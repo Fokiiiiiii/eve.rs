@@ -61,6 +61,45 @@ public interface ISimulation
     /// <summary>Puts a ship in a solar system. Returns null when it was done and the reason when it was not; throws <see cref="SimUnavailableException"/> when the simulation cannot be reached.</summary>
     Task<string?> EnterAsync(SimEnter enter, CancellationToken cancellationToken = default);
 
+    /// <summary>Creates or refreshes one private, static-free Abyssal room scene from host-verified location and mechanics.</summary>
+    Task<string?> EnsureAbyssalSceneAsync(SimEnsureAbyssalScene scene, CancellationToken cancellationToken = default);
+    Task<string?> EnsureAbyssalSceneObjectAsync(SimEnsureAbyssalSceneObject sceneObject, CancellationToken cancellationToken = default);
+    Task<string?> EnsureAbyssalRewardCacheAsync(SimEnsureAbyssalRewardCache cache, CancellationToken cancellationToken = default);
+    Task<string?> EnsureAbyssalLootContainerAsync(SimEnsureAbyssalLootContainer container, CancellationToken cancellationToken = default);
+    Task<string?> EnsureAbyssalEnvironmentObjectAsync(SimEnsureAbyssalEnvironmentObject environment, CancellationToken cancellationToken = default);
+    Task<string?> RefreshAbyssalNpcAsync(SimRefreshAbyssalNpc npc, CancellationToken cancellationToken = default);
+
+    /// <summary>Moves one resident participant and its live simulation state between rooms of the same Abyssal run.</summary>
+    Task<string?> MoveAbyssalParticipantAsync(SimMoveAbyssalParticipant move, CancellationToken cancellationToken = default);
+
+    /// <summary>Moves across the Abyssal boundary and runs the client SessionChange after sim acceptance but before its movement notifications.</summary>
+    Task<string?> MoveAbyssalParticipantInOrderAsync(
+        SimMoveAbyssalParticipant move,
+        Action<SimMoveAbyssalParticipantReply> beforeFollowingMessages,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Reads the authoritative pose of a resident ship from its expected private scene.</summary>
+    Task<SimGetAbyssalParticipantPoseReply> GetAbyssalParticipantPoseAsync(
+        SimGetAbyssalParticipantPose request, CancellationToken cancellationToken = default);
+
+    /// <summary>Rebinds a reconnecting session to the already resident ship and room of its Abyssal run.</summary>
+    Task<string?> RebindAbyssalSessionAsync(SimRebindAbyssalSession rebind, CancellationToken cancellationToken = default);
+
+    /// <summary>Removes a private room after its NPCs, participants and loot containers have been settled.</summary>
+    Task<string?> RemoveAbyssalSceneAsync(SimRemoveAbyssalScene scene, CancellationToken cancellationToken = default);
+
+    /// <summary>Materializes or confirms a persisted public Abyssal trace and publishes its AddBalls2 to visible sessions.</summary>
+    Task<SimEnsureAbyssalTracePublishedReply> EnsureAbyssalTracePublishedAsync(
+        SimEnsureAbyssalTracePublished trace, CancellationToken cancellationToken = default);
+
+    /// <summary>Removes a public Abyssal trace from its solar-system scene; an already-absent item is an explicit idempotent result.</summary>
+    Task<SimRemoveAbyssalTraceReply> RemoveAbyssalTraceAsync(
+        SimRemoveAbyssalTrace trace, CancellationToken cancellationToken = default);
+
+    /// <summary>Removes a settled participant by resident ship identity, without requiring a live client session.</summary>
+    Task<SimRemoveAbyssalParticipantReply> RemoveAbyssalParticipantAsync(
+        SimRemoveAbyssalParticipant participant, CancellationToken cancellationToken = default);
+
     Task SetHeatProfileAsync(ulong sessionId, SimHeatProfile profile, CancellationToken cancellationToken = default);
 
     Task SetModuleOverheatAsync(ulong sessionId, long moduleId, bool active, CancellationToken cancellationToken = default);

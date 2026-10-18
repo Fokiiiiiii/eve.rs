@@ -35,7 +35,7 @@ public sealed partial class SpaceSessions : ISpaceSpawns
         {
             var shipId = HullIdBase + Interlocked.Increment(ref _hulls);
             var spawn = new SimSpawn(
-                NextSpawnRequest(), pilot.SolarSystemId, SimShips.OfType(shipId, type), pilot.ShipId, place, [0, 0, 0], RandomDirection(), "",
+                NextSpawnRequest(), SimSceneKey.SolarSystem(pilot.SolarSystemId), SimShips.OfType(shipId, type), pilot.ShipId, place, [0, 0, 0], RandomDirection(), "",
                 SimNpcIdentity.Default with { Hull = true });
             if (await SpawnAsync(spawn, "spawn", cancellationToken) is not { } npcSession)
             {

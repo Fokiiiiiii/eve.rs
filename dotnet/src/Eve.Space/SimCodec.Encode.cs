@@ -187,6 +187,17 @@ public static partial class SimCodec
         {
             WriteWeapon(w, weapon);
         }
+        if (i.SelfRepairs.Count > 2 || i.SelfRepairs.Any(repair => !SimNpcSelfRepair.IsValid(repair)) || i.SelfRepairs.Select(repair => repair.EffectId).Distinct().Count() != i.SelfRepairs.Count)
+            throw new ArgumentException("bad NPC self-repairs", nameof(i));
+        w.U32((uint)i.SelfRepairs.Count);
+        foreach (var repair in i.SelfRepairs)
+        {
+            w.I32(repair.EffectId);
+            w.F64(repair.Amount);
+            w.F64(repair.CycleMs);
+            w.F64(repair.CapacitorCost);
+            w.F64(repair.DelayChance);
+        }
         WriteWreckKind(w, i.Wreck);
         w.U8((byte)(i.Hull ? 1 : 0));
         w.U8((byte)(i.HostWreck ? 1 : 0));
@@ -698,6 +709,20 @@ private static void WriteStructureDamageCorrelation(
         w.U8(v.ArmorPinned ? (byte)1 : (byte)0);
     }
 
+    private static void WriteWreckPlacement(Writer w, SimPlaceWreck m)
+    {
+        WriteSceneKey(w, m.Scene);
+        w.I64(m.WreckId);
+        w.I32(m.GroupId);
+        WriteWreckKind(w, m.Kind);
+        WriteVector(w, m.Position);
+        WriteVector(w, m.Direction);
+        w.F64(m.Radius);
+        w.I64(m.LauncherId);
+        WriteCredit(w, m.Credit);
+        w.U8((byte)(m.IsEmpty ? 1 : 0));
+    }
+
     private static void WriteShip(Writer w, SimShip s)
     {
         w.I64(s.ShipId);
@@ -744,12 +769,270 @@ private static void WriteStructureDamageCorrelation(
         }
     }
 
+    private static void WriteSceneKey(Writer w, SimSceneKey scene)
+    {
+        if (!scene.IsValid) throw new ArgumentException("Invalid simulation scene key.", nameof(scene));
+        w.I32(scene.LocationId);
+        w.I64(scene.InstanceId);
+        w.I32(scene.RoomIndex);
+    }
+
+    private static void WriteAbyssalModifiers(Writer w, IReadOnlyList<SimAbyssalAttributeModifier> modifiers)
+    {
+        if (modifiers.Count > MaxAbyssalModifiers || modifiers.Any(modifier =>
+                modifier.AttributeId <= 0 || !Enum.IsDefined(modifier.Operation) || !double.IsFinite(modifier.Value)))
+            throw new ArgumentException("Invalid Abyssal attribute modifiers.", nameof(modifiers));
+        w.U32((uint)modifiers.Count);
+        foreach (var modifier in modifiers)
+        {
+            w.I32(modifier.AttributeId);
+            w.U8((byte)modifier.Operation);
+            w.F64(modifier.Value);
+        }
+    }
+
+    private static void WriteAbyssalSceneSpec(Writer w, SimAbyssalSceneSpec spec)
+    {
+        if (!IsAbyssalSceneSpec(spec)) throw new ArgumentException("Invalid Abyssal scene specification.", nameof(spec));
+        WriteSceneKey(w, spec.Scene);
+        WriteAbyssalModifiers(w, spec.Environment.GlobalModifiers);
+        w.U32((uint)spec.Environment.Fields.Count);
+        foreach (var field in spec.Environment.Fields)
+        {
+            WriteVector(w, field.Center);
+            w.F64(field.RadiusMeters);
+            WriteAbyssalModifiers(w, field.Modifiers);
+        }
+        WriteVector(w, spec.Boundary.Center);
+        w.F64(spec.Boundary.RadiusMeters);
+        w.I64(spec.Boundary.TickIntervalMs);
+        w.U32((uint)spec.Boundary.DamageCurve.Count);
+        foreach (var point in spec.Boundary.DamageCurve)
+        {
+            w.F64(point.DistanceOutsideMeters);
+            w.F64(point.AppliedDamagePerSecond);
+        }
+        w.I64(spec.Boundary.TerminalExposureMs);
+        w.I64(spec.ExpiryFileTime);
+    }
+
+
+    private static void WriteAbyssalSceneObject(Writer w, SimAbyssalSceneObject sceneObject)
+    {
+        WriteSceneKey(w, sceneObject.Scene);
+        w.I64(sceneObject.ItemId);
+        w.I32(sceneObject.TypeId);
+        w.I32(sceneObject.GroupId);
+        w.I32(sceneObject.CategoryId);
+        w.I64(sceneObject.OwnerId);
+        w.F64(sceneObject.Radius);
+        w.I32(sceneObject.GraphicId);
+        w.Text(sceneObject.Name);
+        WriteVector(w, sceneObject.Position);
+        WriteVector(w, sceneObject.Direction);
+        w.U8(sceneObject.IsOpen ? (byte)1 : (byte)0);
+    }
+
+    private static void WriteAbyssalTypeIds(Writer w, IReadOnlyList<int> ids)
+    {
+        w.U32((uint)ids.Count);
+        foreach (var id in ids) w.I32(id);
+    }
+
+    private static void WriteAbyssalPointDefense(Writer w, SimAbyssalPointDefense? pulse)
+    {
+        w.U8(pulse is null ? (byte)0 : (byte)1);
+        if (pulse is null) return;
+        w.I64(pulse.TickIntervalMs);
+        foreach (var channel in pulse.Damage) w.F64(channel);
+        w.I32(pulse.TypeListId);
+        foreach (var ids in new[] { pulse.IncludedCategories, pulse.IncludedGroups, pulse.IncludedTypes, pulse.ExcludedCategories, pulse.ExcludedGroups, pulse.ExcludedTypes })
+            WriteAbyssalTypeIds(w, ids);
+        w.Text(pulse.EffectName);
+    }
+
+    private static void WriteAbyssalResult(Writer w, ulong requestId, string? error)
+    {
+        w.U64(requestId);
+        w.U8(error is null ? (byte)0 : (byte)1);
+        w.Text(error ?? string.Empty);
+    }
+
     /// <summary>The whole frame, length prefix included.</summary>
     public static byte[] Encode(SimMessage message)
     {
         var w = new Writer();
         switch (message)
         {
+            case SimEnsureAbyssalScene m:
+                if (m.RequestId == 0) throw new ArgumentOutOfRangeException(nameof(message));
+                w.U8(Kind.EnsureAbyssalScene);
+                w.U64(m.RequestId);
+                WriteAbyssalSceneSpec(w, m.Spec);
+                break;
+            case SimEnsureAbyssalSceneReply m:
+                if (m.RequestId == 0) throw new ArgumentOutOfRangeException(nameof(message));
+                w.U8(Kind.EnsureAbyssalSceneReply);
+                WriteAbyssalResult(w, m.RequestId, m.Error);
+                break;
+            case SimEnsureAbyssalSceneObject m:
+                if (!IsAbyssalSceneObjectRequest(m)) throw new ArgumentException("Invalid Abyssal scene object.", nameof(message));
+                w.U8(Kind.EnsureAbyssalSceneObject);
+                w.U64(m.RequestId);
+                WriteAbyssalSceneObject(w, m.Object);
+                break;
+            case SimEnsureAbyssalSceneObjectReply m:
+                if (m.RequestId == 0) throw new ArgumentOutOfRangeException(nameof(message));
+                w.U8(Kind.EnsureAbyssalSceneObjectReply);
+                WriteAbyssalResult(w, m.RequestId, m.Error);
+                break;
+            case SimMoveAbyssalParticipant m:
+                if (!IsAbyssalMove(m)) throw new ArgumentException("Invalid Abyssal participant move.", nameof(message));
+                w.U8(Kind.MoveAbyssalParticipant);
+                w.U64(m.RequestId);
+                w.I64(m.ShipId);
+                WriteSceneKey(w, m.Source);
+                WriteSceneKey(w, m.Destination);
+                w.U8((byte)((m.PreserveSourcePose ? 1 : 0) | (m.SessionHandoff ? 2 : 0)));
+                if (!m.PreserveSourcePose)
+                {
+                    WriteVector(w, m.Position);
+                    WriteVector(w, m.Direction);
+                }
+                break;
+            case SimMoveAbyssalParticipantReply m:
+                if (m.RequestId == 0) throw new ArgumentOutOfRangeException(nameof(message));
+                w.U8(Kind.MoveAbyssalParticipantReply);
+                WriteAbyssalResult(w, m.RequestId, m.Error);
+                break;
+            case SimRebindAbyssalSession m:
+                if (!IsAbyssalRebind(m)) throw new ArgumentException("Invalid Abyssal session rebind.", nameof(message));
+                w.U8(Kind.RebindAbyssalSession);
+                w.U64(m.RequestId);
+                w.U64(m.SessionId);
+                w.I64(m.ShipId);
+                WriteSceneKey(w, m.Scene);
+                break;
+            case SimRebindAbyssalSessionReply m:
+                if (m.RequestId == 0) throw new ArgumentOutOfRangeException(nameof(message));
+                w.U8(Kind.RebindAbyssalSessionReply);
+                WriteAbyssalResult(w, m.RequestId, m.Error);
+                break;
+            case SimRemoveAbyssalScene m:
+                if (!IsAbyssalSceneRemoval(m)) throw new ArgumentException("bad Abyssal scene removal", nameof(m));
+                w.U8(Kind.RemoveAbyssalScene);
+                w.U64(m.RequestId);
+                WriteSceneKey(w, m.Scene);
+                WriteStructureDamageIds(w, m.SettledNpcIds);
+                WriteStructureDamageIds(w, m.SettledLootIds);
+                break;
+            case SimRemoveAbyssalSceneReply m:
+                if (m.RequestId == 0) throw new ArgumentOutOfRangeException(nameof(message));
+                w.U8(Kind.RemoveAbyssalSceneReply);
+                WriteAbyssalResult(w, m.RequestId, m.Error);
+                break;
+            case SimEnsureAbyssalTracePublished m:
+                if (!IsAbyssalTracePublication(m)) throw new ArgumentException("Invalid Abyssal trace publication.", nameof(message));
+                w.U8(Kind.EnsureAbyssalTracePublished);
+                w.U64(m.RequestId);
+                w.U8(m.ActorSessionId.HasValue ? (byte)1 : (byte)0);
+                if (m.ActorSessionId is { } actorSessionId) w.U64(actorSessionId);
+                w.I32(m.Trace.SolarSystemId);
+                w.I64(m.Trace.ItemId);
+                w.I32(m.Trace.TypeId);
+                w.I32(m.Trace.GroupId);
+                w.I32(m.Trace.CategoryId);
+                w.I64(m.Trace.OwnerId);
+                w.F64(m.Trace.Radius);
+                WriteVector(w, m.Trace.Position);
+                WriteVector(w, m.Trace.Velocity);
+                WriteVector(w, m.Trace.Direction);
+                w.U8(m.Trace.TargetPoint is null ? (byte)0 : (byte)1);
+                if (m.Trace.TargetPoint is { } targetPoint) WriteVector(w, targetPoint);
+                w.F64(m.Trace.SpeedFraction);
+                w.I32(m.Trace.GameModeId);
+                w.I32(m.Trace.FilamentTypeId);
+                w.I32(m.Trace.DifficultyTier);
+                w.I64(m.Trace.ExpiresAtMs);
+                break;
+            case SimEnsureAbyssalTracePublishedReply m:
+                if (m.RequestId == 0 || !Enum.IsDefined(m.Status) || m.RecipientCount < 0 ||
+                    (m.Status == SimAbyssalTraceStatus.Failed) != (m.Error is not null))
+                    throw new ArgumentException("Invalid Abyssal trace publication reply.", nameof(message));
+                w.U8(Kind.EnsureAbyssalTracePublishedReply);
+                w.U64(m.RequestId);
+                w.U8((byte)m.Status);
+                w.I32(m.RecipientCount);
+                w.U8(m.ActorNotified ? (byte)1 : (byte)0);
+                w.Text(m.Error ?? string.Empty);
+                break;
+            case SimRemoveAbyssalTrace m:
+                if (!IsAbyssalTraceRemoval(m)) throw new ArgumentException("Invalid Abyssal trace removal.", nameof(message));
+                w.U8(Kind.RemoveAbyssalTrace);
+                w.U64(m.RequestId);
+                w.I32(m.SolarSystemId);
+                w.I64(m.ItemId);
+                break;
+            case SimRemoveAbyssalTraceReply m:
+                if (m.RequestId == 0 || !Enum.IsDefined(m.Status) || m.RecipientCount < 0 ||
+                    (m.Status == SimAbyssalTraceStatus.Failed) != (m.Error is not null))
+                    throw new ArgumentException("Invalid Abyssal trace removal reply.", nameof(message));
+                w.U8(Kind.RemoveAbyssalTraceReply);
+                w.U64(m.RequestId);
+                w.U8((byte)m.Status);
+                w.I32(m.RecipientCount);
+                w.Text(m.Error ?? string.Empty);
+                break;
+            case SimRemoveAbyssalParticipant m:
+                if (!IsAbyssalParticipantRemoval(m)) throw new ArgumentException("Invalid Abyssal participant removal.", nameof(message));
+                w.U8(Kind.RemoveAbyssalParticipant);
+                w.U64(m.RequestId);
+                WriteSceneKey(w, m.Scene);
+                w.I64(m.ShipId);
+                break;
+            case SimRemoveAbyssalParticipantReply m:
+                if (m.RequestId == 0 || ((m.Error is not null) && m.AlreadyAbsent))
+                    throw new ArgumentException("Invalid Abyssal participant removal reply.", nameof(message));
+                w.U8(Kind.RemoveAbyssalParticipantReply);
+                w.U64(m.RequestId);
+                w.U8(m.AlreadyAbsent ? (byte)1 : (byte)0);
+                w.Text(m.Error ?? string.Empty);
+                break;
+            case SimGetAbyssalParticipantPose m:
+                if (!IsAbyssalPoseRequest(m)) throw new ArgumentException("Invalid Abyssal participant pose request.", nameof(message));
+                w.U8(Kind.GetAbyssalParticipantPose);
+                w.U64(m.RequestId);
+                WriteSceneKey(w, m.Scene);
+                w.I64(m.ShipId);
+                break;
+            case SimGetAbyssalParticipantPoseReply m:
+                if (!IsAbyssalPoseReply(m)) throw new ArgumentException("Invalid Abyssal participant pose reply.", nameof(message));
+                w.U8(Kind.GetAbyssalParticipantPoseReply);
+                w.U64(m.RequestId);
+                WriteSceneKey(w, m.Scene);
+                w.I64(m.ShipId);
+                w.U8(m.Error is null ? (byte)0 : (byte)1);
+                if (m.Error is null)
+                {
+                    WriteVector(w, m.Position);
+                    WriteVector(w, m.Direction);
+                }
+                w.Text(m.Error ?? string.Empty);
+                w.U8(m.Deployment is null ? (byte)0 : (byte)1);
+                if (m.Deployment is { } snapshot)
+                {
+                    if (m.Error is not null || m.Scene.InstanceId != 0 || snapshot.NearbyObjects.Select(item => item.ItemId).Distinct().Count() != snapshot.NearbyObjects.Count)
+                        throw new ArgumentException("Invalid deployment snapshot.", nameof(message));
+                    foreach (var flag in new[] { snapshot.Warping, snapshot.Cloaked, snapshot.CynoActive, snapshot.UndockInvulnerable, snapshot.WarpScrambled }) w.U8(flag ? (byte)1 : (byte)0);
+                    w.U32(checked((uint)snapshot.NearbyObjects.Count));
+                    foreach (var item in snapshot.NearbyObjects)
+                    {
+                        if (item.ItemId <= 0 || item.ItemId == m.ShipId || item.TypeId <= 0 || !double.IsFinite(item.CenterDistanceMeters) || item.CenterDistanceMeters is < 0 or > 1_000_000)
+                            throw new ArgumentException("Invalid deployment object.", nameof(message));
+                        w.I64(item.ItemId); w.I32(item.TypeId); w.F64(item.CenterDistanceMeters);
+                    }
+                }
+                break;
             case SimHello m:
                 w.U8(Kind.Hello);
                 w.U16(m.Version);
@@ -785,7 +1068,7 @@ private static void WriteStructureDamageCorrelation(
             case SimEnter m:
                 w.U8(Kind.Enter);
                 w.U64(m.SessionId);
-                w.I32(m.SolarSystemId);
+                WriteSceneKey(w, m.Scene);
                 w.U8((byte)m.How);
                 w.I64(m.StationId);
                 WriteShip(w, m.Ship);
@@ -1009,6 +1292,8 @@ private static void WriteStructureDamageCorrelation(
                 w.I64(m.LauncherId);
                 WriteCredit(w, m.Credit);
                 w.F64(m.Distance);
+                w.U8(m.ExpectedScene.HasValue ? (byte)1 : (byte)0);
+                if (m.ExpectedScene is { } expectedScene) WriteSceneKey(w, expectedScene);
                 break;
             case SimArrived m:
                 w.U8(Kind.Arrived);
@@ -1517,21 +1802,86 @@ private static void WriteStructureDamageCorrelation(
                 break;
             case SimPlaceWreck m:
                 w.U8(Kind.PlaceWreck);
-                w.I32(m.SolarSystemId);
-                w.I64(m.WreckId);
-                w.I32(m.GroupId);
-                WriteWreckKind(w, m.Kind);
+                WriteWreckPlacement(w, m);
+                break;
+            case SimEnsureAbyssalEnvironmentObject m:
+                if (!IsAbyssalEnvironmentObject(m)) throw new ArgumentException("bad Abyssal environment object", nameof(m));
+                w.U8(Kind.EnsureAbyssalEnvironmentObject);
+                w.U64(m.RequestId);
+                w.Text(m.ContentId);
+                WriteAbyssalSceneObject(w, m.Object.Body);
+                w.F64(m.Object.EffectRadiusMeters);
+                WriteAbyssalPointDefense(w, m.Object.PointDefense);
+                break;
+            case SimEnsureAbyssalEnvironmentObjectReply m:
+                w.U8(Kind.EnsureAbyssalEnvironmentObjectReply);
+                WriteAbyssalResult(w, m.RequestId, m.Error);
+                break;
+            case SimAbyssalFieldMembership m:
+                if (!IsAbyssalFieldMembership(m)) throw new ArgumentException("bad Abyssal field membership", nameof(m));
+                w.U8(Kind.AbyssalFieldMembership);
+                WriteSceneKey(w, m.Scene);
+                w.I64(m.SourceItemId);
+                w.I64(m.ShipId);
+                w.U64(m.SessionId);
+                w.U8(m.Inside ? (byte)1 : (byte)0);
+                break;
+            case SimRefreshAbyssalNpc m:
+                if (!IsAbyssalNpcRefresh(m)) throw new ArgumentException("bad Abyssal NPC refresh", nameof(m));
+                w.U8(Kind.RefreshAbyssalNpc);
+                w.U64(m.RequestId);
+                WriteSceneKey(w, m.Scene);
+                w.U64(m.SessionId);
+                WriteShip(w, m.Ship);
+                WriteIdentity(w, m.Identity);
+                break;
+            case SimRefreshAbyssalNpcReply m:
+                w.U8(Kind.RefreshAbyssalNpcReply);
+                WriteAbyssalResult(w, m.RequestId, m.Error);
+                break;
+            case SimEnsureAbyssalRewardCache m:
+                if (!IsAbyssalRewardCache(m)) throw new ArgumentException("bad Abyssal reward cache", nameof(m));
+                w.U8(Kind.EnsureAbyssalRewardCache);
+                w.U64(m.RequestId);
+                w.Text(m.ContentId);
+                WriteSceneKey(w, m.Scene);
+                WriteShip(w, m.Entity);
                 WriteVector(w, m.Position);
                 WriteVector(w, m.Direction);
-                w.F64(m.Radius);
-                w.I64(m.LauncherId);
-                WriteCredit(w, m.Credit);
-                w.U8((byte)(m.IsEmpty ? 1 : 0));
+                break;
+            case SimEnsureAbyssalRewardCacheReply m:
+                w.U8(Kind.EnsureAbyssalRewardCacheReply);
+                WriteAbyssalResult(w, m.RequestId, m.Error);
+                break;
+            case SimEnsureAbyssalLootContainer m:
+                if (!IsAbyssalLootContainer(m)) throw new ArgumentException("bad Abyssal loot container", nameof(m));
+                w.U8(Kind.EnsureAbyssalLootContainer);
+                w.U64(m.RequestId);
+                w.Text(m.ContentId);
+                WriteWreckPlacement(w, m.Container);
+                break;
+            case SimEnsureAbyssalLootContainerReply m:
+                w.U8(Kind.EnsureAbyssalLootContainerReply);
+                WriteAbyssalResult(w, m.RequestId, m.Error);
                 break;
             case SimSpawn m:
                 w.U8(Kind.Spawn);
                 w.U64(m.RequestId);
-                w.I32(m.SolarSystemId);
+                if (m.AbyssalContentId is { } contentId)
+                {
+                    if (m.Scene.InstanceId <= 0 || !Guid.TryParse(contentId, out var parsedContentId)
+                        || !string.Equals(parsedContentId.ToString("D"), contentId, StringComparison.Ordinal))
+                        throw new ArgumentException("A private Abyssal NPC spawn requires its canonical content UUID.", nameof(m));
+                    w.U8(1);
+                    w.Text(contentId);
+                }
+                else
+                {
+                    if (m.Scene.InstanceId > 0)
+                        throw new ArgumentException("A private Abyssal NPC spawn requires its content UUID.", nameof(m));
+                    w.U8(0);
+                }
+                WriteSceneKey(w, m.Scene);
                 WriteShip(w, m.Ship);
                 w.I64(m.AnchorShipId);
                 WriteVector(w, m.Position);

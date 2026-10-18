@@ -246,6 +246,8 @@ public Func<long, long, CancellationToken, Task<int>>? SkillLevelOfCharacter { g
             return None;
         }
 
+        if (space.IsInAbyssalRun(call.Session))
+            throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr(SpaceSessions.AbyssalWarpBlockedMessage)));
         var type = JsSemantics.PlainText(call.Arg(0));
         if (type is not ("item" or "bookmark" or "char" or "position" or "scan"))
         {
@@ -354,6 +356,8 @@ public Func<long, long, CancellationToken, Task<int>>? SkillLevelOfCharacter { g
         else if (type == "char")
         {
             var targetCharacterId = targetId;
+            if (sessionForCharacter?.Invoke(targetCharacterId) is { } abyssalTarget && space.IsInAbyssalRun(abyssalTarget))
+                throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr(SpaceSessions.AbyssalFleetWarpBlockedMessage)));
             if (fleet is null || fleet.Members.All(member => member.CharacterId != targetCharacterId)
                 || sessionForCharacter?.Invoke(targetCharacterId) is not { } targetSession
                 || targetSession.CharacterId != targetCharacterId

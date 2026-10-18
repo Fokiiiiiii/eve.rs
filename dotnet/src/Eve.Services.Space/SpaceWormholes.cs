@@ -31,11 +31,18 @@ public sealed partial class SpaceSessions
     /// <summary>The environment effects of the system the ship is in, from the pilot that flies it (no pilot, no environment).</summary>
     private IReadOnlyList<Eve.Dogma.EffectDef> EnvironmentOf(long shipId)
     {
-        if (SystemEnvironment is null || _pilots.Values.FirstOrDefault(pilot => pilot.ShipId == shipId) is not { } flown)
+        var flown = _pilots.Values.FirstOrDefault(pilot => pilot.ShipId == shipId);
+        var offline = _abyssalOfflineResidents.GetValueOrDefault(shipId);
+        var scene = flown?.SimulationScene ?? offline?.Scene;
+        if (scene is null) return [];
+        if (scene.Value.InstanceId > 0)
         {
-            return [];
+            var contentId = flown?.AbyssalContentId ?? offline?.ContentId;
+            var weather = _abyssalEnvironmentByScene.TryGetValue(scene.Value, out var effects)
+                ? effects : contentId is not null ? AbyssalEnvironmentEffects?.Invoke(contentId, scene.Value.LocationId) ?? [] : [];
+            return [.. weather, .. LocalAbyssalEffects(scene.Value, shipId)];
         }
-        return SystemEnvironment(flown.SolarSystemId);
+        return SystemEnvironment?.Invoke(scene.Value.LocationId) ?? [];
     }
 
     /// <summary>

@@ -120,7 +120,17 @@ pub fn body_entries(system: &SolarSystem, body: &Body) -> Entries {
         BodyKind::Stargate => stargate_fields(system, body, &mut entries),
         BodyKind::Structure => structure_fields(body, &mut entries),
         BodyKind::Wormhole => wormhole_fields(body, &mut entries),
-        BodyKind::Planet | BodyKind::Moon | BodyKind::Belt | BodyKind::Star => {}
+        BodyKind::AbyssalConduit => {
+            if let Detail::AbyssalConduit { is_open, .. } = &body.detail {
+                entries.push(("isAbyssGateOpen", Value::Bool(*is_open)));
+                entries.push(("animationState", int(if *is_open { 1 } else { 0 })));
+            }
+        }
+        BodyKind::Planet
+        | BodyKind::Moon
+        | BodyKind::Belt
+        | BodyKind::Star
+        | BodyKind::AbyssalEnvironment => {}
     }
     entries
 }

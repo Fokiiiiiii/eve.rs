@@ -127,6 +127,13 @@ impl Scene {
         // a refresh the host sent takes effect at this cycle's start, before what the cycle costs is worked out
         let refresh = refresh_running(&mut pilot.modules.running[index], session, owner, at);
         let run = pilot.modules.running[index].clone();
+        let npc_self_repair = pilot.ship.npc.as_ref().is_some_and(|identity| {
+            identity.self_repairs.iter().any(|repair| {
+                repair.is_valid()
+                    && repair.effect_id == run.effect.effect_id
+                    && crate::npc::npc_self_repair_module_id(repair.effect_id) == module_id
+            })
+        });
         let affordable =
             pilot.modules.capacitor.as_ref().is_some_and(|c| c.charge_at(at) >= run.effect.capacitor_need);
         let more = run.cycles < run.effect.repeat;
@@ -172,6 +179,9 @@ impl Scene {
         if next.effect.turret.is_none() {
             out.push(Self::effect_told(session, owner, ship_id, &next, at, true, at, None));
             out.extend(self.act(session, &next.effect, Applies::CycleStart, at));
+            if npc_self_repair && let Some(brains) = self.brains.as_mut() {
+                brains.effect_started(ship_id, i64::from(next.effect.effect_id));
+            }
             out.extend(self.jam_told(session, &next.effect, at, Jam::Refresh));
             if self.pilots.get(&session).is_some_and(|pilot| {
                 pilot.modules.running.iter().any(|run| {

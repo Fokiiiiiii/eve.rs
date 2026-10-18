@@ -21,8 +21,17 @@ KINDS = {"Hello": 1, "HelloAck": 2, "Enter": 3, "Leave": 4, "Bind": 5, "UpdateSt
          "EcmBurst": 67, "PlaceDisruptor": 68, "SetDisruptorActive": 69, "PlaceInhibitor": 70, "ScanTargets": 71, "DirectionalTargets": 72,
          "PlaceCynoBeacon": 73, "PlaceStructure": 74, "RemoveStructure": 75, "SetStructureState": 76, "StructureDamaged": 77,
          "PlaceAnalysisBeacon": 78, "SetAnalysisBeaconState": 79, "TetherPolicy": 80, "TetherChanged": 81,
-         "PlaceWormhole": 82, "RemoveWormhole": 83, "ControlStructure": 84, "StructureDamageCandidatesRequest": 85, "StructureDamageCandidatesResult": 86, "RemoveCynoBeacon": 87, "DamageableEntityUpserted": 88, "DamageableEntityRemoved": 89, "PlaceObservatory": 90, "RemoteDecloakPing": 91, "PlaceControlTower": 92, "PlaceDeadspacePocket": 93, "PlaceAccelerationGate": 94,
-         "SetSlimField": 95, "PlaceCapturePoint": 96, "PlaceBattlefieldScoreboard": 97}
+         "PlaceWormhole": 82, "RemoveWormhole": 83, "ControlStructure": 84, "StructureDamageCandidatesRequest": 85,
+         "StructureDamageCandidatesResult": 86, "RemoveCynoBeacon": 87, "DamageableEntityUpserted": 88, "DamageableEntityRemoved": 89,
+         "PlaceObservatory": 90, "RemoteDecloakPing": 91, "PlaceControlTower": 92, "PlaceDeadspacePocket": 93,
+         "PlaceAccelerationGate": 94, "SetSlimField": 95, "PlaceCapturePoint": 96, "PlaceBattlefieldScoreboard": 97,
+         "EnsureAbyssalScene": 98, "EnsureAbyssalSceneReply": 99, "MoveAbyssalParticipant": 100, "MoveAbyssalParticipantReply": 101,
+         "RebindAbyssalSession": 102, "RebindAbyssalSessionReply": 103, "RemoveAbyssalScene": 104, "RemoveAbyssalSceneReply": 105,
+         "EnsureAbyssalTracePublished": 106, "EnsureAbyssalTracePublishedReply": 107, "RemoveAbyssalTrace": 108, "RemoveAbyssalTraceReply": 109,
+         "RemoveAbyssalParticipant": 110, "RemoveAbyssalParticipantReply": 111, "GetAbyssalParticipantPose": 112, "GetAbyssalParticipantPoseReply": 113,
+         "EnsureAbyssalSceneObject": 114, "EnsureAbyssalSceneObjectReply": 115, "EnsureAbyssalRewardCache": 116, "EnsureAbyssalRewardCacheReply": 117,
+         "EnsureAbyssalLootContainer": 118, "EnsureAbyssalLootContainerReply": 119, "EnsureAbyssalEnvironmentObject": 120, "EnsureAbyssalEnvironmentObjectReply": 121,
+         "AbyssalFieldMembership": 122, "RefreshAbyssalNpc": 123, "RefreshAbyssalNpcReply": 124}
 
 def slim_value(v):  # a dynamic slim-item field value (protocol 76): a tag (0 none, 1 int, 2 real, 3 bool, 4 text, 5 tuple), then its payload
     tag = v["tag"]
@@ -61,6 +70,50 @@ def i64(value):
 
 def u64(value):
     return struct.pack("<Q", int(value))
+
+
+def scene_key(value):
+    if "scene" in value:
+        key = value["scene"]
+        return struct.pack("<iqi", key["locationId"], int(key["instanceId"]), key["roomIndex"])
+    return struct.pack("<iqi", value["solarSystemId"], 0, 0)
+
+
+def abyssal_modifiers(modifiers):
+    return (struct.pack("<I", len(modifiers))
+            + b"".join(struct.pack("<iBd", m["attributeId"], m["operation"], m["value"]) for m in modifiers))
+
+
+def abyssal_scene_spec(spec):
+    out = scene_key({"scene": spec["scene"]})
+    out += abyssal_modifiers(spec["environment"]["globalModifiers"])
+    out += struct.pack("<I", len(spec["environment"]["fields"]))
+    for field in spec["environment"]["fields"]:
+        out += struct.pack("<4d", *field["center"], field["radiusMeters"])
+        out += abyssal_modifiers(field["modifiers"])
+    boundary = spec["boundary"]
+    out += struct.pack("<3ddqI", *boundary["center"], boundary["radiusMeters"], boundary["tickIntervalMs"], len(boundary["damageCurve"]))
+    for point in boundary["damageCurve"]:
+        out += struct.pack("<2d", point["distanceOutsideMeters"], point["appliedDamagePerSecond"])
+    return out + i64(boundary["terminalExposureMs"]) + i64(spec["expiryFileTime"])
+
+
+TRACE_STATUSES = {"Created": 0, "AlreadyPresent": 1, "Removed": 2, "AlreadyAbsent": 3, "Failed": 255}
+
+
+def abyssal_trace_payload(trace):
+    out = struct.pack("<i", trace["solarSystemId"]) + i64(trace["itemId"])
+    out += struct.pack("<iii", trace["typeId"], trace["groupId"], trace["categoryId"])
+    out += i64(trace["ownerId"]) + struct.pack("<d", trace["radius"])
+    out += struct.pack("<9d", *trace["position"], *trace["velocity"], *trace["direction"])
+    target = trace.get("targetPoint")
+    out += b"\x00" if target is None else b"\x01" + struct.pack("<3d", *target)
+    out += struct.pack("<diii", trace["speedFraction"], trace["gameModeId"], trace["filamentTypeId"], trace["difficultyTier"])
+    return out + i64(trace["expiresAtMs"])
+
+
+def abyssal_result(m):
+    return u64(m["requestId"]) + bytes([0 if m["ok"] else 1]) + s("" if m["ok"] else m["reason"])
 
 
 def analysis_beacon_state(state):
@@ -332,6 +385,10 @@ def identity(i):
     body += struct.pack("<I", len(i["weapons"]))
     for w in i["weapons"]:
         body += weapon(w)
+    repairs = i.get("selfRepairs", [])
+    body += struct.pack("<I", len(repairs))
+    for repair in repairs:
+        body += struct.pack("<i4d", repair["effectId"], repair["amount"], repair["cycleMs"], repair["capacitorCost"], repair["delayChance"])
     return body + wreck_kind(i.get("wreck")) + bytes([1 if i.get("hull") else 0, 1 if i.get("hostWreck") else 0])
 
 
@@ -362,8 +419,96 @@ def structure_health(m):  # protocol 60: the vitals (points, then the resonances
     return out + struct.pack("<d", m["shieldRechargeMs"]) + struct.pack("<6d", *(m["perSecond"] + m["repairPause"]))
 
 
+def abyssal_static_object(obj):
+    body = scene_key({"scene": obj["scene"]}) + i64(obj["itemId"])
+    body += struct.pack("<iii", obj["typeId"], obj["groupId"], obj["categoryId"]) + i64(obj["ownerId"])
+    body += struct.pack("<di", obj["radius"], obj["graphicId"]) + s(obj["name"])
+    return body + struct.pack("<6d", *obj["position"], *obj["direction"]) + bytes([1 if obj["isOpen"] else 0])
+
+
+def abyssal_point_defense(pulse):
+    if pulse is None:
+        return bytes([0])
+    body = bytes([1]) + i64(pulse["tickIntervalMs"]) + struct.pack("<4d", *pulse["damage"]) + struct.pack("<i", pulse["typeListId"])
+    for key in ("includedCategories", "includedGroups", "includedTypes", "excludedCategories", "excludedGroups", "excludedTypes"):
+        body += struct.pack("<I", len(pulse[key])) + b"".join(struct.pack("<i", value) for value in pulse[key])
+    return body + s(pulse["effectName"])
+
+
 def build(m):
     k = m["kind"]
+    if k == "EnsureAbyssalScene":
+        return frame(k, u64(m["requestId"]) + abyssal_scene_spec(m["spec"]))
+    if k == "EnsureAbyssalSceneObject":
+        return frame(k, u64(m["requestId"]) + abyssal_static_object(m["object"]))
+    if k == "EnsureAbyssalEnvironmentObject":
+        obj = m["object"]
+        return frame(k, u64(m["requestId"]) + s(m["contentId"]) + abyssal_static_object(obj["body"])
+                     + struct.pack("<d", obj["effectRadiusMeters"]) + abyssal_point_defense(obj.get("pointDefense")))
+    if k == "AbyssalFieldMembership":
+        return frame(k, scene_key(m) + i64(m["sourceItemId"]) + i64(m["shipId"]) + u64(m["sessionId"]) + bytes([1 if m["inside"] else 0]))
+    if k == "RefreshAbyssalNpc":
+        return frame(k, u64(m["requestId"]) + scene_key(m) + u64(m["sessionId"]) + ship(m["ship"]) + identity(m["identity"]))
+    if k in ("EnsureAbyssalSceneObjectReply", "EnsureAbyssalRewardCacheReply", "EnsureAbyssalLootContainerReply", "EnsureAbyssalEnvironmentObjectReply", "RefreshAbyssalNpcReply"):
+        return frame(k, abyssal_result(m))
+    if k == "EnsureAbyssalRewardCache":
+        return frame(k, u64(m["requestId"]) + s(m["contentId"]) + scene_key(m)
+                     + ship(m["entity"]) + struct.pack("<6d", *m["position"], *m["direction"]))
+    if k == "EnsureAbyssalLootContainer":
+        return frame(k, u64(m["requestId"]) + s(m["contentId"]) + build(m["container"])[5:])
+    if k == "EnsureAbyssalTracePublished":
+        actor = m.get("actorSessionId")
+        body = u64(m["requestId"]) + (b"\x00" if actor is None else b"\x01" + u64(actor))
+        return frame(k, body + abyssal_trace_payload(m["trace"]))
+    if k == "EnsureAbyssalTracePublishedReply":
+        return frame(k, u64(m["requestId"]) + bytes([TRACE_STATUSES[m["status"]]])
+                     + struct.pack("<i", m["recipientCount"]) + bytes([1 if m["actorNotified"] else 0])
+                     + s(m.get("error") or ""))
+    if k == "RemoveAbyssalTrace":
+        return frame(k, u64(m["requestId"]) + struct.pack("<i", m["solarSystemId"]) + i64(m["itemId"]))
+    if k == "RemoveAbyssalTraceReply":
+        return frame(k, u64(m["requestId"]) + bytes([TRACE_STATUSES[m["status"]]])
+                     + struct.pack("<i", m["recipientCount"]) + s(m.get("error") or ""))
+    if k == "RemoveAbyssalParticipant":
+        return frame(k, u64(m["requestId"]) + scene_key({"scene": m["scene"]}) + i64(m["shipId"]))
+    if k == "RemoveAbyssalParticipantReply":
+        return frame(k, u64(m["requestId"]) + bytes([1 if m["alreadyAbsent"] else 0]) + s(m.get("error") or ""))
+    if k == "GetAbyssalParticipantPose":
+        return frame(k, u64(m["requestId"]) + scene_key({"scene": m["scene"]}) + i64(m["shipId"]))
+    if k == "GetAbyssalParticipantPoseReply":
+        error = m.get("error")
+        body = u64(m["requestId"]) + scene_key({"scene": m["scene"]}) + i64(m["shipId"])
+        if error is None:
+            body += b"\x00" + struct.pack("<6d", *m["position"], *m["direction"]) + s("")
+        else:
+            body += b"\x01" + s(error)
+        deployment = m.get("deployment")
+        body += bytes([1 if deployment else 0])
+        if deployment:
+            body += bytes([int(deployment[key]) for key in ["warping", "cloaked", "cynoActive", "undockInvulnerable", "warpScrambled"]])
+            body += struct.pack("<I", len(deployment["nearbyObjects"]))
+            for obj in deployment["nearbyObjects"]:
+                body += i64(obj["itemId"]) + struct.pack("<id", obj["typeId"], obj["centerDistanceMeters"])
+        return frame(k, body)
+    if k in ("EnsureAbyssalSceneReply", "MoveAbyssalParticipantReply", "RebindAbyssalSessionReply", "RemoveAbyssalSceneReply"):
+        return frame(k, abyssal_result(m))
+    if k == "MoveAbyssalParticipant":
+        preserve_source_pose = bool(m.get("preserveSourcePose", False))
+        session_handoff = bool(m.get("sessionHandoff", False))
+        flags = (1 if preserve_source_pose else 0) | (2 if session_handoff else 0)
+        body = u64(m["requestId"]) + i64(m["shipId"])
+        body += scene_key({"scene": m["source"]}) + scene_key({"scene": m["destination"]}) + bytes([flags])
+        if not preserve_source_pose:
+            body += struct.pack("<6d", *m["position"], *m["direction"])
+        return frame(k, body)
+    if k == "RebindAbyssalSession":
+        return frame(k, u64(m["requestId"]) + u64(m["sessionId"]) + i64(m["shipId"]) + scene_key({"scene": m["scene"]}))
+    if k == "RemoveAbyssalScene":
+        body = u64(m["requestId"]) + scene_key(m)
+        for key in ("settledNpcIds", "settledLootIds"):
+            ids = m.get(key, [])
+            body += struct.pack("<I", len(ids)) + b"".join(i64(value) for value in ids)
+        return frame(k, body)
     if k == "Hello":
         return frame(k, struct.pack("<H", m["version"]))
     if k == "ModuleWorkCycle":
@@ -387,7 +532,7 @@ def build(m):
     if k == "HelloAck":
         return frame(k, struct.pack("<HI", m["version"], m["pollHz"]))
     if k == "Enter":
-        return frame(k, u64(m["sessionId"]) + struct.pack("<iB", m["solarSystemId"], m["how"]) + i64(m["stationId"])
+        return frame(k, u64(m["sessionId"]) + scene_key(m) + bytes([m["how"]]) + i64(m["stationId"])
                        + ship(m["ship"])
                        + (b"\x01" + struct.pack("<3d", *m["position"]) + b"\x01" + struct.pack("<3d", *m["direction"]) if m["how"] == 1 else b""))
     if k == "EnterReply":
@@ -447,13 +592,14 @@ def build(m):
     if k == "Respawn":
         return frame(k, u64(m["sessionId"]) + ship(m["ship"]) + struct.pack("<6d", *m["position"], *m["direction"]))
     if k == "PlaceWreck":
-        return frame(k, struct.pack("<i", m["solarSystemId"]) + i64(m["wreckId"]) + struct.pack("<i", m["groupId"]) + wreck_kind(m["wreck"])
+        return frame(k, scene_key(m) + i64(m["wreckId"]) + struct.pack("<i", m["groupId"]) + wreck_kind(m["wreck"])
                      + struct.pack("<7d", *m["position"], *m["direction"], m["radius"]) + i64(m["launcherId"])
                      + i64(m["characterId"]) + i64(m["corporationId"]) + i64(m["allianceId"]) + i64(m["warFactionId"])
                      + bytes([1 if m["isEmpty"] else 0]))
     if k == "PlaceContainer":
         return frame(k, u64(m["sessionId"]) + i64(m["containerId"]) + wreck_kind(m["container"]) + struct.pack("<d", m["radius"]) + i64(m["launcherId"])
-                     + i64(m["characterId"]) + i64(m["corporationId"]) + i64(m["allianceId"]) + i64(m["warFactionId"]) + struct.pack("<d", m["distance"]))
+                     + i64(m["characterId"]) + i64(m["corporationId"]) + i64(m["allianceId"]) + i64(m["warFactionId"]) + struct.pack("<d", m["distance"])
+                     + (bytes([1]) + scene_key({"scene": m["expectedScene"]}) if m.get("expectedScene") else bytes([0])))
     if k == "ContainerPlaced":
         return frame(k, u64(m["sessionId"]) + i64(m["containerId"]) + struct.pack("<6d", *m["position"], *m["direction"]))
     if k == "Arrived":
@@ -542,7 +688,9 @@ def build(m):
     if k == "Measured":
         return frame(k, u64(m["sessionId"]) + bytes([m["command"]]) + (bytes([1]) + struct.pack("<d", m["distance"]) if m.get("distance") is not None else bytes([0])))
     if k == "Spawn":
-        return frame(k, u64(m["requestId"]) + struct.pack("<i", m["solarSystemId"]) + ship(m["ship"]) + i64(m["anchorShipId"])
+        content_id = m.get("abyssalContentId")
+        content = bytes([0]) if content_id is None else bytes([1]) + s(content_id)
+        return frame(k, u64(m["requestId"]) + content + scene_key(m) + ship(m["ship"]) + i64(m["anchorShipId"])
                      + struct.pack("<9d", *m["position"], *m["velocity"], *m["direction"]) + s(m["behavior"]) + identity(m["identity"]))
     if k == "SpawnReply":
         return frame(k, u64(m["requestId"]) + (bytes([0]) + u64(m["session"]) if m["ok"] else bytes([1]) + s(m["reason"])))
@@ -624,14 +772,91 @@ BARE = dict(IBIS, name="", modules=[], allianceId=99000001, securityStatus=-2.5,
             condition={"damage": 0.0, "armorDamage": 0.0, "shieldCharge": 1.0, "charge": 1.0})
 
 valid = [
-    {"name": "hello", "kind": "Hello", "version": 73},
-    {"name": "hello ack", "kind": "HelloAck", "version": 73, "pollHz": 4},
+    {"name": "hello", "kind": "Hello", "version": 75},
+    {"name": "hello ack", "kind": "HelloAck", "version": 75, "pollHz": 4},
+    {"name": "ensure private Abyssal room scene", "kind": "EnsureAbyssalScene", "requestId": "41",
+     "spec": {"scene": {"locationId": 30000142, "instanceId": "9000000000001", "roomIndex": 1},
+              "environment": {"globalModifiers": [{"attributeId": 37, "operation": 1, "value": 1.25}],
+                              "fields": [{"center": [100.0, 200.0, 300.0], "radiusMeters": 500.0,
+                                          "modifiers": [{"attributeId": 265, "operation": 0, "value": 5.0}]}]},
+              "boundary": {"center": [0.0, 0.0, 0.0], "radiusMeters": 75000.0, "tickIntervalMs": 1000, "terminalExposureMs": 15000,
+                           "damageCurve": [{"distanceOutsideMeters": 0.0, "appliedDamagePerSecond": 12.5},
+                                           {"distanceOutsideMeters": 1000.0, "appliedDamagePerSecond": 22.5}]},
+              "expiryFileTime": "134351527136350000"}},
+    {"name": "Abyssal scene ensured", "kind": "EnsureAbyssalSceneReply", "requestId": "41", "ok": True},
+    {"name": "materialize transfer conduit as a static room object", "kind": "EnsureAbyssalSceneObject", "requestId": "52",
+     "object": {"scene": {"locationId": 30000142, "instanceId": "9000000000001", "roomIndex": 1},
+                "itemId": "9840000000001", "typeId": 47685, "groupId": 366, "categoryId": 2,
+                "ownerId": "140000342", "radius": 5000.0, "graphicId": 22130,
+                "name": "Transfer Conduit (Triglavian)", "position": [100.0, 200.0, 35300.0],
+                "direction": [0.0, 0.0, 1.0], "isOpen": False}},
+    {"name": "static room conduit materialization receipt", "kind": "EnsureAbyssalSceneObjectReply",
+     "requestId": "52", "ok": True},
+    {"name": "move resident participant to another room", "kind": "MoveAbyssalParticipant", "requestId": "42",
+     "shipId": "9988400001939",
+     "source": {"locationId": 30000142, "instanceId": "9000000000001", "roomIndex": 1},
+     "destination": {"locationId": 30000142, "instanceId": "9000000000001", "roomIndex": 2},
+     "position": [100.0, 200.0, 300.0], "direction": [0.0, 0.0, 1.0]},
+    {"name": "move participant from origin into Abyssal room", "kind": "MoveAbyssalParticipant", "requestId": "45",
+     "shipId": "9988400001940",
+     "source": {"locationId": 30000142, "instanceId": "0", "roomIndex": 0},
+     "destination": {"locationId": 30000142, "instanceId": "9000000000001", "roomIndex": 1},
+     "position": [100.0, 200.0, 300.0], "direction": [0.0, 0.0, 1.0], "sessionHandoff": True},
+    {"name": "move participant between private rooms using its source pose", "kind": "MoveAbyssalParticipant", "requestId": "51",
+     "shipId": "9988400001941",
+     "source": {"locationId": 30000142, "instanceId": "9000000000001", "roomIndex": 1},
+     "destination": {"locationId": 30000142, "instanceId": "9000000000001", "roomIndex": 2},
+     "preserveSourcePose": True},
+    {"name": "return resident participant to origin system", "kind": "MoveAbyssalParticipant", "requestId": "43",
+     "shipId": "9988400001939",
+     "source": {"locationId": 30000142, "instanceId": "9000000000001", "roomIndex": 2},
+     "destination": {"locationId": 30000142, "instanceId": "0", "roomIndex": 0},
+     "position": [400.0, 500.0, 600.0], "direction": [1.0, 0.0, 0.0], "sessionHandoff": True},
+    {"name": "Abyssal participant moved", "kind": "MoveAbyssalParticipantReply", "requestId": "42", "ok": True},
+    {"name": "rebind a reconnecting session to the resident ship", "kind": "RebindAbyssalSession", "requestId": "44",
+     "sessionId": "1790646377000025", "shipId": "9988400001939",
+     "scene": {"locationId": 30000142, "instanceId": "9000000000001", "roomIndex": 2}},
+    {"name": "Abyssal session rebound", "kind": "RebindAbyssalSessionReply", "requestId": "44", "ok": True},
+    {"name": "remove empty Abyssal room scene", "kind": "RemoveAbyssalScene", "requestId": "46",
+     "scene": {"locationId": 30000142, "instanceId": "9000000000001", "roomIndex": 2}},
+    {"name": "Abyssal scene removed", "kind": "RemoveAbyssalSceneReply", "requestId": "46", "ok": True},
+    {"name": "publish a persisted trace in a public system", "kind": "EnsureAbyssalTracePublished", "requestId": "47",
+     "actorSessionId": "1790646377000015",
+     "trace": {"solarSystemId": 30000142, "itemId": "840000048964", "typeId": 48964, "groupId": 1991,
+               "categoryId": 2, "ownerId": "140000342", "radius": 500.0,
+               "position": [100.0, 200.0, 300.0], "velocity": [0.0, 0.0, 0.0], "direction": [0.0, 0.0, 1.0],
+               "targetPoint": [400.0, 500.0, 600.0], "speedFraction": 0.5, "gameModeId": 2,
+               "filamentTypeId": 56132, "difficultyTier": 0, "expiresAtMs": "1800000000000"}},
+    {"name": "trace publication receipt", "kind": "EnsureAbyssalTracePublishedReply", "requestId": "47",
+     "status": "Created", "recipientCount": 2, "actorNotified": True, "error": None},
+    {"name": "remove a persisted trace", "kind": "RemoveAbyssalTrace", "requestId": "48",
+     "solarSystemId": 30000142, "itemId": "840000048964"},
+    {"name": "trace removal receipt", "kind": "RemoveAbyssalTraceReply", "requestId": "48",
+     "status": "Removed", "recipientCount": 2, "error": None},
+    {"name": "remove a participant from its private room", "kind": "RemoveAbyssalParticipant", "requestId": "49",
+     "scene": {"locationId": 30000142, "instanceId": "9000000000001", "roomIndex": 2}, "shipId": "9988400001939"},
+    {"name": "participant already absent after retry", "kind": "RemoveAbyssalParticipantReply", "requestId": "49",
+     "alreadyAbsent": True, "error": None},
+    {"name": "read a public-system source ship pose", "kind": "GetAbyssalParticipantPose", "requestId": "50",
+     "scene": {"locationId": 30000142, "instanceId": "0", "roomIndex": 0}, "shipId": "9988400001940"},
+    {"name": "public-system source ship pose receipt", "kind": "GetAbyssalParticipantPoseReply", "requestId": "50",
+     "scene": {"locationId": 30000142, "instanceId": "0", "roomIndex": 0}, "shipId": "9988400001940",
+     "position": [100.0, 200.0, 300.0], "direction": [0.0, 0.0, 1.0], "error": None},
+    {"name": "public deployment snapshot carries real ship state and center-distance candidates", "kind": "GetAbyssalParticipantPoseReply", "requestId": "51",
+     "scene": {"locationId": 30000142, "instanceId": "0", "roomIndex": 0}, "shipId": "9988400001940",
+     "position": [100.0, 200.0, 300.0], "direction": [0.0, 0.0, 1.0], "error": None,
+     "deployment": {"warping": True, "cloaked": False, "cynoActive": True, "undockInvulnerable": False, "warpScrambled": True,
+        "nearbyObjects": [{"itemId": "400000001", "typeId": 23, "centerDistanceMeters": 1000000.0}]}},
     {"name": "enter by undocking", "kind": "Enter", "sessionId": "1790646377000015", "solarSystemId": 30100032,
      "how": 0, "stationId": "60015249", "ship": IBIS},
     {"name": "enter already in space, no modules, non-ASCII name", "kind": "Enter", "sessionId": "1",
      "solarSystemId": 30000142, "how": 1, "stationId": "0", "ship": dict(BARE, name="イビス"),
      "position": [100.0, 200.0, 300.0], "direction": [0.0, 0.0, 1.0]},
-    {"name": "enter at the anchor of the system (a game master's relocation, no pose)", "kind": "Enter", "sessionId": "1",
+{"name": "enter static-free Abyssal room scene", "kind": "Enter", "sessionId": "2",
+     "scene": {"locationId": 30000142, "instanceId": "9000000000001", "roomIndex": 1}, "how": 1, "stationId": "0",
+     "ship": dict(BARE, shipId="9988400001939", characterId="140000342"),
+     "position": [100.0, 200.0, 300.0], "direction": [0.0, 0.0, 1.0]},
+{"name": "enter at the anchor of the system (a game master's relocation, no pose)", "kind": "Enter", "sessionId": "1",
      "solarSystemId": 30000142, "how": 2, "stationId": "0", "ship": dict(BARE, name="イビス")},
     {"name": "enter accepted", "kind": "EnterReply", "sessionId": "1790646377000015", "ok": True},
     {"name": "enter refused", "kind": "EnterReply", "sessionId": "1790646377000015", "ok": False,
@@ -1044,6 +1269,8 @@ valid = [
                   "weapons": [{"moduleId": "980050000077", "effectId": 10, "cycleMs": 4000.0, "capacitorNeed": 0.0,
                                "weaponTypeId": 5678, "fx": "effects.Laser", "requiresGunnery": True, "rawDamage": [0.0, 0.0, 6.0, 4.0],
                                "optimalRange": 20000.0, "falloff": 10000.0, "trackingSpeed": 0.4, "signatureResolution": 40.0}],
+                  "selfRepairs": [{"effectId": 6884, "amount": 91.5, "cycleMs": 5500.0, "capacitorCost": 0.25, "delayChance": 0.1},
+                               {"effectId": 6990, "amount": 123.5, "cycleMs": 4000.0, "capacitorCost": 0.5, "delayChance": 0.2}],
                   "wreck": {"typeId": 26506, "name": "Caldari Frigate Wreck", "graphicId": 3117}}},
     {"name": "spawn of a bare NPC: no tree, no weapons, no wreck", "kind": "Spawn", "requestId": "8", "solarSystemId": 30000142,
      "ship": dict(BARE, shipId="980050000078", characterId="0"), "anchorShipId": "9988400001939", "position": [1.0, 2.0, 3.0], "velocity": [4.0, 5.0, 6.0],
@@ -1054,6 +1281,14 @@ valid = [
      "anchorShipId": "0", "position": [1000500.0, 100.0, 100.0], "velocity": [0.0, 0.0, 0.0], "direction": [1.0, 0.0, 0.0], "behavior": "",
      "identity": {"hostileResponseThreshold": -11, "friendlyResponseThreshold": 11, "aggressionRange": 0.0, "weapons": [],
                   "wreck": {"typeId": 26506, "name": "Caldari Frigate Wreck", "graphicId": 3117}, "hostWreck": True}},
+    {"name": "spawn NPC in an Abyssal room scene", "kind": "Spawn", "requestId": "10",
+     "abyssalContentId": "b9294d3a-924f-4a73-9b8c-38713db70101",
+     "scene": {"locationId": 30000142, "instanceId": "9000000000001", "roomIndex": 1},
+     "ship": dict(BARE, shipId="980050000080", characterId="0", ownerId="1000125", categoryId=11, groupId=25, typeId=597),
+     "anchorShipId": "0", "position": [1000500.0, 100.0, 100.0], "velocity": [0.0, 0.0, 0.0],
+     "direction": [1.0, 0.0, 0.0], "behavior": "abyssal rat",
+     "identity": {"hostileResponseThreshold": -11, "friendlyResponseThreshold": 11, "aggressionRange": 15000.0,
+                  "weapons": [], "hull": True, "hostWreck": False}},
     {"name": "spawn done", "kind": "SpawnReply", "requestId": "7", "ok": True, "session": "4611686018427387905"},
     {"name": "spawn refused", "kind": "SpawnReply", "requestId": "8", "ok": False, "reason": "NO_SCENE 30000142"},
     {"name": "launch of a drone", "kind": "LaunchDrone", "requestId": "11", "sessionId": "1790646377000015",
@@ -1106,9 +1341,22 @@ valid = [
      "wreckId": "9988400002420", "groupId": 14, "wreck": {"typeId": 26507, "name": "Amarr Frigate Wreck", "graphicId": 0},
      "position": [0.0, 0.0, 0.0], "direction": [1.0, 0.0, 0.0], "radius": 30.0, "launcherId": "9988400002400",
      "characterId": "0", "corporationId": "0", "allianceId": "0", "warFactionId": "0", "isEmpty": True},
+    {"name": "targetable loot container in an Abyssal room", "kind": "PlaceWreck",
+     "scene": {"locationId": 30000142, "instanceId": "9000000000001", "roomIndex": 2},
+     "wreckId": "9988400002421", "groupId": 12, "wreck": {"typeId": 23, "name": "Cargo Container", "graphicId": 1176},
+     "position": [200.0, 300.0, 400.0], "direction": [0.0, 0.0, 1.0], "radius": 14.0, "launcherId": "9988400001939",
+     "characterId": "140000342", "corporationId": "1000006", "allianceId": "0", "warFactionId": "0", "isEmpty": False},
     {"name": "can for cargo a pilot jettisons", "kind": "PlaceContainer", "sessionId": "1790646377000015", "containerId": "9988400002948",
      "container": {"typeId": 23, "name": "Cargo Container", "graphicId": 1176}, "radius": 14.0, "launcherId": "9988400002940",
      "characterId": "140000431", "corporationId": "1000006", "allianceId": "0", "warFactionId": "0", "distance": 275.0},
+    {"name": "jettison placement fenced to the persisted private room", "kind": "PlaceContainer", "sessionId": "1790646377000015", "containerId": "9988400002948",
+     "container": {"typeId": 23, "name": "Cargo Container", "graphicId": 1176}, "radius": 14.0, "launcherId": "9988400002940",
+     "characterId": "140000431", "corporationId": "1000006", "allianceId": "0", "warFactionId": "0", "distance": 275.0,
+     "expectedScene": {"locationId": 32000010, "instanceId": "887", "roomIndex": 1}},
+    {"name": "public jettison placement fenced to its source system", "kind": "PlaceContainer", "sessionId": "1790646377000015", "containerId": "9988400002948",
+     "container": {"typeId": 23, "name": "Cargo Container", "graphicId": 1176}, "radius": 14.0, "launcherId": "9988400002940",
+     "characterId": "140000431", "corporationId": "1000006", "allianceId": "0", "warFactionId": "0", "distance": 275.0,
+     "expectedScene": {"locationId": 30000142, "instanceId": "0", "roomIndex": 0}},
     {"name": "can that is in space", "kind": "ContainerPlaced", "sessionId": "1790646377000015", "containerId": "9988400002948",
      "position": [311989835983.1308, -13069154020.916222, 156646308895.76187], "direction": [0.6159, 0.01306, 0.78769]},
     {"name": "player's warp ended at a belt", "kind": "Arrived", "sessionId": "1790646377000015", "beltId": "40009256",
@@ -1386,11 +1634,65 @@ valid = [
                 "durationMs": 1000.0, "capacitorNeed": 0.0, "repeat": 1000, "targetId": "0",
                 "action": {"kind": "autoTarget", "range": 50000.0}, "onChanges": [], "offChanges": []}},
 ]
+# Shared unpublished protocol-71 artifact contracts. Health is from SDE 3396210 typeDogma for 47951.
+CACHE_ENTITY = dict(BARE, shipId="9840000000101", characterId="0", ownerId="140000342",
+                    typeId=47951, groupId=2009, categoryId=11, name="Triglavian Bioadaptive Cache",
+                    maxVelocity=0.0, signatureRadius=1000.0, shieldRechargeMs=86400000.0,
+                    vitals={"shieldCapacity": 100.0, "armorHp": 100.0, "structureHp": 100.0,
+                            "resonances": {"shield": [1.0] * 4, "armor": [1.0] * 4, "structure": [1.0] * 4}})
+CACHE_ROOM = {"locationId": 30000142, "instanceId": "9000000000001", "roomIndex": 2}
+CACHE_CONTENT = "12345678-1234-1234-1234-123456789abc"
+valid += [
+    {"name": "ensure SDE damageable non-NPC Abyssal reward cache", "kind": "EnsureAbyssalRewardCache",
+     "requestId": "53", "contentId": CACHE_CONTENT, "scene": CACHE_ROOM, "entity": CACHE_ENTITY,
+     "position": [200.0, 300.0, 400.0], "direction": [0.0, 0.0, 1.0]},
+    {"name": "confirmed reward cache ensure receipt", "kind": "EnsureAbyssalRewardCacheReply", "requestId": "53", "ok": True},
+    {"name": "confirmed domain-owned loot container upsert", "kind": "EnsureAbyssalLootContainer",
+     "requestId": "54", "contentId": CACHE_CONTENT,
+     "container": dict(next(m for m in valid if m["name"] == "targetable loot container in an Abyssal room"))},
+    {"name": "confirmed domain-owned loot upsert receipt", "kind": "EnsureAbyssalLootContainerReply", "requestId": "54", "ok": True},
+]
+
+ENV_BODY = {"scene": CACHE_ROOM, "itemId": "9840000000201", "typeId": 47440, "groupId": 1971, "categoryId": 2,
+            "ownerId": "140000342", "radius": 0.0, "graphicId": 22080, "name": "Medium Bioluminescence Cloud",
+            "position": [100.0, 200.0, 300.0], "direction": [0.0, 0.0, 1.0], "isOpen": False}
+ENV_CLOUD_CASE = {"name": "ensure active room-local cloud geometry", "kind": "EnsureAbyssalEnvironmentObject",
+                  "requestId": "55", "contentId": CACHE_CONTENT,
+                  "object": {"body": ENV_BODY, "effectRadiusMeters": 10000.0, "pointDefense": None}}
+ENV_PULSE_CASE = {"name": "ensure suppressor with six SDE type-list masks and four distinct wire damage channels", "kind": "EnsureAbyssalEnvironmentObject",
+                 "requestId": "56", "contentId": CACHE_CONTENT,
+                 "object": {"body": dict(ENV_BODY, itemId="9840000000202", typeId=47437, groupId=1981, radius=7500.0, graphicId=22035,
+                                          name="Short-Range Deviant Automata Suppressor"),
+                            "effectRadiusMeters": 15000.0,
+                            "pointDefense": {"tickIntervalMs": 2000, "damage": [1.0, 2.0, 3.0, 4.0], "typeListId": 46,
+                                             "includedCategories": [87, 18, 8], "includedGroups": [1997], "includedTypes": [],
+                                             "excludedCategories": [], "excludedGroups": [], "excludedTypes": [48265, 48264, 48263, 48262],
+                                             "effectName": "effects.TriGlavianBS01a"}}}
+PRIVATE_NPC = next(case for case in valid if case.get("abyssalContentId"))
+REFRESH_NPC_CASE = {"name": "refresh a private NPC from its baseline without resetting pose or health", "kind": "RefreshAbyssalNpc",
+                    "requestId": "57", "scene": CACHE_ROOM, "sessionId": "4611686018427387905", "ship": PRIVATE_NPC["ship"],
+                    "identity": dict(PRIVATE_NPC["identity"], wreck=None, hostWreck=False)}
+valid += [
+    ENV_CLOUD_CASE, ENV_PULSE_CASE,
+    {"name": "same cloud type as presentation-only with a source-bounded radius", "kind": "EnsureAbyssalEnvironmentObject",
+     "requestId": "58", "contentId": CACHE_CONTENT,
+     "object": {"body": dict(ENV_BODY, itemId="9840000000203", radius=75000.0), "effectRadiusMeters": 0.0, "pointDefense": None}},
+    {"name": "confirmed environment-object receipt", "kind": "EnsureAbyssalEnvironmentObjectReply", "requestId": "55", "ok": True},
+    {"name": "a pilot enters one source field", "kind": "AbyssalFieldMembership", "scene": CACHE_ROOM,
+     "sourceItemId": "9840000000201", "shipId": "9988400001939", "sessionId": "1790646377000015", "inside": True},
+    {"name": "a pilot leaves one source field", "kind": "AbyssalFieldMembership", "scene": CACHE_ROOM,
+     "sourceItemId": "9840000000201", "shipId": "9988400001939", "sessionId": "1790646377000015", "inside": False},
+    REFRESH_NPC_CASE,
+    {"name": "confirmed private NPC environment refresh", "kind": "RefreshAbyssalNpcReply", "requestId": "57", "ok": True},
+    {"name": "confirmed no-death scene cleanup of settled NPC and cache-wreck IDs", "kind": "RemoveAbyssalScene", "requestId": "59",
+     "scene": CACHE_ROOM, "settledNpcIds": [PRIVATE_NPC["ship"]["shipId"]], "settledLootIds": ["9988400002421"]},
+]
+
 for case in valid:
     case["hex"] = build(case).hex()
 
 # each of these is refused for the stated reason
-good = build(valid[2])  # a good Enter
+good = build(next(case for case in valid if case["name"] == "enter by undocking"))
 precursor = next(c for c in valid if c["name"] == "activate a precursor weapon that builds its damage up")
 negative_spool = dict(precursor, effect=dict(precursor["effect"], turret=dict(precursor["effect"]["turret"], spool={"perCycle": -0.07, "max": 2.125})))
 vorton = next(c for c in valid if c["name"].startswith("activate a vorton projector"))
@@ -1448,7 +1750,13 @@ deep_tuple = {"tag": "none"}
 for _ in range(5):
     deep_tuple = {"tag": "tuple", "items": [deep_tuple]}
 invalid = [
-    {"name": "battlefield scoreboard with a negative radius", "reason": "bad-value", "hex": build(dict(json.loads('{"kind": "PlaceBattlefieldScoreboard", "deployableId": "4300000000000008", "solarSystemId": 30100032, "typeName": "Caldari Scoreboard", "typeId": 73449, "groupId": 227, "position": [1.0e9, 2.0e8, -3.0e8], "radius": 0.0}'), radius=-1.0)).hex()},
+{"name": "environment presentation radius is negative", "reason": "bad-value", "hex": build(dict(ENV_CLOUD_CASE, object=dict(ENV_CLOUD_CASE["object"], body=dict(ENV_BODY, radius=-1.0)))).hex()},
+    {"name": "environment effect radius is not finite", "reason": "bad-value", "hex": build(dict(ENV_CLOUD_CASE, object=dict(ENV_CLOUD_CASE["object"], effectRadiusMeters=float("nan")))).hex()},
+    {"name": "point defense target IDs are duplicated", "reason": "bad-value", "hex": build(dict(ENV_PULSE_CASE, object=dict(ENV_PULSE_CASE["object"], pointDefense=dict(ENV_PULSE_CASE["object"]["pointDefense"], includedCategories=[18,18])))).hex()},
+    {"name": "point defense has a negative raw channel", "reason": "bad-value", "hex": build(dict(ENV_PULSE_CASE, object=dict(ENV_PULSE_CASE["object"], pointDefense=dict(ENV_PULSE_CASE["object"]["pointDefense"], damage=[-1.0,2.0,3.0,4.0])))).hex()},
+    {"name": "scene cleanup cannot overlap NPC and loot IDs", "reason": "bad-value", "hex": build({"kind": "RemoveAbyssalScene", "requestId": "59", "scene": CACHE_ROOM, "settledNpcIds": ["9988400001939"], "settledLootIds": ["9988400001939"]}).hex()},
+    {"name": "scene cleanup cannot contain a zero entity ID", "reason": "bad-value", "hex": build({"kind": "RemoveAbyssalScene", "requestId": "59", "scene": CACHE_ROOM, "settledNpcIds": ["0"], "settledLootIds": []}).hex()},
+{"name": "battlefield scoreboard with a negative radius", "reason": "bad-value", "hex": build(dict(json.loads('{"kind": "PlaceBattlefieldScoreboard", "deployableId": "4300000000000008", "solarSystemId": 30100032, "typeName": "Caldari Scoreboard", "typeId": 73449, "groupId": 227, "position": [1.0e9, 2.0e8, -3.0e8], "radius": 0.0}'), radius=-1.0)).hex()},
     {"name": "battlefield scoreboard cut short", "reason": "truncated", "hex": build(json.loads('{"kind": "PlaceBattlefieldScoreboard", "deployableId": "4300000000000008", "solarSystemId": 30100032, "typeName": "Caldari Scoreboard", "typeId": 73449, "groupId": 227, "position": [1.0e9, 2.0e8, -3.0e8], "radius": 0.0}')).hex()[:-20]},
     {"name": "capture point with a negative attacker faction", "reason": "bad-value", "hex": build(dict(json.loads('{"kind": "PlaceCapturePoint", "deployableId": "4250000000000020", "solarSystemId": 30100032, "typeName": "Caldari Control Zone A", "typeId": 73445, "groupId": 4494, "position": [1.0e9, 2.0e8, -3.0e8], "radius": 231.0, "attackerFaction": 500004, "occupierFaction": 500001, "nextPointTime": "133900000000000000"}'), attackerFaction=-1)).hex()},
     {"name": "capture point with a negative next point time", "reason": "bad-value", "hex": build(dict(json.loads('{"kind": "PlaceCapturePoint", "deployableId": "4250000000000020", "solarSystemId": 30100032, "typeName": "Caldari Control Zone A", "typeId": 73445, "groupId": 4494, "position": [1.0e9, 2.0e8, -3.0e8], "radius": 231.0, "attackerFaction": 500004, "occupierFaction": 500001, "nextPointTime": "133900000000000000"}'), nextPointTime="-1")).hex()},
@@ -1596,6 +1904,26 @@ invalid = [
     {"name": "buff state with a value that is not a number", "reason": "bad-value",
      "hex": build(dict(buff_state, entries=[{"collectionId": 10, "value": float("nan"), "remainingMs": 1000.0}])).hex()},
 ]
+
+npc_repair_case = named("spawn of an NPC with a laser, a wreck and a tree")
+valid_repairs = npc_repair_case["identity"]["selfRepairs"]
+for label, repairs in [
+    ("unknown effect", [dict(valid_repairs[0], effectId=12345)]),
+    ("duplicate effect", [valid_repairs[0], valid_repairs[0]]),
+    ("nonfinite amount", [dict(valid_repairs[0], amount=float("nan"))]),
+    ("invalid duration", [dict(valid_repairs[0], cycleMs=0.0)]),
+    ("invalid delay chance", [dict(valid_repairs[0], delayChance=1.1)]),
+    ("too many effects", valid_repairs + [dict(valid_repairs[0], effectId=6990)]),
+]:
+    bad = dict(npc_repair_case, identity=dict(npc_repair_case["identity"], selfRepairs=repairs))
+    invalid.append({"name": "NPC self-repair " + label, "reason": "bad-value", "hex": build(bad).hex()})
+
+deployment_frame = named("public deployment snapshot carries real ship state and center-distance candidates")
+for label, distance, item_id in [("nonfinite distance", float("nan"), "400000001"), ("outside distance", 1000000.01, "400000001"), ("self included", 1.0, deployment_frame["shipId"])]:
+    bad = dict(deployment_frame, deployment=dict(deployment_frame["deployment"], nearbyObjects=[{"itemId": item_id, "typeId": 23, "centerDistanceMeters": distance}]))
+    invalid.append({"name": "deployment snapshot " + label, "reason": "bad-value", "hex": build(bad).hex()})
+duplicate = dict(deployment_frame, deployment=dict(deployment_frame["deployment"], nearbyObjects=deployment_frame["deployment"]["nearbyObjects"] * 2))
+invalid.append({"name": "deployment snapshot duplicate entity", "reason": "bad-value", "hex": build(duplicate).hex()})
 
 os.makedirs(os.path.dirname(OUT), exist_ok=True)
 with open(OUT, "w", encoding="utf-8") as f:

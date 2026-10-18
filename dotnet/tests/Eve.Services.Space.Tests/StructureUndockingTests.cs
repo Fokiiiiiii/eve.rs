@@ -55,7 +55,7 @@ public sealed class StructureUndockingTests
         // the structure's ball is in the scene before the ship enters the system (its undock point is the structure's)
         Assert.Equal([(int)system], placed);
         var enter = rig.Sim.Heard.OfType<SimEnter>().Last();
-        Assert.Equal(((ulong)session.SessionId, system, EnterHow.Undock, Structure), (enter.SessionId, enter.SolarSystemId, enter.How, enter.StationId));
+        Assert.Equal(((ulong)session.SessionId, system, EnterHow.Undock, Structure), (enter.SessionId, enter.Scene.LocationId, enter.How, enter.StationId));
         Assert.True(rig.Space.IsInSpace(session));
         Assert.Equal((0L, Structure, (long?)null, (long?)null), Assert.Single(locationChanges));
 

@@ -308,7 +308,8 @@ public class SimCodecTests
         [.. ((JsonArray)i["weapons"]!).Select(w => WeaponOf(w!))],
         WreckKindOf(i["wreck"]),
         i["hull"] is { } hull && (bool)hull,
-        i["hostWreck"] is { } hostWreck && (bool)hostWreck);
+        i["hostWreck"] is { } hostWreck && (bool)hostWreck,
+        i["selfRepairs"] is JsonArray repairs ? [.. repairs.Select(r => new SimNpcSelfRepair((int)r!["effectId"]!, (double)r["amount"]!, (double)r["cycleMs"]!, (double)r["capacitorCost"]!, (double)r["delayChance"]!))] : []);
 
     private static SimWreckKind? WreckKindOf(JsonNode? w) => w is null ? null : new SimWreckKind((int)w["typeId"]!, (string)w["name"]!, (int)w["graphicId"]!);
 
@@ -343,6 +344,104 @@ public class SimCodecTests
             s["repairing"] is null ? (bool?)null : (bool)s["repairing"]!);
     }
 
+    private static SimSceneKey SceneKeyOf(JsonNode node)
+    {
+        var key = node["scene"] ?? node;
+        if (key["locationId"] is null) return SimSceneKey.SolarSystem((int)node["solarSystemId"]!);
+        return new SimSceneKey((int)key["locationId"]!, Wide(key, "instanceId"), (int)key["roomIndex"]!);
+    }
+
+    private static SimAbyssalAttributeModifier AbyssalModifierOf(JsonNode node) =>
+        new((int)node["attributeId"]!, (SimAbyssalModifierOperation)(byte)(int)node["operation"]!, (double)node["value"]!);
+
+    private static SimAbyssalSceneSpec AbyssalSceneSpecOf(JsonNode node)
+    {
+        var environment = node["environment"]!;
+        var boundary = node["boundary"]!;
+        return new SimAbyssalSceneSpec(
+            SceneKeyOf(node),
+            new SimAbyssalEnvironmentProfile(
+                [.. ((JsonArray)environment["globalModifiers"]!).Select(modifier => AbyssalModifierOf(modifier!))],
+                [.. ((JsonArray)environment["fields"]!).Select(field => new SimAbyssalEnvironmentField(
+                    VectorOf(field!["center"]!), (double)field["radiusMeters"]!,
+                    [.. ((JsonArray)field["modifiers"]!).Select(modifier => AbyssalModifierOf(modifier!))]))]),
+            new SimAbyssalBoundaryProfile(
+                VectorOf(boundary["center"]!), (double)boundary["radiusMeters"]!, (long)boundary["tickIntervalMs"]!,
+                [.. ((JsonArray)boundary["damageCurve"]!).Select(point => new SimAbyssalBoundaryDamagePoint(
+                    (double)point!["distanceOutsideMeters"]!, (double)point["appliedDamagePerSecond"]!))],
+                (long)boundary["terminalExposureMs"]!),
+            Wide(node, "expiryFileTime"));
+    }
+
+
+    private static SimAbyssalPointDefense? AbyssalPointDefenseOf(JsonNode? node)
+    {
+        if (node is null) return null;
+        int[] Ids(string key) => node[key]!.AsArray().Select(value => (int)value!).ToArray();
+        return new SimAbyssalPointDefense((long)node["tickIntervalMs"]!, VectorOf(node["damage"]!), (int)node["typeListId"]!,
+            Ids("includedCategories"), Ids("includedGroups"), Ids("includedTypes"),
+            Ids("excludedCategories"), Ids("excludedGroups"), Ids("excludedTypes"), (string)node["effectName"]!);
+    }
+
+    private static long[] AbyssalCleanupIds(JsonObject node, string key) =>
+        node[key] is JsonArray ids ? ids.Select(id => long.Parse((string)id!, System.Globalization.CultureInfo.InvariantCulture)).ToArray() : [];
+
+    private static SimAbyssalSceneObject AbyssalSceneObjectOf(JsonNode node) => new(
+        SceneKeyOf(node["scene"]!),
+        Wide(node, "itemId"),
+        (int)node["typeId"]!,
+        (int)node["groupId"]!,
+        (int)node["categoryId"]!,
+        Wide(node, "ownerId"),
+        (double)node["radius"]!,
+        (int)node["graphicId"]!,
+        (string)node["name"]!,
+        VectorOf(node["position"]!),
+        VectorOf(node["direction"]!),
+        (bool)node["isOpen"]!);
+
+    private static SimAbyssalTrace AbyssalTraceOf(JsonNode node) => new(
+        (int)node["solarSystemId"]!,
+        Wide(node, "itemId"),
+        (int)node["typeId"]!,
+        (int)node["groupId"]!,
+        (int)node["categoryId"]!,
+        Wide(node, "ownerId"),
+        (double)node["radius"]!,
+        VectorOf(node["position"]!),
+        VectorOf(node["velocity"]!),
+        VectorOf(node["direction"]!),
+        node["targetPoint"] is { } target ? VectorOf(target) : null,
+        (double)node["speedFraction"]!,
+        (int)node["gameModeId"]!,
+        (int)node["filamentTypeId"]!,
+        (int)node["difficultyTier"]!,
+        Wide(node, "expiresAtMs"));
+
+    private static SimAbyssalTraceStatus AbyssalTraceStatusOf(JsonNode node) => (string)node! switch
+    {
+        "Created" => SimAbyssalTraceStatus.Created,
+        "AlreadyPresent" => SimAbyssalTraceStatus.AlreadyPresent,
+        "Removed" => SimAbyssalTraceStatus.Removed,
+        "AlreadyAbsent" => SimAbyssalTraceStatus.AlreadyAbsent,
+        "Failed" => SimAbyssalTraceStatus.Failed,
+        var status => throw new InvalidDataException($"Unknown Abyssal trace status {status}."),
+    };
+
+    private static SimMoveAbyssalParticipant MoveAbyssalParticipantOf(JsonObject c)
+    {
+        var preserveSourcePose = c["preserveSourcePose"] is { } preserve && (bool)preserve;
+        var sessionHandoff = c["sessionHandoff"] is { } handoff && (bool)handoff;
+        return new SimMoveAbyssalParticipant(
+            (ulong)Wide(c, "requestId"), Wide(c, "shipId"), SceneKeyOf(c["source"]!), SceneKeyOf(c["destination"]!),
+            preserveSourcePose ? Array.Empty<double>() : VectorOf(c["position"]!),
+            preserveSourcePose ? Array.Empty<double>() : VectorOf(c["direction"]!))
+        {
+            PreserveSourcePose = preserveSourcePose,
+            SessionHandoff = sessionHandoff,
+        };
+    }
+
     private static SimMessage MessageOf(JsonObject c)
     {
         ulong Session() => (ulong)Wide(c, "sessionId");
@@ -350,7 +449,70 @@ public class SimCodecTests
         {
             "Hello" => new SimHello((ushort)(int)c["version"]!),
             "HelloAck" => new SimHelloAck((ushort)(int)c["version"]!, (uint)(long)c["pollHz"]!),
-            "Enter" => new SimEnter(Session(), (int)c["solarSystemId"]!, (EnterHow)(int)c["how"]!, Wide(c, "stationId"), ShipOf(c["ship"]!),
+            "EnsureAbyssalScene" => new SimEnsureAbyssalScene((ulong)Wide(c, "requestId"), AbyssalSceneSpecOf(c["spec"]!)),
+            "EnsureAbyssalSceneReply" => new SimEnsureAbyssalSceneReply((ulong)Wide(c, "requestId"), (bool)c["ok"]! ? null : (string)c["reason"]!),
+            "EnsureAbyssalSceneObject" => new SimEnsureAbyssalSceneObject(
+                (ulong)Wide(c, "requestId"), AbyssalSceneObjectOf(c["object"]!)),
+            "EnsureAbyssalSceneObjectReply" => new SimEnsureAbyssalSceneObjectReply(
+                (ulong)Wide(c, "requestId"), (bool)c["ok"]! ? null : (string)c["reason"]!),
+            "EnsureAbyssalEnvironmentObject" => new SimEnsureAbyssalEnvironmentObject(
+                (ulong)Wide(c, "requestId"), (string)c["contentId"]!,
+                new SimAbyssalEnvironmentObject(AbyssalSceneObjectOf(c["object"]!["body"]!),
+                    (double)c["object"]!["effectRadiusMeters"]!, AbyssalPointDefenseOf(c["object"]!["pointDefense"]))),
+            "EnsureAbyssalEnvironmentObjectReply" => new SimEnsureAbyssalEnvironmentObjectReply(
+                (ulong)Wide(c, "requestId"), (bool)c["ok"]! ? null : (string)c["reason"]!),
+            "AbyssalFieldMembership" => new SimAbyssalFieldMembership(
+                SceneKeyOf(c["scene"]!), Wide(c, "sourceItemId"), Wide(c, "shipId"), Session(), (bool)c["inside"]!),
+            "RefreshAbyssalNpc" => new SimRefreshAbyssalNpc((ulong)Wide(c, "requestId"), SceneKeyOf(c["scene"]!),
+                Session(), ShipOf(c["ship"]!), IdentityOf(c["identity"]!)),
+            "RefreshAbyssalNpcReply" => new SimRefreshAbyssalNpcReply(
+                (ulong)Wide(c, "requestId"), (bool)c["ok"]! ? null : (string)c["reason"]!),
+            "EnsureAbyssalRewardCache" => new SimEnsureAbyssalRewardCache(
+                (ulong)Wide(c, "requestId"), (string)c["contentId"]!, SceneKeyOf(c["scene"]!),
+                ShipOf(c["entity"]!), VectorOf(c["position"]!), VectorOf(c["direction"]!)),
+            "EnsureAbyssalRewardCacheReply" => new SimEnsureAbyssalRewardCacheReply(
+                (ulong)Wide(c, "requestId"), (bool)c["ok"]! ? null : (string)c["reason"]!),
+            "EnsureAbyssalLootContainer" => new SimEnsureAbyssalLootContainer(
+                (ulong)Wide(c, "requestId"), (string)c["contentId"]!, (SimPlaceWreck)MessageOf((JsonObject)c["container"]!)),
+            "EnsureAbyssalLootContainerReply" => new SimEnsureAbyssalLootContainerReply(
+                (ulong)Wide(c, "requestId"), (bool)c["ok"]! ? null : (string)c["reason"]!),
+            "EnsureAbyssalTracePublished" => new SimEnsureAbyssalTracePublished(
+                (ulong)Wide(c, "requestId"), c["actorSessionId"] is null ? null : (ulong)Wide(c, "actorSessionId"),
+                AbyssalTraceOf(c["trace"]!)),
+            "EnsureAbyssalTracePublishedReply" => new SimEnsureAbyssalTracePublishedReply(
+                (ulong)Wide(c, "requestId"), AbyssalTraceStatusOf(c["status"]!), (int)c["recipientCount"]!,
+                (bool)c["actorNotified"]!, c["error"] is null ? null : (string)c["error"]!),
+            "RemoveAbyssalTrace" => new SimRemoveAbyssalTrace((ulong)Wide(c, "requestId"), (int)c["solarSystemId"]!, Wide(c, "itemId")),
+            "RemoveAbyssalTraceReply" => new SimRemoveAbyssalTraceReply(
+                (ulong)Wide(c, "requestId"), AbyssalTraceStatusOf(c["status"]!), (int)c["recipientCount"]!,
+                c["error"] is null ? null : (string)c["error"]!),
+            "RemoveAbyssalParticipant" => new SimRemoveAbyssalParticipant(
+                (ulong)Wide(c, "requestId"), SceneKeyOf(c["scene"]!), Wide(c, "shipId")),
+            "RemoveAbyssalParticipantReply" => new SimRemoveAbyssalParticipantReply(
+                (ulong)Wide(c, "requestId"), (bool)c["alreadyAbsent"]!, c["error"] is null ? null : (string)c["error"]!),
+            "GetAbyssalParticipantPose" => new SimGetAbyssalParticipantPose(
+                (ulong)Wide(c, "requestId"), SceneKeyOf(c["scene"]!), Wide(c, "shipId")),
+            "GetAbyssalParticipantPoseReply" => c["error"] is { } poseError
+                ? new SimGetAbyssalParticipantPoseReply((ulong)Wide(c, "requestId"), SceneKeyOf(c["scene"]!), Wide(c, "shipId"), [], [], poseError.GetValue<string>()!)
+                : new SimGetAbyssalParticipantPoseReply((ulong)Wide(c, "requestId"), SceneKeyOf(c["scene"]!), Wide(c, "shipId"),
+                    VectorOf(c["position"]!), VectorOf(c["direction"]!), null)
+                {
+                    Deployment = c["deployment"] is { } deployment ? new(
+                        (bool)deployment["warping"]!, (bool)deployment["cloaked"]!, (bool)deployment["cynoActive"]!,
+                        (bool)deployment["undockInvulnerable"]!, (bool)deployment["warpScrambled"]!,
+                        ((JsonArray)deployment["nearbyObjects"]!).Select(item => new SimAbyssalDeploymentObject(
+                            Wide(item!, "itemId"), (int)item!["typeId"]!, (double)item["centerDistanceMeters"]!)).ToArray()) : null,
+                },
+            "MoveAbyssalParticipant" => MoveAbyssalParticipantOf(c),
+            "MoveAbyssalParticipantReply" => new SimMoveAbyssalParticipantReply((ulong)Wide(c, "requestId"), (bool)c["ok"]! ? null : (string)c["reason"]!),
+            "RebindAbyssalSession" => new SimRebindAbyssalSession((ulong)Wide(c, "requestId"), Session(), Wide(c, "shipId"), SceneKeyOf(c["scene"]!)),
+            "RebindAbyssalSessionReply" => new SimRebindAbyssalSessionReply((ulong)Wide(c, "requestId"), (bool)c["ok"]! ? null : (string)c["reason"]!),
+            "RemoveAbyssalScene" => new SimRemoveAbyssalScene((ulong)Wide(c, "requestId"), SceneKeyOf(c["scene"]!))
+            {
+                SettledNpcIds = AbyssalCleanupIds(c, "settledNpcIds"), SettledLootIds = AbyssalCleanupIds(c, "settledLootIds"),
+            },
+            "RemoveAbyssalSceneReply" => new SimRemoveAbyssalSceneReply((ulong)Wide(c, "requestId"), (bool)c["ok"]! ? null : (string)c["reason"]!),
+            "Enter" => new SimEnter(Session(), SceneKeyOf(c), (EnterHow)(int)c["how"]!, Wide(c, "stationId"), ShipOf(c["ship"]!),
                 c["position"] is { } position ? VectorOf(position) : null,
                 c["direction"] is { } direction ? VectorOf(direction) : null),
             "EnterReply" => new SimEnterReply(Session(), (bool)c["ok"]! ? null : (string)c["reason"]!),
@@ -388,11 +550,11 @@ public class SimCodecTests
             "Destroyed" => new SimDestroyed(Session(), Wide(c, "shipId"), Wide(c, "wreckId"), VectorOf(c["position"]!), VectorOf(c["direction"]!), (double)c["radius"]!, Wide(c, "killerShipId"), WreckKindOf(c["wreckKind"]), (int)c["shipTypeId"]!, (int)c["corporationId"]!),
             "Respawn" => new SimRespawn(Session(), ShipOf(c["ship"]!), VectorOf(c["position"]!), VectorOf(c["direction"]!)),
             "PlaceWreck" => new SimPlaceWreck(
-                (int)c["solarSystemId"]!, Wide(c, "wreckId"), (int)c["groupId"]!, WreckKindOf(c["wreck"])!, VectorOf(c["position"]!), VectorOf(c["direction"]!), (double)c["radius"]!, Wide(c, "launcherId"),
+                SceneKeyOf(c), Wide(c, "wreckId"), (int)c["groupId"]!, WreckKindOf(c["wreck"])!, VectorOf(c["position"]!), VectorOf(c["direction"]!), (double)c["radius"]!, Wide(c, "launcherId"),
                 new SimCredit(Wide(c, "characterId"), Wide(c, "corporationId"), Wide(c, "allianceId"), Wide(c, "warFactionId")), (bool)c["isEmpty"]!),
             "PlaceContainer" => new SimPlaceContainer(
                 Session(), Wide(c, "containerId"), WreckKindOf(c["container"])!, (double)c["radius"]!, Wide(c, "launcherId"),
-                new SimCredit(Wide(c, "characterId"), Wide(c, "corporationId"), Wide(c, "allianceId"), Wide(c, "warFactionId")), (double)c["distance"]!),
+                new SimCredit(Wide(c, "characterId"), Wide(c, "corporationId"), Wide(c, "allianceId"), Wide(c, "warFactionId")), (double)c["distance"]!) { ExpectedScene = c["expectedScene"] is { } expectedScene ? SceneKeyOf(expectedScene) : null },
             "Arrived" => new SimArrived(Session(), Wide(c, "beltId"), VectorOf(c["position"]!)),
             "ContainerPlaced" => new SimContainerPlaced(Session(), Wide(c, "containerId"), VectorOf(c["position"]!), VectorOf(c["direction"]!)),
             "ChangeWreck" => new SimChangeWreck(Session(), Wide(c, "wreckId"), (bool)c["isEmpty"]!),
@@ -459,8 +621,8 @@ public class SimCodecTests
                 (int)c["allianceId"]!, Wide(c, "shipId")),
             "Measured" => new SimMeasured(Session(), (byte)(int)c["command"]!, c["distance"] is { } d ? (double)d : null),
             "Spawn" => new SimSpawn(
-                (ulong)Wide(c, "requestId"), (int)c["solarSystemId"]!, ShipOf(c["ship"]!), Wide(c, "anchorShipId"), VectorOf(c["position"]!), VectorOf(c["velocity"]!), VectorOf(c["direction"]!),
-                (string)c["behavior"]!, IdentityOf(c["identity"]!)),
+                (ulong)Wide(c, "requestId"), SceneKeyOf(c), ShipOf(c["ship"]!), Wide(c, "anchorShipId"), VectorOf(c["position"]!), VectorOf(c["velocity"]!), VectorOf(c["direction"]!),
+                (string)c["behavior"]!, IdentityOf(c["identity"]!), (string?)c["abyssalContentId"]),
             "SpawnReply" => (bool)c["ok"]! ? new SimSpawnReply((ulong)Wide(c, "requestId"), (ulong)Wide(c, "session"), null) : new SimSpawnReply((ulong)Wide(c, "requestId"), null, (string)c["reason"]!),
             "LaunchDrone" => new SimLaunchDrone(
                 (ulong)Wide(c, "requestId"), Session(), ShipOf(c["ship"]!), c["weapon"] is { } weapon ? WeaponOf(weapon) : null, (int)c["graphicId"]!, (double)c["orbitDistance"]!, (double)c["attackRange"]!, (double)c["cruiseFraction"]!,
@@ -488,7 +650,7 @@ public class SimCodecTests
     public void The_fixtures_cover_every_message_kind()
     {
         var kinds = ((JsonArray)Fixtures["valid"]!).Select(c => (string)c!["kind"]!).Distinct().Order().ToArray();
-                Assert.Equal(["Accepted", "Activate", "AdjustCharge", "Approaching", "Arrived", "Bind", "BuffState", "ChangeWreck", "ChargeAdjusted", "ChargeSpent", "Command", "Condition", "ContainerPlaced", "ControlStructure", "DamageableEntityRemoved", "DamageableEntityUpserted", "Deployed", "Destroy", "Destroyed", "DirectionalTargets", "Docked", "DroneCommand", "DroneReleased", "DroneResults", "DroneScooped", "EcmBurst", "Enter", "EnterReply", "FighterGotoPoint", "FighterLanded", "FighterOrder", "FighterReleased", "FighterResults", "FighterSize", "Hello", "HelloAck", "Jumped", "Jumping", "LaunchDrone", "LaunchFighter", "Leave", "Measured", "ModuleEnded", "ModuleWorkCycle", "ModuleWorkResult", "Notify", "PlaceAccelerationGate", "PlaceAnalysisBeacon", "PlaceBattlefieldScoreboard", "PlaceCapturePoint", "PlaceContainer", "PlaceControlTower", "PlaceCynoBeacon", "PlaceDeadspacePocket", "PlaceDisruptor", "PlaceInhibitor", "PlaceObservatory", "PlaceProbe", "PlaceStructure", "PlaceWormhole", "PlaceWreck", "Refused", "RemoteDecloakPing", "RemoveCynoBeacon", "RemoveDeployed", "RemoveProbe", "RemoveStructure", "RemoveWormhole", "RemoveWreck", "Respawn", "ScanTargets", "SetAnalysisBeaconState", "SetDisruptorActive", "SetSlimField", "SetStructureState", "ShipSpec", "Spawn", "SpawnReply", "StructureDamageCandidatesRequest", "StructureDamageCandidatesResult", "StructureDamaged", "TargetRefused", "Targets", "TetherChanged", "TetherPolicy", "UpdateEffect", "UpdateState"], kinds);
+        Assert.Equal(["AbyssalFieldMembership", "Accepted", "Activate", "AdjustCharge", "Approaching", "Arrived", "Bind", "BuffState", "ChangeWreck", "ChargeAdjusted", "ChargeSpent", "Command", "Condition", "ContainerPlaced", "ControlStructure", "DamageableEntityRemoved", "DamageableEntityUpserted", "Deployed", "Destroy", "Destroyed", "DirectionalTargets", "Docked", "DroneCommand", "DroneReleased", "DroneResults", "DroneScooped", "EcmBurst", "EnsureAbyssalEnvironmentObject", "EnsureAbyssalEnvironmentObjectReply", "EnsureAbyssalLootContainer", "EnsureAbyssalLootContainerReply", "EnsureAbyssalRewardCache", "EnsureAbyssalRewardCacheReply", "EnsureAbyssalScene", "EnsureAbyssalSceneObject", "EnsureAbyssalSceneObjectReply", "EnsureAbyssalSceneReply", "EnsureAbyssalTracePublished", "EnsureAbyssalTracePublishedReply", "Enter", "EnterReply", "FighterGotoPoint", "FighterLanded", "FighterOrder", "FighterReleased", "FighterResults", "FighterSize", "GetAbyssalParticipantPose", "GetAbyssalParticipantPoseReply", "Hello", "HelloAck", "Jumped", "Jumping", "LaunchDrone", "LaunchFighter", "Leave", "Measured", "ModuleEnded", "ModuleWorkCycle", "ModuleWorkResult", "MoveAbyssalParticipant", "MoveAbyssalParticipantReply", "Notify", "PlaceAccelerationGate", "PlaceAnalysisBeacon", "PlaceBattlefieldScoreboard", "PlaceCapturePoint", "PlaceContainer", "PlaceControlTower", "PlaceCynoBeacon", "PlaceDeadspacePocket", "PlaceDisruptor", "PlaceInhibitor", "PlaceObservatory", "PlaceProbe", "PlaceStructure", "PlaceWormhole", "PlaceWreck", "RebindAbyssalSession", "RebindAbyssalSessionReply", "RefreshAbyssalNpc", "RefreshAbyssalNpcReply", "Refused", "RemoteDecloakPing", "RemoveAbyssalParticipant", "RemoveAbyssalParticipantReply", "RemoveAbyssalScene", "RemoveAbyssalSceneReply", "RemoveAbyssalTrace", "RemoveAbyssalTraceReply", "RemoveCynoBeacon", "RemoveDeployed", "RemoveProbe", "RemoveStructure", "RemoveWormhole", "RemoveWreck", "Respawn", "ScanTargets", "SetAnalysisBeaconState", "SetDisruptorActive", "SetSlimField", "SetStructureState", "ShipSpec", "Spawn", "SpawnReply", "StructureDamageCandidatesRequest", "StructureDamageCandidatesResult", "StructureDamaged", "TargetRefused", "Targets", "TetherChanged", "TetherPolicy", "UpdateEffect", "UpdateState"], kinds);
         Assert.True(((JsonArray)Fixtures["invalid"]!).Count >= 10);    }
 
     [Theory]
@@ -851,7 +1013,7 @@ public class SimCodecTests
     {
         var c = Case("valid", "enter by undocking");
         var enter = Assert.IsType<SimEnter>(SimCodec.Decode(Hex((string)c["hex"]!).AsMemory(4)));
-        Assert.Equal((1790646377000015UL, 30100032, EnterHow.Undock, 60015249L), (enter.SessionId, enter.SolarSystemId, enter.How, enter.StationId));
+        Assert.Equal((1790646377000015UL, SimSceneKey.SolarSystem(30100032), EnterHow.Undock, 60015249L), (enter.SessionId, enter.Scene, enter.How, enter.StationId));
         Assert.Equal(("Ibis", 9988400001939L, 339.25), (enter.Ship.Name, enter.Ship.ShipId, enter.Ship.MaxVelocity));
         Assert.Equal([(9988400001940L, 21857, 19), (9988400001941L, 3638, 27)], enter.Ship.Modules.Select(m => (m.ItemId, m.TypeId, m.Flag)));
         Assert.Equal((220.0, 137.5, 201.25), (enter.Ship.Vitals!.ShieldCapacity, enter.Ship.Vitals.ArmorHp, enter.Ship.Vitals.StructureHp));
@@ -866,7 +1028,7 @@ public class SimCodecTests
     {
         var position = new double[] { 100.0, 200.0, 300.0 };
         var direction = new double[] { 0.0, 0.0, 1.0 };
-        var message = new SimEnter(7, 30_000_142, EnterHow.InSpace, 0, ShipOf(Case("valid", "enter by undocking")["ship"]!), position, direction);
+        var message = new SimEnter(7, SimSceneKey.SolarSystem(30_000_142), EnterHow.InSpace, 0, ShipOf(Case("valid", "enter by undocking")["ship"]!), position, direction);
 
         var decoded = Assert.IsType<SimEnter>(SimCodec.Decode(SimCodec.Encode(message).AsMemory(4)));
 

@@ -166,6 +166,17 @@ public sealed partial class SpaceContainers
         {
             return null;
         }
+        if (_space.IsInAbyssalRun(session))
+        {
+            if (type.GroupId == AnalysisBeaconRules.Group)
+                throw Refuse("Mobile Analysis Beacons cannot be deployed in Abyssal space.");
+            if (type.GroupId == MobileCynoBeaconGroup)
+                throw Refuse("Mobile Cynosural Beacons cannot be deployed in Abyssal space.");
+            if (type.GroupId == MobileObservatoryGroup)
+                throw Refuse("Mobile Observatories cannot be deployed in Abyssal space.");
+            if (type.GroupId == ControlTowerGroup)
+                throw Refuse("Control Towers cannot be deployed in Abyssal space.");
+        }
         if (type.GroupId == AnalysisBeaconRules.Group)
         {
             // a CONCORD Rogue Analysis Beacon has its own runtime (Beacons/AnalysisBeaconDirector)

@@ -27,7 +27,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// </summary>
 public static partial class SimCodec
 {
-    public const ushort ProtocolVersion = 78;
+    public const ushort ProtocolVersion = 79;
 
     /// <summary>The longest name of a dynamic slim-item field, in bytes (protocol 76).</summary>
     public const int SlimFieldNameMax = 64;
@@ -62,6 +62,26 @@ public static partial class SimCodec
         return ids;
     }
 
+    private static SimPlaceWreck ReadWreckPlacement(ref Reader r)
+    {
+        var scene = ReadSceneKey(ref r);
+        var wreckId = r.I64();
+        var group = r.I32();
+        var kind = ReadWreckKind(ref r) ?? throw new SimLinkException(SimLinkError.BadValue, "bad wreck");
+        var position = ReadVector(ref r);
+        var direction = ReadVector(ref r);
+        var radius = r.F64();
+        var launcher = r.I64();
+        var credit = ReadCredit(ref r);
+        var empty = r.U8() switch
+        {
+            0 => false,
+            1 => true,
+            _ => throw new SimLinkException(SimLinkError.BadValue, "bad is_empty"),
+        };
+        return new SimPlaceWreck(scene, wreckId, group, kind, position, direction, radius, launcher, credit, empty);
+    }
+
     public static SimMessage Decode(ReadOnlyMemory<byte> payload)
     {
         if (payload.IsEmpty)
@@ -72,6 +92,250 @@ public static partial class SimCodec
         SimMessage message;
         switch (payload.Span[0])
         {
+            case Kind.EnsureAbyssalScene:
+                {
+                    var requestId = r.U64();
+                    if (requestId == 0) throw new SimLinkException(SimLinkError.BadValue, "bad Abyssal request id");
+                    message = new SimEnsureAbyssalScene(requestId, ReadAbyssalSceneSpec(ref r));
+                    break;
+                }
+            case Kind.EnsureAbyssalSceneReply:
+                {
+                    var (requestId, error) = ReadAbyssalResult(ref r);
+                    message = new SimEnsureAbyssalSceneReply(requestId, error);
+                    break;
+                }
+            case Kind.EnsureAbyssalSceneObject:
+                {
+                    var requestId = r.U64();
+                    if (requestId == 0) throw new SimLinkException(SimLinkError.BadValue, "bad Abyssal scene object request id");
+                    message = new SimEnsureAbyssalSceneObject(requestId, ReadAbyssalSceneObject(ref r));
+                    break;
+                }
+            case Kind.EnsureAbyssalSceneObjectReply:
+                {
+                    var (requestId, error) = ReadAbyssalResult(ref r);
+                    message = new SimEnsureAbyssalSceneObjectReply(requestId, error);
+                    break;
+                }
+            case Kind.MoveAbyssalParticipant:
+                {
+                    var requestId = r.U64();
+                    var shipId = r.I64();
+                    var source = ReadSceneKey(ref r);
+                    var destination = ReadSceneKey(ref r);
+                    var moveFlags = r.U8();
+                    if (moveFlags > 3) throw new SimLinkException(SimLinkError.BadValue, "bad Abyssal move flags");
+                    var preserveSourcePose = (moveFlags & 1) != 0;
+                    var sessionHandoff = (moveFlags & 2) != 0;
+                    var move = preserveSourcePose
+                        ? new SimMoveAbyssalParticipant(requestId, shipId, source, destination, [], [])
+                        {
+                            PreserveSourcePose = true,
+                            SessionHandoff = sessionHandoff,
+                        }
+                        : new SimMoveAbyssalParticipant(
+                            requestId, shipId, source, destination, ReadVector(ref r), ReadVector(ref r))
+                        {
+                            SessionHandoff = sessionHandoff,
+                        };
+                    if (!IsAbyssalMove(move)) throw new SimLinkException(SimLinkError.BadValue, "bad Abyssal participant move");
+                    message = move;
+                    break;
+                }
+            case Kind.MoveAbyssalParticipantReply:
+                {
+                    var (requestId, error) = ReadAbyssalResult(ref r);
+                    message = new SimMoveAbyssalParticipantReply(requestId, error);
+                    break;
+                }
+            case Kind.RebindAbyssalSession:
+                {
+                    var rebind = new SimRebindAbyssalSession(r.U64(), r.U64(), r.I64(), ReadSceneKey(ref r));
+                    if (!IsAbyssalRebind(rebind)) throw new SimLinkException(SimLinkError.BadValue, "bad Abyssal session rebind");
+                    message = rebind;
+                    break;
+                }
+            case Kind.RebindAbyssalSessionReply:
+                {
+                    var (requestId, error) = ReadAbyssalResult(ref r);
+                    message = new SimRebindAbyssalSessionReply(requestId, error);
+                    break;
+                }
+            case Kind.RemoveAbyssalScene:
+                {
+                    var requestId = r.U64();
+                    var scene = ReadSceneKey(ref r);
+                    var removal = new SimRemoveAbyssalScene(requestId, scene)
+                    {
+                        SettledNpcIds = ReadStructureDamageIds(ref r),
+                        SettledLootIds = ReadStructureDamageIds(ref r),
+                    };
+                    if (!IsAbyssalSceneRemoval(removal)) throw new SimLinkException(SimLinkError.BadValue, "bad Abyssal scene removal");
+                    message = removal;
+                    break;
+                }
+            case Kind.RemoveAbyssalSceneReply:
+                {
+                    var (requestId, error) = ReadAbyssalResult(ref r);
+                    message = new SimRemoveAbyssalSceneReply(requestId, error);
+                    break;
+                }
+            case Kind.EnsureAbyssalTracePublished:
+                {
+                    var requestId = r.U64();
+                    var actorFlag = r.U8();
+                    var actorSessionId = actorFlag switch
+                    {
+                        0 => (ulong?)null,
+                        1 => r.U64(),
+                        _ => throw new SimLinkException(SimLinkError.BadValue, "bad Abyssal trace actor flag"),
+                    };
+                    var solarSystemId = r.I32();
+                    var itemId = r.I64();
+                    var typeId = r.I32();
+                    var groupId = r.I32();
+                    var categoryId = r.I32();
+                    var ownerId = r.I64();
+                    var radius = r.F64();
+                    var position = ReadVector(ref r);
+                    var velocity = ReadVector(ref r);
+                    var direction = ReadVector(ref r);
+                    var targetFlag = r.U8();
+                    var targetPoint = targetFlag switch
+                    {
+                        0 => null,
+                        1 => ReadVector(ref r),
+                        _ => throw new SimLinkException(SimLinkError.BadValue, "bad Abyssal trace target flag"),
+                    };
+                    var speedFraction = r.F64();
+                    var gameModeId = r.I32();
+                    var filamentTypeId = r.I32();
+                    var difficultyTier = r.I32();
+                    var expiresAtMs = r.I64();
+                    var trace = new SimAbyssalTrace(
+                        solarSystemId, itemId, typeId, groupId, categoryId, ownerId, radius,
+                        position, velocity, direction, targetPoint, speedFraction, gameModeId,
+                        filamentTypeId, difficultyTier, expiresAtMs);
+                    var publication = new SimEnsureAbyssalTracePublished(requestId, actorSessionId, trace);
+                    if (!IsAbyssalTracePublication(publication))
+                        throw new SimLinkException(SimLinkError.BadValue, "bad Abyssal trace publication");
+                    message = publication;
+                    break;
+                }
+            case Kind.EnsureAbyssalTracePublishedReply:
+                {
+                    var requestId = r.U64();
+                    var rawStatus = r.U8();
+                    if (!Enum.IsDefined(typeof(SimAbyssalTraceStatus), rawStatus))
+                        throw new SimLinkException(SimLinkError.BadValue, "bad Abyssal trace publication status");
+                    var status = (SimAbyssalTraceStatus)rawStatus;
+                    var recipients = r.I32();
+                    var actorNotifiedFlag = r.U8();
+                    if (actorNotifiedFlag > 1 || recipients < 0)
+                        throw new SimLinkException(SimLinkError.BadValue, "bad Abyssal trace publication receipt");
+                    var errorText = r.Text();
+                    var error = status == SimAbyssalTraceStatus.Failed ? errorText : null;
+                    if (requestId == 0 || (status == SimAbyssalTraceStatus.Failed) != (errorText.Length > 0))
+                        throw new SimLinkException(SimLinkError.BadValue, "invalid Abyssal trace publication result");
+                    message = new SimEnsureAbyssalTracePublishedReply(requestId, status, recipients, actorNotifiedFlag != 0, error);
+                    break;
+                }
+            case Kind.RemoveAbyssalTrace:
+                {
+                    var removal = new SimRemoveAbyssalTrace(r.U64(), r.I32(), r.I64());
+                    if (!IsAbyssalTraceRemoval(removal))
+                        throw new SimLinkException(SimLinkError.BadValue, "bad Abyssal trace removal");
+                    message = removal;
+                    break;
+                }
+            case Kind.RemoveAbyssalTraceReply:
+                {
+                    var requestId = r.U64();
+                    var rawStatus = r.U8();
+                    if (!Enum.IsDefined(typeof(SimAbyssalTraceStatus), rawStatus))
+                        throw new SimLinkException(SimLinkError.BadValue, "bad Abyssal trace removal status");
+                    var status = (SimAbyssalTraceStatus)rawStatus;
+                    var recipients = r.I32();
+                    var errorText = r.Text();
+                    var error = status == SimAbyssalTraceStatus.Failed ? errorText : null;
+                    if (requestId == 0 || recipients < 0 ||
+                        (status == SimAbyssalTraceStatus.Failed) != (errorText.Length > 0))
+                        throw new SimLinkException(SimLinkError.BadValue, "invalid Abyssal trace removal result");
+                    message = new SimRemoveAbyssalTraceReply(requestId, status, recipients, error);
+                    break;
+                }
+            case Kind.RemoveAbyssalParticipant:
+                {
+                    var removal = new SimRemoveAbyssalParticipant(r.U64(), ReadSceneKey(ref r), r.I64());
+                    if (!IsAbyssalParticipantRemoval(removal))
+                        throw new SimLinkException(SimLinkError.BadValue, "bad Abyssal participant removal");
+                    message = removal;
+                    break;
+                }
+            case Kind.RemoveAbyssalParticipantReply:
+                {
+                    var requestId = r.U64();
+                    var absentFlag = r.U8();
+                    var errorText = r.Text();
+                    if (requestId == 0 || absentFlag > 1 || (absentFlag != 0 && errorText.Length > 0))
+                        throw new SimLinkException(SimLinkError.BadValue, "invalid Abyssal participant removal result");
+                    message = new SimRemoveAbyssalParticipantReply(
+                        requestId, absentFlag != 0, errorText.Length == 0 ? null : errorText);
+                    break;
+                }
+            case Kind.GetAbyssalParticipantPose:
+                {
+                    var request = new SimGetAbyssalParticipantPose(r.U64(), ReadSceneKey(ref r), r.I64());
+                    if (!IsAbyssalPoseRequest(request))
+                        throw new SimLinkException(SimLinkError.BadValue, "bad Abyssal participant pose request");
+                    message = request;
+                    break;
+                }
+            case Kind.GetAbyssalParticipantPoseReply:
+                {
+                    var requestId = r.U64();
+                    var scene = ReadSceneKey(ref r);
+                    var shipId = r.I64();
+                    var resultFlag = r.U8();
+                    if (resultFlag > 1)
+                        throw new SimLinkException(SimLinkError.BadValue, "bad Abyssal participant pose result flag");
+                    var position = resultFlag == 0 ? ReadVector(ref r) : Array.Empty<double>();
+                    var direction = resultFlag == 0 ? ReadVector(ref r) : Array.Empty<double>();
+                    var errorText = r.Text();
+                    if ((resultFlag == 0 && errorText.Length > 0) || (resultFlag == 1 && errorText.Length == 0))
+                        throw new SimLinkException(SimLinkError.BadValue, "invalid Abyssal participant pose result");
+                    var reply = new SimGetAbyssalParticipantPoseReply(
+                        requestId, scene, shipId, position, direction, resultFlag == 0 ? null : errorText);
+                    if (!IsAbyssalPoseReply(reply))
+                        throw new SimLinkException(SimLinkError.BadValue, "bad Abyssal participant pose");
+                    var snapshotFlag = r.U8();
+                    if (snapshotFlag > 1) throw new SimLinkException(SimLinkError.BadValue, "bad deployment snapshot flag");
+                    if (snapshotFlag == 1)
+                    {
+                        if (reply.Error is not null || scene.InstanceId != 0) throw new SimLinkException(SimLinkError.BadValue, "bad deployment snapshot scene");
+                        var flags = new bool[5];
+                        for (var index = 0; index < flags.Length; index++)
+                        {
+                            var flag = r.U8();
+                            if (flag > 1) throw new SimLinkException(SimLinkError.BadValue, "bad deployment state flag");
+                            flags[index] = flag != 0;
+                        }
+                        var count = r.U32();
+                        var objects = new List<SimAbyssalDeploymentObject>();
+                        var seen = new HashSet<long>();
+                        for (uint index = 0; index < count; index++)
+                        {
+                            var item = new SimAbyssalDeploymentObject(r.I64(), r.I32(), r.F64());
+                            if (item.ItemId <= 0 || item.ItemId == shipId || item.TypeId <= 0 || !seen.Add(item.ItemId) || !double.IsFinite(item.CenterDistanceMeters) || item.CenterDistanceMeters is < 0 or > 1_000_000)
+                                throw new SimLinkException(SimLinkError.BadValue, "bad deployment object");
+                            objects.Add(item);
+                        }
+                        reply = reply with { Deployment = new(flags[0], flags[1], flags[2], flags[3], flags[4], objects) };
+                    }
+                    message = reply;
+                    break;
+                }
             case Kind.Hello:
                 message = new SimHello(r.U16());
                 break;
@@ -105,7 +369,7 @@ public static partial class SimCodec
             case Kind.Enter:
                 {
                     var session = r.U64();
-                    var system = r.I32();
+                    var scene = ReadSceneKey(ref r);
                     var how = r.U8() switch
                     {
                         0 => EnterHow.Undock,
@@ -121,7 +385,7 @@ public static partial class SimCodec
                     var direction = how == EnterHow.InSpace
                         ? ReadOptionalVector(ref r) ?? throw new SimLinkException(SimLinkError.BadValue, "in-space entry has no direction")
                         : null;
-                    message = new SimEnter(session, system, how, station, ship, position, direction);
+                    message = new SimEnter(session, scene, how, station, ship, position, direction);
                     break;
                 }
             case Kind.EnterReply:
@@ -231,36 +495,96 @@ public static partial class SimCodec
                 message = new SimRespawn(r.U64(), ReadShip(ref r), ReadVector(ref r), ReadVector(ref r));
                 break;
             case Kind.PlaceWreck:
+                message = ReadWreckPlacement(ref r);
+                break;
+            case Kind.EnsureAbyssalEnvironmentObject:
                 {
-                    var system = r.I32();
-                    var wreckId = r.I64();
-                    var group = r.I32();
-                    var kind = ReadWreckKind(ref r) ?? throw new SimLinkException(SimLinkError.BadValue, "bad wreck");
-                    var position = ReadVector(ref r);
-                    var direction = ReadVector(ref r);
-                    var radius = r.F64();
-                    var launcher = r.I64();
-                    var credit = ReadCredit(ref r);
-                    var empty = r.U8() switch
-                    {
-                        0 => false,
-                        1 => true,
-                        _ => throw new SimLinkException(SimLinkError.BadValue, "bad is_empty"),
-                    };
-                    message = new SimPlaceWreck(system, wreckId, group, kind, position, direction, radius, launcher, credit, empty);
+                    var requestId = r.U64();
+                    var contentId = r.Text();
+                    var body = ReadAbyssalSceneObject(ref r, conduit: false);
+                    var environment = new SimEnsureAbyssalEnvironmentObject(requestId, contentId,
+                        new SimAbyssalEnvironmentObject(body, r.F64(), ReadAbyssalPointDefense(ref r)));
+                    if (!IsAbyssalEnvironmentObject(environment)) throw new SimLinkException(SimLinkError.BadValue, "bad Abyssal environment object");
+                    message = environment;
+                    break;
+                }
+            case Kind.EnsureAbyssalEnvironmentObjectReply:
+                {
+                    var (requestId, error) = ReadAbyssalResult(ref r);
+                    message = new SimEnsureAbyssalEnvironmentObjectReply(requestId, error);
+                    break;
+                }
+            case Kind.AbyssalFieldMembership:
+                {
+                    var scene = ReadSceneKey(ref r);
+                    var sourceId = r.I64();
+                    var shipId = r.I64();
+                    var sessionId = r.U64();
+                    var inside = r.U8() switch { 0 => false, 1 => true, _ => throw new SimLinkException(SimLinkError.BadValue, "bad field membership flag") };
+                    var membership = new SimAbyssalFieldMembership(scene, sourceId, shipId, sessionId, inside);
+                    if (!IsAbyssalFieldMembership(membership)) throw new SimLinkException(SimLinkError.BadValue, "bad field membership");
+                    message = membership;
+                    break;
+                }
+            case Kind.RefreshAbyssalNpc:
+                {
+                    var refresh = new SimRefreshAbyssalNpc(r.U64(), ReadSceneKey(ref r), r.U64(), ReadShip(ref r), ReadIdentity(ref r));
+                    if (!IsAbyssalNpcRefresh(refresh)) throw new SimLinkException(SimLinkError.BadValue, "bad Abyssal NPC refresh");
+                    message = refresh;
+                    break;
+                }
+            case Kind.RefreshAbyssalNpcReply:
+                {
+                    var (requestId, error) = ReadAbyssalResult(ref r);
+                    message = new SimRefreshAbyssalNpcReply(requestId, error);
+                    break;
+                }
+            case Kind.EnsureAbyssalRewardCache:
+                {
+                    var cache = new SimEnsureAbyssalRewardCache(r.U64(), r.Text(), ReadSceneKey(ref r), ReadShip(ref r), ReadVector(ref r), ReadVector(ref r));
+                    if (!IsAbyssalRewardCache(cache)) throw new SimLinkException(SimLinkError.BadValue, "bad Abyssal reward cache");
+                    message = cache;
+                    break;
+                }
+            case Kind.EnsureAbyssalRewardCacheReply:
+                {
+                    var (requestId, error) = ReadAbyssalResult(ref r);
+                    message = new SimEnsureAbyssalRewardCacheReply(requestId, error);
+                    break;
+                }
+            case Kind.EnsureAbyssalLootContainer:
+                {
+                    var container = new SimEnsureAbyssalLootContainer(r.U64(), r.Text(), ReadWreckPlacement(ref r));
+                    if (!IsAbyssalLootContainer(container)) throw new SimLinkException(SimLinkError.BadValue, "bad Abyssal loot container");
+                    message = container;
+                    break;
+                }
+            case Kind.EnsureAbyssalLootContainerReply:
+                {
+                    var (requestId, error) = ReadAbyssalResult(ref r);
+                    message = new SimEnsureAbyssalLootContainerReply(requestId, error);
                     break;
                 }
             case Kind.Spawn:
                 {
                     var requestId = r.U64();
-                    var solarSystemId = r.I32();
+                    var abyssalContentId = r.U8() switch
+                    {
+                        0 => null,
+                        1 => r.Text(),
+                        _ => throw new SimLinkException(SimLinkError.BadValue, "bad Abyssal content id flag"),
+                    };
+                    var scene = ReadSceneKey(ref r);
+                    if ((scene.InstanceId > 0) != (abyssalContentId is not null)
+                        || (abyssalContentId is { } contentId && !Guid.TryParse(contentId, out _)))
+                        throw new SimLinkException(SimLinkError.BadValue, "bad Abyssal NPC spawn identity");
                     var ship = ReadShip(ref r);
                     var anchor = r.I64();
                     var position = ReadVector(ref r);
                     var velocity = ReadVector(ref r);
                     var direction = ReadVector(ref r);
                     var behavior = r.Text();
-                    message = new SimSpawn(requestId, solarSystemId, ship, anchor, position, velocity, direction, behavior, ReadIdentity(ref r));
+                    message = new SimSpawn(requestId, scene, ship, anchor, position, velocity, direction, behavior, ReadIdentity(ref r), abyssalContentId);
                     break;
                 }
             case Kind.SpawnReply:
@@ -690,7 +1014,15 @@ public static partial class SimCodec
                     var session = r.U64();
                     var container = r.I64();
                     var kind = ReadWreckKind(ref r) ?? throw new SimLinkException(SimLinkError.BadValue, "bad container");
-                    message = new SimPlaceContainer(session, container, kind, r.F64(), r.I64(), ReadCredit(ref r), r.F64());
+                    message = new SimPlaceContainer(session, container, kind, r.F64(), r.I64(), ReadCredit(ref r), r.F64())
+                    {
+                        ExpectedScene = r.U8() switch
+                        {
+                            0 => null,
+                            1 => ReadSceneKey(ref r),
+                            _ => throw new SimLinkException(SimLinkError.BadValue, "bad expected scene flag"),
+                        },
+                    };
                     break;
                 }
             case Kind.Arrived:

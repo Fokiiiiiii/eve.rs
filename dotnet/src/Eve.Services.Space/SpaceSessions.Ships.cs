@@ -97,7 +97,7 @@ public sealed partial class SpaceSessions
                 {
                     if (inStructure && PlaceStructuresAsync is { } placeStructures)
                         await placeStructures(systemId, token);
-                    refusal = await _sim.EnterAsync(new SimEnter(sessionId, systemId, EnterHow.Undock, placeId, spec), token);
+                      refusal = await _sim.EnterAsync(new SimEnter(sessionId, SimSceneKey.SolarSystem(systemId), EnterHow.Undock, placeId, spec), token);
                     if (refusal is null)
                         await PlaceWormholeEndsAsync(systemId, token);
                     if (refusal is null)
@@ -169,6 +169,7 @@ public sealed partial class SpaceSessions
 
     private async ValueTask<PyValue> EjectPhysicalShipAsync(ClientSession session, long expectedSessionShipId, bool exitStructure, CancellationToken cancellationToken)
     {
+        AssertAbyssalShipSwapAllowed(session);
         var id = (ulong)session.SessionId;
         CancelSafeLogoff(session);
         if (LifecycleBlockers is not { } readBlockers
@@ -300,6 +301,7 @@ public sealed partial class SpaceSessions
 
     public async ValueTask<PyValue> BoardAsync(ClientSession session, long shipId, long currentShipId, CancellationToken cancellationToken)
     {
+        AssertAbyssalShipSwapAllowed(session);
         CancelSafeLogoff(session);
         var id = (ulong)session.SessionId;
         if (session.CharacterId is not { } characterId

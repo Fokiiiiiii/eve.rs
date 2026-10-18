@@ -7,7 +7,7 @@ use crate::health::DamageState;
 use crate::ship::Ship;
 use crate::slim;
 use crate::wire::{filetime, id, int, key_val, list, real, slim_object, text, tuple, word};
-use crate::world::{BodyKind, SolarSystem};
+use crate::world::{BodyKind, Detail, SolarSystem};
 use crate::wreck::{DESTRUCTION_EFFECT_EXPLOSION, Wreck};
 
 /// The kind byte of a state buffer: 0 for `SetState`, 1 for `AddBalls2`.
@@ -82,6 +82,35 @@ pub fn add_wreck(stamp: u32, wreck: &Wreck, now: i64) -> Result<Value, BallError
     Ok(action(stamp, "AddBalls2", [tuple([buffer, list([tuple([slim, wreck_damage_state(now)])])])]))
 }
 
+/// `AddBalls2` for the public Abyssal trace: a dynamic non-damageable ball and its plain Slim dictionary.
+pub fn add_abyssal_trace(stamp: u32, trace: &crate::link::AbyssalTrace) -> Result<Value, BallError> {
+    let vector = |v: [f64; 3]| eve_destiny::Vec3::new(v[0], v[1], v[2]);
+    let ball = BallEntity {
+        item_id: eve_destiny::IdRef::Valid(trace.item_id),
+        radius: trace.radius,
+        position: vector(trace.position),
+        velocity: vector(trace.velocity),
+        direction: vector(trace.direction),
+        target_point: trace.target_point.map(vector),
+        speed_fraction: trace.speed_fraction,
+        owner_positive: trace.owner_id > 0,
+        ..BallEntity::default()
+    };
+    let buffer = state_buffer(ADD_BALLS, stamp, &[ball])?;
+    let slim = Value::Dict(
+        [
+            (word("itemID"), id(trace.item_id)),
+            (word("typeID"), int(i64::from(trace.type_id))),
+            (word("ownerID"), id(trace.owner_id)),
+            (word("groupID"), int(i64::from(trace.group_id))),
+            (word("categoryID"), int(i64::from(trace.category_id))),
+            (word("activationState"), int(0)),
+        ]
+        .into(),
+    );
+    Ok(action(stamp, "AddBalls2", [tuple([buffer, list([slim])])]))
+}
+
 /// `AddBalls2` for a structure body of the system (the body at `index`): its ball, and its slim item with the damage state.
 pub fn add_structure(stamp: u32, system: &SolarSystem, index: usize, now: i64) -> Result<Value, BallError> {
     let buffer = state_buffer(ADD_BALLS, stamp, &[rigid_ball(system, index)])?;
@@ -101,6 +130,26 @@ pub fn add_structures(stamp: u32, system: &SolarSystem, now: i64) -> Vec<Value> 
         .collect()
 }
 
+/// `AddBalls2` for one static Abyssal conduit: its rigid ball and non-damageable slim item.
+pub fn add_abyssal_scene_object(stamp: u32, system: &SolarSystem, index: usize) -> Result<Value, BallError> {
+    let body = &system.bodies[index];
+    let buffer = state_buffer(ADD_BALLS, stamp, &[rigid_ball(system, index)])?;
+    let slim = Value::Dict(
+        slim::body_entries(system, body).into_iter().map(|(key, value)| (word(key), value)).collect(),
+    );
+    Ok(action(stamp, "AddBalls2", [tuple([buffer, list([slim])])]))
+}
+
+/// All static Abyssal conduits in a private scene, in stable body order.
+pub fn add_abyssal_scene_objects(stamp: u32, system: &SolarSystem) -> Result<Vec<Value>, BallError> {
+    (0..system.bodies.len())
+        .filter(|&index| {
+            matches!(system.bodies[index].kind, BodyKind::AbyssalConduit | BodyKind::AbyssalEnvironment)
+        })
+        .map(|index| add_abyssal_scene_object(stamp, system, index))
+        .collect()
+}
+
 /// `AddBalls2` for a wormhole end of the system (the body at `index`): its ball, and its slim item with an empty damage state (a wormhole has no hit points).
 pub fn add_wormhole(stamp: u32, system: &SolarSystem, index: usize, now: i64) -> Result<Value, BallError> {
     let buffer = state_buffer(ADD_BALLS, stamp, &[rigid_ball(system, index)])?;
@@ -112,6 +161,11 @@ pub fn add_wormhole(stamp: u32, system: &SolarSystem, index: usize, now: i64) ->
 
 /// `OnSlimItemChange` for a structure body: its slim item is told again, as an object, to whoever has it in view.
 pub fn structure_slim_change(stamp: u32, system: &SolarSystem, index: usize) -> Value {
+    let body = &system.bodies[index];
+    action(stamp, "OnSlimItemChange", [id(body.id), slim_object(slim::body_entries(system, body))])
+}
+
+pub fn abyssal_scene_object_slim_change(stamp: u32, system: &SolarSystem, index: usize) -> Value {
     let body = &system.bodies[index];
     action(stamp, "OnSlimItemChange", [id(body.id), slim_object(slim::body_entries(system, body))])
 }
@@ -209,6 +263,10 @@ pub(crate) fn rigid_ball(system: &SolarSystem, index: usize) -> BallEntity {
         },
         radius: body.radius,
         position: body.position,
+        direction: match &body.detail {
+            Detail::AbyssalConduit { direction, .. } | Detail::AbyssalEnvironment { direction } => *direction,
+            _ => eve_destiny::Vec3::new(0.0, 0.0, 0.0),
+        },
         ..BallEntity::default()
     }
 }

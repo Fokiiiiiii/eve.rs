@@ -1287,6 +1287,17 @@ public class AllianceTests
                 applicantSink.Packets.Select(NotificationName));
             Assert.Equal(["OnAllianceChanged", "OnAllianceMemberChanged"],
                 executorSink.Packets.Select(NotificationName));
+            var memberChangePacket = applicantSink.Packets.Single(packet =>
+                NotificationName(packet) == "OnAllianceMemberChanged");
+            var memberChangeArgs = NotificationArgs(memberChangePacket);
+            var memberChanges = Assert.IsType<Eve.Marshal.PyDict>(memberChangeArgs.Items[2]);
+            Assert.Equal(["corporationID", "allianceID", "chosenExecutorID", "startDate", "deleted"],
+                memberChanges.Entries.Select(entry => entry.Key switch
+                {
+                    Eve.Marshal.PyBytes key => System.Text.Encoding.UTF8.GetString(key.Value.Span),
+                    Eve.Marshal.PyStr key => key.Value,
+                    _ => throw new InvalidOperationException($"Unexpected notification key: {entry.Key.GetType().Name}")
+                }));
             await events.PumpAsync();
             Assert.Single(changedCharacters);
 
@@ -2250,6 +2261,14 @@ public class AllianceTests
     {
         public List<Eve.Marshal.PyValue> Packets { get; } = [];
         public void Send(Eve.Marshal.PyValue packet) => Packets.Add(packet);
+    }
+
+    private static Eve.Marshal.PyTuple NotificationArgs(Eve.Marshal.PyValue packet)
+    {
+        var fields = (Eve.Marshal.PyTuple)((Eve.Marshal.PyObject)packet).Args;
+        var envelope = (Eve.Marshal.PyTuple)((Eve.Marshal.PyTuple)fields.Items[4]).Items[0];
+        var notification = (Eve.Marshal.PyTuple)Eve.Marshal.MarshalCodec.Decode(((Eve.Marshal.PyBuffer)envelope.Items[1]).Value);
+        return (Eve.Marshal.PyTuple)((Eve.Marshal.PyTuple)notification.Items[1]).Items[1];
     }
 
     private static string? NotificationName(Eve.Marshal.PyValue packet)

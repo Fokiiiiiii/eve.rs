@@ -32,14 +32,14 @@ use crate::scene::{HeatModuleProfile, HeatProfile, HeatRack};
 
 use crate::strike::{Strike, StrikeShape};
 
-use crate::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcWeapon, ShipSpec, ShipStance};
+use crate::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcSelfRepair, NpcWeapon, ShipSpec, ShipStance};
 
 use crate::weapons::{Aoe, Arc, Charge, Spool, Turret};
 
 use crate::world::StructureStatus;
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 78;
+pub const PROTOCOL_VERSION: u16 = 79;
 
 /// A battlefield's capture point the host puts in space (protocol 77): a ball the pilots of its system see. Its factions (the attacker and the
 /// occupier, 0 for none) and its next point time (a FILETIME, 0 for none) are the dynamic slim fields the client reads from it.
@@ -91,6 +91,9 @@ pub enum SlimValue {
 
 /// Maximum candidate or allowed target IDs in a structure-damage authorization step.
 pub const MAX_STRUCTURE_DAMAGE_CANDIDATES: usize = 4096;
+pub const MAX_ABYSSAL_MODIFIERS: usize = 256;
+pub const MAX_ABYSSAL_FIELDS: usize = 64;
+pub const MAX_ABYSSAL_BOUNDARY_POINTS: usize = 64;
 const STRUCTURE_FIELD_PARTITION_EXTENSION_VERSION: u8 = 1;
 
 fn structure_field_partition_is_valid(allowed: &[i64], moved: &[i64], held: &[i64]) -> bool {
@@ -139,7 +142,9 @@ pub enum How {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Spawn {
     pub request_id: u64,
-    pub solar_system_id: i32,
+    /// The UUID of the Abyssal run; required for NPC spawns in a private room.
+    pub abyssal_content_id: Option<String>,
+    pub scene: SceneKey,
     pub ship: ShipSpec,
     /// The ship the place is measured from (0: the place is where it is): the NPC comes into space at that ship's position plus `position`.
     pub anchor_ship_id: i64,
@@ -174,7 +179,7 @@ pub struct LaunchDrone {
 /// A wreck the host made, to be put in space: the item it is (the host's own id), what it is, where, and who may take what is in it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WreckPlacement {
-    pub solar_system_id: i32,
+    pub scene: SceneKey,
     pub wreck_id: i64,
     /// `WRECK_GROUP` for a ship's wreck, `CORPSE_GROUP` for the corpse of a pilot whose capsule was destroyed.
     pub group_id: i32,
@@ -365,19 +370,315 @@ pub struct ContainerPlacement {
     pub launcher_id: i64,
     pub credit: Credit,
     pub distance: f64,
+    pub expected_scene: Option<SceneKey>,
 }
 
 /// A ship enters a solar system.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Enter {
     pub session_id: u64,
-    pub solar_system_id: i32,
+    pub scene: SceneKey,
     pub how: How,
     /// The station undocked from (0 when the ship was already in space).
     pub station_id: i64,
     pub ship: ShipSpec,
     pub position: Option<[f64; 3]>,
     pub direction: Option<[f64; 3]>,
+}
+
+/// The simulation's scene identity. Ordinary systems use `(location_id, 0, 0)`; private content rooms add a run ID and room ordinal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct SceneKey {
+    pub location_id: i32,
+    pub instance_id: i64,
+    pub room_index: i32,
+}
+
+impl SceneKey {
+    pub const fn solar_system(location_id: i32) -> Self {
+        Self { location_id, instance_id: 0, room_index: 0 }
+    }
+
+    pub const fn is_valid(self) -> bool {
+        self.location_id > 0
+            && self.instance_id >= 0
+            && if self.instance_id == 0 {
+                self.room_index == 0
+            } else {
+                self.room_index >= 1 && self.room_index <= 3
+            }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AbyssalModifierOperation {
+    Add,
+    Multiply,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AbyssalAttributeModifier {
+    pub attribute_id: i32,
+    pub operation: AbyssalModifierOperation,
+    pub value: f64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AbyssalEnvironmentField {
+    pub center: [f64; 3],
+    pub radius_meters: f64,
+    pub modifiers: Vec<AbyssalAttributeModifier>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AbyssalEnvironmentProfile {
+    pub global_modifiers: Vec<AbyssalAttributeModifier>,
+    pub fields: Vec<AbyssalEnvironmentField>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AbyssalBoundaryDamagePoint {
+    pub distance_outside_meters: f64,
+    pub applied_damage_per_second: f64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AbyssalBoundaryProfile {
+    pub center: [f64; 3],
+    pub radius_meters: f64,
+    pub tick_interval_ms: i64,
+    pub damage_curve: Vec<AbyssalBoundaryDamagePoint>,
+    pub terminal_exposure_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AbyssalSceneSpec {
+    pub scene: SceneKey,
+    pub environment: AbyssalEnvironmentProfile,
+    pub boundary: AbyssalBoundaryProfile,
+    pub expiry_filetime: i64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AbyssalPointDefense {
+    pub tick_interval_ms: i64,
+    pub damage: [f64; 4],
+    pub type_list_id: i32,
+    /// included categories/groups/types, then excluded categories/groups/types.
+    pub targets: [Vec<i32>; 6],
+    pub effect_name: String,
+}
+
+impl AbyssalPointDefense {
+    pub(crate) fn names(&self, type_id: i32, group_id: i32, category_id: i32) -> bool {
+        let ids = [category_id, group_id, type_id];
+        (0..3).any(|i| self.targets[i].contains(&ids[i]))
+            && !(0..3).any(|i| self.targets[i + 3].contains(&ids[i]))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AbyssalEnvironmentObject {
+    pub content_id: String,
+    pub body: AbyssalSceneObject,
+    pub effect_radius_meters: f64,
+    pub point_defense: Option<AbyssalPointDefense>,
+}
+
+pub(crate) fn valid_abyssal_environment_object(object: &AbyssalEnvironmentObject) -> bool {
+    let body = &object.body;
+    if !valid_abyssal_content_id(&object.content_id)
+        || !body.scene.is_valid()
+        || body.scene.instance_id <= 0
+        || body.item_id <= 0
+        || body.type_id <= 0
+        || body.group_id <= 0
+        || body.category_id <= 0
+        || body.owner_id <= 0
+        || !body.radius.is_finite()
+        || body.radius < 0.0
+        || body.graphic_id < 0
+        || body.name.trim().is_empty()
+        || body.position.iter().chain(&body.direction).any(|v| !v.is_finite())
+        || body.direction.iter().all(|v| *v == 0.0)
+        || !object.effect_radius_meters.is_finite()
+        || object.effect_radius_meters < 0.0
+    {
+        return false;
+    }
+    object.point_defense.as_ref().is_none_or(|pulse| {
+        pulse.tick_interval_ms > 0
+            && object.effect_radius_meters > 0.0
+            && pulse.type_list_id > 0
+            && !pulse.effect_name.trim().is_empty()
+            && pulse.damage.iter().all(|v| v.is_finite() && *v >= 0.0)
+            && pulse.targets.iter().all(|ids| {
+                ids.len() <= 4096
+                    && ids.iter().all(|id| *id > 0)
+                    && ids.iter().collect::<std::collections::HashSet<_>>().len() == ids.len()
+            })
+    })
+}
+
+/// A static damageable cache using the shared unpiloted health/targeting authority, with no NPC runtime.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AbyssalRewardCachePlacement {
+    pub content_id: String,
+    pub scene: SceneKey,
+    pub ship: ShipSpec,
+    pub position: [f64; 3],
+    pub direction: [f64; 3],
+}
+
+pub(crate) fn valid_abyssal_content_id(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() == 36
+        && bytes.iter().enumerate().all(|(index, byte)| {
+            if matches!(index, 8 | 13 | 18 | 23) {
+                *byte == b'-'
+            } else {
+                byte.is_ascii_digit() || (b'a'..=b'f').contains(byte)
+            }
+        })
+}
+
+pub(crate) fn valid_abyssal_reward_cache(cache: &AbyssalRewardCachePlacement) -> bool {
+    valid_abyssal_content_id(&cache.content_id)
+        && cache.scene.is_valid()
+        && cache.scene.instance_id > 0
+        && cache.ship.ship_id > 0
+        && cache.ship.character_id == 0
+        && cache.ship.owner_id > 0
+        && matches!(cache.ship.type_id, 47_951 | 49_689 | 49_661 | 49_662)
+        && cache.ship.group_id == 2_009
+        && cache.ship.category_id == 11
+        && cache.ship.vitals.structure_hp > 0.0
+        && cache.ship.max_velocity == 0.0
+        && cache.ship.modules.is_empty()
+        && cache.position.iter().chain(&cache.direction).all(|value| value.is_finite())
+        && cache.direction.iter().any(|value| *value != 0.0)
+}
+
+pub(crate) fn valid_abyssal_loot(content_id: &str, loot: &WreckPlacement) -> bool {
+    valid_abyssal_content_id(content_id)
+        && loot.scene.is_valid()
+        && loot.scene.instance_id > 0
+        && loot.wreck_id > 0
+        && loot.group_id > 0
+        && loot.credit.character_id > 0
+        && loot.radius.is_finite()
+        && loot.radius > 0.0
+        && loot.position.iter().chain(&loot.direction).all(|value| value.is_finite())
+        && loot.direction.iter().any(|value| *value != 0.0)
+}
+
+/// SDE-backed static conduit metadata and its stable, room-local scene placement.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AbyssalSceneObject {
+    pub scene: SceneKey,
+    pub item_id: i64,
+    pub type_id: i32,
+    pub group_id: i32,
+    pub category_id: i32,
+    pub owner_id: i64,
+    pub radius: f64,
+    pub graphic_id: i32,
+    pub name: String,
+    pub position: [f64; 3],
+    pub direction: [f64; 3],
+    pub is_open: bool,
+}
+
+pub(crate) fn valid_abyssal_scene_object(object: &AbyssalSceneObject) -> bool {
+    let valid_vector = |vector: &[f64; 3]| vector.iter().all(|value| value.is_finite());
+    let expected_graphic = match object.type_id {
+        47_685 => 22_130,
+        47_686 => 22_131,
+        _ => return false,
+    };
+    object.scene.is_valid()
+        && object.scene.instance_id > 0
+        && object.item_id > 0
+        && object.group_id == 366
+        && object.category_id == 2
+        && object.owner_id > 0
+        && object.radius == 5_000.0
+        && object.graphic_id == expected_graphic
+        && !object.name.trim().is_empty()
+        && object.name.len() <= u16::MAX as usize
+        && valid_vector(&object.position)
+        && valid_vector(&object.direction)
+        && object.direction.iter().any(|value| *value != 0.0)
+}
+
+/// A real, Host-persisted Abyssal trace item; the sim materializes it in the public solar-system scene.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AbyssalDeploymentObject {
+    pub item_id: i64,
+    pub type_id: i32,
+    pub center_distance_meters: f64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AbyssalDeploymentSnapshot {
+    pub warping: bool,
+    pub cloaked: bool,
+    pub cyno_active: bool,
+    pub undock_invulnerable: bool,
+    pub warp_scrambled: bool,
+    pub nearby_objects: Vec<AbyssalDeploymentObject>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AbyssalTrace {
+    pub solar_system_id: i32,
+    pub item_id: i64,
+    pub type_id: i32,
+    pub group_id: i32,
+    pub category_id: i32,
+    pub owner_id: i64,
+    pub radius: f64,
+    pub position: [f64; 3],
+    pub velocity: [f64; 3],
+    pub direction: [f64; 3],
+    pub target_point: Option<[f64; 3]>,
+    pub speed_fraction: f64,
+    pub game_mode_id: i32,
+    pub filament_type_id: i32,
+    pub difficulty_tier: i32,
+    pub expires_at_ms: i64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum AbyssalTraceStatus {
+    Created = 0,
+    AlreadyPresent = 1,
+    Removed = 2,
+    AlreadyAbsent = 3,
+    Failed = 255,
+}
+
+pub(crate) fn valid_abyssal_trace(trace: &AbyssalTrace) -> bool {
+    let valid_vector = |vector: &[f64; 3]| vector.iter().all(|value| value.is_finite());
+    trace.solar_system_id > 0
+        && trace.item_id > 0
+        && trace.type_id == 48_964
+        && trace.group_id == 1_991
+        && trace.category_id == 2
+        && trace.owner_id > 0
+        && trace.radius.is_finite()
+        && trace.radius > 0.0
+        && valid_vector(&trace.position)
+        && valid_vector(&trace.velocity)
+        && valid_vector(&trace.direction)
+        && trace.direction.iter().any(|value| *value != 0.0)
+        && trace.target_point.is_none_or(|target| valid_vector(&target))
+        && trace.speed_fraction.is_finite()
+        && (1..=3).contains(&trace.game_mode_id)
+        && trace.filament_type_id > 0
+        && (0..=6).contains(&trace.difficulty_tier)
+        && trace.expires_at_ms > 0
 }
 
 /// One buff of a ship (`BuffState`): its buff collection, the value the buff gives the ship, and the time left, in milliseconds.
@@ -403,6 +704,146 @@ pub enum Message {
     HelloAck {
         version: u16,
         poll_hz: u32,
+    },
+    EnsureAbyssalScene {
+        request_id: u64,
+        spec: AbyssalSceneSpec,
+    },
+    EnsureAbyssalSceneReply {
+        request_id: u64,
+        outcome: Result<(), String>,
+    },
+    EnsureAbyssalSceneObject {
+        request_id: u64,
+        object: AbyssalSceneObject,
+    },
+    EnsureAbyssalSceneObjectReply {
+        request_id: u64,
+        outcome: Result<(), String>,
+    },
+    EnsureAbyssalEnvironmentObject {
+        request_id: u64,
+        object: Box<AbyssalEnvironmentObject>,
+    },
+    EnsureAbyssalEnvironmentObjectReply {
+        request_id: u64,
+        outcome: Result<(), String>,
+    },
+    AbyssalFieldMembership {
+        scene: SceneKey,
+        source_item_id: i64,
+        ship_id: i64,
+        session_id: u64,
+        inside: bool,
+    },
+    RefreshAbyssalNpc {
+        request_id: u64,
+        scene: SceneKey,
+        session_id: u64,
+        ship: Box<ShipSpec>,
+        identity: Box<NpcIdentity>,
+    },
+    RefreshAbyssalNpcReply {
+        request_id: u64,
+        outcome: Result<(), String>,
+    },
+    EnsureAbyssalRewardCache {
+        request_id: u64,
+        cache: Box<AbyssalRewardCachePlacement>,
+    },
+    EnsureAbyssalRewardCacheReply {
+        request_id: u64,
+        outcome: Result<(), String>,
+    },
+    EnsureAbyssalLootContainer {
+        request_id: u64,
+        content_id: String,
+        placement: Box<WreckPlacement>,
+    },
+    EnsureAbyssalLootContainerReply {
+        request_id: u64,
+        outcome: Result<(), String>,
+    },
+    MoveAbyssalParticipant {
+        request_id: u64,
+        ship_id: i64,
+        source: SceneKey,
+        destination: SceneKey,
+        /// When true, carry the authoritative pose read from the source Pilot while applying the move.
+        preserve_source_pose: bool,
+        /// When true, reply before movement notifications so the Host can emit SessionChange in order.
+        session_handoff: bool,
+        position: [f64; 3],
+        direction: [f64; 3],
+    },
+    MoveAbyssalParticipantReply {
+        request_id: u64,
+        outcome: Result<(), String>,
+    },
+    RebindAbyssalSession {
+        request_id: u64,
+        session_id: u64,
+        ship_id: i64,
+        scene: SceneKey,
+    },
+    RebindAbyssalSessionReply {
+        request_id: u64,
+        outcome: Result<(), String>,
+    },
+    RemoveAbyssalScene {
+        request_id: u64,
+        scene: SceneKey,
+        settled_npc_ids: Vec<i64>,
+        settled_loot_ids: Vec<i64>,
+    },
+    RemoveAbyssalSceneReply {
+        request_id: u64,
+        outcome: Result<(), String>,
+    },
+    EnsureAbyssalTracePublished {
+        request_id: u64,
+        actor_session_id: Option<u64>,
+        trace: AbyssalTrace,
+    },
+    EnsureAbyssalTracePublishedReply {
+        request_id: u64,
+        status: AbyssalTraceStatus,
+        recipient_count: i32,
+        actor_notified: bool,
+        error: Option<String>,
+    },
+    RemoveAbyssalTrace {
+        request_id: u64,
+        solar_system_id: i32,
+        item_id: i64,
+    },
+    RemoveAbyssalTraceReply {
+        request_id: u64,
+        status: AbyssalTraceStatus,
+        recipient_count: i32,
+        error: Option<String>,
+    },
+    RemoveAbyssalParticipant {
+        request_id: u64,
+        scene: SceneKey,
+        ship_id: i64,
+    },
+    RemoveAbyssalParticipantReply {
+        request_id: u64,
+        already_absent: bool,
+        error: Option<String>,
+    },
+    GetAbyssalParticipantPose {
+        request_id: u64,
+        scene: SceneKey,
+        ship_id: i64,
+    },
+    GetAbyssalParticipantPoseReply {
+        request_id: u64,
+        scene: SceneKey,
+        ship_id: i64,
+        outcome: Result<([f64; 3], [f64; 3]), String>,
+        deployment: Option<AbyssalDeploymentSnapshot>,
     },
     Enter(Box<Enter>),
     /// Whether an `Enter` was done (`Err` carries why not).
@@ -1011,6 +1452,33 @@ impl Message {
         match self {
             Self::Hello { .. } => kind::HELLO,
             Self::HelloAck { .. } => kind::HELLO_ACK,
+            Self::EnsureAbyssalScene { .. } => kind::ENSURE_ABYSSAL_SCENE,
+            Self::EnsureAbyssalSceneReply { .. } => kind::ENSURE_ABYSSAL_SCENE_REPLY,
+            Self::EnsureAbyssalSceneObject { .. } => kind::ENSURE_ABYSSAL_SCENE_OBJECT,
+            Self::EnsureAbyssalSceneObjectReply { .. } => kind::ENSURE_ABYSSAL_SCENE_OBJECT_REPLY,
+            Self::EnsureAbyssalEnvironmentObject { .. } => kind::ENSURE_ABYSSAL_ENVIRONMENT_OBJECT,
+            Self::EnsureAbyssalEnvironmentObjectReply { .. } => kind::ENSURE_ABYSSAL_ENVIRONMENT_OBJECT_REPLY,
+            Self::AbyssalFieldMembership { .. } => kind::ABYSSAL_FIELD_MEMBERSHIP,
+            Self::RefreshAbyssalNpc { .. } => kind::REFRESH_ABYSSAL_NPC,
+            Self::RefreshAbyssalNpcReply { .. } => kind::REFRESH_ABYSSAL_NPC_REPLY,
+            Self::EnsureAbyssalRewardCache { .. } => kind::ENSURE_ABYSSAL_REWARD_CACHE,
+            Self::EnsureAbyssalRewardCacheReply { .. } => kind::ENSURE_ABYSSAL_REWARD_CACHE_REPLY,
+            Self::EnsureAbyssalLootContainer { .. } => kind::ENSURE_ABYSSAL_LOOT_CONTAINER,
+            Self::EnsureAbyssalLootContainerReply { .. } => kind::ENSURE_ABYSSAL_LOOT_CONTAINER_REPLY,
+            Self::MoveAbyssalParticipant { .. } => kind::MOVE_ABYSSAL_PARTICIPANT,
+            Self::MoveAbyssalParticipantReply { .. } => kind::MOVE_ABYSSAL_PARTICIPANT_REPLY,
+            Self::RebindAbyssalSession { .. } => kind::REBIND_ABYSSAL_SESSION,
+            Self::RebindAbyssalSessionReply { .. } => kind::REBIND_ABYSSAL_SESSION_REPLY,
+            Self::RemoveAbyssalScene { .. } => kind::REMOVE_ABYSSAL_SCENE,
+            Self::RemoveAbyssalSceneReply { .. } => kind::REMOVE_ABYSSAL_SCENE_REPLY,
+            Self::EnsureAbyssalTracePublished { .. } => kind::ENSURE_ABYSSAL_TRACE_PUBLISHED,
+            Self::EnsureAbyssalTracePublishedReply { .. } => kind::ENSURE_ABYSSAL_TRACE_PUBLISHED_REPLY,
+            Self::RemoveAbyssalTrace { .. } => kind::REMOVE_ABYSSAL_TRACE,
+            Self::RemoveAbyssalTraceReply { .. } => kind::REMOVE_ABYSSAL_TRACE_REPLY,
+            Self::RemoveAbyssalParticipant { .. } => kind::REMOVE_ABYSSAL_PARTICIPANT,
+            Self::RemoveAbyssalParticipantReply { .. } => kind::REMOVE_ABYSSAL_PARTICIPANT_REPLY,
+            Self::GetAbyssalParticipantPose { .. } => kind::GET_ABYSSAL_PARTICIPANT_POSE,
+            Self::GetAbyssalParticipantPoseReply { .. } => kind::GET_ABYSSAL_PARTICIPANT_POSE_REPLY,
             Self::Enter(_) => kind::ENTER,
             Self::EnterReply { .. } => kind::ENTER_REPLY,
             Self::Leave { .. } => kind::LEAVE,

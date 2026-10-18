@@ -64,7 +64,7 @@ public sealed partial class SpaceContainers
                 ?? throw new InvalidOperationException($"SDE type {item.TypeId} for unanchor drop {itemId} is missing.");
             var empty = (await _items.InContainerAsync(itemId, cancellationToken)).Count == 0;
             _sim.PlaceWreck(new SimPlaceWreck(
-                spaceItem.SolarSystemId, itemId, spaceItem.GroupId,
+                SimSceneKey.SolarSystem(spaceItem.SolarSystemId), itemId, spaceItem.GroupId,
                 new SimWreckKind(item.TypeId, item.CustomName ?? type.Name, type.GraphicId),
                 spaceItem.Position, spaceItem.Direction, spaceItem.Radius, spaceItem.LauncherId,
                 new SimCredit(spaceItem.CharacterId, spaceItem.CorporationId, spaceItem.AllianceId, spaceItem.WarFactionId), empty));

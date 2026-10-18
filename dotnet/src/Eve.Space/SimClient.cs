@@ -19,6 +19,12 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
     private readonly CancellationTokenSource _stop = new();
     private readonly Channel<byte[]> _outbox = Channel.CreateUnbounded<byte[]>(new UnboundedChannelOptions { SingleReader = true });
     private readonly ConcurrentDictionary<ulong, TaskCompletionSource<string?>> _entering = new();
+    private readonly ConcurrentDictionary<(Type ReplyType, ulong RequestId), TaskCompletionSource<string?>> _abyssal = new();
+    private readonly ConcurrentDictionary<ulong, TaskCompletionSource<SimEnsureAbyssalTracePublishedReply>> _publishingAbyssalTraces = new();
+    private readonly ConcurrentDictionary<ulong, TaskCompletionSource<SimRemoveAbyssalTraceReply>> _removingAbyssalTraces = new();
+    private readonly ConcurrentDictionary<ulong, TaskCompletionSource<SimRemoveAbyssalParticipantReply>> _removingAbyssalParticipants = new();
+    private readonly ConcurrentDictionary<ulong, TaskCompletionSource<SimGetAbyssalParticipantPoseReply>> _abyssalParticipantPoses = new();
+    private readonly ConcurrentDictionary<ulong, Action<SimMoveAbyssalParticipantReply>> _abyssalMoveInOrder = new();
     private readonly ConcurrentDictionary<(ulong Session, byte Code), TaskCompletionSource<CommandReply>> _answered = new();
     private readonly ConcurrentDictionary<ulong, TaskCompletionSource<SimSpawnReply>> _spawning = new();
     private readonly ConcurrentDictionary<ulong, (TaskCompletionSource<SimChargeAdjusted> Completion, Action<SimChargeAdjusted>? InOrder)> _adjusting = new();
@@ -199,6 +205,65 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
                     spawning.TrySetResult(spawned);
                 }
                 break;
+            case SimEnsureAbyssalSceneReply reply:
+                CompleteAbyssal(reply);
+                break;
+            case SimEnsureAbyssalSceneObjectReply reply:
+                CompleteAbyssal(reply);
+                break;
+            case SimEnsureAbyssalEnvironmentObjectReply reply:
+                CompleteAbyssal(reply.RequestId, typeof(SimEnsureAbyssalEnvironmentObjectReply), reply.Error);
+                break;
+            case SimRefreshAbyssalNpcReply reply:
+                CompleteAbyssal(reply.RequestId, typeof(SimRefreshAbyssalNpcReply), reply.Error);
+                break;
+            case SimEnsureAbyssalRewardCacheReply reply:
+                CompleteAbyssal(reply.RequestId, typeof(SimEnsureAbyssalRewardCacheReply), reply.Error);
+                break;
+            case SimEnsureAbyssalLootContainerReply reply:
+                CompleteAbyssal(reply.RequestId, typeof(SimEnsureAbyssalLootContainerReply), reply.Error);
+                break;
+            case SimMoveAbyssalParticipantReply reply:
+                if (_abyssalMoveInOrder.TryGetValue(reply.RequestId, out var beforeMovementNotifications))
+                {
+                    try
+                    {
+                        beforeMovementNotifications(reply);
+                    }
+                    catch (Exception error)
+                    {
+                        _log?.Invoke($"Abyssal SessionChange for move {reply.RequestId} failed: {error.Message}");
+                        reply = reply with { Error = $"ABYSSAL_SESSION_HANDOFF_FAILED: {error.Message}" };
+                    }
+                }
+                CompleteAbyssal(reply);
+                break;
+            case SimRebindAbyssalSessionReply reply:
+                CompleteAbyssal(reply);
+                break;
+            case SimRemoveAbyssalSceneReply reply:
+                CompleteAbyssal(reply);
+                break;
+            case SimEnsureAbyssalTracePublishedReply reply when _publishingAbyssalTraces.TryRemove(reply.RequestId, out var publishingTrace):
+                publishingTrace.TrySetResult(reply);
+                break;
+            case SimEnsureAbyssalTracePublishedReply:
+                break;
+            case SimRemoveAbyssalTraceReply reply when _removingAbyssalTraces.TryRemove(reply.RequestId, out var removingTrace):
+                removingTrace.TrySetResult(reply);
+                break;
+            case SimRemoveAbyssalTraceReply:
+                break;
+            case SimRemoveAbyssalParticipantReply reply when _removingAbyssalParticipants.TryRemove(reply.RequestId, out var removingParticipant):
+                removingParticipant.TrySetResult(reply);
+                break;
+            case SimRemoveAbyssalParticipantReply:
+                break;
+            case SimGetAbyssalParticipantPoseReply reply when _abyssalParticipantPoses.TryRemove(reply.RequestId, out var poseRequest):
+                poseRequest.TrySetResult(reply);
+                break;
+            case SimGetAbyssalParticipantPoseReply:
+                break;
             case SimChargeAdjusted adjusted:
                 if (_adjusting.TryRemove(adjusted.RequestId, out var adjusting))
                 {
@@ -308,6 +373,13 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
                 pending.Completion.TrySetException(new SimUnavailableException("the link to the simulation broke"));
             }
         }
+        foreach (var key in _abyssal.Keys)
+        {
+            if (_abyssal.TryRemove(key, out var pending))
+            {
+                pending.TrySetException(new SimUnavailableException("the link to the simulation broke"));
+            }
+        }
     }
 
     private void Send(SimMessage message)
@@ -340,8 +412,122 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
         return await completion.Task;
     }
 
+    private void CompleteAbyssal(SimEnsureAbyssalSceneReply reply) =>
+        CompleteAbyssal(reply.RequestId, typeof(SimEnsureAbyssalSceneReply), reply.Error);
+
+    private void CompleteAbyssal(SimEnsureAbyssalSceneObjectReply reply) =>
+        CompleteAbyssal(reply.RequestId, typeof(SimEnsureAbyssalSceneObjectReply), reply.Error);
+
+    private void CompleteAbyssal(SimMoveAbyssalParticipantReply reply) =>
+        CompleteAbyssal(reply.RequestId, typeof(SimMoveAbyssalParticipantReply), reply.Error);
+
+    private void CompleteAbyssal(SimRebindAbyssalSessionReply reply) =>
+        CompleteAbyssal(reply.RequestId, typeof(SimRebindAbyssalSessionReply), reply.Error);
+
+    private void CompleteAbyssal(SimRemoveAbyssalSceneReply reply) =>
+        CompleteAbyssal(reply.RequestId, typeof(SimRemoveAbyssalSceneReply), reply.Error);
+
+    private void CompleteAbyssal(ulong requestId, Type replyType, string? error)
+    {
+        if (_abyssal.TryRemove((replyType, requestId), out var pending)) pending.TrySetResult(error);
+    }
+
+    private Task<string?> AwaitAbyssalAsync(ulong requestId, Type replyType, SimMessage request, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!_connected) throw new SimUnavailableException("the simulation is not running");
+        if (requestId == 0) throw new ArgumentOutOfRangeException(nameof(requestId));
+        var key = (replyType, requestId);
+        var completion = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (!_abyssal.TryAdd(key, completion))
+            throw new InvalidOperationException($"Abyssal request {requestId} already has a request of this kind waiting");
+        var registration = cancellationToken.Register(() =>
+        {
+            _abyssal.TryRemove(key, out _);
+            completion.TrySetCanceled(cancellationToken);
+        });
+        try
+        {
+            Send(request);
+        }
+        catch
+        {
+            _abyssal.TryRemove(key, out _);
+            registration.Dispose();
+            throw;
+        }
+        return AwaitAndDisposeAsync(completion.Task, registration);
+    }
+
+    private static async Task<string?> AwaitAndDisposeAsync(Task<string?> task, CancellationTokenRegistration registration)
+    {
+        using (registration) return await task;
+    }
+
     public Task<string?> EnterAsync(SimEnter enter, CancellationToken cancellationToken = default) =>
         AwaitAsync(_entering, enter.SessionId, enter, cancellationToken);
+
+    public Task<string?> EnsureAbyssalSceneAsync(SimEnsureAbyssalScene scene, CancellationToken cancellationToken = default) =>
+        AwaitAbyssalAsync(scene.RequestId, typeof(SimEnsureAbyssalSceneReply), scene, cancellationToken);
+
+    public Task<string?> EnsureAbyssalSceneObjectAsync(SimEnsureAbyssalSceneObject sceneObject, CancellationToken cancellationToken = default) =>
+        AwaitAbyssalAsync(sceneObject.RequestId, typeof(SimEnsureAbyssalSceneObjectReply), sceneObject, cancellationToken);
+
+    public Task<string?> EnsureAbyssalEnvironmentObjectAsync(SimEnsureAbyssalEnvironmentObject environment, CancellationToken cancellationToken = default) =>
+        AwaitAbyssalAsync(environment.RequestId, typeof(SimEnsureAbyssalEnvironmentObjectReply), environment, cancellationToken);
+
+    public Task<string?> RefreshAbyssalNpcAsync(SimRefreshAbyssalNpc npc, CancellationToken cancellationToken = default) =>
+        AwaitAbyssalAsync(npc.RequestId, typeof(SimRefreshAbyssalNpcReply), npc, cancellationToken);
+
+    public Task<string?> EnsureAbyssalRewardCacheAsync(SimEnsureAbyssalRewardCache cache, CancellationToken cancellationToken = default) =>
+        AwaitAbyssalAsync(cache.RequestId, typeof(SimEnsureAbyssalRewardCacheReply), cache, cancellationToken);
+
+    public Task<string?> EnsureAbyssalLootContainerAsync(SimEnsureAbyssalLootContainer container, CancellationToken cancellationToken = default) =>
+        AwaitAbyssalAsync(container.RequestId, typeof(SimEnsureAbyssalLootContainerReply), container, cancellationToken);
+
+    public Task<string?> MoveAbyssalParticipantAsync(SimMoveAbyssalParticipant move, CancellationToken cancellationToken = default) =>
+        AwaitAbyssalAsync(move.RequestId, typeof(SimMoveAbyssalParticipantReply), move, cancellationToken);
+
+    public async Task<string?> MoveAbyssalParticipantInOrderAsync(
+        SimMoveAbyssalParticipant move,
+        Action<SimMoveAbyssalParticipantReply> beforeFollowingMessages,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(beforeFollowingMessages);
+        if (!move.SessionHandoff) throw new ArgumentException("The move does not require a SessionChange handoff.", nameof(move));
+        if (!_abyssalMoveInOrder.TryAdd(move.RequestId, beforeFollowingMessages))
+            throw new InvalidOperationException($"move {move.RequestId} already has a handoff");
+        try
+        {
+            return await AwaitAbyssalAsync(move.RequestId, typeof(SimMoveAbyssalParticipantReply), move, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _abyssalMoveInOrder.TryRemove(move.RequestId, out _);
+        }
+    }
+
+    public Task<string?> RebindAbyssalSessionAsync(SimRebindAbyssalSession rebind, CancellationToken cancellationToken = default) =>
+        AwaitAbyssalAsync(rebind.RequestId, typeof(SimRebindAbyssalSessionReply), rebind, cancellationToken);
+
+    public Task<string?> RemoveAbyssalSceneAsync(SimRemoveAbyssalScene scene, CancellationToken cancellationToken = default) =>
+        AwaitAbyssalAsync(scene.RequestId, typeof(SimRemoveAbyssalSceneReply), scene, cancellationToken);
+
+    public Task<SimEnsureAbyssalTracePublishedReply> EnsureAbyssalTracePublishedAsync(
+        SimEnsureAbyssalTracePublished trace, CancellationToken cancellationToken = default) =>
+        AwaitAsync(_publishingAbyssalTraces, trace.RequestId, trace, cancellationToken);
+
+    public Task<SimRemoveAbyssalTraceReply> RemoveAbyssalTraceAsync(
+        SimRemoveAbyssalTrace trace, CancellationToken cancellationToken = default) =>
+        AwaitAsync(_removingAbyssalTraces, trace.RequestId, trace, cancellationToken);
+
+    public Task<SimRemoveAbyssalParticipantReply> RemoveAbyssalParticipantAsync(
+        SimRemoveAbyssalParticipant participant, CancellationToken cancellationToken = default) =>
+        AwaitAsync(_removingAbyssalParticipants, participant.RequestId, participant, cancellationToken);
+
+    public Task<SimGetAbyssalParticipantPoseReply> GetAbyssalParticipantPoseAsync(
+        SimGetAbyssalParticipantPose request, CancellationToken cancellationToken = default) =>
+        AwaitAsync(_abyssalParticipantPoses, request.RequestId, request, cancellationToken);
 
     public async Task<string?> ControlStructureAsync(SimControlStructure control, CancellationToken cancellationToken = default)
     {

@@ -170,7 +170,7 @@ public sealed class SpaceContainersUnanchorDropsTests
     private static SimPlaceWreck BallOf(Rig rig, int system, long itemId, int typeId, int groupId, string marker, long structureId, bool empty)
     {
         var type = rig.Statics.Type(typeId)!;
-        return new SimPlaceWreck(system, itemId, groupId,
+        return new SimPlaceWreck(SimSceneKey.SolarSystem(system), itemId, groupId,
             new SimWreckKind(typeId, type.Name ?? "", type.GraphicId),
             [1.25, 2.5, -3.75], [0d, 0d, 0d], type.Attributes[162], structureId,
             new SimCredit(0, CorporationId, AllianceId, 0), empty);

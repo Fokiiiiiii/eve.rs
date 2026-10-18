@@ -144,6 +144,164 @@ public sealed class ContentRuntime
         (long?)await Sql.ScalarAsync(connection, transaction, Q("SELECT id FROM {schema}.instances WHERE kind = $1 AND unique_key = $2 ORDER BY id DESC LIMIT 1"),
             cancellationToken, kind, uniqueKey);
 
+    /// <summary>Loads an instance under the caller's transaction and locks it for a domain update.</summary>
+    public async Task<ContentInstance?> GetForUpdateAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        long instanceId,
+        CancellationToken cancellationToken = default) =>
+        (await LoadAsync(connection, transaction, instanceId, true, cancellationToken))?.Info;
+
+    /// <summary>Loads an instance in the caller's transaction without locking or changing it.</summary>
+    public async Task<ContentInstance?> GetInTransactionAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        long instanceId,
+        CancellationToken cancellationToken = default) =>
+        (await LoadAsync(connection, transaction, instanceId, false, cancellationToken))?.Info;
+
+    /// <summary>
+    /// Updates serialized domain data in the caller's transaction without changing lifecycle state or deadlines.
+    /// This is used to persist participant settlement receipts that arrive after the run has expired or failed.
+    /// </summary>
+    public async Task<bool> UpdateDataAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        long instanceId,
+        object? data,
+        CancellationToken cancellationToken = default)
+    {
+        var row = await LoadAsync(connection, transaction, instanceId, true, cancellationToken);
+        if (row is null)
+        {
+            return false;
+        }
+
+        var json = JsonSerializer.Serialize(data ?? new { }, Json);
+        return await Sql.ExecuteAsync(connection, transaction,
+            Q("UPDATE {schema}.instances SET data = $2::text::jsonb WHERE id = $1"),
+            cancellationToken, instanceId, json) > 0;
+    }
+
+    /// <summary>
+    /// Replaces an active instance's data and expiry job atomically in the caller's transaction.
+    /// A null expiry removes the deadline job.
+    /// </summary>
+    public async Task<bool> UpdateDataAndDeadlineAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        long instanceId,
+        object? data,
+        long? expiresMs,
+        CancellationToken cancellationToken = default)
+    {
+        var row = await LoadAsync(connection, transaction, instanceId, true, cancellationToken);
+        if (row is null || row.Info.State != "active")
+        {
+            return false;
+        }
+
+        var json = JsonSerializer.Serialize(data ?? new { }, Json);
+        var changed = await Sql.ExecuteAsync(connection, transaction,
+            Q("UPDATE {schema}.instances SET data = $2::text::jsonb, expires_ms = $3 WHERE id = $1 AND state = 'active'"),
+            cancellationToken, instanceId, json, expiresMs);
+        if (changed == 0)
+        {
+            return false;
+        }
+
+        if (row.Info.ExpiresMs != expiresMs)
+        {
+            if (expiresMs is { } deadline)
+            {
+                await _scheduler.ScheduleAsync(connection, transaction,
+                    new JobSpec(ExpireKind, deadline) { Key = instanceId.ToString(), Payload = new InstanceKey(instanceId), OnDuplicate = OnDuplicate.Replace },
+                    cancellationToken);
+            }
+            else
+            {
+                await _scheduler.CancelAsync(connection, transaction, ExpireKind, instanceId.ToString(), cancellationToken);
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>Loads the active instances of a kind in the caller's transaction without locking them.</summary>
+    public async Task<IReadOnlyList<ContentInstance>> ActiveByKindReadOnlyAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        string kind,
+        CancellationToken cancellationToken = default)
+    {
+        var ids = new List<long>();
+        await using (var command = Sql.Command(connection, transaction,
+            Q("SELECT id FROM {schema}.instances WHERE kind = $1 AND state = 'active' ORDER BY id"), kind))
+        await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
+        {
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                ids.Add(reader.GetInt64(0));
+            }
+        }
+
+        var instances = new List<ContentInstance>(ids.Count);
+        foreach (var id in ids)
+        {
+            if ((await LoadAsync(connection, transaction, id, false, cancellationToken))?.Info is { } instance)
+            {
+                instances.Add(instance);
+            }
+        }
+        return instances;
+    }
+
+    /// <summary>Loads and locks the active instances of a kind in the caller's transaction.</summary>
+    public async Task<IReadOnlyList<ContentInstance>> ActiveByKindAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        string kind,
+        CancellationToken cancellationToken = default)
+    {
+        var ids = new List<long>();
+        await using (var command = Sql.Command(connection, transaction,
+            Q("SELECT id FROM {schema}.instances WHERE kind = $1 AND state = 'active' ORDER BY id FOR UPDATE"), kind))
+        await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
+        {
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                ids.Add(reader.GetInt64(0));
+            }
+        }
+
+        var instances = new List<ContentInstance>(ids.Count);
+        foreach (var id in ids)
+        {
+            if ((await LoadAsync(connection, transaction, id, true, cancellationToken))?.Info is { } instance)
+            {
+                instances.Add(instance);
+            }
+        }
+        return instances;
+    }
+
+    /// <summary>Expires an active instance only when its persisted deadline is due.</summary>
+    public async Task<bool> ExpireIfDueAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        long instanceId,
+        CancellationToken cancellationToken = default)
+    {
+        var row = await LoadAsync(connection, transaction, instanceId, true, cancellationToken);
+        if (row is not { Info: { State: "active", ExpiresMs: { } at } } || at > _scheduler.Now)
+        {
+            return false;
+        }
+
+        await FinishAsync(connection, transaction, row, "expired", "time ran out", cancellationToken);
+        return true;
+    }
+
     /// <summary>
     /// Starts an instance of a definition for an owner, in the caller's transaction. With a <paramref name="uniqueKey"/> only one active instance of the kind may have it (an anomaly in
     /// a system): asking again returns the one that exists. The first objective (every objective, for parallel content) is active at once.

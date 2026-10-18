@@ -186,6 +186,7 @@ public sealed partial class SpaceSessions
         {
             return None;
         }
+        if (pilot.SimulationScene.InstanceId > 0) throw Notify(AbyssalWarpBlockedMessage);
         // a ship that its buffs scramble (warpScrambleStatus 104, the warp penalty of a fleet grant) cannot warp: the same refusal as a scrambler's
         if (await ShipAttributeAsync(pilot, Eve.Services.Space.Effects.ModuleAttributes.WarpScrambleStatus, cancellationToken))
         {

@@ -115,10 +115,185 @@ public const byte UpdateEffect = 61;
         public const byte PlaceControlTower = 92;
         public const byte PlaceDeadspacePocket = 93;
         public const byte PlaceAccelerationGate = 94;
+        public const byte EnsureAbyssalScene = 98;
+        public const byte EnsureAbyssalSceneReply = 99;
+        public const byte MoveAbyssalParticipant = 100;
+        public const byte MoveAbyssalParticipantReply = 101;
+        public const byte RebindAbyssalSession = 102;
+        public const byte RebindAbyssalSessionReply = 103;
+        public const byte RemoveAbyssalScene = 104;
+        public const byte RemoveAbyssalSceneReply = 105;
+        public const byte EnsureAbyssalTracePublished = 106;
+        public const byte EnsureAbyssalTracePublishedReply = 107;
+        public const byte RemoveAbyssalTrace = 108;
+        public const byte RemoveAbyssalTraceReply = 109;
+        public const byte RemoveAbyssalParticipant = 110;
+        public const byte RemoveAbyssalParticipantReply = 111;
+        public const byte GetAbyssalParticipantPose = 112;
+        public const byte GetAbyssalParticipantPoseReply = 113;
+        public const byte EnsureAbyssalSceneObject = 114;
+        public const byte EnsureAbyssalSceneObjectReply = 115;
+        public const byte EnsureAbyssalRewardCache = 116;
+        public const byte EnsureAbyssalRewardCacheReply = 117;
+        public const byte EnsureAbyssalLootContainer = 118;
+        public const byte EnsureAbyssalLootContainerReply = 119;
+        public const byte EnsureAbyssalEnvironmentObject = 120;
+        public const byte EnsureAbyssalEnvironmentObjectReply = 121;
+        public const byte AbyssalFieldMembership = 122;
+        public const byte RefreshAbyssalNpc = 123;
+        public const byte RefreshAbyssalNpcReply = 124;
     }
 
     private const int MaxStructureDamageCandidates = 4096;
+    private const int MaxAbyssalModifiers = 256;
+    private const int MaxAbyssalFields = 64;
+    private const int MaxAbyssalBoundaryPoints = 64;
     private const byte StructureFieldPartitionExtensionVersion = 1;
+
+    private static bool IsVector(IReadOnlyList<double> vector) =>
+        vector.Count == 3 && vector.All(double.IsFinite);
+
+    private static bool IsSceneKey(SimSceneKey scene) => scene.IsValid;
+
+    private static bool IsAbyssalSceneSpec(SimAbyssalSceneSpec spec)
+    {
+        if (!spec.Scene.IsValid || spec.Scene.InstanceId <= 0 || spec.ExpiryFileTime <= 0 ||
+            !IsVector(spec.Boundary.Center) || !double.IsFinite(spec.Boundary.RadiusMeters) || spec.Boundary.RadiusMeters <= 0 ||
+            spec.Boundary.TickIntervalMs <= 0 || spec.Boundary.TerminalExposureMs <= 0 ||
+            spec.Boundary.DamageCurve.Count is < 1 or > MaxAbyssalBoundaryPoints ||
+            spec.Environment.GlobalModifiers.Count > MaxAbyssalModifiers || spec.Environment.Fields.Count > MaxAbyssalFields)
+        {
+            return false;
+        }
+
+        static bool ValidModifiers(IReadOnlyList<SimAbyssalAttributeModifier> modifiers) =>
+            modifiers.Count <= MaxAbyssalModifiers && modifiers.All(modifier =>
+                modifier.AttributeId > 0 && Enum.IsDefined(modifier.Operation) && double.IsFinite(modifier.Value));
+
+        if (!ValidModifiers(spec.Environment.GlobalModifiers)) return false;
+        foreach (var field in spec.Environment.Fields)
+        {
+            if (!IsVector(field.Center) || !double.IsFinite(field.RadiusMeters) || field.RadiusMeters <= 0 ||
+                !ValidModifiers(field.Modifiers)) return false;
+        }
+
+        var previousDistance = -1d;
+        foreach (var point in spec.Boundary.DamageCurve)
+        {
+            if (!double.IsFinite(point.DistanceOutsideMeters) || point.DistanceOutsideMeters < 0 ||
+                point.DistanceOutsideMeters <= previousDistance || !double.IsFinite(point.AppliedDamagePerSecond) ||
+                point.AppliedDamagePerSecond < 0) return false;
+            previousDistance = point.DistanceOutsideMeters;
+        }
+        return true;
+    }
+
+    private static bool IsAbyssalMove(SimMoveAbyssalParticipant move)
+    {
+        var roomTransition = move.Source.InstanceId > 0 && move.Source.InstanceId == move.Destination.InstanceId &&
+            move.Source.RoomIndex != move.Destination.RoomIndex;
+        var entry = move.Source.InstanceId == 0 && move.Destination.InstanceId > 0;
+        var originReturn = move.Source.InstanceId > 0 && move.Destination.InstanceId == 0;
+        var poseIsValid = move.PreserveSourcePose
+            ? roomTransition && move.Position.Count == 0 && move.Direction.Count == 0
+            : IsVector(move.Position) && IsVector(move.Direction) && move.Direction.Any(value => value != 0);
+        var sessionHandoffIsValid = !move.SessionHandoff || entry || originReturn;
+        return move.RequestId > 0 && move.ShipId > 0 &&
+            move.Source.IsValid && move.Destination.IsValid && (roomTransition || entry || originReturn) &&
+            poseIsValid && sessionHandoffIsValid;
+    }
+
+    private static bool IsAbyssalSceneObject(SimAbyssalSceneObject sceneObject) =>
+        sceneObject.Scene.IsValid && sceneObject.Scene.InstanceId > 0 &&
+        sceneObject.ItemId > 0 && sceneObject.TypeId is 47_685 or 47_686 &&
+        sceneObject.GroupId == 366 && sceneObject.CategoryId == 2 && sceneObject.OwnerId > 0 &&
+        sceneObject.Radius == 5_000.0 &&
+        sceneObject.GraphicId == (sceneObject.TypeId == 47_685 ? 22_130 : 22_131) &&
+        !string.IsNullOrWhiteSpace(sceneObject.Name) &&
+        IsVector(sceneObject.Position) && IsVector(sceneObject.Direction) &&
+        sceneObject.Direction.Any(value => value != 0);
+
+    private static bool IsAbyssalSceneObjectRequest(SimEnsureAbyssalSceneObject request) =>
+        request.RequestId > 0 && IsAbyssalSceneObject(request.Object);
+
+    private static bool IsAbyssalEnvironmentObject(SimEnsureAbyssalEnvironmentObject request)
+    {
+        var body = request.Object.Body;
+        if (request.RequestId == 0 || !IsCanonicalContentId(request.ContentId) || !body.Scene.IsValid || body.Scene.InstanceId <= 0 ||
+            body.ItemId <= 0 || body.TypeId <= 0 || body.GroupId <= 0 || body.CategoryId <= 0 || body.OwnerId <= 0 ||
+            !double.IsFinite(body.Radius) || body.Radius < 0 || body.GraphicId < 0 || string.IsNullOrWhiteSpace(body.Name) ||
+            !IsVector(body.Position) || !IsVector(body.Direction) || body.Direction.All(value => value == 0) ||
+            !double.IsFinite(request.Object.EffectRadiusMeters) || request.Object.EffectRadiusMeters < 0) return false;
+        if (request.Object.PointDefense is not { } pulse) return true;
+        static bool Ids(IReadOnlyList<int> ids) => ids.Count <= 4096 && ids.All(id => id > 0) && ids.Distinct().Count() == ids.Count;
+        return pulse.TickIntervalMs > 0 && request.Object.EffectRadiusMeters > 0 && pulse.TypeListId > 0 &&
+            pulse.Damage.Count == 4 && pulse.Damage.All(value => double.IsFinite(value) && value >= 0) &&
+            !string.IsNullOrWhiteSpace(pulse.EffectName) &&
+            new[] { pulse.IncludedCategories, pulse.IncludedGroups, pulse.IncludedTypes, pulse.ExcludedCategories, pulse.ExcludedGroups, pulse.ExcludedTypes }.All(Ids);
+    }
+
+    private static bool IsAbyssalFieldMembership(SimAbyssalFieldMembership membership) =>
+        membership.Scene.IsValid && membership.Scene.InstanceId > 0 && membership.SourceItemId > 0 && membership.ShipId > 0 && membership.SessionId > 0;
+
+    private static bool IsAbyssalNpcRefresh(SimRefreshAbyssalNpc refresh) =>
+        refresh.RequestId > 0 && refresh.Scene.IsValid && refresh.Scene.InstanceId > 0 && refresh.SessionId >= (1UL << 62) &&
+        refresh.Ship.ShipId > 0 && refresh.Ship.CharacterId == 0 && refresh.Identity.Wreck is null && !refresh.Identity.HostWreck;
+
+    private static bool IsCanonicalContentId(string contentId) =>
+        Guid.TryParse(contentId, out var id) && string.Equals(id.ToString("D"), contentId, StringComparison.Ordinal);
+
+    private static bool IsAbyssalRewardCache(SimEnsureAbyssalRewardCache cache) =>
+        cache.RequestId > 0 && IsCanonicalContentId(cache.ContentId) && cache.Scene.IsValid && cache.Scene.InstanceId > 0 &&
+        cache.Entity.ShipId > 0 && cache.Entity.CharacterId == 0 && cache.Entity.OwnerId > 0 &&
+        cache.Entity.TypeId is 47_951 or 49_689 or 49_661 or 49_662 && cache.Entity.GroupId == 2_009 && cache.Entity.CategoryId == 11 &&
+        cache.Entity.Vitals is { StructureHp: > 0 } && cache.Entity.MaxVelocity == 0 && cache.Entity.Modules.Count == 0 &&
+        IsVector(cache.Position) && IsVector(cache.Direction) && cache.Direction.Any(value => value != 0);
+
+    private static bool IsAbyssalLootContainer(SimEnsureAbyssalLootContainer request) =>
+        request.RequestId > 0 && IsCanonicalContentId(request.ContentId) && request.Container.Scene.IsValid &&
+        request.Container.Scene.InstanceId > 0 && request.Container.WreckId > 0 && request.Container.GroupId > 0 &&
+        request.Container.Credit.CharacterId > 0 && double.IsFinite(request.Container.Radius) && request.Container.Radius > 0 &&
+        IsVector(request.Container.Position) && IsVector(request.Container.Direction) && request.Container.Direction.Any(value => value != 0);
+
+    private static bool IsAbyssalTrace(SimAbyssalTrace trace) =>
+        trace.SolarSystemId > 0 && trace.ItemId > 0 &&
+        trace.TypeId == 48_964 && trace.GroupId == 1_991 && trace.CategoryId == 2 &&
+        trace.OwnerId > 0 && double.IsFinite(trace.Radius) && trace.Radius > 0 &&
+        IsVector(trace.Position) && IsVector(trace.Velocity) &&
+        IsVector(trace.Direction) && trace.Direction.Any(value => value != 0) &&
+        (trace.TargetPoint is null || IsVector(trace.TargetPoint)) &&
+        double.IsFinite(trace.SpeedFraction) && trace.GameModeId is >= 1 and <= 3 &&
+        trace.FilamentTypeId > 0 && trace.DifficultyTier is >= 0 and <= 6 && trace.ExpiresAtMs > 0;
+
+    private static bool IsAbyssalTracePublication(SimEnsureAbyssalTracePublished publication) =>
+        publication.RequestId > 0 &&
+        (publication.ActorSessionId is null or > 0) &&
+        IsAbyssalTrace(publication.Trace);
+
+    private static bool IsAbyssalTraceRemoval(SimRemoveAbyssalTrace removal) =>
+        removal.RequestId > 0 && removal.SolarSystemId > 0 && removal.ItemId > 0;
+
+    private static bool IsAbyssalParticipantRemoval(SimRemoveAbyssalParticipant removal) =>
+        removal.RequestId > 0 && removal.Scene.IsValid && removal.Scene.InstanceId > 0 && removal.ShipId > 0;
+
+    private static bool IsAbyssalSceneRemoval(SimRemoveAbyssalScene removal)
+    {
+        static bool Ids(IReadOnlyList<long> ids) => ids.Count <= 4096 && ids.All(id => id > 0) && ids.Distinct().Count() == ids.Count;
+        return removal.RequestId > 0 && removal.Scene.IsValid && removal.Scene.InstanceId > 0 &&
+            Ids(removal.SettledNpcIds) && Ids(removal.SettledLootIds) && !removal.SettledNpcIds.Intersect(removal.SettledLootIds).Any();
+    }
+
+    private static bool IsAbyssalPoseRequest(SimGetAbyssalParticipantPose request) =>
+        request.RequestId > 0 && request.Scene.IsValid && request.ShipId > 0;
+
+    private static bool IsAbyssalPoseReply(SimGetAbyssalParticipantPoseReply reply) =>
+        reply.RequestId > 0 && reply.Scene.IsValid && reply.ShipId > 0 &&
+        (reply.Error is not null ||
+         IsVector(reply.Position) && IsVector(reply.Direction) && reply.Direction.Any(value => value != 0));
+
+    private static bool IsAbyssalRebind(SimRebindAbyssalSession rebind) =>
+        rebind.RequestId > 0 && rebind.SessionId > 0 && rebind.ShipId > 0 &&
+        rebind.Scene.IsValid;
 
     private static bool StructureFieldPartitionIsValid(
         IReadOnlyList<long> allowed,

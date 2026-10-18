@@ -180,6 +180,29 @@ pub(super) fn read_identity(reader: &mut Reader) -> Result<NpcIdentity, DecodeEr
     for _ in 0..count {
         weapons.push(read_weapon(reader)?);
     }
+    let repair_count = reader.u32()? as usize;
+    if repair_count > 2 {
+        return Err(DecodeError::BadValue("NPC self-repair count"));
+    }
+    if repair_count > reader.data.len() / 36 {
+        return Err(DecodeError::Truncated);
+    }
+    let mut self_repairs = Vec::with_capacity(repair_count);
+    for _ in 0..repair_count {
+        let repair = NpcSelfRepair {
+            effect_id: reader.i32()?,
+            amount: reader.f64()?,
+            cycle_ms: reader.f64()?,
+            capacitor_cost: reader.f64()?,
+            delay_chance: reader.f64()?,
+        };
+        if !repair.is_valid()
+            || self_repairs.iter().any(|existing: &NpcSelfRepair| existing.effect_id == repair.effect_id)
+        {
+            return Err(DecodeError::BadValue("NPC self-repair"));
+        }
+        self_repairs.push(repair);
+    }
     let wreck = read_wreck_kind(reader)?;
     let hull = match reader.u8()? {
         0 => false,
@@ -195,6 +218,7 @@ pub(super) fn read_identity(reader: &mut Reader) -> Result<NpcIdentity, DecodeEr
         hostile_response_threshold,
         friendly_response_threshold,
         combat: NpcCombat { weapons, aggression_range },
+        self_repairs,
         wreck,
         hull,
         host_wreck,

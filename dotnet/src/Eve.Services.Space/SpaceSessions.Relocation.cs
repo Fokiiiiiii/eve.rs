@@ -72,7 +72,7 @@ public sealed partial class SpaceSessions
         try
         {
             refusal = await _sim.EnterAsync(
-                new SimEnter(sessionId, solarSystemId, position is null ? EnterHow.Anchor : EnterHow.InSpace, 0, spec, position, direction),
+                new SimEnter(sessionId, SimSceneKey.SolarSystem(solarSystemId), position is null ? EnterHow.Anchor : EnterHow.InSpace, 0, spec, position, direction),
                 cancellationToken);
         }
         catch (SimUnavailableException error)

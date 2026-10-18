@@ -361,9 +361,9 @@ private sealed record SimDamageableEntityRegistration(
                     owners[index] = new(StructureDamageCandidateKind.Unknown, 0);
             }
             else if (_npcShips.TryGetValue(candidateId, out var npc)
-                && npc.SolarSystemId == controller.SolarSystemId)
+                && npc.SolarSystemId == controller.SolarSystemId
+                && npc.Profile is { } profile)
             {
-                var profile = npc.Profile;
                 if (RegistrationMatches(profile.CorporationId, profile.CorporationId, profile.AllianceId, profile.FactionId, npc.TypeId))
                     owners[index] = new(StructureDamageCandidateKind.Npc, 0);
                 else

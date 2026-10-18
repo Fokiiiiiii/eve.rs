@@ -705,7 +705,7 @@ public class SpaceServiceTests
         Assert.Equal(system, session.GetInt("solarsystemid"));
         // the simulation
         var enter = AssertUndockSimulationMessages(rig);
-        Assert.Equal(((ulong)session.SessionId, system, EnterHow.Undock, Rig.Station), (enter.SessionId, enter.SolarSystemId, enter.How, enter.StationId));
+        Assert.Equal(((ulong)session.SessionId, system, EnterHow.Undock, Rig.Station), (enter.SessionId, enter.Scene.LocationId, enter.How, enter.StationId));
         Assert.Equal((character.ShipId, character.CharacterId, "Cockroach"), (enter.Ship.ShipId, enter.Ship.CharacterId, enter.Ship.Name));
         Assert.True(enter.Ship.Mass > 0 && enter.Ship.MaxVelocity > 0 && enter.Ship.Agility > 0 && enter.Ship.Radius > 0 && enter.Ship.ShieldRechargeMs > 0);
         Assert.Equal(3, enter.Ship.Modules.Count);

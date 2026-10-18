@@ -78,7 +78,9 @@ impl Scene {
                     continue;
                 }
                 for body in &self.system.bodies {
-                    if body.kind == BodyKind::Belt || spares(*spare, body, now) {
+                    if matches!(body.kind, BodyKind::Belt | BodyKind::AbyssalEnvironment)
+                        || spares(*spare, body, now)
+                    {
                         continue;
                     }
                     if bump_ship_body(ship, body) {
@@ -511,7 +513,8 @@ pub(super) fn resolve_swept_collisions(
         }
         let seconds = (now - start_at) as f64 / TICKS_PER_SECOND as f64;
         for body in bodies {
-            if body.kind == BodyKind::Belt || spares(*spare, body, now) {
+            if matches!(body.kind, BodyKind::Belt | BodyKind::AbyssalEnvironment) || spares(*spare, body, now)
+            {
                 continue;
             }
             if bump_ship_body_swept(ship, body, start, seconds) {

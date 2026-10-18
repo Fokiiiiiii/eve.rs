@@ -5,6 +5,110 @@ namespace Eve.Space;
 
 public static partial class SimCodec
 {
+    private static SimSceneKey ReadSceneKey(ref Reader r)
+    {
+        var scene = new SimSceneKey(r.I32(), r.I64(), r.I32());
+        if (!scene.IsValid) throw new SimLinkException(SimLinkError.BadValue, "bad scene key");
+        return scene;
+    }
+
+    private static int ReadAbyssalCount(ref Reader r, int maximum, string field)
+    {
+        var count = r.U32();
+        if (count > maximum) throw new SimLinkException(SimLinkError.BadValue, $"too many Abyssal {field}");
+        return (int)count;
+    }
+
+    private static SimAbyssalAttributeModifier[] ReadAbyssalModifiers(ref Reader r)
+    {
+        var count = ReadAbyssalCount(ref r, MaxAbyssalModifiers, "modifiers");
+        var modifiers = new SimAbyssalAttributeModifier[count];
+        for (var index = 0; index < count; index++)
+        {
+            var attributeId = r.I32();
+            var operation = r.U8() switch
+            {
+                0 => SimAbyssalModifierOperation.Add,
+                1 => SimAbyssalModifierOperation.Multiply,
+                _ => throw new SimLinkException(SimLinkError.BadValue, "bad Abyssal modifier operation"),
+            };
+            var value = r.F64();
+            if (attributeId <= 0 || !double.IsFinite(value))
+                throw new SimLinkException(SimLinkError.BadValue, "bad Abyssal modifier");
+            modifiers[index] = new SimAbyssalAttributeModifier(attributeId, operation, value);
+        }
+        return modifiers;
+    }
+
+    private static SimAbyssalSceneSpec ReadAbyssalSceneSpec(ref Reader r)
+    {
+        var scene = ReadSceneKey(ref r);
+        var global = ReadAbyssalModifiers(ref r);
+        var fieldCount = ReadAbyssalCount(ref r, MaxAbyssalFields, "environment fields");
+        var fields = new SimAbyssalEnvironmentField[fieldCount];
+        for (var index = 0; index < fieldCount; index++)
+        {
+            fields[index] = new SimAbyssalEnvironmentField(ReadVector(ref r), r.F64(), ReadAbyssalModifiers(ref r));
+        }
+        var center = ReadVector(ref r);
+        var radius = r.F64();
+        var tickInterval = r.I64();
+        var pointCount = ReadAbyssalCount(ref r, MaxAbyssalBoundaryPoints, "boundary points");
+        var curve = new SimAbyssalBoundaryDamagePoint[pointCount];
+        for (var index = 0; index < pointCount; index++)
+        {
+            curve[index] = new SimAbyssalBoundaryDamagePoint(r.F64(), r.F64());
+        }
+        var terminalExposureMs = r.I64();
+        var expiryFileTime = r.I64();
+        var spec = new SimAbyssalSceneSpec(
+            scene,
+            new SimAbyssalEnvironmentProfile(global, fields),
+            new SimAbyssalBoundaryProfile(center, radius, tickInterval, curve, terminalExposureMs),
+            expiryFileTime);
+        if (!IsAbyssalSceneSpec(spec)) throw new SimLinkException(SimLinkError.BadValue, "bad Abyssal scene specification");
+        return spec;
+    }
+
+
+    private static int[] ReadAbyssalTypeIds(ref Reader r)
+    {
+        var count = r.U32();
+        if (count > 4096) throw new SimLinkException(SimLinkError.BadValue, "too many Abyssal type ids");
+        var ids = new int[count];
+        for (var index = 0; index < ids.Length; index++) ids[index] = r.I32();
+        return ids;
+    }
+
+    private static SimAbyssalPointDefense? ReadAbyssalPointDefense(ref Reader r)
+    {
+        var flag = r.U8();
+        if (flag == 0) return null;
+        if (flag != 1) throw new SimLinkException(SimLinkError.BadValue, "bad Abyssal point defense flag");
+        return new SimAbyssalPointDefense(r.I64(), [r.F64(), r.F64(), r.F64(), r.F64()], r.I32(),
+            ReadAbyssalTypeIds(ref r), ReadAbyssalTypeIds(ref r), ReadAbyssalTypeIds(ref r),
+            ReadAbyssalTypeIds(ref r), ReadAbyssalTypeIds(ref r), ReadAbyssalTypeIds(ref r), r.Text());
+    }
+
+    private static SimAbyssalSceneObject ReadAbyssalSceneObject(ref Reader r, bool conduit = true)
+    {
+        var sceneObject = new SimAbyssalSceneObject(
+            ReadSceneKey(ref r), r.I64(), r.I32(), r.I32(), r.I32(), r.I64(), r.F64(), r.I32(),
+            r.Text(), ReadVector(ref r), ReadVector(ref r), ReadFlag(ref r, "Abyssal conduit open"));
+        if (conduit && !IsAbyssalSceneObject(sceneObject))
+            throw new SimLinkException(SimLinkError.BadValue, "bad Abyssal scene object");
+        return sceneObject;
+    }
+
+    private static (ulong RequestId, string? Error) ReadAbyssalResult(ref Reader r)
+    {
+        var requestId = r.U64();
+        var status = r.U8();
+        var reason = r.Text();
+        if (requestId == 0 || status > 1) throw new SimLinkException(SimLinkError.BadValue, "bad Abyssal result");
+        return (requestId, status == 0 ? null : reason);
+    }
+
     /// <summary>A structure's health (protocol 60): the points of its shield, armor and hull, the resonances of each layer, the shield's recharge, the
     /// limit each layer takes in a second and the repair pause of each layer.</summary>
     private static SimStructureHealth ReadStructureHealth(ref Reader r)
@@ -183,6 +287,20 @@ public static partial class SimCodec
         {
             weapons[i] = ReadWeapon(ref r);
         }
+        var repairCount = r.U32();
+        if (repairCount > 2)
+            throw new SimLinkException(SimLinkError.BadValue, "too many NPC self-repairs");
+        if (repairCount > r.Remaining / 36)
+            throw new SimLinkException(SimLinkError.Truncated, "the frame ends before the message does");
+        var selfRepairs = new SimNpcSelfRepair[repairCount];
+        var repairEffects = new HashSet<int>();
+        for (var i = 0; i < selfRepairs.Length; i++)
+        {
+            var repair = new SimNpcSelfRepair(r.I32(), r.F64(), r.F64(), r.F64(), r.F64());
+            if (!SimNpcSelfRepair.IsValid(repair) || !repairEffects.Add(repair.EffectId))
+                throw new SimLinkException(SimLinkError.BadValue, "bad NPC self-repair");
+            selfRepairs[i] = repair;
+        }
         var wreck = ReadWreckKind(ref r);
         var hull = r.U8() switch
         {
@@ -196,7 +314,7 @@ public static partial class SimCodec
             1 => true,
             _ => throw new SimLinkException(SimLinkError.BadValue, "bad host wreck"),
         };
-        return new SimNpcIdentity(hostile, friendly, aggression, weapons, wreck, hull, hostWreck);
+        return new SimNpcIdentity(hostile, friendly, aggression, weapons, wreck, hull, hostWreck, selfRepairs);
     }
 
     private static SimShip ReadShip(ref Reader r)

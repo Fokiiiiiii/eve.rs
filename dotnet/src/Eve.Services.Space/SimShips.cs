@@ -75,7 +75,7 @@ public static SimHeatProfile HeatProfileOf(ShipSnapshot snapshot, DogmaStatic st
             return double.IsFinite(value) && value > 0 ? value : fallback;
         }
         int thermodynamics = snapshot.Skills.FirstOrDefault(skill => skill.TypeId == Thermodynamics)?.Level ?? 0;
-        var modules = snapshot.Fitted.Select(module => {
+        var modules = snapshot.Fitted.Where(module => Slots.FamilyOfFlag(module.Flag) is SlotFamily.High or SlotFamily.Medium or SlotFamily.Low).Select(module => {
             var type = statics.Type(module.TypeId);
             var state = snapshot.World.Item(module.Id)?.State;
             var overloadable = type?.EffectIds.Select(statics.Effect).Any(effect => effect?.Category == EffectDef.Overload) == true;

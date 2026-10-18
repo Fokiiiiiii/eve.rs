@@ -6,13 +6,15 @@ use eve_space::drones::DroneEffect;
 use eve_space::health::{Condition, Layer, Resonances, Vitals};
 use eve_space::link::SlimValue;
 use eve_space::link::{
-    ChargeOp, ContainerPlacement, DecodeError, DirectionalTarget, Enter, How, LaunchDrone, Message,
-    ScanTarget, Spawn, WreckPlacement,
+    AbyssalAttributeModifier, AbyssalBoundaryDamagePoint, AbyssalBoundaryProfile, AbyssalEnvironmentField,
+    AbyssalEnvironmentProfile, AbyssalModifierOperation, AbyssalSceneObject, AbyssalSceneSpec, AbyssalTrace,
+    AbyssalTraceStatus, ChargeOp, ContainerPlacement, DecodeError, DirectionalTarget, Enter, How,
+    LaunchDrone, Message, ScanTarget, SceneKey, Spawn, WreckPlacement,
 };
 use eve_space::missiles::{Blast, Missile};
 use eve_space::modules::{Action, Applies, Change, Effect, MiningFamily, Numbers, Reach, Remote, Rules};
 use eve_space::scene::{HeatModuleProfile, HeatProfile, HeatRack};
-use eve_space::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcWeapon, ShipSpec, ShipStance};
+use eve_space::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcSelfRepair, NpcWeapon, ShipSpec, ShipStance};
 use eve_space::weapons::{Aoe, Arc, Charge, Spool, Turret};
 use eve_space::wreck::WreckKind;
 use serde_json::Value;
@@ -33,6 +35,153 @@ fn text(case: &Value, field: &str) -> String {
 
 fn wide(case: &Value, field: &str) -> i64 {
     text(case, field).parse().unwrap()
+}
+
+fn scene_key(value: &Value) -> SceneKey {
+    SceneKey {
+        location_id: value["locationId"].as_i64().unwrap() as i32,
+        instance_id: wide(value, "instanceId"),
+        room_index: value["roomIndex"].as_i64().unwrap() as i32,
+    }
+}
+
+fn scene_key_of(value: &Value) -> SceneKey {
+    value
+        .get("scene")
+        .map(scene_key)
+        .unwrap_or_else(|| SceneKey::solar_system(value["solarSystemId"].as_i64().unwrap() as i32))
+}
+
+fn vector3(value: &Value) -> [f64; 3] {
+    [value[0].as_f64().unwrap(), value[1].as_f64().unwrap(), value[2].as_f64().unwrap()]
+}
+
+fn abyssal_modifiers(value: &Value) -> Vec<AbyssalAttributeModifier> {
+    value
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|modifier| AbyssalAttributeModifier {
+            attribute_id: modifier["attributeId"].as_i64().unwrap() as i32,
+            operation: match modifier["operation"].as_u64().unwrap() {
+                0 => AbyssalModifierOperation::Add,
+                1 => AbyssalModifierOperation::Multiply,
+                other => panic!("invalid fixture modifier operation {other}"),
+            },
+            value: modifier["value"].as_f64().unwrap(),
+        })
+        .collect()
+}
+
+fn abyssal_scene_object_of(value: &Value) -> AbyssalSceneObject {
+    AbyssalSceneObject {
+        scene: scene_key(&value["scene"]),
+        item_id: wide(value, "itemId"),
+        type_id: value["typeId"].as_i64().unwrap() as i32,
+        group_id: value["groupId"].as_i64().unwrap() as i32,
+        category_id: value["categoryId"].as_i64().unwrap() as i32,
+        owner_id: wide(value, "ownerId"),
+        radius: value["radius"].as_f64().unwrap(),
+        graphic_id: value["graphicId"].as_i64().unwrap() as i32,
+        name: text(value, "name"),
+        position: vector3(&value["position"]),
+        direction: vector3(&value["direction"]),
+        is_open: value["isOpen"].as_bool().unwrap(),
+    }
+}
+
+fn abyssal_point_defense_of(value: &Value) -> Option<eve_space::link::AbyssalPointDefense> {
+    if value.is_null() {
+        return None;
+    }
+    let keys = [
+        "includedCategories",
+        "includedGroups",
+        "includedTypes",
+        "excludedCategories",
+        "excludedGroups",
+        "excludedTypes",
+    ];
+    Some(eve_space::link::AbyssalPointDefense {
+        tick_interval_ms: value["tickIntervalMs"].as_i64().unwrap(),
+        damage: std::array::from_fn(|index| value["damage"][index].as_f64().unwrap()),
+        type_list_id: value["typeListId"].as_i64().unwrap() as i32,
+        targets: std::array::from_fn(|index| {
+            value[keys[index]].as_array().unwrap().iter().map(|id| id.as_i64().unwrap() as i32).collect()
+        }),
+        effect_name: text(value, "effectName"),
+    })
+}
+
+fn abyssal_scene_spec(value: &Value) -> AbyssalSceneSpec {
+    AbyssalSceneSpec {
+        scene: scene_key(&value["scene"]),
+        environment: AbyssalEnvironmentProfile {
+            global_modifiers: abyssal_modifiers(&value["environment"]["globalModifiers"]),
+            fields: value["environment"]["fields"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|field| AbyssalEnvironmentField {
+                    center: vector3(&field["center"]),
+                    radius_meters: field["radiusMeters"].as_f64().unwrap(),
+                    modifiers: abyssal_modifiers(&field["modifiers"]),
+                })
+                .collect(),
+        },
+        boundary: AbyssalBoundaryProfile {
+            center: vector3(&value["boundary"]["center"]),
+            radius_meters: value["boundary"]["radiusMeters"].as_f64().unwrap(),
+            tick_interval_ms: value["boundary"]["tickIntervalMs"].as_i64().unwrap(),
+            terminal_exposure_ms: value["boundary"]["terminalExposureMs"].as_i64().unwrap(),
+            damage_curve: value["boundary"]["damageCurve"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|point| AbyssalBoundaryDamagePoint {
+                    distance_outside_meters: point["distanceOutsideMeters"].as_f64().unwrap(),
+                    applied_damage_per_second: point["appliedDamagePerSecond"].as_f64().unwrap(),
+                })
+                .collect(),
+        },
+        expiry_filetime: wide(value, "expiryFileTime"),
+    }
+}
+
+fn abyssal_trace_of(value: &Value) -> AbyssalTrace {
+    AbyssalTrace {
+        solar_system_id: value["solarSystemId"].as_i64().unwrap() as i32,
+        item_id: wide(value, "itemId"),
+        type_id: value["typeId"].as_i64().unwrap() as i32,
+        group_id: value["groupId"].as_i64().unwrap() as i32,
+        category_id: value["categoryId"].as_i64().unwrap() as i32,
+        owner_id: wide(value, "ownerId"),
+        radius: value["radius"].as_f64().unwrap(),
+        position: vector3(&value["position"]),
+        velocity: vector3(&value["velocity"]),
+        direction: vector3(&value["direction"]),
+        target_point: value.get("targetPoint").filter(|point| !point.is_null()).map(vector3),
+        speed_fraction: value["speedFraction"].as_f64().unwrap(),
+        game_mode_id: value["gameModeId"].as_i64().unwrap() as i32,
+        filament_type_id: value["filamentTypeId"].as_i64().unwrap() as i32,
+        difficulty_tier: value["difficultyTier"].as_i64().unwrap() as i32,
+        expires_at_ms: wide(value, "expiresAtMs"),
+    }
+}
+
+fn abyssal_trace_status(value: &Value) -> AbyssalTraceStatus {
+    match value.as_str().unwrap() {
+        "Created" => AbyssalTraceStatus::Created,
+        "AlreadyPresent" => AbyssalTraceStatus::AlreadyPresent,
+        "Removed" => AbyssalTraceStatus::Removed,
+        "AlreadyAbsent" => AbyssalTraceStatus::AlreadyAbsent,
+        "Failed" => AbyssalTraceStatus::Failed,
+        status => panic!("unknown Abyssal trace status {status}"),
+    }
+}
+
+fn abyssal_outcome(case: &Value) -> Result<(), String> {
+    if case["ok"].as_bool().unwrap() { Ok(()) } else { Err(text(case, "reason")) }
 }
 
 fn condition_of(case: &Value) -> Condition {
@@ -358,6 +507,9 @@ fn effect_of(case: &Value) -> Effect {
             if a["kind"] == "commandBurst" {
                 return Action::CommandBurst { range_meters: a["rangeMeters"].as_f64().unwrap() };
             }
+            if a["kind"] == "entosis" {
+                return Action::Entosis { range_meters: a["rangeMeters"].as_f64().unwrap() };
+            }
             if a["kind"] == "panic" {
                 return Action::Panic { range_meters: a["rangeMeters"].as_f64().unwrap() };
             }
@@ -658,10 +810,24 @@ fn identity_of(case: &Value) -> NpcIdentity {
         })
         .collect();
     let wreck = wreck_kind_of(case.get("wreck"));
+    let self_repairs = case
+        .get("selfRepairs")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(|repair| NpcSelfRepair {
+            effect_id: repair["effectId"].as_i64().unwrap() as i32,
+            amount: number(repair, "amount"),
+            cycle_ms: number(repair, "cycleMs"),
+            capacitor_cost: number(repair, "capacitorCost"),
+            delay_chance: number(repair, "delayChance"),
+        })
+        .collect();
     NpcIdentity {
         hostile_response_threshold: case["hostileResponseThreshold"].as_i64().unwrap(),
         friendly_response_threshold: case["friendlyResponseThreshold"].as_i64().unwrap(),
         combat: NpcCombat { weapons, aggression_range: number(case, "aggressionRange") },
+        self_repairs,
         wreck,
         hull: case.get("hull").and_then(Value::as_bool).unwrap_or(false),
         host_wreck: case.get("hostWreck").and_then(Value::as_bool).unwrap_or(false),
@@ -758,9 +924,199 @@ fn message_of(case: &Value) -> Message {
         "HelloAck" => {
             Message::HelloAck { version: number("version") as u16, poll_hz: number("pollHz") as u32 }
         }
+        "EnsureAbyssalScene" => Message::EnsureAbyssalScene {
+            request_id: number("requestId"),
+            spec: abyssal_scene_spec(&case["spec"]),
+        },
+        "EnsureAbyssalSceneReply" => Message::EnsureAbyssalSceneReply {
+            request_id: number("requestId"),
+            outcome: abyssal_outcome(case),
+        },
+        "EnsureAbyssalSceneObject" => Message::EnsureAbyssalSceneObject {
+            request_id: number("requestId"),
+            object: abyssal_scene_object_of(&case["object"]),
+        },
+        "EnsureAbyssalSceneObjectReply" => Message::EnsureAbyssalSceneObjectReply {
+            request_id: number("requestId"),
+            outcome: abyssal_outcome(case),
+        },
+        "EnsureAbyssalEnvironmentObject" => Message::EnsureAbyssalEnvironmentObject {
+            request_id: number("requestId"),
+            object: Box::new(eve_space::link::AbyssalEnvironmentObject {
+                content_id: text(case, "contentId"),
+                body: abyssal_scene_object_of(&case["object"]["body"]),
+                effect_radius_meters: case["object"]["effectRadiusMeters"].as_f64().unwrap(),
+                point_defense: abyssal_point_defense_of(&case["object"]["pointDefense"]),
+            }),
+        },
+        "EnsureAbyssalEnvironmentObjectReply" => Message::EnsureAbyssalEnvironmentObjectReply {
+            request_id: number("requestId"),
+            outcome: abyssal_outcome(case),
+        },
+        "AbyssalFieldMembership" => Message::AbyssalFieldMembership {
+            scene: scene_key(&case["scene"]),
+            source_item_id: wide(case, "sourceItemId"),
+            ship_id: wide(case, "shipId"),
+            session_id: number("sessionId"),
+            inside: case["inside"].as_bool().unwrap(),
+        },
+        "RefreshAbyssalNpc" => Message::RefreshAbyssalNpc {
+            request_id: number("requestId"),
+            scene: scene_key(&case["scene"]),
+            session_id: number("sessionId"),
+            ship: Box::new(ship_of(&case["ship"])),
+            identity: Box::new(identity_of(&case["identity"])),
+        },
+        "RefreshAbyssalNpcReply" => Message::RefreshAbyssalNpcReply {
+            request_id: number("requestId"),
+            outcome: abyssal_outcome(case),
+        },
+        "EnsureAbyssalRewardCache" => Message::EnsureAbyssalRewardCache {
+            request_id: number("requestId"),
+            cache: Box::new(eve_space::link::AbyssalRewardCachePlacement {
+                content_id: text(case, "contentId"),
+                scene: scene_key(&case["scene"]),
+                ship: ship_of(&case["entity"]),
+                position: vector3(&case["position"]),
+                direction: vector3(&case["direction"]),
+            }),
+        },
+        "EnsureAbyssalRewardCacheReply" => Message::EnsureAbyssalRewardCacheReply {
+            request_id: number("requestId"),
+            outcome: abyssal_outcome(case),
+        },
+        "EnsureAbyssalLootContainer" => {
+            let Message::PlaceWreck(placement) = message_of(&case["container"]) else {
+                panic!("loot fixture must contain a real wreck placement")
+            };
+            Message::EnsureAbyssalLootContainer {
+                request_id: number("requestId"),
+                content_id: text(case, "contentId"),
+                placement,
+            }
+        }
+        "EnsureAbyssalLootContainerReply" => Message::EnsureAbyssalLootContainerReply {
+            request_id: number("requestId"),
+            outcome: abyssal_outcome(case),
+        },
+        "EnsureAbyssalTracePublished" => Message::EnsureAbyssalTracePublished {
+            request_id: number("requestId"),
+            actor_session_id: case
+                .get("actorSessionId")
+                .and_then(Value::as_str)
+                .map(|value| value.parse().unwrap()),
+            trace: abyssal_trace_of(&case["trace"]),
+        },
+        "EnsureAbyssalTracePublishedReply" => Message::EnsureAbyssalTracePublishedReply {
+            request_id: number("requestId"),
+            status: abyssal_trace_status(&case["status"]),
+            recipient_count: case["recipientCount"].as_i64().unwrap() as i32,
+            actor_notified: case["actorNotified"].as_bool().unwrap(),
+            error: case.get("error").and_then(Value::as_str).map(str::to_owned),
+        },
+        "RemoveAbyssalTrace" => Message::RemoveAbyssalTrace {
+            request_id: number("requestId"),
+            solar_system_id: case["solarSystemId"].as_i64().unwrap() as i32,
+            item_id: wide(case, "itemId"),
+        },
+        "RemoveAbyssalTraceReply" => Message::RemoveAbyssalTraceReply {
+            request_id: number("requestId"),
+            status: abyssal_trace_status(&case["status"]),
+            recipient_count: case["recipientCount"].as_i64().unwrap() as i32,
+            error: case.get("error").and_then(Value::as_str).map(str::to_owned),
+        },
+        "RemoveAbyssalParticipant" => Message::RemoveAbyssalParticipant {
+            request_id: number("requestId"),
+            scene: scene_key(&case["scene"]),
+            ship_id: wide(case, "shipId"),
+        },
+        "RemoveAbyssalParticipantReply" => Message::RemoveAbyssalParticipantReply {
+            request_id: number("requestId"),
+            already_absent: case["alreadyAbsent"].as_bool().unwrap(),
+            error: case.get("error").and_then(Value::as_str).map(str::to_owned),
+        },
+        "GetAbyssalParticipantPose" => Message::GetAbyssalParticipantPose {
+            request_id: number("requestId"),
+            scene: scene_key(&case["scene"]),
+            ship_id: wide(case, "shipId"),
+        },
+        "GetAbyssalParticipantPoseReply" => Message::GetAbyssalParticipantPoseReply {
+            request_id: number("requestId"),
+            scene: scene_key(&case["scene"]),
+            ship_id: wide(case, "shipId"),
+            deployment: case.get("deployment").map(|snapshot| eve_space::link::AbyssalDeploymentSnapshot {
+                warping: snapshot["warping"].as_bool().unwrap(),
+                cloaked: snapshot["cloaked"].as_bool().unwrap(),
+                cyno_active: snapshot["cynoActive"].as_bool().unwrap(),
+                undock_invulnerable: snapshot["undockInvulnerable"].as_bool().unwrap(),
+                warp_scrambled: snapshot["warpScrambled"].as_bool().unwrap(),
+                nearby_objects: snapshot["nearbyObjects"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|object| eve_space::link::AbyssalDeploymentObject {
+                        item_id: wide(object, "itemId"),
+                        type_id: object["typeId"].as_i64().unwrap() as i32,
+                        center_distance_meters: object["centerDistanceMeters"].as_f64().unwrap(),
+                    })
+                    .collect(),
+            }),
+            outcome: case.get("error").and_then(Value::as_str).map_or_else(
+                || Ok((vector3(&case["position"]), vector3(&case["direction"]))),
+                |error| Err(error.to_owned()),
+            ),
+        },
+        "MoveAbyssalParticipant" => {
+            let preserve_source_pose =
+                case.get("preserveSourcePose").and_then(Value::as_bool).unwrap_or(false);
+            Message::MoveAbyssalParticipant {
+                request_id: number("requestId"),
+                ship_id: wide(case, "shipId"),
+                source: scene_key(&case["source"]),
+                destination: scene_key(&case["destination"]),
+                preserve_source_pose,
+                session_handoff: case.get("sessionHandoff").and_then(Value::as_bool).unwrap_or(false),
+                position: if preserve_source_pose { [0.0; 3] } else { vector3(&case["position"]) },
+                direction: if preserve_source_pose { [0.0; 3] } else { vector3(&case["direction"]) },
+            }
+        }
+        "MoveAbyssalParticipantReply" => Message::MoveAbyssalParticipantReply {
+            request_id: number("requestId"),
+            outcome: abyssal_outcome(case),
+        },
+        "RebindAbyssalSession" => Message::RebindAbyssalSession {
+            request_id: number("requestId"),
+            session_id: session_id(),
+            ship_id: wide(case, "shipId"),
+            scene: scene_key(&case["scene"]),
+        },
+        "RebindAbyssalSessionReply" => Message::RebindAbyssalSessionReply {
+            request_id: number("requestId"),
+            outcome: abyssal_outcome(case),
+        },
+        "RemoveAbyssalScene" => Message::RemoveAbyssalScene {
+            request_id: number("requestId"),
+            scene: scene_key(&case["scene"]),
+            settled_npc_ids: case["settledNpcIds"]
+                .as_array()
+                .map(|ids| ids.iter().map(|id| id.as_str().unwrap().parse().unwrap()).collect())
+                .unwrap_or_default(),
+            settled_loot_ids: case["settledLootIds"]
+                .as_array()
+                .map(|ids| ids.iter().map(|id| id.as_str().unwrap().parse().unwrap()).collect())
+                .unwrap_or_default(),
+        },
+        "RemoveAbyssalSceneReply" => Message::RemoveAbyssalSceneReply {
+            request_id: number("requestId"),
+            outcome: abyssal_outcome(case),
+        },
         "Enter" => Message::Enter(Box::new(Enter {
             session_id: session_id(),
-            solar_system_id: number("solarSystemId") as i32,
+            scene: if case.get("scene").is_some() {
+                scene_key_of(case)
+            } else {
+                SceneKey::solar_system(number("solarSystemId") as i32)
+            },
             how: match number("how") {
                 0 => How::Undock,
                 1 => How::InSpace,
@@ -965,7 +1321,7 @@ fn message_of(case: &Value) -> Message {
             direction: vector_of(case, "direction"),
         },
         "PlaceWreck" => Message::PlaceWreck(Box::new(WreckPlacement {
-            solar_system_id: number("solarSystemId") as i32,
+            scene: scene_key_of(case),
             wreck_id: wide(case, "wreckId"),
             group_id: number("groupId") as i32,
             kind: wreck_kind_of(case.get("wreck")).unwrap(),
@@ -994,6 +1350,7 @@ fn message_of(case: &Value) -> Message {
                 war_faction_id: wide(case, "warFactionId"),
             },
             distance: case["distance"].as_f64().unwrap(),
+            expected_scene: case.get("expectedScene").map(scene_key),
         })),
         "ContainerPlaced" => Message::ContainerPlaced {
             session_id: session_id(),
@@ -1344,7 +1701,8 @@ fn message_of(case: &Value) -> Message {
         },
         "Spawn" => Message::Spawn(Box::new(Spawn {
             request_id: wide(case, "requestId") as u64,
-            solar_system_id: number("solarSystemId") as i32,
+            abyssal_content_id: case.get("abyssalContentId").and_then(Value::as_str).map(str::to_owned),
+            scene: scene_key_of(case),
             ship: ship_of(&case["ship"]),
             anchor_ship_id: wide(case, "anchorShipId"),
             position: vector_of(case, "position"),
@@ -1545,7 +1903,52 @@ fn every_valid_frame_encodes_to_its_bytes_and_decodes_back() {
             payload.len(),
             "length of {name}"
         );
-        assert_eq!(Message::decode(payload).unwrap(), message, "decoding of {name}");
+        assert_eq!(
+            Message::decode(payload).unwrap_or_else(|error| panic!("decoding of {name}: {error:?}")),
+            message,
+            "decoding of {name}"
+        );
+    }
+}
+
+#[test]
+fn abyssal_scene_and_participant_frames_match_the_shared_csharp_rust_fixtures() {
+    let fixtures = fixtures();
+    let cases = fixtures["valid"].as_array().unwrap();
+    let selected: Vec<&Value> = cases
+        .iter()
+        .filter(|case| {
+            matches!(
+                case["kind"].as_str(),
+                Some(
+                    "EnsureAbyssalScene"
+                        | "EnsureAbyssalSceneReply"
+                        | "MoveAbyssalParticipant"
+                        | "MoveAbyssalParticipantReply"
+                        | "RebindAbyssalSession"
+                        | "RebindAbyssalSessionReply"
+                        | "RemoveAbyssalScene"
+                        | "RemoveAbyssalSceneReply"
+                        | "EnsureAbyssalTracePublished"
+                        | "EnsureAbyssalTracePublishedReply"
+                        | "RemoveAbyssalTrace"
+                        | "RemoveAbyssalTraceReply"
+                        | "RemoveAbyssalParticipant"
+                        | "RemoveAbyssalParticipantReply"
+                        | "GetAbyssalParticipantPose"
+                        | "GetAbyssalParticipantPoseReply"
+                )
+            ) || case
+                .get("scene")
+                .is_some_and(|scene| scene["instanceId"].as_str().is_some_and(|id| id != "0"))
+        })
+        .collect();
+    assert!(selected.len() >= 8);
+    for case in selected {
+        let expected = hex(case["hex"].as_str().unwrap());
+        let message = message_of(case);
+        assert_eq!(message.encode(), expected, "encoding of {}", text(case, "name"));
+        assert_eq!(Message::decode(&expected[4..]).unwrap(), message, "decoding of {}", text(case, "name"));
     }
 }
 
@@ -1793,6 +2196,36 @@ fn structure_vitals_of(case: &serde_json::Value) -> eve_space::health::Vitals {
             structure: layer("structure"),
         },
         armor_pinned: false,
+    }
+}
+
+#[test]
+fn abyssal_scene_object_and_content_keyed_spawn_fixtures_roundtrip() {
+    let fixture = fixtures();
+    let selected: Vec<_> = fixture["valid"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|case| {
+            case["kind"].as_str().is_some_and(|kind| {
+                kind.starts_with("EnsureAbyssalSceneObject")
+                    || kind.starts_with("EnsureAbyssalRewardCache")
+                    || kind.starts_with("EnsureAbyssalLootContainer")
+                    || kind.starts_with("EnsureAbyssalEnvironmentObject")
+                    || kind == "GetAbyssalParticipantPoseReply"
+                    || kind.starts_with("RefreshAbyssalNpc")
+                    || kind == "AbyssalFieldMembership"
+            }) || case.get("abyssalContentId").is_some()
+                || case.get("settledNpcIds").is_some()
+        })
+        .collect();
+    assert_eq!(selected.len(), 18);
+
+    for case in selected {
+        let message = message_of(case);
+        let frame = hex(case["hex"].as_str().unwrap());
+        assert_eq!(message.encode(), frame, "{}", case["name"]);
+        assert_eq!(Message::decode(&frame[4..]).unwrap(), message, "{}", case["name"]);
     }
 }
 

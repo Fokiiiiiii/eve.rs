@@ -17,7 +17,7 @@ use eve_marshal::Value;
 
 use crate::drones::{DroneCommand, DroneFlight, DroneWorkAnswer};
 
-use crate::link::{Enter, How, LaunchDrone, Message, PROTOCOL_VERSION, Spawn};
+use crate::link::{AbyssalSceneSpec, Enter, How, LaunchDrone, Message, PROTOCOL_VERSION, SceneKey, Spawn};
 
 use crate::modules::ModuleWorkAnswer;
 use crate::npc::{NpcPlace, is_npc_session};
@@ -61,6 +61,13 @@ impl Universe {
         scene
     }
 
+    /// An Abyssal room is keyed by a host-known location but starts without that location's static bodies.
+    fn abyssal_scene_of(&self, system: Arc<SolarSystem>) -> Scene {
+        let mut location = (*system).clone();
+        location.bodies.clear();
+        self.scene_of(Arc::new(location))
+    }
+
     pub fn system(&self, id: i32) -> Result<Arc<SolarSystem>, String> {
         let mut cache = self.systems.lock().expect("the cache lock is never held across a panic");
         if let Some(system) = cache.get(&id) {
@@ -88,10 +95,10 @@ impl std::error::Error for ProtocolError {}
 /// The scenes of one host connection.
 pub struct Sim {
     universe: Arc<Universe>,
-    scenes: BTreeMap<i32, Scene>,
-    sessions: HashMap<SessionId, i32>,
+    scenes: BTreeMap<SceneKey, Scene>,
+    sessions: HashMap<SessionId, SceneKey>,
     /// The sessions whose ship was destroyed and have none yet: the system whose scene keeps their ballpark until the host gives them a capsule.
-    widowed: HashMap<SessionId, i32>,
+    widowed: HashMap<SessionId, SceneKey>,
 }
 
 impl Sim {
@@ -114,8 +121,8 @@ impl Sim {
     }
 
     fn scene_of(&mut self, session: SessionId) -> Option<&mut Scene> {
-        let system = self.sessions.get(&session)?;
-        self.scenes.get_mut(system)
+        let scene = self.sessions.get(&session)?;
+        self.scenes.get_mut(scene)
     }
 }
 

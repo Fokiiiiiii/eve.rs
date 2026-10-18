@@ -273,7 +273,7 @@ public class SpaceContainerTests
         rig.Sim.Lose();
         await rig.Containers.RestoreAsync(system);
         var placed = Assert.IsType<SimPlaceWreck>(Assert.Single(rig.Sim.Heard.Skip(heard)));
-        Assert.Equal((system, can, 12, kept.LauncherId, false), (placed.SolarSystemId, placed.WreckId, placed.GroupId, placed.LauncherId, placed.IsEmpty));
+        Assert.Equal((system, can, 12, kept.LauncherId, false), (placed.Scene.LocationId, placed.WreckId, placed.GroupId, placed.LauncherId, placed.IsEmpty));
         Assert.Equal(new SimWreckKind(23, "Cargo Container", 1176), placed.Kind);
         Assert.Equal([1000.0, 2000.0, 3000.0], placed.Position);
         Assert.Equal(14.0, placed.Radius);

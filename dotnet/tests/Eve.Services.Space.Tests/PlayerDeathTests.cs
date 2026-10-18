@@ -62,7 +62,7 @@ public class PlayerDeathTests
         var wreck = rig.Sim.Heard.OfType<SimPlaceWreck>().Single();
         var wreckItem = (await rig.Items.GetAsync(wreck.WreckId))!;
         var character = (await rig.Characters.GetAsync(c.CharacterId))!;
-        Assert.Equal((system, 26506, c.ShipId, 47.0), (wreck.SolarSystemId, wreckItem.TypeId, wreck.LauncherId, wreck.Radius));
+        Assert.Equal((system, 26506, c.ShipId, 47.0), (wreck.Scene.LocationId, wreckItem.TypeId, wreck.LauncherId, wreck.Radius));
         Assert.Equal(Place, wreck.Position);
         Assert.Equal(new SimCredit(c.CharacterId, character.CorporationId, character.AllianceId ?? 0, character.FactionId ?? 0), wreck.Credit);
         var heard = rig.Sim.Heard.ToArray();
@@ -330,7 +330,7 @@ public class PlayerDeathTests
         // the simulation is told to let go of the session and to put the corpse where the capsule was
         Assert.Contains(rig.Sim.Heard.OfType<SimLeave>(), leave => leave.SessionId == (ulong)session.SessionId);
         var corpse = rig.Sim.Heard.OfType<SimPlaceWreck>().Single();
-        Assert.Equal((14, 25, character.Name, system), (corpse.GroupId, corpse.Kind.TypeId, corpse.Kind.Name, corpse.SolarSystemId));
+        Assert.Equal((14, 25, character.Name, system), (corpse.GroupId, corpse.Kind.TypeId, corpse.Kind.Name, corpse.Scene.LocationId));
         Assert.Equal(Place, corpse.Position);
         Assert.Equal(Facing, corpse.Direction);
         Assert.Equal(new SimCredit(c.CharacterId, 0, 0, 0), corpse.Credit);

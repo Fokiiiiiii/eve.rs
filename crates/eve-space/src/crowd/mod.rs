@@ -4,6 +4,7 @@
 //! ships it has been told of (`sees`); what happens to a ship is told to the pilots whose set holds it, and the sets are brought into line with the
 //! rule when a ship comes, goes or is in warp (`reconcile`). A pilot that has not bound the ballpark is told nothing (the client cannot take a
 //! destiny update yet); it gets everything in view when it binds.
+mod abyssal_traces;
 mod asteroids;
 mod ships;
 mod wrecks;
@@ -37,14 +38,22 @@ impl Scene {
             order.into_iter().filter(|s| *s != session && self.visible_to(session, *s)).collect();
         let wrecks: BTreeSet<i64> =
             self.wrecks.values().filter(|w| self.sees_place_of(session, w)).map(|w| w.id).collect();
+        let traces: BTreeSet<i64> = self
+            .abyssal_traces
+            .values()
+            .filter(|trace| self.sees_place_of_trace(session, trace))
+            .map(|trace| trace.item_id)
+            .collect();
         if let Some(pilot) = self.pilots.get_mut(&session) {
             pilot.bound = true;
             pilot.sees = seen;
             pilot.sees_wrecks = wrecks;
+            pilot.sees_abyssal_traces = traces;
         } else if let Some(observer) = self.controlled_structures.get_mut(&session) {
             observer.bound = true;
             observer.sees = seen;
             observer.sees_wrecks = wrecks;
+            observer.sees_abyssal_traces = traces;
         }
     }
 

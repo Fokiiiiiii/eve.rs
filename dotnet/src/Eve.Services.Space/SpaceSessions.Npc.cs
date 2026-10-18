@@ -90,8 +90,8 @@ public sealed partial class SpaceSessions
         foreach (var place in HullPlaces(count, DeathTestRadiusMeters))
         {
             var shipId = HullIdBase + Interlocked.Increment(ref _hulls);
-            var spawn = new SimSpawn(
-                NextSpawnRequest(), pilot.SolarSystemId, SimShips.OfType(shipId, type), pilot.ShipId, place, [0, 0, 0], RandomDirection(), "",
+              var spawn = new SimSpawn(
+                  NextSpawnRequest(), SimSceneKey.SolarSystem(pilot.SolarSystemId), SimShips.OfType(shipId, type), pilot.ShipId, place, [0, 0, 0], RandomDirection(), "",
                 SimNpcIdentity.Default with { Hull = true });
             if (await SpawnAsync(spawn, "deathtest", cancellationToken) is not null)
             {
@@ -171,7 +171,14 @@ public sealed partial class SpaceSessions
     public NpcWrecks? NpcWrecks { get; init; }
 
     /// <summary>What the host knows of an NPC it made: what it was worth, what it was and where (the simulation tells it only that the ship is gone).</summary>
-    private sealed record NpcShip(NpcProfile Profile, int TypeId, int SolarSystemId, long BeltId = 0, long Group = 0, long SiteId = 0);
+    private sealed record NpcShip(
+        NpcProfile? Profile,
+        int TypeId,
+        int SolarSystemId,
+        long BeltId = 0,
+        long Group = 0,
+        long SiteId = 0,
+        AbyssalNpcRuntime? Abyssal = null);
 
     private readonly ConcurrentDictionary<long, NpcShip> _npcShips = new();
 
@@ -264,6 +271,26 @@ public sealed partial class SpaceSessions
     private async Task FinishNpcDeathAsync(NpcShip npc, SimDestroyed destroyed)
     {
         var killer = _pilots.Values.FirstOrDefault(pilot => pilot.ShipId == destroyed.KillerShipId);
+        if (npc.Abyssal is { } abyssal)
+        {
+            if (AbyssalNpcDestroyedAsync is { } record)
+            {
+                await record(new AbyssalNpcDestroyedNotice(
+                    abyssal.InstanceId,
+                    abyssal.ContentId,
+                    npc.SolarSystemId,
+                    abyssal.RoomIndex,
+                    destroyed.ShipId,
+                    npc.TypeId,
+                    destroyed.KillerShipId), CancellationToken.None).ConfigureAwait(false);
+            }
+            else
+            {
+                throw new InvalidOperationException("Abyssal NPC death requires the Host domain callback.");
+            }
+            return;
+        }
+        var profile = npc.Profile ?? throw new InvalidOperationException("A non-Abyssal NPC has no catalog profile.");
         await LeaveNpcWreckAsync(npc, destroyed, killer);
         try
         {
@@ -271,7 +298,7 @@ public sealed partial class SpaceSessions
         }
         finally
         {
-            var kill = new NpcKill(killer?.CharacterId ?? 0, npc.TypeId, npc.Profile, npc.SolarSystemId, destroyed.ShipId);
+            var kill = new NpcKill(killer?.CharacterId ?? 0, npc.TypeId, profile, npc.SolarSystemId, destroyed.ShipId);
             lock (_npcDestroyedGate)
             {
                 Raise(NpcDestroyed, kill, nameof(NpcDestroyed));
@@ -281,7 +308,8 @@ public sealed partial class SpaceSessions
     }
 
     private Task PayNpcBountyAsync(NpcShip npc, SimDestroyed destroyed, Pilot? killer) =>
-        PayBountyAsync(npc.SolarSystemId, npc.TypeId, destroyed.ShipId, killer, npc.Profile.Bounty);
+        PayBountyAsync(npc.SolarSystemId, npc.TypeId, destroyed.ShipId, killer,
+            (npc.Profile ?? throw new InvalidOperationException("A non-Abyssal NPC has no catalog profile.")).Bounty);
 
     /// <summary>
     /// The bounty of an NPC the simulation keeps (a Pochven sentry or fighter, a kill the host has no record of): the <c>entityKillBounty</c> of its type in the
@@ -361,9 +389,10 @@ public sealed partial class SpaceSessions
         try
         {
             var character = killer is null ? null : await _ships.CharacterAsync(killer.CharacterId);
-            var made = await wrecks.LeaveAsync(kind.TypeId, npc.Profile.LootTableId, character?.Id ?? npc.Profile.CorporationId, npc.SolarSystemId);
+            var profile = npc.Profile ?? throw new InvalidOperationException("A non-Abyssal NPC has no catalog profile.");
+            var made = await wrecks.LeaveAsync(kind.TypeId, profile.LootTableId, character?.Id ?? profile.CorporationId, npc.SolarSystemId);
             var credit = character is null ? new SimCredit(0, 0, 0, 0) : new SimCredit(character.Id, character.CorporationId, character.AllianceId ?? 0, character.FactionId ?? 0);
-            PlaceWreck(new SimPlaceWreck(npc.SolarSystemId, made.Wreck.Id, WreckGroup, kind, destroyed.Position, destroyed.Direction, destroyed.Radius, destroyed.ShipId, credit, made.Contents.Count == 0));
+            PlaceWreck(new SimPlaceWreck(SimSceneKey.SolarSystem(npc.SolarSystemId), made.Wreck.Id, WreckGroup, kind, destroyed.Position, destroyed.Direction, destroyed.Radius, destroyed.ShipId, credit, made.Contents.Count == 0));
         }
         catch (Exception error) when (error is not OperationCanceledException)
         {
@@ -438,7 +467,7 @@ public sealed partial class SpaceSessions
             var shipId = NpcIdBase + Interlocked.Increment(ref _npcs);
             var weapon = NpcArmament.HullWeapon(type, shipId, _statics);
             var aggression = Math.Max(NpcArmament.AggressionRange(type, _statics), aggressionRangeOverride);
-            var identity = new SimNpcIdentity(hostileResponseThreshold, NpcFriendlyThreshold, aggression, weapon is null ? [] : [weapon], null, HostWreck: NpcWrecks is not null);
+            var identity = new SimNpcIdentity(hostileResponseThreshold, NpcFriendlyThreshold, aggression, weapon is null ? [] : [weapon], null, HostWreck: NpcWrecks is not null, SelfRepairs: NpcArmament.SelfRepairsOf(type, _statics));
             var hull = SimShips.OfType(shipId, type);
             var ship = hull with
             {
@@ -454,7 +483,7 @@ public sealed partial class SpaceSessions
             var distance = NpcSpawnDistance(anchor.BaseDistance > 0 ? anchor.BaseDistance : Math.Max(1_000, profile.SpawnDistanceMeters), anchor.Window ?? Math.Min(6_000, 800 + profiles.Count * 600), NpcFormationSpacing, index, Random.Shared.NextDouble());
             var direction = RandomUnitVector();
             double[] place = [anchor.Origin[0] + direction[0] * distance, anchor.Origin[1] + direction[1] * distance, anchor.Origin[2] + direction[2] * distance];
-            var spawn = new SimSpawn(NextSpawnRequest(), anchor.SolarSystemId, ship, anchor.ShipId, place, [0, 0, 0], RandomUnitVector(), NpcBehavior, identity);
+            var spawn = new SimSpawn(NextSpawnRequest(), SimSceneKey.SolarSystem(anchor.SolarSystemId), ship, anchor.ShipId, place, [0, 0, 0], RandomUnitVector(), NpcBehavior, identity);
             if (await SpawnAsync(spawn, "npc", cancellationToken) is not { } npcSession)
             {
                 break;

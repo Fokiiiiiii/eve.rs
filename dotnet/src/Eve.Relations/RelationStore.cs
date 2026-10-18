@@ -429,6 +429,17 @@ public sealed class RelationStore
         return [.. new long?[] { character, affiliation.Corporation, affiliation.Alliance, affiliation.Faction }.Where(id => id is not null).Select(id => id!.Value).Distinct()];
     }
 
+    /// <summary>The standing a character has toward an owner, the higher of the personal and corporation values.</summary>
+    public async Task<double> StandingTowardAsync(long character, long owner, CancellationToken cancellationToken = default)
+    {
+        var personal = await ValueAsync(RelationKinds.Standing.Name, owner, character, cancellationToken: cancellationToken);
+        var affiliation = await AffiliationOfAsync(character, cancellationToken: cancellationToken);
+        var corporate = affiliation.Corporation is { } corporation
+            ? await ValueAsync(RelationKinds.Standing.Name, owner, corporation, cancellationToken: cancellationToken)
+            : 0;
+        return Math.Max(personal, corporate);
+    }
+
     /// <summary>The best (highest) value of the kind from any of <paramref name="from"/> to any of <paramref name="to"/>, or <c>null</c> when none holds. How to combine values is the caller's rule; this is the common one.</summary>
     public async Task<double?> BestAsync(string kind, IEnumerable<long> from, IEnumerable<long> to, CancellationToken cancellationToken = default)
     {

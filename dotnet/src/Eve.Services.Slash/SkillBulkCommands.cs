@@ -1,5 +1,3 @@
-using System.Globalization;
-using System.Text.RegularExpressions;
 using Eve.Characters;
 using Eve.Marshal;
 using Eve.Services.Skills;
@@ -19,7 +17,6 @@ public sealed class SkillBulkCommands(
     Func<long> nowUnixMs, Func<long, ClientSession?> sessionOf, Random? random = null)
 {
     public const string SkillCopyUsage = "Usage: /skillscopy \"<from character>\" \"<to character>\"";
-    private static readonly Regex Operand = new("\"([^\"]*)\"|'([^']*)'|(\\S+)", RegexOptions.Compiled);
     private readonly Random _random = random ?? Random.Shared;
 
     public async Task<string> GiveStarterAsync(ClientSession session, string argument, CancellationToken cancellationToken)
@@ -52,8 +49,7 @@ public sealed class SkillBulkCommands(
 
     public async Task<string> CopyAsync(ClientSession session, string argument, CancellationToken cancellationToken)
     {
-        var operands = Operand.Matches(argument).Select(match => match.Groups[1].Success ? match.Groups[1].Value : match.Groups[2].Success ? match.Groups[2].Value : match.Groups[3].Value)
-            .Where(operand => operand.Length > 0).ToList();
+        var operands = PilotTokens.Operands(argument);
         if (operands.Count != 2) return SkillCopyUsage;
         var (fromId, fromError) = await ResolveAsync(session, operands[0], cancellationToken);
         if (fromId is not { } from) return fromError!;
@@ -69,17 +65,8 @@ public sealed class SkillBulkCommands(
     /// <summary>The pilot's session when it is online: the caller's own session for the caller's character.</summary>
     private ClientSession? Online(ClientSession caller, long character) => character == caller.CharacterId ? caller : sessionOf(character);
 
-    /// <summary>A character by <c>me</c>, its ID or its exact name; the message when there is none.</summary>
-    private async Task<(long? Id, string? Error)> ResolveAsync(ClientSession session, string token, CancellationToken cancellationToken)
-    {
-        if (token.Equals("me", StringComparison.OrdinalIgnoreCase))
-            return session.CharacterId is { } self ? (self, null) : (null, "Select a character before using me.");
-        if (long.TryParse(token, NumberStyles.None, CultureInfo.InvariantCulture, out var id) && id > 0)
-            return await characters.GetAsync(id, cancellationToken) is null ? (null, $"Character not found: {token}.") : (id, null);
-        return await characters.FindIdByNameAsync(token, cancellationToken) is { } named
-            ? (named, null)
-            : (null, $"Character not found: {token}. Use me, a character ID, or an exact character name.");
-    }
+    private Task<(long? Id, string? Error)> ResolveAsync(ClientSession session, string token, CancellationToken cancellationToken) =>
+        PilotTokens.ResolveAsync(characters, session, token, cancellationToken);
 
     /// <summary>
     /// Writes the wanted skills in one transaction. Only the rows that differ are written; with <paramref name="clearFirst"/> the skills not wanted are

@@ -79,7 +79,7 @@ internal sealed class Rig : IAsyncDisposable
     {
         Source = source;
         Catalog = catalog;
-        _schemas = [$"dc_{suffix}", $"di_{suffix}", $"ds_{suffix}", $"dw_{suffix}", $"df_{suffix}", $"dk_{suffix}", $"de_{suffix}", $"dr_{suffix}"];
+        _schemas = [$"dc_{suffix}", $"di_{suffix}", $"ds_{suffix}", $"dw_{suffix}", $"df_{suffix}", $"dk_{suffix}", $"de_{suffix}", $"dr_{suffix}", $"dx_{suffix}"];
         Characters = new PgCharacterStore(source, _schemas[0]);
         Items = new PgItemStore(source, _schemas[1]);
         Skills = new PgSkillStore(source, _schemas[2]);
@@ -96,11 +96,13 @@ internal sealed class Rig : IAsyncDisposable
         Scheduler = new Eve.Scheduler.DurableScheduler(source, () => ClockMs, new Eve.Scheduler.SchedulerOptions { Concurrency = 1 }, _schemas[5]);
         Bus = new Eve.Events.EventBus(source, Scheduler, null, _schemas[6]);
         Relations = new Eve.Relations.RelationStore(source, Scheduler, Bus, _schemas[7]);
+        Crimewatch = new Eve.Crimewatch.PgCrimewatchStore(source, _schemas[8]);
         Slash = new SlashService(new ShipHealthCommands(Ships, statics, () => ClockMs, Health), items: new ItemCommands(new ItemTypeNames(sde), Ships, statics, () => ClockMs), isk: new IskCommands(Transactions, source, () => ClockMs, Wallets, Loyalty),
             loyalty: new LoyaltyCommands(Loyalty, StandingDirectory, () => ClockMs),
             standings: new StandingCommands(StandingDirectory, Relations, (character, owner, standing) => StandingNotices.Add((character, owner, standing))),
             skillBulk: new SkillBulkCommands(catalog, Skills, source, Characters, null, () => ClockMs, _ => null),
-            dogmaUpdate: new DogmaUpdateCommands(statics));
+            dogmaUpdate: new DogmaUpdateCommands(statics),
+            killRight: new KillRightCommands(Characters, (owner, target, system, when, token) => Crimewatch.CreateKillRightAsync(owner, target, system, when, token), () => ClockMs));
         Inventory = new InvBrokerService(Items, new ItemTypeCatalog(sde), new Eve.Universe.StationCatalog([]), Ships, statics, () => ClockMs);
     }
 
@@ -149,6 +151,8 @@ internal sealed class Rig : IAsyncDisposable
 
     public PgSkillStore Skills { get; }
 
+    public Eve.Crimewatch.PgCrimewatchStore Crimewatch { get; }
+
     /// <summary>The SDE skill catalog the rig was built with (the starting sets and the published skills).</summary>
     public SkillCatalog Catalog { get; }
 
@@ -194,6 +198,7 @@ internal sealed class Rig : IAsyncDisposable
         await Eve.Scheduler.DurableScheduler.MigrateAsync(source, $"dk_{suffix}");
         await Eve.Events.EventBus.MigrateAsync(source, $"de_{suffix}");
         await Eve.Relations.RelationStore.MigrateAsync(source, $"dr_{suffix}");
+        await Eve.Crimewatch.PgCrimewatchStore.MigrateAsync(source, $"dx_{suffix}");
         var catalog = await SkillCatalog.LoadAsync(sde);
         var creation = new CharacterCreation(
             source, characters, items, skills, catalog, wallets, new StartingWallet(), CockroachCatalog(await CreationCatalog.LoadAsync(sde, Station)), modules);

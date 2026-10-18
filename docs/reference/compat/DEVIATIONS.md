@@ -4781,3 +4781,10 @@ as reference. The client's `bookmarkSvc.py` (`OnSharedBookmarksFolderUpdated`, `
 - **Reload (G21).** The host reads the attributes, effects and groups again, re-reads the types it had already read, and swaps the tables in as one snapshot (`DogmaStatic.ReloadAsync`). The reply gives the attribute and effect counts. With the pinned SDE the counts do not change; the reload picks up an SDE the database has since received.
 - **No SDE (G21).** A host whose dogma was not loaded from an SDE answers that the reload cannot run; it does not claim a reload.
 - shortcut: the attribute values a ship already computed are kept until its next dogma change, they are not pushed again (upgrade: a dogma-changed notification to the pilots of the system).
+
+## GM tools, slice G22: `/killright <target> [owner]` (2026-10-18)
+
+- **Source (G22).** EVE.js has no `/killright`. The client sends the line as typed (`svc_slash.py` `cmd_killright`). The kill right is the one the crimewatch store grants when an illegal aggression is made: the owner (the caller, or the named pilot) may take the target's kill, in the owner's solar system, for 30 days.
+- **Grant path (G22).** `CrimewatchRuntime.GrantKillRightAsync` writes the store row and tells the owner as an aggression tells it (`KillRightGranted`). The row is made by the store (`CreateKillRightAsync`).
+- **Refusals (G22).** The store makes no right when the two are the same pilot or when the owner already has an open right against the target; the reply says so and creates nothing. Both are the store's own rules (one open right per owner and target, no right against oneself), not new ones.
+- **Tests (G22).** The rig's kill right is the store's grant (no notification); the notification path is the runtime's and is not run by the database tests.

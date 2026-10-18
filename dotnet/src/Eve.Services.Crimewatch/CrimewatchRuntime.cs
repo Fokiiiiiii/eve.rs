@@ -379,6 +379,33 @@ public sealed class CrimewatchRuntime(PgCrimewatchStore store, CharacterSessions
     }
 
 
+    /// <summary>
+    /// A kill right a game master makes (<c>/killright</c>): the store's grant, then the owner is told as an illegal aggression tells it. Null when the
+    /// store makes none (the same pilot, or a right the owner already has open against the target).
+    /// </summary>
+    public async Task<long?> GrantKillRightAsync(long ownerCharacterId, long targetCharacterId, long solarSystemId, long now, CancellationToken cancellationToken)
+    {
+        if (CreateKillRight is not { } createKillRight) return null;
+        if (await createKillRight(new KillRightGrantRequest(ownerCharacterId, targetCharacterId, solarSystemId, now), cancellationToken) is not { } killRightId)
+            return null;
+        var created = new KillRightCreated(killRightId, ownerCharacterId, targetCharacterId, solarSystemId, now);
+        if (KillRightGranted is { } handlers)
+        {
+            foreach (var handler in handlers.GetInvocationList().Cast<Func<KillRightCreated, Task>>())
+            {
+                try
+                {
+                    await handler(created);
+                }
+                catch (Exception error)
+                {
+                    log?.Invoke($"crimewatch could not notify of kill right {killRightId}: {error.Message}");
+                }
+            }
+        }
+        return killRightId;
+    }
+
     private async Task RecordCriminalConsequencesAsync(
         AggressionRequest request,
         CombatState state,

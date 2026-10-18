@@ -133,6 +133,36 @@ def join_corporation(character: int, corporation: int, roles: int) -> None:
         f"corporation_id = excluded.corporation_id, started_ms = excluded.started_ms, roles = excluded.roles")
 
 
+def found_alliance(creator: int, corporation: int, key: str) -> int:
+    alliance = int(sql(f"select nextval('{schema('CORPORATIONS')}.alliance_ids')"))
+    now = int(time.time() * 1000)
+    name = f"Walk Alliance {key}"
+    ticker = f"w{key[:4]}"
+    sql(f"insert into {schema('CORPORATIONS')}.owner_names (owner_id, name_key, ticker_key) "
+        f"values ({alliance}, '{name.lower()}', '{ticker}')")
+    sql(f"insert into {schema('CORPORATIONS')}.alliances "
+        f"(id, name, short_name, description, url, executor_corporation_id, creator_corporation_id, "
+        f"creator_character_id, created_ms, founding_key) values "
+        f"({alliance}, '{name}', '{ticker}', '', '', {int(corporation)}, {int(corporation)}, "
+        f"{int(creator)}, {now}, 'walk-{key}')")
+    return alliance
+
+
+def join_alliance(corporation: int, alliance: int, executor: int) -> None:
+    now = int(time.time() * 1000)
+    sql(f"update {schema('CORPORATIONS')}.alliance_employment set ended_ms = {now} "
+        f"where corporation_id = {int(corporation)} and ended_ms is null")
+    sql(f"insert into {schema('CORPORATIONS')}.alliance_members "
+        f"(alliance_id, corporation_id, started_ms, chosen_executor_id) "
+        f"values ({int(alliance)}, {int(corporation)}, {now}, {int(executor)})")
+    sql(f"insert into {schema('CORPORATIONS')}.alliance_employment "
+        f"(corporation_id, alliance_id, started_ms) values ({int(corporation)}, {int(alliance)}, {now})")
+    sql(f"update {schema('CORPORATIONS')}.corporations set alliance_id = {int(alliance)} "
+        f"where id = {int(corporation)}")
+    sql(f"update {schema('CHARACTERS')}.characters set alliance_id = {int(alliance)} "
+        f"where corporation_id = {int(corporation)}")
+
+
 def fund_account(owner: int, isk: int, account_key: int = 1000) -> None:
     """The ISK of one of an owner's wallet accounts (a corporation's division: wallet.balances by account key)."""
     sql(f"insert into {schema('WALLET')}.balances (owner_id, isk, plex, account_key) values ({int(owner)}, {int(isk)}, 0, {int(account_key)}) "

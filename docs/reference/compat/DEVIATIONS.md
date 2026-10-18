@@ -4601,9 +4601,10 @@ as reference. The client's `bookmarkSvc.py` (`OnSharedBookmarksFolderUpdated`, `
   client and is not used. An expired bookmark is removed at its time: by a one-minute timer (`bookmarks.expiry`, LocalTimers) and by any read,
   and the characters that have its folder active hear of it (`bookmarksRemoved`).
 - **Access changes.** After an owner group change (a list deleted, a member added, removed or changed), each connected character whose
-  folders use the list is told, after the response: `OnSharedBookmarksFoldersAccessLost` (folder ids it can no longer view) and
-  `OnSharedBookmarksFoldersAccessChanged` (folder to its new level). The levels are recomputed from the character's lists at that time; the
-  connection row stays, so a restored list shows the folder again at the next read of the folders.
+  folders use the list is told, after the response: `OnSharedBookmarksFoldersAccessLost` (a list of folder ids it can no longer view) and
+  `OnSharedBookmarksFoldersAccessChanged` (a dict from folder id to its new level). V24.01 `bookmarkSvc.py` removes each lost id from
+  `foldersNew`, clears that folder's cached content and refreshes the UI. The levels are recomputed from the character's lists at that time;
+  the connection row stays, so a restored list shows the folder again at the next read of the folders.
 - **Limits and refusals.** `TooManyKnownFolders` and `TooManyActiveFolders` carry the client's named limits (`maxKnownFolders`;
   `maxPersonalFolders`, `maxSharedFolders`), and their text is the client's. A character may create 30 folders counting its default one
   (`MAX_CREATED_BOOKMARK_FOLDERS`); the client has no error key for it, so `TooManyCreatedFolders` carries the notice of this server.
@@ -4616,10 +4617,11 @@ as reference. The client's `bookmarkSvc.py` (`OnSharedBookmarksFolderUpdated`, `
   changes what its shared folders give it (a corporation's built-in list, an alliance entry). The upkeep timer (`bookmarks.upkeep`, one
   minute, LocalTimers) compares each connected character's corporation and alliance, read from the character store, with the last check;
   a change sends `OnSharedBookmarksFoldersAccessLost` or `OnSharedBookmarksFoldersAccessChanged` for its folders with the lists of its new
-  affiliation. The wiki says changes take up to five minutes to apply; this is one minute at most. The first check of a character only
-  records its affiliation, so a change made between its login and that first check is picked up at its next change.
-- **Not built.** The live-client walk of the corporation and alliance changes is not run (the shared-folder walk is in
-  `tools/headless-client/tests/test_walk_shared_bookmarks.py`).
+  affiliation. Alliance `DeleteMember` also snapshots connected affiliations before the store mutation and plans the resulting access notice
+  after the response. The V24.01 bookmark handler accepts the lost folder-id list directly, removes known folders, clears cached content and
+  refreshes the UI. The live alliance walk observes this alongside `OnAllianceMemberChanged(allianceID, corpID, change)`, whose change dict
+  maps each changed member column to its `(oldValue, newValue)` pair. The live walk `test_alliance_member_departure_revokes_an_alliance_shared_folder`
+  passed against eve.rs on 2026-10-18. The wiki says changes take up to five minutes to apply; upkeep checks within one minute.
 - **Structures and roles.** No structure is an access holder here (owner decision 8: structures are touched only when required). The
   wiki names no corporate role for a shared folder, and the client's bookmark code has no role check (`bookmarkSvc.py`,
   `bookmarkContainerWindow.py` read none). The role inputs are the list membership types (member, manager, admin, excluded) and the

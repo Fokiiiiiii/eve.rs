@@ -133,3 +133,56 @@ def test_corporation_membership_changes_revoke_and_restore_a_shared_folder():
             owner.call(BOOKMARKS, "DeleteFolder", folder_id)
             for group in (view_list, use_list, manage_list, admin_list):
                 owner.call(OWNER_GROUPS, "Delete", group)
+
+
+def test_alliance_member_departure_revokes_an_alliance_shared_folder():
+    race = HEALTH["races"][0]
+    run = uuid.uuid4().hex[:10]
+    with base.connect(f"walk-alliance-bookmark-owner-{run}") as owner:
+        owner_character, *_ = arrive(owner, race, f"{run}o")
+        with base.connect(f"walk-alliance-bookmark-member-{run}") as creator:
+            member_character, *_ = arrive(creator, race, f"{run}m")
+
+        executor_corporation = dbseed.found_corporation(STATION, 30100032, owner_character, f"e{run}")
+        member_corporation = dbseed.found_corporation(STATION, 30100032, member_character, f"m{run}")
+        dbseed.join_corporation(owner_character, executor_corporation, 1)
+        dbseed.join_corporation(member_character, member_corporation, 1)
+        alliance = dbseed.found_alliance(owner_character, executor_corporation, run)
+        dbseed.join_alliance(executor_corporation, alliance, executor_corporation)
+        dbseed.join_alliance(member_corporation, alliance, executor_corporation)
+
+        with base.connect(f"walk-alliance-bookmark-member-{run}") as member:
+            assert member.call("charUnboundMgr", "SelectCharacterID", charID=member_character,
+                               secondChoiceID=None, skipTutorial=False) is None
+            admin_list = group_id_of(owner.call(OWNER_GROUPS, "Create", "Walk alliance admin", ""))
+            manage_list = group_id_of(owner.call(OWNER_GROUPS, "Create", "Walk alliance manage", ""))
+            use_list = group_id_of(owner.call(OWNER_GROUPS, "Create", "Walk alliance use", ""))
+            view_list = group_id_of(owner.call(OWNER_GROUPS, "Create", "Walk alliance view", ""))
+            owner.call(OWNER_GROUPS, "AddMembers", view_list, m.Dict([(alliance, 0)]))
+
+            folder = owner.call(BOOKMARKS, "AddFolder", False, "Walk alliance shared",
+                                "shared with the alliance", admin_list, manage_list, use_list, view_list)
+            folder_id = folder_id_of(folder)
+            joined = member.call(BOOKMARKS, "AddToKnownFolders", folder_id, True)
+            assert number(keyval_of(joined[0])["accessLevel"]) == VIEW
+            notifications_of(member)
+
+            handle = member.call("allianceRegistry", "MachoBindObject", alliance, None)
+            member.call_bound(handle, "DeleteMember", member_corporation)
+            events = wait_for_events(
+                member,
+                lambda seen: named(seen, "OnAllianceMemberChanged")
+                and named(seen, "OnSharedBookmarksFoldersAccessLost"),
+                timeout=65,
+            )
+            changed = named(events, "OnAllianceMemberChanged")
+            lost = named(events, "OnSharedBookmarksFoldersAccessLost")
+            assert changed, "the alliance member change reaches the departing corporation"
+            assert mentions(changed[0], alliance), describe(changed[0]["args"])
+            assert mentions(changed[0], member_corporation), describe(changed[0]["args"])
+            assert lost, "leaving the alliance revokes its shared folder"
+            assert mentions(lost[0], folder_id), describe(lost[0]["args"])
+
+            owner.call(BOOKMARKS, "DeleteFolder", folder_id)
+            for group in (view_list, use_list, manage_list, admin_list):
+                owner.call(OWNER_GROUPS, "Delete", group)

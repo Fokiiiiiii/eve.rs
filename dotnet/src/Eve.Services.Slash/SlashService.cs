@@ -62,6 +62,7 @@ public sealed partial class SlashService(ShipHealthCommands health, DeathTestCom
         {
             commands["/solar"] = (call, argument) => teleport.SolarAsync(call.Session, argument, call.Cancellation);
             commands["/tele"] = (call, argument) => teleport.TeleAsync(call.Session, argument, call.Cancellation);
+            commands["/tr"] = (call, argument) => teleport.TrAsync(call.Session, argument, call.Cancellation);
         }
         if (agent is not null) commands["/agent"] = (call, argument) => agent.RunAsync(call.Session, argument, call.Cancellation);
         if (fw is not null) commands["/fw"] = (call, argument) => fw.RunAsync(call.Session, argument, call.Cancellation);

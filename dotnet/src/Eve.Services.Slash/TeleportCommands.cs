@@ -26,6 +26,12 @@ public interface IGmRelocation
     /// <summary>Where a connected pilot is, as a destination for a game master to go to; null when it is in no solar system.</summary>
     Task<GmDestination?> DestinationNearAsync(ClientSession pilot, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Where a connected pilot is, exactly: its ship's place in space (<see cref="GmDestination.Position"/>), or the anchor of its system (no position) when it is
+    /// docked; null when it is in no solar system.
+    /// </summary>
+    Task<GmDestination?> PlaceOfAsync(ClientSession pilot, CancellationToken cancellationToken);
+
     /// <summary>Moves the session's pilot to the destination; null when it is there, else the words of the refusal.</summary>
     Task<string?> MoveAsync(ClientSession session, GmDestination destination, CancellationToken cancellationToken);
 }
@@ -39,6 +45,7 @@ public sealed class TeleportCommands(IGmRelocation relocation)
 {
     public const string SolarUsage = "Usage: /solar <system name>";
     public const string TeleUsage = "Usage: /tele <character name|characterID>";
+    public const string TrUsage = "Usage: /tr <me|characterID> <destination|pos=x,y,z|offset=x,y,z>";
 
     /// <summary><c>/solar &lt;system&gt;</c>: the pilot goes to the anchor of the system.</summary>
     public async Task<string> SolarAsync(ClientSession session, string argument, CancellationToken cancellationToken)
@@ -67,5 +74,115 @@ public sealed class TeleportCommands(IGmRelocation relocation)
             return $"Could not resolve a live location for character {pilot.CharacterId}.";
         return await relocation.MoveAsync(session, destination, cancellationToken)
             ?? $"Teleported to character {pilot.CharacterId} in {destination.SolarSystemName} ({destination.SolarSystemId}).";
+    }
+
+    /// <summary>
+    /// <c>/tr &lt;me|character&gt; &lt;destination&gt;</c> (EVE.js <c>handleTransportCommand</c>): the pilot is moved to a solar system's anchor, to a place given as
+    /// <c>pos=x,y,z</c> (or three numbers) in the pilot's system, to a place offset by <c>offset=x,y,z</c> from the pilot or from a destination, or to another pilot's
+    /// place (<c>me</c> is the caller's). <c>noblock</c> is ignored. The pilot's ship is put in space at the place (no gate, range or timer rule applies).
+    /// </summary>
+    public async Task<string> TrAsync(ClientSession session, string argument, CancellationToken cancellationToken)
+    {
+        if (session.CharacterId is not { } self) return "Select a character before using /tr.";
+        var tokens = argument.Split([' ', '\t'], StringSplitOptions.RemoveEmptyEntries)
+            .Where(token => !token.Equals("noblock", StringComparison.OrdinalIgnoreCase)).ToArray();
+        if (tokens.Length < 2) return TrUsage;
+
+        var pilot = tokens[0].Equals("me", StringComparison.OrdinalIgnoreCase)
+            ? new GmPilot(self, session)
+            : await relocation.FindPilotAsync(tokens[0], cancellationToken);
+        if (pilot is null) return $"Transport target not found: {tokens[0]}.";
+        if (pilot.Session is not { } target) return $"Character {pilot.CharacterId} is not currently connected.";
+        var targetLabel = target == session ? "me" : $"character {pilot.CharacterId}";
+
+        var rest = tokens[1..];
+        var offset = Vector(rest[^1], "offset");
+        var from = offset is null ? rest : rest[..^1];
+        GmDestination destination;
+        if (rest.Length == 1 && Vector(rest[0], "pos") is { } point)
+        {
+            if (await relocation.PlaceOfAsync(target, cancellationToken) is not { } context)
+                return "Could not resolve a solar-system context for /tr pos=...";
+            destination = Point(context, point);
+        }
+        else if (rest.Length == 3 && Triple(rest) is { } raw)
+        {
+            if (await relocation.PlaceOfAsync(target, cancellationToken) is not { } context)
+                return "Could not resolve a solar-system context for raw /tr coordinates.";
+            destination = Point(context, raw);
+        }
+        else if (from.Length == 0)
+        {
+            // only an offset: from the pilot's own place, which must be in space
+            if (await relocation.PlaceOfAsync(target, cancellationToken) is not { Position: { } at } place || offset is null)
+                return "Could not apply /tr offset=... because the target has no in-space anchor.";
+            destination = Point(place, Add(at, offset));
+        }
+        else if (from.Length == 1)
+        {
+            if (await LocationAsync(session, from[0], cancellationToken) is not { } location)
+                return $"Transport destination not found: {from[0]}.";
+            if (offset is null)
+            {
+                destination = location;
+            }
+            else if (location.Position is not { } at)
+            {
+                return "Could not apply /tr offset=... to that destination.";
+            }
+            else
+            {
+                destination = Point(location, Add(at, offset));
+            }
+        }
+        else
+        {
+            return TrUsage;
+        }
+
+        var answer = await relocation.MoveAsync(target, destination, cancellationToken);
+        return answer ?? $"Transported {targetLabel} to {Describe(destination)}.";
+    }
+
+    /// <summary>The place a destination token names: <c>me</c> (the caller's), a solar system (ID or name), or a connected character's place.</summary>
+    private async Task<GmDestination?> LocationAsync(ClientSession session, string token, CancellationToken cancellationToken)
+    {
+        if (token.Equals("me", StringComparison.OrdinalIgnoreCase))
+            return await relocation.PlaceOfAsync(session, cancellationToken);
+        if (await relocation.FindSolarSystemAsync(token, cancellationToken) is { } system)
+            return new GmDestination(system.Id, system.Name);
+        if (await relocation.FindPilotAsync(token, cancellationToken) is { Session: { } other })
+            return await relocation.PlaceOfAsync(other, cancellationToken);
+        return null;
+    }
+
+    private static GmDestination Point(GmDestination context, IReadOnlyList<double> at) =>
+        new(context.SolarSystemId, context.SolarSystemName, at, [1d, 0d, 0d]);
+
+    private static IReadOnlyList<double> Add(IReadOnlyList<double> at, IReadOnlyList<double> offset) =>
+        [at[0] + offset[0], at[1] + offset[1], at[2] + offset[2]];
+
+    private static string Describe(GmDestination destination) =>
+        destination.Position is { } at
+            ? FormattableString.Invariant($"({at[0]}, {at[1]}, {at[2]})")
+            : $"{destination.SolarSystemName} ({destination.SolarSystemId})";
+
+    /// <summary><c>key=x,y,z</c> as three numbers, or null when the token is not that form.</summary>
+    private static IReadOnlyList<double>? Vector(string token, string key)
+    {
+        var prefix = key + "=";
+        return token.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) ? Triple(token[prefix.Length..].Split(',')) : null;
+    }
+
+    /// <summary>Three numbers (as tokens or as the parts of a comma list), or null.</summary>
+    private static IReadOnlyList<double>? Triple(IReadOnlyList<string> parts)
+    {
+        if (parts.Count != 3) return null;
+        var values = new double[3];
+        for (var i = 0; i < 3; i++)
+            if (!double.TryParse(parts[i], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out values[i])
+                || !double.IsFinite(values[i]))
+                return null;
+        return values;
     }
 }

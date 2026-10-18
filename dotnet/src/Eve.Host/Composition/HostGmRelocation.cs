@@ -33,6 +33,13 @@ internal sealed class HostGmRelocation(SpaceSessions space, SolarSystemCatalog s
         return new GmDestination(place.SolarSystemId, systems.Get(place.SolarSystemId)?.Name ?? place.SolarSystemId.ToString(), place.Position, place.Direction);
     }
 
+    public async Task<GmDestination?> PlaceOfAsync(ClientSession pilot, CancellationToken cancellationToken)
+    {
+        if (await space.PilotPlaceAsync(pilot, cancellationToken) is not { } place)
+            return null;
+        return new GmDestination(place.SolarSystemId, systems.Get(place.SolarSystemId)?.Name ?? place.SolarSystemId.ToString(), place.Position);
+    }
+
     public Task<string?> MoveAsync(ClientSession session, GmDestination destination, CancellationToken cancellationToken) =>
         space.RelocateAsync(session, destination.SolarSystemId, destination.Position, destination.Direction, cancellationToken);
 }

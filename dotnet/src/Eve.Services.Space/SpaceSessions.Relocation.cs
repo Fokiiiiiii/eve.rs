@@ -133,6 +133,23 @@ public sealed partial class SpaceSessions
     }
 
     /// <summary>
+    /// Where a connected pilot is, exactly (<c>/tr</c>): the place of its ship in space, or only its system (a null place) when it is docked; null when it is
+    /// in no system.
+    /// </summary>
+    public async Task<(int SolarSystemId, IReadOnlyList<double>? Position)?> PilotPlaceAsync(ClientSession target, CancellationToken cancellationToken)
+    {
+        if (IsInSpace(target) && ShipIdOf(target) is { } shipId && await ScenePositionOfAsync(target, shipId, cancellationToken) is { } at)
+        {
+            return (at.SolarSystemId, new double[] { at.X, at.Y, at.Z });
+        }
+        if (target.GetInt("solarsystemid2") is { } system and > 0)
+        {
+            return ((int)system, null);
+        }
+        return null;
+    }
+
+    /// <summary>
     /// Where a game master goes to be with a connected pilot (<c>/tele</c>): <see cref="RelocationOffsetMeters"/> off the pilot's ship in space, facing it; a pilot
     /// that is docked is found at the anchor of its system. Null when the pilot is in no system.
     /// </summary>

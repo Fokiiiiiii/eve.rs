@@ -267,25 +267,7 @@ internal sealed partial class CharacterServicesComposition
                 // the offer is the next step of the agent's epic arc (EpicArcOffers: the official arc sequence, the held-back sites kept
                 // out by owner decision), else the basic kill mission of a level 4 or 5 security agent (BasicKillOffers). Other basic
                 // agents have no official mission link and offer nothing.
-                async ValueTask<Eve.Agents.AgentMissionContent?> (AgentMissionAgentData agent, long characterId, CancellationToken ct) =>
-                {
-                    // a storyline agent with a pending storyline offer makes it first
-                    if (await StorylineOffersService.PickAsync(agent, characterId, ct) is { } storylineOffer) return storylineOffer;
-                    var completed = await agentMissionStore.ReadCompletedAsync(characterId, ct);
-                    var failed = await agentMissionStore.ReadFailedAsync(characterId, ct);
-                    var now = DateTimeOffset.UtcNow;
-                    var completedAt = completed.GroupBy(item => item.MissionId).ToDictionary(group => group.Key, group => group.Max(item => item.CompletedAt));
-                    if ((Eve.Services.Core.EpicArcOffers.Pick(agentMissionStatic, agent.AgentId, completed, now, failed) ??
-                            Eve.Services.Core.BasicKillOffers.Pick(agentMissionStatic, agent, completedAt, now,
-                                dungeon => dungeonWavesDirector?.StartRefusalOf(dungeon) is null) ??
-                            Eve.Services.Core.BasicKillOffers.PickCourier(agentMissionStatic, agent, completedAt, now) ??
-                            Eve.Services.Core.BasicKillOffers.PickMining(agentMissionStatic, agent, completedAt, now,
-                                dungeon => dungeonWavesDirector?.StartRefusalOf(dungeon) is null, IsMiningMission)) is not { } missionId ||
-                        agentMissionStatic.Mission(missionId) is not { } mission)
-                        return null;
-                    // the mission type label is the agent's kind (encounter, epicArc): the journal shows no mission without one
-                    return new Eve.Agents.AgentMissionContent(mission.MissionId, mission.NameId, mission.NameEn, agent.MissionKind, agent.ImportantMission);
-                },
+                PickOfferAsync,
                 () => DateTimeOffset.UtcNow,
                 // a talk step completes when the pilot talks to the next agent, in the station or in space in the agent's system (A-X3)
                 async (characterId, agent, atLocation, ct) =>
@@ -639,6 +621,27 @@ internal sealed partial class CharacterServicesComposition
         await economyWallets.AdjustAsync(connection, transaction, characterId, amount, counterpartyId, refTypeId, reason,
             now(), operationKey, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+    }
+
+    /// <summary>The offer an agent makes a character (the dialogue request and the game master's offer): the next step of the epic arc, else a basic kill, courier or mining mission.</summary>
+    internal async ValueTask<Eve.Agents.AgentMissionContent?> PickOfferAsync(AgentMissionAgentData agent, long characterId, CancellationToken ct)
+    {
+        // a storyline agent with a pending storyline offer makes it first
+        if (await StorylineOffersService.PickAsync(agent, characterId, ct) is { } storylineOffer) return storylineOffer;
+        var completed = await agentMissionStore.ReadCompletedAsync(characterId, ct);
+        var failed = await agentMissionStore.ReadFailedAsync(characterId, ct);
+        var now = DateTimeOffset.UtcNow;
+        var completedAt = completed.GroupBy(item => item.MissionId).ToDictionary(group => group.Key, group => group.Max(item => item.CompletedAt));
+        if ((Eve.Services.Core.EpicArcOffers.Pick(agentMissionStatic, agent.AgentId, completed, now, failed) ??
+                Eve.Services.Core.BasicKillOffers.Pick(agentMissionStatic, agent, completedAt, now,
+                    dungeon => dungeonWavesDirector?.StartRefusalOf(dungeon) is null) ??
+                Eve.Services.Core.BasicKillOffers.PickCourier(agentMissionStatic, agent, completedAt, now) ??
+                Eve.Services.Core.BasicKillOffers.PickMining(agentMissionStatic, agent, completedAt, now,
+                    dungeon => dungeonWavesDirector?.StartRefusalOf(dungeon) is null, IsMiningMission)) is not { } missionId ||
+            agentMissionStatic.Mission(missionId) is not { } mission)
+            return null;
+        // the mission type label is the agent's kind (encounter, epicArc): the journal shows no mission without one
+        return new Eve.Agents.AgentMissionContent(mission.MissionId, mission.NameId, mission.NameEn, agent.MissionKind, agent.ImportantMission);
     }
 }
 

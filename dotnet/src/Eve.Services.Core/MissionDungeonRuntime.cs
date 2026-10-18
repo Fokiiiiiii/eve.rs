@@ -251,6 +251,19 @@ public sealed class MissionDungeonRuntime(
         await host.TakeCargoAsync(owner, record.Content.MissionId, (int)cargoType, cancellationToken);
     }
 
+    /// <summary>
+    /// A game master's completion of the character's accepted mission with an agent (<c>/agent complete</c>): the mission is turned in as if its objectives were
+    /// met, and it pays what a completion pays (the ISK, the standings and the basic mission's gains). A consumed objective is not taken from the hold. False,
+    /// with nothing paid, when the character holds no accepted mission with the agent.
+    /// </summary>
+    public async Task<bool> GmCompleteAsync(long owner, long agentId, CancellationToken cancellationToken = default)
+    {
+        var record = await store.ReadAsync(owner, agentId, cancellationToken);
+        if (record is null || record.State != AgentMissionState.Accepted) return false;
+        await CompleteWithRewardAsync(owner, record, $"gm:{record.Content.MissionId}", $"gm:{owner}:{record.Content.MissionId}:{agentId}", cancellationToken);
+        return true;
+    }
+
     /// <summary>The courier objective of a mission: a courier record that is not a trade mission (a trade mission is a fetch at its agent).</summary>
     private MissionStaticCourier? CourierOf(long missionId) => isTrade?.Invoke(missionId) == true ? null : catalog.Mission(missionId)?.Courier;
 

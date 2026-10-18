@@ -146,6 +146,34 @@ public class MissionDungeonRuntimeTests
         Assert.Single(host.Credits);
     }
 
+    [AgentsPgFact]
+    public async Task A_game_master_completion_pays_the_accepted_mission_once_and_refuses_one_that_is_not_accepted()
+    {
+        var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var schema = "mdr_" + Guid.NewGuid().ToString("N")[..12];
+        await using var cleanup = new Cleanup(source, schema);
+        await AgentMissionStore.MigrateAsync(source, schema);
+        var store = new AgentMissionStore(source, schema);
+        var host = new FakeHost { Store = store };
+        var runtime = new MissionDungeonRuntime(store, Catalog(), host, agent => agent == Agent ? new MissionAgentPlace(System, Corporation) : null, () => Start);
+        await store.OfferAsync(Pilot, Agent, new AgentMissionContent(9101, 1234, "Kill Step", "", false), Start, "offer:1");
+
+        // an offer is not a mission the pilot holds: nothing is paid and the offer stays
+        Assert.False(await runtime.GmCompleteAsync(Pilot, Agent));
+        Assert.Equal(AgentMissionState.Offered, (await store.ReadAsync(Pilot, Agent))!.State);
+        Assert.Empty(host.Credits);
+
+        await store.AcceptAsync(Pilot, Agent, Start, "accept:1");
+        Assert.True(await runtime.GmCompleteAsync(Pilot, Agent));
+        var credit = Assert.Single(host.Credits);
+        Assert.Equal((Pilot, 100000L, Corporation, 33), (credit.Character, credit.Amount, credit.Counterparty, credit.RefType));
+        Assert.Equal("agent-mission:" + Pilot + ":9101:gm:9101", credit.Key);
+        Assert.Equal(AgentMissionState.Completed, (await store.ReadAsync(Pilot, Agent))!.State);
+
+        Assert.False(await runtime.GmCompleteAsync(Pilot, Agent));
+        Assert.Single(host.Credits);
+    }
+
     private const string BasicKillMission = """
         {"_key": 9103, "name": {"en": "Basic Kill Step"}, "nameID": 1237, "hasStandingRewards": false,
          "killMission": {"dungeonID": 3509, "objectiveQuantity": 0}}

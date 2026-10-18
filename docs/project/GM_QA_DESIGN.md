@@ -16,7 +16,9 @@ Headless tests and QA runs need the same game-master actions a human GM uses in 
 | `/lp`, `/addlp`, `/setlp` | `LoyaltyCommands` | Per corporation; the LP store announces each change |
 | `/ship`, `/giveme`, `/giveitem`, `/fit`, `/unfit`, `/giveskill`, `/npc`, `/dmg`, `/heal`, `/repair`, `/deathtest`, `/suicide` | the existing command classes | `/repair` is `/heal` (DEVIATIONS G6) |
 | `/solar <system>`, `/tele <character>` | `TeleportCommands` over `SpaceSessions.RelocateAsync` | the relocation of a pilot (DEVIATIONS G8) |
-| agent and mission control, `/fw`, `/pi` | not built | See TODO |
+| `/agent offers`, `offer`, `accept`, `quit`, `complete`, `reset` | `AgentCommands` over `HostAgentControl` | the caller's own missions through the client's path (DEVIATIONS G9) |
+| `/missioncomplete` | not built | EveJS marks placeholder objectives; eve.rs has no placeholder mission (DEVIATIONS G9) |
+| `/fw`, `/pi` | not built | See TODO |
 
 ## Principles
 - Words and semantics come from EveJS (`services/chat/chatCommands.js` and its command modules). Where EveJS lacks a thing, the client contract (eve-logic) and the real game decide, and the choice is recorded in DEVIATIONS.
@@ -28,8 +30,9 @@ Headless tests and QA runs need the same game-master actions a human GM uses in 
 - Database-backed tests on the rig (`Rig` in `Eve.Services.Dogma.Tests`): a real character, real stores in throwaway schemas, the slash service as the host builds it. Each command has a success, a refusal and a repeat.
 - Planet and identity calls are tested against the store (`GmPlanetStoreTests`, `RoleGrantTests`).
 - The relocation: `RelocationTests` (database-backed, the fake simulation of the space tests) and `TeleportCommandTests` (no database); the anchor placement in the scene tests (`a_relocation_*`).
+- The agent missions: `AgentCommandTests` (no database), the reset in `AgentMissionStoreTests` and the GM completion in `MissionDungeonRuntimeTests` (database-backed).
 - Lanes: database tests run under the database's lock (`flock /tmp/eve-heavy-eve_p2.lock`) with `--blame-hang-timeout 120s`, one lane at a time.
 
 ## Open
 - The headless walk against EveJS for the shared commands (MITM capture on the eve_p2 lane, docs/project/MITM_COMPARE.md) is not yet built.
-- Agent and mission control, the FW helpers and the PI helpers are not built.
+- The FW helpers and the PI helpers are not built. `/missioncomplete` is not built (no placeholder mission exists; DEVIATIONS G9).

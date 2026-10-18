@@ -761,7 +761,12 @@ fn message_of(case: &Value) -> Message {
         "Enter" => Message::Enter(Box::new(Enter {
             session_id: session_id(),
             solar_system_id: number("solarSystemId") as i32,
-            how: if number("how") == 0 { How::Undock } else { How::InSpace },
+            how: match number("how") {
+                0 => How::Undock,
+                1 => How::InSpace,
+                2 => How::Anchor,
+                other => panic!("how {other} in {case}"),
+            },
             station_id: wide(case, "stationId"),
             ship: ship_of(&case["ship"]),
             position: case.get("position").map(|vector| {

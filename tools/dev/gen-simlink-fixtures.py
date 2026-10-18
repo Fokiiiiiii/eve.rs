@@ -631,6 +631,8 @@ valid = [
     {"name": "enter already in space, no modules, non-ASCII name", "kind": "Enter", "sessionId": "1",
      "solarSystemId": 30000142, "how": 1, "stationId": "0", "ship": dict(BARE, name="イビス"),
      "position": [100.0, 200.0, 300.0], "direction": [0.0, 0.0, 1.0]},
+    {"name": "enter at the anchor of the system (a game master's relocation, no pose)", "kind": "Enter", "sessionId": "1",
+     "solarSystemId": 30000142, "how": 2, "stationId": "0", "ship": dict(BARE, name="イビス")},
     {"name": "enter accepted", "kind": "EnterReply", "sessionId": "1790646377000015", "ok": True},
     {"name": "enter refused", "kind": "EnterReply", "sessionId": "1790646377000015", "ok": False,
      "reason": "UNKNOWN_STATION 60015249"},

@@ -237,6 +237,7 @@ impl Message {
                 let how = match r.u8()? {
                     0 => How::Undock,
                     1 => How::InSpace,
+                    2 => How::Anchor,
                     _ => return Err(DecodeError::BadValue("how")),
                 };
                 let station_id = r.i64()?;

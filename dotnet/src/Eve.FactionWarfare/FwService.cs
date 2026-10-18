@@ -279,6 +279,43 @@ public sealed class FwService
         return EnlistOutcome.Accepted;
     }
 
+    /// <summary>
+    /// A game master's enlistment (<c>/fw enlist</c>): the corporation or alliance is in the occupier faction now, not at the next downtime, and no standing is asked
+    /// (a QA tool; the client's join asks both). A corporation is in one faction: a join to another one is <see cref="EnlistOutcome.AlreadyEnlisted"/>, and a faction
+    /// that does not occupy is <see cref="EnlistOutcome.NotAnOccupier"/>.
+    /// </summary>
+    public async Task<EnlistOutcome> GmEnlistAsync(int ownerKind, long ownerId, long factionId, long nowMs, CancellationToken cancellationToken = default)
+    {
+        if (!FwFactions.IsOccupier(factionId))
+            return EnlistOutcome.NotAnOccupier;
+        await using var connection = await _store.Source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        var current = await ResolveAsync(connection, transaction, ownerKind, ownerId, nowMs, cancellationToken);
+        if (current.FactionId != 0 && current.FactionId != factionId)
+            return EnlistOutcome.AlreadyEnlisted;
+        await _store.SaveEnlistmentAsync(connection, transaction,
+            current with { FactionId = factionId, NextFactionId = 0, EffectiveMs = 0, ChangedMs = nowMs }, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return EnlistOutcome.Accepted;
+    }
+
+    /// <summary>
+    /// A game master's leave (<c>/fw leave</c>): the corporation or alliance is out of its faction now, with any pending join dropped. Refused with
+    /// <see cref="EnlistOutcome.NothingToWithdraw"/> when it is in no faction.
+    /// </summary>
+    public async Task<EnlistOutcome> GmLeaveAsync(int ownerKind, long ownerId, long nowMs, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await _store.Source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        var current = await ResolveAsync(connection, transaction, ownerKind, ownerId, nowMs, cancellationToken);
+        if (current.FactionId == 0)
+            return EnlistOutcome.NothingToWithdraw;
+        await _store.SaveEnlistmentAsync(connection, transaction,
+            current with { FactionId = 0, NextFactionId = 0, EffectiveMs = 0, ChangedMs = nowMs }, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return EnlistOutcome.Accepted;
+    }
+
     /// <summary>Withdraws a pending join (the enlistment keeps its faction). Refused when no join is pending.</summary>
     public Task<EnlistOutcome> WithdrawJoinAsync(int ownerKind, long ownerId, long nowMs, CancellationToken cancellationToken = default) =>
         WithdrawAsync(ownerKind, ownerId, nowMs, pendingJoin: true, cancellationToken);

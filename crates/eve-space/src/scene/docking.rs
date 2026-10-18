@@ -64,6 +64,32 @@ impl Scene {
         Ok(self.announce_arrival(session, now))
     }
 
+    /// Puts a ship in space at the anchor of its system, where a game master's relocation brings a pilot (EVE.js `buildSolarSystemSpawnState`): off the
+    /// system's first stargate, else its first station, else its first body, on the x axis past the anchor's surface by the ship's radius and
+    /// `ANCHOR_CLEARANCE`, facing the anchor. A system with no body is entered at 1 000 000 m along x.
+    pub fn enter_at_anchor(
+        &mut self,
+        session: SessionId,
+        spec: ShipSpec,
+        now: i64,
+    ) -> Result<Vec<Out>, SceneError> {
+        let anchor = self
+            .system
+            .bodies
+            .iter()
+            .find(|body| body.kind == BodyKind::Stargate)
+            .or_else(|| self.system.bodies.iter().find(|body| is_dock_body(body)))
+            .or_else(|| self.system.bodies.first());
+        let (position, direction) = match anchor {
+            Some(body) => {
+                let offset = body.radius + spec.radius + ANCHOR_CLEARANCE;
+                ([body.position.x + offset, body.position.y, body.position.z], [-1.0, 0.0, 0.0])
+            }
+            None => ([1_000_000.0, 0.0, 0.0], [1.0, 0.0, 0.0]),
+        };
+        self.enter_in_space(session, spec, position, direction, now)
+    }
+
     pub fn leave(&mut self, session: SessionId, why: Departure, now: i64) -> Option<Vec<Out>> {
         let mut out = self.clear_tether_policy(session, now);
         if let Some(structure_id) = self.controlled_structure_id(session) {
@@ -233,6 +259,9 @@ pub(super) fn surface_distance(ship: &Ship, station: Vec3, station_radius: f64) 
 /// The states of an Upwell structure in which it takes no ship (EVE.js `STRUCTURE_DISABLED_STATES`, `structureConstants.js`): unknown, unanchored,
 /// anchoring, onlining, hull reinforce and hull vulnerable, anchor and deploy vulnerable.
 const STRUCTURE_DISABLED_STATES: [i32; 8] = [0, 1, 2, 102, 113, 114, 115, 116];
+
+/// How far past the surface of its anchor body a ship that is put in space at the anchor is placed, metres (the clearance of EVE.js's spawn state).
+const ANCHOR_CLEARANCE: f64 = 5_000.0;
 
 /// Whether a body is one a ship docks at or undocks from: a station, or an Upwell structure (ST-1 c).
 pub(super) fn is_dock_body(body: &crate::world::Body) -> bool {

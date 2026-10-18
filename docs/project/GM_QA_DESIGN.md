@@ -15,7 +15,12 @@ Headless tests and QA runs need the same game-master actions a human GM uses in 
 | `/setstanding`, `/fullstandings`, `/maxagentstandings` | `StandingCommands` | Rows subject = owner, object = character (DEVIATIONS G2, G4) |
 | `/lp`, `/addlp`, `/setlp` | `LoyaltyCommands` | Per corporation; the LP store announces each change |
 | `/ship`, `/giveme`, `/giveitem`, `/fit`, `/unfit`, `/giveskill`, `/npc`, `/dmg`, `/heal`, `/repair`, `/deathtest`, `/suicide` | the existing command classes | `/repair` is `/heal` (DEVIATIONS G6) |
-| `/tele`, `/solar`, agent and mission control, `/fw`, `/pi` | not built | See TODO |
+| `/solar <system>`, `/tele <character>` | `TeleportCommands` over `SpaceSessions.RelocateAsync` | the relocation of a pilot (DEVIATIONS G8) |
+| `/agent offers`, `offer`, `accept`, `quit`, `complete`, `reset` | `AgentCommands` over `HostAgentControl` | the caller's own missions through the client's path (DEVIATIONS G9) |
+| `/missioncomplete` | not built | EveJS marks placeholder objectives; eve.rs has no placeholder mission (DEVIATIONS G9) |
+| `/fw enlist <faction>`, `/fw leave`, `/fw vp <points>` | `FwCommands` over `HostFwControl` | the caller's corporation and system (DEVIATIONS G10) |
+| `/pi list`, `/pi commodity`, `/pi command` | `PiCommands` over `HostPiControl` | the caller's planets, pins named from `list` (DEVIATIONS G10) |
+| `/pi program` | not built | the forced install needs the client's own inputs (DEVIATIONS G10) |
 
 ## Principles
 - Words and semantics come from EveJS (`services/chat/chatCommands.js` and its command modules). Where EveJS lacks a thing, the client contract (eve-logic) and the real game decide, and the choice is recorded in DEVIATIONS.
@@ -26,9 +31,12 @@ Headless tests and QA runs need the same game-master actions a human GM uses in 
 - Unit tests on the parsers and the messages (`SlashCatalogTests`, `IskCommandTests` parsing).
 - Database-backed tests on the rig (`Rig` in `Eve.Services.Dogma.Tests`): a real character, real stores in throwaway schemas, the slash service as the host builds it. Each command has a success, a refusal and a repeat.
 - Planet and identity calls are tested against the store (`GmPlanetStoreTests`, `RoleGrantTests`).
+- The relocation: `RelocationTests` (database-backed, the fake simulation of the space tests) and `TeleportCommandTests` (no database); the anchor placement in the scene tests (`a_relocation_*`).
+- The agent missions: `AgentCommandTests` (no database), the reset in `AgentMissionStoreTests` and the GM completion in `MissionDungeonRuntimeTests` (database-backed).
+- The faction and planet helpers: `FwDatabaseTests` (database-backed) for the enlistment and the victory points, `FwCommandTests` and `PiCommandTests` (no database).
+- The walks: `tools/headless-client/tests/gm.py` seeds ISK and standings through the same commands on both servers; the psql seeds that have no command are listed in DEVIATIONS G11.
 - Lanes: database tests run under the database's lock (`flock /tmp/eve-heavy-eve_p2.lock`) with `--blame-hang-timeout 120s`, one lane at a time.
 
 ## Open
 - The headless walk against EveJS for the shared commands (MITM capture on the eve_p2 lane, docs/project/MITM_COMPARE.md) is not yet built.
-- `/tele` and `/solar` need a relocation of a session that the host does not have yet.
-- Agent and mission control, the FW helpers and the PI helpers are not built.
+- `/missioncomplete` is not built (no placeholder mission exists; DEVIATIONS G9). `/pi program` is not built (DEVIATIONS G10).

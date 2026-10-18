@@ -15,6 +15,9 @@ public enum EnterHow : byte
 
     /// <summary>It is already in space (a login in space, a jump arrival).</summary>
     InSpace = 1,
+
+    /// <summary>It is put in space at the anchor of its solar system, where a game master's relocation brings it (no position is sent).</summary>
+    Anchor = 2,
 }
 
 /// <summary>A fitted module, as the ship's slim item lists it.</summary>

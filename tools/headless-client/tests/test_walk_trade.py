@@ -18,6 +18,7 @@ import pytest
 
 from evecli.describe import describe
 from tests import dbseed
+from tests import gm
 from tests import test_login_to_character as base
 from tests.test_health import HEALTH
 from tests.test_undock import STATION, arrive
@@ -67,7 +68,7 @@ def test_two_pilots_trade_a_cockroach_for_isk_and_the_database_holds_the_result(
         seller_char, _, _, _ = arrive(seller, race, run + "s")
         buyer_char, _, _, _ = arrive(buyer, race, run + "b")
         ship = dbseed.new_item(COCKROACH, owner=seller_char, location=STATION, singleton=True)
-        dbseed.set_isk(buyer_char, PRICE * 2)
+        gm.set_isk(buyer, PRICE * 2)
         seller_isk, buyer_isk = dbseed.isk_of(seller_char), dbseed.isk_of(buyer_char)
 
         moniker = seller.call("trademgr", "InitiateTrade", buyer_char)

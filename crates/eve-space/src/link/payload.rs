@@ -51,6 +51,7 @@ impl Message {
                 out.push(match enter.how {
                     How::Undock => 0,
                     How::InSpace => 1,
+                    How::Anchor => 2,
                 });
                 out.extend_from_slice(&enter.station_id.to_le_bytes());
                 put_ship(&mut out, &enter.ship);

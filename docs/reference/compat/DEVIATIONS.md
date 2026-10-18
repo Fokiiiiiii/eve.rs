@@ -4801,3 +4801,10 @@ as reference. The client's `bookmarkSvc.py` (`OnSharedBookmarksFolderUpdated`, `
 - **Source (G24).** EVE.js has no `/skyhook` command. The client's skyhook menu sends it (`menusvc.py` `GMSetSkyhookState`, `/skyhook state <id> <state>`), with the states of the client's `orbitalSkyhook/const.py`: 0 unknown, 210 shield vulnerable, 211 armor reinforce, 212 armor vulnerable, 213 hull reinforce, 214 hull vulnerable. Any other state is the usage.
 - **Write (G24).** The skyhook's row in the sovereignty table (`/skyhooks/<id>`) gets its `state`; the row is staged, flushed and read back, and the write shares the sovereignty write gate (`PersistenceSkyhookStateWriter`). A skyhook already in the state is not written; an unknown ID answers that it is not found.
 - shortcut: setting the state does not run the reinforcement timers or the sovereignty consequences of a state change; the state is what the skyhook service reads. No change is pushed to the clients, which read the state when they ask for it.
+
+## GM tools, slice G25: `/entity deploy <amount> <entity type|typeID>` (2026-10-18)
+
+- **Source (G25).** EVE.js has no `/entity` command. The client sends `/entity deploy <qty> <typeID>` (`svc_slash.py` `cmd_entity`, `menusvc.py`, `insider.py`'s respawn test followed by `/nuke`). The entity category is SDE category 11: the NPC groups of the Blood Raider, Irregular, Drifter, Sleeper and Mordu's Legion ships. The SDE gives them as ship hulls.
+- **Spawn (G25).** The entities are NPC hulls spawned in space around the pilot's ship by the same spawner as `/spawn`, so `/unspawn` and `/nuke` take them out. The amount is 1 to 50, as `/spawnn`'s.
+- **Names (G25).** A name is resolved among the entity category only; a ship or any other category answers that it is not an entity type. A name with several entity types is ambiguous and asks for the typeID.
+- shortcut: the entities are placed as `/spawn` places a hull (at the pilot's ship, no deviation), not in the formation of the group's own spawn table; upgrade with the entity spawn rules when the spawn tables are seeded.

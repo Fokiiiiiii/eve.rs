@@ -426,7 +426,8 @@ public sealed partial class SpaceSessions
         CancellationToken cancellationToken,
         long hostileResponseThreshold = NpcHostileThreshold,
         double aggressionRangeOverride = 0,
-        List<long>? shipIds = null)
+        List<long>? shipIds = null,
+        bool stationary = false)
     {
         var composition = new List<(string Name, int Count)>();
         var unarmed = 0;
@@ -443,6 +444,8 @@ public sealed partial class SpaceSessions
             {
                 OwnerId = profile.CorporationId, CorporationId = (int)profile.CorporationId, AllianceId = (int)profile.AllianceId, WarFactionId = profile.FactionId,
                 SecurityStatus = profile.SecurityStatus,
+                // QA `/npc ... still`: no top speed, so it holds its place (a Pochven sentry has none either)
+                MaxVelocity = stationary ? 0 : hull.MaxVelocity,
                 // an entity type has no lock range (it has `entityAttackRange` instead) and sometimes no lock count: with 0 of either it could never lock what it
                 // attacks, so it locks as far as it attacks and holds at least one (`applyNativeNpcHullCombatOverrides` of the reference)
                 MaxTargetRange = Math.Max(hull.MaxTargetRange, aggression),
@@ -579,7 +582,7 @@ public sealed partial class SpaceSessions
         }
     }
 
-    public async Task<NpcSpawnReport> SpawnNpcsAsync(ClientSession session, string query, int amount, CancellationToken cancellationToken)
+    public async Task<NpcSpawnReport> SpawnNpcsAsync(ClientSession session, string query, int amount, CancellationToken cancellationToken, bool stationary = false)
     {
         if (!_pilots.TryGetValue((ulong)session.SessionId, out var pilot))
         {
@@ -601,7 +604,7 @@ public sealed partial class SpaceSessions
             return NpcSpawnReport.Failed(plan.Error!, plan.Suggestions);
         }
 
-        var (composition, unarmed) = await SpawnGroupAsync(plan.Profiles, new SpawnAnchor(pilot.SolarSystemId, pilot.ShipId, [0, 0, 0]), cancellationToken);
+        var (composition, unarmed) = await SpawnGroupAsync(plan.Profiles, new SpawnAnchor(pilot.SolarSystemId, pilot.ShipId, [0, 0, 0]), cancellationToken, stationary: stationary);
         return composition.Count == 0
             ? NpcSpawnReport.Failed(NpcSpawnReport.SpawnFailed)
             : new NpcSpawnReport(null, [], selection.Name, composition, plan.Profiles.Count, unarmed);

@@ -15,6 +15,7 @@ Headless tests and QA runs need the same game-master actions a human GM uses in 
 | `/setstanding`, `/fullstandings`, `/maxagentstandings` | `StandingCommands` | Rows subject = owner, object = character (DEVIATIONS G2, G4) |
 | `/lp`, `/addlp`, `/setlp` | `LoyaltyCommands` | Per corporation; the LP store announces each change |
 | `/ship`, `/giveme`, `/giveitem`, `/fit`, `/unfit`, `/giveskill`, `/npc`, `/dmg`, `/heal`, `/repair`, `/deathtest`, `/suicide` | the existing command classes | `/repair` is `/heal` (DEVIATIONS G6) |
+| `/npc <n> <hull> still` | `NpcCommands` (the word `still` is removed from the arguments) | the NPCs get no top speed, so they hold their place (DEVIATIONS #64) |
 | `/solar <system>`, `/tele <character>` | `TeleportCommands` over `SpaceSessions.RelocateAsync` | the relocation of a pilot (DEVIATIONS G8) |
 | `/tr <me\|characterID> <destination>` | `TeleportCommands.TrAsync` | the system, a pilot's place, `pos=`, `offset=` (DEVIATIONS G14) |
 | `/bp help\|list\|jobs\|lookup` | `IndustryCommands` over `HostGmIndustry` and the SDE | the caller's blueprints and jobs, the blueprint of a type (DEVIATIONS G15) |

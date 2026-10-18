@@ -22,6 +22,7 @@ import pytest
 
 from evecli import marshal as m
 from evecli.describe import describe, differences
+from tests import dbseed
 from tests import test_login_to_character as base
 from tests.test_others import watch
 from tests.test_target import compare_answer, plain_race, timing
@@ -35,6 +36,10 @@ pytestmark = [
 ]
 
 RAILGUN, ANTIMATTER, IRON = 10678, 222, 215
+AFTERBURNER, GATLING, MINER = 21857, 3638, 3651  # the modules the server fits the character's Ibis with (in the recorded slots 19, 27 and 28)
+HULLS = (601, dbseed.COCKROACH)  # the recording's Ibis and the test ship: a hull's own entry is the hull's and is not compared
+# the gun's range and capacitor need: the test ship's hull scales them (to 5/6 of the recording's Ibis), so they are not compared (DEVIATIONS #59)
+HULL_SCALED = (6, 54)
 # the moments an event may come after or before the recording's
 TOLERANCE = 0.8
 # the ids of items (stacks, charges) of the recording (10**12 and more) and of this run (from the 1.99 billions) are told apart by the order they appear in
@@ -57,9 +62,28 @@ def canon(described, table: dict):
     return described
 
 
+def hull_free(events: list) -> list:
+    """The events without the lines that the hull scales (the gun's range and capacitor need, HULL_SCALED); an event that holds only those is left out."""
+    out = []
+    for event in events:
+        if event["name"] == "OnModuleAttributeChanges":
+            try:
+                lines = event["args"]["$tuple"][1]["$tuple"][1]["$tuple"][0]
+            except (KeyError, TypeError):
+                lines = None
+            if lines is not None:
+                kept = [line for line in lines if line["$tuple"][3] not in HULL_SCALED]
+                if not kept:
+                    continue
+                event = copy.deepcopy(event)
+                event["args"]["$tuple"][1]["$tuple"][1]["$tuple"][0] = kept
+        out.append(event)
+    return out
+
+
 def canon_events(events: list, table: dict, mapping: dict | None = None) -> list:
     """The events with the ids of the recording changed to this run's where they are known, and the ids of items by the order they appear in."""
-    return [{**e, "args": canon(ids(e["args"], mapping or {}), table)} for e in events]
+    return [{**e, "args": canon(ids(e["args"], mapping or {}), table)} for e in hull_free(events)]
 
 
 def tolerated(answer: dict, drop: tuple = ()) -> dict:
@@ -90,6 +114,24 @@ def without(answer: dict, drop: tuple) -> dict:
     return answer
 
 
+def is_hull(entry) -> bool:
+    """Whether a `shipInfo` entry is the hull itself (its item row's type is the recording's or the test ship's)."""
+    row = dict(entry["args"]["$dict"]).get("invItem") if isinstance(entry, dict) and entry.get("args") else None
+    return row is not None and row["$row"]["typeID"] in HULLS
+
+
+def modules_only(answer: dict) -> dict:
+    """What a `GetAllInfo` answer says of the fitted modules (rows, attributes, charges): the hull's own entry and its state are not compared (DEVIATIONS: the
+    test ship is a Cockroach where the recording's was an Ibis)."""
+    answer = copy.deepcopy(answer)
+    fields = [[k, v] for k, v in answer["args"]["$dict"] if k != "shipState"]
+    for field in fields:
+        if field[0] == "shipInfo":
+            field[1]["$dict"] = [e for e in field[1]["$dict"] if not is_hull(e[1])]
+    answer["args"]["$dict"] = fields
+    return answer
+
+
 def of_the_slot(item, gun: int, ship: int) -> bool:
     """Whether the item a line of `OnModuleAttributeChanges` is about is the gun or the charge in its slot, which the client knows by `(ship, flag, type)`."""
     if isinstance(item, dict) and "$tuple" in item:
@@ -109,7 +151,10 @@ def of_the_gun(events: list, gun: int, ship: int) -> list:
                 lines = event["args"]["$tuple"][1]["$tuple"][1]["$tuple"][0]
             except (KeyError, TypeError):
                 continue
-            if lines and all(of_the_slot(line["$tuple"][2], gun, ship) for line in lines):
+            kept = [line for line in lines if line["$tuple"][3] not in HULL_SCALED]
+            if kept and all(of_the_slot(line["$tuple"][2], gun, ship) for line in kept):
+                event = copy.deepcopy(event)
+                event["args"]["$tuple"][1]["$tuple"][1]["$tuple"][0] = kept
                 out.append(event)
         elif event["name"] == "DoDestinyUpdate" and (played := fx_actions(event, gun)):
             # what the shot does to the rat is a roll: only the effect that plays the shot is compared
@@ -128,7 +173,11 @@ def test_a_pilot_loads_and_fires_a_gun_as_it_did_in_the_reference():
     seen_ids: dict = {}
     seen_recorded: dict = {}
     with base.connect(f"walk-ammo-{run}") as who:
-        _, ship, modules, mapping = arrive(who, plain_race({"pilot": race}, "pilot"), run)
+        character, ship, modules, mapping = arrive(who, plain_race({"pilot": race}, "pilot"), run)
+        # the test ship is the Cockroach (seeded through dbseed); the modules the server fitted stay in their slots and are matched by type
+        dbseed.set_hull(ship, dbseed.COCKROACH)
+        mapping.update({race["roles"]["fitted"][str(t)]: dbseed.items_of(character, t)[0] for t in (AFTERBURNER, GATLING)})
+        mapping[race["moduleIDs"][2]] = dbseed.items_of(character, MINER)[0]
         known = dict(mapping)  # the ids both sides have from the start: the character, the ship and the modules it had
         only = {"events": who}
         slash = lambda command: (lambda: who.call("slash", "SlashCmd", command))  # noqa: E731
@@ -149,9 +198,9 @@ def test_a_pilot_loads_and_fires_a_gun_as_it_did_in_the_reference():
             if error is not None:
                 problems.append(f"{label}: error {base.brief(error)}")
             else:
-                drop = () if values else (6, 51)
-                recorded = canon(base.blank_times(ids(tolerated(steps[label]["ok"], drop), known)), seen_recorded)
-                ours = canon(base.blank_times(without(describe(raw), drop) if drop else describe(raw)), seen_ids)
+                drop = HULL_SCALED if values else (6, 51, 54)
+                recorded = canon(base.blank_times(ids(modules_only(tolerated(steps[label]["ok"], drop)), known)), seen_recorded)
+                ours = canon(base.blank_times(modules_only(without(describe(raw), drop) if drop else describe(raw))), seen_ids)
                 problems.extend(differences(recorded, ours, label))
             got = watch(only, seconds)["events"]
             problems.extend(compare_events(canon_events(steps[label]["events"], seen_recorded, known), canon_events(got, seen_ids), label, {}))
@@ -181,6 +230,8 @@ def test_a_pilot_loads_and_fires_a_gun_as_it_did_in_the_reference():
                 continue
             row = {k: v for k, v in value["args"]["$dict"]}["invItem"]["$row"]
             fitted[row["typeID"]] = int(key["$long"] if isinstance(key, dict) else key)
+        if RAILGUN not in fitted:
+            raise AssertionError("the railgun is not fitted: " + "; ".join(problems) + f" (fitted: {sorted(fitted)})")
         gun = fitted[RAILGUN]
         antimatter = stacks()[ANTIMATTER]
         mapping[roles["gun"]] = gun
@@ -205,12 +256,15 @@ def test_a_pilot_loads_and_fires_a_gun_as_it_did_in_the_reference():
         service = who.call("ship", "MachoBindObject", (STATION, 15), None)
         who.call_bound(service[0], "Undock", ship, False)
         watch(only, 2.5)
-        who.call("beyonce", "MachoBindObject", SYSTEM, None)
+        ballpark = who.call("beyonce", "MachoBindObject", SYSTEM, None)
         watch(only, 3.0)
         dogma = who.call("dogmaIM", "MachoBindObject", (SYSTEM, 5), None)
         who.call_bound(dogma[0], "GetAllInfo", True, True, None)
         watch(only, 1.0)
         watch(only, 45.0, until=lambda seen: any(e["name"] == "OnInvulnCancelled" for e in seen["events"]))
+        # the Cockroach flies about 1.6 km/s (the recording's Ibis 339 m/s): it is stopped, so the rat the server places from the ship is beside it
+        who.call_bound(ballpark[0], "CmdStop")
+        watch(only, 20.0)
         raw_text = who.call("slash", "SlashCmd", "/npc 1 Blood Visionary")
         spawn = watch(only, 8.0)["events"]
         text = getattr(raw_text, "value", raw_text)

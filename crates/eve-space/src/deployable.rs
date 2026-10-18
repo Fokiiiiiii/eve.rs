@@ -16,8 +16,10 @@ use crate::health::Damage;
 use crate::link::{AnalysisBeaconState, SlimValue};
 use crate::missile_entity::CHARGE_CATEGORY;
 use crate::modules::Effect;
+use crate::npc::is_npc_session;
 use crate::payload;
 use crate::scene::{Command, Out, Scene, SessionId, TICKS_PER_SECOND};
+use crate::visibility::{Presence, can_see};
 use crate::wire::{filetime, id, int, list, real, text, tuple, word};
 
 /// The id of the first deployable a scene makes (its own range, apart from the missiles and the wrecks).
@@ -478,6 +480,49 @@ impl Scene {
         }
         deployable.watchers = watchers.into_iter().collect();
         self.deployables.insert(deployable.id, deployable);
+        out
+    }
+
+    /// Brings each bound pilot's view into line with the deployables it can see: a pilot that moved into a deployable's box is sent it, and a pilot that moved
+    /// out of it is told it is gone (the watchers of a deployable are the pilots that hold it, as the wrecks' and asteroids' views are kept).
+    pub(crate) fn reconcile_deployables(&mut self, now: i64) -> Vec<Out> {
+        if self.deployables.is_empty() {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        for observer in self.view_sessions() {
+            if is_npc_session(observer) {
+                continue;
+            }
+            let Some(presence) = self.presence(observer) else { continue };
+            let mut gone = Vec::new();
+            let mut coming = Vec::new();
+            for deployable in self.deployables.values() {
+                let sees = can_see(presence, Presence { position: deployable.position, warping: false });
+                match (sees, deployable.watchers.contains(&observer)) {
+                    (true, false) => coming.push(deployable.id),
+                    (false, true) => gone.push(deployable.id),
+                    _ => {}
+                }
+            }
+            if !gone.is_empty() {
+                let stamp = self.next_stamp(now);
+                out.push(Self::update(observer, vec![payload::remove_ships(stamp, gone.iter().copied())]));
+                for id in gone {
+                    if let Some(deployable) = self.deployables.get_mut(&id) {
+                        deployable.watchers.remove(&observer);
+                    }
+                }
+            }
+            for id in coming {
+                let stamp = self.next_stamp(now);
+                let Some(actions) = self.deployables.get(&id).and_then(|deployable| release_actions(stamp, deployable).ok()) else { continue };
+                out.push(Self::update(observer, actions));
+                if let Some(deployable) = self.deployables.get_mut(&id) {
+                    deployable.watchers.insert(observer);
+                }
+            }
+        }
         out
     }
 

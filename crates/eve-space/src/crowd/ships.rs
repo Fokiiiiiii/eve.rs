@@ -6,7 +6,7 @@ impl Scene {
         self.entries
     }
 
-    pub(super) fn presence(&self, session: SessionId) -> Option<Presence> {
+    pub(crate) fn presence(&self, session: SessionId) -> Option<Presence> {
         if let Some(pilot) = self.pilots.get(&session) {
             return Some(Presence {
                 position: pilot.ship.position,

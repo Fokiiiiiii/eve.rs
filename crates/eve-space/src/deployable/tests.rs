@@ -1293,3 +1293,36 @@ fn a_deadspace_pocket_is_in_the_scene_in_no_client_ball_and_stops_no_field() {
     let lit = scene.activate(A, module(MODULE, field(21_094), 20_000.0), t);
     assert!(accepted(&lit), "a deadspace pocket stops no field: {lit:?}");
 }
+
+#[test]
+fn a_deployable_placed_out_of_a_pilot_s_view_is_told_to_the_pilot_when_it_comes_into_view_and_taken_out_when_it_leaves() {
+    // the acceleration gates and the capture points of a battlefield are placed where the pilots are not yet: a pilot that flies into their box is told them
+    let (mut scene, t) = crowd();
+    let a = scene.pilots[&A].ship.position;
+    // 20,000 km is more than two public-grid boxes (7,864 km each): the point is in another box for certain
+    let far = eve_destiny::Vec3::new(a.x + 20_000_000.0, a.y, a.z);
+    let point = crate::link::CapturePointPlacement {
+        deployable_id: CRAB + 20,
+        solar_system_id: 30_100_032,
+        name: "Caldari Control Zone A".to_string(),
+        type_id: 73_445,
+        group_id: 4_494,
+        position: [far.x, far.y, far.z],
+        radius: 231.0,
+        attacker_faction: 500_004,
+        occupier_faction: 500_001,
+        next_point_time: 0,
+    };
+    let placed = scene.place_capture_point(point, t);
+    assert!(!format!("{placed:?}").contains("AddBalls2"), "a pilot out of the point's box is not told it");
+    assert!(scene.reconcile_deployables(t + SECOND).is_empty(), "a pilot out of the box is still not told it");
+
+    place(&mut scene, A, far);
+    let told = format!("{:?}", scene.reconcile_deployables(t + 2 * SECOND));
+    assert!(told.contains("AddBalls2") && told.contains("Caldari Control Zone A"), "the pilot that comes into view is told the point: {told}");
+    assert!(scene.reconcile_deployables(t + 3 * SECOND).is_empty(), "a point already in view is not told again");
+
+    place(&mut scene, A, a);
+    let gone = format!("{:?}", scene.reconcile_deployables(t + 4 * SECOND));
+    assert!(gone.contains("RemoveBalls"), "the pilot that leaves the box is told the point is gone: {gone}");
+}

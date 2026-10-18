@@ -722,6 +722,7 @@ impl Scene {
         told.extend(self.reconcile(now));
         told.extend(self.reconcile_wrecks(now));
         told.extend(self.reconcile_asteroids(now));
+        told.extend(self.reconcile_deployables(now));
         told.extend(self.expire_wrecks(now));
         told.extend(self.tick_tethers(now));
         self.with_backlog(told)

@@ -24,6 +24,7 @@ pytestmark = pytest.mark.skipif(not LIVE, reason="set EVE_LIVE_HOST=host:port to
 
 FILETIME_EPOCH = 116_444_736_000_000_000  # 1601-01-01 in 100 ns ticks
 DAY = 86400
+NEW_ACCOUNT_END = 4_102_444_800  # 2100-01-01 00:00 UTC, the Omega end of a new account (unix seconds)
 
 
 def unix_of(filetime: int) -> float:
@@ -53,12 +54,13 @@ def test_omega_and_multiple_character_training_are_bought_at_no_charge_and_grant
         enter_new_character(client, run)
         balance = plex_balance(client)
 
-        # the Omega offer: the subscription end time moves 30 days from now (a new account is Omega until 2100)
+        # the Omega offer: a new account is Omega until 2100, and a purchase never moves that end time (SubscriptionPolicy.Extend: the purchase
+        # horizon is kept; DEVIATIONS #62)
         client.notifications.clear()
         assert m.plain(client.call("storeManager", "buy_offer", "omega_30_days", "PLX", 1)) is True
         assert plex_balance(client) == balance
         end = unix_of(m.plain(client.call("subscriptionMgr", "GetSubscriptionTime")))
-        assert time.time() + 30 * DAY - 3600 <= end <= time.time() + 30 * DAY + 3600
+        assert end == NEW_ACCOUNT_END
         assert m.plain(client.call("subscriptionMgr", "GetCloneGrade")) == 1
         assert "OnSubscriptionTimeUpdateServer" in names(client)
 

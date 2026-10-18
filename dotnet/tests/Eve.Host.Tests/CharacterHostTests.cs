@@ -489,6 +489,133 @@ public sealed class CharacterHostTests
     }
 
     [PgFact]
+public async Task Notification_manager_mutations_persist_and_notify_after_the_commit()
+{
+    var pgUrl = Environment.GetEnvironmentVariable("EVE_PG_URL");
+    Assert.False(string.IsNullOrWhiteSpace(pgUrl));
+    await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(pgUrl!));
+    var schema = "notification_mgr_" + Guid.NewGuid().ToString("N");
+    var store = new Eve.GameStore.PersistenceStore(source, schema);
+    try
+    {
+        await store.EnsureSchemaAsync();
+        await using (var owner = await Eve.GameStore.OwnerSession.StartAsync(
+            store, Eve.GameStore.PersistenceRoles.World, $"notification-mgr-{Guid.NewGuid():N}"))
+        await using (var cache = new Eve.GameStore.GameStoreCache(store, owner, new Eve.GameStore.GameStoreCacheOptions
+        {
+            ProcessRole = Eve.GameStore.PersistenceRoles.World,
+            FlushDelay = TimeSpan.FromHours(1),
+        }))
+        {
+            await cache.RecoverAsync();
+            await cache.LoadAsync("notifications");
+            const long character = 90000091;
+            var box = new System.Text.Json.Nodes.JsonObject
+            {
+                ["order"] = new System.Text.Json.Nodes.JsonArray(100, 101, 102),
+                ["byID"] = new System.Text.Json.Nodes.JsonObject
+                {
+                    ["100"] = Notification(100, character),
+                    ["101"] = Notification(101, character),
+                    ["102"] = Notification(102, character),
+                },
+            };
+            Assert.True(cache.Write("notifications", $"/boxes/{character}", box).Success);
+
+            async Task<System.Text.Json.Nodes.JsonObject> ReadTable(string table, CancellationToken cancellationToken)
+            {
+                await cache.LoadAsync(table, cancellationToken);
+                return cache.Read(table, "/").Data as System.Text.Json.Nodes.JsonObject ?? new();
+            }
+
+            async Task<bool> DeletedRowIsCommitted(CancellationToken cancellationToken)
+            {
+                await using var persistedCache = new Eve.GameStore.GameStoreCache(
+                    store, null, new Eve.GameStore.GameStoreCacheOptions
+                    {
+                        ProcessRole = Eve.GameStore.PersistenceRoles.Reader,
+                    });
+                await persistedCache.LoadAsync("notifications", cancellationToken);
+                var persistedBox = persistedCache.Read("notifications", $"/boxes/{character}").Data
+                    as System.Text.Json.Nodes.JsonObject;
+                return persistedBox?["byID"]?["102"] is null;
+            }
+
+            var notificationWasCommittedAtSend = false;
+            var sessions = new Eve.Services.CharacterSessions();
+            var requestingSession = new ClientSession { CharacterId = character, UserId = 1 };
+            var sink = new RecordingPacketSink(() =>
+                notificationWasCommittedAtSend = DeletedRowIsCommitted(CancellationToken.None).GetAwaiter().GetResult());
+            sessions.Enter(character, new ClientSession { CharacterId = character, UserId = 1, Sink = sink });
+
+            var adapter = new NotificationMgrHostAdapter(cache, ReadTable, sessions);
+            var manager = new Eve.Services.Core.NotificationMgrService(
+                adapter.ReadAsync, () => 1_700_000_000_000, mutate: adapter.MutateAsync);
+            Assert.True(manager.HasMethod("MarkAllAsProcessed"));
+            Assert.True(manager.HasMethod("MarkAsProcessed"));
+            Assert.True(manager.HasMethod("DeleteNotifications"));
+
+            await CallAsync(manager, "MarkAsProcessed", requestingSession, new PyList([new PyInt(100)]));
+            Assert.Equal(2, Assert.IsType<PyList>(
+                await CallAsync(manager, "GetUnprocessed", requestingSession)).Items.Count);
+
+            await CallAsync(manager, "MarkAllAsProcessed", requestingSession);
+            await CallAsync(manager, "DeleteNotifications", requestingSession, new PyList([new PyInt(102)]));
+
+            Assert.Equal(2, Assert.IsType<PyList>(
+                await CallAsync(manager, "GetAllNotifications", requestingSession)).Items.Count);
+            Assert.Empty(Assert.IsType<PyList>(
+                await CallAsync(manager, "GetUnprocessed", requestingSession)).Items);
+            Assert.True(notificationWasCommittedAtSend);
+            var deleted = Assert.Single(Notifications(sink), item => item.Name == "OnNotificationDeleted");
+            Assert.Single(deleted.Args);
+            await cache.FlushTableAsync("notifications");
+        }
+
+        await using (var persistedCache = new Eve.GameStore.GameStoreCache(
+            store, null, new Eve.GameStore.GameStoreCacheOptions
+            {
+                ProcessRole = Eve.GameStore.PersistenceRoles.Reader,
+            }))
+        {
+            await persistedCache.LoadAsync("notifications");
+            async Task<System.Text.Json.Nodes.JsonObject> ReadTable(string table, CancellationToken cancellationToken)
+            {
+                await persistedCache.LoadAsync(table, cancellationToken);
+                return persistedCache.Read(table, "/").Data as System.Text.Json.Nodes.JsonObject ?? new();
+            }
+
+            var adapter = new NotificationMgrHostAdapter(
+                persistedCache, ReadTable, new Eve.Services.CharacterSessions());
+            var manager = new Eve.Services.Core.NotificationMgrService(adapter.ReadAsync, () => 1_700_000_000_000);
+            var requestingSession = new ClientSession { CharacterId = 90000091, UserId = 1 };
+            Assert.Equal(2, Assert.IsType<PyList>(
+                await CallAsync(manager, "GetAllNotifications", requestingSession)).Items.Count);
+            Assert.Empty(Assert.IsType<PyList>(
+                await CallAsync(manager, "GetUnprocessed", requestingSession)).Items);
+        }
+    }
+    finally
+    {
+        await using var connection = await source.OpenConnectionAsync();
+        await using var command = new NpgsqlCommand($"DROP SCHEMA IF EXISTS \"{schema}\" CASCADE", connection);
+        await command.ExecuteNonQueryAsync();
+    }
+
+    static System.Text.Json.Nodes.JsonObject Notification(long id, long receiverId) => new()
+    {
+        ["notificationID"] = id,
+        ["typeID"] = 1,
+        ["senderID"] = 10,
+        ["receiverID"] = receiverId,
+        ["groupID"] = 2,
+        ["processed"] = false,
+        ["created"] = "133000000000000000",
+        ["data"] = new System.Text.Json.Nodes.JsonObject(),
+    };
+}
+
+    [PgFact]
     public async Task Skill_bundle_info_answers_the_client_empty_shape_through_the_registry()
     {
         await using var rig = await CharacterHostRig.CreateAsync();
@@ -823,11 +950,15 @@ public sealed class CharacterHostTests
         return events;
     }
 
-    private sealed class RecordingPacketSink : IPacketSink
+    private sealed class RecordingPacketSink(Action? onSend = null) : IPacketSink
     {
         public List<PyValue> Sent { get; } = [];
 
-        public void Send(PyValue packet) => Sent.Add(packet);
+        public void Send(PyValue packet)
+        {
+            Sent.Add(packet);
+            onSend?.Invoke();
+        }
     }
 
     internal sealed class CharacterHostRig : IAsyncDisposable

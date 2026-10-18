@@ -61,7 +61,7 @@ public class SlashCatalogTests
     public async Task Catalog_lists_only_commands_with_wired_handlers()
     {
         var service = Service(death: true, suicide: true, npcs: true, items: true, skills: true);
-        Assert.Equal("Commands: ['deathtest', 'dmg', 'fit', 'giveitem', 'giveme', 'giveskill', 'heal', 'npc', 'repair', 'ship', 'suicide', 'unfit']",
+        Assert.Equal("Commands: ['createitem', 'deathtest', 'dmg', 'fit', 'giveitem', 'giveme', 'giveskill', 'heal', 'npc', 'removeskill', 'repair', 'ship', 'suicide', 'unfit']",
             await CatalogAsync(service));
     }
 
@@ -69,8 +69,8 @@ public class SlashCatalogTests
     [InlineData(true, false, false, false, false, "Commands: ['deathtest', 'dmg', 'heal', 'repair']")]
     [InlineData(false, true, false, false, false, "Commands: ['dmg', 'heal', 'repair', 'suicide']")]
     [InlineData(false, false, true, false, false, "Commands: ['dmg', 'heal', 'npc', 'repair']")]
-    [InlineData(false, false, false, true, false, "Commands: ['dmg', 'fit', 'giveitem', 'giveme', 'heal', 'repair', 'ship', 'unfit']")]
-    [InlineData(false, false, false, false, true, "Commands: ['dmg', 'giveskill', 'heal', 'repair']")]
+    [InlineData(false, false, false, true, false, "Commands: ['createitem', 'dmg', 'fit', 'giveitem', 'giveme', 'heal', 'repair', 'ship', 'unfit']")]
+    [InlineData(false, false, false, false, true, "Commands: ['dmg', 'giveskill', 'heal', 'removeskill', 'repair']")]
     public async Task Catalog_follows_each_optional_registration(bool death, bool suicide, bool npcs, bool items, bool skills, string expected)
     {
         Assert.Equal(expected, await CatalogAsync(Service(death, suicide, npcs, items, skills)));
@@ -85,7 +85,6 @@ public class SlashCatalogTests
     [InlineData("/unfit")]
     [InlineData("/giveskill")]
     [InlineData("/help")]
-    [InlineData("/createitem")]
     [InlineData("")]
     public async Task Unwired_and_unimplemented_commands_still_answer_unknown(string command)
     {

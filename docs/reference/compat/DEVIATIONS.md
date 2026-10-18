@@ -4718,3 +4718,11 @@ as reference. The client's `bookmarkSvc.py` (`OnSharedBookmarksFolderUpdated`, `
 - **`/fullstandings` faction count (G12, open).** On the same walk EveJS sets 21 agent factions and eve.rs sets 0 (both set 178 agent corporations), so eve.rs's agent owner list has no faction rows that EveJS finds. The source of the difference is not yet traced. Not changed.
 - **`/tele` wording and the walk (G12, open).** EveJS answers `Transported me to <station>` and the walk's `Teleported` expectation fails on EveJS for the pilot-to-pilot moves (the answer is the docking above); eve.rs answers `Teleported to character <id> in <station> (<id>)`. Not changed.
 - **Text parity (G12).** `/isk`, `/addisk`, `/setisk`, `/lp`, `/ship`, `/giveme`, `/setstanding` replies follow EveJS's wording for the same case, checked on the dogma suite (230 of 230 passing before this slice's new test).
+
+## GM tools, slice G13: the screen's commands (2026-10-18)
+
+- **`/removeskill <target> <skill|all>` (G13).** Served as EveJS `handleRemoveSkillCommand`: the skill rows are deleted (`PgSkillStore.DeleteAsync`) and the pilot is told with the zeroed records EveJS sends. shortcut: the skill queue is not cleared (EveJS clears it). The client's rendering of the removal is not checked in this slice.
+- **`/createitem <item> [amount]` (G13).** Served as EveJS `handleCreateItemCommand`: in space the items go into the ship's cargo, docked into the hangar. shortcut: EveJS's per-operation amount limit and its cargo volume check are not applied. EveJS's docked reply for `createitem` is not a text line (it returns the item ID); eve.rs uses the `giveitem` text.
+- **`/fullstandings` agent factions (G13).** Traced to the owner list: EveJS takes each agent's corporation's `factionID` (`standingRuntime.getAllAgentStandingOwners`); eve.rs took only the corporations. Fixed in `HostStandingDirectory.AgentOwnersAsync` from the corporation settings' `factionID` (the SDE npcCorporations row). Result: the same faction count as EveJS on the walk.
+- **`/bp` (G13, open).** EveJS's `/bp` is the industry helper (`help`, `list`, `jobs`, `lookup`, `services/industry/industryChatCommands.js`). Not served yet; it answers unknown.
+

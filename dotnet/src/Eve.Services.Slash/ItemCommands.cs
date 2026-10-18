@@ -37,12 +37,23 @@ public sealed class ItemCommands(ItemTypeNames names, CharacterShips ships, Dogm
         return (text, null);
     }
 
-    public async Task<string> GiveAsync(ClientSession session, string argument, CancellationToken cancellationToken)
+    public Task<string> GiveAsync(ClientSession session, string argument, CancellationToken cancellationToken) =>
+        GiveCoreAsync(session, argument, cancellationToken, create: false);
+
+    /// <summary>
+    /// <c>/createitem &lt;item name|typeID&gt; [amount]</c> (EveJS <c>handleCreateItemCommand</c>): the items go into the cargo hold of the pilot's ship when it is in space,
+    /// and into the station hangar when docked. shortcut: EveJS's per-operation amount limit and its cargo volume check are not applied.
+    /// </summary>
+    public Task<string> CreateAsync(ClientSession session, string argument, CancellationToken cancellationToken) =>
+        GiveCoreAsync(session, argument, cancellationToken, create: true);
+
+    private async Task<string> GiveCoreAsync(ClientSession session, string argument, CancellationToken cancellationToken, bool create)
     {
+        var command = create ? "/createitem" : "/giveitem";
         var text = argument.Trim();
         if (text.Length == 0)
         {
-            return "Usage: /giveitem <item name|typeID> [amount]";
+            return $"Usage: {command} <item name|typeID> [amount]";
         }
         var found = await names.FindAsync(text, cancellationToken);
         long amount = 1;
@@ -69,19 +80,40 @@ public sealed class ItemCommands(ItemTypeNames names, CharacterShips ships, Dogm
         }
         if (session.CharacterId is not { } character)
         {
-            return "Select a character before using /giveitem.";
-        }
-        if (session.GetInt("stationid") is null)
-        {
-            return "You must be docked before using /giveitem.";
+            return $"Select a character before using {command}.";
         }
         await statics.EnsureTypesAsync([type.TypeId], cancellationToken);
         var singleton = SingletonCategories.Contains(type.CategoryId);
-        if (await ships.GrantAsync(character, type.TypeId, amount, singleton, cancellationToken) is not { } changes)
+        if (create && session.GetInt("stationid") is null)
+        {
+            if (session.GetInt("shipid") is not { } shipId)
+            {
+                return $"You must be docked or in space before using {command}.";
+            }
+            var made = new List<ItemChanged>();
+            for (var done = 0L; done < (singleton ? amount : 1); done++)
+            {
+                if (await ships.CreateInShipCargoAsync(character, shipId, type.TypeId, singleton ? 1 : amount, cancellationToken) is not { } changes)
+                {
+                    return $"Your current ship could not be found for {command}.";
+                }
+                made.AddRange(changes);
+            }
+            foreach (var change in made)
+            {
+                ShipNotifications.SendItemChange(session, change, item => DogmaInfoRow(item));
+            }
+            return $"{Count(amount)}x {type.Name}{(type.Published ? "" : " [unpublished]")} was added to your ship's cargo hold.";
+        }
+        if (session.GetInt("stationid") is null && !create)
         {
             return "You must be docked before using /giveitem.";
         }
-        foreach (var change in changes)
+        if (await ships.GrantAsync(character, type.TypeId, amount, singleton, cancellationToken) is not { } hangar)
+        {
+            return create ? "You must be docked or in space before using /createitem." : "You must be docked before using /giveitem.";
+        }
+        foreach (var change in hangar)
         {
             ShipNotifications.SendItemChange(session, change, item => DogmaInfoRow(item));
         }

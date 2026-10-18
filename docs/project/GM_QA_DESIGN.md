@@ -40,10 +40,13 @@ Slash commands the screen and its helper service send (`eve/devtools/script/svc_
 | `heal`, `repair` | yes |
 | `giveskill` | yes |
 | `setstanding` | yes (owner-first form added in G12) |
-| `online`, `removeskill`, `givestarterskills`, `randomizeskills`, `skillscopy` | no |
+| `removeskill` | yes (G13) |
+| `online`, `givestarterskills`, `randomizeskills`, `skillscopy` | no |
 | `tr` (teleport a pilot, to a system or to a position) | no (`/tele` is served) |
 | `warpto`, `entity deploy`, `nuke`, `spawn`, `spawnn`, `unspawn`, `unload`, `load`, `skyhook` | no |
-| `bp`, `createitem`, `dogmaupdate`, `killright`, `asteroid rewards` | no |
+| `createitem` | yes (G13): cargo of the ship in space, hangar when docked |
+| `bp` | no (EveJS `/bp` is the industry helper: list, jobs, lookup; G13 open) |
+| `dogmaupdate`, `killright`, `asteroid rewards` | no |
 
 Missing commands answer `Unknown command`, so the screen shows an error for them rather than a fake success. Building them is the next slices; each is recorded here when it lands.
 

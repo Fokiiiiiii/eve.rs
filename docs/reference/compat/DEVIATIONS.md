@@ -4788,3 +4788,10 @@ as reference. The client's `bookmarkSvc.py` (`OnSharedBookmarksFolderUpdated`, `
 - **Grant path (G22).** `CrimewatchRuntime.GrantKillRightAsync` writes the store row and tells the owner as an aggression tells it (`KillRightGranted`). The row is made by the store (`CreateKillRightAsync`).
 - **Refusals (G22).** The store makes no right when the two are the same pilot or when the owner already has an open right against the target; the reply says so and creates nothing. Both are the store's own rules (one open right per owner and target, no right against oneself), not new ones.
 - **Tests (G22).** The rig's kill right is the store's grant (no notification); the notification path is the runtime's and is not run by the database tests.
+
+## GM tools, slice G23: `/asteroid rewards` (2026-10-18)
+
+- **Source (G23).** EVE.js has no `/asteroid rewards`. The client sends it (`svc_slash.py` `_cmd_asteroid_list_rewards`) and shows the reply. The reply is the rocks of the pilot's solar system: each rock's item, its ore and the units it still holds, then the units of each ore in total.
+- **Ore (G23).** A mineable asteroid's type is its ore (as in the game), so the ore is the rock's own type name. The rocks are the space items the host seeded for the system (`SpaceContainers.RocksInSystemAsync`); a rock with no units left is not listed.
+- **Position (G23).** The pilot must be in space; otherwise the reply says so. The highlight and clear options are the client's own (its `_cmd_asteroid_highlight` and `_cmd_asteroid_clear`), not sent to the server.
+- shortcut: the yield of one mining cycle is not listed (it depends on the module, the skills and the rock's volume); the reply gives the units the rock holds.

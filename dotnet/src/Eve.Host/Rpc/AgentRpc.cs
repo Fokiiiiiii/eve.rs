@@ -82,7 +82,10 @@ internal sealed partial class CharacterServicesComposition
                 spaceSessions is null ? null : new SpawnCommands(new ItemTypeNames(sde), spaceSessions),
                 new SkillBulkCommands(skillCatalog, skills, source, characters, dogmaSync, now, characterSessions.Of),
                 new DogmaUpdateCommands(dogma),
-                new KillRightCommands(characters, (owner, target, system, when, token) => crimewatchRuntime.GrantKillRightAsync(owner, target, system, when, token), now)),
+                new KillRightCommands(characters, (owner, target, system, when, token) => crimewatchRuntime.GrantKillRightAsync(owner, target, system, when, token), now),
+                spaceSessions is null || spaceContainers is null ? null : new AsteroidCommands(async (session, token) => spaceSessions.SolarSystemOf(session) is { } system
+                    ? (await spaceContainers.RocksInSystemAsync(system, token)).Select(rock => (rock.ItemId, rock.TypeId, rock.Name, rock.Units)).ToList()
+                    : null)),
             .. spaceSessions is null ? [] : new IService[] { new ShipService(spaceSessions, now, spaceContainers, spaceDrones, getShipFittingInfo: ShipFittingInfoOf, ships: ships,
                 rowOf: item => new Eve.Services.ItemRow(item.Id, item.TypeId, item.OwnerId, item.LocationId, item.Flag, item.Singleton ? -1 : item.Quantity,
                     dogma.Type(item.TypeId)?.GroupId ?? 0, dogma.Type(item.TypeId)?.CategoryId ?? 0)), new BeyonceService(spaceSessions, now, fleetStore, FleetSessionForCharacter) { CynoJammerOnlineSimTimeForSystem = CynoJammerOnlineSimTimeAsync, InitiateBeaconLink = AnalysisBeaconLink }, new StructureTravelRpcService("structureCynoBeaconMgr", new StructureBeaconTravel(StructureBeaconAsync, CynoJammedAsync, structureDirectoryReadModel.CharacterHasServiceAsync, JumpToStructureBeaconAsync).TravelAsync), new ShipcasterRpcService("shipCasterLandingPadMgr", solarSystems), new ShipcasterRpcService("shipCasterLauncherMgr", solarSystems), new ShipcasterRpcService("shipcasterTravelMgr", solarSystems), new ShipcasterRpcService("starterShipcasterTravelMgr", solarSystems), new EntityService(spaceDrones!, now, spaceContainers) },

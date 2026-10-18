@@ -1075,7 +1075,7 @@ fn abyssal_boundary_damage_ticks_against_players_and_npcs_including_residents_wi
         ref message => panic!("unexpected spawn reply {message:?}"),
     };
     assert!(
-        sim.sessions.contains_key(&npc_session) == false,
+        !sim.sessions.contains_key(&npc_session),
         "NPCs are scene residents, not Host-owned player sessions"
     );
     let events = sim.poll(NOON + SECOND);

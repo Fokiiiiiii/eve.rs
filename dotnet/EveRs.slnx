@@ -26,6 +26,7 @@
     <Project Path="src/Eve.Scheduler/Eve.Scheduler.csproj" />
     <Project Path="src/Eve.Skills/Eve.Skills.csproj" />
     <Project Path="src/Eve.Agents/Eve.Agents.csproj" />
+    <Project Path="src/Eve.AccessGroups/Eve.AccessGroups.csproj" />
     <Project Path="src/Eve.Structures/Eve.Structures.csproj" />
     <Project Path="src/Eve.Insurgency/Eve.Insurgency.csproj" />
     <Project Path="src/Eve.FactionWarfare/Eve.FactionWarfare.csproj" />
@@ -83,6 +84,7 @@
     <Project Path="tests/Eve.Scheduler.Tests/Eve.Scheduler.Tests.csproj" />
     <Project Path="tests/Eve.Skills.Tests/Eve.Skills.Tests.csproj" />
     <Project Path="tests/Eve.Agents.Tests/Eve.Agents.Tests.csproj" />
+    <Project Path="tests/Eve.AccessGroups.Tests/Eve.AccessGroups.Tests.csproj" />
     <Project Path="tests/Eve.Structures.Tests/Eve.Structures.Tests.csproj" />
     <Project Path="tests/Eve.Insurgency.Tests/Eve.Insurgency.Tests.csproj" />
     <Project Path="tests/Eve.FactionWarfare.Tests/Eve.FactionWarfare.Tests.csproj" />

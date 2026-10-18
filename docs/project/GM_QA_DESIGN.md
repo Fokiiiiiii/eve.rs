@@ -16,11 +16,40 @@ Headless tests and QA runs need the same game-master actions a human GM uses in 
 | `/lp`, `/addlp`, `/setlp` | `LoyaltyCommands` | Per corporation; the LP store announces each change |
 | `/ship`, `/giveme`, `/giveitem`, `/fit`, `/unfit`, `/giveskill`, `/npc`, `/dmg`, `/heal`, `/repair`, `/deathtest`, `/suicide` | the existing command classes | `/repair` is `/heal` (DEVIATIONS G6) |
 | `/solar <system>`, `/tele <character>` | `TeleportCommands` over `SpaceSessions.RelocateAsync` | the relocation of a pilot (DEVIATIONS G8) |
+| `/tr <me\|characterID> <destination>` | `TeleportCommands.TrAsync` | the system, a pilot's place, `pos=`, `offset=` (DEVIATIONS G14) |
 | `/agent offers`, `offer`, `accept`, `quit`, `complete`, `reset` | `AgentCommands` over `HostAgentControl` | the caller's own missions through the client's path (DEVIATIONS G9) |
 | `/missioncomplete` | not built | EveJS marks placeholder objectives; eve.rs has no placeholder mission (DEVIATIONS G9) |
 | `/fw enlist <faction>`, `/fw leave`, `/fw vp <points>` | `FwCommands` over `HostFwControl` | the caller's corporation and system (DEVIATIONS G10) |
 | `/pi list`, `/pi commodity`, `/pi command` | `PiCommands` over `HostPiControl` | the caller's planets, pins named from `list` (DEVIATIONS G10) |
 | `/pi program` | not built | the forced install needs the client's own inputs (DEVIATIONS G10) |
+
+## GM and QA screen (client InsiderWnd)
+The client's dedicated screen is the Insider window (`eve/devtools/script/insider.py`, `InsiderWnd` and `InsiderService`). Its toolbar menus are gated by the session role (`session.role`, which the server sets to the account bits plus the base bits at character selection, `CharUnboundMgrService`): Tools, Macro, Ship, Charges, Drones, Implants need ROLE_GML; QA and UI need ROLE_QA; Tournament needs ROLE_TOURNAMENT. Most entries are client-local (windows, render and debug toggles, `GetMacros` reads the insider files). The server-facing calls are below.
+
+| Menu entry | Remote call (client code) | eve.rs |
+|---|---|---|
+| Tools, Macro entries, Ship/Drone/Charge helpers, UI links to `/heal`, `/tr`, `/warpto`, `/nuke`, `/entity deploy` | `RemoteSvc('slash').SlashCmd(text)` | `/heal` served; the others not yet (see the next table) |
+| Tournament, reload FSD pickle | `RemoteSvc('localizationServer').ReloadFSDPickle()` | served (`CoreCompatibilityServiceAdapters`) |
+| Standings tool (channel) | `slash.SlashCmd('/setstanding "<owner id>" <character id> <value> "<reason>"')` | served; owner-first form accepted |
+| Map and system tools | `RemoteSvc('stationSvc').GetSolarSystem`, `RemoteSvc('lookupSvc').LookupLocationsByGroup` | served |
+| Season, scanner tracker | `RemoteSvc('seasonManager')`, `RemoteSvc('scanMgr').SignalTrackerRegister()` | `seasonManager` served; `scanMgr` not checked |
+
+Slash commands the screen and its helper service send (`eve/devtools/script/svc_slash.py`, `menusvc.py`, `insider.py`). Served means registered in `SlashService`:
+
+| Command | Served |
+|---|---|
+| `heal`, `repair` | yes |
+| `giveskill` | yes |
+| `setstanding` | yes (owner-first form added in G12) |
+| `removeskill` | yes (G13) |
+| `online`, `givestarterskills`, `randomizeskills`, `skillscopy` | no |
+| `tr` (teleport a pilot, to a system or to a position) | yes (G14; runtime entity and bookmark destinations not served, DEVIATIONS G14) |
+| `warpto`, `entity deploy`, `nuke`, `spawn`, `spawnn`, `unspawn`, `unload`, `load`, `skyhook` | no |
+| `createitem` | yes (G13): cargo of the ship in space, hangar when docked |
+| `bp` | no (EveJS `/bp` is the industry helper: list, jobs, lookup; G13 open) |
+| `dogmaupdate`, `killright`, `asteroid rewards` | no |
+
+Missing commands answer `Unknown command`, so the screen shows an error for them rather than a fake success. Building them is the next slices; each is recorded here when it lands.
 
 ## Principles
 - Words and semantics come from EveJS (`services/chat/chatCommands.js` and its command modules). Where EveJS lacks a thing, the client contract (eve-logic) and the real game decide, and the choice is recorded in DEVIATIONS.

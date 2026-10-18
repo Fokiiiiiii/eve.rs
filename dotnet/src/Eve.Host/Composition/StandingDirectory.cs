@@ -29,13 +29,23 @@ internal sealed class HostStandingDirectory(DogmaStatic statics, Eve.Corporation
 
     public async Task<IReadOnlyList<StandingOwner>> AgentOwnersAsync(CancellationToken cancellationToken)
     {
+        // As EveJS getAllAgentStandingOwners: the agents' corporations, then the distinct factions of those corporations (npcCorporations.factionID).
         var owners = new List<StandingOwner>();
+        var factions = new SortedSet<long>();
         foreach (var corporationId in agents.Values.Select(agent => agent.CorporationId).Where(id => id > 0).Distinct().Order())
         {
-            if (await corporations.GetAsync(corporationId, cancellationToken) is { } corporation) owners.Add(new StandingOwner(corporationId, corporation.Name, IsCorporation: true));
+            if (await corporations.GetAsync(corporationId, cancellationToken) is not { } corporation) continue;
+            owners.Add(new StandingOwner(corporationId, corporation.Name, IsCorporation: true));
+            if (corporation.Settings.TryGetProperty("factionID", out var faction) && faction.ValueKind == System.Text.Json.JsonValueKind.Number)
+                factions.Add(faction.GetInt64());
         }
+        foreach (var factionId in factions)
+            owners.Add(new StandingOwner(factionId, statics.FactionName((int)factionId) ?? "", IsFaction: true));
         return owners;
     }
+
+    public async Task<string?> CharacterNameAsync(long characterId, CancellationToken cancellationToken) =>
+        await characters.GetAsync(characterId, cancellationToken) is { } character ? character.Name : null;
 
     public async Task<long?> FindCharacterAsync(string token, CancellationToken cancellationToken)
     {

@@ -13,7 +13,7 @@ public class ShipCommandTests
         var session = Rig.Session(pilot.CharacterId);
         var before = (await rig.Items.OwnedByAsync(pilot.CharacterId)).Count(item => item.TypeId == Rig.Ibis);
 
-        Assert.Equal("Ibis was added to your station hangar.", await rig.SlashAsync(session, "/ship Ibis"));
+        Assert.Equal("Ibis was added to your ship hangar. /ship only spawns the hull for now; board it manually from the hangar.", await rig.SlashAsync(session, "/ship Ibis"));
         var after = (await rig.Items.OwnedByAsync(pilot.CharacterId)).Where(item => item.TypeId == Rig.Ibis).ToList();
         Assert.Equal(before + 1, after.Count);
         Assert.Contains(after, item => item.LocationId == Station);

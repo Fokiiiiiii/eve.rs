@@ -31,21 +31,24 @@ public sealed partial class SlashService(ShipHealthCommands health, DeathTestCom
         if (items is not null)
         {
             commands["/giveitem"] = (call, argument) => items.GiveAsync(call.Session, argument, call.Cancellation);
-            commands["/ship"] = (call, argument) => items.ShipAsync(call.Session, argument, call.Cancellation);
-            commands["/giveme"] = (call, argument) => items.ShipAsync(call.Session, argument, call.Cancellation);
+            commands["/ship"] = (call, argument) => items.ShipAsync(call.Session, argument, call.Cancellation, "ship");
+            commands["/giveme"] = (call, argument) => items.ShipAsync(call.Session, argument, call.Cancellation, "giveme");
+            commands["/createitem"] = (call, argument) => items.CreateAsync(call.Session, argument, call.Cancellation);
             commands["/fit"] = (call, argument) => items.FitAsync(call.Session, argument, call.Cancellation);
             commands["/unfit"] = (call, argument) => items.UnfitAsync(call.Session, argument, call.Cancellation);
         }
         if (skills is not null) commands["/giveskill"] = (call, argument) => skills.GiveAsync(call.Session, argument, call.Cancellation);
+        if (skills is not null) commands["/removeskill"] = (call, argument) => skills.RemoveAsync(call.Session, argument, call.Cancellation);
         if (isk is not null)
         {
-            commands["/isk"] = (call, argument) => isk.RunAsync(call.Session, argument, call.Cancellation);
+            commands["/isk"] = (call, _) => isk.WalletAsync(call.Session, call.Cancellation);
+            commands["/addisk"] = (call, argument) => isk.GiveAsync(call.Session, argument, call.Cancellation);
             commands["/wallet"] = (call, _) => isk.WalletAsync(call.Session, call.Cancellation);
             commands["/setisk"] = (call, argument) => isk.SetAsync(call.Session, argument, call.Cancellation);
         }
         if (loyalty is not null)
         {
-            commands["/lp"] = (call, _) => loyalty.SummaryAsync(call.Session, call.Cancellation);
+            commands["/lp"] = (call, argument) => loyalty.SummaryAsync(call.Session, argument, call.Cancellation);
             commands["/addlp"] = (call, argument) => loyalty.AddAsync(call.Session, argument, call.Cancellation);
             commands["/setlp"] = (call, argument) => loyalty.SetAsync(call.Session, argument, call.Cancellation);
         }
@@ -59,6 +62,7 @@ public sealed partial class SlashService(ShipHealthCommands health, DeathTestCom
         {
             commands["/solar"] = (call, argument) => teleport.SolarAsync(call.Session, argument, call.Cancellation);
             commands["/tele"] = (call, argument) => teleport.TeleAsync(call.Session, argument, call.Cancellation);
+            commands["/tr"] = (call, argument) => teleport.TrAsync(call.Session, argument, call.Cancellation);
         }
         if (agent is not null) commands["/agent"] = (call, argument) => agent.RunAsync(call.Session, argument, call.Cancellation);
         if (fw is not null) commands["/fw"] = (call, argument) => fw.RunAsync(call.Session, argument, call.Cancellation);

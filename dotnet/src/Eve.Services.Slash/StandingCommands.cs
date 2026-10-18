@@ -15,6 +15,9 @@ public interface IStandingDirectory
     Task<IReadOnlyList<StandingOwner>> AgentOwnersAsync(CancellationToken cancellationToken);
 
     Task<long?> FindCharacterAsync(string token, CancellationToken cancellationToken);
+
+    /// <summary>The name of a character, or null when there is no such character.</summary>
+    Task<string?> CharacterNameAsync(long characterId, CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -32,6 +35,10 @@ public sealed class StandingCommands(IStandingDirectory directory, RelationStore
     public async Task<string> SetAsync(ClientSession session, string argument, CancellationToken cancellationToken)
     {
         var tokens = Tokens(argument);
+        // The client's channel standing tool sends owner first: /setstanding "<owner id>" <character id> <value> "<reason>".
+        if (tokens.Count == 4 && long.TryParse(tokens[1], NumberStyles.None, CultureInfo.InvariantCulture, out _)
+            && decimal.TryParse(tokens[2], NumberStyles.AllowLeadingSign | NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out _))
+            tokens = [tokens[2], tokens[0], tokens[1]];
         if (tokens.Count < 2) return Usage;
         if (!decimal.TryParse(tokens[0], NumberStyles.AllowLeadingSign | NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var asked)
             || asked < -10m || asked > 10m)
@@ -51,7 +58,7 @@ public sealed class StandingCommands(IStandingDirectory directory, RelationStore
             return $"Could not resolve a standing owner from \"{ownerToken}\".";
 
         await SetOneAsync(owner, target, standing, cancellationToken);
-        return $"Set standing with {Label(owner)} to {standing.ToString("F2", CultureInfo.InvariantCulture)} for character({target}).";
+        return $"Set standing with {Label(owner)} to {standing.ToString("F2", CultureInfo.InvariantCulture)} for {await PilotLabelAsync(target, cancellationToken)}.";
     }
 
     /// <summary>Sets the standing toward every agent owner to 10 for the named pilot (the pilot, when no name is given).</summary>
@@ -67,7 +74,7 @@ public sealed class StandingCommands(IStandingDirectory directory, RelationStore
         if (owners.Count == 0) return "No agent corporations or factions were available to update.";
         foreach (var owner in owners) await SetOneAsync(owner, target, Maximum, cancellationToken);
         var factions = owners.Count(owner => owner.IsFaction);
-        return $"Set {owners.Count - factions} agent corporation standings and {factions} agent faction standings to 10.00 for character({target}).";
+        return $"Set {owners.Count - factions} agent corporation standings and {factions} agent faction standings to 10.00 for {await PilotLabelAsync(target, cancellationToken)}.";
     }
 
     private async Task SetOneAsync(StandingOwner owner, long character, double standing, CancellationToken cancellationToken)
@@ -82,6 +89,10 @@ public sealed class StandingCommands(IStandingDirectory directory, RelationStore
     /// <summary>The pilot a token names: <c>me</c> is the session's character, anything else is the directory's (an ID or an exact name).</summary>
     private async Task<long?> CharacterAsync(ClientSession session, string token, CancellationToken cancellationToken) =>
         token.Equals("me", StringComparison.OrdinalIgnoreCase) ? session.CharacterId : await directory.FindCharacterAsync(token, cancellationToken);
+
+    /// <summary>The pilot as EVE.js names it: its name and its ID in brackets.</summary>
+    private async Task<string> PilotLabelAsync(long character, CancellationToken cancellationToken) =>
+        await directory.CharacterNameAsync(character, cancellationToken) is { Length: > 0 } name ? $"{name}({character})" : $"character({character})";
 
     private static string Label(StandingOwner owner) => owner.Name.Length == 0 ? $"owner {owner.Id}" : $"{owner.Name}({owner.Id})";
 

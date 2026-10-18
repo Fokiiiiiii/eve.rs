@@ -466,7 +466,7 @@ public sealed partial class SpaceSessions
             var shipId = NpcIdBase + Interlocked.Increment(ref _npcs);
             var weapon = NpcArmament.HullWeapon(type, shipId, _statics);
             var aggression = Math.Max(NpcArmament.AggressionRange(type, _statics), aggressionRangeOverride);
-            var identity = new SimNpcIdentity(hostileResponseThreshold, NpcFriendlyThreshold, aggression, weapon is null ? [] : [weapon], null, HostWreck: NpcWrecks is not null);
+            var identity = new SimNpcIdentity(hostileResponseThreshold, NpcFriendlyThreshold, aggression, weapon is null ? [] : [weapon], null, HostWreck: NpcWrecks is not null, SelfRepairs: NpcArmament.SelfRepairsOf(type, _statics));
             var hull = SimShips.OfType(shipId, type);
             var ship = hull with
             {

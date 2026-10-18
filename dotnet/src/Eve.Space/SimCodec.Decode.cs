@@ -287,6 +287,20 @@ public static partial class SimCodec
         {
             weapons[i] = ReadWeapon(ref r);
         }
+        var repairCount = r.U32();
+        if (repairCount > 2)
+            throw new SimLinkException(SimLinkError.BadValue, "too many NPC self-repairs");
+        if (repairCount > r.Remaining / 36)
+            throw new SimLinkException(SimLinkError.Truncated, "the frame ends before the message does");
+        var selfRepairs = new SimNpcSelfRepair[repairCount];
+        var repairEffects = new HashSet<int>();
+        for (var i = 0; i < selfRepairs.Length; i++)
+        {
+            var repair = new SimNpcSelfRepair(r.I32(), r.F64(), r.F64(), r.F64(), r.F64());
+            if (!SimNpcSelfRepair.IsValid(repair) || !repairEffects.Add(repair.EffectId))
+                throw new SimLinkException(SimLinkError.BadValue, "bad NPC self-repair");
+            selfRepairs[i] = repair;
+        }
         var wreck = ReadWreckKind(ref r);
         var hull = r.U8() switch
         {
@@ -300,7 +314,7 @@ public static partial class SimCodec
             1 => true,
             _ => throw new SimLinkException(SimLinkError.BadValue, "bad host wreck"),
         };
-        return new SimNpcIdentity(hostile, friendly, aggression, weapons, wreck, hull, hostWreck);
+        return new SimNpcIdentity(hostile, friendly, aggression, weapons, wreck, hull, hostWreck, selfRepairs);
     }
 
     private static SimShip ReadShip(ref Reader r)

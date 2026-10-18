@@ -934,13 +934,25 @@ public sealed record SimNpcWeapon(
     long ModuleId, int EffectId, double CycleMs, double CapacitorNeed, int WeaponTypeId, string Fx, IReadOnlyList<double> RawDamage, double OptimalRange, double Falloff,
     double TrackingSpeed, double SignatureResolution, SimTurretCharge? Charge = null, SimMissile? Missile = null, bool RequiresGunnery = false);
 
+/// <summary>A local self-repair effect of an NPC hull, derived from its SDE type dogma.</summary>
+public sealed record SimNpcSelfRepair(int EffectId, double Amount, double CycleMs, double CapacitorCost, double DelayChance)
+{
+    public static bool IsValid(SimNpcSelfRepair repair) =>
+        repair.EffectId is 6884 or 6990
+        && double.IsFinite(repair.Amount) && repair.Amount > 0
+        && double.IsFinite(repair.CycleMs) && repair.CycleMs >= 1
+        && double.IsFinite(repair.CapacitorCost) && repair.CapacitorCost >= 0
+        && double.IsFinite(repair.DelayChance) && repair.DelayChance is >= 0 and <= 1;
+}
+
 /// <summary>What a ship leaves when it is destroyed.</summary>
 public sealed record SimWreckKind(int TypeId, string Name, int GraphicId);
 
-/// <summary>What sets an NPC apart: the standings at which it treats others as enemies or friends, what it attacks at and with, and what it leaves.</summary>
+/// <summary>What sets an NPC apart: its combat and local SDE-derived self-repair effects.</summary>
 public sealed record SimNpcIdentity(
-    long HostileResponseThreshold, long FriendlyResponseThreshold, double AggressionRange, IReadOnlyList<SimNpcWeapon> Weapons, SimWreckKind? Wreck, bool Hull = false, bool HostWreck = false)
+    long HostileResponseThreshold, long FriendlyResponseThreshold, double AggressionRange, IReadOnlyList<SimNpcWeapon> Weapons, SimWreckKind? Wreck, bool Hull = false, bool HostWreck = false, IReadOnlyList<SimNpcSelfRepair>? SelfRepairs = null)
 {
+    public IReadOnlyList<SimNpcSelfRepair> SelfRepairs { get; init; } = SelfRepairs ?? [];
     /// <summary>The limits the reference gives every NPC, and nothing else.</summary>
     public static readonly SimNpcIdentity Default = new(-11, 11, 0, [], null);
 }

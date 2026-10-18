@@ -7,6 +7,32 @@ use crate::scene::{CloakTrigger, Command, DecloakCause, Out};
 use crate::ship::ShipSpec;
 use crate::weapons::tests::finishes_within;
 
+#[test]
+fn npc_self_repair_delay_roll_is_repeatable_and_uniform_on_5000ms_cycle_boundaries() {
+    const CYCLES: i64 = 4_096;
+    const CHANCE: f64 = 0.35;
+    let session = crate::npc::NPC_SESSION_BASE + 12_345;
+    let module_id = crate::npc::npc_self_repair_module_id(
+        eve_behaviors::consts::EFFECT_NPC_BEHAVIOR_ARMOR_REPAIRER as i32,
+    );
+    let sample = || {
+        (0..CYCLES)
+            .filter(|cycle| {
+                super::effects::npc_repair_cycle_is_delayed(
+                    session,
+                    module_id,
+                    cycle * 5 * TICKS_PER_SECOND,
+                    CHANCE,
+                )
+            })
+            .count()
+    };
+    let first = sample();
+    assert_eq!(first, sample(), "fixed keys and cycle times must replay identically");
+    let rate = first as f64 / CYCLES as f64;
+    assert!((0.30..=0.40).contains(&rate), "skip rate {rate} for chance {CHANCE}");
+}
+
 const A: SessionId = 7;
 const B: SessionId = 8;
 const SECOND: i64 = 10_000_000;

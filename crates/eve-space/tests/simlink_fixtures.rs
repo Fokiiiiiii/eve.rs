@@ -14,7 +14,7 @@ use eve_space::link::{
 use eve_space::missiles::{Blast, Missile};
 use eve_space::modules::{Action, Applies, Change, Effect, MiningFamily, Numbers, Reach, Remote, Rules};
 use eve_space::scene::{HeatModuleProfile, HeatProfile, HeatRack};
-use eve_space::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcWeapon, ShipSpec, ShipStance};
+use eve_space::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcSelfRepair, NpcWeapon, ShipSpec, ShipStance};
 use eve_space::weapons::{Aoe, Arc, Charge, Spool, Turret};
 use eve_space::wreck::WreckKind;
 use serde_json::Value;
@@ -810,10 +810,24 @@ fn identity_of(case: &Value) -> NpcIdentity {
         })
         .collect();
     let wreck = wreck_kind_of(case.get("wreck"));
+    let self_repairs = case
+        .get("selfRepairs")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(|repair| NpcSelfRepair {
+            effect_id: repair["effectId"].as_i64().unwrap() as i32,
+            amount: number(repair, "amount"),
+            cycle_ms: number(repair, "cycleMs"),
+            capacitor_cost: number(repair, "capacitorCost"),
+            delay_chance: number(repair, "delayChance"),
+        })
+        .collect();
     NpcIdentity {
         hostile_response_threshold: case["hostileResponseThreshold"].as_i64().unwrap(),
         friendly_response_threshold: case["friendlyResponseThreshold"].as_i64().unwrap(),
         combat: NpcCombat { weapons, aggression_range: number(case, "aggressionRange") },
+        self_repairs,
         wreck,
         hull: case.get("hull").and_then(Value::as_bool).unwrap_or(false),
         host_wreck: case.get("hostWreck").and_then(Value::as_bool).unwrap_or(false),
@@ -1098,7 +1112,11 @@ fn message_of(case: &Value) -> Message {
         },
         "Enter" => Message::Enter(Box::new(Enter {
             session_id: session_id(),
-            scene: if case.get("scene").is_some() { scene_key_of(case) } else { SceneKey::solar_system(number("solarSystemId") as i32) },
+            scene: if case.get("scene").is_some() {
+                scene_key_of(case)
+            } else {
+                SceneKey::solar_system(number("solarSystemId") as i32)
+            },
             how: match number("how") {
                 0 => How::Undock,
                 1 => How::InSpace,

@@ -25,6 +25,42 @@ pub fn is_npc_session(session: SessionId) -> bool {
     session >= NPC_SESSION_BASE
 }
 
+/// The reserved module identity for one NPC hull self-effect; ordinary item IDs are positive, so it cannot collide with a weapon owner.
+pub(crate) fn npc_self_repair_module_id(effect_id: i32) -> i64 {
+    i64::MIN + i64::from(effect_id)
+}
+
+pub(crate) fn npc_self_repair_effect(
+    module_type: i32,
+    repair: crate::ship::NpcSelfRepair,
+    repeat: i32,
+) -> crate::modules::Effect {
+    let (layer, when) =
+        if i64::from(repair.effect_id) == eve_behaviors::consts::EFFECT_NPC_BEHAVIOR_ARMOR_REPAIRER {
+            (crate::health::Layer::Armor, crate::modules::Applies::CycleEnd)
+        } else {
+            (crate::health::Layer::Shield, crate::modules::Applies::CycleStart)
+        };
+    crate::modules::Effect {
+        rules: Default::default(),
+        burns_fuel: false,
+        module_id: npc_self_repair_module_id(repair.effect_id),
+        module_type,
+        effect_id: repair.effect_id,
+        fx: String::new(),
+        duration_ms: repair.cycle_ms,
+        capacitor_need: repair.capacitor_cost,
+        repeat: repeat.max(1),
+        target_id: 0,
+        turret: None,
+        action: Some(crate::modules::Action::Repair { layer, amount: repair.amount, when }),
+        on: None,
+        off: None,
+        on_changes: Vec::new(),
+        off_changes: Vec::new(),
+    }
+}
+
 /// Where an NPC comes into a scene and how it is moving.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct NpcPlace {
@@ -203,11 +239,59 @@ impl Scene {
             self.brains = Some(brains);
             return Vec::new();
         }
-        let out = brains.run(self, now);
+        let mut out = brains.run(self, now);
+        out.extend(self.sync_npc_self_repairs(now, &brains));
         if let Some(spawned) = self.brains.replace(brains).filter(|spawned| !spawned.is_empty())
             && let Some(mine) = self.brains.as_mut()
         {
             mine.absorb(spawned);
+        }
+        out
+    }
+
+    /// Keeps NPC hull self-repair effects on their SDE-defined module cycles while combat has a locked target.
+    fn sync_npc_self_repairs(&mut self, now: i64, brains: &Brains) -> Vec<Out> {
+        let mut out = Vec::new();
+        for session in self.npc_sessions() {
+            let Some(pilot) = self.pilots.get(&session) else { continue };
+            let Some(identity) = pilot.ship.npc.as_ref() else { continue };
+            if identity.self_repairs.iter().any(|repair| !repair.is_valid())
+                || identity.self_repairs.iter().enumerate().any(|(i, repair)| {
+                    identity.self_repairs[..i].iter().any(|prior| prior.effect_id == repair.effect_id)
+                })
+            {
+                continue;
+            }
+            if brains.has_active_tank(session) {
+                continue;
+            }
+            let repairs = identity.self_repairs.clone();
+            let target_exists = !self.locked_by(session).is_empty();
+            let module_type = pilot.ship.spec.type_id;
+
+            for repair in repairs {
+                let module_id = npc_self_repair_module_id(repair.effect_id);
+                let (running, pending) = self.pilots.get(&session).map_or((false, false), |pilot| {
+                    (
+                        pilot.modules.running.iter().any(|run| run.effect.module_id == module_id),
+                        pilot.modules.active_or_pending_effects().any(|effect| effect.module_id == module_id)
+                            && !pilot.modules.running.iter().any(|run| run.effect.module_id == module_id),
+                    )
+                });
+                if !target_exists {
+                    if pending {
+                        out.extend(self.deactivate(session, module_id, now));
+                    } else if running {
+                        out.extend(self.offline_module(session, module_id, now));
+                    }
+                    continue;
+                }
+                if running || pending {
+                    continue;
+                }
+                let effect = npc_self_repair_effect(module_type, repair, i32::MAX);
+                out.extend(self.activate(session, effect, now));
+            }
         }
         out
     }

@@ -47,6 +47,31 @@ impl SceneWorld<'_> {
             .map(|weapon| (session, weapon.clone()))
     }
 
+    /// The self-repair effect a behavior task owns on an NPC's hull item.
+    fn self_repair_of_hull(
+        &self,
+        hull_id: i64,
+        effect_id: i64,
+    ) -> Option<(SessionId, i32, crate::ship::NpcSelfRepair)> {
+        let session = self.session_of(hull_id)?;
+        if !is_npc_session(session) {
+            return None;
+        }
+        let pilot = self.scene.pilots.get(&session)?;
+        if pilot.ship.spec.ship_id != hull_id {
+            return None;
+        }
+        let repair = pilot
+            .ship
+            .npc
+            .as_ref()?
+            .self_repairs
+            .iter()
+            .copied()
+            .find(|repair| i64::from(repair.effect_id) == effect_id && repair.is_valid())?;
+        Some((session, pilot.ship.spec.type_id, repair))
+    }
+
     /// The weapons of the NPCs of the scene whose ship is of this type (the weapons of an NPC are the same as any other's of the type).
     fn npc_weapons_of_type(&self, type_id: i64) -> impl Iterator<Item = &NpcWeapon> {
         self.scene
@@ -157,6 +182,14 @@ impl Dogma for SceneWorld<'_> {
     /// An NPC's weapons are effects of its ship, so it is the ship's type that has them.
     fn type_has_effect(&self, type_id: i64, effect_id: i64) -> bool {
         self.npc_weapons_of_type(type_id).any(|weapon| i64::from(weapon.effect_id) == effect_id)
+            || self.scene.pilots.values().any(|pilot| {
+                i64::from(pilot.ship.spec.type_id) == type_id
+                    && pilot.ship.npc.as_ref().is_some_and(|npc| {
+                        npc.self_repairs
+                            .iter()
+                            .any(|repair| repair.is_valid() && i64::from(repair.effect_id) == effect_id)
+                    })
+            })
     }
 
     fn is_effect_active(&self, item_id: i64, effect_id: i64) -> bool {
@@ -288,6 +321,27 @@ impl Dogma for SceneWorld<'_> {
         repeat: i64,
         _context: &Value,
     ) -> WorldResult<()> {
+        if let Some(effect_id) = effect_id
+            && let Some((session, module_type, repair)) = self.self_repair_of_hull(module_id, effect_id)
+        {
+            if target_id.is_some() {
+                return Err(WorldError::User("NoSuchEffect".to_string()));
+            }
+            let effect = crate::npc::npc_self_repair_effect(
+                module_type,
+                repair,
+                i32::try_from(repeat.max(1)).unwrap_or(i32::MAX),
+            );
+            let told = self.scene.activate(session, effect, self.now);
+            let refusal = told.iter().find_map(|out| match out {
+                Out::Refused { reason, .. } | Out::TargetRefused { reason, .. } => {
+                    Some((*reason).to_string())
+                }
+                _ => None,
+            });
+            self.keep(told);
+            return refusal.map_or(Ok(()), |reason| Err(WorldError::User(reason)));
+        }
         let Some((session, weapon)) = self.weapon_of_module(module_id) else {
             return Err(WorldError::User("NotAModule".to_string()));
         };
@@ -322,13 +376,21 @@ impl Dogma for SceneWorld<'_> {
         refusal.map_or(Ok(()), |reason| Err(WorldError::User(reason)))
     }
 
-    fn stop_effect_force_repeating(&mut self, _effect_id: i64, module_id: i64) -> WorldResult<()> {
-        self.stop_module(module_id);
+    fn stop_effect_force_repeating(&mut self, effect_id: i64, module_id: i64) -> WorldResult<()> {
+        if let Some((session, _, repair)) = self.self_repair_of_hull(module_id, effect_id) {
+            self.stop_module_for(session, crate::npc::npc_self_repair_module_id(repair.effect_id));
+        } else {
+            self.stop_module(module_id);
+        }
         Ok(())
     }
 
-    fn stop_effect(&mut self, _effect_id: i64, item_id: i64, _forced: bool) -> WorldResult<()> {
-        self.stop_module(item_id);
+    fn stop_effect(&mut self, effect_id: i64, item_id: i64, _forced: bool) -> WorldResult<()> {
+        if let Some((session, _, repair)) = self.self_repair_of_hull(item_id, effect_id) {
+            self.stop_module_for(session, crate::npc::npc_self_repair_module_id(repair.effect_id));
+        } else {
+            self.stop_module(item_id);
+        }
         Ok(())
     }
 
@@ -357,19 +419,26 @@ impl SceneWorld<'_> {
     /// The running effect of an NPC's weapon, and when its cycle began.
     fn active_effect(&self, item_id: i64, effect_id: i64) -> Option<(&Effect, i64)> {
         let session = self.session_of(item_id)?;
+        let module_id = self
+            .self_repair_of_hull(item_id, effect_id)
+            .map_or(item_id, |(_, _, repair)| crate::npc::npc_self_repair_module_id(repair.effect_id));
         self.scene
             .pilots
             .get(&session)?
             .modules
             .running_effects()
-            .find(|(effect, _)| effect.module_id == item_id && i64::from(effect.effect_id) == effect_id)
+            .find(|(effect, _)| effect.module_id == module_id && i64::from(effect.effect_id) == effect_id)
     }
 
     /// The pilot asks for a module to stop (at the end of its cycle).
     fn stop_module(&mut self, module_id: i64) {
         if let Some(session) = self.session_of(module_id) {
-            let told = self.scene.deactivate(session, module_id, self.now);
-            self.keep(told);
+            self.stop_module_for(session, module_id);
         }
+    }
+
+    fn stop_module_for(&mut self, session: SessionId, module_id: i64) {
+        let told = self.scene.deactivate(session, module_id, self.now);
+        self.keep(told);
     }
 }

@@ -385,6 +385,10 @@ def identity(i):
     body += struct.pack("<I", len(i["weapons"]))
     for w in i["weapons"]:
         body += weapon(w)
+    repairs = i.get("selfRepairs", [])
+    body += struct.pack("<I", len(repairs))
+    for repair in repairs:
+        body += struct.pack("<i4d", repair["effectId"], repair["amount"], repair["cycleMs"], repair["capacitorCost"], repair["delayChance"])
     return body + wreck_kind(i.get("wreck")) + bytes([1 if i.get("hull") else 0, 1 if i.get("hostWreck") else 0])
 
 
@@ -1265,6 +1269,8 @@ valid = [
                   "weapons": [{"moduleId": "980050000077", "effectId": 10, "cycleMs": 4000.0, "capacitorNeed": 0.0,
                                "weaponTypeId": 5678, "fx": "effects.Laser", "requiresGunnery": True, "rawDamage": [0.0, 0.0, 6.0, 4.0],
                                "optimalRange": 20000.0, "falloff": 10000.0, "trackingSpeed": 0.4, "signatureResolution": 40.0}],
+                  "selfRepairs": [{"effectId": 6884, "amount": 91.5, "cycleMs": 5500.0, "capacitorCost": 0.25, "delayChance": 0.1},
+                               {"effectId": 6990, "amount": 123.5, "cycleMs": 4000.0, "capacitorCost": 0.5, "delayChance": 0.2}],
                   "wreck": {"typeId": 26506, "name": "Caldari Frigate Wreck", "graphicId": 3117}}},
     {"name": "spawn of a bare NPC: no tree, no weapons, no wreck", "kind": "Spawn", "requestId": "8", "solarSystemId": 30000142,
      "ship": dict(BARE, shipId="980050000078", characterId="0"), "anchorShipId": "9988400001939", "position": [1.0, 2.0, 3.0], "velocity": [4.0, 5.0, 6.0],
@@ -1898,6 +1904,19 @@ invalid = [
     {"name": "buff state with a value that is not a number", "reason": "bad-value",
      "hex": build(dict(buff_state, entries=[{"collectionId": 10, "value": float("nan"), "remainingMs": 1000.0}])).hex()},
 ]
+
+npc_repair_case = named("spawn of an NPC with a laser, a wreck and a tree")
+valid_repairs = npc_repair_case["identity"]["selfRepairs"]
+for label, repairs in [
+    ("unknown effect", [dict(valid_repairs[0], effectId=12345)]),
+    ("duplicate effect", [valid_repairs[0], valid_repairs[0]]),
+    ("nonfinite amount", [dict(valid_repairs[0], amount=float("nan"))]),
+    ("invalid duration", [dict(valid_repairs[0], cycleMs=0.0)]),
+    ("invalid delay chance", [dict(valid_repairs[0], delayChance=1.1)]),
+    ("too many effects", valid_repairs + [dict(valid_repairs[0], effectId=6990)]),
+]:
+    bad = dict(npc_repair_case, identity=dict(npc_repair_case["identity"], selfRepairs=repairs))
+    invalid.append({"name": "NPC self-repair " + label, "reason": "bad-value", "hex": build(bad).hex()})
 
 deployment_frame = named("public deployment snapshot carries real ship state and center-distance candidates")
 for label, distance, item_id in [("nonfinite distance", float("nan"), "400000001"), ("outside distance", 1000000.01, "400000001"), ("self included", 1.0, deployment_frame["shipId"])]:

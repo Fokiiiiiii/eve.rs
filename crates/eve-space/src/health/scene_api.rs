@@ -73,6 +73,11 @@ impl Scene {
             .into_iter()
             .collect();
         if applied.changed
+            && let Some(brains) = self.brains.as_mut()
+        {
+            brains.damage_changed(ship_id);
+        }
+        if applied.changed
             && let Some(subject) = self.subject(ship_id, now)
         {
             out.extend(self.announce_damage_state(&subject, now));
@@ -108,6 +113,11 @@ impl Scene {
         let mut out: Vec<Out> = Self::health_told(session, owner, ship_id, now, &applied.attribute_changes())
             .into_iter()
             .collect();
+        if applied.changed
+            && let Some(brains) = self.brains.as_mut()
+        {
+            brains.damage_changed(ship_id);
+        }
         if applied.changed
             && let Some(subject) = self.subject(ship_id, now)
         {

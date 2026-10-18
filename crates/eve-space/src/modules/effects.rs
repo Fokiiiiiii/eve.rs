@@ -7,6 +7,23 @@ const REACH_POLL_TICKS: i64 = TICKS_PER_SECOND / 4;
 /// The slack a target's reach is measured with (metres): the reference's one metre of tolerance on its range gate.
 const REACH_SLACK_METERS: f64 = 1.0;
 
+pub(super) fn npc_repair_cycle_is_delayed(session: SessionId, module_id: i64, at: i64, chance: f64) -> bool {
+    if chance <= 0.0 {
+        return false;
+    }
+    if chance >= 1.0 {
+        return true;
+    }
+    let mut bits = (session as u64)
+        ^ (module_id as u64).rotate_left(23)
+        ^ (at as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    bits = (bits ^ (bits >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    bits = (bits ^ (bits >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    bits ^= bits >> 31;
+    let roll = (bits >> 11) as f64 / ((1_u64 << 53) as f64);
+    roll < chance
+}
+
 impl Scene {
     /// What the client of the ship an effect is projected at is told, for its HUD (`hudIconStates.js` of the reference): as the effect goes on `OnJamStart` (who, which module,
     /// the target, what the HUD calls it, when and for how long: a cycle and a tick over), `OnEwarStart` and the buff bar refreshed; as each cycle begins the timer again; as it ends
@@ -66,7 +83,22 @@ impl Scene {
                 let Some(ship_id) = self.pilots.get(&session).map(|pilot| pilot.ship.spec.ship_id) else {
                     return Vec::new();
                 };
-                self.mend(ship_id, *layer, *amount, at)
+                let delay_chance = self
+                    .pilots
+                    .get(&session)
+                    .and_then(|pilot| pilot.ship.npc.as_ref())
+                    .and_then(|identity| {
+                        identity.self_repairs.iter().find(|repair| {
+                            repair.effect_id == effect.effect_id
+                                && crate::npc::npc_self_repair_module_id(repair.effect_id) == effect.module_id
+                        })
+                    })
+                    .map_or(0.0, |repair| repair.delay_chance);
+                if npc_repair_cycle_is_delayed(session, effect.module_id, at, delay_chance) {
+                    Vec::new()
+                } else {
+                    self.mend(ship_id, *layer, *amount, at)
+                }
             }
             Some(Action::Remote { what, reach, when: applies, .. }) if *applies == when => {
                 self.project(session, effect, what, reach, at)

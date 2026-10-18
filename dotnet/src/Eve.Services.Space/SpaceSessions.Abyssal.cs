@@ -545,7 +545,8 @@ public sealed partial class SpaceSessions
             aggressionRange,
             weapon is null ? [] : [weapon],
             null,
-            HostWreck: false);
+            HostWreck: false,
+            SelfRepairs: NpcArmament.SelfRepairsOf(type, _statics));
         var length = Math.Sqrt(direction.Sum(value => value * value));
         if (!double.IsFinite(length) || length <= 0)
             throw new ArgumentException("An Abyssal NPC direction must have finite nonzero length.", nameof(direction));

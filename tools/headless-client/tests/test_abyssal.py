@@ -757,6 +757,7 @@ def _complete_three_rooms(client, ship_id, system_id, ballpark, modules, content
         ], f"room {room} still has living combat NPCs"
         caches = [item_id for item_id, fields in entities.items() if _integer(fields["groupID"]) == 2009]
         assert len(caches) == 1, f"room {room} did not expose its damageable main cache"
+        _approach_static_entity(client, ballpark, ship_id, caches[0], expiry_time)
         _shoot_entity(client, ballpark, dogma, modules, caches[0], expiry_time, follow_distance=2500)
         entities, _ = _room_snapshot(client, ballpark)
         wrecks = [

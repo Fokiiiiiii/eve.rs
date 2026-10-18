@@ -144,6 +144,14 @@ pub(super) fn put_identity(out: &mut Vec<u8>, identity: &NpcIdentity) {
     for weapon in &identity.combat.weapons {
         put_weapon(out, weapon);
     }
+    out.extend_from_slice(&(identity.self_repairs.len() as u32).to_le_bytes());
+    for repair in &identity.self_repairs {
+        out.extend_from_slice(&repair.effect_id.to_le_bytes());
+        out.extend_from_slice(&repair.amount.to_le_bytes());
+        out.extend_from_slice(&repair.cycle_ms.to_le_bytes());
+        out.extend_from_slice(&repair.capacitor_cost.to_le_bytes());
+        out.extend_from_slice(&repair.delay_chance.to_le_bytes());
+    }
     put_wreck_kind(out, identity.wreck.as_ref());
     out.push(u8::from(identity.hull));
     out.push(u8::from(identity.host_wreck));

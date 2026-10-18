@@ -187,6 +187,17 @@ public static partial class SimCodec
         {
             WriteWeapon(w, weapon);
         }
+        if (i.SelfRepairs.Count > 2 || i.SelfRepairs.Any(repair => !SimNpcSelfRepair.IsValid(repair)) || i.SelfRepairs.Select(repair => repair.EffectId).Distinct().Count() != i.SelfRepairs.Count)
+            throw new ArgumentException("bad NPC self-repairs", nameof(i));
+        w.U32((uint)i.SelfRepairs.Count);
+        foreach (var repair in i.SelfRepairs)
+        {
+            w.I32(repair.EffectId);
+            w.F64(repair.Amount);
+            w.F64(repair.CycleMs);
+            w.F64(repair.CapacitorCost);
+            w.F64(repair.DelayChance);
+        }
         WriteWreckKind(w, i.Wreck);
         w.U8((byte)(i.Hull ? 1 : 0));
         w.U8((byte)(i.HostWreck ? 1 : 0));

@@ -308,7 +308,8 @@ public class SimCodecTests
         [.. ((JsonArray)i["weapons"]!).Select(w => WeaponOf(w!))],
         WreckKindOf(i["wreck"]),
         i["hull"] is { } hull && (bool)hull,
-        i["hostWreck"] is { } hostWreck && (bool)hostWreck);
+        i["hostWreck"] is { } hostWreck && (bool)hostWreck,
+        i["selfRepairs"] is JsonArray repairs ? [.. repairs.Select(r => new SimNpcSelfRepair((int)r!["effectId"]!, (double)r["amount"]!, (double)r["cycleMs"]!, (double)r["capacitorCost"]!, (double)r["delayChance"]!))] : []);
 
     private static SimWreckKind? WreckKindOf(JsonNode? w) => w is null ? null : new SimWreckKind((int)w["typeId"]!, (string)w["name"]!, (int)w["graphicId"]!);
 

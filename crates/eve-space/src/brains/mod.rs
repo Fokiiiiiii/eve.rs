@@ -190,6 +190,34 @@ impl Brains {
         self.brains.get(&session).map_or(&[], |brain| brain.faults.as_slice())
     }
 
+    /// Whether the NPC's assigned tree delegates self-repair activation to the damage-gated ActiveTank task.
+    pub(crate) fn has_active_tank(&self, session: SessionId) -> bool {
+        self.brains.get(&session).is_some_and(|brain| {
+            (0..brain.tree.task_count()).any(|task| brain.tree.type_name_of(task) == "ActiveTank")
+        })
+    }
+
+    /// Tell an item's existing behavior subscribers that its damage state changed.
+    pub(crate) fn damage_changed(&mut self, item_id: i64) {
+        self.shared.tell_subscribers(
+            eve_behaviors::events::Subject::Item(item_id),
+            eve_behaviors::events::message::ON_DAMAGE_CHANGED,
+            &[],
+        );
+    }
+
+    /// Deliver the recurring NPC module-cycle start to behaviors that subscribed to this effect.
+    pub(crate) fn effect_started(&mut self, item_id: i64, effect_id: i64) {
+        self.shared.tell_subscribers(
+            eve_behaviors::events::Subject::Item(item_id),
+            eve_behaviors::events::EventKey::with(
+                eve_behaviors::events::message::ON_EFFECT_STARTED,
+                effect_id,
+            ),
+            &[],
+        );
+    }
+
     /// The status of the root of an NPC's tree, if it has one.
     pub fn root_status(&self, session: SessionId) -> Option<Status> {
         let brain = self.brains.get(&session)?;

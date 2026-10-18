@@ -32,7 +32,7 @@ use crate::scene::{HeatModuleProfile, HeatProfile, HeatRack};
 
 use crate::strike::{Strike, StrikeShape};
 
-use crate::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcWeapon, ShipSpec, ShipStance};
+use crate::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcSelfRepair, NpcWeapon, ShipSpec, ShipStance};
 
 use crate::weapons::{Aoe, Arc, Charge, Spool, Turret};
 

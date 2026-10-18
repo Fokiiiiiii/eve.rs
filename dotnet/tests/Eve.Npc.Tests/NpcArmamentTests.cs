@@ -1,5 +1,9 @@
 using Eve.Dogma;
+using Eve.Data;
 using Eve.Npc;
+using Eve.Sde;
+using Eve.Space;
+using Npgsql;
 
 namespace Eve.Npc.Tests;
 
@@ -264,6 +268,43 @@ public sealed class NpcArmamentTests
     public void An_npc_attacks_at_the_range_its_hull_gives(double range, double expected)
     {
         Assert.Equal(expected, NpcArmament.AggressionRange(Hull([(247, range)]), Statics()));
+    }
+
+    [PgFact]
+    public async Task Native_NPC_self_repairs_are_resolved_from_the_SDE_type_effects_and_attributes()
+    {
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(BountyRig.Url!));
+        var sde = new SdeReader(source);
+        Assert.NotNull(await sde.BuildAsync());
+        var statics = await DogmaStatic.LoadAsync(sde);
+        await statics.EnsureTypesAsync([56_138, 56_170]);
+
+        foreach (var (typeId, effectId, amountName, delayName) in new[]
+        {
+            (56_138, 6_990, "behaviorShieldBoosterAmount", "entityShieldBoostDelayChance"),
+            (56_170, 6_884, "behaviorArmorRepairerAmount", "entityArmorRepairDelayChance"),
+        })
+        {
+            var type = Assert.IsType<TypeDef>(statics.Type(typeId));
+            Assert.Contains(effectId, type.EffectIds);
+            var effect = Assert.IsType<EffectDef>(statics.Effect(effectId));
+            var repair = Assert.Single(NpcArmament.SelfRepairsOf(type, statics));
+            Assert.Equal(effectId, repair.EffectId);
+            Assert.Equal(Value(type, statics, amountName), repair.Amount);
+            Assert.Equal(Value(type, statics, effect.DurationAttributeId), repair.CycleMs);
+            Assert.Equal(Value(type, statics, effect.DischargeAttributeId), repair.CapacitorCost);
+            Assert.Equal(Value(type, statics, delayName), repair.DelayChance);
+            Assert.True(SimNpcSelfRepair.IsValid(repair));
+        }
+    }
+
+    private static double Value(TypeDef type, DogmaStatic statics, string attributeName) =>
+        Value(type, statics, Assert.IsType<int>(statics.AttributeId(attributeName)));
+
+    private static double Value(TypeDef type, DogmaStatic statics, int attributeId)
+    {
+        var attribute = Assert.IsType<AttributeDef>(statics.Attribute(attributeId));
+        return type.Attributes.GetValueOrDefault(attributeId, attribute.DefaultValue);
     }
 
     [Fact]

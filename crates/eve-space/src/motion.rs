@@ -335,6 +335,21 @@ mod tests {
     }
 
     #[test]
+    fn a_ship_with_no_top_speed_holds_its_place_while_it_orbits() {
+        // a QA-spawned NPC (`/npc ... still`) has no top speed (a Pochven sentry has none either): an orbit asks it for no speed, however fast its target goes
+        let target = Target { position: Vec3::ZERO, radius: 500.0, velocity: Vec3::new(339.0, 0.0, 0.0) };
+        let start = Vec3::new(10_000.0, 0.0, 0.0);
+        let mut s = ship(Course::Orbit { target: 7, distance: 5_000.0 });
+        s.spec.max_velocity = 0.0;
+        s.position = start;
+        for _ in 0..60 {
+            advance(&mut s, 1.0, Some(target));
+        }
+        assert!(distance(&s, Target::at_rest(start, 0.0)) < 1.0, "{:?}", s.position);
+        assert!(length(s.velocity) < 1.0, "{:?}", s.velocity);
+    }
+
+    #[test]
     fn a_ship_following_a_target_that_moves_keeps_up_instead_of_lagging_behind_it() {
         let mut s = ship(Course::Follow { target: 7, range: 500.0 });
         s.spec.max_velocity = 500.0;

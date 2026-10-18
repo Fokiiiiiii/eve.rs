@@ -26,6 +26,10 @@ from tests.test_target import plain_race, timing
 from tests.test_undock import STATION, SYSTEM, arrive, collapse, compare_events, outcome
 
 DEATH = base.load("death.json")
+# the moment of a detonation: the recording's came 1.35 s after its 2.0 s of simulation time, this side 0.27 s (DEVIATIONS #63)
+DETONATION_TOLERANCE = 1.5
+
+
 pytestmark = [
     pytest.mark.skipif(not base.LIVE, reason="set EVE_LIVE_HOST=host:port to test against a running server"),
     pytest.mark.skipif(os.environ.get("EVE_LIVE_SLOW") != "1", reason="a minute: set EVE_LIVE_SLOW=1"),
@@ -42,6 +46,15 @@ def without_protection(events: list) -> list:
 
 HULL = 4_200_000_000_000_000
 WRECK_ITEM = 9_988_400_002_415
+
+
+# what a ball that a station pushes out of its place is told (DEVIATIONS #63): a hull placed 3 km to 20 km off the pilot may land within a station's
+# sphere, and the simulation moves it out and says where it stopped; the reference's hull is not in one, so the recording has none of these
+BUMP_ACTIONS = {"SetBallPosition", "SetBallVelocity", "SetSpeedFraction", "Stop"}
+
+
+def without_bumps(events: list) -> list:
+    return [e for e in events if e["name"] != "DoDestinyUpdate" or not (_names(e) <= BUMP_ACTIONS)]
 
 
 def canonical(node):
@@ -99,9 +112,13 @@ def test_a_hull_that_blows_up_beside_two_pilots_is_seen_as_it_was_in_the_referen
             problems.append(f"{label}: answered {raw!r} in place of the recording's text")
         got = watch(both, 40.0, until=lambda seen: sum(1 for e in seen["events"] + seen["seen"] if _names(e) & {"RemoveBalls"}) >= 2)
         for who, key in (("the victim", "events"), ("the watcher", "seen")):
-            theirs, ours = canonical(without_protection(steps[label][key])), canonical(without_protection(got[key]))
+            theirs, ours = canonical(without_protection(steps[label][key])), canonical(without_protection(without_bumps(got[key])))
             problems.extend(compare_events(theirs, ours, f"{label} ({who})", mapping))
-            problems.extend(timing(theirs, ours, f"{label} ({who})", TOLERANCE, ("DoDestinyUpdate",)))
+            # the detonation is 2.0 s of simulation time after the spawn: the recording's took 3.4 s after it (1.35 s of its own latency), this side 2.3 s
+            # the moments of the hull's arrival and of its detonation (the ball's own settings are told at a different moment and are not timed)
+            def moments(events):
+                return [e for e in events if e["name"] != "DoDestinyUpdate" or _names(e) & {"AddBalls2", "RemoveBalls"}]
+            problems.extend(timing(moments(theirs), moments(ours), f"{label} ({who})", DETONATION_TOLERANCE, ("DoDestinyUpdate",)))
     assert problems == [], "\n".join(problems[:40])
 
 

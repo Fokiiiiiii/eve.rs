@@ -14,6 +14,7 @@ public sealed class NpcCommands(ISpaceNpcs space)
 {
     public const int DefaultAmount = 5;
     public const int MaxAmount = 50;
+    public const string StillWord = "still";
 
     /// <summary><c>parseNpcSpawnArguments</c>: the first word that is a number is the amount (a whole number above nothing, or the command is refused), the rest is what is named.</summary>
     public static (int Amount, string Query)? Parse(string argument, int defaultAmount = DefaultAmount)
@@ -49,7 +50,10 @@ public sealed class NpcCommands(ISpaceNpcs space)
 
     public async Task<string> RunAsync(ClientSession session, string argument, CancellationToken cancellationToken)
     {
-        if (Parse(argument) is not var (amount, query))
+        // QA: the word "still" makes the NPCs hold where they are (no top speed), for walks that need a target that does not move
+        var words = argument.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        var stationary = words.Any(word => word.Equals(StillWord, StringComparison.OrdinalIgnoreCase));
+        if (Parse(string.Join(' ', words.Where(word => !word.Equals(StillWord, StringComparison.OrdinalIgnoreCase)))) is not var (amount, query))
         {
             return "Usage: /npc [amount] [faction|profile|pool]";
         }
@@ -57,7 +61,7 @@ public sealed class NpcCommands(ISpaceNpcs space)
         {
             return $"NPC spawn count must be between 1 and {MaxAmount}.";
         }
-        var report = await space.SpawnNpcsAsync(session, query, amount, cancellationToken);
+        var report = await space.SpawnNpcsAsync(session, query, amount, cancellationToken, stationary);
         if (report.Error is { } error)
         {
             var suggestions = Suggestions(report.Suggestions);
@@ -78,7 +82,8 @@ public sealed class NpcCommands(ISpaceNpcs space)
         var composition = string.Join(", ", report.Composition.Select(part => $"{part.Count.ToString(CultureInfo.InvariantCulture)}x {part.Name}"));
         var from = report.SelectionName.Length > 0 ? $" from {report.SelectionName}" : "";
         var partial = spawned < report.Requested ? $" Spawn stopped at {spawned + 1}/{report.Requested}: {NpcSpawnReport.SpawnFailed}." : "";
+        var still = stationary ? " They hold still (a QA spawn: no top speed)." : "";
         var unarmed = report.Unarmed > 0 ? $" {report.Unarmed} of them carry no weapon this server can fire yet (missile launchers)." : "";
-        return $"Spawned {spawned} hull{(spawned == 1 ? "" : "s")}{from}: {composition}. These command-spawned NPCs are transient and are not written to disk.{unarmed}{partial}";
+        return $"Spawned {spawned} hull{(spawned == 1 ? "" : "s")}{from}: {composition}. These command-spawned NPCs are transient and are not written to disk.{still}{unarmed}{partial}";
     }
 }

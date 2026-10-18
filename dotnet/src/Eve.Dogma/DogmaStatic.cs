@@ -16,58 +16,80 @@ public sealed class DogmaStatic
     private readonly SdeReader? _sde;
     /// <summary>The compressed gas types by name, read once: a cloud's yield is looked up by name when its material is not in the SDE.</summary>
     private Dictionary<string, int>? _compressedGasTypeIds;
-    private readonly ConcurrentDictionary<int, TypeDef> _types = new();
-    private readonly Dictionary<int, AttributeDef> _attributes;
-    private readonly Dictionary<int, EffectDef> _effects;
-    private readonly Dictionary<int, int> _categoryOfGroup;
-    private readonly Dictionary<int, string> _groupNames;
-    private readonly Dictionary<int, string> _categoryNames;
-    private readonly Dictionary<int, string> _factionNames;
-    private readonly Dictionary<string, int> _attributeIdsByName;
+    /// <summary>The dogma tables a reload swaps as one, so a reader sees the old set or the new one, never a mix.</summary>
+    private sealed record DogmaTables(
+        ConcurrentDictionary<int, TypeDef> Types,
+        Dictionary<int, AttributeDef> Attributes,
+        Dictionary<int, EffectDef> Effects,
+        Dictionary<int, int> CategoryOfGroup,
+        Dictionary<int, string> GroupNames,
+        Dictionary<int, string> CategoryNames,
+        Dictionary<int, string> FactionNames,
+        Dictionary<string, int> AttributeIdsByName);
+
+    private volatile DogmaTables _tables;
 
     public DogmaStatic(IEnumerable<AttributeDef> attributes, IEnumerable<EffectDef> effects, IEnumerable<TypeDef> types, SdeReader? sde = null, IReadOnlyDictionary<int, int>? categoryOfGroup = null, IReadOnlyDictionary<int, string>? groupNames = null, IReadOnlyDictionary<int, string>? categoryNames = null, IReadOnlyDictionary<int, string>? factionNames = null, IReadOnlySet<int>? missileLauncherGroups = null)
     {
-        _attributes = attributes.ToDictionary(a => a.Id);
-        _effects = effects.ToDictionary(e => e.Id);
+        var typeTable = new ConcurrentDictionary<int, TypeDef>();
         foreach (var type in types)
         {
-            _types[type.TypeId] = type;
+            typeTable[type.TypeId] = type;
         }
+        var attributeTable = attributes.ToDictionary(a => a.Id);
+        _tables = new DogmaTables(
+            typeTable,
+            attributeTable,
+            effects.ToDictionary(e => e.Id),
+            categoryOfGroup is null ? new Dictionary<int, int>() : new Dictionary<int, int>(categoryOfGroup),
+            groupNames is null ? new Dictionary<int, string>() : new Dictionary<int, string>(groupNames),
+            categoryNames is null ? new Dictionary<int, string>() : new Dictionary<int, string>(categoryNames),
+            factionNames is null ? new Dictionary<int, string>() : new Dictionary<int, string>(factionNames),
+            attributeTable.Values
+                .Where(a => a.Name.Length > 0)
+                .GroupBy(a => a.Name, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.First().Id, StringComparer.OrdinalIgnoreCase));
         _sde = sde;
-        _categoryOfGroup = categoryOfGroup is null ? [] : new Dictionary<int, int>(categoryOfGroup);
-        _groupNames = groupNames is null ? [] : new Dictionary<int, string>(groupNames);
-        _categoryNames = categoryNames is null ? [] : new Dictionary<int, string>(categoryNames);
-        _factionNames = factionNames is null ? [] : new Dictionary<int, string>(factionNames);
         MissileLauncherGroups = missileLauncherGroups ?? new HashSet<int>();
-        _attributeIdsByName = _attributes.Values
-            .Where(a => a.Name.Length > 0)
-            .GroupBy(a => a.Name, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(g => g.Key, g => g.First().Id, StringComparer.OrdinalIgnoreCase);
     }
 
+    /// <summary>
+    /// Reads the dogma tables again from the SDE the host loaded them from, and swaps them in. The types the host had read are read again too; the others are
+    /// read as they are asked for. shortcut: the attribute values a ship already computed are kept until the ship's next dogma change, they are not pushed again.
+    /// </summary>
+    public async Task<(int Attributes, int Effects)> ReloadAsync(CancellationToken cancellationToken = default)
+    {
+        if (_sde is null) throw new InvalidOperationException("the dogma tables were not loaded from an SDE");
+        var loaded = _tables.Types.Keys.ToList();
+        var fresh = await LoadAsync(_sde, cancellationToken);
+        await fresh.EnsureTypesAsync(loaded, cancellationToken);
+        _tables = fresh._tables;
+        _compressedGasTypeIds = null;
+        return (fresh.AttributeCount, fresh.EffectCount);
+    }
     /// <summary>Returns this catalog with extra in-memory definitions for deterministic fixtures.</summary>
     public DogmaStatic WithFixtures(
         IEnumerable<TypeDef> types,
         IReadOnlyDictionary<int, int>? categoryOfGroup = null,
         IReadOnlyDictionary<int, string>? groupNames = null)
     {
-        var categories = new Dictionary<int, int>(_categoryOfGroup);
+        var categories = new Dictionary<int, int>(_tables.CategoryOfGroup);
         if (categoryOfGroup is not null)
             foreach (var (groupId, categoryId) in categoryOfGroup)
                 categories[groupId] = categoryId;
-        var names = new Dictionary<int, string>(_groupNames);
+        var names = new Dictionary<int, string>(_tables.GroupNames);
         if (groupNames is not null)
             foreach (var (groupId, name) in groupNames)
                 names[groupId] = name;
         return new DogmaStatic(
-            _attributes.Values,
-            _effects.Values,
-            _types.Values.Concat(types),
+            _tables.Attributes.Values,
+            _tables.Effects.Values,
+            _tables.Types.Values.Concat(types),
             _sde,
             categories,
             names,
-            _categoryNames,
-            _factionNames,
+            _tables.CategoryNames,
+            _tables.FactionNames,
             MissileLauncherGroups);
     }
 
@@ -80,43 +102,43 @@ public sealed class DogmaStatic
     /// <summary>The timed buff collections of the static data (<c>dbuffCollections</c>), by id. Empty when the static data has none.</summary>
     public IReadOnlyDictionary<int, BuffCollection> BuffCollections { get; init; } = new Dictionary<int, BuffCollection>();
 
-    public AttributeDef? Attribute(int id) => _attributes.GetValueOrDefault(id);
+    public AttributeDef? Attribute(int id) => _tables.Attributes.GetValueOrDefault(id);
 
-    public EffectDef? Effect(int id) => _effects.GetValueOrDefault(id);
+    public EffectDef? Effect(int id) => _tables.Effects.GetValueOrDefault(id);
 
-    public TypeDef? Type(int typeId) => _types.GetValueOrDefault(typeId);
+    public TypeDef? Type(int typeId) => _tables.Types.GetValueOrDefault(typeId);
 
     /// <summary>The English name of a group (an empty string when the data has none).</summary>
-    public string GroupName(int groupId) => _groupNames.GetValueOrDefault(groupId, "");
+    public string GroupName(int groupId) => _tables.GroupNames.GetValueOrDefault(groupId, "");
 
     /// <summary>The SDE category name for a group category identifier.</summary>
-    public string CategoryName(int categoryId) => _categoryNames.GetValueOrDefault(categoryId, "");
+    public string CategoryName(int categoryId) => _tables.CategoryNames.GetValueOrDefault(categoryId, "");
 
-    public string FactionName(int factionId) => _factionNames.GetValueOrDefault(factionId, "");
+    public string FactionName(int factionId) => _tables.FactionNames.GetValueOrDefault(factionId, "");
 
     /// <summary>Every faction's name by its ID (the SDE's <c>factions</c>).</summary>
-    public IReadOnlyDictionary<int, string> FactionNames => _factionNames;
+    public IReadOnlyDictionary<int, string> FactionNames => _tables.FactionNames;
 
     /// <summary>The SDE identifier for a category name.</summary>
-    public int? CategoryId(string name) => _categoryNames
+    public int? CategoryId(string name) => _tables.CategoryNames
         .Where(pair => pair.Value.Equals(name, StringComparison.OrdinalIgnoreCase))
         .Select(pair => (int?)pair.Key)
         .FirstOrDefault();
 
     /// <summary>The SDE identifier for a dogma attribute name.</summary>
-    public int? AttributeId(string name) => _attributeIdsByName.TryGetValue(name, out var id) ? id : null;
+    public int? AttributeId(string name) => _tables.AttributeIdsByName.TryGetValue(name, out var id) ? id : null;
 
-    public int AttributeCount => _attributes.Count;
+    public int AttributeCount => _tables.Attributes.Count;
 
-    public int EffectCount => _effects.Count;
+    public int EffectCount => _tables.Effects.Count;
 
     /// <summary>Every effect the static data and the built-in effects define.</summary>
-    public IEnumerable<EffectDef> Effects => _effects.Values;
+    public IEnumerable<EffectDef> Effects => _tables.Effects.Values;
 
     /// <summary>Makes sure these types are known (reads them from the SDE when they are not).</summary>
     public async Task EnsureTypesAsync(IEnumerable<int> typeIds, CancellationToken cancellationToken = default)
 {
-    var missing = typeIds.Distinct().Where(id => !_types.ContainsKey(id)).ToArray();
+    var missing = typeIds.Distinct().Where(id => !_tables.Types.ContainsKey(id)).ToArray();
     if (missing.Length == 0 || _sde is null)
     {
         return;
@@ -157,7 +179,7 @@ public sealed class DogmaStatic
         var name = row.Doc.TryGetProperty("name", out var names) ? SdeReader.English(names) : "";
         var graphic = row.Doc.TryGetProperty("graphicID", out var graphicId) && graphicId.ValueKind == JsonValueKind.Number ? graphicId.GetInt32() : 0;
         var race = row.Doc.TryGetProperty("raceID", out var raceId) && raceId.ValueKind == JsonValueKind.Number ? raceId.GetInt32() : 0;
-        _types[(int)row.Key] = new TypeDef((int)row.Key, group, _categoryOfGroup.GetValueOrDefault(group), attributes, effects, name, graphic, race)
+        _tables.Types[(int)row.Key] = new TypeDef((int)row.Key, group, _tables.CategoryOfGroup.GetValueOrDefault(group), attributes, effects, name, graphic, race)
         {
             Published = IsPublished(row.Doc),
         };
@@ -272,7 +294,7 @@ public sealed class DogmaStatic
         {
             return [];
         }
-        var groups = _categoryOfGroup.Where(pair => pair.Value == categoryId).Select(pair => (long)pair.Key).ToArray();
+        var groups = _tables.CategoryOfGroup.Where(pair => pair.Value == categoryId).Select(pair => (long)pair.Key).ToArray();
         if (groups.Length == 0)
         {
             return [];

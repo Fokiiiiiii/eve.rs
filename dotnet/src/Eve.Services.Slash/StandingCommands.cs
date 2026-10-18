@@ -35,6 +35,10 @@ public sealed class StandingCommands(IStandingDirectory directory, RelationStore
     public async Task<string> SetAsync(ClientSession session, string argument, CancellationToken cancellationToken)
     {
         var tokens = Tokens(argument);
+        // The client's channel standing tool sends owner first: /setstanding "<owner id>" <character id> <value> "<reason>".
+        if (tokens.Count == 4 && long.TryParse(tokens[1], NumberStyles.None, CultureInfo.InvariantCulture, out _)
+            && decimal.TryParse(tokens[2], NumberStyles.AllowLeadingSign | NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out _))
+            tokens = [tokens[2], tokens[0], tokens[1]];
         if (tokens.Count < 2) return Usage;
         if (!decimal.TryParse(tokens[0], NumberStyles.AllowLeadingSign | NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var asked)
             || asked < -10m || asked > 10m)

@@ -26,7 +26,8 @@ public sealed class FakeStandingDirectory : IStandingDirectory
         Task.FromResult<IReadOnlyList<StandingOwner>>([Owners[0], Owners[1], Owners[2]]);
 
     public Task<long?> FindCharacterAsync(string token, CancellationToken cancellationToken) =>
-        Task.FromResult(Characters.TryGetValue(token, out var id) ? (long?)id : null);
+        Task.FromResult(Characters.TryGetValue(token, out var id) ? (long?)id
+            : long.TryParse(token, out var known) && Characters.Values.Contains(known) ? known : null);
 
     public Task<string?> CharacterNameAsync(long characterId, CancellationToken cancellationToken) =>
         Task.FromResult<string?>($"Pilot {characterId}");
@@ -55,6 +56,21 @@ public class StandingCommandTests
         Assert.Equal(-2.5, await rig.Relations.ValueAsync(RelationKinds.Standing.Name, FakeStandingDirectory.CaldariState, other.CharacterId));
         Assert.Equal(0.0, await rig.Relations.ValueAsync(RelationKinds.Standing.Name, FakeStandingDirectory.CaldariState, pilot.CharacterId));
         Assert.Equal((other.CharacterId, FakeStandingDirectory.CaldariState, -2.5), rig.StandingNotices[^1]);
+    }
+
+    [PgFact]
+    public async Task The_client_channel_tool_sends_the_owner_first_and_the_standing_is_set_toward_the_named_pilot()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var pilot = await rig.NewCharacterAsync("Owner First Pilot");
+        rig.StandingDirectory.Characters["Owner First Pilot"] = pilot.CharacterId;
+        var session = Rig.Session(pilot.CharacterId);
+
+        // /setstanding "<owner id>" <character id> <value> "<reason>", as the client's standings tool sends it
+        Assert.StartsWith("Set standing with Caldari Test Corp(1000035) to 3.00 for",
+            await rig.SlashAsync(session, $"/setstanding \"{FakeStandingDirectory.CaldariCorp}\" {pilot.CharacterId} 3 \"Mass standing change\""));
+        Assert.Equal(3.0, await rig.Relations.ValueAsync(RelationKinds.Standing.Name, FakeStandingDirectory.CaldariCorp, pilot.CharacterId));
+        Assert.Equal((pilot.CharacterId, FakeStandingDirectory.CaldariCorp, 3.0), rig.StandingNotices[^1]);
     }
 
     [PgFact]

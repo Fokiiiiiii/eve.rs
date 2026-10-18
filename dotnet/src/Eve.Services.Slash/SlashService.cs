@@ -8,16 +8,16 @@ namespace Eve.Services.Slash;
 /// commands the modules that exist can carry out are here: <c>/dmg</c> and <c>/heal</c> (<see cref="ShipHealthCommands"/>) <c>/deathtest</c> (<see cref="DeathTestCommands"/>), <c>/suicide</c> (<see cref="SuicideCommands"/>), <c>/npc</c> (<see cref="NpcCommands"/>) and the item commands <c>/giveitem</c>, <c>/fit</c> and <c>/unfit</c> (<see cref="ItemCommands"/>) and <c>/giveskill</c> (<see cref="SkillCommands"/>); any other is answered as unknown.
 /// </summary>
 [Service("slash")]
-public sealed partial class SlashService(ShipHealthCommands health, DeathTestCommands? death = null, SuicideCommands? suicide = null, NpcCommands? npcs = null, ItemCommands? items = null, SkillCommands? skills = null, IskCommands? isk = null, LoyaltyCommands? loyalty = null, StandingCommands? standings = null, TeleportCommands? teleport = null, AgentCommands? agent = null, FwCommands? fw = null, PiCommands? pi = null, IndustryCommands? industry = null, SpawnCommands? spawn = null)
+public sealed partial class SlashService(ShipHealthCommands health, DeathTestCommands? death = null, SuicideCommands? suicide = null, NpcCommands? npcs = null, ItemCommands? items = null, SkillCommands? skills = null, IskCommands? isk = null, LoyaltyCommands? loyalty = null, StandingCommands? standings = null, TeleportCommands? teleport = null, AgentCommands? agent = null, FwCommands? fw = null, PiCommands? pi = null, IndustryCommands? industry = null, SpawnCommands? spawn = null, SkillBulkCommands? skillBulk = null)
 {
     private readonly Dictionary<string, Func<ServiceCall, string, Task<string>>> _commands =
-        Commands(health, death, suicide, npcs, items, skills, isk, loyalty, standings, teleport, agent, fw, pi, industry, spawn);
+        Commands(health, death, suicide, npcs, items, skills, isk, loyalty, standings, teleport, agent, fw, pi, industry, spawn, skillBulk);
 
     // Dispatch and discovery share the same registrations; absent providers expose no command.
     private static Dictionary<string, Func<ServiceCall, string, Task<string>>> Commands(
         ShipHealthCommands health, DeathTestCommands? death, SuicideCommands? suicide,
         NpcCommands? npcs, ItemCommands? items, SkillCommands? skills, IskCommands? isk, LoyaltyCommands? loyalty, StandingCommands? standings,
-        TeleportCommands? teleport, AgentCommands? agent, FwCommands? fw, PiCommands? pi, IndustryCommands? industry, SpawnCommands? spawn)
+        TeleportCommands? teleport, AgentCommands? agent, FwCommands? fw, PiCommands? pi, IndustryCommands? industry, SpawnCommands? spawn, SkillBulkCommands? skillBulk)
     {
         var commands = new Dictionary<string, Func<ServiceCall, string, Task<string>>>(StringComparer.Ordinal)
         {
@@ -42,6 +42,12 @@ public sealed partial class SlashService(ShipHealthCommands health, DeathTestCom
         }
         if (skills is not null) commands["/giveskill"] = (call, argument) => skills.GiveAsync(call.Session, argument, call.Cancellation);
         if (skills is not null) commands["/removeskill"] = (call, argument) => skills.RemoveAsync(call.Session, argument, call.Cancellation);
+        if (skillBulk is not null)
+        {
+            commands["/givestarterskills"] = (call, argument) => skillBulk.GiveStarterAsync(call.Session, argument, call.Cancellation);
+            commands["/randomizeskills"] = (call, _) => skillBulk.RandomizeAsync(call.Session, call.Cancellation);
+            commands["/skillscopy"] = (call, argument) => skillBulk.CopyAsync(call.Session, argument, call.Cancellation);
+        }
         if (isk is not null)
         {
             commands["/isk"] = (call, _) => isk.WalletAsync(call.Session, call.Cancellation);

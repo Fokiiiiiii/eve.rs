@@ -75,9 +75,10 @@ internal sealed class Rig : IAsyncDisposable
 
     private readonly string[] _schemas;
 
-    private Rig(NpgsqlDataSource source, string suffix, SdeReader sde, DogmaStatic statics, CharacterCreation creation, PgModuleStateStore modules, SkillBoosterActivationHandler? activateBooster)
+    private Rig(NpgsqlDataSource source, string suffix, SdeReader sde, DogmaStatic statics, CharacterCreation creation, PgModuleStateStore modules, SkillBoosterActivationHandler? activateBooster, SkillCatalog catalog)
     {
         Source = source;
+        Catalog = catalog;
         _schemas = [$"dc_{suffix}", $"di_{suffix}", $"ds_{suffix}", $"dw_{suffix}", $"df_{suffix}", $"dk_{suffix}", $"de_{suffix}", $"dr_{suffix}"];
         Characters = new PgCharacterStore(source, _schemas[0]);
         Items = new PgItemStore(source, _schemas[1]);
@@ -97,7 +98,8 @@ internal sealed class Rig : IAsyncDisposable
         Relations = new Eve.Relations.RelationStore(source, Scheduler, Bus, _schemas[7]);
         Slash = new SlashService(new ShipHealthCommands(Ships, statics, () => ClockMs, Health), items: new ItemCommands(new ItemTypeNames(sde), Ships, statics, () => ClockMs), isk: new IskCommands(Transactions, source, () => ClockMs, Wallets, Loyalty),
             loyalty: new LoyaltyCommands(Loyalty, StandingDirectory, () => ClockMs),
-            standings: new StandingCommands(StandingDirectory, Relations, (character, owner, standing) => StandingNotices.Add((character, owner, standing))));
+            standings: new StandingCommands(StandingDirectory, Relations, (character, owner, standing) => StandingNotices.Add((character, owner, standing))),
+            skillBulk: new SkillBulkCommands(catalog, Skills, source, Characters, null, () => ClockMs, _ => null));
         Inventory = new InvBrokerService(Items, new ItemTypeCatalog(sde), new Eve.Universe.StationCatalog([]), Ships, statics, () => ClockMs);
     }
 
@@ -146,6 +148,9 @@ internal sealed class Rig : IAsyncDisposable
 
     public PgSkillStore Skills { get; }
 
+    /// <summary>The SDE skill catalog the rig was built with (the starting sets and the published skills).</summary>
+    public SkillCatalog Catalog { get; }
+
     public DogmaStatic Statics { get; }
 
     public PgModuleStateStore Modules { get; }
@@ -188,9 +193,10 @@ internal sealed class Rig : IAsyncDisposable
         await Eve.Scheduler.DurableScheduler.MigrateAsync(source, $"dk_{suffix}");
         await Eve.Events.EventBus.MigrateAsync(source, $"de_{suffix}");
         await Eve.Relations.RelationStore.MigrateAsync(source, $"dr_{suffix}");
+        var catalog = await SkillCatalog.LoadAsync(sde);
         var creation = new CharacterCreation(
-            source, characters, items, skills, await SkillCatalog.LoadAsync(sde), wallets, new StartingWallet(), CockroachCatalog(await CreationCatalog.LoadAsync(sde, Station)), modules);
-        return new Rig(source, suffix, sde, await DogmaStatic.LoadAsync(sde), creation, modules, activateBooster);
+            source, characters, items, skills, catalog, wallets, new StartingWallet(), CockroachCatalog(await CreationCatalog.LoadAsync(sde, Station)), modules);
+        return new Rig(source, suffix, sde, await DogmaStatic.LoadAsync(sde), creation, modules, activateBooster, catalog);
     }
 
     /// <summary>A new character of a race (Caldari by default), on the Cockroach test hull.</summary>

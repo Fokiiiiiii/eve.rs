@@ -99,6 +99,20 @@ public sealed class TeleportCommandTests
     }
 
     [Fact]
+    public async Task Solar_moves_to_the_first_stargate_anchor_when_static_data_provides_one()
+    {
+        var relocation = new FakeRelocation();
+        relocation.Systems["Gateworld"] = new GmSolarSystem(30000142, "Gateworld", [6_000, 8_000, 0], [0.6, 0.8, 0], "Gate A");
+
+        var answer = await new TeleportCommands(relocation).SolarAsync(Rig.Session(1001), "Gateworld", default);
+
+        Assert.Equal("Teleported to Gateworld (30000142) near stargate Gate A.", answer);
+        var destination = Assert.Single(relocation.Moves).Destination;
+        Assert.Equal(new double[] { 6_000, 8_000, 0 }, destination.Position!.ToArray());
+        Assert.Equal(new double[] { 0.6, 0.8, 0 }, destination.Direction!.ToArray());
+    }
+
+    [Fact]
     public async Task Solar_gives_the_refusal_of_the_move_as_it_is()
     {
         var relocation = WithJita();

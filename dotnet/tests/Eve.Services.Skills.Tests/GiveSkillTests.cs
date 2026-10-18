@@ -53,6 +53,20 @@ public class GiveSkillTests
         Assert.Equal(3, (await rig.Store.ForCharacterAsync(Character)).Count);
     }
 
+    [Fact]
+    public async Task Skill_suggestions_rank_typo_matches_by_Levenshtein_distance()
+    {
+        await using var source = Npgsql.NpgsqlDataSource.Create("Host=127.0.0.1;Database=eve_p3;Username=root");
+        var catalog = new SkillCatalog(
+            [new SkillType(3300, "Gunnery", 1, "Gunnery", true, 1), new SkillType(3301, "Small Hybrid Turret", 1, "Turrets", true, 1)],
+            new Dictionary<int, IReadOnlyList<StartingSkill>>());
+        var commands = new SkillCommands(catalog, new PgSkillStore(source), source, null, () => Rig.ClockMs);
+        var (session, _) = Rig.Session(Character);
+
+        Assert.Equal("Skill not found: Gunneryy. Suggestions: Gunnery(3300)",
+            await commands.RemoveAsync(session, "me Gunneryy", default));
+    }
+
     [PgFact]
     public async Task What_cannot_be_done_is_answered_in_the_words_of_the_reference()
     {

@@ -134,6 +134,23 @@ public sealed class CharacterDogmaSync(DogmaStatic statics, CharacterShips ships
         SendCharacter(session, snapshot, fileTime, NextBrainVersion(characterId));
     }
 
+    public async Task ShipAttributesChangedAsync(ClientSession session, long characterId, CancellationToken cancellationToken = default)
+    {
+        if (await ships.LoadAsync(characterId, cancellationToken) is not { } snapshot) return;
+        var fileTime = Py.FileTimeFromUnixMs(nowUnixMs());
+        var changes = Info.ShipAttributes(snapshot)
+            .Where(attribute => attribute.Key != DogmaInfo.Quantity)
+            .Select(attribute => ShipNotifications.AttributeChange(characterId, new Eve.Marshal.PyLong(snapshot.Ship.Id),
+                attribute.Key, fileTime, null, attribute.Value))
+            .Concat(snapshot.Fitted.SelectMany(module => Info.ModuleAttributes(snapshot, module.Id)
+                .Where(attribute => attribute.Key != DogmaInfo.Quantity)
+                .Select(attribute => ShipNotifications.AttributeChange(characterId, new Eve.Marshal.PyLong(module.Id),
+                    attribute.Key, fileTime, null, attribute.Value))))
+            .ToArray();
+        if (changes.Length > 0)
+            session.SendNotification("OnModuleAttributeChanges", "clientID", new Eve.Marshal.PyList(changes));
+    }
+
     public async Task SkillsChangedAsync(ClientSession session, long characterId, IReadOnlyList<CharacterSkill> before, CancellationToken cancellationToken = default)
     {
         if (await ships.LoadAsync(characterId, cancellationToken) is not { } snapshot)

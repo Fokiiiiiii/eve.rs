@@ -3,8 +3,8 @@ using Eve.Macho;
 
 namespace Eve.Services.Slash;
 
-/// <summary>A solar system a game master names: its ID and its name.</summary>
-public sealed record GmSolarSystem(int Id, string Name);
+/// <summary>A named solar system and, when SDE stargate data is available, the radial point used for a GM arrival.</summary>
+public sealed record GmSolarSystem(int Id, string Name, IReadOnlyList<double>? Position = null, IReadOnlyList<double>? Direction = null, string? AnchorName = null);
 
 /// <summary>A character a game master names, with its connected session (null when the character is not connected).</summary>
 public sealed record GmPilot(long CharacterId, ClientSession? Session);
@@ -62,8 +62,9 @@ public sealed class TeleportCommands(IGmRelocation relocation)
         if (token.Length == 0) return SolarUsage;
         if (await relocation.FindSolarSystemAsync(token, cancellationToken) is not { } system)
             return $"Solar system not found: {token}.";
-        var destination = new GmDestination(system.Id, system.Name);
-        return await relocation.MoveAsync(session, destination, cancellationToken) ?? $"Teleported to {system.Name} ({system.Id}).";
+        var destination = new GmDestination(system.Id, system.Name, system.Position, system.Direction);
+        var anchor = system.AnchorName is { Length: > 0 } name ? $" near stargate {name}" : "";
+        return await relocation.MoveAsync(session, destination, cancellationToken) ?? $"Teleported to {system.Name} ({system.Id}){anchor}.";
     }
 
     /// <summary><c>/tele &lt;character&gt;</c>: the pilot goes to the target pilot (<c>me</c> is the caller's own character).</summary>

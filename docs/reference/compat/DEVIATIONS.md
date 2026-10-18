@@ -11,7 +11,7 @@ is better off, and how it is tested. A behaviour is either:
 
 ## Project status
 
-Summary of this file, as of 2026-10-13. The task list with the same areas is the "Project status" table at the top of `docs/project/TODO.md`. **Status** is the state of the area; **Project rule** is the rule a deviation stands on; **Cut** lists what the owner or the evidence has cut, with the entry that records it. A cut item without an entry here or in its section is a bug in this file.
+Summary of this file, as of 2026-10-18. The task list with the same areas is the "Project status" table at the top of `docs/project/TODO.md`. **Status** is the state of the area; **Project rule** is the rule a deviation stands on; **Cut** lists what the owner or the evidence has cut, with the entry that records it. A cut item without an entry here or in its section is a bug in this file.
 
 | Area | Status | Project rule | Cut (entry) |
 |---|---|---|---|
@@ -31,7 +31,7 @@ Summary of this file, as of 2026-10-13. The task list with the same areas is the
 | Wormhole space (sections "Wormhole ..." and "Wormhole space: final status") | Built; a live jump passed headless. | Project rules where nothing is published: signature counts, category shares, five combat sites in a Drifter system, 50 km ends, 1,000-unit clouds. | Wandering K-space connections (cut by the owner); region-adjacency exclusion of statics not applied; local chat in J-space (no chat service); ice belt of a Shattered system (not planned). |
 | Zarzakh and Pochven (sections "Zarzakh ...", "Pochven ...") | Partly built. | Client-only system data from the embedded client export; no invented values. | Gate guns without published numbers; heat, tidal forces and Point of No Return; landmarks and the Black Monolith look-at; gate sentries that shoot; the Deathless Shipcaster jump; bounty and loot of the Pochven hulls. |
 
-Verification run (2026-10-13), the same merged tree and database as the TODO verification: the Rust workspace has 1479 passing tests and no failures; the .NET suite has no failing project in its last run (the Host, Services.Space, Market, Core, Dogma, Inventory, Space and Planets projects were rerun on the merged tree, and the others were not rerun after the final merge).
+Verification run (2026-10-18), gate on origin/main 86be1658 with 967256f1: Rust 1525 passed (cargo fmt and clippy clean); .NET 6534 passed, 1 skipped, 0 warnings. Headless walks: the gate ran 23 walk files, of which 22 were green; the one red walk, test_walk_shared_bookmarks.py, is fixed (the walk waits for OnSharedBookmarksFoldersAccessLost, which the server sends after the response) and green on a fresh server. Eve.AccessGroups.Tests: 23 passed after the regression test was added. A run of the test_walk_*.py files alone gave 16 of 16 passed.
 
 ## Register
 

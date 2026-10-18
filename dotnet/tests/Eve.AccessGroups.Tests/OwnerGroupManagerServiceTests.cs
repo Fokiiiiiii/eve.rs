@@ -1,4 +1,5 @@
 using Eve.AccessGroups;
+using Eve.Bookmarks;
 using Eve.Macho;
 using Eve.Marshal;
 using Eve.Services;
@@ -125,6 +126,46 @@ public sealed class OwnerGroupManagerServiceTests
         Assert.Empty(Notifications(carolSink));
     }
 
+    [PgFact]
+    public async Task Removing_a_member_whose_list_gave_a_shared_folder_its_view_sends_the_loss_after_the_response()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var bookmarkSchema = "bm_" + Guid.NewGuid().ToString("N")[..12];
+        await BookmarkStore.MigrateAsync(rig.Source, bookmarkSchema);
+        try
+        {
+            var bookmarks = new BookmarkStore(rig.Source, bookmarkSchema, () => rig.Now);
+            var sessions = new CharacterSessions();
+            async ValueTask<AccessLists> ListsOf(Affiliation who, CancellationToken token) =>
+                new(await rig.Store.MemberRolesAsync(who, token), who.CorporationId);
+            var service = new OwnerGroupRefusals(new OwnerGroupManagerService(rig.Store,
+                id => ValueTask.FromResult<MemberKind?>(Kinds.TryGetValue(id, out var kind) ? kind : null), sessions,
+                new SharedFolderNotifier(bookmarks, ListsOf, sessions)));
+            var alice = Connect(sessions, Alice, CorpA, new Sink());
+            var bobSink = new Sink();
+            var bob = Connect(sessions, Bob, CorpB, bobSink);
+            var admin = Num(Fields(await Call(service, alice, "Create", new PyWString("Admin"), new PyWString(""))) ["groupID"]);
+            var view = Num(Fields(await Call(service, alice, "Create", new PyWString("View"), new PyWString(""))) ["groupID"]);
+            await Call(service, alice, "AddMembers", new PyLong(view), Dict((Bob, 0)));
+            var folder = await bookmarks.AddFolderAsync(Alice, false, "Shared", "", new SharedGroups(admin, admin, admin, view),
+                await ListsOf(new Affiliation(Alice, CorpA, 0), default));
+            await bookmarks.AddKnownFolderAsync(Bob, folder.Folder.FolderId, true, await ListsOf(new Affiliation(Bob, CorpB, 0), default));
+            alice.RunAfterResponse();
+            bob.RunAfterResponse();
+
+            await Call(service, alice, "DeleteMembers", new PyLong(view), new PyList([new PyLong(Bob)]));
+            Assert.DoesNotContain(SharedNotices(bobSink), heard => heard.Name == "OnSharedBookmarksFoldersAccessLost");
+            alice.RunAfterResponse();
+            var lost = Assert.Single(SharedNotices(bobSink), heard => heard.Name == "OnSharedBookmarksFoldersAccessLost");
+            Assert.Equal(folder.Folder.FolderId, Num(Assert.Single(Assert.IsType<PyList>(Assert.IsType<PyTuple>(lost.Args).Items[0]).Items)));
+        }
+        finally
+        {
+            await using var command = rig.Source.CreateCommand($"DROP SCHEMA IF EXISTS {bookmarkSchema} CASCADE");
+            await command.ExecuteNonQueryAsync();
+        }
+    }
+
     private static IService Service(Rig rig, CharacterSessions sessions) =>
         new OwnerGroupRefusals(new OwnerGroupManagerService(rig.Store,
             id => ValueTask.FromResult<MemberKind?>(Kinds.TryGetValue(id, out var kind) ? kind : null), sessions));
@@ -161,6 +202,19 @@ public sealed class OwnerGroupManagerServiceTests
         var dict = Assert.IsType<PyDict>(Assert.IsType<PyTuple>(arguments).Items[0]);
         var entry = Assert.Single(dict.Entries, e => Num(e.Key) == group);
         return ((PyList)entry.Value).Items.Select(code => (int)Num(code)).ToArray();
+    }
+
+    private static List<(string Name, PyValue Args)> SharedNotices(Sink sink)
+    {
+        var heard = new List<(string Name, PyValue Args)>();
+        foreach (var packet in sink.Packets)
+        {
+            var nodes = Walk(packet).ToList();
+            if (nodes.OfType<PyStr>().FirstOrDefault(node => node.Value.StartsWith("OnShared", StringComparison.Ordinal)) is not { } name) continue;
+            var stream = Assert.IsType<PyTuple>(MarshalCodec.Decode(nodes.OfType<PyBuffer>().Single().Value));
+            heard.Add((name.Value, Assert.IsType<PyTuple>(Assert.IsType<PyTuple>(stream.Items[1]).Items[1])));
+        }
+        return heard;
     }
 
     /// <summary>The arguments of each <c>OnOwnerGroupsUpdated</c> the session received.</summary>

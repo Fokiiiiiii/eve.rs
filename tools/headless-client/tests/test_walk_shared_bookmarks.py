@@ -16,7 +16,7 @@ import pytest
 
 from evecli import marshal as m
 from evecli.describe import describe
-from evecli.observe import notifications_of
+from evecli.observe import notifications_of, wait_for_events
 from tests import test_login_to_character as base
 from tests.test_health import HEALTH
 from tests.test_undock import STATION, arrive, number
@@ -74,7 +74,8 @@ def test_a_shared_folder_reaches_the_member_while_it_holds_a_view_and_goes_when_
         assert mentions(heard[0], folder_id), describe(heard[0]["args"])
 
         owner.call(OWNER_GROUPS, "DeleteMembers", view_list, [member_character])
-        lost = named(notifications_of(member), "OnSharedBookmarksFoldersAccessLost")
+        # the notice follows the response (after it, not before), so wait for it rather than read the queue at once
+        lost = named(wait_for_events(member, lambda seen: named(seen, "OnSharedBookmarksFoldersAccessLost")), "OnSharedBookmarksFoldersAccessLost")
         assert lost, "the member hears the folder go once it holds no list"
         assert mentions(lost[0], folder_id), describe(lost[0]["args"])
 

@@ -11,7 +11,7 @@ is better off, and how it is tested. A behaviour is either:
 
 ## Project status
 
-Summary of this file, as of 2026-10-13. The task list with the same areas is the "Project status" table at the top of `docs/project/TODO.md`. **Status** is the state of the area; **Project rule** is the rule a deviation stands on; **Cut** lists what the owner or the evidence has cut, with the entry that records it. A cut item without an entry here or in its section is a bug in this file.
+Summary of this file, as of 2026-10-18. The task list with the same areas is the "Project status" table at the top of `docs/project/TODO.md`. **Status** is the state of the area; **Project rule** is the rule a deviation stands on; **Cut** lists what the owner or the evidence has cut, with the entry that records it. A cut item without an entry here or in its section is a bug in this file.
 
 | Area | Status | Project rule | Cut (entry) |
 |---|---|---|---|
@@ -31,7 +31,7 @@ Summary of this file, as of 2026-10-13. The task list with the same areas is the
 | Wormhole space (sections "Wormhole ..." and "Wormhole space: final status") | Built; a live jump passed headless. | Project rules where nothing is published: signature counts, category shares, five combat sites in a Drifter system, 50 km ends, 1,000-unit clouds. | Wandering K-space connections (cut by the owner); region-adjacency exclusion of statics not applied; local chat in J-space (no chat service); ice belt of a Shattered system (not planned). |
 | Zarzakh and Pochven (sections "Zarzakh ...", "Pochven ...") | Partly built. | Client-only system data from the embedded client export; no invented values. | Gate guns without published numbers; heat, tidal forces and Point of No Return; landmarks and the Black Monolith look-at; gate sentries that shoot; the Deathless Shipcaster jump; bounty and loot of the Pochven hulls. |
 
-Verification run (2026-10-13), the same merged tree and database as the TODO verification: the Rust workspace has 1479 passing tests and no failures; the .NET suite has no failing project in its last run (the Host, Services.Space, Market, Core, Dogma, Inventory, Space and Planets projects were rerun on the merged tree, and the others were not rerun after the final merge).
+Verification run (2026-10-18), gate on origin/main 86be1658 with 967256f1: Rust 1525 passed (cargo fmt and clippy clean); .NET 6534 passed, 1 skipped, 0 warnings. Headless walks: the gate ran 23 walk files, of which 22 were green; the one red walk, test_walk_shared_bookmarks.py, is fixed (the walk waits for OnSharedBookmarksFoldersAccessLost, which the server sends after the response) and green on a fresh server. Eve.AccessGroups.Tests: 23 passed after the regression test was added. A run of the test_walk_*.py files alone gave 16 of 16 passed.
 
 ## Register
 
@@ -4683,8 +4683,8 @@ as reference. The client's `bookmarkSvc.py` (`OnSharedBookmarksFolderUpdated`, `
 ## GM tools, slice G4: standing direction fixed everywhere (2026-10-17)
 
 - **The defect of G2 is fixed.** Corporation-office tax (`CorpStationMgrComposition`), reprocessing tax (`ReprocessingService`), the faction-kill standing loss (`NpcFactionStanding`), the contraband standing loss (`UndockContraband`), and the FW standing read (`CoreRpc`, `ReadStandingAsync`) now use subject = owner (faction, corporation or agent), object = character, as `RelationKinds.Standing`, the mission rewards, the standings read service and the client's `OnStandingSet(fromID, toID, standing)` do. The client's reference is `OnStandingSet` (fromID = the owner) and EveJS `notifyStandingSet(characterID, fromID, toID)`.
-- **Stored rows of the old direction are not moved.** A database written before this change holds the reverse rows; a migration would have to swap them and is not made here (the tests run on empty schemas). Upgrade path: swap the `subject`/`object` of `kind = 'standing'` rows where the subject is a character.
-- **Checked:** `NpcFactionStandingTests`, `UndockContrabandTests` (the loss and the restart), `CustomsPenaltyHostTests` (the fine's standing row), database-backed. The corporation-office and reprocessing reads have no direct test; they follow the same convention, and the coverage gap is in TODO.
+- **Stored rows are migrated.** Migration `Eve.Relations/Migrations/0002_standing_direction.sql` transposes legacy player rows (`subject >= 140000000`, the character id range allocated by `Characters/Migrations/0001_characters.sql`) in both `relations` and `relation_history`. If both directions exist, the row already in the corrected direction is retained. The migration test starts from the 0001 schema, applies 0002, checks the row and history directions, and applies the set again.
+- **Tax reads use the corrected relation direction.** The shared `RelationStore.StandingTowardAsync` reads the personal and corporation standing as owner → character/corporation and returns the higher value. The corporation station service check and reprocessing quote use this shared read. Checked: `RelationTests.A_characters_standing_toward_an_owner_reads_owner_to_character_and_the_corporations_value` (database-backed), `ReprocessingServiceTests.GetQuotes_uses_the_corrected_owner_to_character_standing_for_station_tax` (database-backed), `StandingDirectionMigrationTests.Legacy_player_standings_and_history_are_transposed_once`, alongside the G4 standing-loss tests listed above.
 
 ## GM tools, slice G5: /ship and /giveme (2026-10-17)
 
@@ -4810,7 +4810,7 @@ as reference. The client's `bookmarkSvc.py` (`OnSharedBookmarksFolderUpdated`, `
 - **Source (G21).** EVE.js has no `/dogmaupdate`. The client sends it and then clears its own effect cache (`svc_slash.py` `cmd_dogmaupdate`), so the server's part is the reload of its dogma tables from the SDE it runs on.
 - **Reload (G21).** The host reads the attributes, effects and groups again, re-reads the types it had already read, and swaps the tables in as one snapshot (`DogmaStatic.ReloadAsync`). The reply gives the attribute and effect counts. With the pinned SDE the counts do not change; the reload picks up an SDE the database has since received.
 - **No SDE (G21).** A host whose dogma was not loaded from an SDE answers that the reload cannot run; it does not claim a reload.
-- shortcut: the attribute values a ship already computed are kept until its next dogma change, they are not pushed again (upgrade: a dogma-changed notification to the pilots of the system).
+- **Client update (G21).** After the SDE snapshot is swapped, the calling pilot receives `OnModuleAttributeChanges` with fresh attributes for its active ship and fitted modules. Values are recomputed by `CharacterDogmaSync` from authoritative ship state and the reloaded dogma tables. The V24.01 `svc_slash.py` callsite clears the client effect cache after the RPC; this notification refreshes already cached item attributes.
 
 ## GM tools, slice G22: `/killright <target> [owner]` (2026-10-18)
 
@@ -4844,6 +4844,6 @@ as reference. The client's `bookmarkSvc.py` (`OnSharedBookmarksFolderUpdated`, `
 The walk is `tools/headless-client/tests/test_insider_gm_live.py` (procedure: docs/project/MITM_COMPARE.md, "Insider walk"). The calls match one for one by service and method; the answers below are the differences.
 
 - **Commands EVE.js does not have (intended, G20 to G25).** `/givestarterskills`, `/skillscopy`, `/dogmaupdate`, `/killright`, `/skyhook`, `/entity`, `/asteroid`, `/randomizeskills` and `/repair` answer `Unknown command` on EVE.js. eve.rs serves them from the client's contract; `/repair` is `/heal` on eve.rs (G6).
-- **`/removeskill` suggestions (open wording).** EVE.js lists the closest skill names (Levenshtein distance, the same rule as its `suggestSkillNames`), eve.rs lists only the names that contain the word. The text differs; no call or state does. Not changed in this slice: the existing skill tests pin the current text.
+- **`/giveskill` and `/removeskill` suggestions (G26).** eve.rs now follows EveJS `server/src/services/chat/commands/skills.js` `suggestSkillNames`: prefix matches rank 0, other substring matches rank 1, remaining names use Levenshtein distance; names with score at most 6 are sorted by score then name and capped at five. `/solar` uses the first SDE stargate in the destination system, placing the pilot radially outside it by `max(radius * 0.4, 5000m)`, matching EveJS `server/src/space/transitions.js` `buildSolarSystemSpawnState` and `buildOffsetSpawnState`.
 - **`/solar` (open behaviour, owned by G8).** EVE.js answers `Teleported to Jita (30000142) near stargate Stargate (Maurasi).`; eve.rs answers `Teleported to Jita (30000142).`, and after it eve.rs's `/entity` and `/asteroid` answer `You must be in space`. The reply says EVE.js places the pilot near a gate; where eve.rs places the pilot is the open point to match (not checked on EVE.js in this walk).
 - **Harness.** The eve.rs walk logs in twice (the identity fixture grants the GM role at a login); the EVE.js walk does not. Not a server difference.

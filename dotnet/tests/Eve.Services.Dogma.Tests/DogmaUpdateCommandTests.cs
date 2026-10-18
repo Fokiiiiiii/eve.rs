@@ -26,6 +26,33 @@ public class DogmaUpdateCommandTests
     }
 
     [Fact]
+    public async Task Dogma_update_refreshes_the_callers_cached_ship_attributes_after_reloading()
+    {
+        var session = Rig.Session(1001);
+        var reloaded = false;
+        long? refreshedCharacter = null;
+        var commands = new DogmaUpdateCommands(
+            new DogmaStatic([], [], []),
+            (caller, character, _) =>
+            {
+                Assert.Same(session, caller);
+                Assert.True(reloaded);
+                refreshedCharacter = character;
+                return Task.CompletedTask;
+            },
+            _ =>
+            {
+                reloaded = true;
+                return Task.FromResult((12, 3));
+            });
+
+        var reply = await commands.RunAsync(session, CancellationToken.None);
+
+        Assert.Equal("Dogma reloaded from the SDE: 12 attributes, 3 effects.", reply);
+        Assert.Equal(1001, refreshedCharacter);
+    }
+
+    [Fact]
     public async Task Dogma_update_without_an_sde_says_so()
     {
         var reply = await new DogmaUpdateCommands(new DogmaStatic([], [], [])).RunAsync(Rig.Session(null), CancellationToken.None);

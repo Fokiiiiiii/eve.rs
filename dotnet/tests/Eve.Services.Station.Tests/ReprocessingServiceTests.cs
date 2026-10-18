@@ -194,6 +194,19 @@ public sealed class ReprocessingServiceTests
     }
 
     [ReprocessingPgFact]
+    public async Task GetQuotes_uses_the_corrected_owner_to_character_standing_for_station_tax()
+    {
+        await using var rig = await ReprocessingRig.CreateAsync();
+        await rig.OpenWalletAsync(Character, 1000m);
+        await rig.Relations.SetAsync("standing", ReprocessingRig.StationOwner, Character, 6.67);
+        var stack = await rig.CreateAsync(Character, ReprocessingRig.Station, ItemFlags.Hangar, FixedReprocessingData.Veldspar, 100);
+
+        var quotes = (PyList)await CallPlant(rig.Service(), Session(Character, ReprocessingRig.Station), ReprocessingRig.Station, "GetQuotes", Ids1(stack), new PyInt(0));
+
+        Assert.Equal(0, ((PyReal)quotes.Items[0]).Value, 6);
+    }
+
+    [ReprocessingPgFact]
     public async Task Reprocess_consumes_whole_portions_keeps_the_leftovers_creates_the_yield_and_charges_the_tax_once()
     {
         await using var rig = await ReprocessingRig.CreateAsync();

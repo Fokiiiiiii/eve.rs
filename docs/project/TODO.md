@@ -2,7 +2,7 @@
 
 ## Project status
 
-Built from the sections below, as of 2026-10-13. **Status** is what the area does today. **Project rule** is the rule it is built under (the client, the SDE, CCP or the EVE University wiki, or an owner decision). **Cut or open** lists what is not built; the section named holds the evidence. Every cut or open item in this file has a row in the table or a line in its section, and a cut that changes what the client sees also has an entry in `docs/reference/compat/DEVIATIONS.md`.
+Built from the sections below, as of 2026-10-18. **Status** is what the area does today. **Project rule** is the rule it is built under (the client, the SDE, CCP or the EVE University wiki, or an owner decision). **Cut or open** lists what is not built; the section named holds the evidence. Every cut or open item in this file has a row in the table or a line in its section, and a cut that changes what the client sees also has an entry in `docs/reference/compat/DEVIATIONS.md`.
 
 | Area (sections) | Status | Project rule | Cut or open |
 |---|---|---|---|
@@ -31,7 +31,7 @@ Built from the sections below, as of 2026-10-13. **Status** is what the area doe
 | Zarzakh and Pochven (12, "Pochven, Triglavian and EDENCOM space") | Partly built: Zarzakh rules and flags from the client's data; Pochven population, capital stargate rule, toll and anchoring; the Turnur to Zarzakh jump passed live (eve.rs only). | Client-only system data comes from the embedded copy of the client export; no invented values. | Cut: gate guns without published numbers, heat and tidal forces and Point of No Return, landmarks and the Black Monolith look-at, gate sentries that shoot, Deathless Shipcaster jump, bounty and loot of the Pochven hulls. Open: sovereignty refusal, warp bubbles and probes in Zarzakh, live check of the flags. Emanation notices wait for the public gateway. |
 | Client static data (embedded) | Embedded: the server runs without `EVE_CLIENT_SDE_DIR`. | Copies built by `tools/dev/extract-client-sde.py` from build 3396210. | Live check of the Zarzakh flags on the embedded data. |
 
-Verification run (2026-10-13), on merged tree 94aef9b8 with the formatting commit d6ef2068 on top, PostgreSQL 18 (eve, eve_p2, eve_p3, eve_p4): `cargo fmt --all -- --check` and `cargo clippy --workspace --all-targets -- -D warnings` clean; `cargo test --workspace --no-fail-fast` 1479 passed, 0 failed, 0 ignored (40 suites). `dotnet build EveRs.slnx` 0 warnings, 0 errors. .NET tests on the merged tree: Eve.Host.Tests 318/318, Eve.Services.Space.Tests 839/839, Eve.Market.Tests 106/106 (with EVE_MARKET_BENCH=1), Eve.Services.Core.Tests 731/731, Eve.Services.Dogma.Tests 153/153, Eve.Services.Inventory.Tests 63/63, Eve.Services.Skills.Tests 63/63, Eve.Skills.Tests 85/85, Eve.Ships.Tests 229/229, Eve.Inventory.Tests 55/55, Eve.Space.Tests 314/314, Eve.Planets.Tests 35/35; Eve.Universe.Tests 68/68 with EVE_CLIENT_SDE_DIR set. Other test projects were last run before the final origin merge and were not rerun; that is a gap. All projects together, as last run: 5,915 passed, 0 failed, 0 skipped.
+Verification run (2026-10-18), gate on origin/main 86be1658 with 967256f1: Rust 1525 passed (cargo fmt and clippy clean); .NET 6534 passed, 1 skipped, 0 warnings. Headless walks: the gate ran 23 walk files, of which 22 were green; the one red walk, test_walk_shared_bookmarks.py, is fixed (the walk waits for OnSharedBookmarksFoldersAccessLost, which the server sends after the response) and green on a fresh server. Eve.AccessGroups.Tests: 23 passed after the regression test was added. A run of the test_walk_*.py files alone gave 16 of 16 passed.
 
 ## Native Windows character-entry regression (2026-10-12)
 
@@ -2641,8 +2641,4 @@ Done: every command the Insider window and its helper service send is served (`d
 
 Open:
 - `/missioncomplete` (no placeholder mission in eve.rs, DEVIATIONS G9) and `/pi program` (the forced install needs the client's own inputs, DEVIATIONS G10): not built.
-- `/solar` places the pilot differently from EVE.js (near a gate on EVE.js, DEVIATIONS G26 and G8): to match.
-- `/removeskill` and `/giveskill` list the skill suggestions by the word match, EVE.js by Levenshtein distance (DEVIATIONS G26): the wording to match.
-- Direct tests for the corporation-office tax and reprocessing tax reads of a standing, with the owner as subject (DEVIATIONS G4).
-- Stored standing rows written in the old direction (subject = character) before DEVIATIONS G4: a migration to swap them.
-- `/dogmaupdate` keeps the attribute values a ship already computed until its next dogma change (DEVIATIONS G21, shortcut).
+- DONE (G4 follow-up): migrated old standing rows and their history to owner → character direction (`Eve.Relations` migration `0002_standing_direction`); direct database tests cover owner-to-pilot and corporation standing reads plus the reprocessing tax quote. See `docs/reference/compat/DEVIATIONS.md`, G4.

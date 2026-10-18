@@ -11,18 +11,18 @@ public sealed partial class FwStore
         CancellationToken cancellationToken = default)
     {
         await using var command = Sql.Command(connection, transaction, Q(
-            "SELECT b.battlefield_id, b.solar_system_id, b.occupier_id, b.score, b.updated_ms, p.point_index, p.hold_ms, p.holder_id " +
+            "SELECT b.battlefield_id, b.solar_system_id, b.occupier_id, b.score, b.updated_ms, b.instance_id, p.point_index, p.hold_ms, p.holder_id " +
             "FROM {schema}.fw_battlefields b JOIN {schema}.fw_battlefield_points p ON p.battlefield_id = b.battlefield_id " +
             "WHERE b.closed_ms IS NULL ORDER BY b.battlefield_id, p.point_index"));
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        var rows = new List<(long Id, long System, long Occupier, long Score, long Updated, int Index, long Hold, long Holder)>();
+        var rows = new List<(long Id, long System, long Occupier, long Score, long Updated, long Instance, int Index, long Hold, long Holder)>();
         while (await reader.ReadAsync(cancellationToken))
-            rows.Add((reader.GetInt64(0), reader.GetInt64(1), reader.GetInt64(2), reader.GetInt64(3), reader.GetInt64(4), reader.GetInt16(5),
-                reader.GetInt64(6), reader.GetInt64(7)));
+            rows.Add((reader.GetInt64(0), reader.GetInt64(1), reader.GetInt64(2), reader.GetInt64(3), reader.GetInt64(4), reader.GetInt64(5),
+                reader.GetInt16(6), reader.GetInt64(7), reader.GetInt64(8)));
         return rows.GroupBy(row => row.Id).Select(group =>
         {
             var first = group.First();
-            return new FwBattlefield(group.Key, first.System, first.Occupier, first.Score, first.Updated,
+            return new FwBattlefield(group.Key, first.System, first.Occupier, first.Score, first.Updated, first.Instance,
                 group.Select(row => new FwBattlefieldPoint(row.Index, row.Hold, row.Holder)).ToList());
         }).ToList();
     }
@@ -45,6 +45,12 @@ public sealed partial class FwStore
         }
         return id;
     }
+
+    /// <summary>Records the dungeon instance of a battlefield's site (its gate's room).</summary>
+    public Task SetBattlefieldInstanceAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long battlefieldId, long instanceId,
+        CancellationToken cancellationToken = default) =>
+        Sql.ExecuteAsync(connection, transaction, Q("UPDATE {schema}.fw_battlefields SET instance_id = $2 WHERE battlefield_id = $1"),
+            cancellationToken, battlefieldId, instanceId);
 
     /// <summary>Stores the score of an open battlefield, and the time it was counted to.</summary>
     public Task SaveBattlefieldAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long battlefieldId, long score, long nowMs,

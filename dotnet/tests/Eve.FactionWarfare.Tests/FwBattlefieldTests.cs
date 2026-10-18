@@ -79,14 +79,21 @@ public sealed class FwBattlefieldTickerTests
         var rewards = new RecordingRewards();
         var first = await TickAsync(rig, sites, rewards);
         Assert.Empty(first);
-        sites.ActiveSystem = (await OpenAsync(rig)).First().SolarSystemId;
+        var opened = (await OpenAsync(rig)).First();
+        Assert.Equal(0, opened.InstanceId); // no pilot in the system yet: no site
+        sites.ActiveSystem = opened.SolarSystemId;
         sites.Pilots = Enumerable.Range(0, 35).Select(index => new FwComplexPilot(2000 + index, Minmatar)).ToList();
+        await TickAsync(rig, sites, rewards);
+        opened = (await OpenAsync(rig)).First();
+        Assert.True(opened.InstanceId > 0, "the site starts with the first pilot in the system");
+        Assert.Equal(1, sites.Started);
         var wins = new List<FwBattlefieldWon>();
         for (int tick = 0; tick < 400 && wins.Count == 0; tick++)
             wins.AddRange(await TickAsync(rig, sites, rewards));
 
         var won = Assert.Single(wins);
         Assert.Equal(sites.ActiveSystem, won.SolarSystemId);
+        Assert.Equal(opened.InstanceId, Assert.Single(sites.Ended)); // the won battlefield's site ends with it
         Assert.Equal(Minmatar, won.WinnerId);
         Assert.Equal(FwBattlefields.VictoryPoints, won.VictoryPoints);
         Assert.Equal(FwBattlefields.VictoryPoints, won.AttackerPoints);
@@ -182,13 +189,27 @@ public sealed class FwBattlefieldTickerTests
 
         public Task<bool> DefendersClearedAsync(long instanceId, CancellationToken cancellationToken) => throw new NotSupportedException();
 
-        public bool PilotsIn(long solarSystemId) => false;
+        public bool PilotsIn(long solarSystemId) => solarSystemId == ActiveSystem && Pilots.Count > 0;
 
         public Task<IReadOnlyList<FwComplexPilot>> PilotsInsideAsync(long solarSystemId, long instanceId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
-        public Task EndAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long instanceId, CancellationToken cancellationToken) =>
-            throw new NotSupportedException();
+        public List<long> Ended { get; } = [];
+
+        public int Started { get; private set; }
+
+        public Task<long> StartBattlefieldAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long solarSystemId, long battlefieldId,
+            CancellationToken cancellationToken)
+        {
+            Started++;
+            return Task.FromResult(9_000 + battlefieldId);
+        }
+
+        public Task EndAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long instanceId, CancellationToken cancellationToken)
+        {
+            Ended.Add(instanceId);
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class RecordingRewards : IFwRewards

@@ -156,6 +156,9 @@ public sealed class FwComplexTickerTests
 
         public bool PilotsIn(long solarSystemId) => Pilots;
 
+        public Task<long> StartBattlefieldAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long solarSystemId, long battlefieldId,
+            CancellationToken cancellationToken) => throw new NotSupportedException("the complex tests start no battlefield site");
+
         public Task<long> StartAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long solarSystemId, ComplexSize size, long complexId, CancellationToken cancellationToken)
         {
             Starts++;

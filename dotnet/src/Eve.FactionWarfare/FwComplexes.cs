@@ -41,6 +41,9 @@ public interface IFwComplexSites
     /// <summary>Ends the complex's site (its pilots are taken out and its NPCs removed).</summary>
     Task EndAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long instanceId, CancellationToken cancellationToken);
 
+    /// <summary>Starts a battlefield's site (its gated room, archetype <see cref="FwBattlefields.SiteArchetypeId"/>) in the system and returns its instance id.</summary>
+    Task<long> StartBattlefieldAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long solarSystemId, long battlefieldId, CancellationToken cancellationToken);
+
     /// <summary>The point a battlefield of a system is laid out from (outside the system's star, as the complex sites are).</summary>
     Task<double[]> OriginAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long solarSystemId, CancellationToken cancellationToken);
 

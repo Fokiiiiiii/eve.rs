@@ -16,7 +16,18 @@ internal sealed class HostGmRelocation(SpaceSessions space, SolarSystemCatalog s
         var found = int.TryParse(token, out var id)
             ? systems.Get(id)
             : systems.Systems.FirstOrDefault(system => system.Name.Equals(token, StringComparison.OrdinalIgnoreCase));
-        return Task.FromResult(found is null ? null : new GmSolarSystem(found.Id, found.Name));
+        return Task.FromResult(found is null ? null : SolarSystem(found));
+    }
+
+    private static GmSolarSystem SolarSystem(SolarSystemInfo system)
+    {
+        if (system.GateX is not { } x || system.GateY is not { } y || system.GateZ is not { } z)
+            return new GmSolarSystem(system.Id, system.Name);
+        var magnitude = Math.Sqrt(x * x + y * y + z * z);
+        var direction = magnitude > 0 ? new[] { x / magnitude, y / magnitude, z / magnitude } : new[] { 1d, 0d, 0d };
+        var offset = Math.Max(Math.Max(system.GateRadius, 0) * 0.4, 5_000);
+        var position = new[] { x + direction[0] * offset, y + direction[1] * offset, z + direction[2] * offset };
+        return new GmSolarSystem(system.Id, system.Name, position, direction, system.GateName ?? $"Stargate {system.Id}");
     }
 
     public async Task<GmPilot?> FindPilotAsync(string token, CancellationToken cancellationToken)

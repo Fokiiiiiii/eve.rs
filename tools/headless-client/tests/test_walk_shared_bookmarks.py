@@ -16,7 +16,8 @@ import pytest
 
 from evecli import marshal as m
 from evecli.describe import describe
-from evecli.observe import notifications_of
+from evecli.observe import notifications_of, wait_for_events
+from tests import dbseed
 from tests import test_login_to_character as base
 from tests.test_health import HEALTH
 from tests.test_undock import STATION, arrive, number
@@ -74,10 +75,61 @@ def test_a_shared_folder_reaches_the_member_while_it_holds_a_view_and_goes_when_
         assert mentions(heard[0], folder_id), describe(heard[0]["args"])
 
         owner.call(OWNER_GROUPS, "DeleteMembers", view_list, [member_character])
-        lost = named(notifications_of(member), "OnSharedBookmarksFoldersAccessLost")
+        # the notice follows the response (after it, not before), so wait for it rather than read the queue at once
+        lost = named(wait_for_events(member, lambda seen: named(seen, "OnSharedBookmarksFoldersAccessLost")), "OnSharedBookmarksFoldersAccessLost")
         assert lost, "the member hears the folder go once it holds no list"
         assert mentions(lost[0], folder_id), describe(lost[0]["args"])
 
         owner.call(BOOKMARKS, "DeleteFolder", folder_id)
         owner.call(OWNER_GROUPS, "Delete", view_list)
         owner.call(OWNER_GROUPS, "Delete", admin_list)
+
+def test_corporation_membership_changes_revoke_and_restore_a_shared_folder():
+    race = HEALTH["races"][0]
+    run = uuid.uuid4().hex[:10]
+    with base.connect(f"walk-corp-bookmark-owner-{run}") as owner:
+        owner_character, *_ = arrive(owner, race, f"{run}o")
+        with base.connect(f"walk-corp-bookmark-member-{run}") as creator:
+            member_character, *_ = arrive(creator, race, f"{run}m")
+
+        corporation = dbseed.found_corporation(STATION, 30100032, owner_character, f"a{run}")
+        other_corporation = dbseed.found_corporation(STATION, 30100032, owner_character, f"b{run}")
+        dbseed.join_corporation(member_character, corporation, 0)
+
+        with base.connect(f"walk-corp-bookmark-member-{run}") as member:
+            assert member.call("charUnboundMgr", "SelectCharacterID", charID=member_character,
+                               secondChoiceID=None, skipTutorial=False) is None
+
+            admin_list = group_id_of(owner.call(OWNER_GROUPS, "Create", "Walk corp admin", ""))
+            manage_list = group_id_of(owner.call(OWNER_GROUPS, "Create", "Walk corp manage", ""))
+            use_list = group_id_of(owner.call(OWNER_GROUPS, "Create", "Walk corp use", ""))
+            view_list = group_id_of(owner.call(OWNER_GROUPS, "Create", "Walk corp view", ""))
+            owner.call(OWNER_GROUPS, "AddMembers", view_list,
+                       m.Dict([(owner_character, 0), (corporation, 0)]))
+
+            folder = owner.call(BOOKMARKS, "AddFolder", False, "Walk corp shared",
+                                "shared with the corporation", admin_list, manage_list, use_list, view_list)
+            folder_id = folder_id_of(folder)
+            joined = member.call(BOOKMARKS, "AddToKnownFolders", folder_id, True)
+            assert number(keyval_of(joined[0])["accessLevel"]) == VIEW
+            notifications_of(member)
+
+            # Let the one-minute upkeep record the connected pilot's initial corporation.
+            wait_for_events(member, lambda _: False, timeout=65)
+
+            dbseed.join_corporation(member_character, other_corporation, 0)
+            lost = named(wait_for_events(member, lambda seen: named(seen, "OnSharedBookmarksFoldersAccessLost"),
+                                         timeout=65), "OnSharedBookmarksFoldersAccessLost")
+            assert lost, "leaving the corporation tells the pilot the shared folder is no longer available"
+            assert mentions(lost[0], folder_id), describe(lost[0]["args"])
+
+            dbseed.join_corporation(member_character, corporation, 0)
+            changed = named(wait_for_events(member, lambda seen: named(seen, "OnSharedBookmarksFoldersAccessChanged"),
+                                            timeout=65), "OnSharedBookmarksFoldersAccessChanged")
+            assert changed, "joining the corporation tells the pilot the shared folder is available again"
+            assert mentions(changed[0], folder_id), describe(changed[0]["args"])
+            assert str(VIEW) in repr(describe(changed[0]["args"])), describe(changed[0]["args"])
+
+            owner.call(BOOKMARKS, "DeleteFolder", folder_id)
+            for group in (view_list, use_list, manage_list, admin_list):
+                owner.call(OWNER_GROUPS, "Delete", group)

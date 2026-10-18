@@ -35,6 +35,15 @@ public static class FwBattlefields
     public const long LpPool = 150_000;
     public const int LpParticipants = 30;
     public const long LpEach = LpPool / LpParticipants;
+    /// <summary>
+    /// How far a battlefield's site point is from the complexes' site point of its system, along x (metres). shortcut: the complexes of a system share
+    /// one site point, so a battlefield is laid out this far apart; the site point of each complex needs its own offset when several sizes share a system.
+    /// </summary>
+    public const double SiteOffsetMeters = 300_000;
+    /// <summary>The SDE dungeon archetype of a battlefield site: the gated room the pilots enter by the acceleration gate (the wiki's battlefield entrance).</summary>
+    public const long SiteArchetypeId = 68;
+    /// <summary>How long a battlefield's site lasts when no side wins it (the site ends at the win otherwise).</summary>
+    public static readonly TimeSpan SiteLifetime = TimeSpan.FromHours(24);
     /// <summary>The first deployable id of the battlefield balls: each battlefield has <see cref="PointCount"/> points and a scoreboard.</summary>
     public const long IdBase = 4_300_000_000_000_000;
 
@@ -107,7 +116,8 @@ public static class FwBattlefields
 public sealed record FwBattlefieldPoint(int Index, long HoldMs, long HolderId);
 
 /// <summary>An open battlefield: its system, the occupier (its defenders; the attackers are the occupier's enemy), its score and its points.</summary>
-public sealed record FwBattlefield(long BattlefieldId, long SolarSystemId, long OccupierId, long Score, long UpdatedMs, IReadOnlyList<FwBattlefieldPoint> Points);
+public sealed record FwBattlefield(long BattlefieldId, long SolarSystemId, long OccupierId, long Score, long UpdatedMs, long InstanceId,
+    IReadOnlyList<FwBattlefieldPoint> Points);
 
 /// <summary>A point's ball as the simulation needs it: its id, type, name, place, and the next tick time (ms, 0 when none is running).</summary>
 public sealed record FwBattlefieldPointState(long PointId, long TypeId, string Name, double[] Position, long NextTickMs);
@@ -144,14 +154,22 @@ public static class FwBattlefieldTicker
                 .OrderBy(system => system.SolarSystemId).FirstOrDefault() is { } site)
         {
             long id = await store.InsertBattlefieldAsync(connection, transaction, site.SolarSystemId, site.OccupierId, nowMs, cancellationToken);
-            open.Add(new FwBattlefield(id, site.SolarSystemId, site.OccupierId, 0, nowMs,
+            open.Add(new FwBattlefield(id, site.SolarSystemId, site.OccupierId, 0, nowMs, 0,
                 Enumerable.Range(0, FwBattlefields.PointCount).Select(index => new FwBattlefieldPoint(index, 0, 0)).ToList()));
         }
 
         var states = new List<FwBattlefieldState>();
         var wins = new List<FwBattlefieldWon>();
-        foreach (var battlefield in open.OrderBy(battlefield => battlefield.BattlefieldId))
+        foreach (var open0 in open.OrderBy(battlefield => battlefield.BattlefieldId))
         {
+            var battlefield = open0;
+            // the site starts with the first pilot in its system (as a complex's does): its room, and so its gate, exists from then on
+            if (battlefield.InstanceId == 0 && sites.PilotsIn(battlefield.SolarSystemId))
+            {
+                long instance = await sites.StartBattlefieldAsync(connection, transaction, battlefield.SolarSystemId, battlefield.BattlefieldId, cancellationToken);
+                await store.SetBattlefieldInstanceAsync(connection, transaction, battlefield.BattlefieldId, instance, cancellationToken);
+                battlefield = battlefield with { InstanceId = instance };
+            }
             long id = battlefield.BattlefieldId;
             long occupier = battlefield.OccupierId;
             long attacker = FwFactions.OccupationEnemyOf(occupier);
@@ -218,6 +236,8 @@ public static class FwBattlefieldTicker
                     await store.AddPilotDailyAsync(connection, transaction, characterId, day, 0, share, cancellationToken);
             }
             await store.CloseBattlefieldAsync(connection, transaction, id, winner, score, nowMs, cancellationToken);
+            if (battlefield.InstanceId > 0)
+                await sites.EndAsync(connection, transaction, battlefield.InstanceId, cancellationToken);
             states.Add(new FwBattlefieldState(id, battlefield.SolarSystemId, occupier, attacker, scoreboard, scoreboardType, scoreboardName, score, points, true));
             wins.Add(new FwBattlefieldWon(id, battlefield.SolarSystemId, scoreboard, winner, victoryPoints, attackerPoints, recipients.Count));
         }

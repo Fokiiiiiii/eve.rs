@@ -10,6 +10,7 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/Eve.Services.Core/Eve.Services.Core.csproj" />
+    <ProjectReference Include="../../src/Eve.Dungeons/Eve.Dungeons.csproj" />
     <ProjectReference Include="../../src/Eve.Ships/Eve.Ships.csproj" />
     <ProjectReference Include="../../src/Eve.ReadSide/Eve.ReadSide.csproj" />
   </ItemGroup>

@@ -182,8 +182,7 @@ impl Scene {
         }
         let sources = self.abyssal_environment_objects.keys().copied().collect::<Vec<_>>();
         for source in sources {
-            loop {
-                let Some(runtime) = self.abyssal_environment_objects.get_mut(&source) else { break };
+            while let Some(runtime) = self.abyssal_environment_objects.get_mut(&source) {
                 let Some(pulse) = runtime.object.point_defense.clone() else { break };
                 let tick = runtime.next_pulse_at;
                 if tick > now {

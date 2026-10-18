@@ -1,3 +1,4 @@
+use super::spawn::AbyssalParticipantMove;
 use super::*;
 use crate::scene::MAX_CONDUIT_PASSENGERS;
 
@@ -616,14 +617,16 @@ impl Sim {
                 direction,
             } => {
                 return Ok(self.move_abyssal_participant(
-                    request_id,
-                    ship_id,
-                    source,
-                    destination,
-                    preserve_source_pose,
-                    session_handoff,
-                    position,
-                    direction,
+                    AbyssalParticipantMove {
+                        request_id,
+                        ship_id,
+                        source_key: source,
+                        destination_key: destination,
+                        preserve_source_pose,
+                        session_handoff,
+                        position,
+                        direction,
+                    },
                     now,
                 ));
             }

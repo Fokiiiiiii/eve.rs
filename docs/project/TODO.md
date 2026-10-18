@@ -2638,5 +2638,5 @@ Lane eve_p3, branch ch-s9 (merged with origin/main). Results (nothing skipped un
 
 - Direct tests for the corporation-office tax and reprocessing tax reads of a standing (owner as subject; DEVIATIONS G4).
 - Stored standing rows written in the old direction (subject = character) before DEVIATIONS G4: a migration to swap them.
-- `/missioncomplete` (EveJS placeholder objectives: no placeholder mission exists in eve.rs, DEVIATIONS G9), `/pi program` (forced install, DEVIATIONS G10), dbseed.py GM helper, DB-backed tests for the PI GM calls and the role grant, the MITM headless walk against EveJS, and docs/project/GM_QA_DESIGN.md.
+- `/missioncomplete` (EveJS placeholder objectives: no placeholder mission exists in eve.rs, DEVIATIONS G9), `/pi program` (forced install, DEVIATIONS G10), DB-backed tests for the PI GM calls and the role grant, the MITM headless walk against EveJS, and docs/project/GM_QA_DESIGN.md.
 

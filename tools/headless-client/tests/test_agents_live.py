@@ -21,6 +21,7 @@ from evecli import marshal as m
 from evecli.observe import notifications_of
 
 from tests import dbseed_evejs as evejs
+from tests import gm
 from tests.test_login_to_character import WALK, connect, revive
 
 LIVE = os.environ.get("EVE_LIVE_HOST", "")
@@ -150,27 +151,18 @@ def says_label(says) -> str:
 
 
 def seed_wallet(client, character_id, amount):
-    """The pilot's ISK: the reference takes the absolute amount through its /setisk, eve.rs adds it in the database."""
-    if REFERENCE:
-        evejs.set_isk(client, amount)
-    else:
-        seed_isk(character_id, amount)
+    """The pilot's ISK, through the game master's /setisk on both servers (the absolute balance)."""
+    gm.set_isk(client, amount)
 
 
 def seed_agent_standing(client, subject, character_id):
-    """A standing toward an agent or its corporation: /setstanding on the reference, the relations rows on eve.rs."""
-    if REFERENCE:
-        evejs.set_standing(client, subject)
-    else:
-        seed_standing(subject, character_id)
+    """A standing toward an agent's corporation or faction (an owner id), through /setstanding on both servers."""
+    gm.set_standing(client, subject)
 
 
 def seed_personal_standing(client, agent, character_id):
-    """The pilot's own standing toward an agent (the agent's personal standing, not its corporation's)."""
-    if REFERENCE:
-        evejs.set_agent_standing(client, agent)
-    else:
-        seed_standing(agent, character_id)
+    """The pilot's own standing toward an agent (the agent's personal standing, not its corporation's), through /setstanding on both servers."""
+    gm.set_agent_standing(client, agent, name=evejs.agent_name(agent) if REFERENCE else None)
 
 
 def balance_of(client, character_id):
@@ -200,7 +192,7 @@ def test_lp_store_purchase_takes_lp_and_isk_and_grants_the_item():
     wallet = schema("EVE_WALLET_SCHEMA")
     with connect(f"lp-{run_id()}") as client:
         character_id = new_pilot(client, run_id())
-        seed_isk(character_id, 1_000_000)
+        seed_wallet(client, character_id, 1_000_000)
         seed_loyalty_points(character_id, STORE_CORPORATION, 5000)
         seed_offer(STORE_CORPORATION, OFFER, TRITANIUM, lp_cost=100, isk_cost=1000)
         isk_before = isk_of(character_id)
@@ -269,10 +261,10 @@ def test_locator_locates_a_second_pilot_charges_the_fee_and_tells_the_requester(
     with connect(f"loc-{run}") as requester, connect(f"target-{run}") as target:
         character_id = new_pilot(requester, run)
         target_id = new_pilot(target, f"t{run}")
-        seed_isk(character_id, 1_000_000)
+        seed_wallet(requester, character_id, 1_000_000)
         locator = next(row for row in agents(requester) if row["isLocatorAgent"] and row["level"] >= 3 and not row["isInSpace"])
-        seed_standing(locator["corporationID"], character_id)
-        seed_standing(locator["agentID"], character_id)
+        seed_agent_standing(requester, locator["corporationID"], character_id)
+        seed_agent_standing(requester, locator["agentID"], character_id)
         handle = requester.call("agentMgr", "MachoBindObject", locator["agentID"])
         requester.notifications.clear()
 
@@ -304,8 +296,8 @@ def test_agent_decline_asks_first_and_a_yes_declines_the_offer():
         for agent in agents(client):
             if agent["agentTypeID"] == RESEARCH_AGENT_TYPE or agent["isLocatorAgent"] or agent["isInSpace"]:
                 continue
-            seed_standing(agent["corporationID"], character_id)
-            seed_standing(agent["agentID"], character_id)
+            seed_agent_standing(client, agent["corporationID"], character_id)
+            seed_agent_standing(client, agent["agentID"], character_id)
             handle = client.call("agentMgr", "MachoBindObject", agent["agentID"])
             _, actions, _ = do_action(client, handle, REQUEST)
             if (ACCEPT, 3) in actions:

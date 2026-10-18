@@ -34,6 +34,7 @@ Headless tests and QA runs need the same game-master actions a human GM uses in 
 - The relocation: `RelocationTests` (database-backed, the fake simulation of the space tests) and `TeleportCommandTests` (no database); the anchor placement in the scene tests (`a_relocation_*`).
 - The agent missions: `AgentCommandTests` (no database), the reset in `AgentMissionStoreTests` and the GM completion in `MissionDungeonRuntimeTests` (database-backed).
 - The faction and planet helpers: `FwDatabaseTests` (database-backed) for the enlistment and the victory points, `FwCommandTests` and `PiCommandTests` (no database).
+- The walks: `tools/headless-client/tests/gm.py` seeds ISK and standings through the same commands on both servers; the psql seeds that have no command are listed in DEVIATIONS G11.
 - Lanes: database tests run under the database's lock (`flock /tmp/eve-heavy-eve_p2.lock`) with `--blame-hang-timeout 120s`, one lane at a time.
 
 ## Open

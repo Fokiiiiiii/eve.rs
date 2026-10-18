@@ -204,12 +204,15 @@ internal sealed partial class CharacterServicesComposition
             async (characterId, cancellationToken) => await WarFactionOfAsync(characterId, cancellationToken),
             async (solarSystemId, cancellationToken) =>
             {
+                // the sites a pilot can be inside: the open complexes' and the open battlefields' (their rooms are entered by the same gates)
                 await using var connection = await source.OpenConnectionAsync(cancellationToken);
-                return (await factionWarfareStore.OpenComplexesAsync(connection, null, cancellationToken))
+                var complexes = (await factionWarfareStore.OpenComplexesAsync(connection, null, cancellationToken))
                     .Where(complex => complex.SolarSystemId == solarSystemId && complex.InstanceId > 0)
-                    .OrderBy(complex => complex.InstanceId)
-                    .Select(complex => complex.InstanceId)
-                    .ToList();
+                    .Select(complex => complex.InstanceId);
+                var battlefields = (await factionWarfareStore.OpenBattlefieldsAsync(connection, null, cancellationToken))
+                    .Where(battlefield => battlefield.SolarSystemId == solarSystemId && battlefield.InstanceId > 0)
+                    .Select(battlefield => battlefield.InstanceId);
+                return complexes.Concat(battlefields).OrderBy(instance => instance).ToList();
             });
         complexInstanceOfPilot = sites.InstanceOfAsync;
         var complexes = new FwComplexDirector(factionWarfareStore, foundations.Scheduler, foundations.Events, sites,

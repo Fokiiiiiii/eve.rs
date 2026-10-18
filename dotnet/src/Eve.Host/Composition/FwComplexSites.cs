@@ -43,6 +43,24 @@ internal sealed class FwComplexSites(
         return start.InstanceId ?? throw new InvalidOperationException($"complex {complexId} ({size}, dungeon {dungeon}): {start.Refusal}");
     }
 
+    /// <summary>The battlefield sites: the gated dungeons of the battlefield archetype that can start (ids in order).</summary>
+    public IReadOnlyList<long> BattlefieldTemplates { get; } = catalog.Dungeons
+        .Where(dungeon => dungeon.ArchetypeID == FwBattlefields.SiteArchetypeId && dungeon.Waves.Count > 0 && sites.StartRefusalOf(dungeon.DungeonID) is null)
+        .Select(dungeon => dungeon.DungeonID).OrderBy(id => id).ToList();
+
+    /// <summary>A battlefield's site: a battlefield-archetype dungeon at the system's site point; its gate is the room's (the pilots enter by it).</summary>
+    public async Task<long> StartBattlefieldAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long solarSystemId, long battlefieldId,
+        CancellationToken cancellationToken)
+    {
+        if (BattlefieldTemplates.Count == 0)
+            throw new InvalidOperationException("the owner data has no battlefield site");
+        long dungeon = BattlefieldTemplates[(int)(battlefieldId % BattlefieldTemplates.Count)];
+        var origin = await SiteOriginAsync(connection, transaction, solarSystemId, cancellationToken);
+        var start = await sites.StartForSystemAsync((int)solarSystemId, origin, dungeon, $"factionwarfare:battlefield:{battlefieldId}",
+            FwBattlefields.SiteLifetime, connection, transaction, cancellationToken);
+        return start.InstanceId ?? throw new InvalidOperationException($"battlefield {battlefieldId} (dungeon {dungeon}): {start.Refusal}");
+    }
+
     /// <summary>How far outside its star's surface a complex site sits, metres (shortcut: the planets are not checked; a site is 1e9 m out of the star).</summary>
     public const double SiteClearanceMeters = 1_000_000_000;
 

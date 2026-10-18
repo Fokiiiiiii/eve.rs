@@ -143,7 +143,7 @@ def test_a_rat_that_launches_missiles_shows_the_pilot_each_missile_and_the_missi
         watch({"events": who}, 45.0, until=lambda seen: any(e["name"] == "OnInvulnCancelled" for e in seen["events"]))
         hold_still(who, ballpark[0])
 
-        reply = who.call("slash", "SlashCmd", "/npc 1 Guristas Invader")
+        reply = who.call("slash", "SlashCmd", "/npc 1 Guristas Invader still")
         text = getattr(reply, "value", reply)
         text = text.decode() if isinstance(text, bytes) else str(text)
         assert text.startswith("Spawned 1 hull from Guristas Invader"), text

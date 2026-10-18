@@ -4732,3 +4732,9 @@ as reference. The client's `bookmarkSvc.py` (`OnSharedBookmarksFolderUpdated`, `
 - **Moves are relocations (G14).** EveJS moves a pilot to a point inside its scene without a session change; eve.rs leaves the scene and enters it again at the point, so the client takes the undock and item-change path (the same path `/solar` and `/tele` take). Shortcut: the scene's own teleport is not used.
 - **Docked places (G14).** A docked pilot's anchor is its solar system: EveJS moves to the station, which this path does not serve, so the move lands at the system anchor. shortcut: the station destination, upgrade when a station move is shared with `/dock`.
 - **Not served (G14).** Runtime entity targets and destinations (an item ID, as the Insider's `TR me here!` sends) and `bookmark=`. They answer `Transport target not found` or `Transport destination not found`. shortcut: upgrade when scene entities are addressable by the relocation.
+
+## GM tools, slice G15: `/bp` (2026-10-18)
+
+- **`/bp help|list|jobs|lookup` (G15).** Served as EveJS `executeBlueprintCommand`: `list` is the caller's blueprint items (the blueprint manager's owner read, at most 20 rows, `runs=-1` for originals), `jobs` is the caller's industry jobs (every status, at most 20 rows), `lookup` names the blueprint and product of a preset, a product or a blueprint, and the blueprint's maximum production limit (from the SDE `blueprints` row). The row words are EveJS's.
+- **`/bp` help (G15).** The reply lists the four `/bp` lines only. EveJS's help also lists the `/bpauto` helper, which is not served and not advertised here; `/bpauto` answers `Unknown command`.
+- **Lookup resolution (G15).** EveJS takes the first fuzzy blueprint definition for a name. eve.rs takes the first type of that exact name (ambiguous names included) that has a blueprint of its own or makes one, then the one partial name match. shortcut: the exact-name order, upgrade if EveJS's ranking is shown to differ on a name.

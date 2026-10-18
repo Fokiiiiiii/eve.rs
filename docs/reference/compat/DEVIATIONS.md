@@ -4767,3 +4767,46 @@ as reference. The client's `bookmarkSvc.py` (`OnSharedBookmarksFolderUpdated`, `
 - **Semantics (G19).** EVE.js has no server `/load` or `/unload` command (its ammo load is the client's `LoadAmmo`). The client's own sequence is `/create <type>` then `/load me <type>` (`infosvc.py`), so `/load me <item> [amount]` makes the item as `/createitem` does and, for a charge, loads it into the fitted modules that take it (`CharacterShips.LoadAmmoAsync`, the reference's rules). Other items are made as `/createitem` makes them. `/unload me <all|module itemID|charge itemID|charge name|typeID>` moves the rounds of the chosen modules to the station hangar (`UnloadAmmoAsync`).
 - **Docked only (G19).** Charges load and unload docked only; in space they answer that the reload in space is not served yet. shortcut: the simulation's reload timing and gun rounds are not used here.
 - **Notifications (G19).** shortcut: the pilot is sent the item changes of the stacks; the module charge notifications the dogma service sends are not repeated, so the charge shows on the next fitting refresh.
+
+## GM tools, slice G20: `/givestarterskills`, `/randomizeskills`, `/skillscopy` (2026-10-18)
+
+- **Source (G20).** EVE.js has none of the three commands (its only starter-skill path is the character's reset in `skillAdminRuntime.js`, which the slash does not call). The client sends them (`svc_slash.py`: `/givestarterskills <characterID>`, `/randomizeskills`, `/skillscopy "<from>" "<to>"`). The starting set is the SDE's race set that character creation grants (`SkillCatalog.StartingSet`).
+- **Give, not reset (G20).** `/givestarterskills` sets the race's starting skills to their starting levels and keeps the other skills. The EVE.js reset replaces every skill; the client's word is "give", so the choice is the give. shortcut: the reset behaviour is not offered, upgrade if a client flow needs it.
+- **Randomize (G20).** Every published skill of the pilot gets a random level from 0 to 5 (the points of that level). The game's rule for a random level is not in the SDE or the client, so the range is the trained-level range of the skill system.
+- **Copy (G20).** `/skillscopy` makes the second character's skills the first's (levels and points) and removes the skills the first lacks, in one transaction. Characters are named by ID, exact name or `me`.
+- **Notifications (G20).** An online pilot is told the change as training tells it (`OnServerSkillsChanged`, `OnSkillLevelsTrained`, `OnSkillsChanged`, then the dogma sync). shortcut: a pilot who is offline reads the change at its next login; no message is queued for it.
+- **Access (G20).** The staff role gate of the slash service covers the three commands; no other role is asked.
+
+## GM tools, slice G21: `/dogmaupdate` (2026-10-18)
+
+- **Source (G21).** EVE.js has no `/dogmaupdate`. The client sends it and then clears its own effect cache (`svc_slash.py` `cmd_dogmaupdate`), so the server's part is the reload of its dogma tables from the SDE it runs on.
+- **Reload (G21).** The host reads the attributes, effects and groups again, re-reads the types it had already read, and swaps the tables in as one snapshot (`DogmaStatic.ReloadAsync`). The reply gives the attribute and effect counts. With the pinned SDE the counts do not change; the reload picks up an SDE the database has since received.
+- **No SDE (G21).** A host whose dogma was not loaded from an SDE answers that the reload cannot run; it does not claim a reload.
+- shortcut: the attribute values a ship already computed are kept until its next dogma change, they are not pushed again (upgrade: a dogma-changed notification to the pilots of the system).
+
+## GM tools, slice G22: `/killright <target> [owner]` (2026-10-18)
+
+- **Source (G22).** EVE.js has no `/killright`. The client sends the line as typed (`svc_slash.py` `cmd_killright`). The kill right is the one the crimewatch store grants when an illegal aggression is made: the owner (the caller, or the named pilot) may take the target's kill, in the owner's solar system, for 30 days.
+- **Grant path (G22).** `CrimewatchRuntime.GrantKillRightAsync` writes the store row and tells the owner as an aggression tells it (`KillRightGranted`). The row is made by the store (`CreateKillRightAsync`).
+- **Refusals (G22).** The store makes no right when the two are the same pilot or when the owner already has an open right against the target; the reply says so and creates nothing. Both are the store's own rules (one open right per owner and target, no right against oneself), not new ones.
+- **Tests (G22).** The rig's kill right is the store's grant (no notification); the notification path is the runtime's and is not run by the database tests.
+
+## GM tools, slice G23: `/asteroid rewards` (2026-10-18)
+
+- **Source (G23).** EVE.js has no `/asteroid rewards`. The client sends it (`svc_slash.py` `_cmd_asteroid_list_rewards`) and shows the reply. The reply is the rocks of the pilot's solar system: each rock's item, its ore and the units it still holds, then the units of each ore in total.
+- **Ore (G23).** A mineable asteroid's type is its ore (as in the game), so the ore is the rock's own type name. The rocks are the space items the host seeded for the system (`SpaceContainers.RocksInSystemAsync`); a rock with no units left is not listed.
+- **Position (G23).** The pilot must be in space; otherwise the reply says so. The highlight and clear options are the client's own (its `_cmd_asteroid_highlight` and `_cmd_asteroid_clear`), not sent to the server.
+- shortcut: the yield of one mining cycle is not listed (it depends on the module, the skills and the rock's volume); the reply gives the units the rock holds.
+
+## GM tools, slice G24: `/skyhook state <skyhookID> <state>` (2026-10-18)
+
+- **Source (G24).** EVE.js has no `/skyhook` command. The client's skyhook menu sends it (`menusvc.py` `GMSetSkyhookState`, `/skyhook state <id> <state>`), with the states of the client's `orbitalSkyhook/const.py`: 0 unknown, 210 shield vulnerable, 211 armor reinforce, 212 armor vulnerable, 213 hull reinforce, 214 hull vulnerable. Any other state is the usage.
+- **Write (G24).** The skyhook's row in the sovereignty table (`/skyhooks/<id>`) gets its `state`; the row is staged, flushed and read back, and the write shares the sovereignty write gate (`PersistenceSkyhookStateWriter`). A skyhook already in the state is not written; an unknown ID answers that it is not found.
+- shortcut: setting the state does not run the reinforcement timers or the sovereignty consequences of a state change; the state is what the skyhook service reads. No change is pushed to the clients, which read the state when they ask for it.
+
+## GM tools, slice G25: `/entity deploy <amount> <entity type|typeID>` (2026-10-18)
+
+- **Source (G25).** EVE.js has no `/entity` command. The client sends `/entity deploy <qty> <typeID>` (`svc_slash.py` `cmd_entity`, `menusvc.py`, `insider.py`'s respawn test followed by `/nuke`). The entity category is SDE category 11: the NPC groups of the Blood Raider, Irregular, Drifter, Sleeper and Mordu's Legion ships. The SDE gives them as ship hulls.
+- **Spawn (G25).** The entities are NPC hulls spawned in space around the pilot's ship by the same spawner as `/spawn`, so `/unspawn` and `/nuke` take them out. The amount is 1 to 50, as `/spawnn`'s.
+- **Names (G25).** A name is resolved among the entity category only; a ship or any other category answers that it is not an entity type. A name with several entity types is ambiguous and asks for the typeID.
+- shortcut: the entities are placed as `/spawn` places a hull (at the pilot's ship, no deviation), not in the formation of the group's own spawn table; upgrade with the entity spawn rules when the spawn tables are seeded.

@@ -38,6 +38,12 @@ public sealed class TeleportCommandTests
         public Task<GmDestination?> PlaceOfAsync(ClientSession pilot, CancellationToken cancellationToken) =>
             Task.FromResult(Places.GetValueOrDefault(pilot.SessionId));
 
+        /// <summary>Where an item of the caller's system is, by item ID (missing: the simulation does not know it there).</summary>
+        public Dictionary<long, GmDestination> Items { get; } = [];
+
+        public Task<GmDestination?> ItemPlaceAsync(ClientSession caller, long itemId, CancellationToken cancellationToken) =>
+            Task.FromResult(Items.GetValueOrDefault(itemId));
+
         public Task<string?> MoveAsync(ClientSession session, GmDestination destination, CancellationToken cancellationToken)
         {
             Moves.Add((session.SessionId, destination));
@@ -299,5 +305,45 @@ public sealed class TeleportCommandTests
         Assert.Equal("Transport destination not found: Nowhere.",
             await new TeleportCommands(relocation).TrAsync(Rig.Session(1001, id: 5), "me Nowhere", default));
         Assert.Empty(relocation.Moves);
+    }
+
+    [Fact]
+    public async Task Warpto_needs_an_item_number_and_a_selected_character()
+    {
+        var relocation = WithJita();
+        relocation.Places[5] = InSpace(0, 0, 0);
+        relocation.Items[99] = InSpace(10, 20, 30);
+
+        Assert.Equal(TeleportCommands.WarpToUsage, await new TeleportCommands(relocation).WarpToAsync(Rig.Session(1001, id: 5), "Jita", default));
+        Assert.Equal("Select a character before using /warpto.", await new TeleportCommands(relocation).WarpToAsync(Rig.Session(null), "99", default));
+        Assert.Empty(relocation.Moves);
+    }
+
+    [Fact]
+    public async Task Warpto_from_a_docked_pilot_or_to_an_item_the_system_does_not_know_moves_nobody()
+    {
+        var relocation = WithJita();
+        relocation.Items[99] = InSpace(10, 20, 30);
+
+        Assert.Equal("Undock before using /warpto.", await new TeleportCommands(relocation).WarpToAsync(Rig.Session(1001, id: 5), "99", default));
+        relocation.Places[5] = InSpace(0, 0, 0);
+        Assert.Equal("Item not found in your solar system: 77.", await new TeleportCommands(relocation).WarpToAsync(Rig.Session(1001, id: 5), "77", default));
+        Assert.Empty(relocation.Moves);
+    }
+
+    [Fact]
+    public async Task Warpto_puts_the_pilot_off_the_item_facing_it_and_names_it()
+    {
+        var relocation = WithJita();
+        relocation.Places[5] = InSpace(0, 0, 0);
+        relocation.Items[99] = InSpace(10, 20, 30);
+
+        var answer = await new TeleportCommands(relocation).WarpToAsync(Rig.Session(1001, id: 5), "99", default);
+
+        Assert.Equal("Warped to item 99 in Jita (30000142).", answer);
+        var (session, destination) = Assert.Single(relocation.Moves);
+        Assert.Equal(5, session);
+        Assert.Equal(new double[] { 2510, 20, 30 }, destination.Position!.ToArray());
+        Assert.Equal(new double[] { -1, 0, 0 }, destination.Direction!.ToArray());
     }
 }

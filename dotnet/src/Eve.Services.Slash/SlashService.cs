@@ -64,6 +64,7 @@ public sealed partial class SlashService(ShipHealthCommands health, DeathTestCom
             commands["/solar"] = (call, argument) => teleport.SolarAsync(call.Session, argument, call.Cancellation);
             commands["/tele"] = (call, argument) => teleport.TeleAsync(call.Session, argument, call.Cancellation);
             commands["/tr"] = (call, argument) => teleport.TrAsync(call.Session, argument, call.Cancellation);
+            commands["/warpto"] = (call, argument) => teleport.WarpToAsync(call.Session, argument, call.Cancellation);
         }
         if (agent is not null) commands["/agent"] = (call, argument) => agent.RunAsync(call.Session, argument, call.Cancellation);
         if (fw is not null) commands["/fw"] = (call, argument) => fw.RunAsync(call.Session, argument, call.Cancellation);
@@ -91,7 +92,8 @@ public sealed partial class SlashService(ShipHealthCommands health, DeathTestCom
             throw MachoErrors.ThrowUserError("", ("reason", new PyStr($"Commands: [{string.Join(", ", names)}]")));
         }
         var space = text.IndexOfAny([' ', '\t']);
-        var name = (space < 0 ? text : text[..space]).ToLowerInvariant();
+        // the client sends the same names with and without the slash (the Insider's `heal 5 0`, `warpto 5`)
+        var name = "/" + (space < 0 ? text : text[..space]).TrimStart('/').ToLowerInvariant();
         var argument = space < 0 ? "" : text[(space + 1)..].Trim();
         var message = _commands.TryGetValue(name, out var command)
             ? await command(call, argument)

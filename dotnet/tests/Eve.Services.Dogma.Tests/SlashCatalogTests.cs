@@ -101,6 +101,15 @@ public class SlashCatalogTests
         Assert.Equal(SlashService.NotGameMaster, Assert.IsType<PyStr>(await CallAsync(Service(skills: true), command, new ClientSession())).Value);
     }
 
+    [Theory]
+    [InlineData("dmg Heavy")]
+    [InlineData("/DMG Heavy")]
+    [InlineData("  dmg   Heavy  ")]
+    public async Task Bare_and_slashed_names_dispatch_alike(string command)
+    {
+        Assert.Equal("Select a character before using /dmg.", Assert.IsType<PyStr>(await CallAsync(Service(), command)).Value);
+    }
+
     [Fact]
     public async Task Registered_commands_keep_the_existing_dispatch_and_self_target_guards()
     {

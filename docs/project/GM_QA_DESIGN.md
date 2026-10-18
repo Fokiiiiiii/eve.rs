@@ -18,6 +18,7 @@ Headless tests and QA runs need the same game-master actions a human GM uses in 
 | `/solar <system>`, `/tele <character>` | `TeleportCommands` over `SpaceSessions.RelocateAsync` | the relocation of a pilot (DEVIATIONS G8) |
 | `/tr <me\|characterID> <destination>` | `TeleportCommands.TrAsync` | the system, a pilot's place, `pos=`, `offset=` (DEVIATIONS G14) |
 | `/bp help\|list\|jobs\|lookup` | `IndustryCommands` over `HostGmIndustry` and the SDE | the caller's blueprints and jobs, the blueprint of a type (DEVIATIONS G15) |
+| `/warpto <itemID>` | `TeleportCommands.WarpToAsync` over `SpaceSessions.ItemPlaceAsync` | a pilot in space to 2 500 m off an item (DEVIATIONS G17) |
 | `/agent offers`, `offer`, `accept`, `quit`, `complete`, `reset` | `AgentCommands` over `HostAgentControl` | the caller's own missions through the client's path (DEVIATIONS G9) |
 | `/missioncomplete` | not built | EveJS marks placeholder objectives; eve.rs has no placeholder mission (DEVIATIONS G9) |
 | `/fw enlist <faction>`, `/fw leave`, `/fw vp <points>` | `FwCommands` over `HostFwControl` | the caller's corporation and system (DEVIATIONS G10) |
@@ -46,7 +47,8 @@ Slash commands the screen and its helper service send (`eve/devtools/script/svc_
 | `online` | yes (G16: the active ship, DEVIATIONS G16) |
 | `givestarterskills`, `randomizeskills`, `skillscopy` | no |
 | `tr` (teleport a pilot, to a system or to a position) | yes (G14; runtime entity and bookmark destinations not served, DEVIATIONS G14) |
-| `warpto`, `entity deploy`, `nuke`, `spawn`, `spawnn`, `unspawn`, `unload`, `load`, `skyhook` | no |
+| `warpto` | yes (G17, celestials and pilot ships of the system; DEVIATIONS G17) |
+| `entity deploy`, `nuke`, `spawn`, `spawnn`, `unspawn`, `unload`, `load`, `skyhook` | no |
 | `createitem` | yes (G13): cargo of the ship in space, hangar when docked |
 | `bp` | yes (G15: `help`, `list`, `jobs`, `lookup`; DEVIATIONS G15) |
 | `dogmaupdate`, `killright`, `asteroid rewards` | no |

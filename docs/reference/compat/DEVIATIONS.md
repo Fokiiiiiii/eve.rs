@@ -4774,3 +4774,10 @@ as reference. The client's `bookmarkSvc.py` (`OnSharedBookmarksFolderUpdated`, `
 - **Copy (G20).** `/skillscopy` makes the second character's skills the first's (levels and points) and removes the skills the first lacks, in one transaction. Characters are named by ID, exact name or `me`.
 - **Notifications (G20).** An online pilot is told the change as training tells it (`OnServerSkillsChanged`, `OnSkillLevelsTrained`, `OnSkillsChanged`, then the dogma sync). shortcut: a pilot who is offline reads the change at its next login; no message is queued for it.
 - **Access (G20).** The staff role gate of the slash service covers the three commands; no other role is asked.
+
+## GM tools, slice G21: `/dogmaupdate` (2026-10-18)
+
+- **Source (G21).** EVE.js has no `/dogmaupdate`. The client sends it and then clears its own effect cache (`svc_slash.py` `cmd_dogmaupdate`), so the server's part is the reload of its dogma tables from the SDE it runs on.
+- **Reload (G21).** The host reads the attributes, effects and groups again, re-reads the types it had already read, and swaps the tables in as one snapshot (`DogmaStatic.ReloadAsync`). The reply gives the attribute and effect counts. With the pinned SDE the counts do not change; the reload picks up an SDE the database has since received.
+- **No SDE (G21).** A host whose dogma was not loaded from an SDE answers that the reload cannot run; it does not claim a reload.
+- shortcut: the attribute values a ship already computed are kept until its next dogma change, they are not pushed again (upgrade: a dogma-changed notification to the pilots of the system).

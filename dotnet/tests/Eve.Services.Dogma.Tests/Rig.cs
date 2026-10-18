@@ -99,7 +99,8 @@ internal sealed class Rig : IAsyncDisposable
         Slash = new SlashService(new ShipHealthCommands(Ships, statics, () => ClockMs, Health), items: new ItemCommands(new ItemTypeNames(sde), Ships, statics, () => ClockMs), isk: new IskCommands(Transactions, source, () => ClockMs, Wallets, Loyalty),
             loyalty: new LoyaltyCommands(Loyalty, StandingDirectory, () => ClockMs),
             standings: new StandingCommands(StandingDirectory, Relations, (character, owner, standing) => StandingNotices.Add((character, owner, standing))),
-            skillBulk: new SkillBulkCommands(catalog, Skills, source, Characters, null, () => ClockMs, _ => null));
+            skillBulk: new SkillBulkCommands(catalog, Skills, source, Characters, null, () => ClockMs, _ => null),
+            dogmaUpdate: new DogmaUpdateCommands(statics));
         Inventory = new InvBrokerService(Items, new ItemTypeCatalog(sde), new Eve.Universe.StationCatalog([]), Ships, statics, () => ClockMs);
     }
 

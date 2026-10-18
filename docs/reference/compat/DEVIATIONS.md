@@ -4400,7 +4400,7 @@ donation sections it marks outdated. Design: `docs/project/FW_DESIGN.md`.
   (one of the nine battlefield templates of the owner catalog, chosen by the battlefield id); it starts with the first pilot in the system, as a complex's
   does (a site started with no pilot has its waves refused and ends before its gate is placed). Its site point is the complexes' site point of the system
   moved 300 km along x (`FwBattlefields.SiteOffsetMeters`): the complexes of a system share one point, and a battlefield's room and points would
-  otherwise count the complexes' pilots in their presence.
+  otherwise count the complexes' pilots in their presence. Its gate admits T1 hulls (SDE meta group 1 or no meta group) and empire Navy hulls (meta group 4, faction ID 500001 through 500004), per the [EVE University battlefield description](https://wiki.eveuniversity.org/Faction_warfare).
   - Points: three capture points (the centre and two 80 km either side, wiki). The hold timer and the point value are the SDE's fwCapturePoint values
     (numberOfSeconds 20, pointValue 1, range 30 km): a point's holder is the side whose pilots are within its range alone, and each full 20 s of
     holding moves the score one point toward that side. Both sides present, or neither, pause the timer.
@@ -4411,7 +4411,7 @@ donation sections it marks outdated. Design: `docs/project/FW_DESIGN.md`.
     The winners' victory points (2,000 split evenly, rounded down) go to the daily statistics rows. The site ends with the battlefield.
   - Spawn: occupied systems, up to two open at a time, one per system, three hours after a completion (wiki).
   - Not built: the frontline choice (every occupied system is a candidate), the NPC blockers of a point, the objectives (archetype 67, and
-    `OnFwObjectiveCompletedInSolarSystem`), and the wiki's gate restrictions (T1 and Navy ships only; a non-enrolled capsuleer lands 75 to 125 km from
+    `OnFwObjectiveCompletedInSolarSystem`), a non-enrolled capsuleer landing 75 to 125 km from
     the points). The gate applies the room's rule: its allowed races, or, when it names none, the blacklist of capsules and capital hulls.
 - **Complexes: scan visibility.** An open complex is listed in the system's anomaly overlay (`map`, `scanMgr` and `taleMgr` GetAnomalies path) with the
   `CosmicAnomalyInfo` fields of EveJS `buildAnomalySiteInfo` (siteID and instanceID = the site's instance, dungeonID, archetypeID, difficulty, targetID =

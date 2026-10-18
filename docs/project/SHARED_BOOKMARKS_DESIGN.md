@@ -47,6 +47,11 @@ open. The compatibility choices are in
   `OnSharedBookmarksFoldersAccessChanged` go to the connected characters whose folders use the group (`SharedFolderNotifier`). Expired
   bookmarks are removed by a one-minute timer and by reads, and the viewers hear `bookmarksRemoved`.
 
+- EveJS difference (v0.12.9, `828823a75f211fdecb945b087a26c225f111491f`): `bookmarkRuntimeAccess.js` derives group subjects from the
+  character, corporation and alliance IDs (`buildMembershipSubjects`), while `bookmarkNotifications.js` has no affiliation-change notice
+  producer. eve.rs checks affiliation changes in the character store each minute and sends the access notices consumed by V24.01
+  `bookmarkSvc.py:332,343`. The corporation membership live walk covers this eve.rs behavior.
+
 ## Tests
 
 - `dotnet/tests/Eve.AccessGroups.Tests`: the rules (no database), the store on PostgreSQL (roles, precedence, corporation built-in list,

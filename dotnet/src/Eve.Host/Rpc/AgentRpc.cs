@@ -81,7 +81,7 @@ internal sealed partial class CharacterServicesComposition
                 new IndustryCommands(new ItemTypeNames(sde), sde, new HostGmIndustry(ReadOwnedBlueprintsAsync, industryJobOperations.ReadJobsAsync)),
                 spaceSessions is null ? null : new SpawnCommands(new ItemTypeNames(sde), spaceSessions),
                 new SkillBulkCommands(skillCatalog, skills, source, characters, dogmaSync, now, characterSessions.Of),
-                new DogmaUpdateCommands(dogma),
+                new DogmaUpdateCommands(dogma, (session, character, token) => dogmaSync!.ShipAttributesChangedAsync(session, character, token)),
                 new KillRightCommands(characters, (owner, target, system, when, token) => crimewatchRuntime.GrantKillRightAsync(owner, target, system, when, token), now),
                 spaceSessions is null || spaceContainers is null ? null : new AsteroidCommands(async (session, token) => spaceSessions.SolarSystemOf(session) is { } system
                     ? (await spaceContainers.RocksInSystemAsync(system, token)).Select(rock => (rock.ItemId, rock.TypeId, rock.Name, rock.Units)).ToList()

@@ -103,6 +103,18 @@ public class RelationTests
     }
 
     [PgFact]
+    public async Task A_characters_standing_toward_an_owner_reads_owner_to_character_and_the_corporations_value()
+    {
+        await using var rig = await Rig.Create();
+        await rig.Set("affiliation.corporation", Pilot, Corp, 0);
+        await rig.Set("standing", Faction, Corp, 4);
+        await rig.Set("standing", Faction, Pilot, 2);
+        await rig.Set("standing", Pilot, Corp, 9); // legacy direction must not be read as the effective standing
+
+        Assert.Equal(4, await rig.Relations.StandingTowardAsync(Pilot, Faction));
+    }
+
+    [PgFact]
     public async Task Changes_are_published_through_the_event_bus_and_a_rolled_back_change_is_not()
     {
         await using var rig = await Rig.Create();

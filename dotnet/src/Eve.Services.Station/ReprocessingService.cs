@@ -383,14 +383,7 @@ public sealed partial class ReprocessingService(NpgsqlDataSource source, PgItemS
 
     /// <summary>The standing toward the owner: the higher of the character's own and its corporation's (the wiki's rule).</summary>
     private async Task<double> StandingTowardAsync(long character, long owner, CancellationToken cancellationToken)
-    {
-        var personal = await relations.ValueAsync(RelationKinds.Standing.Name, owner, character, 0, cancellationToken: cancellationToken).ConfigureAwait(false);
-        var affiliation = await relations.AffiliationOfAsync(character, cancellationToken: cancellationToken).ConfigureAwait(false);
-        var corporate = affiliation.Corporation is { } corporation
-            ? await relations.ValueAsync(RelationKinds.Standing.Name, owner, corporation, 0, cancellationToken: cancellationToken).ConfigureAwait(false)
-            : 0;
-        return Math.Max(personal, corporate);
-    }
+        => await relations.StandingTowardAsync(character, owner, cancellationToken).ConfigureAwait(false);
 
     // ── rows and notices ─────────────────────────────────────────────────────
 

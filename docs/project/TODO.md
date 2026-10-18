@@ -2640,8 +2640,4 @@ Done: every command the Insider window and its helper service send is served (`d
 
 Open:
 - `/missioncomplete` (no placeholder mission in eve.rs, DEVIATIONS G9) and `/pi program` (the forced install needs the client's own inputs, DEVIATIONS G10): not built.
-- `/solar` places the pilot differently from EVE.js (near a gate on EVE.js, DEVIATIONS G26 and G8): to match.
-- `/removeskill` and `/giveskill` list the skill suggestions by the word match, EVE.js by Levenshtein distance (DEVIATIONS G26): the wording to match.
-- Direct tests for the corporation-office tax and reprocessing tax reads of a standing, with the owner as subject (DEVIATIONS G4).
-- Stored standing rows written in the old direction (subject = character) before DEVIATIONS G4: a migration to swap them.
-- `/dogmaupdate` keeps the attribute values a ship already computed until its next dogma change (DEVIATIONS G21, shortcut).
+- DONE (G4 follow-up): migrated old standing rows and their history to owner → character direction (`Eve.Relations` migration `0002_standing_direction`); direct database tests cover owner-to-pilot and corporation standing reads plus the reprocessing tax quote. See `docs/reference/compat/DEVIATIONS.md`, G4.

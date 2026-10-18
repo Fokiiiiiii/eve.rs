@@ -516,7 +516,11 @@ impl Scene {
             }
             for id in coming {
                 let stamp = self.next_stamp(now);
-                let Some(actions) = self.deployables.get(&id).and_then(|deployable| release_actions(stamp, deployable).ok()) else { continue };
+                let Some(actions) =
+                    self.deployables.get(&id).and_then(|deployable| release_actions(stamp, deployable).ok())
+                else {
+                    continue;
+                };
                 out.push(Self::update(observer, actions));
                 if let Some(deployable) = self.deployables.get_mut(&id) {
                     deployable.watchers.insert(observer);

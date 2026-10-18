@@ -98,6 +98,29 @@ public sealed class SkillCommands(SkillCatalog catalog, PgSkillStore store, Npgs
     }
 
     /// <summary>The skill a token names (a name, or a type ID); the message when there is none or the name is ambiguous.</summary>
+    private static int SuggestionDistance(string query, string name)
+    {
+        if (query.Length == 0) return int.MaxValue;
+        if (name.StartsWith(query, StringComparison.Ordinal)) return 0;
+        if (name.Contains(query, StringComparison.Ordinal)) return 1;
+
+        var previous = Enumerable.Range(0, name.Length + 1).ToArray();
+        var current = new int[name.Length + 1];
+        for (var i = 1; i <= query.Length; i++)
+        {
+            current[0] = i;
+            for (var j = 1; j <= name.Length; j++)
+            {
+                var substitution = query[i - 1] == name[j - 1] ? 0 : 1;
+                current[j] = Math.Min(
+                    Math.Min(current[j - 1] + 1, previous[j] + 1),
+                    previous[j - 1] + substitution);
+            }
+            (previous, current) = (current, previous);
+        }
+        return previous[name.Length];
+    }
+
     private string? Resolve(string skillToken, out SkillType? single)
     {
         var query = Normalize(skillToken);
@@ -118,7 +141,13 @@ public sealed class SkillCommands(SkillCatalog catalog, PgSkillStore store, Npgs
         }
         if (single is null)
         {
-            var near = skills.Where(skill => Normalize(skill.Name).Contains(query, StringComparison.Ordinal)).OrderBy(skill => skill.Name).Take(5).Select(skill => $"{skill.Name}({skill.TypeId})");
+            var near = skills
+                .Select(skill => (Skill: skill, Distance: SuggestionDistance(query, Normalize(skill.Name))))
+                .Where(candidate => candidate.Distance <= 6)
+                .OrderBy(candidate => candidate.Distance)
+                .ThenBy(candidate => candidate.Skill.Name, StringComparer.Ordinal)
+                .Take(5)
+                .Select(candidate => $"{candidate.Skill.Name}({candidate.Skill.TypeId})");
             return $"Skill not found: {skillToken}.{Suggestions(near)}";
         }
         return null;

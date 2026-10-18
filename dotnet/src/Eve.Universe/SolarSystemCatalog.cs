@@ -11,7 +11,8 @@ namespace Eve.Universe;
 /// The client's per-system flags (<see cref="ClientSystemFlags"/>): no cynosural field may be lit here, and no scanning (probes) is possible here.
 /// </summary>
 public sealed record SolarSystemInfo(int Id, string Name, int ConstellationId, int RegionId, double Security, int FactionId = 0, double X = 0, double Y = 0, double Z = 0,
-    bool DisallowCyno = false, bool DisallowScanning = false);
+    bool DisallowCyno = false, bool DisallowScanning = false, double? GateX = null, double? GateY = null, double? GateZ = null,
+    double GateRadius = 0, string? GateName = null);
 
 /// <summary>The solar systems of the game, read from the static data.</summary>
 public sealed class SolarSystemCatalog
@@ -46,6 +47,14 @@ public sealed class SolarSystemCatalog
         var constellationFactions = await FactionsOfAsync(sde, "mapConstellations", cancellationToken);
         var regionFactions = await FactionsOfAsync(sde, "mapRegions", cancellationToken);
         var rows = await sde.ReadAsync("mapSolarSystems", cancellationToken: cancellationToken);
+        var gates = (await sde.ReadAsync("mapDenormalize", cancellationToken: cancellationToken))
+            .Where(row => row.Doc.TryGetProperty("groupID", out var group) && group.GetInt32() == 10 &&
+                row.Doc.TryGetProperty("solarSystemID", out var system) && system.ValueKind == JsonValueKind.Number)
+            .GroupBy(row => row.Doc.GetProperty("solarSystemID").GetInt32())
+            .ToDictionary(group => group.Key, group => group.OrderBy(row => row.Key).First());
+        var gateTypeIds = gates.Values.Select(row => row.Doc.GetProperty("typeID").GetInt64()).Distinct().ToArray();
+        var typeRadii = (await sde.ReadAsync("types", gateTypeIds, cancellationToken))
+            .ToDictionary(row => row.Key, row => Position(row.Doc, "radius"));
         return new SolarSystemCatalog(rows.Select(r =>
         {
             var constellation = r.Doc.GetProperty("constellationID").GetInt32();
@@ -54,6 +63,16 @@ public sealed class SolarSystemCatalog
                 : constellationFactions.GetValueOrDefault(constellation) is > 0 and var inherited ? inherited
                 : regionFactions.GetValueOrDefault(region);
             var flags = clientFlags?.GetValueOrDefault((int)r.Key);
+            var gate = gates.GetValueOrDefault((int)r.Key)?.Doc;
+            var gateRadius = 0d;
+            if (gate is { } gateRow)
+            {
+                var physicalRadius = gateRow.TryGetProperty("physicalRadius", out var explicitRadius) &&
+                    explicitRadius.ValueKind == JsonValueKind.Number ? explicitRadius.GetDouble() : 0;
+                var typeRadius = gateRow.TryGetProperty("typeID", out var typeId) && typeId.ValueKind == JsonValueKind.Number
+                    ? typeRadii.GetValueOrDefault(typeId.GetInt64()) : 0;
+                gateRadius = physicalRadius > 0 ? physicalRadius : typeRadius > 0 ? typeRadius : Position(gateRow, "radius");
+            }
             return new SolarSystemInfo(
                 (int)r.Key,
                 SdeReader.English(r.Doc.GetProperty("name")),
@@ -62,7 +81,12 @@ public sealed class SolarSystemCatalog
                 r.Doc.TryGetProperty("securityStatus", out var security) && security.ValueKind == JsonValueKind.Number ? security.GetDouble() : 0d,
                 faction,
                 Position(r.Doc, "x"), Position(r.Doc, "y"), Position(r.Doc, "z"),
-                flags?.DisallowCyno ?? false, flags?.DisallowScanning ?? false);
+                flags?.DisallowCyno ?? false, flags?.DisallowScanning ?? false,
+                gate is null ? null : Position(gate.Value, "x"),
+                gate is null ? null : Position(gate.Value, "y"),
+                gate is null ? null : Position(gate.Value, "z"),
+                gateRadius,
+                gate is not null && gate.Value.TryGetProperty("itemName", out var gateName) ? gateName.GetString() : null);
         }));
     }
 

@@ -4795,3 +4795,9 @@ as reference. The client's `bookmarkSvc.py` (`OnSharedBookmarksFolderUpdated`, `
 - **Ore (G23).** A mineable asteroid's type is its ore (as in the game), so the ore is the rock's own type name. The rocks are the space items the host seeded for the system (`SpaceContainers.RocksInSystemAsync`); a rock with no units left is not listed.
 - **Position (G23).** The pilot must be in space; otherwise the reply says so. The highlight and clear options are the client's own (its `_cmd_asteroid_highlight` and `_cmd_asteroid_clear`), not sent to the server.
 - shortcut: the yield of one mining cycle is not listed (it depends on the module, the skills and the rock's volume); the reply gives the units the rock holds.
+
+## GM tools, slice G24: `/skyhook state <skyhookID> <state>` (2026-10-18)
+
+- **Source (G24).** EVE.js has no `/skyhook` command. The client's skyhook menu sends it (`menusvc.py` `GMSetSkyhookState`, `/skyhook state <id> <state>`), with the states of the client's `orbitalSkyhook/const.py`: 0 unknown, 210 shield vulnerable, 211 armor reinforce, 212 armor vulnerable, 213 hull reinforce, 214 hull vulnerable. Any other state is the usage.
+- **Write (G24).** The skyhook's row in the sovereignty table (`/skyhooks/<id>`) gets its `state`; the row is staged, flushed and read back, and the write shares the sovereignty write gate (`PersistenceSkyhookStateWriter`). A skyhook already in the state is not written; an unknown ID answers that it is not found.
+- shortcut: setting the state does not run the reinforcement timers or the sovereignty consequences of a state change; the state is what the skyhook service reads. No change is pushed to the clients, which read the state when they ask for it.

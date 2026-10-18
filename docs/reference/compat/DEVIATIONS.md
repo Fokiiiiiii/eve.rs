@@ -4808,3 +4808,12 @@ as reference. The client's `bookmarkSvc.py` (`OnSharedBookmarksFolderUpdated`, `
 - **Spawn (G25).** The entities are NPC hulls spawned in space around the pilot's ship by the same spawner as `/spawn`, so `/unspawn` and `/nuke` take them out. The amount is 1 to 50, as `/spawnn`'s.
 - **Names (G25).** A name is resolved among the entity category only; a ship or any other category answers that it is not an entity type. A name with several entity types is ambiguous and asks for the typeID.
 - shortcut: the entities are placed as `/spawn` places a hull (at the pilot's ship, no deviation), not in the formation of the group's own spawn table; upgrade with the entity spawn rules when the spawn tables are seeded.
+
+## GM tools, slice G26: the Insider walk against EVE.js (2026-10-18)
+
+The walk is `tools/headless-client/tests/test_insider_gm_live.py` (procedure: docs/project/MITM_COMPARE.md, "Insider walk"). The calls match one for one by service and method; the answers below are the differences.
+
+- **Commands EVE.js does not have (intended, G20 to G25).** `/givestarterskills`, `/skillscopy`, `/dogmaupdate`, `/killright`, `/skyhook`, `/entity`, `/asteroid`, `/randomizeskills` and `/repair` answer `Unknown command` on EVE.js. eve.rs serves them from the client's contract; `/repair` is `/heal` on eve.rs (G6).
+- **`/removeskill` suggestions (open wording).** EVE.js lists the closest skill names (Levenshtein distance, the same rule as its `suggestSkillNames`), eve.rs lists only the names that contain the word. The text differs; no call or state does. Not changed in this slice: the existing skill tests pin the current text.
+- **`/solar` (open behaviour, owned by G8).** EVE.js answers `Teleported to Jita (30000142) near stargate Stargate (Maurasi).`; eve.rs answers `Teleported to Jita (30000142).`, and after it eve.rs's `/entity` and `/asteroid` answer `You must be in space`. The reply says EVE.js places the pilot near a gate; where eve.rs places the pilot is the open point to match (not checked on EVE.js in this walk).
+- **Harness.** The eve.rs walk logs in twice (the identity fixture grants the GM role at a login); the EVE.js walk does not. Not a server difference.

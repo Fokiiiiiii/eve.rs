@@ -54,3 +54,23 @@ are git-ignored (`/captures/`).
   1 skipped: the strict-password test). `run-evejs-live.sh` runs only that file; `run-eve-live.sh` takes any selection
   through `EVE_RUN`, so a larger scenario needs the same selection run against the EVE.js proxy by hand.
 - Not the graphical client. Its handshake and calls are checked against evecli and the recorded fixtures only.
+
+## Insider walk (GM and QA slash commands, 2026-10-18)
+
+The Insider window's server calls (`tools/headless-client/tests/test_insider_gm_live.py`): money, standing, skills, the GM helpers (`/givestarterskills`, `/skillscopy`, `/dogmaupdate`, `/killright`, `/skyhook state`, `/entity deploy`, `/asteroid rewards`, `/randomizeskills` last, because its levels differ on each run), the heal and the ship. Run on the eve_p2 lane for eve.rs and on EVE.js with its own port.
+
+```
+# eve.rs: the lane's live port 26101 behind the proxy 26211 (MITM port B); the GM roles by the identity fixture
+EVE_PG_URL=postgres://postgres@127.0.0.1:5432/eve_p2 tools/dev/db-lock.sh bash -c 'tools/mitm/mitm capture --upstream 127.0.0.1:26101 --listen 127.0.0.1:26211 --out captures/eve-rs-insider.jsonl --quiet & p=$!; sleep 1; EVE_IDENTITY_SCHEMA=1 EVE_DEV_AUTO_CREATE=1 EVE_LIVE_PORT=26101 EVE_LIVE_HOST=127.0.0.1:26211 EVE_SDE_DIR=<sde>/eve-online-static-data-3396210-jsonl EVE_MARKET_SEED=skip EVE_LP_STORE_SEED=skip EVE_ADJUSTED_PRICE_SEED=skip EVE_GM_TRANSCRIPT=captures/eve-rs-insider.transcript.jsonl EVE_RUN="cd tools/headless-client && .venv/bin/python -m pytest -q tests/test_insider_gm_live.py" tools/dev/run-eve-live.sh; s=$?; kill -TERM $p; wait $p; exit $s'
+
+# EVE.js: its port 26020 behind the proxy 26111 (MITM port A); the lane lock; a node heap of 6 GB (the default heap ran out at startup)
+flock /tmp/eve-heavy-eve_p2.lock timeout 3000 bash -c 'tools/mitm/mitm capture --upstream 127.0.0.1:26020 --listen 127.0.0.1:26111 --out captures/evejs-insider.jsonl --quiet & p=$!; sleep 1; EVE_LIVE_LOG_DIR=captures/evejs-logs EVE_LIVE_PORT=26020 EVE_LIVE_HOST=127.0.0.1:26111 EVE_LIVE_BOOT_SECONDS=900 EVE_MARKET_SEED=skip EVE_LP_STORE_SEED=skip EVE_ADJUSTED_PRICE_SEED=skip EVE_GM_TRANSCRIPT=captures/evejs-insider.transcript.jsonl EVE_RUN="cd tools/headless-client && .venv/bin/python -m pytest -q tests/test_insider_gm_live.py" tools/dev/run-evejs-live.sh <evejs> <sde>/eve-online-static-data-3396210-jsonl; s=$?; kill -TERM $p; wait $p; exit $s'
+```
+
+Notes from the run:
+
+- EVE.js stopped with `listen EADDRINUSE` on 26001 while another listener held it, and the runner's readiness check passes against any listener on its port; the reference therefore ran on 26020, and a port must be checked free before a run.
+- The runner's `node` gets a 6 GB heap from a wrapper on `PATH` (the runner sets `NODE_OPTIONS` itself).
+- The eve.rs side logs in twice (the identity fixture grants the role at a login), so its capture has two more `GetServiceInfo` calls before the walk. The calls by service and method otherwise match one for one (25 on EVE.js, 27 on eve.rs).
+- The EVE.js walk fails its own outcome check on the new commands (it answers `Unknown command`); that is the comparison, not a fault of the walk. The eve.rs walk passes its outcome checks.
+- `mitm diff` stops at the first divergence, which is the extra login above; the comparison that matters is the transcript and the call multiset. The answers that differ are recorded in DEVIATIONS G26.

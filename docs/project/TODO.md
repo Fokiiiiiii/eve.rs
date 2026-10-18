@@ -2634,9 +2634,14 @@ Lane eve_p3, branch ch-s9 (merged with origin/main). Results (nothing skipped un
 - Live headless walk through a multi-room site with a MITM capture (eve_p2 lane).
 - Gate lock state in the slim item (the client's gate display).
 
-## GM tools backlog (2026-10-17)
+## GM tools (2026-10-18): state
 
-- Direct tests for the corporation-office tax and reprocessing tax reads of a standing (owner as subject; DEVIATIONS G4).
+Done: every command the Insider window and its helper service send is served (`docs/project/GM_QA_DESIGN.md`): `/givestarterskills`, `/randomizeskills`, `/skillscopy` (G20), `/dogmaupdate` (G21), `/killright` (G22), `/asteroid rewards` (G23), `/skyhook state` (G24), `/entity deploy` (G25). Each has database-backed or unit tests, recorded in DEVIATIONS G20 to G25. The Insider walk ran on the eve_p2 lane against eve.rs and EVE.js through the MITM; the call sequences match, and the answers that differ are in DEVIATIONS G26 (MITM_COMPARE.md, "Insider walk").
+
+Open:
+- `/missioncomplete` (no placeholder mission in eve.rs, DEVIATIONS G9) and `/pi program` (the forced install needs the client's own inputs, DEVIATIONS G10): not built.
+- `/solar` places the pilot differently from EVE.js (near a gate on EVE.js, DEVIATIONS G26 and G8): to match.
+- `/removeskill` and `/giveskill` list the skill suggestions by the word match, EVE.js by Levenshtein distance (DEVIATIONS G26): the wording to match.
+- Direct tests for the corporation-office tax and reprocessing tax reads of a standing, with the owner as subject (DEVIATIONS G4).
 - Stored standing rows written in the old direction (subject = character) before DEVIATIONS G4: a migration to swap them.
-- `/missioncomplete` (EveJS placeholder objectives: no placeholder mission exists in eve.rs, DEVIATIONS G9), `/pi program` (forced install, DEVIATIONS G10), DB-backed tests for the PI GM calls and the role grant, the MITM headless walk against EveJS, and docs/project/GM_QA_DESIGN.md.
-
+- `/dogmaupdate` keeps the attribute values a ship already computed until its next dogma change (DEVIATIONS G21, shortcut).

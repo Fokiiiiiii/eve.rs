@@ -23,6 +23,14 @@ Headless tests and QA runs need the same game-master actions a human GM uses in 
 | `/missioncomplete` | not built | EveJS marks placeholder objectives; eve.rs has no placeholder mission (DEVIATIONS G9) |
 | `/fw enlist <faction>`, `/fw leave`, `/fw vp <points>` | `FwCommands` over `HostFwControl` | the caller's corporation and system (DEVIATIONS G10) |
 | `/pi list`, `/pi commodity`, `/pi command` | `PiCommands` over `HostPiControl` | the caller's planets, pins named from `list` (DEVIATIONS G10) |
+| `/createitem`, `/online`, `/load`, `/unload` | `ItemCommands` (cargo, the active ship's modules, the charges) | `/createitem` G13, `/online` G16, `/load` and `/unload` G19 |
+| `/spawn`, `/spawnn`, `/unspawn`, `/nuke` | `SpawnCommands` over `ISpaceSpawns` | ship hulls in space around the pilot (DEVIATIONS G18) |
+| `/givestarterskills`, `/randomizeskills`, `/skillscopy` | `SkillBulkCommands` over the skill store | the race's starting set, a random level per published skill, a copy of one pilot's skills to another (DEVIATIONS G20) |
+| `/dogmaupdate` | `DogmaUpdateCommands` over `DogmaStatic.ReloadAsync` | the dogma tables re-read from the SDE and swapped in (DEVIATIONS G21) |
+| `/killright <target> [owner]` | `KillRightCommands` over the crimewatch runtime | a kill right through the crimewatch store, the owner told (DEVIATIONS G22) |
+| `/asteroid rewards` | `AsteroidCommands` over `SpaceContainers.RocksInSystemAsync` | the rocks of the pilot's system with their ore and units (DEVIATIONS G23) |
+| `/skyhook state <id> <state>` | `SkyhookCommands` over `PersistenceSkyhookStateWriter` | an orbital skyhook's state in the sovereignty table (DEVIATIONS G24) |
+| `/entity deploy <amount> <type>` | `EntityCommands` over `ISpaceSpawns` | entity-category NPC hulls in space around the pilot (DEVIATIONS G25) |
 | `/pi program` | not built | the forced install needs the client's own inputs (DEVIATIONS G10) |
 
 ## GM and QA screen (client InsiderWnd)
@@ -45,17 +53,20 @@ Slash commands the screen and its helper service send (`eve/devtools/script/svc_
 | `setstanding` | yes (owner-first form added in G12) |
 | `removeskill` | yes (G13) |
 | `online` | yes (G16: the active ship, DEVIATIONS G16) |
-| `givestarterskills`, `randomizeskills`, `skillscopy` | no |
+| `givestarterskills`, `randomizeskills`, `skillscopy` | yes (G20) |
 | `tr` (teleport a pilot, to a system or to a position) | yes (G14; runtime entity and bookmark destinations not served, DEVIATIONS G14) |
 | `warpto` | yes (G17, celestials and pilot ships of the system; DEVIATIONS G17) |
 | `spawn`, `spawnn`, `unspawn`, `nuke` | yes (G18: ship hulls only, DEVIATIONS G18) |
 | `load`, `unload` | yes (G19: charges docked; DEVIATIONS G19) |
-| `entity deploy`, `skyhook` | no |
+| `entity deploy` | yes (G25: entity category, DEVIATIONS G25) |
+| `skyhook state` | yes (G24: the client's five states and unknown, DEVIATIONS G24) |
 | `createitem` | yes (G13): cargo of the ship in space, hangar when docked |
 | `bp` | yes (G15: `help`, `list`, `jobs`, `lookup`; DEVIATIONS G15) |
-| `dogmaupdate`, `killright`, `asteroid rewards` | no |
+| `dogmaupdate` | yes (G21) |
+| `killright` | yes (G22) |
+| `asteroid rewards` | yes (G23: the rocks of the pilot's system) |
 
-Missing commands answer `Unknown command`, so the screen shows an error for them rather than a fake success. Building them is the next slices; each is recorded here when it lands.
+Every command the screen sends is served. A word that no command serves still answers `Unknown command`, so the screen shows an error rather than a fake success.
 
 ## Principles
 - Words and semantics come from EveJS (`services/chat/chatCommands.js` and its command modules). Where EveJS lacks a thing, the client contract (eve-logic) and the real game decide, and the choice is recorded in DEVIATIONS.
@@ -70,8 +81,10 @@ Missing commands answer `Unknown command`, so the screen shows an error for them
 - The agent missions: `AgentCommandTests` (no database), the reset in `AgentMissionStoreTests` and the GM completion in `MissionDungeonRuntimeTests` (database-backed).
 - The faction and planet helpers: `FwDatabaseTests` (database-backed) for the enlistment and the victory points, `FwCommandTests` and `PiCommandTests` (no database).
 - The walks: `tools/headless-client/tests/gm.py` seeds ISK and standings through the same commands on both servers; the psql seeds that have no command are listed in DEVIATIONS G11.
+- The G20 to G25 tests: `SkillBulkCommandTests`, `DogmaUpdateCommandTests`, `KillRightCommandTests`, `EntityCommandTests` and `SkyhookCommandTests` (Dogma tests, database-backed where the store is real); `AsteroidCommandTests` (no database) and `AsteroidRockTests` (the space rig's stores); `SkyhookStateWriterTests` (Host tests, an in-memory sovereignty table).
+- The Insider walk: `tools/headless-client/tests/test_insider_gm_live.py` sends the Insider's calls on both servers; its transcripts are compared through the MITM (docs/project/MITM_COMPARE.md, section "Insider walk").
 - Lanes: database tests run under the database's lock (`flock /tmp/eve-heavy-eve_p2.lock`) with `--blame-hang-timeout 120s`, one lane at a time.
 
 ## Open
-- The headless walk against EveJS for the shared commands (MITM capture on the eve_p2 lane, docs/project/MITM_COMPARE.md) is not yet built.
 - `/missioncomplete` is not built (no placeholder mission exists; DEVIATIONS G9). `/pi program` is not built (DEVIATIONS G10).
+- The Insider walk against EVE.js is run and compared (MITM_COMPARE.md). Its open differences: `/solar` puts the pilot in space near a gate on EVE.js and not on eve.rs (DEVIATIONS G26), and the skill-not-found suggestions differ in wording (DEVIATIONS G26).

@@ -45,6 +45,14 @@ def watch(clients: dict, seconds: float, until=None) -> dict:
     return out
 
 
+def hold_still(who, ballpark, seconds: float = 10.0) -> None:
+    """The pilot's ship is stopped before a rat is called (`CmdStop`, then the events of the stop are watched): the server places the rat from where the
+    ship is when the rat is called, and a ship that still flies (the Ibis at 339 m/s) is past its lock range (29.7 km: AddTarget refuses with
+    TargetNotWithinRangeGeneric) by the time the rat is there."""
+    who.call_bound(ballpark, "CmdStop")
+    watch({"events": who}, seconds)
+
+
 def names(event: dict) -> list:
     if event["name"] != "DoDestinyUpdate":
         return []

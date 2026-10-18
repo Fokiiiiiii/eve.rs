@@ -647,6 +647,18 @@ impl Scene {
         out
     }
 
+    /// Retires in-flight projectiles when their exact Abyssal scene is being torn down after all durable actors settle.
+    pub(crate) fn retire_abyssal_projectiles(&mut self, now: i64) -> Vec<Out> {
+        let ids: Vec<_> = self.missiles.keys().copied().collect();
+        let mut out = Vec::new();
+        for id in ids {
+            if let Some(missile) = self.missiles.remove(&id) {
+                out.extend(self.missile_gone(&missile, false, now));
+            }
+        }
+        out
+    }
+
     pub fn missiles_within(&self, centre: Vec3, range: f64) -> Vec<i64> {
         let candidates = self.missiles.values().filter(|missile| missile.is_flying()).map(|missile| {
             crate::geo::SpatialEntity {

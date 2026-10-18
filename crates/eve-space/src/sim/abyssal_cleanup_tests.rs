@@ -328,3 +328,77 @@ fn abyssal_public_observatory_tower_and_decloak_dispatch_do_not_cross_private_sc
         .unwrap();
     assert_eq!(sim.scenes[&private].pilots[&(SESSION + 1)].cloak, crate::visibility::CloakState::Cloaked);
 }
+
+fn spawn_and_kill_abyssal_npc(sim: &mut Sim, request_id: u64, scene: SceneKey, npc_id: i64, now: i64) -> i64 {
+    let mut request = abyssal_spawn(request_id, scene, npc_id, [0.0; 3]);
+    let Message::Spawn(spawn) = &mut request else { panic!("expected NPC spawn request") };
+    spawn.identity.wreck = Some(crate::wreck::WreckKind {
+        type_id: 26_468,
+        name: "Abyssal NPC Wreck".to_string(),
+        graphic_id: None,
+    });
+    let messages = sim.handle(request, now).unwrap();
+    let session = messages
+        .iter()
+        .find_map(|message| match message {
+            Message::SpawnReply { outcome: Ok(session), .. } => Some(*session),
+            _ => None,
+        })
+        .expect("Abyssal NPC spawn should produce a session");
+    assert!(sim.scenes[&scene].abyssal_npc_spawn_receipts.contains_key(&npc_id));
+
+    let death = sim.scenes.get_mut(&scene).unwrap().destroy(session, None, now);
+    sim.forget_the_destroyed(&death);
+    let wreck = sim.scenes[&scene]
+        .wrecks
+        .values()
+        .find(|wreck| wreck.launcher_id == npc_id)
+        .expect("NPC death should create its native wreck");
+    assert_eq!(wreck.kind.type_id, 26_468);
+    assert_eq!(wreck.group_id, crate::wreck::WRECK_GROUP);
+    wreck.id
+}
+
+#[test]
+fn abyssal_teardown_removes_only_wrecks_from_settled_npcs_in_the_exact_scene() {
+    let mut sim = sim();
+    let first = SceneKey { location_id: SYSTEM, instance_id: 888, room_index: 1 };
+    let second = SceneKey { room_index: 2, ..first };
+    ensure_abyssal(&mut sim, first, NOON, 75_000.0, 0.0);
+    ensure_abyssal(&mut sim, second, NOON, 75_000.0, 0.0);
+
+    let settled_npc = 8_880_001;
+    let unlisted_npc = 8_880_002;
+    let other_scene_npc = 8_880_003;
+    let settled_wreck = spawn_and_kill_abyssal_npc(&mut sim, 1, first, settled_npc, NOON);
+    let unlisted_wreck = spawn_and_kill_abyssal_npc(&mut sim, 2, first, unlisted_npc, NOON);
+    let other_scene_wreck = spawn_and_kill_abyssal_npc(&mut sim, 3, second, other_scene_npc, NOON);
+    assert_eq!(settled_wreck, other_scene_wreck, "transient wreck IDs may be reused in separate scenes");
+    assert_ne!(settled_wreck, unlisted_wreck);
+
+    let cache_wreck = 8_880_004;
+    let unlisted_loot = 8_880_005;
+    sim.handle(Message::PlaceWreck(Box::new(loot(first, cache_wreck))), NOON).unwrap();
+    sim.handle(Message::PlaceWreck(Box::new(loot(first, unlisted_loot))), NOON).unwrap();
+
+    let other_scene = sim.handle(cleanup(second, &[other_scene_npc], &[]), NOON).unwrap();
+    assert_eq!(
+        other_scene.last(),
+        Some(&Message::RemoveAbyssalSceneReply { request_id: 99, outcome: Ok(()) })
+    );
+    assert!(!other_scene.iter().any(|message| matches!(message, Message::Destroyed { .. })));
+    assert!(!sim.scenes.contains_key(&second));
+    assert!(sim.scenes[&first].wreck(settled_wreck).is_some());
+
+    let partial = sim.handle(cleanup(first, &[settled_npc], &[cache_wreck]), NOON).unwrap();
+    assert!(matches!(
+        partial.last(),
+        Some(Message::RemoveAbyssalSceneReply { outcome: Err(reason), .. }) if reason == "ABYSSAL_SCENE_NOT_EMPTY"
+    ));
+    assert!(!partial.iter().any(|message| matches!(message, Message::Destroyed { .. })));
+    assert!(sim.scenes[&first].wreck(settled_wreck).is_none());
+    assert!(sim.scenes[&first].wreck(unlisted_wreck).is_some());
+    assert!(sim.scenes[&first].wreck(unlisted_loot).is_some());
+    assert!(sim.scenes[&first].wreck(cache_wreck).is_none());
+    assert!(sim.scenes[&first].abyssal_npc_spawn_receipts.contains_key(&unlisted_npc));
+}

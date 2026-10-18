@@ -418,11 +418,18 @@ public sealed class AbyssalContentTests
 
         await rig.Commit((connection, transaction) =>
             abyssal.DisconnectAsync(connection, transaction, started.State.InstanceId, Member));
+        await Assert.ThrowsAsync<AbyssalRuleException>(() => rig.Commit((connection, transaction) =>
+            abyssal.ReconnectAsync(connection, transaction, Member, MemberShip + 1)));
         rig.Now += 45_000;
         var reconnected = await rig.Commit((connection, transaction) =>
             abyssal.ReconnectAsync(connection, transaction, Member, MemberShip));
         Assert.Equal(deadline, reconnected.State!.Data.RunExpiresAtMs);
         Assert.Equal(1, reconnected.State.Data.Participants.Single(p => p.CharacterId == Member).CurrentRoomIndex);
+        var repeatedReconnect = await rig.Commit((connection, transaction) =>
+            abyssal.ReconnectAsync(connection, transaction, Member, MemberShip));
+        Assert.Equal(AbyssalOperationStatus.AlreadyApplied, repeatedReconnect.Status);
+        Assert.Equal(reconnected.State.Data.Participants.Single(p => p.CharacterId == Member).LifecycleReplayOrdinal,
+            repeatedReconnect.State.Data.Participants.Single(p => p.CharacterId == Member).LifecycleReplayOrdinal);
         var replayedExpiry = Assert.Single(await rig.Scheduler.ListAsync(ContentRuntime.ExpireKind));
         Assert.Equal(scheduledExpiry.Id, replayedExpiry.Id);
         Assert.Equal(deadline, replayedExpiry.RunAtMs);
@@ -441,6 +448,15 @@ public sealed class AbyssalContentTests
         });
         Assert.Equal(Creator, locationEvents[0].GetProperty("recipientCharacterId").GetInt64());
         Assert.Equal(Member, locationEvents[1].GetProperty("recipientCharacterId").GetInt64());
+
+        await rig.Commit((connection, transaction) =>
+            abyssal.ParticipantDestroyedAsync(connection, transaction,
+                new AbyssalParticipantDestroyedRequest(started.State.InstanceId, Creator, CreatorShip, "ship-destroyed")));
+        await Assert.ThrowsAsync<AbyssalRuleException>(() => rig.Commit((connection, transaction) =>
+            abyssal.ReconnectAsync(connection, transaction, Creator, CreatorShip)));
+        Assert.Equal(AbyssalParticipantStatus.Destroyed,
+            (await rig.Content.GetAsync(started.State.InstanceId))!.Data<AbyssalRunData>()!.Participants
+                .Single(participant => participant.CharacterId == Creator).Status);
     }
 
     [PgFact]

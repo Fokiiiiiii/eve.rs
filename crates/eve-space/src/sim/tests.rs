@@ -69,6 +69,211 @@ fn abyssal_reward_cache_is_non_npc_damageable_and_retries_replay_confirmed_destr
 }
 
 #[test]
+fn abyssal_rebind_combat_death_loot_return_cleanup_retires_only_scene_projectiles() {
+    let mut sim = sim();
+    let room = SceneKey { location_id: SYSTEM, instance_id: 879, room_index: 1 };
+    let player_ship_id = 8_790_001;
+    let npc_ship_id = 8_790_002;
+    let cache_id = 8_790_003;
+    let npc_wreck_id = 8_790_004;
+    ensure_abyssal(&mut sim, room, NOON, 75_000.0, 0.0);
+
+    sim.handle(abyssal_enter(SESSION, room, player_ship_id, [0.0, 0.0, 0.0]), NOON).unwrap();
+    let relogin_session = SESSION + 100;
+    assert_eq!(
+        sim.handle(
+            Message::RebindAbyssalSession {
+                request_id: 3,
+                session_id: relogin_session,
+                ship_id: player_ship_id,
+                scene: room,
+            },
+            NOON + 1,
+        )
+        .unwrap(),
+        [Message::RebindAbyssalSessionReply { request_id: 3, outcome: Ok(()) }]
+    );
+    assert!(!sim.sessions.contains_key(&SESSION));
+    assert_eq!(sim.sessions.get(&relogin_session), Some(&room));
+    let npc_session = match sim
+        .handle(
+            abyssal_spawn_for(
+                "12345678-1234-1234-1234-123456789abc",
+                1,
+                room,
+                npc_ship_id,
+                [2_000.0, 0.0, 0.0],
+            ),
+            NOON,
+        )
+        .unwrap()
+        .first()
+    {
+        Some(Message::SpawnReply { outcome: Ok(session), .. }) => *session,
+        other => panic!("unexpected NPC spawn reply {other:?}"),
+    };
+    let cache = abyssal_reward_cache(cache_id, room, [1_000.0, 500.0, 0.0]);
+    sim.handle(Message::EnsureAbyssalRewardCache { request_id: 2, cache: Box::new(cache) }, NOON).unwrap();
+
+    let effect = crate::modules::Effect {
+        module_id: player_ship_id + 10,
+        module_type: 12_345,
+        effect_id: 101,
+        fx: "effects.MissileDeployment".to_string(),
+        duration_ms: 2_500.0,
+        capacitor_need: 0.0,
+        repeat: 1,
+        target_id: npc_ship_id,
+        turret: Some(crate::weapons::Turret {
+            weapon_type_id: 12_345,
+            fx: "effects.MissileDeployment".to_string(),
+            raw_damage: [10.0, 0.0, 0.0, 0.0],
+            optimal_range: 20_000.0,
+            falloff: 0.0,
+            tracking_speed: 0.0,
+            signature_resolution: 40_000.0,
+            charge: None,
+            missile: Some(crate::missiles::Missile {
+                charge_type_id: 21,
+                group_id: 84,
+                name: "Cleanup fixture missile".to_string(),
+                radius: 1.0,
+                mass: 1.0,
+                agility: 1.0,
+                hit_points: 1.0,
+                max_velocity: 1_000.0,
+                flight_time_ms: 60_000.0,
+                explosion_radius: 1.0,
+                explosion_velocity: 1.0,
+                damage_reduction_factor: 1.0,
+                damage_reduction_sensitivity: 1.0,
+                dot: None,
+            }),
+            spool: None,
+            aoe: None,
+            arc: None,
+            requires_gunnery: false,
+        }),
+        action: None,
+        on: None,
+        off: None,
+        on_changes: Vec::new(),
+        off_changes: Vec::new(),
+        burns_fuel: false,
+        rules: Default::default(),
+    };
+    let missile_id = {
+        let scene = sim.scenes.get_mut(&room).unwrap();
+        scene.launch_missile(relogin_session, &effect, NOON + SECOND);
+        let missile_id = scene.missiles().next().expect("combat launch creates a scene missile").id;
+        let (_, hit) = scene.damage(npc_ship_id, [1.0e12, 0.0, 0.0, 0.0], NOON + SECOND + 1);
+        assert!(hit.unwrap().destroyed);
+        let death = scene.destroy_credited(
+            npc_session,
+            crate::death::Credit { character_id: player_ship_id + 1, ..Default::default() },
+            Some(player_ship_id),
+            NOON + SECOND + 1,
+        );
+        assert!(
+            death.iter().any(|out| matches!(out, Out::Destroyed { ship_id, .. } if *ship_id == npc_ship_id))
+        );
+
+        let cache_session = scene.session_of(cache_id).unwrap();
+        let (_, cache_hit) = scene.damage(cache_id, [1.0e12, 0.0, 0.0, 0.0], NOON + SECOND + 1);
+        assert!(cache_hit.unwrap().destroyed);
+        let cache_death = scene.destroy(cache_session, None, NOON + SECOND + 1);
+        assert!(
+            cache_death
+                .iter()
+                .any(|out| matches!(out, Out::Destroyed { ship_id, .. } if *ship_id == cache_id))
+        );
+        missile_id
+    };
+
+    let loot = crate::link::WreckPlacement {
+        scene: room,
+        wreck_id: npc_wreck_id,
+        group_id: 186,
+        kind: crate::wreck::WreckKind {
+            type_id: 48_120,
+            name: "SDE wreck type 48120".to_string(),
+            graphic_id: None,
+        },
+        position: [2_000.0, 0.0, 0.0],
+        direction: [0.0, 0.0, 1.0],
+        radius: 14.0,
+        launcher_id: npc_ship_id,
+        credit: crate::death::Credit { character_id: player_ship_id + 1, ..Default::default() },
+        is_empty: false,
+    };
+    let loot_request = Message::EnsureAbyssalLootContainer {
+        request_id: 9,
+        content_id: "12345678-1234-1234-1234-123456789abc".to_string(),
+        placement: Box::new(loot),
+    };
+    assert_eq!(Message::decode(&loot_request.payload()).unwrap(), loot_request);
+    assert!(matches!(
+        sim.handle(loot_request, NOON + SECOND + 1).unwrap().last(),
+        Some(Message::EnsureAbyssalLootContainerReply { outcome: Ok(()), .. })
+    ));
+    let moved = sim
+        .handle(
+            Message::MoveAbyssalParticipant {
+                request_id: 3,
+                ship_id: player_ship_id,
+                source: room,
+                destination: SceneKey::solar_system(SYSTEM),
+                preserve_source_pose: false,
+                session_handoff: true,
+                position: [100_000.0, 0.0, 0.0],
+                direction: [0.0, 0.0, 1.0],
+            },
+            NOON + SECOND + 2,
+        )
+        .unwrap();
+    assert!(
+        moved
+            .iter()
+            .any(|message| matches!(message, Message::MoveAbyssalParticipantReply { outcome: Ok(()), .. }))
+    );
+    assert!(!sim.sessions.contains_key(&SESSION));
+    assert_eq!(sim.sessions.get(&relogin_session), Some(&SceneKey::solar_system(SYSTEM)));
+
+    assert!(sim.scenes[&room].wreck(npc_wreck_id).is_some());
+    let cleanup = sim
+        .handle(
+            Message::RemoveAbyssalScene {
+                request_id: 4,
+                scene: room,
+                settled_npc_ids: vec![npc_ship_id],
+                settled_loot_ids: vec![npc_wreck_id],
+            },
+            NOON + SECOND + 3,
+        )
+        .unwrap();
+    let residual_missiles: Vec<_> = sim
+        .scenes
+        .get(&room)
+        .into_iter()
+        .flat_map(|scene| {
+            scene.missiles().map(|missile| (missile.id, missile.shooter.ship_id, missile.target))
+        })
+        .collect();
+    assert!(
+        sim.scenes[&SceneKey::solar_system(SYSTEM)]
+            .pilots
+            .values()
+            .any(|pilot| pilot.ship.spec.ship_id == player_ship_id)
+    );
+    assert!(
+        matches!(cleanup.last(), Some(Message::RemoveAbyssalSceneReply { outcome: Ok(()), .. })),
+        "scene teardown should retire combat missile {missile_id} after confirmed NPC/cache death and exact loot settlement; got {cleanup:?}; residual missiles={residual_missiles:?}"
+    );
+    assert!(!cleanup.iter().any(|message| matches!(message, Message::Destroyed { .. })));
+    assert!(!sim.scenes.contains_key(&room));
+}
+
+#[test]
 fn abyssal_confirmed_loot_upsert_preserves_live_state_and_does_not_resurrect_removed_items() {
     let mut sim = sim();
     let scene = SceneKey { location_id: SYSTEM, instance_id: 881, room_index: 1 };
@@ -489,6 +694,13 @@ fn abyssal_static_scene_objects_materialize_idempotently_and_update_open_state()
     let mut simulation = sim();
     let room = SceneKey { location_id: SYSTEM, instance_id: 305, room_index: 1 };
     ensure_abyssal(&mut simulation, room, NOON, 75_000.0, 0.0);
+    let entered =
+        simulation.handle(abyssal_enter(7, room, 8_100_000_305, [100.0, 200.0, 300.0]), NOON).unwrap();
+    assert!(entered.iter().any(|message| matches!(message, Message::EnterReply { outcome: Ok(()), .. })));
+    let bound = simulation.handle(Message::Bind { session_id: 7 }, NOON).unwrap();
+    assert!(bound.iter().any(
+        |message| matches!(message, Message::Notify { session_id: 7, name, .. } if name == "DoDestinyUpdate")
+    ));
     let object = crate::link::AbyssalSceneObject {
         scene: room,
         item_id: 8_400_000_305,
@@ -500,7 +712,7 @@ fn abyssal_static_scene_objects_materialize_idempotently_and_update_open_state()
         graphic_id: 22_130,
         name: "Transfer Conduit (Triglavian)".to_string(),
         position: [100.0, 200.0, 35_300.0],
-        direction: [0.0, 0.0, 1.0],
+        direction: [0.2672612419124244, 0.5345224838248488, 0.8017837257372732],
         is_open: false,
     };
 
@@ -512,6 +724,11 @@ fn abyssal_static_scene_objects_materialize_idempotently_and_update_open_state()
         Some(Message::EnsureAbyssalSceneObjectReply { request_id: 61, outcome: Ok(()) })
     ));
     assert_eq!(simulation.scenes[&room].system().bodies.len(), 1);
+    let system = simulation.scenes[&room].system();
+    let closed_slim = crate::slim::body_entries(system, &system.bodies[0]);
+    assert!(closed_slim.iter().any(|(name, value)| {
+        *name == "isAbyssGateOpen" && matches!(value, eve_marshal::Value::Bool(false))
+    }));
 
     let retry = simulation
         .handle(Message::EnsureAbyssalSceneObject { request_id: 62, object: object.clone() }, NOON + SECOND)
@@ -537,6 +754,16 @@ fn abyssal_static_scene_objects_materialize_idempotently_and_update_open_state()
         &simulation.scenes[&room].system().bodies[0].detail,
         crate::world::Detail::AbyssalConduit { is_open: true, .. }
     ));
+    assert!(opened.iter().any(|message| matches!(
+        message,
+        Message::Notify { session_id: 7, name, .. } if name == "DoDestinyUpdate"
+    )));
+    let system = simulation.scenes[&room].system();
+    let body = &system.bodies[0];
+    let slim = crate::slim::body_entries(system, body);
+    assert!(slim.iter().any(|(name, value)| {
+        *name == "isAbyssGateOpen" && matches!(value, eve_marshal::Value::Bool(true))
+    }));
 }
 
 #[test]

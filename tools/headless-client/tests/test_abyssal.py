@@ -29,6 +29,8 @@ THORAX_TYPE_ID = 627
 TRANQUIL_DARK_FILAMENT = 56132
 JITA_SYSTEM_ID = 30000142
 JITA_PLANET_ID = 40009080
+DOGMA_EFFECT_ID_ARMOR_REPAIR = 27
+DOGMA_EFFECT_ID_MODULE_BONUS_AFTERBURNER = 6731
 
 
 def _item_id(rows, type_id):
@@ -461,8 +463,12 @@ def _prepare_combat_modules(client, ship_id, station_id):
     """Equip this disposable pilot before deployment using existing setup commands."""
     reply = m.plain(client.call("slash", "SlashCmd", "/giveskill me all 5"))
     assert "not found" not in str(reply).lower() and "Unknown command" not in str(reply), reply
-    # SDE339: five medium railguns, normal tank and capacitor support.
-    fitted_types = [12344] * 5 + [3530, 2048, 11269, 11269, 10190, 12058, 2032, 17559, 17559]
+    # SDE339: five medium railguns, tank/cap support, and three medium capacitor rigs.
+    fitted_types = (
+        [12344] * 5
+        + [3530, 2048, 11269, 11269, 10190, 12058, 2032, 17559, 17559]
+        + [31378, 31378, 31372]
+    )
     for type_id in fitted_types:
         reply = m.plain(client.call("slash", "SlashCmd", f"/fit me {type_id}"))
         assert "fitted" in str(reply).lower() and "offline" not in str(reply).lower(), reply
@@ -490,9 +496,81 @@ def _prepare_combat_modules(client, ship_id, station_id):
              if int(row.fields()["typeID"]) == 226]
     assert len(spare) == 1 and int(spare[0]["quantity"]) >= 3000, spare
     assert len(modules.get(3530, ())) == len(modules.get(12058, ())) == 1, modules
+    assert len(modules.get(31378, ())) == 2 and len(modules.get(31372, ())) == 1, (
+        f"combat setup did not fit the SDE-approved capacitor rigs: {modules}"
+    )
+
+    # Read the fitted hull and rig dogma from this same normal pre-entry GetAllInfo reply.
+    dogma_by_item = {}
+    for fields in _dicts(info):
+        item_id = _integer(fields.get("itemID"))
+        raw_attributes = fields.get("attributes")
+        pairs = raw_attributes.get("$dict") if isinstance(raw_attributes, dict) else None
+        if item_id is None or not isinstance(pairs, list):
+            continue
+        attributes = {}
+        for attribute_id, value in pairs:
+            attribute_id = _integer(attribute_id)
+            if attribute_id is None:
+                continue
+            if isinstance(value, dict) and _integer(value) is not None:
+                value = _integer(value)
+            attributes[attribute_id] = value
+        dogma_by_item[item_id] = attributes
+
+    rig_ids = sorted(modules[31378] | modules[31372])
+    rig_inventory = {}
+    for fields in _dicts(info):
+        item_id = _integer(fields.get("itemID"))
+        if item_id in rig_ids and _integer(fields.get("locationID")) == ship_id:
+            rig_inventory[item_id] = (
+                _integer(fields.get("typeID")), _integer(fields.get("flagID")),
+            )
+    assert set(rig_inventory) == set(rig_ids), (
+        f"GetAllInfo did not show all three rigs fitted to the Thorax: {rig_inventory}"
+    )
+    assert sorted(type_id for type_id, _ in rig_inventory.values()) == [31372, 31378, 31378], (
+        f"fitted rig item types differ from the approved calibration package: {rig_inventory}"
+    )
+    assert {flag for _, flag in rig_inventory.values()} == {92, 93, 94}, (
+        f"three distinct rig slots were not filled: {rig_inventory}"
+    )
+    rig_costs = []
+    for rig_id in rig_ids:
+        attributes = dogma_by_item.get(rig_id)
+        assert attributes is not None, f"GetAllInfo omitted fitted rig attributes for {rig_id}"
+        assert attributes.get(1547) == 2, f"rig {rig_id} is not a medium rig: {attributes}"
+        rig_costs.append(attributes.get(1153))
+    assert all(isinstance(cost, (int, float)) and not isinstance(cost, bool) for cost in rig_costs), (
+        f"GetAllInfo omitted numeric rig calibration costs: {rig_costs}"
+    )
+    assert sorted(rig_costs) == [100, 150, 150], f"SDE rig calibration costs differ: {rig_costs}"
+    calibration_used = sum(rig_costs)
+    assert calibration_used == 400, f"capacitor rigs use {calibration_used} calibration, expected 400"
+
+    ship_attributes = dogma_by_item.get(ship_id)
+    assert ship_attributes is not None, f"GetAllInfo omitted fitted Thorax attributes for {ship_id}"
+    assert ship_attributes.get(1137) == 3 and ship_attributes.get(1547) == 2, (
+        f"SDE Thorax rig slots/size differ from the approved fit: {ship_attributes}"
+    )
+    assert ship_attributes.get(1132) == 400 and ship_attributes.get(1154) == 0, (
+        f"fitted capacitor rigs did not fill the 400-calibration, three-slot budget: {ship_attributes}"
+    )
+    recharge_ms = ship_attributes.get(55)
+    assert isinstance(recharge_ms, (int, float)) and math.isclose(
+        recharge_ms, 168748.8, rel_tol=0.0, abs_tol=0.1
+    ), f"fitted capacitor recharge did not reach the SDE-expected 168748.8 ms: {recharge_ms!r}"
+    print("ABYSSAL_CAP_RIG_PREFLIGHT " + json.dumps({
+        "shipID": ship_id, "rigIDs": rig_ids,
+        "rigTypes": {"31378": len(modules[31378]), "31372": len(modules[31372])},
+        "rigCalibration": calibration_used, "calibrationCapacity": ship_attributes[1132],
+        "rigSlots": ship_attributes[1137], "rigSlotsLeft": ship_attributes[1154],
+        "capacitorRechargeMs": recharge_ms,
+    }, sort_keys=True), flush=True)
+
     return {"guns": guns, "repair": next(iter(modules[3530])),
             "afterburner": next(iter(modules[12058])), "ship": ship_id,
-            "ammunition": int(spare[0]["itemID"]), "webs": webs}
+            "ammunition": int(spare[0]["itemID"]), "webs": webs, "capacitor_rigs": rig_ids}
 
 
 def _room_snapshot(client, ballpark):
@@ -567,6 +645,23 @@ def _destroyed_on_wire(events, target):
     ]
     names = {action.get("name") for action in actions}
     return {"TerminalPlayDestructionEffect", "RemoveBalls"} <= names
+
+
+def _cache_wreck_added_for_cache(events, cache_id):
+    return any(
+        event.get("name") == "DoDestinyUpdate"
+        and any(
+            action.get("name") in ("AddBalls2", "SetState")
+            and any(
+                _integer(fields.get("launcherID")) == cache_id
+                and _integer(fields.get("typeID")) in (48120, 49692)
+                and _integer(fields.get("itemID")) is not None
+                for fields in _dicts(action.get("args"))
+            )
+            for action in event.get("destiny", {}).get("actions", [])
+        )
+        for event in events
+    )
 
 
 def _shoot_entity(client, ballpark, dogma, modules, target, expiry_time, follow_distance, web_ids=None):
@@ -714,6 +809,50 @@ def _loot_destroyed_cache(client, ballpark, ship_id, system_id, wreck_id, expiry
 
 
 
+def _support_module_cycle_duration_ms(dogma_info, module_id):
+    module = next(
+        (
+            fields for fields in _dicts(dogma_info)
+            if _integer(fields.get("itemID")) == module_id
+            and "attributes" in fields
+        ),
+        None,
+    )
+    assert module is not None, f"GetAllInfo omitted module attributes for {module_id}"
+    attributes = module["attributes"].get("$dict") if isinstance(module["attributes"], dict) else None
+    assert isinstance(attributes, list), f"GetAllInfo returned unreadable attributes for module {module_id}"
+    duration = next(
+        (value for attribute_id, value in attributes if _integer(attribute_id) == 73),
+        None,
+    )
+    duration = _integer(duration) if isinstance(duration, dict) else duration
+    assert (
+        isinstance(duration, (int, float))
+        and not isinstance(duration, bool)
+        and math.isfinite(duration)
+        and duration > 0
+    ), (
+        f"GetAllInfo returned no positive duration attribute for module {module_id}: {duration!r}"
+    )
+    return float(duration)
+
+
+def _support_module_stopped(events, module_id, expected_effect_id):
+    for event in events:
+        if event.get("name") != "OnGodmaShipEffect":
+            continue
+        effect = undock.args_of(event).get("$tuple", [])
+        if (
+            isinstance(effect, (list, tuple))
+            and len(effect) > 3
+            and _integer(effect[0]) == module_id
+            and _integer(effect[1]) == expected_effect_id
+            and effect[3] == 0
+        ):
+            return True
+    return False
+
+
 def _is_inactive_support_error(error, module_name):
     envelope = _fields_with_keys(error, {"msg", "dict"})
     notification = _fields_with_keys(error, {"notify"})
@@ -724,22 +863,78 @@ def _is_inactive_support_error(error, module_name):
     )
 
 
-def _stop_support_module(client, dogma, module_id, effect, module_name):
+def _stop_support_module(client, dogma, module_id, effect, expected_effect_id, module_name, dogma_info):
+    cycle_ms = _support_module_cycle_duration_ms(dogma_info, module_id)
     result, error = undock.outcome(
         lambda: client.call_bound(dogma, "Deactivate", module_id, effect)
     )
-    if error is None:
-        assert m.plain(result) == 1
-    else:
-        # Automatic capacitor/cycle termination may have already stopped it.
-        # Only the actual module's exact inactive response is an acceptable stop.
+    if error is not None:
         assert _is_inactive_support_error(error, module_name), error
+        return
+    assert m.plain(result) == 1
+    stopped = wait_quietly(
+        client,
+        cycle_ms / 1000,
+        until=lambda events: _support_module_stopped(events, module_id, expected_effect_id),
+    )
+    assert _support_module_stopped(stopped, module_id, expected_effect_id), (
+        f"{module_name} Deactivate returned success but no inactive OnGodmaShipEffect arrived "
+        f"within its {cycle_ms:g} ms cycle"
+    )
+
+
+def test_support_stop_uses_computed_cycle_and_matching_godma_event():
+    module_id = 1990000015
+    info = {"$dict": [["shipInfo", {"$dict": [[module_id, {
+        "$object": "util.KeyVal",
+        "args": {"$dict": [
+            ["itemID", module_id],
+            ["attributes", {"$dict": [[73, 7500.0]]}],
+        ]},
+    }]]}]]}
+    active = {"name": "OnGodmaShipEffect", "args": {"$tuple": [module_id, 6731, 123, 1]}}
+    inactive = {"name": "OnGodmaShipEffect", "args": {"$tuple": [module_id, 6731, 123, 0]}}
+    other_module = {"name": "OnGodmaShipEffect", "args": {"$tuple": [module_id + 1, 6731, 123, 0]}}
+    other_effect_inactive = {"name": "OnGodmaShipEffect", "args": {"$tuple": [module_id, DOGMA_EFFECT_ID_ARMOR_REPAIR, 123, 0]}}
+    online_inactive = {"name": "OnGodmaShipEffect", "args": {"$tuple": [module_id, 16, 123, 0]}}
+
+    assert _support_module_cycle_duration_ms(info, module_id) == 7500.0
+    assert not _support_module_stopped([active], module_id, DOGMA_EFFECT_ID_MODULE_BONUS_AFTERBURNER)
+    assert not _support_module_stopped([other_module], module_id, DOGMA_EFFECT_ID_MODULE_BONUS_AFTERBURNER)
+    assert not _support_module_stopped([other_effect_inactive], module_id, DOGMA_EFFECT_ID_MODULE_BONUS_AFTERBURNER)
+    assert not _support_module_stopped([online_inactive], module_id, DOGMA_EFFECT_ID_MODULE_BONUS_AFTERBURNER)
+    assert _support_module_stopped([inactive], module_id, DOGMA_EFFECT_ID_MODULE_BONUS_AFTERBURNER)
+
+
+def test_cache_wreck_wait_observes_spawn_after_empty_snapshots():
+    cache_id = 7001
+    wreck_id = 7002
+
+    def event(action, item_id, type_id, launcher_id):
+        slim = {"$dict": [
+            ["itemID", item_id], ["typeID", type_id], ["launcherID", launcher_id],
+        ]}
+        return {"name": "DoDestinyUpdate", "destiny": {"actions": [
+            {"name": action, "args": {"$tuple": [slim]}},
+        ]}}
+
+    empty_set_state = event("SetState", cache_id, 47951, None)
+    other_cache_wreck = event("AddBalls2", wreck_id, 48120, cache_id + 1)
+    cache_wreck = event("AddBalls2", wreck_id, 48120, cache_id)
+    snapshots = [[empty_set_state], [other_cache_wreck], [cache_wreck]]
+
+    assert [_cache_wreck_added_for_cache(batch, cache_id) for batch in snapshots] == [
+        False, False, True,
+    ]
+    assert _cache_wreck_added_for_cache(
+        [event("SetState", wreck_id, 48120, cache_id)], cache_id,
+    )
 
 
 def _complete_three_rooms(client, ship_id, system_id, ballpark, modules, content_id, expiry_time):
     for room in (1, 2, 3):
         dogma = client.call("dogmaIM", "MachoBindObject", (system_id, 5), None)[0]
-        client.call_bound(dogma, "GetAllInfo", True, True, None)
+        dogma_info = describe(client.call_bound(dogma, "GetAllInfo", True, True, None))
         client.call_bound(dogma, "Activate", modules["repair"], "armorRepair", ship_id, 1000)
         client.call_bound(dogma, "Activate", modules["afterburner"], "moduleBonusAfterburner", ship_id, 1000)
         entities, _ = _room_snapshot(client, ballpark)
@@ -759,11 +954,28 @@ def _complete_three_rooms(client, ship_id, system_id, ballpark, modules, content
         assert len(caches) == 1, f"room {room} did not expose its damageable main cache"
         _approach_static_entity(client, ballpark, ship_id, caches[0], expiry_time)
         _shoot_entity(client, ballpark, dogma, modules, caches[0], expiry_time, follow_distance=2500)
-        entities, _ = _room_snapshot(client, ballpark)
+        entities, cache_events = _room_snapshot(client, ballpark)
         wrecks = [
             item_id for item_id, fields in entities.items()
             if _integer(fields["typeID"]) in (48120, 49692)
         ]
+        if not wrecks:
+            remaining_expiry = max(0.0, filetime_to_unix(expiry_time) - time.time())
+            wreck_events = wait_for_events(
+                client,
+                lambda seen: _cache_wreck_added_for_cache(
+                    cache_events + seen, caches[0],
+                ),
+                timeout=min(15.0, remaining_expiry),
+            )
+            assert _cache_wreck_added_for_cache(
+                cache_events + wreck_events, caches[0],
+            ), f"cache {caches[0]} death did not expose its real wreck before expiry"
+            entities, _ = _room_snapshot(client, ballpark)
+            wrecks = [
+                item_id for item_id, fields in entities.items()
+                if _integer(fields["typeID"]) in (48120, 49692)
+            ]
         assert len(wrecks) == 1, f"room {room} cache destruction did not create its real wreck"
         _loot_destroyed_cache(
             client, ballpark, ship_id, system_id, wrecks[0], expiry_time
@@ -777,8 +989,8 @@ def _complete_three_rooms(client, ship_id, system_id, ballpark, modules, content
         _approach_static_entity(
             client, ballpark, ship_id, gate, expiry_time
         )
-        _stop_support_module(client, dogma, modules["repair"], "armorRepair", "Medium Armor Repairer II")
-        _stop_support_module(client, dogma, modules["afterburner"], "moduleBonusAfterburner", "10MN Afterburner II")
+        _stop_support_module(client, dogma, modules["repair"], "armorRepair", DOGMA_EFFECT_ID_ARMOR_REPAIR, "Medium Armor Repairer II", dogma_info)
+        _stop_support_module(client, dogma, modules["afterburner"], "moduleBonusAfterburner", DOGMA_EFFECT_ID_MODULE_BONUS_AFTERBURNER, "10MN Afterburner II", dogma_info)
         method = "AbyssalGateActivation" if room < 3 else "AbyssalEndGateActivation"
         assert m.plain(client.call("abyssalMgr", method, gate)) is None
         transition = wait_quietly(

@@ -476,6 +476,7 @@ internal sealed partial class CharacterServicesComposition
         }
 
         var data = binding.Run.Data;
+        var participantWasDisconnected = binding.Participant.Status == AbyssalParticipantStatus.Disconnected;
         var deadline = data.RunExpiresAtMs
             ?? throw new InvalidDataException($"Active Abyssal run {binding.Run.InstanceId} has no absolute run deadline.");
         var room = data.Plan.Rooms.SingleOrDefault(
@@ -486,6 +487,31 @@ internal sealed partial class CharacterServicesComposition
         var (dungeonId, roomId) = AbyssalDungeonProjection.RoomIds(room.LocationId, environment);
         var position = await space.PositionOfAsync(session, shipId.Value, cancellationToken).ConfigureAwait(false)
             ?? throw new InvalidOperationException($"Abyssal ship {shipId.Value} has no simulation position after ClientIsReady.");
+
+        if (participantWasDisconnected)
+        {
+            await using var reconnectConnection = await source.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+            await using var reconnectTransaction = await reconnectConnection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+            var replay = await abyssalRuntime.ReconnectAsync(
+                reconnectConnection, reconnectTransaction, characterId, shipId.Value, cancellationToken).ConfigureAwait(false);
+            var replayedParticipant = replay.State.Data.Participants.SingleOrDefault(item => item.CharacterId == characterId);
+            if (replay.State.InstanceId != binding.Run.InstanceId ||
+                replay.State.Data.ContentId != data.ContentId ||
+                replayedParticipant is null || replayedParticipant.ShipId != shipId.Value ||
+                replayedParticipant.Status != AbyssalParticipantStatus.Active ||
+                replay.State.Data.RunExpiresAtMs != deadline ||
+                replay.State.ExpiresAtMs != binding.Run.ExpiresAtMs)
+            {
+                throw new InvalidDataException("Abyssal reconnect changed the run, ship, participant status or expiry authority.");
+            }
+            await reconnectTransaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        const string readyDeadlineSessionKey = "abyssalClientReadyDeadline";
+        var readyDeadlineIdentity = data.ContentId + ":" + deadline.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var sameReadyDeadlineWasSent = session.Get(readyDeadlineSessionKey) is PyStr previousDeadline &&
+            string.Equals(previousDeadline.Value, readyDeadlineIdentity, StringComparison.Ordinal);
+        var forceDeadlineResend = !participantWasDisconnected && !sameReadyDeadlineWasSent;
 
         if (!abyssalNotifications.SendEnteringDungeonRoom(
                 characterId, dungeonId, roomId, [position.X, position.Y, position.Z],
@@ -504,10 +530,11 @@ internal sealed partial class CharacterServicesComposition
                 forceResend: true) ||
             !abyssalNotifications.SendDeadlineAdded(
                 new AbyssalDeadlineAddedEvent(binding.Run.InstanceId, data.ContentId, characterId, deadline),
-                forceResend: true))
+                forceResend: forceDeadlineResend))
         {
             throw new InvalidOperationException($"The Abyssal client-ready notifications could not be delivered to character {characterId}.");
         }
+        session.Set(readyDeadlineSessionKey, new PyStr(readyDeadlineIdentity));
         return true;
     }
 
@@ -874,6 +901,8 @@ internal sealed partial class CharacterServicesComposition
         AbyssalNpcDestroyedNotice notice,
         CancellationToken cancellationToken)
     {
+        // Domain LocationId is the room ordinal; SimSceneKey.LocationId is the hidden system.
+        var roomIndex = notice.RoomIndex;
         AbyssalOperationResult result;
         await using (var connection = await source.OpenConnectionAsync(cancellationToken).ConfigureAwait(false))
         await using (var transaction = await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false))
@@ -881,13 +910,13 @@ internal sealed partial class CharacterServicesComposition
             result = await abyssalRuntime.NpcDestroyedAsync(
                 connection,
                 transaction,
-                new AbyssalNpcDestroyedRequest(notice.InstanceId, notice.LocationId, notice.EntityId),
+                new AbyssalNpcDestroyedRequest(notice.InstanceId, roomIndex, notice.EntityId),
                 cancellationToken).ConfigureAwait(false);
             await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         }
-        var room = result.State.Data.Rooms.Single(value => value.LocationId == notice.LocationId);
+        var room = result.State.Data.Rooms.Single(value => value.LocationId == roomIndex);
         if (room.Cleared)
-            await SetAbyssalGateOpenAsync(result.State, notice.LocationId, isOpen: true, cancellationToken).ConfigureAwait(false);
+            await SetAbyssalGateOpenAsync(result.State, roomIndex, isOpen: true, cancellationToken).ConfigureAwait(false);
     }
 
     private async ValueTask PersistAbyssalDeathRequestAsync(

@@ -5,6 +5,11 @@ use crate::world::Body;
 
 impl Scene {
     pub(crate) fn abyssal_scene_is_clear(&self) -> bool {
+        self.abyssal_scene_is_clear_except_missiles() && self.missiles.is_empty()
+    }
+
+    /// Whether only in-flight missiles keep an otherwise-settled Abyssal scene alive.
+    pub(crate) fn abyssal_scene_is_clear_except_missiles(&self) -> bool {
         self.abyssal.is_some()
             && self
                 .pilots
@@ -21,7 +26,6 @@ impl Scene {
             && self.asteroids.is_empty()
             && self.deployables.is_empty()
             && self.drones.is_empty()
-            && self.missiles.is_empty()
             && self.dots.is_empty()
     }
 
@@ -35,6 +39,91 @@ impl Scene {
             self.abyssal_boundary_at = now.checked_add(interval);
             self.abyssal_boundary_exposure_ms.clear();
         }
+    }
+
+    /// Read-only identity summary for the two exact-scene cleanup refusal branches.
+    pub(crate) fn abyssal_cleanup_diagnostic(&self) -> String {
+        let pilots: Vec<_> = self
+            .pilots
+            .iter()
+            .map(|(session, pilot)| {
+                (
+                    *session,
+                    pilot.ship.spec.ship_id,
+                    pilot.ship.spec.type_id,
+                    crate::npc::is_npc_session(*session),
+                    self.abyssal_reward_caches.contains_key(&pilot.ship.spec.ship_id),
+                )
+            })
+            .collect();
+        let deaths: Vec<_> =
+            self.abyssal_participant_deaths.iter().map(|(ship, session)| (*ship, *session)).collect();
+        let unpiloted: Vec<_> = self.unpiloted.iter().map(|(ship, session)| (*ship, *session)).collect();
+        let wrecks: Vec<_> = self
+            .wrecks
+            .values()
+            .map(|wreck| (wreck.id, wreck.kind.type_id, wreck.group_id, wreck.launcher_id))
+            .collect();
+        let asteroids: Vec<_> = self
+            .asteroids
+            .values()
+            .map(|asteroid| (asteroid.id, asteroid.type_id, asteroid.group_id))
+            .collect();
+        let missiles: Vec<_> = self
+            .missiles
+            .values()
+            .map(|missile| (missile.id, missile.shooter.ship_id, missile.target))
+            .collect();
+        let dots: Vec<_> = self.dots.iter().map(|(target, dot)| (*target, dot.applications.len())).collect();
+        let mut parts = Vec::new();
+        parts.push(format!("abyssal={}", self.abyssal.is_some()));
+        parts.push(format!("pilots[{}]={pilots:?}", pilots.len()));
+        parts.push(format!("widowed[{}]={:?}", self.widowed.len(), self.widowed.keys().collect::<Vec<_>>()));
+        parts.push(format!("deaths[{}]={deaths:?}", deaths.len()));
+        parts.push(format!("unpiloted[{}]={unpiloted:?}", unpiloted.len()));
+        parts.push(format!(
+            "controlled_structures[{}]={:?}",
+            self.controlled_structures.len(),
+            self.controlled_structures.keys().collect::<Vec<_>>()
+        ));
+        parts.push(format!(
+            "structure_health[{}]={:?}",
+            self.structure_health.len(),
+            self.structure_health.keys().collect::<Vec<_>>()
+        ));
+        parts.push(format!(
+            "structure_modules[{}]={:?}",
+            self.structure_modules.len(),
+            self.structure_modules.keys().collect::<Vec<_>>()
+        ));
+        parts.push(format!("wrecks[{}]={wrecks:?}", wrecks.len()));
+        parts.push(format!(
+            "traces[{}]={:?}",
+            self.abyssal_traces.len(),
+            self.abyssal_traces.keys().collect::<Vec<_>>()
+        ));
+        parts.push(format!("asteroids[{}]={asteroids:?}", asteroids.len()));
+        parts.push(format!(
+            "deployables[{}]={:?}",
+            self.deployables.len(),
+            self.deployables.keys().collect::<Vec<_>>()
+        ));
+        parts.push(format!("drones[{}]={:?}", self.drones.len(), self.drones.keys().collect::<Vec<_>>()));
+        parts.push(format!("missiles[{}]={missiles:?}", missiles.len()));
+        parts.push(format!("dots[{}]={dots:?}", dots.len()));
+        parts.push(format!(
+            "receipts[npc={:?},cache={:?},loot={:?},environment={:?}]",
+            self.abyssal_npc_spawn_receipts.keys().collect::<Vec<_>>(),
+            self.abyssal_reward_caches.keys().collect::<Vec<_>>(),
+            self.abyssal_loot_receipts.keys().collect::<Vec<_>>(),
+            self.abyssal_environment_objects.keys().collect::<Vec<_>>()
+        ));
+        parts.push(format!(
+            "sim_damageables[{}]={:?}",
+            self.sim_damageable_entities.len(),
+            self.sim_damageable_entities.iter().collect::<Vec<_>>()
+        ));
+        parts.join("; ")
     }
 
     pub(crate) fn ensure_abyssal_scene_object(

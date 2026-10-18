@@ -308,17 +308,8 @@ internal sealed partial class CharacterServicesComposition
             .Single(entity => entity.Role == AbyssalEntityRole.Gate);
         var item = await items.LockAndGetAsync(connection, transaction, gate.EntityId, cancellationToken).ConfigureAwait(false)
             ?? throw new InvalidDataException($"Abyssal gate item {gate.EntityId} is missing.");
-        var rows = await sde.ReadAsync("mapSolarSystems", [run.Data.SpaceLocationId], cancellationToken).ConfigureAwait(false);
-        var system = rows.SingleOrDefault()
-            ?? throw new InvalidDataException($"Abyssal hidden system {run.Data.SpaceLocationId} is absent from the pinned SDE.");
-        var doc = system.Doc;
-        var systemPosition = doc.TryGetProperty("position", out var positionNode) ? positionNode : doc;
-        if (!systemPosition.TryGetProperty("x", out var x) || !x.TryGetDouble(out var centerX) ||
-            !systemPosition.TryGetProperty("y", out var y) || !y.TryGetDouble(out var centerY) ||
-            !systemPosition.TryGetProperty("z", out var z) || !z.TryGetDouble(out var centerZ))
-        {
-            throw new InvalidDataException($"Abyssal hidden system {run.Data.SpaceLocationId} has no SDE center.");
-        }
+        var center = await abyssalRoomSpawnReservation.ResolvePrivateSceneOriginAsync(run.Data, cancellationToken)
+            .ConfigureAwait(false);
         var scene = new SimSceneKey(run.Data.SpaceLocationId, run.InstanceId, locationId);
         var error = await (spaceSessions
             ?? throw new InvalidOperationException("Abyssal gate updates require initialized SpaceSessions."))
@@ -329,7 +320,7 @@ internal sealed partial class CharacterServicesComposition
                 item.TypeId,
                 item.OwnerId,
                 [gate.Position.X, gate.Position.Y, gate.Position.Z],
-                AbyssalRoomSpawnPlanner.DirectionToward(gate.Position, new AbyssalPosition(centerX, centerY, centerZ)),
+                AbyssalRoomSpawnPlanner.DirectionToward(gate.Position, center),
                 isOpen,
                 cancellationToken).ConfigureAwait(false);
         if (error is not null)

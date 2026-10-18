@@ -28,7 +28,7 @@ public class RelocationTests
         Assert.Null(await rig.Space.RelocateAsync(session, target.Id, null, null, CancellationToken.None));
 
         var enter = Assert.Single(rig.Sim.Heard.OfType<SimEnter>());
-        Assert.Equal(((ulong)session.SessionId, target.Id, EnterHow.Anchor), (enter.SessionId, enter.SolarSystemId, enter.How));
+        Assert.Equal(((ulong)session.SessionId, SimSceneKey.SolarSystem(target.Id), EnterHow.Anchor), (enter.SessionId, enter.Scene, enter.How));
         Assert.Null(enter.Position);
         Assert.True(rig.Space.IsInSpace(session));
         Assert.Equal(target.Id, rig.Space.SolarSystemOf(session));
@@ -60,7 +60,7 @@ public class RelocationTests
         var after = rig.Sim.Heard.ToArray().SkipWhile(message => message is not SimLeave).ToArray();
         Assert.Equal(new SimLeave((ulong)session.SessionId, LeaveWhy.Jumped), after[0]);
         var enter = Assert.IsType<SimEnter>(after[1]);
-        Assert.Equal((target.Id, EnterHow.InSpace), (enter.SolarSystemId, enter.How));
+        Assert.Equal((SimSceneKey.SolarSystem(target.Id), EnterHow.InSpace), (enter.Scene, enter.How));
         Assert.Equal(place, enter.Position);
         Assert.Equal(facing, enter.Direction);
         Assert.True(rig.Space.IsInSpace(session));

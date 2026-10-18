@@ -275,6 +275,12 @@ impl Sim {
                 || scene.abyssal_participant_deaths.contains_key(id)
         });
         if participant_present || invalid_npc || invalid_loot {
+            if participant_present {
+                eprintln!(
+                    "eve-sim: abyssal.remove_scene_not_empty branch=participant_guard scene={scene_key:?} {}",
+                    scene.abyssal_cleanup_diagnostic(),
+                );
+            }
             self.scenes.insert(scene_key, scene);
             return vec![reply(Err(if participant_present {
                 "ABYSSAL_SCENE_NOT_EMPTY"
@@ -283,6 +289,14 @@ impl Sim {
             }
             .to_string()))];
         }
+        // A dead NPC's transient wreck has a different ID; only the NPC spawn receipt and the wreck's launcher link it to a settled hull.
+        let settled_dead_npc_ids = settled_npc_ids
+            .iter()
+            .copied()
+            .filter(|npc_id| {
+                scene.session_of(*npc_id).is_none() && scene.abyssal_npc_spawn_receipts.contains_key(npc_id)
+            })
+            .collect::<std::collections::HashSet<_>>();
         let mut out = Vec::new();
         for ship_id in settled_npc_ids {
             if let Some(session) = scene.session_of(ship_id) {
@@ -294,7 +308,23 @@ impl Sim {
                 out.extend(scene.remove_wreck(item_id, 0, now));
             }
         }
+        let settled_npc_wreck_ids = scene
+            .wrecks
+            .values()
+            .filter(|wreck| settled_dead_npc_ids.contains(&wreck.launcher_id))
+            .map(|wreck| wreck.id)
+            .collect::<Vec<_>>();
+        for wreck_id in settled_npc_wreck_ids {
+            out.extend(scene.remove_wreck(wreck_id, 0, now));
+        }
+        if !scene.abyssal_scene_is_clear() && scene.abyssal_scene_is_clear_except_missiles() {
+            out.extend(scene.retire_abyssal_projectiles(now));
+        }
         if !scene.abyssal_scene_is_clear() {
+            eprintln!(
+                "eve-sim: abyssal.remove_scene_not_empty branch=actor_clear scene={scene_key:?} {}",
+                scene.abyssal_cleanup_diagnostic(),
+            );
             self.scenes.insert(scene_key, scene);
             let mut messages = Self::messages(out);
             messages.push(reply(Err("ABYSSAL_SCENE_NOT_EMPTY".to_string())));

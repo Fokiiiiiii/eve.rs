@@ -26,6 +26,57 @@ namespace Eve.Host.Tests;
 public sealed class AbyssalHostFlowTests
 {
     [RealAbyssalSimPgFact]
+    public async Task Saved_origin_gate_open_update_passes_the_real_rust_scene_guard()
+    {
+        var binary = Environment.GetEnvironmentVariable("EVE_ABYSSAL_SIM_BINARY")!;
+        var start = new System.Diagnostics.ProcessStartInfo(binary)
+        {
+            UseShellExecute = false, CreateNoWindow = true, RedirectStandardError = true, RedirectStandardOutput = true,
+        };
+        start.Environment["EVE_SIM_LISTEN"] = "127.0.0.1:0";
+        start.Environment["EVE_SDE_DIR"] = Environment.GetEnvironmentVariable("EVE_ABYSSAL_SIM_SDE")!;
+        using var process = System.Diagnostics.Process.Start(start) ?? throw new InvalidOperationException("The test simulation did not start.");
+        try
+        {
+            string? endpoint = null;
+            using var ready = new CancellationTokenSource(TimeSpan.FromSeconds(45));
+            while (await process.StandardError.ReadLineAsync(ready.Token) is { } line)
+                if (line.StartsWith("eve-sim: listening on ", StringComparison.Ordinal))
+                { endpoint = line["eve-sim: listening on ".Length..]; break; }
+            Assert.NotNull(endpoint);
+            var stderr = process.StandardError.ReadToEndAsync();
+            var stdout = process.StandardOutput.ReadToEndAsync();
+            await using var simulation = SimClient.ToTcpSocket(endpoint);
+            simulation.Start();
+            using var connected = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            while (!simulation.IsConnected) await Task.Delay(20, connected.Token);
+            await using var rig = await Rig.Create(simulation);
+            rig.Now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            var run = await rig.CreateRun(shipDirection: new AbyssalPosition(1, 2, 3));
+            var savedOrigin = run.Data.PrivateSceneOrigin ?? throw new InvalidOperationException("The test run must persist its private scene origin.");
+            var sdeCenter = await rig.Reservation.ReadSystemCenterAsync(run.Data.SpaceLocationId, CancellationToken.None);
+            Assert.NotEqual(sdeCenter, savedOrigin);
+            await rig.Materialize(run, 1);
+            var gate = run.Data.Rooms.Single(room => room.LocationId == 1).Entities
+                .Single(entity => entity.Role == AbyssalEntityRole.Gate);
+            var closed = Assert.Single(rig.Simulator.SceneObjects, item => item.Object.ItemId == gate.EntityId);
+            Assert.False(closed.Object.IsOpen);
+            await rig.Invoke("SetAbyssalGateOpenAsync", run, 1, true, CancellationToken.None);
+            var opened = rig.Simulator.SceneObjects.Last(item => item.Object.ItemId == gate.EntityId);
+            Assert.True(opened.Object.IsOpen);
+            Assert.Equal(closed.Object.Direction, opened.Object.Direction);
+            Assert.Empty(rig.Problems);
+            _ = stderr;
+            _ = stdout;
+        }
+        finally
+        {
+            if (!process.HasExited) process.Kill(entireProcessTree: true);
+            await process.WaitForExitAsync();
+        }
+    }
+
+    [RealAbyssalSimPgFact]
     public async Task Real_sim_cleanup_confirms_live_npc_environment_and_reward_scene_removal_with_another_run_intact()
     {
         var binary = Environment.GetEnvironmentVariable("EVE_ABYSSAL_SIM_BINARY")!;
@@ -56,7 +107,14 @@ public sealed class AbyssalHostFlowTests
             await using var rig = await Rig.Create(simulation);
             rig.Now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             var publicSetup = await rig.CreateRun(enter: false);
+            await rig.Transaction(async (connection, transaction) =>
+            {
+                foreach (var (typeId, flag) in new[] { (31378, 92), (31378, 93), (31372, 94) })
+                    await rig.Items.CreateAsync(connection, transaction,
+                        new Eve.Inventory.NewItem(typeId, publicSetup.Data.CreatorCharacterId, publicSetup.Data.CreatorShipId, flag, 1, true));
+            });
             var publicSession = await rig.ConnectPublic(publicSetup);
+            Assert.True(rig.Space.IsInSpace(publicSession));
             var publicPose = await rig.Space.GetAbyssalDeploymentPoseAsync(publicSetup.Data.CreatorShipId,
                 SimSceneKey.SolarSystem((int)publicSetup.Data.SourceSolarSystemId));
             Assert.True(publicPose.Found, publicPose.Error);
@@ -85,6 +143,10 @@ public sealed class AbyssalHostFlowTests
             Assert.NotNull(await simulation.RemoveAbyssalSceneAsync(new SimRemoveAbyssalScene(900_002,
                 new SimSceneKey(other.Data.SpaceLocationId, other.InstanceId, 1))));
             foreach (var entity in other.Data.Rooms[0].Entities) Assert.NotNull(await rig.Items.GetAsync(entity.EntityId));
+            if (!process.HasExited) process.Kill(entireProcessTree: true);
+            await process.WaitForExitAsync();
+            var simOutput = (await stderr) + (await stdout);
+            Assert.DoesNotContain("invalid heat profile", simOutput, StringComparison.OrdinalIgnoreCase);
         }
         finally
         {
@@ -444,14 +506,58 @@ public sealed class AbyssalHostFlowTests
         await rig.Drain();
         Assert.Equal(1, rig.Simulator.Moves);
         Assert.Single((await rig.State(run.InstanceId)).GateTransitions);
+        var expiryBeforeReconnect = run.Data.RunExpiresAtMs;
+        var contentId = run.Data.ContentId;
+        var participantShipId = run.Data.CreatorShipId;
+        var instanceExpiresBeforeReconnect = (await rig.Foundations.Content.GetAsync(run.InstanceId))!.ExpiresMs;
         await rig.Disconnect(session);
+        var disconnected = await rig.State(run.InstanceId);
+        Assert.Equal(AbyssalParticipantStatus.Disconnected, disconnected.Participants.Single().Status);
+
         var reconnected = await rig.Connect(run, sessionOffset: 1000);
+        var rebound = await rig.State(run.InstanceId);
+        Assert.Equal(AbyssalParticipantStatus.Disconnected, rebound.Participants.Single().Status);
+        Assert.Equal(participantShipId, rebound.Participants.Single().ShipId);
+        Assert.Equal(contentId, rebound.ContentId);
+        Assert.Equal(expiryBeforeReconnect, rebound.RunExpiresAtMs);
+
+        rig.ClientNotifications.Clear();
+        var ready = new ServiceCall { Session = reconnected, Method = "ClientIsReady", Args = [] };
+        await rig.Service.CallAsync(ready);
+        var readyState = await rig.State(run.InstanceId);
+        Assert.Equal(AbyssalParticipantStatus.Active, readyState.Participants.Single().Status);
+        Assert.Equal(participantShipId, readyState.Participants.Single().ShipId);
+        Assert.Equal(contentId, readyState.ContentId);
+        Assert.Equal(expiryBeforeReconnect, readyState.RunExpiresAtMs);
+        Assert.Equal(instanceExpiresBeforeReconnect, (await rig.Foundations.Content.GetAsync(run.InstanceId))!.ExpiresMs);
+        await rig.Drain();
+        Assert.Equal(1, rig.ClientNotifications.Count(name => name == "OnAddExpiryDurationForAbyssalContent"));
+        await rig.Service.CallAsync(ready);
+        await rig.Drain();
+        Assert.Equal(1, rig.ClientNotifications.Count(name => name == "OnAddExpiryDurationForAbyssalContent"));
+
         await rig.Service.CallAsync(new ServiceCall { Session = reconnected, Method = request.Method, Args = request.Args });
         await rig.Drain();
         Assert.Equal(1, rig.Simulator.Moves);
         await Assert.ThrowsAsync<MachoWrappedException>(() => rig.Service.CallAsync(new ServiceCall
         { Session = reconnected, Method = request.Method, Args = [new PyLong(gate.EntityId + 10_000_000)] }).AsTask());
         Assert.Single((await rig.State(run.InstanceId)).GateTransitions);
+
+        var room2 = (await rig.State(run.InstanceId)).Rooms.Single(value => value.LocationId == 2);
+        await rig.Transaction(async (c, tx) =>
+        {
+            foreach (var npc in room2.Entities.Where(entity => entity.Role == AbyssalEntityRole.Npc))
+                await rig.Runtime.NpcDestroyedAsync(c, tx, new AbyssalNpcDestroyedRequest(run.InstanceId, 2, npc.EntityId));
+        });
+        await rig.Drain();
+        var current = await rig.State(run.InstanceId);
+        var gate2 = current.Rooms.Single(value => value.LocationId == 2).Entities.Single(entity => entity.Role == AbyssalEntityRole.Gate);
+        rig.Simulator.Pose = [gate2.Position.X, gate2.Position.Y, gate2.Position.Z];
+        await rig.Service.CallAsync(new ServiceCall { Session = reconnected, Method = request.Method, Args = [new PyLong(gate2.EntityId)] });
+        await rig.Drain();
+        var advanced = await rig.State(run.InstanceId);
+        Assert.Equal(3, advanced.CurrentRoomIndex);
+        Assert.Equal(2, advanced.GateTransitions.Count);
     }
 
     [PgFact]
@@ -696,6 +802,75 @@ public sealed class AbyssalHostFlowTests
         Assert.Equal(plan.EnvironmentObjects.Count, rig.Simulator.EnvironmentObjects.Select(value => value.Object.Body.ItemId).Distinct().Count());
     }
 
+
+    [PgFact]
+    public async Task Sim_destroyed_room_npcs_record_the_room_and_open_its_gate_through_the_host_subscription()
+    {
+        await using var rig = await Rig.Create();
+        var run = await rig.CreateRun(shipDirection: new AbyssalPosition(1, 2, 3));
+        await rig.Materialize(run, 1);
+        var room = run.Data.Rooms.Single(value => value.LocationId == 1);
+        var gate = room.Entities.Single(value => value.Role == AbyssalEntityRole.Gate);
+        var closedGate = Assert.Single(rig.Simulator.SceneObjects, value => value.Object.ItemId == gate.EntityId);
+        Assert.False(closedGate.Object.IsOpen);
+        var npcs = room.Entities.Where(value => value.Role == AbyssalEntityRole.Npc).ToArray();
+        Assert.NotEmpty(npcs);
+        Assert.True(run.Data.SpaceLocationId > 3, "the test separates hidden system ID from room ordinal");
+
+        var persistNpcDeath = typeof(CharacterServicesComposition)
+            .GetMethod("PersistAbyssalNpcDestructionAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .CreateDelegate<Func<AbyssalNpcDestroyedNotice, CancellationToken, ValueTask>>(rig.Host);
+        TaskCompletionSource<AbyssalNpcDestroyedNotice>? completion = null;
+        rig.Space.AbyssalNpcDestroyedAsync = async (notice, cancellationToken) =>
+        {
+            try
+            {
+                await persistNpcDeath(notice, cancellationToken);
+                completion?.TrySetResult(notice);
+            }
+            catch (Exception error)
+            {
+                completion?.TrySetException(error);
+                throw;
+            }
+        };
+
+        for (var index = 0; index < npcs.Length; index++)
+        {
+            var npc = npcs[index];
+            var spawn = rig.Simulator.Spawns.Single(value => value.Ship.ShipId == npc.EntityId);
+            Assert.Equal(new SimSceneKey(run.Data.SpaceLocationId, run.InstanceId, 1), spawn.Scene);
+            var destroyedNotice = new TaskCompletionSource<AbyssalNpcDestroyedNotice>(TaskCreationOptions.RunContinuationsAsynchronously);
+            completion = destroyedNotice;
+            rig.Simulator.Deliver(new SimDestroyed(
+                SpaceSessions.SimNpcSessionBase + (ulong)(index + 1),
+                npc.EntityId,
+                0,
+                [npc.Position.X, npc.Position.Y, npc.Position.Z],
+                [0, 0, 1],
+                47.0,
+                0,
+                null,
+                npc.TypeId,
+                0));
+            var notice = await destroyedNotice.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal(
+                (run.Data.SpaceLocationId, 1, npc.EntityId, npc.TypeId),
+                (notice.LocationId, notice.RoomIndex, notice.EntityId, notice.TypeId));
+        }
+
+        var saved = await rig.State(run.InstanceId);
+        var clearedRoom = saved.Rooms.Single(value => value.LocationId == 1);
+        Assert.True(clearedRoom.Cleared);
+        Assert.Equal(npcs.Select(value => value.EntityId).Order(), clearedRoom.DestroyedNpcIds.Order());
+
+        var openedGate = rig.Simulator.SceneObjects.Last(value => value.Object.ItemId == gate.EntityId);
+        Assert.Equal(new SimSceneKey(run.Data.SpaceLocationId, run.InstanceId, 1), openedGate.Object.Scene);
+        Assert.True(openedGate.Object.IsOpen);
+        Assert.Equal(closedGate.Object.Direction, openedGate.Object.Direction);
+        Assert.Empty(rig.Problems);
+    }
+
     [PgFact]
     public async Task Cache_destruction_after_deadline_suppresses_rewards()
     {
@@ -739,6 +914,7 @@ public sealed class AbyssalHostFlowTests
         public required AbyssalMgrService Service { get; init; }
         public required string[] Schemas { get; init; }
         public List<string> Order { get; } = [];
+        public List<string> ClientNotifications { get; } = [];
         public List<string> Problems { get; } = [];
         public long Now { get; set; } = 1_790_000_000_000;
 
@@ -843,8 +1019,9 @@ public sealed class AbyssalHostFlowTests
             return rig;
         }
 
-        public async Task<AbyssalRunState> CreateRun(bool enter = true)
+        public async Task<AbyssalRunState> CreateRun(bool enter = true, AbyssalPosition? shipDirection = null)
         {
+            var initialDirection = shipDirection ?? new AbyssalPosition(0, 0, 1);
             const int origin = 30000142;
             var system = (await Sde.ReadAsync("mapSolarSystems", [origin])).Single().Doc;
             var race = Creation.Races.First();
@@ -872,12 +1049,12 @@ public sealed class AbyssalHostFlowTests
                 var started = await Runtime.StartAsync(c, tx, new AbyssalStartRequest(trace, character, ship, null,
                     AbyssalGameMode.SoloCruiser, filament.TypeId, origin, origin, new AbyssalPosition(10, 20, 30), Now + 1_800_000, plan));
                 await Items.SetCustomInfoAsync(c, tx, trace,
-                    System.Text.Json.JsonSerializer.Serialize(new AbyssalTracePoseSnapshot(1, [10, 20, 30], [0, 0, 1]),
+                    System.Text.Json.JsonSerializer.Serialize(new AbyssalTracePoseSnapshot(1, [10, 20, 30], [initialDirection.X, initialDirection.Y, initialDirection.Z]),
                         new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web)));
                 if (!enter) { run = started.State; return; }
                 var entered = await Runtime.EnterAsync(c, tx, new AbyssalEnterRequest(started.State.InstanceId,
                     new AbyssalParticipantAdmission(character, ship, type, "cruiser", null,
-                        new AbyssalParticipantOrigin(origin, origin, new AbyssalPosition(10, 20, 30), new AbyssalPosition(0, 0, 1), shipRadius))));
+                        new AbyssalParticipantOrigin(origin, origin, new AbyssalPosition(10, 20, 30), initialDirection, shipRadius))));
                 await Reservation.PrepareAsync(c, tx, entered.State, 1);
                 var hiddenRow = (await Sde.ReadAsync("mapSolarSystems", [hidden])).Single().Doc;
                 await Characters.SetLocationAsync(c, tx, character, hidden, hiddenRow.GetProperty("constellationID").GetInt32(), hiddenRow.GetProperty("regionID").GetInt32());
@@ -911,7 +1088,8 @@ public sealed class AbyssalHostFlowTests
         public async Task<ClientSession> Connect(AbyssalRunState run, long sessionOffset = 100)
         {
             var p = Assert.Single(run.Data.Participants);
-            var session = new ClientSession(new RecordingSink(Order)) { SessionId = p.CharacterId + sessionOffset, ClientId = p.CharacterId + sessionOffset + 100 };
+            var session = new ClientSession(new RecordingSink(Order, ClientNotifications))
+                { SessionId = p.CharacterId + sessionOffset, ClientId = p.CharacterId + sessionOffset + 100 };
             session.Set("charid", new PyLong(p.CharacterId)); session.Set("shipid", new PyLong(p.ShipId));
             session.Set("solarsystemid", new PyInt(run.Data.SpaceLocationId));
             session.Set("solarsystemid2", new PyInt(run.Data.SpaceLocationId));
@@ -1008,6 +1186,9 @@ public sealed class AbyssalHostFlowTests
         public List<SimEnsureAbyssalRewardCache> Caches { get; } = [];
         public List<SimEnsureAbyssalEnvironmentObject> EnvironmentObjects { get; } = [];
         public List<SimSpawn> Spawns { get; } = [];
+        public List<SimEnsureAbyssalSceneObject> SceneObjects { get; } = [];
+        private Action<SimMessage>? _received;
+        public void Deliver(SimMessage message) => _received?.Invoke(message);
         public List<string> Order { get; set; } = [];
         public string? RemovalError { get; set; }
         public IReadOnlyList<double> Pose { get; set; } = [0, 0, 0];
@@ -1018,8 +1199,15 @@ public sealed class AbyssalHostFlowTests
         protected override object? Invoke(MethodInfo? method, object?[]? args)
         {
             ArgumentNullException.ThrowIfNull(method);
-            if (Inner is not null) return method.Invoke(Inner, args);
+            if (Inner is not null)
+            {
+                if (method.Name == nameof(ISimulation.EnsureAbyssalSceneObjectAsync))
+                    SceneObjects.Add((SimEnsureAbyssalSceneObject)args![0]!);
+                return method.Invoke(Inner, args);
+            }
             if (method.Name == "get_IsConnected") return true;
+            if (method.Name == "add_Received") { _received += (Action<SimMessage>)args![0]!; return null; }
+            if (method.Name == "remove_Received") { _received -= (Action<SimMessage>)args![0]!; return null; }
             if (method.Name.StartsWith("add_") || method.Name.StartsWith("remove_")) return null;
             if (method.Name == "RemoveAbyssalParticipantAsync")
             {
@@ -1079,6 +1267,11 @@ public sealed class AbyssalHostFlowTests
                 Spawns.Add(spawn);
                 return Task.FromResult(new SimSpawnReply(spawn.RequestId, null, null));
             }
+            if (method.Name == "EnsureAbyssalSceneObjectAsync")
+            {
+                SceneObjects.Add((SimEnsureAbyssalSceneObject)args![0]!);
+                return Task.FromResult<string?>(null);
+            }
             if (method.Name == "EnsureAbyssalRewardCacheAsync")
             {
                 Caches.Add((SimEnsureAbyssalRewardCache)args![0]!);
@@ -1101,7 +1294,7 @@ public sealed class AbyssalHostFlowTests
         }
     }
 
-    private sealed class RecordingSink(List<string> order) : IPacketSink
+    private sealed class RecordingSink(List<string> order, List<string>? notifications = null) : IPacketSink
     {
         public void Send(PyValue packet)
         {
@@ -1110,6 +1303,10 @@ public sealed class AbyssalHostFlowTests
             if (fields[0] is PyInt { Value: MachoMessage.SessionChangeNotification }) { order.Add("SessionChange"); return; }
             if (fields[0] is not PyInt { Value: MachoMessage.Notification }) return;
             var address = MachoAddress.Decode(fields[2]);
+            if (address.BroadcastId is { } broadcastId)
+            {
+                notifications?.Add(broadcastId);
+            }
             if (address.BroadcastId is "OnItemChange" or "OnExitingDungeon" or "OnAbyssalLocationExited" or "OnAbyssalContentFinished")
                 order.Add(address.BroadcastId);
         }

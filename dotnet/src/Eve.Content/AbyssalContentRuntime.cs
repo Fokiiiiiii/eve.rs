@@ -403,7 +403,11 @@ public sealed class AbyssalContentRuntime
         {
             throw Rule(AbyssalRuleCode.InvalidRequest, "the reconnecting character is not in the recorded run ship");
         }
-        if (participant.Status is not (AbyssalParticipantStatus.Active or AbyssalParticipantStatus.Disconnected))
+        if (participant.Status == AbyssalParticipantStatus.Active)
+        {
+            return Result(AbyssalOperationStatus.AlreadyApplied, instance);
+        }
+        if (participant.Status != AbyssalParticipantStatus.Disconnected)
         {
             throw Rule(AbyssalRuleCode.ParticipantNotFound, "the participant has already left or been destroyed");
         }

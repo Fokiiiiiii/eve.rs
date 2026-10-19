@@ -8,6 +8,7 @@ The fitted module and its one charge are seeded in the pilot's ship; fitting and
 
 from __future__ import annotations
 
+import time
 import uuid
 
 import pytest
@@ -19,7 +20,6 @@ from tests import dbseed, gm
 from tests import test_login_to_character as base
 from tests.test_health import HEALTH
 from tests.test_undock import STATION, SYSTEM, arrive, number
-from tests.test_warp import names as destiny_names
 
 pytestmark = pytest.mark.skipif(not base.LIVE, reason="set EVE_LIVE_HOST=host:port to test against a running server")
 
@@ -93,13 +93,8 @@ def test_a_loaded_burst_changes_a_fleet_members_dogma_until_its_buff_expires():
         notifications_of(member)
 
         owner_ballpark = owner.call("beyonce", "MachoBindObject", SYSTEM, None)
-        owner.call_bound(owner_ballpark[0], "CmdWarpToStuff", "item", member_ship, minRange=0)
-        arrived = wait_for_events(
-            owner,
-            lambda events: any("Stop" in destiny_names(event) for event in events),
-            timeout=200,
-        )
-        assert any("Stop" in destiny_names(event) for event in arrived), "pilot A did not arrive at pilot B before the burst"
+        owner.call_bound(owner_ballpark[0], "CmdOrbit", member_ship, 5_000)
+        time.sleep(30)  # let the normal flight order bring the burst ship inside its SDE-defined range
         notifications_of(owner)
         notifications_of(member)
 

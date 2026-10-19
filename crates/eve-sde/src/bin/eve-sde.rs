@@ -119,7 +119,6 @@ fn ensure_command(args: &[String]) -> Result<ExitCode, Failure> {
             extracted.dir
         }
     };
-    // With a database that already held the build, nothing was extracted.
     if dir.join(".complete").is_file() {
         println!("{}", dir.display());
     }

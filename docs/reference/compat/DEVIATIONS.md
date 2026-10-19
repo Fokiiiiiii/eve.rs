@@ -4932,6 +4932,6 @@ The owner decided that Triglavian NPCs in Pochven do not pay bounties. Existing 
 
 ## Research checkpoint reconciliation (2026-10-19)
 
-The supplied research reports identify a possible ruleset boundary conflict: `FwBattlefields.LpPool` is 150,000, while report 2 says client build 3396210 predates the 2026-07-01 increase and should use 50,000. Q-16 is open. CRAB's standard and Carrier scan durations are recorded in `AnalysisBeaconRules.cs`; report 1's remaining candidate mechanics (link tail, resistances, CEQ, system interference and reward access window) remain to be reconciled item by item. See `docs/project/RESEARCH_RECONCILIATION.md`.
+Q-16 adopts the June 16 checkpoint per item for build 3396210. CCP’s [Version 24.01 patch notes](https://www.eveonline.com/news/view/patch-notes-version-24-01) date the battlefield increase to July 1; `FwBattlefields.LpPool` is 50,000. Other later values listed in `docs/project/RULESET_BOUNDARY.md` are excluded. The CRAB details are tracked in that reconciliation and the CRAB section above.
 
 - **Advanced Contracting capacity configuration (Q-18).** `ApproximateContractLimitConfiguration` defaults to +4 outstanding contracts per skill level and its limit hook is unit-tested. The value is approximate and unconfirmed. The current contracts track has no creation/limit provider to call the hook; limit enforcement remains open.

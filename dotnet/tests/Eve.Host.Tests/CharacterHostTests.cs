@@ -425,6 +425,13 @@ public sealed class CharacterHostTests
             await transaction.CommitAsync();
         }
         await rig.SetSkillLevelAsync(character, 3300, 3);
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var queue = new NpgsqlCommand(
+            $"INSERT INTO {rig.SkillsSchema}.skill_queue (character_id, position, type_id, to_level) VALUES ($1, 0, 3300, 4)", connection))
+        {
+            queue.Parameters.Add(new NpgsqlParameter { Value = character });
+            await queue.ExecuteNonQueryAsync();
+        }
 
         // prepare again, move the waiting time into the past (the test's clock), then delete
         await CallAsync(restarted, "PrepareCharacterForDelete", session, new PyLong(character));
@@ -450,6 +457,13 @@ public sealed class CharacterHostTests
         {
             count.Parameters.Add(new NpgsqlParameter { Value = character });
             Assert.Equal(0L, (long)(await count.ExecuteScalarAsync())!);
+        }
+        await using (var queueConnection = await rig.Source.OpenConnectionAsync())
+        await using (var queueCount = new NpgsqlCommand(
+            $"SELECT count(*) FROM {rig.SkillsSchema}.skill_queue WHERE character_id = $1", queueConnection))
+        {
+            queueCount.Parameters.Add(new NpgsqlParameter { Value = character });
+            Assert.Equal(0L, (long)(await queueCount.ExecuteScalarAsync())!);
         }
         // the graveyard corporation (EveJS DOOMHEIM_CORPORATION_ID)
         Assert.Equal(1000001L, (await rig.Characters.GetAsync(character))!.CorporationId);

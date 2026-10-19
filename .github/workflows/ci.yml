@@ -21,7 +21,7 @@ permissions:
 env:
   # the toolchain the project is built and tested with (Cargo.toml's rust-version is 1.94); a newer clippy's new lints are
   # looked at by the advisory job below, not allowed to break the build
-  RUST_TOOLCHAIN: "1.94.1"
+  RUST_TOOLCHAIN: "1.99.0"
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"
   DOTNET_NOLOGO: "1"

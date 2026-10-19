@@ -5,7 +5,6 @@ using Npgsql;
 namespace Eve.AccessGroups;
 
 /// <summary>
-/// The owner groups (access lists) in PostgreSQL (schema <c>access_groups</c>). A change runs in one transaction that holds the group's
 /// advisory lock, so the rules read the entries they change. Who may do what is <see cref="AccessRules"/>; the store only applies it.
 /// </summary>
 public sealed partial class AccessGroupStore
@@ -74,7 +73,6 @@ public sealed partial class AccessGroupStore
             return AccessRules.CanSee(role, group) ? new GroupView(group, role, AdminsOf(group, members)) : null;
         }, token);
 
-    /// <summary>The entries of a group, for a character that manages it; nothing for anyone else (the wiki: members cannot see the list).</summary>
     public Task<IReadOnlyList<AccessMember>> MembersAsync(Affiliation who, long groupId, CancellationToken token = default) =>
         InTransactionAsync(0, async (connection, tx) =>
         {

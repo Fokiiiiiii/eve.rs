@@ -22,6 +22,9 @@ use crate::scene::{Command, Out, Scene, SessionId, TICKS_PER_SECOND};
 use crate::visibility::{Presence, can_see};
 use crate::wire::{filetime, id, int, list, real, text, tuple, word};
 
+/// The CRAB link's additional resistance bonus, reducing each damage-layer resonance by ten percent.
+pub(crate) const CRAB_LINK_RESISTANCE_BONUS: f64 = 0.10;
+
 /// The id of the first deployable a scene makes (its own range, apart from the missiles and the wrecks).
 pub const DEPLOYABLE_ID_BASE: i64 = 4_250_000_000_000_000;
 
@@ -1414,8 +1417,8 @@ impl Scene {
         self.insert_deployable(deployable, now)
     }
 
-    /// Whether the CRAB's linked ship still has link effects: tethering and cloaking stay blocked through the 60-second status tail.
-    pub(crate) fn link_blocks_cloak_or_tether(&self, session: SessionId, now: i64) -> bool {
+    /// The CRAB's resistance bonus and tether/cloak restrictions apply from link start through the 60-second status tail.
+    pub(crate) fn link_effects_active(&self, session: SessionId, now: i64) -> bool {
         let Some(pilot) = self.pilots.get(&session) else { return false };
         let ship = pilot.ship.spec.ship_id;
         self.deployables.values().any(|deployable| match &deployable.role {

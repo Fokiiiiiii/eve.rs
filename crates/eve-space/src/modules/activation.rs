@@ -180,7 +180,7 @@ impl Scene {
         }
         self.settle_all(now);
         if matches!(effect.action.as_ref(), Some(Action::Cloak { .. }))
-            && self.link_blocks_cloak_or_tether(session, now)
+            && self.link_effects_active(session, now)
         {
             return vec![Out::Refused { session, command: CODE, reason: "LINK_HOLD" }];
         }

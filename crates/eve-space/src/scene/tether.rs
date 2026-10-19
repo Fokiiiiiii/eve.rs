@@ -115,7 +115,7 @@ impl Scene {
         let Some(pilot) = self.pilots.get(&session) else { return false };
         pilot.flight.is_none()
             && pilot.jump.is_none()
-            && !self.link_blocks_cloak_or_tether(session, now)
+            && !self.link_effects_active(session, now)
             && pilot.protected_until <= now
             && pilot.disrupted_until <= now
             && matches!(

@@ -44,7 +44,11 @@ def ship_attribute(answer, ship_id: int, attribute_id: int) -> float:
 
 
 def named(events: list[dict], name: str) -> list[dict]:
-    return [event for event in events if event["name"] == name]
+    return [
+        event for event in events
+        if event["name"] == name
+        or any(action.get("name") == name for action in event.get("destiny", {}).get("actions", []))
+    ]
 
 
 def test_a_loaded_burst_changes_a_fleet_members_dogma_until_its_buff_expires():

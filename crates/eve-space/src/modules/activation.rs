@@ -828,9 +828,18 @@ impl Scene {
         entries: Vec<crate::link::BuffEntry>,
         now: i64,
     ) -> Vec<Out> {
-        if self.pilots.get(&session).is_none_or(|pilot| pilot.ship.spec.ship_id != ship_id) {
+        let Some(pilot) = self.pilots.get(&session) else {
+            eprintln!("eve-sim: refused buff state session={session} ship={ship_id} reason=no_pilot");
+            return Vec::new();
+        };
+        if pilot.ship.spec.ship_id != ship_id {
+            eprintln!(
+                "eve-sim: refused buff state session={session} ship={ship_id} pilot_ship={}",
+                pilot.ship.spec.ship_id
+            );
             return Vec::new();
         }
+        eprintln!("eve-sim: accepted buff state session={session} ship={ship_id} entries={}", entries.len());
         let stamp = self.next_stamp(now);
         // a remaining time in milliseconds is a span of ticks (a tick is 100 ns, as the FILETIME is)
         let entries = entries.into_iter().map(|entry| {

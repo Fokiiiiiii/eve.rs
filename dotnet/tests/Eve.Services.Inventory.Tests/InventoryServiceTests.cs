@@ -58,7 +58,9 @@ internal sealed class Rig : IAsyncDisposable
         Modules = new PgModuleStateStore(source, _schema + "f");
         Ships = new CharacterShips(source, statics, Characters, Items, Skills, Modules);
         Service = new InvBrokerService(Items, new ItemTypeCatalog(new SdeReader(source)), Stations, Ships, statics,
-            () => ClockMs, corporationHangarAccess: corporationHangarAccess);
+            () => ClockMs, corporationHangarAccess: corporationHangarAccess,
+            crystalDamage: async (itemIds, token) => (await Modules.ModuleConditionsAsync(itemIds, token))
+                .ToDictionary(entry => entry.Key, entry => entry.Value.Damage));
     }
 
     /// <summary>Ships that these reads never ask anything of.</summary>
@@ -548,6 +550,34 @@ public class InvBrokerTests
         Assert.Contains(all, row => PackedItemId(row) == cargo);
         Assert.Equal(2, Assert.IsType<PyTuple>(await rig.CallAsync(session, "GetAssetWorth", oid)).Items.Count);
         Assert.Equal(PyNone.Instance, await rig.CallAsync(Rig.Session(id: 2), "List", oid));
+    }
+
+
+    [PgFact]
+    public async Task Crystal_damage_lists_only_owned_damageable_crystals_from_persisted_module_conditions()
+    {
+        await using var rig = await Rig.CreateAsync();
+        const int crystalTypeId = 12552;
+        await rig.Statics.EnsureTypesAsync([crystalTypeId]);
+        var attributeId = Assert.IsType<int>(rig.Statics.AttributeId("crystalsGetDamaged"));
+        Assert.True(rig.Statics.Type(crystalTypeId)!.Attributes.GetValueOrDefault(attributeId) > 0);
+
+        var damagedCrystal = await rig.AddAsync(crystalTypeId, Rig.Character, Rig.Station, singleton: true);
+        var freshCrystal = await rig.AddAsync(crystalTypeId, Rig.Character, Rig.Station, singleton: true);
+        var foreignCrystal = await rig.AddAsync(crystalTypeId, Rig.Character + 1, Rig.Station, singleton: true);
+        var tritanium = await rig.AddAsync(Rig.Tritanium, Rig.Character, Rig.Station);
+        await rig.Modules.SetModuleConditionsAsync(new Dictionary<long, Eve.Fitting.ModuleCondition>
+        {
+            [damagedCrystal] = new(0.375, 0, 0, false),
+        });
+
+        var result = Assert.IsType<PyDict>(await rig.CallAsync(
+            Rig.Session(), "GetDamageForCrystals", null,
+            PyValue.PythonSet([new PyLong(damagedCrystal), new PyLong(freshCrystal), new PyLong(foreignCrystal), new PyLong(tritanium)])));
+        Assert.Equal(new PyReal(0.375), Assert.Single(result.Entries, entry => entry.Key == new PyLong(damagedCrystal)).Value);
+        Assert.Equal(new PyReal(0), Assert.Single(result.Entries, entry => entry.Key == new PyLong(freshCrystal)).Value);
+        Assert.DoesNotContain(result.Entries, entry => entry.Key == new PyLong(foreignCrystal));
+        Assert.DoesNotContain(result.Entries, entry => entry.Key == new PyLong(tritanium));
     }
 
     [PgFact]

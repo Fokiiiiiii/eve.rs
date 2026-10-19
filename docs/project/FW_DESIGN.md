@@ -188,3 +188,8 @@ Pilots enter a complex's rooms through acceleration gates. The API for the FW co
 - Not built: the battlefield's NPC blockers (enemy NPCs do not pause a point), the defenders of a point, the frontline choice (every occupied
   system is a candidate), the objectives (archetype 67) and their `OnFwObjectiveCompletedInSolarSystem`, and a non-enrolled capsuleer landing 75 to 125 km from the points. The gate admits T1 hulls (SDE meta group 1 or no meta group) and empire Navy hulls (meta group 4, faction IDs 500001 through 500004); `AccelerationGateTests` covers accepted and refused hulls.
 - Checked by the live walk: the two side points' holding and the centre contest. Checked by `FwBattlefieldTickerTests`: the timer pause under contest and the cooldown-created second battlefield's victory.
+
+
+## Research reconciliation (2026-10-19)
+
+The supplied candidate report describes Battlefield LP as 150,000 after the 2026-07-01 change and says build 3396210 predates it, implying a 50,000 LP checkpoint value. Current `FwBattlefields.LpPool` is 150,000. The checkpoint conflict is open under Q-16 and in `RULESET_BOUNDARY.md`; do not treat the current constant as checkpoint-confirmed. The report's 30 km capture, three-hour cooldown, 2,000 VP and 30-recipient maximum match current constants; blocker details and pod eligibility need explicit comparison to the current walk.

@@ -43,6 +43,40 @@ public static class Customs
     public static double Rate(double security, int customsCodeExpertiseLevel) =>
         security >= HighSecurity ? Math.Max(0, NpcRateHighSecurity - 0.01 * Math.Clamp(customsCodeExpertiseLevel, 0, 5)) : NpcRateOutside;
 
+    /// <summary>The five standing bands used by the V24.01 customs-office tax calculator.</summary>
+    public enum StandingTier { Excellent, Good, Neutral, Bad, Terrible }
+
+    /// <summary>Owner-configured rates by relationship; values are decimal fractions (for example, 0.05 is five percent).</summary>
+    public sealed record OwnerTaxRates(
+        double Corporation,
+        double Alliance,
+        double Excellent,
+        double Good,
+        double Neutral,
+        double Bad,
+        double Terrible)
+    {
+        public double ForPilot(bool sameCorporation, bool sameAlliance, double standing)
+        {
+            if (sameCorporation) return Corporation;
+            if (sameAlliance) return Alliance;
+            return TierRate(standing);
+        }
+
+        public double TierRate(double standing) => standing switch
+        {
+            >= 10 => Excellent,
+            >= 5 => Good,
+            >= 0 => Neutral,
+            >= -5 => Bad,
+            _ => Terrible,
+        };
+    }
+
+    /// <summary>The total displayed rate: the owner-configured component plus the NPC component, capped at the published 100% maximum.</summary>
+    public static double CombinedRate(double npcRate, double ownerRate) =>
+        Math.Clamp(npcRate + ownerRate, 0, 1);
+
     /// <summary>
     /// The import and export fees of a transfer (spaceportPin.GetImportTax, GetExportTax): sum of quantity x the launchpad's rate x the
     /// commodity's multiplier, times the office rate. Imports use the launchpad's import rate, exports its export rate.

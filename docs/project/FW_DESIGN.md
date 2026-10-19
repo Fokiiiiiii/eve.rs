@@ -184,10 +184,7 @@ Pilots enter a complex's rooms through acceleration gates. The API for the FW co
   faction info and tick countdown and the scoreboard's score updates. The centre point is held by the enemy while the pilot is in its range (the room's
   entry is 15 km from it), its score rises by one per 20 s, and the battlefield is won at +150: the test asserts the system's attacker points (+2,000), the
   notices (`OnFwScoreboardWon` before `OnVictoryPointStateUpdated`), the winner's victory points on the daily row and in `GetStats_Character`, and the 5,000 LP
-  in the wallet journal. The walk takes about 50 minutes (the win needs 3,000 s with one point held). Passed on the run of 2026-10-18 (three
-  pilots on the three points were tried first: the side points were not reached; see the commit history of the walk).
+  in the wallet journal. The walk takes about 50 minutes (the win needs 3,000 s with one point held). The walk also checks the two side points and that contesting the centre pauses its score.
 - Not built: the battlefield's NPC blockers (enemy NPCs do not pause a point), the defenders of a point, the frontline choice (every occupied
-  system is a candidate), the objectives (archetype 67) and their `OnFwObjectiveCompletedInSolarSystem`, and the wiki's gate restrictions (T1 and
-  Navy ships only; a non-enrolled capsuleer lands 75 to 125 km from the points).
-- Not checked: the two side points' holding (no pilot held them in the walk), the contest (both sides present pausing a point) on the live server (covered by
-  `FwBattlefieldTickerTests`), and the second battlefield's win.
+  system is a candidate), the objectives (archetype 67) and their `OnFwObjectiveCompletedInSolarSystem`, a non-enrolled capsuleer landing 75 to 125 km from the points. The T1 and empire Navy gate restriction uses the SDE ship category, meta group 4, and the four empire faction IDs, with accept/reject coverage in `AccelerationGateTests`.
+- Checked by the live walk: the two side points' holding and the centre contest. Checked by `FwBattlefieldTickerTests`: the timer pause under contest and the cooldown-created second battlefield's victory.

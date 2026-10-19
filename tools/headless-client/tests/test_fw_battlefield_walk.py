@@ -1,11 +1,10 @@
-"""Three pilots take a battlefield of an occupied system by its acceleration gate and win it for their faction (factional warfare battlefields).
+"""Two pilots take a battlefield of an occupied system by its acceleration gate and win it for their faction (factional warfare battlefields).
 
     EVE_LIVE_SLOW=1 EVE_LIVE_HOST=host:port EVE_PG_URL=... EVE_FW_CAPTURE=<the tools/mitm capture file> pytest tests/test_fw_battlefield_walk.py
 
 The battlefield of a system has three capture points (the centre and 80 km either side) and a scoreboard. Its site (a gated room, SDE archetype 68) starts with the
 first pilot in the system. Each pilot (the owner's test ship, the Cockroach, with the QA Smartbomb) enlists in the occupier's enemy, flies the stargates to the
-system, warps to the battlefield's gate and takes it into the room. One pilot holds the centre point, the others the points 80 km either side (a flight of about
-70 s). A point is held by the side whose pilots are within its 30 km range alone: its hold timer runs, and each 20 s tick moves the score one point toward that side.
+system, warps to the battlefield's gate and takes it into the room. The pilots contest the centre, then fly to and hold opposite side points (about 70 s flight), before returning to the centre for the capture. A point is held by the side whose pilots are within its 30 km range alone: its hold timer runs, and each 20 s tick moves the score one point toward that side.
 The battlefield is won at +150 (the attackers): the system's attacker points rise by 2,000, the winners get OnFwScoreboardWon and OnVictoryPointStateUpdated, their
 victory points (2,000 split evenly) and their loyalty points (5,000 each, from the militia) are recorded, and the site ends.
 The capture (the MITM file named by EVE_FW_CAPTURE) must hold the points' and the scoreboard's slim fields.
@@ -147,6 +146,42 @@ def test_a_pilot_holds_a_battlefield_point_and_the_battlefield_is_won_for_its_fa
             if not missing or time.time() - started > SETTLE_LIMIT_S:
                 break
         assert not missing, f"points {missing} have no faction info in the capture: {[point_ids[i] for i in missing]}"
+
+        # The opposing militia pilot contests the centre, then the two pilots fly to opposite side points. The points are 80 km from the battlefield origin,
+        # beyond the room's entry range, so these are ordinary client movement orders rather than seeded positions.
+        with base.connect(f"walk-fw-battlefield-{run}-occupier") as defender:
+            defender_race = plain_race(DEATH["races"][0], "defender")
+            _, defender_ship, defender_ballpark, _ = setup_pilot(defender, defender_race, run + "-occupier", occupier, hops)
+            enter_by_gate(defender, defender_ballpark, gate)
+            watch({"events": who}, 12.0)
+            contested_score = fw.battlefield_row(battlefield)[0]
+            watch({"events": who}, 25.0)
+            assert fw.battlefield_row(battlefield)[0] == contested_score, "the centre capture score advanced while both factions were in point range"
+
+            for client, pilot_ballpark, ship, index, faction in (
+                (who, ballpark, ship_id, 1, enemy),
+                (defender, defender_ballpark, defender_ship, 2, occupier),
+            ):
+                client.call_bound(pilot_ballpark[0], "CmdSetSpeedFraction", 1.0)
+                client.call_bound(pilot_ballpark[0], "CmdFollowBall", point_ids[index], 0)
+                started = time.monotonic()
+                while fw.battlefield_points(battlefield)[index][2] != faction and time.monotonic() - started < SETTLE_LIMIT_S:
+                    watch({"events": client}, 8.0)
+                holder = fw.battlefield_points(battlefield)[index][2]
+                assert holder == faction, f"side point {index} was not held by faction {faction}: {fw.battlefield_points(battlefield)}"
+
+            who.call_bound(ballpark[0], "CmdFollowBall", point_ids[0], 0)
+            defender.call_bound(defender_ballpark[0], "CmdFollowBall", point_ids[0], 0)
+            started = time.monotonic()
+            while time.monotonic() - started < SETTLE_LIMIT_S:
+                watch({"events": who}, 8.0)
+                if fw.battlefield_points(battlefield)[0][2] == enemy:
+                    break
+            assert fw.battlefield_points(battlefield)[0][2] == enemy, "the attacking pilot did not return to the centre point"
+            watch({"events": who}, 12.0)
+            contested_score = fw.battlefield_row(battlefield)[0]
+            watch({"events": who}, 25.0)
+            assert fw.battlefield_row(battlefield)[0] == contested_score, "the centre capture score advanced during the live contest"
 
         # the centre point is held by the pilot inside its 30 km range (the room's entry is 15 km from it): the holder changes to the attackers
         started = time.time()

@@ -30,7 +30,7 @@ impl Scene {
         )
     }
 
-    /// The values an effect changes, told to the pilot. A launcher's cycle is told as a real whatever its value (the recording of the reference's launcher: `4900.0`).
+    /// Effect attribute changes and the current cycle duration, sent to the pilot.
     pub(super) fn changes_told(
         session: SessionId,
         owner: i64,
@@ -119,7 +119,7 @@ impl Scene {
                 int(i64::from(on)),
                 int(i64::from(on)),
                 number(effect.duration_ms),
-                // a turret's start says how many cycles were asked for, its stop says nothing (the recording of the reference's gun)
+                // A turret start reports the requested cycle count; its stop reports none.
                 if on { effect.fx_repeat().map_or(Value::None, int) } else { Value::None },
                 Value::None,
                 int(0),
@@ -195,8 +195,7 @@ impl Scene {
         {
             return vec![Out::Refused { session, command: CODE, reason: "MAX_GROUP_ACTIVE" }];
         }
-        // a module of a group of which a limited number run at once (maxGroupActive 763: the afterburner and the microwarpdrive) is refused while that many
-        // of its group run or are starting (EveJS MAX_GROUP_ACTIVE; the client's EffectCrowdedOut is shown as the notice, the count is not carried yet)
+        // SDE attribute 763 limits concurrent or pending activations within a module group.
         if effect.rules.max_group_active > 0 && effect.rules.group_id != 0 {
             let same_group = pilot
                 .modules
@@ -220,8 +219,8 @@ impl Scene {
         {
             return vec![Out::Refused { session, command: CODE, reason: "ACTIVE_INDUSTRIAL_CORE_REQUIRED" }];
         }
-        // a module that starts only within a band of the ship's speed (WP19: maxVelocityActivationLimit 1334, minVelocityActivationLimit 2608) is refused
-        // outside it; the speed is the ship's velocity as the scene moves it (a stopped ship has none)
+        // SDE attributes 1334 and 2608 bound activation speed using the ship's current velocity.
+        // A stopped ship has speed 0.
         let v = pilot.ship.velocity;
         if let Some(reason) = velocity_refusal(&effect.rules, (v.x * v.x + v.y * v.y + v.z * v.z).sqrt()) {
             return vec![Out::Refused { session, command: CODE, reason }];
@@ -262,20 +261,20 @@ impl Scene {
         {
             return vec![Out::Refused { session, command: CODE, reason: "SafetyActivated" }];
         }
-        // a cynosural field does not light in Pochven: its region-wide jammer stops every kind of field there (the wiki, "Pochven": "stops anyone from lighting a cyno")
+        // Pochven's regional jammer blocks cynosural fields.
         if matches!(effect.action.as_ref(), Some(Action::CynoField { .. }))
             && self.system().region_id == POCHVEN_REGION_ID
         {
             return vec![Out::Refused { session, command: CODE, reason: "CYNOSURAL_FIELD_JAMMED" }];
         }
-        // a cynosural field does not light within 200 km of an anchored Mobile Cynosural Inhibitor (EVE.js CYNOSURAL_FIELD_INHIBITED); a covert field is not stopped
+        // Cynosural fields cannot start within 200 km of an anchored Mobile Cynosural Inhibitor; covert fields are exempt.
         if let Some(Action::CynoField { ball, .. }) = effect.action.as_ref()
             && ball.charge_type_id != COVERT_CYNOSURAL_FIELD_TYPE
             && self.inhibited_at(pilot.ship.position)
         {
             return vec![Out::Refused { session, command: CODE, reason: "CYNOSURAL_FIELD_INHIBITED" }];
         }
-        // a smartbomb does not start close to a station or a stargate: the larger of 5 km and its range, held to the wiki's largest value (wiki "Smartbombs", see DEVIATIONS)
+        // Smartbombs cannot start within max(5 km, range) of a station or stargate; cap range at the largest listed value.
         if let Some(Action::Smartbomb { range, .. }) = effect.action.as_ref()
             && self.station_or_gate_within(
                 pilot.ship.position,
@@ -305,7 +304,7 @@ impl Scene {
             if effect.target_id <= 0 {
                 return vec![Out::Refused { session, command: CODE, reason: "TARGET_REQUIRED" }];
             }
-            // a beam pulls a wreck or a can (EVE.js: anything else is TARGET_NOT_FOUND); the pilot must hold its lock, and it must be in reach
+            // Tractor beams require a locked non-corpse wreck or container in range; other target types return TARGET_NOT_FOUND.
             let Some(wreck) = self
                 .wrecks
                 .get(&effect.target_id)
@@ -329,8 +328,7 @@ impl Scene {
                 }];
             }
         }
-        // a scanner reads a ship it holds the lock on, within its reach (the reference's TARGET_REQUIRED, TARGET_NOT_FOUND, TARGET_NOT_LOCKED and
-        // TARGET_OUT_OF_RANGE); the reveal itself is settled by the host when the cycle ends (`work_target_ok` keeps the same two checks)
+        // Scanning requires a locked ship in range; the Host resolves the reveal when the cycle ends.
         if let Some(Action::Scan { reach, .. }) = effect.action.as_ref() {
             if effect.target_id <= 0 {
                 return vec![Out::Refused { session, command: CODE, reason: "TARGET_REQUIRED" }];
@@ -356,7 +354,7 @@ impl Scene {
                 }];
             }
         }
-        // an entosis link works on a structure the pilot holds the lock on, within its reach (EVE.js resolveEntosisLinkActivation: the same refusal names)
+        // Entosis links require a locked structure in activation range.
         if let Some(Action::Entosis { range_meters }) = effect.action.as_ref() {
             if effect.target_id <= 0 {
                 return vec![Out::Refused { session, command: CODE, reason: "TARGET_REQUIRED" }];
@@ -391,7 +389,7 @@ impl Scene {
             {
                 return vec![Out::Refused { session, command: CODE, reason: "BAD_DOOMSDAY" }];
             }
-            // the target is a locked ship of the scene (the reference's TARGET_REQUIRED, TARGET_NOT_FOUND and TARGET_NOT_LOCKED)
+            // Doomsdays require a locked ship target in this scene.
             if effect.target_id <= 0 {
                 return vec![Out::Refused { session, command: CODE, reason: "TARGET_REQUIRED" }];
             }
@@ -418,11 +416,11 @@ impl Scene {
             }
         }
         if matches!(effect.action.as_ref(), Some(Action::Cloak { .. })) {
-            // FakeCloaking.PreStartChecks refuses a second device while the ship is cloaked; EveJS reports MODULE_ALREADY_ACTIVE.
+            // A cloaked ship cannot activate another cloaking module.
             if pilot.cloak != crate::visibility::CloakState::Uncloaked {
                 return vec![Out::Refused { session, command: CODE, reason: "MODULE_ALREADY_ACTIVE" }];
             }
-            // a module that cannot be deactivated early (disallowEarlyDeactivation 906) runs: the ship does not cloak (EveJS CLOAK_MODULE_ACTIVE)
+            // SDE attribute 906 blocks cloaking while a non-early-deactivating module runs.
             if pilot.modules.running.iter().any(|r| r.effect.rules.disallow_early_deactivation) {
                 return vec![Out::Refused { session, command: CODE, reason: "CLOAK_MODULE_ACTIVE" }];
             }
@@ -439,14 +437,14 @@ impl Scene {
                 return vec![Out::Refused { session, command: CODE, reason: "CLOAK_PROXIMITY_BLOCKED" }];
             }
         } else if pilot.cloak != crate::visibility::CloakState::Uncloaked {
-            // the blanket rule of a cloaked ship: while the cloak runs nothing else starts (the reference; the cloak's own refusals above are the only ones)
+            // While cloaked, no other module may start.
             return vec![Out::Refused { session, command: CODE, reason: "MODULE_CLOAKED" }];
         }
         if effect.turret.is_some() {
             if effect.target_id <= 0 && effect.target_id != AUTO_TARGET_ID {
                 return vec![Out::Refused { session, command: CODE, reason: "NO_TARGET" }];
             }
-            // a target that is not in the scene is not there (the reference answers `TARGET_NOT_FOUND`), one that is must be locked
+            // Reject targets absent from the scene or missing a lock.
             if effect.target_id != AUTO_TARGET_ID && !self.target_in_scene(effect.target_id) {
                 return vec![Out::Refused { session, command: CODE, reason: "TARGET_NOT_FOUND" }];
             }
@@ -456,8 +454,7 @@ impl Scene {
             if effect.turret.as_ref().and_then(|t| t.charge).is_some_and(|c| c.rounds < c.per_cycle) {
                 return vec![Out::Refused { session, command: CODE, reason: "NO_AMMO" }];
             }
-            // a launcher is not refused for a target beyond its missile's flight: the missile flies its flight time and is spent (the wiki, Missiles);
-            // no client or EVE.js text refuses the activation
+            // A missile launcher may start beyond missile flight range; the missile expires when its flight ends.
         }
         // an effect that is projected at a ship needs it: there, locked and in reach (what is too far off is told with the range and how far it is)
         if let Some((what, reach, _)) = effect.remote() {
@@ -654,8 +651,7 @@ impl Scene {
                 out.extend(self.tell_all(session, actions));
             }
         }
-        // a lance's beacon is in space before its effect is played, which is drawn to it (EVE.js spawnLanceBeacon, the beacon first; a strike with no
-        // effect of its own, the cone, has the beacon but no beam to draw)
+        // Spawn a lance beacon before its effect so clients can draw the beam; strikes without a beam still need the beacon.
         let beacon = match run.effect.action.as_ref() {
             Some(Action::Strike { strike }) => strike.beacon.map(|offset| {
                 let lifetime = run.effect.duration_ms;
@@ -667,7 +663,7 @@ impl Scene {
         if let Some((_, beacon_out)) = beacon {
             out.extend(beacon_out);
         }
-        // a turret's special effect is played before its numbers are told (the recording of the reference's gun), a propulsion module's after
+        // Tell turret effects before their attribute changes.
         let fx_target = if beacon_id > 0 { beacon_id } else { run.effect.target_id };
         let fx = self.tell_all(session, vec![Self::fx_action(stamp, &ship, &run.effect, true, fx_target)]);
         if run.effect.turret.is_some() {
@@ -694,7 +690,7 @@ impl Scene {
         }) {
             return out;
         }
-        // A controlled structure's area strike commits its first charge only after pulse 0 has a correlated Host decision.
+        // A controlled structure's area strike spends its first charge only after the Host authorizes pulse 0.
         if self.defer_structure_damage_charge(session, &effect, charged_this_cycle) {
             return out;
         }
@@ -760,7 +756,7 @@ impl Scene {
             ChargeOp::Remove { .. } => 0,
         };
         let after = *rounds;
-        // a gun that waited for its load (FP-C8) starts its next cycle with the rounds it has, or stops when none came
+        // A gun waiting on reload starts its next cycle with the loaded rounds, or stops if none arrived.
         let waiting = std::mem::take(&mut run.pending_reload);
         let mut out = answer(true, before, after);
         if waiting {
@@ -819,8 +815,8 @@ impl Scene {
         Vec::new()
     }
 
-    /// The host's state of a ship's buffs (`BuffState`, protocol 43): the client is told `OnDbuffUpdated` with them, as the reference tells it. The numbers
-    /// of the ship are the host's (it sends them with the buffs); nothing is answered. A state for a ship that is not this session's is not told.
+    /// Protocol 43 applies the Host's buff state, notifies the client with `OnDbuffUpdated`, and uses the Host's ship attributes.
+    /// State for another ship is ignored.
     pub(crate) fn set_buffs(
         &mut self,
         session: SessionId,
@@ -880,7 +876,6 @@ impl Scene {
         }
     }
 
-    /// What the ramp of a running effect has built, for the tests.
     #[cfg(test)]
     pub(crate) fn spool_of(&self, session: SessionId, module_id: i64) -> Option<SpoolState> {
         self.pilots
@@ -999,8 +994,7 @@ impl Scene {
             out.extend(self.effect_ended(session, run, owner, ship_id, now, Ending::Done));
             return out;
         }
-        // A mining cycle that is short-cycled by the pilot pays what it has mined so far, as the reference does (`deactivateGenericModule`). An ice cycle is not
-        // short-cycled: it mines nothing short, so it runs to its boundary as the reference does.
+        // A short mining cycle pays its partial yield; an ice cycle runs to its boundary without partial yield.
         let run = &pilot.modules.running[index];
         let efficiency = ((now - run.cycle_start) as f64
             / (run.effect.duration_ms * TICKS_PER_SECOND as f64 / 1000.0))
@@ -1099,9 +1093,8 @@ impl Scene {
         self.with_controlled_structure_modules(now, |scene| scene.settle_modules_for_pilots(now))
     }
 
-    /// What the running effects and the capacitors have come to by `now`: cycles that end (the next begins, or the effect stops), and the charge told.
-    /// At most `MAX_MOMENTS_PER_SETTLE` moments are taken for a ship in one settle, and a moment that comes back at the same tick with nothing done is a stall
-    /// (the progress guarantee, M-1): the effect it belongs to is ended, so the loop always moves on.
+    /// Settles effects and capacitors through `now`, sending completed cycles and charge updates in event order.
+    /// Each settle is bounded by `MAX_MOMENTS_PER_SETTLE`; a stalled moment ends its effect to guarantee progress.
     fn settle_modules_for_pilots(&mut self, now: i64) -> Vec<Out> {
         let sessions: Vec<SessionId> = self
             .in_entry_order()
@@ -1173,8 +1166,7 @@ impl Scene {
         }
     }
 
-    /// A moment that came back unchanged (M-1): the effect it belongs to is ended (`Ending::Forced`) or the stalled pending start is dropped. `None` when the
-    /// moment has no effect to end (the charge and the shield are told as their ticks come), so the settle is left there.
+    /// A stalled moment ends its effect or drops its pending start; returns `None` when there is no effect to end.
     pub(super) fn stalled(&mut self, session: SessionId, kind: Moment, at: i64) -> Option<Vec<Out>> {
         let module_id = match kind {
             Moment::CycleEnd(index)
@@ -1273,7 +1265,7 @@ impl Scene {
         if let Some(sample) = pilot.modules.capacitor.as_ref().and_then(|c| c.next_sample) {
             consider(sample, Moment::Charge);
         }
-        // the shield's charge follows the capacitor's at the same tick (the reference works them out in that order)
+        // Tell the shield charge after the capacitor charge when both change at the same tick.
         if let Some(sample) = pilot.ship.health.next_sample {
             consider(sample, Moment::Shield);
         }
@@ -1308,20 +1300,19 @@ impl Scene {
             capacitor.next_sample = None;
             return Vec::new();
         }
-        // the tick that fills it is told when it is a tick that tells (the reference tells the change on every fifth tick)
+        // Report a charge change on every fifth tick, including the tick that fills the capacitor.
         capacitor.next_sample = (new < capacitor.capacity).then_some(at + SAMPLE_EVERY);
         vec![Self::charge_told(session, owner, ship, at, new, old)]
     }
 }
 
-/// The distance from a station or a stargate, short of which a smartbomb does not start: the larger of 5 km and its range, where the wiki gives values (3 km
-/// range held to 5 km, 6 km to 6 km). A range beyond the wiki's largest value takes that value: no source gives more.
+/// Smartbombs are refused within max(5 km, their range) of a station or stargate; range is capped at the largest listed value.
 const SMARTBOMB_NEAR_METERS: f64 = 5_000.0;
 const SMARTBOMB_NEAR_SOURCED_MAX_METERS: f64 = 6_000.0;
-/// The covert cynosural field's type (EVE.js `TYPE_COVERT_CYNOSURAL_FIELD`): a Mobile Cynosural Inhibitor does not stop it.
+/// Mobile Cynosural Inhibitors do not stop covert cynosural fields.
 const COVERT_CYNOSURAL_FIELD_TYPE: i32 = 28_650;
 
-/// Pochven (SDE region 10000070): the Triglavian region, a region-wide cynosural jammer (the wiki, "Pochven").
+/// Pochven (SDE region 10000070) blocks cynosural fields.
 const POCHVEN_REGION_ID: i32 = 10_000_070;
 
 impl Scene {
@@ -1336,7 +1327,7 @@ impl Scene {
     }
 }
 
-/// The refusal of a module whose rules limit the speed it starts at (WP19), for a ship going `speed` m/s: `None` when the speed is within the limits (a limit of 0 is none).
+/// Refuses activation outside the allowed ship speed in m/s; a limit of 0 disables that bound.
 pub(crate) fn velocity_refusal(rules: &Rules, speed: f64) -> Option<&'static str> {
     if rules.max_velocity_limit > 0.0 && speed > rules.max_velocity_limit {
         return Some("VELOCITY_TOO_HIGH");

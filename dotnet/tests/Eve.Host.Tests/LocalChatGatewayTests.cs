@@ -90,6 +90,23 @@ public sealed class LocalChatGatewayTests
         Assert.Equal(429U, (await gateway[BroadcastRequest](Request(BroadcastRequest, 1001, valid.ToArray()), CancellationToken.None)).StatusCode);
     }
 
+    [Fact]
+    public async Task Broadcast_enforces_a_shared_per_system_flood_limit()
+    {
+        var sessions = new ConnectedSessions();
+        sessions.Add(Session(1001, 2001, 30_000_001, 0));
+        sessions.Add(Session(1002, 2002, 30_000_001, 0));
+        var gateway = new LocalChatGateway(sessions, new NoticeHub()).Handlers();
+        var body = new ProtoWriter();
+        body.String(1, "hello");
+
+        for (var i = 0; i < 3; i++)
+            Assert.Equal(200U, (await gateway[BroadcastRequest](Request(BroadcastRequest, 1001, body.ToArray()), CancellationToken.None)).StatusCode);
+        for (var i = 0; i < 3; i++)
+            Assert.Equal(200U, (await gateway[BroadcastRequest](Request(BroadcastRequest, 1002, body.ToArray()), CancellationToken.None)).StatusCode);
+        Assert.Equal(429U, (await gateway[BroadcastRequest](Request(BroadcastRequest, 1001, body.ToArray()), CancellationToken.None)).StatusCode);
+    }
+
     private static ClientSession Session(long characterId, long corporationId, long systemId, long role)
     {
         var session = new ClientSession { SessionId = characterId, ClientId = characterId };

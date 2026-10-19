@@ -170,7 +170,6 @@ pub fn hit_quality_tier(shot: &Shot) -> u8 {
 }
 
 /// The `OnDamageMessage` a shot makes: for the pilot of the ship that shot (`attackType` `me`) or for the pilot of the ship that was shot
-
 #[allow(clippy::too_many_arguments)]
 pub fn damage_message(
     for_the_attacker: bool,

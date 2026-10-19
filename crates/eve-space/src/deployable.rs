@@ -1343,7 +1343,6 @@ impl Scene {
     }
 
     /// Whether a warp-disruption source covers `position` at `now`: a probe still in space within its range, or a bubble (a ship's running field generator, see
-
     pub(crate) fn warp_disrupted_at(&self, position: Vec3, now: i64) -> bool {
         let bubble = self.pilots.values().any(|pilot| {
             let reach = distance(position, pilot.ship.position);

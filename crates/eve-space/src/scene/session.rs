@@ -27,7 +27,6 @@ impl Scene {
     }
 
     /// The Host's current structure-pilot record version for this controller lease.
-
     pub(crate) fn burst_source_id(&self, session: SessionId) -> Option<i64> {
         self.controlled_structure_id(session)
             .or_else(|| self.pilots.get(&session).map(|pilot| pilot.ship.spec.ship_id))

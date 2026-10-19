@@ -184,7 +184,7 @@ pub enum CompanionKind {
 }
 
 /// What sets an NPC's ship apart from a player's: nobody flies it (its ball has no session and is not interactive), its slim item has no name and
-
+///
 /// as enemies or friends), and it fights with what `combat` says.
 #[derive(Debug, Clone, PartialEq)]
 pub struct NpcIdentity {

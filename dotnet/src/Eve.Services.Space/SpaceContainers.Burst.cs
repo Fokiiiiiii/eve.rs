@@ -56,7 +56,10 @@ public sealed partial class SpaceContainers
         var duration = CommandBurstBuffs.DurationOf(ship.World, cycle.OwnerId);
         if (buffs.Count == 0 || duration <= 0)
         {
-            _log?.Invoke($"command burst cycle {cycle.CycleId} refused: module {cycle.OwnerId} has {buffs.Count} buffs and duration {duration}");
+            var module = ship.Fitted.FirstOrDefault(item => item.Id == cycle.OwnerId);
+            var charge = module is null ? null : ship.ChargeOf(module);
+            var ids = new[] { 2468, 2470, 2472, 2536 }.Select(attribute => ship.World.Get(cycle.OwnerId, attribute));
+            _log?.Invoke($"command burst cycle {cycle.CycleId} refused: module {cycle.OwnerId} has {buffs.Count} buffs and duration {duration}; fitted flag {module?.Flag}; charge {charge?.TypeId}/{charge?.LocationId}/{charge?.Flag}/{charge?.Quantity}; buff ids [{string.Join(",", ids)}]");
             return WorkOutcome.Refuse("INVALID_PROFILE");
         }
         var now = (double)_nowUnixMs();

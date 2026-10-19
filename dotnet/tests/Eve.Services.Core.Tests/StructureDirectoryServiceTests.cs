@@ -619,16 +619,17 @@ public sealed class StructureDirectoryServiceTests
     }
 
     [Fact]
-    public async Task Move_eject_time_gm_requires_gml_and_accepts_only_client_timer_options()
+    public async Task Move_eject_time_gm_requires_gml_account_role_and_accepts_only_client_timer_options()
     {
         const long wrapId = 90000001;
-        const long gmlRole = 1L << 54;
+        var gmlRole = Eve.Services.GameMasterRoles.Gml;
         var callbacks = new TestAssetSafetyReadCallbacks();
         var service = new StructureAssetSafetyService(callbacks);
-        ServiceCall Request(int days, long role)
+        ServiceCall Request(int days, long accountRole, long sessionRole = 0)
         {
             var session = new ClientSession { CharacterId = 42 };
-            session.Set("role", new PyLong(role));
+            session.Set("accountRole", new PyLong(accountRole));
+            session.Set("role", new PyLong(sessionRole));
             return new ServiceCall
             {
                 Method = "MoveEjectTimeGM",
@@ -638,7 +639,7 @@ public sealed class StructureDirectoryServiceTests
         }
 
         await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(() =>
-            service.CallAsync(Request(5, 0)).AsTask());
+            service.CallAsync(Request(5, 0, gmlRole)).AsTask());
         await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(() =>
             service.CallAsync(Request(10, gmlRole)).AsTask());
         Assert.Empty(callbacks.GmTimerRequests);

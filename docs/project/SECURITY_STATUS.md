@@ -72,3 +72,19 @@ The following compressed records are embedded and look client-derived. They cont
 | `dotnet/src/Eve.Universe/Data/client-systems.jsonl.gz` | 21,379 bytes | 8,114 solar-system records | Review rights; prefer the permitted official SDE source |
 | `dotnet/src/Eve.Universe/Data/client-spacecomponentsbytype.jsonl.gz` | 474 bytes | 10 space-component records | Review rights; prefer the permitted official SDE source |
 | `dotnet/src/Eve.Universe/Data/client-solarsystemcontent.jsonl.gz` | 384 bytes | 6 solar-system content records | Review rights; prefer the permitted official SDE source |
+
+## Security review part 2
+
+On 2026-10-19, the slash command registry was traced in `dotnet/src/Eve.Services.Slash/SlashService.cs`. `SlashCmd` checks `GameMasterRoles.Staff` before catalog discovery, argument parsing, or handler dispatch, so every registered command shares the same server-side staff gate. `ReportSlashCommandUsage` does not execute a command or mutate command state. The existing tests checked representative commands; a new regression test enumerates the active command catalog and requires the refusal for each entry.
+
+| Entry class | Review result | Coverage |
+| --- | --- | --- |
+| Slash `SlashCmd` | Checked: common server-side staff gate precedes every registered handler. | Added catalog-driven non-staff refusal regression test; focused .NET test awaits package restore. |
+| Slash `ReportSlashCommandUsage` | Read-only telemetry endpoint; does not dispatch commands. | Source reviewed. |
+| GM/QA RPC services | Open: every public method and required role has not yet been enumerated. | Existing public QA denial tests remain; no complete registry test. |
+| Host RPC identifiers and ownership | Open: systematic service/method inventory and ownership classifications remain outstanding. | Existing representative ownership tests only. |
+| Expensive RPC and per-session bounds | Open: complete inventory and configurable limits remain outstanding. | Prior review covers only wire frame and output queue bounds described above. |
+| Host/RPC malformed payload isolation and checked arithmetic | Open: complete RPC argument-shape and arithmetic review remains outstanding. | Prior marshal decoder robustness checks described above. |
+| Placebo login replay mitigation | Open: no protocol-compatible nonce binding, account/IP throttling, or short hash validity window is recorded as implemented. | Production TLS termination remains the deployment requirement; protocol change needs client compatibility evidence. |
+
+Dependency scan during this pass: `cargo audit --no-fetch` scanned 114 locked Rust dependencies against 1,338 locally available advisories and exited successfully without findings. `pip-audit` is not installed. The .NET vulnerability scan could not complete because NuGet restore remained pending against the configured package source; the focused test project likewise has no assets file yet. No image scanner was available in the command path. These scan results do not close the open RPC and handshake review items above.

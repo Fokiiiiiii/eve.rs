@@ -165,4 +165,30 @@ public class ModuleBonusTests
 
         Assert.Equal(Percent(Base(rig, CovertCynosuralGeneratorI, CynoDuration), Base(rig, Redeemer, CynoDurationBonus)), running.World.Get(generator, CynoDuration), 9);
     }
+
+
+    /// <summary>
+    /// The skill's SDE strength bonus is 10% per level (attribute 2572, effect 6775); effects 6776, 6777 and 6780 apply that strength to the
+    /// corresponding charge-derived values. At level V, the Mk I module's value 1 and charge multipliers -8/-8/40 (2596) resolve to -12/-12/60.
+    /// </summary>
+    [PgFact]
+    public async Task Armor_shield_and_mining_burst_strength_uses_the_level_five_sde_skill_bonus()
+    {
+        await using var rig = await Rig.CreateAsync();
+        (int Module, int Charge, int StrengthSkill, double Expected)[] cases =
+        [
+            (42526, 42832, 11569, -12), // Armor Energizing: -8 * (1 + 50%)
+            (42529, 42695, 3351, -12),  // Shield Harmonizing: -8 * (1 + 50%)
+            (42528, 42829, 0, 60),      // Mining Foreman is the module's required skill: 40 * (1 + 50%)
+        ];
+
+        foreach (var (moduleTypeId, chargeTypeId, strengthSkill, expected) in cases)
+        {
+            var started = strengthSkill == 0
+                ? await FitAndStartAsync(rig, 587, moduleTypeId, chargeTypeId)
+                : await FitAndStartAsync(rig, 587, moduleTypeId, chargeTypeId, strengthSkill);
+            var (_, burst, running) = started;
+            Assert.Equal(expected, running.World.Get(burst, BuffValue), 9);
+        }
+    }
 }

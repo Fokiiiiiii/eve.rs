@@ -93,7 +93,10 @@ def test_a_loaded_burst_changes_a_fleet_members_dogma_until_its_buff_expires():
         notifications_of(member)
 
         owner_ballpark = owner.call("beyonce", "MachoBindObject", SYSTEM, None)
-        time.sleep(3)  # let both undocks publish the two ships to the shared ballpark
+        member_safe = wait_for_events(member, lambda events: named(events, "OnInvulnCancelled"), timeout=50)
+        assert named(member_safe, "OnInvulnCancelled"), "pilot B remained protected after undocking"
+        owner_safe = wait_for_events(owner, lambda events: named(events, "OnInvulnCancelled"), timeout=50)
+        assert named(owner_safe, "OnInvulnCancelled"), "pilot A remained protected after undocking"
         owner.call_bound(owner_ballpark[0], "CmdOrbit", member_ship, 5_000)
         try:
             owner.call_bound(owner_dogma[0], "AddTarget", member_ship)

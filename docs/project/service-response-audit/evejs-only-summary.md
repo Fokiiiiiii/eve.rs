@@ -4,7 +4,7 @@
 
 **登録名があること、同じRPC名があることだけでは、応答互換とは判断していません。** このsummaryは672行の詳細ledgerを読む入口です。全field・状態更新・通知・実client操作まで確認できていない項目は、引き続き未確認です。
 
-基準は `C:\Users\yutai\eve.rs`、`main`、HEAD `dda03ca0464043822e68c8348604ff34eadedcac`。元監査の開始HEADは `52b8421f` で、最終集計には親の作業中RPC宣言も含みます。参照はEveJS `828823a` とV24.01 eve-logicです。このsummary作成時も同じroot・branch・HEADを確認しました。
+基準は `eve.rs`、`main`、HEAD `dda03ca0464043822e68c8348604ff34eadedcac`。元監査の開始HEADは `52b8421f` で、最終集計には親の作業中RPC宣言も含みます。参照はEveJS `828823a` とV24.01 eve-logicです。このsummary作成時も同じroot・branch・HEADを確認しました。
 
 - **RS側coverage：181サービス名、1,280 RPC経路。** aliasを除く実装の名前は177、RPCの組合せは1,212。PostgreSQL・SDE・spaceを含むfull profileのソース集計で、実運転中の登録数を測った値ではありません。
 - **詳細ledger：672行＝named出口差476行＋protobuf候補182行＋返値・通知・session・providerの14群。** 同じhandlerを継承するaliasの重複は除いています。

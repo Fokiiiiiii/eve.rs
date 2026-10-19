@@ -42,7 +42,7 @@ the engine can be checked number by number.
    skills last, in their own order). The client applies these itself when it fits a ship on its own.
 6. **The service host uses it; the simulation is given the numbers.** `Eve.Services.Dogma` loads a
    character's ship, fitting and skills from their modules (ADR 0003), builds a world, and answers. The Rust
-   simulation (S4) does not run a second engine: the host sends it the derived numbers of each ship when its
+   simulation (S4) does not exercised a second engine: the host sends it the derived numbers of each ship when its
    fitting, skills or module state change (over the link of ADR 0002). What changes tick by tick (speed under
    an afterburner, an overloaded module) is handled when it arrives, either as a new set of numbers or, if
    that turns out too slow, by a Rust port checked against the same recordings and unit tests.

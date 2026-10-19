@@ -473,4 +473,4 @@ Not done (the rest of step (b) onward):
   list in the spec and in the sim's ship model. Not started in this slice.
 - The service-layer jump tests (NOT DONE): the harness exists (`SpaceServiceTests`, the gate jump tests) but a wormhole world needs a
   store and a scheduler in the space test rig. Not started.
-- The live check (NOT DONE): needs the sim, a static wormhole in a K-space system, and the MITM capture against EveJS; not run.
+- The live check (NOT DONE): needs the sim, a static wormhole in a K-space system, and the MITM capture against EveJS; not exercised.

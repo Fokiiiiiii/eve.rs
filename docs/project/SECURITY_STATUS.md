@@ -7,8 +7,8 @@ Checked 2026-10-19.
 - Rust: `cargo audit 0.22.2` loaded 1,338 RustSec advisories and scanned 114 dependencies in `Cargo.lock`; it exited successfully and reported no vulnerable packages. `cargo test -p eve-sde` passed (40 tests); `cargo fmt --check` and `cargo clippy -p eve-sde -- -D warnings` passed. CI on `1b867976` passed Rust tests, formatting, clippy, and the stable-toolchain advisory job.
 - .NET: `dotnet list dotnet/EveRs.slnx package --vulnerable --include-transitive` reported no vulnerable packages across the solution projects. The CI build passed with zero warnings on `1b867976`; the current full CI run is pending.
 - Python: `pip-audit 2.10.1` scanned both headless-client requirements files and reported no known vulnerabilities. The CI Python client job passed on `1b867976`; the current CI run is pending.
-- No tracked npm manifests or lockfiles were present. The Dockerfile uses `rust:1.99.0-bookworm`, `mcr.microsoft.com/dotnet/sdk:10.0`, and `mcr.microsoft.com/dotnet/runtime:10.0`. Docker Scout, Trivy, Grype, and Snyk were unavailable, so no image vulnerability database scan was completed.
-- Workflow action references were reviewed locally. They use version tags, including `actions/checkout@v7`, `actions/cache@v6`, and `actions/setup-dotnet@v6`; no action-advisory scan was available.
+- No tracked npm manifests or lockfiles were present. The Dockerfile uses those Rust and .NET version tags with pinned registry manifest digests. Docker Scout, Trivy, Grype, and Snyk were unavailable, so no image vulnerability database scan was completed.
+- Workflow action references are pinned to full commit IDs; no action-advisory scan was available.
 - GitHub Dependabot alerts are disabled for this repository. The GitHub secret-scanning MCP function was unavailable, and the REST alert endpoint was blocked by the environment proxy.
 
 ## Secret scan
@@ -33,7 +33,7 @@ Reviewed 2026-10-19 against the Rust, .NET, Python tool, deployment, and workflo
 
 ## Outstanding checks
 
-- The full regression suites will run in GitHub Actions after the security commits are pushed. Local checks here cover the changed Rust listener and workflow policy only.
+- GitHub Actions run 121 for commit `96c48594` failed during setup because the cache action ID was malformed; the pinned toolchain step also exposed a missing explicit `stable` input. Both workflow issues are corrected in the follow-up commit. Local checks cover the changed Rust listener and workflow policy.
 - The authorization review sampled role and ownership tests but did not enumerate every RPC that accepts a client-provided character, item, or location identifier, or every slash command that requires a staff role.
 - Per-account throttling for expensive authenticated RPCs needs a dedicated pass; no complete inventory of costly calls and limits is recorded here.
 - The review sampled marshal and gateway frame parsing. JSON/protobuf payload handling and malformed-input exception isolation across every Host/RPC entry remain to be traced.

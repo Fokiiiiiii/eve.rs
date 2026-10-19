@@ -2702,3 +2702,14 @@ The simulation writer now appends encoded frames directly to its batch buffer. T
 - **Insurgency agent:** map stage effects to 24.01 implementation and record thresholds/gateway protocol gaps.
 - **Weapon-bank agent:** inspect client grouped-weapon RPC contracts and state transitions.
 - **Static-data agent:** check June 12/16 NPC, capacitor recharge, Pyroxeres grade-0 yield and NPC mass changes against pinned SDE.
+
+## 62. Scheduler, war and inventory scale, structure identities, customs client contract (2026-10-19)
+
+| Status | Row | Notes |
+|---|---|---|
+| VERIFIED (PostgreSQL measurements) | Item 9: due-job scheduler throughput and site expiry storm | `Eve.Scheduler.Tests.A_burst_of_due_jobs_finishes_with_bounded_scheduler_latency`: 512 due jobs completed below 20 seconds with concurrency 8 and batch size 64. `CosmicSiteDirectorTests.A_burst_of_expired_sites_across_thirty_two_systems_finishes_within_twenty_seconds`: 128 site expiries across 32 systems completed below 20 seconds and each system regained four sites. Dungeon wave-progression load remains open. |
+| VERIFIED (PostgreSQL measurements) | Item 10: war lookup and item moves | `RuntimeTests.A_war_check_with_one_thousand_unrelated_wars_has_bounded_latency` checks the indexed owner-pair query against 1,000 unrelated wars and an active match. `ItemMutationStoreTests.Moving_items_uses_bounded_row_lookups_with_ten_thousand_items_present` measures 100 row-locked moves with 10,000 rows present. Ordinary moves lock by item primary key; merges acquire both item locks in ascending id order. Mixed-operation contention remains open. |
+| VERIFIED (PostgreSQL Host regression) | Item 11: structure item identity | `StructureAnchorAuthority` consumes the inventory item and inserts the structure under the same id in one transaction. `StructureAnchorTests.An_item_id_already_taken_by_a_structure_is_refused_and_the_item_stays` verifies duplicate live-structure ids are refused and the source item remains. Concurrent sovereignty save/restart stress coverage remains open. |
+| BUILT (target SDE, Host tests; graphical presentation open) | Item 14: customs inspection | V24 `eve/client/script/ui/shared/info/infosvc.py` exposes faction contraband legality and `eve/client/script/ui/shared/item.py` displays the contraband marker. EveJS checks undock and destination-system gate arrival; eve.rs uses the matching SDE `contrabandTypes` rules for fines, standing loss and confiscation. EVE University `New Slaves` documents a fine and faction-standing loss. `UndockContraband` regression tests cover the penalty settlement; the graphical notice, wallet line and item removal view remain open. |
+
+The war and move audit found no global in-process inventory or war lock. Direct war checks use the relation store's `(kind, subject, object)` uniqueness index and object index; inventory moves are keyed by item id. No runtime behavior change was required by these scale checks.

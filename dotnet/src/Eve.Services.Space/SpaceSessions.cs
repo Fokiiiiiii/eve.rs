@@ -878,8 +878,8 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
                         _log?.Invoke($"simulation sent OnDbuffUpdated for untracked session {notify.SessionId}");
                     }
                     break;
-                case SimNotify notify when _structureObservers.TryGetValue(notify.SessionId, out var observer):
-                    Forward(observer, notify);
+                case SimNotify notify when _structureObservers.TryGetValue(notify.SessionId, out var structureObserver):
+                    Forward(structureObserver, notify);
                     break;
                 case SimNotify notify when _pilots.TryGetValue(notify.SessionId, out var pilot):
                     Forward(pilot.Session, notify);

@@ -4937,6 +4937,10 @@ Q-22 records that Triglavian NPCs in Pochven do not pay bounties. Existing loot 
 
 V24.01 `eve/client/script/ui/shared/dockedUI/controllers/stationController.py:76` invokes `DoStandingCheckForStationService(stationServiceID)` with no character ID. EveJS `server/src/services/corporation/corpStationMgrService.js:304-353` also accepts a second ID and uses it for standing and security checks. The Host now treats any positive second ID as an assertion that must equal `Session.CharacterId`, then reads standing for that session character only. This preserves the V24.01 call shape and closes the path where a caller could substitute another pilot's standing. Regression: `CorpStationMgrTests.The_standing_check_cannot_use_another_pilots_standing`.
 
+## Standing manager read ownership (2026-10-19)
+
+V24.01 `eve/client/script/ui/shared/standings/standingsUIUtil.py:109` constructs `StandingData(toID, ownerID)` from the active character or corporation selected by the standings panel. EveJS `standingMgrService.js` accepts arbitrary identifiers for `GetStandingTransactions(fromID, toID)` and `GetStandingCompositions(fromID, corporationID)`. The Host keeps those RPC signatures, but returns character transaction history only when `toID` matches the active session character and corporation composition only when the requested corporation matches the caller's persisted membership. Regression: `StandingMgrServiceTests.Standing_history_is_scoped_to_the_active_character_and_corporation`.
+
 
 ## Research checkpoint reconciliation (2026-10-19)
 

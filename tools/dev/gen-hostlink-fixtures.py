@@ -15,7 +15,7 @@ KINDS = {"Hello": 1, "HelloAck": 2, "AuthRequest": 3, "AuthReply": 4, "SessionOp
          "SessionClose": 6, "Packet": 7, "Send": 8, "Disconnect": 9, "ClusterConfig": 10}
 
 
-def s(text):  # u16 length + UTF-8
+def s(text):
     data = text.encode("utf-8")
     return struct.pack("<H", len(data)) + data
 

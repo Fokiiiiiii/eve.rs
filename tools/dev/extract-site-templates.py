@@ -85,7 +85,7 @@ def main():
         c = client.get(dungeon_id) or {}
         return c.get("dungeonNameID"), c.get("entryObjectTypeID"), c.get("difficulty")
 
-    # combat anomalies and signatures: the wiki's site tables, matched to the SDE's dungeons by name
+
     for t in templates:
         if t.get("source") != "eve-university" or t.get("siteFamily") != "combat" or t.get("siteKind") not in ("anomaly", "signature"):
             continue

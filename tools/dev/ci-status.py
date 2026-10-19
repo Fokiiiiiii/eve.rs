@@ -78,7 +78,7 @@ def failing_step_tail(payload: bytes, content_type: str, job_id: int, step: dict
     lines = payload.decode("utf-8", "replace").splitlines()
     start, end = step.get("started_at"), step.get("completed_at")
     if start and end:
-        # Job logs prefix every line with an RFC3339 timestamp. Isolate the failing step's time window.
+
         start_time = datetime.fromisoformat(start.replace("Z", "+00:00"))
         end_time = datetime.fromisoformat(end.replace("Z", "+00:00"))
         window = []

@@ -460,6 +460,10 @@ public sealed partial class SpaceSessions
                 ? refusal with { TargetType = reply.TargetType, ShipType = snapshot.Ship.TypeId, DesiredRange = reply.DesiredRange, ActualDistance = reply.ActualDistance, EffectName = effectName }
                 : refusal;
         }
+        if (string.Equals(effectName, Effects.TypeAttributeResistanceEffect.EffectName, StringComparison.OrdinalIgnoreCase))
+        {
+            await _ships.BurnOutModuleAsync(characterId, moduleId, cancellationToken).ConfigureAwait(false);
+        }
         pilot.RunningModules[moduleId] = RunningModule.Of(effectName, targetId, repeat, aim, aimEnd, package);
         await RefreshRunningAsync(pilot, id, cancellationToken).ConfigureAwait(false);
         AnnounceModeChange(pilot, snapshot, moduleId, started: true);

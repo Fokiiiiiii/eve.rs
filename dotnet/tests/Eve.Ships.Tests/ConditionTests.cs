@@ -51,6 +51,21 @@ public class ConditionTests
     }
 
     [PgFact]
+    public async Task An_emergency_hull_energizer_burns_out_once_and_the_damage_survives_a_ship_reload()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var c = await rig.NewCharacterAsync();
+
+        Assert.True(await rig.Ships.BurnOutModuleAsync(c.CharacterId, c.ShipId + 1));
+
+        var snapshot = (await rig.Ships.LoadAsync(c.CharacterId))!;
+        Assert.Equal(1, snapshot.ConditionOf(c.ShipId + 1).Damage);
+        Assert.False(await rig.Ships.BurnOutModuleAsync(c.CharacterId, c.ShipId + 1));
+        Assert.False(await rig.Ships.BurnOutModuleAsync(999_999_999, c.ShipId + 1));
+        Assert.Equal(1, (await rig.Ships.LoadAsync(c.CharacterId))!.ConditionOf(c.ShipId + 1).Damage);
+    }
+
+    [PgFact]
     public async Task A_preset_damages_the_ship_and_every_fitted_module_and_says_what_each_was()
     {
         await using var rig = await Rig.CreateAsync();

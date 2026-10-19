@@ -28,7 +28,8 @@ public sealed partial class DogmaIMService(
     ISpaceRounds? rounds = null, Func<TimeSpan, CancellationToken, Task>? delay = null, Action<string>? log = null, Eve.Scheduler.LocalTimers? localTimers = null, Func<ClientSession, IReadOnlyList<long>, CancellationToken, Task<PyValue>>? injectSkillBooks = null,
     Func<ClientSession, CancellationToken, ValueTask>? createNewbieShip = null, ISpaceProbes? probes = null,
     Func<ClientSession, ShipSnapshot, CancellationToken, ValueTask<ShipSnapshot?>>? controlledStructureSnapshot = null,
-    PilotAugmentationRpc? augmentations = null) : IBoundObjectReleaseHandler
+    PilotAugmentationRpc? augmentations = null,
+    Func<ClientSession, ShipSnapshot, CancellationToken, ValueTask<ShipSnapshot?>>? prepareSpaceDogma = null) : IBoundObjectReleaseHandler
 {
     private readonly CharacterDogmaSync _sync = sync ?? new CharacterDogmaSync(statics, ships, nowUnixMs);
 
@@ -118,6 +119,8 @@ public sealed partial class DogmaIMService(
         if (BoundContextOf(call) is null || call.Session.CharacterId is not { } character
             || await ReadSnapshotAsync(call.Session, call.Cancellation) is not { } snapshot)
             return None;
+        if (prepareSpaceDogma is not null && await prepareSpaceDogma(call.Session, snapshot, call.Cancellation) is { } dogmaSnapshot)
+            snapshot = dogmaSnapshot;
         // a ship in space has taken what the simulation says, not what it had when it left the station
         if (health is not null && await health.ConditionAsync(call.Session, call.Cancellation) is { } live)
         {

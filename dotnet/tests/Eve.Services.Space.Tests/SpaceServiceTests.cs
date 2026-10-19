@@ -1290,6 +1290,35 @@ public class SpaceServiceTests
     }
 
     [PgFact]
+    public async Task A_module_at_full_hull_damage_is_refused_before_the_simulation_starts_it()
+    {
+        var (rig, character, _) = await DockedAsync();
+        await using var _ = rig;
+        var (snapshot, afterburner, _, _) = await ShipAsync(rig, character);
+        var damaged = new Eve.Ships.ShipSnapshot
+        {
+            Character = snapshot.Character,
+            Ship = snapshot.Ship,
+            Fitted = snapshot.Fitted,
+            Charges = snapshot.Charges,
+            Stance = snapshot.Stance,
+            Skills = snapshot.Skills,
+            World = snapshot.World,
+            Condition = snapshot.Condition,
+            Neighbours = snapshot.Neighbours,
+            ModuleConditions = new Dictionary<long, Eve.Fitting.ModuleCondition>
+            {
+                [afterburner] = new(1, 0, 1, false),
+            },
+        };
+
+        var result = ModulePackages.Of(damaged, rig.Statics, afterburner, "moduleBonusAfterburner", 0, 1);
+
+        Assert.Equal("MODULE_INCAPACITATED", result.Reason);
+        Assert.Null(result.Effect);
+    }
+
+    [PgFact]
     public async Task What_cannot_be_run_is_refused_with_the_reason_and_the_module_that_the_message_names()
     {
         var (rig, character, _) = await DockedAsync();

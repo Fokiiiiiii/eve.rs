@@ -42,6 +42,28 @@ public sealed partial class CharacterShips
     /// The character's ship in its hangar is damaged as the preset says, and so is each module fitted to it (the shield and capacitor as well as
     /// the armor and hull). Null when the character has no ship in a hangar.
     /// </summary>
+    /// <summary>Persists the emergency hull energizer's one-use burnout after its activation is accepted.</summary>
+    public async Task<bool> BurnOutModuleAsync(long characterId, long moduleId, CancellationToken cancellationToken = default)
+    {
+        if (await ActiveShipAsync(characterId, cancellationToken) is not var (ship, fitted, _)
+            || fitted.FirstOrDefault(module => module.Id == moduleId) is null)
+        {
+            return false;
+        }
+
+        var condition = (await modules.ModuleConditionsAsync([moduleId], cancellationToken))
+            .GetValueOrDefault(moduleId, ModuleCondition.Untouched);
+        if (condition.Damage >= 1)
+        {
+            return false;
+        }
+
+        await modules.SetModuleConditionsAsync(
+            new Dictionary<long, ModuleCondition> { [moduleId] = condition with { Damage = 1 } },
+            cancellationToken);
+        return true;
+    }
+
     public async Task<ConditionChanged?> DamageDockedAsync(long characterId, HealthPreset preset, CancellationToken cancellationToken = default)
     {
         if (await ActiveShipAsync(characterId, cancellationToken) is not var (ship, fitted, character) || ship.LocationId != character.StationId || ship.Flag != ItemFlags.Hangar)

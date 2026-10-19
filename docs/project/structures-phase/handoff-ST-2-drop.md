@@ -43,7 +43,7 @@ The Structures tests cover the same-transaction callback/outbox, restart deliver
 
 ## Parent Test Run Update
 
-Parent reported an initial focused Space test run with 9 tests: 8 passed and `Bound_ship_scoop_moves_the_fittings_artifact_and_children_then_checks_hull_hold_room` failed because its fixture reused the station-bound OID after undocking. The bound service correctly rejected that OID, and the handler returned `None` without changing custody. The fixture now calls `BindShipInSpaceAsync(session)` after `Undock`, matching the existing jettison test path. Parent must rerun the focused filter; this worker did not run it. No production distance, authorization, or capacity rule was relaxed.
+Parent reported an initial focused Space test run with 9 tests: 8 passed and `Bound_ship_scoop_moves_the_fittings_artifact_and_children_then_checks_hull_hold_room` failed because its fixture reused the station-bound OID after undocking. The bound service correctly rejected that OID, and the handler returned `None` without changing custody. The fixture now calls `BindShipInSpaceAsync(session)` after `Undock`, matching the existing jettison test path. Parent must rerun the focused filter; this worker did not execute it. No production distance, authorization, or capacity rule was relaxed.
 
 ## Remaining Verification
 

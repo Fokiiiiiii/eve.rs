@@ -25,12 +25,57 @@ public sealed class CharacterHostTests
     private const long ProxyNode = MachoMessage.ProxyNodeId;
 
     [PgFact]
+    public async Task Skill_injector_applies_sequential_awards_and_persists_points_and_inventory_through_host()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync();
+        var character = await rig.CreateCharacterAsync();
+        var sink = new RecordingPacketSink();
+        var session = new ClientSession { CharacterId = character, Sink = sink };
+        session.Set("stationid", new PyInt(rig.Station));
+        rig.Sessions.Enter(character, session);
+        var skills = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("skillHandler"));
+        var sde = new Eve.Sde.SdeReader(rig.Source);
+        var catalog = await Eve.Skills.SkillCatalog.LoadAsync(sde);
+        var large = catalog.ItemTypeId("Large Skill Injector")!.Value;
+        var itemStore = new PgItemStore(rig.Source, rig.InventorySchema);
+        var itemId = await CreateHostItemAsync(rig, itemStore,
+            new NewItem(large, character, rig.Station, 4, 2, Singleton: false));
+        var store = new PgSkillStore(rig.Source, rig.SkillsSchema);
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await store.GrantFreeSkillPointsAsync(connection, transaction, character, 4_501_000);
+            await transaction.CommitAsync();
+        }
+
+        Assert.Equal(new PyInt(900_000), await CallAsync(skills, "InjectSkillpoints", session,
+            new PyLong(itemId), new PyInt(2)));
+        Assert.Equal(5_401_000, await store.FreeSkillPointsAsync(character));
+        Assert.Null(await itemStore.GetAsync(itemId));
+        Assert.Equal(new[] { "OnItemChange", "OnFreeSkillPointsChanged" }, Notifications(sink).Select(n => n.Name));
+
+        await rig.RestartAsync();
+        Assert.Equal(5_401_000, await new PgSkillStore(rig.Source, rig.SkillsSchema).FreeSkillPointsAsync(character));
+        Assert.Null(await new PgItemStore(rig.Source, rig.InventorySchema).GetAsync(itemId));
+    }
+
+    private static async Task<long> CreateHostItemAsync(CharacterHostRig rig, PgItemStore store, NewItem item)
+    {
+        await using var connection = await rig.Source.OpenConnectionAsync();
+        await using var transaction = await connection.BeginTransactionAsync();
+        var id = await store.CreateAsync(connection, transaction, item);
+        await transaction.CommitAsync();
+        return id;
+    }
+
+    [PgFact]
     public async Task Jump_clones_are_read_changed_and_kept_through_the_host_registry_and_a_restart()
     {
         await using var rig = await CharacterHostRig.CreateAsync();
         var character = await rig.CreateCharacterAsync();
         var sink = new RecordingPacketSink();
         var session = new ClientSession { CharacterId = character, Sink = sink };
+        session.Set("charid", new PyLong(character));
         session.Set("stationid", new PyInt(rig.Station));
         var service = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("jumpCloneSvc"));
         foreach (var method in new[]
@@ -89,12 +134,26 @@ public sealed class CharacterHostTests
         Assert.Equal(new[] { first, other }, Rows(Field(afterRestart, "clones")).Select(row => ((PyLong)row.Items[0]).Value).ToArray());
         Assert.Equal("Renamed", ((PyWString)Rows(Field(afterRestart, "clones"))[0].Items[2]).Value);
 
-        // destroy removes the clone; the last jump reset is persisted as zero
+        // destroy removes the clone and persists the same notification row returned by notificationMgr
         Assert.IsType<PyNone>(await BoundAsync(restarted, session, "DestroyInstalledClone", new PyLong(other)));
         Assert.Equal(new[] { first }, Rows(Field(await BoundAsync(restarted, session, "GetCloneState"), "clones"))
             .Select(row => ((PyLong)row.Items[0]).Value).ToArray());
-        Assert.IsType<PyNone>(await BoundAsync(restarted, session, "ResetLastCloneJumpTime"));
-        Assert.Equal(new PyLong(0), Field(await BoundAsync(restarted, session, "GetCloneState"), "timeLastJump"));
+        var notifications = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("notificationMgr"));
+        var deleted = Assert.Single(Assert.IsType<PyList>(await CallAsync(notifications, "GetAllNotifications", session)).Items);
+        Assert.Equal(new PyInt(56), Field(deleted, "typeID"));
+        var deletionData = Field(deleted, "data");
+        Assert.Equal(new PyInt(character), Field(deletionData, "locationOwnerID"));
+        Assert.Equal(new PyInt(character), Field(deletionData, "destroyerID"));
+        Assert.Empty(Assert.IsType<PyList>(Field(deletionData, "typeIDs")).Items);
+
+        await rig.RestartAsync();
+        var notificationsAfterRestart = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("notificationMgr"));
+        var persistedDeletion = Assert.Single(Assert.IsType<PyList>(await CallAsync(notificationsAfterRestart, "GetAllNotifications", session)).Items);
+        Assert.Equal(new PyInt(56), Field(persistedDeletion, "typeID"));
+
+        var restartedClones = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("jumpCloneSvc"));
+        Assert.IsType<PyNone>(await BoundAsync(restartedClones, session, "ResetLastCloneJumpTime"));
+        Assert.Equal(new PyLong(0), Field(await BoundAsync(restartedClones, session, "GetCloneState"), "timeLastJump"));
     }
 
     [PgFact]
@@ -425,6 +484,8 @@ public sealed class CharacterHostTests
             await transaction.CommitAsync();
         }
         await rig.SetSkillLevelAsync(character, 3300, 3);
+        var skillPlans = new Eve.Skills.PgSkillPlanStore(rig.Source, rig.SkillsSchema);
+        var skillPlanId = await skillPlans.CreateAsync(character, "Private plan", "", []);
         await using (var connection = await rig.Source.OpenConnectionAsync())
         await using (var queue = new NpgsqlCommand(
             $"INSERT INTO {rig.SkillsSchema}.skill_queue (character_id, position, type_id, to_level) VALUES ($1, 0, 3300, 4)", connection))
@@ -432,6 +493,8 @@ public sealed class CharacterHostTests
             queue.Parameters.Add(new NpgsqlParameter { Value = character });
             await queue.ExecuteNonQueryAsync();
         }
+
+        await rig.Characters.SetAppearanceAsync(character, [1, 2], true, [3, 4], true);
 
         // prepare again, move the waiting time into the past (the test's clock), then delete
         await CallAsync(restarted, "PrepareCharacterForDelete", session, new PyLong(character));
@@ -458,6 +521,8 @@ public sealed class CharacterHostTests
             count.Parameters.Add(new NpgsqlParameter { Value = character });
             Assert.Equal(0L, (long)(await count.ExecuteScalarAsync())!);
         }
+        Assert.Empty(await skillPlans.ListAsync(character));
+        Assert.Null(await skillPlans.GetAsync(character, skillPlanId));
         await using (var queueConnection = await rig.Source.OpenConnectionAsync())
         await using (var queueCount = new NpgsqlCommand(
             $"SELECT count(*) FROM {rig.SkillsSchema}.skill_queue WHERE character_id = $1", queueConnection))
@@ -471,6 +536,7 @@ public sealed class CharacterHostTests
         // the deleted character is hidden from its account and refused at selection
         var deleted = Assert.IsType<Character>(await rig.Characters.GetAsync(character));
         Assert.True(deleted.IsDeleted);
+        Assert.Equal((null, null), await rig.Characters.AppearanceAsync(character));
         Assert.DoesNotContain(await rig.Characters.ForAccountAsync(1), c => c.Id == character);
         var refused = await Assert.ThrowsAsync<MachoWrappedException>(() =>
             CallAsync(restarted, "SelectCharacterID", session, new PyLong(character), PyNone.Instance, PyBool.False));
@@ -953,7 +1019,12 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
 
     private static PyValue Field(PyValue keyVal, string key)
     {
-        var entries = Assert.IsType<PyDict>(Assert.IsType<PyObject>(keyVal).Args).Entries;
+        var entries = keyVal switch
+        {
+            PyObject obj => Assert.IsType<PyDict>(obj.Args).Entries,
+            PyDict dict => dict.Entries,
+            _ => throw new Xunit.Sdk.XunitException($"Expected a dictionary, got {keyVal.GetType().Name}"),
+        };
         return entries.Single(entry => ((PyStr)entry.Key).Value == key).Value;
     }
 

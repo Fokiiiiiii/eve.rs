@@ -4,10 +4,10 @@
 
 ## 読む順番と現在の集計
 
-1. [日本語summary](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-summary.md) — 利用者向けの影響、確定・候補・未確認の区別。
-2. [詳細ledger](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md) — EJS-0001〜EJS-0672の672行、両側sourceとcallsite、動的検証の限界。
-3. [TODO入口](C:/Users/yutai/eve.rs/docs/project/TODO.md#evejs-response-audit-backlog-2026-10-13) — 448 named出口を63 service group、182候補を59 namespaceで参照。既存owner TODOへ統合し重複加算しない。
-4. [Core A-F新handoff](C:/Users/yutai/eve.rs/docs/project/service-response-audit/core-a-f.md:345) と [Host/protobuf監査](C:/Users/yutai/eve.rs/docs/project/service-response-audit/host-protobuf.md) — 新分類と登録・共通通信の根拠。
+1. [日本語summary](../../service-response-audit/evejs-only-summary.md) — 利用者向けの影響、確定・候補・未確認の区別。
+2. [詳細ledger](../../service-response-audit/evejs-only-responses.md) — EJS-0001〜EJS-0672の672行、両側sourceとcallsite、動的検証の限界。
+3. [TODO入口](../../TODO.md#evejs-response-audit-backlog-2026-10-13) — 448 named出口を63 service group、182候補を59 namespaceで参照。既存owner TODOへ統合し重複加算しない。
+4. [Core A-F新handoff](../../service-response-audit/core-a-f.md:345) と [Host/protobuf監査](../../service-response-audit/host-protobuf.md) — 新分類と登録・共通通信の根拠。
 
 現在の476 named名差は **未実装448／client-local対応3／legacy未確認25**。綴りalias 2はclient-local 3の内数です。Core A-F旧44件は **未実装33／client-local対応3／legacy6／現行same-service実装済2**、現在の未登録名は42件。実装済2件は既存ledger・TODOから既に除外されており、二重減算しません。
 
@@ -19,13 +19,13 @@
 
 main `c114dc0d` にはupstream `1e3e97f8`（Industry／Market／Cynosural）が取り込まれています。監査snapshot `dda03ca0` の判定・672行ledgerを維持し、これら後続差分の再照合は未完了として保留します。後続mainへの取り込みを、snapshot判定の更新や新しい実動互換の確認とは扱いません。
 
-snapshot後に親＋Zenoが確認したSkills `DiminishedInjectorSp` の既存実装差は、[既存Skills TODOへの修正待ち補足](C:/Users/yutai/eve.rs/docs/project/TODO.md#evejs-response-audit-backlog-2026-10-13)で別管理します。Zenoが修正担当であり、修正済み・検証済みとは記録していません。ledgerへ新しいIDを追加せず、集計を変更しません。今回の文書補足はREADME／TODOのみで、全数再監査は実施していません。
+snapshot後に親＋Zenoが確認したSkills `DiminishedInjectorSp` の既存実装差は、[既存Skills TODOへの修正待ち補足](../../TODO.md#evejs-response-audit-backlog-2026-10-13)で別管理します。Zenoが修正担当であり、修正済み・検証済みとは記録していません。ledgerへ新しいIDを追加せず、集計を変更しません。今回の文書補足はREADME／TODOのみで、全数再監査は実施していません。
 
 ## 対象と根拠
 
-- 作業対象は `C:\Users\yutai\eve.rs` の `main`。source監査snapshot HEADは `dda03ca0464043822e68c8348604ff34eadedcac`（親のdirty宣言を含むsource監査。実運転snapshotではない）。文書読戻し時のmain HEADは `c114dc0d8e292c056e8d71b37f496084f484676f`。この後続commitのsource受入を再検証したとは扱わない。
-- EveJS の基準は `C:\Users\yutai\evejs-v0.12.9`、commit `828823a75f211fdecb945b087a26c225f111491f`。
-- V24.01 client callsites は `C:\Users\yutai\eve-logic`、commit `1dbb5711a072a146e1d228365668ac05655eefe1`。
+- 作業対象は `repository root` の `main`。source監査snapshot HEADは `dda03ca0464043822e68c8348604ff34eadedcac`（親のdirty宣言を含むsource監査。実運転snapshotではない）。文書読戻し時のmain HEADは `c114dc0d8e292c056e8d71b37f496084f484676f`。この後続commitのsource受入を再検証したとは扱わない。
+- EveJS の基準は `evejs-v0.12.9`、commit `828823a75f211fdecb945b087a26c225f111491f`。
+- V24.01 client callsites は `eve-logic`、commit `1dbb5711a072a146e1d228365668ac05655eefe1`。
 - 別checkoutを読んだサブエージェント結果は現行mainの監査結果として受け入れない。絶対パス・branch・HEADを確認して再監査する。
 
 ## 手順と判定

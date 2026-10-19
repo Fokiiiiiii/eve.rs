@@ -269,7 +269,7 @@ Client sources use the separate EveLogic commit and blob IDs below.
 | `spacecomponents/client/components/activate.py` | `e4b259dccbf713f47ba16dcf0c10ec8cbd116ae0` |
 | `eve/client/script/spacecomponents/activatecontroller.py` | `40560ad6bbd03eb13e379c716c90f5e9748e52d2` |
 
-## Unverified items
+## Not confirmed items
 
 - Feature status remains PARTLY: JS three-room combat/final Origin and the single-scenario RS reconnect baseline now pass; RS all4 and full same-scenario JS/RS capture parity remain not confirmed.
 - The latest RS reconnect/entry baseline passes, but it does not establish RS all-four or same-scenario combat/loot/Origin parity with EveJS.

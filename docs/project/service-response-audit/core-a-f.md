@@ -1,8 +1,8 @@
 # Eve.Services.Core A–F 応答互換監査
 
 監査時点: 2026-10-13（中断後の追補完了）
-対象checkout: C:\Users\yutai\eve.rs / main / 取得基点HEAD 52b8421f34e635900a18459da4403f26f2dfaec0 / 最終確認HEAD dda03ca0464043822e68c8348604ff34eadedcac
-参照: C:\Users\yutai\evejs-v0.12.9、C:\Users\yutai\eve-logic
+対象checkout: eve.rs / main / 取得基点HEAD 52b8421f34e635900a18459da4403f26f2dfaec0 / 最終確認HEAD dda03ca0464043822e68c8348604ff34eadedcac
+参照: evejs-v0.12.9、eve-logic
 対象範囲: dotnet/src/Eve.Services.Core のbasename A–Fの26個のC#ファイルにある全service宣言。FittingMgrServicesを含む。
 
 ## 集計（現行main）
@@ -19,7 +19,7 @@
 
 AGENTS.md、CLAUDE.md、AGENT_OVERRIDE.md、dotnet/src/AGENTS.md、関連skill repo-recon/ponytail、ADR 0001/0003/0005/0010を確認した。比較ではEveJSのservice handler、Hostの登録・provider、eve-logicのcallsiteを別々に追った。
 
-CBMは接続済みでTransport closedは発生しなかったため、指定のCLI fallbackは不要だった。CBMのcoreディレクトリcoverageはfreshness=not_trackedだったので、indexは探索に使い、内容と行番号はSerenaの現在sourceを基準にした。継続監査ではSerena manualを読み、canonical Serenaを絶対path C:\Users\yutai\eve.rsへactivateした。参照検索はrootを確認したCBMを使用した。mainのexact-path coverageはmetadata_changedだったため、現行C#のbody・行番号はSerenaで読み直した。CBMはC-Users-yutai-eve.rs / repository root、evejs-v0.12.9 / EveJS repository（828823a75f211fdecb945b087a26c225f111491f）、eve-logic / eve-logic repository（1dbb5711a072a146e1d228365668ac05655eefe1）を確認済み。
+CBMは接続済みでTransport closedは発生しなかったため、指定のCLI fallbackは不要だった。CBMのcoreディレクトリcoverageはfreshness=not_trackedだったので、indexは探索に使い、内容と行番号はSerenaの現在sourceを基準にした。継続監査ではSerena manualを読み、canonical Serenaを絶対path eve.rsへactivateした。参照検索はrootを確認したCBMを使用した。mainのexact-path coverageはmetadata_changedだったため、現行C#のbody・行番号はSerenaで読み直した。CBMはC-Users-yutai-eve.rs / repository root、evejs-v0.12.9 / EveJS repository（828823a75f211fdecb945b087a26c225f111491f）、eve-logic / eve-logic repository（1dbb5711a072a146e1d228365668ac05655eefe1）を確認済み。
 
 これはsource-level監査であり、テスト、headless differential run、実EVE V24.01 graphical client、PostgreSQLシナリオ、再起動後の応答は実行していない。PyValue/JS値から導く応答shapeは静的な判定で、実wire byte captureの確認ではない。ID、Filetime、CallId、現在時刻の値差はshape差と分けている。
 
@@ -443,7 +443,7 @@ PIのpayload helpersも確認した。PJ:307-346のpinはutil.KeyVal（type別fi
 
 ### 作業保全・最終境界
 
-- 実root repository root、branch main、取得基点HEAD 52b8421f34e635900a18459da4403f26f2dfaec0、最終確認HEAD dda03ca0464043822e68c8348604ff34eadedcac。保存/検査中の親commit dda03ca0はCrate retry修正で、変更pathはCrateService.cs、CrateServiceTests.cs、親のcrate-skill-retry-fix.mdのみ。今回49 RPC＋新規2 RPCのソースにはこのcommitの差分なし。Crate ClaimFittingは最新sourceで読み戻し、予約/rollbackを保持することを確認した。ambient worktree1e47はsource/保存に使わなかった。全exec_commandのworkdirをC:\Users\yutai\eve.rsに指定。
+- 実root repository root、branch main、取得基点HEAD 52b8421f34e635900a18459da4403f26f2dfaec0、最終確認HEAD dda03ca0464043822e68c8348604ff34eadedcac。保存/検査中の親commit dda03ca0はCrate retry修正で、変更pathはCrateService.cs、CrateServiceTests.cs、親のcrate-skill-retry-fix.mdのみ。今回49 RPC＋新規2 RPCのソースにはこのcommitの差分なし。Crate ClaimFittingは最新sourceで読み戻し、予約/rollbackを保持することを確認した。ambient worktree1e47はsource/保存に使わなかった。全exec_commandのworkdirをeve.rsに指定。
 - 途中に親/他workerのsource/test差分14 files（保存前read-only statで661 insertions/46 deletions）と複数の未追跡audit docsを観測した。これらをrestore/stage/delete/commitしていない。自担当writeはこのcore-a-f.mdのみ。開始時source cleanと読み直し時の親Crate dirtyを混同しない。
 - 既読materialを再利用。canonical Serena manual/activateとCBM三rootを確認済み。CBM source exact-path metadata_changedをSerena current bodyで補った。Transport closedはなかった。追加text searchのrequest_timeoutはnarrow query/graph/snippetで回避し、ARCHETYPE_SETS追加text検索timeoutもsymbol snippetで回収し、CJ:33-51の定数を照合した。未確認を一致件数へ加えていない。
 - 本担当ではsource/test変更、build/test、Git mutation、子agent、別modelへの切替を実行していない。親のCore698/Rust835等のPASSはユーザー提示の既存検証対象であり、本監査の全差分/runtimesをPASSとする証拠にはしていない。

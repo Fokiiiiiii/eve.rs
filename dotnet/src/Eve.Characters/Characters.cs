@@ -547,4 +547,15 @@ public sealed partial class PgCharacterStore
         command.Parameters.Add(new NpgsqlParameter { Value = (object?)portrait ?? DBNull.Value });
         return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
     }
+
+
+    /// <summary>Removes appearance data as part of the character deletion transaction.</summary>
+    public async Task ClearAppearanceAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long id, CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand(
+            $"UPDATE {_schema}.characters SET doll_info = NULL, portrait_info = NULL, paperdoll_state = NULL WHERE id = $1",
+            connection, transaction);
+        command.Parameters.Add(new NpgsqlParameter { Value = id });
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
 }

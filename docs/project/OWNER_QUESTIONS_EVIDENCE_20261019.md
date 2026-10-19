@@ -34,7 +34,7 @@ The numeric values above are type IDs only where the client objective graph expl
 | Add rule-derived generic NPC/site content from objective categories | A site could include generic hostile, hauler, fighter or defense objectives, using only types named in the chain where available. | Requires owner approval of a deliberately approximate simulation; count, waves, rooms, and unspecified enemy types remain unsupported. This is not a source-complete recreation. |
 | Wait for a source-backed NPC manifest/template | The intended historical AIR simulation could be represented if a reliable manifest is obtained. | No such manifest appears in the reviewed server SDE, client static export, eve-logic, or EveJS. |
 
-**Decision needed:** Should 17183–17186 remain held until a source-backed NPC manifest exists, or should the owner explicitly approve four generic, rule-derived simulations despite missing count/roster data? **Recommended default:** keep them held. The objective categories alone cannot define a complete kill site without inventing content.
+**Owner decision (2026-10-19):** Keep 17183–17186 held until an authoritative NPC/site manifest exists. The objective categories do not supply a complete site roster, counts or waves. The objective categories alone cannot define a complete kill site without inventing content.
 
 ## Q-03 — 1,100 untagged missions
 
@@ -50,7 +50,7 @@ The server SDE mission records do not carry a top-level mission level, `missionL
 
 The untagged set totals 1,100. Agent division, mission-name conventions, rewards, and standing changes are not a defensible level formula: divisions classify work, titles are narrative/family labels, and reward/standing values do not have a stable published conversion to mission level. Epic-arc reward adjustments further make reward inversion unreliable.
 
-**Recommendation:** leave these rows untagged. Add a level only when a row gains an authoritative level field or an independently documented rule that maps it without relying on title guesses, agent assignment, or reward inference.
+**Owner decision (2026-10-19):** Keep the approximately 1,100 rows untagged until an authoritative level source exists. Add a level only when a row gains an authoritative level field or an independently documented rule that maps it without relying on title guesses, agent assignment, or reward inference.
 
 ## Q-04 — Public gateway: insurgency corruption/suppression (C-G1)
 
@@ -66,7 +66,7 @@ The untagged set totals 1,100. Agent division, mission-name conventions, rewards
 
 The client call, message contract, gateway transport, and campaign/site-point state exist. Missing pieces are the registered insurgency reads and notice subscriptions, rules-backed aggregation of campaign progress and per-stage contribution, and thresholds sourced from a verified game rule. No missing structure or protobuf service definition is established. A server can implement the handler/notification shape from the contract, but it must not return EveJS's zeros and empty lists as if they were real progress. The client-side failure also means a server-only change has not been shown to make these bars visible in the unmodified client.
 
-**Decision needed:** Should this be reopened for implementation from authoritative campaign/site-point state after the client-side messenger failure and threshold source are resolved, or remain deferred? **Recommended default:** retain the deferment until the call path and threshold/progress rules can both produce truthful bars; then wire the existing transport to the existing campaign owner. The cheapest honest implementation is a read-only provider plus the contract-defined notices, with no invented progress values or empty “success” thresholds.
+**Owner decision (2026-10-19):** Defer the gateway until the client call path and truthful progress/threshold rules are available. The existing transport and campaign/site-point state remain available for a later implementation. The cheapest honest implementation is a read-only provider plus the contract-defined notices, with no invented progress values or empty “success” thresholds.
 
 ## Q-05 — Planetary Interaction survey data
 
@@ -86,7 +86,7 @@ The client call, message contract, gateway transport, and campaign/site-point st
 | Build a project-defined harmonic and teach the client to render it | A usable approximate survey in a modified client. | Requires an explicit approximation decision and client support; it is not an unmodified-client fix and not the CCP resource model. |
 | Reproduce CCP resource harmonics | CCP-like survey values and map display if exact native inputs/format are available. | Requires the missing native resource algorithm/data and its exact buffer contract, plus a fix or compatible client change for the proximity unpack error. |
 
-**Decision needed:** Keep the survey limited to rule-derived values, or authorize a clearly approximate project survey/modified-client path? **Recommended default:** keep the limited honest response; do not synthesize an `SH` buffer. A complete CCP survey is blocked by missing native data/format, and the unmodified client path has an independent call-site error.
+**Owner decision (2026-10-19):** Keep the survey limited to rule-derived values; do not synthesize an `SH` buffer. A complete CCP survey is blocked by missing native data/format, and the unmodified client path has an independent call-site error.
 
 ## Other blocked or explicitly deferred items in TODO.md / DEVIATIONS.md
 
@@ -94,10 +94,10 @@ This is a status scan of entries explicitly marked blocked or described as an ow
 
 | Item | Current blocker / status |
 |---|---|
-| C4 command bursts and buff registry | DEVIATIONS lines 545–556: sim wire lacks fleet recipient lists and live numbers; the buff registry is not built and its SDE value chain resolves to zero. Requires one protocol batch and a rules-backed value before implementation. |
-| E-07 weapon banks | TODO line 1191: held on RC-5 weapon-bank semantics; do not infer grouped activation behavior without that dependency. |
+| C4 command bursts and buff registry | Owner decision 2026-10-19: supersede Q-06 and build the feature. The zero-value finding was corrected: charge multipliers 2596–2599 flow through effect 6737 into the module's buff value attributes. `CommandBurstFamiliesTests` checks all published charges in groups 1769, 1771–1774 and 4905. A two-pilot headless walk received buff 10 (-8.16), but shield resonance remained 0.92 before and after activation; recipient dogma mutation/reversion remains open. |
+| E-07 weapon banks | Owner decision 2026-10-19: keep E-07 held on RC-5 grouped-activation semantics; do not infer activation, ammunition or cycle behavior. |
 | Insurgency public gateway | TODO line 1506 and DEVIATIONS lines 2758–2761: old “transport absent” rationale is stale; feature still lacks insurgency handlers/read model and client path remains affected by messenger failure (see Q-04). |
-| Mutual-war invites | TODO line 2147: explicit unavailable refusal remains until invite and blocked-state reads/writes are connected to an authoritative war owner; this is a deliberate stopgap, not a completed service. |
+| Mutual-war invites | Owner decision 2026-10-19: retain the explicit unavailable refusal until invite and blocked-state reads/writes are connected to an authoritative war owner. |
 | PI resource survey | PI_DESIGN D9 and DEVIATIONS PI section: native resource harmonic data/format is absent, and the client proximity tuple unpack fails in the described trained/in-range path (see Q-05). |
 | Skills injector correction | TODO lines 2125–2174: tier scale correction is present in the working source, while parent regression/acceptance remains pending; it is not marked complete. |
 

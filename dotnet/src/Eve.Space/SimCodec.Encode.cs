@@ -641,7 +641,7 @@ private static void WriteStructureDamageCorrelation(
         w.F64(e.CapacitorNeed);
         w.I32(e.Repeat);
         w.I64(e.TargetId);
-        w.U8((byte)((e.On is null ? 0 : 1) | (e.Off is null ? 0 : 2) | (e.Turret is null ? 0 : 4) | (e.Action is null ? 0 : 8) | (e.BurnsFuel ? 16 : 0) | (e.Rules is null ? 0 : 32)));
+        w.U8((byte)((e.On is null ? 0 : 1) | (e.Off is null ? 0 : 2) | (e.Turret is null ? 0 : 4) | (e.Action is null ? 0 : 8) | (e.BurnsFuel ? 16 : 0) | (e.Rules is null ? 0 : 32) | (e.FallbackCapacitorNeed != 0 ? 64 : 0)));
         if (e.On is { } on) WriteNumbers(w, on);
         if (e.Off is { } off) WriteNumbers(w, off);
         WriteChanges(w, e.OnChanges);
@@ -649,6 +649,7 @@ private static void WriteStructureDamageCorrelation(
         if (e.Turret is { } turret) WriteTurret(w, turret);
         if (e.Action is { } action) WriteAction(w, action);
         if (e.Rules is { } rules) WriteRules(w, rules);
+        if (e.FallbackCapacitorNeed != 0) w.F64(e.FallbackCapacitorNeed);
     }
 
     /// <summary>The module rules of an effect (flag 32, after its action): the group, its limit, the rule bits (1 early deactivation, 2 needs a core, 4 is a core), and the reactivation delay.</summary>

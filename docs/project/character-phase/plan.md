@@ -84,7 +84,7 @@ Lanes are the PostgreSQL databases from `docs/project/DATABASES.md`: `eve_p2` (l
 
 | ID | Package | Depends on | Wave | Lane | Parallel with |
 |---|---|---|---|---|---|
-| CH-1 | Character deletion: prepare, cancel, delete | none | 1 | eve_p2 | CH-3, CH-6, CH-10, CH-12 |
+| CH-1 | Character deletion: prepare, cancel, delete, and purge character-owned skill plans with the deletion transaction | none | 1 | eve_p2 | CH-3, CH-6, CH-10, CH-12 |
 | CH-2 | Alpha injections, and acceptance of the injector correction | none | 1 | eve_p3 | CH-5, CH-7, CH-9 |
 | CH-3 | Skill handler: CheckAndSendNotifications, GetSkillBundleInfo, skill notification order | none | 1 | eve_p2 | CH-1, CH-6, CH-10, CH-12 |
 | CH-4 | Tutorial and season read surfaces | none | 1 | eve_p4 | CH-8, CH-11, CH-13, CH-14 |
@@ -94,7 +94,7 @@ Lanes are the PostgreSQL databases from `docs/project/DATABASES.md`: `eve_p2` (l
 | CH-8 | Re-sculpt and paperdoll states 1 and 3 | GATE-B | 1 (gated) | eve_p4 | CH-4, CH-11, CH-13, CH-14 |
 | CH-9 | Achievement writes, no fixture | none | 1 | eve_p3 | CH-2, CH-5, CH-7 |
 | CH-10 | userSvc constant answers (playtime, votes, reports) | GATE-C | 1 (gated) | eve_p2 | CH-1, CH-3, CH-6, CH-12 |
-| CH-11 | Implant and booster modifiers in pilot dogma | none | 1 | eve_p4 | CH-4, CH-8, CH-13, CH-14 |
+| CH-11 | Implant and booster modifiers in pilot dogma and training | none | 1 | eve_p3 | CH-4, CH-8, CH-13, CH-14 |
 | CH-12 | Jump-clone store, clone state reads, names, destroy, clone-station field | none | 1 | eve_p2 | CH-1, CH-3, CH-6, CH-10 |
 | CH-13 | Player bounties: place, read, top lists | none | 1 | eve_p4 | CH-4, CH-8, CH-11, CH-14 |
 | CH-14 | Standings verification (NPC kill standing) | none | 1 | eve_p4 | CH-4, CH-8, CH-11, CH-13 |
@@ -334,7 +334,7 @@ Each item was checked in source; the test names are those found by search. Items
 - No build, no test, no database query, no live client run. Nothing here is a pass.
 - The SDE was not queried. Item types for re-sculpt, Daily Alpha Injector, expert systems and implants are for the package agents to confirm.
 - The EVE University wiki was not fetched. Every mechanic in CH-1 to CH-22 is to be read from the wiki by the package agent before coding; where the wiki is silent, EveJS is the second source and the choice goes in DEVIATIONS.
-- EveJS was read by grep and by the listed bodies only. Its handlers were not run.
+- EveJS was read by grep and by the listed bodies only. Its handlers were not executed.
 - The V24.01 client call sites come from grep. A call built from a computed name would not be found. The eve-logic repository was searched as text.
 - DEVIATIONS was read in lines 151-161, 239-264, 877-901 and 1318-1392, and searched by keyword elsewhere. The file has 4,151 lines; rows in other sections may hold character items this plan does not list.
 - TODO.md (2,559 lines) was searched by keyword, not read in full. `service-response-audit/evejs-only-responses.md` was consulted only through the TODO references.

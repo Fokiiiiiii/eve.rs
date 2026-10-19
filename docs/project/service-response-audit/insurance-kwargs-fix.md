@@ -4,7 +4,7 @@
 
 **実装済、静的レビュー済。担当側のbuild/test/実サーバー検証はnot performed。親からInsuranceServiceTests Debug subsetの30 PASS／0 FAIL／0 SKIPが報告された。** 対象は`insuranceSvc.InsureShip`が`voidOld` kwargsを無視する1件だけ。監査の未比較177 RPCはこのsliceでは調査・実装していない。Host DB/native acceptanceは未確認。
 
-- canonical root: `C:\Users\yutai\eve.rs`、branch: `main`。
+- canonical root: `eve.rs`、branch: `main`。
 - 開始時HEAD: `c114dc0d8e292c056e8d71b37f496084f484676f`。
 - 静的レビュー時HEAD: `b2557b42e8077fe8c6376a9189f8a0072a7d26be`。親の進行によりmainが進んだ。こちらではGitコマンド/変更操作を行っていない。`.git/HEAD`と`refs/heads/main`の読み取りで確認。
 - branch/worktree/子agentは作成していない。ambient worktree1e47は使用していない。全shell実行のworkdirはcanonical root。
@@ -12,9 +12,9 @@
 
 | 変更ファイル | 内容 |
 |---|---|
-| `C:\Users\yutai\eve.rs\dotnet\src\Eve.Services.Core\InsuranceService.cs` | InsureShipのreplaceValue取得1行のみ |
-| `C:\Users\yutai\eve.rs\dotnet\tests\Eve.Services.Core.Tests\InsuranceServiceTests.cs` | 既存classへ6 regression tests/12ケース追加。既存assertion・位置引数テストを維持 |
-| `C:\Users\yutai\eve.rs\docs\project\service-response-audit\insurance-kwargs-fix.md` | 本書 |
+| `../../../dotnet/src/Eve.Services.Core/InsuranceService.cs` | InsureShipのreplaceValue取得1行のみ |
+| `../../../dotnet/tests/Eve.Services.Core.Tests/InsuranceServiceTests.cs` | 既存classへ6 regression tests/12ケース追加。既存assertion・位置引数テストを維持 |
+| `insurance-kwargs-fix.md` | 本書 |
 
 ## 根本原因と修正
 
@@ -35,10 +35,10 @@ EveJSのhandlerはkwargsを取り出してvoidOldをruntimeへ渡す。V24が使
 
 参照根拠:
 
-- `C:\Users\yutai\eve-logic\eve\client\script\ui\station\insurance\base_insurance.py:519` — 最初の3 args、UserErrorの確認、`:542` — voidOld=True再送。
-- `C:\Users\yutai\evejs-v0.12.9\server\src\services\insurance\insuranceService.js:69` — kwargsからvoidOld取得、runtime.insureShipへ渡す。
-- `C:\Users\yutai\eve.rs\dotnet\src\Eve.Services.Core\InsuranceService.cs:361` — InsureShip、`:371` — 修正行、`:481` — 既存TryBoolean。
-- `C:\Users\yutai\eve.rs\dotnet\src\Eve.Services\ServiceCall.cs:31` — Kwargはキー不在時null、明示PyNoneはPyNoneを返す。この区別でFalse/Noneがfallbackに消されない。
+- `eve-logic/eve/client/script/ui/station/insurance/base_insurance.py:519` — 最初の3 args、UserErrorの確認、`:542` — voidOld=True再送。
+- `evejs-v0.12.9/server/src/services/insurance/insuranceService.js:69` — kwargsからvoidOld取得、runtime.insureShipへ渡す。
+- `../../../dotnet/src/Eve.Services.Core/InsuranceService.cs:361` — InsureShip、`:371` — 修正行、`:481` — 既存TryBoolean。
+- `../../../dotnet/src/Eve.Services/ServiceCall.cs:31` — Kwargはキー不在時null、明示PyNoneはPyNoneを返す。この区別でFalse/Noneがfallbackに消されない。
 
 ## Authority・再契約・失敗の副作用
 
@@ -50,9 +50,9 @@ Hostはship/insurance contractをlockし、activeな旧契約についてReplace
 
 根拠:
 
-- `C:\Users\yutai\eve.rs\dotnet\src\Eve.Services.Core\InsuranceService.cs:379` — actor validation、`:390` — command、`:454` — None/InsureShipFailedSingleContract(ownerName)/InsureShipFailedのmapping。
-- `C:\Users\yutai\eve.rs\dotnet\src\Eve.Host\Persistence\Insurance\PersistenceInsuranceWriteModel.cs:54` — validation、ship lock/ownership/hangar、active contract確認、transaction/commit/postcommit notification。
-- Host配線の既読監査根拠: `C:\Users\yutai\eve.rs\dotnet\src\Eve.Host\Composition\CharacterComposition.cs:129`、`C:\Users\yutai\eve.rs\dotnet\src\Eve.Host\Rpc\MailRpc.cs:41`。このsliceでは配線を変更していない。
+- `../../../dotnet/src/Eve.Services.Core/InsuranceService.cs:379` — actor validation、`:390` — command、`:454` — None/InsureShipFailedSingleContract(ownerName)/InsureShipFailedのmapping。
+- `../../../dotnet/src/Eve.Host/Persistence/Insurance/PersistenceInsuranceWriteModel.cs:54` — validation、ship lock/ownership/hangar、active contract確認、transaction/commit/postcommit notification。
+- Host配線の既読監査根拠: `../../../dotnet/src/Eve.Host/Composition/CharacterComposition.cs:129`、`../../../dotnet/src/Eve.Host/Rpc/MailRpc.cs:41`。このsliceでは配線を変更していない。
 
 ## Regression tests（担当側not performed）
 
@@ -66,14 +66,14 @@ Hostはship/insurance contractをlockし、activeな旧契約についてReplace
 | InsureShip_voidOld_keyword_preserves_writer_rejection |1|writer NotEligibleはkwargs trueでもInsureShipFailed。拒否を偽の成功に変換しない |
 | **計** |**12**|**6 tests** |
 
-新規test開始行: `C:\Users\yutai\eve.rs\dotnet\tests\Eve.Services.Core.Tests\InsuranceServiceTests.cs:171`、`:205`、`:229`、`:251`、`:278`、`:314`。
+新規test開始行: `../../../dotnet/tests/Eve.Services.Core.Tests/InsuranceServiceTests.cs:171`、`:205`、`:229`、`:251`、`:278`、`:314`。
 
 既存`InsureShip_forwards_the_wire_amount_owner_kind_and_replace_flag`（`:140`）は未変更で位置引数fallbackの回帰確認に使える。新規のkwargs正例/優先/無効値/確認再送は修正前のkwargs無視を検出するassertionになっているが、RED実行はしていない。actor拒否とwriter拒否は変更しない動作の保護。stub writerによりservice境界を検査するテストであり、Host DB transactionの統合証明ではない。
 
 ## MCP・静的レビューと親への検証handoff
 
-- Serena manualを読み、`C:\Users\yutai\eve.rs`へactivate。symbol read/editを使用。production置換はdry-runで1 occurrenceを確認し、stale occurrence guard付きで適用した。前後のmethodと新規testsを静的レビュー済み。
-- CBM接続はindex_status/search_graphともTransport closed、再試行も同じ。ユーザー指定のdocumented CLI `C:\Users\yutai\AppData\Local\Programs\codebase-memory-mcp\codebase-memory-mcp.exe cli`で復旧。CLI index_statusはcanonical root/main/start HEADでready。graph/snippetからinsurance method、既存tests、ServiceCall、EveJS/V24 callsiteを確認した。MCP transportは未復旧だがCLI経由のCBMは利用できた。
+- Serena manualを読み、`eve.rs`へactivate。symbol read/editを使用。production置換はdry-runで1 occurrenceを確認し、stale occurrence guard付きで適用した。前後のmethodと新規testsを静的レビュー済み。
+- CBM接続はindex_status/search_graphともTransport closed、再試行も同じ。ユーザー指定のdocumented CLI `external verification workspace cli`で復旧。CLI index_statusはcanonical root/main/start HEADでready。graph/snippetからinsurance method、既存tests、ServiceCall、EveJS/V24 callsiteを確認した。MCP transportは未復旧だがCLI経由のCBMは利用できた。
 - 関連AGENTS/CLAUDE/overrideは既読、追加の`dotnet/tests/AGENTS.md`を確認。tdd-loop/self-reviewを適用。実行禁止の指定に従い、RED/GREEN、build、test、Git diff/check、commit/pushは行っていない。
 
 親がcanonical rootで直列実行する推奨コマンド（本担当は実行していない）:

@@ -232,6 +232,7 @@ public class ModuleEffectsTests
         Assert.Null(loadedResult.Reason);
         var loadedPackage = Assert.IsType<Eve.Space.SimEffect>(loadedResult.Effect);
         Assert.Equal(0, loadedPackage.CapacitorNeed);
+        Assert.Equal(135, loadedPackage.FallbackCapacitorNeed);
         var charged = Assert.IsType<Eve.Space.SimAction.Charged>(loadedPackage.Action);
         Assert.Equal(9, charged.Charges);
         Assert.Null(charged.Fallback);
@@ -248,6 +249,7 @@ public class ModuleEffectsTests
         Assert.Null(emptyResult.Reason);
         var emptyPackage = Assert.IsType<Eve.Space.SimEffect>(emptyResult.Effect);
         Assert.Equal(135, emptyPackage.CapacitorNeed);
+        Assert.Equal(135, emptyPackage.FallbackCapacitorNeed);
         var unchargedRemote = Assert.IsType<Eve.Space.SimAction.Remote>(emptyPackage.Action);
         Assert.Equal(new Eve.Space.SimRemote.Repair(Eve.Space.SimLayer.Shield, 125), unchargedRemote.What);
     }

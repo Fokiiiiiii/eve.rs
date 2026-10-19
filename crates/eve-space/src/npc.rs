@@ -50,6 +50,7 @@ pub(crate) fn npc_self_repair_effect(
         fx: String::new(),
         duration_ms: repair.cycle_ms,
         capacitor_need: repair.capacitor_cost,
+        fallback_capacitor_need: 0.0,
         repeat: repeat.max(1),
         target_id: 0,
         turret: None,

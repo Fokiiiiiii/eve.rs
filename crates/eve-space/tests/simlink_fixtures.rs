@@ -376,6 +376,7 @@ fn effect_of(case: &Value) -> Effect {
         fx: text(case, "fx"),
         duration_ms: number(case, "durationMs"),
         capacitor_need: number(case, "capacitorNeed"),
+        fallback_capacitor_need: 0.0,
         repeat: case["repeat"].as_i64().unwrap() as i32,
         target_id: wide(case, "targetId"),
         turret: case.get("turret").map(turret_of),
@@ -2007,6 +2008,7 @@ fn charged_actions_roundtrip_cycle_charge_and_fallback_in_the_shared_link() {
         panic!("fixture must activate an effect")
     };
     let mut effect = *effect;
+    effect.fallback_capacitor_need = 17.5;
     effect.action = Some(Action::Charged {
         action: Box::new(Action::Remote {
             what: Remote::Transfer { amount: 60.0 },
@@ -2051,6 +2053,7 @@ fn mutadaptive_remote_repair_action_and_cycle_messages_roundtrip_through_the_lin
         fx: "effects.RemoteArmorRepair".to_string(),
         duration_ms: 6_000.0,
         capacitor_need: 513.0,
+        fallback_capacitor_need: 0.0,
         repeat: i32::MAX,
         target_id: 701,
         turret: None,

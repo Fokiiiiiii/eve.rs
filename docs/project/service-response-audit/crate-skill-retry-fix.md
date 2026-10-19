@@ -72,7 +72,7 @@ Recommended parent commands, from repository root, serially:
 - dotnet test dotnet/tests/Eve.Services.Core.Tests/Eve.Services.Core.Tests.csproj --no-restore --verbosity minimal
 - git -C repository root diff --check
 
-## Unverified boundaries and TODO candidates
+## Not confirmed boundaries and TODO candidates
 
 - Durable pending ledger: NOT IMPLEMENTED. Pending skill bundles remain service-local memory; server/service restart before claim can lose pending rewards. A future ledger must commit claim consumption with skill/SP grants, using the existing authoritative skill store.
 - Ambiguous PostgreSQL commit: a transport/cancellation exception can leave the caller uncertain whether commit succeeded. Restoring a pending reward cannot guarantee exactly-once free-SP grants in that case without a durable claim key. This task does not change the Host transaction or schema.

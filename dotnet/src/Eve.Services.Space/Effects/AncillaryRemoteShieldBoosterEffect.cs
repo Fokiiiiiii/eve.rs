@@ -30,7 +30,7 @@ internal sealed class AncillaryRemoteShieldBoosterEffect : ShipEffect
         return new SimEffect(
             module.ModuleId, module.Module.TypeId, module.Effect.Id, module.Effect.Guid,
             duration, charge is { Quantity: > 0 } ? 0 : capacitor, Math.Max(1, module.Repeat), Math.Max(0, module.TargetId),
-            null, null, told, told, null, action);
+            null, null, told, told, null, action, FallbackCapacitorNeed: capacitor);
     }
 }
 

@@ -746,10 +746,11 @@ public class SimCodecTests
         var charged = new SimAction.Charged(
             new SimAction.Remote(new SimRemote.Transfer(60), 0, 0, false, "energyTransfer"),
             new SimAction.Repair(SimLayer.Armor, 24, true), 16272, 27, 3, 5);
-        var message = baseline with { Effect = baseline.Effect with { Action = charged } };
+        var message = baseline with { Effect = baseline.Effect with { Action = charged, FallbackCapacitorNeed = 17.5 } };
         var encoded = SimCodec.Encode(message);
         var decoded = Assert.IsType<SimActivate>(SimCodec.Decode(encoded.AsMemory(4)));
         Assert.Equal(Convert.ToHexString(encoded), Convert.ToHexString(SimCodec.Encode(decoded)));
+        Assert.Equal(17.5, decoded.Effect.FallbackCapacitorNeed);
         var action = Assert.IsType<SimAction.Charged>(decoded.Effect.Action);
         Assert.Equal((16272, 27, 3, 5L), (action.ChargeTypeId, action.ChargeFlag, action.ChargePerCycle, action.Charges));
         Assert.IsType<SimAction.Repair>(action.Fallback);

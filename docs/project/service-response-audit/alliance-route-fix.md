@@ -18,6 +18,6 @@ No production forwarding methods or duplicate handlers were added. Moving or for
 ## Change and verification handoff
 
 - `dotnet/tests/Eve.Corporations.Tests/AllianceTests.cs`: made the route contract explicit by asserting the service name and all three `HasMethod` results on `corpRegistry`; existing `allianceRegistry` assertions remain.
-- Tests and builds were not run because the parent is running the .NET suite serially, as instructed. No Git mutation was performed.
+- Tests and builds were not executed because the parent is running the .NET suite serially, as instructed. No Git mutation was performed.
 - Recommended focused check after the parent finishes: `dotnet test dotnet/tests/Eve.Corporations.Tests/Eve.Corporations.Tests.csproj --filter FullyQualifiedName~Alliance_and_corporation_registry_expose_application_methods`.
 - No graphical-client verification was performed. This audit confirms the current source-level service/Host route and adds a regression assertion; it does not claim a live client session was exercised.

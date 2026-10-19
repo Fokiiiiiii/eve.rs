@@ -26,6 +26,8 @@ python3 tools/dev/ci-status.py dispatch ci.yml --ref main --jobs python
 python3 tools/dev/ci-status.py dispatch ci.yml --ref main --jobs windows
 ```
 
+The slow-live workflow prints the last 500 lines of the Host, simulation and front logs when a selected walk fails. It also uploads those logs as a seven-day artifact for diagnosis.
+
 Dispatch one slow test or the full slow matrix:
 
 ```sh

@@ -93,6 +93,7 @@ def test_a_loaded_burst_changes_a_fleet_members_dogma_until_its_buff_expires():
 
         notifications_of(member)
 
+        owner.call_bound(owner_dogma[0], "SetModuleOnline", owner_ship, burst)
         owner.call_bound(owner_dogma[0], "Activate", burst, "moduleBonusWarfareLinkShield", None, 1000)
         active_events = wait_for_events(
             member,
@@ -101,11 +102,14 @@ def test_a_loaded_burst_changes_a_fleet_members_dogma_until_its_buff_expires():
         )
         changes = named(active_events, "OnModuleAttributeChanges")
         dbuffs = named(active_events, "OnDbuffUpdated")
-        assert changes and dbuffs, "the receiver did not hear both its dogma attributes and buff state"
-        assert active_events.index(changes[0]) < active_events.index(dbuffs[0]), "dogma attributes must precede the buff-state update"
-
         active_info = member.call_bound(member_dogma[0], "GetAllInfo", True, True, None)
         active = ship_attribute(active_info, member_ship, SHIELD_EM_RESONANCE)
+        assert changes and dbuffs, (
+            f"the receiver did not hear both its dogma attributes and buff state; "
+            f"receiver resonance {before} -> {active}; event names {[event['name'] for event in active_events]}"
+        )
+        assert active_events.index(changes[0]) < active_events.index(dbuffs[0]), "dogma attributes must precede the buff-state update"
+
         assert active == pytest.approx(before * 0.92), f"shield resonance was {active}, expected an 8% resistance burst from {before}"
 
         notifications_of(member)

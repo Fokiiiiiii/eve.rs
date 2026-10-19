@@ -9,6 +9,17 @@ namespace Eve.Host.PublicGateway;
 /// <summary>The V24.01 public-gateway Local chat requests and notices (chat/client/local_chat/messenger.py).</summary>
 internal sealed class LocalChatGateway
 {
+    private enum ChannelKind : ulong
+    {
+        Local = 0,
+        Corporation = 1,
+        Alliance = 2,
+        Fleet = 3,
+        Wing = 4,
+        Squad = 5,
+    }
+
+    private readonly record struct ChannelAddress(ChannelKind Kind, long Id, long ParentId = 0, long RootId = 0);
     private const string Prefix = "eve_public.chat.local.api.";
     private const string GetMembersRequest = Prefix + "GetMembershipListRequest";
     private const string GetMembersResponse = Prefix + "GetMembershipListResponse";
@@ -28,12 +39,13 @@ internal sealed class LocalChatGateway
     private readonly ConnectedSessions _sessions;
     private readonly NoticeHub _notices;
     private readonly ConcurrentDictionary<ClientSession, Queue<DateTimeOffset>> _messageTimes = new(ReferenceEqualityComparer.Instance);
-    private readonly Dictionary<long, Queue<DateTimeOffset>> _channelMessageTimes = [];
+    private readonly Dictionary<ChannelAddress, Queue<DateTimeOffset>> _channelMessageTimes = [];
     private readonly object _gate = new();
     private readonly Dictionary<long, HashSet<long>> _speakersBySystem = [];
     private readonly Dictionary<(long SystemId, long CharacterId), DateTimeOffset> _lastSpoke = [];
     private readonly Dictionary<long, long> _systemByCharacter = [];
     private readonly Dictionary<ClientSession, long> _characterBySession = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<ClientSession, Dictionary<ChannelKind, ChannelAddress>> _groupChannelsBySession = new(ReferenceEqualityComparer.Instance);
 
     public LocalChatGateway(ConnectedSessions sessions, NoticeHub notices)
     {
@@ -58,12 +70,16 @@ internal sealed class LocalChatGateway
         if (session is null)
             return Task.FromResult(new GatewayAnswer(409, "the active character is not connected", GetMembersResponse, []));
 
-        var systemId = CurrentSystem(session);
-        var members = VisibleMembers(systemId);
+        if (!TryReadChannelKind(request.Payload, 1, out var kind))
+            return Task.FromResult(new GatewayAnswer(400, "unknown chat channel", GetMembersResponse, []));
+        var channel = ChannelForSession(session, kind);
+        if (channel is null)
+            return Task.FromResult(new GatewayAnswer(409, "the character is not a member of that chat channel", GetMembersResponse, []));
+        var members = VisibleMembers(channel.Value);
         var writer = new ProtoWriter();
         foreach (var member in members)
             writer.Message(1, EncodeCharacter(member));
-        writer.Message(2, EncodeIdentifier(systemId));
+        WriteChannel(writer, channel.Value, 3);
         return Task.FromResult(new GatewayAnswer(200, "", GetMembersResponse, writer.ToArray()));
     }
 
@@ -73,39 +89,46 @@ internal sealed class LocalChatGateway
         var session = ActiveCharacter(request.CharacterId);
         if (session is null)
             return Task.FromResult(new GatewayAnswer(409, "the active character is not connected", BroadcastResponse, []));
+        if (!TryReadChannelKind(request.Payload, 2, out var kind))
+            return Task.FromResult(new GatewayAnswer(400, "unknown chat channel", BroadcastResponse, []));
+        var channel = ChannelForSession(session, kind);
+        if (channel is null)
+            return Task.FromResult(new GatewayAnswer(409, "the character is not a member of that chat channel", BroadcastResponse, []));
         var message = ReadString(request.Payload, 1).Trim();
         if (message.Length == 0 || Encoding.UTF8.GetByteCount(message) > MaxMessageBytes)
             return Task.FromResult(new GatewayAnswer(400, "chat message is empty or too long", BroadcastResponse, []));
         var sentAt = DateTimeOffset.UtcNow;
-        if (!PermitMessage(session, sentAt) || !PermitChannelMessage(CurrentSystem(session), sentAt))
+        if (!PermitMessage(session, sentAt) || !PermitChannelMessage(channel.Value, sentAt))
             return Task.FromResult(new GatewayAnswer(429, "chat message rate limit exceeded", BroadcastResponse, []));
 
         var characterId = session.CharacterId!.Value;
-        var systemId = CurrentSystem(session);
         var safeMessage = WebUtility.HtmlEncode(message);
-        bool joined;
-        lock (_gate)
+        if (kind == ChannelKind.Local)
         {
-            if (!_speakersBySystem.TryGetValue(systemId, out var speakers))
-                _speakersBySystem[systemId] = speakers = [];
-            joined = speakers.Add(characterId);
-            _lastSpoke[(systemId, characterId)] = DateTimeOffset.UtcNow;
-        }
+            bool joined;
+            lock (_gate)
+            {
+                if (!_speakersBySystem.TryGetValue(channel.Value.Id, out var speakers))
+                    _speakersBySystem[channel.Value.Id] = speakers = [];
+                joined = speakers.Add(characterId);
+                _lastSpoke[(channel.Value.Id, characterId)] = DateTimeOffset.UtcNow;
+            }
 
-        if (joined && IsDelayed(systemId))
-        {
-            var join = new ProtoWriter();
-            join.Message(1, EncodeCharacter(session));
-            join.Message(2, EncodeIdentifier(systemId));
-            PublishToSystem(systemId, JoinNotice, join.ToArray());
-            PublishMembershipList(systemId);
+            if (joined && IsDelayed(channel.Value.Id))
+            {
+                var join = new ProtoWriter();
+                join.Message(1, EncodeCharacter(session));
+                WriteChannel(join, channel.Value, 3);
+                PublishToChannel(channel.Value, JoinNotice, join.ToArray());
+                PublishMembershipList(channel.Value);
+            }
         }
 
         var notice = new ProtoWriter();
         notice.Message(1, EncodeIdentifier(characterId));
-        notice.Message(2, EncodeIdentifier(systemId));
+        WriteChannel(notice, channel.Value, 4);
         notice.String(3, safeMessage);
-        PublishToSystem(systemId, MessageNotice, notice.ToArray());
+        PublishToChannel(channel.Value, MessageNotice, notice.ToArray());
         return Task.FromResult(new GatewayAnswer(200, "", BroadcastResponse, []));
     }
 
@@ -115,6 +138,7 @@ internal sealed class LocalChatGateway
         session.Closed += () => Untrack(session);
         if (session.CharacterId is { } characterId)
             EnterSystem(session, characterId, CurrentSystem(session));
+        RefreshGroupChannels(session);
     }
 
     private void Untrack(ClientSession session)
@@ -122,6 +146,7 @@ internal sealed class LocalChatGateway
         session.AttributesChanged -= OnAttributesChanged;
         if (session.CharacterId is { } characterId)
             LeaveSystem(session, characterId);
+        LeaveGroupChannels(session);
         _messageTimes.TryRemove(session, out _);
     }
 
@@ -130,7 +155,7 @@ internal sealed class LocalChatGateway
         var characterChanged = changed.Contains("charid", StringComparer.Ordinal);
         var systemChanged = changed.Contains("solarsystemid2", StringComparer.Ordinal)
             || changed.Contains("solarsystemid", StringComparer.Ordinal);
-        var affiliationChanged = changed.Any(name => name is "corpid" or "allianceid" or "warfactionid" or "accountRole" or "role");
+        var affiliationChanged = changed.Any(name => name is "corpid" or "allianceid" or "warfactionid" or "accountRole" or "role" or "fleetid" or "wingid" or "squadid");
         if (!characterChanged && !systemChanged && !affiliationChanged)
             return;
 
@@ -143,6 +168,7 @@ internal sealed class LocalChatGateway
         {
             if (oldCharacter is > 0) LeaveSystem(session, oldCharacter.Value);
             if (newCharacter is > 0 && nextSystem > 0) EnterSystem(session, newCharacter.Value, nextSystem);
+            RefreshGroupChannels(session);
             return;
         }
         if (newCharacter is not { } characterId) return;
@@ -162,6 +188,8 @@ internal sealed class LocalChatGateway
             notice.Message(2, EncodeIdentifier(nextSystem));
             PublishToSystem(nextSystem, MemberRefreshNotice, notice.ToArray());
         }
+        if (affiliationChanged)
+            RefreshGroupChannels(session);
     }
 
     private void EnterSystem(ClientSession session, long characterId, long systemId)
@@ -203,13 +231,15 @@ internal sealed class LocalChatGateway
         PublishMembershipList(systemId);
     }
 
-    private void PublishMembershipList(long systemId)
+    private void PublishMembershipList(long systemId) => PublishMembershipList(new ChannelAddress(ChannelKind.Local, systemId));
+
+    private void PublishMembershipList(ChannelAddress channel)
     {
         var notice = new ProtoWriter();
-        foreach (var member in VisibleMembers(systemId))
+        foreach (var member in VisibleMembers(channel))
             notice.Message(1, EncodeCharacter(member));
-        notice.Message(2, EncodeIdentifier(systemId));
-        PublishToSystem(systemId, MembershipNotice, notice.ToArray());
+        WriteChannel(notice, channel, 3);
+        PublishToChannel(channel, MembershipNotice, notice.ToArray());
     }
 
     private void PublishToSystem(long systemId, string type, byte[] payload, long? exceptCharacter = null)
@@ -222,27 +252,46 @@ internal sealed class LocalChatGateway
         }
     }
 
-    private IReadOnlyList<ClientSession> VisibleMembers(long systemId)
+    private void PublishToChannel(ChannelAddress channel, string type, byte[] payload, long? exceptCharacter = null)
+    {
+        if (channel.Kind == ChannelKind.Local)
+        {
+            PublishToSystem(channel.Id, type, payload, exceptCharacter);
+            return;
+        }
+
+        foreach (var session in _sessions.Snapshot())
+        {
+            if (session.CharacterId is not { } characterId || characterId == exceptCharacter
+                || ChannelForSession(session, channel.Kind) != channel)
+                continue;
+            _notices.Publish(type, payload, character: characterId);
+        }
+    }
+
+    private IReadOnlyList<ClientSession> VisibleMembers(long systemId) => VisibleMembers(new ChannelAddress(ChannelKind.Local, systemId));
+
+    private IReadOnlyList<ClientSession> VisibleMembers(ChannelAddress channel)
     {
         var current = _sessions.Snapshot()
-            .Where(s => s.CharacterId is > 0 && CurrentSystem(s) == systemId)
+            .Where(s => s.CharacterId is > 0 && ChannelForSession(s, channel.Kind) == channel)
             .GroupBy(s => s.CharacterId!.Value)
             .Select(g => g.First())
             .ToDictionary(s => s.CharacterId!.Value);
-        if (!IsDelayed(systemId))
+        if (channel.Kind != ChannelKind.Local || !IsDelayed(channel.Id))
             return [.. current.Values];
         lock (_gate)
         {
-            if (!_speakersBySystem.TryGetValue(systemId, out var speakers)) return [];
+            if (!_speakersBySystem.TryGetValue(channel.Id, out var speakers)) return [];
             var now = DateTimeOffset.UtcNow;
             speakers.RemoveWhere(id =>
             {
-                var stale = !_lastSpoke.TryGetValue((systemId, id), out var lastSpoke)
+                var stale = !_lastSpoke.TryGetValue((channel.Id, id), out var lastSpoke)
                     || now - lastSpoke >= IdleMemberRemovalTime;
-                if (stale) _lastSpoke.Remove((systemId, id));
+                if (stale) _lastSpoke.Remove((channel.Id, id));
                 return stale || !current.ContainsKey(id);
             });
-            if (speakers.Count == 0) _speakersBySystem.Remove(systemId);
+            if (speakers.Count == 0) _speakersBySystem.Remove(channel.Id);
             return [.. speakers.Where(current.ContainsKey).Select(id => current[id])];
         }
     }
@@ -260,12 +309,12 @@ internal sealed class LocalChatGateway
         }
     }
 
-    private bool PermitChannelMessage(long systemId, DateTimeOffset now)
+    private bool PermitChannelMessage(ChannelAddress channel, DateTimeOffset now)
     {
         lock (_gate)
         {
-            if (!_channelMessageTimes.TryGetValue(systemId, out var times))
-                _channelMessageTimes[systemId] = times = new Queue<DateTimeOffset>();
+            if (!_channelMessageTimes.TryGetValue(channel, out var times))
+                _channelMessageTimes[channel] = times = new Queue<DateTimeOffset>();
             while (times.Count > 0 && now - times.Peek() >= FloodWindow)
                 times.Dequeue();
             if (times.Count >= MaxMessagesPerChannelWindow) return false;
@@ -275,8 +324,105 @@ internal sealed class LocalChatGateway
     }
 
     private ClientSession? ActiveCharacter(long? characterId) => characterId is { } id
-        ? _sessions.Snapshot().FirstOrDefault(s => s.CharacterId == id && CurrentSystem(s) > 0)
+        ? _sessions.Snapshot().FirstOrDefault(s => s.CharacterId == id)
         : null;
+
+    private void RefreshGroupChannels(ClientSession session)
+    {
+        var next = new Dictionary<ChannelKind, ChannelAddress>();
+        foreach (var kind in new[] { ChannelKind.Corporation, ChannelKind.Alliance, ChannelKind.Fleet, ChannelKind.Wing, ChannelKind.Squad })
+            if (ChannelForSession(session, kind) is { } channel)
+                next[kind] = channel;
+
+        Dictionary<ChannelKind, ChannelAddress> previous;
+        lock (_gate)
+        {
+            previous = _groupChannelsBySession.GetValueOrDefault(session) ?? [];
+            _groupChannelsBySession[session] = next;
+        }
+
+        foreach (var (kind, channel) in previous)
+            if (!next.TryGetValue(kind, out var current) || current != channel)
+                PublishGroupMembershipChange(session, channel, LeaveNotice, joined: false);
+        foreach (var (kind, channel) in next)
+            if (!previous.TryGetValue(kind, out var prior) || prior != channel)
+                PublishGroupMembershipChange(session, channel, JoinNotice, joined: true);
+        foreach (var channel in previous.Values.Concat(next.Values).Distinct())
+            PublishMembershipList(channel);
+    }
+
+    private void LeaveGroupChannels(ClientSession session)
+    {
+        Dictionary<ChannelKind, ChannelAddress> previous;
+        lock (_gate)
+        {
+            if (!_groupChannelsBySession.TryGetValue(session, out previous!)) return;
+            _groupChannelsBySession.Remove(session);
+        }
+        foreach (var channel in previous.Values)
+        {
+            PublishGroupMembershipChange(session, channel, LeaveNotice, joined: false);
+            PublishMembershipList(channel);
+        }
+    }
+
+    private void PublishGroupMembershipChange(ClientSession session, ChannelAddress channel, string type, bool joined)
+    {
+        if (session.CharacterId is not { } characterId) return;
+        var notice = new ProtoWriter();
+        if (joined) notice.Message(1, EncodeCharacter(session)); else notice.Message(1, EncodeIdentifier(characterId));
+        WriteChannel(notice, channel, 3);
+        PublishToChannel(channel, type, notice.ToArray(), joined ? characterId : null);
+    }
+
+    private static ChannelAddress? ChannelForSession(ClientSession session, ChannelKind kind)
+    {
+        var id = kind switch
+        {
+            ChannelKind.Local => CurrentSystem(session),
+            ChannelKind.Corporation => session.GetInt("corpid") ?? 0,
+            ChannelKind.Alliance => session.GetInt("allianceid") ?? 0,
+            ChannelKind.Fleet => session.GetInt("fleetid") ?? 0,
+            ChannelKind.Wing => session.GetInt("wingid") ?? 0,
+            ChannelKind.Squad => session.GetInt("squadid") ?? 0,
+            _ => 0,
+        };
+        if (id <= 0) return null;
+        var parent = kind switch
+        {
+            ChannelKind.Wing or ChannelKind.Squad => session.GetInt("fleetid") ?? 0,
+            _ => 0,
+        };
+        var root = kind == ChannelKind.Squad ? session.GetInt("wingid") ?? 0 : 0;
+        if (kind is ChannelKind.Wing or ChannelKind.Squad && parent <= 0) return null;
+        if (kind == ChannelKind.Squad && root <= 0) return null;
+        return new ChannelAddress(kind, id, parent, root);
+    }
+
+    private static bool TryReadChannelKind(ReadOnlyMemory<byte> payload, int number, out ChannelKind kind)
+    {
+        var field = ProtoReader.Fields(payload).FirstOrDefault(f => f.Number == number && f.WireType == 0);
+        if (field.Number != number)
+        {
+            kind = ChannelKind.Local;
+            return true;
+        }
+        if (Enum.IsDefined(typeof(ChannelKind), field.Scalar))
+        {
+            kind = (ChannelKind)field.Scalar;
+            return true;
+        }
+        kind = ChannelKind.Local;
+        return false;
+    }
+
+    private static void WriteChannel(ProtoWriter writer, ChannelAddress channel, int kindField)
+    {
+        writer.Message(2, EncodeIdentifier(channel.Id));
+        writer.Uint(kindField, (ulong)channel.Kind);
+        if (channel.ParentId > 0) writer.Message(kindField + 1, EncodeIdentifier(channel.ParentId));
+        if (channel.RootId > 0) writer.Message(kindField + 2, EncodeIdentifier(channel.RootId));
+    }
 
     private static long CurrentSystem(ClientSession session) => session.GetInt("solarsystemid2") ?? session.GetInt("solarsystemid") ?? 0;
     private static bool IsDelayed(long systemId) => systemId is >= 31_000_000 and <= 31_999_999;

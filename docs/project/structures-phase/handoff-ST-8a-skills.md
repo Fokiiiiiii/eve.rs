@@ -2,7 +2,7 @@
 
 ## Repository and scope
 
-Target root: C:\Users\yutai\eve.rs. The assigning parent supplied branch main at baseline b328b58a; this agent ran no Git commands.
+Target root: eve.rs. The assigning parent supplied branch main at baseline b328b58a; this agent ran no Git commands.
 
 This is a narrow Structure Dogma skill-filter correction. It does not complete ST-8 execution.
 
@@ -22,7 +22,7 @@ Character and skill metadata remain authoritative: the returned snapshot retains
 
 ## not performed
 
-This agent did not run tests, builds, formatters, EveJS comparisons, or the graphical EVE client. No result from the parent's PG-backed regression test is recorded here.
+This agent did not execute tests, builds, formatters, EveJS comparisons, or the graphical EVE client. No result from the parent's PG-backed regression test is recorded here.
 
 ## Remaining work
 

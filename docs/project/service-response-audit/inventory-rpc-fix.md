@@ -136,7 +136,7 @@ same items/ships/statics/spaceContainersと実corporation role providerを渡す
 親へ渡すコマンド（この担当は未実行）:
 
 ```powershell
-Set-Location C:\Users\yutai\eve.rs
+Set-Location eve.rs
 dotnet test dotnet/tests/Eve.Services.Inventory.Tests/Eve.Services.Inventory.Tests.csproj --no-restore --filter FullyQualifiedName~InventoryRpcFixTests
 dotnet test dotnet/tests/Eve.Services.Inventory.Tests/Eve.Services.Inventory.Tests.csproj --no-restore
 dotnet test dotnet/tests/Eve.Services.Space.Tests/Eve.Services.Space.Tests.csproj --no-restore --filter FullyQualifiedName~LootAllTests

@@ -41,7 +41,7 @@ Scenario 3 (moon) needed the server fixes below; the first moon start that reach
 - Eject back to the pilot's own ship (`EjectFromStructure` with a ship id after a boarding from space): Host-tested, not live.
 - Moon extraction's later stages (fracture, completion, ore delivery) and the moon's yield numbers: not checked.
 - The inbox notice is checked on the recipient's live session only (the mailbox row itself is not read back).
-- Graphical client and MITM comparison of the notices: not run.
+- Graphical client and MITM comparison of the notices: not exercised.
 
 ## Things that will bite
 

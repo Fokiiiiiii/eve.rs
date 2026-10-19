@@ -7,7 +7,7 @@ Base: origin/main 46e164b (CI green). Database `eve_p2`, live port 26101, Postgr
 Run (`EVE_RUN` = the default list, then the structure seed, then `test_structures.py`; `EVE_LIVE_START_TENTHS=3000`, database `eve_p2`,
 port 26101): **73 passed, 0 failed, 8 skipped**. The skips: 7 slow-mode tests (`EVE_LIVE_SLOW=1` not set: movement, warp, jump, others, target,
 module, health) and 1 skill-speed test (`test_login_to_character.py`, needs the host at `EVE_SKILL_TRAINING_SPEED=60000`; that setting breaks the
-speed-1.0 skill and dogma tests, so it needs its own run). Not run: the slow tests, the graphical client, the MITM comparison.
+speed-1.0 skill and dogma tests, so it needs its own run). not exercised: the slow tests, the graphical client, the MITM comparison.
 
 Both structure tests pass live:
 
@@ -32,7 +32,7 @@ anchors an Astrahus through `StructureAnchorAuthority` (the default profile, id 
 table the profile backend writes, and checks `StructureDirectoryService.CanDock`: the owner corporation's pilot may dock, another corporation may not.
 It passes with the other `StructureAnchorTests` on eve_p3 (10 passed, 0 skipped, including the pinned SDE restriction test).
 
-EveJS comparison (read, not run): `structureProfilesState.js` `characterHasDockingAccessForProfile` requires `canCharacterDockAtStructure` and the profile
+EveJS comparison (read, not exercised): `structureProfilesState.js` `characterHasDockingAccessForProfile` requires `canCharacterDockAtStructure` and the profile
 setting `HOUSING_CAN_DOCK` for the session, and the access groups match the session's corporation (specificity 300), alliance (200) or everyone (0). A
 member of the owner corporation is admitted through the corporation chain, as in `CanDock`'s owner-corporation fallback. Not checked in this pass: the
 default value of `HOUSING_CAN_DOCK` in EveJS, and the wiki's default docking rule. The Host's explicit profile-setting path (profile with settings for
@@ -79,4 +79,4 @@ Tests (pass on eve_p3): `SovereigntyClaimNotificationTests` (1, new), `SovHubCla
   answer: not added (they need seeded moon, role or hacking data).
 - Shattered wormholes and the sovereignty index delay are not refused at anchor (TODO row 1464). Thera, starter and career systems and trade hubs are
   refused by the pinned SDE rule (`Pinned_SDE_anchor_restrictions_refuse_before_consumption`, passing).
-- The client text of notices 43 and 44 (MITM not run).
+- The client text of notices 43 and 44 (MITM not exercised).

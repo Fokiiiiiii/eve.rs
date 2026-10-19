@@ -129,8 +129,8 @@ public sealed partial class MachoNetService(
     public async ValueTask<PyValue> SetGlobalConfigValue(ServiceCall call)
     {
         call.Cancellation.ThrowIfCancellationRequested();
-        var roles = (call.Session.GetInt("accountRole") ?? 0) | (call.Session.GetInt("role") ?? 0);
-        if ((roles & (RoleAdmin | RoleService)) == 0)
+        var accountRoles = call.Session.GetInt("accountRole") ?? 0;
+        if ((accountRoles & (RoleAdmin | RoleService)) == 0)
         {
             throw new MachoWrappedException(MachoErrors.Wrapped("exceptions.RuntimeError", [
                 new PyStr("RoleNotAssigned"),

@@ -1,6 +1,5 @@
 namespace Eve.AccessGroups;
 
-/// <summary>The membership types of the client's <c>ownergroupConst</c>: none, member, manager, admin, excluded (blocked).</summary>
 public enum MembershipType { None = -1, Member = 0, Manager = 1, Admin = 2, Excluded = 3 }
 
 /// <summary>What a member entry names: everyone (the public entry, id 0), a character, a corporation or an alliance.</summary>
@@ -30,7 +29,6 @@ public sealed record AccessLogEntry(long LogId, long CharacterId, int ActionId, 
 /// </summary>
 public sealed record Audience(IReadOnlySet<long> Characters, IReadOnlySet<long> Corporations, IReadOnlySet<long> Alliances, bool Everyone);
 
-/// <summary>The change codes of the client's <c>ownergroupConst</c>, as they are recorded for a group (the <c>OnOwnerGroupsUpdated</c> payload).</summary>
 public static class AccessGroupChanges
 {
     public const int Created = 1;
@@ -56,7 +54,6 @@ public sealed class AccessGroupError(string code, string? notice = null) : Excep
 }
 
 /// <summary>
-/// The rules of owner groups, from the EVE University wiki's access list page: the creator is the admin; the admin edits and deletes the
 /// list and manages every entry; a manager adds members and removes or changes only member and blocked entries; corporations, alliances and
 /// everyone can be member or blocked only; the most specific entry decides (character, then corporation, then alliance, then everyone).
 /// A corporation's built-in list is fixed: its corporation is its admin, and every member of the corporation may use it.

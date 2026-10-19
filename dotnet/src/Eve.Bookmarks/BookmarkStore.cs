@@ -15,7 +15,6 @@ public sealed class BookmarkError(string code, string? notice = null) : Exceptio
     public string? Notice { get; } = notice;
 }
 
-/// <summary>A folder: a personal one (its owner's), or a shared one whose <see cref="SharedGroups"/> give its access levels.</summary>
 public sealed record BookmarkFolder(long FolderId, long OwnerId, string Name, string Description, bool IsPersonal, bool IsActive, long CreatedMs,
     SharedGroups? Groups = null);
 
@@ -60,7 +59,6 @@ public static class BookmarkRules
 
     public const string DefaultFolderName = "Personal Locations";
 
-    /// <summary>Systems where no bookmark can be made: Zarzakh (30100000), "Bookmarks are disabled in system." (the EVE University wiki).</summary>
     public static readonly IReadOnlySet<long> DisabledSystems = new HashSet<long> { 30_100_000 };
 
     /// <summary>The expiry an expiry mode gives a bookmark made at <paramref name="nowMs"/>, or null for none (the reference's <c>translateExpiryToFiletime</c>).</summary>
@@ -224,7 +222,6 @@ public sealed partial class BookmarkStore
     }
 
     /// <summary>
-    /// Deletes the folder with its subfolders, bookmarks and connections (the wiki). Only the admin deletes it. Answers the characters that had
     /// it active (other than the caller), who hear of the deletion.
     /// </summary>
     public Task<IReadOnlyList<long>> DeleteFolderAsync(long characterId, long folderId, AccessLists? lists = null, CancellationToken token = default)
@@ -375,7 +372,6 @@ public sealed partial class BookmarkStore
         }, token);
 
     /// <summary>
-    /// Changes a bookmark: its memo, note, subfolder, folder and expiry (cancelled on request). The bookmark must be in the old folder; the
     /// character edits it when it manages that folder or uses it and made the bookmark, and moves it only into a folder it can use.
     /// </summary>
     public Task<Bookmark> UpdateBookmarkAsync(long characterId, long bookmarkId, long oldFolderId, string? memo, string? note,

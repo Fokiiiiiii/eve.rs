@@ -3261,5 +3261,5 @@ fn tether_host_policy_dispatches_to_the_real_scene_and_transitions_return_to_the
         )
         .unwrap_err();
     assert!(wrong_direction.0.contains("kind 81"));
-    assert_eq!(crate::link::PROTOCOL_VERSION, 79);
+    assert_eq!(crate::link::PROTOCOL_VERSION, 80);
 }

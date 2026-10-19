@@ -30,6 +30,7 @@ public sealed record CharMgrPersonalData(
         new Dictionary<long, string>());
 
     public long? NextOwnerNoteId { get; init; }
+    public long? NextContactLabelId { get; init; }
     public IReadOnlyDictionary<string, PyValue> CharacterSettings { get; init; } =
         new Dictionary<string, PyValue>(StringComparer.Ordinal);
 }
@@ -524,6 +525,116 @@ public sealed partial class CharMgrService(
                     ("color", new PyInt(label.Value.Color)))))
             .ToArray();
         return new PyDict(entries);
+    }
+
+
+    [Method("CreateLabel")]
+    public async ValueTask<PyValue> CreateLabel(ServiceCall call)
+    {
+        var name = call.Args.Count > 0 ? Eve.Macho.JsSemantics.StringValue(call.Arg(0))?.Trim() ?? "" : "";
+        var color = call.Args.Count > 1 ? NormalizeInteger(call.Arg(1)) : 0;
+        long labelId = 0;
+        var updated = await UpdatePersonalDataAsync(call, data =>
+        {
+            var hint = data.NextContactLabelId is > 0 ? data.NextContactLabelId.Value : 1;
+            labelId = 1;
+            while (labelId < hint && labelId <= long.MaxValue / 2)
+                labelId <<= 1;
+            if (labelId < hint)
+            {
+                labelId = 0;
+                return data;
+            }
+            while (labelId > 0 && data.Labels.ContainsKey(labelId))
+            {
+                if (labelId > long.MaxValue / 2)
+                {
+                    labelId = 0;
+                    return data;
+                }
+                labelId <<= 1;
+            }
+            if (labelId <= 0)
+                return data;
+            var labels = new Dictionary<long, CharMgrContactLabel>(data.Labels);
+            labels[labelId] = new CharMgrContactLabel(name, color);
+            return data with { Labels = labels, NextContactLabelId = labelId <= (1L << 61) ? labelId << 1 : null };
+        });
+        return updated is not null && labelId > 0 ? new PyInt(labelId) : None;
+    }
+
+    [Method("DeleteLabel")]
+    public async ValueTask<PyValue> DeleteLabel(ServiceCall call)
+    {
+        var labelId = call.Args.Count > 0 ? NormalizeInteger(call.Arg(0)) : 0;
+        if (labelId <= 0)
+            return None;
+        await UpdatePersonalDataAsync(call, data =>
+        {
+            var labels = data.Labels.Where(entry => entry.Key != labelId).ToDictionary();
+            var contacts = data.Contacts.Select(contact => contact with { LabelMask = contact.LabelMask & ~labelId }).ToArray();
+            return data with { Labels = labels, Contacts = contacts };
+        });
+        return None;
+    }
+
+    [Method("EditLabel")]
+    public async ValueTask<PyValue> EditLabel(ServiceCall call)
+    {
+        if (call.Args.Count == 0)
+            return None;
+        var labelId = NormalizeInteger(call.Arg(0));
+        if (labelId <= 0)
+            return None;
+        var hasName = call.Args.Count > 1 && call.Arg(1) is not PyNone;
+        var hasColor = call.Args.Count > 2 && call.Arg(2) is not PyNone;
+        var name = hasName ? Eve.Macho.JsSemantics.StringValue(call.Arg(1)) ?? "" : "";
+        var color = hasColor ? NormalizeInteger(call.Arg(2)) : 0;
+        await UpdatePersonalDataAsync(call, data =>
+        {
+            var old = data.Labels.GetValueOrDefault(labelId) ?? new CharMgrContactLabel("", 0);
+            var labels = new Dictionary<long, CharMgrContactLabel>(data.Labels);
+            labels[labelId] = new CharMgrContactLabel(hasName ? name : old.Name, hasColor ? color : old.Color);
+            return data with { Labels = labels };
+        });
+        return None;
+    }
+
+    [Method("AssignLabels")]
+    public async ValueTask<PyValue> AssignLabels(ServiceCall call)
+    {
+        var contactIds = call.Args.Count > 0 ? ListItems(call.Arg(0)).Select(item => NormalizeInteger(item)).Where(id => id > 0).ToHashSet() : new HashSet<long>();
+        var labelMask = call.Args.Count > 1 ? NormalizeInteger(call.Arg(1)) : 0;
+        if (labelMask <= 0 || contactIds.Count == 0)
+            return None;
+        await UpdatePersonalDataAsync(call, data =>
+        {
+            var contacts = data.Contacts.ToDictionary(contact => contact.ContactId);
+            foreach (var contactId in contactIds)
+            {
+                var existing = contacts.GetValueOrDefault(contactId);
+                contacts[contactId] = new CharMgrContact(contactId, existing?.InWatchlist ?? false,
+                    existing?.RelationshipId ?? 0, (existing?.LabelMask ?? 0) | labelMask);
+            }
+            return data with { Contacts = contacts.Values.OrderBy(contact => contact.ContactId).ToArray() };
+        });
+        return None;
+    }
+
+    [Method("RemoveLabels")]
+    public async ValueTask<PyValue> RemoveLabels(ServiceCall call)
+    {
+        var contactIds = call.Args.Count > 0 ? ListItems(call.Arg(0)).Select(item => NormalizeInteger(item)).Where(id => id > 0).ToHashSet() : new HashSet<long>();
+        var labelMask = call.Args.Count > 1 ? NormalizeInteger(call.Arg(1)) : 0;
+        if (labelMask <= 0 || contactIds.Count == 0)
+            return None;
+        await UpdatePersonalDataAsync(call, data => data with
+        {
+            Contacts = data.Contacts.Select(contact => contactIds.Contains(contact.ContactId)
+                ? contact with { LabelMask = contact.LabelMask & ~labelMask }
+                : contact).ToArray(),
+        });
+        return None;
     }
 
 

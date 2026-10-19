@@ -568,6 +568,36 @@ public sealed class CharacterHostTests
         Assert.Empty(Notifications(sink));
     }
 
+
+    [PgFact]
+    public async Task Character_contact_labels_persist_through_the_host_and_a_restart()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync();
+        var character = await rig.CreateCharacterAsync();
+        var session = new ClientSession { CharacterId = character, UserId = 1, Sink = new RecordingPacketSink() };
+        var charMgr = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("charMgr"));
+
+        Assert.Equal(new PyInt(1), await CallAsync(charMgr, "CreateLabel", session, new PyStr("Fleet"), new PyInt(7)));
+        Assert.Equal(new PyInt(2), await CallAsync(charMgr, "CreateLabel", session, new PyStr("Friends"), new PyInt(3)));
+        await CallAsync(charMgr, "AssignLabels", session, new PyList([new PyLong(77_001)]), new PyLong(3));
+        Assert.IsType<PyNone>(await CallAsync(charMgr, "DeleteLabel", session, new PyLong(2)));
+
+        var expectedLabels = new PyDict([new KeyValuePair<PyValue, PyValue>(
+            new PyInt(1), Py.KeyVal(("labelID", new PyInt(1)), ("name", new PyStr("Fleet")), ("color", new PyInt(7))))]);
+        var expectedContacts = Py.KeyVal(
+            ("addresses", Py.Rowset(["contactID", "inWatchlist", "relationshipID", "labelMask"],
+                [new PyList([new PyInt(77_001), new PyInt(0), new PyInt(0), new PyInt(1)])])),
+            ("blocked", Py.Rowset(["senderID"], [])));
+        Assert.Equal(expectedLabels, await CallAsync(charMgr, "GetLabels", session));
+        Assert.Equal(expectedContacts, await CallAsync(charMgr, "GetContactList", session));
+
+        await rig.RestartAsync();
+        charMgr = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("charMgr"));
+        Assert.Equal(expectedLabels, await CallAsync(charMgr, "GetLabels", session));
+        Assert.Equal(expectedContacts, await CallAsync(charMgr, "GetContactList", session));
+        Assert.Equal(new PyInt(4), await CallAsync(charMgr, "CreateLabel", session, new PyStr("Next"), new PyInt(5)));
+    }
+
     [PgFact]
 public async Task Notification_manager_mutations_persist_and_notify_after_the_commit()
 {

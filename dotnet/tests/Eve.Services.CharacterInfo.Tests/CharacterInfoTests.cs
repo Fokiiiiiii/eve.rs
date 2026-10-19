@@ -629,6 +629,44 @@ public class CharMgrTests
 
 
     [PgFact]
+    public async Task Personal_contact_labels_can_be_created_edited_assigned_removed_and_deleted()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var characterId = await rig.MakeAsync("Ann Lee");
+        var state = new CharMgrPersonalData(
+            [new CharMgrContact(2001, true, -10, 1)], [],
+            new Dictionary<long, CharMgrContactLabel> { [1] = new("Fleet", 7) }, [],
+            new Dictionary<long, string>())
+        { NextContactLabelId = 3 };
+        var service = rig.CreateCharMgr(
+            (ownerId, _) => ValueTask.FromResult<CharMgrPersonalData?>(ownerId == characterId ? state : null),
+            (_, update, _) =>
+            {
+                state = update(state);
+                return ValueTask.FromResult<CharMgrPersonalData?>(state);
+            });
+        var (session, _) = Rig.Session(characterId);
+        async Task<PyValue> Call(string method, params PyValue[] args) => await Rig.CallAsync(service, session, method, args);
+
+        Assert.Equal(Id(4), await Call("CreateLabel", new PyStr("Wing"), Id(5)));
+        Assert.Equal(new CharMgrContact(2001, true, -10, 1), Assert.Single(state.Contacts));
+        Assert.IsType<PyNone>(await Call("AssignLabels", new PyList([Id(2001), Id(2002)]), new PyLong(4)));
+        Assert.Equal(new[] { new CharMgrContact(2001, true, -10, 5), new CharMgrContact(2002, false, 0, 4) },
+            state.Contacts.OrderBy(contact => contact.ContactId));
+        Assert.IsType<PyNone>(await Call("EditLabel", new PyLong(1), new PyStr("Fleet pilots"), Id(9)));
+        Assert.IsType<PyNone>(await Call("RemoveLabels", new PyList([Id(2001)]), new PyLong(1)));
+        Assert.IsType<PyNone>(await Call("DeleteLabel", new PyLong(4)));
+        Assert.Equal(Id(8), await Call("CreateLabel", new PyStr("Next"), Id(6)));
+        Assert.Equal(new Dictionary<long, CharMgrContactLabel>
+        {
+            [1] = new("Fleet pilots", 9), [8] = new("Next", 6),
+        }, state.Labels);
+        Assert.Equal(new[] { new CharMgrContact(2001, true, -10, 0), new CharMgrContact(2002, false, 0, 0) },
+            state.Contacts.OrderBy(contact => contact.ContactId));
+    }
+
+
+    [PgFact]
     public async Task Get_private_info_on_corporation_change_returns_the_reference_keyval_shape()
     {
         await using var rig = await Rig.CreateAsync();

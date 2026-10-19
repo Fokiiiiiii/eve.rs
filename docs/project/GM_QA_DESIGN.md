@@ -89,3 +89,7 @@ Every command the screen sends is served. A word that no command serves still an
 ## Open
 - `/missioncomplete` is not built (no placeholder mission exists; DEVIATIONS G9). `/pi program` is not built (DEVIATIONS G10).
 - The Insider walk against EVE.js is run and compared (MITM_COMPARE.md). Its remaining differences include `/solar` reply text (EVE.js includes the gate name; eve.rs does not) and skill-not-found suggestion wording (DEVIATIONS G26). Both servers place the pilot beside the destination system’s first stargate.
+
+## ESS link hull grant (owner decision, 2026-10-19)
+
+The ESS live walk needs a hull permitted by the ESS link module. Choose the hull from the pinned SDE `canFitShipGroup` and `canFitShipType` attributes, then add a role-gated slash command that grants the hull with the module fitted and online. The live walk must exercise linking, reserve-bank interaction, and key consumption.

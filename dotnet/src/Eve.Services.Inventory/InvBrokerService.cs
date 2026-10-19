@@ -538,22 +538,32 @@ public sealed partial class InvBrokerService(
 [Method("ListStations")]
     public async ValueTask<PyValue> ListStations(ServiceCall call)
     {
-        if (call.Session.CharacterId is not { } character) return new PyList([]);
+        if (call.Session.CharacterId is not { } character)
+            return Py.Rowset(
+                ["stationID", "solarSystemID", "typeID", "itemCount", "upkeepState"],
+                []);
+
         var owned = await items.OwnedByAsync(character, call.Cancellation);
-        var ids = owned.Select(item => item.LocationId).Where(id => stations.Get(id) is not null).ToHashSet();
-        var corporationId = CorporationIdOf(call.Session);
-        if (corporationId > 0 && corporationId != character && corporationHangarAccess is not null)
-        {
-            var corpItems = await items.OwnedByAsync(corporationId, call.Cancellation);
-            foreach (var group in corpItems.Where(item => ItemFlags.IsCorporationHangar(item.Flag) && stations.Get(item.LocationId) is not null)
-                         .GroupBy(item => (item.LocationId, item.Flag)))
-            {
-                if (await CorporationAccessAsync(character, corporationId, group.Key.LocationId, group.Key.Flag,
-                        CorporationHangarOperation.Query, call.Cancellation))
-                    ids.Add(group.Key.LocationId);
-            }
-        }
-        return new PyList([.. ids.Order().Select(InventoryWire.Id)]);
+        var rows = owned
+            .Where(item => item.Quantity != 0 && stations.Get(item.LocationId) is not null)
+            .GroupBy(item => item.LocationId)
+            .Select(group => stations.Get(group.Key) is { } station
+                ? (Station: station, ItemCount: group.Count())
+                : default)
+            .Where(group => group.Station is not null)
+            .OrderBy(group => group.Station!.SolarSystemId)
+            .ThenBy(group => group.Station!.Id)
+            .Select(group => Py.Tuple([
+                InventoryWire.Id(group.Station!.Id),
+                InventoryWire.Id(group.Station.SolarSystemId),
+                new PyInt(group.Station.TypeId),
+                new PyInt(group.ItemCount),
+                PyNone.Instance
+            ]));
+
+        return Py.Rowset(
+            ["stationID", "solarSystemID", "typeID", "itemCount", "upkeepState"],
+            rows);
     }
 
     [Method("ListStationItems")]
@@ -594,12 +604,40 @@ public sealed partial class InvBrokerService(
     [Method("GetAssetWorth")]
     public async ValueTask<PyValue> GetAssetWorth(ServiceCall call)
     {
-        if (call.Session.CharacterId is not { } character) return Py.Number(0d);
+        const int PlexTypeId = 44992;
+        const int BlueprintCategoryId = 9;
+        if (call.Session.CharacterId is not { } character)
+            return Py.Tuple([Py.Number(0d), Py.Number(0d)]);
+
         var owned = await items.OwnedByAsync(character, call.Cancellation);
-        var typesById = await types.GetAsync(owned.Select(item => item.TypeId), call.Cancellation);
-        var worth = owned.Sum(item => typesById.GetValueOrDefault(item.TypeId)?.BasePrice
-            * Math.Max(1, item.Singleton ? 1 : item.Quantity) ?? 0m);
-        return Py.Number((double)worth);
+        var typesById = await types.GetAsync(owned.Select(item => item.TypeId).Append(PlexTypeId), call.Cancellation);
+        decimal assetWorth = 0m;
+        decimal plexWorth = 0m;
+        var plexUnitPrice = typesById.GetValueOrDefault(PlexTypeId)?.BasePrice ?? 0m;
+
+        foreach (var item in owned)
+        {
+            if (item.Quantity == 0 || !typesById.TryGetValue(item.TypeId, out var type))
+                continue;
+
+            var units = item.Singleton ? 1 : Math.Max(0, item.Quantity);
+            if (units == 0)
+                continue;
+
+            if (item.TypeId == PlexTypeId)
+            {
+                plexWorth += plexUnitPrice * units;
+                continue;
+            }
+
+            if (type.CategoryId != BlueprintCategoryId && type.BasePrice > 0)
+                assetWorth += type.BasePrice * units;
+        }
+
+        return Py.Tuple([
+            Py.Number((double)Math.Round(assetWorth, MidpointRounding.AwayFromZero)),
+            Py.Number((double)Math.Round(plexWorth, MidpointRounding.AwayFromZero))
+        ]);
     }
 
     [Method("IsMyItemAtDockableLocation")]

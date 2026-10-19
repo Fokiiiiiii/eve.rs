@@ -7,7 +7,10 @@ using Eve.Space;
 namespace Eve.Services.Space.Gates;
 
 /// <summary>The group and the race of a ship's type (the static data the gate's rules read).</summary>
-public sealed record ShipClass(int GroupId, int RaceId);
+public sealed record ShipClass(int GroupId, int RaceId)
+{
+    public bool BattlefieldAllowed { get; init; }
+}
 
 /// <summary>
 /// <c>keeper.ActivateAccelerationGate</c> in space (docs/project/ACCELERATION_GATES.md; EveJS <c>keeperService.js</c> <c>activateAccelerationGateForSession</c>): a
@@ -26,6 +29,11 @@ public sealed class SpaceAccelerationGates(
     /// <summary>The ship groups a gate bars when it names no race (EveJS <c>ACCELERATION_GATE_BLACKLISTED_GROUP_IDS</c>: capsules and the capital hulls).</summary>
     public static readonly IReadOnlySet<int> BlacklistedGroups = new HashSet<int> { 29, 30, 485, 513, 547, 659, 883, 902, 1538, 4594, 5120 };
 
+    /// <summary>Whether an SDE ship type is allowed by a battlefield gate (T1 or empire faction hull only).</summary>
+    public static bool IsBattlefieldAllowed(int categoryId, int? metaGroupId, long? factionId) =>
+        categoryId == 6 && (metaGroupId is null or 1 ||
+            (metaGroupId == 4 && factionId is { } faction && Eve.FactionWarfare.FwFactions.IsOccupier(faction)));
+
     /// <summary>The instance and the gate's place in its dungeon's list, for a gate id of the host (null when the id is not one of a gate).</summary>
     public static (long InstanceId, int GateIndex)? GateOf(long gateId)
     {
@@ -37,49 +45,32 @@ public sealed class SpaceAccelerationGates(
     public async Task<PyValue> ActivateAsync(ClientSession session, long gateId, CancellationToken cancellationToken)
     {
         if (GateOf(gateId) is not { } where)
-        {
             throw MachoErrors.ThrowUserError("DeniedTargetAttemptFailed");
-        }
         if (await currentInstanceOf(session, cancellationToken) != where.InstanceId)
-        {
             throw MachoErrors.ThrowUserError("DeniedTargetAttemptFailed");
-        }
         var pocket = (await activePockets(cancellationToken)).FirstOrDefault(p => p.InstanceId == where.InstanceId);
         if (pocket?.Layout is not { } layout || layout.Gates.FirstOrDefault(g => g.GateIndex == where.GateIndex) is not { } gate)
-        {
             throw MachoErrors.ThrowUserError("DeniedTargetAttemptFailed");
-        }
-        // a gate out of a room is locked until the room's waves are done (EveJS: "The acceleration gate is locked."); the gate into the entry room is the
-        // site's own and is open (the layout numbers its source as the entry room, which is not a room to clear first)
         if (layout.Room(gate.DestinationRoomKey)?.Index != 0 && !(await clearedRooms(where.InstanceId, cancellationToken)).Contains(gate.SourceRoomKey))
-        {
             throw MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr("The acceleration gate is locked.")));
-        }
         if (await shipClassOf(session, cancellationToken) is not { } ship)
-        {
             throw MachoErrors.ThrowUserError("DeniedShipChanged");
-        }
+        if (pocket.ArchetypeId == 68 && (!ship.BattlefieldAllowed || BlacklistedGroups.Contains(ship.GroupId)))
+            throw MachoErrors.ThrowUserError("DunShipCannotWarp");
         if (gate.AllowedRaces.Count > 0)
         {
             if (!gate.AllowedRaces.Contains(ship.RaceId))
-            {
                 throw MachoErrors.ThrowUserError("DunShipCannotWarp");
-            }
         }
         else if (BlacklistedGroups.Contains(ship.GroupId))
         {
             throw MachoErrors.ThrowUserError("DunBlacklistCannotWarp");
         }
         if (layout.Room(gate.DestinationRoomKey) is not { } room)
-        {
             throw MachoErrors.ThrowUserError("DeniedTargetAttemptFailed");
-        }
         var reply = await transit(session, gateId, room.EntryPoint, cancellationToken);
         if (!reply.Accepted)
-        {
             throw Refused(reply.Reason);
-        }
-        // the pilot is in the room it leads to: the site's game state keeps it (the keeper's current dungeon and the presence queries read it)
         await recordRoom(where.InstanceId, room.Key, room.RoomId ?? 0, cancellationToken);
         return PyNone.Instance;
     }

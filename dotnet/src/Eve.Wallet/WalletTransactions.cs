@@ -208,24 +208,28 @@ public sealed partial class WalletTransactions
         reader.GetInt64(2), reader.GetInt32(3), reader.GetDecimal(4), reader.GetDecimal(5), reader.GetString(6),
         reader.GetInt64(7), reader.GetString(8),reader.GetInt32(9),reader.IsDBNull(10) ? null : reader.GetInt64(10),reader.IsDBNull(11) ? null : reader.GetInt32(11));
 
-    public async Task<IReadOnlyList<JournalEntry>> JournalAsync(long ownerId, long? beforeId = null,
-        int limit = 1000, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<JournalEntry>> JournalForAccountAsync(long ownerId, int accountKey,
+        long? beforeId = null, int limit = 1000, CancellationToken cancellationToken = default)
     {
+        if (accountKey is < 1000 or > 1006)
+            throw new ArgumentOutOfRangeException(nameof(accountKey));
         if (limit is < 1 or > 1000)
-        {
             throw new ArgumentOutOfRangeException(nameof(limit));
-        }
+
         await using var command = _source.CreateCommand(
-            $"SELECT id, owner_id, counterparty_id, ref_type_id, amount, balance, reason, time_ms, operation_key, account_key, reference_id, reference_type FROM {_schema}.journal WHERE owner_id = $1 AND account_key = 1000 AND id < $2 ORDER BY id DESC LIMIT $3");
+            $"SELECT id, owner_id, counterparty_id, ref_type_id, amount, balance, reason, time_ms, operation_key, account_key, reference_id, reference_type FROM {_schema}.journal WHERE owner_id = $1 AND account_key = $2 AND id < $3 ORDER BY id DESC LIMIT $4");
         command.Parameters.Add(new NpgsqlParameter { Value = ownerId });
+        command.Parameters.Add(new NpgsqlParameter { Value = accountKey });
         command.Parameters.Add(new NpgsqlParameter { Value = beforeId ?? long.MaxValue });
         command.Parameters.Add(new NpgsqlParameter { Value = limit });
         var entries = new List<JournalEntry>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
-        {
             entries.Add(Read(reader));
-        }
         return entries;
     }
+
+    public Task<IReadOnlyList<JournalEntry>> JournalAsync(long ownerId, long? beforeId = null,
+        int limit = 1000, CancellationToken cancellationToken = default) =>
+        JournalForAccountAsync(ownerId, 1000, beforeId, limit, cancellationToken);
 }

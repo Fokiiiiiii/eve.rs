@@ -50,6 +50,7 @@ public sealed class CompatibilityRpcServiceTests
             new ShipCosmeticsMgrRpcService(),
             new CharacterEnergyMgrRpcService(), new PaperDollServerRpcService(),
             new IndustryMonitorRpcService(),
+            new ClientStatLoggerRpcService(),
         };
         var expected = new Dictionary<string, string[]>
         {
@@ -57,11 +58,24 @@ public sealed class CompatibilityRpcServiceTests
             ["characterEnergyMgr"] = ["GetMyEnergyState"],
             ["paperDollServer"] = ["GetMyPaperDollData", "GetPaperDollData", "GetPaperDollDataBatch", "GetPaperDollPortraitDataFor", "UpdateExistingCharacterFull", "UpdateExistingCharacterLimited"],
             ["industryMonitor"] = ["ConnectJob", "DisconnectJob"],
+            ["clientStatLogger"] = ["LogString"],
         };
         Assert.Equal(expected.Keys.Order(), services.Select(service => service.Name).Order());
         foreach (var service in services)
             foreach (var method in expected[service.Name])
                 Assert.True(service.HasMethod(method), $"{service.Name}.{method}");
+    }
+
+    [Fact]
+    public async Task Client_stat_log_records_the_message_and_answers_none()
+    {
+        var messages = new List<string>();
+        var service = new ClientStatLoggerRpcService(messages.Add);
+
+        var response = await service.CallAsync(Call("LogString", args: [new PyStr("ballpark startup failed")]));
+
+        Assert.IsType<PyNone>(response);
+        Assert.Equal(["ballpark startup failed"], messages);
     }
 
     [Fact]

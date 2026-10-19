@@ -35,9 +35,9 @@ public sealed class AccelerationGateTests
         public ClientSession Session { get; } = new(new Sink());
         public SpaceAccelerationGates Gates { get; private set; } = null!;
 
-        public void Build(long currentInstance, long instance, DungeonLayout? layout = null)
+        public void Build(long currentInstance, long instance, DungeonLayout? layout = null, long? archetypeId = null)
         {
-            var pockets = new List<DungeonPocket> { new(instance, 30_000_001, Origin, layout ?? LayoutOf(Dungeon283)) };
+            var pockets = new List<DungeonPocket> { new(instance, 30_000_001, Origin, layout ?? LayoutOf(Dungeon283), archetypeId) };
             Gates = new SpaceAccelerationGates(
                 _ => Task.FromResult<IReadOnlyList<DungeonPocket>>(pockets),
                 (_, _) => Task.FromResult<long?>(currentInstance),
@@ -125,6 +125,49 @@ public sealed class AccelerationGateTests
         Assert.Equal("DunBlacklistCannotWarp", UserError(refused).Name);
         Assert.Empty(capsule.Transits);
 
+    }
+
+    [Fact]
+    public async Task Battlefield_gate_rejects_ships_outside_the_t1_and_navy_allowlist()
+    {
+        var layout = LayoutOf(Dungeon283);
+        var gateId = GateIdOf(layout);
+        var ship = new ShipClass(GroupId: 25, RaceId: 1) { BattlefieldAllowed = false };
+        var rig = new Rig(ship, new CommandReply(true, 0, null));
+        rig.Build(Instance, Instance, archetypeId: 68);
+
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            rig.Gates.ActivateAsync(rig.Session, gateId, CancellationToken.None));
+        Assert.Equal("DunShipCannotWarp", UserError(error).Name);
+        Assert.Empty(rig.Transits);
+    }
+
+    [Fact]
+    public async Task Battlefield_gate_allows_a_ship_in_the_t1_and_navy_allowlist()
+    {
+        var layout = LayoutOf(Dungeon283);
+        var gateId = GateIdOf(layout);
+        var ship = new ShipClass(GroupId: 25, RaceId: 1) { BattlefieldAllowed = true };
+        var rig = new Rig(ship, new CommandReply(true, 0, null));
+        rig.Build(Instance, Instance, archetypeId: 68);
+
+        await rig.Gates.ActivateAsync(rig.Session, gateId, CancellationToken.None);
+
+        Assert.Single(rig.Transits);
+    }
+
+
+    [Theory]
+    [InlineData(6, null, null, true)]
+    [InlineData(6, 1, null, true)]
+    [InlineData(6, 2, 500001L, false)]
+    [InlineData(6, 3, 500001L, false)]
+    [InlineData(6, 4, 500001L, true)]
+    [InlineData(6, 4, 500010L, false)]
+    [InlineData(4, 1, null, false)]
+    public void Battlefield_allowlist_uses_ship_category_meta_group_and_faction(int categoryId, int? metaGroupId, long? factionId, bool expected)
+    {
+        Assert.Equal(expected, SpaceAccelerationGates.IsBattlefieldAllowed(categoryId, metaGroupId, factionId));
     }
 
     [Fact]

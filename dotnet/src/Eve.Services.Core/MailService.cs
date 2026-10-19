@@ -33,7 +33,7 @@ public sealed class MailService(
 
     public string Name => "mailMgr";
 
-    public bool HasMethod(string method) => method is "SyncMail" or "GetMailHeaders" or "GetBody" or "GetLabels" or "SendMail" or "PokePlayerAboutChatMsgGm";
+    public bool HasMethod(string method) => method is "SyncMail" or "GetMailHeaders" or "GetBody" or "GetLabels" or "MarkAsRead" or "SendMail" or "PokePlayerAboutChatMsgGm";
 
     public async ValueTask<PyValue> CallAsync(ServiceCall call)
     {
@@ -41,6 +41,14 @@ public sealed class MailService(
             return PyNone.Instance;
         call.Cancellation.ThrowIfCancellationRequested();
 
+        if (call.Method == "MarkAsRead")
+        {
+            var requestingCharacterId = call.Session.CharacterId.GetValueOrDefault();
+            if (requestingCharacterId > 0)
+                foreach (var id in Items(call.Arg(0)).Select(PositiveId).Where(id => id > 0).Distinct())
+                    await _markAsRead(requestingCharacterId, id, call.Session, call.Cancellation);
+            return PyNone.Instance;
+        }
         if (call.Method == "SendMail")
             return await SendMailAsync(call);
         if (call.Method == "PokePlayerAboutChatMsgGm")

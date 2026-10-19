@@ -36,7 +36,7 @@ public sealed record DungeonWaveData(int WaveIndex, string SpawnQuery, int Amoun
 public sealed record DungeonStart(bool Started, long? InstanceId, string? Refusal);
 
 /// <summary>An active dungeon as a deadspace pocket: its instance, its system and its origin in the scene (metres).</summary>
-public sealed record DungeonPocket(long InstanceId, int SolarSystemId, double[] Origin, Eve.Dungeons.DungeonLayout? Layout = null);
+public sealed record DungeonPocket(long InstanceId, int SolarSystemId, double[] Origin, Eve.Dungeons.DungeonLayout? Layout = null, long? ArchetypeId = null);
 
 /// <summary>
 /// Runs the NPC waves of a dungeon in order, on the shared content runtime (<c>Eve.Content</c>): one definition per dungeon, one sequential objective per wave whose target is the
@@ -212,10 +212,9 @@ public sealed class DungeonWaveDirector
         {
             if (instance.Data<DungeonInstanceData>() is { } data)
             {
-                var layout = _catalog.GetDungeon(data.DungeonID) is DungeonFound found
-                    ? Eve.Dungeons.DungeonRoomLayout.Build(found.Dungeon, data.Origin, GateRadii)
-                    : null;
-                pockets.Add(new DungeonPocket(instance.Id, data.SolarSystemId, data.Origin, layout));
+                var dungeon = _catalog.GetDungeon(data.DungeonID) is DungeonFound found ? found.Dungeon : null;
+                var layout = dungeon is null ? null : Eve.Dungeons.DungeonRoomLayout.Build(dungeon, data.Origin, GateRadii);
+                pockets.Add(new DungeonPocket(instance.Id, data.SolarSystemId, data.Origin, layout, dungeon?.ArchetypeID));
             }
         }
         return pockets;

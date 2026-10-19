@@ -161,6 +161,25 @@ public sealed class MailServiceTests
     }
 
     [Fact]
+    public async Task Mark_as_read_forwards_each_distinct_mailbox_message_to_durable_host_callback()
+    {
+        var call = Request("MarkAsRead", new PyList([new PyInt(20), new PyInt(21), new PyInt(20)]));
+        var marked = new List<long>();
+        var service = new MailService(_ => Task.FromResult(Mailbox()), async (characterId, messageId, session, ct) =>
+        {
+            Assert.Equal(90000001, characterId);
+            Assert.Same(call.Session, session);
+            Assert.Equal(call.Cancellation, ct);
+            marked.Add(messageId);
+            await Task.Yield();
+        });
+
+        Assert.True(service.HasMethod("MarkAsRead"));
+        Assert.Same(PyNone.Instance, await service.CallAsync(call));
+        Assert.Equal([20L, 21L], marked);
+    }
+
+    [Fact]
     public async Task Failed_read_status_persistence_does_not_report_successful_body_retrieval()
     {
         var service = new MailService(_ => Task.FromResult(Mailbox()),

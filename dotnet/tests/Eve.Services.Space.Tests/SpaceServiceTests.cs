@@ -1509,6 +1509,39 @@ public class SpaceServiceTests
     }
 
     [PgFact]
+    public async Task A_target_that_disallows_offensive_modifiers_refuses_a_gun_before_the_simulation()
+    {
+        // The pinned SDE has no ship type with attribute 872; add it to the real starter hull so this host gate is exercised.
+        var rig = await Rig.CreateAsync(staticsOverride: async statics =>
+        {
+            await statics.EnsureTypesAsync([Rig.Cockroach]);
+            var targetHull = statics.Type(Rig.Cockroach)
+                ?? throw new InvalidOperationException("The starter hull must be in the pinned SDE.");
+            var attribute = statics.AttributeId("disallowOffensiveModifiers")
+                ?? throw new InvalidOperationException("The SDE must define disallowOffensiveModifiers.");
+            Assert.Equal(872, attribute);
+            var attributes = new Dictionary<int, double>(targetHull.Attributes) { [attribute] = 1 };
+            return statics.WithFixtures([targetHull with { Attributes = attributes }]);
+        });
+        await using var _ = rig;
+
+        var attacker = await rig.NewCharacterAsync("Module Attacker", account: 1);
+        var target = await rig.NewCharacterAsync("Immune Target", account: 2);
+        var attackerSession = await rig.SessionAsync(attacker, id: 1);
+        var targetSession = await rig.SessionAsync(target, id: 2);
+        var (_, _, gun, _) = await ShipAsync(rig, attacker);
+        await InSpaceAsync(rig, attackerSession);
+        await InSpaceAsync(rig, targetSession);
+        var activationsBefore = rig.Sim.Heard.OfType<SimActivate>().Count();
+
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            rig.Space.ActivateAsync(attackerSession, gun, "targetAttack", target.ShipId, 1, CancellationToken.None));
+
+        Assert.Equal("DeniedActivateTargetModuleDisallowed", error.Error.UserErrorMessage);
+        Assert.Equal(activationsBefore, rig.Sim.Heard.OfType<SimActivate>().Count());
+    }
+
+    [PgFact]
     public async Task A_gun_that_needs_no_charge_shoots_with_its_own_damage_after_the_skills_of_the_pilot()
     {
         var (rig, character, _) = await DockedAsync();

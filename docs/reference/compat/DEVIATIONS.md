@@ -2391,9 +2391,7 @@ client's use of mission data: eve-logic `evemissions/client/data.py`, `eve/clien
   so the rooms and spawns cannot be taken from `dungeons`. `MissionStaticCatalog` returns the ID; `MissionDataGaps.DungeonContent`
   gives the reason. Status: open, belongs to the dungeon owner.
 - **Dungeon catalog manifest `sdeBuild` is 3405148, not the runtime pin 3396210.** `dotnet/src/Eve.Dungeons/Data/catalog/v1/manifest.json` is written by `tools/dev/extract-dungeon-catalog.py` run on the 3405148 JSONL directory: that script needs `missions.jsonl` and `epicArcs.jsonl`, which only build 3405148 has, and takes `sdeBuild` from that directory's `_sde.jsonl`. The type, archetype and dungeon checks in the manifest (0 mismatches) ran against that same build. The runtime static data stays the pinned 3396210 (`sde/lock.json`); the mission tables are the second pin (`missionPinned`). Status: explained; the manifest is unchanged because `DungeonCatalogTests` asserts 3405148.
-- **LP and standings: not answered by the mission data.** Mission LP rewards and LP store standing requirements are not in
-  the build (the official `missions` rows carry ISK and item rewards and standings in `extraStandings`). LP store offers
-  come from the agents track (its ESI source). Status: open (`MissionDataGaps.Standings`).
+- **Mission LP formula configuration (Q-21).** `ApproximateMissionRewardConfiguration` defaults to the owner-approved report values: system-security factor 1.6288 and Security Connections +10% per level. `ApproximateMissionRewardRules` provides formula plumbing with configurable factors. These values are approximate and unconfirmed; they are not applied to payouts because the official mission data has no LP base reward, and no mission LP payout provider exists (`MissionDataGaps.Standings`). Unit tests cover the formula and replacing both factors.
 - **Reward terms are official.** `missionRewards` (reward, bonus reward, bonus interval) is read for the 940 missions that
   have it. The reward base per level is not in the build. Status: decided.
 - **Agent mission kind and importance: an eve.rs rule table** (`dotnet/src/Eve.Services.Core/AgentMissionKindRules.cs`).
@@ -4931,3 +4929,5 @@ The owner decided that Triglavian NPCs in Pochven do not pay bounties. Existing 
 ## Research checkpoint reconciliation (2026-10-19)
 
 The supplied research reports identify a possible ruleset boundary conflict: `FwBattlefields.LpPool` is 150,000, while report 2 says client build 3396210 predates the 2026-07-01 increase and should use 50,000. Q-16 is open. CRAB's standard and Carrier scan durations are recorded in `AnalysisBeaconRules.cs`; report 1's remaining candidate mechanics (link tail, resistances, CEQ, system interference and reward access window) remain to be reconciled item by item. See `docs/project/RESEARCH_RECONCILIATION.md`.
+
+- **Advanced Contracting capacity configuration (Q-18).** `ApproximateContractLimitConfiguration` defaults to +4 outstanding contracts per skill level and its limit hook is unit-tested. The value is approximate and unconfirmed. The current contracts track has no creation/limit provider to call the hook; limit enforcement remains open.

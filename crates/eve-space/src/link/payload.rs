@@ -855,6 +855,7 @@ impl Message {
                 target_id,
                 cycle_id,
                 command,
+                charge_type_id,
                 mining_amount_m3,
                 waste_multiplier,
                 waste_probability,
@@ -891,6 +892,7 @@ impl Message {
                 for ship in recipients {
                     out.extend_from_slice(&ship.to_le_bytes());
                 }
+                out.extend_from_slice(&charge_type_id.to_le_bytes());
             }
             Self::ModuleWorkResult {
                 session_id,

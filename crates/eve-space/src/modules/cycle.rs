@@ -561,6 +561,16 @@ impl Scene {
             }
             _ => return None,
         };
+        let charge_type_id = self
+            .pilots
+            .get(&session)
+            .and_then(|pilot| pilot.modules.running.iter().find(|run| run.effect.module_id == module_id))
+            .and_then(|run| run.effect.action.as_ref())
+            .and_then(|action| match action {
+                Action::Charged { charge_type_id, .. } if command == WORK_BURST => Some(*charge_type_id),
+                _ => None,
+            })
+            .unwrap_or(0);
         let recipients = match work {
             Action::CommandBurst { range_meters } => self.burst_recipients(session, *range_meters),
             _ => Vec::new(),
@@ -579,6 +589,7 @@ impl Scene {
             target_id,
             cycle_id: pending.cycle_id,
             command,
+            charge_type_id,
             mining_amount_m3,
             waste_multiplier,
             waste_probability,

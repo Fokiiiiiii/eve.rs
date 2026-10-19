@@ -29,7 +29,7 @@ public sealed partial class SpaceContainers
     private sealed record WorkCycle(
         bool IsModule, ulong SessionId, long CharacterId, long ShipId, int SolarSystemId, long OwnerId, long TargetId, ulong CycleId, byte Command,
         double MiningAmountM3, double WasteVolumeMultiplier, double WasteProbability, double AccessDifficultyBonus, double Roll,
-        double RoundingRoll, double CritRoll, double CritProbability, double CritQuantityMultiplier, IReadOnlyList<long>? Recipients = null)
+        double RoundingRoll, double CritRoll, double CritProbability, double CritQuantityMultiplier, IReadOnlyList<long>? Recipients = null, int ChargeTypeId = 0)
     {
         public static WorkCycle OfDrone(SimDroneWorkCycle cycle) => new(
             false, cycle.SessionId, cycle.CharacterId, cycle.ShipId, cycle.SolarSystemId, cycle.DroneId, cycle.TargetId, cycle.CycleId, cycle.Command,
@@ -38,7 +38,7 @@ public sealed partial class SpaceContainers
         public static WorkCycle OfModule(SimModuleWorkCycle cycle) => new(
             true, cycle.SessionId, cycle.CharacterId, cycle.ShipId, cycle.SolarSystemId, cycle.ModuleId, cycle.TargetId, cycle.CycleId, cycle.Command,
             cycle.MiningAmountM3, cycle.WasteVolumeMultiplier, cycle.WasteProbability, cycle.AccessDifficultyBonus, cycle.WasteRoll,
-            cycle.RoundingRoll, cycle.CritRoll, cycle.CritProbability, cycle.CritQuantityMultiplier, cycle.Recipients);
+            cycle.RoundingRoll, cycle.CritRoll, cycle.CritProbability, cycle.CritQuantityMultiplier, cycle.Recipients, cycle.ChargeTypeId);
 
         public string Kind => IsModule ? "module" : "drone";
     }

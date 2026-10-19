@@ -390,6 +390,7 @@ pub enum Out {
         target_id: i64,
         cycle_id: u64,
         command: u8,
+        charge_type_id: i32,
         mining_amount_m3: f64,
         waste_multiplier: f64,
         waste_probability: f64,

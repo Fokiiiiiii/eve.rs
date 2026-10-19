@@ -316,7 +316,7 @@ public class CommandBurstHostTests
     /// <summary>A burst's cycle as the simulation sends it at the cycle's end: the ships it found in reach, the source among them.</summary>
     private static SimModuleWorkCycle BurstCycle(DroneHostTests.Flying flying, ulong cycleId, params long[] recipients) => new(
         (ulong)flying.Session.SessionId, flying.Character, ShipIdOf(flying), flying.System, flying.Module, 0, cycleId, SimModuleWorkCommands.Burst,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, recipients);
+        0, 0, 0, 0, 0, 0, 0, 0, 0, recipients, ShieldHarmonizing);
 
     private static long ShipIdOf(DroneHostTests.Flying flying) => flying.Session.GetInt("shipid")!.Value;
 

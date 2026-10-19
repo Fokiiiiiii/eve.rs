@@ -27,7 +27,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// </summary>
 public static partial class SimCodec
 {
-    public const ushort ProtocolVersion = 80;
+    public const ushort ProtocolVersion = 81;
 
     /// <summary>The longest name of a dynamic slim-item field, in bytes (protocol 76).</summary>
     public const int SlimFieldNameMax = 64;
@@ -859,6 +859,7 @@ public static partial class SimCodec
                     var roundingRoll = r.F64();
                     var critRoll = r.F64();
                     var recipients = ReadRecipients(ref r);
+                    var chargeTypeId = r.I32();
                     // probabilities are at most one, the rolls below one, the numbers finite and not negative; a mining cycle mines something
                     if (cycleId == 0 || command is not (SimDroneCommands.MineRepeatedly or SimDroneCommands.Salvage or SimModuleWorkCommands.ConsumeFuel
                             or SimModuleWorkCommands.ScanCargo or SimModuleWorkCommands.ScanShip or SimModuleWorkCommands.Burst or SimModuleWorkCommands.Panic
@@ -871,13 +872,14 @@ public static partial class SimCodec
                         || (command is SimModuleWorkCommands.ConsumeFuel or SimModuleWorkCommands.ScanCargo or SimModuleWorkCommands.ScanShip or SimModuleWorkCommands.Burst or SimModuleWorkCommands.Panic or SimModuleWorkCommands.Entosis
                             && new[] { mining, wasteMultiplier, wasteProbability, critProbability, critMultiplier, accessBonus }.Any(n => n != 0))
                         // only a command burst names ships: the ships in reach of its cycle
-                        || (command is not (SimModuleWorkCommands.Burst or SimModuleWorkCommands.Panic) && recipients is { Count: > 0 }))
+                        || (command is not (SimModuleWorkCommands.Burst or SimModuleWorkCommands.Panic) && recipients is { Count: > 0 })
+                        || (command == SimModuleWorkCommands.Burst ? chargeTypeId <= 0 : chargeTypeId != 0))
                     {
                         throw new SimLinkException(SimLinkError.BadValue, "bad module work cycle");
                     }
                     message = new SimModuleWorkCycle(
                         session, character, ship, system, module, target, cycleId, command, mining, wasteMultiplier, wasteProbability, critProbability,
-                        critMultiplier, accessBonus, wasteRoll, roundingRoll, critRoll, recipients);
+                        critMultiplier, accessBonus, wasteRoll, roundingRoll, critRoll, recipients, chargeTypeId);
                     break;
                 }
             case Kind.ModuleWorkResult:

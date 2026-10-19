@@ -49,7 +49,7 @@ async fn read_frame<R: AsyncRead + Unpin>(reader: &mut R) -> io::Result<Option<V
 async fn write_all<W: AsyncWrite + Unpin>(writer: &mut W, messages: &[Message]) -> io::Result<()> {
     let mut bytes = Vec::new();
     for message in messages {
-        bytes.extend_from_slice(&message.encode());
+        message.encode_into(&mut bytes);
     }
     if bytes.is_empty() { Ok(()) } else { writer.write_all(&bytes).await }
 }

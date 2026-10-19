@@ -1519,12 +1519,17 @@ impl Message {
         out
     }
 
+    /// Appends the whole frame, length prefix included, to `out`.
+    pub fn encode_into(&self, out: &mut Vec<u8>) {
+        let payload = self.payload();
+        out.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        out.extend_from_slice(&payload);
+    }
+
     /// The whole frame, length prefix included.
     pub fn encode(&self) -> Vec<u8> {
-        let payload = self.payload();
-        let mut frame = Vec::with_capacity(4 + payload.len());
-        frame.extend_from_slice(&(payload.len() as u32).to_le_bytes());
-        frame.extend_from_slice(&payload);
+        let mut frame = Vec::new();
+        self.encode_into(&mut frame);
         frame
     }
 }

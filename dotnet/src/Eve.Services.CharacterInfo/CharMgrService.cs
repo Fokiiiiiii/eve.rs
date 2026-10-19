@@ -713,9 +713,7 @@ public sealed partial class CharMgrService(
     [Method("GetPrivateInfoOnCorpChange")]
     public async ValueTask<PyValue> GetPrivateInfoOnCorpChange(ServiceCall call)
     {
-        var characterId = call.Args.Count == 0
-            ? call.Session.CharacterId ?? 0
-            : NormalizeInteger(call.Arg(0));
+        var characterId = call.Session.CharacterId ?? 0;
         var character = characterId > 0
             ? await characters.GetAsync(characterId, call.Cancellation)
             : null;

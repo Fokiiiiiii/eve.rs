@@ -935,6 +935,28 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
     }
 
     [PgFact]
+    public async Task Host_startup_recreates_expiry_jobs_for_existing_training_slots()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync();
+        Assert.Equal(1, await rig.CreateAccountAsync());
+        var endsAt = DateTimeOffset.UtcNow.AddDays(30);
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var command = new NpgsqlCommand(
+            $"INSERT INTO {rig.IdentitySchema}.account_training_slots(account_id, slot, ends_at) VALUES (1, 2, $1)", connection))
+        {
+            command.Parameters.Add(new NpgsqlParameter { Value = endsAt });
+            await command.ExecuteNonQueryAsync();
+        }
+
+        await rig.RestartAsync();
+
+        var key = $"1:{endsAt.ToUnixTimeMilliseconds()}";
+        var job = await rig.Scheduler.FindAsync(Eve.Services.Skills.MultipleTrainingSlotExpiry.JobKind, key);
+        Assert.NotNull(job);
+        Assert.Equal(endsAt.ToUnixTimeMilliseconds(), job.RunAtMs);
+    }
+
+    [PgFact]
     public async Task A_stack_of_multiple_character_training_certificates_gives_up_one_certificate_per_activation()
     {
         await using var rig = await CharacterHostRig.CreateAsync();

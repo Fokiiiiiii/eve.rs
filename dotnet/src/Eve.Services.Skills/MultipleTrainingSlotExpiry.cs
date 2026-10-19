@@ -14,7 +14,8 @@ public sealed class MultipleTrainingSlotExpiry(
     CharacterTraining training,
     TrainingAnnouncer announcer,
     CharacterSessions sessions,
-    Func<long, CancellationToken, Task<IReadOnlyList<long>>> accountCharacters)
+    Func<long, CancellationToken, Task<IReadOnlyList<long>>> accountCharacters,
+    Func<CancellationToken, Task<IReadOnlyList<(long AccountId, DateTimeOffset EndsAt)>>>? savedSlotExpiries = null)
 {
     public const string JobKind = "skills.mctSlotExpiry";
 
@@ -33,7 +34,34 @@ public sealed class MultipleTrainingSlotExpiry(
             cancellationToken);
     }
 
+    /// <summary>Rebuilds missing expiry jobs for persisted slots and applies expiries that elapsed while the host was stopped.</summary>
+    public async Task ReconcileSavedSlotsAsync(CancellationToken cancellationToken)
+    {
+        if (savedSlotExpiries is null)
+            return;
+
+        var slots = await savedSlotExpiries(cancellationToken);
+        var expiredAccounts = new HashSet<long>();
+        foreach (var (accountId, endsAt) in slots)
+        {
+            var endsMs = endsAt.ToUnixTimeMilliseconds();
+            if (endsMs <= scheduler.Now)
+            {
+                expiredAccounts.Add(accountId);
+                continue;
+            }
+
+            await scheduler.ScheduleAsync(
+                new JobSpec(JobKind, endsMs) { Key = $"{accountId}:{endsMs}", Payload = new AccountJob(accountId) },
+                cancellationToken);
+        }
+
+        foreach (var accountId in expiredAccounts.Order())
+            await PauseOverLimitAsync(accountId, cancellationToken);
+    }
+
     /// <summary>Pauses the running queues that the account's remaining slots no longer cover, then tells the account's clients.</summary>
+
     public async Task PauseOverLimitAsync(long accountId, CancellationToken cancellationToken)
     {
         var characters = await accountCharacters(accountId, cancellationToken);

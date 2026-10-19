@@ -25,6 +25,50 @@ public sealed class CharacterHostTests
     private const long ProxyNode = MachoMessage.ProxyNodeId;
 
     [PgFact]
+    public async Task Skill_injector_applies_sequential_awards_and_persists_points_and_inventory_through_host()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync();
+        var character = await rig.CreateCharacterAsync();
+        var sink = new RecordingPacketSink();
+        var session = new ClientSession { CharacterId = character, Sink = sink };
+        session.Set("stationid", new PyInt(rig.Station));
+        rig.Sessions.Enter(character, session);
+        var skills = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("skillHandler"));
+        var sde = new Eve.Sde.SdeReader(rig.Source);
+        var catalog = await Eve.Skills.SkillCatalog.LoadAsync(sde);
+        var large = catalog.ItemTypeId("Large Skill Injector")!.Value;
+        var itemStore = new PgItemStore(rig.Source, rig.InventorySchema);
+        var itemId = await CreateHostItemAsync(rig, itemStore,
+            new NewItem(large, character, rig.Station, 4, 2, Singleton: false));
+        var store = new PgSkillStore(rig.Source, rig.SkillsSchema);
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await store.GrantFreeSkillPointsAsync(connection, transaction, character, 4_501_000);
+            await transaction.CommitAsync();
+        }
+
+        Assert.Equal(new PyInt(900_000), await CallAsync(skills, "InjectSkillpoints", session,
+            new PyLong(itemId), new PyInt(2)));
+        Assert.Equal(5_401_000, await store.FreeSkillPointsAsync(character));
+        Assert.Null(await itemStore.GetAsync(itemId));
+        Assert.Equal(new[] { "OnItemChange", "OnFreeSkillPointsChanged" }, Notifications(sink).Select(n => n.Name));
+
+        await rig.RestartAsync();
+        Assert.Equal(5_401_000, await new PgSkillStore(rig.Source, rig.SkillsSchema).FreeSkillPointsAsync(character));
+        Assert.Null(await new PgItemStore(rig.Source, rig.InventorySchema).GetAsync(itemId));
+    }
+
+    private static async Task<long> CreateHostItemAsync(CharacterHostRig rig, PgItemStore store, NewItem item)
+    {
+        await using var connection = await rig.Source.OpenConnectionAsync();
+        await using var transaction = await connection.BeginTransactionAsync();
+        var id = await store.CreateAsync(connection, transaction, item);
+        await transaction.CommitAsync();
+        return id;
+    }
+
+    [PgFact]
     public async Task Jump_clones_are_read_changed_and_kept_through_the_host_registry_and_a_restart()
     {
         await using var rig = await CharacterHostRig.CreateAsync();

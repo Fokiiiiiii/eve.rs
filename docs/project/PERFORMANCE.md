@@ -54,3 +54,11 @@ Rerun with `CARGO_BUILD_JOBS=1 CARGO_PROFILE_BENCH_LTO=false CARGO_PROFILE_BENCH
 | 64 | 3.57 ms |
 
 This exercises the real simulation poll and scene tick path. The synthetic scene keeps pilots stationary and does not measure movement-heavy combat, real network writes, or graphical-client load. Attributing tick time to individual phases and measuring spatial queries, marshal, SDE loading and process memory remain open.
+
+## Market order book read baseline
+
+Measured on 2026-10-19 with the opt-in PostgreSQL market benchmark on `eve_p4`. It seeded 10,000 resting NPC asks for one type and region, placed 20 one-unit buys, then read the remaining book through `MarketStore.BookAsync`. The run measured p50 placement 12.6 ms, p95 18.5 ms, and maximum 621.6 ms; each placement locked exactly 50 candidate rows. The final book read returned 9,998 asks, no bids, in 67.8 ms. The maximum placement is an outlier on this shared test machine; the benchmark's deterministic row-lock count is the stable matching-work measure.
+
+Rerun with `flock /tmp/eve-heavy-eve_p4.lock env EVE_PG_URL=postgres://postgres@127.0.0.1:5432/eve_p4 EVE_MARKET_BENCH=1 DOTNET_CLI_USE_MSBUILD_SERVER=0 dotnet test dotnet/tests/Eve.Market.Tests/Eve.Market.Tests.csproj --no-restore --filter FullyQualifiedName~Placement_on_a_10000_order_book_locks_a_bounded_number_of_rows -nodeReuse:false --logger 'console;verbosity=detailed'`. The benchmark source is `dotnet/tests/Eve.Market.Tests/OrderBookBenchmarkTests.cs`. It is a synthetic large-book database test, not a live client session. PostgreSQL statement-level totals were not available: `pg_stat_statements` is not installed in `eve_p4`, and `log_min_duration_statement` is `-1`; ranking the login/play query workload and capturing `EXPLAIN (ANALYZE, BUFFERS)` remain open.
+
+A single-query variant was measured against this baseline, with asks and bids split while reading one ordered result. It preserved the market book regression test but changed the 10,000-order book read from 67.8 ms to 177.3 ms, with the same 9,998 asks; the shared host is noisy, but this result does not show a gain, so the variant was reverted. The two-query implementation remains in place.

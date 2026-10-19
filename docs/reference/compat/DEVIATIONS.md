@@ -34,7 +34,7 @@ Summary of this file, as of 2026-10-18. The task list with the same areas is the
 | Insurgency (section "Insurgency campaigns (C-M1, C-S1)") | Campaign and site points built; the public gateway is not built. | Owner decision 4: option (a); the corruption and suppression bars are not served. | Public gateway (C-G1), recorded in this section; the client's gateway call fails on the client side and is logged. |
 | CRAB (section "CRAB (track D ...)") | First cut built, figures owner-decided. | Wave and reward amounts are project rule constants, not CCP data; owner decision 5 asks for a wiki check. | Second wave at scan progress 0.5 is not built (the cut line). |
 | Encounter Surveillance System (sections "Encounter Surveillance System ..." ESS-1 to ESS-3) | Built; live walk open. | Owner decisions in the ESS-2 section. | Single-transaction key consumption (open); live walk. |
-| Wormhole space (sections "Wormhole ..." and "Wormhole space: final status") | Built; a live jump passed headless. | Project rules where nothing is published: signature counts, category shares, five combat sites in a Drifter system, 50 km ends, 1,000-unit clouds. | Wandering K-space connections (cut by the owner); region-adjacency exclusion of statics not applied; local chat in J-space (no chat service); ice belt of a Shattered system (not planned). |
+| Wormhole space (sections "Wormhole ..." and "Wormhole space: final status") | Built; a live jump passed headless. | Project rules where nothing is published: signature counts, category shares, five combat sites in a Drifter system, 50 km ends, 1,000-unit clouds. | Wandering K-space connections (cut by the owner); region-adjacency exclusion of statics not applied; chat service and delayed Local remain open under owner decision Q-13; ice belt of a Shattered system (not planned). |
 | Zarzakh and Pochven (sections "Zarzakh ...", "Pochven ...") | Partly built. | Client-only system data from the embedded client export; no invented values. | Gate guns without published numbers; heat, tidal forces and Point of No Return; landmarks and the Black Monolith look-at; gate sentries that shoot; the Deathless Shipcaster jump; bounty and loot of the Pochven hulls. |
 
 Verification run (2026-10-18), gate on origin/main 86be1658 with 967256f1: Rust 1525 passed (cargo fmt and clippy clean); .NET 6534 passed, 1 skipped, 0 warnings. Headless walks: the gate ran 23 walk files, of which 22 were green; the one red walk, test_walk_shared_bookmarks.py, is fixed (the walk waits for OnSharedBookmarksFoldersAccessLost, which the server sends after the response) and green on a fresh server. Eve.AccessGroups.Tests: 23 passed after the regression test was added. A run of the test_walk_*.py files alone gave 16 of 16 passed.
@@ -2825,6 +2825,12 @@ Focused PostgreSQL verification: Station 28/28, selected Space docking/undocking
 - **Loader.** The mission text IDs and the content templates come from the V24.01 client's `native/missions.jsonl.gz`, read at each start from the embedded copy `dotnet/src/Eve.Services.Core/Data/client-missions.jsonl.gz` (build 3396210; localization IDs only, no text) into the schema `client_sde` (table `mission_messages`), replacing the earlier load. `EVE_CLIENT_SDE_DIR`, when it is set and holds the file, is read instead. Status: decided.
 - **Views.** `GetMissionBriefingInfo` and `GetMissionObjectiveInfo` answer the held mission (offered, accepted or completed) with EveJS's keys; the objective carries the kill dungeon and the ISK reward. Fetch and courier objectives are not built (empty lists), and the dungeon location and enemy owner are shortcuts (the faction, and no location). A character with no held mission gets None, as in EveJS. Status: shortcut for the listed parts; the rest OPEN.
 
+## Owner decisions recorded 2026-10-19
+
+- **Q-12, Pochven NPC bounty:** No bounty is paid for Pochven Triglavian NPCs under the owner rule that bounty payouts exist only in New Eden proper. Loot and drops remain unchanged because the decision does not specify them.
+- **Q-14, customs-office taxes:** Follow the [EVE University Wiki Colony management defaults and standing discounts](https://wiki.eveuniversity.org/Colony_management). The implementation remains open for owner-set POCO rates and applicable standing adjustments.
+- **Q-15, ESS hulls for acceptance:** Determine linkable hulls from SDE type list 231 and grant an eligible ship to test characters with a GM command. The live acceptance walk remains open until this command is implemented.
+
 ## Encounter Surveillance System: Main Bank, Reserve Bank and the clock (ESS-1, 2026-10-11)
 
 > Superseded in part by "Encounter Surveillance System, slice ESS-2" below: the Reserve Bank share and maximum payout, the link breaks, the ESS ball, the quadrant gate, key consumption, the weapon timer and the owner rule are now as ESS-2 states.
@@ -3751,12 +3757,14 @@ Owner decisions (X9, X10). The courier rules below are eve.rs's project rules, n
 
 ### Wormhole space: final status (2026-10-12)
 
+Owner decision Q-13 (2026-10-19): Local in wormhole space uses DELAYED mode; the member list contains only characters who have spoken in that system. The player chat service that will apply this rule is open.
+
 The implemented work, its evidence and its open items are in `docs/project/TODO.md` ("Wormhole space: final status"). This section lists the places where eve.rs differs from the reference or where a project rule stands in for a published value.
 
 - **Project rules (nothing published):** signature counts 4 to 9 per system and category shares (combat 40%, relic 15%, data 15%, gas 20%, ore 10%); a Drifter system has five combat sites; the plan's seed is the system id; the scan strength of a wormhole signature is the SDE value 0.0 (attribute 1908); the ends are placed 50 km from their system's centre, pushed out of any star or planet; a cloud holds 1,000 units.
 - **Shortcuts (known limits):** the site's resources are removed when the site ends, but a rock or cloud that is still in space when the server stops is only restored by its site's next entry; the host's placement of an end is not the reference's; an arrival is 12 km from the far end (the gate's clearance), and the return flies in.
 - **Cut by the owner:** wandering connections in K-space (Thera's connections are implemented, the K-space ones are not); region-adjacency exclusion of statics is not applied.
-- **Not done:** local chat in J-space (no chat service); the ice belt of a Shattered system (not planned); a live check of a gas or ore site; a capture comparison of a wormhole jump with a stargate jump; the client's attribute refresh after a system change; trace logging behind an environment variable (not needed for the drift).
+- **Open:** the player chat service and Local lifecycle; wormhole Local uses DELAYED membership under owner decision Q-13. The ice belt of a Shattered system is not planned. A live check of a gas or ore site, a capture comparison of a wormhole jump with a stargate jump, the client attribute refresh after a system change, and trace logging behind an environment variable remain open.
 - **Live evidence:** the headless jump in and back through a static wormhole passed (`tools/headless-client/tests/test_wormhole_live.py`, through the MITM proxy). It was a run with a copied static into the pilot's station system, not a static of the world's generator.
 
 ## Module activation rules audit (2026-10-12)

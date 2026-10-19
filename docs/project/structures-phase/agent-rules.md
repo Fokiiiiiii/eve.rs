@@ -4,7 +4,7 @@ Repo: /home/user/eve.rs (main). Plan: THIS DIR/structures_phase.md (read your pa
 Decisions for the open items of the plan: D-1 size class: SDE first (type/group attributes), fall back to a small table taken from EveJS structureConstants.js, record in DEVIATIONS. D-2 reinforcement-hour change: follow the wiki (pending, takes effect after the stated delay), record the EveJS difference. D-3 sim: structure = body with health. D-4 fuel burn: SDE attributes first, then wiki, then EveJS. D-5 hacking loot: wiki, else EveJS. Never stop for "no source": wiki decides, then EveJS.
 
 ## Source priority (user rule)
-Stats/numbers/attributes: SDE first (postgres db `eve`, schema `sde`, jsonb `doc`; psql). Logic/mechanics: EVE University wiki (implement as written), then EveJS (/home/user/evejs-v0.12.9/server/src), CCP docs, eve-logic (/home/user/eve-logic) at equal rank. Client wire shapes: eve-logic decides. Record every conflict in docs/reference/compat/DEVIATIONS.md with the chosen source. Never write UNVERIFIED / inference labels in repo files.
+Stats/numbers/attributes: SDE first (postgres db `eve`, schema `sde`, jsonb `doc`; psql). Logic/mechanics: EVE University wiki (implement as written), then EveJS (/home/user/evejs-v0.12.9/server/src), CCP docs, eve-logic (/home/user/eve-logic) at equal rank. Client wire shapes: eve-logic decides. Record every conflict in docs/reference/compat/DEVIATIONS.md with the chosen source. Never write not confirmed / inference labels in repo files.
 
 ## Git / process
 - Create your OWN worktree: git -C /home/user/eve.rs worktree add /home/user/wt-<pkg> -b wt-<pkg> origin/main (fetch first). Work there. Delete the worktree when done.

@@ -44,7 +44,7 @@ Both runs exit 0, same four tests passing. Client calls: 9 each, equal. Server e
 | T15 pilot in space drops cargo | 1 | 0 | not capturable on EVE.js: needs the inventory DB seed; the first eve.rs run failed on the host start, the rerun passed |
 | T16 controlling pilot starts a moon extraction | 0 | 0 | identical after the drill seed (only the extraction timestamps and the Dock id encoding differ); see DEVIATIONS ("Standup drill") |
 
-Not run: `structureHangarViewMgr` (no test in `test_structures.py`), and the `OnStructureStateChanged` family (the only test that raises it relocates the pilot through the eve.rs DB, so it is not capturable on EVE.js).
+not exercised: `structureHangarViewMgr` (no test in `test_structures.py`), and the `OnStructureStateChanged` family (the only test that raises it relocates the pilot through the eve.rs DB, so it is not capturable on EVE.js).
 
 ## The four open items: decisions
 

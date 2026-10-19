@@ -1542,46 +1542,40 @@ public class SpaceServiceTests
     }
 
     [PgFact]
-        public async Task A_target_that_disallows_ew_immune_effects_refuses_a_module_that_opts_in()
+    public async Task A_target_that_disallows_ew_immune_effects_refuses_remote_sensor_boost()
+    {
+        const int RemoteSensorBoosterI = 1963;
+        var rig = await Rig.CreateAsync(staticsOverride: async statics =>
         {
-            // No target hull in the pinned SDE carries 872, and the starter gun does not opt in via 1798.
-            var rig = await Rig.CreateAsync(staticsOverride: async statics =>
-            {
-                await statics.EnsureTypesAsync([Rig.Cockroach, 3638]);
-                var targetHull = statics.Type(Rig.Cockroach)
-                    ?? throw new InvalidOperationException("The starter hull must be in the pinned SDE.");
-                var gunType = statics.Type(3638)
-                    ?? throw new InvalidOperationException("The starter gun must be in the pinned SDE.");
-                var offensiveAttribute = statics.AttributeId("disallowOffensiveModifiers")
-                    ?? throw new InvalidOperationException("The SDE must define disallowOffensiveModifiers.");
-                var immuneTargetAttribute = statics.AttributeId("disallowAgainstEwImmuneTarget")
-                    ?? throw new InvalidOperationException("The SDE must define disallowAgainstEwImmuneTarget.");
-                Assert.Equal(872, offensiveAttribute);
-                Assert.Equal(1798, immuneTargetAttribute);
-                var targetAttributes = new Dictionary<int, double>(targetHull.Attributes) { [offensiveAttribute] = 1 };
-                var gunAttributes = new Dictionary<int, double>(gunType.Attributes) { [immuneTargetAttribute] = 1 };
-                return statics.WithFixtures([
-                    targetHull with { Attributes = targetAttributes },
-                    gunType with { Attributes = gunAttributes },
-                ]);
-            });
-            await using var _ = rig;
+            await statics.EnsureTypesAsync([Rig.Cockroach, RemoteSensorBoosterI]);
+            var targetHull = statics.Type(Rig.Cockroach)
+                ?? throw new InvalidOperationException("The starter hull must be in the pinned SDE.");
+            var boosterType = statics.Type(RemoteSensorBoosterI)
+                ?? throw new InvalidOperationException("Remote Sensor Booster I must be in the pinned SDE.");
+            var offensiveAttribute = statics.AttributeId("disallowOffensiveModifiers")
+                ?? throw new InvalidOperationException("The SDE must define disallowOffensiveModifiers.");
+            var immuneTargetAttribute = statics.AttributeId("disallowAgainstEwImmuneTarget")
+                ?? throw new InvalidOperationException("The SDE must define disallowAgainstEwImmuneTarget.");
+            Assert.Equal(872, offensiveAttribute);
+            Assert.Equal(1798, immuneTargetAttribute);
+            Assert.Equal(1d, boosterType.Attributes[immuneTargetAttribute]);
+            var targetAttributes = new Dictionary<int, double>(targetHull.Attributes) { [offensiveAttribute] = 1 };
+            return statics.WithFixtures([targetHull with { Attributes = targetAttributes }]);
+        });
+        await using var _ = rig;
 
-            var attacker = await rig.NewCharacterAsync("Module Attacker", account: 1);
-            var target = await rig.NewCharacterAsync("EW Immune Target", account: 2);
-            var attackerSession = await rig.SessionAsync(attacker, id: 1);
-            var targetSession = await rig.SessionAsync(target, id: 2);
-            var (_, _, gun, _) = await ShipAsync(rig, attacker);
-            await InSpaceAsync(rig, attackerSession);
-            await InSpaceAsync(rig, targetSession);
-            var activationsBefore = rig.Sim.Heard.OfType<SimActivate>().Count();
+        var (supportSession, _, module) = await RepairHostTests.InSpaceWithAsync(rig, RemoteSensorBoosterI, 19);
+        var targetCharacter = await rig.NewCharacterAsync("EW Immune Target", account: 2);
+        var targetSession = await WeaponHostTests.InSpaceAsync(rig, targetCharacter, 2);
+        var targetId = targetSession.GetInt("shipid")!.Value;
+        var activationsBefore = rig.Sim.Heard.OfType<SimActivate>().Count();
 
-            var error = await Assert.ThrowsAsync<MachoWrappedException>(() =>
-                rig.Space.ActivateAsync(attackerSession, gun, "targetAttack", target.ShipId, 1, CancellationToken.None));
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            rig.Space.ActivateAsync(supportSession, module, "remoteSensorBoostFalloff", targetId, 1000, CancellationToken.None));
 
-            Assert.Equal("DeniedActivateTargetModuleDisallowed", error.Error.UserErrorMessage);
-            Assert.Equal(activationsBefore, rig.Sim.Heard.OfType<SimActivate>().Count());
-        }
+        Assert.Equal("DeniedActivateTargetModuleDisallowed", error.Error.UserErrorMessage);
+        Assert.Equal(activationsBefore, rig.Sim.Heard.OfType<SimActivate>().Count());
+    }
 
     [PgFact]
     public async Task A_module_that_can_activate_in_gate_cloak_keeps_a_jump_cloak()

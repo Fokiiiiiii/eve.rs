@@ -5,7 +5,7 @@ Owner: the structures phase (plan in the scratchpad `specs/structures_phase.md`,
 ## Increments c and d (in progress, see TODO section 46)
 - (c) `scene/docking.rs`: docks and undocks take a structure; refusals `STRUCTURE_DISABLED` and `SHIP_TOO_LARGE` (DEVIATIONS "Structure docking (ST-1 c)").
 - (d) `dotnet/src/Eve.Services.Space/SpaceStructures.cs` with the composition wiring in `Eve.Host/Composition/StructureComposition.cs`; `Eve.Services.Space` now references `Eve.Structures`. Tests: `dotnet/tests/Eve.Services.Space.Tests/SpaceStructuresTests.cs` (3 PG tests); `Rig` gained a `StructureSchema`.
-- (e) `tools/headless-client/tests/test_structures.py` is written. It is skipped unless the live environment is set (`EVE_LIVE_HOST`, `EVE_LIVE_STRUCTURE_ID`, `EVE_LIVE_STRUCTURE_SYSTEM`, `EVE_LIVE_CHARACTER`, `EVE_LIVE_USER`). Collected and skipped with the headless venv (`/home/user/eve.rs/tools/headless-client/.venv`). It has NOT run against a live server: the character-select step is the assumed client call (`charMgr.SelectCharacterID`), and the ballpark parsing reuses `tests/test_undock` helpers. Verify it with the live stack before trusting it.
+- (e) `tools/headless-client/tests/test_structures.py` is written. It is skipped unless the live environment is set (`EVE_LIVE_HOST`, `EVE_LIVE_STRUCTURE_ID`, `EVE_LIVE_STRUCTURE_SYSTEM`, `EVE_LIVE_CHARACTER`, `EVE_LIVE_USER`). Collected and skipped with the headless venv (`/home/user/eve.rs/tools/headless-client/.venv`). It has not exercised against a live server: the character-select step is the assumed client call (`charMgr.SelectCharacterID`), and the ballpark parsing reuses `tests/test_undock` helpers. Verify it with the live stack before trusting it.
 - Open: structure placement on anchoring (ST-2); the live run of (e); the slim `repairing` and `unanchoring` fields.
 
 ## Pushed to main
@@ -36,7 +36,7 @@ Owner: the structures phase (plan in the scratchpad `specs/structures_phase.md`,
 1. The host supplies the vitals (SDE 263/265/9 layers, 2034-2036 limits, 3354-3356 pauses) in `PlaceStructure`; nothing does yet. A weapon path that hits a structure body is not wired (ST-8a).
 2. (c) Dockable body in `scene/docking.rs` (`Station` -> dockable body; state gate from J `STRUCTURE_DISABLED_STATES`).
 3. (d) Host `dotnet/src/Eve.Services.Space/SpaceStructures.cs`: restore on first pilot entry, `structure.state_changed` -> `SetStructureState`, `StructureDamaged` -> ST-0 machine.
-4. (e) Headless test `tools/headless-client/tests/test_structures.py` (MITM rows stay UNVERIFIED until the graphical client is used).
+4. (e) Headless test `tools/headless-client/tests/test_structures.py` (MITM rows stay not confirmed until the graphical client is used).
 
 ## Gotchas
 - The Serena MCP view did not match this worktree: edits made through it did not reach `/home/user/wt-st1` (git stayed clean). Increment a was applied with python3 scripts from Bash, as AGENT_RULES.md prescribes. Check `git status` after any edit.

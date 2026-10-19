@@ -334,7 +334,7 @@ Each item was checked in source; the test names are those found by search. Items
 - No build, no test, no database query, no live client run. Nothing here is a pass.
 - The SDE was not queried. Item types for re-sculpt, Daily Alpha Injector, expert systems and implants are for the package agents to confirm.
 - The EVE University wiki was not fetched. Every mechanic in CH-1 to CH-22 is to be read from the wiki by the package agent before coding; where the wiki is silent, EveJS is the second source and the choice goes in DEVIATIONS.
-- EveJS was read by grep and by the listed bodies only. Its handlers were not run.
+- EveJS was read by grep and by the listed bodies only. Its handlers were not executed.
 - The V24.01 client call sites come from grep. A call built from a computed name would not be found. The eve-logic repository was searched as text.
 - DEVIATIONS was read in lines 151-161, 239-264, 877-901 and 1318-1392, and searched by keyword elsewhere. The file has 4,151 lines; rows in other sections may hold character items this plan does not list.
 - TODO.md (2,559 lines) was searched by keyword, not read in full. `service-response-audit/evejs-only-responses.md` was consulted only through the TODO references.

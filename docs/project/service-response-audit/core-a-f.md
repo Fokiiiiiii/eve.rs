@@ -1,8 +1,8 @@
 # Eve.Services.Core A–F 応答互換監査
 
 監査時点: 2026-10-13（中断後の追補完了）
-対象checkout: C:\Users\yutai\eve.rs / main / 取得基点HEAD 52b8421f34e635900a18459da4403f26f2dfaec0 / 最終確認HEAD dda03ca0464043822e68c8348604ff34eadedcac
-参照: C:\Users\yutai\evejs-v0.12.9、C:\Users\yutai\eve-logic
+対象checkout: eve.rs / main / 取得基点HEAD 52b8421f34e635900a18459da4403f26f2dfaec0 / 最終確認HEAD dda03ca0464043822e68c8348604ff34eadedcac
+参照: evejs-v0.12.9、eve-logic
 対象範囲: dotnet/src/Eve.Services.Core のbasename A–Fの26個のC#ファイルにある全service宣言。FittingMgrServicesを含む。
 
 ## 集計（現行main）
@@ -19,7 +19,7 @@
 
 AGENTS.md、CLAUDE.md、AGENT_OVERRIDE.md、dotnet/src/AGENTS.md、関連skill repo-recon/ponytail、ADR 0001/0003/0005/0010を確認した。比較ではEveJSのservice handler、Hostの登録・provider、eve-logicのcallsiteを別々に追った。
 
-CBMは接続済みでTransport closedは発生しなかったため、指定のCLI fallbackは不要だった。CBMのcoreディレクトリcoverageはfreshness=not_trackedだったので、indexは探索に使い、内容と行番号はSerenaの現在sourceを基準にした。継続監査ではSerena manualを読み、canonical Serenaを絶対path C:\Users\yutai\eve.rsへactivateした。参照検索はrootを確認したCBMを使用した。mainのexact-path coverageはmetadata_changedだったため、現行C#のbody・行番号はSerenaで読み直した。CBMはC-Users-yutai-eve.rs / C:/Users/yutai/eve.rs、evejs-v0.12.9 / C:/Users/yutai/evejs-v0.12.9（828823a75f211fdecb945b087a26c225f111491f）、eve-logic / C:/Users/yutai/eve-logic（1dbb5711a072a146e1d228365668ac05655eefe1）を確認済み。
+CBMは接続済みでTransport closedは発生しなかったため、指定のCLI fallbackは不要だった。CBMのcoreディレクトリcoverageはfreshness=not_trackedだったので、indexは探索に使い、内容と行番号はSerenaの現在sourceを基準にした。継続監査ではSerena manualを読み、canonical Serenaを絶対path eve.rsへactivateした。参照検索はrootを確認したCBMを使用した。mainのexact-path coverageはmetadata_changedだったため、現行C#のbody・行番号はSerenaで読み直した。CBMはC-Users-yutai-eve.rs / repository root、evejs-v0.12.9 / EveJS repository（828823a75f211fdecb945b087a26c225f111491f）、eve-logic / eve-logic repository（1dbb5711a072a146e1d228365668ac05655eefe1）を確認済み。
 
 これはsource-level監査であり、テスト、headless differential run、実EVE V24.01 graphical client、PostgreSQLシナリオ、再起動後の応答は実行していない。PyValue/JS値から導く応答shapeは静的な判定で、実wire byte captureの確認ではない。ID、Filetime、CallId、現在時刻の値差はshape差と分けている。
 
@@ -68,7 +68,7 @@ D/Uは「累計詳細比較済み/Host RPC body未比較」。H/Eは「実Host R
 
 ### agentMgr: 現行の登録・bound経路（旧指摘を訂正）
 
-現行Hostは14 RPC。MachoResolveObjectはProxyNodeIdを返し、BindAsyncは同じHasMethod表を使ってnested RPCへCallAsyncでdispatchする。args、kwargs、bound object ID/parametersを引き継ぐ。前回の「Resolveなし」「DoAction以外のnested call拒否」は現行不具合として撤回する。根拠: C:/Users/yutai/eve.rs/dotnet/src/Eve.Services.Core/AgentMissionService.cs:67-107,184-232。AgentRowもPyListへ修正済み（同:456-477）。aab0dd10/b636110e以後のcurrent sourceで確認した。
+現行Hostは14 RPC。MachoResolveObjectはProxyNodeIdを返し、BindAsyncは同じHasMethod表を使ってnested RPCへCallAsyncでdispatchする。args、kwargs、bound object ID/parametersを引き継ぐ。前回の「Resolveなし」「DoAction以外のnested call拒否」は現行不具合として撤回する。根拠: ../../../dotnet/src/Eve.Services.Core/AgentMissionService.cs:67-107,184-232。AgentRowもPyListへ修正済み（同:456-477）。aab0dd10/b636110e以後のcurrent sourceで確認した。
 
 残る16名の未登録を一律に破損とは扱わない。client-local lookupで覆われる1、legacy未確認2、client callsite付き未実装13を追補の44件台帳で区別する。Briefing/Objectiveとbound Journalの内容差分は下記49件表と残存指摘を参照。DoActionの既比較記録を追加の11件と混同しない。
 
@@ -104,9 +104,9 @@ char/corp/allianceの21 shared RPCは同じFittingMgrCallsに委譲される。s
 
 ### crateService.ClaimFitting: 保存先の旧指摘を撤回
 
-c7288f1c以後の現行HostはCrate backendへsavedFittingsを渡し、ClaimFittingAsyncがPgSavedFittingStore.SaveManyAsync(Character, characterId, ...)を呼ぶ。charFittingMgrと同じ保存ownerである。GameStore savedFittingsはclaim元の定義を読むために残るが、claim先はPostgreSQL。旧「別storeへ保存するので一覧に出ない」は撤回。根拠: C:/Users/yutai/eve.rs/dotnet/src/Eve.Host/Rpc/InventoryRpc.cs:44、C:/Users/yutai/eve.rs/dotnet/src/Eve.Host/Persistence/Inventory/PersistenceCrateServiceBackend.cs:141-166。
+c7288f1c以後の現行HostはCrate backendへsavedFittingsを渡し、ClaimFittingAsyncがPgSavedFittingStore.SaveManyAsync(Character, characterId, ...)を呼ぶ。charFittingMgrと同じ保存ownerである。GameStore savedFittingsはclaim元の定義を読むために残るが、claim先はPostgreSQL。旧「別storeへ保存するので一覧に出ない」は撤回。根拠: ../../../dotnet/src/Eve.Host/Rpc/InventoryRpc.cs:44、../../../dotnet/src/Eve.Host/Persistence/Inventory/PersistenceCrateServiceBackend.cs:141-166。
 
-現行CrateService.ClaimFittingAsyncはpending数をlock内で先に予約し、保存不成立ならfinallyで戻す（C:/Users/yutai/eve.rs/dotnet/src/Eve.Services.Core/CrateService.cs:247-286）。これはsourceで確認した修正で、並列実行PASSの主張ではない。読み直し時点に親のCrate作業中差分があった。再接続後pendingや通知について、この保存先修正だけから完成とは判断しない。
+現行CrateService.ClaimFittingAsyncはpending数をlock内で先に予約し、保存不成立ならfinallyで戻す（../../../dotnet/src/Eve.Services.Core/CrateService.cs:247-286）。これはsourceで確認した修正で、並列実行PASSの主張ではない。読み直し時点に親のCrate作業中差分があった。再接続後pendingや通知について、この保存先修正だけから完成とは判断しない。
 
 ### BannedWords / AlphaInjector / Core adapters
 
@@ -136,7 +136,7 @@ FwCharacterEnlistmentとInsurgencyはHost callbackへ配線される。Enlistmen
 
 旧EveJS-only44件は末尾の分類台帳へ移した。現行未登録名は42件。別service対応は実際のclient forwardingを確認できた3件だけである。
 
-## 未検証と作業境界
+## 未確認と作業境界
 
 - 継続監査開始時はmain/52b8421fでsource dirtyなし（他担当の未追跡artifactあり）。途中に親のCharacter/Skills/Crate source/testの作業中差分が増えた。旧dirty snapshotを現行不具合の根拠にせず、対象bodyはcanonical checkoutから再取得した。
 - CBM graphは探索用。exact-path freshnessのmetadata_changedを確認した4ファイルはSerenaの現在bodyを読んだ。EveJSは指定828823a root、eve-logicは上記固定root/HEADを参照。
@@ -152,21 +152,21 @@ GetBlueprintData(blueprintID)でitemが見つからない、blueprint以外、�
 
 BeanCountの(None,None)とSendClientStackTraceAlertの2要素応答shapeはHost/EveJSで対応する。EveJSはstackHash/stackKeyから既存errorIDを解決し、CLIENT_LOG_MODEを返す (alertService.js:313-330)。Hostは呼出し毎にInterlocked.Incrementで新しいIDを払い出し、modeを"D"固定で返す (ClientStartupServices.cs:23-33)。client alert.pyは返却値をstack hashにcacheする (carbon/common/script/sys/alert.py:494-520)。IDがstack固有に安定するか、log modeが設定値になるかはHostと異なる。
 
-EveJS-onlyの3件はclient modeから実際にProxySvc('alert')へ呼ばれる。旧「server内部だけ」は誤りで訂正する。C:/Users/yutai/eve-logic/carbon/common/script/sys/alert.py:346-357がBeanDelivery/GroupBeanDelivery、同:797-807がGetLogModeForError。通常のゲームRPCではないが、client telemetry経路の未実装である。
+EveJS-onlyの3件はclient modeから実際にProxySvc('alert')へ呼ばれる。旧「server内部だけ」は誤りで訂正する。eve-logic/carbon/common/script/sys/alert.py:346-357がBeanDelivery/GroupBeanDelivery、同:797-807がGetLogModeForError。通常のゲームRPCではないが、client telemetry経路の未実装である。
 
 ### method-not-registered時のwire error
 
-PacketDispatcherはCallAsyncより先にIService.HasMethodを検査し、falseの場合はAttributeErrorをwrapして送る (PacketDispatcher.cs:76-246)。したがって、EveJS-only methodは一般のservice callではCallAsync内部のdefault returnに到達せず、method-not-registered errorになる。agentMgrのnested callは現行HasMethodで検査し、未登録名や再帰bindだけを拒否する。既登録Briefing/Objectiveをnestedで呼ぶ経路はaab0dd10で修正済み。C:/Users/yutai/eve.rs/dotnet/src/Eve.Services.Core/AgentMissionService.cs:203-231。
+PacketDispatcherはCallAsyncより先にIService.HasMethodを検査し、falseの場合はAttributeErrorをwrapして送る (PacketDispatcher.cs:76-246)。したがって、EveJS-only methodは一般のservice callではCallAsync内部のdefault returnに到達せず、method-not-registered errorになる。agentMgrのnested callは現行HasMethodで検査し、未登録名や再帰bindだけを拒否する。既登録Briefing/Objectiveをnestedで呼ぶ経路はaab0dd10で修正済み。../../../dotnet/src/Eve.Services.Core/AgentMissionService.cs:203-231。
 
 ### cacheと揺れる値
 
-cache.GetServerVersionAndBuildはHostが(server BootVersion, BootBuild)の2要素tuple、EveJSがruntime configの(boot_version, boot_build)配列を返す (CoreCompatibilityServiceAdapters.cs:39-43; cacheService.js:11-25)。構成値そのものの一致は未実測。JS生array→PyTupleはEveJS marshal.js:213-217でsource確認した。Cacheはmethod body比較数に含めるが、wire containerの最終形は未検証。
+cache.GetServerVersionAndBuildはHostが(server BootVersion, BootBuild)の2要素tuple、EveJSがruntime configの(boot_version, boot_build)配列を返す (CoreCompatibilityServiceAdapters.cs:39-43; cacheService.js:11-25)。構成値そのものの一致は未実測。JS生array→PyTupleはEveJS marshal.js:213-217でsource確認した。Cacheはmethod body比較数に含めるが、wire containerの最終形は未確認。
 
 ### cosmetics/paperDollの呼出し経路
 
-shipCosmeticsMgrのAmerican spelling alias2件はHost未登録。ただしV24 client local cosmeticsSvc.GetLicensedSkinsがremote GetLicencedSkinsへ、_GetLicensedPersonalSkinsForTypeがremote GetLicencedSkinsForShipType(session.charid,typeID)へforwardすることを確認した。C:/Users/yutai/eve-logic/cosmetics/client/cosmeticsSvc.py:113-129。旧remote mapping未確認を解消し、通常の取得フローについてname gapの破損扱いをしない。American spellingを直接RPCで送ればAttributeErrorになる。
+shipCosmeticsMgrのAmerican spelling alias2件はHost未登録。ただしV24 client local cosmeticsSvc.GetLicensedSkinsがremote GetLicencedSkinsへ、_GetLicensedPersonalSkinsForTypeがremote GetLicencedSkinsForShipType(session.charid,typeID)へforwardすることを確認した。eve-logic/cosmetics/client/cosmeticsSvc.py:113-129。旧remote mapping未確認を解消し、通常の取得フローについてname gapの破損扱いをしない。American spellingを直接RPCで送ればAttributeErrorになる。
 
-paperDollServer.ConvertAndSavePaperDollはEveJS自体がNoneを返すだけ（C:/Users/yutai/evejs-v0.12.9/server/src/services/character/paperDollServerService.js:214-217）。Hostにないが現行client callsiteを検出できず、legacyでclient未確認として扱う。
+paperDollServer.ConvertAndSavePaperDollはEveJS自体がNoneを返すだけ（evejs-v0.12.9/server/src/services/character/paperDollServerService.js:214-217）。Hostにないが現行client callsiteを検出できず、legacyでclient未確認として扱う。
 
 ### 検査対象外のruntime受入
 
@@ -182,9 +182,9 @@ HostCompositionは明示的に組み立てたservicesとcharacterServicesの各�
 
 旧未比較49件を下の5表で全件比較した。旧EveJS-only44件を別の44行台帳で分類した。現行追加2件のResolve/Triglavianもbodyを比較し、未比較は0件。source比較済と実クライアント動作確認済は異なる。空payloadを一致と数えるには、同じ意味のstateが本当に空である必要がある。
 
-RPC所属はファイル名で推定していない。Service属性付きC# partial型、またはIService.Name/HasMethod、実際にHostへ渡すinstanceを追って下表の型を確定した。Host partial composition型はすべてEve.Host.CharacterServicesCompositionであり、CoreRpc/AgentRpc/DungeonRpcなどのファイル名は所属service名ではない。通常のPG-enabled Host compositionを集計対象にした。PG無設定のminimal Host branchはcharacterServices=[]で、同じ186 RPCの構成ではない。
+RPC所属はファイル名で見積もりしていない。Service属性付きC# partial型、またはIService.Name/HasMethod、実際にHostへ渡すinstanceを追って下表の型を確定した。Host partial composition型はすべてEve.Host.CharacterServicesCompositionであり、CoreRpc/AgentRpc/DungeonRpcなどのファイル名は所属service名ではない。通常のPG-enabled Host compositionを集計対象にした。PG無設定のminimal Host branchはcharacterServices=[]で、同じ186 RPCの構成ではない。
 
-根拠: C:/Users/yutai/eve.rs/dotnet/src/Eve.Host/Hosting/HostComposition.cs:74,114-128（factoryとregistry登録）、C:/Users/yutai/eve.rs/dotnet/src/Eve.Host/Rpc/CharacterServiceList.cs:41-72（Core/Dungeon/Inventory/Fitting等を合成）、C:/Users/yutai/eve.rs/dotnet/src/Eve.Host/Rpc/AgentRpc.cs:65-68、C:/Users/yutai/eve.rs/dotnet/src/Eve.Host/Rpc/CoreRpc.cs:70-110、C:/Users/yutai/eve.rs/dotnet/src/Eve.Host/Rpc/DungeonRpc.cs:41-49、I:41-69、C:/Users/yutai/eve.rs/dotnet/src/Eve.Host/Rpc/FittingRpc.cs:23-27。Fitting三型はFittingMgrServices.cs:301/327/364のService属性で区別した。
+根拠: ../../../dotnet/src/Eve.Host/Hosting/HostComposition.cs:74,114-128（factoryとregistry登録）、../../../dotnet/src/Eve.Host/Rpc/CharacterServiceList.cs:41-72（Core/Dungeon/Inventory/Fitting等を合成）、../../../dotnet/src/Eve.Host/Rpc/AgentRpc.cs:65-68、../../../dotnet/src/Eve.Host/Rpc/CoreRpc.cs:70-110、../../../dotnet/src/Eve.Host/Rpc/DungeonRpc.cs:41-49、I:41-69、../../../dotnet/src/Eve.Host/Rpc/FittingRpc.cs:23-27。Fitting三型はFittingMgrServices.cs:301/327/364のService属性で区別した。
 
 | Service ID | 実登録CLR/C#型 | 確定経路 |
 |---|---|---|
@@ -227,32 +227,32 @@ RPC所属はファイル名で推定していない。Service属性付きC# part
 
 以下の A:120 はこの凡例の絶対pathの1-based line 120を意味する。Serenaの0-based行は1を足した。EveJS/CCP参照rootもCBM index_statusのcanonical_rootで確認済み。source本文を取得したpathがworktree1e47を指すものは本監査に使っていない。
 
-- **A** = [C:/Users/yutai/eve.rs/dotnet/src/Eve.Services.Core/AgentMissionService.cs](C:/Users/yutai/eve.rs/dotnet/src/Eve.Services.Core/AgentMissionService.cs)
-- **MV** = [C:/Users/yutai/eve.rs/dotnet/src/Eve.Services.Core/MissionViews.cs](C:/Users/yutai/eve.rs/dotnet/src/Eve.Services.Core/MissionViews.cs)
-- **MC** = [C:/Users/yutai/eve.rs/dotnet/src/Eve.Host/Composition/MissionComposition.cs](C:/Users/yutai/eve.rs/dotnet/src/Eve.Host/Composition/MissionComposition.cs)
-- **AO** = [C:/Users/yutai/eve.rs/dotnet/src/Eve.Services.Core/AgentMissionStoreRecords.cs](C:/Users/yutai/eve.rs/dotnet/src/Eve.Services.Core/AgentMissionStoreRecords.cs)
-- **AJ** = [C:/Users/yutai/evejs-v0.12.9/server/src/services/agent/agentMgrService.js](C:/Users/yutai/evejs-v0.12.9/server/src/services/agent/agentMgrService.js)
-- **MR** = [C:/Users/yutai/evejs-v0.12.9/server/src/services/agent/agentMissionRuntime.js](C:/Users/yutai/evejs-v0.12.9/server/src/services/agent/agentMissionRuntime.js)
-- **F** = [C:/Users/yutai/eve.rs/dotnet/src/Eve.Services.Space/SpaceFighters.cs](C:/Users/yutai/eve.rs/dotnet/src/Eve.Services.Space/SpaceFighters.cs)
-- **FJ** = [C:/Users/yutai/evejs-v0.12.9/server/src/services/fighter/fighterMgrService.js](C:/Users/yutai/evejs-v0.12.9/server/src/services/fighter/fighterMgrService.js)
-- **FR** = [C:/Users/yutai/evejs-v0.12.9/server/src/services/fighter/fighterRuntime.js](C:/Users/yutai/evejs-v0.12.9/server/src/services/fighter/fighterRuntime.js)
-- **S** = [C:/Users/yutai/eve.rs/dotnet/src/Eve.Host/ShipCosmeticsMgrRpcService.cs](C:/Users/yutai/eve.rs/dotnet/src/Eve.Host/ShipCosmeticsMgrRpcService.cs)
-- **SJ** = [C:/Users/yutai/evejs-v0.12.9/server/src/services/ship/shipCosmeticsMgrService.js](C:/Users/yutai/evejs-v0.12.9/server/src/services/ship/shipCosmeticsMgrService.js)
-- **SS** = [C:/Users/yutai/evejs-v0.12.9/server/src/services/ship/shipCosmeticsState.js](C:/Users/yutai/evejs-v0.12.9/server/src/services/ship/shipCosmeticsState.js)
-- **I** = [C:/Users/yutai/eve.rs/dotnet/src/Eve.Host/Rpc/InventoryRpc.cs](C:/Users/yutai/eve.rs/dotnet/src/Eve.Host/Rpc/InventoryRpc.cs)
-- **D** = [C:/Users/yutai/eve.rs/dotnet/src/Eve.Services.Core/DungeonRpcServices.cs](C:/Users/yutai/eve.rs/dotnet/src/Eve.Services.Core/DungeonRpcServices.cs)
-- **DJ** = [C:/Users/yutai/evejs-v0.12.9/server/src/services/dungeon/dungeonService.js](C:/Users/yutai/evejs-v0.12.9/server/src/services/dungeon/dungeonService.js)
-- **CJ** = [C:/Users/yutai/evejs-v0.12.9/server/src/services/dungeon/dungeonInstanceCacheMgrService.js](C:/Users/yutai/evejs-v0.12.9/server/src/services/dungeon/dungeonInstanceCacheMgrService.js)
-- **DR** = [C:/Users/yutai/eve.rs/dotnet/src/Eve.Host/Persistence/Incursions/PersistenceDungeonReadModel.cs](C:/Users/yutai/eve.rs/dotnet/src/Eve.Host/Persistence/Incursions/PersistenceDungeonReadModel.cs)
-- **P** = [C:/Users/yutai/eve.rs/dotnet/src/Eve.Host/PlanetMgrRpcService.cs](C:/Users/yutai/eve.rs/dotnet/src/Eve.Host/PlanetMgrRpcService.cs)
-- **PJ** = [C:/Users/yutai/evejs-v0.12.9/server/src/services/planet/planetMgrService.js](C:/Users/yutai/evejs-v0.12.9/server/src/services/planet/planetMgrService.js)
-- **AL** = [C:/Users/yutai/evejs-v0.12.9/server/src/services/alert/alertService.js](C:/Users/yutai/evejs-v0.12.9/server/src/services/alert/alertService.js)
-- **NK** = [C:/Users/yutai/evejs-v0.12.9/server/src/services/ship/shipKillCounterService.js](C:/Users/yutai/evejs-v0.12.9/server/src/services/ship/shipKillCounterService.js)
-- **PD** = [C:/Users/yutai/evejs-v0.12.9/server/src/services/character/paperDollServerService.js](C:/Users/yutai/evejs-v0.12.9/server/src/services/character/paperDollServerService.js)
+- **A** = [../../../dotnet/src/Eve.Services.Core/AgentMissionService.cs](../../../dotnet/src/Eve.Services.Core/AgentMissionService.cs)
+- **MV** = [../../../dotnet/src/Eve.Services.Core/MissionViews.cs](../../../dotnet/src/Eve.Services.Core/MissionViews.cs)
+- **MC** = [../../../dotnet/src/Eve.Host/Composition/MissionComposition.cs](../../../dotnet/src/Eve.Host/Composition/MissionComposition.cs)
+- **AO** = [../../../dotnet/src/Eve.Services.Core/AgentMissionStoreRecords.cs](../../../dotnet/src/Eve.Services.Core/AgentMissionStoreRecords.cs)
+- **AJ** = [evejs-v0.12.9/server/src/services/agent/agentMgrService.js](evejs-v0.12.9/server/src/services/agent/agentMgrService.js)
+- **MR** = [evejs-v0.12.9/server/src/services/agent/agentMissionRuntime.js](evejs-v0.12.9/server/src/services/agent/agentMissionRuntime.js)
+- **F** = [../../../dotnet/src/Eve.Services.Space/SpaceFighters.cs](../../../dotnet/src/Eve.Services.Space/SpaceFighters.cs)
+- **FJ** = [evejs-v0.12.9/server/src/services/fighter/fighterMgrService.js](evejs-v0.12.9/server/src/services/fighter/fighterMgrService.js)
+- **FR** = [evejs-v0.12.9/server/src/services/fighter/fighterRuntime.js](evejs-v0.12.9/server/src/services/fighter/fighterRuntime.js)
+- **S** = [../../../dotnet/src/Eve.Host/ShipCosmeticsMgrRpcService.cs](../../../dotnet/src/Eve.Host/ShipCosmeticsMgrRpcService.cs)
+- **SJ** = [evejs-v0.12.9/server/src/services/ship/shipCosmeticsMgrService.js](evejs-v0.12.9/server/src/services/ship/shipCosmeticsMgrService.js)
+- **SS** = [evejs-v0.12.9/server/src/services/ship/shipCosmeticsState.js](evejs-v0.12.9/server/src/services/ship/shipCosmeticsState.js)
+- **I** = [../../../dotnet/src/Eve.Host/Rpc/InventoryRpc.cs](../../../dotnet/src/Eve.Host/Rpc/InventoryRpc.cs)
+- **D** = [../../../dotnet/src/Eve.Services.Core/DungeonRpcServices.cs](../../../dotnet/src/Eve.Services.Core/DungeonRpcServices.cs)
+- **DJ** = [evejs-v0.12.9/server/src/services/dungeon/dungeonService.js](evejs-v0.12.9/server/src/services/dungeon/dungeonService.js)
+- **CJ** = [evejs-v0.12.9/server/src/services/dungeon/dungeonInstanceCacheMgrService.js](evejs-v0.12.9/server/src/services/dungeon/dungeonInstanceCacheMgrService.js)
+- **DR** = [../../../dotnet/src/Eve.Host/Persistence/Incursions/PersistenceDungeonReadModel.cs](../../../dotnet/src/Eve.Host/Persistence/Incursions/PersistenceDungeonReadModel.cs)
+- **P** = [../../../dotnet/src/Eve.Host/PlanetMgrRpcService.cs](../../../dotnet/src/Eve.Host/PlanetMgrRpcService.cs)
+- **PJ** = [evejs-v0.12.9/server/src/services/planet/planetMgrService.js](evejs-v0.12.9/server/src/services/planet/planetMgrService.js)
+- **AL** = [evejs-v0.12.9/server/src/services/alert/alertService.js](evejs-v0.12.9/server/src/services/alert/alertService.js)
+- **NK** = [evejs-v0.12.9/server/src/services/ship/shipKillCounterService.js](evejs-v0.12.9/server/src/services/ship/shipKillCounterService.js)
+- **PD** = [evejs-v0.12.9/server/src/services/character/paperDollServerService.js](evejs-v0.12.9/server/src/services/character/paperDollServerService.js)
 
 ### 49 RPC — 入力・shape・通知・state owner詳細
 
-kwargsは以下に明記したGiveSkinとDungeon filters以外、対象bodyでは使われない。binderのnested kwargsはAgentMissionServiceがServiceCallへそのまま引き継ぐ。read RPCでも、state source未接続やcache envelopeの差があるものを「互換一致」とは扱わない。JS生arrayはPyTupleとしてencodeされる（C:/Users/yutai/evejs-v0.12.9/server/src/network/tcp/utils/marshal.js:213-217）。explicit buildList/PyListとの違いも区別した。
+kwargsは以下に明記したGiveSkinとDungeon filters以外、対象bodyでは使われない。binderのnested kwargsはAgentMissionServiceがServiceCallへそのまま引き継ぐ。read RPCでも、state source未接続やcache envelopeの差があるものを「互換一致」とは扱わない。JS生arrayはPyTupleとしてencodeされる（evejs-v0.12.9/server/src/network/tcp/utils/marshal.js:213-217）。explicit buildList/PyListとの違いも区別した。
 
 #### agentMgr（11/11）
 
@@ -274,9 +274,9 @@ HostはMC:194-201のstatic callbacks、MC:215-239のGameStore/Pg mission overlay
 
 #### fighterMgr（10/10）
 
-[Service("fighterMgr")] partial型の10 handlerはC:/Users/yutai/eve.rs/dotnet/src/Eve.Services.Core/ClientStartupServices.cs:46-131からISpaceFightersへ委譲される。実Host providerはCoreRpc.cs:42-51のSpaceFightersで、sim、CharacterShips、Dogma、SolarSystem/Security sourceを渡しPilotEntered→RebuildAsyncを設定する。tube/inventory mutationはCharacterShips/PgItemStoreのtransaction、flight/effectはRust simulation、ability stateはitem customInfoと_slotsで管理する。unsupported simulationをfake successにしない拒否はEveJSとの差であり、その差だけで破損と断定しない。
+[Service("fighterMgr")] partial型の10 handlerは../../../dotnet/src/Eve.Services.Core/ClientStartupServices.cs:46-131からISpaceFightersへ委譲される。実Host providerはCoreRpc.cs:42-51のSpaceFightersで、sim、CharacterShips、Dogma、SolarSystem/Security sourceを渡しPilotEntered→RebuildAsyncを設定する。tube/inventory mutationはCharacterShips/PgItemStoreのtransaction、flight/effectはRust simulation、ability stateはitem customInfoと_slotsで管理する。unsupported simulationをfake successにしない拒否はEveJSとの差であり、その差だけで破損と断定しない。
 
-CCP client contract: C:/Users/yutai/eve-logic/eve/client/script/parklife/fightersSvc.py:98-109,234-235、C:/Users/yutai/eve-logic/eve/client/script/ui/inflight/squadrons/shipFighterState.py:201-230。abilityStatesは初期状態更新の実入力である。
+CCP client contract: eve-logic/eve/client/script/parklife/fightersSvc.py:98-109,234-235、eve-logic/eve/client/script/ui/inflight/squadrons/shipFighterState.py:201-230。abilityStatesは初期状態更新の実入力である。
 
 | RPC | 具体的入力・kwargs | 戻り値・差分判定 | 通知/Host state owner | body根拠 |
 |---|---|---|---|---|
@@ -284,10 +284,10 @@ CCP client contract: C:/Users/yutai/eve-logic/eve/client/script/parklife/fighter
 | CmdAbandonFighter | (fighterID,) | 成功bool。Host invalid fighterをUserError、EveJS false。EveJS raw listもnormalizeするがCCP callerはscalar。 | Rust Abandon→OnReceived/ReleasedTo→controller removal/EMPTY。DBとruntime処理を追跡。 | F:582-597,739-785,982-986; FJ:453-459; FR:4870-4893 |
 | CmdActivateAbilitySlots | ([fighterIDs],slotID,targetIDまたはXYZ) | dict(fighterID→None/UserError payload)。slot/charge/cooldown/security/effect validationあり。正常・invalid slot・no simの枝を比較。 | _slots + type/ability catalog + Rust effects。Keepでitem customInfo保存。activation noticeを50ms遅延（EveJS queue）。順序保証はruntime未確認。 | F:201-215,234-299,389-404; FJ:420-435; FR:4416-4658 |
 | CmdDeactivateAbilitySlots | ([fighterIDs],slotID) | dict(fighterID→None/error)。非activeの拒否あり。Host sim cycleとstate.Stop、EveJS cooldown再設定/即時active clearにはタイミング差。 | Rust Deactivate、_slots。OnFighterAbilitySlotDeactivatedは遅延queue。exact timing未実測。 | F:218-229,319-364; FJ:437-451; FR:4660-4752 |
-| CmdScoopAbandonedFighterFromSpace | (fighterID,toFlagID=158またはtube) | bool。Hostは同じchar/shipが放棄し、_abandonedに残るものに限定。EveJSはsceneのcontroller-free fighterを距離/scopeで判定。他人の放棄/restart後を同等とは数えない。 | Pg Scoop→Rust確認→失敗時release、ItemChange→tube content→READY。 | F:600-645; FJ:461-468; FR:5028-5124; C:/Users/yutai/eve.rs/dotnet/src/Eve.Ships/CharacterShips.Fighters.cs:198-250 |
+| CmdScoopAbandonedFighterFromSpace | (fighterID,toFlagID=158またはtube) | bool。Hostは同じchar/shipが放棄し、_abandonedに残るものに限定。EveJSはsceneのcontroller-free fighterを距離/scopeで判定。他人の放棄/restart後を同等とは数えない。 | Pg Scoop→Rust確認→失敗時release、ItemChange→tube content→READY。 | F:600-645; FJ:461-468; FR:5028-5124; ../../../dotnet/src/Eve.Ships/CharacterShips.Fighters.cs:198-250 |
 | ExecuteMovementCommandOnFighters | ([fighterIDs],STOP/ORBIT/FOLLOW/GOTO_POINT,target/range/XYZ) | 正常None。Host commandはcase-sensitive、EveJS trim+uppercase。Host無対象/invalidをUserError、EveJS skip→handler None。正規CCP入力の命令typeは共通。 | Rust order/point order。EveJS recall取消時INSPACE notice、Host exact cancellation effectsはsim側確認が必要。 | F:503-576; FJ:409-418; FR:4781-4868 |
 | LaunchFightersFromTubes | ([tubeFlags],) | dictは失敗tubeだけを列挙。Host no-pilotはthrow、EveJS no-host empty errors。success shape共通。 | Pg tube→space→Rust spawn、拒否時tubeへ戻す。ItemChange→ContentEmpty→AddedToController→INSPACE。 | F:143-157,652-737; FJ:387-393; FR:3693-3858 |
-| LoadFightersToTube | (fighterID,tubeFlagID) | 成功True。Host拒否はUserError、EveJS false。inventory capacity/owner/tube classの検査は実storeへ接続。 | Pg CharacterShips move commit→ItemChange→ContentUpdate→READY。 | F:105-125; FJ:309-350; C:/Users/yutai/eve.rs/dotnet/src/Eve.Ships/CharacterShips.Fighters.cs:43-83 |
+| LoadFightersToTube | (fighterID,tubeFlagID) | 成功True。Host拒否はUserError、EveJS false。inventory capacity/owner/tube classの検査は実storeへ接続。 | Pg CharacterShips move commit→ItemChange→ContentUpdate→READY。 | F:105-125; FJ:309-350; ../../../dotnet/src/Eve.Ships/CharacterShips.Fighters.cs:43-83 |
 | RecallFightersToTubes | ([fighterIDs],) | dictは全要求fighterID→None/error。Host invalid/no simのrefusalもper ID。 | Rust recall→RECALLING、land eventでLANDING→ItemChange→RemovedFromController→ContentUpdate→READY。EveJSはrecall時ability deactivateも行う。 | F:160-195,959-978; FJ:395-407; FR:4050-4137 |
 | UnloadTubeToFighterBay | (tubeFlagID,) | Host成功None、EveJS True。失敗Host UserError/EveJS false。client wrapperは返すが上位がboolで分岐する証拠は未確認。単独で破損と断定しない。 | Pg move commit→ItemChange→ContentEmpty→EMPTY。 | F:127-140; FJ:352-385 |
 
@@ -332,7 +332,7 @@ DungeonRpc.cs:49→DR.ReadCacheSnapshotAsync。DR:38-75がContentRuntime anomaly
 | GetIceBeltsCount | args/kwargsなし | dict systemID→int、authority slotとdepletion deadlineで計算。Host authority emptyかつactive iceもauthority filterで落ちる。 | DR未配線、時計deadlineはID/時刻揺れでなくavailability state差。 | D:169,229-266; CJ:228-299,649-652 |
 | GetOreAnomalyInstances | args/kwargsなし | dict systemID→list(KeyVal)、archetype27。active hydrated instancesは共通shape。 | Content + GameStore/SDE、read、通知なし。 | D:170,186-203; CJ:654-657 |
 | GetOreAnomaliesCount | args/kwargsなし | dict systemID→int。EveJS universe planned spawn countにactive countをoverlay。Host planned count入力emptyで未materialized systemsが欠落。 | DR empty OreAnomalySpawnCounts、read、通知なし。 | D:171,229-266; DR:70-75; CJ:269-299,659-662 |
-| GetOreAnomaliesCountInRange | 両bodyは範囲引数/kwargsを使わない | 上記と同じdict。range filteringを追加したとの推定をしない。planned map未配線は同じ。 | same resource count reader、通知なし。 | D:171; CJ:664-667 |
+| GetOreAnomaliesCountInRange | 両bodyは範囲引数/kwargsを使わない | 上記と同じdict。range filteringを追加したとの見積もりをしない。planned map未配線は同じ。 | same resource count reader、通知なし。 | D:171; CJ:664-667 |
 | GetBulwarkMiningSiteCounts | args/kwargsなし | dict systemID→int。8 dungeon IDs、metadata/runtimeFlags/family/originによる判定。raw active summariesを使う点を比較。 | shared anomalies snapshot、通知なし。 | D:140,172,268-290; CJ:323-360,669-672 |
 | GetFactionWarfareInstances | args/kwargsなし | dict systemID→list(KeyVal)。archetypes33/34/35/36/68。 | snapshot SDE hydrate、read、通知なし。 | D:133,173,186-203; CJ:674-677 |
 | GetFactionWarfareBattlefieldInstances | args/kwargsなし | dict systemID→list(KeyVal)。archetype68。 | snapshot read、通知なし。 | D:134,174; CJ:679-682 |
@@ -348,44 +348,44 @@ DungeonRpc.cs:49→DR.ReadCacheSnapshotAsync。DR:38-75がContentRuntime anomaly
 
 全Nameが既存別Host serviceへ直接移動しているとは確認できなかった。対応3件はclient-local lookup/forwardingである。直に旧RPC名を送ると未登録名42件は通常のPacketDispatcher:147-160でwrapped AttributeError。planetMgrのResolve/Bindには別serviceのagent binderを転用したとみなせない。agent nested未登録名はA:203-206のrefusalになる。static検索の0件はruntime不要の証明ではない。
 
-全行の「agents.py」はC:/Users/yutai/eve-logic/eve/client/script/ui/station/agents/agents.py、「clientPlanet.py」はC:/Users/yutai/eve-logic/eve/client/script/environment/planet/clientPlanet.py、「planetSvc.py」はC:/Users/yutai/eve-logic/eve/client/script/environment/planetSvc.py、「cosmeticsSvc.py」はC:/Users/yutai/eve-logic/cosmetics/client/cosmeticsSvc.py、「alert.py」はC:/Users/yutai/eve-logic/carbon/common/script/sys/alert.pyの絶対root参照である。短名の他callsiteは先行詳細監査の固定eve-logic rootと同じ。
+全行の「agents.py」はeve-logic/eve/client/script/ui/station/agents/agents.py、「clientPlanet.py」はeve-logic/eve/client/script/environment/planet/clientPlanet.py、「planetSvc.py」はeve-logic/eve/client/script/environment/planetSvc.py、「cosmeticsSvc.py」はeve-logic/cosmetics/client/cosmeticsSvc.py、「alert.py」はeve-logic/carbon/common/script/sys/alert.pyの絶対root参照である。短名の他callsiteは先行詳細監査の固定eve-logic rootと同じ。
 
 | # | Service/RPC | 分類 | 具体的入力→EveJS shape/通知 | 現行Host・CCP経路・再利用先 | 根拠 |
 |---|---|---|---|---|---|
-| 1 | agentMgr.GetAgentByID | 既存別serviceで対応 | (agentID,)→dict/None、EveJSはmaterialize→OnAgentAdded | V24 local svc.agents.GetAgentByIDはGetAgents().Clone/Indexを読む（C:/Users/yutai/eve-logic/eve/client/script/ui/station/agents/agents.py:89-122）。Host直RPC名は未登録。再利用A:GetAgents、MC agent static rows。 | AJ:1415-1423; A:67-107,364-372 |
-| 2 | agentMgr.GetAgentStaticInfo | legacyでclient未確認 | (agentID,)→dict/None、materialize→OnAgentAdded | common notificationUtil.GetAgentのboot.role!=client枝のみ（C:/Users/yutai/eve-logic/eve/common/script/util/notificationUtil.py:84-98）。client直接呼出し未確認。Host未登録、static agent directoryを再利用候補。 | AJ:854-862; A:67-107 |
-| 3 | agentMgr.GetDungeonShipRestrictions | 未実装 | bound、(dungeonID,gateID?)→dict restrictedShipTypes | activeMissionController/agent monikerのclient呼出しあり（C:/Users/yutai/eve-logic/eve/client/script/ui/shared/neocom/activeMissionController.py:118）。Host未登録。keeperのSDE gate restrictionsを共通投影する候補だが代替RPC完了とは数えない。 | AJ:1193-1200; A:67-107 |
+| 1 | agentMgr.GetAgentByID | 既存別serviceで対応 | (agentID,)→dict/None、EveJSはmaterialize→OnAgentAdded | V24 local svc.agents.GetAgentByIDはGetAgents().Clone/Indexを読む（eve-logic/eve/client/script/ui/station/agents/agents.py:89-122）。Host直RPC名は未登録。再利用A:GetAgents、MC agent static rows。 | AJ:1415-1423; A:67-107,364-372 |
+| 2 | agentMgr.GetAgentStaticInfo | legacyでclient未確認 | (agentID,)→dict/None、materialize→OnAgentAdded | common notificationUtil.GetAgentのboot.role!=client枝のみ（eve-logic/eve/common/script/util/notificationUtil.py:84-98）。client直接呼出し未確認。Host未登録、static agent directoryを再利用候補。 | AJ:854-862; A:67-107 |
+| 3 | agentMgr.GetDungeonShipRestrictions | 未実装 | bound、(dungeonID,gateID?)→dict restrictedShipTypes | activeMissionController/agent monikerのclient呼出しあり（eve-logic/eve/client/script/ui/shared/neocom/activeMissionController.py:118）。Host未登録。keeperのSDE gate restrictionsを共通投影する候補だが代替RPC完了とは数えない。 | AJ:1193-1200; A:67-107 |
 | 4 | agentMgr.GetEntryPoint | 未実装 | bound、()→XYZ tuple/None | epicArcAgentContentPiece.py:128-129のclient呼出し。現行Host未登録。mission store/space siteのentry positionを使うadapterが必要。 | AJ:1202-1210; A:67-107; MC:413-420 |
-| 5 | agentMgr.GetInfoServiceDetails | 未実装 | bound、()→dict/None | C:/Users/yutai/eve-logic/eve/client/script/ui/shared/info/infosvc.py:1998-2000。Host未登録、agent/held missionの既存read ownerが再利用候補。 | AJ:1173-1180; A:67-107 |
-| 6 | agentMgr.GetMissionJournalInfo | 未実装 | bound、(charID?,contentID?)→dict/None（briefing/objectives等） | C:/Users/yutai/eve-logic/eve/client/script/ui/station/agents/agents.py:746-763。Host未登録。ReadHeldMission/MissionViewsを再利用しJournal wrapperを組む必要。Objectiveのpartial fieldsをそのまま完成扱いしない。 | AJ:1130-1137; A:67-107,120-127; MV:30-117 |
+| 5 | agentMgr.GetInfoServiceDetails | 未実装 | bound、()→dict/None | eve-logic/eve/client/script/ui/shared/info/infosvc.py:1998-2000。Host未登録、agent/held missionの既存read ownerが再利用候補。 | AJ:1173-1180; A:67-107 |
+| 6 | agentMgr.GetMissionJournalInfo | 未実装 | bound、(charID?,contentID?)→dict/None（briefing/objectives等） | eve-logic/eve/client/script/ui/station/agents/agents.py:746-763。Host未登録。ReadHeldMission/MissionViewsを再利用しJournal wrapperを組む必要。Objectiveのpartial fieldsをそのまま完成扱いしない。 | AJ:1130-1137; A:67-107,120-127; MV:30-117 |
 | 7 | agentMgr.GetMissionKeywords | 未実装 | bound、(contentID?)→dict | agents.py:626-638がlocalization substitutions用に呼ぶ。Host未登録、clientMissionMessages/agent static contextを使う候補。現在Briefingのkeywords={}では代替にならない。 | AJ:1148-1156; A:67-107; MV:32 |
 | 8 | agentMgr.GetReplayTimestamp | 未実装 | bound、(characterID?)→Filetime long/None | agents.py:306-314のagent timers。Host未登録。Pg mission completed/failed historyを用いる候補（MC:273-276）。 | AJ:1400-1405; A:67-107 |
-| 9 | agentMgr.GetStandingGainsForMission | 未実装 | bound、(missionID?)→numeric-key dict gain | C:/Users/yutai/eve-logic/evemissions/client/missioncontroller.py:223-225。Host未登録、mission reward + existing Relations standing ownerの投影が必要。 | AJ:1182-1191; A:67-107; MC:249-264 |
-| 10 | agentMgr.GetStaticBlob | legacyでclient未確認 | (messageID)をbodyは使わず空string | C:/Users/yutai/eve-logic/eve/common/script/sys/strangeStrings.py:13-30のold string unpickle helper。現行UI→remote agentMgr経路は未確認。Host未登録。不要と断定しない。 | AJ:864-866; A:67-107 |
-| 11 | agentMgr.GotoLocation | 未実装 | bound、(locationType,locationNumber?,referringAgentID?)→None | C:/Users/yutai/eve-logic/eve/client/script/ui/services/menuSvcExtras/movementFunctions.py:401（元監査の同名callsite）。EveJS follow/goto pointを行う。Host agent RPCなし。SpaceSessions移動とmission targetを接続する候補。 | AJ:1212-1236; A:67-107 |
+| 9 | agentMgr.GetStandingGainsForMission | 未実装 | bound、(missionID?)→numeric-key dict gain | eve-logic/evemissions/client/missioncontroller.py:223-225。Host未登録、mission reward + existing Relations standing ownerの投影が必要。 | AJ:1182-1191; A:67-107; MC:249-264 |
+| 10 | agentMgr.GetStaticBlob | legacyでclient未確認 | (messageID)をbodyは使わず空string | eve-logic/eve/common/script/sys/strangeStrings.py:13-30のold string unpickle helper。現行UI→remote agentMgr経路は未確認。Host未登録。不要と断定しない。 | AJ:864-866; A:67-107 |
+| 11 | agentMgr.GotoLocation | 未実装 | bound、(locationType,locationNumber?,referringAgentID?)→None | eve-logic/eve/client/script/ui/services/menuSvcExtras/movementFunctions.py:401（元監査の同名callsite）。EveJS follow/goto pointを行う。Host agent RPCなし。SpaceSessions移動とmission targetを接続する候補。 | AJ:1212-1236; A:67-107 |
 | 12 | agentMgr.IsCheatingWithAgent | 未実装 | bound、()→False | agents.py:549-550。Host未登録。EveJSの固定Falseもclientが使うcontract、unknown methodでの失敗を同値としない。 | AJ:1407-1409; A:67-107 |
 | 13 | agentMgr.MachoResolveObject | 現行同service実装済 | (bindParams)→node int | 現行A:67,91で登録/dispatch。node IDの実数値はrouting config差として扱い、shape/bodyを比較済。carbon/common/script/net/moniker.py:111-165のresolve経路。 | AJ:771-775; A:67-107 |
 | 14 | agentMgr.RemoveOfferFromJournal | 未実装 | bound、()→None、offer mutation | agents.py:782-784。Host未登録、AgentMissionStoreをownerとして削除/通知を接続する必要。DoAction(decline)と同一の操作とは数えない。 | AJ:1158-1163; A:67-107 |
 | 15 | agentMgr.ShouldAlwaysAllowReplay | 未実装 | bound、()→False | agents.py:552-553。Host未登録、client replay gatingのcallがAttributeErrorになる。 | AJ:1411-1413; A:67-107 |
-| 16 | agentMgr.WarpToAgentInSpace | 未実装 | (agentID?)→None、warp point/entity | C:/Users/yutai/eve-logic/eve/client/script/ui/shared/agencyNew/contentPieces/agentContentPiece.py:301-307。Host agent methodなし。SDE agent-in-spaceとSpaceSessions warp ownerが再利用候補。 | AJ:1350-1398; A:67-107 |
+| 16 | agentMgr.WarpToAgentInSpace | 未実装 | (agentID?)→None、warp point/entity | eve-logic/eve/client/script/ui/shared/agencyNew/contentPieces/agentContentPiece.py:301-307。Host agent methodなし。SDE agent-in-spaceとSpaceSessions warp ownerが再利用候補。 | AJ:1350-1398; A:67-107 |
 | 17 | agentMgr.WarpToLocation | 未実装 | bound、(locationType,number?,range,?,referringAgentID?)→None | CCP movementFunctions.WarpToBookmarkがagent pathを選ぶ（同file:415-430）。EveJSはmission site materialize→warp。別のbeyonce bookmark RPCがあるだけではこのcallを処理できない。 | AJ:1238-1305,1308-1348; A:67-107 |
-| 18 | alert.BeanDelivery | 未実装 | (beans dict)→None、counts/audit更新 | client mode branchのProxySvc('alert') call（C:/Users/yutai/eve-logic/carbon/common/script/sys/alert.py:346-357）。Host AlertServiceは2 exportsのみ。telemetry aggregate ownerの接続が必要。 | AL:270-276; C:/Users/yutai/eve.rs/dotnet/src/Eve.Services.Core/ClientStartupServices.cs:15-44 |
-| 19 | alert.GetLogModeForError | 未実装 | (errorIDs dict)→tuple(dict changes,list flooded) | client BeanDeliveryBoy→UpdateLogModes→ProxySvc call（alert.py:346-348,797-807）。EveJS empty resultも有効shape。Host未登録。 | AL:306-312; C:/Users/yutai/eve.rs/dotnet/src/Eve.Services.Core/ClientStartupServices.cs:15-44 |
-| 20 | alert.GroupBeanDelivery | 未実装 | (compressed zlib marshal bytesまたはdict,nodeID?)→None | client telemetry details-mode delivery（alert.py:353-357）。EveJS decompress/aggregate/audit、Host未登録。runtime ID揺れではなくcall path欠落。 | AL:278-304; C:/Users/yutai/eve.rs/dotnet/src/Eve.Services.Core/ClientStartupServices.cs:15-44 |
-| 21 | shipKillCounter.GetItemKillCountNPC | legacyでclient未確認 | (itemID,)→numeric count | CBM whole eve-logic exact-name検索でclient call未検出。HostはPlayerのみ。existing shipKillCounters readerをNPC projectionへ再利用できるが、同RPCを実装済とは数えない。 | NK:33-38; C:/Users/yutai/eve.rs/dotnet/src/Eve.Services.Core/ClientStartupServices.cs:133-161 |
-| 22 | shipCosmeticsMgr.GetLicensedSkins | 既存別serviceで対応 | argsなし→list(KeyVal)、EveJS British alias forwarding | client local cosmeticsSvc.GetLicensedSkinsはremote GetLicencedSkinsを呼ぶ（C:/Users/yutai/eve-logic/cosmetics/client/cosmeticsSvc.py:113-117）。既存Host bodyに到達。American直RPC名は未登録。 | SJ:270-272; S:16,79-80 |
+| 18 | alert.BeanDelivery | 未実装 | (beans dict)→None、counts/audit更新 | client mode branchのProxySvc('alert') call（eve-logic/carbon/common/script/sys/alert.py:346-357）。Host AlertServiceは2 exportsのみ。telemetry aggregate ownerの接続が必要。 | AL:270-276; ../../../dotnet/src/Eve.Services.Core/ClientStartupServices.cs:15-44 |
+| 19 | alert.GetLogModeForError | 未実装 | (errorIDs dict)→tuple(dict changes,list flooded) | client BeanDeliveryBoy→UpdateLogModes→ProxySvc call（alert.py:346-348,797-807）。EveJS empty resultも有効shape。Host未登録。 | AL:306-312; ../../../dotnet/src/Eve.Services.Core/ClientStartupServices.cs:15-44 |
+| 20 | alert.GroupBeanDelivery | 未実装 | (compressed zlib marshal bytesまたはdict,nodeID?)→None | client telemetry details-mode delivery（alert.py:353-357）。EveJS decompress/aggregate/audit、Host未登録。runtime ID揺れではなくcall path欠落。 | AL:278-304; ../../../dotnet/src/Eve.Services.Core/ClientStartupServices.cs:15-44 |
+| 21 | shipKillCounter.GetItemKillCountNPC | legacyでclient未確認 | (itemID,)→numeric count | CBM whole eve-logic exact-name検索でclient call未検出。HostはPlayerのみ。existing shipKillCounters readerをNPC projectionへ再利用できるが、同RPCを実装済とは数えない。 | NK:33-38; ../../../dotnet/src/Eve.Services.Core/ClientStartupServices.cs:133-161 |
+| 22 | shipCosmeticsMgr.GetLicensedSkins | 既存別serviceで対応 | argsなし→list(KeyVal)、EveJS British alias forwarding | client local cosmeticsSvc.GetLicensedSkinsはremote GetLicencedSkinsを呼ぶ（eve-logic/cosmetics/client/cosmeticsSvc.py:113-117）。既存Host bodyに到達。American直RPC名は未登録。 | SJ:270-272; S:16,79-80 |
 | 23 | shipCosmeticsMgr.GetLicensedSkinsForShipType | 既存別serviceで対応 | (typeID)または(charID,typeID)→list(KeyVal) | client _GetLicensedPersonalSkinsForTypeはGetLicencedSkinsForShipType(session.charid,typeID)へforward（cosmeticsSvc.py:124-129）。同じHost bodyに到達。American直名は未登録。 | SJ:294-296; S:16,82-90 |
-| 24 | paperDollServer.ConvertAndSavePaperDoll | legacyでclient未確認 | argsを使わずNone、EveJS自身もno-op | whole eve-logic exact-name検索でcallsite未検出。Hostの6-method tableにはなし。必要性を実確認していないため未実装ゲームフローとは断定しない。 | PD:214-217; C:/Users/yutai/eve.rs/dotnet/src/Eve.Host/CharacterRpcServices.cs:55-80 |
-| 25 | planetMgr.GetCommandPinsForPlanet | 未実装 | (planetID)またはbound→dict(ownerID→KeyVal6 fields) | C:/Users/yutai/eve-logic/eve/client/script/environment/planetSvc.py:110-118。Host P:27は3 namesだけ。planetRuntimeState colony/SDE groupを使うadapterが必要。 | PJ:1177-1193; P:27-39 |
+| 24 | paperDollServer.ConvertAndSavePaperDoll | legacyでclient未確認 | argsを使わずNone、EveJS自身もno-op | whole eve-logic exact-name検索でcallsite未検出。Hostの6-method tableにはなし。必要性を実確認していないため未実装ゲームフローとは断定しない。 | PD:214-217; ../../../dotnet/src/Eve.Host/CharacterRpcServices.cs:55-80 |
+| 25 | planetMgr.GetCommandPinsForPlanet | 未実装 | (planetID)またはbound→dict(ownerID→KeyVal6 fields) | eve-logic/eve/client/script/environment/planetSvc.py:110-118。Host P:27は3 namesだけ。planetRuntimeState colony/SDE groupを使うadapterが必要。 | PJ:1177-1193; P:27-39 |
 | 26 | planetMgr.GetExtractorsForPlanet | 未実装 | (planetID)またはbound→list(KeyVal6 fields) | planetSvc.py:120-128。全owner colonyのECU pin reader。Host未登録。 | PJ:1195-1210; P:27-39 |
 | 27 | planetMgr.GetFullNetworkForOwner | 未実装 | (planetID,ownerID)→tuple(list pin KeyVal,list endpoint list) | planetSvc.py:98-108。Host未登録。colony owner-scoped network readerが必要。 | PJ:1160-1175; P:27-39 |
-| 28 | planetMgr.GetPlanetInfo | 未実装 | boundまたは(planetID)→KeyVal planet/colony | C:/Users/yutai/eve-logic/eve/client/script/environment/planet/clientPlanet.py:82-94。初期PI read。Hostはbound自体未提供。 | PJ:1075-1084; P:27-39 |
+| 28 | planetMgr.GetPlanetInfo | 未実装 | boundまたは(planetID)→KeyVal planet/colony | eve-logic/eve/client/script/environment/planet/clientPlanet.py:82-94。初期PI read。Hostはbound自体未提供。 | PJ:1075-1084; P:27-39 |
 | 29 | planetMgr.GetPlanetResourceInfo | 未実装 | planetID/bound→CachedMethodCallResult(resource dict) | clientPlanet.py:644、resource/GM program chooser。Host未登録。SDE resource catalog + planet runtime ownerが必要。 | PJ:1086-1098; P:27-39 |
 | 30 | planetMgr.GetProgramResultInfo | 未実装 | bound、(pinID,typeID,heads,headRadius)→tuple(qty,cycleTime,numCycles) | clientPlanet.py:525のprogram estimate。Host未登録。ECU/resource distribution authoritative calculationが必要。 | PJ:1426-1460; P:27-39 |
 | 31 | planetMgr.GetResourceData | 未実装 | bound、(KeyVal resourceInfo)→KeyVal(data bytes,numBands等) | clientPlanet.py:734。Host未登録。resource harmonic bytes readerなし。Empty bytesで成功する代替はない。 | PJ:1100-1114; P:27-39 |
 | 32 | planetMgr.GMAddCommodity | 未実装 | bound、(pinID,typeID,quantity)→result KeyVal/UserError | clientPlanet.py:668-674のGM callあり。colony mutation→OnRefreshPins([pinID])。Host未登録。GM用と通常UIを区別。 | PJ:1508-1530; P:27-39 |
 | 33 | planetMgr.GMCleanupExpiredLaunches | legacyでclient未確認 | (maxAgeDays,ownerID?)→result KeyVal | EveJS cleanup実処理、deleted>0でOnPILaunchesChange。whole client exact-name未検出。Host未登録。既存P launch read/delete ownerを再利用候補。 | PJ:1489-1506; P:41-64 |
-| 34 | planetMgr.GMGetCompleteResource | 未実装 | bound、(resourceTypeID,layer)→resource KeyVal(bytes) | C:/Users/yutai/eve-logic/eve/client/script/ui/shared/planet/planetUISvc.py:669-675のGMShowResource。Host未登録。 | PJ:1116-1129; P:27-39 |
+| 34 | planetMgr.GMGetCompleteResource | 未実装 | bound、(resourceTypeID,layer)→resource KeyVal(bytes) | eve-logic/eve/client/script/ui/shared/planet/planetUISvc.py:669-675のGMShowResource。Host未登録。 | PJ:1116-1129; P:27-39 |
 | 35 | planetMgr.GMGetLocalDistributionReport | 未実装 | (planetID,(theta,phi))→KeyVal(planetID,latitude,longitude,resources dict) | clientPlanet.py:385-386。Host未登録。planet resource samplingを再利用する準備が必要。 | PJ:1131-1139; P:27-39 |
 | 36 | planetMgr.GMGetPlanetDiagnostics | legacyでclient未確認 | (planetID?,ownerID?)→diagnostics KeyVal | whole eve-logic exact-name未検出。EveJS diagnostics readerでstate mutationなし。Host未登録。 | PJ:1476-1487; P:27-39 |
 | 37 | planetMgr.GMGetSynchedServerState | 未実装 | bound、(ownerID?)→tuple(duration Filetime,colony KeyVal) | clientPlanet.py:676-700のGMVerifySimulation。Host未登録。clockの実数値差は受入の時刻揺れ、colonyが取れないことは別。 | PJ:1141-1158; P:27-39 |
@@ -397,23 +397,23 @@ DungeonRpc.cs:49→DR.ReadCacheSnapshotAsync。DR:38-75がContentRuntime anomaly
 | 43 | planetMgr.UserUpdateNetwork | 未実装 | bound、(serializedChanges)→serialized colony KeyVal/UserError | clientPlanet.py:180。EveJS request-scope hash/revision/idempotency→preview→construction debit→apply→refund on error→consume new command-center items。Host未登録。既存wallet/itemsを再利用しcolony authoritative transactionが必要。 | PJ:1212-1326; P:27-39 |
 | 44 | dungeonInstanceCacheMgr.GetTriglavianSiteInstances | 現行同service実装済 | argsなし→dict(systemID→list KeyVal) | 現行D:157,181はarchetype65で実dispatch、Host dungeonReadModelへ接続。旧未実装記録を撤回。runtime/actual populated instancesは未実測。 | CJ:699-702; D:138,151-183,186-203 |
 
-PIのpayload helpersも確認した。PJ:307-346のpinはutil.KeyVal（type別fields/contents dict/Filetime等）、PJ:368-377のcolonyはownerID/pins list/links list/routes list/level/currentSimTimeを持つKeyVal、PJ:379-400のradiusは明示real、PJ:417-431のresourceはdata bytes/numBands/proximity、PJ:450-493のdistributionとpin summariesはKeyVal。UserAbandonPlanetはC:/Users/yutai/evejs-v0.12.9/server/src/services/planet/planetRuntimeStore.js:3977-3988でboolを返す。未登録だから戻り値を調べずに済ませた行はない。
+PIのpayload helpersも確認した。PJ:307-346のpinはutil.KeyVal（type別fields/contents dict/Filetime等）、PJ:368-377のcolonyはownerID/pins list/links list/routes list/level/currentSimTimeを持つKeyVal、PJ:379-400のradiusは明示real、PJ:417-431のresourceはdata bytes/numBands/proximity、PJ:450-493のdistributionとpin summariesはKeyVal。UserAbandonPlanetはevejs-v0.12.9/server/src/services/planet/planetRuntimeStore.js:3977-3988でboolを返す。未登録だから戻り値を調べずに済ませた行はない。
 
 ### 具体的な残存破損・未接続と再利用先
 
 ここでの破損はstatic sourceで同じ入力/stateに対してclient contractを満たせない経路が確定したもの。実発生をgraphical clientで観測した、という意味ではない。
 
 1. **SKIN license activation noticeの引数数（破損）**
-   入力: active character Cが所有する有効license itemをActivateSkinLicense([itemID])でactivate。S:190-247で保存・consume後、I:55-58は2 IDを含むPyListを1引数でSendNotificationする。C:/Users/yutai/eve.rs/dotnet/src/Eve.Services/ClientSession.cs:220-224のparams arrayと同/SessionChanges.cs:53-79のBuildはflattenしないため、argsの長さは1。EveJS SJ:180-188とnetwork/clientSession.js:109-111,829-922は2 IDをflat argsとして送る。CCP cosmeticsSvc.py:213-216のOnSkinLicenseActivated(_skinID,licenseeID)は2引数を要求し、Host payloadでは受信callbackがTypeErrorになりcacheをresetできない。保存済license/item消費を取り消さずUI cacheだけ古く残り得る。既存ClientSession.SendNotificationを2 scalar引数で使う修正候補。ここでは修正していない。
+   入力: active character Cが所有する有効license itemをActivateSkinLicense([itemID])でactivate。S:190-247で保存・consume後、I:55-58は2 IDを含むPyListを1引数でSendNotificationする。../../../dotnet/src/Eve.Services/ClientSession.cs:220-224のparams arrayと同/SessionChanges.cs:53-79のBuildはflattenしないため、argsの長さは1。EveJS SJ:180-188とnetwork/clientSession.js:109-111,829-922は2 IDをflat argsとして送る。CCP cosmeticsSvc.py:213-216のOnSkinLicenseActivated(_skinID,licenseeID)は2引数を要求し、Host payloadでは受信callbackがTypeErrorになりcacheをresetできない。保存済license/item消費を取り消さずUI cacheだけ古く残り得る。既存ClientSession.SendNotificationを2 scalar引数で使う修正候補。ここでは修正していない。
 
 2. **cosmeticsの64-bit ship ID clamp（破損）**
-   入力例: PgItemStoreにowner=Cのship ID 2147483648が存在するstateでApplySkinToShip(2147483648,None)、または同IDのlogo stateをGetEnabledCosmetics(2147483648)で読む。S:294のPositiveは2147483647へclampするため、別ID lookup/別pathとなる。EveJS SJ:250-259,308-322はこの値をNumberで保持する。C:/Users/yutai/eve.rs/dotnet/src/Eve.Inventory/Items.cs:38-40,519-525はItem.Id/GetAsyncがlongで、この入力はstore contract上有効。IDの揺れではなくIDの損失。既存long parser/InventoryWire.Idを再利用する候補。session activeShipIdにも同じclampがある。型ID/skinIDのInt32とitemIDのInt64を区別する必要がある。
+   入力例: PgItemStoreにowner=Cのship ID 2147483648が存在するstateでApplySkinToShip(2147483648,None)、または同IDのlogo stateをGetEnabledCosmetics(2147483648)で読む。S:294のPositiveは2147483647へclampするため、別ID lookup/別pathとなる。EveJS SJ:250-259,308-322はこの値をNumberで保持する。../../../dotnet/src/Eve.Inventory/Items.cs:38-40,519-525はItem.Id/GetAsyncがlongで、この入力はstore contract上有効。IDの揺れではなくIDの損失。既存long parser/InventoryWire.Idを再利用する候補。session activeShipIdにも同じclampがある。型ID/skinIDのInt32とitemIDのInt64を区別する必要がある。
 
 3. **mission Briefing/Objectiveの実state投影不足（部分実装）**
    入力: offered/accepted/completed held missionへbound GetMissionBriefingInfo()/GetMissionObjectiveInfo()。accepted timestamp/expiryがあるstateでもMV:30-40はNone、keywordsはempty。kill missionでもMV:42-60はsystem/location 0、rewards/LP/bonus/locationsはMV:95-117で部分的な固定値。EveJS MR:5780-5838,5884-6169はheld record/rewards/locationを読む。単なるFiletime揺れではない。client mission text、destination、reward表示が欠ける経路。既存HeldMissionView、AgentMissionRecord、MC:413-447のFetch/Courier/static content/mission messagesを使って投影する候補。client/APIが要求しないmetadata field差は同列に破損扱いしない。
 
 4. **R&D Journalのownerがwriterと異なる（未接続）**
-   入力: ResearchProjectStoreにprojectをStartAsyncしたcharacter CでGetMyJournalDetails()。現行writerはC:/Users/yutai/eve.rs/dotnet/src/Eve.Services.Core/AgentDialogue.cs:377-378でresearch.Projects.StartAsync、cancelも同:417でPg storeへ書く。MC:203はそのResearchProjectStoreをPersistenceAgentResearchへ渡す。一方journal research bucketはMC:235-239のGameStore researchRuntimeStateのみを読み、Pg projectsをoverlayしない。fresh legacy tableが空ならstart後もjournal research rowsは空。EveJS MR:7558-7562はresearchRuntimeから現在rowsを作る。再利用先はC:/Users/yutai/eve.rs/dotnet/src/Eve.Agents/ResearchProjectStore.cs:53-54のAccruedPoints、同:70-83のReadAllAsyncとSDE agent station/field metadata。新しいparallel research storeは不要。
+   入力: ResearchProjectStoreにprojectをStartAsyncしたcharacter CでGetMyJournalDetails()。現行writerは../../../dotnet/src/Eve.Services.Core/AgentDialogue.cs:377-378でresearch.Projects.StartAsync、cancelも同:417でPg storeへ書く。MC:203はそのResearchProjectStoreをPersistenceAgentResearchへ渡す。一方journal research bucketはMC:235-239のGameStore researchRuntimeStateのみを読み、Pg projectsをoverlayしない。fresh legacy tableが空ならstart後もjournal research rowsは空。EveJS MR:7558-7562はresearchRuntimeから現在rowsを作る。再利用先は../../../dotnet/src/Eve.Agents/ResearchProjectStore.cs:53-54のAccruedPoints、同:70-83のReadAllAsyncとSDE agent station/field metadata。新しいparallel research storeは不要。
 
 5. **新規Pg epic arc progressがGetMyEpicArcStatusへ投影されない（未接続）**
    入力: legacy missionRuntimeStateが空のcharacterでPg AgentMissionStoreにepic arc stepがあるstate。MC:215-221はAO:17-39のOverlayを使うが、AO:50-67のRecordはmissionID/state/timestamps等だけでclientMissionRecord/isEpicArc/epicArcIDを作らない。A:513-593のEpicArcStatusPayloadはlegacy progressかそのmissing metadataに依存するため、Pg stepをarc mapへ追加できない。MR:7565-7569はruntime epic progressを返す。再利用先はMC:273-279で既に使うReadCompletedAsync/ReadFailedAsync、agentMissionStatic.EpicArcs/mission membership。completed career mapもA:379のlegacy readしか更新接続を検出できず、進行後bool反映を一致とは数えていない。
@@ -422,7 +422,7 @@ PIのpayload helpersも確認した。PJ:307-346のpinはutil.KeyVal（type別fi
    入力: launched fighterにactive ability、remaining chargeまたはcooldownがあるstateでGetFightersForShip()。F:85-103は第三dictを常にemptyにするが、FR:2149-2160は各entityのslot payloadを返す。CCP shipFighterState.py:201-230はcacheをclear後そのdictでslot statesを復元する。UI再生成/reconnectのsnapshotでactive/charge/cooldown表示が欠ける。backendに_slots、AbilitySlot、StateOf/Resumeが既存（F:406-500,793-839）。それらからsnapshotを投影する候補。activation/deactivation notificationsが後で来ることは、初期snapshotが正しいことの代用にならない。
 
 7. **Dungeon resource/wormholeのHost projection未配線（未接続）**
-   入力: authority-backed ice siteがあるstateでGetIceBeltInstances()/GetIceBeltsCount()、未materialized ore planned siteをGetOreAnomaliesCount()/InRange、visible wormholeのみあるsystemをGetSignatureInstances()で読む。DR:70-75はOreAnomalySpawnCounts/IceSystemAuthority/VisibleWormholeSignatureCountsをすべてemptyで渡す。D:186-203,212-266はその入力を本当に使用するので、ice entries/count・未materialized ore・wormhole追加countが欠落する。CJ:228-321,389-402は実authority/runtimeを使う。handler shape一致では解決しない。既存ContentRuntime/dungeonRuntimeState/SDE catalogを保ち、補助authorityを接続する候補。wormholeはC:/Users/yutai/eve.rs/dotnet/src/Eve.Host/Composition/SpaceComposition.cs:195-206のspaceSessions.Wormholes、C:/Users/yutai/eve.rs/dotnet/src/Eve.Wormholes/WormholeWorld.cs:80-92のEndsInSystemAsyncを再利用しvisibilityを適用する。ore/ice計画authorityのHost projection自体は未実装で、EveJSのcaptured countを固定値でコピーする案は採らない。
+   入力: authority-backed ice siteがあるstateでGetIceBeltInstances()/GetIceBeltsCount()、未materialized ore planned siteをGetOreAnomaliesCount()/InRange、visible wormholeのみあるsystemをGetSignatureInstances()で読む。DR:70-75はOreAnomalySpawnCounts/IceSystemAuthority/VisibleWormholeSignatureCountsをすべてemptyで渡す。D:186-203,212-266はその入力を本当に使用するので、ice entries/count・未materialized ore・wormhole追加countが欠落する。CJ:228-321,389-402は実authority/runtimeを使う。handler shape一致では解決しない。既存ContentRuntime/dungeonRuntimeState/SDE catalogを保ち、補助authorityを接続する候補。wormholeは../../../dotnet/src/Eve.Host/Composition/SpaceComposition.cs:195-206のspaceSessions.Wormholes、../../../dotnet/src/Eve.Wormholes/WormholeWorld.cs:80-92のEndsInSystemAsyncを再利用しvisibilityを適用する。ore/ice計画authorityのHost projection自体は未実装で、EveJSのcaptured countを固定値でコピーする案は採らない。
 
 8. **共有folder/Calendar/Facility/Community/RW/FWの先行差分を現行sourceでも再確認**
    AccessGroup Add/UpdateはArgs0-2だけ（AccessGroupBookmarkMgrService.cs:30-44）、admin searchはPersonalFoldersだけ（同:59-63）。Calendar event通知送信はdotnet/src exact-name検索で未検出。FacilityManagerService.cs:21-45とIndustryComposition.cs:172-190は5 fallbackとempty activities/serviceAccess/rigModifiersを維持。CorpFittingMgrService.GetCommunityFittingsはFittingMgrServices.cs:351-360のcache wrapper追加を確認したがFittingRpc.cs:23-27にproviderがなく内容はempty dict（CCP fittingSvc.py:400-413が読む）。CoreRpc.cs:85,102のRW/Victory callbackなしも現行で再確認。これらは先行節のprovider未接続記録として残す。既存BookmarkStore/CalendarStore/Industry facility store/Pg fitting store/FW state ownerを接続する候補で、別ownerを作らない。先行行番号は適宜このcurrent証拠を優先する。
@@ -443,7 +443,7 @@ PIのpayload helpersも確認した。PJ:307-346のpinはutil.KeyVal（type別fi
 
 ### 作業保全・最終境界
 
-- 実root C:/Users/yutai/eve.rs、branch main、取得基点HEAD 52b8421f34e635900a18459da4403f26f2dfaec0、最終確認HEAD dda03ca0464043822e68c8348604ff34eadedcac。保存/検査中の親commit dda03ca0はCrate retry修正で、変更pathはCrateService.cs、CrateServiceTests.cs、親のcrate-skill-retry-fix.mdのみ。今回49 RPC＋新規2 RPCのソースにはこのcommitの差分なし。Crate ClaimFittingは最新sourceで読み戻し、予約/rollbackを保持することを確認した。ambient worktree1e47はsource/保存に使わなかった。全exec_commandのworkdirをC:\Users\yutai\eve.rsに指定。
+- 実root repository root、branch main、取得基点HEAD 52b8421f34e635900a18459da4403f26f2dfaec0、最終確認HEAD dda03ca0464043822e68c8348604ff34eadedcac。保存/検査中の親commit dda03ca0はCrate retry修正で、変更pathはCrateService.cs、CrateServiceTests.cs、親のcrate-skill-retry-fix.mdのみ。今回49 RPC＋新規2 RPCのソースにはこのcommitの差分なし。Crate ClaimFittingは最新sourceで読み戻し、予約/rollbackを保持することを確認した。ambient worktree1e47はsource/保存に使わなかった。全exec_commandのworkdirをeve.rsに指定。
 - 途中に親/他workerのsource/test差分14 files（保存前read-only statで661 insertions/46 deletions）と複数の未追跡audit docsを観測した。これらをrestore/stage/delete/commitしていない。自担当writeはこのcore-a-f.mdのみ。開始時source cleanと読み直し時の親Crate dirtyを混同しない。
 - 既読materialを再利用。canonical Serena manual/activateとCBM三rootを確認済み。CBM source exact-path metadata_changedをSerena current bodyで補った。Transport closedはなかった。追加text searchのrequest_timeoutはnarrow query/graph/snippetで回避し、ARCHETYPE_SETS追加text検索timeoutもsymbol snippetで回収し、CJ:33-51の定数を照合した。未確認を一致件数へ加えていない。
 - 本担当ではsource/test変更、build/test、Git mutation、子agent、別modelへの切替を実行していない。親のCore698/Rust835等のPASSはユーザー提示の既存検証対象であり、本監査の全差分/runtimesをPASSとする証拠にはしていない。

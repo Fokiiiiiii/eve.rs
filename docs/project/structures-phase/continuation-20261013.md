@@ -3,7 +3,7 @@
 ## Objective and current boundary
 Continue `structures-phase/HANDOFF.md` from ST-5/ST-6 into ST-8a: a controlling pilot must activate and deactivate an ordinary fitted Standup launcher or electronic warfare module on the actual structure. Use authoritative inventory, controller lease, profile permission, dogma values, charge state, target/range checks and simulation results. Preserve the pilot's retained personal ship.
 
-Source snapshot before this increment: canonical `C:/Users/yutai/eve.rs`, `main`, upstream `9db7d354`. Earlier response-audit source changes are present and owned separately; preserve and verify them before integration. Historical Linux/worktree/source-priority instructions do not override current AGENTS/user rules.
+Source snapshot before this increment: canonical `repository root`, `main`, upstream `9db7d354`. Earlier response-audit source changes are present and owned separately; preserve and verify them before integration. Historical Linux/worktree/source-priority instructions do not override current AGENTS/user rules.
 
 ## Ownership and sequence
 1. Parent: existing shared-tree baseline build, regression checks, official-source/SDE evidence, interface agreement, final diff review, Git delivery and this record.

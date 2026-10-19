@@ -293,7 +293,7 @@ public sealed partial class CharMgrService(
     [Method("GetPaperdollState")]
     public async ValueTask<PyValue> GetPaperdollState(ServiceCall call)
     {
-        var characterId = call.Arg(0) is PyInt { Value: > 0 } given ? given.Value : call.Session.CharacterId ?? 0;
+        var characterId = call.Session.CharacterId ?? 0;
         if (characterId <= 0)
             return new PyInt(NoExistingCustomization);
         if (readRecustomizationState is not null && await readRecustomizationState(characterId, call.Cancellation) is { } recustomizing)

@@ -198,7 +198,7 @@ Each effect below is **OPEN — module wired, effect body pending**. Its handler
 
 Not wired here, and why:
 
-- `probeLaunching` is carried by probe charges (group 479, category 8), not by fitted modules. The client launches probes with `dogmaIM.LaunchProbes` (`eve/client/script/parklife/scanSvc.py`), and the `LaunchProbes` route is built by track A5 (section 24); the scan itself is not.
+- `probeLaunching` is carried by probe charges (group 479, category 8), not by fitted modules. The client launches probes with `dogmaIM.LaunchProbes` (`eve/client/script/parklife/scanSvc.py`), and the `LaunchProbes` route is built by track A5 (section 24); probe scanning is implemented in track A7 (section 29).
 - `surveyScan` is carried by the mining survey chipsets (ML-3 Mining Probe, Dactyl Asteroid Analyzer) and the QA Survey Scanner. It belongs to the mining work.
 - `targetHostiles` (Automated Targeting Systems), `ECMBurstJammerQA`, `pacifierDebuffQA` and `structureScanResolutionActivePercentage` (a structure module) are outside the exploration, hacking and scanner set.
 
@@ -584,7 +584,7 @@ Open, each with its blocker:
 - Resistance at activation: EVE.js refuses the start before a cycle is spent. The host reads the target's resistance at the cycle's end, so the eve.rs scanner
   spends one cycle. A pre-activation check needs the target's resistance in the activation request (a wire field).
 - NPC targets: a target needs an item record for its hold and fittings. NPC ships have none, so they are refused as `NO_TARGET`.
-- Probe lifecycle notifications (E-06: `OnNewProbe`, `OnProbeWarpStart` and the rest): not started; they depend on `LaunchProbes` (RC-7).
+- Probe lifecycle notifications (E-06: `OnNewProbe`, `OnProbeWarpStart` and the rest): built through the scan and recovery paths in sections 24 and 29; graphical-client check remains open.
 - Client check: not exercised. The MITM recipe (tools/mitm/README.md) needs a live EVE.js run and a headless scenario that scripts a scanner; neither exists.
 
 ## 20. Track C4: command bursts, buff registry, P.A.N.I.C. (2026-10-09): historical specification, superseded by C5–C8
@@ -617,7 +617,7 @@ Open, each with its exact blocker:
 - The projected ECCM (2246): pending.
 - WP12 bastion and 1934 (keep running after logoff): not built. The wiki page says nothing about logoff; the SDE sets 1934 = 0. Needs a logged-off ship that stays in space.
 - WP17 sim-side assistance and jam overlays: not started; the part to build is not settled in the sources read.
-- E-06 probe lifecycle notifications: not started; needs the probe launcher (`LaunchProbes`, RC-7).
+- E-06 probe lifecycle notifications: built with `LaunchProbes` in section 24 and scan/recovery in section 29; graphical-client verification remains open.
 ## 21. Track C5: command bursts and the buff registry (2026-10-09): built
 
 The dogma library and recipient rule were implemented in C5. Section 22 supersedes the remaining C5 open items with the end-to-end implementation; C8 records persistence across entry and restart. The C4 reading of zero was wrong: effect 6737 derives strength from charge multiplier 2596 and module value 2469. Sources and choices are in DEVIATIONS, tracks C4–C8.
@@ -674,7 +674,7 @@ Open, each with its exact blocker:
 
 ## 24. Track A5: scanner probes, launch and recall (2026-10-10)
 
-Done (tests in `ScanProbeHostTests`, the simulation tests in `deployable/tests.rs`, codec fixtures; decisions in DEVIATIONS "Track A5: scanner probes"): `dogmaIM.LaunchProbes`
+Done (tests in `ScanProbeHostTests`, the simulation tests in `deployable/tests.rs`, codec fixtures; decisions in DEVIATIONS "Track A5: scanner probes"): `dogmaIM.LaunchProbes`. `The_pilot_controls_at_most_eight_probes_and_a_launcher_with_too_few_probes_refuses` passed on `eve_p3` on 2026-10-19.
 with the reference's checks and messages; eight active probes per pilot per system; probes put in space on a ring of ten kilometres (`PlaceProbe`, protocol 45); the
 charge stack spent; `OnNewProbe` told to the pilot; recall through `scanMgr.DestroyProbe` (`OnRemoveProbe`); expiry at `space.probes.sweep`.
 

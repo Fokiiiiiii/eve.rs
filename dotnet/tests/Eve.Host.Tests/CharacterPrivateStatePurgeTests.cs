@@ -34,6 +34,12 @@ public sealed class CharacterPrivateStatePurgeTests
             await Seed(cache, "characterNotes", "/characters/8", new JsonObject { ["note"] = "other" });
             await Seed(cache, "characters", "/7", new JsonObject { ["name"] = "gone", ["characterSettings"] = new JsonObject { ["x"] = 1 } });
             await Seed(cache, "characters", "/8", new JsonObject { ["name"] = "kept" });
+            await Seed(cache, "skillPlans", "/7", new JsonObject { ["plans"] = new JsonArray() });
+            await Seed(cache, "skillPlans", "/8", new JsonObject { ["plans"] = new JsonArray() });
+            await Seed(cache, "skillQueues", "/7", new JsonObject { ["queue"] = new JsonArray() });
+            await Seed(cache, "skillQueues", "/8", new JsonObject { ["queue"] = new JsonArray() });
+            await Seed(cache, "skillTradingState", "/7", new JsonObject { ["offers"] = new JsonArray() });
+            await Seed(cache, "skillTradingState", "/8", new JsonObject { ["offers"] = new JsonArray() });
             await Seed(cache, "missionRuntimeState", "/charactersByID/7", new JsonObject { ["missions"] = 1 });
             await Seed(cache, "researchRuntimeState", "/charactersByID/7", new JsonObject { ["projects"] = 1 });
 
@@ -48,6 +54,12 @@ public sealed class CharacterPrivateStatePurgeTests
             Assert.False(cache.Read("characters", "/7/characterSettings").Success);
             Assert.Equal("gone", cache.Read("characters", "/7/name").Data?.GetValue<string>(), ignoreCase: false);
             Assert.True(cache.Read("characters", "/8").Success);
+            Assert.False(cache.Read("skillPlans", "/7").Success);
+            Assert.True(cache.Read("skillPlans", "/8").Success);
+            Assert.False(cache.Read("skillQueues", "/7").Success);
+            Assert.True(cache.Read("skillQueues", "/8").Success);
+            Assert.False(cache.Read("skillTradingState", "/7").Success);
+            Assert.True(cache.Read("skillTradingState", "/8").Success);
             Assert.False(cache.Read("missionRuntimeState", "/charactersByID/7").Success);
             Assert.False(cache.Read("researchRuntimeState", "/charactersByID/7").Success);
 
@@ -56,9 +68,16 @@ public sealed class CharacterPrivateStatePurgeTests
             cache = Cache(store, owner);
             await cache.RecoverAsync();
             await cache.LoadAsync("mail");
+            await cache.LoadAsync("skillPlans");
+            await cache.LoadAsync("skillQueues");
+            await cache.LoadAsync("skillTradingState");
             await cache.LoadAsync("characterNotes");
             await cache.LoadAsync("characters");
             Assert.False(cache.Read("mail", "/mailboxes/7").Success);
+            Assert.False(cache.Read("skillPlans", "/7").Success);
+            Assert.True(cache.Read("skillPlans", "/8").Success);
+            Assert.False(cache.Read("skillQueues", "/7").Success);
+            Assert.False(cache.Read("skillTradingState", "/7").Success);
             Assert.False(cache.Read("characterNotes", "/characters/7").Success);
             Assert.False(cache.Read("characters", "/7/characterSettings").Success);
             Assert.True(cache.Read("mail", "/mailboxes/8").Success);

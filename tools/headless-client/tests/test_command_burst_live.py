@@ -114,9 +114,11 @@ def test_a_loaded_burst_changes_a_fleet_members_dogma_until_its_buff_expires():
         dbuffs = named(active_events, "OnDbuffUpdated")
         active_info = member.call_bound(member_dogma[0], "GetAllInfo", True, True, None)
         active = ship_attribute(active_info, member_ship, SHIELD_EM_RESONANCE)
+        source_events = notifications_of(owner)
         assert changes and dbuffs, (
             f"the receiver did not hear both its dogma attributes and buff state; "
-            f"receiver resonance {before} -> {active}; event names {[event['name'] for event in active_events]}"
+            f"receiver resonance {before} -> {active}; receiver events {[event['name'] for event in active_events]}; "
+            f"source events {[event['name'] for event in source_events]}"
         )
         assert active_events.index(changes[0]) < active_events.index(dbuffs[0]), "dogma attributes must precede the buff-state update"
 

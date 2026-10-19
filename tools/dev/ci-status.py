@@ -115,10 +115,16 @@ def cancel_queued(args, token: str) -> None:
         run for run in runs
         if run.get("head_branch") == args.branch
         and (not args.workflow or run.get("path", "").endswith(args.workflow))
-        and (not args.sha or run.get("head_sha") != args.sha)
+        and (not args.sha or not run.get("head_sha", "").startswith(args.sha))
     ]
     for run in selected:
-        status, _, _ = request(f"/actions/runs/{run['id']}/cancel", token, method="POST")
+        try:
+            status, _, _ = request(f"/actions/runs/{run['id']}/cancel", token, method="POST")
+        except RuntimeError as error:
+            if "HTTP 409" in str(error):
+                print(f"Skipped run {run['run_number']} sha={run['head_sha'][:12]} because it was no longer queued.")
+                continue
+            raise
         print(f"Cancelled queued run {run['run_number']} sha={run['head_sha'][:12]} (HTTP {status}): {run['html_url']}")
     if not selected:
         print(f"No queued runs to cancel on {args.branch}.")

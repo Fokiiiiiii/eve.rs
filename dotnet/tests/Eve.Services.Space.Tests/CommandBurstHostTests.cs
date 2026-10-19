@@ -1,5 +1,6 @@
 using Eve.Inventory;
 using Eve.Dogma;
+using Eve.Marshal;
 using Eve.Services.Space.Effects;
 using Eve.Ships;
 using Eve.Space;
@@ -20,6 +21,11 @@ public class CommandBurstHostTests
     /// <summary>The Pulse Activated Nexus Invulnerability Core (42522) and its duration (panicDuration, 240 s), and the collections it grants.</summary>
     private const int PanicCore = 42522, ShieldInvulnerability = 8, DisallowWeapons = 59;
     private const long CoreMs = 240_000;
+
+    private static PyTuple AttributeChange(IEnumerable<Events.Event> notifications, long itemId, int attributeId) =>
+        notifications.Where(notification => notification.Name == "OnModuleAttributeChanges")
+            .SelectMany(notification => ((PyList)notification.Args[0]).Items.OfType<PyTuple>())
+            .Last(change => Events.Number(change.Items[2]) == itemId && Events.Number(change.Items[3]) == attributeId);
 
     [PgFact]
     public async Task A_burst_cycle_buffs_the_source_and_its_fleet_ship_in_reach_and_tells_each_pilot_its_state()
@@ -43,6 +49,15 @@ public class CommandBurstHostTests
                 told => told.SessionId == (ulong)pilot.Session.SessionId && told.ShipId == ShipIdOf(pilot)
                     && told.Entries.Any(entry => entry.CollectionId == ShieldResistance && entry.Value == -8 && entry.RemainingMs == BuffMs));
         }
+
+        var allySnapshot = Assert.IsType<ShipSnapshot>(await rig.Ships.LoadAsync(ally.Character));
+        var baseResonance = allySnapshot.World.Get(allySnapshot.Ship.Id, 271);
+        await rig.Space.PrepareSpaceDogmaAsync(ally.Session, allySnapshot, CancellationToken.None);
+        var activeBuff = Assert.Single(rig.Space.Buffs.StateOf(ShipIdOf(ally), rig.Now));
+        var expectedResonance = baseResonance * (100 + activeBuff.Value) / 100;
+        Assert.Equal(expectedResonance, allySnapshot.World.Get(allySnapshot.Ship.Id, 271), 9);
+        var attributeUpdate = AttributeChange(Events.Of(ally.Session), ShipIdOf(ally), 271);
+        Assert.Equal(expectedResonance, Eve.Macho.JsSemantics.NumberValue(attributeUpdate.Items[5]), 9);
     }
 
     [PgFact]
@@ -85,14 +100,23 @@ public class CommandBurstHostTests
     {
         await using var rig = await Rig.CreateAsync();
         var source = await FlyingWithAsync(rig, ShieldCommandBurstI);
+        var ally = await DroneHostTests.FlyingWithADroneAsync(rig, characterName: "Expiring Fleet Mate", sessionId: 2);
+        rig.Space.FleetIdOfAsync = (_, _) => Task.FromResult<long?>(FleetId);
         await LoadChargeAsync(rig, source, ShieldHarmonizing);
         rig.Space.StartModuleForTest((ulong)source.Session.SessionId, source.Module);
-        Assert.True((await ModuleFuelHostTests.SettleAsync(rig, BurstCycle(source, 5, ShipIdOf(source)))).Accepted);
+        Assert.True((await ModuleFuelHostTests.SettleAsync(rig, BurstCycle(source, 5, ShipIdOf(source), ShipIdOf(ally)))).Accepted);
+        var allySnapshot = Assert.IsType<ShipSnapshot>(await rig.Ships.LoadAsync(ally.Character));
+        var baseResonance = allySnapshot.World.Get(allySnapshot.Ship.Id, 271);
 
         rig.Now += BuffMs + 1;
         await rig.Containers.SweepAsync();
 
         Assert.Empty(rig.Space.Buffs.StateOf(ShipIdOf(source), rig.Now));
+        Assert.Empty(rig.Space.Buffs.StateOf(ShipIdOf(ally), rig.Now));
+        await rig.Space.PrepareSpaceDogmaAsync(ally.Session, allySnapshot, CancellationToken.None);
+        Assert.Equal(baseResonance, allySnapshot.World.Get(allySnapshot.Ship.Id, 271), 9);
+        var attributeUpdate = AttributeChange(Events.Of(ally.Session), ShipIdOf(ally), 271);
+        Assert.Equal(baseResonance, Eve.Macho.JsSemantics.NumberValue(attributeUpdate.Items[5]), 9);
         var last = rig.Sim.BuffStates.Last(told => told.ShipId == ShipIdOf(source));
         Assert.Empty(last.Entries);
     }

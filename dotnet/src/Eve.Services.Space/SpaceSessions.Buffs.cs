@@ -14,6 +14,17 @@ public sealed partial class SpaceSessions
     /// <summary>The host's record of the ships' buff inputs. Null keeps the buffs in memory only.</summary>
     public PgShipBuffStore? BuffStore { get; set; }
 
+    /// <summary>Loads a flown ship's active buff effects into the dogma world used by dogmaIM, as the space simulation already does.</summary>
+    public async ValueTask<ShipSnapshot?> PrepareSpaceDogmaAsync(ClientSession session, ShipSnapshot snapshot, CancellationToken cancellationToken)
+    {
+        if (!IsInSpace(session) || session.GetInt("shipid") != snapshot.Ship.Id)
+        {
+            return snapshot;
+        }
+        await SyncBuffsAsync(snapshot.World, snapshot.Ship.Id, cancellationToken);
+        return snapshot;
+    }
+
     /// <summary>The ship's world carries its buffs: the ones a restart dropped are restored from the record first, then the world is synced with them.</summary>
     internal async Task SyncBuffsAsync(Eve.Dogma.DogmaWorld world, long shipId, CancellationToken cancellationToken)
     {

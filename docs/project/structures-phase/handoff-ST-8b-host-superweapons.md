@@ -52,4 +52,4 @@ The same hook should cover the shared PointDefense/AoE action without changing i
 3. Build successful Standup burst effects from live fitted/online module Dogma values: effect duration attribute, capacitor discharge, area geometry, SDE repeat/deactivation/group rules, security restrictions, structure fit type, charge requirements where present, core and controller lease.
 4. Re-evaluate current owner-corporation legality on each pulse; Sim must apply only the Host-returned allowed IDs.
 5. Route structure lightning through the same hook for the primary target and each ordered secondary hop, preserving the SDE type list, range, maximum chain count, and per-hop falloff.
-6. Re-run focused Space and Host tests serially under the parent task, then record those results separately from this worker's work. Real V24.01 client acceptance remains unverified.
+6. Re-run focused Space and Host tests serially under the parent task, then record those results separately from this worker's work. Real V24.01 client acceptance remains not confirmed.

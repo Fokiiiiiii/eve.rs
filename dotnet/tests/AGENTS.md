@@ -7,4 +7,4 @@
 5. Exercise success, rejection, concurrency, retries and restart when applicable.
 6. Use different inputs and states to detect hardcoded answers.
 7. Never loosen assertions just to make tests pass.
-8. Distinguish PASS, FAIL, SKIPPED and NOT RUN. Add regression coverage for every repaired defect.
+8. Distinguish PASS, FAIL, SKIPPED and not performed. Add regression coverage for every repaired defect.

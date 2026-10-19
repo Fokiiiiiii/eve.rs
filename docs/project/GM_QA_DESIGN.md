@@ -88,4 +88,4 @@ Every command the screen sends is served. A word that no command serves still an
 
 ## Open
 - `/missioncomplete` is not built (no placeholder mission exists; DEVIATIONS G9). `/pi program` is not built (DEVIATIONS G10).
-- The Insider walk against EVE.js is run and compared (MITM_COMPARE.md). Its open differences: `/solar` puts the pilot in space near a gate on EVE.js and not on eve.rs (DEVIATIONS G26), and the skill-not-found suggestions differ in wording (DEVIATIONS G26).
+- The Insider walk against EVE.js is run and compared (MITM_COMPARE.md). Its remaining differences include `/solar` reply text (EVE.js includes the gate name; eve.rs does not) and skill-not-found suggestion wording (DEVIATIONS G26). Both servers place the pilot beside the destination system’s first stargate.

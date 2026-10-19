@@ -440,8 +440,8 @@ public static partial class SimCodec
         var repeat = r.I32();
         var target = r.I64();
         var flags = r.U8();
-        // bits: 1 on, 2 off, 4 turret, 8 action, 16 burns fuel (the fuel is asked for before each cycle, ModuleWorkCycle with ConsumeFuel), 32 the module rules
-        if (flags > 63)
+        // Bits 1-32 carry the existing effect fields; bit 64 carries the fallback capacitor need after the module rules.
+        if (flags > 127)
         {
             throw new SimLinkException(SimLinkError.BadValue, "bad flags");
         }
@@ -452,7 +452,8 @@ public static partial class SimCodec
         var turret = (flags & 4) != 0 ? ReadTurret(ref r) : null;
         var action = (flags & 8) != 0 ? ReadAction(ref r) : null;
         var rules = (flags & 32) != 0 ? ReadRules(ref r) : null;
-        return new SimEffect(module, moduleType, effectId, fx, duration, capacitor, repeat, target, on, off, onChanges, offChanges, turret, action, (flags & 16) != 0, rules);
+        var fallbackCapacitor = (flags & 64) != 0 ? r.F64() : 0.0;
+        return new SimEffect(module, moduleType, effectId, fx, duration, capacitor, repeat, target, on, off, onChanges, offChanges, turret, action, (flags & 16) != 0, rules, fallbackCapacitor);
     }
 
     private static SimModuleRules ReadRules(ref Reader r)

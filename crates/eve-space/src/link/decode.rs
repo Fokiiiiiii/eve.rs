@@ -346,8 +346,8 @@ pub(super) fn read_effect(reader: &mut Reader) -> Result<Effect, DecodeError> {
     let repeat = reader.i32()?;
     let target_id = reader.i64()?;
     let flags = reader.u8()?;
-    // bits: 1 on, 2 off, 4 turret, 8 action, 16 burns fuel (a fuel cycle is asked of the host before each cycle that starts), 32 the module rules
-    if flags > 63 {
+    // bits: 1 on, 2 off, 4 turret, 8 action, 16 burns fuel, 32 module rules, 64 fallback capacitor need
+    if flags > 127 {
         return Err(DecodeError::BadValue("flags"));
     }
     let on = if flags & 1 != 0 { Some(read_numbers(reader)?) } else { None };
@@ -357,8 +357,10 @@ pub(super) fn read_effect(reader: &mut Reader) -> Result<Effect, DecodeError> {
     let turret = if flags & 4 != 0 { Some(read_turret(reader)?) } else { None };
     let action = if flags & 8 != 0 { Some(read_action(reader)?) } else { None };
     let rules = if flags & 32 != 0 { read_rules(reader)? } else { Rules::default() };
+    let fallback_capacitor_need = if flags & 64 != 0 { reader.f64()? } else { 0.0 };
     Ok(Effect {
         rules,
+        fallback_capacitor_need,
         burns_fuel: flags & 16 != 0,
         module_id,
         module_type,

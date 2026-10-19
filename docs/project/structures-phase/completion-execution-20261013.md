@@ -1,6 +1,6 @@
 # Structures phase completion execution (2026-10-13)
 
-Canonical root: C:/Users/yutai/eve.rs, main, initial HEAD 06abc660. Every worker is explicitly gpt-6-luna and runtime-verified before GO. Preserve unrelated dirty Corporation/Space audit patches. No new branches/worktrees, descendants, guessed values or fake success. Existing AGENTS source priority and foundations override historical handoff rules.
+Canonical root: repository root, main, initial HEAD 06abc660. Every worker is explicitly gpt-6-luna and runtime-verified before GO. Preserve unrelated dirty Corporation/Space audit patches. No new branches/worktrees, descendants, guessed values or fake success. Existing AGENTS source priority and foundations override historical handoff rules.
 
 ## Required closure checklist
 - [ ] ST-8a: complete controlled-structure module execution on Host and Sim, actual ammo/cap/targets/FX, controller revocation and retained hull preservation.

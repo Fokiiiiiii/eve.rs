@@ -23,7 +23,7 @@ Expected answers come from the reference (EVE.js, cited per test), not from a re
 
 Result on eve_p4: `test_structures.py` 11 passed (`tools/dev/run-eve-live.sh` with `EVE_RUN`, the file alone).
 
-Server change found by the scenarios: `dotnet/src/Eve.Host/Persistence/Structures/StructureControlBackend.cs`. The old `ControlAsync` checked the structure's setting (17) before the docked and system checks, and every refusal was `CustomNotify "Structure control refused: <REASON>"`. The reference orders the checks (not found, docked for TakeControl, system, setting) and sends its own labels. The change keeps the owner lookup first, moves the docked check ahead of the setting, uses the reference's order for the system check, and maps `STRUCTURE_CONTROL_DENIED` to `StructureDefenseDenied`, `STRUCTURE_NOT_FOUND` to `TargetingAttemptCancelled`, and the two notices for the docked and system refusals. Other reasons keep the old text. By code reading, the old order answered `STRUCTURE_CONTROL_DENIED` to the pilot in space; this was not run before the change.
+Server change found by the scenarios: `dotnet/src/Eve.Host/Persistence/Structures/StructureControlBackend.cs`. The old `ControlAsync` checked the structure's setting (17) before the docked and system checks, and every refusal was `CustomNotify "Structure control refused: <REASON>"`. The reference orders the checks (not found, docked for TakeControl, system, setting) and sends its own labels. The change keeps the owner lookup first, moves the docked check ahead of the setting, uses the reference's order for the system check, and maps `STRUCTURE_CONTROL_DENIED` to `StructureDefenseDenied`, `STRUCTURE_NOT_FOUND` to `TargetingAttemptCancelled`, and the two notices for the docked and system refusals. Other reasons keep the old text. By code reading, the old order answered `STRUCTURE_CONTROL_DENIED` to the pilot in space; this was not exercised before the change.
 
 ### Not live (named precisely)
 
@@ -44,7 +44,7 @@ Server change found by the scenarios: `dotnet/src/Eve.Host/Persistence/Structure
 
 ## 4. Checks
 
-- No Rust was changed, so clippy was not run for this package. `cargo fmt --all` was run before the push.
+- No Rust was changed, so clippy was not exercised for this package. `cargo fmt --all` was run before the push.
 - Python tests: the live file above. No Python lint is configured for `tools/headless-client`.
 
 ## Things that will bite

@@ -158,7 +158,7 @@ mod tests {
     fn a_random_vector_is_on_the_sphere_or_in_the_shell_and_draws_what_the_client_draws() {
         let mut w = TestWorld::with_numbers(&[0.25, 0.75, 0.5]);
         let v = random_vector(10.0, 0.0, &mut w);
-        // t = pi / 2 * 1 = 0.5 * pi, u = 0.5, sq = sqrt(0.75)
+
         assert!(
             (v[0]).abs() < 1e-9 && (v[1] - 10.0 * 0.75f64.sqrt()).abs() < 1e-9 && (v[2] - 5.0).abs() < 1e-9
         );

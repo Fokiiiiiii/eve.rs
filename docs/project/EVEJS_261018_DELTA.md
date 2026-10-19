@@ -117,7 +117,7 @@ Before porting each row, require exact V24 callsite or static-data evidence from
 6. Complete corporate bounty and mission LP tax trace (M): existing TODO already records a real LP tax gap.
 7. Test T3 rig removal and saved-fit overwrite semantics (S): bounded existing fitting domain with existing tests.
 8. Add Abyssal protection window checks on entry and room transition (M): TODO marks abyssal flow client-ready open.
-9. Audit site expiry/job scheduling and concurrency (M): release reports a freeze fix; protects state progress.
+9. DONE (scheduler burst regression): `DurableScheduler` claims bounded batches, executes at configured concurrency, and commits each handler with its job state. The expired-site replacement test passed; a 512-due-job PostgreSQL stress test completed below its 20-second bound. This checks scheduler throughput, not a multi-system end-to-end expiry storm.
 10. Audit war checks and inventory item-move lock scope (M): upstream freeze fixes flag likely shared hot paths.
 11. Audit Sov Hub save/deploy IDs (M): protects persistent structure state and global item identity.
 12. Compare combat anomaly and DED pack records to V24 SDE/client exports before selecting one site (M): may replace generated approximations with defensible compositions.

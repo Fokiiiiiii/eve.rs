@@ -206,7 +206,6 @@ fn a_bomb_goes_off_where_it_is_and_hurts_the_ships_in_its_blast_but_not_its_laun
 #[test]
 fn a_cynosural_field_is_lit_where_the_ship_is_as_its_activation_ends_and_is_taken_out_when_its_lifetime_is_up()
  {
-    // the wiki: a field is lit after the generator's activation time; the SDE: a field lives its explosionDelay (600000 ms) and does not explode
     let (mut scene, t) = crowd();
     let field = Action::CynoField {
         ball: Spec {
@@ -401,7 +400,6 @@ fn a_control_tower_is_in_space_unanchored_until_the_host_anchors_it_and_stops_no
     assert!(accepted(&lit), "a control tower stops no field: {lit:?}");
 }
 
-/// Pochven (SDE region 10000070) is a region-wide cynosural jammer: no field lights there, a covert or an industrial one neither (the wiki, "Pochven":
 /// "stops anyone from lighting a cyno"), and the same field lights in a system of another region. Each scene is made anew from its system, as a restarted
 /// simulation makes it: the region is the static data's and nothing of the refusal is kept.
 #[test]
@@ -572,7 +570,7 @@ fn a_defender_launcher_shoots_down_the_hostile_missile_in_its_reach() {
     use crate::missile_entity::{MISSILE_ID_BASE, MissileEntity, Shooter};
     use crate::missiles::Missile;
     let (mut scene, t) = crowd();
-    // a missile of another owner flies from B at A: five kilometres off, with little hit points
+
     let incoming = Missile {
         charge_type_id: 27_000,
         group_id: 385,
@@ -722,7 +720,7 @@ fn third_ship(scene: &mut Scene, corporation: i32, metres: f64, t: i64) -> i64 {
 #[test]
 fn an_fof_launch_goes_for_the_nearest_enemy_that_fired_on_the_shooter_and_locks_none() {
     let (mut scene, t) = crowd();
-    // B is of another corporation and fired on A (the wiki: the nearest enemy that has previously fired on you); the corporation-mate below is A's
+
     scene.pilots.get_mut(&B).unwrap().ship.spec.corporation_id = 98_000_001;
     let a_corp = scene.pilots[&A].ship.spec.corporation_id;
     let b_ship = scene.pilots[&B].ship.spec.ship_id;
@@ -1193,6 +1191,14 @@ fn a_linked_ship_is_held_until_its_link_is_complete_and_out_of_warp_for_a_minute
     assert!(!held(&scene.command(A, Command::Stop, t), "LINK_HOLD"), "a stop is never held");
     assert!(!held(&scene.command(B, goto, t), "LINK_HOLD"), "another pilot's ship is not held");
 
+    assert!(scene.link_effects_active(A, t), "link restrictions start with the link");
+    assert!(
+        scene.link_effects_active(A, link_done + 59 * SECOND),
+        "link restrictions include the 60-second tail"
+    );
+    assert!(!scene.link_effects_active(A, link_done + 60 * SECOND), "link restrictions clear after the tail");
+    assert!(!scene.link_effects_active(B, t), "another pilot is not restricted");
+
     let after_link = link_done + SECOND;
     assert!(
         !held(&scene.command(A, goto, after_link), "LINK_HOLD"),
@@ -1205,6 +1211,39 @@ fn a_linked_ship_is_held_until_its_link_is_complete_and_out_of_warp_for_a_minute
     assert!(
         !held(&scene.command(A, warp, link_done + 61 * SECOND), "LINK_HOLD"),
         "the warp is free after the status clear delay"
+    );
+}
+
+#[test]
+fn a_crab_link_reduces_damage_by_ten_percent_until_the_status_tail_clears() {
+    let (mut scene, t) = crowd();
+    let ship = scene.pilots[&A].ship.spec.ship_id;
+    let idle = AnalysisBeaconState {
+        active: true,
+        activate_at: 0,
+        deployed_at: t,
+        activation_seconds: 20,
+        link_state: 1,
+        link_complete_at: 0,
+        linked_ship_id: 0,
+    };
+    scene.place_analysis_beacon(crab_placement(&scene, idle), t);
+    let link_done = t + 240 * SECOND;
+    scene.set_analysis_beacon_state(
+        CRAB,
+        AnalysisBeaconState { link_state: 2, link_complete_at: link_done, linked_ship_id: ship, ..idle },
+        t,
+    );
+
+    let (_, linked_hit) = scene.damage(ship, [0.0, 0.0, 100.0, 0.0], t);
+    let linked_hit = linked_hit.expect("the linked ship has damageable shields");
+    assert!((linked_hit.taken.shield - 54.0).abs() < 1e-9, "10% less than 60 damage: {linked_hit:?}");
+
+    let (_, after_tail_hit) = scene.damage(ship, [0.0, 0.0, 100.0, 0.0], link_done + 61 * SECOND);
+    let after_tail_hit = after_tail_hit.expect("the linked ship still has damageable shields");
+    assert!(
+        (after_tail_hit.taken.shield - 60.0).abs() < 1e-9,
+        "the bonus ends with the status tail: {after_tail_hit:?}"
     );
 }
 

@@ -307,7 +307,6 @@ impl ActivateTargetedEffect {
         }
     }
 
-    /// `TryActivateEffect(ownerID, targetID)`: a `UserError` is only logged (and an effect that is active already is monitored as if it had started).
     fn try_activate_effect(t: &mut TaskCtx<'_, '_>, owner_id: i64, target_id: &Value) {
         let (Some(me), Some(effect_id), Some(repeats)) =
             (t.my_item_id(), t.required_int("effectId"), t.required_int("repeats"))

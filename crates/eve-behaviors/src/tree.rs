@@ -313,7 +313,6 @@ impl Shared {
         id
     }
 
-    /// The next step of a tasklet: a call after `seconds`, that goes with the tasklet.
     pub fn schedule_tasklet_call(
         &mut self,
         tasklet: i64,
@@ -772,7 +771,6 @@ impl Cx<'_> {
         }
     }
 
-    /// `Step`: one task of the queue. False at the end marker.
     fn step(&mut self) -> bool {
         let Some(entry) = self.core.queue.pop_front() else { return false };
         let more = match entry {
@@ -1315,7 +1313,6 @@ impl TaskCtx<'_, '_> {
         self.cx.shared.new_tasklet()
     }
 
-    /// The next step of a tasklet: `on_call(handler, args)` of this task after `seconds` of simulation time, unless the tasklet is killed.
     pub fn schedule_tasklet_call(&mut self, tasklet: i64, seconds: f64, handler: u16, args: Vec<Value>) {
         let observer = self.observer(handler);
         self.cx.shared.schedule_tasklet_call(tasklet, seconds, observer, args);

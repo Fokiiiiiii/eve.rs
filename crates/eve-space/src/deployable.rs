@@ -3,7 +3,7 @@
 //! (`AddBalls2` when it is released, `RemoveBalls` when it is gone, the bomb's explosion played first). Both lifetimes are the simulation's own clock (the SDE's
 //! explosion delay): nothing is persisted, so a restart drops them (ADR 0012 addendum, a stated limitation).
 //!
-//! A bomb's blast is one `Area` (ADR 0011, its addendum of 2026-10-09): the centre is where the bomb is, the radius is the charge's blast radius, and
+
 //! the recipients are the ships of the scene within that surface distance, but the ship that launched it (as a smartbomb spares its own).
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -21,6 +21,9 @@ use crate::payload;
 use crate::scene::{Command, Out, Scene, SessionId, TICKS_PER_SECOND};
 use crate::visibility::{Presence, can_see};
 use crate::wire::{filetime, id, int, list, real, text, tuple, word};
+
+/// The CRAB link's additional resistance bonus, reducing each damage-layer resonance by ten percent.
+pub(crate) const CRAB_LINK_RESISTANCE_BONUS: f64 = 0.10;
 
 /// The id of the first deployable a scene makes (its own range, apart from the missiles and the wrecks).
 pub const DEPLOYABLE_ID_BASE: i64 = 4_250_000_000_000_000;
@@ -63,13 +66,11 @@ pub enum Role {
     /// that. The host anchors it when its activation time is over and takes it out when its record's time is up.
     CynoBeacon { active: bool },
     /// A Mobile Observatory the host keeps a record of (protocol 72): while it is anchored (`active`), its pings decloak the cloaked ships of its system (the
-    /// wiki, Mobile Observatory). The host anchors it and takes it out when its record's time is up.
     MobileObservatory { active: bool },
     /// A player control tower the host keeps a record of (protocol 73): a ball in space, anchored (`active`) when its anchoring time is over. It has no warp or cyno
     /// effect: the fuel and the modules are not modelled yet.
     ControlTower { active: bool },
     /// A deadspace pocket of a dungeon the host keeps a record of (protocol 74): a region of the scene around its origin, in no client ball. It has no effect in the
-    /// simulation yet: the warp and the observatory checks read the host's record of it (DEVIATIONS, ST-23).
     DeadspacePocket,
     /// An acceleration gate of a dungeon room the host keeps a record of (protocol 75): a stargate-kind ball the pilots of its system see, interactive
     /// (EVE.js `abyssalRoomEntity`: `ballInteractive`, group 366). Its transit is the scene's `AccelerationGateTransit` command.
@@ -242,7 +243,6 @@ fn category_of(role: &Role) -> i32 {
     }
 }
 
-/// The slim item of a deployable: its item, type, owner, name, group, category and launcher, and for a CRAB its components (see `analysis_beacon_entries`).
 fn slim_entries(deployable: &Deployable, category: i32) -> Vec<(&'static str, Value)> {
     let mut entries = vec![
         ("itemID", id(deployable.id)),
@@ -1346,7 +1346,6 @@ impl Scene {
     }
 
     /// Whether a warp-disruption source covers `position` at `now`: a probe still in space within its range, or a bubble (a ship's running field generator, see
-    /// `Action::WarpBubble`) within its range of the ship's position. No owner is spared (the reference's check has none).
     pub(crate) fn warp_disrupted_at(&self, position: Vec3, now: i64) -> bool {
         let bubble = self.pilots.values().any(|pilot| {
             let reach = distance(position, pilot.ship.position);
@@ -1418,8 +1417,18 @@ impl Scene {
         self.insert_deployable(deployable, now)
     }
 
-    /// The host sets a CRAB's state: those who have it in view are told its slim item again (`OnSlimItemChange`, the whole slim item). A state already set is
-    /// not told again, and a deployable that is not a CRAB is left alone.
+    /// The CRAB's resistance bonus and tether/cloak restrictions apply from link start through the 60-second status tail.
+    pub(crate) fn link_effects_active(&self, session: SessionId, now: i64) -> bool {
+        let Some(pilot) = self.pilots.get(&session) else { return false };
+        let ship = pilot.ship.spec.ship_id;
+        self.deployables.values().any(|deployable| match &deployable.role {
+            Role::AnalysisBeacon { state } if state.link_state >= 2 && state.linked_ship_id == ship => {
+                now < state.link_complete_at.saturating_add(ticks(60_000.0))
+            }
+            _ => false,
+        })
+    }
+
     /// Whether a CRAB's link holds a command of a pilot (EVE.js `applyLinkRestrictionsToShip`): from the start of the link the ship is immobile until the link is
     /// complete, and it cannot warp, jump or dock until a minute after that (the status clear delay, `MOBILE_ANALYSIS_BEACON_LINK_STATUS_CLEAR_DELAY_MS`). A stop is
     /// never held.
@@ -1476,6 +1485,8 @@ impl Scene {
             .collect()
     }
 
+    /// The host sets a CRAB's state: those who have it in view are told its slim item again (`OnSlimItemChange`, the whole slim item). A state already set is
+    /// not told again, and a deployable that is not a CRAB is left alone.
     pub(crate) fn set_analysis_beacon_state(
         &mut self,
         deployable_id: i64,
@@ -1495,9 +1506,12 @@ impl Scene {
             "OnSlimItemChange",
             [id(changed.id), slim_item(&changed, category_of(&changed.role))],
         );
-        self.missile_audience(changed.position)
+        let mut out: Vec<_> = self
+            .missile_audience(changed.position)
             .into_iter()
             .map(|session| Self::update(session, vec![change.clone()]))
-            .collect()
+            .collect();
+        out.extend(self.tick_tethers(at));
+        out
     }
 }

@@ -240,7 +240,6 @@ mod tests {
     use eve_destiny::encode_entity_ball;
 
     /// What the reference sent for the wreck of a hull that `/deathtest` blew up (`oracle/fixtures/scenarios/death.json`, the third update of the
-    /// step "the watcher detonates a hull beside both"): the ball in the `AddBalls2` buffer, without its header (the kind and the stamp).
     const RECORDED_BALL: &str = "6fb5089b15090000\
         0200003c425fc833c6022952426c5427b7db5708c285e10f7e6c3c424209000000000088c34000ffffffffffffffff46420f00ffffffff000000000000000000000000000000000000000000000000000000000000803f00000000ff";
 
@@ -296,7 +295,6 @@ mod tests {
         assert!(!wreck.is_container());
     }
 
-    /// What the reference sent for the corpse of a pilot whose capsule was destroyed (`death.json`, the step "the victim destroys its capsule", the watcher's
     /// second update): the ball in the `AddBalls2` buffer, without its header.
     const RECORDED_CORPSE_BALL: &str = "f2b5089b15090000020000803f41af97ae02295242a0d32176db5708c2740473936c3c424209000000000088c34000ffffffffffffffffffffffffffffffff000000000000000000000000000000000000000000000000000000000000803f00000000ff";
 

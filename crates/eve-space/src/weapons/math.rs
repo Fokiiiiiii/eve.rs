@@ -154,7 +154,6 @@ pub fn resolve_shot(turret: &Turret, attacker: &Kinematics, target: &Kinematics,
     }
 }
 
-/// The hit quality the combat log shows, 0 to 6: a miss, grazes, glances off, hits, penetrates, smashes, wrecks (EVE University's bands of the
 /// damage multiplier).
 pub fn hit_quality_tier(shot: &Shot) -> u8 {
     if !shot.hit {
@@ -171,7 +170,6 @@ pub fn hit_quality_tier(shot: &Shot) -> u8 {
 }
 
 /// The `OnDamageMessage` a shot makes: for the pilot of the ship that shot (`attackType` `me`) or for the pilot of the ship that was shot
-/// (`otherPlayerWeapons`, with the attacker's id). `owner` is the character, or the corporation, that owns the attacking ship.
 #[allow(clippy::too_many_arguments)]
 pub fn damage_message(
     for_the_attacker: bool,

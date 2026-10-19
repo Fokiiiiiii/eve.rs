@@ -1027,7 +1027,7 @@ impl Scene {
 
     /// Taking a module offline interrupts its running effect immediately, even during a cycle.
     /// Ported from EVE.js moduleOperation.js at commit 828823a75f211fdecb945b087a26c225f111491f:
-    /// https://github.com/Fokiiiiiii/evejs-v0.12.9/blob/828823a75f211fdecb945b087a26c225f111491f/server/src/services/dogma/dogmaService/moduleOperation.js#L2607-L2618
+    ///
     /// The caller remains responsible for persisting the module's online state.
     pub(crate) fn offline_module(&mut self, session: SessionId, module_id: i64, now: i64) -> Vec<Out> {
         if !self.pilots.contains_key(&session)

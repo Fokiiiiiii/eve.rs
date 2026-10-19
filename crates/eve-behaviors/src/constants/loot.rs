@@ -1,6 +1,5 @@
 //! `behaviors/const/loot.py`: the loot tables an NPC group of a faction adds to what it drops.
 
-/// `EXTRA_LOOT_TABLES_BY_OWNER_ID_AND_ENTITY_GROUP_ID`, as `(owner id, entity group id, loot table id)`: every entry of the client's table has one loot
 /// table.
 pub const EXTRA_LOOT_TABLES_BY_OWNER_ID_AND_ENTITY_GROUP_ID: [(i64, i64, i64); 17] = [
     (1000069, 1767, 10201),
@@ -22,7 +21,6 @@ pub const EXTRA_LOOT_TABLES_BY_OWNER_ID_AND_ENTITY_GROUP_ID: [(i64, i64, i64); 1
     (1000298, 4028, 12082),
 ];
 
-/// `EXTRA_LOOT_TABLES_BY_OWNER_ID_AND_ENTITY_GROUP_ID.get(owner_id)`: `{entity group id: [loot table ids]}`.
 pub fn extra_loot_tables_for_owner(owner_id: i64) -> Option<Vec<(i64, Vec<i64>)>> {
     let mut groups: Vec<(i64, Vec<i64>)> = Vec::new();
     for (owner, group, table) in EXTRA_LOOT_TABLES_BY_OWNER_ID_AND_ENTITY_GROUP_ID {

@@ -116,7 +116,7 @@ def test_a_crab_is_launched_linked_and_holds_the_ship_until_the_link_is_over():
         raw, error = outcome(lambda: who.call_bound(ballpark[0], "CmdWarpToStuff", "item", WARP_GATE, minRange=0))
         assert refused(error), f"a warp during the status tail was not refused: {error!r} {raw!r}"
 
-        # The four-minute link ends; all four statuses clear after the additional minute.
+        # The four-minute link ends; the walk checks warp after the additional minute. Simulator tests cover cloak and tether restrictions.
         wait_quietly(who, 60.0 + 15.0)
         raw, error = outcome(lambda: who.call_bound(ballpark[0], "CmdWarpToStuff", "item", WARP_GATE, minRange=0))
         assert error is None, f"the warp after the link status tail was refused: {error!r}"

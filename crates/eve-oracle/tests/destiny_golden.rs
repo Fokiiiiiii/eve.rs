@@ -1,5 +1,4 @@
 //! Replays tools/oracle/fixtures/destiny against the Rust destiny kernels.
-//! Outputs are compared as EJSON, i.e. down to the exact IEEE-754 bits.
 
 use eve_oracle::destiny_adapter;
 use eve_oracle::fixtures;

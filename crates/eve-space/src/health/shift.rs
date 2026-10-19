@@ -20,7 +20,6 @@ impl Health {
     }
 
     /// A reactive armor hardener starts on the ship: its resonances are `seed` (the module's own values, in the order of a damage vector) and move
-    /// by `step` a cycle. Its tally starts from nothing, so a hardener that starts again starts from its seed.
     pub fn start_shift(&mut self, seed: Damage, step: f64) {
         self.shift = Some(Shift { profile: seed.map(|r| r.clamp(0.0, 1.0)), tally: [0.0; 4], step });
     }

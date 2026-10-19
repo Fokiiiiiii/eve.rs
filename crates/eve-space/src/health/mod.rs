@@ -159,7 +159,7 @@ impl Applied {
 
 /// The adaptive resonances of a reactive armor hardener that runs on the ship: the module's multipliers of the armor's resonances (`profile`, the
 /// effective armor resonance is the ship's own times these), the damage the armor took this cycle per kind, weighted by the resonance it had (`tally`),
-/// and the most a kind gives up each cycle (`step`). Owned by the simulation: nothing else writes it (see `crate::resistance_shift`).
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Shift {
     pub profile: Damage,
@@ -276,6 +276,26 @@ impl Health {
 
     fn armor_gone(&self) -> f64 {
         self.vitals.armor_hp.max(0.0) * self.condition.armor_damage.max(0.0)
+    }
+
+    /// A hit with an additional resistance bonus: each layer takes the same fraction less damage than its current resonances allow.
+    pub(crate) fn apply_with_resistance_bonus(
+        &mut self,
+        now: i64,
+        raw: Damage,
+        bonus: f64,
+    ) -> Option<Applied> {
+        let original = self.vitals.resonances;
+        let scale = 1.0 - bonus.clamp(0.0, 1.0);
+        let boosted = |resonance: Damage| resonance.map(|remaining| (remaining * scale).clamp(0.0, 1.0));
+        self.vitals.resonances = Resonances {
+            shield: boosted(original.shield),
+            armor: boosted(original.armor),
+            structure: boosted(original.structure),
+        };
+        let applied = self.apply(now, raw);
+        self.vitals.resonances = original;
+        applied
     }
 
     /// A hit of `raw` damage at `now`: the shield takes what it can, then the armor, then the hull. None when there is nothing to hurt.

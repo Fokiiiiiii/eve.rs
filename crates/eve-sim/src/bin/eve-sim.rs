@@ -1,10 +1,7 @@
-//! eve-sim: the space simulation.
-//!
 //!   EVE_SIM_SOCKET   the Unix socket the host connects to        (default /tmp/eve-sim.sock)
 //!   EVE_SIM_LISTEN   a TCP address to listen on instead, on any platform (off Unix: 127.0.0.1:26011)
-//!   EVE_SDE_DIR      the static data (the SDE's JSONL files)      (default: .cache/sde, as the tools find it)
+//!   EVE_SDE_DIR      JSONL static data directory                  (default: .cache/sde)
 //!
-//! One host at a time; a host that goes away takes its ships with it.
 
 #[cfg(unix)]
 use std::path::PathBuf;
@@ -20,7 +17,7 @@ use tokio::net::TcpListener;
 #[cfg(unix)]
 use tokio::net::{UnixListener, UnixStream};
 
-/// Off Unix there is no socket path to default to: the simulation listens on a local TCP port.
+/// Used where Unix sockets are unavailable.
 #[cfg(not(unix))]
 const DEFAULT_SIM_LISTEN: &str = "127.0.0.1:26011";
 
@@ -29,8 +26,7 @@ fn env_or(name: &str, default: &str) -> String {
     std::env::var(name).ok().filter(|value| !value.is_empty()).unwrap_or_else(|| default.to_owned())
 }
 
-/// Serves one host until it goes away. True when Ctrl-C came first, so the caller stops listening. Serving is raced
-/// against Ctrl-C because the accept loop is not polled while a host is connected.
+/// Returns true when Ctrl-C arrives first; the accept loop pauses while a host is connected.
 async fn serve_host<S>(stream: S, universe: Arc<Universe>) -> bool
 where
     S: AsyncRead + AsyncWrite + Unpin,

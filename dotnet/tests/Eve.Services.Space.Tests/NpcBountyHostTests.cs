@@ -56,16 +56,19 @@ public class NpcBountyHostTests
     }
 
     [PgFact]
-    public async Task A_sim_resident_npc_pays_its_types_entity_kill_bounty_from_the_static_data()
+    public async Task A_sim_resident_triglavian_in_Pochven_pays_no_bounty()
     {
-        // a Pochven Entropic Disintegrator Werpost (54577): no host profile, its SDE entityKillBounty is 12,500,000 ISK
+        // the Werpost has an SDE entityKillBounty, but the owner's Pochven rule suppresses the payout
         var (rig, c, session) = await InSpaceAsync();
         await using var _ = rig;
+        var pochven = rig.Systems.Systems.First(system => system.RegionId == Eve.Services.Space.Pochven.PochvenRules.RegionId);
+        Assert.Null(await rig.Space.RelocateAsync(session, pochven.Id, null, null, CancellationToken.None));
+
         rig.Sim.Say(new SimDestroyed(1UL << 62 | 7, 980_100_000_001, 0, [0, 0, 0], [1, 0, 0], 1359, c.ShipId, null, 54577, 1000298));
-        await Rig.UntilAsync(() => rig.Bounties.PendingAsync().Result.Count == 1);
-        var bucket = Assert.Single(await rig.Bounties.PendingAsync());
-        Assert.Equal((c.CharacterId, 12_500_000m, 1), (bucket.CharacterId, bucket.Amount, bucket.Kills));
-        Assert.Equal(new Dictionary<int, int> { [54577] = 1 }, bucket.NpcTypes);
+        await Task.Delay(1500);
+
+        Assert.Empty(await rig.Bounties.PendingAsync());
+        Assert.DoesNotContain(Events.Of(session), e => e.Name == "OnBountyAddedToPayout");
     }
 
     [PgFact]

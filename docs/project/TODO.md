@@ -1696,7 +1696,7 @@ Evidence and decisions: `docs/project/WORMHOLE_DESIGN.md` (sources, SDE numbers,
 | DONE (tests) | Camps: two Damavik at the first two gates of a Triglavian system | `pochven_population.rs` |
 | DONE (tests) | Skirmish spawner: every 900 s, four factions in turn, deterministic, capped at 40 NPCs per scene | `pochven_population.rs` (`populate_pochven`) |
 | DONE (data) | System states: 27 Pochven systems held by the Triglavians; EDENCOM list empty | `data/pochven_states.json` (source and date in the file) |
-| CUT | Bounty and loot of the Pochven hulls | Host bounty code is keyed on profiles without these hulls; needs host work |
+| DONE (unit rule) | NPC bounty payout in Pochven | Host payout returns before recording a payout when the victim system is in Pochven; the owner rule leaves loot and drops unchanged. Regression: PochvenRulesTests.NPC_bounty_payout_is_disabled_only_in_Pochven. |
 | CUT | Fortress and Heavy GunStar placements in Pochven | No Pochven system is an EDENCOM fortress in the wiki; the path is tested through the data file |
 | DONE (live, eve.rs only) | Live walk: a Cockroach logs into Pochven 30000021 in space; the Werpost (54577) and a Liminal Damavik (52182) come into its scene and fight | `tools/headless-client/tests/test_pochven_live.py`; the pilot is seeded (no station); no EVE.js reference run, so no mitm diff |
 | OPEN | Skirmish spawns and the other gates' sentries in the live walk | Only 25 s observed; the skirmish cadence is 900 s |

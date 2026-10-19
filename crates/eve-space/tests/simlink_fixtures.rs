@@ -29,6 +29,20 @@ fn hex(text: &str) -> Vec<u8> {
     (0..text.len() / 2).map(|i| u8::from_str_radix(&text[2 * i..2 * i + 2], 16).unwrap()).collect()
 }
 
+#[test]
+fn encode_into_appends_multiple_complete_frames() {
+    let messages = [Message::Hello { version: 75 }, Message::HelloAck { version: 75, poll_hz: 10 }];
+    let mut output = vec![0xaa];
+    for message in &messages {
+        message.encode_into(&mut output);
+    }
+    let mut expected = vec![0xaa];
+    for message in &messages {
+        expected.extend_from_slice(&message.encode());
+    }
+    assert_eq!(output, expected);
+}
+
 fn text(case: &Value, field: &str) -> String {
     case[field].as_str().unwrap_or_else(|| panic!("{field} in {case}")).to_owned()
 }

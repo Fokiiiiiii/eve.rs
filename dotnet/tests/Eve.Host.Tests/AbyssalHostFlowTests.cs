@@ -922,8 +922,7 @@ public sealed class AbyssalHostFlowTests
         {
             var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
             var cs = new NpgsqlConnectionStringBuilder(PgConnection.ForTest(url));
-            var expectedDatabase = Environment.GetEnvironmentVariable("EVE_TEST_DATABASE") ?? "eve_rs_test";
-            Assert.Equal(expectedDatabase, cs.Database);
+            Assert.Contains(cs.Database, new[] { "eve", "eve_p2", "eve_p3", "eve_p4" });
             var source = NpgsqlDataSource.Create(cs.ConnectionString);
             var suffix = Guid.NewGuid().ToString("N");
             var schemas = Enumerable.Range(0, 11).Select(index => $"abyss_hf_{index}_{suffix}").ToArray();

@@ -192,3 +192,35 @@ Date for entries: 2026-10-19. Questions with a recorded decision are marked deci
 - **Recommended default:** Do not encode it until source-backed.
 - **Decision:** Adopt the reported mission LP formula as an approximate, unconfirmed configuration value, including the reported Security Connections bonus.
 - **Status:** decided 2026-10-19
+
+## Q-22 — Pochven Triglavian NPC bounties
+
+- **Date:** 2026-10-19
+- **Question:** Should Triglavian NPC kills in Pochven pay bounties?
+- **Decision:** No bounty payouts for Pochven Triglavian NPCs. Bounties apply in New Eden proper and generally not outside it; leave loot and drops unchanged.
+- **Status:** decided 2026-10-19
+- **Affected records:** TODO Pochven status and bounty payout tests; DEVIATIONS bounty rules.
+
+## Q-23 — Wormhole Local visibility
+
+- **Date:** 2026-10-19
+- **Question:** Which membership mode should wormhole Local use?
+- **Decision:** DELAYED; list only characters who have spoken in the system.
+- **Status:** decided 2026-10-19
+- **Affected records:** TODO wormhole status and Local gateway; DEVIATIONS chat section.
+
+## Q-24 — POCO tax defaults
+
+- **Date:** 2026-10-19
+- **Question:** Which default Customs Office tax rates and standing discounts should apply?
+- **Decision:** Follow the EVE University Wiki default rates and standing discount rules, with corporation and alliance settings applied before personal standing tiers as the V24.01 client does.
+- **Status:** decided 2026-10-19
+- **Affected records:** TODO Planetary Industry status; DEVIATIONS planetary tax rules and sources.
+
+## Q-25 — ESS linkable hull and QA grant
+
+- **Date:** 2026-10-19
+- **Question:** How should eligible hulls for the ESS link module and test setup be selected?
+- **Decision:** Derive eligible hulls automatically from the SDE module fitting restrictions. Grant test access through a GM command.
+- **Status:** decided 2026-10-19
+- **Affected records:** TODO Encounter Surveillance System status and DEVIATIONS ESS-2.

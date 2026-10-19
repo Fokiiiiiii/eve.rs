@@ -31,8 +31,8 @@ public static class FwBattlefields
     public static readonly TimeSpan Cooldown = TimeSpan.FromHours(3);
     /// <summary>The victory points a battlefield pays the system (wiki: 2,000).</summary>
     public const long VictoryPoints = 2_000;
-    /// <summary>The loyalty points a battlefield pays (wiki: up to 150,000), split evenly over the first <see cref="LpParticipants"/> winners.</summary>
-    public const long LpPool = 150_000;
+    /// <summary>The loyalty points a battlefield pays at build 3396210 (before the 2026-07-01 increase), split over the first <see cref="LpParticipants"/> winners.</summary>
+    public const long LpPool = 50_000;
     public const int LpParticipants = 30;
     public const long LpEach = LpPool / LpParticipants;
     /// <summary>

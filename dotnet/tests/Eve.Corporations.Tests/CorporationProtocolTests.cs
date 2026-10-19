@@ -1002,8 +1002,8 @@ private static PyValue RowField(PyValue value,string key)
         Assert.Equal(new PyWString("Service award"), Assert.IsType<PyList>(receivedRows[0]).Items[4]);
         Assert.Equal(new PyWString("Repeat award"), Assert.IsType<PyList>(receivedRows[1]).Items[4]);
         Assert.Single(Lines(received.Items[1]));
-        var outsiderReceived = Assert.IsType<PyTuple>(await FounderRpc("GetMedalsReceived", new PyInt(outsider)));
-        Assert.Empty(Lines(outsiderReceived.Items[0]));
+        var crossCharacterReceived = Assert.IsType<PyTuple>(await MemberRpc("GetMedalsReceived", new PyInt(founder)));
+        Assert.Empty(Lines(crossCharacterReceived.Items[0]));
 
         var details = await MemberRpc("GetMedalDetails", new PyInt(medalId));
         var detail = Assert.Single(Assert.IsType<PyList>(Field(details, "info")).Items);

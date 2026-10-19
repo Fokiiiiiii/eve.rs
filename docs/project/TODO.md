@@ -99,15 +99,16 @@ Do not fabricate successful state or fake backends to close these items.
 | Method | V24 client evidence | Result |
 |---|---|---|
 | `account.GetWalletDivisionsInfo` | `accountsvc.GetWalletDivisionsInfo` calls the remote AccountMgr and the corporation wallet divisions panel renders its rows. | Implemented with persisted division access roles and wallet balances. The corporation protocol regression covers accountant visibility, a member without access, and a member with one division role. |
-| `account.GetTransactions` | Personal and corporation transaction panels call the AccountMgr through the account service. | Open. Return rows from the existing wallet journal authority, with month and division filters and the EveJS transaction fields. |
-| `account.GetEntryTypes` | The account client service fetches these records and uses them to render journal entries. | Open. Preserve EveJS cached method result wire shape and provide the client-visible entry metadata from the pinned client data. |
+| `account.GetTransactions` | Personal and corporation transaction panels call the AccountMgr through the account service. | Implemented using persisted wallet journal rows, account key and month filters, the 30-day default, EveJS transaction fields, and persisted corporation division read roles. Corporation protocol and wallet persistence tests passed. |
+| `account.GetEntryTypes` | The account client service fetches these records and uses them to render journal entries. | Implemented with the 26 metadata tuples from the EveJS account service and the shared cached-method wrapper. The regression checks the result envelope, checksum, message IDs, null fields, and row count. |
 | `account.GetDefaultContactCost` | The account client service calls AccountMgr; email and contacts UI read the local value. | Omitted: EveJS returns null and the client maps that to its local default of -1. There is no server-owned setting to read. |
 | `account.SetContactCost` | The account client setter updates its local default and calls AccountMgr. | Omitted: EveJS returns null without persisting state or notifying clients; the client owns the value. |
 | `account.GetAurumBalance`, `GetDefaultWalletDivision`, `GetJournal`, `GetJournalForAccounts`, `GetKeyMap` | No direct calls were found in the V24 Python client source search. | Skip pending evidence of a client route; the EveJS export alone does not establish a client action. |
 
+The V24 client loads `res:/staticdata/accountingEntryTypes.fsdbinary`. The matching 3396210 client SDE export has no accounting entry type dataset, so the service follows the EveJS metadata mapping for these rows.
 The noncorporate response returns the authoritative ISK row only; the current wallet authority has no AURUM balance. Do not substitute PLEX for that client field.
 
-The previous audit row EJS-0009 is superseded by the implementation and test above. Account rows EJS-0001 through EJS-0008 remain subject to the client-route findings in this table.
+The previous audit rows EJS-0008 and EJS-0009 are superseded by the implementations and tests above. Account rows EJS-0001 through EJS-0008 remain subject to the client-route findings in this table.
 
 ## 1. Runtime state and notifications
 

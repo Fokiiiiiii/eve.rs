@@ -366,6 +366,107 @@ private static PyValue RowField(PyValue value,string key)
     }
 
     [PgFact]
+    public async Task Get_entry_types_returns_the_cached_v24_metadata_rows()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var service = new Eve.Services.Wallet.AccountService(rig.Wallets, rig.Store, rig.Transactions);
+        var session = new ClientSession();
+        var before = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var cached = Assert.IsType<PyObject>(await service.GetEntryTypes(Call(session, "GetEntryTypes")));
+        var after = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+
+        Assert.Equal(new PyStr("carbon.common.script.net.objectCaching.CachedMethodCallResult"), cached.Name);
+        var args = Assert.IsType<PyTuple>(cached.Args).Items;
+        Assert.Equal(3, args.Count);
+        var details = Assert.IsType<PyDict>(args[0]);
+        var detail = Assert.Single(details.Entries);
+        Assert.Equal("versionCheck", Eve.Macho.JsSemantics.StringValue(detail.Key));
+        Assert.Equal("run", Eve.Macho.JsSemantics.StringValue(detail.Value));
+        var rows = Assert.IsType<PyList>(Assert.IsType<PySubStream>(args[1]).Decoded);
+        Assert.Equal(26, rows.Items.Count);
+        var version = Assert.IsType<PyList>(args[2]);
+        Assert.InRange(Assert.IsType<PyLong>(version.Items[0]).Value,
+            Py.FileTimeFromUnixMs(before), Py.FileTimeFromUnixMs(after));
+        Assert.Equal(new PyInt(Eve.Services.Checksums.SignedAdler32(MarshalCodec.Encode(rows))),
+            version.Items[1]);
+
+        var donation = Assert.IsType<PyObject>(Assert.Single(rows.Items,
+            row => row is PyObject item && HasTransactionField(item, "entryTypeID", new PyInt(10))));
+        AssertTransactionField(donation, "entryTypeName", new PyStr("PlayerDonation"));
+        AssertTransactionField(donation, "entryTypeNameID", new PyInt(59802));
+        AssertTransactionField(donation, "entryJournalMessageID", new PyInt(234508));
+
+        var officeRent = Assert.IsType<PyObject>(Assert.Single(rows.Items,
+            row => row is PyObject item && HasTransactionField(item, "entryTypeID", new PyInt(13))));
+        AssertTransactionField(officeRent, "entryTypeNameID", PyNone.Instance);
+        AssertTransactionField(officeRent, "entryJournalMessageID", PyNone.Instance);
+    }
+
+    [PgFact]
+    public async Task Get_transactions_returns_persisted_rows_and_enforces_division_read_access()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var founder = await rig.CharacterAsync("Founder One");
+        var member = await rig.CharacterAsync("Member One");
+        var corp = await rig.Store.CreateAsync(founder, new("Orbital Works", "ORBIT", "", "", 0.05m), "first");
+        var application = await rig.Store.ApplyAsync(member, corp.Id, "Join");
+        await rig.Store.RespondAsync(founder, application, 6, "Join", "");
+        await rig.Store.RespondAsync(member, application, 2, "Join", "");
+
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await rig.Transactions.TransferAsync(connection, transaction, new Eve.Wallet.WalletAccount(founder),
+                new Eve.Wallet.WalletAccount(corp.Id, 1006), 123.45m, 10, "Deposit", rig.Now, "deposit", "test");
+            await transaction.CommitAsync();
+        }
+
+        var service = new Eve.Services.Wallet.AccountService(rig.Wallets, rig.Store, rig.Transactions);
+        var session = new ClientSession();
+        session.Set("charid", new PyInt(founder));
+        session.Set("corpid", new PyInt(corp.Id));
+        var date = DateTimeOffset.FromUnixTimeMilliseconds(rig.Now);
+        var corporateCall = Call(session, "GetTransactions", new PyInt(1006), new PyInt(date.Year), new PyInt(date.Month), PyBool.True);
+        var corporateRows = Assert.IsType<PyList>(await service.GetTransactions(corporateCall));
+        var corporateRow = Assert.IsType<PyObject>(Assert.Single(corporateRows.Items));
+        AssertTransactionField(corporateRow, "accountKey", new PyInt(1006));
+        AssertTransactionField(corporateRow, "entryTypeID", new PyInt(10));
+        AssertTransactionField(corporateRow, "ownerID1", new PyLong(corp.Id));
+        AssertTransactionField(corporateRow, "ownerID2", new PyLong(founder));
+        AssertTransactionField(corporateRow, "amount", new PyReal(123.45));
+        AssertTransactionField(corporateRow, "description", new PyStr("Deposit"));
+        AssertTransactionField(corporateRow, "currency", new PyInt(1));
+        AssertTransactionField(corporateRow, "sortValue", new PyInt(1));
+        AssertTransactionField(corporateRow, "transactionDate", new PyLong(date.UtcDateTime.ToFileTimeUtc()));
+
+        var personalCall = Call(session, "GetTransactions", new PyInt(1000), new PyInt(date.Year), new PyInt(date.Month), PyBool.False);
+        var personalRows = Assert.IsType<PyList>(await service.GetTransactions(personalCall));
+        var personalRow = Assert.IsType<PyObject>(Assert.Single(personalRows.Items, item => item is PyObject row && HasTransactionField(row, "amount", new PyReal(-123.45))));
+        AssertTransactionField(personalRow, "accountKey", new PyInt(1000));
+        AssertTransactionField(personalRow, "ownerID1", new PyLong(founder));
+        AssertTransactionField(personalRow, "ownerID2", new PyLong(corp.Id));
+        AssertTransactionField(personalRow, "amount", new PyReal(-123.45));
+
+        session.Set("charid", new PyInt(member));
+        await Assert.ThrowsAsync<MachoWrappedException>(async () => await service.GetTransactions(
+            Call(session, "GetTransactions", new PyInt(1006), new PyInt(date.Year), new PyInt(date.Month), PyBool.True)));
+
+        var persisted = (await rig.Store.MemberAsync(member))!;
+        await rig.Store.UpdateMemberAsync(founder, persisted with { Masks = new RoleMasks(CorporationRoles.WalletTakeRole(1006)) });
+        var memberRows = Assert.IsType<PyList>(await service.GetTransactions(
+            Call(session, "GetTransactions", new PyInt(1006), new PyInt(date.Year), new PyInt(date.Month), PyBool.True)));
+        Assert.Single(memberRows.Items);
+    }
+
+    private static void AssertTransactionField(PyObject row, string name, PyValue expected) =>
+        Assert.Contains(Assert.IsType<PyDict>(row.Args).Entries,
+            entry => entry.Key.Equals(new PyStr(name)) && entry.Value.Equals(expected));
+
+    private static bool HasTransactionField(PyObject row, string name, PyValue expected) =>
+        Assert.IsType<PyDict>(row.Args).Entries.Any(entry =>
+            entry.Key.Equals(new PyStr(name)) && entry.Value.Equals(expected));
+
+    [PgFact]
     public async Task Wallet_division_info_lists_persisted_readable_balances()
     {
         await using var rig = await Rig.CreateAsync();

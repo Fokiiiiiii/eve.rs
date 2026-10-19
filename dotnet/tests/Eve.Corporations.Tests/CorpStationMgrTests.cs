@@ -42,6 +42,21 @@ public sealed class CorpStationMgrTests
     }
 
     [PgFact]
+    public async Task The_standing_check_cannot_use_another_pilots_standing()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var character = await rig.CharacterAsync("Standing Pilot");
+        var otherCharacter = await rig.CharacterAsync("Other Standing Pilot");
+        var session = Session(character);
+        var service = CreateService(rig, standing: 0.0, standingForCharacter: id => id == otherCharacter ? 3.0 : 0.0);
+
+        var refused = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            Nested(service, session, "DoStandingCheckForStationService", new PyInt(5), new PyLong(otherCharacter)));
+
+        Assert.Equal("CustomNotify", refused.Error.UserErrorMessage);
+    }
+
+    [PgFact]
     public async Task A_station_without_the_bind_is_refused_and_an_unknown_station_cannot_be_bound()
     {
         await using var rig = await Rig.CreateAsync();
@@ -152,10 +167,10 @@ public sealed class CorpStationMgrTests
         Assert.Equal(OtherStationId, (await rig.Store.GetAsync(corporation.Id))!.StationId);
     }
 
-    private static CorpStationMgrService CreateService(Rig rig, double standing) => new(
+    private static CorpStationMgrService CreateService(Rig rig, double standing, Func<long, double>? standingForCharacter = null) => new(
         rig.Store,
         null,
-        (character, owner, token) => ValueTask.FromResult(standing),
+        (character, owner, token) => ValueTask.FromResult(standingForCharacter?.Invoke(character) ?? standing),
         id => id == StationId ? new CorporationStationPlace(StationId, OwnerId, SolarSystemId) : null,
         (owner, token) => ValueTask.FromResult<IReadOnlyDictionary<long, double>>(owner == OwnerId ? Rules : new Dictionary<long, double>()),
         () => 1_000L);

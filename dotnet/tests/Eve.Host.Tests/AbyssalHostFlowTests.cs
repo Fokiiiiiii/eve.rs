@@ -31,7 +31,10 @@ public sealed class AbyssalHostFlowTests
         var binary = Environment.GetEnvironmentVariable("EVE_ABYSSAL_SIM_BINARY")!;
         var start = new System.Diagnostics.ProcessStartInfo(binary)
         {
-            UseShellExecute = false, CreateNoWindow = true, RedirectStandardError = true, RedirectStandardOutput = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardError = true,
+            RedirectStandardOutput = true,
         };
         start.Environment["EVE_SIM_LISTEN"] = "127.0.0.1:0";
         start.Environment["EVE_SDE_DIR"] = Environment.GetEnvironmentVariable("EVE_ABYSSAL_SIM_SDE")!;
@@ -82,7 +85,10 @@ public sealed class AbyssalHostFlowTests
         var binary = Environment.GetEnvironmentVariable("EVE_ABYSSAL_SIM_BINARY")!;
         var start = new System.Diagnostics.ProcessStartInfo(binary)
         {
-            UseShellExecute = false, CreateNoWindow = true, RedirectStandardError = true, RedirectStandardOutput = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardError = true,
+            RedirectStandardOutput = true,
         };
         start.Environment["EVE_SIM_LISTEN"] = "127.0.0.1:0";
         start.Environment["EVE_SDE_DIR"] = Environment.GetEnvironmentVariable("EVE_ABYSSAL_SIM_SDE")
@@ -922,6 +928,7 @@ public sealed class AbyssalHostFlowTests
         {
             var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
             var cs = new NpgsqlConnectionStringBuilder(PgConnection.ForTest(url));
+            Assert.Equal(new NpgsqlConnectionStringBuilder(PgConnection.ToConnectionString(url)).Database, cs.Database);
             Assert.Contains(cs.Database, new[] { "eve", "eve_p2", "eve_p3", "eve_p4" });
             var source = NpgsqlDataSource.Create(cs.ConnectionString);
             var suffix = Guid.NewGuid().ToString("N");
@@ -942,8 +949,10 @@ public sealed class AbyssalHostFlowTests
             Rig? rig = null;
             var mapping = new Dictionary<string, string>
             {
-                ["EVE_SCHEDULER_SCHEMA"] = schemas[5], ["EVE_EVENTS_SCHEMA"] = schemas[6],
-                ["EVE_RELATIONS_SCHEMA"] = schemas[7], ["EVE_CONTENT_SCHEMA"] = schemas[8],
+                ["EVE_SCHEDULER_SCHEMA"] = schemas[5],
+                ["EVE_EVENTS_SCHEMA"] = schemas[6],
+                ["EVE_RELATIONS_SCHEMA"] = schemas[7],
+                ["EVE_CONTENT_SCHEMA"] = schemas[8],
             };
             var foundations = await Foundations.CreateAsync(source, () => rig?.Now ?? 1_790_000_000_000,
                 (key, fallback) => mapping.GetValueOrDefault(key, fallback), text => rig?.Problems.Add(text));
@@ -1003,10 +1012,24 @@ public sealed class AbyssalHostFlowTests
                 .CreateDelegate<Func<ServiceCall, CancellationToken, ValueTask<PyValue>>>(host);
             rig = new Rig
             {
-                Source = source, Foundations = foundations, Characters = characters, Items = items, SpaceItems = spaces,
-                Runtime = runtime, Catalog = catalog, Creation = creation, Stations = stations, Sde = sde,
-                Reservation = reservation, Host = host, Space = space, Simulator = fake, Sessions = sessions,
-                Service = new AbyssalMgrService(handler), Ships = ships, Schemas = schemas,
+                Source = source,
+                Foundations = foundations,
+                Characters = characters,
+                Items = items,
+                SpaceItems = spaces,
+                Runtime = runtime,
+                Catalog = catalog,
+                Creation = creation,
+                Stations = stations,
+                Sde = sde,
+                Reservation = reservation,
+                Host = host,
+                Space = space,
+                Simulator = fake,
+                Sessions = sessions,
+                Service = new AbyssalMgrService(handler),
+                Ships = ships,
+                Schemas = schemas,
             };
             fake.Order = rig.Order;
             space.FindAbyssalReconnectAsync = typeof(CharacterServicesComposition).GetMethod("FindAbyssalReconnectAsync",
@@ -1089,7 +1112,7 @@ public sealed class AbyssalHostFlowTests
         {
             var p = Assert.Single(run.Data.Participants);
             var session = new ClientSession(new RecordingSink(Order, ClientNotifications))
-                { SessionId = p.CharacterId + sessionOffset, ClientId = p.CharacterId + sessionOffset + 100 };
+            { SessionId = p.CharacterId + sessionOffset, ClientId = p.CharacterId + sessionOffset + 100 };
             session.Set("charid", new PyLong(p.CharacterId)); session.Set("shipid", new PyLong(p.ShipId));
             session.Set("solarsystemid", new PyInt(run.Data.SpaceLocationId));
             session.Set("solarsystemid2", new PyInt(run.Data.SpaceLocationId));
@@ -1220,7 +1243,7 @@ public sealed class AbyssalHostFlowTests
                 var request = (SimGetAbyssalParticipantPose)args![0]!;
                 if (request.Scene.InstanceId == 0) PublicPoseQueries++;
                 return Task.FromResult(new SimGetAbyssalParticipantPoseReply(request.RequestId, request.Scene, request.ShipId, Pose, ShipDirection, null)
-                    { Deployment = request.Scene.InstanceId == 0 ? new SimAbyssalDeploymentSnapshot(false, false, false, false, false, []) : null });
+                { Deployment = request.Scene.InstanceId == 0 ? new SimAbyssalDeploymentSnapshot(false, false, false, false, false, []) : null });
             }
             if (method.Name is "MoveAbyssalParticipantAsync" or "MoveAbyssalParticipantInOrderAsync")
             {

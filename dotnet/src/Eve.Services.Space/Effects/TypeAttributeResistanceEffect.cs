@@ -7,7 +7,7 @@ namespace Eve.Services.Space.Effects;
 /// <summary>Starts the explicitly supported effects whose active behavior is supplied by SDE Dogma modifiers: the emergency hull energizer.</summary>
 internal sealed class TypeAttributeResistanceEffect : ShipEffect
 {
-    private const string EmergencyHullEnergizer = "emergencyHullEnergizer";
+    internal const string EffectName = "emergencyHullEnergizer";
 
     /// <summary>
     /// The hull resonances of the emergency hull energizer: the module's own hull attribute multiplies (PostMul) the ship's resonance of the same damage type
@@ -21,7 +21,7 @@ internal sealed class TypeAttributeResistanceEffect : ShipEffect
         ("hullThermalDamageResonance", "thermalDamageResonance"),
     ];
 
-    public override IReadOnlyCollection<string> EffectNames { get; } = [EmergencyHullEnergizer];
+    public override IReadOnlyCollection<string> EffectNames { get; } = [EffectName];
 
     protected override SimEffect Build(ModuleEffectContext module)
     {

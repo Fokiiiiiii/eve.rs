@@ -3808,6 +3808,10 @@ Every refusal of the module activation path, as the code had it, checked against
 Tests: `crates/eve-space` 799 passed. dotnet: `Eve.Space.Tests` 313 passed, `Eve.Services.Dogma.Tests` 134 passed, `Eve.Services.Space.Tests` filtered to Module/Smartbomb/Ecm/Cloak/Drone 111 passed. not exercised: the live walk (`tools/headless-client/tests/test_fob_insystem_walk.py`), which fits a smartbomb in high security at red safety.
 
 
+## Emergency hull energizer burnout (2026-10-19)
+
+V24 `eve/common/script/dogma/pythonEffects/emergencyHullEnergizer.py:Start` sets module damage to the module's hit points when activation starts. EveJS v0.12.9 `server/src/space/runtime/moduleHeat.js:913-926` applies one structure-HP of damage on activation. eve.rs persists full damage to the existing module condition after the simulation accepts activation, while the simulation sends the same burnout attribute update to the client. `ModulePackages.Of` refuses a module whose persisted damage is full or whose condition is incapacitated; `ModuleRefusals.Of` returns the existing `MODULE_INCAPACITATED` client message. The persistence and refusal regressions passed on eve_p3. Graphical-client behavior was not exercised.
+
 ## Refusals reviewed against a basis (2026-10-13)
 
 Owner policy: a refusal needs an SDE attribute, a client error key or text or constant, or a wiki basis; EveJS alone is not one. Reviewed in

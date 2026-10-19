@@ -2,6 +2,7 @@ using Eve.Characters;
 using Eve.Inventory;
 using Eve.Macho;
 using Eve.Marshal;
+using Eve.Planets;
 using Eve.Space;
 
 namespace Eve.Services.Space.Tests;
@@ -159,6 +160,27 @@ public class SpaceContainerTests
         Assert.NotNull(await rig.Containers.OpenAsync(flying.Session, can, CancellationToken.None));
         rig.Sim.MeasureAnswer = null;
         Assert.Equal("FakeItemNotFound", UserError(await Assert.ThrowsAsync<MachoWrappedException>(async () => await rig.Containers.OpenAsync(flying.Session, can, CancellationToken.None))).Name);
+    }
+
+    [PgFact]
+    public async Task A_customs_office_is_opened_through_the_same_in_space_range_check_as_other_containers()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var flying = await FlyingWithCargoAsync(rig);
+        long officeId;
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            officeId = await rig.Items.CreateAsync(connection, transaction,
+                new NewItem(Customs.OfficeTypeId, 1_000_125, flying.Session.GetInt("solarsystemid")!.Value, 0, 1, true));
+            await transaction.CommitAsync();
+        }
+
+        rig.Sim.MeasureAnswer = 2500;
+        Assert.Equal(officeId, (await rig.Containers.OpenAsync(flying.Session, officeId, CancellationToken.None))!.Id);
+        rig.Sim.MeasureAnswer = 2501;
+        Assert.Equal("TargetTooFar", UserError(await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await rig.Containers.OpenAsync(flying.Session, officeId, CancellationToken.None))).Name);
     }
 
     [PgFact]

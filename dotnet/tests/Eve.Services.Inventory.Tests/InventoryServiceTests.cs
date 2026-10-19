@@ -1040,14 +1040,20 @@ public class InvBrokerTests
     private sealed class FakeSpace : Eve.Services.Ships.ISpaceContainers
     {
         public bool? Answer { get; set; }
+        public Item? OpenResult { get; set; }
 
         public List<(IReadOnlyList<long> Ids, long Source, long Destination)> Asked { get; } = [];
+        public List<long> Opened { get; } = [];
 
         public bool IsInSpace(ClientSession session) => true;
 
         public int? SolarSystemOf(ClientSession session) => 30100032;
 
-        public Task<Item?> OpenAsync(ClientSession session, long containerId, CancellationToken cancellationToken) => Task.FromResult<Item?>(null);
+        public Task<Item?> OpenAsync(ClientSession session, long containerId, CancellationToken cancellationToken)
+        {
+            Opened.Add(containerId);
+            return Task.FromResult(OpenResult);
+        }
 
         public Task<long?> MoveAsync(ClientSession session, long itemId, long sourceId, long destinationId, long? quantity, CancellationToken cancellationToken) => Task.FromResult<long?>(null);
 
@@ -1058,6 +1064,95 @@ public class InvBrokerTests
         }
 
         public Task<IReadOnlyList<long>> JettisonAsync(ClientSession session, IReadOnlyList<long> itemIds, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<long>>([]);
+    }
+
+    private sealed class FakeCustoms(long officeId) : ICustomsOffices
+    {
+        public int ImportCalls { get; private set; }
+        public int MoveCalls { get; private set; }
+        public ValueTask<bool> IsOfficeAsync(long requestedOfficeId, CancellationToken cancellationToken) => ValueTask.FromResult(requestedOfficeId == officeId);
+        public double OfficeCapacity => 35_000;
+        public ValueTask ImportExportAsync(ClientSession session, long requestedOfficeId, long launchpadId,
+            IReadOnlyDictionary<long, long> imports, IReadOnlyDictionary<int, long> exports, double taxRate, CancellationToken cancellationToken) =>
+            ImportCalled();
+        public ValueTask<long> MoveToOfficeAsync(ClientSession session, long requestedOfficeId, long itemId, long quantity, CancellationToken cancellationToken) =>
+            MoveCalled();
+
+        private ValueTask ImportCalled() { ImportCalls++; return ValueTask.CompletedTask; }
+        private ValueTask<long> MoveCalled() { MoveCalls++; return ValueTask.FromResult(0L); }
+    }
+
+    [PgFact]
+    public async Task A_customs_office_inventory_is_bound_only_after_the_space_open_check()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var space = new FakeSpace();
+        var officeId = 1_200_040_491_241L;
+        var service = new InvBrokerService(rig.Items, new ItemTypeCatalog(new SdeReader(rig.Source)), Rig.Stations,
+            Rig.Unused(rig.Source, rig.Items, new DogmaStatic([], [], [])), new DogmaStatic([], [], []), () => 1, space)
+        {
+            Customs = new FakeCustoms(officeId),
+        };
+        var session = Rig.Session(station: null);
+        session.Set("shipid", new PyLong(9_988_400_000_001));
+        session.Set("solarsystemid", new PyInt(30100032));
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(() => service.GetInventoryFromId(new ServiceCall
+        {
+            Method = "GetInventoryFromId",
+            Args = [new PyLong(officeId)],
+            Session = session,
+        }).AsTask());
+
+        Assert.Equal("FakeItemNotFound", error.Error.UserErrorMessage);
+        Assert.Equal([officeId], space.Opened);
+    }
+
+    [PgFact]
+    public async Task Customs_office_bound_mutations_recheck_space_access()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var officeId = 1_200_040_491_241L;
+        var space = new FakeSpace
+        {
+            OpenResult = new Item(officeId, 2233, 1_000_125, 30100032, 0, 1, true, null),
+        };
+        var customs = new FakeCustoms(officeId);
+        var service = new InvBrokerService(rig.Items, new ItemTypeCatalog(new SdeReader(rig.Source)), Rig.Stations,
+            Rig.Unused(rig.Source, rig.Items, new DogmaStatic([], [], [])), new DogmaStatic([], [], []), () => 1, space)
+        {
+            Customs = customs,
+        };
+        var session = Rig.Session(station: null);
+        session.Set("shipid", new PyLong(9_988_400_000_001));
+        session.Set("solarsystemid", new PyInt(30100032));
+        var binding = await service.GetInventoryFromId(new ServiceCall
+        {
+            Method = "GetInventoryFromId",
+            Args = [new PyLong(officeId)],
+            Session = session,
+        });
+        var oid = Rig.OidOf(binding);
+        space.OpenResult = null;
+
+        var move = await service.Add(new ServiceCall
+        {
+            Method = "Add",
+            Args = [new PyLong(77), new PyLong(9_988_400_000_001)],
+            Session = session,
+            BoundObjectId = oid,
+        });
+        Assert.Equal(PyNone.Instance, move);
+        var import = await Assert.ThrowsAsync<MachoWrappedException>(() => service.ImportExportWithPlanet(new ServiceCall
+        {
+            Method = "ImportExportWithPlanet",
+            Args = [],
+            Session = session,
+            BoundObjectId = oid,
+        }).AsTask());
+
+        Assert.Equal("CustomsOfficeAccessDenied", import.Error.UserErrorMessage);
+        Assert.Equal([officeId, officeId, officeId], space.Opened);
+        Assert.Equal((0, 0), (customs.MoveCalls, customs.ImportCalls));
     }
 
     [PgFact]

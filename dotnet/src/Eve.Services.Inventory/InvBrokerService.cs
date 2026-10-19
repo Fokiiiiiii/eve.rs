@@ -376,7 +376,9 @@ public sealed partial class InvBrokerService(
         }
         else if (Customs is not null && await Customs.IsOfficeAsync(id, call.Cancellation))
         {
-            result = Bind(new Context(Kind.Container, id, 0, CharacterShips.ContainerFlag), call.Session);
+            result = space is not null && await space.OpenAsync(call.Session, id, call.Cancellation) is not null
+                ? Bind(new Context(Kind.Container, id, 0, CharacterShips.ContainerFlag), call.Session)
+                : None;
         }
         else if (StationOf(call.Session) is not { } station)
         {
@@ -426,6 +428,8 @@ public sealed partial class InvBrokerService(
     public async ValueTask<PyValue> ImportExportWithPlanet(ServiceCall call)
     {
         if (ContextOf(call) is not { Kind: Kind.Container } office || Customs is null)
+            throw MachoErrors.ThrowUserError("CustomsOfficeAccessDenied");
+        if (space is null || await space.OpenAsync(call.Session, office.ItemId, call.Cancellation) is null)
             throw MachoErrors.ThrowUserError("CustomsOfficeAccessDenied");
         var imports = new Dictionary<long, long>();
         if (call.Arg(1) is PyDict importDict)
@@ -891,6 +895,7 @@ public sealed partial class InvBrokerService(
     private async ValueTask<PyValue> AddToCustomsOfficeAsync(ServiceCall call, long character, long itemId, long source, long officeId, long? quantity)
     {
         if (call.Session.GetInt("shipid") is not { } shipId || source != shipId || space?.SolarSystemOf(call.Session) is not { } system
+            || await space.OpenAsync(call.Session, officeId, call.Cancellation) is null
             || await items.GetAsync(itemId, call.Cancellation) is not { } stack || stack.OwnerId != character || stack.LocationId != shipId
             || await items.GetAsync(officeId, call.Cancellation) is not { } office || office.LocationId != system)
             return None;

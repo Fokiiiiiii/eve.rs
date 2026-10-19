@@ -17,7 +17,7 @@ from evecli.string_table import OFFICIAL_STRING_TABLE, STRING_TABLE
 from .oracle import js_to_value, parse_ejson, to_ejson
 
 FIXTURES = pathlib.Path(__file__).resolve().parents[3] / "oracle/fixtures/marshal/cases.json"
-CASES = json.loads(FIXTURES.read_text())
+CASES = json.loads(FIXTURES.read_text(encoding="utf-8"))
 
 
 def test_fixture_set_is_present():

@@ -434,6 +434,19 @@ public class CharMgrTests
     }
 
     [PgFact]
+    public async Task Paperdoll_state_ignores_a_client_supplied_other_character_id()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var ownId = await rig.MakeAsync("Doll Ann");
+        var otherId = await rig.MakeAsync("Doll Bob");
+        await rig.Characters.SetAppearanceAsync(otherId,
+            MarshalCodec.Encode(new PyDict([new(new PyStr("recorded"), new PyInt(1))])), true, null, false);
+        var (session, _) = Rig.Session(ownId);
+
+        Assert.Equal(new PyInt(2), await Rig.CallAsync(rig.CharMgr, session, "GetPaperdollState", Id(otherId)));
+    }
+
+    [PgFact]
     public async Task The_fixed_answers_are_the_recorded_ones()
     {
         await using var rig = await Rig.CreateAsync();
@@ -534,6 +547,8 @@ public class CharMgrTests
         rig.SecurityStatuses[characterId] = -1.25;
         var character = (await rig.Characters.GetAsync(characterId))!;
         var (session, _) = Rig.Session(characterId);
+        session.Set("corpid", Id(character.CorporationId));
+        session.Set("rolesAtAll", Id(Eve.Corporations.CorporationRoles.PersonnelManager));
 
         var actual = await Rig.CallAsync(rig.CharMgr, session, "GetPrivateInfo", Id(characterId));
         var expected = Py.Rowset(
@@ -544,6 +559,22 @@ public class CharMgrTests
                 Py.Number(54321.75), Py.Number(-1.25),
             ])]);
         Assert.True(PyValue.DeepEquals(expected, actual));
+    }
+
+    [PgFact]
+    public async Task Private_member_info_requires_an_authorized_role_in_the_members_corporation()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var characterId = await rig.MakeAsync("Private Member");
+        var character = (await rig.Characters.GetAsync(characterId))!;
+        var (session, _) = Rig.Session(characterId);
+
+        Assert.IsType<PyNone>(await Rig.CallAsync(rig.CharMgr, session, "GetPrivateInfo", Id(characterId)));
+        session.Set("corpid", Id(character.CorporationId));
+        session.Set("rolesAtAll", Id(Eve.Corporations.CorporationRoles.PersonnelManager));
+        Assert.IsType<PyObject>(await Rig.CallAsync(rig.CharMgr, session, "GetPrivateInfo", Id(characterId)));
+        session.Set("corpid", Id(character.CorporationId + 1));
+        Assert.IsType<PyNone>(await Rig.CallAsync(rig.CharMgr, session, "GetPrivateInfo", Id(characterId)));
     }
 
     [PgFact]
@@ -705,6 +736,25 @@ public class CharMgrTests
             await Rig.CallAsync(service, session, "GetPrivateInfoOnCorpChange", Id(characterId)));
     }
 
+
+    [PgFact]
+    public async Task Private_corporation_change_info_ignores_a_client_supplied_other_character_id()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var ownId = await rig.MakeAsync("Own Corp Change");
+        var otherId = await rig.MakeAsync("Other Corp Change");
+        long? readCharacterId = null;
+        var service = rig.CreateCharMgr(readCorporationMemberStartedMs: (id, _) =>
+        {
+            readCharacterId = id;
+            return ValueTask.FromResult<long?>(1_700_000_000_123);
+        });
+        var (session, _) = Rig.Session(ownId);
+
+        await Rig.CallAsync(service, session, "GetPrivateInfoOnCorpChange", Id(otherId));
+
+        Assert.Equal(ownId, readCharacterId);
+    }
 
     [PgFact]
     public async Task Personal_char_mgr_rpcs_preserve_client_shapes_and_update_owner_scoped_state()

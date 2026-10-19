@@ -133,6 +133,15 @@ public sealed partial class CharMgrService(
             ("medal1GraphicID", Nullable(medal1GraphicId)));
     }
 
+    private static bool CanReadPrivateCorporationMemberInfo(ServiceCall call, long targetCorporationId)
+    {
+        var callerCorporationId = call.Session.GetInt("corporationID") ?? call.Session.GetInt("corpid") ?? 0;
+        var roles = call.Session.GetInt("rolesAtAll") ?? call.Session.GetInt("corprole") ?? 0;
+        var permittedRoles = Eve.Corporations.CorporationRoles.Director | Eve.Corporations.CorporationRoles.PersonnelManager;
+        return targetCorporationId > 0 && callerCorporationId == targetCorporationId &&
+            (roles & permittedRoles) != 0;
+    }
+
     private async ValueTask<Character?> CharacterAsync(ServiceCall call)
     {
         var id = IdOf(call.Arg(0));
@@ -200,7 +209,8 @@ public sealed partial class CharMgrService(
     [Method("GetPrivateInfo")]
     public async ValueTask<PyValue> GetPrivateInfo(ServiceCall call)
     {
-        if (await CharacterAsync(call) is not { } character)
+        if (await CharacterAsync(call) is not { } character ||
+            !CanReadPrivateCorporationMemberInfo(call, character.CorporationId))
             return None;
         var balance = readBalance is null ? 0m : (await readBalance(character.Id, call.Cancellation)) ?? 0m;
         var security = await readCharacterSecurityStatus(character.Id, call.Cancellation);
@@ -293,7 +303,7 @@ public sealed partial class CharMgrService(
     [Method("GetPaperdollState")]
     public async ValueTask<PyValue> GetPaperdollState(ServiceCall call)
     {
-        var characterId = call.Arg(0) is PyInt { Value: > 0 } given ? given.Value : call.Session.CharacterId ?? 0;
+        var characterId = call.Session.CharacterId ?? 0;
         if (characterId <= 0)
             return new PyInt(NoExistingCustomization);
         if (readRecustomizationState is not null && await readRecustomizationState(characterId, call.Cancellation) is { } recustomizing)
@@ -713,9 +723,7 @@ public sealed partial class CharMgrService(
     [Method("GetPrivateInfoOnCorpChange")]
     public async ValueTask<PyValue> GetPrivateInfoOnCorpChange(ServiceCall call)
     {
-        var characterId = call.Args.Count == 0
-            ? call.Session.CharacterId ?? 0
-            : NormalizeInteger(call.Arg(0));
+        var characterId = call.Session.CharacterId ?? 0;
         var character = characterId > 0
             ? await characters.GetAsync(characterId, call.Cancellation)
             : null;

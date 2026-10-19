@@ -22,11 +22,18 @@ public class MarketLockOrderTests
 
     [Theory]
     [InlineData("PlaceAsync")]
+    [InlineData("PlaceBuyOrdersAsync")]
     [InlineData("ModifyAsync")]
     [InlineData("CloseAsync")]
     public void Each_entry_point_takes_its_locks_in_the_documented_order(string method)
     {
-        var body = MethodBody(SourceText(), method);
+        var source = SourceText();
+        var body = MethodBody(source, method);
+        if (method is "PlaceAsync" or "PlaceBuyOrdersAsync")
+        {
+            Assert.Contains("PlaceWithinTransactionAsync", body);
+            body = MethodBody(source, "PlaceWithinTransactionAsync");
+        }
         var previous = -1;
         var previousRank = "";
         foreach (var (rank, pattern) in Order)

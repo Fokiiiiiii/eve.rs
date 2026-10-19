@@ -121,10 +121,10 @@ public sealed class MiningLedgerServiceTests
     public async Task Corporation_observer_headers_require_a_ledger_role_and_list_only_visible_retained_observers_by_name()
     {
         await using var ledger = await Ledger.CreateAsync(ObserverFixture);
-        var service = new CorpMiningLedgerService(ledger.Reads, () => Now);
+        var service = CorpService(ledger.Reads, 0);
 
         var unauthorized = Assert.IsType<PyList>(await service.CallAsync(Request("GetObserversWithMiningEvents", corporationId: CorporationId, role: 0)));
-        var result = Assert.IsType<PyList>(await service.CallAsync(Request("GetObserversWithMiningEvents", corporationId: CorporationId, role: Accountant)));
+        var result = Assert.IsType<PyList>(await CorpService(ledger.Reads, Accountant).CallAsync(Request("GetObserversWithMiningEvents", corporationId: CorporationId, role: 0)));
 
         Assert.Equal("corpMiningLedger", service.Name);
         Assert.Empty(unauthorized.Items);
@@ -136,6 +136,18 @@ public sealed class MiningLedgerServiceTests
         Assert.Equal(new PyLong(100), Field(result.Items[1], "itemID"));
     }
 
+    [Fact]
+    public async Task Corporation_observer_access_uses_current_persisted_roles_not_cached_session_roles()
+    {
+        await using var ledger = await Ledger.CreateAsync(ObserverFixture);
+        var service = CorpService(ledger.Reads, 0);
+
+        var result = Assert.IsType<PyList>(await service.CallAsync(Request(
+            "GetObserversWithMiningEvents", corporationId: CorporationId, role: Director | Accountant | JuniorAccountant)));
+
+        Assert.Empty(result.Items);
+    }
+
     [Theory]
     [InlineData(Director)]
     [InlineData(Accountant)]
@@ -143,10 +155,10 @@ public sealed class MiningLedgerServiceTests
     public async Task Each_reference_ledger_role_can_read_the_corporation_observer_ledger(long role)
     {
         await using var ledger = await Ledger.CreateAsync(ObserverFixture);
-        var service = new CorpMiningLedgerService(ledger.Reads, () => Now);
+        var service = CorpService(ledger.Reads, role);
 
         var result = Assert.IsType<PyList>(await service.CallAsync(Request("GetObserverLedger", args: [new PyInt(100)],
-            corporationId: CorporationId, role: role)));
+            corporationId: CorporationId, role: 0)));
 
         Assert.Equal(2, result.Items.Count);
         Assert.Equal(new PyLong(5), Field(result.Items[0], "entryID"));
@@ -159,7 +171,7 @@ public sealed class MiningLedgerServiceTests
     public async Task Missing_or_foreign_observer_and_unknown_methods_return_reference_empty_shapes()
     {
         await using var ledger = await Ledger.CreateAsync(ObserverFixture);
-        var service = new CorpMiningLedgerService(ledger.Reads, () => Now);
+        var service = CorpService(ledger.Reads, Accountant);
 
         var missing = Assert.IsType<PyList>(await service.CallAsync(Request("GetObserverLedger", args: [new PyInt(0)], corporationId: CorporationId, role: Accountant)));
         var foreign = Assert.IsType<PyList>(await service.CallAsync(Request("GetObserverLedger", args: [new PyInt(100)], corporationId: 98000002, role: Accountant)));
@@ -169,6 +181,11 @@ public sealed class MiningLedgerServiceTests
         Assert.Empty(foreign.Items);
         Assert.Same(PyNone.Instance, unknown);
     }
+
+    private static CorpMiningLedgerService CorpService(Eve.ReadSide.ReadSide reads, long persistedRoles) =>
+        new(reads, (corporationId, characterId, _) => ValueTask.FromResult(
+            corporationId == CorporationId && characterId == CharacterId &&
+            (persistedRoles & (Director | Accountant | JuniorAccountant)) != 0), () => Now);
 
     /// <summary>A scratch schema with the EVE.js ledger imported into the mining ledger table, and the read side over it.</summary>
     private sealed class Ledger : IAsyncDisposable

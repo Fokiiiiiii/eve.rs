@@ -35,6 +35,7 @@ public sealed class FittingMgrServicesTests : IAsyncLifetime
     private sealed class Host : IFittingHost
     {
         public bool FittingManager { get; set; }
+        public bool OwnerAccess { get; set; } = true;
         public long? Executor { get; set; } = FittingMgrServicesTests.Executor;
         public List<ClientSession> Sessions { get; } = [];
 
@@ -42,6 +43,7 @@ public sealed class FittingMgrServicesTests : IAsyncLifetime
             Task.FromResult<IReadOnlyDictionary<int, int>>(typeIds.Where(id => id is Tengu or Ibis or DamageControl)
                 .ToDictionary(id => id, id => id == DamageControl ? 7 : 6));
         public Task<bool> HasFittingManagerRoleAsync(long characterId, CancellationToken cancellationToken) => Task.FromResult(FittingManager);
+        public Task<bool> CanAccessOwnerAsync(long characterId, long ownerId, FittingOwnerScope scope, CancellationToken cancellationToken) => Task.FromResult(OwnerAccess);
         public Task<long?> AllianceExecutorAsync(long allianceId, CancellationToken cancellationToken) => Task.FromResult(Executor);
         public IReadOnlyList<ClientSession> SessionsOf(FittingOwnerScope scope, long ownerId) => Sessions;
     }
@@ -171,6 +173,24 @@ public sealed class FittingMgrServicesTests : IAsyncLifetime
         var id = (PyLong)await corp.CallAsync(Call("SaveFitting", member, new PyInt(Corporation), Fitting()));
         Assert.True(id.Value > 0);
         Assert.True(sink.Sent("OnFittingAdded"));
+    }
+
+    [FittingPgFact]
+    public async Task A_departed_member_cannot_read_fittings_through_stale_corporation_or_alliance_session_ids()
+    {
+        var (_, host, calls) = await SetUpAsync();
+        var formerMember = SessionOf(new Sink(), Character, Corporation, Alliance);
+        host.OwnerAccess = false;
+        IService corporation = new CorpFittingMgrService(calls);
+        IService alliance = new AllianceFittingMgrService(calls);
+
+        var corporationError = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            corporation.CallAsync(Call("GetFittings", formerMember, new PyInt(Corporation))).AsTask());
+        var allianceError = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            alliance.CallAsync(Call("GetFittings", formerMember, new PyInt(Alliance))).AsTask());
+
+        Assert.Equal("CustomNotify", corporationError.Error.UserErrorMessage);
+        Assert.Equal("CustomNotify", allianceError.Error.UserErrorMessage);
     }
 
     [FittingPgFact]

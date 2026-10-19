@@ -166,8 +166,8 @@ async fn a_ship_is_sent_out_bound_told_to_dock_and_reported_docked() {
     assert!(
         matches!(host.recv().await, Message::Notify { name, id_type, .. } if name == "OnDockingAccepted" && id_type == "charid")
     );
-    assert!(matches!(host.recv().await, Message::Notify { name, .. } if name == "DoDestinyUpdate"));
     assert_eq!(host.recv().await, Message::Accepted { session_id: SESSION, command: 4, at: NOON });
+    assert!(matches!(host.recv().await, Message::Notify { name, .. } if name == "DoDestinyUpdate"));
 
     // the ship is docked once four seconds have gone by, which the simulation notices at its next poll
     host.clock.store(NOON + 5 * SECOND, Ordering::SeqCst);

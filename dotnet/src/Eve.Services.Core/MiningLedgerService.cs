@@ -39,11 +39,11 @@ public sealed class CharacterMiningLedgerService(Eve.ReadSide.ReadSide reads, Fu
 /// The read-only EVE.js corpMiningLedger RPCs over the mining ledger table: the observers of the corporation that have a ledger, and an observer's entries.
 /// Only the corporation's ledger roles see them, as the reference checks.
 /// </summary>
-public sealed class CorpMiningLedgerService(Eve.ReadSide.ReadSide reads, Func<long>? nowFileTime = null) : IService
+public sealed class CorpMiningLedgerService(
+    Eve.ReadSide.ReadSide reads,
+    Func<long, long, CancellationToken, ValueTask<bool>> canReadLedger,
+    Func<long>? nowFileTime = null) : IService
 {
-    // Matches Eve.Corporations.CorporationRoles and EVE.js CORP_ROLE_* values.
-    private const long LedgerRoleMask = 1L | 256L | (1L << 52);
-
     private readonly Func<long> _nowFileTime = nowFileTime ?? (() => DateTime.UtcNow.ToFileTimeUtc());
 
     public string Name => "corpMiningLedger";
@@ -59,8 +59,8 @@ public sealed class CorpMiningLedgerService(Eve.ReadSide.ReadSide reads, Func<lo
         var corporationId = Positive(call.Session.GetInt("corporationID") ?? 0);
         if (corporationId == 0)
             corporationId = Positive(call.Session.GetInt("corpid") ?? 0);
-        var roles = call.Session.GetInt("corprole") ?? 0;
-        if (corporationId == 0 || (roles & LedgerRoleMask) == 0)
+        var characterId = call.Session.CharacterId ?? call.Session.GetInt("charid") ?? 0;
+        if (corporationId == 0 || characterId <= 0 || !await canReadLedger(corporationId, characterId, call.Cancellation))
             return new PyList([]);
 
         if (call.Method == "GetObserverLedger")

@@ -1,6 +1,4 @@
-//! What the client checks about the server it logs in to: the packaged client build this server targets.
-//! (The reference keeps the same values in `network/protocolProfile.js`; changing one in isolation
-//! invalidates handshakes, object-cache CRCs and bound-object addresses.)
+//! Keep the client protocol values in sync; they affect handshakes, cache CRCs and bound-object addresses.
 
 /// The client's "birthday": the release the protocol belongs to.
 pub const BIRTHDAY: i64 = 170_472;
@@ -14,7 +12,5 @@ pub const PROJECT_CODENAME: &str = "eve.rs";
 pub const PROJECT_REGION: &str = "ccp";
 /// The proxy node the front answers as (0xFFAA), the default node id.
 pub const PROXY_NODE_ID: u32 = 0xFFAA;
-/// The `challenge_responsehash` the server sends in `CryptoServerHandshake`, a constant of the reference
-/// server that the real client accepts. It is not the CRC of the (empty) challenge, and nothing else the
-/// server sends depends on it; a headless client ignores it.
+/// The client-expected `challenge_responsehash`; it is not the CRC of the empty challenge.
 pub const CHALLENGE_RESPONSE_HASH: &str = "55087";

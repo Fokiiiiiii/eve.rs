@@ -51,6 +51,27 @@ internal sealed class FittingHost(DogmaStatic dogma, CorporationStore corporatio
         await corporations.MemberAsync(characterId, cancellationToken) is { } member
         && (member.Masks.Roles & FittingManagerRole) == FittingManagerRole;
 
+    public async Task<bool> CanAccessOwnerAsync(
+        long characterId,
+        long ownerId,
+        FittingOwnerScope scope,
+        CancellationToken cancellationToken)
+    {
+        if (characterId <= 0 || ownerId <= 0)
+            return false;
+        if (scope == FittingOwnerScope.Character)
+            return characterId == ownerId;
+
+        var member = await corporations.MemberAsync(characterId, cancellationToken);
+        if (member is null)
+            return false;
+        if (scope == FittingOwnerScope.Corporation)
+            return member.CorporationId == ownerId;
+
+        return await corporations.GetAsync(member.CorporationId, cancellationToken) is { AllianceId: { } allianceId }
+            && allianceId == ownerId;
+    }
+
     public async Task<long?> AllianceExecutorAsync(long allianceId, CancellationToken cancellationToken) =>
         (await corporations.AllianceAsync(allianceId, cancellationToken))?.ExecutorCorporationId;
 

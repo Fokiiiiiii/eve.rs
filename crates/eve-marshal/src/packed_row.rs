@@ -1,9 +1,6 @@
-//! PyPackedRow: a `DBRowDescriptor` header plus a bit-packed row.
-//!
-//! Layout (mirrors the JS reference): fixed-width columns are laid out widest
-//! first (ties by column index), followed by one bitmap holding every BOOL
-//! value and then one null flag per column. That block is RLE-compressed.
-//! Columns without a fixed width follow as ordinary marshal values.
+//! `PyPackedRow` carries a `DBRowDescriptor` header and a bit-packed row.
+//! Fixed-width columns are ordered widest first (ties by column index); BOOL and null bitmaps are RLE-compressed.
+//! Other columns follow as ordinary marshal values.
 
 use std::sync::{Arc, OnceLock};
 

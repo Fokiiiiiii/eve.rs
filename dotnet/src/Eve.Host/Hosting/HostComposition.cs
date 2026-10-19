@@ -207,7 +207,8 @@ internal static class HostComposition
                 Log = message => Console.Error.WriteLine($"eve-host: {message}"),
                 SessionOpened = session =>
                 {
-                    connected.Add(session);
+                    var previous = connected.AddExclusive(session);
+                    previous?.RequestDisconnect("Another client logged in to this account.");
                     session.Closed += () =>
                     {
                         connected.Remove(session);

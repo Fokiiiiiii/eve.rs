@@ -72,9 +72,14 @@ public sealed partial class CorpStationMgrService(
         var rules = await readStandingRules(place.OwnerId, call.Cancellation);
         if (Integral(call.Arg(0)) is not { } serviceId || !rules.TryGetValue(serviceId, out var minimum) || minimum == 0)
             return PyNone.Instance;
-        var given = Integral(call.Arg(1)) ?? 0;
-        var character = given > 0 ? given : call.Session.CharacterId ?? 0;
-        if (character > 0 && await readStanding(character, place.OwnerId, call.Cancellation) < minimum)
+
+        var characterId = call.Session.CharacterId ?? 0;
+        var suppliedCharacterId = Integral(call.Arg(1));
+        if (characterId <= 0)
+            throw Notify("An active pilot is required to check station service standing.");
+        if (suppliedCharacterId is > 0 && suppliedCharacterId != characterId)
+            throw Notify("Only the active pilot's standings can be checked.");
+        if (await readStanding(characterId, place.OwnerId, call.Cancellation) < minimum)
             throw Notify("Your standings are too low to access this service.");
         return PyNone.Instance;
     }

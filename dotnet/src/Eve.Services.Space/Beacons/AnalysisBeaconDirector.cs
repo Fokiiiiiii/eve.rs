@@ -178,8 +178,7 @@ public sealed class AnalysisBeaconDirector
     // ── activation and the wave ─────────────────────────────────────────────
 
     /// <summary>
-    /// The activation time is over (the durable job): the beacon is active, its scan runs from now, and its first wave of Rogue Drones is made (the owner's figures). A
-    /// wave that is not made in full ends the scan as failed, and the drones made are taken out.
+    /// The activation time is over (the durable job): the beacon becomes active and can be linked. Scanning and the first wave start when the four-minute link completes.
     /// </summary>
     public async Task ActivateAsync(long deployableId, CancellationToken cancellationToken = default)
     {
@@ -190,43 +189,16 @@ public sealed class AnalysisBeaconDirector
         }
         var now = _nowUnixMs();
         BeaconRow row;
-        var failure = (string?)null;
-        var made = new List<long>();
         await using (var connection = await _source.OpenConnectionAsync(cancellationToken))
         await using (var transaction = await connection.BeginTransactionAsync(cancellationToken))
         {
-            if (await _store.GetAsync(connection, transaction, deployableId, forUpdate: true, cancellationToken) is not { Active: false, Outcome: null } current)
+            if (await _store.GetAsync(connection, transaction, deployableId, forUpdate: true, cancellationToken) is not { Active: false, Outcome: null })
             {
-                return;   // already active, ended, or not a beacon row: nothing to do
+                return;
             }
-            await _store.ActivateAsync(connection, transaction, deployableId, now, cancellationToken);
-            var rule = _rules.For(current.TypeId)!;
-            var (selection, refusal) = WaveComposition.Resolve(_selector, rule.Waves[0].SpawnPool);
-            if (selection is null)
-            {
-                failure = $"the wave's pool could not be used: {refusal}";
-            }
-            else
-            {
-                var result = await _spawner.SpawnAsync(record.SolarSystemId, record.Position, selection, rule.Waves[0].Amount, cancellationToken);
-                made.AddRange(result.ShipIds);
-                if (result.Error is not null || result.ShipIds.Count < rule.Waves[0].Amount)
-                {
-                    failure = $"{result.ShipIds.Count} of {rule.Waves[0].Amount} Rogue Drones were made" + (result.Error is null ? "" : $": {result.Error}");
-                }
-                await _store.AddDronesAsync(connection, transaction, deployableId, result.ShipIds, cancellationToken);
-            }
-            if (failure is not null)
-            {
-                await _store.EndAsync(connection, transaction, deployableId, "failed", failure, cancellationToken);
-            }
+            await _store.ActivateAsync(connection, transaction, deployableId, cancellationToken);
             await transaction.CommitAsync(cancellationToken);
             row = (await _store.GetAsync(connection, null, deployableId, forUpdate: false, cancellationToken))!;
-        }
-        if (failure is not null)
-        {
-            _spawner.Remove(made);
-            _log?.Invoke($"the beacon {deployableId} failed at activation: {failure}");
         }
         _sim.SetAnalysisBeaconState(deployableId, StateOf(row));
     }
@@ -301,6 +273,10 @@ public sealed class AnalysisBeaconDirector
             {
                 refusal = "the ship is not in space";
             }
+            else if (!await _store.TryConsumeLinkResourcesAsync(connection, transaction, character, row.SolarSystemId, row.TypeId, now, cancellationToken))
+            {
+                refusal = "the character lacks Complex Encryption Qubits or system signal interference is saturated";
+            }
             else if (!await _store.StartLinkAsync(connection, transaction, deployableId, shipId, now + (long)AnalysisBeaconRules.LinkDuration.TotalMilliseconds, cancellationToken))
             {
                 refusal = "the beacon is already linked";
@@ -329,19 +305,37 @@ public sealed class AnalysisBeaconDirector
         _scheduler.Wake();
     }
 
-    /// <summary>The link's time is up (the durable job): the link is complete, and the ship is linked until the beacon leaves.</summary>
+    /// <summary>The link's time is up (the durable job): scanning begins, the first wave appears, and the linked ship remains restricted for its status tail.</summary>
     public async Task LinkCompleteAsync(long deployableId, CancellationToken cancellationToken = default)
     {
         BeaconRow? row;
+        IReadOnlyList<long> made = [];
+        string? failure = null;
+        var now = _nowUnixMs();
         await using (var connection = await _source.OpenConnectionAsync(cancellationToken))
         await using (var transaction = await connection.BeginTransactionAsync(cancellationToken))
         {
             if (await _store.CompleteLinkAsync(connection, transaction, deployableId, cancellationToken) == 0)
             {
-                return;   // not running (the beacon left, or the link was never started)
+                return;
+            }
+            row = await _store.GetAsync(connection, transaction, deployableId, forUpdate: false, cancellationToken);
+            if (row is { Active: true, Outcome: null })
+            {
+                (failure, made) = await MakeWaveAsync(connection, transaction, row, _rules.For(row.TypeId)!.Waves[0], cancellationToken);
+                await _store.SetScanAsync(connection, transaction, deployableId, 0, now, cancellationToken);
+                if (failure is not null)
+                {
+                    await _store.EndAsync(connection, transaction, deployableId, "failed", failure, cancellationToken);
+                }
             }
             await transaction.CommitAsync(cancellationToken);
             row = await _store.GetAsync(connection, null, deployableId, forUpdate: false, cancellationToken);
+        }
+        if (failure is not null)
+        {
+            _spawner.Remove(made);
+            _log?.Invoke($"the beacon {deployableId} failed as its scan began: {failure}");
         }
         if (row is not null)
         {
@@ -366,7 +360,7 @@ public sealed class AnalysisBeaconDirector
         {
             foreach (var row in await _store.RunningAsync(connection, transaction, cancellationToken))
             {
-                if (!row.Active)
+                if (!row.Active || row.LinkState != 3 || row.ScanUpdatedMs == 0)
                 {
                     continue;
                 }

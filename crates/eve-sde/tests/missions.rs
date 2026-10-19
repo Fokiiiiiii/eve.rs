@@ -115,7 +115,6 @@ fn only_the_named_tables_are_loaded_and_the_build_records_them() {
     assert!(!table_exists(&mut client, &schema, "types"), "a table that was not named must not be loaded");
     assert_eq!(ensure::loaded_tables(&mut client, &schema).unwrap().len(), 2);
 
-    // The rows keep their file order and their key, as the default loader stores them.
     let key: String = client
         .query_one(&format!("SELECT key FROM {schema}.\"missions\" ORDER BY ord LIMIT 1"), &[])
         .unwrap()
@@ -153,7 +152,6 @@ fn a_schema_with_only_some_of_the_tables_is_loaded_again() {
     let scratch = Scratch::new("missions-partial");
     let archive = scratch.path("mission.zip");
     let hash = mission_archive(&archive, MISSION_BUILD);
-    // Load one table by hand, as an earlier run would have.
     let extracted = scratch.path("extracted");
     fetch::extract(&archive, &extracted).unwrap();
     let manifest = SdeManifest::read(&extracted).unwrap();
@@ -167,7 +165,6 @@ fn a_schema_with_only_some_of_the_tables_is_loaded_again() {
     assert!(matches!(outcome, Outcome::Loaded { tables: 2, .. }), "{outcome:?}");
     assert_eq!(ensure::loaded_tables(&mut client, &schema).unwrap().len(), 2);
 
-    // Now it holds both, so the second start does nothing.
     let fresh = Scratch::new("missions-again");
     let again = options(&fresh, MISSION_BUILD, vec![file_url(&fresh.path("missing.zip"))], Expect::Unchecked);
     assert_eq!(
@@ -266,7 +263,6 @@ fn the_loader_keeps_only_the_named_tables_and_leaves_no_copy_of_the_build_on_dis
     let scratch = Scratch::new("missions-discard");
     let source = scratch.path("source.zip");
     let hash = fake_full_build(&source, MISSION_BUILD);
-    // A full extract left by an earlier run is removed too.
     let cache = scratch.path("cache");
     let earlier = cache.join(fetch::archive_name(MISSION_BUILD));
     std::fs::create_dir_all(&earlier).unwrap();

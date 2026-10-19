@@ -67,7 +67,7 @@ public sealed class BlueprintManagerServiceTests
     [Fact]
     public async Task The_corporation_sees_its_own_blueprints_and_not_another_corporations()
     {
-        var service = Service();
+        var service = Service(corporationRoles: CorporationRoles(1L << 21));
         var session = Session(Owner);
         session.Set("corpid", new PyInt(Corporation));
         session.Set("corprole", new PyLong(Eve.Corporations.CorporationRoles.FactoryManager));
@@ -86,33 +86,40 @@ public sealed class BlueprintManagerServiceTests
         var service = Service();
         var session = Session(Owner);
         session.Set("corpid", new PyInt(Corporation));
+        session.Set("corprole", new PyLong(Eve.Corporations.CorporationRoles.FactoryManager));
+        session.Set("rolesAtOther", new PyLong(1L << 21));
 
         var noRole = Assert.IsType<PyTuple>(await service.CallAsync(Call("GetBlueprintDataByOwner", session, new PyLong(Corporation), PyNone.Instance)));
         Assert.Empty(Assert.IsType<PyList>(noRole.Items[0]).Items);
         await Assert.ThrowsAsync<MachoWrappedException>(async () =>
             await service.CallAsync(Call("GetBlueprintData", session, new PyLong(CorpOwned.ItemId))));
 
-        session.Set("corprole", new PyLong(Eve.Corporations.CorporationRoles.FactoryManager));
-        var noHangarAccess = Assert.IsType<PyTuple>(await service.CallAsync(Call("GetBlueprintDataByOwner", session, new PyLong(Corporation), PyNone.Instance)));
+        var noHangarService = Service(corporationRoles: CorporationRoles(0));
+        var noHangarAccess = Assert.IsType<PyTuple>(await noHangarService.CallAsync(Call("GetBlueprintDataByOwner", session, new PyLong(Corporation), PyNone.Instance)));
         Assert.Empty(Assert.IsType<PyList>(noHangarAccess.Items[0]).Items);
         await Assert.ThrowsAsync<MachoWrappedException>(async () =>
-            await service.CallAsync(Call("GetBlueprintData", session, new PyLong(CorpOwned.ItemId))));
+            await noHangarService.CallAsync(Call("GetBlueprintData", session, new PyLong(CorpOwned.ItemId))));
 
-        session.Set("rolesAtOther", new PyLong(1L << 21));
-        var accessible = Assert.IsType<PyTuple>(await service.CallAsync(Call("GetBlueprintDataByOwner", session, new PyLong(Corporation), PyNone.Instance)));
+        var accessibleService = Service(corporationRoles: CorporationRoles(1L << 21));
+        var accessible = Assert.IsType<PyTuple>(await accessibleService.CallAsync(Call("GetBlueprintDataByOwner", session, new PyLong(Corporation), PyNone.Instance)));
         Assert.Single(Assert.IsType<PyList>(accessible.Items[0]).Items);
-        Assert.IsType<PyObject>(await service.CallAsync(Call("GetBlueprintData", session, new PyLong(CorpOwned.ItemId))));
+        Assert.IsType<PyObject>(await accessibleService.CallAsync(Call("GetBlueprintData", session, new PyLong(CorpOwned.ItemId))));
     }
 
-    private static IService Service((long Blueprint, long Job)? job = null)
+    private static IService Service((long Blueprint, long Job)? job = null, Eve.Corporations.SessionRoles? corporationRoles = null)
     {
         var all = new[] { Original, Copy, CorpOwned };
         var jobs = job is { } entry ? new Dictionary<long, long> { [entry.Blueprint] = entry.Job } : new Dictionary<long, long>();
         return new BlueprintManagerService(
             (id, _) => ValueTask.FromResult(all.FirstOrDefault(blueprint => blueprint.ItemId == id)),
             (owner, _) => ValueTask.FromResult<IReadOnlyList<BlueprintRecord>>(all.Where(blueprint => blueprint.OwnerId == owner).ToArray()),
-            (_, _) => ValueTask.FromResult<IReadOnlyDictionary<long, long>>(jobs));
+            (_, _) => ValueTask.FromResult<IReadOnlyDictionary<long, long>>(jobs),
+            (characterId, corporationId, _, _) => ValueTask.FromResult(
+                characterId == Owner && corporationId == Corporation ? corporationRoles : null));
     }
+
+    private static Eve.Corporations.SessionRoles CorporationRoles(long rolesAtOther) =>
+        new(Eve.Corporations.CorporationRoles.FactoryManager, 0, 0, 0, rolesAtOther, null, null, 1000);
 
     private static ClientSession Session(long characterId) => new() { CharacterId = characterId };
 

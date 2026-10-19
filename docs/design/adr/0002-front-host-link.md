@@ -59,9 +59,10 @@ because every later slice adds to it.
   (frames are self-describing), and a host that can be tested without a socket by feeding it frames.
 - Bad: a second implementation of the layout on each side, and a version to keep in step; mitigated by the
   shared golden frames and by `Hello` carrying the version.
-- Later: the host will push session changes and notifications through `Send`; a `Disconnect` reason will be
-  shown to the client as a transport-closed message. Ping is forwarded in S1; answering it in the front is
-  an optimisation to make when it is measured.
+- The host pushes session changes and notifications through `Send`; a `Disconnect` reason is shown to the
+  client as a transport-closed message. The host's shared `ConnectedSessions` set admits one live session per
+  account and sends this `Disconnect` when a later client opens that account. Ping is forwarded in S1; answering
+  it in the front is an optimisation to make when it is measured.
 
 ## Notes from S1
 

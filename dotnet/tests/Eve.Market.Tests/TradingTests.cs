@@ -107,6 +107,56 @@ public class TradingTests
         Assert.Equal(10,(await r.Book.BookAsync(r.Station.RegionId,34,r.Now)).Asks.Single().VolumeRemaining);
     }
 
+
+    [PgFact]
+    public async Task A_failed_sell_refunds_its_broker_fee_and_the_same_key_retries_once()
+    {
+        await using var r=await TradeRig.Create();
+        var seller=await r.Actor("Seller One");
+        var item=await r.Stock(seller,10);
+        await using (var reject=r.Source.CreateCommand($"ALTER TABLE {r.MarketSchema}.orders ADD CONSTRAINT reject_sell_order CHECK(price<>10)"))
+            await reject.ExecuteNonQueryAsync();
+
+        await Assert.ThrowsAsync<PostgresException>(() => r.Trading.PlaceAsync(r.Sell(seller,item,10,10,90),"sell-retry"));
+        Assert.Equal(10000m,(await r.WalletStore.GetAsync(seller))!.Isk);
+        Assert.Equal(10,Assert.Single(await r.Items.InLocationAsync(r.Station.Id,seller)).Quantity);
+        await using (var check=r.Source.CreateCommand($"SELECT count(*) FROM {r.MarketSchema}.commands WHERE operation_key='sell-retry'"))
+            Assert.Equal(0L,(long)(await check.ExecuteScalarAsync())!);
+
+        await using (var allow=r.Source.CreateCommand($"ALTER TABLE {r.MarketSchema}.orders DROP CONSTRAINT reject_sell_order"))
+            await allow.ExecuteNonQueryAsync();
+        var placed=await r.Trading.PlaceAsync(r.Sell(seller,item,10,10,90),"sell-retry");
+        var replay=await r.Reopen().PlaceAsync(r.Sell(seller,item,10,10,90),"sell-retry");
+        Assert.Equal(placed.OrderId,replay.OrderId);
+        Assert.Equal(9900m,(await r.WalletStore.GetAsync(seller))!.Isk);
+        Assert.Single((await r.Book.BookAsync(r.Station.RegionId,34,r.Now)).Asks);
+    }
+
+    [PgFact]
+    public async Task Multi_buy_rolls_back_all_lines_on_partial_failure_and_retries_without_double_charge()
+    {
+        await using var r=await TradeRig.Create();
+        var buyer=await r.Actor("Multi Buyer");
+        (MarketRequest Request,string OperationKey)[] failed=[(r.Buy(buyer,10,10),"multi-0"),(r.Buy(buyer,1000,100),"multi-1")];
+
+        await Assert.ThrowsAsync<InsufficientFundsException>(() => r.Trading.PlaceBuyOrdersAsync(failed));
+        Assert.Equal(10000m,(await r.WalletStore.GetAsync(buyer))!.Isk);
+        Assert.Empty((await r.Book.BookAsync(r.Station.RegionId,34,r.Now)).Bids);
+        await using (var check=r.Source.CreateCommand($"SELECT count(*) FROM {r.MarketSchema}.commands WHERE operation_key IN ('multi-0','multi-1')"))
+            Assert.Equal(0L,(long)(await check.ExecuteScalarAsync())!);
+
+        (MarketRequest Request,string OperationKey)[] retry=[(r.Buy(buyer,10,10),"multi-0"),(r.Buy(buyer,20,1),"multi-1")];
+        var receipts=await r.Trading.PlaceBuyOrdersAsync(retry);
+        Assert.Equal(2,receipts.Count);
+        Assert.All(receipts,receipt => Assert.NotNull(receipt.OrderId));
+        var balance=(await r.WalletStore.GetAsync(buyer))!.Isk;
+        Assert.Equal(9680m,balance);
+        var replay=await r.Reopen().PlaceBuyOrdersAsync(retry);
+        Assert.Equal(receipts.Select(receipt => receipt.OrderId),replay.Select(receipt => receipt.OrderId));
+        Assert.Equal(balance,(await r.WalletStore.GetAsync(buyer))!.Isk);
+        Assert.Equal(2,(await r.Book.BookAsync(r.Station.RegionId,34,r.Now)).Bids.Count);
+    }
+
     [PgFact]
     public async Task A_missing_market_receipt_cannot_reapply_goods_when_the_wallet_receipt_survived()
     {

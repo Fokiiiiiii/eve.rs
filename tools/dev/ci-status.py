@@ -108,6 +108,27 @@ def dispatch(args, token: str) -> None:
     print(f"Dispatched {args.workflow} on {args.ref} (HTTP {status}).")
 
 
+def cancel_queued(args, token: str) -> None:
+    query = {"per_page": 100, "status": "queued"}
+    runs = api_json("/actions/runs?" + urllib.parse.urlencode(query), token).get("workflow_runs", [])
+    selected = [
+        run for run in runs
+        if run.get("head_branch") == args.branch
+        and (not args.workflow or run.get("path", "").endswith(args.workflow))
+        and (not args.sha or not run.get("head_sha", "").startswith(args.sha))
+    ]
+    for run in selected:
+        try:
+            status, _, _ = request(f"/actions/runs/{run['id']}/cancel", token, method="POST")
+        except RuntimeError as error:
+            if "HTTP 409" in str(error):
+                print(f"Skipped run {run['run_number']} sha={run['head_sha'][:12]} because it was no longer queued.")
+                continue
+            raise
+        print(f"Cancelled queued run {run['run_number']} sha={run['head_sha'][:12]} (HTTP {status}): {run['html_url']}")
+    if not selected:
+        print(f"No queued runs to cancel on {args.branch}.")
+
 def print_run(run, token: str, show_logs: bool) -> None:
     print(f"Run {run['run_number']} {run['name']} {run['conclusion'] or run['status']} sha={run['head_sha'][:12]}")
     print(f"  {run['html_url']}")
@@ -144,6 +165,10 @@ def main() -> int:
     status.add_argument("--workflow")
     status.add_argument("--limit", type=int, default=10)
     status.add_argument("--no-logs", action="store_true")
+    cancel = sub.add_parser("cancel-queued", help="cancel queued runs for a branch")
+    cancel.add_argument("--branch", default="main")
+    cancel.add_argument("--workflow")
+    cancel.add_argument("--sha", help="preserve runs for this commit SHA")
     send = sub.add_parser("dispatch", help="dispatch a workflow")
     send.add_argument("workflow", choices=["ci.yml", "live-slow.yml"])
     send.add_argument("--ref", default="main")
@@ -156,6 +181,9 @@ def main() -> int:
     try:
         if args.command == "dispatch":
             dispatch(args, token)
+            return 0
+        if args.command == "cancel-queued":
+            cancel_queued(args, token)
             return 0
         query = {"per_page": 100}
         if args.workflow:

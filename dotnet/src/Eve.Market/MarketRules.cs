@@ -72,6 +72,16 @@ public static class MarketRules
                 RangeOf(skills.Marketing), RangeOf(skills.Procurement), RangeOf(skills.Visibility), RangeOf(skills.Daytrading)));
     }
 
+    /// <summary>Applies an Upwell structure's owner-set market broker rate; Accounting still applies to transaction tax.</summary>
+    public static MarketContext StructureContext(MarketSkillLevels skills, double? configuredBrokerPercent)
+    {
+        var percent = configuredBrokerPercent is { } configured && double.IsFinite(configured)
+            ? Math.Clamp(configured, 0, 11.5)
+            : 1.0;
+        var context = Context(skills, false);
+        return context with { BrokerCommissionRate = percent / 100.0 };
+    }
+
     public static FeeInfo BrokerFee(MarketContext context, double? oldAmount, double newAmount)
     {
         newAmount = RoundIsk(newAmount);

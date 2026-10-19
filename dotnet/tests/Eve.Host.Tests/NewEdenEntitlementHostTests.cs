@@ -226,7 +226,7 @@ public sealed class NewEdenEntitlementHostTests : IAsyncLifetime
         var lapsed = await NewAccountAsync(accounts, "lapsed-account");
         accounts.SetSubscriptionEndsAt(lapsed, Lapsed);
         var lapsedSession = Enter(host, new Packets(), lapsed, await CreatePilotAsync(source, station, "Lapsed Pilot", lapsed), 513);
-        var before = DateTimeOffset.UtcNow;
+        var before = DateTimeOffset.FromUnixTimeMilliseconds(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
         Assert.Equal(PyBool.True, await BuyAsync(host, lapsedSession, 13, "cash_omega_90_days", "USD", 2, storeId: 9));
         var end = await StoredEndAsync(accounts, lapsed);
         Assert.InRange(end, Plus(before, TimeSpan.FromDays(180)), Plus(DateTimeOffset.UtcNow, TimeSpan.FromDays(180)));

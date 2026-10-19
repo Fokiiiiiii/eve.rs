@@ -57,7 +57,6 @@ pub trait Universe {
         None
     }
 
-    /// `get_standings_from_npc_to_item(standingMgr, npcOwnerId, toId)`.
     fn standings_from_npc_to_item(&self, _npc_owner_id: i64, _to_id: i64) -> f64 {
         0.0
     }
@@ -79,7 +78,7 @@ pub trait Universe {
         _args: &[crate::value::Value],
     ) {
     }
-    /// What `IsEvePlayerCharacter` asks the server for an owner of the ids that are not clearly a player's: `cfg.eveowners.Get(id).IsCharacter()`
+
     /// (and not a player corporation).
     fn is_pre_inv64_player_character(&self, _owner_id: i64) -> bool {
         false

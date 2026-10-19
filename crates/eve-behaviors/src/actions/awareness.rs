@@ -118,7 +118,7 @@ impl Task for InitializeSpawnPoolFleetAwareness {
     fn on_enter(&mut self, t: &mut TaskCtx<'_, '_>) {
         let Some(pool_address) = t.required_address("spawnPoolIdAddress") else { return };
         self.spawn_pool_id = t.get_last_blackboard_value(&pool_address);
-        // the first `get_owner_id` is only a check that there is one
+
         let _ = get_owner_id(t);
         if t.faulted() {
             return;

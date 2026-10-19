@@ -39,7 +39,6 @@ pub fn create_incursion_group_behavior(
         .add(Node::class("WaitAction").named("Wait for some action"))
 }
 
-/// `CreateGroupBehaviorTree(friendlyOwnerIds, hostileOwnerIds, isAutomaticallyAggressive)`.
 pub fn create_group_behavior_tree(
     friendly_owner_ids: Value,
     hostile_owner_ids: Value,

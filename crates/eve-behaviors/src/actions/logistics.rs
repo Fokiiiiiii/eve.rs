@@ -58,7 +58,6 @@ fn type_error(t: &mut TaskCtx<'_, '_>, what: &str) {
     t.raise(BehaviorError::Task(format!("TypeError: {what}")));
 }
 
-/// The entries of an attribute that lists owners (`slimItem.ownerID in self.attributes.friendlyOwners`).
 fn owner_in(owners: &Value, owner_id: Option<i64>) -> bool {
     owners.contains(&owner_id.map_or(Value::None, Value::Int))
 }

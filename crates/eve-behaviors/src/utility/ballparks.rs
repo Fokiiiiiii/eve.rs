@@ -85,7 +85,6 @@ pub fn is_coordinate_in_range_of_ball(
     dist3(ball, coordinates) <= required_range
 }
 
-/// `get_item_owner`.
 pub fn get_item_owner(t: &mut TaskCtx<'_, '_>, item_id: i64) -> Option<i64> {
     t.world().slim_item(item_id)?.owner_id
 }

@@ -52,6 +52,26 @@ public class AnalysisBeaconRulesTests
     }
 
     [Fact]
+    public void Character_energy_and_system_interference_regenerate_continuously_to_their_caps()
+    {
+        Assert.Equal(50, AnalysisBeaconRules.RegenerateResource(0, 1_000, 1_000 + 11 * 60 * 60 * 1000L,
+            AnalysisBeaconRules.MaximumCharacterEnergy, AnalysisBeaconRules.CharacterEnergyFullRegeneration), 8);
+        Assert.Equal(100, AnalysisBeaconRules.RegenerateResource(0, 1_000, 1_000 + 22 * 60 * 60 * 1000L,
+            AnalysisBeaconRules.MaximumCharacterEnergy, AnalysisBeaconRules.CharacterEnergyFullRegeneration), 8);
+        Assert.Equal(2, AnalysisBeaconRules.RegenerateResource(50, 1_000, 1_000 + 12 * 60 * 60 * 1000L,
+            AnalysisBeaconRules.MaximumSignalInterference, AnalysisBeaconRules.SignalInterferenceFullDecay, decays: true), 8);
+    }
+
+    [Fact]
+    public void Link_costs_preserve_the_reported_daily_use_rates()
+    {
+        Assert.Equal(100d / 3, AnalysisBeaconRules.CharacterEnergyCostOf(AnalysisBeaconRules.StandardType), 8);
+        Assert.Equal(25, AnalysisBeaconRules.CharacterEnergyCostOf(AnalysisBeaconRules.CarrierType));
+        Assert.Equal(3, AnalysisBeaconRules.SignalInterferenceCostOf(AnalysisBeaconRules.StandardType));
+        Assert.Equal(2.5, AnalysisBeaconRules.SignalInterferenceCostOf(AnalysisBeaconRules.CarrierType));
+    }
+
+    [Fact]
     public void A_file_with_another_schema_is_refused()
     {
         var error = Assert.Throws<InvalidDataException>(() => Parse(Valid.Replace("analysis-beacon-rules/v1", "analysis-beacon-rules/v2")));

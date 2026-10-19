@@ -31,11 +31,9 @@ pytestmark = [
     pytest.mark.skipif(os.environ.get("EVE_LIVE_SERVER", "eve.rs") == "reference", reason="the reference has no recording of a repairer"),
 ]
 
-
 def text_of(answer) -> str:
     answer = getattr(answer, "value", answer)
     return answer.decode() if isinstance(answer, bytes) else str(answer)
-
 
 def armors_of(events: list, ship: int) -> list[float]:
     """The armor fractions the stream tells of this ship (`OnDamageStateChange` of its own), in order."""
@@ -52,7 +50,6 @@ def armors_of(events: list, ship: int) -> list[float]:
             if name == "OnDamageStateChange" and number(payload[0]) == ship:
                 told.append(payload[1]["$tuple"][1])
     return told
-
 
 def test_an_armor_repairer_mends_the_armor_as_its_cycle_ends():
     race = plain_race(DEATH["races"][0], "victim")

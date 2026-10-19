@@ -3,7 +3,6 @@
 //! The reference's rules (`warpTargets.js`, `transitions.js`), which the client cannot check for itself: a ship warping to a gate ends at a
 //! random point of a half sphere on the side of the gate it comes from, and one that has jumped appears in a cone in front of the gate it
 //! comes out of. Both draw random numbers; what matters to the client is where the points may be, so the draws are the scene's own.
-
 use std::f64::consts::PI;
 
 use eve_destiny::Vec3;

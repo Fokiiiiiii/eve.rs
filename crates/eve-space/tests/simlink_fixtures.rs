@@ -1,5 +1,4 @@
 //! file): every valid frame encodes to its bytes and decodes back, every invalid one is refused for the stated reason.
-
 use eve_space::death::Credit;
 use eve_space::drones::DroneEffect;
 use eve_space::health::{Condition, Layer, Resonances, Vitals};

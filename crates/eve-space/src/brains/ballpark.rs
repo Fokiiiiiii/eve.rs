@@ -1,7 +1,6 @@
 //! `SceneWorld` as the ballpark: the balls of the scene (its ships and the bodies of the system), where they are and how they move, and the
 //! orders that move them. A bubble is a box of the public grid (`crate::visibility`): the reference groups balls in bubbles too, but its bubbles are
 //! not part of the client, and the box is what the scene already uses to tell who sees whom.
-
 use eve_behaviors::consts::{
     DESTINY_MODE_FOLLOW, DESTINY_MODE_GOTO, DESTINY_MODE_ORBIT, DESTINY_MODE_STOP, DESTINY_MODE_WARP,
     SHIP_NOT_WARPING,

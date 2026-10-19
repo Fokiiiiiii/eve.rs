@@ -2,7 +2,6 @@
 //!
 //! What the pilot sees is the client's own simulation of `WarpTo`; this is the server's copy of it (`crate::warp` has the numbers). It tells the
 //! scene when the ship has dropped out and when it is at rest, so the scene can say so, and it answers where the ship is between those moments.
-
 use eve_destiny::{DESTINY_SPACE_FRICTION, Vec3, integrate_carbon_motion};
 
 use crate::motion;

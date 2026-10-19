@@ -3,7 +3,6 @@ using Npgsql;
 
 namespace Eve.Agents;
 
-/// <summary>One research project: a character researching a skill with a research agent, at a rate of points per day.</summary>
 public sealed record ResearchProject(
     long CharacterId,
     long AgentId,
@@ -12,7 +11,6 @@ public sealed record ResearchProject(
     double PointsPerDay,
     double RemainderPoints);
 
-/// <summary>A start the rules refuse (the character has too many projects, or already researches with this agent). Nothing is written.</summary>
 public sealed class ResearchRefusedException(string reason, string message) : Exception(message)
 {
     /// <summary>A stable name for the refusal: too_many_projects or already_researching.</summary>
@@ -66,7 +64,6 @@ public sealed class ResearchProjectStore
         return await reader.ReadAsync(cancellationToken) ? Read(reader) : null;
     }
 
-    /// <summary>The character's projects, in agent order.</summary>
     public async Task<IReadOnlyList<ResearchProject>> ReadAllAsync(long characterId, CancellationToken cancellationToken = default)
     {
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
@@ -82,7 +79,6 @@ public sealed class ResearchProjectStore
         return rows;
     }
 
-    /// <summary>Starts a project. Refused, with nothing written, when the character already has <paramref name="maxConcurrent"/> projects or already researches with this agent.</summary>
     public async Task<ResearchProject> StartAsync(ResearchProject project, int maxConcurrent, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(project);

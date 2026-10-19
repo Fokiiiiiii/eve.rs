@@ -65,11 +65,9 @@ def describe(value: Any) -> Any:
         return [describe(item) for item in value]
     return {"$unknown": repr(value)}
 
-
 def decode_marshaled(data: bytes) -> Any:
     """Decode a nested EVE marshal stream into its comparison-safe description."""
     return describe(m.decode(bytes(data)))
-
 
 def buffer_bytes(value: Any) -> bytes | None:
     if isinstance(value, (bytes, bytearray, m.Buffer)):
@@ -86,7 +84,6 @@ def buffer_bytes(value: Any) -> bytes | None:
             return None
     return None
 
-
 def destiny_state_header(value: Any) -> dict | None:
     """Decode the client-side Destiny state stream's packet type and stamp."""
     data = buffer_bytes(value)
@@ -99,13 +96,11 @@ def destiny_state_header(value: Any) -> dict | None:
         "stamp": int.from_bytes(data[1:5], "little"),
     }
 
-
 def _text(data: bytes) -> str:
     try:
         return data.decode("utf-8")
     except UnicodeDecodeError:
         return "$bytes:" + data.hex()
-
 
 def type_name(described: Any) -> str:
     if described is None:
@@ -125,7 +120,6 @@ def type_name(described: Any) -> str:
             if key.startswith("$"):
                 return key[1:]
     return "unknown"
-
 
 def shape(described: Any) -> Any:
     """The structure of a description with every leaf replaced by its type."""
@@ -147,7 +141,6 @@ def shape(described: Any) -> Any:
             return {"$row": {name: shape(item) for name, item in described["$row"].items()}}
         return {"$" + kind: "value"}
     return kind
-
 
 def differences(
     expected: Any, actual: Any, path: str = "$", *, volatile_keys: frozenset[str] | set[str] = frozenset(), float_tolerance: float = 0.0,
@@ -218,10 +211,8 @@ def differences(
         out.append(f"{path}: {_brief(expected)} expected, got {_brief(actual)}")
     return out
 
-
 def _key(described: Any) -> str:
     return described if isinstance(described, str) else str(described)
-
 
 def _brief(described: Any, limit: int = 80) -> str:
     text = repr(described)

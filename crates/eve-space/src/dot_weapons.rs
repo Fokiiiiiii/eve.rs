@@ -1,14 +1,10 @@
 //! Damage over time (the breacher pods). A hit does no damage: it starts a `Dot` on the ship it reaches. A ship can carry several applications, but one
 //! works on it at a time: the strongest (the most a tick does at the ship's current total hit points; the one already working wins a tie, then the one
-
 //! strongest breacher pod effect will deal damage to the target, and the weaker effect stays inert until the stronger one expires").
 //!
-
 //! ship's total hit points (shield, armor and hull, their capacities) and its flat cap, rounded down (`int(min(...))` in eve-logic `dotUtil.py`), and it
-
 //!
 //! Nothing is persisted: a restart drops the applications, as it drops the missiles in flight.
-
 use std::borrow::Cow;
 use std::cmp::Ordering;
 

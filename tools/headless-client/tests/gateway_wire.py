@@ -13,7 +13,6 @@ import grpc
 REQUEST_SEND = "/eve_public.gateway.Requests/Send"
 REQUEST_PING = "/eve_public.gateway.Requests/Ping"
 
-
 def varint(value: int) -> bytes:
     out = bytearray()
     while True:
@@ -25,37 +24,29 @@ def varint(value: int) -> bytes:
             out.append(low)
             return bytes(out)
 
-
 def field(number: int, data: bytes) -> bytes:
     return varint(number << 3 | 2) + varint(len(data)) + data
-
 
 def number_field(number: int, value: int) -> bytes:
     return varint(number << 3) + varint(value)
 
-
 def identifier(uuid_value: uuid.UUID) -> bytes:
     return field(1, uuid_value.bytes)
-
 
 def type_identifier(type_id: int) -> bytes:
     return number_field(1, type_id)
 
-
 def requirement(type_id: int, level: int) -> bytes:
     return field(1, type_identifier(type_id)) + number_field(2, level)
-
 
 def plan_attributes(name: str, description: str, requirements) -> bytes:
     body = field(1, name.encode()) + b"".join(field(2, requirement(t, lv)) for t, lv in requirements) + field(3, description.encode())
     return body
 
-
 def request(name: str, character: int, payload: bytes) -> bytes:
     any_message = field(1, ("type.evetech.net/" + name).encode()) + field(2, payload)
     identity = field(10, field(1, number_field(1, character)))
     return field(2, uuid.uuid4().bytes) + field(3, any_message) + field(6, identity)
-
 
 def read_fields(data: bytes) -> dict:
     """The fields of a message as {number: [values]} (varints as ints, the others as bytes)."""
@@ -74,7 +65,6 @@ def read_fields(data: bytes) -> dict:
         fields.setdefault(number, []).append(value)
     return fields
 
-
 def read_varint(data: bytes, offset: int):
     value = shift = 0
     while True:
@@ -84,7 +74,6 @@ def read_varint(data: bytes, offset: int):
         if not byte & 0x80:
             return value, offset
         shift += 7
-
 
 def answer(response: bytes):
     """A gateway response: (status, the type name of its payload, the payload's message)."""
@@ -96,14 +85,12 @@ def answer(response: bytes):
     type_url = any_fields[1][0].decode()
     return status, type_url[type_url.rfind("/") + 1:], any_fields.get(2, [b""])[0]
 
-
 def bearer(user_id: int) -> str:
     """The login JWT the client sends with its gateway calls for an account: the subject names the account (USER:EVE:<id>, the subject
     the client reads). The signature is not checked by the gateway, so this token carries none (DEVIATIONS, character phase S9)."""
     def part(data: dict) -> str:
         return base64.urlsafe_b64encode(json.dumps(data, separators=(",", ":")).encode()).rstrip(b"=").decode()
     return "Bearer " + ".".join([part({"alg": "HS256", "typ": "JWT"}), part({"sub": f"USER:EVE:{user_id}", "tenant": "eve-test", "tier": "dev", "exp": 4102444800}), part({"unsigned": True})])
-
 
 class Authorized:
     """A gRPC channel whose calls carry the account's bearer token (the client's `authorization` metadata)."""
@@ -118,10 +105,8 @@ class Authorized:
     def stream_stream(self, method):
         return lambda requests: self._channel.stream_stream(method)(requests, metadata=self._metadata)
 
-
 def as_user(channel, user_id: int) -> Authorized:
     return Authorized(channel, bearer(user_id))
-
 
 def send(channel, requests):
     """Sends the requests on one Requests/Send stream; returns the answers in order and checks the gRPC status."""
@@ -132,5 +117,4 @@ def send(channel, requests):
         frames.append(chunk)
     assert call.code() == grpc.StatusCode.OK, call.details()
     return [answer(chunk) for chunk in frames]
-
 

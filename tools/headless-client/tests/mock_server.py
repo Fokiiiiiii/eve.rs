@@ -14,11 +14,9 @@ from evecli.handshake import password_hash
 
 FILETIME_UNIX_EPOCH = 116444736000000000
 
-
 def _pickle_str(text: str) -> bytes:
     data = text.encode("utf-8")
     return b"X" + struct.pack("<I", len(data)) + data
-
 
 def transport_closed(reason: str) -> m.CPickled:
     """The cPickle of `exceptions.GPSTransportClosed(reason, code, {})` the server sends on a refusal."""
@@ -26,7 +24,6 @@ def transport_closed(reason: str) -> m.CPickled:
         b"\x80\x02cexceptions\nGPSTransportClosed\n"
         + _pickle_str(reason) + _pickle_str(reason) + b"}" + b"\x87" + b"R."
     )
-
 
 class MockServer:
     def __init__(self, accounts=None, auto_create=False, macho_version=496):
@@ -177,7 +174,7 @@ class MockServer:
             return
 
         assert pkt.command == p.CALL_REQ, pkt.command
-        body = pkt.payload[0][1].value  # (isBound, SubStream((1, method, args, kwargs)))
+        body = pkt.payload[0][1].value
         _, method, args, kwargs = body
         method = bytes(method).decode() if isinstance(method, bytes) else method
         service = pkt.destination.service

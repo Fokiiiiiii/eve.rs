@@ -2,7 +2,6 @@
 //! above any the host gives a player), so a ship's motion, warp, locks, modules and health work the same for both and a player sees an NPC as it sees
 //! any other ship. What differs is what the client is told about one: its ball has no session and is not interactive, its slim item has no name, and
 //! nothing is ever sent to an NPC (`Out`s for an NPC's session are dropped where the scene meets the host, `Sim`).
-
 use eve_destiny::Vec3;
 
 use crate::brains::{Brains, GiveError};

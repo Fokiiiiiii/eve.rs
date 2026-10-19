@@ -40,7 +40,6 @@ BALLS = ("OnDroneStateChange", "AddBalls2", "Orbit", "FollowBall", "RemoveBalls"
 # the moments an event may come after or before the recording's: the stream of the simulation is in quarters of a second and the settle of the drone's item in halves
 TOLERANCE = 0.9
 
-
 def numbers_in(described) -> set:
     """Every whole number a description holds (the ids an event is about)."""
     if isinstance(described, list):
@@ -52,7 +51,6 @@ def numbers_in(described) -> set:
     if isinstance(described, int) and not isinstance(described, bool):
         return {described}
     return set()
-
 
 def about_the_drone(events: list, drone: int, window: float | None = None, balls: bool = True) -> list:
     """What the pilot is told of this drone, in order: `{name, at, args}` (the balls' actions by their names, with no arguments)."""
@@ -76,7 +74,6 @@ def about_the_drone(events: list, drone: int, window: float | None = None, balls
                 out.append({"name": f"destiny {action}", "at": event["at"], "args": None})
     return out
 
-
 def compare(recorded: list, ours: list, where: str, mapping: dict) -> list[str]:
     wanted = [e["name"] for e in recorded]
     got = [e["name"] for e in ours]
@@ -90,7 +87,6 @@ def compare(recorded: list, ours: list, where: str, mapping: dict) -> list[str]:
         if abs(a["at"] - b["at"]) > TOLERANCE:
             out.append(f"{label} after {b['at']} s, in the recording after {a['at']} s")
     return out
-
 
 def in_space_with_a_drone(who, ship: int, only: dict) -> dict:
     """A pilot with the Drones skill and a Hobgoblin I in the drone bay of its ship undocks, waits for the protection of the undock to end and calls a rat (`/npc`): what it needs to
@@ -130,7 +126,6 @@ def in_space_with_a_drone(who, ship: int, only: dict) -> dict:
     assert in_bay == stack, "the drone in the bay is not the drone that was put there"
     watch(only, 1.0)
     return {"space": space, "ship_in_space": ship_in_space, "entity": entity, "bay": bay, "drone": stack, "rat": rat}
-
 
 def test_a_pilot_flies_a_drone_as_in_the_reference():
     race = FLIGHT["races"][0]
@@ -228,7 +223,6 @@ def test_a_pilot_flies_a_drone_as_in_the_reference():
         if [int(row.fields()["itemID"]) for row in rows] != [stack]:
             problems.append(f"the drone is not in the bay at the end: {rows}")
     assert not problems, "\n".join(problems)
-
 
 @pytest.mark.skipif(os.environ.get("EVE_LIVE_SERVER") == "reference", reason="the reference refuses an order that names no target (DEVIATIONS #119)")
 def test_drones_sent_to_attack_with_nothing_locked_look_for_an_opponent_by_themselves():

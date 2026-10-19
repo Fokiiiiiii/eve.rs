@@ -40,7 +40,6 @@ pytestmark = [
 TOLERANCE = 0.8
 RELOAD_EVENTS = ("OnItemsChanged", "OnGodmaPrimeItem", "OnChargeBeingLoadedToModule")
 
-
 def of_the_reload(events: list, gun: int, ship: int) -> list:
     """What a reload and an unload make the pilot's client hear: the stacks of the hold that changed, the charge that is primed and announced, and the numbers of the
     module and of the rounds in its slot (the next activation time is one of them), with what the gun does."""
@@ -51,7 +50,6 @@ def of_the_reload(events: list, gun: int, ship: int) -> list:
         else:
             out.extend(of_the_gun([event], gun, ship))
     return out
-
 
 def test_a_pilot_loads_a_gun_in_space_and_waits_for_the_reload_as_in_the_reference():
     race = RELOAD["races"][0]
@@ -188,7 +186,7 @@ def test_a_pilot_loads_a_gun_in_space_and_waits_for_the_reload_as_in_the_referen
                 ours_answer = canon(base.blank_times(describe(raw)), seen_ids)
                 problems.extend(differences(theirs_answer, ours_answer, label))
             got = watch_and_heal(seconds, until)
-            if os.environ.get("EVE_RELOAD_DUMP"):  # what this side was sent, step by step, to read beside the recording when they differ
+            if os.environ.get("EVE_RELOAD_DUMP"):
                 with open(os.environ["EVE_RELOAD_DUMP"], "a", encoding="utf-8") as dump:
                     dump.write(json.dumps({"label": label, "events": got}, default=str) + "\n")
             if not events:

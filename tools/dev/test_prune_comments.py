@@ -35,6 +35,9 @@ class C { string s = $@"{{ /* intact */ }}"; string r = $$"""// intact {value}""
 # TODO: stale
 ''', 'py')
 
+    def test_python_form_feed_keeps_comment_offsets(self):
+        self.check('x = 1\n\f# TODO: stale\nx = 2\n', 'py')
+
     def test_doc_comment_has_no_empty_line_before_item(self):
         src = '/// Keep docs.\n\n#[inline]\nfn f() {}\n'
         result, _, _ = pruner.transform(src, 'rs')

@@ -45,12 +45,10 @@ pytestmark = pytest.mark.skipif(
     reason="set EVE_LIVE_HOST, EVE_PG_URL and EVE_LIVE_FOB_WALK=1 (a few minutes of smartbomb cycles)",
 )
 
-
 def fit_bombs(ship_id: int) -> list[int]:
     """The Cockroach (the mission walk's fixture) with a QA Smartbomb in each free high slot (dbseed.seed_qa_arsenal): every bomb of the ship."""
     seed_cockroach(ship_id)
     return dbseed.items_of(dbseed.owner_of(ship_id), dbseed.QA_SMARTBOMB)
-
 
 def seed_hub_pilot(character_id: int, ship: int, system: int) -> None:
     """The pilot as a pilot in space keeps it: the character row names the system, the ship is in it (flag 0) and a pose lies 150 km from the FOB."""
@@ -63,10 +61,8 @@ def seed_hub_pilot(character_id: int, ship: int, system: int) -> None:
          f"SELECT {ship}, {system}, {EGO_OFFSET}, 0, 0, 1, 0, 0, 42, {COCKROACH_GROUP}, 0, {character_id}, corporation_id, 0, 0, {FAR_FUTURE_MS} "
          f"FROM {characters} WHERE id = {character_id}")
 
-
 def structure_state(fob: int) -> int:
     return int(psql(f"SELECT state FROM {schema('EVE_STRUCTURES_SCHEMA')}.structures WHERE structure_id = {fob}"))
-
 
 def test_the_qa_smartbombs_take_the_fobs_shield_in_its_system():
     ins = schema("EVE_INSURGENCY_SCHEMA")

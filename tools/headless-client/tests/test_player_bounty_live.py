@@ -23,10 +23,8 @@ LIVE = os.environ.get("EVE_LIVE_HOST", "")
 PG_URL = os.environ.get("EVE_PG_URL", "")
 pytestmark = pytest.mark.skipif(not (LIVE and PG_URL), reason="set EVE_LIVE_HOST=host:port and EVE_PG_URL to test against a running server")
 
-
 def isk(character: int) -> int:
     return int(float(psql(f"SELECT isk FROM {schema('EVE_WALLET_SCHEMA')}.balances WHERE owner_id = {character} AND account_key = 1000")))
-
 
 def test_a_placed_bounty_debits_the_placer_once_and_reads_back_and_an_unpayable_one_is_refused():
     run = uuid.uuid4().hex[:8]

@@ -1,6 +1,5 @@
 //! The scene as the world of the NPCs' trees: what it tells the trees that ask to hear (sensors, locks, aggression, the end of an undock protection),
 //! and what it answers as a dogma engine for the weapons of an NPC.
-
 use eve_behaviors::blackboards::Observer;
 use eve_behaviors::env::{Ballpark, Dogma, WorldError};
 use eve_behaviors::events::{Subject, message};

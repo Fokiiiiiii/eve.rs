@@ -1,5 +1,4 @@
 //! A ship in space: what the host says about it (`ShipSpec`, ADR 0007) and where it is and how it is moving.
-
 use eve_destiny::ball::{LegacyMode, WarpState};
 use eve_destiny::{BallEntity, IdRef, Kind, Vec3};
 

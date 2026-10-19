@@ -36,7 +36,6 @@ pytestmark = [
 SECURITY_STATUS_ATTRIBUTE = 2610
 NAMED = only("OnWeaponsTimerUpdate", "OnPvpTimerUpdate", "OnNpcTimerUpdate", "OnCriminalTimerUpdate", "OnDisapprovalTimerUpdate", "OnSystemCriminalFlagUpdates", "OnSecurityStatusUpdate")
 
-
 def changes_security_status(event: dict) -> bool:
     """Whether an `OnModuleAttributeChanges` is about the pilot's security status (the other attributes of a fight are not crimewatch's)."""
     stack = [event["args"]]
@@ -51,17 +50,14 @@ def changes_security_status(event: dict) -> bool:
             stack.extend(value)
     return False
 
-
 def CRIMEWATCH(events: list) -> list:
     """The crimewatch events of a step: the timers, the flags, the pilot's security status and the attribute that carries it."""
     named = NAMED(events)
     return [e for e in events if e in named or (e["name"] == "OnModuleAttributeChanges" and changes_security_status(e))]
 
-
 def slim_changes(events: list) -> int:
     """How many times the slim item of a ship was told again (what a change of security status does for those who see the ship)."""
     return sum(1 for e in events if e["name"] == "DoDestinyUpdate" and "OnSlimItemChange" in json.dumps(e["args"]))
-
 
 def mine(described, keep: set):
     """A description with the flagged pilots of other runs left out of every set (a flag lasts a quarter of an hour, in a system every run starts in)."""
@@ -75,7 +71,6 @@ def mine(described, keep: set):
         return out
     return described
 
-
 def flags_of(events: list, keep: set) -> list:
     """The crimewatch events, with the pilots of other runs left out of the flag updates (an update that is only about them is no event of this run)."""
     kept = []
@@ -88,7 +83,6 @@ def flags_of(events: list, keep: set) -> list:
         kept.append(event)
     return kept
 
-
 def timer_expiries(states: dict) -> list:
     """The expiry of each of the five timers of a described `GetClientStates` answer (`None` while idle)."""
     out = []
@@ -96,7 +90,6 @@ def timer_expiries(states: dict) -> list:
         expiry = timer["$tuple"][1]
         out.append(expiry["$long"] if isinstance(expiry, dict) else expiry)
     return out
-
 
 def test_an_attack_on_another_pilot_starts_the_timers_and_flags_the_attacker_as_the_reference_did():
     race = AGGRESSION["races"][0]

@@ -11,15 +11,12 @@ from . import marshal as m
 # Windows FILETIME (100 ns ticks since 1601-01-01) to Unix seconds.
 _FILETIME_EPOCH_OFFSET = 116444736000000000
 
-
 def filetime_to_unix(filetime: int) -> float:
     return (int(filetime) - _FILETIME_EPOCH_OFFSET) / 1e7
-
 
 def _is_provisional(received: packet.Packet) -> bool:
     named = m.plain(received.named_payload)
     return isinstance(named, dict) and "provisional" in named
-
 
 class Client:
     def __init__(self, host: str = "127.0.0.1", port: int = 26000, timeout: float = 10.0):
@@ -34,7 +31,6 @@ class Client:
         # Dialog answers are queued by method; dialogs record server calls that need answers.
         self.scripted: dict[str, list] = {}
         self.dialogs: list[tuple[str, tuple]] = []
-
 
     def login(self, user: str, password: str) -> handshake.SessionInfo:
         self.close()
@@ -63,7 +59,6 @@ class Client:
 
     def __exit__(self, *exc) -> None:
         self.close()
-
 
     def _next_call_id(self) -> int:
         self._call_id += 1

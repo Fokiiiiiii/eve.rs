@@ -3,9 +3,7 @@
 //! (`AddBalls2` when it is released, `RemoveBalls` when it is gone, the bomb's explosion played first). Both lifetimes are the simulation's own clock (the SDE's
 //! explosion delay): nothing is persisted, so a restart drops them (ADR 0012 addendum, a stated limitation).
 //!
-
 //! the recipients are the ships of the scene within that surface distance, but the ship that launched it (as a smartbomb spares its own).
-
 use std::collections::{BTreeMap, BTreeSet};
 
 use eve_destiny::ball::LegacyMode;

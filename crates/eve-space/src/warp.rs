@@ -4,7 +4,6 @@
 //! for itself from `WarpTo`. Where a warp to a planet, a sun or another big celestial ends is the client's own rule too (a point worked out
 //! from the body's place and size with a random number seeded by its id, Python's Mersenne twister), which the server has to reproduce or the
 //! client's ball and the server's would land in different places.
-
 use eve_destiny::Vec3;
 
 use crate::world::{Body, BodyKind};

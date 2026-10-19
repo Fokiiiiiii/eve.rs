@@ -27,27 +27,21 @@ OWNER_GROUPS = "ownerGroupManager"
 VIEW = 2
 pytestmark = pytest.mark.skipif(not base.LIVE, reason="set EVE_LIVE_HOST=host:port to test against a running server")
 
-
 def keyval_of(answer) -> dict:
     return dict(describe(answer)["args"]["$dict"])
-
 
 def group_id_of(group) -> int:
     return number(keyval_of(group)["groupID"])
 
-
 def folder_id_of(folder) -> int:
     return number(keyval_of(folder)["folderID"])
-
 
 def named(events: list[dict], name: str) -> list[dict]:
     return [event for event in events if event["name"] == name]
 
-
 def mentions(event: dict, value: int) -> bool:
     """Whether the decoded arguments of a notice carry the id (the shape nests lists and tuples)."""
     return str(value) in repr(describe(event["args"]))
-
 
 def test_a_shared_folder_reaches_the_member_while_it_holds_a_view_and_goes_when_the_list_drops_it():
     race = HEALTH["races"][0]
@@ -133,7 +127,6 @@ def test_corporation_membership_changes_revoke_and_restore_a_shared_folder():
             owner.call(BOOKMARKS, "DeleteFolder", folder_id)
             for group in (view_list, use_list, manage_list, admin_list):
                 owner.call(OWNER_GROUPS, "Delete", group)
-
 
 def test_alliance_member_departure_revokes_an_alliance_shared_folder():
     race = HEALTH["races"][0]

@@ -1,6 +1,5 @@
 //! Pochven: the NPCs of its four factions fight each other. The rule is `pochven.rs`, read by `SceneWorld::standings_from_npc_to_item`; the belt rat's
 //! tree does the rest (it finds what is hostile to it in its sensor's range and fights it with its weapon).
-
 use std::sync::Arc;
 
 use eve_destiny::Vec3;

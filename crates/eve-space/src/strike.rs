@@ -3,7 +3,6 @@
 //! The geometry is the reference's (`superweaponRuntime.js`, `isEntityInsideCone` and `isEntityInsideCylinder`): the area starts at the hull's surface
 //! along the aim, runs `length` metres, and a cone's radius at a distance is that distance (a 45 degree half angle). The numbers are the host's: it sends
 //! the aim, the length, the damage per pulse and the windows (the SDE's values). The simulation only applies them.
-
 use crate::health::Damage;
 
 pub const DISRUPTED_REMOTE_REPAIR: f64 = 0.5;

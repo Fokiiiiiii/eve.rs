@@ -1,7 +1,6 @@
 //! The effects the client plays where a ball ends (`TerminalPlayDestructionEffect(id, effect)`): a port, as it is, of `destructionEffect/destructionType.py` of the
 //! client (V24.01, `Fokiiiiiii/eve-logic`). A ship blows up (`EXPLOSION`), an asteroid that is mined out dissolves (`DISSOLVE`, which the client takes 33 seconds
 //! over), and a pilot who is thrown out of a ship is shown the reverse (`REVERSE_EJECT`, 11 seconds).
-
 /// No effect: the ball is gone at once.
 pub const NONE: i64 = 0;
 /// The explosion of a ship or a missile, whatever the ball would have played.

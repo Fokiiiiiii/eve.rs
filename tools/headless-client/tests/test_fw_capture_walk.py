@@ -35,7 +35,7 @@ from tests.test_target import plain_race
 from tests.test_undock import STATION, SYSTEM, arrive, outcome
 
 SDE_DIR = os.environ.get("EVE_SDE_DIR", "")
-SCOUT_VICTORY_POINTS = 50  # the wiki's Scout victory points (FwComplexes.Specs)
+SCOUT_VICTORY_POINTS = 50
 OPEN_LIMIT_S = 180.0  # the first tick after the start opens the complexes; a fresh server needs a few seconds
 DEFENDERS_LIMIT_S = 900.0  # the smartbomb clears the defenders (the room's waves)
 CAPTURE_LIMIT_S = 1200.0  # the capture timer: 300 s of the pilot alone in the complex, ticked every 10 s
@@ -47,7 +47,6 @@ pytestmark = [
                        reason="needs the run's factionwarfare schema, its database and the SDE (tools/dev/run-eve-live.sh)"),
 ]
 
-
 def wait_for_open_scouts() -> set[int]:
     started = time.time()
     while True:
@@ -55,7 +54,6 @@ def wait_for_open_scouts() -> set[int]:
         if systems or time.time() - started > OPEN_LIMIT_S:
             return systems
         time.sleep(5.0)
-
 
 def warp_to_gate(who, ballpark, gate: int, limit: float = 90.0) -> None:
     """Warps to the complex's gate. The gate joins the scene when its room is placed (the server's reconcile, every ten seconds, once the pilot's
@@ -71,7 +69,6 @@ def warp_to_gate(who, ballpark, gate: int, limit: float = 90.0) -> None:
                                      f"{repr(describe(error.payload))[:600]}") from error
             watch({"events": who}, 5.0)
 
-
 def activate_gate(who, gate: int, limit: float = 90.0) -> None:
     """Takes the gate into the room (keeper.ActivateAccelerationGate). The pilot must be at the gate: a walk that is still under way is refused
     as a denied target until the warp ends, so the walk asks again until it is accepted."""
@@ -84,7 +81,6 @@ def activate_gate(who, gate: int, limit: float = 90.0) -> None:
             if time.time() - started > limit:
                 raise AssertionError(f"the gate {gate} was refused for {int(limit)} s: {repr(describe(error.payload))[:600]}") from error
             watch({"events": who}, 5.0)
-
 
 def test_a_pilot_takes_a_scout_complex_in_space_and_captures_it_for_its_faction():
     run = uuid.uuid4().hex[:10]

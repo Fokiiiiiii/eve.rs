@@ -19,10 +19,8 @@ from .oracle import js_to_value, parse_ejson, to_ejson
 FIXTURES = pathlib.Path(__file__).resolve().parents[3] / "oracle/fixtures/marshal/cases.json"
 CASES = json.loads(FIXTURES.read_text(encoding="utf-8"))
 
-
 def test_fixture_set_is_present():
     assert len(CASES) > 500
-
 
 @pytest.mark.parametrize("case", [c for c in CASES if "input" in c], ids=lambda c: c["id"])
 def test_encode_matches_recorded_bytes(case):
@@ -34,7 +32,6 @@ def test_encode_matches_recorded_bytes(case):
     else:
         assert m.encode(js_to_value(js)).hex() == case["encoded"]
 
-
 def _check_decode(decode, data, case, ok_key, err_key):
     if err_key in case:
         with pytest.raises(m.MarshalError) as info:
@@ -43,13 +40,11 @@ def _check_decode(decode, data, case, ok_key, err_key):
     else:
         assert to_ejson(decode(data)) == case[ok_key]
 
-
 @pytest.mark.parametrize("case", [c for c in CASES if "encoded" in c], ids=lambda c: c["id"])
 def test_decode_matches_recorded_value(case):
     data = bytes.fromhex(case["encoded"])
     _check_decode(m.decode, data, case, "decoded", "decodeError")
     _check_decode(m.decode_exact, data, case, "decodedExact", "decodeExactError")
-
 
 def test_hostile_nesting_fails_cleanly():
     with pytest.raises(m.MarshalError):
@@ -60,19 +55,16 @@ def test_hostile_nesting_fails_cleanly():
     with pytest.raises(m.MarshalError):
         m.encode(nested)
 
-
 def test_huge_declared_counts_do_not_allocate():
     for opcode in (0x14, 0x15, 0x16):
         with pytest.raises(m.MarshalError):
             m.decode(b"\x7e\x00\x00\x00\x00" + bytes((opcode, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF)))
-
 
 def test_packet_framing():
     packet = m.encode_packet((1, "two"))
     payload, rest = m.split_packet(packet + b"tail")
     assert payload == packet[4:] and rest == b"tail"
     assert m.split_packet(packet[:-1]) is None
-
 
 def test_official_client_string_table_is_selected_explicitly():
     assert len(STRING_TABLE) == 195
@@ -93,11 +85,9 @@ def test_official_client_string_table_is_selected_explicitly():
     assert payload == m.encode("*fleetid", string_table=OFFICIAL_STRING_TABLE)
     assert rest == b"tail"
 
-
 def test_native_python_containers_use_their_official_marshal_opcodes():
     assert m.encode([1, 2]) == m.encode(m.List([1, 2]))
     assert m.encode({"first": 1, "second": 2}) == m.encode(m.Dict([("first", 1), ("second", 2)]))
-
 
 def test_packet_build_and_parse_match_official_machonet_state():
     source = packet.client_address(m.Long(7_000_001), 4, "machoNet")
@@ -177,7 +167,6 @@ def test_packet_build_and_parse_match_official_machonet_state():
     assert stream.value[0] == 1
     assert bytes(stream.value[1]) == b"GetTime"
     assert stream.value[2:] == ((), None)
-
 
 def test_call_result_and_error_response_unwrap_official_substreams():
     response = packet.Packet(

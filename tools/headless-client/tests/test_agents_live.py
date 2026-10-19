@@ -40,7 +40,6 @@ REQUEST, ACCEPT, DECLINE = 376, 377, 378
 DAY_MS = 86_400_000
 SKIP_REFERENCE = pytest.mark.skipif(REFERENCE, reason="the EVE.js reference walk covers the research dialogue only")
 
-
 def new_pilot(client, run: str) -> int:
     """A new character (the creation of login_to_character.json) with the Cockroach as its active ship, then selected.
 
@@ -60,7 +59,6 @@ def new_pilot(client, run: str) -> int:
         assert int(psql(f"SELECT type_id FROM {schema('EVE_INVENTORY_SCHEMA')}.items WHERE id = {ship} AND flag = 4")) == COCKROACH
     return character_id
 
-
 def seed_ship(character_id: int) -> int:
     """A Cockroach in the pilot's station hangar (flag 4, singleton), made the active ship through the characters row. The pilot's
     safety is set to none (the red level), which a smartbomb needs in low, high and safe space."""
@@ -72,20 +70,16 @@ def seed_ship(character_id: int) -> int:
          f"UPDATE {characters} SET ship_id = (SELECT id FROM ship) WHERE id = {character_id}")
     return int(psql(f"SELECT ship_id FROM {characters} WHERE id = {character_id}"))
 
-
 def psql(statement: str) -> str:
     done = subprocess.run(["psql", PG_URL, "-v", "ON_ERROR_STOP=1", "-tAqc", statement], capture_output=True, text=True)
     assert done.returncode == 0, f"{statement}\n{done.stderr}"
     return done.stdout.strip()
 
-
 def schema(name: str) -> str:
     return os.environ[name]
 
-
 def isk_of(character_id: int) -> float:
     return float(psql(f"SELECT isk FROM {schema('EVE_WALLET_SCHEMA')}.balances WHERE owner_id = {character_id}"))
-
 
 # the seeds update the row or insert it: the scratch schemas do not all carry the unique keys an upsert needs
 def seed_isk(character_id: int, amount: int) -> None:
@@ -93,20 +87,17 @@ def seed_isk(character_id: int, amount: int) -> None:
     psql(f"WITH u AS (UPDATE {table} SET isk = isk + {amount} WHERE owner_id = {character_id} RETURNING 1) "
          f"INSERT INTO {table} (owner_id, isk, plex) SELECT {character_id}, {amount}, 0 WHERE NOT EXISTS (SELECT 1 FROM u)")
 
-
 def seed_loyalty_points(character_id: int, corporation_id: int, amount: int) -> None:
     table = f"{schema('EVE_WALLET_SCHEMA')}.lp_balances"
     psql(f"WITH u AS (UPDATE {table} SET amount = {amount} WHERE holder_kind = 'character' AND holder_id = {character_id} "
          f"AND issuer_corp_id = {corporation_id} RETURNING 1) INSERT INTO {table} (holder_kind, holder_id, issuer_corp_id, amount) "
          f"SELECT 'character', {character_id}, {corporation_id}, {amount} WHERE NOT EXISTS (SELECT 1 FROM u)")
 
-
 def seed_offer(corporation_id: int, offer_id: int, type_id: int, lp_cost: int, isk_cost: int) -> None:
     table = f"{schema('EVE_WALLET_SCHEMA')}.lp_store_offers"
     psql(f"INSERT INTO {table} (corporation_id, offer_id, type_id, quantity, lp_cost, isk_cost) "
          f"SELECT {corporation_id}, {offer_id}, {type_id}, 1, {lp_cost}, {isk_cost} "
          f"WHERE NOT EXISTS (SELECT 1 FROM {table} WHERE corporation_id = {corporation_id} AND offer_id = {offer_id})")
-
 
 def seed_standing(subject: int, character_id: int, value: float = 10) -> None:
     """A standing toward an agent or its corporation (the relations rows the agents' access rule reads)."""
@@ -115,13 +106,11 @@ def seed_standing(subject: int, character_id: int, value: float = 10) -> None:
          f"RETURNING 1) INSERT INTO {table} (kind, subject, object, value, since_ms, updated_ms) "
          f"SELECT 'standing', {subject}, {character_id}, {value}, 0, 0 WHERE NOT EXISTS (SELECT 1 FROM u)")
 
-
 def agents(client) -> list:
     """The agent rows: a rowset (name, {"header", "lines"}), each line a dict by column name."""
     _, rowset = m.plain(client.call("agentMgr", "GetAgents"))
     names = [str(name) for name in rowset["header"]]
     return [dict(zip(names, line)) for line in rowset["lines"]]
-
 
 def research_skill_count(agent_id: int) -> int:
     if REFERENCE:
@@ -129,14 +118,11 @@ def research_skill_count(agent_id: int) -> int:
     """The distinct skills an R&D agent offers in the SDE (npcCharacters.skills of its agentTypeID 4 record)."""
     return int(psql(f"SELECT count(DISTINCT s->>'typeID') FROM sde.\"npcCharacters\", jsonb_array_elements(doc->'skills') s WHERE key = '{agent_id}'"))
 
-
 def character_name(character_id: int) -> str:
     return psql(f"SELECT name FROM {schema('EVE_CHARACTERS_SCHEMA')}.characters WHERE id = {character_id}")
 
-
 def names(client) -> set:
     return {event["name"] for event in notifications_of(client)}
-
 
 def do_action(client, handle, action: int):
     """DoAction: ((agentSays, actions), lastActionInfo). Returns (says, [(action, button), ...], lastActionInfo)."""
@@ -144,36 +130,29 @@ def do_action(client, handle, action: int):
     says, actions = reply[0]
     return says, [tuple(pair) for pair in actions], reply[1]
 
-
 def says_label(says) -> str:
     message = says[0]
     return message[0] if isinstance(message, (tuple, list)) else str(message)
-
 
 def seed_wallet(client, character_id, amount):
     """The pilot's ISK, through the game master's /setisk on both servers (the absolute balance)."""
     gm.set_isk(client, amount)
 
-
 def seed_agent_standing(client, subject, character_id):
     """A standing toward an agent's corporation or faction (an owner id), through /setstanding on both servers."""
     gm.set_standing(client, subject)
-
 
 def seed_personal_standing(client, agent, character_id):
     """The pilot's own standing toward an agent (the agent's personal standing, not its corporation's), through /setstanding on both servers."""
     gm.set_agent_standing(client, agent, name=evejs.agent_name(agent) if REFERENCE else None)
 
-
 def balance_of(client, character_id):
     return evejs.cash_balance(client, character_id) if REFERENCE else isk_of(character_id)
-
 
 def project_count(character_id, expected=None):
     if REFERENCE:
         return evejs.research_project_count(character_id, until=expected)
     return int(psql(f"SELECT count(*) FROM {schema('EVE_AGENTS_SCHEMA')}.research_projects WHERE character_id = {character_id}"))
-
 
 def age_projects(character_id, milliseconds):
     """Time passes for the project: eve.rs moves its start back in the database, the reference moves its clock forward."""
@@ -182,10 +161,8 @@ def age_projects(character_id, milliseconds):
     else:
         psql(f"UPDATE {schema('EVE_AGENTS_SCHEMA')}.research_projects SET started_at_ms = started_at_ms - {milliseconds} WHERE character_id = {character_id}")
 
-
 def run_id() -> str:
     return uuid.uuid4().hex[:10]
-
 
 @SKIP_REFERENCE
 def test_lp_store_purchase_takes_lp_and_isk_and_grants_the_item():
@@ -204,7 +181,6 @@ def test_lp_store_purchase_takes_lp_and_isk_and_grants_the_item():
         lp = psql(f"SELECT amount FROM {wallet}.lp_balances WHERE holder_id = {character_id} AND issuer_corp_id = {STORE_CORPORATION}")
         assert int(lp) == 4900
         assert "OnItemChange" in names(client)
-
 
 def test_research_start_cancel_and_datacores_over_the_dialogs():
     with connect(f"rnd-{run_id()}") as client:
@@ -226,7 +202,7 @@ def test_research_start_cancel_and_datacores_over_the_dialogs():
         says, actions, _ = do_action(client, handle, START_RESEARCH)
         assert (BUY_DATACORES, 14) in actions and (CANCEL_RESEARCH, 13) in actions, (says_label(says), actions, client.dialogs)
         assert "ResearchStarted" in says_label(says), (says_label(says), client.dialogs)
-        # the field list is the agent's own skills (npcCharacters.skills of the SDE), one choice each: all five by /giveskill
+
         choices = [args for method, args in client.dialogs if method == "SingleChoiceBox"][-1][2]
         assert len(choices) == research_skill_count(agent["agentID"]), (len(choices), client.dialogs)
 
@@ -253,7 +229,6 @@ def test_research_start_cancel_and_datacores_over_the_dialogs():
         assert "ResearchCancelled" in says_label(says)
         assert (START_RESEARCH, 12) in actions
         assert project_count(character_id, 0) == 0
-
 
 @SKIP_REFERENCE
 def test_locator_locates_a_second_pilot_charges_the_fee_and_tells_the_requester():
@@ -287,12 +262,11 @@ def test_locator_locates_a_second_pilot_charges_the_fee_and_tells_the_requester(
             time.sleep(0.5)
         assert "OnNotificationReceived" in seen
 
-
 @SKIP_REFERENCE
 def test_agent_decline_asks_first_and_a_yes_declines_the_offer():
     with connect(f"dec-{run_id()}") as client:
         character_id = new_pilot(client, run_id())
-        # the first agent that offers a mission to this pilot (only the epic-arc agents offer any in this build)
+
         for agent in agents(client):
             if agent["agentTypeID"] == RESEARCH_AGENT_TYPE or agent["isLocatorAgent"] or agent["isInSpace"]:
                 continue

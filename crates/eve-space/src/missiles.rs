@@ -4,7 +4,6 @@
 //! `explosionDelay` (so it reaches `maxVelocity × explosionDelay`), and what it does to the target it reaches is its damage times an application factor:
 //! `min(1, signature / explosion radius, (signature / explosion radius × explosion velocity / target speed) ^ exponent)`. CCP stores the exponent of the damage reduction
 //! as `ln(drf) / ln(5.5)` in the missile's `aoeDamageReductionFactor`; a value above one is taken as the raw factor and worked into that exponent.
-
 use crate::health::Damage;
 
 /// What a launcher flies: the type of the missile it fires, its speed, how long it flies and the numbers that decide how much of its damage a target takes.

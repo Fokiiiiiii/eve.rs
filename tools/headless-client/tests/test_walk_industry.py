@@ -37,13 +37,10 @@ pytestmark = [
     pytest.mark.skipif(os.environ.get("EVE_LIVE_SERVER", "eve.rs") == "reference", reason="seeding needs the database: eve.rs only"),
 ]
 
-
 def station_system() -> int:
     return int(dbseed.sql(f"select doc->>'solarSystemID' from sde.\"npcStations\" where key = '{STATION}'"))
 
-
 SCIENTIFIC_NETWORKING = 24270  # the distance skill of the science activities: 5 jumps per level (the client's DISTANCE_PER_LEVEL)
-
 
 def nearest_laboratory(origin: int) -> tuple[int, int, int]:
     """The nearest station with a Laboratory (service 15): `(station, its system, jumps from the origin system)`. The stargates
@@ -74,7 +71,6 @@ def nearest_laboratory(origin: int) -> tuple[int, int, int]:
                 frontier.append(neighbour)
     raise AssertionError(f"no laboratory within 25 jumps of system {origin}")
 
-
 def job_dump(character: int, blueprint: int, activity: int, system: int, runs: int = 1, materials: dict | None = None,
              facility: int = STATION, blueprint_type: int = BLUEPRINT, corporation: int = 0, flag: int = dbseed.HANGAR,
              output_flag: int | None = None) -> dict:
@@ -100,21 +96,17 @@ def job_dump(character: int, blueprint: int, activity: int, system: int, runs: i
         "productTypeID": None,
     }
 
-
 def job_status(job: int) -> int:
     return int(dbseed.sql(f"select status from {dbseed.schema('INDUSTRY')}.jobs where job_id = {int(job)}"))
-
 
 def ready_now(job: int) -> None:
     """Moves the job's end into the past, so its completion (the Deliver button) is allowed."""
     dbseed.sql(f"update {dbseed.schema('INDUSTRY')}.jobs set end_date_filetime = 1 where job_id = {int(job)}")
 
-
 def efficiencies(who, blueprint: int) -> tuple[int, int]:
     """The blueprint's material and time efficiency as the blueprint manager reports them to the client."""
     fields = dict(describe(who.call("blueprintManager", "GetBlueprintData", blueprint))["args"]["$dict"])
     return number(fields["materialEfficiency"]), number(fields["timeEfficiency"])
-
 
 def wait_for_notification(who, name: str, seconds: float = 3.0) -> bool:
     """Whether a named notification reaches the session within the time (the event pump delivers within its poll interval)."""
@@ -125,7 +117,6 @@ def wait_for_notification(who, name: str, seconds: float = 3.0) -> bool:
         if time.monotonic() >= deadline:
             return False
         time.sleep(0.2)
-
 
 def test_a_pilot_installs_lists_and_cancels_a_manufacturing_job():
     race = HEALTH["races"][0]
@@ -139,7 +130,7 @@ def test_a_pilot_installs_lists_and_cancels_a_manufacturing_job():
         job = number(who.call("industryManager", "InstallJob", job_dump(character, blueprint, MANUFACTURING, system)))
         assert job_status(job) == 1
         assert dbseed.items_of(character, MATERIAL) == [], "the 86 units are consumed at install"
-        # the client's job list is kept by OnIndustryJob, which the change subscriber sends to the owner's session
+
         assert wait_for_notification(who, "OnIndustryJob"), "no OnIndustryJob after the install"
 
         listed = who.call("industryManager", "GetJobsByOwner", character, False)
@@ -149,7 +140,6 @@ def test_a_pilot_installs_lists_and_cancels_a_manufacturing_job():
         assert job_status(job) == 102
         answer, error = outcome(lambda: who.call("industryManager", "CompleteJob", job, system))
         assert error is not None, answer  # a cancelled job cannot be delivered
-
 
 def test_a_pilot_delivers_a_manufacturing_job_and_gets_the_product():
     race = HEALTH["races"][0]
@@ -167,7 +157,6 @@ def test_a_pilot_delivers_a_manufacturing_job_and_gets_the_product():
         assert job_status(job) == 100
         assert dbseed.items_of(character, PRODUCT), "the product is delivered to the output hangar"
         assert dbseed.sql(f"select count(*) from {dbseed.schema('INDUSTRY')}.jobs where job_id = {int(job)} and output_item_ids <> '{{}}'") == "1"
-
 
 def test_research_raises_material_efficiency_then_time_efficiency_by_two():
     race = HEALTH["races"][0]
@@ -191,12 +180,10 @@ def test_research_raises_material_efficiency_then_time_efficiency_by_two():
         who.call("industryManager", "CompleteJob", te, lab_system)
         assert efficiencies(who, blueprint) == (1, 2)
 
-
 def grant_skills(character: int, skills: list[tuple[int, int]]) -> None:
     for type_id, level in skills:
         dbseed.sql(f"insert into {dbseed.schema('SKILLS')}.character_skills (character_id, type_id, level, skill_points) "
                    f"values ({int(character)}, {int(type_id)}, {int(level)}, 1000)")
-
 
 def test_a_pilot_copies_a_blueprint_at_a_laboratory_and_receives_the_copy():
     race = HEALTH["races"][0]
@@ -218,7 +205,6 @@ def test_a_pilot_copies_a_blueprint_at_a_laboratory_and_receives_the_copy():
         copies = dbseed.sql(f"select count(*) from {dbseed.schema('INVENTORY')}.items "
                             f"where owner_id = {int(character)} and type_id = {BLUEPRINT} and blueprint_copy")
         assert copies == "1", copies
-
 
 def test_an_invention_uses_the_decryptor_the_client_lists_and_its_skills():
     race = HEALTH["races"][0]
@@ -254,7 +240,6 @@ def test_an_invention_uses_the_decryptor_the_client_lists_and_its_skills():
         for row in [line for line in outputs.splitlines() if line]:
             assert row.split("|") == ["2", "4", "14"], row
 
-
 def _entries(described) -> list:
     """The (key, value) pairs of a described dictionary, util.KeyVal object or Python dictionary."""
     if not isinstance(described, dict):
@@ -267,11 +252,9 @@ def _entries(described) -> list:
         return _entries(described["args"])
     return list(described.items())
 
-
 def _fields(value) -> dict:
     """The fields of a result, by name (the values stay described)."""
     return dict(_entries(describe(value)))
-
 
 def test_the_facility_selector_sees_the_station_its_activities_its_hangar_and_its_tax():
     race = HEALTH["races"][0]
@@ -302,19 +285,16 @@ def test_the_facility_selector_sees_the_station_its_activities_its_hangar_and_it
         ids = [number(dict(_entries(row))["facilityID"]) for row in listed]
         assert STATION in ids, ids
 
-
 CORPORATION_HANGAR_1 = 115  # flagCorpSAG1 (inventorycommon/const.py); the deliveries are flag 62
 CORPORATION_HANGAR_3 = 117
 FACTORY_MANAGER = 1024  # the client's ROLE_FACTORY_MANAGER
 MANUFACTURING_ROLE = 1 << 50  # the client's ROLE_FACTORY_MANUFACTURING
 WALLET_DIVISION_1_TAKE = 1 << 27  # the Account Take 1 role (CorporationRoles.WalletTakeRole(1000))
 
-
 def reenter(who, character: int) -> None:
     """The character logs off and selects again, so its session takes the corporation and roles the database now has."""
     who.call("userSvc", "UserLogOffCharacter")
     assert base.attempt(who, "charUnboundMgr", "SelectCharacterID", character, None, False) == ("ok", None)
-
 
 def test_a_corporation_job_is_paid_from_its_division_announced_to_its_managers_and_delivered_to_the_chosen_hangar():
     race = HEALTH["races"][0]

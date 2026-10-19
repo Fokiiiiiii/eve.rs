@@ -1,7 +1,6 @@
 //! Wormhole ends in the scene. A wormhole end is a body of its system (`BodyKind::Wormhole`) that the host puts in space and takes out
 //! (protocol 63). Its far end is in another system; a ship that comes out of this end is placed by the far end's position and radius.
 //! The simulation decides no mass, lifetime or collapse: the host does that before it sends the jump (ADR 0012, rule 3).
-
 use std::f64::consts::PI;
 use std::sync::Arc;
 

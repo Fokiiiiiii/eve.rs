@@ -1,5 +1,4 @@
 //! A scene answers the client as the reference did in the recorded undock: what it says at the bind, to each command and to a docking.
-
 mod support;
 
 use std::sync::Arc;

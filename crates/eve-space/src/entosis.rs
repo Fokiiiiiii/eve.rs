@@ -2,7 +2,6 @@
 //! simulation keeps the target and its reach; the host decides the capture (ADR 0013: a work cycle, command `WORK_ENTOSIS`).
 //!
 //! The reach is EVE.js's `resolveEntosisLinkActivation` and `executeEntosisLinkCycle`: a surface-to-surface distance with a grace of one metre.
-
 use crate::scene::{Scene, SessionId};
 use crate::world::BodyKind;
 

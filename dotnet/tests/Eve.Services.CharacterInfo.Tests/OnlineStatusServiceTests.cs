@@ -169,6 +169,16 @@ public sealed class OnlineStatusServiceTests
         Assert.Equal(PyBool.False, await Call(new OnlineStatusService(sessions), new ClientSession(), "GetOnlineStatus", id));
     }
 
+    [Fact]
+    public async Task Unselected_sessions_cannot_query_a_known_characters_presence()
+    {
+        var sessions = new CharacterSessions();
+        Enter(sessions, Target);
+
+        Assert.Equal(PyBool.False, await Call(new OnlineStatusService(sessions), new ClientSession(),
+            "GetOnlineStatus", new PyInt(Target)));
+    }
+
     public static IEnumerable<object[]> NumericIds()
     {
         yield return [new PyInt(Target)];

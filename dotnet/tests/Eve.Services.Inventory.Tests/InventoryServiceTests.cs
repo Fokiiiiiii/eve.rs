@@ -48,7 +48,12 @@ internal sealed class Rig : IAsyncDisposable
 
     private readonly string _schema = $"inv_{Guid.NewGuid():N}"[..20];
 
-    private Rig(NpgsqlDataSource source, DogmaStatic statics, CorporationHangarAccess? corporationHangarAccess)
+    private Rig(
+        NpgsqlDataSource source,
+        DogmaStatic statics,
+        CorporationHangarAccess? corporationHangarAccess,
+        Func<Eve.Services.ClientSession, long, CancellationToken, ValueTask<ControlledStructureInventory?>>? controlledStructureInventory,
+        Func<long, CancellationToken, ValueTask<DockableAssetLocation?>>? dockableAssetLocation)
     {
         Source = source;
         Statics = statics;
@@ -59,6 +64,8 @@ internal sealed class Rig : IAsyncDisposable
         Ships = new CharacterShips(source, statics, Characters, Items, Skills, Modules);
         Service = new InvBrokerService(Items, new ItemTypeCatalog(new SdeReader(source)), Stations, Ships, statics,
             () => ClockMs, corporationHangarAccess: corporationHangarAccess,
+            controlledStructureInventory: controlledStructureInventory,
+            dockableAssetLocation: dockableAssetLocation,
             crystalDamage: async (itemIds, token) => (await Modules.ModuleConditionsAsync(itemIds, token))
                 .ToDictionary(entry => entry.Key, entry => entry.Value.Damage));
     }
@@ -83,12 +90,18 @@ internal sealed class Rig : IAsyncDisposable
 
     public InvBrokerService Service { get; }
 
-    public static async Task<Rig> CreateAsync(bool activeShip = false, CorporationHangarAccess? corporationHangarAccess = null, int characterTypeId = 1)
+    public static async Task<Rig> CreateAsync(
+        bool activeShip = false,
+        CorporationHangarAccess? corporationHangarAccess = null,
+        int characterTypeId = 1,
+        Func<Eve.Services.ClientSession, long, CancellationToken, ValueTask<ControlledStructureInventory?>>? controlledStructureInventory = null,
+        Func<long, CancellationToken, ValueTask<DockableAssetLocation?>>? dockableAssetLocation = null)
     {
         var source = NpgsqlDataSource.Create(PgConnection.ForTest(Url!));
         var sde = new SdeReader(source);
         Assert.True(await sde.BuildAsync() is not null, "no SDE is loaded: run `cargo run -p eve-sde -- ensure --pg $EVE_PG_URL`");
-        var rig = new Rig(source, await DogmaStatic.LoadAsync(sde), corporationHangarAccess);
+        var rig = new Rig(source, await DogmaStatic.LoadAsync(sde), corporationHangarAccess,
+            controlledStructureInventory, dockableAssetLocation);
         await PgItemStore.MigrateAsync(source, rig._schema);
         await PgCharacterStore.MigrateAsync(source, rig._schema + "c");
         await PgSkillStore.MigrateAsync(source, rig._schema + "s");
@@ -556,6 +569,47 @@ public class InvBrokerTests
         Assert.Contains(all, row => PackedItemId(row) == cargo);
         Assert.Equal(2, Assert.IsType<PyTuple>(await rig.CallAsync(session, "GetAssetWorth", oid)).Items.Count);
         Assert.Equal(PyNone.Instance, await rig.CallAsync(Rig.Session(id: 2), "List", oid));
+    }
+
+
+    [PgFact]
+    public async Task Global_assets_resolve_structure_roots_and_nested_personal_items()
+    {
+        const long structureId = 4_000_000_001;
+        const long solarSystemId = 30_000_142;
+        await using var rig = await Rig.CreateAsync(
+            dockableAssetLocation: (id, _) => ValueTask.FromResult<DockableAssetLocation?>(
+                id == structureId ? new DockableAssetLocation(structureId, solarSystemId, 35832) : null));
+        var container = await rig.AddAsync(Rig.Cockroach, Rig.Character, structureId, flag: 5, singleton: true);
+        var nestedItem = await rig.AddAsync(Rig.Tritanium, Rig.Character, container, flag: 5, quantity: 10);
+        var session = Rig.Session();
+
+        var binding = Assert.IsType<PyTuple>(await rig.CallAsync(
+            session,
+            "MachoBindObject",
+            null,
+            new PyTuple([new PyLong(Rig.Character), new PyLong(10002)]),
+            new PyTuple([new PyStr("ListStations"), new PyTuple([]), PyNone.Instance])));
+        var oid = Rig.OidOf(Assert.IsType<PySubStruct>(binding.Items[0]));
+
+        var stationRowset = Assert.IsType<PyObject>(await rig.CallAsync(session, "ListStations", oid));
+        var stationArgs = Assert.IsType<PyDict>(stationRowset.Args);
+        var stationLines = Assert.IsType<PyList>(stationArgs.Entries.Single(entry => entry.Key == new PyStr("lines")).Value);
+        var stationRow = Assert.IsType<PyTuple>(Assert.Single(stationLines.Items));
+        Assert.Equal(structureId, Assert.IsType<PyLong>(stationRow.Items[0]).Value);
+        Assert.Equal(solarSystemId, Assert.IsType<PyInt>(stationRow.Items[1]).Value);
+        Assert.Equal(1, Assert.IsType<PyInt>(stationRow.Items[3]).Value);
+
+        var topLevel = Rows(await rig.CallAsync(session, "List", oid));
+        Assert.Contains(topLevel, row => PackedItemId(row) == container);
+        Assert.DoesNotContain(topLevel, row => PackedItemId(row) == nestedItem);
+
+        var stationItems = Rows(await rig.CallAsync(session, "ListStationItems", oid, new PyLong(structureId)));
+        Assert.Contains(stationItems, row => PackedItemId(row) == container);
+
+        var all = Rows(await rig.CallAsync(session, "ListIncludingContainers", oid));
+        Assert.Contains(all, row => PackedItemId(row) == container);
+        Assert.Contains(all, row => PackedItemId(row) == nestedItem);
     }
 
 

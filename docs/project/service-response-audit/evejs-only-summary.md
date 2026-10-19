@@ -38,7 +38,7 @@ EveJSがclientへ広告する143名のうち、RSのfull profileにない名前�
 - **分類2・export出口なし：476行全体。** 登録済みサービス側332行＋サービスなし側144行。その332行はnamed未実装305／client-local対応3／legacy 24です。
 - **分類3・bound後続・binder不足：39行。** 476行の内数で、39件を追加加算しません。内訳はnamed未実装37／legacy 2です。更新したV24列ではcaller-source根拠17行、未確認22行です。[EJS-0306](../../../docs/project/service-response-audit/evejs-only-responses.md:557)、[EJS-0203](../../../docs/project/service-response-audit/evejs-only-responses.md:454)
 
-named RPC表のV24列全体では、caller／forwarding-source根拠が40行、未確認が436行です。40行はmissing出口のcaller記録37行とclient-local代替3行で、実動比較済み件数ではありません。これはこの列に反映したsource根拠の数であり、他のNative trace・feature監査を含む「全client調査件数」ではありません。完全な引数・返値field・副作用・再接続互換を40件確認した、という意味でもありません。
+named RPC表のV24列全体では、caller／forwarding-source根拠が41行、未確認が435行です。41行はmissing出口のcaller記録38行とclient-local代替3行で、実動比較済み件数ではありません。これはこの列に反映したsource根拠の数であり、他のNative trace・feature監査を含む「全client調査件数」ではありません。完全な引数・返値field・副作用・再接続互換を41件確認した、という意味でもありません。
 
 ### 代表的なclient操作
 
@@ -108,3 +108,9 @@ source実装・test・build・Git mutation・子agentは引き続き行ってい
 旧44件は**未実装33／client-local対応3／legacy 6／現行同service実装済み2**、現在の未登録名は42です。agentMgr.MachoResolveObjectとdungeonInstanceCacheMgr.GetTriglavianSiteInstancesは、既存ledger・TODOでも既に欠落から除外済みでした。2件を再び減算せず、core-a-fの分類変更7件を反映しています。**全体の672行、物理名差476、サービス11／候補29、protobuf候補182、14群、Host181／1280は維持**します。named未実装のTODOは448件・63groupへ更新しました。[core-a-f revised 44-row handoff](../../../docs/project/service-response-audit/core-a-f.md:345)
 
 Source snapshotは引き続きmain/dda03ca0（親dirty宣言を含む）です。文書読戻し時のmain HEADはc114dc0dへ進んでいましたが、その新commitのsource再監査は今回行っていません。この文書更新で動的受入を追加確認したものはありません。
+
+### Follow-up (2026-10-19)
+
+`charMgr` global assets now resolves personal inventory roots at persistently deployed structures as well as static stations. It follows nested container ancestry for root selection and keeps nested rows in `ListIncludingContainers`; one focused `eve_p2` regression passed. The Host callback reads deployed structure locations from the existing structure directory source. The `charMgr` Host wrapper still needs an end-to-end regression.
+
+The V24 caller for `contractProxy.GetLoginInfo` is confirmed at `eve/client/script/ui/shared/neocom/contracts/contracts.py:190-205`; `NeocomBlink` consumes all three rowsets for contract notifications. The method remains open because eve.rs has no persisted contract records or contract read model from which to build those rows. The 476 named exit count is unchanged: this missing exit remains open.

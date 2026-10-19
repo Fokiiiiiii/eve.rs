@@ -11,11 +11,14 @@ namespace Eve.Services.Inventory;
 
 public sealed record ControlledStructureInventory(Item Structure, IReadOnlyList<Item> Contents);
 
+public sealed record DockableAssetLocation(long Id, long SolarSystemId, int TypeId);
+
 [Service("invbroker")]
 public sealed partial class InvBrokerService(
     PgItemStore items, ItemTypeCatalog types, StationCatalog stations, CharacterShips ships, DogmaStatic statics, Func<long> nowUnixMs, ISpaceContainers? space = null, ISpaceDroneBays? droneBays = null, CorporationHangarAccess? corporationHangarAccess = null, IReadOnlyList<Eve.Services.ICharacterEntryHook>? entryHooks = null,
     Func<ClientSession, long, CancellationToken, ValueTask<ControlledStructureInventory?>>? controlledStructureInventory = null,
-            Func<IReadOnlyCollection<long>, CancellationToken, Task<IReadOnlyDictionary<long, double>>>? crystalDamage = null) : IBoundObjectReleaseHandler
+            Func<IReadOnlyCollection<long>, CancellationToken, Task<IReadOnlyDictionary<long, double>>>? crystalDamage = null,
+            Func<long, CancellationToken, ValueTask<DockableAssetLocation?>>? dockableAssetLocation = null) : IBoundObjectReleaseHandler
 {
     /// <summary>The container the client asks for to get the hangar of the station it is docked at.</summary>
     public const int ContainerHangar = 10004;
@@ -101,6 +104,19 @@ public sealed partial class InvBrokerService(
             || view.Contents.Any(item => item.LocationId != structureId || item.OwnerId != view.Structure.OwnerId))
             return null;
         return view;
+    }
+
+    private async ValueTask<DockableAssetLocation?> GlobalAssetStructureAsync(
+        long locationId, CancellationToken cancellationToken)
+    {
+        if (dockableAssetLocation is null || locationId <= 0)
+            return null;
+        var location = await dockableAssetLocation(locationId, cancellationToken);
+        if (location is null || location.Id != locationId || location.SolarSystemId <= 0 || location.TypeId <= 0 ||
+            statics.CategoryId("Structure") is not { } category)
+            return null;
+        await statics.EnsureTypesAsync([location.TypeId], cancellationToken);
+        return statics.Type(location.TypeId)?.CategoryId == category ? location : null;
     }
 
     private void RequireMutableInventory(ServiceCall call)
@@ -469,8 +485,12 @@ public sealed partial class InvBrokerService(
             var contents = controlled is not null
                 ? await RowsAsync(controlled.Contents, call.Cancellation)
                 : await ContentsAsync(context, call.Session, call.Cancellation);
-            if (context.Kind == Kind.GlobalAssets)
-                contents = contents.Where(row => stations.Get(row.LocationId) is not null).ToArray();
+            if (context.Kind == Kind.GlobalAssets && call.Session.CharacterId is { } character)
+            {
+                var owned = await items.OwnedByAsync(character, call.Cancellation);
+                var roots = await GlobalAssetRootsAsync(owned, call.Cancellation);
+                contents = contents.Where(row => roots.LocationIds.Contains(row.LocationId)).ToArray();
+            }
             var chosen = flag is { } f ? contents.Where(r => r.Flag == f).ToList() : [.. contents];
             result = context.Kind == Kind.Ship && flag is null && StationOf(call.Session) is not null
                 ? InventoryWire.Set(chosen.Select(r => InventoryWire.PackedRow(r, r.CategoryId == PlayerCategory ? new PyStr("") : PyNone.Instance)))
@@ -656,12 +676,67 @@ public sealed partial class InvBrokerService(
     private static PyValue KeyVal(double capacity, double used) => new PyObject(
         new PyStr("util.KeyVal"), new PyDict([new(new PyStr("capacity"), Py.Number(capacity)), new(new PyStr("used"), Py.Number(used))]));
 
-    /// <summary>
-    /// <c>GetCapacity(flag)</c>: how big the inventory is and how much is in it. A ship's hold is the ship's own capacity (dogma's); asked of a ship with no flag it is the
-    /// cargo hold. A hangar holds a million cubic metres whatever is in it; asked for the cargo hold it answers what the reference does for an inventory that is no
-    /// ship (5,000).
-    /// </summary>
-[Method("ListStations")]
+    /// <summary>The root locations and owned items that resolve to them in the global assets view.</summary>
+        private sealed record GlobalAssetRoots(
+        HashSet<long> LocationIds,
+        HashSet<long> ItemIds,
+        Dictionary<long, DockableAssetLocation> Structures);
+
+    private async Task<GlobalAssetRoots> GlobalAssetRootsAsync(
+        IReadOnlyList<Item> owned, CancellationToken cancellationToken)
+    {
+        var itemsById = owned.ToDictionary(item => item.Id);
+        var locationIds = new HashSet<long>();
+        var itemIds = new HashSet<long>();
+        var structures = new Dictionary<long, DockableAssetLocation>();
+        var checkedStructureIds = new HashSet<long>();
+
+        async ValueTask<DockableAssetLocation?> StructureAtAsync(long locationId)
+        {
+            if (structures.TryGetValue(locationId, out var cached))
+                return cached;
+            if (!checkedStructureIds.Add(locationId))
+                return null;
+            var structure = await GlobalAssetStructureAsync(locationId, cancellationToken);
+            if (structure is not null)
+                structures.Add(locationId, structure);
+            return structure;
+        }
+
+        foreach (var item in owned.Where(item => item.Quantity != 0))
+        {
+            var current = item;
+            var visited = new HashSet<long>();
+            while (current.LocationId > 0)
+            {
+                var locationId = current.LocationId;
+                if (stations.Get(locationId) is not null)
+                {
+                    locationIds.Add(locationId);
+                    itemIds.Add(item.Id);
+                    break;
+                }
+
+                if (!visited.Add(locationId))
+                    break;
+                if (itemsById.TryGetValue(locationId, out var parent))
+                {
+                    current = parent;
+                    continue;
+                }
+                if (await StructureAtAsync(locationId) is not null)
+                {
+                    locationIds.Add(locationId);
+                    itemIds.Add(item.Id);
+                }
+                break;
+            }
+        }
+
+        return new GlobalAssetRoots(locationIds, itemIds, structures);
+    }
+
+    [Method("ListStations")]
     public async ValueTask<PyValue> ListStations(ServiceCall call)
     {
         var context = ContextOf(call);
@@ -672,26 +747,36 @@ public sealed partial class InvBrokerService(
                 []);
 
         var owned = await items.OwnedByAsync(characterId, call.Cancellation);
-        var rows = owned
-            .Where(item => item.Quantity != 0 && stations.Get(item.LocationId) is not null)
-            .GroupBy(item => item.LocationId)
-            .Select(group => stations.Get(group.Key) is { } station
-                ? (Station: station, ItemCount: group.Count())
-                : default)
-            .Where(group => group.Station is not null)
-            .OrderBy(group => group.Station!.SolarSystemId)
-            .ThenBy(group => group.Station!.Id)
-            .Select(group => Py.Tuple([
-                InventoryWire.Id(group.Station!.Id),
-                InventoryWire.Id(group.Station.SolarSystemId),
-                new PyInt(group.Station.TypeId),
-                new PyInt(group.ItemCount),
-                PyNone.Instance
-            ]));
+        var roots = await GlobalAssetRootsAsync(owned, call.Cancellation);
+        var rows = new List<(long SolarSystemId, long LocationId, PyValue Row)>();
+        foreach (var locationId in roots.LocationIds)
+        {
+            var itemCount = owned.Count(item => item.Quantity != 0 && item.LocationId == locationId);
+            if (stations.Get(locationId) is { } station)
+            {
+                rows.Add((station.SolarSystemId, station.Id, Py.Tuple([
+                    InventoryWire.Id(station.Id),
+                    InventoryWire.Id(station.SolarSystemId),
+                    new PyInt(station.TypeId),
+                    new PyInt(itemCount),
+                    PyNone.Instance
+                ])));
+            }
+            else if (roots.Structures.TryGetValue(locationId, out var structure))
+            {
+                rows.Add((structure.SolarSystemId, structure.Id, Py.Tuple([
+                    InventoryWire.Id(structure.Id),
+                    InventoryWire.Id(structure.SolarSystemId),
+                    new PyInt(structure.TypeId),
+                    new PyInt(itemCount),
+                    PyNone.Instance
+                ])));
+            }
+        }
 
         return Py.Rowset(
             ["stationID", "solarSystemID", "typeID", "itemCount", "upkeepState"],
-            rows);
+            rows.OrderBy(row => row.SolarSystemId).ThenBy(row => row.LocationId).Select(row => row.Row));
     }
 
     [Method("ListStationItems")]
@@ -699,7 +784,12 @@ public sealed partial class InvBrokerService(
     {
         var context = ContextOf(call);
         var character = context is { Kind: Kind.GlobalAssets } ? context.ItemId : call.Session.CharacterId;
-        if (character is not { } characterId || IdOf(call.Arg(0)) is not { } station || stations.Get(station) is null)
+        if (character is not { } characterId || IdOf(call.Arg(0)) is not { } station)
+            return new PyList([]);
+
+        if (stations.Get(station) is null &&
+            (context?.Kind != Kind.GlobalAssets ||
+                await GlobalAssetStructureAsync(station, call.Cancellation) is null))
             return new PyList([]);
 
         var stationItems = context is { Kind: Kind.GlobalAssets }
@@ -730,6 +820,13 @@ public sealed partial class InvBrokerService(
             }
             foreach (var child in await RowsAsync(visible, call.Cancellation))
                 pending.Enqueue(child);
+        }
+
+        if (context.Kind == Kind.GlobalAssets)
+        {
+            var owned = await items.OwnedByAsync(character, call.Cancellation);
+            var roots = await GlobalAssetRootsAsync(owned, call.Cancellation);
+            rows = rows.Where(row => roots.ItemIds.Contains(row.ItemId)).ToList();
         }
         return new PyList([.. rows.Select(row => InventoryWire.PackedRow(row))]);
     }
@@ -810,6 +907,11 @@ public sealed partial class InvBrokerService(
         return landed == 0 ? None : InventoryWire.Id(landed);
     }
 
+    /// <summary>
+    /// <c>GetCapacity(flag)</c>: how big the inventory is and how much is in it. A ship's hold is the ship's own capacity (dogma's); asked of a ship with no flag it is the
+    /// cargo hold. A hangar holds a million cubic metres whatever is in it; asked for the cargo hold it answers what the reference does for an inventory that is no
+    /// ship (5,000).
+    /// </summary>
     [Method("GetCapacity")]
     public async ValueTask<PyValue> GetCapacity(ServiceCall call)
     {

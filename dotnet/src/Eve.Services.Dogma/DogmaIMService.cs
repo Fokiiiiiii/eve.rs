@@ -129,12 +129,15 @@ public sealed partial class DogmaIMService(
         var fileTime = Py.FileTimeFromUnixMs(nowUnixMs());
         var wantCharacter = Flag(call.Arg(0), true);
         var wantShip = Flag(call.Arg(1), true);
-        var answer = _info.GetAllInfo(snapshot, wantCharacter, wantShip, Flag(call.Arg(2), call.Session.GetInt("structureid") is > 0), fileTime, docked: call.Session.DockedLocationId is not null);
-        if (wantCharacter || (wantShip && !wantCharacter))
+        var syncCharacter = wantCharacter || (wantShip && !wantCharacter);
+        var brain = syncCharacter ? _info.BuildBrain(snapshot) : null;
+        var answer = _info.GetAllInfo(snapshot, wantCharacter, wantShip, Flag(call.Arg(2), call.Session.GetInt("structureid") is > 0), fileTime,
+            docked: call.Session.DockedLocationId is not null, brain: brain);
+        if (syncCharacter)
         {
             // sent after the answer: the client has the character before it is told how the character's attributes came to be
             var version = _sync.NextBrainVersion(character);
-            call.Session.AfterResponse(() => _sync.SendCharacter(call.Session, snapshot, fileTime, version));
+            call.Session.AfterResponse(() => _sync.SendCharacter(call.Session, snapshot, fileTime, version, brain));
         }
         return answer;
     }

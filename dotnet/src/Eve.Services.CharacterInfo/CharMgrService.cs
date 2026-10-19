@@ -52,7 +52,8 @@ public sealed partial class CharMgrService(
     Func<long, CancellationToken, ValueTask<long?>>? readCorporationMemberStartedMs = null,
     Func<IReadOnlyList<Character>, CancellationToken, ValueTask<IReadOnlyDictionary<long, CharMgrOrganizationInfo>>>? readOrganizationInfo = null,
     Func<long, CancellationToken, ValueTask<int?>>? readRecustomizationState = null,
-    Func<ServiceCall, ValueTask<PyValue>>? globalAssetsInventoryCall = null)
+    Func<ServiceCall, ValueTask<PyValue>>? globalAssetsInventoryCall = null,
+    Func<long, CancellationToken, ValueTask<decimal?>>? readBalance = null)
 {
 
     /// <summary>
@@ -192,6 +193,24 @@ public sealed partial class CharMgrService(
     [Method("GetCharacterCreationDate")]
     public async ValueTask<PyValue> GetCharacterCreationDate(ServiceCall call) =>
         await CharacterAsync(call) is { } character ? FileTime(character.CreatedAt) : None;
+
+
+    /// <summary>The private character row used by the corporation member editor.</summary>
+    [Method("GetPrivateInfo")]
+    public async ValueTask<PyValue> GetPrivateInfo(ServiceCall call)
+    {
+        if (await CharacterAsync(call) is not { } character)
+            return None;
+        var balance = readBalance is null ? 0m : (await readBalance(character.Id, call.Cancellation)) ?? 0m;
+        var security = await readCharacterSecurityStatus(character.Id, call.Cancellation);
+        var fields = new[] { "characterID", "gender", "createDateTime", "raceID", "bloodlineID", "ancestryID", "balance", "securityRating" };
+        var row = new PyList([
+            new PyInt(character.Id), new PyInt(character.Gender), FileTime(character.CreatedAt),
+            new PyInt(character.RaceId), new PyInt(character.BloodlineId), new PyInt(character.AncestryId),
+            Py.Number((double)balance), Py.Number(security),
+        ]);
+        return Py.Rowset(fields, [row]);
+    }
 
     /// <summary>The station the character's clone is at, in every spelling the client has asked for it in.</summary>
     [Method("GetHomeStationRow")]

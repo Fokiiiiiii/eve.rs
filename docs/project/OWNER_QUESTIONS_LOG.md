@@ -42,7 +42,7 @@ Date for entries: 2026-10-19. Questions with a recorded decision are marked deci
 
 - **Date:** 2026-10-19
 - **Question:** Should the C4 command-burst track be scheduled with a sim wire batch and a source-backed live buff value?
-- **Context:** The earlier zero-value finding was based on reading output attributes before tracing effect 6737 to charge multipliers and module inputs. SDE charge multipliers and module values produce nonzero results; `CommandBurstValueTests` checks Shield Harmonizing (-8 Tech I, -10 Tech II). The prior deferral relied on the incorrect zero-value finding.
+- **Context:** The earlier zero-value finding was based on reading output attributes before tracing effect 6737 to charge multipliers and module inputs. SDE charge multipliers and module values produce nonzero results; `CommandBurstValueTests` checks Shield Harmonizing (-8 Tech I, -10 Tech II), and `CommandBurstFamiliesTests` checks every published burst charge. The owner superseded the prior deferral on 2026-10-19 and directed the full command-burst build; Host coverage now checks delivery for all six families, including Mining Foreman collection 2474. The corrected two-pilot headless walk remains to be run.
 - **Decision:** Superseded 2026-10-19: build command bursts, including the shared recipient exchange and timed buff delivery.
 - **Status:** superseded by owner direction, 2026-10-19
 

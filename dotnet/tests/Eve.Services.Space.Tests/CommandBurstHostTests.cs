@@ -1,5 +1,6 @@
 using Eve.Inventory;
 using Eve.Dogma;
+using Eve.Marshal;
 using Eve.Services.Space.Effects;
 using Eve.Ships;
 using Eve.Space;
@@ -20,6 +21,66 @@ public class CommandBurstHostTests
     /// <summary>The Pulse Activated Nexus Invulnerability Core (42522) and its duration (panicDuration, 240 s), and the collections it grants.</summary>
     private const int PanicCore = 42522, ShieldInvulnerability = 8, DisallowWeapons = 59;
     private const long CoreMs = 240_000;
+
+    private static PyTuple AttributeChange(IEnumerable<Events.Event> notifications, long itemId, int attributeId) =>
+        notifications.Where(notification => notification.Name == "OnModuleAttributeChanges")
+            .SelectMany(notification => ((PyList)notification.Args[0]).Items.OfType<PyTuple>())
+            .Last(change => Events.Number(change.Items[2]) == itemId && Events.Number(change.Items[3]) == attributeId);
+
+    [PgFact]
+    public async Task Every_burst_family_delivers_its_charge_values_to_a_fleet_member()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var source = await DroneHostTests.FlyingWithADroneAsync(rig);
+        var ally = await DroneHostTests.FlyingWithADroneAsync(
+            rig,
+            characterName: $"Burst Mate {Guid.NewGuid().ToString("N")[..8]}",
+            sessionId: Random.Shared.Next(100, int.MaxValue));
+        rig.Space.FleetIdOfAsync = (_, _) => Task.FromResult<long?>(FleetId);
+        (int Module, int Charge)[] families =
+        [
+            (42526, 42832), // Armor
+            (42527, 42835), // Information
+            (42528, 42829), // Mining Foreman, including Enhanced Mining Scanner (2474)
+            (42529, 42695), // Shield
+            (42530, 42838), // Skirmish
+            (89608, 89612), // Expedition
+        ];
+
+        ulong cycleId = 100;
+        foreach (var (moduleTypeId, chargeTypeId) in families)
+        {
+            var moduleId = await FitBurstModuleAsync(rig, source, moduleTypeId);
+            var burstSource = source with { Module = moduleId };
+            await LoadChargeAsync(rig, burstSource, chargeTypeId);
+            var sourceSnapshot = Assert.IsType<ShipSnapshot>(await rig.Ships.LoadAsync(source.Character));
+            var expected = CommandBurstBuffs.Of(sourceSnapshot.World, rig.Statics, moduleId);
+            Assert.NotEmpty(expected);
+
+            rig.Space.StartModuleForTest((ulong)source.Session.SessionId, moduleId);
+            var result = await ModuleFuelHostTests.SettleAsync(
+                rig,
+                BurstCycle(burstSource, cycleId++, ShipIdOf(source), ShipIdOf(ally)));
+
+            Assert.True(result.Accepted, result.Reason);
+            var received = rig.Space.Buffs.StateOf(ShipIdOf(ally), rig.Now);
+            foreach (var (collection, value) in expected)
+            {
+                Assert.Contains(received, state => state.CollectionId == collection.Id && state.Value == value);
+                Assert.Contains(
+                    rig.Sim.BuffStates,
+                    told => told.SessionId == (ulong)ally.Session.SessionId
+                        && told.ShipId == ShipIdOf(ally)
+                        && told.Entries.Any(entry => entry.CollectionId == collection.Id && entry.Value == value));
+            }
+
+            if (chargeTypeId == 42829)
+            {
+                Assert.Contains(expected, buff => buff.Collection.Id == 2474 && buff.Value != 0);
+                Assert.Contains(received, state => state.CollectionId == 2474 && state.Value != 0);
+            }
+        }
+    }
 
     [PgFact]
     public async Task A_burst_cycle_buffs_the_source_and_its_fleet_ship_in_reach_and_tells_each_pilot_its_state()
@@ -43,6 +104,15 @@ public class CommandBurstHostTests
                 told => told.SessionId == (ulong)pilot.Session.SessionId && told.ShipId == ShipIdOf(pilot)
                     && told.Entries.Any(entry => entry.CollectionId == ShieldResistance && entry.Value == -8 && entry.RemainingMs == BuffMs));
         }
+
+        var allySnapshot = Assert.IsType<ShipSnapshot>(await rig.Ships.LoadAsync(ally.Character));
+        var baseResonance = allySnapshot.World.Get(allySnapshot.Ship.Id, 271);
+        await rig.Space.PrepareSpaceDogmaAsync(ally.Session, allySnapshot, CancellationToken.None);
+        var activeBuff = Assert.Single(rig.Space.Buffs.StateOf(ShipIdOf(ally), rig.Now));
+        var expectedResonance = baseResonance * (100 + activeBuff.Value) / 100;
+        Assert.Equal(expectedResonance, allySnapshot.World.Get(allySnapshot.Ship.Id, 271), 9);
+        var attributeUpdate = AttributeChange(Events.Of(ally.Session), ShipIdOf(ally), 271);
+        Assert.Equal(expectedResonance, Eve.Macho.JsSemantics.NumberValue(attributeUpdate.Items[5]), 9);
     }
 
     [PgFact]
@@ -85,14 +155,23 @@ public class CommandBurstHostTests
     {
         await using var rig = await Rig.CreateAsync();
         var source = await FlyingWithAsync(rig, ShieldCommandBurstI);
+        var ally = await DroneHostTests.FlyingWithADroneAsync(rig, characterName: "Expiring Fleet Mate", sessionId: 2);
+        rig.Space.FleetIdOfAsync = (_, _) => Task.FromResult<long?>(FleetId);
         await LoadChargeAsync(rig, source, ShieldHarmonizing);
         rig.Space.StartModuleForTest((ulong)source.Session.SessionId, source.Module);
-        Assert.True((await ModuleFuelHostTests.SettleAsync(rig, BurstCycle(source, 5, ShipIdOf(source)))).Accepted);
+        Assert.True((await ModuleFuelHostTests.SettleAsync(rig, BurstCycle(source, 5, ShipIdOf(source), ShipIdOf(ally)))).Accepted);
+        var allySnapshot = Assert.IsType<ShipSnapshot>(await rig.Ships.LoadAsync(ally.Character));
+        var baseResonance = allySnapshot.World.Get(allySnapshot.Ship.Id, 271);
 
         rig.Now += BuffMs + 1;
         await rig.Containers.SweepAsync();
 
         Assert.Empty(rig.Space.Buffs.StateOf(ShipIdOf(source), rig.Now));
+        Assert.Empty(rig.Space.Buffs.StateOf(ShipIdOf(ally), rig.Now));
+        await rig.Space.PrepareSpaceDogmaAsync(ally.Session, allySnapshot, CancellationToken.None);
+        Assert.Equal(baseResonance, allySnapshot.World.Get(allySnapshot.Ship.Id, 271), 9);
+        var attributeUpdate = AttributeChange(Events.Of(ally.Session), ShipIdOf(ally), 271);
+        Assert.Equal(baseResonance, Eve.Macho.JsSemantics.NumberValue(attributeUpdate.Items[5]), 9);
         var last = rig.Sim.BuffStates.Last(told => told.ShipId == ShipIdOf(source));
         Assert.Empty(last.Entries);
     }
@@ -195,9 +274,29 @@ public class CommandBurstHostTests
     /// A pilot in space with a module of this type fitted and online in a free mid slot (the helper's own module goes in a high slot, where the default fit of the
     /// ship already sits, so a charge loaded into it would pair with the wrong item).
     /// </summary>
-    private static async Task<DroneHostTests.Flying> FlyingWithAsync(Rig rig, int moduleTypeId)
+    private static async Task<long> FitBurstModuleAsync(Rig rig, DroneHostTests.Flying flying, int moduleTypeId)
     {
-        var flying = await DroneHostTests.FlyingWithADroneAsync(rig);
+        var shipId = ShipIdOf(flying);
+        var used = (await rig.Items.InLocationAsync(shipId, flying.Character)).Select(item => item.Flag).ToHashSet();
+        var flag = Enumerable.Range(ItemFlags.MedSlot0, 8).First(candidate => !used.Contains(candidate));
+        await using var connection = await rig.Source.OpenConnectionAsync();
+        await using var transaction = await connection.BeginTransactionAsync();
+        var moduleId = await rig.Items.CreateAsync(connection, transaction, new NewItem(moduleTypeId, flying.Character, shipId, flag, 1, true));
+        await rig.Modules.SetAsync(connection, transaction, moduleId, ItemState.Online);
+        await transaction.CommitAsync();
+        return moduleId;
+    }
+
+    private static async Task<DroneHostTests.Flying> FlyingWithAsync(
+        Rig rig,
+        int moduleTypeId,
+        string? characterName = null,
+        long sessionId = 1)
+    {
+        var flying = await DroneHostTests.FlyingWithADroneAsync(
+            rig,
+            characterName: characterName ?? "Space Tester",
+            sessionId: sessionId);
         var shipId = ShipIdOf(flying);
         var used = (await rig.Items.InLocationAsync(shipId, flying.Character)).Select(item => item.Flag).ToHashSet();
         var flag = Enumerable.Range(ItemFlags.MedSlot0, 8).First(candidate => !used.Contains(candidate));

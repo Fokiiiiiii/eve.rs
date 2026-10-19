@@ -494,6 +494,8 @@ public sealed class CharacterHostTests
             await queue.ExecuteNonQueryAsync();
         }
 
+        await rig.Characters.SetAppearanceAsync(character, [1, 2], true, [3, 4], true);
+
         // prepare again, move the waiting time into the past (the test's clock), then delete
         await CallAsync(restarted, "PrepareCharacterForDelete", session, new PyLong(character));
         await using (var connection = await rig.Source.OpenConnectionAsync())
@@ -534,6 +536,7 @@ public sealed class CharacterHostTests
         // the deleted character is hidden from its account and refused at selection
         var deleted = Assert.IsType<Character>(await rig.Characters.GetAsync(character));
         Assert.True(deleted.IsDeleted);
+        Assert.Equal((null, null), await rig.Characters.AppearanceAsync(character));
         Assert.DoesNotContain(await rig.Characters.ForAccountAsync(1), c => c.Id == character);
         var refused = await Assert.ThrowsAsync<MachoWrappedException>(() =>
             CallAsync(restarted, "SelectCharacterID", session, new PyLong(character), PyNone.Instance, PyBool.False));

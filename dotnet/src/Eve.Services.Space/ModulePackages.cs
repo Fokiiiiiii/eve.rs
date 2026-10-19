@@ -79,6 +79,11 @@ internal static class ModulePackages
         {
             return new Result(null, "UNSUPPORTED_EFFECT", module.TypeId, name);
         }
+        var condition = snapshot.ConditionOf(moduleId);
+        if (condition.Incapacitated || condition.Damage >= 1)
+        {
+            return new Result(null, "MODULE_INCAPACITATED", module.TypeId, name);
+        }
         if (snapshot.World.Item(moduleId) is not { State: >= ItemState.Online })
         {
             return new Result(null, "MODULE_NOT_ONLINE", module.TypeId, name);

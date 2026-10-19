@@ -316,7 +316,7 @@ public sealed class MailServiceTests
     }
 
     [Fact]
-    public async Task Chat_gm_poke_forwards_the_reference_mail_payload_to_its_typed_backend()
+    public async Task Chat_gm_poke_requires_gml_before_forwarding_the_reference_mail_payload()
     {
         GmChatPokeMailRequest? sent = null;
         ClientSession? sender = null;
@@ -335,6 +335,13 @@ public sealed class MailServiceTests
             Args = [new PyInt(90000003), new PyStr("help-channel")],
             Session = new ClientSession(),
         };
+
+        Assert.Same(PyNone.Instance, await service.CallAsync(call));
+        Assert.Null(sent);
+        call.Session.Set("role", new PyLong(Eve.Services.GameMasterRoles.Gml));
+        Assert.Same(PyNone.Instance, await service.CallAsync(call));
+        Assert.Null(sent);
+        call.Session.Set("accountRole", new PyLong(Eve.Services.GameMasterRoles.Gml));
 
         Assert.Equal(new PyLong(700), await service.CallAsync(call));
         Assert.NotNull(sent);

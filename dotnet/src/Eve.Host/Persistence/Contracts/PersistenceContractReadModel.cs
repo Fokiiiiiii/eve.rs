@@ -65,6 +65,17 @@ public sealed class PersistenceContractReadModel : IContractReadModel
             );
             CREATE INDEX contract_bids_contract_order ON contract_bids (contract_id, amount DESC, created_at_filetime DESC, bid_id DESC);
             """),
+        new Eve.Data.Migration("0002_contract_terms", """
+            ALTER TABLE contract_records
+                ADD COLUMN availability smallint NOT NULL DEFAULT 0 CHECK (availability BETWEEN 0 AND 3),
+                ADD COLUMN price_isk numeric(28, 2) NOT NULL DEFAULT 0 CHECK (price_isk >= 0),
+                ADD COLUMN collateral_isk numeric(28, 2) NOT NULL DEFAULT 0 CHECK (collateral_isk >= 0),
+                ADD COLUMN creation_fee_isk numeric(28, 2) NOT NULL DEFAULT 0 CHECK (creation_fee_isk >= 0),
+                ADD COLUMN deposit_isk numeric(28, 2) NOT NULL DEFAULT 0 CHECK (deposit_isk >= 0),
+                ADD COLUMN sales_tax_isk numeric(28, 2) NOT NULL DEFAULT 0 CHECK (sales_tax_isk >= 0),
+                ADD COLUMN title text NOT NULL DEFAULT '',
+                ADD COLUMN description text NOT NULL DEFAULT '';
+            """),
     ];
 
     public static Task MigrateAsync(

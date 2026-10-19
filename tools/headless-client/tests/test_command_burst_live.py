@@ -8,6 +8,7 @@ The fitted module and its one charge are seeded in the pilot's ship; fitting and
 
 from __future__ import annotations
 
+import time
 import uuid
 
 import pytest
@@ -92,8 +93,12 @@ def test_a_loaded_burst_changes_a_fleet_members_dogma_until_its_buff_expires():
         notifications_of(member)
 
         owner_ballpark = owner.call("beyonce", "MachoBindObject", SYSTEM, None)
+        time.sleep(3)  # let both undocks publish the two ships to the shared ballpark
         owner.call_bound(owner_ballpark[0], "CmdOrbit", member_ship, 5_000)
-        owner.call_bound(owner_dogma[0], "AddTarget", member_ship)
+        try:
+            owner.call_bound(owner_dogma[0], "AddTarget", member_ship)
+        except Exception as error:
+            raise AssertionError(f"pilot A could not target pilot B: {error!r}; payload={getattr(error, 'payload', None)!r}") from error
         targeting = wait_for_events(owner, lambda events: named(events, "OnTarget"), timeout=90)
         assert named(targeting, "OnTarget"), "pilot A did not acquire pilot B after approaching"
         notifications_of(owner)

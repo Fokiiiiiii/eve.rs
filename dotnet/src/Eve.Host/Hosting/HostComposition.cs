@@ -109,6 +109,9 @@ internal static class HostComposition
             var notices = new PublicGateway.NoticeHub();
             foreach (var (name, handler) in PublicGateway.TitleGateway.Handlers(titleStore, titles, notices))
                 gateway[name] = handler;
+            var localChat = new PublicGateway.LocalChatGateway(connected, notices);
+            foreach (var (name, handler) in localChat.Handlers())
+                gateway[name] = handler;
             // a request's character counts only when the token's account owns it (the login JWT names the account)
             var gatewayCharacters = new Eve.Characters.PgCharacterStore(source, Env("EVE_CHARACTERS_SCHEMA", Eve.Characters.PgCharacterStore.DefaultSchema));
             var authority = new PublicGateway.GatewayAuthority(

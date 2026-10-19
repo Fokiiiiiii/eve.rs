@@ -57,7 +57,9 @@ internal sealed partial class CharacterServicesComposition
             spaceDrones,
             corporations,
             characterEntryHooks,
-            controlledStructureInventory: structureControlReadModel.InventoryAsync);
+            controlledStructureInventory: structureControlReadModel.InventoryAsync,
+            crystalDamage: async (itemIds, token) => (await modules.ModuleConditionsAsync(itemIds, token))
+                .ToDictionary(entry => entry.Key, entry => entry.Value.Damage));
         return [
             new SkillMgr2Service(),
             skillHandler,

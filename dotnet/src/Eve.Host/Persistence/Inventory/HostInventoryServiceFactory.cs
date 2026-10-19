@@ -48,7 +48,8 @@ public static class HostInventoryServiceFactory
         Eve.Services.Ships.ISpaceDroneBays? droneBays,
         Eve.Corporations.CorporationStore corporations,
         IReadOnlyList<ICharacterEntryHook>? entryHooks = null,
-        Func<Eve.Services.ClientSession, long, CancellationToken, ValueTask<ControlledStructureInventory?>>? controlledStructureInventory = null) =>
+        Func<Eve.Services.ClientSession, long, CancellationToken, ValueTask<ControlledStructureInventory?>>? controlledStructureInventory = null,
+        Func<IReadOnlyCollection<long>, CancellationToken, Task<IReadOnlyDictionary<long, double>>>? crystalDamage = null) =>
         new(
             items,
             types,
@@ -60,7 +61,8 @@ public static class HostInventoryServiceFactory
             droneBays,
             corporationHangarAccess: HangarAccessOf(corporations),
             entryHooks: entryHooks,
-            controlledStructureInventory: controlledStructureInventory);
+            controlledStructureInventory: controlledStructureInventory,
+            crystalDamage: crystalDamage);
 
     /// <summary>
     /// The access to a corporation division hangar: the Query, Take and Deposit operations. Deposit needs only membership (the existing rule); Query and Take read

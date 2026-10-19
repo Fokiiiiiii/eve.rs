@@ -6,7 +6,7 @@ using Eve.Macho;
 /// Implements the resource operations consumed by sovereigntyResourceSvc.py.
 /// The host supplies SDE-backed resource definitions and durable sovereignty state; the read
 /// authorization callback must apply the existing theft-vulnerability visibility rules.
-/// The activation writer must revalidate owner and corporation role in the same transaction
+
 /// that persists the status, so a role change cannot race the preflight check.
 /// </summary>
 public sealed class SkyhookResourceService

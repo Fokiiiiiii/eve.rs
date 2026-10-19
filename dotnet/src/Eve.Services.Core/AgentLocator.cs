@@ -25,7 +25,7 @@ public interface IAgentLocatorPort
     ValueTask<LocatePlace?> PlaceAsync(long solarSystemId, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Charges the fee and starts the cooldown in one transaction, then sends the result (type 69, sent by the agent). False, with nothing
+
     /// written, when the pilot cannot pay.
     /// </summary>
     ValueTask<bool> DeliverAsync(long characterId, long agentId, long fee, JsonObject result, CancellationToken cancellationToken);

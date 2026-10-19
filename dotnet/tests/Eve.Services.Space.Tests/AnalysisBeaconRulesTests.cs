@@ -145,6 +145,34 @@ public class AnalysisBeaconRulesTests
     }
 
     [PgFact]
+    public async Task Both_beacon_blueprints_match_the_pinned_sde_manufacturing_recipe()
+    {
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var sde = new SdeReader(source);
+        Assert.Equal(3396210L, await sde.BuildAsync());
+        var blueprints = await sde.ReadAsync("blueprints", [60514, 92182]);
+
+        foreach (var blueprint in blueprints)
+        {
+            var manufacturing = blueprint.Doc.GetProperty("activities").GetProperty("manufacturing");
+            Assert.Equal(12_000, manufacturing.GetProperty("time").GetInt32());
+            Assert.Equal(1, manufacturing.GetProperty("products")[0].GetProperty("quantity").GetInt32());
+            var productType = manufacturing.GetProperty("products")[0].GetProperty("typeID").GetInt32();
+            Assert.Contains(productType, new[] { AnalysisBeaconRules.StandardType, AnalysisBeaconRules.CarrierType });
+
+            var materials = manufacturing.GetProperty("materials").EnumerateArray()
+                .ToDictionary(row => row.GetProperty("typeID").GetInt32(), row => row.GetProperty("quantity").GetInt32());
+            Assert.Equal(new Dictionary<int, int>
+            {
+                [34] = 1_400_000, [35] = 400_000, [37] = 6_000, [39] = 10_000, [40] = 5_000,
+                [2867] = 2, [2872] = 1, [2875] = 1, [2876] = 1,
+            }, materials);
+        }
+
+        Assert.Equal(2, blueprints.Count);
+    }
+
+    [PgFact]
     public async Task A_carrier_links_in_both_lists_and_a_titan_only_in_the_standard_one()
     {
         await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));

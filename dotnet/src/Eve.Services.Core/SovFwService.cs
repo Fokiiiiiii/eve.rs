@@ -50,7 +50,7 @@ public sealed record SovHubWriteOperations(
     Func<ServiceCall, long, long, ValueTask<PyValue>> SelfDestructUpgradeAsync,
     Func<ServiceCall, long, PyValue, ValueTask<PyValue>> SaveWorkforceConfigurationAsync);
 
-/// <summary>Host callbacks re-read persisted Skyhooks; acquisition charges ISK and commits ownership/ACL changes before returning IDs. Destruction returns IDs only after the existing Skyhook rows are durably destroyed. Neither RPC moves reagents or workforce.</summary>
+
 public sealed record SovSkyhookWriteOperations(
     Func<ServiceCall, long, SovHubRecord, IReadOnlyList<long>, ValueTask<IReadOnlyList<long>>> DestroySkyhooksAsync,
     Func<ServiceCall, long, SovHubRecord, IReadOnlyList<long>, long?, ValueTask<IReadOnlyList<long>>> AcquireSkyhooksAsync);

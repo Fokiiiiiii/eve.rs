@@ -1020,6 +1020,7 @@ Closed in slice B3 (2026-10-10): `GetAverageMarketPrices` answers each type with
 Done in slice C (DEVIATIONS.md, "Character selection and entry (slice C, 2026-10-10)"):
 - `populationCap`: the live per-system load, the nearest alternatives, the saved move, the selection refusal (`PopulationCapTests`).
 - `multiLoginBlocker.Login`: the computer hash and clone grade are recorded; the Alpha rule refuses a second account on the same computer (`MultiLoginBlockerTests`).
+- Host account admission enforces one active client per account across front connections; a later login disconnects the earlier client (`ConnectedSessionsTests`).
 - `ToggleValidation` by role, `GetCharOmegaDowngradeStatus` answered (`ValidationAndOmegaTests`).
 - `OnCharacterSelected` expectation in the live walk corrected to zero arguments; new live step `test_the_population_cap_answers_through_its_moniker`.
 - Verified against the client and left as they are: `GetCharacterSelectionData` 4-tuple and row fields, `GetCharacterLockType`, `GetCohortsForUser`, the session attribute set, the reward checks, the entry hooks' order.
@@ -1028,6 +1029,7 @@ Open after slice C:
 | Status | Item | Owner / where |
 |---|---|---|
 | OPEN | `charMgr.GetSettingsInfo`: the client's native `Crypto.Verify` needs CCP's signing key; the failure is logged and `LogSettings` is skipped | DEVIATIONS, slice C; needs a decision on signing |
+| DONE | Account session exclusivity: a later same-account session replaces and cleanly disconnects the previous client | Host `ConnectedSessions` and `HostServer`; `ConnectedSessionsTests` |
 | OPEN | SSO login: the computer hash and the token are not produced, so `multiLoginBlocker.Login` is not reached | slice A gap G1 (DEVIATIONS "Single sign-on login") |
 | OPEN | `SelectCharacterID` population check and the entry are not atomic (two selections into a full system can both pass) | DEVIATIONS, slice C |
 | OPEN | `populationCap` alternatives are the nearest systems by distance; the reference's neighbours (stargates) need a stargate table in the static data | static data (Slice B follow-up) |

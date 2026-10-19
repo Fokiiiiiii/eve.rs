@@ -378,7 +378,7 @@ The start scripts are `tools/windows/` (`start-server.bat`, `start-server-dev.ba
 
 | Status | Item | Missing work |
 |---|---|---|
-| OPEN | Windows CI result | The workflow now selects Windows coverage on sensitive pushes, manual selection and the weekly run. Record and review a successful run before closing this row. |
+| OPEN | Windows CI result | Linux passed on run 174, while Windows reached the PowerShell 5.1 headless entry point and failed its exit-code check. The script now initializes and captures the native exit code; rerun Windows coverage and review a successful run before closing this row. |
 | OPEN | Windows Python fixture decoding | Run 134 passed Rust and .NET on Windows but the Python golden test used the Windows default code page. The loader now specifies UTF-8; the focused Python suite passed on Linux and the Windows rerun will confirm it. |
 | OPEN | Windows PowerShell and console behavior | PowerShell developer scripts now cover service control, checks, and headless tests. Verify Ctrl+C, the batch prompt, and window-close behavior on the owner's Windows setup. |
 | OPEN | `global.json` SDK path `../.dotnet` | Check SDK selection on the owner's Windows checkout path. |

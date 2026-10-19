@@ -111,7 +111,21 @@ public sealed class FwBattlefieldTickerTests
         Assert.Single(await OpenAsync(rig));
         rig.Now += 3 * 60 * 60 * 1000;
         await TickAsync(rig, sites, rewards);
-        Assert.Equal(2, (await OpenAsync(rig)).Count);
+        var second = (await OpenAsync(rig)).Single(battlefield => battlefield.InstanceId == 0);
+        sites.ActiveSystem = second.SolarSystemId;
+        sites.Pilots = Enumerable.Range(0, 35).Select(index => new FwComplexPilot(3000 + index, Minmatar)).ToList();
+        await TickAsync(rig, sites, rewards);
+        second = (await OpenAsync(rig)).Single(battlefield => battlefield.SolarSystemId == second.SolarSystemId);
+        Assert.True(second.InstanceId > 0);
+        var secondWins = new List<FwBattlefieldWon>();
+        for (int tick = 0; tick < 400 && secondWins.Count == 0; tick++)
+            secondWins.AddRange(await TickAsync(rig, sites, rewards));
+
+        var secondWon = Assert.Single(secondWins);
+        Assert.Equal(second.SolarSystemId, secondWon.SolarSystemId);
+        Assert.Equal(second.InstanceId, Assert.Single(sites.Ended, instance => instance == second.InstanceId));
+        Assert.Equal(Minmatar, secondWon.WinnerId);
+        Assert.Equal(FwBattlefields.VictoryPoints, secondWon.AttackerPoints);
     }
 
     [PgFact]

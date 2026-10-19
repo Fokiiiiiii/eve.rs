@@ -13,7 +13,6 @@
 //! ```
 //!
 //! A refused login is answered with a pickled `GPSTransportClosed` and the connection is closed.
-//! Whether a login is accepted is the [`Authenticator`]'s decision.
 
 use std::future::Future;
 use std::io;
@@ -28,9 +27,7 @@ use crate::frame::FrameReader;
 use crate::hostlink::AuthOutcome;
 use crate::profile;
 
-/// The role bits every login session gets on top of the account's role: ROLE_LOGIN, ROLE_PLAYER and ROLE_IGB. The
-/// reference composes it the same way (EveJS `accountRoleProfiles.js` SESSION_BASE_ROLE_MASK; eve.rs
-/// `CharUnboundMgrService.SessionBaseRole`), so a normal account (role 0) logs in with these bits.
+/// Login sessions add ROLE_LOGIN, ROLE_PLAYER, and ROLE_IGB to the account role.
 pub const SESSION_BASE_ROLE: u64 = 0x6000_0000_8000_0000;
 
 /// What the front knows about the login attempt.
@@ -207,8 +204,7 @@ async fn receive<R: AsyncRead + Unpin>(reader: &mut FrameReader<R>) -> Result<Va
     Ok(decode_bytes(&frame)?)
 }
 
-/// The cluster user count the client shows on the server list. The reference reports at least one (EveJS
-/// `getClusterUserCount`, and eve.rs `GetServerStatus`), including while the first login is still being made.
+/// The server list reports at least one user while the first login is being made.
 fn online_users(env: &Environment) -> u32 {
     env.user_count.max(1)
 }
@@ -375,7 +371,6 @@ where
                     // The login session's role: the account's bits plus the base bits every session has.
                     ("role", Value::Long((role | SESSION_BASE_ROLE) as i64)),
                     ("address", Value::string(address.to_owned())),
-                    // The reference's acknowledgement carries inDetention (EveJS handshake.js session_init), so it is sent here too.
                     ("inDetention", Value::None),
                 ]),
             ),

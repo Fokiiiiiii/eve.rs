@@ -54,8 +54,6 @@ fn the_first_start_fetches_and_loads_and_the_second_does_nothing() {
     let count: i64 = client.query_one(&format!("SELECT count(*) FROM {schema}.types"), &[]).unwrap().get(0);
     assert_eq!(count, 1);
 
-    // Second start, with a fresh cache and a source that cannot be reached:
-    // the database already has the build, so nothing is fetched and nothing is created.
     let fresh = Scratch::new("ensure-first-again");
     let again = options(&fresh, 71, vec![file_url(&fresh.path("missing.zip"))], Expect::Unchecked);
     assert_eq!(ensure::ensure_loaded_into(&mut client, &again, &schema).unwrap(), Outcome::AlreadyLoaded);

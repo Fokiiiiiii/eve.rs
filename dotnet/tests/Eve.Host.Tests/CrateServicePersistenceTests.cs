@@ -1,5 +1,6 @@
 using System.Text.Json.Nodes;
 using Eve.GameStore;
+using Eve.Fitting;
 using Eve.Host;
 using Eve.Inventory;
 using Eve.Marshal;
@@ -12,6 +13,20 @@ namespace Eve.Host.Tests;
 
 public sealed class CrateServicePersistenceTests
 {
+    private sealed class FittingHost(long characterId) : IFittingHost
+    {
+        public Task<IReadOnlyDictionary<int, int>> CategoriesAsync(IReadOnlyCollection<int> typeIds, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("The fitting list read does not request type categories.");
+        public Task<bool> HasFittingManagerRoleAsync(long requestedCharacterId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("The fitting list read does not check mutation roles.");
+        public Task<bool> CanAccessOwnerAsync(long requestedCharacterId, long ownerId, FittingOwnerScope scope, CancellationToken cancellationToken) =>
+            Task.FromResult(requestedCharacterId == characterId && ownerId == characterId && scope == FittingOwnerScope.Character);
+        public Task<long?> AllianceExecutorAsync(long allianceId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("The fitting list read does not request alliance ownership.");
+        public IReadOnlyList<ClientSession> SessionsOf(FittingOwnerScope scope, long ownerId) =>
+            throw new NotSupportedException("The fitting list read does not send notifications.");
+    }
+
     [Fact]
     public async Task Opening_and_claiming_a_crate_updates_the_inventory_store()
     {
@@ -193,7 +208,7 @@ public sealed class CrateServicePersistenceTests
             var claimed = await service.CallAsync(Call("ClaimFitting", new PyInt(crateId), new PyInt(sourceFittingId)));
             var claimedId = claimed switch { PyInt id => id.Value, PyLong id => id.Value, _ => 0 };
             Assert.True(claimedId > 0);
-            IService fittingService = new CharFittingMgrService(new FittingMgrCalls(savedFittings, null!, () => 0));
+            IService fittingService = new CharFittingMgrService(new FittingMgrCalls(savedFittings, new FittingHost(characterId), () => 0));
             var fittingList = Assert.IsType<PyDict>(await fittingService.CallAsync(Call("GetFittings")));
             var fitting = Assert.Single(fittingList.Entries);
             Assert.Equal(new PyLong(claimedId), fitting.Key);

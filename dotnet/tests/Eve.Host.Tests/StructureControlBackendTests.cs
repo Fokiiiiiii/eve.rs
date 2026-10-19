@@ -199,6 +199,20 @@ public sealed class StructureControlBackendTests
     }
 
     [PgFact]
+    public async Task Get_structure_pilot_does_not_disclose_a_pilot_outside_the_callers_system()
+    {
+        await using var f = await Fixture.CreateAsync();
+        var owner = await f.SessionAsync(20);
+        var remote = await f.SessionAsync(21);
+        await f.Backend.TakeControlAsync(f.Call(owner), Structure);
+
+        remote.Set("solarsystemid2", new PyInt(System + 1));
+        remote.Set("solarsystemid", new PyInt(System + 1));
+        Assert.Null(await f.Backend.GetStructurePilotAsync(f.Call(remote), Structure));
+        Assert.Equal(20, await f.Backend.GetStructurePilotAsync(f.Call(owner), Structure));
+    }
+
+    [PgFact]
     public async Task Simulation_refusal_restores_the_displaced_expected_owner_with_a_new_version()
     {
         await using var f = await Fixture.CreateAsync();

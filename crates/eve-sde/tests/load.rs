@@ -1,9 +1,3 @@
-//! Reader and loader tests. The database tests need a PostgreSQL to talk to:
-//!
-//!   EVE_PG_URL=postgres://postgres@127.0.0.1:5432/eve cargo test -p eve-sde
-//!
-//! and are skipped (loudly) when it is not set.
-
 use std::fs;
 use std::path::PathBuf;
 
@@ -12,7 +6,6 @@ use eve_sde::jsonl::{self, JsonlError};
 use eve_sde::load::{self, LoadError, copy_escape};
 use postgres::{Client, NoTls};
 
-/// A scratch directory under the system temp dir, removed on drop.
 struct Scratch(PathBuf);
 
 impl Scratch {
@@ -34,7 +27,6 @@ impl Drop for Scratch {
     }
 }
 
-/// A small SDE with awkward content: tabs, newlines, backslashes, quotes, unicode.
 fn mini_sde(dir: &Scratch) {
     dir.write(
         "_sde.jsonl",

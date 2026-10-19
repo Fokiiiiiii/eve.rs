@@ -240,7 +240,6 @@ mod tests {
     use eve_destiny::encode_entity_ball;
 
     /// What the reference sent for the wreck of a hull that `/deathtest` blew up (`oracle/fixtures/scenarios/death.json`, the third update of the
-
     const RECORDED_BALL: &str = "6fb5089b15090000\
         0200003c425fc833c6022952426c5427b7db5708c285e10f7e6c3c424209000000000088c34000ffffffffffffffff46420f00ffffffff000000000000000000000000000000000000000000000000000000000000803f00000000ff";
 

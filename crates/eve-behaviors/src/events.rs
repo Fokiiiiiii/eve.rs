@@ -147,7 +147,6 @@ impl EventMessenger {
         self.subscriptions.get(&(subject, key.into())).cloned().unwrap_or_default()
     }
 
-    /// Drops everything a tree subscribed to (its owner is gone).
     pub fn forget_tree(&mut self, tree: i64) {
         for list in self.subscriptions.values_mut() {
             list.retain(|o| o.tree != tree);

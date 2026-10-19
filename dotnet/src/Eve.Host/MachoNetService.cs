@@ -69,7 +69,7 @@ public sealed partial class MachoNetService(
     MachoNetGlobalConfigUpdateCallback? setGlobalConfigValue = null)
 {
     private const string ServerStatusLabel = "/Carbon/MachoNet/ServerStatus/OK";
-    private const long RoleAdmin = 1L << 56;   // ROLE_ADMIN (carbon/common/script/sys/serviceConst.py)
+    private const long RoleAdmin = 1L << 56;
     private const long RoleService = 1L << 60; // ROLE_SERVICE
 
     private PyValue ServiceInfo() => new PyDict([.. info.Services().Select(entry =>

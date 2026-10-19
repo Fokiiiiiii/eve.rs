@@ -15,7 +15,7 @@ internal sealed class ObservatoryLandmarkSource(
     IReadOnlyDictionary<int, IReadOnlyList<double[]>> stargates,
     Func<int, int> groupOfType)
 {
-    /// <summary>The SDE group of the player control towers (the wiki, Mobile Observatory: 100 km from a control tower, not 1 000 km).</summary>
+
     internal const int ControlTowerGroupId = 365;
 
     public async Task<IReadOnlyList<double[]>> ReadAsync(int solarSystemId, CancellationToken cancellationToken)

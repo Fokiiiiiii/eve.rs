@@ -939,8 +939,8 @@ private async ValueTask<IReadOnlyList<long>> ReadCommittedAcquisitionsAsync(
     }
 
     /// <summary>
-    /// ST-9 d: a neutral Sovereignty Hub that an entosis link captured is claimed by the capturing corporation and alliance: the system, its hub's structure row and
-    /// the hub record take the owner, and the claim time is now (the hub's strategic index counts from it). Refused (false) unless the system is still neutral and
+
+
     /// the hub is its infrastructure hub; a claim this alliance already holds is answered as done (a repeat after a lost answer). Written through the sovereignty
     /// table like the other claims and verified in the persisted table.
     /// </summary>
@@ -1004,8 +1004,8 @@ private async ValueTask<IReadOnlyList<long>> ReadCommittedAcquisitionsAsync(
     }
 
     /// <summary>
-    /// ST-17 a: a hub destroyed by its command node stage (EVE.js commitSovereigntyHubCampaignOutcome, result attacker): the system loses its owner, its claim, its
-    /// hub pointer, its claim time and its fuel group, and the hub's structure row and its hub record leave the table. A system whose hub or owner is not the
+
+
     /// destroyed one is left alone and answered as done. Verified in the persisted table, like the claims.
     /// </summary>
     public async Task<bool> DestroyLostHubAsync(long solarSystemId, long hubId, long allianceId, CancellationToken cancellationToken = default)

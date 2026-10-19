@@ -201,7 +201,7 @@ public sealed class PersistenceStructureProfilesRpcBackend(
         }
         if (moved.Count > 0)
         {
-            // the structures schema owns the profile of a structure (ST-0); the game store's table is no longer written
+
             var set = setStructureProfileAsync ?? throw new InvalidOperationException("structure profiles are not wired to the structure store");
             await set(moved, profileId, cancellationToken).ConfigureAwait(false);
             NotifyCorporationStructuresUpdated(corporationId);

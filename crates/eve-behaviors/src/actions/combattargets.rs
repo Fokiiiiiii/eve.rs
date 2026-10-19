@@ -658,7 +658,6 @@ impl Task for AcquireTargetLock {
     }
 
     fn on_event(&mut self, t: &mut TaskCtx<'_, '_>, _handler: u16, _args: &[Value]) {
-        // OnTargetAdded(target_id)
         t.set_status_to_success();
         t.on_status_updated();
     }

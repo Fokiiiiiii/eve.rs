@@ -399,7 +399,6 @@ impl Task for StopCombatEffectsOnTarget {
     }
 }
 
-/// Takes the items of the owners it is given out of a set of items.
 #[derive(Debug, Default)]
 pub struct OwnerListFilterAction;
 

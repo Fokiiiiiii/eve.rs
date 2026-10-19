@@ -19,7 +19,7 @@ public sealed class SharedFolderNotifier(BookmarkStore store, Func<Affiliation, 
     private readonly Dictionary<long, (long CorporationId, long AllianceId)> _seen = new();
 
     /// <summary>
-    /// Plans the notices for a changed owner group: each connected character with a folder that uses the group gets
+
     /// <c>OnSharedBookmarksFoldersAccessLost</c> for the folders it can no longer view, and <c>OnSharedBookmarksFoldersAccessChanged</c> (folder
     /// to level) for the rest. Answers null when nothing is to be sent.
     /// </summary>

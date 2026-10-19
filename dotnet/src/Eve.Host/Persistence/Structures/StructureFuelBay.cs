@@ -8,7 +8,7 @@ using Npgsql;
 namespace Eve.Host;
 
 /// <summary>
-/// The fuel bay of a structure over the item store: the fuel blocks (SDE group 1136) at the structure in its fuel bay (flag 172, EveJS
+
 /// <c>STRUCTURE_FUEL_BAY_FLAG</c>). A burn takes the oldest stacks first, inside the caller's transaction: a stack is deleted or shrunk.
 /// </summary>
 public sealed class InventoryStructureFuelBay(PgItemStore items, DogmaStatic dogma, EventBus events) : IStructureFuelBay

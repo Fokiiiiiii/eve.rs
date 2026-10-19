@@ -42,7 +42,7 @@ public static class ContractCreationRules
             !ItemExchangeExpiryOptions.Contains(request.ExpiryMinutes) ||
             request.Price < 0 || request.Reward < 0 || request.BrokerFee < 0 || request.Deposit < 0 || request.SalesTax < 0 ||
             request.WalletAccountKey is < 1000 or > 1006 || string.IsNullOrWhiteSpace(request.Title) ||
-            request.Title.Length > 50 || request.Description.Length > 50 || request.Items is null ||
+            request.Title.Length > 50 || request.Description.Length > 4000 || request.Items is null ||
             request.Items.Count is 0 or > 500 || request.Items.Any(item => item.ItemId <= 0 || item.Quantity <= 0) ||
             request.Items.Select(item => item.ItemId).Distinct().Count() != request.Items.Count ||
             new[] { request.Price, request.Reward, request.BrokerFee, request.Deposit, request.SalesTax }

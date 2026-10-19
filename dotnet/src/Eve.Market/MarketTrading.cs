@@ -213,7 +213,7 @@ public sealed class MarketTrading(NpgsqlDataSource source,MarketStore store,PgCh
         var context = await Context(c,tx,actor.Id,station,token);
         var current = new MarketLocation(actor.StationId,actor.SolarSystemId,actor.ConstellationId,actor.RegionId);
         var location = MarketLocation.From(station);
-        // A duration-0 buy matches immediately; any remainder rests for the default buy duration.
+
         var duration = request.Buying && request.Duration == 0 ? MarketRules.ImmediateBuyBookedDays : request.Duration;
         if (!request.Buying || duration>0)
         {
@@ -228,7 +228,7 @@ public sealed class MarketTrading(NpgsqlDataSource source,MarketStore store,PgCh
             await using var count = Command(c,tx,$"SELECT count(*) FROM {Schema}.orders WHERE actor_id=$1 AND state=0",actor.Id);
             if ((long)(await count.ExecuteScalarAsync(token))! >= context.Limits.Count) throw new MarketError("MARKET_ORDER_LIMIT");
         }
-        // Book locks are per region and type; wallet rows use the shared owner/key order.
+
         await using (var bookLock = Command(c,tx,"SELECT pg_advisory_xact_lock(hashtextextended($1,0))",$"market:{Schema}:book:{station.RegionId}:{request.TypeId}"))
             await bookLock.ExecuteNonQueryAsync(token);
         var (held,plans) = await MatchAsync(c,tx,request.TypeId,request.Buying,request.Price,request.Quantity,request.Range,station,time,token);
@@ -787,7 +787,7 @@ public Task<MarketReceipt> ModifyAsync(long actorId,long orderId,decimal newPric
         return result;
     }
 
-    /// <summary>Recipients are the owner, actor, and corporation members with market rights; zero ids are dropped.</summary>
+
     private async Task<long[]> NoticeRecipientsAsync(NpgsqlConnection c,NpgsqlTransaction tx,long walletOwnerId,long orderActor,long stationId,long[] acting,CancellationToken token)
     {
         var ids=new List<long> { orderActor };

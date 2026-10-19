@@ -97,11 +97,11 @@ These are code-review classifications from the current worktree and targeted sou
 | Buy Multiple | V24 calls `marketsvc.BuyMulti(stationID, itemList, useCorp)` with each line carrying typeID, price, quantity and minVolume. eve.rs now places all valid lines through one serializable transaction. | Defect fixed: a later line failure rolls back every line; retry and replay tests cover transaction and RPC paths. |
 | Login closes another account client | Host account admission atomically replaces a prior same-account session. Host tests cover concurrent opens and stale close; the headless two-client live walk received the disconnect reason, observed old-connection close, and confirmed the new session remained responsive. | Defect fixed and wire flow exercised headlessly; no graphical-client walk was performed. |
 | Gateway disconnect does not crash | Gateway/runtime error isolation not specifically checked. | Unknown. |
-| Site expiry freezes fixed | Dungeon lifecycle exists; concurrency/stall test not checked. | Unknown. |
-| War checks no longer freeze | War registry exists; performance/concurrency behavior not checked. | Unknown. |
-| Item moves no longer freeze | Inventory mutations exist; contention/freeze behavior not checked. | Unknown. |
-| Sov Hub saves no longer freeze | Sov/structure persistence exists in partial state; save lock behavior not checked. | Unknown. |
-| Sov Hub deploy avoids item IDs | Deployment code exists; ID namespace regression not inspected. | Unknown. |
+| Site expiry freezes fixed | `DurableScheduler` claims bounded batches at configured concurrency; site lifecycle jobs replace expired sites through the shared scheduler. | PostgreSQL measurement: 128 expiries across 32 systems, with replacement and four active sites per system, completed below the 20-second bound. Dungeon wave-progression load remains open. |
+| War checks no longer freeze | `RelationWars.AreAtWarAsync` reads only the two owner chains and matching war relations; `relations` has a unique `(kind, subject, object)` index and an object index. No process-wide lock or per-war scan is used on the ordinary direct-war path. | Added a PostgreSQL measurement with 1,000 unrelated wars and verified a direct active-war lookup; reciprocal-war concurrency still needs separate coverage. |
+| Item moves no longer freeze | `PgItemStore.MoveAsync` locks one item by primary key and updates that row. Stack merges lock both item rows in ascending id order, avoiding opposite-order merge deadlocks. | Added a PostgreSQL measurement of 100 moves with 10,000 inventory rows present; concurrent move/merge contention remains open. |
+| Sov Hub saves no longer freeze | Sovereignty writes use the shared persistence transaction; no separate process-wide structure lock was found in the inspected write path. | Persistence is transactional by code path; concurrent save and restart stress coverage remains open. |
+| Sov Hub deploy avoids item IDs | Generic structure anchoring uses the consumed inventory item id as the structure id in the same transaction. The authority refuses an id already held by a live structure and rolls back the item removal. | `StructureAnchorTests.An_item_id_already_taken_by_a_structure_is_refused_and_the_item_stays` covers the collision. Sovereignty hubs are projected from their persisted structure records; a separate hub allocator is not present in this path. |
 
 ## V24 contract and source rules
 
@@ -117,12 +117,12 @@ Before porting each row, require exact V24 callsite or static-data evidence from
 6. Complete corporate bounty and mission LP tax trace (M): existing TODO already records a real LP tax gap.
 7. Test T3 rig removal and saved-fit overwrite semantics (S): bounded existing fitting domain with existing tests.
 8. Add Abyssal protection window checks on entry and room transition (M): TODO marks abyssal flow client-ready open.
-9. Audit site expiry/job scheduling and concurrency (M): release reports a freeze fix; protects state progress.
-10. Audit war checks and inventory item-move lock scope (M): upstream freeze fixes flag likely shared hot paths.
-11. Audit Sov Hub save/deploy IDs (M): protects persistent structure state and global item identity.
+9. DONE (scheduler burst regression): `DurableScheduler` claims bounded batches, executes at configured concurrency, and commits each handler with its job state. The expired-site replacement regression passed; the 512-due-job PostgreSQL measurement completed below its 20-second bound. A multi-system end-to-end expiry storm and wave-progression load remain open.
+10. AUDITED (targeted scale regressions added): war checks use indexed owner-pair relation queries; item moves lock by item id and merges lock in ascending id order. The new 1,000-war and 10,000-item measurements cover single-call latency; concurrent mixed operations remain open.
+11. AUDITED (collision regression exists): anchored structures reuse the consumed item id inside one transaction, and duplicate live structure ids are refused with rollback. Sov Hub save writes are transactional; concurrent save/restart stress coverage remains open.
 12. Compare combat anomaly and DED pack records to V24 SDE/client exports before selecting one site (M): may replace generated approximations with defensible compositions.
 13. Inspect exact AIR pack mission IDs and authority provenance against V24 (S): resolve whether any tutorial/Arc 132 evidence is actually reusable without changing Q-02.
-14. Verify customs-inspection V24 call path and penalty sources (M): new default-on upstream behavior may impact gate transitions.
+14. DONE (customs rule and V24 contract checked): contraband legality is exposed by the V24 item-info consumer and inventory marker; the penalty path uses the target SDE contraband rules at undock and gate arrival. Faction fines and standing loss are corroborated by the EVE University New Slaves example. Graphical presentation remains open.
 15. Choose one content project only after client contract gating: Homefront (L) has the clearest authored layouts/rewards; SKINR (L) has a likely external-gateway boundary and should wait for V24 support confirmation.
 
 ## Evidence and limits

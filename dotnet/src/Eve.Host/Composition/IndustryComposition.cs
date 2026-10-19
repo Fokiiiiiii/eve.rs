@@ -106,7 +106,7 @@ internal sealed partial class CharacterServicesComposition
 
     /// <summary>
     /// The facility tax of an NPC station: the SDE <c>npcCorporations.taxRate</c> of the station's owning corporation
-    /// (CCP data; most NPC corporations are 0, some 0.10 or 0.11). Zero when the owner has no row.
+
     /// </summary>
     async ValueTask<decimal> ReadNpcStationTaxAsync(long ownerId, CancellationToken token)
     {
@@ -304,7 +304,7 @@ internal sealed partial class CharacterServicesComposition
     /// <summary>
     /// The activities of an NPC station as the client reads them: per activity the time modifiers, then empty material, cost,
     /// category, group and type lists (no restriction). Manufacturing (1) needs the Factory (14); the science activities (3, 4, 5, 8)
-    /// need the Laboratory (15). A modifier is listed only for a factor other than 1, as EveJS does.
+
     /// </summary>
     static PyValue NpcActivitiesPayload(NpcOperation operation)
     {
@@ -419,7 +419,7 @@ internal sealed partial class CharacterServicesComposition
 
     /// <summary>
     /// GetFacilityLocations: the station hangar of an NPC station, as the client's industry.Location object (itemID, typeID,
-    /// ownerID, flagID, canView, canTake). Corporation deliveries are not offered yet.
+
     /// </summary>
     PyValue? FacilityLocations(long facilityId, long ownerId, bool corporate)
     {
@@ -523,7 +523,7 @@ internal sealed partial class CharacterServicesComposition
             foundations.Events, stations, ResolveIndustryFacilityAsync, industryCostIndexes,
             async (characterId, token) => (await characters.GetAsync(characterId, token)) is { } character ? (long?)character.SolarSystemId : null,
             industryReady, now);
-        
+
     }
 
     static long PositiveMapRpcId(PyValue value) => value switch
@@ -584,7 +584,7 @@ internal sealed partial class CharacterServicesComposition
                 var change = context.Event.Payload<Eve.Services.Core.IndustryJobChangedEvent>();
                 if (change is null)
                     return Task.CompletedTask;
-                // The owner and the installer, and for a corporation's job the online members whose roles let them see corporation blueprints and jobs (the client's
+
                 // CanSeeCorpBlueprints: Factory Manager, Rent Factory Slot or Rent Research Slot).
                 var recipients = new List<Eve.Services.ClientSession>();
                 foreach (var characterId in new[] { change.OwnerId, change.InstallerId }.Distinct())

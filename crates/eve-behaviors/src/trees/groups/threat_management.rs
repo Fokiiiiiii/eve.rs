@@ -6,7 +6,6 @@ use crate::value::Value;
 use crate::trees::builder::{Node, int_list, sequence};
 use crate::trees::combat::combat_targets_set;
 
-/// `CreateThreatManagementBehavior(friendlyOwnerIds, hostileOwnerIds, isAutomaticallyAggressive)`.
 pub fn create_threat_management_behavior(
     friendly_owner_ids: Value,
     hostile_owner_ids: Value,

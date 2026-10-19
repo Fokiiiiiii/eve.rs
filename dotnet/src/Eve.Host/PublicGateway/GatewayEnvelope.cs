@@ -10,7 +10,7 @@ internal sealed record GatewayRequest(byte[] CorrelationUuid, string TypeUrl, by
     public string TypeName => TypeUrl[(TypeUrl.LastIndexOf('/') + 1)..];
 }
 
-/// <summary>The envelopes and the gRPC framing of the public gateway (EveJS publicGatewayLocal.js: createGrpcFrame and the response envelope).</summary>
+
 internal static class GatewayEnvelope
 {
     /// <summary>The type url prefix of the responses (the client's TYPE_URL, eveProto/__init__.py).</summary>

@@ -1,6 +1,6 @@
 namespace Eve.Services.Core;
 
-/// <summary>An upgrade a hub has installed, in install order, with the owner's online switch (EVE.js installedUpgrades: installation.online).</summary>
+
 public sealed record SovUpgradeInstall(long TypeId, bool Online);
 
 /// <summary>An upgrade's power and workforce numbers: what it needs to run and what it produces once it runs.</summary>
@@ -10,7 +10,7 @@ public sealed record SovUpgradeDefinition(long TypeId, double PowerRequired, dou
 public sealed record SovUpgradeSupply(double Power, double Workforce);
 
 /// <summary>
-/// The sovereignty upgrade power and workforce budget (ST-17 c; EVE.js sovModernState <c>computeHubUpgradeSnapshot</c>). An upgrade with its online switch set runs
+
 /// when the power and the workforce it needs fit what is left of the supply, in install order; a running upgrade adds what it produces. An upgrade that does not
 /// fit is LOW, one whose switch is off is OFFLINE. The cynosural suppression's online state is "ONLINE", so it is derived here, not stored.
 /// </summary>
@@ -22,7 +22,7 @@ public static class SovUpgradeBudget
     public const int PowerStateLow = 3;
 
     /// <summary>
-    /// The Cynosural Suppression upgrade's numbers (SDE 81619 has no power or workforce attribute; the EVE University wiki's Sovereignty Hub table gives 250
+
     /// power and 4 500 workforce).
     /// </summary>
     public const long CynoSuppressionTypeId = 81619;
@@ -31,7 +31,7 @@ public static class SovUpgradeBudget
     public const double FallbackStarPower = 500;
 
     /// <summary>
-    /// The numbers of an upgrade: the wiki's where it gives them, else EVE.js's placeholder for the type (sovStaticData UPGRADE_FAKE_BY_REMAINDER: the values by
+
     /// type id modulo 4; EVE.js produces no power or workforce with them).
     /// </summary>
     public static SovUpgradeDefinition DefinitionOf(long typeId)

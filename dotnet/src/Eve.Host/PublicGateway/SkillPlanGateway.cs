@@ -4,7 +4,7 @@ namespace Eve.Host.PublicGateway;
 
 /// <summary>
 /// The skill plan namespace of the public gateway (eve_public.character.skill.plan, the plan and milestone requests): the personal plans of
-/// the active character, kept by <see cref="PgSkillPlanStore"/>. The answers are those of the EveJS skill plan gateway
+
 /// (services/skills/plans/skillPlanState.js): a missing plan is 404, a refused write 400, and an unknown request is not answered here.
 /// The requirements are stored in the reference's canonical form (prerequisites absorbed and listed first). Plans do not train skills.
 /// </summary>

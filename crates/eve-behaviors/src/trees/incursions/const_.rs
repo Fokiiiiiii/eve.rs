@@ -5,12 +5,10 @@ use crate::value::Value;
 
 use crate::trees::builder::int_set;
 
-/// `DRIFTER_OWNERS`.
 pub fn drifter_owners() -> Value {
     int_set(&[FACTION_DRIFTERS, OWNER_UNKNOWN])
 }
 
-/// `AMARR_NAVY_OWNERS`.
 pub fn amarr_navy_owners() -> Value {
     int_set(&[OWNER_AMARR_NAVY])
 }

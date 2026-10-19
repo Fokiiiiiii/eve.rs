@@ -4,8 +4,8 @@ namespace Eve.Host;
 
 /// <summary>
 /// Reserves stable positions for the persisted room plan. Room scenes are isolated by RoomIndex,
-/// so the same hidden-system center can be reused across rooms without EveJS's 12,000km same-scene spacing workaround.
-/// The generic fallback layout follows EveJS's 35km conduit and 10km NPC orbit distances.
+
+
 /// </summary>
 public static class AbyssalRoomSpawnPlanner
 {

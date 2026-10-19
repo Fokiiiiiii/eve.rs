@@ -5,7 +5,7 @@ public sealed record ApproximateMissionRewardConfiguration(
     decimal SystemSecurityFactor = 1.6288m,
     decimal SecurityConnectionsBonusPerLevel = 0.10m);
 
-/// <summary>Formula plumbing for the owner-approved, approximate mission LP calculation.</summary>
+
 public static class ApproximateMissionRewardRules
 {
     public static decimal LoyaltyPoints(decimal basePoints, decimal systemSecurity, decimal divisionSkillBonus,

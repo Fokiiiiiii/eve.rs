@@ -91,7 +91,6 @@ impl SpawnNewEntities {
         Self { name: "SpawnNewEntities", getter: EntityGetter::Plain, spawner: EntitySpawner::Plain }
     }
 
-    /// `SpawnNewEntitiesBySpawnlistAndOwnerId`.
     pub fn by_spawnlist_and_owner_id() -> Self {
         Self {
             name: "SpawnNewEntitiesBySpawnlistAndOwnerId",
@@ -114,7 +113,6 @@ impl SpawnNewEntities {
         Self { name: "SpawnNewEntitiesAtStructure", spawner: EntitySpawner::WithUndock, ..Self::new() }
     }
 
-    /// `SpawnNewEntitiesAtStructureBySpawnlistAndOwnerId`.
     pub fn at_structure_by_spawnlist_and_owner_id() -> Self {
         Self {
             name: "SpawnNewEntitiesAtStructureBySpawnlistAndOwnerId",
@@ -341,23 +339,21 @@ enter_task!(
     }
 );
 
-enter_task!(
-    /// Puts the spawn table that goes with the owner on a blackboard; raises when the task maps none for it.
-    SetSpawnTableOnBlackboardByOwner,
-    |t| {
-        let owner_id = get_owner_id(t);
-        let Some(mapping) = t.required("ownerToSpawnTableMapping") else { return };
-        let spawn_table_id = owner_id.and_then(|owner| mapping.dict_get(&Value::Int(owner)).cloned());
-        let Some(spawn_table_id) = spawn_table_id.filter(|table| !table.is_none()) else {
-            let owner = owner_id.map_or("None".to_string(), |id| id.to_string());
-            t.raise(BehaviorError::Task(format!("ValueError: Unable to find a spawn table id for owner {owner}")));
-            return;
-        };
-        let Some(address) = t.required_address("spawnTableIdAddress") else { return };
-        t.send_blackboard_value(&address, spawn_table_id);
-        t.set_status_to_success();
-    }
-);
+enter_task!(SetSpawnTableOnBlackboardByOwner, |t| {
+    let owner_id = get_owner_id(t);
+    let Some(mapping) = t.required("ownerToSpawnTableMapping") else { return };
+    let spawn_table_id = owner_id.and_then(|owner| mapping.dict_get(&Value::Int(owner)).cloned());
+    let Some(spawn_table_id) = spawn_table_id.filter(|table| !table.is_none()) else {
+        let owner = owner_id.map_or("None".to_string(), |id| id.to_string());
+        t.raise(BehaviorError::Task(format!(
+            "ValueError: Unable to find a spawn table id for owner {owner}"
+        )));
+        return;
+    };
+    let Some(address) = t.required_address("spawnTableIdAddress") else { return };
+    t.send_blackboard_value(&address, spawn_table_id);
+    t.set_status_to_success();
+});
 
 /// Starts a spawner that reacts to what threatens it (`ReactiveSpawning`).
 #[derive(Debug, Default)]
@@ -641,7 +637,7 @@ mod tests {
             Status::Success
         );
         assert_eq!(rig.world.deployments[0].spawn_data.len(), 3);
-        // an owner the mapping lacks has nothing to spawn
+
         let mut rig2 = rig_with_owner(8);
         rig2.ctx.solar_system_id = Some(30000142);
         rig2.world.security.insert(30000142, 0.9);

@@ -5,7 +5,7 @@ namespace Eve.Host;
 
 /// <summary>
 /// The fuel of each structure service, from the SDE (pinned build, typeDogma of the service module): the hourly burn (attribute 2109) and the online charge (2110,
-/// which is 72 hours of the burn: the wiki's three days). EveJS reads the same attributes (<c>structureServiceModules.js</c>). A module without them is not offered:
+
 /// its service cannot go online (a named refusal), and the server still starts.
 /// </summary>
 public sealed class ServiceFuelRulesSource : IServiceFuelRules

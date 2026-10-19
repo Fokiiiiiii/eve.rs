@@ -46,8 +46,11 @@ pub enum MonitorEvent {
     /// `OnTreeResetRequest(requestedBy)`: `'RequestReset'`.
     RequestReset(Option<TaskId>),
     /// `OnTreeSetBlockReset(value, task)`: `'SetBlockReset'`.
-    SetBlockReset { task: TaskId, blocked: bool },
-    /// `OnTreeStep(task)`: `'Step'`; `None` is the end of the tick.
+    SetBlockReset {
+        task: TaskId,
+        blocked: bool,
+    },
+
     Step(Option<TaskId>),
 }
 

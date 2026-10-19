@@ -30,7 +30,7 @@ Updated at every push. Plan: scratchpad `specs/structures_phase.md`, section ST-
    generic_relic_loot, all tags) into the container's cargo, owned by the winner, and leaves it looted until empty (a win with no loot clears immediately). The last item move clears the row, publishes `site.container.cleared`, and removes the ball. Two lost
    attempts destroy the row and remove the ball; failures survive a restart. Tests: `SiteContainerTests` (4), `SiteLootTests` (3),
    `ContainerSiteEndToEndTests` (1: fill -> containers -> attempts through `HackingMgrService` with a winning board -> loot in cargo -> cleared ->
-   the site leaves the active list). The package-close review left both EveJS behaviors open; see the 2026-10-14 follow-up below for the implementation and parent-reported test result.
+   the site leaves the active list). The package-close review left both EveJS behaviors open; see the 2026-10-14 follow-up below for the implementation and recorded test result.
    Fixed in this round: the d1 fill never wrote its placement (the placement code was lost before the d1 commit); the test that caught it is the
    end-to-end one.
 `hackOrbital` (Data Subverter) stays refused.
@@ -44,7 +44,7 @@ Updated at every push. Plan: scratchpad `specs/structures_phase.md`, section ST-
 
 The production item-move publisher and Host subscriber were already wired. Inventory MultiAdd reaches CharacterShips; PgItemStore writes inventory.item_moved in the move transaction; SpaceComposition routes it to SiteContainerHacks.OnItemLeftAsync. Site containers remain owner 0; SpaceContainers allows only matching looted rows and selected cargo owned by the pilot. A looted row restores its ball after restart; the final committed move clears the row, emits site.container.cleared, and removes the ball.
 
-Parent-reported Cockroach regression: SiteContainerRestartTests — 1 PASS, 0 FAIL, 0 SKIP (3s). Native graphical-client verification and MITM comparison remain unverified.
+Parent-reported Cockroach regression: SiteContainerRestartTests — 1 PASS, 0 FAIL, 0 SKIP (3s). Native graphical-client verification and MITM comparison remain not confirmed.
 
 ## Closed
 

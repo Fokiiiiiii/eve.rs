@@ -36,7 +36,7 @@ Owner: the structures phase (plan in the scratchpad `specs/structures_phase.md`,
 1. The host supplies the vitals (SDE 263/265/9 layers, 2034-2036 limits, 3354-3356 pauses) in `PlaceStructure`; nothing does yet. A weapon path that hits a structure body is not wired (ST-8a).
 2. (c) Dockable body in `scene/docking.rs` (`Station` -> dockable body; state gate from J `STRUCTURE_DISABLED_STATES`).
 3. (d) Host `dotnet/src/Eve.Services.Space/SpaceStructures.cs`: restore on first pilot entry, `structure.state_changed` -> `SetStructureState`, `StructureDamaged` -> ST-0 machine.
-4. (e) Headless test `tools/headless-client/tests/test_structures.py` (MITM rows stay UNVERIFIED until the graphical client is used).
+4. (e) Headless test `tools/headless-client/tests/test_structures.py` (MITM rows stay not confirmed until the graphical client is used).
 
 ## Gotchas
 - The Serena MCP view did not match this worktree: edits made through it did not reach `/home/user/wt-st1` (git stayed clean). Increment a was applied with python3 scripts from Bash, as AGENT_RULES.md prescribes. Check `git status` after any edit.

@@ -720,6 +720,25 @@ public class CharMgrTests
 
 
     [PgFact]
+    public async Task Private_corporation_change_info_ignores_a_client_supplied_other_character_id()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var ownId = await rig.MakeAsync("Own Corp Change");
+        var otherId = await rig.MakeAsync("Other Corp Change");
+        long? readCharacterId = null;
+        var service = rig.CreateCharMgr(readCorporationMemberStartedMs: (id, _) =>
+        {
+            readCharacterId = id;
+            return ValueTask.FromResult<long?>(1_700_000_000_123);
+        });
+        var (session, _) = Rig.Session(ownId);
+
+        await Rig.CallAsync(service, session, "GetPrivateInfoOnCorpChange", Id(otherId));
+
+        Assert.Equal(ownId, readCharacterId);
+    }
+
+    [PgFact]
     public async Task Personal_char_mgr_rpcs_preserve_client_shapes_and_update_owner_scoped_state()
     {
         await using var rig = await Rig.CreateAsync();

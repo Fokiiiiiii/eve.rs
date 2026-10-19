@@ -111,6 +111,9 @@ public sealed class ShipCosmeticsMgrRpcService : IService
 
     private PyValue GiveSkin(ServiceCall call)
     {
+        if (!GameMasterRoles.Has(call.Session, GameMasterRoles.Staff))
+            throw MachoErrors.ThrowUserError(
+                "CustomNotify", ("notify", new PyStr("ROLE_STAFF_REQUIRED")));
         var characterId = call.Session.CharacterId ?? 0;
         var skinId = Positive(call.Arg(0));
         if (characterId <= 0 || skinId <= 0 || _store is null) return PyNone.Instance;
@@ -145,6 +148,9 @@ public sealed class ShipCosmeticsMgrRpcService : IService
 
     private PyValue GMExpireSkinLicense(ServiceCall call)
     {
+        if (!GameMasterRoles.Has(call.Session, GameMasterRoles.Gml))
+            throw MachoErrors.ThrowUserError(
+                "CustomNotify", ("notify", new PyStr("ROLE_GML is required")));
         var characterId = call.Session.CharacterId ?? 0;
         var skinId = Positive(call.Arg(0));
         var path = OverridePath(characterId, skinId);

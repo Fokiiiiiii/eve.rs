@@ -741,8 +741,7 @@ public AllianceRegistryService(CorporationStore store, PgCharacterStore characte
     [Method("GMForceAcceptApplication")]
     public async ValueTask<PyValue> GMForceAcceptApplication(ServiceCall call)
     {
-        const long gmlRole = 1L << 54;
-        if (((call.Session.GetInt("role") ?? 0) & gmlRole) == 0)
+        if (!Eve.Services.GameMasterRoles.Has(call.Session, Eve.Services.GameMasterRoles.Gml))
             throw AllianceAccessDenied();
         var allianceId = call.BoundObjectId is { } oid && _alliancesByObject.TryGetValue(oid,out var bound)
             ? bound

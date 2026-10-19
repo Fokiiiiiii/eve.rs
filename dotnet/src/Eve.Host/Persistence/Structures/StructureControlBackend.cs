@@ -42,6 +42,14 @@ public sealed class StructureControlBackend
 
     public async ValueTask<long?> GetStructurePilotAsync(ServiceCall call, long structureId)
     {
+        if (structureId <= 0) return null;
+        var visibleSystem = call.Session.GetInt("solarsystemid2") ?? call.Session.GetInt("solarsystemid");
+        if (visibleSystem is null) return null;
+        var structure = await _structures.GetAsync(structureId, call.Cancellation);
+        if (structure is null || structure.Snapshot.DestroyedMs != 0 ||
+            structure.Snapshot.State is StructureState.Unanchored or StructureState.Anchoring ||
+            structure.SolarSystemId != visibleSystem.Value)
+            return null;
         await using var connection = await _source.OpenConnectionAsync(call.Cancellation);
         return (await _pilots.GetByStructureAsync(connection, null, structureId, call.Cancellation))?.CharacterId;
     }

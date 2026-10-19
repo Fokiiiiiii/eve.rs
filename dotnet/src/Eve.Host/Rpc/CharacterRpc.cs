@@ -58,6 +58,12 @@ internal sealed partial class CharacterServicesComposition
             corporations,
             characterEntryHooks,
             controlledStructureInventory: structureControlReadModel.InventoryAsync,
+            dockableAssetLocation: async (structureId, token) =>
+            {
+                if (await ReadHomeStationStructureAsync(structureId, token) is not { Location: { } location })
+                    return null;
+                return new DockableAssetLocation(location.Id, location.SolarSystemId, location.TypeId);
+            },
             crystalDamage: async (itemIds, token) => (await modules.ModuleConditionsAsync(itemIds, token))
                 .ToDictionary(entry => entry.Key, entry => entry.Value.Damage));
         return [

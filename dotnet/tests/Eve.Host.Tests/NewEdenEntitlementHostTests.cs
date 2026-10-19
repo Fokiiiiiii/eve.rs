@@ -191,7 +191,9 @@ public sealed class NewEdenEntitlementHostTests : IAsyncLifetime
         var after = DateTimeOffset.UtcNow;
 
         var end = await StoredEndAsync(accounts, accountId);
-        Assert.InRange(end, Plus(before, TimeSpan.FromDays(30)), Plus(after, TimeSpan.FromDays(30)));
+        Assert.InRange(end,
+            Plus(DateTimeOffset.FromUnixTimeMilliseconds(before.ToUnixTimeMilliseconds()), TimeSpan.FromDays(30)),
+            Plus(DateTimeOffset.FromUnixTimeMilliseconds(after.ToUnixTimeMilliseconds()), TimeSpan.FromDays(30)));
         Assert.Equal(0, await PlexBalanceAsync(host, session, 4));
         Assert.Equal(new PyInt(1), await subscriptions.CallAsync(Call(session, "GetCloneGrade", 5, [])));
         Assert.Equal(1, sink.Count("OnSubscriptionChangedServer"));

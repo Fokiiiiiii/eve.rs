@@ -28,6 +28,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$env:DOTNET_CLI_USE_MSBUILD_SERVER = '0'
 if ($Trace -or $Strict) { $Dev = $true }
 
 $isWindowsHost = [Environment]::OSVersion.Platform -eq 'Win32NT'
@@ -174,10 +175,13 @@ try {
     Write-Step 'building eve-host (dotnet build -c Release)'
     Push-Location (Join-Path $root 'dotnet')
     try {
-        & $dotnet build -c Release src/Eve.Host -nologo -v q
+        & $dotnet build -c Release src/Eve.Host -nologo -v q -nodeReuse:false
         if ($LASTEXITCODE -ne 0) { throw 'dotnet build of Eve.Host failed' }
     }
-    finally { Pop-Location }
+    finally {
+        dotnet build-server shutdown
+        Pop-Location
+    }
     $hostDll = Join-Path $root 'dotnet/src/Eve.Host/bin/Release/net10.0/eve-host.dll'
 
     # PostgreSQL 18: reachable, the right major version, and the eve database exists

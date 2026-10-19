@@ -54,6 +54,7 @@ public sealed class CorpStationMgrTests
             Nested(service, session, "DoStandingCheckForStationService", new PyInt(5), new PyLong(otherCharacter)));
 
         Assert.Equal("CustomNotify", refused.Error.UserErrorMessage);
+        Assert.Equal(PyNone.Instance, await Nested(service, session, "DoStandingCheckForStationService", new PyInt(13), new PyLong(character)));
     }
 
     [PgFact]

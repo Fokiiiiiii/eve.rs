@@ -113,7 +113,7 @@ Source snapshotは引き続きmain/dda03ca0（親dirty宣言を含む）です�
 
 `charMgr` global assets now resolves personal inventory roots at persistently deployed structures as well as static stations. It follows nested container ancestry for root selection and keeps nested rows in `ListIncludingContainers`; one focused `eve_p2` regression passed. The Host callback reads deployed structure locations from the existing structure directory source. The `charMgr` Host wrapper still needs an end-to-end regression.
 
-The V24 caller for `contractProxy.GetLoginInfo` is confirmed at `eve/client/script/ui/shared/neocom/contracts/contracts.py:190-205`; `NeocomBlink` consumes all three rowsets for contract notifications. The method remains open because eve.rs has no persisted contract records or contract read model from which to build those rows. The 476 named exit count is unchanged: this missing exit remains open.
+The V24 caller for `contractProxy.GetLoginInfo` is confirmed at `eve/client/script/ui/shared/neocom/contracts/contracts.py:190-205`; `NeocomBlink` consumes all three rowsets for contract notifications. eve.rs now reads the three rowsets from persisted PostgreSQL contract records through `PersistenceContractReadModel`; `GetMyContractEscrow` reads the personal and corporation-issued escrow totals. Contract mutations, searches and settlement remain open. The 476 named exit count is unchanged.
 
 
 ### Follow-up: contract startup reads (2026-10-19)

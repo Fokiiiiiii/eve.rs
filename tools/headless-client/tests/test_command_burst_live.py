@@ -91,6 +91,7 @@ def test_a_loaded_burst_changes_a_fleet_members_dogma_until_its_buff_expires():
         member.call_bound(member_dogma[0], "GetAllInfo", True, True, None)
         notifications_of(member)
 
+        owner.call_bound(owner_dogma[0], "SetModuleOnline", owner_ship, burst)
         owner.call_bound(owner_dogma[0], "Activate", burst, "moduleBonusWarfareLinkShield", None, 1000)
         active_events = wait_for_events(
             member,

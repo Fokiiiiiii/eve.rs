@@ -39,7 +39,7 @@ public class HostServerTests : IAsyncLifetime
 
     public Task InitializeAsync() => Task.CompletedTask;
 
-    private void Start(AccountOptions? identity = null, int maxPending = 10_000, Action<ServiceRegistry>? configure = null, IAccountDirectory? accounts = null, bool strictRpc = false, Action<string, Exception?>? onProblem = null)
+    private void Start(AccountOptions? identity = null, int maxPending = 10_000, Action<ServiceRegistry>? configure = null, IAccountDirectory? accounts = null, bool strictRpc = false, Action<string, Exception?>? onProblem = null, Action<ClientSession>? sessionOpened = null)
     {
         var registry = new ServiceRegistry();
         configure?.Invoke(registry);
@@ -55,7 +55,7 @@ public class HostServerTests : IAsyncLifetime
         var dispatcher = new PacketDispatcher(registry, now) { StrictRpc = strictRpc, OnProblem = onProblem };
         var encoded = MarshalCodec.Encode(config);
         _server = new HostServer(
-            new HostOptions { MaxPendingPacketsPerSession = maxPending, Log = message => { lock (_log) { _log.Add(message); } } },
+            new HostOptions { MaxPendingPacketsPerSession = maxPending, Log = message => { lock (_log) { _log.Add(message); } }, SessionOpened = sessionOpened },
             dispatcher,
             accounts ?? new InMemoryAccountDirectory(identity ?? new AccountOptions { AutoCreate = true }),
             () => encoded);
@@ -1579,6 +1579,29 @@ public class HostServerTests : IAsyncLifetime
         await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(Packets.Call(open, 2, "machoNet", "GetTime"))));
         var time = Assert.IsType<PyLong>(Result(MarshalCodec.Decode(Assert.IsType<Send>(await front.ReceiveAsync()).Payload)));
         Assert.Equal(Py.FileTimeFromUnixMs(FixedNowMs), time.Value);
+    }
+
+[Fact]
+    public async Task A_second_front_login_disconnects_the_previous_session_of_the_same_account()
+    {
+        var connected = new ConnectedSessions();
+        Start(sessionOpened: session =>
+        {
+            var previous = connected.AddExclusive(session);
+            previous?.RequestDisconnect("Another client logged in to this account.");
+            session.Closed += () => connected.Remove(session);
+        });
+        using var first = await Handshaken(await ConnectAsync());
+        using var second = await Handshaken(await ConnectAsync());
+
+        await first.SendAsync(Open(11, 42));
+        Assert.IsType<Send>(await first.ReceiveAsync());
+
+        await second.SendAsync(Open(22, 42));
+        var disconnect = Assert.IsType<Disconnect>(await first.ReceiveAsync());
+        Assert.Equal(11UL, disconnect.SessionId);
+        Assert.Equal("Another client logged in to this account.", disconnect.Reason);
+        Assert.IsType<Send>(await second.ReceiveAsync());
     }
 
     [Fact]

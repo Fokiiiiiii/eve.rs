@@ -1,12 +1,4 @@
-//! eve-loadgen: measures a server from the client's side, the same way against any server that speaks the
-//! protocol (eve.rs or the EVE.js reference).
-//!
-//!   eve-loadgen <host:port> [--clients N] [--calls M] [--pipeline P] [--service S] [--method M] [--prefix NAME]
-//!
-//! Phase 1: N clients connect and log in at once (handshake latency, logins per second).
-//! Phase 2: each client makes M calls, keeping P in flight (call latency, calls per second).
-//! Accounts are created on first login, so a run against a fresh server includes that cost; repeat it for
-//! the steady state.
+//! Usage: eve-loadgen <host:port> [--clients N] [--calls M] [--pipeline P] [--service S] [--method M] [--prefix NAME]
 
 use std::process::ExitCode;
 use std::time::{Duration, Instant};

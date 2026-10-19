@@ -57,6 +57,7 @@ public sealed class GetAllInfoBenchmarkTests(ITestOutputHelper output)
             _ = MarshalCodec.Encode(reply);
         var encodeAllocated = GC.GetAllocatedBytesForCurrentThread() - encodeAllocatedBefore;
         encodeElapsed.Stop();
+        Assert.Equal(encodedReply, MarshalCodec.Encode(reply));
 
         for (var i = 0; i < marshalWarmupCalls; i++)
             _ = MarshalCodec.Decode(encodedReply);

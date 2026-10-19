@@ -21,12 +21,14 @@ internal sealed class LocalChatGateway
     private const string MessageNotice = Prefix + "MessageBroadcastNotice";
     private const int MaxMessageBytes = 1024;
     private const int MaxMessagesPerWindow = 3;
+    private const int MaxMessagesPerChannelWindow = 30;
     private static readonly TimeSpan FloodWindow = TimeSpan.FromSeconds(1);
     private static readonly TimeSpan IdleMemberRemovalTime = TimeSpan.FromSeconds(900);
 
     private readonly ConnectedSessions _sessions;
     private readonly NoticeHub _notices;
     private readonly ConcurrentDictionary<ClientSession, Queue<DateTimeOffset>> _messageTimes = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<long, Queue<DateTimeOffset>> _channelMessageTimes = [];
     private readonly object _gate = new();
     private readonly Dictionary<long, HashSet<long>> _speakersBySystem = [];
     private readonly Dictionary<(long SystemId, long CharacterId), DateTimeOffset> _lastSpoke = [];
@@ -74,7 +76,8 @@ internal sealed class LocalChatGateway
         var message = ReadString(request.Payload, 1).Trim();
         if (message.Length == 0 || Encoding.UTF8.GetByteCount(message) > MaxMessageBytes)
             return Task.FromResult(new GatewayAnswer(400, "chat message is empty or too long", BroadcastResponse, []));
-        if (!PermitMessage(session, DateTimeOffset.UtcNow))
+        var sentAt = DateTimeOffset.UtcNow;
+        if (!PermitMessage(session, sentAt) || !PermitChannelMessage(CurrentSystem(session), sentAt))
             return Task.FromResult(new GatewayAnswer(429, "chat message rate limit exceeded", BroadcastResponse, []));
 
         var characterId = session.CharacterId!.Value;
@@ -252,6 +255,20 @@ internal sealed class LocalChatGateway
             while (times.Count > 0 && now - times.Peek() >= FloodWindow)
                 times.Dequeue();
             if (times.Count >= MaxMessagesPerWindow) return false;
+            times.Enqueue(now);
+            return true;
+        }
+    }
+
+    private bool PermitChannelMessage(long systemId, DateTimeOffset now)
+    {
+        lock (_gate)
+        {
+            if (!_channelMessageTimes.TryGetValue(systemId, out var times))
+                _channelMessageTimes[systemId] = times = new Queue<DateTimeOffset>();
+            while (times.Count > 0 && now - times.Peek() >= FloodWindow)
+                times.Dequeue();
+            if (times.Count >= MaxMessagesPerChannelWindow) return false;
             times.Enqueue(now);
             return true;
         }

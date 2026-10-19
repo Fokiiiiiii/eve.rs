@@ -88,6 +88,8 @@ public interface IJumpCloneSpace
 public sealed class JumpCloneSpaceLink
 {
     public IJumpCloneSpace? Space { get; set; }
+
+    public Func<long, long, IReadOnlyList<int>, CancellationToken, Task>? CloneDeletedNotification { get; set; }
 }
 
 /// <summary>
@@ -238,9 +240,11 @@ public sealed partial class JumpCloneService(IJumpCloneStore? store = null, Jump
     public async ValueTask<PyValue> DestroyInstalledClone(ServiceCall call)
     {
         var characterId = call.Session.CharacterId ?? 0;
-        var clone = Number(call.Arg(0)) ?? 0;
-        if (characterId == 0 || clone == 0 || await Store().DestroyAsync(characterId, clone, call.Cancellation) is not { } removed)
+        var cloneId = Number(call.Arg(0)) ?? 0;
+        if (characterId == 0 || cloneId == 0 || await Store().DestroyAsync(characterId, cloneId, call.Cancellation) is not { } removed)
             throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Jump clone not found")));
+        if (spaceLink?.CloneDeletedNotification is { } notifyDeleted)
+            await notifyDeleted(characterId, cloneId, removed.ImplantTypeIds, call.Cancellation);
         Invalidate(call.Session, removed.LocationId, characterId);
         return PyNone.Instance;
     }

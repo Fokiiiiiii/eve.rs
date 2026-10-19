@@ -359,6 +359,33 @@ public sealed class PersistenceMailSendHostAdapter(
         CancellationToken cancellationToken) =>
         WriteNotificationAsync(recipientId, placerId, typeId, BountiesGroupId, data, idempotencyKey, cancellationToken);
 
+    public Task WriteJumpCloneDeletedNotificationAsync(
+        long characterId,
+        long cloneId,
+        IReadOnlyList<int> implantTypeIds,
+        CancellationToken cancellationToken)
+    {
+        if (characterId <= 0)
+            throw new ArgumentOutOfRangeException(nameof(characterId));
+        if (cloneId <= 0)
+            throw new ArgumentOutOfRangeException(nameof(cloneId));
+
+        var data = new JsonObject
+        {
+            ["locationOwnerID"] = characterId,
+            ["destroyerID"] = characterId,
+            ["typeIDs"] = new JsonArray(implantTypeIds.Select(typeId => (JsonNode?)JsonValue.Create(typeId)).ToArray()),
+        };
+        return WriteNotificationAsync(
+            characterId,
+            characterId,
+            typeId: 56,
+            groupId: 4,
+            data,
+            $"jump-clone-deleted:{characterId}:{cloneId}",
+            cancellationToken);
+    }
+
     /// <summary>The notification group of bounties (EveJS <c>NOTIFICATION_GROUP.BOUNTIES</c>).</summary>
     private const int BountiesGroupId = 10;
 

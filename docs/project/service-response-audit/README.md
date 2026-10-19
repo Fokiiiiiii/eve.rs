@@ -21,6 +21,10 @@ main `c114dc0d` にはupstream `1e3e97f8`（Industry／Market／Cynosural）が�
 
 snapshot後に親＋Zenoが確認したSkills `DiminishedInjectorSp` の既存実装差は、[既存Skills TODOへの修正待ち補足](../../TODO.md#evejs-response-audit-backlog-2026-10-13)で別管理します。Zenoが修正担当であり、修正済み・検証済みとは記録していません。ledgerへ新しいIDを追加せず、集計を変更しません。今回の文書補足はREADME／TODOのみで、全数再監査は実施していません。
 
+## EveJS v261018.1 delta follow-up (2026-10-19)
+
+The detailed release-note feature inventory and named bug-fix comparison are in [`EVEJS_261018_DELTA.md`](../../EVEJS_261018_DELTA.md). The service-response ledger and counts below remain the v0.12.9 snapshot: the newer EveJS tree does not change a V24.01 contract classification by itself. No RPC names, wire shapes, Host coverage counts, or client-visible parity claims were recalculated from v261018.1. Reconcile a service row only after checking its V24.01 callsite and eve.rs provider; new gateway APIs and non-V24 features must not be counted as legacy client coverage.
+
 ## 対象と根拠
 
 - 作業対象は `repository root` の `main`。source監査snapshot HEADは `dda03ca0464043822e68c8348604ff34eadedcac`（親のdirty宣言を含むsource監査。実運転snapshotではない）。文書読戻し時のmain HEADは `c114dc0d8e292c056e8d71b37f496084f484676f`。この後続commitのsource受入を再検証したとは扱わない。

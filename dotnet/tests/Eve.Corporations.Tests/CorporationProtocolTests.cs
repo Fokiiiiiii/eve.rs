@@ -1340,6 +1340,23 @@ private static PyValue RowField(PyValue value,string key)
         mismatched.Set("corpid", new PyInt(corporation.Id + 1));
         await Assert.ThrowsAsync<CorporationError>(async () => await service.GetAssetInventory(Call(
             mismatched, "GetAssetInventory", new PyInt(corporation.Id), new PyStr("property"))));
+
+        var member = await rig.CharacterAsync("Corp RPC Member");
+        var registry = new CorpRegistryService(rig.Store, rig.Characters, () => rig.Now);
+        var memberSession = new ClientSession { CharacterId = member };
+        var applicationId = Assert.IsType<PyInt>(await registry.InsertApplication(Call(
+            memberSession, "InsertApplication", new PyInt(corporation.Id), new PyStr("Please consider my application.")))).Value;
+        await registry.UpdateApplicationOffer(Call(
+            session, "UpdateApplicationOffer", new PyInt(applicationId), new PyInt(member),
+            new PyInt(corporation.Id), new PyStr(""), new PyInt(6), new PyStr("")));
+        await registry.UpdateApplicationOffer(Call(
+            memberSession, "UpdateApplicationOffer", new PyInt(applicationId), new PyInt(member),
+            new PyInt(corporation.Id), new PyStr(""), new PyInt(2), new PyStr("")));
+        await new CorporationLoginHook(rig.Store, rig.Characters)
+            .OnCharacterEnteredAsync(memberSession, member, default);
+        Assert.Equal(corporation.Id, memberSession.GetInt("corpid"));
+        await Assert.ThrowsAsync<CorporationError>(async () => await service.GetAssetInventory(Call(
+            memberSession, "GetAssetInventory", new PyInt(corporation.Id), new PyStr("property"))));
     }
 
     [PgFact]

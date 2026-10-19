@@ -53,9 +53,13 @@ public sealed partial class OnlineStatusService(
     }
 
     [Method("GetOnlineStatus")]
-    public async ValueTask<PyValue> GetOnlineStatus(ServiceCall call) =>
-        PyValue.Of(await IsOnline(Eve.Macho.JsSemantics.ToPositiveInteger(call.Arg(0)),
-            call.Session.CharacterId ?? 0, call.Cancellation));
+    public async ValueTask<PyValue> GetOnlineStatus(ServiceCall call)
+    {
+        if (call.Session.CharacterId is not > 0)
+            return PyBool.False;
+        return PyValue.Of(await IsOnline(Eve.Macho.JsSemantics.ToPositiveInteger(call.Arg(0)),
+            call.Session.CharacterId.Value, call.Cancellation));
+    }
 
     [Method("GetInitialState")]
     public async ValueTask<PyValue> GetInitialState(ServiceCall call)

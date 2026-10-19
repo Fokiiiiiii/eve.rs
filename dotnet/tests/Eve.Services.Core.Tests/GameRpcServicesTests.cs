@@ -45,10 +45,9 @@ public sealed class GameRpcServicesTests
                 return ValueTask.FromResult<int?>(quantity ?? 8);
             });
         var services = CoreServices.Create(new NoAccounts(), () => 1_700_000_000_000,
-            gameRpcCallbacks: callbacks, contractReadModel: new ContractRpcReadModel());
+            gameRpcCallbacks: callbacks);
         var raffle = services.Single(service => service.Name == "raffleMgr");
         var raffleProxy = services.Single(service => service.Name == "raffleProxy");
-        var contractProxy = services.Single(service => service.Name == "contractProxy");
         var jumpClone = services.Single(service => service.Name == "jumpCloneSvc");
         var gateway = services.Single(service => service.Name == "serviceGatewayMgr");
 
@@ -56,8 +55,6 @@ public sealed class GameRpcServicesTests
         Assert.Equal(3, seededQuantity);
         Assert.Equal(new PyInt(8), await raffle.CallAsync(Call("QA_SeedRaffles")));
         Assert.Equal(PyBool.False, await raffleProxy.CallAsync(Call("AmIBanned")));
-        Assert.Equal(Py.KeyVal(("iskEscrow", Py.Number(0d)), ("itemsEscrow", new PyInt(0))),
-            await contractProxy.CallAsync(Call("GetMyContractEscrow", Session(20))));
         Assert.Equal(new PyInt(Eve.Macho.MachoMessage.ProxyNodeId),
             await jumpClone.CallAsync(Call("MachoResolveObject")));
 
@@ -236,16 +233,5 @@ public sealed class GameRpcServicesTests
     private sealed class NoAccounts : IOmegaAccountStore
     {
         public string? GetOmegaExpiry(long accountId) => OmegaLicenses.DefaultOmegaExpiryText;
-    }
-
-    private sealed class ContractRpcReadModel : IContractReadModel
-    {
-        public ValueTask<ContractLoginInfo> GetLoginInfoAsync(
-            long characterId, long corporationId, long allianceId, long nowFileTime, CancellationToken cancellationToken) =>
-            ValueTask.FromResult(new ContractLoginInfo([], [], []));
-
-        public ValueTask<ContractEscrowSummary> GetMyContractEscrowAsync(
-            long characterId, long corporationId, CancellationToken cancellationToken) =>
-            ValueTask.FromResult(new ContractEscrowSummary(0m, 0));
     }
 }

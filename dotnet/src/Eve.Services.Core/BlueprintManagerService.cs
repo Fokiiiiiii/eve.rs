@@ -33,7 +33,7 @@ public sealed partial class BlueprintManagerService(
     {
         var itemId = Integral(call.Arg(0)) ?? 0;
         var blueprint = itemId > 0 ? await readBlueprint(itemId, call.Cancellation) : null;
-        if (blueprint is null || !Holds(blueprint.OwnerId, call.Session))
+        if (blueprint is null || !CanRead(blueprint, call.Session))
             throw MachoErrors.ThrowUserError("IndustryBlueprintNotFound");
         var jobs = await readActiveJobs(blueprint.OwnerId, call.Cancellation);
         return Payload(blueprint, jobs.TryGetValue(blueprint.ItemId, out var job) ? job : null);
@@ -48,23 +48,46 @@ public sealed partial class BlueprintManagerService(
     {
         var owner = Integral(call.Arg(0)) ?? 0;
         var facility = Integral(call.Arg(1));
-        if (!Holds(owner, call.Session))
+        if (!CanListOwner(owner, call.Session))
             return Py.Tuple(new PyList([]), new PyDict([]));
-        var held = await readOwned(owner, call.Cancellation);
+        var owned = await readOwned(owner, call.Cancellation);
+        var held = owned.Where(blueprint => CanRead(blueprint, call.Session)).ToArray();
         var jobs = await readActiveJobs(owner, call.Cancellation);
         IEnumerable<PyValue> listed = facility is null
             ? held.Take(MaxBlueprintResults).Select(blueprint => Payload(blueprint, jobs.TryGetValue(blueprint.ItemId, out var job) ? job : null))
             : Array.Empty<PyValue>();
-        var counts = new PyDict([new KeyValuePair<PyValue, PyValue>(PyNone.Instance, new PyInt(held.Count))]);
+        var counts = new PyDict([new KeyValuePair<PyValue, PyValue>(PyNone.Instance, new PyInt(held.Length))]);
         return Py.Tuple(new PyList([.. listed]), counts);
     }
 
     /// <summary>The character or corporation the session acts for: the owner's own blueprints only.</summary>
-    private static bool Holds(long owner, ClientSession session)
+    private static bool CanRead(BlueprintRecord blueprint, ClientSession session)
     {
-        if (owner <= 0) return false;
-        return owner == session.CharacterId || owner == (session.GetInt("corpid") ?? 0);
+        if (blueprint.OwnerId == session.CharacterId)
+            return true;
+        if (!HoldsCorporation(blueprint.OwnerId, session))
+            return false;
+
+        var roles = new Eve.Corporations.SessionRoles(
+            session.GetInt("corprole") ?? 0,
+            session.GetInt("rolesAtAll") ?? 0,
+            session.GetInt("rolesAtHQ") ?? 0,
+            session.GetInt("rolesAtBase") ?? 0,
+            session.GetInt("rolesAtOther") ?? 0,
+            session.GetInt("hqID"),
+            session.GetInt("baseID"),
+            (int)(session.GetInt("corpAccountKey") ?? 1000));
+        return (roles.CorpRole & Eve.Corporations.CorporationRoles.FactoryManager) != 0 &&
+            Eve.Corporations.CorporationRoles.HasHangarAccess(roles, blueprint.LocationId, blueprint.Flag, take: false);
     }
+
+    private static bool CanListOwner(long owner, ClientSession session) =>
+        owner > 0 && (owner == session.CharacterId ||
+            HoldsCorporation(owner, session) &&
+            ((session.GetInt("corprole") ?? 0) & Eve.Corporations.CorporationRoles.FactoryManager) != 0);
+
+    private static bool HoldsCorporation(long owner, ClientSession session) =>
+        owner > 0 && owner == (session.GetInt("corpid") ?? 0);
 
     /// <summary>
     /// The blueprint instance payload. The client reads a blueprint as an original when its quantity is not -2 and as singleton when it

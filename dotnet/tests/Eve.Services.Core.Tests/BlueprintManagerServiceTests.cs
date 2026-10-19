@@ -70,12 +70,38 @@ public sealed class BlueprintManagerServiceTests
         var service = Service();
         var session = Session(Owner);
         session.Set("corpid", new PyInt(Corporation));
+        session.Set("corprole", new PyLong(Eve.Corporations.CorporationRoles.FactoryManager));
+        session.Set("rolesAtOther", new PyLong(1L << 21));
 
         var own = Assert.IsType<PyTuple>(await service.CallAsync(Call("GetBlueprintDataByOwner", session, new PyLong(Corporation), PyNone.Instance)));
         Assert.Single(Assert.IsType<PyList>(own.Items[0]).Items);
 
         var other = Assert.IsType<PyTuple>(await service.CallAsync(Call("GetBlueprintDataByOwner", session, new PyLong(Corporation + 1), PyNone.Instance)));
         Assert.Empty(Assert.IsType<PyList>(other.Items[0]).Items);
+    }
+
+    [Fact]
+    public async Task Corporation_blueprint_reads_require_factory_manager_and_query_access_to_the_hangar()
+    {
+        var service = Service();
+        var session = Session(Owner);
+        session.Set("corpid", new PyInt(Corporation));
+
+        var noRole = Assert.IsType<PyTuple>(await service.CallAsync(Call("GetBlueprintDataByOwner", session, new PyLong(Corporation), PyNone.Instance)));
+        Assert.Empty(Assert.IsType<PyList>(noRole.Items[0]).Items);
+        await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await service.CallAsync(Call("GetBlueprintData", session, new PyLong(CorpOwned.ItemId))));
+
+        session.Set("corprole", new PyLong(Eve.Corporations.CorporationRoles.FactoryManager));
+        var noHangarAccess = Assert.IsType<PyTuple>(await service.CallAsync(Call("GetBlueprintDataByOwner", session, new PyLong(Corporation), PyNone.Instance)));
+        Assert.Empty(Assert.IsType<PyList>(noHangarAccess.Items[0]).Items);
+        await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await service.CallAsync(Call("GetBlueprintData", session, new PyLong(CorpOwned.ItemId))));
+
+        session.Set("rolesAtOther", new PyLong(1L << 21));
+        var accessible = Assert.IsType<PyTuple>(await service.CallAsync(Call("GetBlueprintDataByOwner", session, new PyLong(Corporation), PyNone.Instance)));
+        Assert.Single(Assert.IsType<PyList>(accessible.Items[0]).Items);
+        Assert.IsType<PyObject>(await service.CallAsync(Call("GetBlueprintData", session, new PyLong(CorpOwned.ItemId))));
     }
 
     private static IService Service((long Blueprint, long Job)? job = null)

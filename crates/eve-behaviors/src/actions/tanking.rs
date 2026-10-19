@@ -1,5 +1,3 @@
-//! `behaviors/actions/tanking.py`: repairing the armor and boosting the shield of my entity when it is hurt.
-
 use crate::consts::{
     EFFECT_ENTITY_ARMOR_REPAIRING_LARGE, EFFECT_ENTITY_ARMOR_REPAIRING_MEDIUM,
     EFFECT_ENTITY_ARMOR_REPAIRING_SMALL, EFFECT_ENTITY_SHIELD_BOOSTING_LARGE,
@@ -13,7 +11,6 @@ use crate::tree::{Task, TaskCtx};
 use crate::utility::dogmatic::type_has_effect;
 use crate::value::Value;
 
-/// `ARMOR_TANK_EFFECT_IDS` and `SHIELD_TANK_EFFECT_IDS` (the ids of a set have no order in the client; the lowest one the type has is used).
 const ARMOR_TANK_EFFECT_IDS: [i64; 4] = [
     EFFECT_ENTITY_ARMOR_REPAIRING_SMALL,
     EFFECT_ENTITY_ARMOR_REPAIRING_MEDIUM,
@@ -27,7 +24,6 @@ const SHIELD_TANK_EFFECT_IDS: [i64; 4] = [
     EFFECT_NPC_BEHAVIOR_SHIELD_BOOSTER,
 ];
 
-/// How many times the tank effect repeats.
 const TANK_EFFECT_REPEAT: i64 = 100;
 
 const HANDLER_ON_DAMAGE_RECEIVED: u16 = 0;
@@ -40,7 +36,6 @@ enum TankKind {
     Shield,
 }
 
-/// `EntityArmorTank` and `EntityShieldTank`.
 #[derive(Debug)]
 struct EntityTank {
     kind: TankKind,
@@ -63,12 +58,10 @@ impl EntityTank {
         }
     }
 
-    /// `IsInitialized(itemId)`.
     fn is_initialized(&self, item_id: i64) -> bool {
         self.item_id == Some(item_id)
     }
 
-    /// `Initialized(...)`, with `_DetermineValidTankEffect`.
     fn initialize(&mut self, t: &mut TaskCtx<'_, '_>, item_id: i64, type_id: i64, owner_id: Option<i64>) {
         self.item_id = Some(item_id);
         self.type_id = Some(type_id);
@@ -86,13 +79,11 @@ impl EntityTank {
         }
     }
 
-    /// `CanActiveTank`: it has an effect, and the entity is not exploding.
     fn can_active_tank(&self, t: &mut TaskCtx<'_, '_>) -> Result<bool, WorldError> {
         let (Some(_), Some(item_id)) = (self.effect_id, self.item_id) else { return Ok(false) };
         Ok(!t.world().is_exploding(item_id)?)
     }
 
-    /// `GetTankStatus`: the ratio of the layer that is left.
     fn tank_status(&self, t: &mut TaskCtx<'_, '_>) -> Result<f64, WorldError> {
         let item_id = self.item_id.unwrap_or_default();
         match self.kind {
@@ -101,12 +92,10 @@ impl EntityTank {
         }
     }
 
-    /// `IsAtFullHealth`.
     fn is_at_full_health(&self, t: &mut TaskCtx<'_, '_>) -> Result<bool, WorldError> {
         Ok(self.tank_status(t)? >= 1.0)
     }
 
-    /// `ActivateTankIfDamaged`.
     fn activate_tank_if_damaged(&mut self, t: &mut TaskCtx<'_, '_>) -> Result<(), WorldError> {
         if !self.can_active_tank(t)? {
             return Ok(());
@@ -117,7 +106,6 @@ impl EntityTank {
         Ok(())
     }
 
-    /// `_StartTanking`: the effect starts (what goes wrong in that is eaten) and the tank listens for it to cycle.
     fn start_tanking(&mut self, t: &mut TaskCtx<'_, '_>) {
         let (Some(item_id), Some(effect_id)) = (self.item_id, self.effect_id) else { return };
         self.is_tanking = true;
@@ -126,7 +114,6 @@ impl EntityTank {
             EventKey::with(message::ON_EFFECT_STARTED, effect_id),
             self.repaired_handler(),
         );
-        // `_StartEffects`
         let owner_id = self.owner_id;
         t.eat_exceptions(|t| {
             if t.world().active_effect_target_id(item_id, effect_id).is_some() {
@@ -147,7 +134,6 @@ impl EntityTank {
         });
     }
 
-    /// `_OnTankRepaired`.
     fn on_tank_repaired(&mut self, t: &mut TaskCtx<'_, '_>) {
         if !self.is_tanking {
             return;
@@ -159,10 +145,8 @@ impl EntityTank {
         }
     }
 
-    /// `TryStopTanking`: an effect that is still cycling stays, and so does anything else that goes wrong.
     fn try_stop_tanking(&mut self, t: &mut TaskCtx<'_, '_>) {
         let (Some(item_id), Some(effect_id)) = (self.item_id, self.effect_id) else { return };
-        // `_StopEffects`
         if t.world().stop_effect(effect_id, item_id, false).is_err() {
             return;
         }
@@ -175,8 +159,6 @@ impl EntityTank {
     }
 }
 
-/// Keeps the shield and the armor of my entity repaired for as long as it is hurt; it is never done (a failure) and resets the tree when it is
-/// damaged with nothing repairing.
 #[derive(Debug)]
 pub struct ActiveTank {
     armor_tank: EntityTank,
@@ -280,7 +262,6 @@ mod tests {
     use crate::tree::tests::Rig;
     use crate::tree::{Attrs, Status};
 
-    /// The shield and the armor of the entity, as ratios of what it can have.
     fn set_health(rig: &mut Rig, shield: f64, armor: f64) {
         use crate::consts::{
             ATTRIBUTE_ARMOR_DAMAGE, ATTRIBUTE_ARMOR_HP, ATTRIBUTE_SHIELD_CAPACITY, ATTRIBUTE_SHIELD_CHARGE,
@@ -301,7 +282,6 @@ mod tests {
         rig
     }
 
-    /// A tank task under a sequence that goes on, so that its reset requests are only its own.
     fn start(rig: &mut Rig) -> crate::blackboards::TaskId {
         let task = rig.tree.add_task(Box::new(ActiveTank::default()), Attrs::new());
         let wait = rig.leaf("wait", Status::Success, 50);
@@ -392,7 +372,6 @@ mod tests {
             rig.world.take_calls(),
             [format!("stop_effect({EFFECT_ENTITY_SHIELD_BOOSTING_MEDIUM}, 1, false)")]
         );
-        // it is not tanking any more: the next cycle changes nothing
         rig.send_event(1, key, &[]);
         assert!(rig.world.take_calls().is_empty());
     }

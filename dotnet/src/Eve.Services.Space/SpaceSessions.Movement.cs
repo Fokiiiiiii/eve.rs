@@ -96,6 +96,39 @@ public sealed partial class SpaceSessions
     public Task<WarpCoordinates?> DropPointAsync(ClientSession session, double distance, CancellationToken cancellationToken) =>
         QueryPositionAsync(session, SimCommands.DropPoint, [distance], cancellationToken);
 
+    /// <summary>Whether a candidate deployment point is within the checkpoint's 10,000 km asteroid exclusion radius.</summary>
+    public async Task<bool> HasAsteroidWithinDistanceAsync(int solarSystemId, IReadOnlyList<double> position, double distanceMeters, CancellationToken cancellationToken = default)
+    {
+        if (_spaceItems is null)
+        {
+            throw new InvalidOperationException("space item storage is required for asteroid placement checks");
+        }
+        if (solarSystemId <= 0 || position.Count != 3 || position.Any(value => !double.IsFinite(value)) || !double.IsFinite(distanceMeters) || distanceMeters < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(position), "a solar system, finite 3D point and nonnegative finite radius are required");
+        }
+
+        var asteroidGroups = (await _statics.TypesInCategoryAsync("Asteroid", cancellationToken))
+            .Select(type => type.GroupId)
+            .ToHashSet();
+        var radiusSquared = distanceMeters * distanceMeters;
+        foreach (var item in await _spaceItems.InSystemAsync(solarSystemId, cancellationToken))
+        {
+            if (!asteroidGroups.Contains(item.GroupId) || item.Position.Count != 3)
+            {
+                continue;
+            }
+            var x = position[0] - item.Position[0];
+            var y = position[1] - item.Position[1];
+            var z = position[2] - item.Position[2];
+            if (x * x + y * y + z * z <= radiusSquared)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public Task<WarpCoordinates?> PositionOfAsync(
         ClientSession session,
         long targetId,

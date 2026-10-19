@@ -139,6 +139,10 @@ public sealed class AnalysisBeaconDirector
             throw Unavailable();
         }
         var position = new[] { point.X, point.Y, point.Z };
+        if (await _space.HasAsteroidWithinDistanceAsync(system, position, 10_000_000, cancellationToken))
+        {
+            throw Refuse("A CRAB cannot be deployed within 10,000 km of an asteroid.");
+        }
         var now = _nowUnixMs();
         var dropped = await _ships.DropDisruptorAsync(character, shipId, itemId, system, cancellationToken)
             ?? throw Refuse("That item is no longer in your ship's cargo hold.");

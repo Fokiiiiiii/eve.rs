@@ -8,15 +8,14 @@ using Npgsql;
 namespace Eve.Host;
 
 /// <summary>
-/// A deleted character's assets and private state, in one PostgreSQL transaction (EveJS <c>characterDeletionRuntime.js</c>).
-/// An asset tree (a root item and everything inside it) goes into the corporation's deliveries, or is destroyed when the
-/// character's corporation was an NPC corporation. Its skills and saved fittings are cleared.
+/// Deletes a character's private state and transfers its asset trees to corporation deliveries, except for NPC corporations.
+/// Skills and saved fittings are cleared in the same transaction.
 /// </summary>
 internal sealed class HostCharacterDeletionPurge(
     NpgsqlDataSource source, PgItemStore items, PgSkillStore skills, PgCharacterStore characters, string fittingSchema,
     Func<long, CancellationToken, Task<bool>> isNpcCorporation, CharacterPrivateStatePurge privateState) : ICharacterDeletionPurge
 {
-    /// <summary>The corporation deliveries hangar (EveJS <c>CORPORATION_DELIVERIES_FLAG_ID</c>).</summary>
+    /// <summary>The corporation deliveries hangar flag.</summary>
     private const int CorporationDeliveriesFlag = 62;
 
     public async Task PurgeAsync(long characterId, long corporationId, CancellationToken cancellationToken)
@@ -25,7 +24,7 @@ internal sealed class HostCharacterDeletionPurge(
         var owned = await items.OwnedByAsync(characterId, cancellationToken);
         var ownedIds = owned.Select(item => item.Id).ToHashSet();
         var children = owned.GroupBy(item => item.LocationId).ToDictionary(group => group.Key, group => group.ToArray());
-        // a root sits outside the character's own items: in a station, a structure or a space location
+        // Roots can be in stations, structures, or space locations, outside the character inventory.
         var roots = owned.Where(item => !ownedIds.Contains(item.LocationId)).OrderBy(item => item.Id).ToArray();
 
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
@@ -40,7 +39,7 @@ internal sealed class HostCharacterDeletionPurge(
                     await items.DeleteAsync(connection, transaction, item.Id, cancellationToken);
                 continue;
             }
-            // shortcut: the root stays at its own location; EveJS falls back to the home station when that location is neither a station nor a structure.
+            // shortcut: keep the root at its location, including space locations.
             await items.MoveToOwnerAsync(connection, transaction, root.Id, corporationId, root.LocationId, CorporationDeliveriesFlag, cancellationToken);
             foreach (var child in tree.Skip(1))
                 await items.MoveToOwnerAsync(connection, transaction, child.Id, corporationId, child.LocationId, child.Flag, cancellationToken);

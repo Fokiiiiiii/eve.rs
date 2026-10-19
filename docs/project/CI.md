@@ -2,7 +2,7 @@
 
 ## Workflows
 
-`.github/workflows/ci.yml` runs on each push to `main`, except changes limited to `docs/**`, Markdown files, and `.github/dependabot.yml`. Its `gate` job is the required status to read. The workflow checks Rust formatting and clippy, Rust tests, .NET tests in parallel database-isolated shards, Python client tests, generated fixtures, and fast live walks.
+`.github/workflows/ci.yml` runs on each push to `main`, except changes limited to `docs/**`, Markdown files, and `.github/dependabot.yml`. Its `gate` job is the required status to read. Push runs share a per-ref concurrency group, so a newer push cancels an older push; manual dispatch runs use their own per-ref group. The workflow checks Rust formatting and clippy, Rust tests, .NET tests in parallel database-isolated shards, Python client tests, generated fixtures, and fast live walks.
 
 Manual CI runs accept `jobs` as a comma-separated selection: `all` (default), `rust-fmt`, `rust-test`, `dotnet`, `python`, `fixtures`, or `live`. Example: `tools/dev/ci-status.py dispatch ci.yml --jobs rust-test`.
 

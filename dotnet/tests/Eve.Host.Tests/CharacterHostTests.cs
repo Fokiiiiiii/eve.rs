@@ -883,6 +883,7 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
 
         // its Medical service online: the install goes ahead, the fee moves to the owner corporation's wallet, and the clone survives a restart
         await rig.AddStructureAsync(structure, Eve.Structures.StructureServiceIds.Medical);
+        clones = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("jumpCloneSvc"));
         Assert.Empty(Assert.IsType<PyList>(await BoundAsync(clones, session, "ValidateInstallJumpClone")).Items);
         Assert.IsType<PyNone>(await CallAsync(clones, "InstallCloneInStructure", session));
         Assert.Equal(new[] { structure }, Rows(await BoundAsync(clones, session, "GetStationCloneState")).Select(row => ((PyLong)row.Items[1]).Value).ToArray());
@@ -1031,14 +1032,45 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
         /// <summary>A structure of the rig's corporation, with the given services online (the clone bay reads them).</summary>
         public async Task AddStructureAsync(long structureId, params int[] onlineServices)
         {
-            await using var connection = await Source.OpenConnectionAsync();
-            await using var transaction = await connection.BeginTransactionAsync();
-            var structures = new Eve.Structures.StructureStore(Source, StructuresSchema);
-            Assert.True(await structures.CreateAsync(connection, transaction, new Eve.Structures.NewStructure(structureId, 35832, 30000142, 0, 0, 0, 0,
-                CorporationId, 0, "Clone bay", "")));
-            foreach (var service in onlineServices)
-                await structures.SetServiceAsync(connection, transaction, structureId, service, Eve.Structures.ServiceState.Online, 1_000);
-            await transaction.CommitAsync();
+            await _shutdown();
+            await using (var connection = await Source.OpenConnectionAsync())
+            await using (var transaction = await connection.BeginTransactionAsync())
+            {
+                var structures = new Eve.Structures.StructureStore(Source, StructuresSchema);
+                Assert.True(await structures.CreateAsync(connection, transaction, new Eve.Structures.NewStructure(structureId, 35832, 30000142, 0, 0, 0, 0,
+                    CorporationId, 0, "Clone bay", "")));
+                foreach (var service in onlineServices)
+                    await structures.SetServiceAsync(connection, transaction, structureId, service, Eve.Structures.ServiceState.Online, 1_000);
+                await transaction.CommitAsync();
+            }
+
+            await using (var store = new PersistenceStore(Source, GameStoreSchema))
+            {
+                await store.EnsureSchemaAsync();
+                await using var owner = await OwnerSession.StartAsync(
+                    store, PersistenceRoles.World, "character-host-structure-" + Guid.NewGuid().ToString("N"));
+                await using var cache = new GameStoreCache(store, owner,
+                    new GameStoreCacheOptions { ProcessRole = PersistenceRoles.World, FlushDelay = TimeSpan.FromHours(1) });
+                await cache.RecoverAsync();
+                await cache.LoadAsync("structures");
+                var serviceStates = new System.Text.Json.Nodes.JsonObject();
+                foreach (var service in onlineServices)
+                    serviceStates[service.ToString(System.Globalization.CultureInfo.InvariantCulture)] = (int)Eve.Structures.ServiceState.Online;
+                Assert.True(cache.Write("structures", "/" + structureId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    new System.Text.Json.Nodes.JsonObject
+                    {
+                        ["structureID"] = structureId,
+                        ["typeID"] = 35832,
+                        ["solarSystemID"] = 30000142,
+                        ["ownerCorpID"] = CorporationId,
+                        ["allianceID"] = 0,
+                        ["profileID"] = 0,
+                        ["serviceStates"] = serviceStates,
+                    }).Success);
+                await cache.FlushTableAsync("structures");
+            }
+
+            (_runtime, _shutdown) = await BuildHostAsync(_schemas);
         }
 
         /// <summary>Sets a character's ISK balance (the wallet row is opened here if the character has none yet).</summary>

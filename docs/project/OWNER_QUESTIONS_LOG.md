@@ -92,3 +92,36 @@ Date for entries: 2026-10-19. Questions with a recorded decision are marked deci
 - **Question:** How should the reusable login hash exposure be mitigated while preserving the unmodified V24.01 client contract?
 - **Decision:** Use per-connection nonce binding, validity windows, per-account and per-IP attempt limits, and never log the hash. Document TLS termination as the production setup. Security agent cx35 is implementing the server-side mitigations.
 - **Status:** decided 2026-10-19
+
+## Q-09 — Pochven Triglavian NPC bounties
+
+- **Date:** 2026-10-19
+- **Question:** Should Pochven Triglavian NPC kills produce bounties?
+- **Decision:** Do not pay bounties for Pochven Triglavian NPCs. Bounty payments are restricted to New Eden proper; other locations generally have none. Existing loot and drops are unchanged.
+- **Status:** decided 2026-10-19
+- **Affected records:** TODO bounty/loot status; DEVIATIONS, Encounter Surveillance System and NPC bounty rules.
+
+## Q-10 — Wormhole Local mode
+
+- **Date:** 2026-10-19
+- **Question:** Which Local member visibility mode applies in wormhole space?
+- **Decision:** Use delayed Local. Its member list contains only characters who have spoken.
+- **Status:** decided 2026-10-19
+- **Affected records:** TODO chat and wormhole Local status; DEVIATIONS, wormhole Local.
+
+## Q-11 — Customs office taxes
+
+- **Date:** 2026-10-19
+- **Question:** Which baseline POCO tax model should PI use?
+- **Decision:** Follow the EVE University Wiki default rates and standing discounts, including the high-security NPC component and Customs Code Expertise effects. Taxes apply on import and export and are paid to the owning corporation wallet for the owner-set portion.
+- **Evidence:** [Planetary Industry](https://wiki.eveuniversity.org/Planetary_Industry), [Colony management](https://wiki.eveuniversity.org/Colony_management), and [Player Owned Customs Office](https://wiki.eveuniversity.org/Player_Owned_Customs_Office).
+- **Status:** decided 2026-10-19
+- **Affected records:** TODO customs office row; DEVIATIONS, Planetary Interaction; PI_DESIGN.md.
+
+## Q-12 — ESS linkable hull for QA
+
+- **Date:** 2026-10-19
+- **Question:** How should ESS live-walk characters obtain a hull allowed by the ESS link module?
+- **Decision:** Derive eligible hulls from the SDE module fitting attributes and grant one, fitted with the module and online, using a role-gated GM command.
+- **Status:** decided 2026-10-19
+- **Affected records:** TODO ESS row; DEVIATIONS, Encounter Surveillance System; GM_QA_DESIGN.md.

@@ -1542,6 +1542,48 @@ public class SpaceServiceTests
     }
 
     [PgFact]
+        public async Task A_target_that_disallows_ew_immune_effects_refuses_a_module_that_opts_in()
+        {
+            // No target hull in the pinned SDE carries 872, and the starter gun does not opt in via 1798.
+            var rig = await Rig.CreateAsync(staticsOverride: async statics =>
+            {
+                await statics.EnsureTypesAsync([Rig.Cockroach, 3638]);
+                var targetHull = statics.Type(Rig.Cockroach)
+                    ?? throw new InvalidOperationException("The starter hull must be in the pinned SDE.");
+                var gunType = statics.Type(3638)
+                    ?? throw new InvalidOperationException("The starter gun must be in the pinned SDE.");
+                var offensiveAttribute = statics.AttributeId("disallowOffensiveModifiers")
+                    ?? throw new InvalidOperationException("The SDE must define disallowOffensiveModifiers.");
+                var immuneTargetAttribute = statics.AttributeId("disallowAgainstEwImmuneTarget")
+                    ?? throw new InvalidOperationException("The SDE must define disallowAgainstEwImmuneTarget.");
+                Assert.Equal(872, offensiveAttribute);
+                Assert.Equal(1798, immuneTargetAttribute);
+                var targetAttributes = new Dictionary<int, double>(targetHull.Attributes) { [offensiveAttribute] = 1 };
+                var gunAttributes = new Dictionary<int, double>(gunType.Attributes) { [immuneTargetAttribute] = 1 };
+                return statics.WithFixtures([
+                    targetHull with { Attributes = targetAttributes },
+                    gunType with { Attributes = gunAttributes },
+                ]);
+            });
+            await using var _ = rig;
+
+            var attacker = await rig.NewCharacterAsync("Module Attacker", account: 1);
+            var target = await rig.NewCharacterAsync("EW Immune Target", account: 2);
+            var attackerSession = await rig.SessionAsync(attacker, id: 1);
+            var targetSession = await rig.SessionAsync(target, id: 2);
+            var (_, _, gun, _) = await ShipAsync(rig, attacker);
+            await InSpaceAsync(rig, attackerSession);
+            await InSpaceAsync(rig, targetSession);
+            var activationsBefore = rig.Sim.Heard.OfType<SimActivate>().Count();
+
+            var error = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+                rig.Space.ActivateAsync(attackerSession, gun, "targetAttack", target.ShipId, 1, CancellationToken.None));
+
+            Assert.Equal("DeniedActivateTargetModuleDisallowed", error.Error.UserErrorMessage);
+            Assert.Equal(activationsBefore, rig.Sim.Heard.OfType<SimActivate>().Count());
+        }
+
+    [PgFact]
     public async Task A_gun_that_needs_no_charge_shoots_with_its_own_damage_after_the_skills_of_the_pilot()
     {
         var (rig, character, _) = await DockedAsync();

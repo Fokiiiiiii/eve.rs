@@ -866,6 +866,8 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
                     Forward(observer, notify);
                     break;
                 case SimNotify notify when _pilots.TryGetValue(notify.SessionId, out var pilot):
+                    if (notify.Name == "OnDbuffUpdated")
+                        _log?.Invoke($"simulation sent OnDbuffUpdated to session {notify.SessionId} for ship {pilot.ShipId}");
                     Forward(pilot.Session, notify);
                     break;
                 case SimAccepted accepted when !_structureObservers.ContainsKey(accepted.SessionId) && accepted.Command != SimCommands.ControlStructure && _pilots.TryGetValue(accepted.SessionId, out var mover):

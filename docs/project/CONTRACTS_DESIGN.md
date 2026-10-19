@@ -33,9 +33,9 @@ Use the client tables as the exact limit contract: personal outstanding limit is
 
 ## Fees, deposits, and collateral
 
-EVE University’s [Contracts](https://wiki.eveuniversity.org/Contract) page describes public contract base value as the auction starting bid, courier reward, or the larger of reward and price for item exchange; it describes a 1% deposit (100,000 ISK minimum, 10,000,000 ISK maximum), a 0.4% broker fee (10,000 ISK minimum, 10,000,000 ISK maximum), a 0.05 percentage-point broker-fee increase per extra expiry day, a 1% sales tax (10,000 ISK minimum, 100,000,000 ISK maximum), Broker Relations reductions, and Accounting reductions. The same page distinguishes private contracts’ fixed creation fee. These contract rules are separate from market broker fee and market sales-tax calculations.
+EVE University’s [Contracts](https://wiki.eveuniversity.org/Contract) page describes public contract base value as the auction starting bid, courier reward, or the larger of reward and price for item exchange, and documents separate private-contract charges. V24.01 `contractscommon.py` is the exact formula for this client build: broker fee starts at 0.4% (10,000 ISK minimum, 100,000,000 ISK cap before Broker Relations reduction), sales tax starts at 1% (10,000 ISK minimum, 1,000,000,000 ISK cap before Accounting reduction), and private deposits use 1% of base (100,000 ISK minimum, 100,000,000 ISK maximum; courier minimum 10,000 ISK). Courier costs use a 0.1 multiplier. Each expiry day after the first adds 0.05 percentage points to the broker rate and applies the separate 5% amount multiplier. V24 values take priority where the wiki’s summary differs. These contract rules are separate from market broker fee and market sales-tax calculations.
 
-Before charging any value, implementation must compare these values and rounding/cap order against the V24 client `contractscommon.py` and EveJS contract fee helpers. Store the applied fee and deposit on the contract at creation so later skill changes cannot rewrite a settlement. A deposit is returned on successful completion; deletion or expiry forfeits it as described by the contract rules. Courier collateral is separate from the creation deposit: it is secured from the hauler at acceptance, returned on successful delivery, and paid to the issuer on failure. Do not derive collateral from item prices; it is the amount specified by the issuer.
+The core V24 formula is implemented in `ContractFeesCalculator` and covered by `ContractFeesCalculatorTests`: it uses `max(price, reward)`, the type cost multiplier, skill reductions, fee minima/caps, the expiry-day broker increment, and private-contract deposit rules. Its `brokerFeeAdjustment` input is required so the caller supplies the client-equivalent system/faction adjustment from `facwarCommon.GetAdjustedFeePercentage` when applicable. Creation must persist the resulting amounts so later skill changes cannot rewrite a settlement. The calculator does not perform wallet charging or determine that adjustment. A deposit is returned on successful completion; deletion or expiry forfeits it as described by the contract rules. Courier collateral is separate from the creation deposit: it is secured from the hauler at acceptance, returned on successful delivery, and paid to the issuer on failure. Do not derive collateral from item prices; it is the amount specified by the issuer.
 
 ## RPC and notification boundary
 
@@ -45,7 +45,7 @@ Publish the V24 contract notifications only after the corresponding transaction 
 
 ## Delivery slices
 
-1. **Built:** PostgreSQL contract header, escrow-item, and bid tables; Host wiring for `GetLoginInfo` and `GetMyContractEscrow`; Core wire-shape tests and a PostgreSQL Host read test passed. The personal-list read remains open.
+1. **Built:** PostgreSQL contract header, escrow-item, and bid tables; Host wiring for `GetLoginInfo` and `GetMyContractEscrow`; Core wire-shape tests and a PostgreSQL Host read test passed. The personal-list read remains open. The V24 fee formula core is implemented and unit-tested; transaction charging, system/faction adjustment lookup, and creation integration remain open.
 2. Item exchange create/accept/delete/expiry with inventory and wallet journaling, notifications, failure and retry coverage.
 3. Public/region search, corporation issuance and item selection, availability checks, and contract-limit enforcement.
 4. Auction bids, outbid refunds, buyout/expiry settlement, and bid reads.
@@ -53,3 +53,6 @@ Publish the V24 contract notifications only after the corresponding transaction 
 6. Headless-client walk between two characters, restart reads, and comparison with the same EveJS scenario.
 
 A slice is complete only when its wire values, persisted state, side effects, notification order, retry behavior, and focused tests are recorded in TODO and the compatibility ledger. The graphical V24 client is a separate verification target.
+## Persisted terms migration
+
+Migration `0002_contract_terms` extends the existing PostgreSQL header with availability, price, collateral, creation fee, deposit, sales tax, title, and description. Each monetary column is nonnegative with two-decimal precision, and availability is constrained to the four client modes (private, public, corporation, alliance). Existing rows receive zero-valued terms and remain readable. This schema supports later creation and settlement writes; it does not itself create contracts or move inventory or ISK.

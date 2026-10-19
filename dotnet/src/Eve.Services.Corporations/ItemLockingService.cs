@@ -17,6 +17,7 @@ public sealed partial class ItemLockingService(CorporationStore corporations)
         var corporationId = SessionCorporationId(call.Session);
         var locationId = Integral(call.Arg(0));
         if (corporationId <= 0 || locationId is not > 0) return new PyDict([]);
+        await RequireAssetAuthorityAsync(call, corporationId);
         var items = await corporations.LockedItemsAsync(corporationId, locationId, call.Cancellation);
         return new PyDict([.. items.Select(item => new KeyValuePair<PyValue, PyValue>(InventoryWire.Id(item.ItemId), Py.KeyVal(
             ("itemID", InventoryWire.Id(item.ItemId)),
@@ -30,6 +31,7 @@ public sealed partial class ItemLockingService(CorporationStore corporations)
     {
         var corporationId = SessionCorporationId(call.Session);
         if (corporationId <= 0) return InventoryWire.EmptySet();
+        await RequireAssetAuthorityAsync(call, corporationId);
         var locations = await corporations.LockedItemLocationsAsync(corporationId, call.Cancellation);
         return InventoryWire.Set(locations.Select(InventoryWire.Id));
     }
@@ -50,6 +52,23 @@ public sealed partial class ItemLockingService(CorporationStore corporations)
                 // a session that cannot take the push is left to refresh on its next read
             }
         }
+    }
+
+    private async ValueTask RequireAssetAuthorityAsync(ServiceCall call, long corporationId)
+    {
+        var characterId = call.Session.CharacterId;
+        if (characterId is not > 0 ||
+            await corporations.GetAsync(corporationId, call.Cancellation) is not { IsNpc: false, Deleted: false } corporation ||
+            await corporations.MemberAsync(characterId.Value, call.Cancellation) is not { CorporationId: var memberCorporation } member ||
+            memberCorporation != corporationId)
+            throw new CorporationError("CORPORATION_ACCESS_DENIED");
+
+        var titles = await corporations.TitlesAsync(corporationId, call.Cancellation);
+        var roles = Eve.Corporations.CorporationRoles.Session(
+            corporation, member, call.Session.GetInt("stationid"), titles).CorpRole;
+        if ((roles & (Eve.Corporations.CorporationRoles.Accountant |
+                      Eve.Corporations.CorporationRoles.JuniorAccountant)) == 0)
+            throw new CorporationError("CORPORATION_ACCESS_DENIED");
     }
 
     private static long SessionCorporationId(ClientSession session)

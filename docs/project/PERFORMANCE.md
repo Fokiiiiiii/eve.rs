@@ -19,7 +19,14 @@ Rerun with `flock /tmp/eve-heavy-eve_p4.lock env EVE_PG_URL=postgres://postgres@
 | Marshal encode | 1,000 | 18,828 bytes | 691,982 ns | 139,456 bytes |
 | Marshal decode | 1,000 | 18,828 bytes | 493,895 ns | 151,960 bytes |
 
-These are the same-run baseline numbers before codec changes. The shared machine makes latency noisy; allocation counts are the primary comparison.
+These are the baseline numbers before the encoder change. After switching nested tuple, list, object-list and dictionary-pair traversal to indexed loops, the reply encoded deterministically on repeat, while the 1,107-case marshal golden suite continued to match the recorded wire bytes:
+
+| Path | Calls | Payload | Mean per call | Allocated per call |
+|---|---:|---:|---:|---:|
+| Marshal encode after indexed traversal | 1,000 | 18,828 bytes | 1,025,006 ns | 122,688 bytes |
+| Marshal decode (unchanged) | 1,000 | 18,828 bytes | 594,968 ns | 151,960 bytes |
+
+Encoding saved 16,768 allocated bytes/call (12.0%). The two encode wall-time samples are noisy on the shared machine and do not show a latency improvement; no latency gain is claimed. The full `Eve.Marshal.Tests` suite passed (1,107 tests), and the benchmark asserts repeat encoding matches the measured bytes.
 
 ## Simulation-to-Host frame batching baseline
 

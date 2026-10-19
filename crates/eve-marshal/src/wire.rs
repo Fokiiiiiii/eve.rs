@@ -1,5 +1,3 @@
-//! Wire constants shared by the encoder and the decoder.
-
 pub const MARSHAL_HEADER: u8 = 0x7e;
 pub const SAVE_MASK: u8 = 0x40;
 pub const OPCODE_MASK: u8 = 0x3f;

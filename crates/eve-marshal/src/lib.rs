@@ -1,20 +1,6 @@
 #![forbid(unsafe_code)]
 
-//! EVE MachoNet marshal codec.
-//!
-//! Byte-compatible with the JS reference in
-//! `server/src/network/tcp/utils/marshal.js`; compatibility is enforced by the
-//! golden fixtures under `oracle/fixtures/marshal`, which the
-//! `eve-oracle` crate replays.
-//!
-//! ```
-//! use eve_marshal::{Value, decode, encode};
-//!
-//! let call = Value::Tuple(vec![Value::Int(7), Value::str("machoNet")]);
-//! let bytes = encode(&call).unwrap();
-//! assert_eq!(bytes[0], 0x7e);
-//! assert!(decode(&bytes).is_ok());
-//! ```
+//! Byte-compatible EVE MachoNet marshal codec.
 
 mod decode;
 mod encode;

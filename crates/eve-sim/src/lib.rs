@@ -1,10 +1,6 @@
 #![forbid(unsafe_code)]
 
-//! The simulation process: it listens on a socket, the service host connects, and everything the host says is handed to
-//! a [`Sim`](eve_space::sim::Sim) (`docs/design/adr/0007-space-simulation-process.md`).
-//!
-//! One host at a time. A connection has its own scenes: when the host goes away (or is restarted) its ships go with it,
-//! as its sessions do.
+//! One host at a time; its scenes, ships and sessions end when it disconnects.
 
 use std::io;
 use std::sync::Arc;
@@ -71,9 +67,8 @@ fn hold_tick_aligned(messages: Vec<Message>, held: &mut Vec<Message>) -> Vec<Mes
     immediate
 }
 
-/// Serves one host over a connected stream until it closes it or says something the simulation cannot take.
-///
-/// `clock` says what time it is (a FILETIME); tests pass their own.
+/// Handles one host stream until it closes or sends an invalid message.
+/// `clock` returns FILETIME ticks for simulation updates.
 pub async fn serve_connection<S, C>(stream: S, universe: Arc<Universe>, clock: C) -> io::Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin,

@@ -22,6 +22,9 @@ public static class PochvenRules
     /// <summary>The refusal of a capital at a stargate: the text the stargate lists already use (the wiki gives no text for Pochven).</summary>
     public const string CapitalStargateRefusal = "Capital ships cannot use this stargate.";
 
+    /// <summary>NPC bounty payouts are not made in Pochven (owner decision 2026-10-19).</summary>
+    public static bool PaysNpcBounty(int regionId) => !IsPochvenRegion(regionId);
+
     public static bool IsPochvenRegion(int regionId) => regionId == RegionId;
 
     public static bool IsCapitalGroup(int groupId) =>

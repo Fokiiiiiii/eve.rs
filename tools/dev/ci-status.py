@@ -170,7 +170,7 @@ def main() -> int:
     cancel.add_argument("--workflow")
     cancel.add_argument("--sha", help="preserve runs for this commit SHA")
     send = sub.add_parser("dispatch", help="dispatch a workflow")
-    send.add_argument("workflow", choices=["ci.yml", "live-slow.yml"])
+    send.add_argument("workflow", choices=["ci.yml", "ci-windows.yml", "live-slow.yml"])
     send.add_argument("--ref", default="main")
     send.add_argument("--jobs", default="all", help="ci.yml job selection")
     send.add_argument("--test-file", default="all", help="live-slow.yml filename or all")

@@ -107,6 +107,65 @@ public sealed class LocalChatGatewayTests
         Assert.Equal(429U, (await gateway[BroadcastRequest](Request(BroadcastRequest, 1001, body.ToArray()), CancellationToken.None)).StatusCode);
     }
 
+    [Fact]
+    public async Task Organization_and_fleet_channels_derive_membership_from_session_authority()
+    {
+        var sessions = new ConnectedSessions();
+        var first = Session(1001, 2001, 30_000_001, 0);
+        var second = Session(1002, 2001, 30_000_001, 0);
+        var outsider = Session(1003, 2002, 30_000_001, 0);
+        foreach (var session in new[] { first, second })
+        {
+            session.Set("allianceid", new PyLong(3001));
+            session.Set("fleetid", new PyLong(4001));
+            session.Set("wingid", new PyLong(5001));
+            session.Set("squadid", new PyLong(6001));
+        }
+        outsider.Set("allianceid", new PyLong(3002));
+        outsider.Set("fleetid", new PyLong(4002));
+        outsider.Set("wingid", new PyLong(5001));
+        outsider.Set("squadid", new PyLong(6001));
+        sessions.Add(first);
+        sessions.Add(second);
+        sessions.Add(outsider);
+
+        var notices = new NoticeHub();
+        var recipient = notices.Subscribe(9002);
+        recipient.Character = 1002;
+        var gateway = new LocalChatGateway(sessions, notices).Handlers();
+        foreach (var kind in new ulong[] { 1, 2, 3, 4, 5 })
+        {
+            var filter = new ProtoWriter();
+            filter.Uint(1, kind);
+            var members = await gateway[MembersRequest](Request(MembersRequest, 1001, filter.ToArray()), CancellationToken.None);
+            Assert.Equal(200U, members.StatusCode);
+            Assert.Equal(new long[] { 1001, 1002 }, MemberIds(members.Payload));
+        }
+
+        var body = new ProtoWriter();
+        body.String(1, "corporation hello");
+        body.Uint(2, 1);
+        var sent = await gateway[BroadcastRequest](Request(BroadcastRequest, 1001, body.ToArray()), CancellationToken.None);
+        Assert.Equal(200U, sent.StatusCode);
+        var frameText = "";
+        while (!frameText.Contains("corporation hello", StringComparison.Ordinal))
+            frameText = Encoding.UTF8.GetString(await recipient.Frames.Reader.ReadAsync());
+        Assert.Contains(GatewayEnvelope.TypeUrlPrefix + MessageNotice, frameText);
+
+        var channelMembers = Enumerable.Range(0, 11)
+            .Select(index => Session(2000 + index, 2010, 30_000_001, 0))
+            .ToArray();
+        foreach (var member in channelMembers)
+            sessions.Add(member);
+        var groupMessage = new ProtoWriter();
+        groupMessage.String(1, "limited group message");
+        groupMessage.Uint(2, 1);
+        for (var index = 0; index < 10; index++)
+            for (var message = 0; message < 3; message++)
+                Assert.Equal(200U, (await gateway[BroadcastRequest](Request(BroadcastRequest, 2000 + index, groupMessage.ToArray()), CancellationToken.None)).StatusCode);
+        Assert.Equal(429U, (await gateway[BroadcastRequest](Request(BroadcastRequest, 2010, groupMessage.ToArray()), CancellationToken.None)).StatusCode);
+    }
+
     private static ClientSession Session(long characterId, long corporationId, long systemId, long role)
     {
         var session = new ClientSession { SessionId = characterId, ClientId = characterId };

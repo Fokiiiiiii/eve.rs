@@ -1,6 +1,6 @@
 # GitHub Actions CI
 
-`ci.yml` runs its Linux jobs on pushes to `main` except documentation-only changes and `.github/dependabot.yml`. Push runs do not cancel the active run; GitHub retains the newest pending run for the ref. Manual `workflow_dispatch` runs can cancel older manual runs and select jobs. Windows coverage is selected for platform-sensitive paths, a manual `windows` selection, and the weekly schedule. It provisions PostgreSQL 18 on the Windows runner and runs Rust, .NET, Python, and a login-to-character walk. `live-slow.yml` is dispatch-only and runs each selected headless-client test file in its own matrix job. The CI workflow builds and tests with Rust 1.99.0; `Cargo.toml` retains the Rust 1.94 minimum supported version.
+`ci.yml` runs its Linux jobs on pushes to `main` except documentation-only changes and `.github/dependabot.yml`. Every push SHA has a unique concurrency group, so later pushes do not cancel or replace its run. Manual `workflow_dispatch` runs can cancel older manual runs and select jobs. Windows coverage is selected for platform-sensitive paths, a manual `windows` selection, and the weekly schedule. It provisions PostgreSQL 18 on the Windows runner and runs Rust, .NET, Python, and a login-to-character walk. `live-slow.yml` is dispatch-only and runs each selected headless-client test file in its own matrix job. The CI workflow builds and tests with Rust 1.99.0; `Cargo.toml` retains the Rust 1.94 minimum supported version.
 
 ## Read the result for a commit
 
@@ -14,7 +14,7 @@ python3 tools/dev/ci-status.py status --sha <commit-sha> --workflow ci.yml
 
 The status command lists run URLs, per-job conclusions and durations, failing steps, and a failing-step log tail when the token can download job logs. To save output while a run is still active, add `--no-logs`.
 
-Push concurrency keeps only one active run and the newest pending run for `main`. If an exact SHA no longer has a run because a newer push replaced its pending run, read the newest `main` run instead: it contains the current tree plus the superseded commit's changes. Check the run's `head_sha` and ensure no later push has reverted those changes before using its result as evidence.
+Push runs use their commit SHA in the concurrency group and continue independently. The `Required CI gate` job prints its `GITHUB_SHA` and all dependency results; use `status --sha` to verify that the completed run's `head_sha` matches the commit being checked.
 
 ## Dispatch
 

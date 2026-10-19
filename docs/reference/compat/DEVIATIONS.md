@@ -4924,3 +4924,8 @@ For ESS QA, the selected hull must come from the pinned SDE fitting restrictions
 ## Owner decisions (2026-10-19): Pochven bounties and wormhole Local
 
 The owner decided that Triglavian NPCs in Pochven do not pay bounties. Existing loot and drop behavior is unchanged. Bounty payments otherwise apply in New Eden proper and generally not outside it. Wormhole Local uses delayed visibility: its member list includes only characters who have spoken.
+
+
+## Research checkpoint reconciliation (2026-10-19)
+
+The supplied research reports identify a possible ruleset boundary conflict: `FwBattlefields.LpPool` is 150,000, while report 2 says client build 3396210 predates the 2026-07-01 increase and should use 50,000. Q-16 is open. CRAB's standard and Carrier scan durations are recorded in `AnalysisBeaconRules.cs`; report 1's remaining candidate mechanics (link tail, resistances, CEQ, system interference and reward access window) remain to be reconciled item by item. See `docs/project/RESEARCH_RECONCILIATION.md`.

@@ -6,6 +6,12 @@ Built from the sections below, as of 2026-10-19. **Status** is what the area doe
 
 | Area (sections) | Status | Project rule | Cut or open |
 |---|---|---|---|
+| Ruleset checkpoint and research reconciliation | OPEN | Target client build 3396210; proposed `24.01@2026-06-16` needs owner confirmation (Q-16). | Reconcile post-checkpoint values already present, pre-checkpoint SDE changes, and candidate report claims; see RULESET_BOUNDARY.md and RESEARCH_RECONCILIATION.md. |
+| Security regression matrix (security agent) | OPEN | Report 2 candidate security cases; adopt as regression coverage only after mapping to real handlers. | Zero-ISK donation must not reveal balances; response projection; idempotency keys; CALL_REQ before SessionInit; admin-only service access; nested substream bounds. |
+| Performance SLO and benchmark scenarios (perf agent) | OPEN | Proposed SLOs are engineering targets, not CCP limits. | Add handshake storm, soak, movement-heavy, dense grid, weapon burst, market hotspot, jump storm, mission wave, restart, cold boot and malformed protocol scenarios; link from PERFORMANCE.md. |
+| Protocol parser state machine and limits (security/protocol agent) | OPEN | Frame, marshal and packet behavior must follow observed V24.01 contract. | Document and cover length/payload/decode/session/auth/dispatch states, oversized inputs, nested substreams, partial/coalesced frames. |
+| FW, CRAB and insurgency reconciliation (FW/CRAB agents) | OPEN | Use checkpoint-specific rules and source-backed values. | Resolve battlefield LP conflict; compare capture blockers/pods/respawn; CRAB timing and limits; insurgency stage effects and unknown thresholds. |
+| Weapon-bank RPC check (weapon-bank agent) | OPEN | Group semantics require client RPC evidence. | Trace grouped activation, reload and offline flow before implementation. |
 | Login, character selection and entry ("Native Windows character-entry regression", 40) | Working on the start-up path. The Windows inventory fix is in; its response-shape fixes need the next Host rebuild. | What the client can observe matches EveJS; each difference is in DEVIATIONS with its evidence. | Native Undock acceptance; the recorded RPC and protobuf gaps (the Windows section). |
 | Runtime state and notifications (1) | Partly built. Home station and insurgency snapshot are real. `onlineStatus.GetOnlineStatus` reads live character sessions, applies mutual watchlist access for selected observers and raw presence for unselected sessions; its initial rowset uses the configured watchlist provider. The rest of the list is open or future. | A missing producer answers the empty shape the client expects. No invented data, no fake success. | Open: abyssal client-ready, scan signal tracker, control towers, contract escrow, expert systems, raffle bans. Future: SSO login, blacklisted planets. |
 | Mutation authorities (2) | Dynamic items, mutated modules and drones, and in-space compression are built and tested headless and on PostgreSQL. | One transaction per mutation with its provenance; a refusal is a named `CustomNotify`, never `None`. | Graphical-client runs of these; abyssal gate activation; structure services (sections 43 to 48). |
@@ -2678,3 +2684,15 @@ The simulation writer now appends encoded frames directly to its batch buffer. T
 - **Wormhole Local:** Delayed mode; only characters who have spoken appear in the list. See the same DEVIATIONS entry.
 - **Planetary customs offices:** Implement and test owner-set rates by standings tier, standing discounts, import/export charging, and corporation wallet payment according to the Wiki sources recorded in DEVIATIONS.md. PI_DESIGN.md and the existing partial tax path need alignment.
 - **ESS:** Extend the live walk through link, reserve bank interaction, and key consumption. Select a link-module-compatible hull from SDE fitting attributes and grant it fitted and online with a role-gated GM command.
+
+
+## Research tasks from 2026-10-19 reports
+
+- **Security agent:** add regression cases for zero-value donation response projection, idempotent duplicate requests, pre-SessionInit calls, admin-only service authorization, and bounded nested substreams.
+- **Performance agent:** add proposal-labeled load scenarios and link them from [PERFORMANCE.md](PERFORMANCE.md); retain measured baselines separately from target SLOs.
+- **Protocol/security agent:** specify parser state progression and configurable frame/string/list/nesting bounds; include partial and coalesced TCP frames.
+- **FW agent:** reconcile Battlefield LP against the June 16 checkpoint, blockers, pods, capture points and respawn.
+- **CRAB agent:** compare reported phases, timers, resistances, CEQ/interference, reward window, HP, deployment and BPC data to code and release sources.
+- **Insurgency agent:** map stage effects to 24.01 implementation and record thresholds/gateway protocol gaps.
+- **Weapon-bank agent:** inspect client grouped-weapon RPC contracts and state transitions.
+- **Static-data agent:** check June 12/16 NPC, capacitor recharge, Pyroxeres grade-0 yield and NPC mass changes against pinned SDE.

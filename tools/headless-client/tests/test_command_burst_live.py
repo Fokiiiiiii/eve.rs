@@ -8,6 +8,7 @@ The fitted module and its one charge are seeded in the pilot's ship; fitting and
 
 from __future__ import annotations
 
+import time
 import uuid
 
 import pytest
@@ -96,10 +97,11 @@ def test_a_loaded_burst_changes_a_fleet_members_dogma_until_its_buff_expires():
         owner_safe = wait_for_events(owner, lambda events: named(events, "OnInvulnCancelled"), timeout=50)
         assert named(owner_safe, "OnInvulnCancelled"), "pilot A remained protected after undocking"
         owner_ballpark = owner.call("beyonce", "MachoBindObject", SYSTEM, None)
-        owner.call_bound(owner_ballpark[0], "CmdOrbit", member_ship, 5_000)
         owner.call_bound(owner_dogma[0], "AddTarget", member_ship)
         targeting = wait_for_events(owner, lambda events: named(events, "OnTarget"), timeout=90)
-        assert named(targeting, "OnTarget"), "pilot A did not acquire pilot B after approaching"
+        assert named(targeting, "OnTarget"), "pilot A did not acquire pilot B"
+        owner.call_bound(owner_ballpark[0], "CmdOrbit", member_ship, 5_000)
+        time.sleep(30)  # let the client flight order reach the burst's 15 km SDE range
         notifications_of(owner)
         notifications_of(member)
 

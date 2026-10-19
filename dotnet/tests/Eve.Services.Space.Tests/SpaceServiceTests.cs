@@ -2462,6 +2462,29 @@ public class SpaceServiceTests
     }
 
     [PgFact]
+    public async Task A_gate_arrival_inspects_the_ship_in_the_destination_system_only_after_the_jump_succeeds()
+    {
+        var (rig, character, session) = await DockedAsync();
+        await using var _ = rig;
+        await InSpaceAsync(rig, session);
+        var oid = await rig.BindBeyonceAsync(session);
+        var inspections = new List<(long Character, long Ship, int System)>();
+        rig.Space.ApplyContrabandPenaltyAsync = (characterId, shipId, systemId, _) =>
+        {
+            inspections.Add((characterId, shipId, systemId));
+            return Task.FromResult<Eve.Services.Space.ContrabandPenalty?>(null);
+        };
+
+        rig.Sim.JumpAnswer = new CommandReply(false, 0, "TOO_FAR_FROM_STARGATE");
+        await Assert.ThrowsAsync<MachoWrappedException>(() => JumpAsync(rig, session, oid, character.ShipId));
+        Assert.Empty(inspections);
+
+        rig.Sim.JumpAnswer = new CommandReply(true, 0, null, null, NextSystem, 0);
+        Assert.IsType<PyTuple>(await JumpAsync(rig, session, oid, character.ShipId));
+        Assert.Equal([(character.CharacterId, character.ShipId, NextSystem)], inspections);
+    }
+
+    [PgFact]
     public async Task A_jump_that_cannot_be_done_is_the_message_the_reference_tells()
     {
         var (rig, character, session) = await DockedAsync();

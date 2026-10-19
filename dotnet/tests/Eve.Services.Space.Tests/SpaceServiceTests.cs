@@ -74,12 +74,15 @@ public class SpaceServiceTests
     private static long Id(PyValue value) => Events.Number(value);
 
     [Fact]
-    public async Task Admin_get_bubble_id_requires_view_role_and_uses_available_bubble_sources()
+    public async Task Admin_get_bubble_id_requires_server_staff_role_and_uses_available_bubble_sources()
     {
         await using var rig = await Rig.CreateAsync();
         var character = await rig.NewCharacterAsync();
         var session = await rig.SessionAsync(character);
 
+        session.Set("accountRole", new PyLong(0));
+        session.Set("role", new PyLong(Eve.Services.GameMasterRoles.Gml));
+        session.Set("rolesAtAll", new PyLong(Eve.Services.GameMasterRoles.Staff));
         var denied = await rig.BeyonceCallAsync(session, "AdminGetBubbleID", null, new PyLong(character.ShipId));
         Assert.Same(PyNone.Instance, denied);
 
@@ -87,7 +90,8 @@ public class SpaceServiceTests
         Assert.Same(PyNone.Instance, await rig.BeyonceCallAsync(
             session, "AdminGetBubbleID", null, new PyLong(character.ShipId)));
 
-        session.Set("role", new PyLong(18014398509481984L));
+        session.Set("accountRole", new PyLong(Eve.Services.GameMasterRoles.Gml));
+        session.Set("role", new PyLong(0));
         session.Set("shipid", new PyLong(character.ShipId));
         session.Set("ballparkid", new PyLong(987653));
         var ownShipBubble = await rig.BeyonceCallAsync(

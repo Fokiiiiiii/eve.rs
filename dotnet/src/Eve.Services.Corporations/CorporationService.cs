@@ -115,7 +115,8 @@ public sealed partial class CorporationService(CorporationStore store,PgCharacte
     [Method("SetMedalStatus")]
     public async ValueTask<PyValue> SetMedalStatus(ServiceCall call)
     {
-        await store.SetMedalStatusesAsync(SessionCorporationId(call.Session), MedalStatusEntries(call.Arg(0)), call.Cancellation);
+        var (corporationId, _) = await RequireMedalManagerAsync(call);
+        await store.SetMedalStatusesAsync(corporationId, MedalStatusEntries(call.Arg(0)), call.Cancellation);
         return PyNone.Instance;
     }
 

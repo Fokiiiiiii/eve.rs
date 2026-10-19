@@ -123,6 +123,8 @@ shot", Invasion page); no gate-gun damage, range or retribution timer is publish
   Standing gain per completed site: 0.01% per Stellar Reconnaissance anomaly; 0.24% per Observatory Flashpoint in First Liminality.
 - Empire rats (EDENCOM) drop a stack of 1,000 faction ammo.
 
+NPC bounty handling (owner decision, 2026-10-19): NPC bounty credit is suppressed in Pochven at the Host payout boundary. The SDE's `entityKillBounty` remains static type data; the kill does not create a pilot payout or ESS credit. Existing loot and drops are unchanged. The regression is `NpcBountyHostTests.A_sim_resident_triglavian_in_Pochven_pays_no_bounty`.
+
 ## 6. Not published (not in the SDE, not on the wiki pages read)
 
 - Spawn tables: which NPC ship, how many, per site, per bounty, per roaming fleet. The SDE has 54 Triglavian, 28 EDENCOM, 68

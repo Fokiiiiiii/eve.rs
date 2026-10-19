@@ -223,6 +223,9 @@ public sealed class ClientSession
             Send(ClientNotification.Build(UserId ?? 0, NodeId, name, idType, args, ++_notificationSequence));
     }
 
+    /// <summary>Raised after committed session attributes change, for state owners that follow location and affiliation.</summary>
+    public event Action<ClientSession, IReadOnlyList<string>>? AttributesChanged;
+
     /// <summary>Raised once, when the connection of this session has ended: modules release what the session held.</summary>
     public event Action? Closed;
 
@@ -243,19 +246,26 @@ public sealed class ClientSession
     public IReadOnlyList<SessionChange> Change(params (string Name, PyValue Value)[] values)
     {
         List<SessionChange> announced = [];
+        List<string> changed = [];
         lock (_gate)
         {
             foreach (var (name, value) in values)
             {
                 var old = _attributes.GetValueOrDefault(name) ?? PyNone.Instance;
                 _attributes[name] = value;
-                if (SessionAttributes.ClientVisible.Contains(name) && !Equals(old, value))
-                    announced.Add(new SessionChange(name, old, value));
+                if (!Equals(old, value))
+                {
+                    changed.Add(name);
+                    if (SessionAttributes.ClientVisible.Contains(name))
+                        announced.Add(new SessionChange(name, old, value));
+                }
             }
             // Keep the announced order identical to the committed attribute order.
             if (announced.Count > 0)
                 Send(SessionChangeNotification.Build(SessionId, ClientId, UserId ?? 0, NodeId, announced));
         }
+        if (changed.Count > 0)
+            AttributesChanged?.Invoke(this, changed);
         return announced;
     }
 }

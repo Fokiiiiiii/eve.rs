@@ -220,11 +220,13 @@ Not built, with the reason:
   supports. The documented mechanic (statics replaced on collapse; non-static wormholes gone when they collapse; lifetime and
   mass from SDE) is the part that can be built once the owner names the static list.
 
-### 9.4 Local chat (owner decision 4)
+### 9.4 Local chat (owner decision Q-13)
 
-- Not implemented (no wormhole channel exists in eve.rs). The client has the wormhole chat category
-  (`chatutil/const.py` `CATEGORY_WORMHOLE`, `chatutil/channelnames.py`), and the wiki says local keeps timestamps of jumps.
-  The "delayed local, list fills when pilots speak" rule was not read in the client source in this slice: open.
+- Owner decision Q-13 sets wormhole Local to DELAYED mode: only characters who have spoken appear in the member list.
+- The Host public gateway implements Local roster requests, message delivery and membership changes when a character joins,
+  leaves or changes system. The V24.01 request and notice shapes come from `chat/client/local_chat/messenger.py`; speaker
+  inactivity follows `chat/client/const.py` (900-second default). Focused regression coverage is `LocalChatGatewayTests`.
+- Other channel types and a live two-character client walk remain open.
 
 ### 9.5 CCP patch notes and devblogs (once)
 
@@ -274,7 +276,7 @@ The 1,038 systems with an effect: 1,036 agree by name between EveJS `environment
 the `Wolf-Rayet` / `Wolf Rayet` spelling is normalised); the two others are the two shattered systems above, where EveJS disagrees
 with itself.
 
-### 10.3 Local chat (owner decision 5)
+### 10.3 Local chat (owner decision Q-13)
 
 - Client (V24.01, `chat/client/local_chat/channel_controller.py`): in a wormhole system (`IsWormholeSystem`, also Zarzakh and
   Triglavian space) the local channel is "delayed": `is_local_chat_delayed` is true, so on joining a system no members are
@@ -282,9 +284,11 @@ with itself.
   (`_remove_inactive_members_routine`), and `member_count` is 0 (line 139). The member list fills only when pilots speak.
 - Server (EveJS `server/src/services/chat/channelRules.js`): `isDelayedLocalSolarSystemID` (line 126) and
   `isWormholeSolarSystemID` (line 104). The rule is the same; the server sends messages, the client shows the list.
-- eve.rs has no chat service (`dotnet/src` has no local channel; `SessionStartupRpcServices.cs` mentions only the session
-  startup). So there is nothing to change for delayed local yet. Building the local channel is a chat-service task, not a
-  wormhole task. Not built.
+- The Host Local gateway now applies this rule in all systems: K-space lists currently connected characters; wormhole
+  systems list active characters who have spoken during the system visit. Broadcast author identity comes from the
+  authenticated gateway character, and messages are HTML-escaped, limited to 1,024 UTF-8 bytes, and rate-limited to three
+  per second per session. This is a partial chat implementation; corporation and fleet channels, ignore lists and a live
+  graphical-client check remain open.
 
 ### 10.4 What is not done in slice 3, and why
 
@@ -387,7 +391,7 @@ Status: not built in this slice. This section records what the code and the clie
   archetype is loaded; the site counts are not published (design 4).
 - Thera and Turnur: a static exit to Thera (class 12) has a pool of one system (31000005). Thera has no statics (data file).
   Turnur (J377 leads there) needs the K-space side, which is cut with the wandering connections.
-- Delayed local: no chat service in eve.rs (section 10.3). Skipped.
+- Delayed Local membership and message delivery are implemented in the Host gateway (section 10.3); the two-character live walk remains open.
 - Headless MITM run: needs a wormhole the client can enter, so it waits for 12.3.
 
 ### 12.5 Decision for the next slice

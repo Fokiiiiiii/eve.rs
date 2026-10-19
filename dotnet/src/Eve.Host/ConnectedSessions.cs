@@ -11,20 +11,23 @@ public sealed class ConnectedSessions
     private readonly HashSet<ClientSession> _sessions = new(ReferenceEqualityComparer.Instance);
     private readonly object _gate = new();
 
+    public event Action<ClientSession>? Added;
+    public event Action<ClientSession>? Removed;
+
     public void Add(ClientSession session)
     {
+        bool added;
         lock (_gate)
-        {
-            _sessions.Add(session);
-        }
+            added = _sessions.Add(session);
+        if (added) Added?.Invoke(session);
     }
 
     public void Remove(ClientSession session)
     {
+        bool removed;
         lock (_gate)
-        {
-            _sessions.Remove(session);
-        }
+            removed = _sessions.Remove(session);
+        if (removed) Removed?.Invoke(session);
     }
 
     public IReadOnlyList<ClientSession> Snapshot()

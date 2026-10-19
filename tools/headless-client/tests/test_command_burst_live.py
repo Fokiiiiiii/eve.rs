@@ -72,8 +72,8 @@ def test_a_loaded_burst_changes_a_fleet_members_dogma_until_its_buff_expires():
         burst_flag = next(flag for flag in dbseed.HIGH_SLOTS if flag not in occupied)
         burst = dbseed.new_item(BURST_MODULE, owner=owner_character, location=owner_ship,
                                 flag=burst_flag, singleton=True)
-        charge = dbseed.new_item(BURST_CHARGE, owner=owner_character, location=owner_ship,
-                                 flag=5, quantity=1)
+        charge = dbseed.new_item(BURST_CHARGE, owner=owner_character, location=STATION,
+                                 flag=dbseed.HANGAR, quantity=1)
         station_dogma = owner.call("dogmaIM", "MachoBindObject", (STATION, 15), None)
         owner.call_bound(station_dogma[0], "LoadAmmo", owner_ship, m.List([burst]), m.List([charge]), STATION)
 

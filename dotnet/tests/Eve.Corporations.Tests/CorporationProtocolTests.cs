@@ -925,11 +925,12 @@ private static PyValue RowField(PyValue value,string key)
     }
 
     [PgFact]
-    public async Task Corporation_medal_rpcs_preserve_wire_rows_persist_awards_and_follow_reference_authorization()
+    public async Task Corporation_medal_rpcs_enforce_manager_roles_and_member_recipients()
     {
         await using var rig = await Rig.CreateAsync();
         var founder = await rig.CharacterAsync("Medal Founder");
         var member = await rig.CharacterAsync("Medal Member");
+        var outsider = await rig.CharacterAsync("Medal Outsider");
         var corp = await rig.Store.CreateAsync(founder, new("Medal Works", "MEDAL", "", "", 0.05m), "medals");
         var application = await rig.Store.ApplyAsync(member, corp.Id, "");
         await rig.Store.RespondAsync(founder, application, 6, "", "");
@@ -940,6 +941,8 @@ private static PyValue RowField(PyValue value,string key)
         var memberSession = new ClientSession();
         memberSession.CharacterId = member;
         memberSession.Set("corporationID", new PyInt(corp.Id));
+        memberSession.Set("role", new PyLong(CorporationRoles.PersonnelManager));
+        memberSession.Set("rolesAtAll", new PyLong(CorporationRoles.PersonnelManager));
         var founderSession = new ClientSession();
         founderSession.CharacterId = founder;
         founderSession.Set("corpid", new PyInt(corp.Id));
@@ -947,24 +950,37 @@ private static PyValue RowField(PyValue value,string key)
         ValueTask<PyValue> FounderRpc(string method, params PyValue[] args) => service.CallAsync(Call(founderSession, method, args));
 
         var graphics = new PyList([Py.Tuple(new PyInt(1), new PyWString("emblem.42"), new PyInt(7))]);
+        await Assert.ThrowsAsync<CorporationError>(async () => await MemberRpc("CreateMedal",
+            new PyWString("Denied"), new PyWString("Forged role"), graphics));
+        var founderMedalId = Assert.IsType<PyInt>(await FounderRpc("CreateMedal",
+            new PyWString("Founder"), new PyWString("For service"), graphics)).Value;
+        await Assert.ThrowsAsync<CorporationError>(async () => await MemberRpc("GiveMedalToCharacters",
+            new PyInt(founderMedalId), new PyList([new PyInt(founder)]), new PyWString("Unauthorized")));
+
+        var memberRecord = await rig.Store.MemberAsync(member);
+        await rig.Store.UpdateMemberAsync(founder, memberRecord! with { Masks = new RoleMasks(CorporationRoles.PersonnelManager) });
         var medalId = Assert.IsType<PyInt>(await MemberRpc("CreateMedal",
             new PyWString("Service"), new PyWString("For service"), graphics)).Value;
         var all = Assert.IsType<PyTuple>(CachedPayload(await MemberRpc("GetAllCorpMedals", new PyInt(corp.Id))));
-        var medalRow = Assert.IsType<PyList>(Assert.Single(Lines(all.Items[0])));
-        Assert.Equal(new PyInt(medalId), medalRow.Items[0]);
+        var medalRows = Lines(all.Items[0]).Select(value => Assert.IsType<PyList>(value)).ToArray();
+        Assert.Equal(2, medalRows.Length);
+        var medalRow = Assert.Single(medalRows, row => Assert.IsType<PyInt>(row.Items[0]).Value == medalId);
         Assert.Equal(new PyInt(corp.Id), medalRow.Items[1]);
         Assert.Equal(new PyWString("Service"), medalRow.Items[3]);
         Assert.Equal(new PyWString("For service"), medalRow.Items[4]);
         Assert.IsType<PyLong>(medalRow.Items[5]);
         Assert.Equal(new PyInt(0), medalRow.Items[6]);
-        var graphicRow = Assert.IsType<PyList>(Assert.Single(Lines(all.Items[1])));
+        var graphicRow = Assert.Single(Lines(all.Items[1]).Select(value => Assert.IsType<PyList>(value)),
+            row => Assert.IsType<PyInt>(row.Items[0]).Value == medalId);
         Assert.Equal(new PyWString("emblem.42"), graphicRow.Items[2]);
         var emptyDetails = await MemberRpc("GetMedalDetails", new PyInt(medalId));
         var emptyDetail = Assert.Single(Assert.IsType<PyList>(Field(emptyDetails, "info")).Items);
         Assert.Equal(new PyInt(0), Field(emptyDetail, "numberOfRecipients"));
 
-        var status = new PyDict([new(new PyInt(medalId), new PyInt(4))]);
+        var status = new PyDict([new(new PyInt(medalId), new PyInt(2))]);
         Assert.IsType<PyNone>(await MemberRpc("SetMedalStatus", status));
+        await Assert.ThrowsAsync<CorporationError>(async () => await MemberRpc("GiveMedalToCharacters",
+            new PyInt(medalId), new PyList([new PyInt(founder), new PyInt(outsider)]), new PyWString("Partial award")));
         Assert.IsType<PyNone>(await MemberRpc("GiveMedalToCharacters",
             new PyInt(medalId), new PyList([new PyInt(founder)]), new PyWString("Service award")));
         Assert.IsType<PyNone>(await MemberRpc("GiveMedalToCharacters",
@@ -986,6 +1002,8 @@ private static PyValue RowField(PyValue value,string key)
         Assert.Equal(new PyWString("Service award"), Assert.IsType<PyList>(receivedRows[0]).Items[4]);
         Assert.Equal(new PyWString("Repeat award"), Assert.IsType<PyList>(receivedRows[1]).Items[4]);
         Assert.Single(Lines(received.Items[1]));
+        var outsiderReceived = Assert.IsType<PyTuple>(await FounderRpc("GetMedalsReceived", new PyInt(outsider)));
+        Assert.Empty(Lines(outsiderReceived.Items[0]));
 
         var details = await MemberRpc("GetMedalDetails", new PyInt(medalId));
         var detail = Assert.Single(Assert.IsType<PyList>(Field(details, "info")).Items);

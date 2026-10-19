@@ -64,8 +64,14 @@ impl Scene {
         else {
             return (Vec::new(), None);
         };
+        let resistance_bonus = self.link_effects_active(session, now);
         let pilot = self.pilots.get_mut(&session).expect("the pilot is in the scene");
         let owner = pilot.ship.spec.character_id;
+        let amount = if resistance_bonus {
+            amount * (1.0 - crate::deployable::CRAB_LINK_RESISTANCE_BONUS)
+        } else {
+            amount
+        };
         let Some(applied) = pilot.ship.health.apply_resolved_amount(now, amount) else {
             return (Vec::new(), None);
         };
@@ -102,9 +108,16 @@ impl Scene {
         else {
             return (Vec::new(), None);
         };
+        let resistance_bonus = resisted && self.link_effects_active(session, now);
         let pilot = self.pilots.get_mut(&session).expect("the pilot is in the scene");
         let owner = pilot.ship.spec.character_id;
-        let applied = if resisted {
+        let applied = if resistance_bonus {
+            pilot.ship.health.apply_with_resistance_bonus(
+                now,
+                raw,
+                crate::deployable::CRAB_LINK_RESISTANCE_BONUS,
+            )
+        } else if resisted {
             pilot.ship.health.apply(now, raw)
         } else {
             pilot.ship.health.apply_unresisted(now, raw)

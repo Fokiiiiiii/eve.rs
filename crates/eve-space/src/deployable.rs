@@ -22,6 +22,9 @@ use crate::scene::{Command, Out, Scene, SessionId, TICKS_PER_SECOND};
 use crate::visibility::{Presence, can_see};
 use crate::wire::{filetime, id, int, list, real, text, tuple, word};
 
+/// The CRAB link's additional resistance bonus, reducing each damage-layer resonance by ten percent.
+pub(crate) const CRAB_LINK_RESISTANCE_BONUS: f64 = 0.10;
+
 /// The id of the first deployable a scene makes (its own range, apart from the missiles and the wrecks).
 pub const DEPLOYABLE_ID_BASE: i64 = 4_250_000_000_000_000;
 
@@ -1343,7 +1346,6 @@ impl Scene {
     }
 
     /// Whether a warp-disruption source covers `position` at `now`: a probe still in space within its range, or a bubble (a ship's running field generator, see
-
     pub(crate) fn warp_disrupted_at(&self, position: Vec3, now: i64) -> bool {
         let bubble = self.pilots.values().any(|pilot| {
             let reach = distance(position, pilot.ship.position);
@@ -1415,8 +1417,18 @@ impl Scene {
         self.insert_deployable(deployable, now)
     }
 
-    /// The host sets a CRAB's state: those who have it in view are told its slim item again (`OnSlimItemChange`, the whole slim item). A state already set is
-    /// not told again, and a deployable that is not a CRAB is left alone.
+    /// The CRAB's resistance bonus and tether/cloak restrictions apply from link start through the 60-second status tail.
+    pub(crate) fn link_effects_active(&self, session: SessionId, now: i64) -> bool {
+        let Some(pilot) = self.pilots.get(&session) else { return false };
+        let ship = pilot.ship.spec.ship_id;
+        self.deployables.values().any(|deployable| match &deployable.role {
+            Role::AnalysisBeacon { state } if state.link_state >= 2 && state.linked_ship_id == ship => {
+                now < state.link_complete_at.saturating_add(ticks(60_000.0))
+            }
+            _ => false,
+        })
+    }
+
     /// Whether a CRAB's link holds a command of a pilot (EVE.js `applyLinkRestrictionsToShip`): from the start of the link the ship is immobile until the link is
     /// complete, and it cannot warp, jump or dock until a minute after that (the status clear delay, `MOBILE_ANALYSIS_BEACON_LINK_STATUS_CLEAR_DELAY_MS`). A stop is
     /// never held.
@@ -1473,6 +1485,8 @@ impl Scene {
             .collect()
     }
 
+    /// The host sets a CRAB's state: those who have it in view are told its slim item again (`OnSlimItemChange`, the whole slim item). A state already set is
+    /// not told again, and a deployable that is not a CRAB is left alone.
     pub(crate) fn set_analysis_beacon_state(
         &mut self,
         deployable_id: i64,
@@ -1492,9 +1506,12 @@ impl Scene {
             "OnSlimItemChange",
             [id(changed.id), slim_item(&changed, category_of(&changed.role))],
         );
-        self.missile_audience(changed.position)
+        let mut out: Vec<_> = self
+            .missile_audience(changed.position)
             .into_iter()
             .map(|session| Self::update(session, vec![change.clone()]))
-            .collect()
+            .collect();
+        out.extend(self.tick_tethers(at));
+        out
     }
 }

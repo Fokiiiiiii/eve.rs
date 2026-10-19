@@ -268,13 +268,13 @@ internal sealed partial class CharacterServicesComposition
                 : null,
             now,
             structureOffices);
-        // ST-12: the rent of an office at a structure falls due as a durable job (an unpaid one gives the office up)
+
         corporationOfficeStore.RenewalRentSource = structureOffices.RenewalRentAsync;
         var rentDue = new StructureOfficeRentDue(source, corporationOfficeStore, economyWallets, foundations.Scheduler, structureOffices,
             items, characters, notificationMailbox ?? throw new InvalidOperationException("The notifications mailbox is wired before the offices."));
         rentDue.Register();
         rentDue.SubscribeClosures(foundations.Events);
-        // ST-16: the rent bills taken at a station before the creditor was recorded get the station's owner, once (a no-op from the second start)
+
         await rentDue.CreditStationBillsAsync(id => stations.Get(id) is { } station ? (long?)station.OwnerId : null);
         skinCosmeticsCatalog = await ShipCosmeticsCatalog.LoadAsync(sde);
     }

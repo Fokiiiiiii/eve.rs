@@ -13,7 +13,7 @@ public sealed record AbyssalTracePoseSnapshot(
 
 /// <summary>
 /// Builds the public trace ball from the persisted item identity and an authoritative ship pose.
-/// Geometry follows EveJS 7cc6f323c7c5c92c2738476a62768318799d8077:
+
 /// its shared Tranquil profile uses the captured source vector; other profiles use the
 /// configured 2,500m directional deployment distance.
 /// </summary>

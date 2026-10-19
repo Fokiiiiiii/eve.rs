@@ -274,7 +274,7 @@ internal sealed class LocalChatGateway
     private IReadOnlyList<ClientSession> VisibleMembers(ChannelAddress channel)
     {
         var current = _sessions.Snapshot()
-            .Where(s => s.CharacterId is > 0 && ChannelForSession(s, channel.Kind) == channel)
+            .Where(s => s.CharacterId is > 0 && ChannelForSession(s, channel.Kind) == channel && Classification(s) != 1)
             .GroupBy(s => s.CharacterId!.Value)
             .Select(g => g.First())
             .ToDictionary(s => s.CharacterId!.Value);
@@ -456,9 +456,11 @@ internal sealed class LocalChatGateway
     private static int Classification(ClientSession session)
     {
         var role = session.GetInt("accountRole") ?? 0;
-        if ((role & GameMasterRoles.Qa) != 0 || (role & GameMasterRoles.Programmer) != 0) return 2;
-        if ((role & GameMasterRoles.Admin) != 0) return 3;
-        if ((role & (GameMasterRoles.Gml | GameMasterRoles.Gmh | GameMasterRoles.ExtGm1 | GameMasterRoles.ExtGm2 | GameMasterRoles.ExtGm3 | GameMasterRoles.ExtGm4)) != 0) return 4;
+        if ((role & GameMasterRoles.ChtInvisible) != 0) return 1;
+        if ((role & GameMasterRoles.PinkChat) != 0) return 6;
+        if ((role & GameMasterRoles.Qa) != 0) return 2;
+        if ((role & (GameMasterRoles.Gml | GameMasterRoles.Gmh | GameMasterRoles.Gms | GameMasterRoles.Admin)) != 0) return 4;
+        if ((role & (GameMasterRoles.Centurion | GameMasterRoles.Legioneer)) != 0) return 5;
         return 0;
     }
 }

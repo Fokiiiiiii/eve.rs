@@ -9,13 +9,13 @@ internal sealed partial class CharacterServicesComposition
     private Eve.Services.Space.Entosis.EntosisCaptureService? entosisCaptureService;
 
     /// <summary>
-    /// ST-17 a: a hub destroyed by its command node stage is lost from the sovereignty records (the sovereignty write path; EVE.js
-    /// commitSovereigntyHubCampaignOutcome). The system's owner, claim, hub pointer and fuel group are cleared, and the hub's structure row and record leave.
+
+
     /// </summary>
     private Task<bool> EntosisHubDestroyedAsync(Eve.Services.Space.Entosis.EntosisDestroyedHub hub, CancellationToken cancellationToken) =>
         sovWriteOperations.DestroyLostHubAsync(hub.SolarSystemId, hub.HubId, hub.DefenderAllianceId, cancellationToken);
 
-    /// <summary>ST-17 a: the constellation of a system (its static data), for the notice of a stage's start; 0 when the static data has none.</summary>
+
     private async Task<int> EntosisConstellationOfAsync(int solarSystemId, CancellationToken cancellationToken)
     {
         var systems = await mapSolarSystems.Value.WaitAsync(cancellationToken);
@@ -24,7 +24,7 @@ internal sealed partial class CharacterServicesComposition
     }
 
     /// <summary>
-    /// ST-17 a: the systems of a system's constellation (the static data's mapSolarSystems), where a stage's command nodes spawn. A system is its own constellation's
+
     /// member when the static data has no constellation for it.
     /// </summary>
     private async Task<IReadOnlyList<int>> EntosisConstellationSystemsAsync(int solarSystemId, CancellationToken cancellationToken)
@@ -42,8 +42,8 @@ internal sealed partial class CharacterServicesComposition
     }
 
     /// <summary>
-    /// ST-9 d: the handover of a captured neutral hub. The sovereignty records give the system to the capturer (the sovereignty write path, verified in the
-    /// persisted table), and the hub's ball in space is put back with its new owner. A claim the records refuse (another alliance has the system) is superseded.
+
+
     /// </summary>
     private async Task<EntosisHandover> EntosisHandoverAsync(EntosisCapturedHub captured, CancellationToken cancellationToken)
     {
@@ -61,7 +61,7 @@ internal sealed partial class CharacterServicesComposition
         {
             await spaceSovHubs.ReplaceAsync(captured.HubId, captured.SolarSystemId, cancellationToken);
         }
-        // ST-9 e: keyed by the claim time the records hold (a retry keeps the first claim's time); a failure is retried by the handover job
+
         var snapshot = await sovereigntyReadModel.ReadSnapshotAsync(cancellationToken);
         var claimTime = snapshot.HubsBySolarSystemId.TryGetValue(captured.SolarSystemId, out var claimed0) ? claimed0.ClaimTimeFileTime : null;
         if (claimTime is not { } claimedAt)
@@ -73,9 +73,9 @@ internal sealed partial class CharacterServicesComposition
     }
 
     /// <summary>
-    /// ST-9 c, e: a system's Sovereignty Hub as the sovereignty records have it at a cycle. Its owner's alliance is the records' (none when neutral). The activity
-    /// multiplier is the owner's system's (<see cref="StructureAnchorAuthority.ActivityDefenseMultiplier"/>); a neutral hub has none and its capture time is the
-    /// base time (EVE.js's neutral capture is not scaled), so it is 1. The owner's prime hour centres its daily vulnerability window (<see cref="EntosisWindow"/>).
+
+
+
     /// </summary>
     private async Task<EntosisHubReading?> EntosisHubReadingAsync(int solarSystemId, CancellationToken cancellationToken)
     {

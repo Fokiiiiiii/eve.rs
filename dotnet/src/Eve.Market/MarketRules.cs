@@ -20,9 +20,9 @@ public static class MarketRules
     public const int RangeEsiFourJumps = -4;
     public const int RangeRegion = 32767;
 
-    /// <summary>Base sales tax in percent: CCP patch 2025-03-12.1 ("Sales Tax has been increased from 4% to 7.5%"); decision Q1. Not the client's 8.0 default.</summary>
+
     public const double SalesTaxPercent = 7.5;
-    /// <summary>The modification discount grows by this much per Advanced Broker Relations level: the client's own constant (decision Q2; CCP's text says 5 points).</summary>
+
     public const double ModificationDiscountPerLevel = 0.06;
     /// <summary>A modification waits this long after the later of the order's issue and its last modification (CCP-BR; the client's mktModificationDelay = 300).</summary>
     public const long ModificationDelayMs = 300_000;
@@ -72,7 +72,7 @@ public static class MarketRules
                 RangeOf(skills.Marketing), RangeOf(skills.Procurement), RangeOf(skills.Visibility), RangeOf(skills.Daytrading)));
     }
 
-    /// <summary>Applies an Upwell structure's owner-set market broker rate; Accounting still applies to transaction tax.</summary>
+
     public static MarketContext StructureContext(MarketSkillLevels skills, double? configuredBrokerPercent)
     {
         var percent = configuredBrokerPercent is { } configured && double.IsFinite(configured)

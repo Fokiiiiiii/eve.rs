@@ -15,7 +15,7 @@ internal sealed partial class CharacterServicesComposition
 
     /// <summary>
     /// The pirate insurgency campaigns (C-M1, C-S1): the store and the deadline jobs of the state machine, the campaign snapshot the client asks for, and the
-    /// notices of each change to the pilots it concerns (V24.01 insurgencyCampaignSvc.py:59-143). No client or operator path starts a campaign yet (Q-INS-4),
+
     /// so a server without one answers the empty list.
     /// </summary>
     private async Task Insurgency()

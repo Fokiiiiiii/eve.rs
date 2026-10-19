@@ -1191,6 +1191,14 @@ fn a_linked_ship_is_held_until_its_link_is_complete_and_out_of_warp_for_a_minute
     assert!(!held(&scene.command(A, Command::Stop, t), "LINK_HOLD"), "a stop is never held");
     assert!(!held(&scene.command(B, goto, t), "LINK_HOLD"), "another pilot's ship is not held");
 
+    assert!(scene.link_effects_active(A, t), "link restrictions start with the link");
+    assert!(
+        scene.link_effects_active(A, link_done + 59 * SECOND),
+        "link restrictions include the 60-second tail"
+    );
+    assert!(!scene.link_effects_active(A, link_done + 60 * SECOND), "link restrictions clear after the tail");
+    assert!(!scene.link_effects_active(B, t), "another pilot is not restricted");
+
     let after_link = link_done + SECOND;
     assert!(
         !held(&scene.command(A, goto, after_link), "LINK_HOLD"),
@@ -1203,6 +1211,39 @@ fn a_linked_ship_is_held_until_its_link_is_complete_and_out_of_warp_for_a_minute
     assert!(
         !held(&scene.command(A, warp, link_done + 61 * SECOND), "LINK_HOLD"),
         "the warp is free after the status clear delay"
+    );
+}
+
+#[test]
+fn a_crab_link_reduces_damage_by_ten_percent_until_the_status_tail_clears() {
+    let (mut scene, t) = crowd();
+    let ship = scene.pilots[&A].ship.spec.ship_id;
+    let idle = AnalysisBeaconState {
+        active: true,
+        activate_at: 0,
+        deployed_at: t,
+        activation_seconds: 20,
+        link_state: 1,
+        link_complete_at: 0,
+        linked_ship_id: 0,
+    };
+    scene.place_analysis_beacon(crab_placement(&scene, idle), t);
+    let link_done = t + 240 * SECOND;
+    scene.set_analysis_beacon_state(
+        CRAB,
+        AnalysisBeaconState { link_state: 2, link_complete_at: link_done, linked_ship_id: ship, ..idle },
+        t,
+    );
+
+    let (_, linked_hit) = scene.damage(ship, [0.0, 0.0, 100.0, 0.0], t);
+    let linked_hit = linked_hit.expect("the linked ship has damageable shields");
+    assert!((linked_hit.taken.shield - 54.0).abs() < 1e-9, "10% less than 60 damage: {linked_hit:?}");
+
+    let (_, after_tail_hit) = scene.damage(ship, [0.0, 0.0, 100.0, 0.0], link_done + 61 * SECOND);
+    let after_tail_hit = after_tail_hit.expect("the linked ship still has damageable shields");
+    assert!(
+        (after_tail_hit.taken.shield - 60.0).abs() < 1e-9,
+        "the bonus ends with the status tail: {after_tail_hit:?}"
     );
 }
 

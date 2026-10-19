@@ -166,6 +166,27 @@ public sealed class LocalChatGatewayTests
         Assert.Equal(429U, (await gateway[BroadcastRequest](Request(BroadcastRequest, 2010, groupMessage.ToArray()), CancellationToken.None)).StatusCode);
     }
 
+    [Fact]
+    public async Task Membership_uses_client_chat_classifications_and_hides_invisible_roles()
+    {
+        var sessions = new ConnectedSessions();
+        sessions.Add(Session(1001, 2001, 30_000_001, 1L << 52)); // QA / developer
+        sessions.Add(Session(1002, 2001, 30_000_001, 1L << 53)); // GMH / game master
+        sessions.Add(Session(1003, 2001, 30_000_001, 1L << 11)); // centurion / volunteer
+        sessions.Add(Session(1004, 2001, 30_000_001, 1L << 6)); // pink chat / NPC
+        sessions.Add(Session(1005, 2001, 30_000_001, 1L << 20)); // chat invisible
+        var gateway = new LocalChatGateway(sessions, new NoticeHub()).Handlers();
+
+        var members = await gateway[MembersRequest](Request(MembersRequest, 1001), CancellationToken.None);
+        var records = ProtoReader.Fields(members.Payload)
+            .Where(field => field.Number == 1 && field.WireType == 2)
+            .Select(field => ProtoReader.Fields(field.Bytes))
+            .ToDictionary(fields => (long)ProtoReader.Fields(fields.First(f => f.Number == 1).Bytes).First(f => f.Number == 1).Scalar,
+                fields => (int)fields.First(f => f.Number == 7).Scalar);
+
+        Assert.Equal(new Dictionary<long, int> { [1001] = 2, [1002] = 4, [1003] = 5, [1004] = 6 }, records);
+    }
+
     private static ClientSession Session(long characterId, long corporationId, long systemId, long role)
     {
         var session = new ClientSession { SessionId = characterId, ClientId = characterId };

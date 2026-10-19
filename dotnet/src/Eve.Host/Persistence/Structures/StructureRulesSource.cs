@@ -83,7 +83,7 @@ public sealed class StructureRulesSource : IStructureRulesSource
                 SecurityClass.LowSec => SecurityBand.LowSec,
                 _ => SecurityBand.HighSec,
             };
-        // a pirate FOB has no rig size: its own rules (no owner's reinforcement hour, never abandoned)
+
         if (InsurgencyWarzones.All.Any(warzone => warzone.FobTypeId == typeId))
             return StructureRules.Of(StructureSize.Fob, band, canBeAbandoned: false);
         return StructureRules.Of(size, band);

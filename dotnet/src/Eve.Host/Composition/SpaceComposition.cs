@@ -61,7 +61,7 @@ internal sealed partial class CharacterServicesComposition
     }
 
     /// <summary>
-    /// The customs penalty (ST-18) and its settlement job, registered with the shared scheduler whether or not the simulation runs: a process runs the kinds it has
+
     /// a handler for, so a penalty scheduled by one process is settled by any process that has the handler.
     /// </summary>
     private UndockContraband customs = default!;
@@ -173,7 +173,7 @@ internal sealed partial class CharacterServicesComposition
             {
                 foundations.Content.Define(definition);
             }
-            // the cosmic sites of the systems: content of the shared runtime, kept filled by a recurring job per system (docs/design/FOUNDATIONS.md, an anomaly end to end)
+
             // the containers of the sites: their rows are kept in the sites schema. The type of a container is the static data's type of its name in the
             // container groups (306 Spawn, 314, 1207 Scatter); a name the static data does not have falls back to the lowest type id of the kind's group
             var siteContainers = new Eve.Services.Space.SiteContainerStore(source);
@@ -221,7 +221,7 @@ internal sealed partial class CharacterServicesComposition
             // the stargate lists and tolls: the embedded client data, or the export named by EVE_CLIENT_SDE_DIR where it holds the file
             var clientDirectory = Env(Eve.Universe.ClientStaticData.DirectoryVariable, "");
             spaceSessions.GateRules = await Eve.Services.Space.Gates.GateRules.LoadAsync(sde, clientDirectory);
-            // the environment of the J-space systems (slice 7c): each system's effect beacon (SDE group 920) as dogma effects on the ships in it
+
             var beaconEffects = await Eve.Universe.WormholeEffects.LoadAsync(sde);
             var environments = new Dictionary<int, IReadOnlyList<Eve.Dogma.EffectDef>>();
             foreach (var system in Eve.Universe.JSpaceSystems.Load())
@@ -234,7 +234,7 @@ internal sealed partial class CharacterServicesComposition
                 }
             }
             spaceSessions.SystemEnvironment = id => environments.GetValueOrDefault(id) ?? [];
-            // the wormholes of J-space (slice 7): the world is generated once from the seed (EVE_WORMHOLE_SEED) out of the SDE and the client's system classes
+
             // (embedded; EVE_WORMHOLES=off turns the wormholes off). The ends of a system are placed with its scene (SpaceSessions); a collapse or an opening is published to it
             if (Env("EVE_WORMHOLES", "on") is not ("off" or "0" or "false"))
             {
@@ -249,7 +249,7 @@ internal sealed partial class CharacterServicesComposition
                 spaceSessions.Wormholes = wormholes;
                 wormholes.Changed += spaceSessions.PublishWormholeChange;
             }
-            // the gate toll is journaled as a sink: no source names a payee, so no wallet is credited (DEVIATIONS, slice 3)
+
             var tollWallets = new Eve.Wallet.WalletTransactions(source, walletSchema);
             spaceSessions.ChargeGateToll = async (character, amount, key, token) =>
             {
@@ -339,7 +339,7 @@ internal sealed partial class CharacterServicesComposition
                     return;
                 try
                 {
-                    // the fleet of the killer shares the bounty (EVE University wiki: "the entire fleet shares the bounty")
+
                     var sharers = FleetSharersAsync(loss.KillerCharacterId).GetAwaiter().GetResult();
                     playerBountyKills!.ClaimShipLossAsync(loss.CharacterId, loss.ShipId, loss.ShipTypeId,
                         [.. (loss.Contents ?? []).Select(item => (item.TypeId, item.Quantity))], loss.KillerCharacterId, now(),
@@ -356,7 +356,7 @@ internal sealed partial class CharacterServicesComposition
                     Console.Error.WriteLine($"eve-host: player bounty of ship {loss.ShipId} could not be claimed: {error}");
                 }
             };
-            // the capsule is a loss of its own: a pilot that shoots a pod dead claims the pod's value (the capsule's base price; the wiki's implant value is not tracked yet)
+
             spaceSessions.PodLost += loss =>
             {
                 if (loss.Cause != Eve.Services.Space.ShipLossCause.Player || loss.KillerCharacterId <= 0)
@@ -378,7 +378,7 @@ internal sealed partial class CharacterServicesComposition
                     Console.Error.WriteLine($"eve-host: player bounty of pod {loss.CapsuleId} could not be claimed: {error}");
                 }
             };
-            // a pilot that destroys a faction's NPC loses standing with the faction (EveJS factionKillStandingRuntime; the debounce is in memory)
+
             var npcFactionStanding = new Eve.Services.Space.NpcFactionStanding(foundations.Relations, now);
             spaceSessions.NpcDestroyed += RecordFactionWarfareNpcKill;
             spaceSessions.NpcDestroyed += kill =>
@@ -387,7 +387,7 @@ internal sealed partial class CharacterServicesComposition
                     return;
                 try
                 {
-                    // the pilot is told the new standing as the reference tells it (EveJS notifyStandingSet: OnStandingSet(faction, pilot, standing))
+
                     var standing = npcFactionStanding.ApplyAsync(kill.FinalBlowCharacterId, kill.Profile.FactionId, kill.SolarSystemId, CancellationToken.None).GetAwaiter().GetResult();
                     if (standing is { } changed && characterSessions?.Of(kill.FinalBlowCharacterId) is { } pilot)
                     {
@@ -476,7 +476,7 @@ internal sealed partial class CharacterServicesComposition
                 typeId => dogma.Type(typeId)?.GroupId ?? 0);
             spaceContainers.ReadObservatoryLandmarks = observatoryLandmarks.ReadAsync;
             spaceContainers.ReadControlTowers = observatoryLandmarks.ReadControlTowersAsync;
-            // the cosmic sites are deadspace anchors; a dungeon's pocket is its own record (ST-23, SpaceContainers.Pockets)
+
             spaceContainers.ReadDeadspaceAnchors = async (system, token) => cosmicSites is { } sites
                 ? (IReadOnlyList<double[]>)(await sites.ActiveAsync(system, token)).Select(site => site.Position).ToArray()
                 : [];
@@ -515,7 +515,7 @@ internal sealed partial class CharacterServicesComposition
             var dungeonWaves = new Eve.Services.Space.Waves.DungeonWaveDirector(source, foundations.Content, foundations.Scheduler, foundations.Events,
                 Eve.Dungeons.DungeonCatalog.LoadEmbedded(), Eve.Dungeons.WaveRules.LoadEmbedded(), new NpcSelector(npcAuthority),
                 new Eve.Services.Space.SpaceDungeonNpcs(spaceSessions), spaceSchema, message => Console.Error.WriteLine($"eve-host: space: {message}"));
-            // the gate types' radii come from the SDE (17831, and the large gate 35776 of the owner data)
+
             dungeonWaves.GateRadii = (await sde.ReadAsync("types", [17831L, 35776L])).ToDictionary(row => row.Key, row => row.Doc.GetProperty("radius").GetDouble());
             await dungeonWaves.AttachAsync();
             dungeonWavesDirector = dungeonWaves;

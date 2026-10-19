@@ -384,7 +384,6 @@ pub(crate) const WORK_ENTOSIS: u8 = 14;
 pub(crate) const WORK_RESEND_TICKS: i64 = 2 * TICKS_PER_SECOND;
 
 /// The ids of work cycles are drawn from one counter of the process, seeded from the clock, so an id is never sent twice by one run of the simulation
-
 pub(crate) fn next_work_cycle_id() -> u64 {
     static NEXT: std::sync::LazyLock<std::sync::atomic::AtomicU64> = std::sync::LazyLock::new(|| {
         let seconds = std::time::SystemTime::now()

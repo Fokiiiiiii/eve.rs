@@ -4,11 +4,11 @@ using Eve.Sde;
 
 namespace Eve.Host;
 
-/// <summary>A station as the agent catalog reads it: its type and its solar system (both from the SDE station row or the station store).</summary>
+
 public readonly record struct AgentStationPlace(long TypeId, long? SolarSystemId);
 
 /// <summary>
-/// The agent catalog rows (<c>GetAgents</c>) built from the SDE: every <c>npcCharacters</c> row that has an <c>agent</c> object, with
+
 /// its in-space placement (<c>agentsInSpace</c>), its station and its solar system. It is a pure function of its inputs so that a test
 /// can run it on the pinned SDE and assert the catalog's counts and agents (tests: <c>AgentCatalogSdeTests</c>).
 /// </summary>
@@ -31,7 +31,7 @@ public static class AgentCatalog
             .Select(row =>
             {
                 var agent = row.Doc.GetProperty("agent");
-                // The SDE has no mission kind or importance for an agent: the eve.rs rule table decides them (AgentMissionKindRules).
+
                 var missionClass = AgentMissionKindRules.Classify(AgentSdeInteger(agent, "agentTypeID"), AgentSdeInteger(agent, "divisionID"));
                 var locationId = AgentSdeInteger(row.Doc, "locationID");
                 var place = locationId > 0 ? station(locationId) : null;

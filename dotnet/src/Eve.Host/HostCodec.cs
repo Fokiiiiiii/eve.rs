@@ -3,7 +3,7 @@ using System.Text;
 
 namespace Eve.Host;
 
-/// <summary>A message on the link between the network front and this host (docs/design/adr/0002-front-host-link.md).</summary>
+
 public abstract record HostMessage;
 
 public sealed record Hello(ushort Version, uint NodeId) : HostMessage;
@@ -54,7 +54,7 @@ public sealed class HostLinkException(HostLinkError error, string message) : Exc
 
 /// <summary>
 /// The wire layout of <see cref="HostMessage"/>: <c>u32 length | u8 kind | body</c>, little endian, text as
-/// <c>u16 length + UTF-8</c>, byte strings as <c>u32 length + bytes</c>. The Rust front and this codec are
+
 /// both checked against oracle/fixtures/hostlink/messages.json.
 /// </summary>
 public static class HostCodec

@@ -60,7 +60,6 @@ pub fn int_of(value: &Value) -> Option<i64> {
     }
 }
 
-/// CRC-HQX (CRC-16/XMODEM), the hash the Placebo crypto pack answers a challenge with.
 pub fn crc_hqx(data: &[u8]) -> u16 {
     let mut crc = 0u16;
     for &byte in data {

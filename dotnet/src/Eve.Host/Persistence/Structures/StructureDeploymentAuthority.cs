@@ -9,11 +9,11 @@ using Npgsql;
 namespace Eve.Host;
 
 /// <summary>
-/// The management calls of <c>structureDeployment.RenameStructure</c> and <c>structureVulnerability.UpdateReinforceTimesFromClient</c>. The gates are EveJS's
+
 /// (<c>sovPlayerDeployment.js</c> <c>requireStructureManagementSession</c> and <c>renameStructureByID</c>; <c>structureVulnerabilityService.js</c>
 /// <c>Handle_UpdateReinforceTimesFromClient</c>): every structure exists and is not gone, the pilot's corporation owns it, and the pilot is a Station Manager,
 /// a Director or the CEO. A refusal is a named user error and changes nothing (all structures of one request are checked before any is changed).
-/// The reinforcement time is the timeline's (<see cref="StructureStateMachine"/>): the new day and hour are pending for 30 days (wiki; DEVIATIONS).
+
 /// </summary>
 public sealed class StructureDeploymentAuthority
 {

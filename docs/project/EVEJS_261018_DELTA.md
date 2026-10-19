@@ -84,17 +84,17 @@ These are code-review classifications from the current worktree and targeted sou
 
 | EveJS fix | eve.rs finding | Verdict / next evidence |
 |---|---|---|
-| 1 Hz space updates | Space runtime has simulation/tick scheduling, but this review did not establish emitted update cadence from source and test together. | Unknown; compare `Eve.Space` tick publisher and timing tests. |
-| Warp lands at selected range | No source/test result in this assessment proved selected-range preservation. | Unknown. |
-| Dock from outside range flies in then docks | Station/docking exists; no proof of approach transition found. | Unknown. |
+| Tick-aligned Destiny updates | `eve-sim` polls at 4 Hz for due simulation work; this is not the notification cadence. The sim link now holds `DoDestinyUpdate` until the next whole-second boundary, matching EveJS `server/src/network/tickAlignedSends.js:27-81`. | Defect fixed; boundary-delay, immediate-reply, and sim-link ordering tests pass. |
+| Warp lands at selected range | `warp_target_point` preserves the selected range for ordinary bodies; the boundary regression passes (`scene::tests::a_range_within_the_jump_range_changes_nothing_and_one_beyond_it_sets_the_sphere_that_far_out`). | No defect found in selected-range calculation. |
+| Dock from outside range flies in then docks | A dock request only started `FollowBall`; arrival did not accept docking, so the client had to issue a second dock command. The scene now rechecks eligibility at arrival and begins normal docking. | Defect fixed; `a_dock_request_from_out_of_range_approaches_and_completes_docking_on_arrival` passes. |
 | Abyssal 60 s protection on entry/room change | TODO labels abyssal client-ready work open; no matching protection assertion reviewed. | Unknown, likely high priority to check; see `Eve.Services.Space/SpaceSessions.Abyssal.cs`, TODO `ABYSSAL_DEADSPACE.md`. |
 | T3 cruiser rigs removable | Fitting service and fitting tests exist; exact T3 rig removal branch not checked. | Unknown; `FittingMgrServicesTests` is relevant but not proof. |
 | Saved fit applies over existing fit | Fitting service exists; overwrite semantics not inspected. | Unknown. |
 | Industry exactness | `INDUSTRY_STATUS.md` is authoritative project status, but exact EveJS parity and all cost/time/material branches were not walked here. | Unknown; do not infer parity from tests alone. |
 | Corp tax on bounties / mission LP | TODO records corporation LP tax as open at least for FW; NPC bounty path was not traced. | Defect/open for LP tax; bounty path unknown. |
-| Structure 1% market tax | Current TODO explicitly states server sales tax 7.5%; structure 1% parity is not established and the release note conflicts with current recorded status. | Candidate defect; verify whether 7.5% applies only NPC station sales before changing. |
-| Failed sell order refunds fees | Transaction tests exist; failed-sell fee atomicity not established. | Unknown. |
-| Buy Multiple | Market RPC and transaction tests exist; Buy Multiple client path not checked. | Unknown. |
+| Structure 1% market tax | The V24 sell preview uses Accounting-adjusted `limits['acc']` for transaction tax. `MarketQuote.GetBaseTax` reads a structure's MARKET_TAX setting for the broker fee; EveJS defaults it to 1% and adds the 0.5% SCC surcharge. eve.rs now has a separate structure-rate calculation regression. Its settlement route still resolves SDE `StationCatalog` entries only. | Rate semantics reconciled; structure order settlement remains open. |
+| Failed sell order refunds fees | A failed order insert rolls back the broker debit and item move with the placement transaction; retrying the operation key produces one successful charge. | No defect found; the injected post-charge failure regression proves rollback and idempotent retry. |
+| Buy Multiple | V24 calls `marketsvc.BuyMulti(stationID, itemList, useCorp)` with each line carrying typeID, price, quantity and minVolume. eve.rs now places all valid lines through one serializable transaction. | Defect fixed: a later line failure rolls back every line; retry and replay tests cover transaction and RPC paths. |
 | Login closes another account client | `ClientSession`/character selection exist; duplicate-account transport behavior not evidenced in reviewed tests. | Unknown. |
 | Gateway disconnect does not crash | Gateway/runtime error isolation not specifically checked. | Unknown. |
 | Site expiry freezes fixed | Dungeon lifecycle exists; concurrency/stall test not checked. | Unknown. |
@@ -109,10 +109,10 @@ Before porting each row, require exact V24 callsite or static-data evidence from
 
 ## Recommended next 15 implementation/research slices
 
-1. Verify the eve.rs space tick cadence, warp selected range, and approach docking (M): three fundamental visible movement cases are explicit upstream fixes.
-2. Add/account-session exclusivity review and regression (S): prevents simultaneous account sessions and is a bounded server policy.
-3. Reconcile market tax semantics against V24 formula and NPC/structure location (S): TODO's 7.5% and release 1% statement need a precise split.
-4. Verify failed sell refund and Buy Multiple transaction flows (M): both expose wallet/inventory correctness and retries.
+1. DONE (defects fixed and selected warp range verified): Destiny updates flush on whole-second boundaries, out-of-range dock requests complete on arrival, and selected warp range is covered by a boundary regression. Focused `eve-sim` and `eve-space` tests cover the changes.
+2. DONE (defect fixed): Host account-session admission now atomically replaces an existing same-account client and sends its clean disconnect reason; `ConnectedSessionsTests` covers replacement, stale close, and concurrent opens.
+3. DONE (calculation split): NPC station transaction tax remains 7.5% base reduced by Accounting; a structure's owner-set 1% value is its broker fee, plus the 0.5% SCC surcharge. The structure order settlement route remains open because `MarketTrading` uses `StationCatalog` locations.
+4. DONE (failed-sell defect not found; Buy Multiple defect fixed): the failed sell rollback and retry are covered by an injected database failure; Buy Multiple uses one transaction and its RPC regression covers later-line failure, retry and replay. eve.rs deliberately makes multi-buy atomic across lines, while EveJS v261018.1 calls `executeBuyRequest` once per line and can commit earlier lines before a later line fails.
 5. Trace industry calculation and Corp Deliveries against V24 client calculation (L): highest confidence route to resolve broad parity claims.
 6. Complete corporate bounty and mission LP tax trace (M): existing TODO already records a real LP tax gap.
 7. Test T3 rig removal and saved-fit overwrite semantics (S): bounded existing fitting domain with existing tests.

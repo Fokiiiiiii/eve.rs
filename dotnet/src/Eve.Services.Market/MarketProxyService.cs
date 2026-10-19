@@ -438,27 +438,32 @@ private const int PlexTypeId = 44992;
         var actor = Actor(call);
         var stationId = Integer(call.Arg(0));
         var useCorporation = JsSemantics.Truthy(call.Arg(2));
-        var line = 0;
-        var created = new List<MarketOwnedOrder>();
-        foreach (var entry in Sequence(call.Arg(1)))
+        var requests = new List<(MarketRequest Request,string OperationKey)>();
+        foreach (var (entry,line) in Sequence(call.Arg(1)).Select((entry,line)=>(entry,line)))
         {
-            var key = Key(call, "buy-multi:" + line++);
             var typeId = Integer(Field(entry, "typeID"));
             var quantity = Integer(Field(entry, "quantity"));
             if (typeId <= 0 || quantity <= 0) continue;
             var request = new MarketRequest(actor, (int)typeId, true, Money(Field(entry, "price")), quantity, stationId, 0,
                 MarketRules.RangeStation, Math.Max(1, Integer(Field(entry, "minVolume"), 1)), UseCorporation: useCorporation);
-            try
+            RefuseRepeatedPlacement(call, request);
+            if (requests.Any(previous => previous.Request == request))
+                throw Error(new MarketError("MARKET_DUPLICATE_PLACEMENT"));
+            requests.Add((request,Key(call,"buy-multi:" + line)));
+        }
+        try
+        {
+            var receipts = await trading.PlaceBuyOrdersAsync(requests, call.Cancellation);
+            foreach (var line in requests) RecordPlacement(call, line.Request);
+            var created = new List<MarketOwnedOrder>();
+            foreach (var receipt in receipts)
             {
-                RefuseRepeatedPlacement(call, request);
-                var receipt = await trading.PlaceAsync(request, key, call.Cancellation);
-                RecordPlacement(call, request);
                 await Publish(receipt);
                 created.AddRange(receipt.ChangedOrders.Where(change => change.Reason == "Created").Select(change => change.Order));
             }
-            catch (Exception e) when (e is MarketError or MoneyLimitException or InsufficientFundsException or Eve.Corporations.CorporationError) { throw Error(e); }
+            return OwnerOrderRowset(created, null);
         }
-        return OwnerOrderRowset(created, null);
+        catch (Exception e) when (e is MarketError or MoneyLimitException or InsufficientFundsException or Eve.Corporations.CorporationError) { throw Error(e); }
     }
 
     /// <summary>A PLEX sell line (the client's SellPlex): the PLEX type only; it sells personally or for the corporation like any other item. Answers whether it traded or rests.</summary>

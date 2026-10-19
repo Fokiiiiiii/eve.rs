@@ -121,6 +121,14 @@ internal sealed partial class CharacterServicesComposition
                 store: crimewatchStore,
                 notificationWriter: mailSendWriter.WriteKillRightNotificationAsync,
                 nowUnixMs: now,
-                bountyRpcHandler: PlayerBounties.HandleAsync),
+                bountyRpcHandler: PlayerBounties.HandleAsync,
+                resolveOrganization: async (characterId, token) =>
+                {
+                    var member = await corporations.MemberAsync(characterId, token);
+                    if (member is null)
+                        return (0, 0);
+                    var corporation = await corporations.GetAsync(member.CorporationId, token);
+                    return (member.CorporationId, corporation?.AllianceId ?? 0);
+                }),
     ];
 }

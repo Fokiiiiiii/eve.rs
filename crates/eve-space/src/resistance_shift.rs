@@ -21,7 +21,7 @@ fn round6(value: f64) -> f64 {
 }
 
 /// The resonances after one cycle, given the damage the armor took per kind in it (`tally`, already weighted by the resonance it had) and the most
-
+///
 /// the same to the millionth): the armor is then told nothing.
 pub fn next_profile(profile: Kinds, tally: Kinds, step: f64) -> Option<Kinds> {
     if !step.is_finite() || step <= 0.0 {

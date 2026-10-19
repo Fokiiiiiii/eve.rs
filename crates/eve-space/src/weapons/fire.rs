@@ -37,7 +37,6 @@ impl Scene {
     }
 
     /// Whether a precursor weapon that builds its damage up (a spool) has its target past its optimal range (with the shooter's range disruption
-
     pub(crate) fn spool_target_out_of_optimal(&self, session: SessionId, effect: &Effect) -> bool {
         let Some(turret) = effect.turret.as_ref() else { return false };
         if turret.spool.is_none() {

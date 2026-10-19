@@ -60,7 +60,6 @@ pub fn pochven_tree_kind(behavior: &str) -> Option<bool> {
 }
 
 /// The tree of a Pochven NPC: the rat's tree, with entities in its sensors' reports (the fleets of the other factions are entities, category 11), the
-
 pub fn create_pochven_behavior_tree(stationary: bool, owners: &Owners) -> BehaviorTree {
     fighter(
         if stationary { "Pochven sentry" } else { "Pochven NPC" },

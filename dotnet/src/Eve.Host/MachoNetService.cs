@@ -27,6 +27,9 @@ public interface IMachoNetInfo
 
     /// <summary>The number of clients connected.</summary>
     int UserCount();
+
+    /// <summary>Live system and station pilot counts, keyed by solar system ID minus 30,000,000.</summary>
+    PyValue ClusterGameStatisticsForClient();
 }
 
 /// <summary>
@@ -82,6 +85,16 @@ public sealed partial class MachoNetService(
 
     [Method("GetServiceInfo")]
     public PyValue GetServiceInfo(ServiceCall call) => ServiceInfo();
+
+    /// <summary>Returns the live map counts for EVE, or the caller's default for other clusters.</summary>
+    [Method("GetClusterGameStatisticsForClient")]
+    public PyValue GetClusterGameStatisticsForClient(ServiceCall call)
+    {
+        var key = JsSemantics.StringValue(call.Arg(0));
+        return key == "EVE"
+            ? info.ClusterGameStatisticsForClient()
+            : call.Arg(1);
+    }
 
     [Method("GetGlobalConfig")]
     public PyValue GetGlobalConfig(ServiceCall call) => info.GlobalConfig();

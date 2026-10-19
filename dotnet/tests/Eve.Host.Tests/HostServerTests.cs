@@ -201,6 +201,7 @@ public class HostServerTests : IAsyncLifetime
         public PyDict GlobalConfig() => config;
 
         public int UserCount() => 0;
+        public PyValue ClusterGameStatisticsForClient() => Py.Tuple(new PyDict([]), new PyDict([]), new PyInt(1));
     }
 
     // ── helpers ─────────────────────────────────────────────────────────────

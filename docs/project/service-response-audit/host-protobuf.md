@@ -86,11 +86,11 @@ Both sides ignore ordinary unused args for the no-argument methods. GetGlobalCon
 
 GetGlobalConfig/GetInitVals type inspection is included in the eight source comparisons, but **full config-field parity is not declared**. None of these comparisons establishes exact current wire bytes under a live session.
 
-### Missing four machoNet exports
+### Remaining three machoNet exports
 
 | RPC | EveJS result / effect | Current RS / V24 evidence |
 |---|---|---|
-| GetClusterGameStatisticsForClient | tuple({}, {}, 1), a nonzero divisor for empty pilot statistics | no export; mapSvc.py:429 calls ('EVE', ({},{},0)), unpacks 3 values and divides by divisor. Unknown method produces AttributeError. Verified client-used missing exit; do not synthesize arbitrary populated statistics. JS :500-509; RS method table MachoNetService.cs:76-164 |
+| GetClusterGameStatisticsForClient | tuple(systemCounts, dockedCounts, 1), counts from active character sessions | mapSvc.py:428-442 calls ('EVE', ({},{},0)), unpacks 3 values, maps system IDs to solarSystemIDs and divides by divisor. HostMachoNetInfo derives system and docked counts from session state; MachoNetService returns the supplied default for other cluster keys. |
 | GetNodeFromAddress | protocol node integer | no export. Carbon internal method exists, but direct current client ProxySvc reachability was not established. JS :485-494 |
 | ReloadClientCodeHash | client code-hash payload; broadcasts reload hash | no export. Current V24 direct caller unverified. JS :439-448 |
 | ForwardCharacterNotification | None; forwards requested notification to target character's sessions | no export. Current V24 direct caller/authorization contract unverified. JS :450-483 |

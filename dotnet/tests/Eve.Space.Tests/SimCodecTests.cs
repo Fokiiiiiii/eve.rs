@@ -533,7 +533,8 @@ public class SimCodecTests
             "ModuleWorkCycle" => new SimModuleWorkCycle(
                 Session(), Wide(c, "characterId"), Wide(c, "shipId"), (int)c["solarSystemId"]!, Wide(c, "moduleId"), Wide(c, "targetId"), (ulong)Wide(c, "cycleId"),
                 (byte)(int)c["command"]!, (double)c["miningAmountM3"]!, (double)c["wasteMultiplier"]!, (double)c["wasteProbability"]!, (double)c["critProbability"]!,
-                (double)c["critMultiplier"]!, (double)c["accessDifficultyBonus"]!, (double)c["wasteRoll"]!, (double)c["roundingRoll"]!, (double)c["critRoll"]!, RecipientsOf(c)),
+                (double)c["critMultiplier"]!, (double)c["accessDifficultyBonus"]!, (double)c["wasteRoll"]!, (double)c["roundingRoll"]!, (double)c["critRoll"]!, RecipientsOf(c),
+                c["chargeTypeId"] is JsonNode chargeType ? (int)chargeType : 0),
             "ModuleWorkResult" => new SimModuleWorkResult(
                 Session(), Wide(c, "moduleId"), Wide(c, "targetId"), (ulong)Wide(c, "cycleId"), (bool)c["accepted"]!, (string)c["reason"]!, Wide(c, "unitsRemaining"),
                 Wide(c, "deliveredUnits"), (bool)c["complete"]!),
@@ -889,6 +890,18 @@ public class SimCodecTests
         var encoded = SimCodec.Encode(expected);
 
         Assert.Equal(expected, SimCodec.Decode(encoded.AsMemory(4)));
+    }
+
+    [Fact]
+    public void A_burst_cycle_roundtrips_its_charge_type_after_recipients()
+    {
+        var expected = new SimModuleWorkCycle(
+            42, 7, 8, 9, 10, 0, 13, SimModuleWorkCommands.Burst, 0, 0, 0, 0, 0, 0, 0, 0, 0, [8, 9], 42695);
+        var encoded = SimCodec.Encode(expected);
+
+        var decoded = Assert.IsType<SimModuleWorkCycle>(SimCodec.Decode(encoded.AsMemory(4)));
+        Assert.Equal(expected.ChargeTypeId, decoded.ChargeTypeId);
+        Assert.Equal(expected.Recipients, decoded.Recipients);
     }
 
     [Fact]

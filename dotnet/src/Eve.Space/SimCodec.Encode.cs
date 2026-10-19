@@ -1720,6 +1720,10 @@ private static void WriteStructureDamageCorrelation(
                 w.I64(m.TargetId);
                 w.U64(m.CycleId);
                 w.U8(m.Command);
+                if (m.Command == SimModuleWorkCommands.Burst ? m.ChargeTypeId <= 0 : m.ChargeTypeId != 0)
+                {
+                    throw new ArgumentException("only a command burst cycle carries a charge type", nameof(message));
+                }
                 w.F64(m.MiningAmountM3);
                 w.F64(m.WasteVolumeMultiplier);
                 w.F64(m.WasteProbability);
@@ -1740,6 +1744,7 @@ private static void WriteStructureDamageCorrelation(
                 {
                     w.I64(ship);
                 }
+                w.I32(m.ChargeTypeId);
                 break;
             case SimModuleWorkResult m:
                 w.U8(Kind.ModuleWorkResult);

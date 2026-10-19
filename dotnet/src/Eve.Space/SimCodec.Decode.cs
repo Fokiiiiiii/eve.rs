@@ -397,7 +397,7 @@ public static partial class SimCodec
     private static IReadOnlyList<long>? ReadRecipients(ref Reader r)
     {
         var count = r.U32();
-        if (count > r.Remaining / 8)
+        if (r.Remaining < 4 || count > (r.Remaining - 4) / 8)
         {
             throw new SimLinkException(SimLinkError.Truncated, "recipients count");
         }

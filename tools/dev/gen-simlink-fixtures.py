@@ -518,7 +518,8 @@ def build(m):
                      + struct.pack("<9d", m["miningAmountM3"], m["wasteMultiplier"], m["wasteProbability"], m["critProbability"],
                                    m["critMultiplier"], m["accessDifficultyBonus"], m["wasteRoll"], m["roundingRoll"], m["critRoll"])
                      # protocol 43: the ships a command burst reaches (a count, then each ship's id); empty for every other command
-                     + struct.pack("<I", len(m.get("recipients", []))) + b"".join(i64(ship) for ship in m.get("recipients", [])))
+                      + struct.pack("<I", len(m.get("recipients", []))) + b"".join(i64(ship) for ship in m.get("recipients", []))
+                     + struct.pack("<i", m.get("chargeTypeId", 0)))
     # protocol 43 (track C6): the timed buffs of a ship of this session (the command burst's), host to simulation
     if k == "BuffState":
         return frame(k, u64(m["sessionId"]) + i64(m["shipId"]) + struct.pack("<I", len(m["entries"]))
@@ -1491,7 +1492,7 @@ valid = [
     # protocol 43 (track C6): a command burst's cycle asks the host with the ships of the scene in reach (the host decides the fleet); a cargo scan's cycle carries no numbers
     {"name": "module work cycle of a command burst reaching two ships", "kind": "ModuleWorkCycle", "sessionId": "1790646377000015",
      "characterId": "140000342", "shipId": "9988400001939", "solarSystemId": 30100032, "moduleId": "9988400002813",
-     "targetId": "0", "cycleId": "7301444403200000004", "command": 12, "miningAmountM3": 0.0,
+     "targetId": "0", "cycleId": "7301444403200000004", "command": 12, "chargeTypeId": 1131, "miningAmountM3": 0.0,
      "wasteMultiplier": 0.0, "wasteProbability": 0.0, "critProbability": 0.0, "critMultiplier": 0.0,
      "accessDifficultyBonus": 0.0, "wasteRoll": 0.25, "roundingRoll": 0.5, "critRoll": 0.75,
      "recipients": ["9988400001939", "9988400001940"]},
@@ -1503,7 +1504,7 @@ valid = [
      "accessDifficultyBonus": 0.0, "wasteRoll": 0.0, "roundingRoll": 0.0, "critRoll": 0.0},
     {"name": "module work cycle of a command burst reaching only its own ship", "kind": "ModuleWorkCycle", "sessionId": "1790646377000015",
      "characterId": "140000342", "shipId": "9988400001939", "solarSystemId": 30100032, "moduleId": "9988400002813",
-     "targetId": "0", "cycleId": "7301444403200000005", "command": 12, "miningAmountM3": 0.0,
+     "targetId": "0", "cycleId": "7301444403200000005", "command": 12, "chargeTypeId": 1131, "miningAmountM3": 0.0,
      "wasteMultiplier": 0.0, "wasteProbability": 0.0, "critProbability": 0.0, "critMultiplier": 0.0,
      "accessDifficultyBonus": 0.0, "wasteRoll": 0.0, "roundingRoll": 0.0, "critRoll": 0.0, "recipients": ["9988400001939"]},
     {"name": "module work cycle of a cargo scan (command 10) carrying no numbers", "kind": "ModuleWorkCycle", "sessionId": "1790646377000015",
@@ -1898,7 +1899,7 @@ invalid = [
     {"name": "invulnerability core's grant carrying mining numbers", "reason": "bad-value",
      "hex": build(dict(grant, miningAmountM3=20.0)).hex()},
     {"name": "burst recipients with a count the frame cannot hold", "reason": "truncated",
-     "hex": (lambda frame: frame[:len(frame) - 20] + struct.pack("<I", 1000) + frame[len(frame) - 16:])(build(burst_cycle)).hex()},
+     "hex": (lambda frame: frame[:len(frame) - 24] + struct.pack("<I", 1000) + frame[len(frame) - 20:])(build(burst_cycle)).hex()},
     {"name": "buff state with a negative time left", "reason": "bad-value",
      "hex": build(dict(buff_state, entries=[{"collectionId": 10, "value": -10.0, "remainingMs": -1.0}])).hex()},
     {"name": "buff state with a value that is not a number", "reason": "bad-value",

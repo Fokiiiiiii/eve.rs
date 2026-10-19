@@ -1,5 +1,7 @@
 # GitHub Actions CI
 
+The workflows are currently in the automatic mode while the repository is public. `ci.yml` uses push and weekly schedule triggers; `live-slow.yml` remains dispatch-only. When the repository becomes private again run `python3 tools/dev/ci-mode.py manual` and push. This makes every workflow manual only through `workflow_dispatch`; it removes push, schedule, and pull request triggers. Use `python3 tools/dev/ci-mode.py --check` to print the current mode. Run `python3 tools/dev/ci-mode.py auto` to restore automatic triggers. The automatic trigger definitions are kept in the script.
+
 `ci.yml` runs its Linux jobs on pushes to `main` except documentation-only changes and `.github/dependabot.yml`. Every push SHA has a unique concurrency group, so later pushes do not cancel or replace its run. Manual `workflow_dispatch` runs can cancel older manual runs and select jobs. Windows coverage is selected for platform-sensitive paths, a manual `windows` selection, and the weekly schedule. It provisions PostgreSQL 18 on the Windows runner and runs Rust, .NET, Python, and a login-to-character walk. Windows has a 45-minute job timeout and is currently excluded from the `Required CI gate` while its runner checks are being repaired; the gate waits only for Linux jobs. `live-slow.yml` is dispatch-only and runs each selected headless-client test file in its own matrix job. The CI workflow builds and tests with Rust 1.99.0; `Cargo.toml` retains the Rust 1.94 minimum supported version.
 
 ## Read the result for a commit

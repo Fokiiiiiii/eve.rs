@@ -42,7 +42,7 @@ Date for entries: 2026-10-19. Questions with a recorded decision are marked deci
 
 - **Date:** 2026-10-19
 - **Question:** Should the C4 command-burst track be scheduled with a sim wire batch and a source-backed live buff value?
-- **Context:** The earlier zero-value finding was based on reading output attributes before tracing effect 6737 to charge multipliers and module inputs. SDE charge multipliers and module values produce nonzero results; `CommandBurstValueTests` checks Shield Harmonizing (-8 Tech I, -10 Tech II), and `CommandBurstFamiliesTests` checks every published burst charge. The owner superseded the prior deferral on 2026-10-19 and directed the full command-burst build; Host coverage now checks delivery for all six families, including Mining Foreman collection 2474. A new level-V strength regression expects -12 for Armor Energizing, -12 for Shield Harmonizing and +60 for Mining Laser Field Enhancement from pinned SDE inputs. The two-pilot walk is included in the selected slow-workflow check. Actions run 34 failed: pilot A showed activation events, but pilot B stayed at resonance 0.92 and received no burst notifications. Receiver delivery needs a repair and green rerun.
+- **Context:** The earlier zero-value finding was based on reading output attributes before tracing effect 6737 to charge multipliers and module inputs. SDE charge multipliers and module values produce nonzero results; `CommandBurstValueTests` checks Shield Harmonizing (-8 Tech I, -10 Tech II), and `CommandBurstFamiliesTests` checks every published burst charge. The owner superseded the prior deferral on 2026-10-19 and directed the full command-burst build; Host coverage now checks delivery for all six families, including Mining Foreman collection 2474. A new level-V strength regression expects -12 for Armor Energizing, -12 for Shield Harmonizing and +60 for Mining Laser Field Enhancement from pinned SDE inputs. The two-pilot walk is included in the selected slow-workflow check. The live two-pilot trace showed both recipient ids arriving with the cycle, then a Host snapshot with no charge and four zero buff ids. Simlink protocol 81 now carries the consumed SDE charge type into settlement for DogmaWorld evaluation. The selected two-pilot Actions walk still needs a green end-to-end run to confirm receiver notifications, changed dogma and expiry.
 - **Decision:** Superseded 2026-10-19: build command bursts, including the shared recipient exchange and timed buff delivery.
 - **Status:** superseded by owner direction, 2026-10-19
 
@@ -71,3 +71,24 @@ Date for entries: 2026-10-19. Questions with a recorded decision are marked deci
 - **Decision 10:** Decide autonomously; when EveJS lacks a feature, build it in Rust from game rules and the client contract. Code work requires both codebase-memory and Serena.
 
 - **Decisions 11–17 (2026-10-19):** Q-02 keep Arc 132 missions 17183–17186 held; Q-03 keep the approximately 1,100 untagged missions untagged until an authoritative level source exists; Q-04 defer the public insurgency gateway until its client call path and truthful progress/threshold rules exist; Q-05 keep PI survey limited to rule-derived values and do not synthesize an SH buffer; Q-06 superseded 2026-10-19: build command bursts, including recipient exchange and timed buff delivery; Q-07 keep weapon banks held on RC-5; Q-08 retain mutual-war invite refusal.
+
+## Q-09 — Embedded client exports while the repository is public
+
+- **Date:** 2026-10-19
+- **Question:** Should embedded `client-*` exports be removed or replaced during the temporary public period?
+- **Decision:** Keep the embedded data as it is while the repository is public; revisit the decision when the repository returns to private. No data change now.
+- **Status:** decided 2026-10-19
+
+## Q-10 — CI triggers after the repository returns to private
+
+- **Date:** 2026-10-19
+- **Question:** Which GitHub Actions triggers should run after the repository returns to private?
+- **Decision:** Make all workflows manual only: `workflow_dispatch` for `ci.yml`, `live-slow.yml`, and Windows jobs, with no push, schedule, or pull request triggers. The repository is public temporarily; the owner will switch it back and announce the change. Until then, keep the current automatic mode. `tools/dev/ci-mode.py` switches trigger blocks between modes.
+- **Status:** decided 2026-10-19
+
+## Q-11 — Placebo login hash exposure
+
+- **Date:** 2026-10-19
+- **Question:** How should the reusable login hash exposure be mitigated while preserving the unmodified V24.01 client contract?
+- **Decision:** Use per-connection nonce binding, validity windows, per-account and per-IP attempt limits, and never log the hash. Document TLS termination as the production setup. Security agent cx35 is implementing the server-side mitigations.
+- **Status:** decided 2026-10-19

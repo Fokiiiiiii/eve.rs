@@ -53,3 +53,6 @@ Publish the V24 contract notifications only after the corresponding transaction 
 6. Headless-client walk between two characters, restart reads, and comparison with the same EveJS scenario.
 
 A slice is complete only when its wire values, persisted state, side effects, notification order, retry behavior, and focused tests are recorded in TODO and the compatibility ledger. The graphical V24 client is a separate verification target.
+## Persisted terms migration
+
+Migration `0002_contract_terms` extends the existing PostgreSQL header with availability, price, collateral, creation fee, deposit, sales tax, title, and description. Each monetary column is nonnegative with two-decimal precision, and availability is constrained to the four client modes (private, public, corporation, alliance). Existing rows receive zero-valued terms and remain readable. This schema supports later creation and settlement writes; it does not itself create contracts or move inventory or ISK.

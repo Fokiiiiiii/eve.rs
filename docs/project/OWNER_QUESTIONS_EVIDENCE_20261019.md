@@ -103,4 +103,4 @@ This is a status scan of entries explicitly marked blocked or described as an ow
 
 ## Scope notes
 
-This review is a static source and data comparison. It did not run the graphical client or exercise live gateway/PI flows. No claim is made that an implementation works end to end based on source presence alone.
+This review compares source and static data. It includes no graphical-client session or live gateway/PI exercise. Source presence alone does not establish end-to-end behavior.

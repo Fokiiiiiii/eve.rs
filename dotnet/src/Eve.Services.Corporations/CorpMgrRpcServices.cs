@@ -249,11 +249,17 @@ public sealed partial class CorpMgrService
         var characterId = call.Session.CharacterId;
         var sessionCorporationId = call.Session.GetInt("corporationID") ?? call.Session.GetInt("corpid") ?? 0;
         if (corporationId <= 0 || sessionCorporationId != corporationId || characterId is not > 0 ||
-            await store.GetAsync(corporationId, cancellationToken) is not { IsNpc: false, Deleted: false } ||
+            await store.GetAsync(corporationId, cancellationToken) is not { IsNpc: false, Deleted: false } corporation ||
             await characters.GetAsync(characterId.Value, cancellationToken) is not { } character ||
             character.CorporationId != corporationId ||
-            await store.MemberAsync(characterId.Value, cancellationToken) is not { CorporationId: var memberCorporation } ||
+            await store.MemberAsync(characterId.Value, cancellationToken) is not { CorporationId: var memberCorporation } member ||
             memberCorporation != corporationId)
+            throw new CorporationError("CORPORATION_ACCESS_DENIED");
+
+        var roles = CorporationRoles.Session(
+            corporation, member, character.StationId,
+            await store.TitlesAsync(corporationId, cancellationToken)).CorpRole;
+        if ((roles & (CorporationRoles.Accountant | CorporationRoles.JuniorAccountant)) == 0)
             throw new CorporationError("CORPORATION_ACCESS_DENIED");
     }
 

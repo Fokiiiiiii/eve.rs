@@ -662,7 +662,7 @@ impl BallEntity {
             None if finite_or(self.warp_speed_au, 0.0) > 0.0 => js_round(self.warp_speed_au * 1000.0),
             None => 3000.0,
         };
-        // toInt32(raw, 3000)
+
         let factor = finite_or(raw, 3000.0).trunc();
         if (0.0..=4_294_967_295.0).contains(&factor) { factor as i64 } else { 3000 }
     }
@@ -705,7 +705,6 @@ pub fn encode_free_ball(entity: &BallEntity) -> Result<Vec<u8>, BallError> {
     out.f64(entity.free_ball_mass());
     out.u8(entity.cloak_mode);
 
-    // appendFreeBallOwnershipHeader
     out.i64(match entity.harmonic {
         IdRef::Absent | IdRef::Blank => -1,
         other => other.required("Destiny harmonic")?,

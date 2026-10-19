@@ -25,7 +25,6 @@ pub fn is_npc_session(session: SessionId) -> bool {
     session >= NPC_SESSION_BASE
 }
 
-/// The reserved module identity for one NPC hull self-effect; ordinary item IDs are positive, so it cannot collide with a weapon owner.
 pub(crate) fn npc_self_repair_module_id(effect_id: i32) -> i64 {
     i64::MIN + i64::from(effect_id)
 }
@@ -154,7 +153,7 @@ impl Scene {
         let ship = pilot.ship.clone();
         let system_id = i64::from(self.system().id);
         let group = group.unwrap_or_else(|| self.new_entity_group());
-        // the owners a Pochven NPC attacks, by its behavior (`pochven_population::owners_for`)
+
         let in_zone = crate::pochven_population::is_zone(self.system().id);
         let owners =
             crate::pochven_population::owners_for(behavior, i64::from(ship.spec.corporation_id), in_zone);

@@ -4,7 +4,7 @@ use crate::world::{Body, Detail};
 
 pub(crate) const STATION: i64 = 60_000_001;
 pub(crate) const SESSION: SessionId = 7;
-/// 2026-09-29 12:00:00 UTC as a FILETIME.
+
 pub(crate) const NOON: i64 = 134_351_688_000_000_000;
 
 pub(crate) fn system() -> Arc<SolarSystem> {

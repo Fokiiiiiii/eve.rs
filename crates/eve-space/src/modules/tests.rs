@@ -1794,7 +1794,6 @@ fn crowd_off_the_station(gap: f64) -> (Scene, i64) {
 
 #[test]
 fn a_smartbomb_does_not_start_within_five_kilometres_of_a_station_or_its_range_when_that_is_more() {
-    // the least restriction is 5 km; a bomb of 6 km range is held off to 6 km (the wiki's two data points, see DEVIATIONS)
     let (mut scene, t) = crowd_off_the_station(4_000.0);
     let refused = scene.activate(A, smartbomb(3_000.0, [0.0, 40.0, 0.0, 40.0], true), t);
     assert!(
@@ -1816,7 +1815,6 @@ fn a_smartbomb_does_not_start_within_five_kilometres_of_a_station_or_its_range_w
 
 #[test]
 fn a_smartbomb_of_a_range_beyond_the_wiki_data_is_held_to_the_largest_restriction_it_gives() {
-    // the wiki's largest value is 6 km: a 250 km field (the QA bomb) is held to 6 km, not to its own range
     let (mut scene, t) = crowd_off_the_station(5_500.0);
     let refused = scene.activate(A, smartbomb(250_000.0, [0.0, 40.0, 0.0, 40.0], true), t);
     assert!(
@@ -2906,7 +2904,7 @@ fn a_tractor_pulls_its_locked_wreck_to_the_hold_distance_and_lets_go_when_stoppe
     }
     let ship_radius = scene.pilots[&A].ship.spec.radius;
     let apart = scene.distance_to_wreck(A, WRECK, now).unwrap();
-    // the follow step holds the wreck at 499.5 m (the 0.999 standoff share of 500 m) from the ship's centre plus the ship's radius
+
     assert!((apart - ship_radius - 499.5).abs() < 5.0, "the wreck is held at the hold distance, {apart} m");
     // stopping the beam lets the wreck go where it is
     let stop = scene.stop_module(A, module, now);
@@ -3295,7 +3293,6 @@ fn a_running_module_blocks_the_module_it_names_and_no_other() {
 
 #[test]
 fn a_computer_is_not_hostile_and_a_disruptor_is_whatever_its_percentages_say() {
-    // FP-3 and FP-C6: a positive tracking disruption (a tracking computer) helps; a guidance computer does the other way round from a guidance disruptor
     let tracking_computer =
         Remote::Disrupt { range_percent: 20.0, falloff_percent: 10.0, tracking_percent: 15.0 };
     let tracking_disruptor =
@@ -3381,7 +3378,6 @@ fn a_second_cloak_device_is_refused_while_the_ship_is_cloaked() {
 
 #[test]
 fn a_cloak_is_refused_while_a_module_that_cannot_be_deactivated_early_runs() {
-    // disallowEarlyDeactivation 906 on a running module: the ship cannot cloak (EveJS CLOAK_MODULE_ACTIVE)
     let (mut scene, t) = crowd();
     let held =
         Effect { rules: Rules { disallow_early_deactivation: true, ..Default::default() }, ..afterburner() };
@@ -3938,7 +3934,6 @@ fn a_station_within_two_kilometres_refuses_a_cloak_and_breaks_one_that_runs() {
 
 #[test]
 fn a_cloak_is_stopped_by_a_ship_that_targets_its_pilot_and_not_by_the_locks_the_pilot_holds() {
-    // the wiki (Cloaking): being targeted prevents a cloak; the cloak drops the ship's own locks, so holding a lock does not
     let (mut scene, t) = crowd();
     let b_ship = scene.pilots[&B].ship.spec.ship_id;
     let t = lock_for_tractor(&mut scene, b_ship, t);
@@ -4814,8 +4809,6 @@ fn a_sim_missile_profile_is_published_and_removed_with_its_projectile() {
     assert!(!scene.sim_damageable_entities.contains(&missile_id));
 }
 
-// ST-9 b: the Entosis Link (tag 31, protocol 70): a cycle on a locked structure, settled by the host as command 14 (`WORK_ENTOSIS`).
-
 /// An Entosis Link's effect (effect 6063, group 1313): a 300 s cycle, reaching `range` metres, on `target`.
 fn entosis(range: f64, target: i64) -> Effect {
     let mut effect = repairer(Layer::Shield, 0.0, Applies::CycleEnd);
@@ -4937,7 +4930,6 @@ fn structure_burst_effect(what: Remote) -> Effect {
     effect
 }
 
-/// The Host request of a structure damage step: (activation nonce, lease generation, cycle id, pulse ordinal, candidate ids).
 fn burst_request(out: &[Out]) -> (u64, i64, u64, u32, Vec<i64>) {
     match out.iter().find(|o| matches!(o, Out::StructureDamageCandidatesRequest { .. })) {
         Some(Out::StructureDamageCandidatesRequest {
@@ -5029,7 +5021,6 @@ fn a_controlled_structure_burst_web_reaches_only_the_ships_the_host_authorizes_a
     assert!(web_lands_on(&scene, B), "the authorized ship is webbed by the pulse");
 }
 
-/// ST-17 d: a ship-fitted burst projector (no structure under control) asks the Host for each pulse with its own ship as the source: the ship never reaches
 /// itself, the lease of a ship is 0, and the grant of the Host reaches the other ship.
 #[test]
 fn a_ship_fitted_burst_projector_asks_the_host_for_each_pulse_and_spares_its_own_ship() {

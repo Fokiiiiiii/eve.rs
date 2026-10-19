@@ -146,7 +146,7 @@ impl Scene {
     /// `CmdJumpToFleetModuleBeacon` and `CmdJumpToFleetDeployableBeacon` (command 26): the ship's jump drive spools for `spool_ms`, and the ship then leaves
     /// for `destination_system` to appear at the cynosural field `field_id` lit there. The stop and the jump-out effect are the stargate jump's; the checks are
     /// its checks, without the gate. The host has checked the field, the fleet, the range, the fuel and the drive's cooldown. The activation takes
-    /// `capacitor_fraction` of the full capacitor when the charge holds it (the wiki: 95 %, less the pilot's Jump Drive Operation).
+
     pub(super) fn cyno_jump(
         &mut self,
         session: SessionId,

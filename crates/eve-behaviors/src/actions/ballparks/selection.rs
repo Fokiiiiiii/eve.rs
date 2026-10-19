@@ -313,14 +313,10 @@ impl Task for SelectClosestPointOnObject {
     }
 }
 
-// ---- GetBallsInBubbleByOwnerIds ----
-
-/// Adds the ships of my bubble that belong to the owners to the set of objects on the blackboard.
 #[derive(Debug, Default)]
 pub struct GetBallsInBubbleByOwnerIds;
 
 impl GetBallsInBubbleByOwnerIds {
-    /// `GetBallsInBubbleForOwnerIds`: the new ones in ascending order (a Python set has none).
     fn get_balls_in_bubble_for_owner_ids(t: &mut TaskCtx<'_, '_>) -> Option<Vec<i64>> {
         let me = t.my_item_id()?;
         let ship_balls_in_bubble = t.world().ships_in_same_bubble(me);
@@ -1009,8 +1005,6 @@ mod tests {
         rig.run(Box::new(SelectClosestPointOnObject), closest_attrs());
         assert!(matches!(rig.last_error, Some(BehaviorError::Task(ref m)) if m.starts_with("ZeroDivision")));
     }
-
-    // ---- GetBallsInBubbleByOwnerIds ----
 
     fn owners_attrs() -> Attrs {
         Attrs::new().with("ownerListAddress", item("Owners")).with("objectListAddress", item("Objects"))

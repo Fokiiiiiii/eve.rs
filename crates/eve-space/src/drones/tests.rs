@@ -334,7 +334,6 @@ fn a_drone_sent_at_a_rat_flies_at_it_fights_and_kills_it_and_the_pilots_log_tell
 
 #[test]
 fn a_drone_whose_controller_deals_no_drone_damage_does_not_kill_the_rat_it_fights() {
-    // the same fight as the kill above, with the controller's drone damage at zero (the wiki: a protected ship cannot deal damage, so its drones do not either)
     let (mut scene, _drone, _) = launched();
     scene.pilots.get_mut(&PLAYER).expect("the controller is in space").ship.spec.drone_damage_multiplier =
         0.0;
@@ -668,7 +667,6 @@ fn launched_with(scene: &mut Scene, effect: DroneEffect) -> SessionId {
 
 #[test]
 fn a_cloaked_ship_launches_no_drone_and_orders_none_to_engage() {
-    // the cloak blocks a ship's drones in space: none is launched while it is cloaked, and an order to engage is refused for each drone (the wiki, Cloaking)
     let mut scene = scene_with_a_player();
     launched_with(&mut scene, armor_bot());
     let drone = scene.drones_of(PLAYER)[0];
@@ -747,7 +745,7 @@ fn an_armor_bot_mends_a_friendly_ship_only_when_its_cycle_ends() {
         now += SECOND / 4;
     }
     let after = scene.pilots[&friend].ship.health.layers_at(now).armor;
-    // the armor is kept as a fraction of the layer that is rounded to six places (health.rs), so 12 points land within that step
+
     assert!((after - before - 12.0).abs() < 1e-3, "{before} -> {after}");
 }
 
@@ -782,7 +780,7 @@ fn a_drone_that_is_destroyed_leaves_no_wreck_and_its_controller_is_told_it_is_go
         _ => None,
     });
     assert_eq!(destroyed, Some((None, None)), "{told:?}");
-    // EVE.js clears controller/owner/target, keeps typeID, and sends activity reset separately.
+
     let player = for_the_player(&told);
     let state = notified(&player, "OnDroneStateChange");
     assert_eq!(state.len(), 1);

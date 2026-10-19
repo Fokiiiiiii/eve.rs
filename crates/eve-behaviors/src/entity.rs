@@ -95,7 +95,6 @@ pub trait EntityHost {
         false
     }
 
-    /// `get_kill_owner_id(ballpark, id)`.
     fn kill_owner_id(&self) -> Option<i64> {
         None
     }
@@ -110,7 +109,6 @@ pub trait EntityHost {
         Ok(())
     }
 
-    /// `shipAccess.Jettison_DropWreck_Ex(offenderOwnerID, id, typeID, position, wreckTypeID, itemList, npcLoot=True)`.
     fn drop_wreck(
         &mut self,
         _offender_owner_id: Option<i64>,
@@ -129,7 +127,6 @@ pub trait EntityHost {
         Vec::new()
     }
 
-    /// `lootSvc.GetLootForEntity(typeId, id, ownerId)`.
     fn loot_for_entity(&self, _type_id: i64, _owner_id: i64) -> LootPicks {
         Vec::new()
     }
@@ -297,7 +294,6 @@ impl BehaviorEntity {
         self.additional_loot.contains_key(&type_id)
     }
 
-    /// `GetLootForEntity(typeId, ownerId)`: what the loot service drops for the type, then the additional loot; whoever cares is told which types
     /// and amounts the additional loot is.
     pub fn loot_for_entity(&self, host: &mut dyn EntityHost, type_id: i64, owner_id: i64) -> Vec<LootEntry> {
         let mut item_list = Vec::new();

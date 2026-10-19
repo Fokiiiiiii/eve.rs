@@ -152,7 +152,6 @@ impl Scene {
                 .is_some_and(|npc| npc.combat.weapons.is_empty())
     }
 
-    /// Whether a ship is on the side of a pilot (the reference's `isFriendlyRepairTarget`: its character or owner, its corporation or its alliance).
     pub(super) fn is_friendly_to(&self, controller: SessionId, target: SessionId) -> bool {
         let (Some(controller), Some(target)) = (self.pilots.get(&controller), self.pilots.get(&target))
         else {

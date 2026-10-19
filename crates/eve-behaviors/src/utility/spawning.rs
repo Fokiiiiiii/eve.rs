@@ -46,7 +46,7 @@ pub fn types_and_counts(entities: &Value) -> Vec<(i64, i64)> {
 pub enum EntityGetter {
     /// `EntityGetter`: the task's `entities`.
     Plain,
-    /// `EntityGetterBySpawnlistAndOwner`: a group picked from the spawn list of my group's owner.
+
     BySpawnlistAndOwner,
     /// `EntityGetterFromSpawnPointPool`: NPCs picked from a spawn table for the points of a pool.
     FromSpawnPointPool,
@@ -186,7 +186,7 @@ impl EntityGetter {
 pub enum EntitySpawner {
     /// `EntitySpawner`.
     Plain,
-    /// `EntitySpawnTableSpawner`: the owner is the spawn table's.
+
     SpawnTable,
     /// `EntitySpawnerWithUndock`: the entities come out of a structure.
     WithUndock,
@@ -195,7 +195,6 @@ pub enum EntitySpawner {
 }
 
 impl EntitySpawner {
-    /// `get_owner_id`: nothing when the spawn table has no owner (the client's `KeyError` is raised).
     pub fn get_owner_id(self, t: &mut TaskCtx<'_, '_>) -> Option<i64> {
         if self == Self::SpawnTable {
             let table = get_spawn_table_id(t)?.as_int();

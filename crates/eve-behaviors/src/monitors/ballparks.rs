@@ -149,8 +149,6 @@ impl Task for BallEnteredOrLeftBubbleGroupMonitor {
     }
 }
 
-/// Puts a ball that comes into a bubble on the target set when its owner is one of the wanted (`TargetWithOwnerEnteredBubbleMonitor`: my bubble;
-/// `TargetsWithOwnerEnteredBubbleMonitor`: the bubbles of my group).
 #[derive(Debug, Default)]
 pub struct TargetWithOwnerEnteredBubbleMonitor {
     pub group: bool,
@@ -212,7 +210,6 @@ impl Task for TargetWithOwnerEnteredBubbleMonitor {
     }
 
     fn on_event(&mut self, t: &mut TaskCtx<'_, '_>, _handler: u16, args: &[Value]) {
-        // OnBubbleEntered(ballId)
         if t.is_invalid() {
             return;
         }
@@ -224,7 +221,7 @@ impl Task for TargetWithOwnerEnteredBubbleMonitor {
         {
             return;
         }
-        // the client writes the owner and the bubble of the ball to its log before it goes on: both must be there
+
         if slim.is_none() {
             t.raise(BehaviorError::Task(
                 "AttributeError: 'NoneType' object has no attribute 'ownerID'".to_string(),
@@ -502,7 +499,6 @@ impl Task for MonitorInvulnerabilityCanceledInBubble {
     }
 
     fn on_event(&mut self, t: &mut TaskCtx<'_, '_>, _handler: u16, args: &[Value]) {
-        // OnInvulnerabilityCanceled(itemId, isCompleted, reason)
         if t.is_invalid() {
             return;
         }

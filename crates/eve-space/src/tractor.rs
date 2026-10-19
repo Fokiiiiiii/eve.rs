@@ -100,7 +100,6 @@ impl Scene {
         self.tell_wreck(wreck_id, actions)
     }
 
-    /// The pulled wreck moves over the time its puller settled from `from` to `now`: it follows the puller's place, at the hold distance (the follow step
     /// of a ship, `motion::pull`). Called when the puller settles, so both move over the same time.
     pub(crate) fn advance_pulled_by(&mut self, session: SessionId, from: i64, now: i64) {
         if now <= from {

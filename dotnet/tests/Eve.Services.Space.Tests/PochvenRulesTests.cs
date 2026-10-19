@@ -44,6 +44,13 @@ public sealed class PochvenRulesTests
     }
 
     [Fact]
+    public void NPC_bounty_payout_is_disabled_only_in_Pochven()
+    {
+        Assert.False(PochvenRules.PaysNpcBounty(PochvenRules.RegionId));
+        Assert.True(PochvenRules.PaysNpcBounty(TheForgeRegion));
+    }
+
+    [Fact]
     public void Triglavian_rats_are_hostile_at_zero_and_below_and_edencom_rats_only_below_zero()
     {
         Assert.True(PochvenRules.NpcHostileToPilot(TriglavianFaction, 0.0));

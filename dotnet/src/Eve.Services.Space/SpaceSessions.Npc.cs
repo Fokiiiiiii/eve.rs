@@ -343,6 +343,10 @@ public sealed partial class SpaceSessions
         {
             return;
         }
+        if (RegionOfSystem(solarSystemId) is { } regionId && !Pochven.PochvenRules.PaysNpcBounty(regionId))
+        {
+            return;
+        }
         // in a system with an ESS the Main Bank takes its share of the bounty; the share commits with the pilot's bucket or not at all
         var essOnline = Ess is not null && await Ess.IsOnlineAsync(solarSystemId);
         var (pilotShare, mainShare, reserveShare) = EssRules.SplitBounty(amount, essOnline);

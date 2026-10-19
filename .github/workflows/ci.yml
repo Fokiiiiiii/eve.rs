@@ -5,7 +5,8 @@ name: CI
 # fixtures are what their generators write, and run the fast end-to-end tests (the whole server stack and the
 # headless client). The slow end-to-end tests are live-slow.yml (also by hand).
 
-# Manual runs accept a comma-separated job selection; the default runs every required gate. The same checks can be run locally
+# Push runs keep the active run and the newest pending run; manual runs can cancel an older run. Manual runs accept a comma-separated job selection.
+# The default runs every required gate. The same checks can be run locally
 # with tools/dev/check-all.sh.
 on:
   push:
@@ -24,7 +25,8 @@ on:
 
 concurrency:
   group: ci-${{ github.ref }}-${{ github.event_name }}
-  cancel-in-progress: true
+  # Push traffic is bursty; retain the active run and let GitHub keep the newest pending push.
+  cancel-in-progress: ${{ github.event_name != 'push' }}
 
 permissions:
   contents: read

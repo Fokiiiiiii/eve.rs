@@ -1,30 +1,43 @@
 # GitHub Actions CI
 
-## Workflows
+`ci.yml` runs on pushes to `main` except documentation-only changes and `.github/dependabot.yml`. Push runs do not cancel the active run; GitHub retains the newest pending run for the ref. Manual `workflow_dispatch` runs can cancel older manual runs. `live-slow.yml` is dispatch-only and runs each selected headless-client test file in its own matrix job.
 
-`.github/workflows/ci.yml` runs on each push to `main`, except changes limited to `docs/**`, Markdown files, and `.github/dependabot.yml`. Its `gate` job is the required status to read. Push runs share a per-ref concurrency group, so a newer push cancels an older push; manual dispatch runs use their own per-ref group. The workflow checks Rust formatting and clippy, Rust tests, .NET tests in parallel database-isolated shards, Python client tests, generated fixtures, and fast live walks.
+## Read the result for a commit
 
-Manual CI runs accept `jobs` as a comma-separated selection: `all` (default), `rust-fmt`, `rust-test`, `dotnet`, `python`, `fixtures`, or `live`. Example: `tools/dev/ci-status.py dispatch ci.yml --jobs rust-test`.
-
-`.github/workflows/live-slow.yml` stays manual. Each headless-client test file has its own runner and Postgres service. Set `test_file` to `all` or one exact file name, for example `test_walk_industry.py`. Dispatch with `tools/dev/ci-status.py dispatch live-slow.yml --test-file test_walk_industry.py`.
-
-## Inspecting runs
-
-The standard library helper needs `GH_TOKEN` or `GITHUB_TOKEN`; it never prints or stores the token. Examples:
+Set `GH_TOKEN` or `GITHUB_TOKEN` in the environment, then run:
 
 ```sh
-tools/dev/ci-status.py status --branch main --limit 5
-tools/dev/ci-status.py status --sha <commit-sha>
-tools/dev/ci-status.py dispatch ci.yml --ref main --jobs all
-tools/dev/ci-status.py dispatch live-slow.yml --ref main --test-file test_walk_industry.py
+python3 tools/dev/ci-status.py status --branch main
+python3 tools/dev/ci-status.py status --sha <commit-sha>
+python3 tools/dev/ci-status.py status --sha <commit-sha> --workflow ci.yml
 ```
 
-Status lists runs and per-job outcomes. When a job has a failed step, it identifies that step and tries to print the last 40 lines from its log. `--no-logs` skips log downloads. GitHub job-log access can require additional token scope; the initial access check returned HTTP 401 for `GET /actions/jobs/{job_id}/logs`, while run and job metadata returned HTTP 200.
+The status command lists run URLs, per-job conclusions and durations, failing steps, and a failing-step log tail when the token can download job logs. To save output while a run is still active, add `--no-logs`.
 
-## Actions minutes
+Push concurrency keeps only one active run and the newest pending run for `main`. If an exact SHA no longer has a run because a newer push replaced its pending run, read the newest `main` run instead: it contains the current tree plus the superseded commit's changes. Check the run's `head_sha` and ensure no later push has reverted those changes before using its result as evidence.
 
-Record each CI run's total elapsed job time (sum of job durations, including parallel jobs) here after the gate completes. Keep approximately 300 minutes in reserve. Cancel superseded runs when needed; per-ref concurrency already cancels older CI runs after a newer push.
+## Dispatch
 
-| Run | Commit | Gate | Sum of job durations |
+Dispatch the full CI gate or a selected subset:
+
+```sh
+python3 tools/dev/ci-status.py dispatch ci.yml --ref main --jobs all
+python3 tools/dev/ci-status.py dispatch ci.yml --ref main --jobs python
+```
+
+Dispatch one slow test or the full slow matrix:
+
+```sh
+python3 tools/dev/ci-status.py dispatch live-slow.yml --ref main --test-file test_walk_industry.py
+python3 tools/dev/ci-status.py dispatch live-slow.yml --ref main --test-file all
+```
+
+The token in this environment can list runs and jobs (`GET /actions/runs` and `GET /actions/runs/{run_id}/jobs`, HTTP 200), and it can dispatch workflows (`POST /actions/workflows/ci.yml/dispatches`, HTTP 204). Its job-log request (`GET /actions/jobs/{job_id}/logs`) returned HTTP 401. The helper reports that log download failure while retaining the run, job, and failed-step information. If dispatch is denied elsewhere, it prints the HTTP status and API response.
+
+## Minutes budget
+
+Record the sum of completed job durations for each CI run used to validate workflow changes below. Job duration is the sum of its runner jobs, so concurrent matrix jobs count separately. Keep roughly 300 Actions minutes in reserve when iterating.
+
+| Run | Commit | Result | Sum of job durations |
 |---|---|---|---|
-| Baseline before push-triggered CI | `235ee85a882f2a5a36067192874d842f1ec22828` | Success, manual run [38888008879](https://github.com/Fokiiiiiii/eve.rs/actions/runs/38888008879), 2026-10-16 | 71.7 min |
+| Baseline manual run 80 | [`235ee85a`](https://github.com/Fokiiiiiii/eve.rs/actions/runs/38888008879) | success, 2026-10-16 | 71.7 runner-minutes |

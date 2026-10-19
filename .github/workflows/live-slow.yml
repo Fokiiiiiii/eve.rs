@@ -1,47 +1,19 @@
 name: Live (slow)
 
 # The end-to-end tests that take minutes (a pilot undocks, fights a rat, dies, jumps): every test file of the headless
-# client against the whole server stack, each on its own. Nightly and on request; the fast ones run on every push (ci.yml).
+# client against the whole server stack, each on its own. This workflow is dispatch-only; the fast ones run on pushes (ci.yml).
 
-# The nightly schedule is switched off (2026-10-04, the owner's request): run it by hand from the Actions tab or the helper, or give `on:` back
-# `schedule: - cron: "17 3 * * *"` to run it every night again.
-on:
+# The nightly schedule is switched off (2026-10-04, the owner's request). Dispatch one file or all files from the Actions tab or helper.
+'on':
   workflow_dispatch:
     inputs:
       test_file:
-        description: 'One test filename, such as test_walk_industry.py, or all'
+        description: 'One test filename, or all'
         required: true
         default: all
-        type: string
-
-concurrency:
-  group: live-slow-${{ github.ref }}
-  cancel-in-progress: true
-
-permissions:
-  contents: read
-
-env:
-  # the toolchain the project is built and tested with (Cargo.toml's rust-version is 1.94); a newer clippy's new lints are
-  # looked at by the advisory job below, not allowed to break the build
-  RUST_TOOLCHAIN: "1.99.0"
-  CARGO_TERM_COLOR: always
-  CARGO_INCREMENTAL: "0"
-  DOTNET_NOLOGO: "1"
-  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
-  DOTNET_CLI_USE_MSBUILD_SERVER: "0"
-  EVE_MARKET_SEED: skip
-
-jobs:
-  live-slow:
-    name: Live slow (${{ matrix.test_file }})
-    runs-on: ubuntu-latest
-    timeout-minutes: 120
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.test_file == 'all' || inputs.test_file == matrix.test_file }}
-    strategy:
-      fail-fast: false
-      matrix:
-        test_file:
+        type: choice
+        options:
+          - all
           - test_abyssal.py
           - test_achievement_tracker_live.py
           - test_agents_live.py
@@ -123,6 +95,34 @@ jobs:
           - test_weapon.py
           - test_wormhole_live.py
           - test_zarzakh_jump.py
+
+concurrency:
+  group: live-slow-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # the toolchain the project is built and tested with (Cargo.toml's rust-version is 1.94); a newer clippy's new lints are
+  # looked at by the advisory job below, not allowed to break the build
+  RUST_TOOLCHAIN: "1.99.0"
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  DOTNET_NOLOGO: "1"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_CLI_USE_MSBUILD_SERVER: "0"
+  EVE_MARKET_SEED: skip
+
+jobs:
+  live-slow:
+    name: Live slow (${{ matrix.test_file }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        test_file: ${{ fromJSON(inputs.test_file == 'all' && '["test_abyssal.py","test_achievement_tracker_live.py","test_agents_live.py","test_aggression.py","test_alpha_injector_live.py","test_ammo.py","test_arc29_walk.py","test_belt_rats.py","test_cargo.py","test_character_delete.py","test_clone_install_live.py","test_clone_jump_live.py","test_crab_walk.py","test_crimewatch.py","test_death.py","test_describe.py","test_drone_flight.py","test_drones.py","test_ess.py","test_expert_system_live.py","test_faction_standing_live.py","test_fob_insystem_walk.py","test_fob_walk.py","test_fw_battlefield_walk.py","test_fw_capture_walk.py","test_fw_complex_walk.py","test_gm_commands_live.py","test_handshake_mock.py","test_health.py","test_implant_live.py","test_incursion_walk.py","test_insider_gm_live.py","test_jump.py","test_jump_clone_live.py","test_live.py","test_login_milestone_live.py","test_login_to_character.py","test_loot.py","test_market.py","test_marshal_golden.py","test_missile.py","test_mission_walk.py","test_mitm.py","test_module.py","test_movement.py","test_multi_training_live.py","test_npc.py","test_official_client_launch.py","test_others.py","test_planet_walk.py","test_player_bounty_live.py","test_pochven_live.py","test_population_cap_live.py","test_project_discovery_live.py","test_projected.py","test_recorded_scenarios.py","test_reload.py","test_repair.py","test_resculpt_live.py","test_skill_bundle_info_live.py","test_skill_plan_live.py","test_store_entitlements_live.py","test_structures.py","test_target.py","test_title_live.py","test_undock.py","test_user_votes_live.py","test_walk_blueprints.py","test_walk_bookmarks.py","test_walk_corp_station.py","test_walk_industry.py","test_walk_item_locking.py","test_walk_nes_intro.py","test_walk_reprocessing.py","test_walk_shared_bookmarks.py","test_walk_trade.py","test_walk_war_registry.py","test_warp.py","test_weapon.py","test_wormhole_live.py","test_zarzakh_jump.py"]' || format('["{0}"]', inputs.test_file)) }}
     services:
       postgres:
         image: postgres:18

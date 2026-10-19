@@ -225,6 +225,7 @@ public sealed partial class SpaceContainers
         var entries = _space.Buffs.StateOf(shipId, now)
             .Select(state => new SimBuffEntry(state.CollectionId, state.Value, Math.Max(0d, state.ExpiresAtMs - now)))
             .ToArray();
+        _log?.Invoke($"command burst buff state sent: session {pilot.SessionId}; ship {shipId}; entries [{string.Join(",", entries.Select(entry => $"{entry.CollectionId}:{entry.Value}:{entry.RemainingMs:F0}"))}]");
         _sim.BuffState((ulong)pilot.SessionId, shipId, entries);
     }
 }

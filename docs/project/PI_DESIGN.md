@@ -124,3 +124,6 @@ Live walk (slice 3): `test_planet_walk.py` passes both tests on `eve_p2` through
 - Skills read: Interplanetary Consolidation (`LevelAsync`, `character_skills`), Command Center Upgrades. Remote Sensing and Planetology are not checked (no resource survey data, D1).
 - Pin items: created in the transaction with the pin (location: the planet), deleted with it; the command center consumes its hold item (checked: owner and type only; the hold flag is not checked).
 
+## POCO tax rules (owner decision, 2026-10-19)
+
+The selected baseline is the EVE University Wiki model: import and export charge tax; the high-security POCO rate includes its 10% NPC component, reduced by Customs Code Expertise by one percentage point per trained level, while the NPC-owned outside-high-security rate is 17% and is not reduced by that skill. Owner-set rates and standing discounts apply by the relevant relationship tier. The owner-set portion is paid to the owning corporation wallet. Sources: [Planetary Industry](https://wiki.eveuniversity.org/Planetary_Industry), [Colony management](https://wiki.eveuniversity.org/Colony_management), and [Player Owned Customs Office](https://wiki.eveuniversity.org/Player_Owned_Customs_Office). These rules still require implementation and corresponding regression coverage.

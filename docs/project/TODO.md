@@ -248,7 +248,7 @@ stop. A fitted Polarized weapon pins the armor at one: the profile is then froze
 
 ## 9. Module effects: gaps left after the parity fixes
 
-Each item below is **OPEN**. Evidence is the code path named; none of them is covered by a passing test that proves the reference behavior.
+Each row records its current status. OPEN rows identify missing behavior; completed and changed rows cite the implementation and regression evidence.
 
 | Status | Gap | Evidence and what it needs |
 |---|---|---|

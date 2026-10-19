@@ -31,18 +31,43 @@ public sealed class GetAllInfoBenchmarkTests(ITestOutputHelper output)
             _ = await rig.CallAsync(session, "GetAllInfo", bound, args);
 
         var latencies = new double[MeasuredCalls];
+        PyValue reply = PyNone.Instance;
         var allocatedBefore = GC.GetTotalAllocatedBytes(precise: true);
         for (var i = 0; i < MeasuredCalls; i++)
         {
             var clock = Stopwatch.StartNew();
-            var result = await rig.CallAsync(session, "GetAllInfo", bound, args);
-            Assert.IsType<PyObject>(result);
+            reply = await rig.CallAsync(session, "GetAllInfo", bound, args);
+            Assert.IsType<PyObject>(reply);
             session.RunAfterResponse();
             clock.Stop();
             latencies[i] = clock.Elapsed.TotalMilliseconds;
         }
         var allocated = GC.GetTotalAllocatedBytes(precise: true) - allocatedBefore;
         Array.Sort(latencies);
+
+        const int marshalWarmupCalls = 20;
+        const int marshalMeasuredCalls = 1_000;
+        for (var i = 0; i < marshalWarmupCalls; i++)
+            _ = MarshalCodec.Encode(reply);
+
+        var encodedReply = MarshalCodec.Encode(reply);
+        var encodeElapsed = Stopwatch.StartNew();
+        var encodeAllocatedBefore = GC.GetAllocatedBytesForCurrentThread();
+        for (var i = 0; i < marshalMeasuredCalls; i++)
+            _ = MarshalCodec.Encode(reply);
+        var encodeAllocated = GC.GetAllocatedBytesForCurrentThread() - encodeAllocatedBefore;
+        encodeElapsed.Stop();
+        Assert.Equal(encodedReply, MarshalCodec.Encode(reply));
+
+        for (var i = 0; i < marshalWarmupCalls; i++)
+            _ = MarshalCodec.Decode(encodedReply);
+
+        var decodeElapsed = Stopwatch.StartNew();
+        var decodeAllocatedBefore = GC.GetAllocatedBytesForCurrentThread();
+        for (var i = 0; i < marshalMeasuredCalls; i++)
+            _ = MarshalCodec.Decode(encodedReply);
+        var decodeAllocated = GC.GetAllocatedBytesForCurrentThread() - decodeAllocatedBefore;
+        decodeElapsed.Stop();
 
         var snapshot = await rig.Ships.LoadAsync(character.CharacterId) ?? throw new InvalidOperationException("character ship snapshot is missing");
         var info = new DogmaInfo(rig.Statics);
@@ -58,6 +83,8 @@ public sealed class GetAllInfoBenchmarkTests(ITestOutputHelper output)
         var duplicateAllocated = GC.GetTotalAllocatedBytes(precise: true) - duplicateAllocatedBefore;
         Array.Sort(duplicateLatencies);
         output.WriteLine($"GetAllInfo docked fitted ship calls={MeasuredCalls} p50_ms={latencies[MeasuredCalls / 2]:F3} p95_ms={latencies[(int)(MeasuredCalls * 0.95) - 1]:F3} allocated_bytes_per_call={allocated / MeasuredCalls}");
+        output.WriteLine($"Marshal encode GetAllInfo reply calls={marshalMeasuredCalls} payload_bytes={encodedReply.Length} ns_per_call={encodeElapsed.Elapsed.TotalNanoseconds / marshalMeasuredCalls:F0} allocated_bytes_per_call={encodeAllocated / marshalMeasuredCalls}");
+        output.WriteLine($"Marshal decode GetAllInfo reply calls={marshalMeasuredCalls} payload_bytes={encodedReply.Length} ns_per_call={decodeElapsed.Elapsed.TotalNanoseconds / marshalMeasuredCalls:F0} allocated_bytes_per_call={decodeAllocated / marshalMeasuredCalls}");
         output.WriteLine($"Prior duplicate brain construction p50_ms={duplicateLatencies[MeasuredCalls / 2]:F3} p95_ms={duplicateLatencies[(int)(MeasuredCalls * 0.95) - 1]:F3} allocated_bytes_per_call={duplicateAllocated / MeasuredCalls}");
         output.WriteLine($"Same-run allocation comparison optimized_bytes_per_call={allocated / MeasuredCalls} same_run_prior_behavior_estimate_bytes_per_call={(allocated + duplicateAllocated) / MeasuredCalls}");
     }

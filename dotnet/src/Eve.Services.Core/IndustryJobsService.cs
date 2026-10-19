@@ -90,7 +90,7 @@ public interface IIndustryJobOperations
 
 public sealed class IndustryJobsService : IService
 {
-    private const long FactoryManagerRole = 1024;
+    private const long FactoryManagerRole = Eve.Corporations.CorporationRoles.FactoryManager;
     private const long Installed = 1;
     private const long Paused = 2;
     private const long Ready = 3;

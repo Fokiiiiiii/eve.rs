@@ -15,13 +15,13 @@ internal sealed class HostJumpCloneStore(PgJumpCloneStore clones, NpgsqlDataSour
     WalletTransactions wallet, PgWalletStore walletStore, PgCharacterStore characters, PgItemStore items, DogmaStatic statics,
     StationCatalog stations, Eve.Services.Skills.SkillBoosterLapse boosters) : IJumpCloneStore
 {
-    /// <summary>The wallet reference of a jump clone installation fee (EveJS <c>REF_JUMP_CLONE_INSTALLATION_FEE</c>).</summary>
+
     private const int JumpCloneInstallationReference = 55;
 
-    /// <summary>The wallet reference of a jump clone activation fee (EveJS <c>REF_JUMP_CLONE_ACTIVATION_FEE</c>).</summary>
+
     private const int JumpCloneActivationReference = 128;
 
-    /// <summary>The corporation's master wallet (EveJS <c>CORPORATION_WALLET_KEY_START</c>).</summary>
+
     private const int CorporationWalletKey = 1000;
 
     public async ValueTask<JumpCloneSnapshot> ReadAsync(long characterId, CancellationToken cancellationToken)
@@ -66,13 +66,13 @@ internal sealed class HostJumpCloneStore(PgJumpCloneStore clones, NpgsqlDataSour
         {
             if (install.Fee > 0 && install.OwnerCorporationId > 0)
             {
-                // a structure's fee is paid into its owner corporation's master wallet (EveJS: the debit, then the owner credit)
+
                 await wallet.TransferAsync(connection, transaction, new WalletAccount(characterId), new WalletAccount(install.OwnerCorporationId, CorporationWalletKey),
                     install.Fee, JumpCloneInstallationReference, "jump clone installation", timeMs, operationKey, operationKey, cancellationToken, install.LocationId);
             }
             else if (install.Fee > 0)
             {
-                // a ship's fee: the offering pilot is the journal's counterparty and no wallet is credited (EveJS installs with no owner corporation)
+
                 await wallet.AdjustAsync(connection, transaction, characterId, -install.Fee, install.OfferingCharacterId, JumpCloneInstallationReference,
                     "jump clone installation", timeMs, operationKey, cancellationToken);
             }
@@ -135,7 +135,7 @@ internal sealed class HostJumpCloneStore(PgJumpCloneStore clones, NpgsqlDataSour
             await items.CreateAsync(connection, transaction, new NewItem(typeId, characterId, characterId, PilotAugmentations.ImplantFlag, 1, Singleton: true), cancellationToken);
         await characters.SetStationAsync(connection, transaction, characterId, station.Id, cancellationToken);
         await characters.SetLocationAsync(connection, transaction, characterId, station.SolarSystemId, station.ConstellationId, station.RegionId, cancellationToken);
-        // a jump ends the body's normal boosters (wiki); the cerebral accelerators go on with the pilot
+
         var endedBoosters = await boosters.EndNormalBoostersAsync(connection, transaction, characterId, nowFileTime, statics, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         if (endedBoosters)

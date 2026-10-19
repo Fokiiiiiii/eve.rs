@@ -47,7 +47,7 @@ internal sealed partial class CharacterServicesComposition
         crimewatchSchema = Env("EVE_CRIMEWATCH_SCHEMA", Eve.Crimewatch.PgCrimewatchStore.DefaultSchema);
         await Eve.Crimewatch.PgCrimewatchStore.MigrateAsync(source, crimewatchSchema);
         crimewatchStore = new Eve.Crimewatch.PgCrimewatchStore(source, crimewatchSchema);
-        // agent offers and mission states (AG-2 / A5): the agents schema, migrated here
+
         agentMissionStore = new Eve.Agents.AgentMissionStore(source, Env("EVE_AGENTS_SCHEMA", Eve.Agents.AgentMissionStore.DefaultSchema));
         storylineCounters = new Eve.Agents.StorylineCounters(source, Env("EVE_AGENTS_SCHEMA", Eve.Agents.AgentMissionStore.DefaultSchema));
         await Eve.Agents.AgentMissionStore.MigrateAsync(source, agentMissionStore.Schema);

@@ -21,7 +21,7 @@ internal sealed partial class CharacterServicesComposition
         return await BlueprintRecordAsync(item, cancellationToken);
     }
 
-    /// <summary>The blueprints an owner holds (a character's or a corporation's items that are blueprints).</summary>
+
     private async ValueTask<IReadOnlyList<BlueprintRecord>> ReadOwnedBlueprintsAsync(long ownerId, CancellationToken cancellationToken)
     {
         var records = new List<BlueprintRecord>();
@@ -34,7 +34,7 @@ internal sealed partial class CharacterServicesComposition
         return records;
     }
 
-    /// <summary>The active industry job (status before completed) of each blueprint the owner has in a job, keyed by the blueprint's item id.</summary>
+
     private async ValueTask<IReadOnlyDictionary<long, long>> ReadActiveJobsAsync(long ownerId, CancellationToken cancellationToken)
     {
         var result = new Dictionary<long, long>();

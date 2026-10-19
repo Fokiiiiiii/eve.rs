@@ -349,7 +349,7 @@ public sealed class PersistenceMailSendHostAdapter(
             Eve.Services.Crimewatch.KillRightNotificationTypes.MiscGroup,
             data, idempotencyKey, cancellationToken);
 
-    /// <summary>The bounty placement notification (EveJS <c>bountyNotifications.js</c>): the placer is the sender, the group is bounties (10).</summary>
+
     public Task WriteBountyPlacedNotificationAsync(
         long recipientId,
         long placerId,
@@ -386,7 +386,7 @@ public sealed class PersistenceMailSendHostAdapter(
             cancellationToken);
     }
 
-    /// <summary>The notification group of bounties (EveJS <c>NOTIFICATION_GROUP.BOUNTIES</c>).</summary>
+
     private const int BountiesGroupId = 10;
 
     public Task WriteAllianceMaintenanceBillNotificationAsync(
@@ -402,7 +402,7 @@ public sealed class PersistenceMailSendHostAdapter(
     // Structure delivery holds the same gate until its SQL commit and cache publication finish.
     public SemaphoreSlim MutationGate => _sendGate;
 
-    /// <summary>The located notification (type 69, group agents), sent by the agent; the key keeps one locate to one notification.</summary>
+
     public Task WriteLocateNotificationAsync(long recipientId, long agentId, JsonObject data, string idempotencyKey, CancellationToken cancellationToken) =>
         WriteNotificationAsync(recipientId, agentId, 69, 1, data, idempotencyKey, cancellationToken);
 

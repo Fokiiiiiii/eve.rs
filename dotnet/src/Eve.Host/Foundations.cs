@@ -7,7 +7,7 @@ using Eve.Scheduler;
 using Npgsql;
 
 /// <summary>
-/// The shared foundations every feature builds on (see <c>docs/design/FOUNDATIONS.md</c>): the durable scheduler, the outbox event bus, the relation store, the content runtime and the
+
 /// rowset read side, each in a PostgreSQL schema of its own. A feature takes the ones it needs by constructor; it does not start a timer, keep an event list or a table of its running
 /// content for itself. Create them, register handlers and subscribers, then <see cref="StartAsync"/>.
 /// </summary>

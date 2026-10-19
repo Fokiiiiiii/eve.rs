@@ -16,15 +16,15 @@ using Npgsql;
 namespace Eve.Host;
 
 /// <summary>
-/// <c>structureDeployment.Anchor</c>: an Upwell structure item in the pilot's ship is anchored in space beside the ship. The gates are EveJS's
-/// (<c>sovPlayerDeployment.js</c> <c>requireValidDeploymentSession</c>, <c>deployStructureFromInventoryItem</c>, <c>deployGenericStructureFromItem</c>) and the wiki's
-/// (EVE University "Anchoring structures", "Upwell structures"): in space and not in warp, a Station Manager, Director or CEO of a player corporation at least
+
+
+
 /// seven days old, 1000 km from every station, structure and belt, not in a trade hub, an extra-large structure not in high-security space. The item is
 /// consumed and the structure created in one transaction with <c>structure.anchored</c>; the simulation shows the structure when a pilot is in the system.
 /// </summary>
 public sealed class StructureAnchorAuthority
 {
-    /// <summary>The event of a new anchored structure (the subscribers are the notices of ST-2 d and the placement).</summary>
+
     public const string AnchoredTopic = "structure.anchored";
 
     private const long DirectorRole = 1, StationManagerRole = 2048;
@@ -188,7 +188,7 @@ public sealed class StructureAnchorAuthority
         await _placed(item.Id);
     }
 
-    /// <summary>A Station Manager, a Director or the CEO (wiki "Anchoring structures"). The corporation's own check is in the record's gate.</summary>
+
     private static void RequireRole(ClientSession session)
     {
         var roles = session.GetInt("corprole") ?? 0;
@@ -200,7 +200,7 @@ public sealed class StructureAnchorAuthority
     }
 
     /// <summary>
-    /// The placement of EveJS <c>resolvePositionFromClientRequest</c>: the client sends ship-relative offsets or ballpark coordinates; the one inside the deployment
+
     /// range is taken, and the relative reading is kept when both are.
     /// </summary>
     internal static (double X, double Y, double Z) Place(WarpCoordinates ship, double? x, double? z)
@@ -217,7 +217,7 @@ public sealed class StructureAnchorAuthority
     private static double Distance(double ax, double ay, double az, double bx, double by, double bz) =>
         Math.Sqrt((ax - bx) * (ax - bx) + (ay - by) * (ay - by) + (az - bz) * (az - bz));
 
-    /// <summary>1000 km from every station, belt and other structure of the system (wiki "Anchoring structures"; the blocker's type is the answer, as EveJS gives it).</summary>
+
     private async Task RequireFreeSpaceAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, int systemId, int typeId, double x, double y, double z, CancellationToken cancellationToken)
     {
         foreach (var structure in await _store.ListAsync(connection, transaction, includeGone: false, cancellationToken))
@@ -267,7 +267,7 @@ public sealed class StructureAnchorAuthority
     }
 
     /// <summary>
-    /// The trade hubs by name (wiki "Anchoring structures": Jita, Amarr etc.; the five of EveJS <c>incursionPlanner.js</c> <c>TRADE_HUB_SYSTEM_NAMES</c>). The SDE's
+
     /// <c>hub</c> flag marks far more systems than the trade hubs, so it is not used.
     /// </summary>
     private static async Task<bool> IsTradeHubAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, int systemId, CancellationToken cancellationToken) =>
@@ -301,7 +301,7 @@ public sealed class StructureAnchorAuthority
         {
             if (development is null)
                 throw Notice("Sovereignty development indices are unavailable for this system.");
-            // CCP says higher than 4.0; EveJS uses >= 4, so the official boundary wins.
+
             if (ActivityDefenseMultiplier(development) > 4.0)
                 throw MachoErrors.ThrowUserError("CantDeployBlocked", ("typeID", new PyInt(typeId)));
         }
@@ -316,7 +316,7 @@ public sealed class StructureAnchorAuthority
 
     private const long DevelopmentIndexLevelWidth = 100_000L * 96;
 
-    /// <summary>The activity defense multiplier (ADM) of a system from its indices: 1 plus the military, industrial and strategic bonuses, from 1 to 6 (ST-9 c shares it).</summary>
+
     internal static double ActivityDefenseMultiplier(DevelopmentIndexRecord indices)
     {
         var militaryLevel = OperationalIndexLevel(indices.MilitaryPoints);

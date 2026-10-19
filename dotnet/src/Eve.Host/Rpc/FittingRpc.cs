@@ -11,7 +11,7 @@ namespace Eve.Host;
 internal sealed partial class CharacterServicesComposition
 {
     /// <summary>
-    /// <c>ship.GetShipFittingInfo</c> for a saved fitting: its name and hull (EveJS <c>Handle_GetShipFittingInfo</c>: the name, the icon, the ship type and
+
     /// no insurance). A fitting that is not saved gets the reference's default, which the ship service gives.
     /// </summary>
     private async ValueTask<ShipFittingInfo?> ShipFittingInfoOf(long fittingId, CancellationToken cancellationToken) =>
@@ -27,10 +27,10 @@ internal sealed partial class CharacterServicesComposition
     }
 }
 
-/// <summary>The host's answers to the fitting calls: the static data, the corporation roles and the sessions that play an owner.</summary>
+
 internal sealed class FittingHost(DogmaStatic dogma, CorporationStore corporations, CharacterSessions sessions) : IFittingHost
 {
-    /// <summary>The corporation role that lets a member change the shared fittings (EveJS <c>CORP_ROLE_FITTING_MANAGER</c>, fittingStore.js:50).</summary>
+
     private const long FittingManagerRole = 1L << 59;
 
     public async Task<IReadOnlyDictionary<int, int>> CategoriesAsync(IReadOnlyCollection<int> typeIds, CancellationToken cancellationToken)

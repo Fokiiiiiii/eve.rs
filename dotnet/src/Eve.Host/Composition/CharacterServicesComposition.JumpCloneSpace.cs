@@ -4,15 +4,15 @@ using Eve.Structures;
 namespace Eve.Host;
 
 /// <summary>
-/// The clone bays of the structures (EveJS <c>characterHasStructureCloneService</c>, <c>getCloneServiceCostForLocation</c>) and the late link of
+
 /// the jump clone service to the space side. The link is set once the space sessions and the structures are composed.
 /// </summary>
 internal sealed partial class CharacterServicesComposition
 {
-    /// <summary>The CLONINGBAY_TAX profile setting (EveJS <c>STRUCTURE_SETTING_ID.CLONINGBAY_TAX</c>).</summary>
+
     private const int CloningBayTaxSettingId = 23;
 
-    /// <summary>EveJS <c>MAX_STRUCTURE_CLONE_BAY_COST</c>: the highest fee a structure may set.</summary>
+
     private const decimal MaxStructureCloneBayFee = 100000000m;
 
     private readonly JumpCloneSpaceLink jumpCloneSpace = new();
@@ -23,7 +23,7 @@ internal sealed partial class CharacterServicesComposition
 
     /// <summary>
     /// A structure's clone bay for a character: its Medical service online, or its Jump Clone service online and the character allowed to dock
-    /// there. The fee is the owner's CLONINGBAY_TAX (EveJS: the install fee when the profile has none).
+
     /// </summary>
     private async ValueTask<StructureCloneBay?> StructureCloneBayAsync(long characterId, long structureId, CancellationToken token)
     {

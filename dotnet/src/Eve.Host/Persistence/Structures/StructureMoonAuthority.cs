@@ -10,7 +10,7 @@ namespace Eve.Host;
 /// The backend of the moon service's mutations (<c>moonExtractions</c>, EVE.js moonExtractionsService): <c>StartNewExtraction</c>, <c>FractureChunkWithStructure</c> and
 /// <c>CancelExtraction</c>. Each requires the current control seat, moon service profile access and an online drill outside Pochven;
 /// cancel also needs the Station Manager role. The moon's checks and the record are the domain's
-/// (<see cref="MoonExtractions"/>), gated by persistent control ownership and the moon service profile.
+
 /// </summary>
 public sealed class StructureMoonAuthority
 {
@@ -111,7 +111,7 @@ public sealed class StructureMoonAuthority
             throw Refusal("You must be controlling this structure.");
         if (call.Session.CharacterId is not { } characterId || call.Session.SessionId <= 0)
             throw StructureDefenseDenied();
-        // the persistent pilot record (ST-5) must agree with the session: a forged or released session changes nothing
+
         var pilot = await _pilots.GetBySessionAsync(connection, transaction, call.Session.SessionId, call.Cancellation, forUpdate: true);
         if (pilot is null || pilot.CharacterId != characterId || pilot.StructureId != structureId ||
             !await _hasMoonAccess(characterId, structureId, call.Cancellation))

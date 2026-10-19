@@ -35,7 +35,7 @@ using static Eve.Host.HostConfiguration;
 
 namespace Eve.Host;
 
-/// <summary>The legacy GameStore the host still builds on (ADR 0003 drift). Disposed in the original order: cache, owner session, store.</summary>
+
 internal sealed class LegacyGameStore(PersistenceStore store, OwnerSession owner, GameStoreCache cache) : IAsyncDisposable
 {
     internal PersistenceStore Store { get; } = store;

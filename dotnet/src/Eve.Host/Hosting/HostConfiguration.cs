@@ -61,10 +61,10 @@ internal static class HostConfiguration
     //                          without charUnboundMgr, and a client cannot get past the character screen.
     //   EVE_MARKET_SEED        skip: do not fetch the NPC market's first orders from CCP's ESI (CI, development)  (default auto: fetch once per SDE build)
     //   EVE_SCHEDULER_SCHEMA, EVE_EVENTS_SCHEMA, EVE_RELATIONS_SCHEMA, EVE_CONTENT_SCHEMA   the schemas of the shared foundations (scheduler, event bus, relations, content)
-    //                          (defaults scheduler, events, relations, content)
+
     //   EVE_CRIMEWATCH_SCHEMA  the schema of crimewatch (ship safety levels)                          (default crimewatch)
-    //   EVE_DEV_SKIP_PASSWORD  1 accepts any password (development only)                          (default 0)
-    //   EVE_DEV_AUTO_CREATE    0 refuses unknown user names                                       (default 0)
+
+
     //   EVE_GM_ACCOUNTS        user=ROLE+ROLE,... adds game-master role bits (GML, GMH, QA, PROGRAMMER, CONTENT, ADMIN,
     //                          EXT_GM1..EXT_GM4) to existing accounts at start-up; a grant never takes a bit away (default none)
     //   EVE_STRICT_RPC         1 answers an unknown service or method, an unhandled exception or a call with no service

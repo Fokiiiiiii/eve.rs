@@ -14,6 +14,7 @@
 | `tools/headless-client/evecli/client.py` | 5 | 3 | 2026-10-19 |
 | `crates/eve-behaviors/src/actions/tanking.rs` | 26 | 6 | 2026-10-19 |
 | `dotnet/src/Eve.Host/Composition/CharacterDeletionPurge.cs` | 10 | 9 | 2026-10-19 |
+| `dotnet/src/Eve.Host` (83 C# files) | 1,054 | 832 | 2026-10-19 |
 | `tools/dev` (19 Python files) | 106 | 97 | 2026-10-19 |
 | `crates/eve-space` (128 Rust files) | 3649 | 3499 | 2026-10-19 |
 | `crates/eve-destiny` (4 Rust files) | 185 | 182 | 2026-10-19 |

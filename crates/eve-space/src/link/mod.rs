@@ -39,7 +39,7 @@ use crate::weapons::{Aoe, Arc, Charge, Spool, Turret};
 use crate::world::StructureStatus;
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 79;
+pub const PROTOCOL_VERSION: u16 = 80;
 
 /// A battlefield's capture point the host puts in space (protocol 77): a ball the pilots of its system see. Its factions (the attacker and the
 /// occupier, 0 for none) and its next point time (a FILETIME, 0 for none) are the dynamic slim fields the client reads from it.

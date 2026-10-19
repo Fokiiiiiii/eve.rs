@@ -40,7 +40,13 @@ internal sealed partial class CharacterServicesComposition
     private Task CharMgrReadModel()
     {
         charMgrReadModel = new PersistenceCharMgrReadModel(
-            ReadGameStoreTableAsync,
+            (table, cancellationToken) =>
+            {
+                var cached = mailCache.Read(table);
+                return cached.Success && cached.Data is System.Text.Json.Nodes.JsonObject row
+                    ? Task.FromResult(row)
+                    : ReadGameStoreTableAsync(table, cancellationToken);
+            },
             ReadRecentShipKillmailPageAsync,
             ReadCharacterDescriptionAsync,
             WriteCharacterDescriptionAsync,

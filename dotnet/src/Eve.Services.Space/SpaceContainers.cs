@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using Eve.Dogma;
 using Eve.Inventory;
 using Eve.Marshal;
+using Eve.Planets;
 using Eve.Scheduler;
 using Eve.Services.Ships;
 using Eve.Ships;
@@ -122,7 +123,7 @@ public sealed partial class SpaceContainers : ISpaceContainers, IDisposable
         await _statics.EnsureTypesAsync([item.TypeId], cancellationToken);
         var type = _statics.Type(item.TypeId);
         if (type is null ||
-            (type.GroupId != CanGroup && type.GroupId != WreckGroup &&
+            (type.GroupId != CanGroup && type.GroupId != WreckGroup && type.GroupId != Customs.OfficeGroupId &&
              !Eve.Structures.StructureUnanchorDrop.IsFittingsContainer(item.TypeId, item.CustomInfo) &&
              !(await IsLootedSiteContainerAsync(item.Id, item.TypeId, type.GroupId, cancellationToken))))
         {

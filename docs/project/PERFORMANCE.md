@@ -20,3 +20,17 @@ Rerun with `CARGO_BUILD_JOBS=1 CARGO_PROFILE_BENCH_LTO=false CARGO_PROFILE_BENCH
 | After: frames appended with `Message::encode_into` | 500,000 | 4.45 µs | 704 |
 
 The same 64 messages produced 704 bytes in both runs. The batch encoding path dropped from two per-message Vec allocations (payload and framed copy) to one (payload); the shared output Vec retains its normal amortized growth. The same-run median batch time decreased 60.6%. This is a serialization microbenchmark, not a full simulation tick or graphical-client measurement.
+
+## Simulation tick baseline
+
+Measured `Sim::poll` with a hand-built universe and active in-space pilots: one system with no moving celestial objects, one fitted Ibis per pilot, spaced 5 km apart. Each case warms 1,000 ticks, then records five samples of 1,000 polls, advancing simulated time by 250 ms per poll and consuming each output message count. Pilot counts are 1, 16 and 64.
+
+Rerun with `CARGO_BUILD_JOBS=1 CARGO_PROFILE_BENCH_LTO=false CARGO_PROFILE_BENCH_CODEGEN_UNITS=256 CARGO_PROFILE_BENCH_OPT_LEVEL=0 cargo bench -p eve-space --bench sim_tick` (source: `crates/eve-space/benches/sim_tick.rs`). This low-optimization profile avoided compiler memory pressure in the shared environment; its timings are a baseline for the exact harness and do not predict optimized server latency.
+
+| Active pilots | Median time per `Sim::poll` |
+|---:|---:|
+| 1 | 48.01 µs |
+| 16 | 404.52 µs |
+| 64 | 3.57 ms |
+
+This exercises the real simulation poll and scene tick path. The synthetic scene keeps pilots stationary and does not measure movement-heavy combat, real network writes, or graphical-client load. Attributing tick time to individual phases and measuring spatial queries, marshal, SDE loading and process memory remain open.

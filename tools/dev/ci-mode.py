@@ -13,9 +13,30 @@ WORKFLOWS = ROOT / ".github" / "workflows"
 # Keep the automatic trigger policy here so manual mode never loses it.
 AUTOMATIC_SCHEDULES = {
     "ci.yml": "  schedule:\n    - cron: '0 6 * * 1'\n",
+    "ci-windows.yml": "  schedule:\n    - cron: '0 */6 * * *'\n",
 }
-AUTOMATIC_PUSH_WORKFLOWS = {"ci.yml"}
-PUSH_TRIGGER = "  push:\n    branches: [main]\n    paths-ignore:\n      - 'docs/**'\n      - '**/*.md'\n      - '.github/dependabot.yml'\n"
+AUTOMATIC_PUSH_WORKFLOWS = {"ci.yml", "ci-windows.yml"}
+PUSH_TRIGGERS = {
+    "ci.yml": "  push:\n    branches: [main]\n    paths-ignore:\n      - 'docs/**'\n      - '**/*.md'\n      - '.github/dependabot.yml'\n",
+    "ci-windows.yml": """  push:
+    branches: [main]
+    paths:
+      - 'crates/**'
+      - 'dotnet/**'
+      - 'tools/windows/**'
+      - 'tools/dev/**'
+      - 'tools/headless-client/**'
+      - 'sde/**'
+      - '.cargo/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rustfmt.toml'
+      - 'global.json'
+      - '.gitattributes'
+      - '.github/workflows/ci.yml'
+      - '.github/workflows/ci-windows.yml'
+""",
+}
 
 
 def split_workflow(text: str) -> tuple[str, str, str, str]:
@@ -49,7 +70,7 @@ def rewrite(path: Path, mode: str) -> bool:
     else:
         if path.name in AUTOMATIC_PUSH_WORKFLOWS:
             schedule = AUTOMATIC_SCHEDULES.get(path.name, "")
-            new_block = header + PUSH_TRIGGER + schedule + dispatch
+            new_block = header + PUSH_TRIGGERS[path.name] + schedule + dispatch
         else:
             new_block = header + dispatch
     updated = prefix + new_block + suffix
@@ -62,12 +83,13 @@ def rewrite(path: Path, mode: str) -> bool:
 def current_mode(paths: list[Path]) -> str:
     modes = set()
     for path in paths:
+        if path.name not in AUTOMATIC_PUSH_WORKFLOWS:
+            continue
         lines = path.read_text(encoding="utf-8").splitlines()
         start = next(i for i, line in enumerate(lines) if re.fullmatch(r"(?:'on'|\"on\"|on):\s*", line))
         end = next((i for i in range(start + 1, len(lines)) if lines[i].strip() and not lines[i][0].isspace() and not lines[i].startswith("#")), len(lines))
         events = [line.strip().split(":", 1)[0] for line in lines[start + 1:end] if re.match(r"  [A-Za-z_][\w-]*:", line)]
-        expected_auto = path.name in AUTOMATIC_PUSH_WORKFLOWS
-        is_auto = ("push" in events or "schedule" in events) if expected_auto else "push" not in events and "schedule" not in events
+        is_auto = "push" in events and "schedule" in events
         modes.add("auto" if is_auto else "manual")
     return next(iter(modes)) if len(modes) == 1 else "mixed"
 

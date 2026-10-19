@@ -73,7 +73,7 @@ A production start clears both, with a warning, so they cannot leak into a norma
 `tools/server/start-server.sh [--dev]` is the same flow for Linux (needs `dotnet`, `cargo`, `psql`, `curl`, `python3`).
 It stops on Ctrl-C or SIGTERM, with the same order and exit status 130 for an interrupt.
 
-## Tested on
+## Recorded checks
 
 Tested here (Linux VM, PostgreSQL 18.4 binaries run on port 5433, PowerShell 7.6.6 for Linux):
 
@@ -84,19 +84,16 @@ Tested here (Linux VM, PostgreSQL 18.4 binaries run on port 5433, PowerShell 7.6
 - `stop-server.ps1` stopped the processes of a start whose PowerShell had been killed (no shutdown ran).
 - Unreachable PostgreSQL exits with status 1; `server.env` is read; environment variables win over it; the password
   is masked in the printed settings.
-- `cargo check --workspace --all-targets --target x86_64-pc-windows-gnu` passes (no linker needed for `check`).
+- `cargo check --workspace --all-targets --target x86_64-pc-windows-gnu` passed (no linker needed for `check`).
 - `eve-sim` shuts down on Ctrl-C while a host is connected (this was broken: the accept loop was not polled).
 
-Not tested (no Windows machine here):
+These checks ran on a Linux VM with PowerShell 7.6.6 and PostgreSQL 18.4. They exercise the scripts and TCP paths on Linux, not native Windows console semantics.
 
-- Windows PowerShell 5.1 and `cmd.exe` (the `.bat` files); the `.ps1` files are written for 5.1 but only run under 7.6.
-- Real PostgreSQL 18 on Windows and the `psql.exe` path search.
-- Ctrl-C and console-close behaviour under Windows consoles, and `Start-Process -NoNewWindow` there.
-- `cargo build` (not only `check`) and `dotnet build` on Windows; `curl.exe` in `eve-sde`.
+The Windows workflow now builds and tests the workspace on `windows-latest`, runs the .NET and Python suites, and walks the login-to-character path through the complete stack. Its run history is the source for native Windows CI evidence.
 
 ## Known limits
 
 - The host's `tcp:` listener accepts numeric IPv4 addresses only (`localhost` fails); the scripts use numeric addresses.
-- `tools/dev/*.sh` (the live test runners, `pg18.sh`) remain bash scripts for Git Bash or WSL; they are not ported.
-- `global.json` lists `../.dotnet` as an SDK path; whether that entry is ignored cleanly on Windows is not verified.
+- `tools/dev/*.sh` remain bash scripts for Linux, Git Bash, or WSL; Windows equivalents for local checks and headless tests are in `tools/windows`.
+- `global.json` lists `../.dotnet` as an SDK path; CI and the owner checkout should confirm SDK selection from Windows paths.
 - Closing the window does not run the orderly shutdown; the children then stop when the console closes.

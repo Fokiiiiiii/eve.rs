@@ -1,0 +1,137 @@
+name: Windows CI
+
+# Keep long Windows coverage outside the Linux required-gate run so it cannot hold the push queue.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/**'
+      - 'dotnet/**'
+      - 'tools/windows/**'
+      - 'tools/dev/**'
+      - 'tools/headless-client/**'
+      - 'sde/**'
+      - '.cargo/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rustfmt.toml'
+      - 'global.json'
+      - '.gitattributes'
+      - '.github/workflows/ci.yml'
+      - '.github/workflows/ci-windows.yml'
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: ci-windows-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    name: Windows Rust, .NET, Python and live client
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      RUST_TOOLCHAIN: "1.99.0"
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: "0"
+      DOTNET_NOLOGO: "1"
+      DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+      DOTNET_CLI_USE_MSBUILD_SERVER: "0"
+      EVE_MARKET_SEED: skip
+      EVE_PG_URL: postgres://postgres:postgres@127.0.0.1:5432/eve
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install PostgreSQL 18
+        shell: pwsh
+        run: |
+          $installer = Join-Path $env:RUNNER_TEMP 'postgresql-18.4-1-windows-x64.exe'
+          Invoke-WebRequest -Uri 'https://get.enterprisedb.com/postgresql/postgresql-18.4-1-windows-x64.exe' -OutFile $installer
+          $process = Start-Process -FilePath $installer -Wait -PassThru -ArgumentList @('--mode', 'unattended', '--unattendedmodeui', 'none', '--superpassword', 'postgres', '--serverport', '5432', '--enable-components', 'server,commandlinetools', '--disable-components', 'pgAdmin,stackbuilder')
+          if ($process.ExitCode -ne 0) { throw "PostgreSQL installer exited with $($process.ExitCode)." }
+          $env:Path = "C:\Program Files\PostgreSQL\18\bin;$env:Path"
+          "C:\Program Files\PostgreSQL\18\bin" >> $env:GITHUB_PATH
+          $env:PGPASSWORD = 'postgres'
+          $deadline = (Get-Date).AddMinutes(2)
+          do { pg_isready -h 127.0.0.1 -p 5432 -U postgres; if ($LASTEXITCODE -eq 0) { break }; Start-Sleep -Seconds 2 } while ((Get-Date) -lt $deadline)
+          if ($LASTEXITCODE -ne 0) { throw 'PostgreSQL 18 did not become ready.' }
+          createdb -h 127.0.0.1 -U postgres eve
+          if ($LASTEXITCODE -ne 0) { throw 'Could not initialize the eve test database.' }
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master as of 2026-10-19
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          components: rustfmt, clippy
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~\.cargo\registry\cache
+          key: cargo-windows-${{ hashFiles('Cargo.lock') }}
+      - name: Rust format and lint
+        run: |
+          cargo fmt --all --check
+          cargo clippy --workspace --all-targets -- -D warnings
+      - name: Load SDE and test Rust workspace
+        run: |
+          cargo run -q -p eve-sde -- ensure --pg $env:EVE_PG_URL
+          if ($LASTEXITCODE -ne 0) { throw 'SDE loading failed.' }
+          cargo run -q -p eve-sde -- ensure --missions --pg $env:EVE_PG_URL
+          if ($LASTEXITCODE -ne 0) { throw 'Mission data loading failed.' }
+          cargo test --workspace
+      - name: Build .NET solution
+        working-directory: dotnet
+        run: |
+          dotnet build EveRs.slnx -c Release -nologo --verbosity minimal -nodeReuse:false
+          if ($LASTEXITCODE -ne 0) { throw '.NET build failed.' }
+      - name: Shut down .NET build servers after build
+        if: always()
+        run: dotnet build-server shutdown
+      - name: Run PostgreSQL-backed .NET test projects
+        working-directory: dotnet
+        run: |
+          $env:EVE_PG_URL = 'Host=127.0.0.1;Port=5432;Username=postgres;Password=postgres;Database=eve'
+          dotnet test EveRs.slnx -c Release --no-build -nologo --verbosity minimal -nodeReuse:false
+          if ($LASTEXITCODE -ne 0) { throw '.NET tests failed.' }
+      - name: Shut down .NET build servers after tests
+        if: always()
+        run: dotnet build-server shutdown
+      - name: Run Python client tests
+        working-directory: tools/headless-client
+        run: |
+          python -m pip install -r requirements-dev.txt
+          if ($LASTEXITCODE -ne 0) { throw 'Python dependency installation failed.' }
+          python -m pytest -q -rs
+      - name: Exercise the PowerShell 5.1 headless entry point
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/windows/run-headless.ps1 -PytestArgs tests/test_marshal_golden.py tests/test_handshake_mock.py
+      - name: Start server and walk the Windows client path
+        shell: pwsh
+        run: |
+          $start = Join-Path $PWD 'tools/windows/start-server.bat'
+          $server = Start-Process -FilePath 'cmd.exe' -ArgumentList ('/c "' + $start + '"') -PassThru
+          try {
+            $deadline = (Get-Date).AddMinutes(10)
+            $ready = $false
+            while ((Get-Date) -lt $deadline) {
+              if ($server.HasExited) { throw "Server exited with $($server.ExitCode)." }
+              $client = New-Object System.Net.Sockets.TcpClient
+              try { $client.Connect('127.0.0.1', 26000); $ready = $true } catch { Start-Sleep -Milliseconds 500 } finally { $client.Close() }
+              if ($ready) { break }
+            }
+            if (-not $ready) { throw 'The Windows stack did not open port 26000.' }
+            & (Join-Path $PWD 'tools/windows/run-headless.ps1') -Live -PytestArgs @('tests/test_live.py', 'tests/test_login_to_character.py')
+            if ($LASTEXITCODE -ne 0) { throw 'The end-to-end Windows client walk failed.' }
+          } finally {
+            $stop = Join-Path $PWD 'tools/windows/stop-server.bat'
+            $stopProcess = Start-Process -FilePath 'cmd.exe' -ArgumentList ('/c "' + $stop + '"') -Wait -PassThru
+            if ($stopProcess.ExitCode -ne 0) { throw "The Windows stop wrapper exited with $($stopProcess.ExitCode)." }
+            if (-not $server.HasExited) { Stop-Process -Id $server.Id -Force }
+          }
+

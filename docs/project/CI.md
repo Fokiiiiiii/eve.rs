@@ -1,8 +1,8 @@
 # GitHub Actions CI
 
-The workflows are currently in the automatic mode while the repository is public. `ci.yml` uses push and weekly schedule triggers; `live-slow.yml` remains dispatch-only. When the repository becomes private again run `python3 tools/dev/ci-mode.py manual` and push. This makes every workflow manual only through `workflow_dispatch`; it removes push, schedule, and pull request triggers. Use `python3 tools/dev/ci-mode.py --check` to print the current mode. Run `python3 tools/dev/ci-mode.py auto` to restore automatic triggers. The automatic trigger definitions are kept in the script.
+The workflows are currently in the automatic mode while the repository is public. `ci.yml` uses push and weekly schedule triggers; `ci-windows.yml` handles Windows checks on platform-sensitive pushes, every six hours, and manual dispatch; `live-slow.yml` remains dispatch-only. When the repository becomes private again run `python3 tools/dev/ci-mode.py manual` and push. This makes every workflow manual only through `workflow_dispatch`; it removes push, schedule, and pull request triggers. Use `python3 tools/dev/ci-mode.py --check` to print the current mode. Run `python3 tools/dev/ci-mode.py auto` to restore automatic triggers. The automatic trigger definitions are kept in the script.
 
-`ci.yml` runs its Linux jobs on pushes to `main` except documentation-only changes and `.github/dependabot.yml`. Push runs share a branch concurrency group with `cancel-in-progress: false`; GitHub keeps the running run and the newest pending SHA, replacing older pending runs. Manual runs use a separate interactive group and can cancel older manual runs. Manual `workflow_dispatch` runs can cancel older manual runs and select jobs. Windows coverage is selected for platform-sensitive paths, a manual `windows` selection, and the weekly schedule. It provisions PostgreSQL 18 on the Windows runner and runs Rust, .NET, Python, and a login-to-character walk. Windows has a 45-minute job timeout and is currently excluded from the `Required CI gate` while its runner checks are being repaired; the gate waits only for Linux jobs. `live-slow.yml` is dispatch-only and runs each selected headless-client test file in its own matrix job. The CI workflow builds and tests with Rust 1.99.0; `Cargo.toml` retains the Rust 1.94 minimum supported version.
+`ci.yml` runs its Linux jobs on pushes to `main` except documentation-only changes and `.github/dependabot.yml`. Push runs share a branch concurrency group with `cancel-in-progress: false`; GitHub keeps the running run and the newest pending SHA, replacing older pending runs. Manual runs use a separate interactive group and can cancel older manual runs. Manual `workflow_dispatch` runs can cancel older manual runs and select jobs. The separate `ci-windows.yml` workflow provisions PostgreSQL 18 on the Windows runner and runs Rust, .NET, Python, and a login-to-character walk. Its 45-minute job timeout and independent workflow run keep Windows diagnostics outside the Linux push queue and `Required CI gate`. `live-slow.yml` is dispatch-only and runs each selected headless-client test file in its own matrix job. The CI workflow builds and tests with Rust 1.99.0; `Cargo.toml` retains the Rust 1.94 minimum supported version.
 
 ## Read the result for a commit
 
@@ -21,12 +21,17 @@ Push runs are serialized by branch, with one replaceable pending run, so runner 
 
 ## Dispatch
 
-Dispatch the full CI gate or a selected subset:
+Dispatch the Linux CI gate or a selected subset:
 
 ```sh
 python3 tools/dev/ci-status.py dispatch ci.yml --ref main --jobs all
 python3 tools/dev/ci-status.py dispatch ci.yml --ref main --jobs python
-python3 tools/dev/ci-status.py dispatch ci.yml --ref main --jobs windows
+```
+
+Dispatch Windows coverage independently:
+
+```sh
+python3 tools/dev/ci-status.py dispatch ci-windows.yml --ref main
 ```
 
 Use `cancel-queued` once to clear stale queued runs after changing the concurrency policy; it cancels queued runs matching the selected branch and optional workflow, and `--sha` preserves that commit.
@@ -66,4 +71,4 @@ Runs 172–174 (SHAs `dce9440d`, `75f01741`, and `f308d922`) each reached a conc
 
 Run 205 on `af059238` reported `ControlTowerHostTests.A_control_tower_burns_one_period_of_its_race_fuel_and_goes_offline_when_the_bay_cannot_pay` with 0 fuel blocks where the test expected 40 after unanchoring; the Space shard passed on run 209 (`6eaa703e`) in 13.6 minutes. No code change for this case separates those runs, so the failure did not reproduce. Run 219 on `429e17da` reproduced a different live assertion: `OnInvulnCancelled` arrived before `DoDestinyUpdate` during the movement walk, this time at the speed-fraction step. `compare_events` now checks the invulnerability notice and payload independently from the simulation event sequence, while preserving the order and payload checks for both streams. A focused fixture comparison with the two notifications reversed passed locally; a follow-up CI result is pending. Run 219 also failed `.NET (all other tests)` in `Eve.Market.Tests.MarketLockOrderTests` for `PlaceAsync`: the source guard searched the public wrapper for locks after lock acquisition moved into `PlaceWithinTransactionAsync`. The guard now verifies that `PlaceAsync` and `PlaceBuyOrdersAsync` delegate to that helper, then checks the helper's lock order. The focused `MarketLockOrderTests` run passed locally (4 tests); CI for this correction is pending.
 
-Windows handoff for cx32: in runs 194 (`d01856d3`) and 195 (`95512e4f`), PostgreSQL 18 installation/readiness, Rust tests and the .NET build completed, but `Run PostgreSQL-backed .NET test projects` (whole-solution `dotnet test EveRs.slnx`) continued until the 45-minute job timeout canceled it, about 35 minutes into that step. This is the Windows diagnostic job only; it is excluded from the Required CI gate. Please investigate why the Windows solution test command does not finish within the remaining job time.
+Windows workflow handoff for cx32: in runs 194 (`d01856d3`) and 195 (`95512e4f`), PostgreSQL 18 installation/readiness, Rust tests and the .NET build completed, but `Run PostgreSQL-backed .NET test projects` (whole-solution `dotnet test EveRs.slnx`) continued until the 45-minute job timeout canceled it, about 35 minutes into that step. This is the separate Windows diagnostic workflow; it does not block the Required CI gate. Please investigate why the Windows solution test command does not finish within the remaining job time.

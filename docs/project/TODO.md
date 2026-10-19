@@ -15,7 +15,7 @@ Built from the sections below, as of 2026-10-19. **Status** is what the area doe
 | Drones (6) | Built; flights covered headless. | As above. | Hybrid drones (open); mining and salvage drones on the client. |
 | Mining, salvage, tractor, targeting (10) | Built and tested headless. | As above. | Entosis link waits for structures (phase 3); mining scan list (open). |
 | P.A.N.I.C., superweapons, fighters, bursts, scanners (11 to 13, 20 to 26) | Command burst activation, fleet delivery, timed state, receiver dogma attributes and attribute notifications are built through C8; dogmaIM snapshots sync the active buff registry. P.A.N.I.C. is built. Superweapons partly (12). Fighters, scanners and probes built (13, 21, 22, 24). | As above. | Section 12 open rows (burst projectors, Area type); section 13 open rows. The two-pilot headless burst walk is implemented and selected in the slow workflow; its Actions result is pending. Graphical-client verification remains open (section 22). |
-| Windows and production start (14) | Start scripts exist; Windows is not in CI. | CI runs on pushes to `main` except documentation-only changes. Push runs keep one active run and the newest pending run; manual runs accept a selected job set. `tools/dev/check-all.sh` remains the local check. | Windows console behaviour, PowerShell 5.1, `global.json` SDK path, Windows live runners, Host `tcp:` listener. |
+| Windows and production start (14) | TCP defaults, Windows start/stop scripts, PostgreSQL service control, local checks and a headless test runner are present. CI has a path-selected Windows job for Rust, .NET, Python and a login-to-character walk. | Linux CI remains the ordinary push gate; Windows CI runs for platform-sensitive changes, manual selection, and weekly. See [WINDOWS.md](WINDOWS.md). | Close the CI gate with a green Windows run; verify PowerShell 5.1 console shutdown and the pinned .NET SDK selection on the owner's Windows install. |
 | Client preparation (`tools/client-patch`) | The patch exists. | Launch arguments are taken from the client. | Real-client check of the patched `start.ini` and launch arguments. |
 | Alliance registry (18) | Built. | Affiliation and wars follow the reference. | Open rows of section 18. |
 | Market (42) | M1 to M9 done; the live walk passed (M9). | The server charges the 7.5% sales tax; rules are data (`rules.json`) and replayed. | Client preview of the sales and security tax (the client reads its own flag source); the client label table is partial. |
@@ -371,16 +371,15 @@ Decisions: ADR 0015 and its amendments. Deviations and their evidence: DEVIATION
 ## 14. Windows and the production start (2026-10-09)
 
 The start scripts are `tools/windows/` (`start-server.bat`, `start-server-dev.bat`, `stop-server.bat`, the `.ps1` files) and
-`tools/server/start-server.sh`; the tested and untested parts are listed in [tools/windows/README.md](../../tools/windows/README.md).
+`tools/server/start-server.sh`. Windows usage and CI coverage are described in [WINDOWS.md](WINDOWS.md).
 
 | Status | Item | Missing work |
 |---|---|---|
-| OPEN | Windows is not in CI | No Windows job runs `cargo build`, `dotnet test` or the scripts. Add one, or keep the verification in the README current. |
-| OPEN | `.bat` files and PowerShell 5.1 | Run `start-server.bat`, `stop-server.bat` and the `.ps1` files under Windows PowerShell 5.1 and `cmd.exe` on a real Windows machine with PostgreSQL 18. |
-| OPEN | Windows console behaviour | Verify Ctrl-C (and the `Terminate batch job` prompt) and closing the window; closing does not exercised the orderly shutdown. |
-| OPEN | `global.json` SDK path `../.dotnet` | Confirm the SDK resolves on Windows without that directory. |
-| OPEN | Live test runners on Windows | `tools/dev/run-eve-live.sh`, `run-evejs-live.sh` and `pg18.sh` are bash and use `.venv/bin` and `/tmp`; port them if Windows must run the live tests. |
-| OPEN | Host `tcp:` listener | `HostListener` takes numeric IPv4 addresses only (`IPAddress.Parse`); accept host names or IPv6 if needed. |
+| OPEN | Windows CI result | The workflow now selects Windows coverage on sensitive pushes, manual selection and the weekly run. Record and review a successful run before closing this row. |
+| OPEN | Windows PowerShell and console behavior | PowerShell developer scripts now cover service control, checks, and headless tests. Verify Ctrl+C, the batch prompt, and window-close behavior on the owner's Windows setup. |
+| OPEN | `global.json` SDK path `../.dotnet` | Check SDK selection on the owner's Windows checkout path. |
+| DONE | Windows test entry points | `tools/windows/check-all.ps1`, `pg18.ps1`, and `run-headless.ps1` provide PowerShell 5.1 counterparts for local checks, installed PostgreSQL 18 service control, and headless tests. |
+| DONE | Host `tcp:` listener | `HostListener` binds numeric IPv4 TCP endpoints; Windows tests cover its defaults and binding. |
 | DONE | Platform-aware defaults | `eve-net` (`DEFAULT_HOST`), `eve-sim` (`127.0.0.1:26011` off Unix) and `HostConfiguration.DefaultEndpoint`/`DefaultSimSocket` default to TCP on Windows; unit tests cover them. |
 | DONE | Ctrl-C of the simulation | `eve-sim` races the connection against Ctrl-C; before, it ignored Ctrl-C while a host was connected. |
 | DONE | Line endings | `.gitattributes`: `* text=auto`, `.sh` LF, `.bat`/`.ps1` CRLF. |

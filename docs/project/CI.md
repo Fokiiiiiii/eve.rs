@@ -1,6 +1,6 @@
 # GitHub Actions CI
 
-`ci.yml` runs on pushes to `main` except documentation-only changes and `.github/dependabot.yml`. Push runs do not cancel the active run; GitHub retains the newest pending run for the ref. Manual `workflow_dispatch` runs can cancel older manual runs and select jobs. `live-slow.yml` is dispatch-only and runs each selected headless-client test file in its own matrix job. The CI workflow builds and tests with Rust 1.99.0; `Cargo.toml` retains the Rust 1.94 minimum supported version.
+`ci.yml` runs its Linux jobs on pushes to `main` except documentation-only changes and `.github/dependabot.yml`. Push runs do not cancel the active run; GitHub retains the newest pending run for the ref. Manual `workflow_dispatch` runs can cancel older manual runs and select jobs. Windows coverage is selected for platform-sensitive paths, a manual `windows` selection, and the weekly schedule. It provisions PostgreSQL 18 on the Windows runner and runs Rust, .NET, Python, and a login-to-character walk. `live-slow.yml` is dispatch-only and runs each selected headless-client test file in its own matrix job. The CI workflow builds and tests with Rust 1.99.0; `Cargo.toml` retains the Rust 1.94 minimum supported version.
 
 ## Read the result for a commit
 
@@ -23,6 +23,7 @@ Dispatch the full CI gate or a selected subset:
 ```sh
 python3 tools/dev/ci-status.py dispatch ci.yml --ref main --jobs all
 python3 tools/dev/ci-status.py dispatch ci.yml --ref main --jobs python
+python3 tools/dev/ci-status.py dispatch ci.yml --ref main --jobs windows
 ```
 
 Dispatch one slow test or the full slow matrix:

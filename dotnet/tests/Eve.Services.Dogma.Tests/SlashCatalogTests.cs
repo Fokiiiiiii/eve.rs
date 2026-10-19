@@ -101,6 +101,22 @@ public class SlashCatalogTests
         Assert.Equal(SlashService.NotGameMaster, Assert.IsType<PyStr>(await CallAsync(Service(skills: true), command, new ClientSession())).Value);
     }
 
+    [Fact]
+    public async Task Every_registered_command_is_refused_to_a_session_without_a_staff_role()
+    {
+        var service = Service(death: true, suicide: true, npcs: true, items: true, skills: true);
+        var catalog = await CatalogAsync(service);
+        var names = catalog["Commands: [".Length..^1]
+            .Split(", ", StringSplitOptions.RemoveEmptyEntries)
+            .Select(name => "/" + name.Trim('\'', ' '));
+
+        foreach (var name in names)
+        {
+            Assert.Equal(SlashService.NotGameMaster,
+                Assert.IsType<PyStr>(await CallAsync(service, name, new ClientSession())).Value);
+        }
+    }
+
     [Theory]
     [InlineData("dmg Heavy")]
     [InlineData("/DMG Heavy")]

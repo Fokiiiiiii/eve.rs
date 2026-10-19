@@ -133,6 +133,9 @@ def transform(src: str, lang: str):
         for j in range(a,b):
             if chars[j] != '\n': chars[j] = ' '
     result = '\n'.join(line.rstrip(' \t') for line in ''.join(chars).split('\n'))
+    result = re.sub(r'\n[ \t]*\n(?:[ \t]*\n)+', '\n\n', result)
+    result = re.sub(r'((?:^[ \t]*///[^\n]*\n|^[ \t]*//!.*\n)+)[ \t]*\n+', r'\1', result, flags=re.M)
+    result = re.sub(r'(^[ \t]*/\*\*[\s\S]*?\*/[ \t]*\n)[ \t]*\n+', r'\1', result, flags=re.M)
     if code_tokens(src, lang) != code_tokens(result, lang):
         raise ValueError('code token stream changed')
     return result, len(spans), len(remove)

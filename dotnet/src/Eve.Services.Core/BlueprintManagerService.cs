@@ -10,7 +10,7 @@ public sealed record BlueprintRecord(long ItemId, int TypeId, long OwnerId, long
 
 /// <summary>
 /// The client's <c>blueprintManager</c>: the blueprints a character or corporation holds, for the industry windows. The answers are the
-/// reference's (<c>blueprintManagerService.js</c>, <c>industryPayloads.js</c>). A blueprint's owner is the only one who sees it.
+
 /// </summary>
 [Service("blueprintManager")]
 public sealed partial class BlueprintManagerService(
@@ -44,7 +44,7 @@ public sealed partial class BlueprintManagerService(
     }
 
     /// <summary>
-    /// The blueprints of an owner: [list, counts]. The counts are per facility (the key is null for a blueprint in no facility). The
+
     /// listing is limited to <see cref="MaxBlueprintResults"/>. A facility filter lists none: no blueprint is in an industry facility here.
     /// </summary>
     [Method("GetBlueprintDataByOwner")]
@@ -65,7 +65,7 @@ public sealed partial class BlueprintManagerService(
         return Py.Tuple(new PyList([.. listed]), counts);
     }
 
-    /// <summary>The character or corporation the session acts for: the owner's own blueprints only.</summary>
+
     private async ValueTask<Eve.Corporations.SessionRoles?> CorporationRolesAsync(long owner, ServiceCall call)
     {
         var characterId = call.Session.CharacterId ?? 0;

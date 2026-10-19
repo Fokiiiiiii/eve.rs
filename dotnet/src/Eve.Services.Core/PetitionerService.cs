@@ -9,7 +9,7 @@ namespace Eve.Services.Core;
 public delegate ValueTask<PyValue?> PetitionerRpcCallback(ServiceCall call);
 
 /// <summary>
-/// EveLogic/EveJS petitioner RPC routes. With no support backend, responses match EveJS's
+
 /// client-safe empty and default wire values; a callback may handle any route when wired.
 /// </summary>
 [Service("petitioner")]

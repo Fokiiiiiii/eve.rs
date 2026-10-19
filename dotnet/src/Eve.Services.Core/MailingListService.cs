@@ -7,7 +7,7 @@ using Eve.Marshal;
 namespace Eve.Services.Core;
 
 /// <summary>
-/// Mailing-list discovery and configuration reads. Source: EveJS v0.12.9,
+
 /// 828823a75f211fdecb945b087a26c225f111491f, services/mail/mailingListsMgrService.js
 /// and mailState.js; client: eve-logic, ui/services/mail/mailingListsSvc.py.
 /// </summary>

@@ -5,30 +5,30 @@ using Eve.Services;
 
 namespace Eve.Services.Core;
 
-/// <summary>What the fitting managers need from the host: the categories of the types, the corporation roles, the alliance executor and the sessions of an owner.</summary>
+
 public interface IFittingHost
 {
     /// <summary>The category of each type that exists; a type that does not exist is absent.</summary>
     Task<IReadOnlyDictionary<int, int>> CategoriesAsync(IReadOnlyCollection<int> typeIds, CancellationToken cancellationToken);
 
-    /// <summary>Whether the character holds the corporation Fitting Manager role (EveJS <c>sessionHasFittingManagerRole</c>).</summary>
+
     Task<bool> HasFittingManagerRoleAsync(long characterId, CancellationToken cancellationToken);
 
-    /// <summary>Whether the character currently belongs to the named fitting owner.</summary>
+
     Task<bool> CanAccessOwnerAsync(long characterId, long ownerId, FittingOwnerScope scope, CancellationToken cancellationToken);
 
     /// <summary>The executor corporation of an alliance, or null.</summary>
     Task<long?> AllianceExecutorAsync(long allianceId, CancellationToken cancellationToken);
 
-    /// <summary>The sessions that play the characters of an owner: the recipients of its fitting notifications.</summary>
+
     IReadOnlyList<ClientSession> SessionsOf(FittingOwnerScope scope, long ownerId);
 }
 
 /// <summary>
-/// The fitting calls of <c>charFittingMgr</c>, <c>corpFittingMgr</c> and <c>allianceFittingMgr</c> (EveJS <c>charFittingMgrService.js</c>,
+
 /// <c>corpFittingMgrService.js</c>, <c>allianceFittingMgrService.js</c> and the store in <c>fittingStore.js</c>). The three services share this: the
-/// owner is the argument or the session's own, access and mutation are checked as the reference checks them, a refusal is the client's own UserError,
-/// and each change is announced to the sessions of the owner (<c>OnFittingAdded</c>, <c>OnFittingDeleted</c>, <c>OnManyFittingsDeleted</c>).
+
+
 /// </summary>
 public sealed class FittingMgrCalls(PgSavedFittingStore store, IFittingHost host, Func<long> nowUnixMs)
 {
@@ -141,7 +141,7 @@ public sealed class FittingMgrCalls(PgSavedFittingStore store, IFittingHost host
 
     private long Filetime() => Py.FileTimeFromUnixMs(nowUnixMs());
 
-    /// <summary>The owner the call names, or the session's own when it names none (EveJS <c>resolveRequestedOwnerID</c>).</summary>
+
     private static long OwnerOf(ServiceCall call, FittingOwnerScope scope)
     {
         var requested = IdOf(call.Arg(0)) ?? 0;
@@ -155,7 +155,7 @@ public sealed class FittingMgrCalls(PgSavedFittingStore store, IFittingHost host
         _ => session.CharacterId ?? 0,
     };
 
-    /// <summary>EveJS <c>assertSessionCanAccessOwner</c>: the owner is the session's own.</summary>
+
     private async ValueTask AccessAsync(ServiceCall call, long owner, FittingOwnerScope scope)
     {
         var characterId = call.Session.CharacterId ?? call.Session.GetInt("charid") ?? 0;
@@ -167,7 +167,7 @@ public sealed class FittingMgrCalls(PgSavedFittingStore store, IFittingHost host
         throw Refusal("OWNER_SCOPE_DENIED");
     }
 
-    /// <summary>EveJS <c>assertSessionCanMutateOwner</c>: a corporation needs the Fitting Manager role; an alliance also needs its executor corporation.</summary>
+
     private async ValueTask MutateAccessAsync(ServiceCall call, long owner, FittingOwnerScope scope)
     {
         await AccessAsync(call, owner, scope);
@@ -189,7 +189,7 @@ public sealed class FittingMgrCalls(PgSavedFittingStore store, IFittingHost host
         }
     }
 
-    /// <summary>The fitting exists for the owner (EveJS <c>FITTING_NOT_FOUND</c> before any other check).</summary>
+
     private async Task RequireOwnedAsync(FittingOwnerScope scope, long owner, long fittingId)
     {
         var found = fittingId > 0 ? await store.OwnerOfAsync(fittingId) : null;
@@ -199,7 +199,7 @@ public sealed class FittingMgrCalls(PgSavedFittingStore store, IFittingHost host
         }
     }
 
-    /// <summary>Reads a client fitting, normalises it and checks it (EveJS <c>normalizeIncomingFitting</c> then <c>validateFittingRecord</c>).</summary>
+
     private async Task<FittingDraft> CheckedDraftAsync(ServiceCall call, PyValue value)
     {
         var fields = Fields(value).ToDictionary(entry => JsSemantics.StringValue(entry.Key) ?? "", entry => entry.Value);
@@ -233,7 +233,7 @@ public sealed class FittingMgrCalls(PgSavedFittingStore store, IFittingHost host
             : new FittingItem((int)type, (int)flag, (int)quantity);
     }
 
-    /// <summary>Saves drafts for an owner, refusing when the owner would go over its limit. Returns the new ids in order.</summary>
+
     private async Task<IReadOnlyList<long>> SaveDraftsAsync(FittingOwnerScope scope, long owner, IReadOnlyList<FittingDraft> drafts)
     {
         var limit = LimitOf(scope);
@@ -242,7 +242,7 @@ public sealed class FittingMgrCalls(PgSavedFittingStore store, IFittingHost host
     }
 
     /// <summary>
-    /// Tells every session of the owner what changed, and for a corporation first drops the client's cached list (EveJS
+
     /// <c>notifyFittingMutation</c> and <c>invalidateClientFittingListCache</c>: the invalidation is in the stream before the notification).
     /// </summary>
     private void Notify(ServiceCall call, FittingOwnerScope scope, long owner, string name, PyValue payload)
@@ -282,7 +282,7 @@ public sealed class FittingMgrCalls(PgSavedFittingStore store, IFittingHost host
         _ => null,
     };
 
-    /// <summary>The refusal the client shows: the reference's UserError for the code (EveJS <c>throwFittingError</c>).</summary>
+
     public static MachoWrappedException Refusal(string code, long value = 0) => code switch
     {
         "FITTING_NAME_REQUIRED" => MachoErrors.ThrowUserError("FittingNeedsToHaveAName"),

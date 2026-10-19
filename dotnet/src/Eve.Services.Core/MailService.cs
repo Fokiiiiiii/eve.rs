@@ -8,7 +8,7 @@ using Eve.Marshal;
 namespace Eve.Services.Core;
 
 /// <summary>
-/// The mailMgr read contract from EveJS 828823a75f211fdecb945b087a26c225f111491f:
+
 /// server/src/services/mail/{mailMgrService,mailState}.js.
 /// Client: eve-logic 1dbb5711a072a146e1d228365668ac05655eefe1,
 /// eve/client/script/ui/services/mail/mailSvc.py (SyncMail, GetBody, GetLabels).

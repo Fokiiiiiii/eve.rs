@@ -3,9 +3,9 @@ using System.Text.Json;
 namespace Eve.Services.Core;
 
 /// <summary>
-/// The site status of the epic arc steps with a kill objective (<c>Data/mission-site-status.v1.json</c>, generated from the owner's
+
 /// coverage table). <see cref="Generic"/>: the site's population is a family rule, not client data; <see cref="Missing"/>: the
-/// kill dungeon has no template; <see cref="Specific"/>: a captured or client-static population. Owner decision: arc steps whose
+
 /// sites are generic or missing are held back from offers (see <see cref="MissionStaticCatalog.IsHeldBack"/>).
 /// </summary>
 public static class MissionSiteStatus

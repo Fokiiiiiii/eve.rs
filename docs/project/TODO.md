@@ -198,7 +198,7 @@ Each effect below is **OPEN — module wired, effect body pending**. Its handler
 
 Not wired here, and why:
 
-- `probeLaunching` is carried by probe charges (group 479, category 8), not by fitted modules. The client launches probes with `dogmaIM.LaunchProbes` (`eve/client/script/parklife/scanSvc.py`), and the `LaunchProbes` route is built by track A5 (section 24); the scan itself is not.
+- `probeLaunching` is carried by probe charges (group 479, category 8), not by fitted modules. The client launches probes with `dogmaIM.LaunchProbes` (`eve/client/script/parklife/scanSvc.py`), and the `LaunchProbes` route is built by track A5 (section 24); probe scanning is implemented in track A7 (section 29).
 - `surveyScan` is carried by the mining survey chipsets (ML-3 Mining Probe, Dactyl Asteroid Analyzer) and the QA Survey Scanner. It belongs to the mining work.
 - `targetHostiles` (Automated Targeting Systems), `ECMBurstJammerQA`, `pacifierDebuffQA` and `structureScanResolutionActivePercentage` (a structure module) are outside the exploration, hacking and scanner set.
 
@@ -584,7 +584,7 @@ Open, each with its blocker:
 - Resistance at activation: EVE.js refuses the start before a cycle is spent. The host reads the target's resistance at the cycle's end, so the eve.rs scanner
   spends one cycle. A pre-activation check needs the target's resistance in the activation request (a wire field).
 - NPC targets: a target needs an item record for its hold and fittings. NPC ships have none, so they are refused as `NO_TARGET`.
-- Probe lifecycle notifications (E-06: `OnNewProbe`, `OnProbeWarpStart` and the rest): not started; they depend on `LaunchProbes` (RC-7).
+- Probe lifecycle notifications (E-06: `OnNewProbe`, `OnProbeWarpStart` and the rest): built through the scan and recovery paths in sections 24 and 29; graphical-client check remains open.
 - Client check: not exercised. The MITM recipe (tools/mitm/README.md) needs a live EVE.js run and a headless scenario that scripts a scanner; neither exists.
 
 ## 20. Track C4: command bursts, buff registry, P.A.N.I.C. (2026-10-09): historical specification, superseded by C5–C8
@@ -617,7 +617,7 @@ Open, each with its exact blocker:
 - The projected ECCM (2246): pending.
 - WP12 bastion and 1934 (keep running after logoff): not built. The wiki page says nothing about logoff; the SDE sets 1934 = 0. Needs a logged-off ship that stays in space.
 - WP17 sim-side assistance and jam overlays: not started; the part to build is not settled in the sources read.
-- E-06 probe lifecycle notifications: not started; needs the probe launcher (`LaunchProbes`, RC-7).
+- E-06 probe lifecycle notifications: built with `LaunchProbes` in section 24 and scan/recovery in section 29; graphical-client verification remains open.
 ## 21. Track C5: command bursts and the buff registry (2026-10-09): built
 
 The dogma library and recipient rule were implemented in C5. Section 22 supersedes the remaining C5 open items with the end-to-end implementation; C8 records persistence across entry and restart. The C4 reading of zero was wrong: effect 6737 derives strength from charge multiplier 2596 and module value 2469. Sources and choices are in DEVIATIONS, tracks C4–C8.
@@ -674,7 +674,7 @@ Open, each with its exact blocker:
 
 ## 24. Track A5: scanner probes, launch and recall (2026-10-10)
 
-Done (tests in `ScanProbeHostTests`, the simulation tests in `deployable/tests.rs`, codec fixtures; decisions in DEVIATIONS "Track A5: scanner probes"): `dogmaIM.LaunchProbes`
+Done (tests in `ScanProbeHostTests`, the simulation tests in `deployable/tests.rs`, codec fixtures; decisions in DEVIATIONS "Track A5: scanner probes"): `dogmaIM.LaunchProbes`. `The_pilot_controls_at_most_eight_probes_and_a_launcher_with_too_few_probes_refuses` passed on `eve_p3` on 2026-10-19.
 with the reference's checks and messages; eight active probes per pilot per system; probes put in space on a ring of ten kilometres (`PlaceProbe`, protocol 45); the
 charge stack spent; `OnNewProbe` told to the pilot; recall through `scanMgr.DestroyProbe` (`OnRemoveProbe`); expiry at `space.probes.sweep`.
 
@@ -2607,7 +2607,7 @@ Packages CH-11 (partial), CH-2, CH-5, CH-7, CH-9 of `docs/project/character-phas
 - **CH-5 (done, lane eve_p3).** Login milestone: `MilestoneMgrService`, `LoginMilestoneStore` (migration 0008). Tests: `LoginMilestoneStoreTests`, `MilestoneMgrServiceTests`. Live: `tools/headless-client/tests/test_login_milestone_live.py`.
 - **CH-7 (done, lane eve_p3).** Atomic population seat on `SelectCharacterID`. Tests: `PopulationCapTests` (`Simultaneous_entries_into_the_last_room_admit_exactly_one`, `A_seat_is_taken_in_the_same_step_as_the_room_check_and_is_given_back_when_disposed`). Live: `tools/headless-client/tests/test_population_cap_live.py`.
 - **CH-9 (done, lane eve_p3).** Achievement tracker writes and reads, no golden fixture: `AchievementTrackerStore` (migration 0009). Tests: `AchievementTrackerStoreTests`, `AchievementTrackerWriteTests`. Live: `tools/headless-client/tests/test_achievement_tracker_live.py`.
-- **CH-11 (partial).** Implants and active boosters act on the pilot's dogma attributes (`Eve.Ships/PilotAugmentations.cs`; tests `PilotAugmentationTests`). Open: the training rate reads base learning attributes; no implant-change notification (clone install, CH-15/CH-16); no live walk.
+- **CH-11 (implemented; live walk covers the implant lifecycle).** `PilotLearningBonus` refreshes SDE dogma modifiers from installed implants and active boosters, and `CharacterTraining` adds those bonuses to the learning attributes used for skill rates. Implant mutations publish item, implant-cache, attribute and brain notifications. Coverage: `PilotAugmentationTests`, `PilotLearningBonusTests`, `CharacterTrainingLearningTests`, and live `tools/headless-client/tests/test_implant_live.py` (booster training-rate change, implant install/refusal/removal and notification order). The live test does not isolate the implant's contribution to the training rate or verify it across a host restart.
 - **CH-17 (not started in S2).** Expert systems: the catalogue is EveJS's static table (`tools/DatabaseCreator/staticTables/expertSystems/data.json`, from the client SDE 3365090; the pinned SDE copy has no expert system data).
 
 ## Character phase S4 (2026-10-16)
@@ -2616,7 +2616,7 @@ Packages CH-11 (done, eve_p3), CH-17 (done, eve_p3), CH-16 (partial). Difference
 
 - **CH-11 (done, lane eve_p3).** Implants and boosters act on the training rate and are walked live: `dogmaIM.InjectImplant` (Plug In), `DestroyImplant` (Unplug) and `UseBooster` (Consume) are served by `Eve.Services.Dogma/DogmaIMService.Augmentations.cs` and `PilotAugmentationRpc.cs`, with `Eve.Ships/PilotImplants.cs` and `PilotLearningBonus.cs`. Tests: `CharacterTrainingLearningTests` (rate, rebase, refresh), `PilotLearningBonusTests` (Eve.Ships.Tests), live `test_implant_live.py` (booster rate 1.5 on Gunnery; plug-in, refusal of a second implant for the slot, unplug; notification order). Not done: the Omega rule for certain implants (wiki, unnamed); the booster expiry changes the rate at the next read, not at the lapse (DEVIATIONS S4). The implant and booster outcome after a host restart is read from PostgreSQL but no restart test covers it.
 - **CH-17 (done, lane eve_p3).** Expert systems: `expertSystemMgr` (`Eve.Services.Skills/ExpertSystemMgrService.cs`): `GetMyExpertSystems`, `ConsumeExpertSystem`, `RemoveMyExpertSystem`; the catalogue `Eve.Skills/Data/expert-systems.v1.json` (EveJS data, generated by `tools/dev/gen-expert-system-catalog.py`); table `character_expert_systems` (skills migration 0008); the granted levels in `GetSkills` and in the pilot's dogma; the expiry job `skills.expert-systems.expire` (10 s). Tests: `ExpertSystemTests`, `ExpertSystemStoreTests` (Eve.Skills.Tests), live `test_expert_system_live.py` (consume, list, granted skill, remove, lapse with `OnExpertSystemExpired`). Not done: the persistent expiry notice for an offline pilot (type 253), the fitting checks on the granted level (not checked).
-- **CH-16 (not done).** The clone jump needs a session relocation helper that eve.rs does not have (EveJS `applyCharacterToSession`); the activation fee, the cooldown and the replacement-clone rules are read from EveJS (`jumpCloneRules.js`, `jumpCloneRuntime.js`); the death respawn already uses the home station (= the clone station, CH-12). CH-15 (S1) has the station install on `origin/main`. See `docs/project/character-phase/handoff-S4.md`.
+- **CH-16 (station-clone jump implemented; other destinations remain open).** The station-clone jump relocates the session, charges the activation fee, starts the cooldown, applies replacement-clone rules and ends normal boosters while preserving cerebral accelerators. Host restart and live station-clone coverage are recorded below. Structure clone destinations are not supported by this path; pod-death respawn remains at the home station. Sources and remaining destination limits are recorded in DEVIATIONS, "Clone jumps (CH-16)".
 - **Not this package (found, not fixed).** `dotnet/tests/Eve.Services.Core.Tests` does not compile on `origin/main`: `UserSvcServiceTests.cs` `InMemoryMultipleTraining` implements `ActivateCertificatesAsync` and not the `IMultipleTrainingCallbacks.ActivateItemAsync` of CH-6 (`MultipleTrainingCallbacks.cs`). The Core test project therefore runs nothing until that double is updated.
 
 

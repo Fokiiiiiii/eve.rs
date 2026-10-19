@@ -94,7 +94,7 @@ Lanes are the PostgreSQL databases from `docs/project/DATABASES.md`: `eve_p2` (l
 | CH-8 | Re-sculpt and paperdoll states 1 and 3 | GATE-B | 1 (gated) | eve_p4 | CH-4, CH-11, CH-13, CH-14 |
 | CH-9 | Achievement writes, no fixture | none | 1 | eve_p3 | CH-2, CH-5, CH-7 |
 | CH-10 | userSvc constant answers (playtime, votes, reports) | GATE-C | 1 (gated) | eve_p2 | CH-1, CH-3, CH-6, CH-12 |
-| CH-11 | Implant and booster modifiers in pilot dogma | none | 1 | eve_p4 | CH-4, CH-8, CH-13, CH-14 |
+| CH-11 | Implant and booster modifiers in pilot dogma and training | none | 1 | eve_p3 | CH-4, CH-8, CH-13, CH-14 |
 | CH-12 | Jump-clone store, clone state reads, names, destroy, clone-station field | none | 1 | eve_p2 | CH-1, CH-3, CH-6, CH-10 |
 | CH-13 | Player bounties: place, read, top lists | none | 1 | eve_p4 | CH-4, CH-8, CH-11, CH-14 |
 | CH-14 | Standings verification (NPC kill standing) | none | 1 | eve_p4 | CH-4, CH-8, CH-11, CH-13 |

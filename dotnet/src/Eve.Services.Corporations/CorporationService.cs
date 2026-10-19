@@ -52,6 +52,8 @@ public sealed partial class CorporationService(CorporationStore store,PgCharacte
     {
         var characterId = call.Args.Count == 0 ? SessionCharacterId(call.Session) : MedalInteger(call.Arg(0));
         var received = await store.MedalsReceivedAsync(characterId, call.Cancellation);
+        if (characterId != SessionCharacterId(call.Session))
+            received = received.Where(r => r.Medal.Status == 3).ToArray();
         var info = received.Select(r => (PyValue)Py.List(
             CorporationWire.Id(r.Medal.Id), CorporationWire.Id(r.Award.IssuerId), CorporationWire.Id(r.Medal.CorporationId),
             CorporationWire.Id(r.Medal.Status), new PyWString(r.Award.Reason),
@@ -85,12 +87,28 @@ public sealed partial class CorporationService(CorporationStore store,PgCharacte
         return Py.KeyVal([("info", info), ("graphics", graphics)]);
     }
 
+    private async Task<(long CorporationId, long CharacterId)> RequireMedalManagerAsync(ServiceCall call)
+    {
+        var actor = SessionCharacterId(call.Session);
+        if (actor <= 0 || await characters.GetAsync(actor,call.Cancellation) is not { } character ||
+            await store.GetAsync(character.CorporationId,call.Cancellation) is not { IsNpc:false,Deleted:false } corporation ||
+            await store.MemberAsync(actor,call.Cancellation) is not { } member || member.CorporationId != corporation.Id)
+            throw new CorporationError("CORPORATION_ACCESS_DENIED");
+
+        var roles = CorporationRoles.Session(corporation,member,character.StationId,
+            await store.TitlesAsync(corporation.Id,call.Cancellation)).AtAll;
+        if ((roles & (CorporationRoles.Director | CorporationRoles.PersonnelManager)) == 0)
+            throw new CorporationError("CORPORATION_ACCESS_DENIED");
+        return (corporation.Id,actor);
+    }
+
     [Method("CreateMedal")]
     public async ValueTask<PyValue> CreateMedal(ServiceCall call)
     {
+        var (corporationId,actor) = await RequireMedalManagerAsync(call);
         var graphics = ParseMedalGraphics(call.Arg(2));
-        var id = await store.CreateMedalAsync(SessionCorporationId(call.Session), SessionIssuerId(call.Session),
-            MedalText(call.Arg(0)), MedalText(call.Arg(1)), graphics, call.Cancellation);
+        var id = await store.CreateMedalAsync(corporationId,actor,
+            MedalText(call.Arg(0)),MedalText(call.Arg(1)),graphics,call.Cancellation);
         return CorporationWire.Id(id);
     }
 
@@ -129,17 +147,27 @@ public sealed partial class CorporationService(CorporationStore store,PgCharacte
     [Method("GiveMedalToCharacters")]
     public async ValueTask<PyValue> GiveMedalToCharacters(ServiceCall call)
     {
+        var (corporationId,actor) = await RequireMedalManagerAsync(call);
         var rawRecipients = call.Arg(1);
         var recipients = rawRecipients is PyList or PyTuple
             ? MedalSequence(rawRecipients).Select(MedalInteger).ToArray()
             : [MedalInteger(rawRecipients)];
-        var corporationId = SessionCorporationId(call.Session);
         var medalId = MedalInteger(call.Arg(0));
         var medal = await store.MedalAsync(medalId,call.Cancellation);
+        if (medalId <= 0 || medal?.CorporationId != corporationId ||
+            recipients.Length == 0 || recipients.Any(characterId => characterId <= 0))
+            throw new CorporationError("CORPORATION_ACCESS_DENIED");
+
+        foreach (var recipientId in recipients)
+        {
+            if (await store.MemberAsync(recipientId,call.Cancellation) is not { } recipient ||
+                recipient.CorporationId != corporationId)
+                throw new CorporationError("CORPORATION_ACCESS_DENIED");
+        }
+
         await store.AwardMedalAsync(corporationId,medalId,recipients,
-            SessionIssuerId(call.Session),MedalText(call.Arg(2)),call.Cancellation);
-        if (medal?.CorporationId == corporationId)
-            CorporationNotificationAdapter.MedalsReceived(characterSessions,call,medalId,recipients);
+            actor,MedalText(call.Arg(2)),call.Cancellation);
+        CorporationNotificationAdapter.MedalsReceived(characterSessions,call,medalId,recipients);
         return PyNone.Instance;
     }
 

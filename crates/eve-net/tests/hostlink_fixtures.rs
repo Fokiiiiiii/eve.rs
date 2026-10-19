@@ -1,7 +1,3 @@
-//! Replays oracle/fixtures/hostlink/messages.json, the golden frames of docs/design/adr/0002 (the C# host
-//! replays the same file): every valid frame encodes to its bytes and decodes back, every invalid one is
-//! refused for the stated reason.
-
 use bytes::{Bytes, BytesMut};
 use eve_net::hostlink::{AuthOutcome, DecodeError, Message, SessionOpen};
 use serde_json::Value;

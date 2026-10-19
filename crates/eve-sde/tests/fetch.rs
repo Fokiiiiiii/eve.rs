@@ -1,7 +1,3 @@
-//! Tests for fetching an SDE build: sources, hash pin, extraction. Downloads use
-//! `file://` URLs and one loopback HTTP server; the loader half is in ensure.rs.
-//! They need `curl` on the PATH, as the fetcher does.
-
 use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -175,7 +171,6 @@ fn no_sources_and_no_archive_is_an_error_not_a_silent_success() {
     assert!(matches!(error, FetchError::NoSources), "{error}");
 }
 
-/// Serve `routes` (path, status, body) on a loopback port, one connection each in order of arrival.
 fn serve(routes: Vec<(&'static str, u16, Vec<u8>)>) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let base = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());

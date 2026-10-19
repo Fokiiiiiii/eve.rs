@@ -1,7 +1,3 @@
-//! A minimal EVE client, for tests and load generation: the client half of the handshake, and the packets
-//! a session sends. It is not a game client; `tools/headless-client` (evecli) is the reference for what a
-//! real one does.
-
 use bytes::Bytes;
 use eve_marshal::{SubStream, Value, decode_bytes, encode_packet};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};

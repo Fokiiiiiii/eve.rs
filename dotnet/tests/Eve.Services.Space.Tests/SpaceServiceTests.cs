@@ -73,6 +73,28 @@ public class SpaceServiceTests
 {
     private static long Id(PyValue value) => Events.Number(value);
 
+    [PgFact]
+    public async Task A_tengu_rig_can_be_removed_to_the_hangar_without_being_destroyed()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var character = await rig.NewCharacterAsync();
+        const int tenguTypeId = 29984;
+        const int mediumRigTypeId = 31790;
+        await rig.Statics.EnsureTypesAsync([tenguTypeId, mediumRigTypeId]);
+        Assert.Equal(963, rig.Statics.Type(tenguTypeId)!.GroupId);
+        var tengu = (await rig.Ships.GrantAsync(character.CharacterId, tenguTypeId, 1, singleton: true))!.Single().After;
+        var rigItem = (await rig.Ships.GrantAsync(character.CharacterId, mediumRigTypeId, 1, singleton: true))!.Single().After;
+
+        var fitted = await rig.Ships.MoveAsync(character.CharacterId, rigItem.Id, Rig.Station, tengu.Id, 92, null);
+        Assert.IsType<Eve.Ships.ShipChanged>(fitted);
+        var removed = await rig.Ships.MoveAsync(character.CharacterId, rigItem.Id, tengu.Id, Rig.Station, null, null);
+
+        Assert.IsType<Eve.Ships.ShipChanged>(removed);
+        var saved = await rig.Items.GetAsync(rigItem.Id);
+        Assert.NotNull(saved);
+        Assert.Equal((Rig.Station, Eve.Inventory.ItemFlags.Hangar), (saved.LocationId, saved.Flag));
+    }
+
     [Fact]
     public async Task Admin_get_bubble_id_requires_server_staff_role_and_uses_available_bubble_sources()
     {
@@ -185,17 +207,13 @@ public class SpaceServiceTests
         release.TrySetResult();
         await Rig.UntilAsync(() => !rig.Space.IsInSpace(session));
 
-        var recovered = false;
-        for (var attempt = 0; attempt < 200 && !recovered; attempt++)
-        {
-            var ship = await rig.Items.GetAsync(character.ShipId);
-            recovered = ship is not null
-                && ship.LocationId == Rig.Station
-                && ship.Flag == Eve.Inventory.ItemFlags.Hangar;
-            if (!recovered)
-                await Task.Delay(25);
-        }
-        Assert.True(recovered, "the logged-off ship should be in the station hangar");
+        await rig.Space.QuiesceAsync();
+        var ship = (await rig.Items.GetAsync(character.ShipId))!;
+        var spaceItem = await rig.SpaceItems.GetAsync(character.ShipId);
+        var system = session.GetInt("solarsystemid")!.Value;
+        Assert.Equal(system, ship.LocationId);
+        Assert.Equal(Eve.Ships.CharacterShips.InSpaceFlag, ship.Flag);
+        Assert.Equal((int)system, spaceItem?.SolarSystemId);
     }
 
     [PgFact]
@@ -2679,12 +2697,14 @@ public class SpaceServiceTests
         await Rig.UntilAsync(() => session.GetInt("solarsystemid") == NextSystem);
 
         session.Close();
-        await Rig.UntilAsync(() => rig.Items.GetAsync(character.ShipId).GetAwaiter().GetResult()!.Flag == ItemFlags.Hangar);
+        await rig.Space.QuiesceAsync();
 
         var ship = (await rig.Items.GetAsync(character.ShipId))!;
-        Assert.Equal(Rig.Station, ship.LocationId);
+        Assert.Equal((long)NextSystem, ship.LocationId);
+        Assert.Equal(Eve.Ships.CharacterShips.InSpaceFlag, ship.Flag);
+        Assert.Equal(NextSystem, (await rig.SpaceItems.GetAsync(character.ShipId))?.SolarSystemId);
         var record = (await rig.Characters.GetAsync(character.CharacterId))!;
-        Assert.Equal((from, Rig.Station), (record.SolarSystemId, record.StationId));
+        Assert.Equal((NextSystem, Rig.Station), (record.SolarSystemId, record.StationId));
         Assert.Contains(rig.Sim.Heard, m => m is SimLeave { Why: LeaveWhy.LoggedOff });
     }
 
@@ -2951,8 +2971,13 @@ public class SpaceServiceTests
 
         var leave = new SimLeave((ulong)session.SessionId, LeaveWhy.LoggedOff);
         await Rig.UntilAsync(() => rig.Sim.Heard.Contains(leave));
+        await rig.Space.QuiesceAsync();
         Assert.Contains(leave, rig.Sim.Heard);
-        await Rig.UntilAsync(() => rig.Items.GetAsync(character.ShipId).GetAwaiter().GetResult() is { LocationId: Rig.Station });
+        var ship = (await rig.Items.GetAsync(character.ShipId))!;
+        var system = (int)session.GetInt("solarsystemid")!.Value;
+        Assert.Equal((long)system, ship.LocationId);
+        Assert.Equal(Eve.Ships.CharacterShips.InSpaceFlag, ship.Flag);
+        Assert.Equal(system, (await rig.SpaceItems.GetAsync(character.ShipId))?.SolarSystemId);
         Assert.False(rig.Space.IsInSpace(session));
     }
 

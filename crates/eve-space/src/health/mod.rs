@@ -159,7 +159,6 @@ impl Applied {
 
 /// The adaptive resonances of a reactive armor hardener that runs on the ship: the module's multipliers of the armor's resonances (`profile`, the
 /// effective armor resonance is the ship's own times these), the damage the armor took this cycle per kind, weighted by the resonance it had (`tally`),
-
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Shift {
     pub profile: Damage,

@@ -13,7 +13,12 @@ namespace Eve.Services.Corporations;
 /// negotiation can be opened here, so the calls that act on one are refused, and the lists of them are empty.
 /// </summary>
 [Service("warRegistry")]
-public sealed partial class WarRegistryService(Npgsql.NpgsqlDataSource source, RelationStore relations, CharacterSessions? sessions, Func<long> nowMs)
+public sealed partial class WarRegistryService(
+    Npgsql.NpgsqlDataSource source,
+    RelationStore relations,
+    CharacterSessions? sessions,
+    Func<long> nowMs,
+    Func<long, long, CancellationToken, Task<bool>>? canManageWarAsync = null)
 {
     private const string WarKind = "war";
     private const string NegotiationNotice = "War negotiations are not available on this server.";
@@ -100,6 +105,7 @@ public sealed partial class WarRegistryService(Npgsql.NpgsqlDataSource source, R
         var warId = Integral(call.Arg(0)) ?? 0;
         var open = Truthy(call.Arg(1));
         var entity = EntityOf(call.Session);
+        await RequireWarDirectorAsync(call, entity);
         await ChangeWarAsync(warId, war => war.AgainstId == entity, (attrs, _) => attrs["openForAllies"] = open ? 1 : 0, null, call.Cancellation);
         return PyNone.Instance;
     }
@@ -112,6 +118,7 @@ public sealed partial class WarRegistryService(Npgsql.NpgsqlDataSource source, R
     {
         var warId = Integral(call.Arg(0)) ?? 0;
         var entity = EntityOf(call.Session);
+        await RequireWarDirectorAsync(call, entity);
         var now = nowMs();
         await ChangeWarAsync(warId, war => war.Mutual && (war.DeclaredById == entity || war.AgainstId == entity),
             (attrs, _) =>
@@ -143,6 +150,14 @@ public sealed partial class WarRegistryService(Npgsql.NpgsqlDataSource source, R
         var updated = await WarsAsync(token);
         var after = updated.FirstOrDefault(candidate => candidate.WarId == warId);
         if (after is not null) CorporationNotificationAdapter.WarChangedBackground(sessions, after.DeclaredById, after.AgainstId, Payload(after));
+    }
+
+    private async Task RequireWarDirectorAsync(ServiceCall call, long ownerId)
+    {
+        var characterId = call.Session.CharacterId ?? 0;
+        if (characterId <= 0 || ownerId <= 0 || canManageWarAsync is not { } canManage ||
+            !await canManage(characterId, ownerId, call.Cancellation))
+            throw MachoErrors.ThrowUserError("CrpAccessDenied", ("reason", new PyStr("UI/Corporations/AccessRestrictions/NotDirector")));
     }
 
     private async Task<IReadOnlyList<WarsInfoMgrService.WarRecord>> WarsAsync(CancellationToken token) => await WarsInfoMgrService.ReadWarsAsync(relations, token);

@@ -28,10 +28,8 @@ from typing import Any, Optional
 
 from . import marshal as m
 
-
 class HandshakeError(Exception):
     pass
-
 
 class LoginRejected(HandshakeError):
     """The server refused the login and closed the transport."""
@@ -39,7 +37,6 @@ class LoginRejected(HandshakeError):
     def __init__(self, reason: str):
         super().__init__(f"login rejected: {reason}")
         self.reason = reason
-
 
 def password_hash(user: str, password: str) -> bytes:
     """The client's `machobase.PasswordHash`: SHA-1 over the UTF-16LE password and a
@@ -50,7 +47,6 @@ def password_hash(user: str, password: str) -> bytes:
     for _ in range(1000):
         digest = hashlib.sha1(digest + salt).digest()
     return digest
-
 
 class Connection:
     """A framed marshal connection: [u32 length][payload] in both directions."""
@@ -84,7 +80,6 @@ class Connection:
         except OSError:
             pass
 
-
 @dataclass
 class ServerVersion:
     birthday: Any
@@ -93,7 +88,6 @@ class ServerVersion:
     boot_version: Any
     boot_build: Any
     project: Any
-
 
 @dataclass
 class SessionInfo:
@@ -134,19 +128,15 @@ class SessionInfo:
         self.user_id = self.session_init.get("userid", self.user_id)
         self.role = self.session_init.get("role", self.role)
 
-
 def _text(value) -> str:
     if isinstance(value, (bytes, bytearray)):
         return bytes(value).decode("utf-8", "replace")
     return str(value)
 
-
 def _as_dict(value) -> dict:
     return value.as_dict() if isinstance(value, m.Dict) else {}
 
-
 _REASON = re.compile(rb"(LoginAuthFailed|ACCOUNTBANNED|[A-Z][A-Za-z_]{6,})")
-
 
 def _rejection_reason(value) -> Optional[str]:
     """The reason of a GPSTransportClosed pickle sent instead of a reply."""
@@ -154,7 +144,6 @@ def _rejection_reason(value) -> Optional[str]:
         found = _REASON.search(bytes(value).split(b"GPSTransportClosed", 1)[-1])
         return found.group(1).decode() if found else "transport closed"
     return None
-
 
 def login(conn: Connection, user: str, password: str, *, language: str = "EN") -> SessionInfo:
     """Run the handshake on `conn` and return the session it opened."""
@@ -229,7 +218,6 @@ def login(conn: Connection, user: str, password: str, *, language: str = "EN") -
         handshake=_as_dict(handshake),
         signed_func=signed_func,
     )
-
 
 def connect(host: str, port: int, timeout: float = 10.0) -> Connection:
     return Connection(socket.create_connection((host, port), timeout=timeout), timeout)

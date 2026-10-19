@@ -8,7 +8,6 @@ from evecli.client import Client, filetime_to_unix
 
 from .mock_server import MockServer
 
-
 def test_password_hash_matches_the_clients_recipe():
     # An independent restatement of machobase.PasswordHash
     import hashlib
@@ -22,7 +21,6 @@ def test_password_hash_matches_the_clients_recipe():
     assert handshake.password_hash("PILOT", "hunter2") == handshake.password_hash("pilot", "hunter2")
     # ...but the password's case does.
     assert handshake.password_hash("pilot", "Hunter2") != handshake.password_hash("pilot", "hunter2")
-
 
 def test_login_and_calls():
     with MockServer() as server:
@@ -57,7 +55,6 @@ def test_login_and_calls():
     # The crypto request carries no keys: nothing is encrypted
     assert m.plain(server.received[2][1][0]) == "placebo"
 
-
 def test_service_info_routes_routed_services_through_a_cached_node():
     client = Client()
     client.service_info = {
@@ -71,7 +68,6 @@ def test_service_info_routes_routed_services_through_a_cached_node():
     assert client._address_for_service("machoNet") == packet.any_address("machoNet")
     assert client._address_for_service("invbroker") == (packet.ADDR_NODE, 65_450, "invbroker", None)
     assert client._address_for_service("beyonce") == packet.any_address("beyonce")
-
 
 def test_session_change_is_applied_while_waiting_for_call_response():
     session = handshake.SessionInfo(
@@ -126,7 +122,6 @@ def test_session_change_is_applied_while_waiting_for_call_response():
     assert m.plain(session.session_init["solarsystemid"]) == 30_000_142
     assert client.notifications[0].command == packet.SESSIONCHANGENOTIFICATION
 
-
 def test_wrong_password_is_rejected():
     with MockServer() as server:
         server.add_account("pilot", "hunter2")
@@ -134,7 +129,6 @@ def test_wrong_password_is_rejected():
             with pytest.raises(handshake.LoginRejected) as info:
                 client.login("pilot", "wrong")
     assert info.value.reason == "LoginAuthFailed"
-
 
 def test_unknown_account_can_be_auto_created():
     with MockServer(auto_create=True) as server:
@@ -147,7 +141,6 @@ def test_unknown_account_can_be_auto_created():
             with pytest.raises(handshake.LoginRejected):
                 client.login("newcomer", "different")
 
-
 def test_error_response_becomes_an_exception():
     with MockServer() as server:
         server.add_account("pilot", "hunter2")
@@ -157,7 +150,6 @@ def test_error_response_becomes_an_exception():
                 client.call("noSuchService", "Nothing")
     assert info.value.code == 2
     assert "noSuchService.Nothing" in str(m.plain(info.value.payload))
-
 
 def test_call_request_wire_shape():
     """What the server receives is the reference's CallReq shape."""
@@ -176,7 +168,6 @@ def test_call_request_wire_shape():
     remote_object, method, args, kwargs = stream.value
     assert (remote_object, args) == (1, ()) and bytes(method).decode() == "GetTime"
 
-
 def test_a_bound_call_names_its_object_in_the_body_and_no_service_in_the_address():
     """The call to a bound object: the destination has no service and the body's first element is the object."""
     oid = ("N=65450:1", m.Long(134351313110300000))
@@ -194,7 +185,6 @@ def test_a_bound_call_names_its_object_in_the_body_and_no_service_in_the_address
     assert m.plain(remote_object) == ("N=65450:1", 134351313110300000)
     assert bytes(method).decode() == "List" and args == (4,)
     assert m.plain(kwargs) == {"flags": 1}
-
 
 def test_the_object_of_a_bind_answer_is_found_through_its_wrappers():
     oid = ("N=65450:1", 5)

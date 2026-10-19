@@ -23,11 +23,9 @@ VULNERABILITY_THRESHOLD = 75_000
 # the two warzones hold 103 and 149 systems; the faction-held ones are seeded from the SDE, so a server has well over a hundred occupied
 MIN_OCCUPIED = 100
 
-
 def _client() -> Client:
     host, _, port = LIVE.partition(":")
     return Client(host or "127.0.0.1", int(port or 26000), timeout=20.0)
-
 
 def _states(value):
     """The (system id, score, threshold) of each entry of the answer, whatever the containers are."""
@@ -42,7 +40,6 @@ def _states(value):
         rows.append((int(system), numbers))
     return rows
 
-
 def _flatten(value):
     if isinstance(value, (list, tuple)):
         for item in value:
@@ -54,7 +51,6 @@ def _flatten(value):
         yield from _flatten(vars(value))
     else:
         yield value
-
 
 def test_every_occupied_system_has_a_victory_point_state_at_the_threshold():
     with _client() as client:

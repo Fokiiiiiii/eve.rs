@@ -21,7 +21,6 @@ CHECKED_SERVICE = 5  # a station service with a standing requirement in the SDE 
 OPEN_SERVICE = 13  # a station service whose requirement is below zero: open to everyone
 pytestmark = pytest.mark.skipif(not base.LIVE, reason="set EVE_LIVE_HOST=host:port to test against a running server")
 
-
 def test_a_docked_pilot_asks_the_station_door_for_its_services():
     race = HEALTH["races"][0]
     run = uuid.uuid4().hex[:10]
@@ -31,6 +30,6 @@ def test_a_docked_pilot_asks_the_station_door_for_its_services():
         door = bound[0]
         assert who.call_bound(door, "DoStandingCheckForStationService", OPEN_SERVICE) is None
         answer, error = outcome(lambda: who.call_bound(door, "DoStandingCheckForStationService", CHECKED_SERVICE))
-        assert answer is None or error is not None, (answer, error)  # open for this station's owner, or refused by standing
+        assert answer is None or error is not None, (answer, error)
         answer, error = outcome(lambda: who.call_bound(door, "MoveCorpHQHere"))
         assert error is not None, answer  # no director role: refused

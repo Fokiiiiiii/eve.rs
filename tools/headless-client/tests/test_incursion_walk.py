@@ -25,11 +25,9 @@ pytestmark = pytest.mark.skipif(not LIVE, reason="set EVE_LIVE_HOST=host:port to
 # the keys of an incursion report row the map reads (the client reads the tale id, state, influence and incursed systems of each row)
 REPORT_KEYS = {"taleID", "templateClassID", "stagingSolarSystemID", "state", "influence", "rewardGroupID", "incursedSystems"}
 
-
 def _client() -> Client:
     host, _, port = LIVE.partition(":")
     return Client(host or "127.0.0.1", int(port or 26000), timeout=20.0)
-
 
 def normal(value):
     """A decoded answer as plain Python: a named object (a KeyVal, a rowset) is its fields, a tuple is a list."""
@@ -41,7 +39,6 @@ def normal(value):
         return {str(key): normal(item) for key, item in value.items()}
     return value
 
-
 def shape(value):
     """The keys and the types of a normalised answer, with a list shown by its first row (the values are not compared)."""
     if isinstance(value, dict):
@@ -49,7 +46,6 @@ def shape(value):
     if isinstance(value, list):
         return [shape(value[0])] if value else []
     return type(value).__name__
-
 
 def _dump(name: str, answer) -> None:
     path = os.environ.get("EVE_LIVE_SHAPE_OUT")
@@ -64,7 +60,6 @@ def _dump(name: str, answer) -> None:
     with open(path, "w") as handle:
         json.dump(recorded, handle, indent=2, sort_keys=True)
 
-
 def test_the_incursion_report_has_the_rows_the_map_reads():
     with _client() as client:
         client.login("evecli-live", "evecli-live")
@@ -76,7 +71,6 @@ def test_the_incursion_report_has_the_rows_the_map_reads():
             assert REPORT_KEYS <= set(row), f"missing keys: {sorted(REPORT_KEYS - set(row))}"
             assert row["state"] in (0, 1, 2)
             assert 0.0 <= float(row["influence"]) <= 1.0
-
 
 def test_the_systems_in_incursions_answer_rows_for_the_staging_systems():
     with _client() as client:

@@ -64,7 +64,7 @@ public sealed record StructureRpcCallbacks
 }
 
 /// <summary>
-/// Implements the EveJS structure RPC surface. Missing domain backends use the same empty/null
+
 /// wire values as the reference handlers and can be supplied through <see cref="StructureRpcCallbacks"/>.
 /// </summary>
 public sealed class StructureRpcService : IService

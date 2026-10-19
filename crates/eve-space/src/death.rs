@@ -2,7 +2,6 @@
 //! its ball (one stamp), it stops being a pilot of the scene (its locks are let go, its tree is forgotten), and it leaves a wreck (`crate::wreck`),
 //! which those who can see the place are sent. What is done to the pilot of a player's ship (a capsule to fly, the ship's items, the wreck's
 //! contents) is the host's: it is told with [`Out::Destroyed`].
-
 use eve_destiny::Vec3;
 use eve_marshal::Value;
 

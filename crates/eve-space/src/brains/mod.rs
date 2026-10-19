@@ -5,7 +5,6 @@
 //! The scene has no threads and no clock of its own, so the brains are run by `Scene::poll`: the calls and timers that are due, the ball callbacks
 //! whose range has been reached, and the messages waiting for a tree are delivered every poll, and the trees are ticked once a second ([`TICK`]; the
 //! client's package does not say how often, and the reference's own NPC loop is not a behavior tree).
-
 mod ballpark;
 mod dogma;
 #[cfg(test)]

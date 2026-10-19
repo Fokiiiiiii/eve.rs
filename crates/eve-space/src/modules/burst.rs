@@ -1,7 +1,5 @@
 //! The Standup burst projectors of a controlled structure (ST-8b). The structure's pilot runs the module. Each pulse first asks the Host which of the
-
 //! the ships the Host returns are reached. What a pulse lands is the projected effect of the family (`Remote`), with the ship effect's numbers.
-
 use super::{Effect, PendingStructureDamageOperation, Remote};
 use crate::ewar::{jam_chance, rolls_under};
 use crate::scene::{Out, Scene, SessionId};

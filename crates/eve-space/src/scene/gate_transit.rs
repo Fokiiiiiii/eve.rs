@@ -3,7 +3,6 @@
 //! The rules are EVE.js `activateAccelerationGateForSession`: the ship must be within the gate's reach (the gate's and the ship's radius plus
 //! [`GATE_ACTIVATION_RANGE`], at least that range), and the transit is a warp to the other room's entry point, the client's own warp sequence. The
 //! ship's modules stop and its locks are let go, as the warp begins (the reference runs the same stop for a gate transit).
-
 use super::*;
 
 use crate::deployable::Role;

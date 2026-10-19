@@ -5,7 +5,6 @@
 //! tick past that, so that a module that stops (or whose ship leaves the scene) lets go of the target by itself. The ship's own numbers (what its local effects make of them)
 //! are the base: what the ship has is the base worked by what lands on it, the percentages of one attribute stacking with the game's penalty. The reference
 //! (`hostileModuleRuntime.js`) keeps the same state in `incomingEffects` and rebuilds the ship's numbers from it.
-
 use crate::modules::TICK;
 use crate::scene::{Command, Out, Scene, SessionId, TICKS_PER_SECOND};
 use crate::wire::{id, real};

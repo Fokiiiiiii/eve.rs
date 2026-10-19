@@ -34,7 +34,6 @@ WAITS = {"bind the ship service": 0.5, "undock": 2.0, "bind the ballpark": 2.5}
 # integrator says, and a tick of theirs is a second
 TOLERANCE = 3.0
 
-
 def names(event: dict) -> list:
     if event["name"] != "DoDestinyUpdate":
         return []
@@ -43,7 +42,6 @@ def names(event: dict) -> list:
     except (KeyError, TypeError):
         return []
     return [action[1] for action in actions]
-
 
 def milestones(events: list) -> dict:
     """The seconds after the call at which the ship dropped out (the massless updates) and came to rest (the stop), from the events."""
@@ -56,7 +54,6 @@ def milestones(events: list) -> dict:
                 out["rest"] = event["at"]
     return out
 
-
 def without_ballpark_noise(events: list) -> list:
     """The events without the state the polling asks for and the balls the reference takes out of the ballpark in warp (DEVIATIONS #16)."""
     keep = []
@@ -66,10 +63,8 @@ def without_ballpark_noise(events: list) -> list:
         keep.append(event)
     return keep
 
-
 def in_order(events: list) -> list:
     return sorted(events, key=lambda e: e.get("at", 0.0))
-
 
 @pytest.mark.parametrize("race", WARP["races"], ids=lambda r: f"race-{r['raceID']}")
 def test_a_ship_warps_to_a_planet_as_the_reference_did(race):

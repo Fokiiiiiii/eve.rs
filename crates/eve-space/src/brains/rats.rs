@@ -1,7 +1,6 @@
 //! The behavior of the NPCs this server places itself (the rats of a belt): a tree of the client's package, put together the way its own trees are
 //! (`trees/miners/basicdpstree.py` is the pattern) out of the same parts. The client's package has the parts and no tree for a rat that waits until
 //! somebody comes near and then fights: the trees it does have are the drifters', the sleepers', the miners'. This is the one server-authored tree.
-
 use eve_behaviors::actions::combatnavigation::{DEFAULT_COMBAT_ATTACK_RANGE, DEFAULT_COMBAT_ORBIT_RANGE};
 use eve_behaviors::constants::behaviorroles::ROLE_DPS;
 use eve_behaviors::consts::{CATEGORY_DRONE, CATEGORY_ENTITY, CATEGORY_FIGHTER, CATEGORY_SHIP};

@@ -1,6 +1,5 @@
 //! Two ships in one system, as the reference showed them to each other (`oracle/fixtures/scenarios/others.json`): what the one that is in space is
 //! sent when the other undocks, binds, is given orders, warps off and docks, and what the newcomer is sent of the one that was there.
-
 mod support;
 
 use std::sync::Arc;

@@ -31,7 +31,6 @@ MILESTONE = "eve_public.character.skill.plan.milestone."
 GUNNERY = 3300
 SMALL_HYBRID_TURRET = 3310
 
-
 def test_a_skill_plan_is_created_read_changed_with_a_milestone_activated_and_deleted_through_the_gateway():
     run = uuid.uuid4().hex[:10]
     with connect(f"skillplan-{run}") as client:

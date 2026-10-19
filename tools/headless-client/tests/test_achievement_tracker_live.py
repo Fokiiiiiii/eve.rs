@@ -26,10 +26,8 @@ ACHIEVEMENT = 9
 FILETIME = 134273341290000000
 EVENT, COUNT = "client_openMap", 3
 
-
 def maps_of(client) -> dict:
     return json.loads(json.dumps(m.plain(client.call("achievementTrackerMgr", "GetCompletedAchievementsAndClientEventCount")), sort_keys=True))
-
 
 def test_the_achievement_tracker_is_stored_for_the_character_and_read_back_on_the_next_login():
     run = uuid.uuid4().hex[:10]

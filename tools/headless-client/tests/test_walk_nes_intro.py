@@ -21,7 +21,6 @@ from tests.test_undock import arrive
 SKIPPED = 3  # NesIntroState.SKIPPED in storylines/common/nes_intro_constants.py
 pytestmark = pytest.mark.skipif(not base.LIVE, reason="set EVE_LIVE_HOST=host:port to test against a running server")
 
-
 def test_a_new_character_reads_and_skips_the_nes_intro_as_the_client_does():
     race = HEALTH["races"][0]
     run = uuid.uuid4().hex[:10]

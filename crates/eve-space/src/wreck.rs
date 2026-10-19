@@ -1,7 +1,6 @@
 //! What a ship leaves when it is destroyed: a wreck, a ball that does not move until it is gone. The reference makes the wreck an item of its own
 //! (the dead ship's type says which: `Caldari Frigate Wreck`), gives whoever may loot it the rights to it (`lootRights`), and takes it out of space
 //! after `spaceDebrisLifetimeMs` (two hours). The client sees it as a ball of kind wreck with a slim item; it moves only while a tractor beam pulls it (`tractor.rs`).
-
 use eve_destiny::ball::LegacyMode;
 use eve_destiny::{BallEntity, IdRef, Kind, Vec3};
 use eve_marshal::Value;

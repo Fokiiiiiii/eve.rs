@@ -35,16 +35,14 @@ pytestmark = [
 ]
 
 CRAB = 60244  # the standard CONCORD Rogue Analysis Beacon (SDE 60244)
-ANCHORING = 11584  # the skill a CRAB's launch needs (the wiki's CRAB page; the host checks it at level 3)
+ANCHORING = 11584
 LOW_SYSTEM = 30004988  # security 0.43, four gates from Manifest (SDE mapStargates, the shortest route)
 LOW_HOPS = [(50017727, 50016629, 30005204), (50003291, 50003399, 30005206), (50003400, 50003410, 30004987), (50003411, 50004520, 30004988)]
 WARP_GATE = 50004521  # another gate of LOW_SYSTEM (SDE mapStargates), about 380,000 km from the arrival gate: a warp target the ship can make
 
-
 def sql(text: str) -> str:
     url = os.environ["EVE_PSQL_URL"]
     return subprocess.run(["psql", url, "-At", "-c", text], check=True, capture_output=True, text=True).stdout.strip()
-
 
 def seed_crab(ship_id: int) -> int:
     """A fixture, not a server path: a standard CRAB in the ship's cargo (flag 5) and the anchoring skill at level 3 for its owner."""
@@ -55,7 +53,6 @@ def seed_crab(ship_id: int) -> int:
     crab = sql(f"INSERT INTO {inventory}.items (type_id, owner_id, location_id, flag, quantity, singleton) "
                f"VALUES ({CRAB}, {owner}, {ship_id}, 5, 1, true) RETURNING id")
     return int(crab.split()[0])
-
 
 def fly_from(who, ship_id: int, ballpark):
     """The gates of the low-security route in turn, from the system the pilot is bound to: warp to the gate, jump, bind the next system."""
@@ -73,17 +70,15 @@ def fly_from(who, ship_id: int, ballpark):
         wait_quietly(who, 3.0)
     return ballpark
 
-
 def refused(error) -> bool:
     return error is not None and "warp" in str(error).lower()
-
 
 def test_a_crab_is_launched_linked_and_holds_the_ship_until_the_link_is_over():
     race = plain_race(DEATH["races"][0], "victim")
     run = uuid.uuid4().hex[:10]
     with base.connect(f"walk-crab-{run}") as who:
         _, ship_id, _, _ = arrive(who, race, run)
-        seed_cockroach(ship_id)  # the owner's test ship (the Cockroach is on the CRAB link lists)
+        seed_cockroach(ship_id)
         service = who.call("ship", "MachoBindObject", (STATION, 15), None)
         who.call_bound(service[0], "Undock", ship_id, False)
         wait_quietly(who, 2.0)

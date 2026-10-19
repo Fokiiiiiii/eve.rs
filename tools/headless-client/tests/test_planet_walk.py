@@ -30,7 +30,7 @@ PLANET = 40486618  # a barren planet of the SDE (sde.mapPlanets, type 2016, radi
 PLANET_SYSTEM = 31000604  # its solar system (sde.mapPlanets; a wormhole system)
 BARREN = 2016
 COMMAND_CENTER = 2524  # Barren Command Center
-STORAGE = 2541  # Barren Storage Facility (250,000 ISK)
+STORAGE = 2541
 CONSOLIDATION = 2495  # Interplanetary Consolidation
 COMMAND_CENTER_UPGRADE = 2505
 LATITUDE, LONGITUDE = 0.5, 1.0  # a point on the planet (radians)
@@ -49,20 +49,16 @@ pytestmark = pytest.mark.skipif(
     reason="set EVE_LIVE_HOST, EVE_PG_URL and EVE_LIVE_PI_WALK=1",
 )
 
-
 def skill(character: int, type_id: int, level: int) -> None:
     psql(f"INSERT INTO {schema('EVE_SKILLS_SCHEMA')}.character_skills (character_id, type_id, level, skill_points) "
          f"VALUES ({character}, {type_id}, {level}, 0) ON CONFLICT (character_id, type_id) DO UPDATE SET level = {level}")
 
-
 def item_exists(item: int) -> bool:
     return psql(f"SELECT count(*) FROM {schema('EVE_INVENTORY_SCHEMA')}.items WHERE id = {item}") == "1"
-
 
 def colony_pins(owner: int, planet: int) -> int:
     count = psql(f"SELECT jsonb_array_length(doc->'Pins') FROM {schema('EVE_PLANETS_SCHEMA')}.colonies WHERE owner_id = {owner} AND planet_id = {planet}")
     return int(count or 0)
-
 
 def test_a_pilot_places_a_command_center_and_a_storage_facility_on_a_barren_planet():
     run = run_id()
@@ -104,7 +100,6 @@ def test_a_pilot_places_a_command_center_and_a_storage_facility_on_a_barren_plan
         colony = record(client.call_bound(handle, "GetPlanetInfo"))
         assert len(colony["pins"]) == 2
 
-
 def record(value):
     """A call's answer as plain data: a util.KeyVal (the client's record) is the dict of its fields, recursively."""
     def unwrap(item):
@@ -116,7 +111,6 @@ def record(value):
             return [unwrap(field) for field in item]
         return item
     return unwrap(m.plain(value))
-
 
 @contextmanager
 def new_pilot(tag: str, system: int | None = None):
@@ -133,16 +127,13 @@ def new_pilot(tag: str, system: int | None = None):
         client.call("charUnboundMgr", "SelectCharacterID", charID=character, secondChoiceID=None, skipTutorial=False)
         yield client, character, ship
 
-
 def colony_doc(owner: int, planet: int) -> dict:
     text = psql(f"SELECT doc::text FROM {schema('EVE_PLANETS_SCHEMA')}.colonies WHERE owner_id = {owner} AND planet_id = {planet}")
     return json.loads(text)
 
-
 def save_colony_doc(owner: int, planet: int, doc: dict) -> None:
     body = json.dumps(doc)
     psql(f"UPDATE {schema('EVE_PLANETS_SCHEMA')}.colonies SET doc = $json${body}$json$::jsonb WHERE owner_id = {owner} AND planet_id = {planet}")
-
 
 def move_colony_back(owner: int, planet: int, hours: int) -> None:
     """The colony as it was `hours` ago: every time of it moves back (the lazy simulation then runs that span to now)."""
@@ -155,7 +146,6 @@ def move_colony_back(owner: int, planet: int, hours: int) -> None:
                 pin[key] -= delta
     save_colony_doc(owner, planet, doc)
 
-
 def set_contents(owner: int, planet: int, pin: int, contents: dict) -> None:
     doc = colony_doc(owner, planet)
     for entry in doc["Pins"]:
@@ -163,14 +153,11 @@ def set_contents(owner: int, planet: int, pin: int, contents: dict) -> None:
             entry["Contents"] = {str(k): v for k, v in contents.items()}
     save_colony_doc(owner, planet, doc)
 
-
 def pin_contents(colony: dict, pin: int) -> dict:
     return {int(k): v for k, v in next(p for p in colony["pins"] if p["id"] == pin)["contents"].items()}
 
-
 def pin_of_type(colony: dict, type_id: int) -> int:
     return next(p["id"] for p in colony["pins"] if p["typeID"] == type_id)
-
 
 def ball_of(events: list, item: int, planet: int | None) -> bool:
     """Whether the events tell of the item's ball: its slim item has its id (and, for an orbital, its planet and its category). A destiny update's
@@ -181,7 +168,6 @@ def ball_of(events: list, item: int, planet: int | None) -> bool:
         return False
     return planet is None or bool(re.search(r"[\"']planetID[\"'],\s*%s%d\b" % (value, planet), text)
                                   and re.search(r"[\"']categoryID[\"'],\s*46\b", text))
-
 
 def test_a_colony_runs_in_time_launches_and_trades_at_customs():
     with new_pilot("colony", system=PLANET_SYSTEM) as (client, pilot, ship):
@@ -243,11 +229,11 @@ def test_a_colony_runs_in_time_launches_and_trades_at_customs():
                    f"AND c.location_id = {system} AND EXISTS (SELECT 1 FROM {schema('EVE_INVENTORY_SCHEMA')}.items s WHERE s.location_id = c.id AND s.type_id = {WATER} AND s.quantity = 5)")
         assert can, "the launch container holds the launched commodities"
         assert psql(f"SELECT count(*) FROM {schema('EVE_PLANETS_SCHEMA')}.launches WHERE owner_id = {pilot} AND NOT deleted") == "1"
-        # the can is in space: its space row (the owner's, a can's group, the launch's expiry) and its ball in the pilot's scene
+
         assert psql(f"SELECT group_id || '|' || character_id FROM {schema('EVE_SPACE_SCHEMA')}.space_items WHERE item_id = {can}") == f"12|{pilot}"
         # its ball is told to the pilots who can see its place: this pilot is about 1.9e10 m from the planet (the walk's pose), so the ball is not
         # checked here; the simulation's wreck placement is checked in eve-space (the watchers of a placed wreck)
-        # the owner is told of the launch: its launches list reloads and the neocom blinks (planetUISvc.OnPILaunchesChange)
+
         assert "OnPILaunchesChange" in json.dumps(wait_quietly(client, 2.0), default=str), "the launch is not announced to the owner"
 
         # customs: the office is the planet's (its id). The planet is in system 31000604 (wormhole space): the NPC rate outside high-security is 17%
@@ -276,7 +262,7 @@ def test_a_colony_runs_in_time_launches_and_trades_at_customs():
         assert pin_contents(record(client.call_bound(handle, "GetPlanetInfo")), pad)[WATER] == 15
 
         # the container Add (the client's importExportUI.MoveFromInventory): a stack from the pilot's ship hold goes into the office; it keeps its
-        # owner and lands in the office hangar. Too much for the office's room is refused as NotEnoughSpace.
+
         room = record(client.call_bound(customs, "GetCapacity"))  # the window reads the office's room first
         assert room["capacity"] == 35000.0
         hold = dbseed.new_item(WATER, owner=pilot, location=ship, flag=CARGO_FLAG, quantity=10)

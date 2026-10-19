@@ -35,6 +35,19 @@ class C { string s = $@"{{ /* intact */ }}"; string r = $$"""// intact {value}""
 # TODO: stale
 ''', 'py')
 
+    def test_python_form_feed_keeps_comment_offsets(self):
+        self.check('x = 1\n\f# TODO: stale\nx = 2\n', 'py')
+
+    def test_doc_comment_has_no_empty_line_before_item(self):
+        src = '/// Keep docs.\n\n#[inline]\nfn f() {}\n'
+        result, _, _ = pruner.transform(src, 'rs')
+        self.assertIn('/// Keep docs.\n#[inline]', result)
+
+    def test_deleted_comment_collapses_blank_lines(self):
+        src = 'let a = 1;\n\n// TODO: stale\n\n\nlet b = 2;\n'
+        result, _, _ = pruner.transform(src, 'rs')
+        self.assertNotIn('\n\n\n', result)
+
     def test_short_explanatory_comment_survives(self):
         src = 'fn f() { // Keep this because ordering matters.\n call(); }\n'
         result, _, removed = pruner.transform(src, 'rs')

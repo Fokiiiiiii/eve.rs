@@ -64,8 +64,31 @@ internal sealed partial class CharacterServicesComposition
             new Eve.Services.Corporations.ItemLockingService(corporations),
             new Eve.Services.Corporations.CorpStationMgrService(corporations, characterSessions, StandingTowardAsync, StationPlace,
                 StationStandingRulesAsync, now),
-            new Eve.Services.Corporations.WarRegistryService(source, foundations.Relations, characterSessions, now),
+            new Eve.Services.Corporations.WarRegistryService(
+                source, foundations.Relations, characterSessions, now, CanManageWarAsync),
     ];
+
+    private async Task<bool> CanManageWarAsync(long characterId, long ownerId, CancellationToken token)
+    {
+        var member = await corporations.MemberAsync(characterId, token);
+        if (member is null) return false;
+        var corporation = await corporations.GetAsync(member.CorporationId, token);
+        if (corporation is null || member.CorporationId <= 0) return false;
+
+        if (ownerId != corporation.Id)
+        {
+            var alliance = await corporations.AllianceAsync(ownerId, token);
+            if (alliance is not { Deleted: false } || alliance.ActiveExecutorId != corporation.Id ||
+                corporation.AllianceId != ownerId)
+                return false;
+        }
+
+        var isCeo = !corporation.CeoRolesSuspended && corporation.CeoId == characterId;
+        var titles = await corporations.TitlesAsync(corporation.Id, token);
+        var isDirector = (Eve.Corporations.CorporationRoles.Session(corporation, member, null, titles).AtAll &
+            Eve.Corporations.CorporationRoles.Director) != 0;
+        return isCeo || isDirector;
+    }
 
       private async ValueTask<Eve.Services.Corporations.CorpWarDeclarationResult> CreateWarDeclarationAsync(
           Eve.Services.Corporations.CorpWarDeclarationRequest request,CancellationToken cancellationToken)

@@ -31,7 +31,6 @@ pytestmark = pytest.mark.skipif(not base.LIVE, reason="set EVE_LIVE_HOST=host:po
 TRITANIUM = 34
 LAST_DOCKED_STEP = "the pilot asks for its hold after"
 
-
 def test_a_pilot_fills_and_empties_its_hold_as_in_the_reference():
     race = CARGO["races"][0]
     run = uuid.uuid4().hex[:10]

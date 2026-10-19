@@ -41,7 +41,6 @@ pytestmark = [
     pytest.mark.skipif(os.environ.get("EVE_LIVE_SERVER", "eve.rs") == "reference", reason="the reference has no recording of these modules"),
 ]
 
-
 def fitted(who, ship_dogma) -> dict:
     """The modules in the ship by type: `{type id: item id}`."""
     info = who.call_bound(ship_dogma, "GetAllInfo", True, True, None)
@@ -52,7 +51,6 @@ def fitted(who, ship_dogma) -> dict:
         row = {k: v for k, v in value["args"]["$dict"]}["invItem"]["$row"]
         items[row["typeID"]] = int(key["$long"] if isinstance(key, dict) else key)
     return items
-
 
 def test_a_remote_armor_repairer_mends_the_armor_of_the_ship_it_is_aimed_at():
     race = DEATH["races"][0]
@@ -111,7 +109,6 @@ def test_a_remote_armor_repairer_mends_the_armor_of_the_ship_it_is_aimed_at():
         ended = watch(both, 10.0, until=lambda seen: any(e["name"] == "OnJamEnd" for e in seen["b"]))
         assert any(e["name"] == "OnJamEnd" for e in ended["b"]) and any(e["name"] == "OnEwarEnd" for e in ended["b"]), "the target was not told it ended"
 
-
 def speeds_of(events: list, ball: int) -> list[float]:
     """The top speeds the stream tells of this ball (`SetMaxSpeed` of its own), in order."""
     told = []
@@ -127,7 +124,6 @@ def speeds_of(events: list, ball: int) -> list[float]:
             if name == "SetMaxSpeed" and number(payload[0]) == ball:
                 told.append(float(payload[1]))
     return told
-
 
 class Fight:
     """A pilot in space with one module fitted and a belt rat spawned next to it: what the tests of a module aimed at a rat share."""
@@ -157,7 +153,6 @@ class Fight:
                 return
             assert time.monotonic() < deadline, f"the module was never accepted: {base.brief(refused)}"
             watch(self.only, 2.0)
-
 
 @contextlib.contextmanager
 def fight(name: str, skills: tuple, module_type: int):
@@ -196,7 +191,6 @@ def fight(name: str, skills: tuple, module_type: int):
         assert rat, "the rat did not come into space"
         yield Fight(who, ship, slash, only, dogma, beyonce, module, rat)
 
-
 def test_a_stasis_webifier_slows_the_ship_it_is_aimed_at_for_as_long_as_it_runs():
     with fight("web", ("Propulsion Jamming",), WEBIFIER) as f:
         f.reach("remoteWebifierFalloff")
@@ -208,7 +202,6 @@ def test_a_stasis_webifier_slows_the_ship_it_is_aimed_at_for_as_long_as_it_runs(
         freed = watch(f.only, 8.0, until=lambda seen: any(x > min(speeds) for x in speeds_of(seen["who"], f.rat)))
         after = speeds_of(freed["who"], f.rat)
         assert any(x > min(speeds) for x in after), f"the rat's top speed did not come back: {speeds} then {after}"
-
 
 def test_an_ecm_jammer_runs_against_a_rat_and_its_cycles_cost_the_pilot_its_capacitor():
     """Whether a jam lands is a roll (the strength of the jammer for the kind of sensor the rat has over that sensor's strength), and the rat is an NPC that is told nothing:
@@ -224,7 +217,6 @@ def test_an_ecm_jammer_runs_against_a_rat_and_its_cycles_cost_the_pilot_its_capa
         stops = [effect_of(e) for e in ended["who"] if e["name"] == "OnGodmaShipEffect" and number(effect_of(e)[0]) == f.module and not effect_of(e)[3]]
         assert stops, "the jammer did not stop at the end of its cycle"
 
-
 def test_a_tracking_disruptor_runs_against_a_rat():
     """What it does to the rat's guns is rolled into its shots, which the pilot sees only as damage; this holds that the module is accepted at the rat, starts and stops."""
     with fight("disrupt", ("Weapon Disruption",), TRACKING_DISRUPTOR) as f:
@@ -236,7 +228,6 @@ def test_a_tracking_disruptor_runs_against_a_rat():
         f.who.call_bound(f.dogma[0], "Deactivate", f.module, "shipModuleTrackingDisruptor")
         ended = watch(f.only, 15.0, until=lambda seen: any(e["name"] == "OnGodmaShipEffect" and number(effect_of(e)[0]) == f.module and not effect_of(e)[3] for e in seen["who"]))
         assert any(e["name"] == "OnGodmaShipEffect" and number(effect_of(e)[0]) == f.module and not effect_of(e)[3] for e in ended["who"]), "the disruptor did not stop"
-
 
 def test_a_guidance_disruptor_runs_against_a_rat():
     """What it does to the rat's missiles is worked into each missile the rat launches (the speed, flight time and explosion of the ball the pilot is shown); this holds that the
@@ -250,7 +241,6 @@ def test_a_guidance_disruptor_runs_against_a_rat():
         f.who.call_bound(f.dogma[0], "Deactivate", f.module, "shipModuleGuidanceDisruptor")
         ended = watch(f.only, 15.0, until=lambda seen: any(e["name"] == "OnGodmaShipEffect" and number(effect_of(e)[0]) == f.module and not effect_of(e)[3] for e in seen["who"]))
         assert any(e["name"] == "OnGodmaShipEffect" and number(effect_of(e)[0]) == f.module and not effect_of(e)[3] for e in ended["who"]), "the disruptor did not stop"
-
 
 def test_a_smartbomb_hurts_the_rat_that_comes_into_its_field():
     """A smartbomb needs no lock: the pilot flies at a belt rat, and a cycle that begins with the rat in the field hurts it and tells the pilot (a damage message of its own)."""

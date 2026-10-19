@@ -1,5 +1,4 @@
 //! A solar system's stations and celestials, built from the static data: what a ship undocking finds around it.
-
 use std::collections::HashMap;
 
 use eve_destiny::Vec3;

@@ -12,12 +12,12 @@ public sealed record JumpCloneRecord(long JumpCloneId, long LocationId, string L
 public sealed record JumpCloneSnapshot(IReadOnlyList<JumpCloneRecord> Clones, long TimeLastJumpFileTime);
 
 /// <summary>
-/// The settlement of one install (EveJS <c>jumpCloneInstallSettlements</c>): the fee the character pays, and who is paid it: the owner
+
 /// corporation of a structure (its wallet is credited), or the offering pilot of a ship (the journal's counterparty; no wallet is credited).
 /// </summary>
 public sealed record JumpCloneInstall(long LocationId, string LocationKind, decimal Fee, long OwnerCorporationId = 0, long OfferingCharacterId = 0);
 
-/// <summary>A structure's clone bay as one character may use it: the owner's fee and the owner corporation.</summary>
+
 public sealed record StructureCloneBay(long StructureId, long OwnerCorporationId, decimal Fee);
 
 /// <summary>The active ship of a pilot and its clone bay: the hull's clone capacity and operational range, and whether a Clone Vat Bay is fitted.</summary>
@@ -29,7 +29,7 @@ public sealed record ShipCloneBay(long ShipId, bool CanReceiveCloneJumps, bool H
 /// </summary>
 public sealed record CloneJumpResult(string? Refusal, long StationId = 0, int SolarSystemId = 0, int ConstellationId = 0, int RegionId = 0);
 
-/// <summary>The clone jump rules that are not state: the cooldown (wiki: Jump clones; EveJS <c>jumpCloneRules.js</c>).</summary>
+
 public static class CloneJumpRules
 {
     /// <summary>The Infomorph Synchronizing skill: each level takes an hour off the cooldown.</summary>
@@ -96,7 +96,7 @@ public sealed class JumpCloneSpaceLink
 /// The jump clone service (<c>jumpCloneSvc</c>, bound per location as <c>Moniker('jumpCloneSvc', (locationID, group))</c>).
 /// The clone state the client reads: <c>clones</c> and <c>implants</c> rowsets and the last jump time (eve-logic
 /// <c>eve/client/script/ui/services/clonejumpsvc.py</c>, <c>GetCloneState</c>). The clone limit is the sum of the three
-/// Infomorph Psychology levels (wiki: Jump clone; EveJS <c>jumpCloneRules.js</c>).
+
 /// </summary>
 [Service("jumpCloneSvc")]
 public sealed partial class JumpCloneService(IJumpCloneStore? store = null, JumpCloneSpaceLink? spaceLink = null)
@@ -105,11 +105,11 @@ public sealed partial class JumpCloneService(IJumpCloneStore? store = null, Jump
     private static readonly int[] CloneLimitSkills = [24242, 33407, 73910];
     private const int CloneNameMaxLength = 100;
 
-    /// <summary>The install fee of a clone station or of a structure without its own fee (EveJS <c>JUMP_CLONE_INSTALL_COST</c>, the wiki's 900,000 ISK).</summary>
+
     private const decimal JumpCloneInstallFee = 900000m;
 
     /// <summary>
-    /// The ship clone offers, by the pilot they were made to (EveJS <c>pendingShipCloneOffers</c>). They live in memory, as the reference keeps them:
+
     /// an offer does not survive a Host restart, and an installed clone does.
     /// </summary>
     private readonly ConcurrentDictionary<long, ShipCloneOffer> _offers = new();
@@ -217,7 +217,7 @@ public sealed partial class JumpCloneService(IJumpCloneStore? store = null, Jump
             errors.Add(Py.Tuple(new PyStr("UI/CharacterSheet/CharacterSheetWindow/JumpCloneScroll/InstalledCloneCount"),
                 Py.Dict(("clone_count", new PyInt(here)))));
         }
-        // a structure installs only where the character may use its clone bay (EveJS validateInstallJumpClone)
+
         if (!IsStationDock(call.Session) && await StructureBay(characterId, location, call.Cancellation) is null)
             errors.Add(new PyStr("UI/Medical/Errors/UnknownValidationError"));
         return new PyList([.. errors]);
@@ -261,7 +261,7 @@ public sealed partial class JumpCloneService(IJumpCloneStore? store = null, Jump
 
     /// <summary>
     /// <c>InstallCloneInStation()</c> and <c>InstallCloneInStructure()</c>: installs a clone of the character at the place it is docked in
-    /// (EveJS <c>installCloneAtCurrentLocation</c>) and charges the fee. A validation failure is refused with its label; too little ISK is
+
     /// the client's NotEnoughMoney.
     /// </summary>
     [Method("InstallCloneInStation")]
@@ -272,7 +272,7 @@ public sealed partial class JumpCloneService(IJumpCloneStore? store = null, Jump
 
     /// <summary>
     /// <c>GetPriceForClone()</c>: the fee of an install here: the structure's clone bay fee where the character may use it, else the install fee
-    /// (EveJS <c>getCloneServiceCostForLocation</c>, which answers the install fee outside a structure).
+
     /// </summary>
     [Method("GetPriceForClone")]
     public async ValueTask<PyValue> GetPriceForClone(ServiceCall call)
@@ -289,7 +289,7 @@ public sealed partial class JumpCloneService(IJumpCloneStore? store = null, Jump
 
     /// <summary>
     /// <c>OfferShipCloneInstallation(charID)</c>: the pilot of a ship with a Clone Vat Bay offers the target pilot a clone installed in the ship
-    /// (EveJS <c>offerShipCloneInstallation</c>). The target hears <c>OnShipJumpCloneInstallationOffered</c>; the offer waits in memory.
+
     /// </summary>
     [Method("OfferShipCloneInstallation")]
     public async ValueTask<PyValue> OfferShipCloneInstallation(ServiceCall call)
@@ -315,7 +315,7 @@ public sealed partial class JumpCloneService(IJumpCloneStore? store = null, Jump
 
     /// <summary>
     /// <c>AcceptShipCloneInstallation()</c>: the target pilot accepts the offer. The clone is installed in the offering ship, the fee is paid,
-    /// and the pilot and the offering pilot hear <c>OnShipJumpCloneInstallationDone</c> (EveJS <c>acceptShipCloneInstallation</c>).
+
     /// </summary>
     [Method("AcceptShipCloneInstallation")]
     public async ValueTask<PyValue> AcceptShipCloneInstallation(ServiceCall call)
@@ -355,7 +355,7 @@ public sealed partial class JumpCloneService(IJumpCloneStore? store = null, Jump
 
     /// <summary>
     /// <c>CancelShipCloneInstallation()</c>: either pilot cancels the offer that involves it; both hear
-    /// <c>OnShipJumpCloneInstallationCanceled</c> (EveJS <c>cancelShipCloneInstallation</c>). Nothing to cancel is not an error.
+
     /// </summary>
     [Method("CancelShipCloneInstallation")]
     public PyValue CancelShipCloneInstallation(ServiceCall call)
@@ -372,11 +372,11 @@ public sealed partial class JumpCloneService(IJumpCloneStore? store = null, Jump
         return PyNone.Instance;
     }
 
-    /// <summary>The activation fee of a clone jump (EveJS <c>REF_JUMP_CLONE_ACTIVATION_FEE</c>, the same 900,000 ISK).</summary>
+
     private const decimal JumpCloneActivationFee = 900000m;
 
     /// <summary>
-    /// <c>CloneJump(destLocationID, cloneID, cost, confirmed)</c>: the character leaves for the place of an installed clone (EveJS
+
     /// <c>performCloneJump</c>, <c>buildCloneJumpState</c>). The cooldown is checked when the clone is not where the character is, a
     /// clone at the current place is replaced unless the client confirmed it, and the activation fee is charged once.
     /// </summary>
@@ -465,7 +465,7 @@ public sealed partial class JumpCloneService(IJumpCloneStore? store = null, Jump
     private async ValueTask<StructureCloneBay?> StructureBay(long characterId, long structureId, CancellationToken cancellationToken) =>
         spaceLink?.Space is { } space ? await space.StructureBayAsync(characterId, structureId, cancellationToken) : null;
 
-    /// <summary>EveJS <c>validateCloneVatTargetRange</c>: the offering ship has an operational range and the target is within it.</summary>
+
     private static async ValueTask<bool> InCloneRange(IJumpCloneSpace space, ClientSession offering, ShipCloneBay ship, ClientSession target, ShipCloneBay? targetShip, CancellationToken cancellationToken)
     {
         if (ship.MaxOperationalDistance <= 0 || targetShip is null)
@@ -474,7 +474,7 @@ public sealed partial class JumpCloneService(IJumpCloneStore? store = null, Jump
             && distance <= ship.MaxOperationalDistance;
     }
 
-    /// <summary>The ship clone notifications carry one list: the offering pilot, the target pilot, the ship, and 0 (EveJS <c>payload</c>).</summary>
+
     private static PyList OfferPayload(long offeringCharacterId, long targetCharacterId, long shipId) =>
         new([new PyLong(offeringCharacterId), new PyLong(targetCharacterId), new PyLong(shipId), new PyInt(0)]);
 
@@ -516,7 +516,7 @@ public sealed partial class JumpCloneService(IJumpCloneStore? store = null, Jump
         clones.SelectMany(clone => clone.ImplantTypeIds.Select(typeId =>
             (PyValue)new PyList([new PyLong(clone.JumpCloneId), new PyInt(typeId)]))).ToArray());
 
-    /// <summary>The clone-change notifications the client's clone caches listen for (EveJS <c>emitCloneInvalidations</c>).</summary>
+
     private static void Invalidate(ClientSession session, long locationId, long ownerId)
     {
         session.SendNotification("OnJumpCloneCacheInvalidated", "clientID");

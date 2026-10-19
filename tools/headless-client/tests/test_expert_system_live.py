@@ -25,16 +25,14 @@ LIVE = os.environ.get("EVE_LIVE_HOST", "")
 pytestmark = pytest.mark.skipif(not LIVE, reason="set EVE_LIVE_HOST=host:port to test against a running server")
 
 FREE_AIR_EXPLORER = 63826
-# the skills the catalogue grants (EveJS data.json, the row of 63826): a new pilot has trained some of them already
+
 GRANTED_BY_FREE_AIR_EXPLORER = [3327, 3328, 3329, 3330, 3331, 3412, 3431, 3436, 3449, 3452, 3453, 3455, 13278, 21718, 24241, 24242, 25739, 25810, 25811]
 EXPIRY_WAIT_SECONDS = 40
-
 
 def untrained_grant(character: int) -> int:
     """A skill the system grants that the pilot has not trained, so that a grant is the only way it shows."""
     trained = {int(line) for line in psql(f"SELECT type_id FROM {schema('EVE_SKILLS_SCHEMA')}.character_skills WHERE character_id = {character}").split()}
     return next(skill for skill in GRANTED_BY_FREE_AIR_EXPLORER if skill not in trained)
-
 
 def contains(value, wanted: int) -> bool:
     if isinstance(value, bool):
@@ -47,7 +45,6 @@ def contains(value, wanted: int) -> bool:
         return any(contains(item, wanted) for item in value)
     return False
 
-
 def wait_for_notification(client, name: str, seconds: float) -> bool:
     deadline = time.monotonic() + seconds
     while True:
@@ -56,7 +53,6 @@ def wait_for_notification(client, name: str, seconds: float) -> bool:
         if time.monotonic() >= deadline:
             return False
         time.sleep(0.5)
-
 
 def test_an_expert_system_is_used_listed_granted_removed_and_lapses_as_the_client_sees_it():
     run = uuid.uuid4().hex[:10]

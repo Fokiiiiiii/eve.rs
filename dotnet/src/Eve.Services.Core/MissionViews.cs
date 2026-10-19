@@ -3,22 +3,22 @@ using Eve.Marshal;
 
 namespace Eve.Services.Core;
 
-/// <summary>A mission the character holds with an agent: the official record, the held state and the briefing text ID (null when not loaded).</summary>
+
 public sealed record HeldMissionView(MissionStatic Mission, AgentMissionRecord Record, long? BriefingMessageId, FetchObjectiveView? Fetch = null,
     CourierObjectiveView? Courier = null);
 
-/// <summary>The cargo of a courier mission: the item (SDE type, quantity and volume of one unit), whether the pilot holds it, the pickup (the agent's
-/// station), the drop-off station and the agent's corporation (the owner of the stations' tuples, as the fetch objective's).</summary>
+
+
 public sealed record CourierObjectiveView(int TypeId, long Quantity, double Volume, bool HasCargo, long PickupStationId, long DropoffStationId, long CorporationId);
 
 /// <summary>
-/// The objective item of a fetch step: the type and quantity from the SDE, the item's volume of one unit, the quantity the pilot holds, and the agent's
+
 /// station and corporation (the drop-off, where the item is handed in).
 /// </summary>
 public sealed record FetchObjectiveView(int TypeId, long Quantity, double Volume, long HeldQuantity, long StationId, long CorporationId);
 
 /// <summary>
-/// The briefing and objective answers of a held mission (EveJS <c>buildMissionBriefingInfo</c>, <c>buildMissionObjectivePayload</c>), for the kill
+
 /// missions: the dungeon objective, the fetch objective of an item and the ISK reward. The courier objective is not built yet.
 /// </summary>
 public static class MissionViews
@@ -46,7 +46,7 @@ public static class MissionViews
         var dungeons = new List<PyValue>();
         if (mission.Kill?.DungeonId is { } dungeonId)
         {
-            // ownerID is the mission's faction when the record has one: the EveJS enemy-owner rule is not ported (shortcut)
+
             dungeons.Add(new PyDict(
             [
                 Field("briefingMessage", IdOrNone(view.BriefingMessageId)),
@@ -60,7 +60,7 @@ public static class MissionViews
         var objectives = new List<PyValue>();
         if (view.Fetch is { } fetch)
         {
-            // the client's fetch objective (eve-logic evemissions/client/mission.py): the owner, the drop-off location and the cargo
+
             // shortcut: solarsystemID is 0 (the client reads only locationID of a fetch's drop-off)
             objectives.Add(new PyTuple([new PyStr("fetch"), new PyTuple(
             [
@@ -77,7 +77,7 @@ public static class MissionViews
         }
         if (view.Courier is { } courier)
         {
-            // the client's transport objective (eve-logic evemissions/client/mission.py): pickup, drop-off and cargo, each location with its owner
+
             objectives.Add(new PyTuple([new PyStr("transport"), new PyTuple(
             [
                 new PyInt(courier.CorporationId),

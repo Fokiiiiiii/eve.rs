@@ -10,7 +10,6 @@ import uuid
 
 _SEQUENCE = itertools.count(1)
 
-
 def run_token() -> str:
     base = os.environ.get("EVE_LIVE_RUN_ID")
     if not base:

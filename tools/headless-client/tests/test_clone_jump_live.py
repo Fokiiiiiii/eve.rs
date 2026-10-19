@@ -32,16 +32,13 @@ IMPLANT_FLAG = 89
 CLONE_JUMP_FEE = 900_000
 COOLDOWN_LABEL = "UI/CharacterSheet/CharacterSheetWindow/JumpCloneScroll/JumpCooldownError"
 
-
 def clone_rows(clones_state) -> list:
     return m_rows(fields(clones_state)["clones"])
-
 
 def m_rows(rowset) -> list:
     from evecli import marshal as m
 
     return m.plain(rowset)[1]["lines"]
-
 
 def test_a_clone_jump_moves_the_pilot_swaps_the_bodies_and_charges_once_then_the_cooldown_holds():
     run = uuid.uuid4().hex[:10]

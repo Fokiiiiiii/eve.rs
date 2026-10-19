@@ -20,7 +20,6 @@ from typing import Any, Optional
 
 from . import marshal as m
 
-# Packet types (MACHONETMSG_TYPE)
 AUTHENTICATION_REQ = 0
 AUTHENTICATION_RSP = 1
 IDENTIFICATION_REQ = 2
@@ -63,22 +62,17 @@ _GUID = {
 
 _STATE_LENGTH = 14  # (command, source, destination, userID, payload, oob, contextKey, ... 14 in all)
 
-
 def any_address(service: Optional[str] = None, call_id: Optional[int] = None) -> tuple:
     return (ADDR_ANY, service, call_id)
-
 
 def client_address(client_id, call_id: Optional[int] = None, service: Optional[str] = None) -> tuple:
     return (ADDR_CLIENT, client_id, call_id, service)
 
-
 def node_address(node_id, service: Optional[str] = None, call_id: Optional[int] = None) -> tuple:
     return (ADDR_NODE, node_id, service, call_id)
 
-
 def broadcast_address(broadcast_id=None, narrowcast=(), id_type: Optional[str] = None) -> tuple:
     return (ADDR_BROADCAST, broadcast_id, list(narrowcast), id_type)
-
 
 @dataclass
 class Address:
@@ -134,7 +128,6 @@ class Address:
             return (ADDR_ANY, self.service, self.call_id)
         raise ValueError(f"unsupported MachoNet address type {self.kind}")
 
-
 @dataclass
 class Packet:
     command: int
@@ -180,14 +173,12 @@ class Packet:
             compressed_part=compressed_part,
         )
 
-
 def _wire_address(value) -> m.Object:
     if isinstance(value, Address):
         value = value.to_wire()
     if isinstance(value, m.Object):
         return value
     return m.Object(_ADDRESS_GUID, tuple(value))
-
 
 def build_packet(
     command: int,
@@ -244,12 +235,10 @@ def build_packet(
     state += [None] * (_STATE_LENGTH - len(state))
     return m.Object(_GUID.get(command, _GENERIC_PACKET_GUID), tuple(state))
 
-
 def call_payload(method: str, args: tuple = (), kwargs: Optional[dict] = None, *, is_bound: bool = True) -> tuple:
     """The CallReq body; a direct service/object call has its official isBound flag set."""
     keywords = m.Dict(list((kwargs or {}).items()))
     return ((1 if is_bound else 0, m.SubStream(value=(1, method, tuple(args), keywords if keywords else None))),)
-
 
 def _substream_value(value):
     if isinstance(value, m.SubStream):
@@ -257,7 +246,6 @@ def _substream_value(value):
     if isinstance(value, tuple) and len(value) == 1 and isinstance(value[0], m.SubStream):
         return value[0].value
     return value
-
 
 def result_of(packet: Packet):
     """Unwrap the official CallDown flag and marshal stream, or the legacy result shape."""
@@ -267,7 +255,6 @@ def result_of(packet: Packet):
     if isinstance(payload, tuple) and len(payload) == 2 and type(payload[0]) is int and payload[0] in (0, 1):
         payload = payload[1]
     return _substream_value(payload)
-
 
 class MachoError(Exception):
     """An ERRORRESPONSE from the server."""

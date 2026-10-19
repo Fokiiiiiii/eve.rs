@@ -29,33 +29,27 @@ DEATH = base.load("death.json")
 # the moment of a detonation: the recording's came 1.35 s after its 2.0 s of simulation time, this side 0.27 s (DEVIATIONS #63)
 DETONATION_TOLERANCE = 1.5
 
-
 pytestmark = [
     pytest.mark.skipif(not base.LIVE, reason="set EVE_LIVE_HOST=host:port to test against a running server"),
     pytest.mark.skipif(os.environ.get("EVE_LIVE_SLOW") != "1", reason="a minute: set EVE_LIVE_SLOW=1"),
 ]
 
 # the moment a ball goes may differ from the recording's by this much: the reference blows a hull up about 3.7 s after it comes (its own two seconds of
-# simulation time and the way its scene delivers them), eve.rs two seconds on (docs/reference/compat/DEVIATIONS.md #49)
-TOLERANCE = 1.6
 
+TOLERANCE = 1.6
 
 def without_protection(events: list) -> list:
     return [e for e in events if e["name"] != "OnInvulnCancelled"]
 
-
 HULL = 4_200_000_000_000_000
 WRECK_ITEM = 9_988_400_002_415
-
 
 # what a ball that a station pushes out of its place is told (DEVIATIONS #63): a hull placed 3 km to 20 km off the pilot may land within a station's
 # sphere, and the simulation moves it out and says where it stopped; the reference's hull is not in one, so the recording has none of these
 BUMP_ACTIONS = {"SetBallPosition", "SetBallVelocity", "SetSpeedFraction", "Stop"}
 
-
 def without_bumps(events: list) -> list:
     return [e for e in events if e["name"] != "DoDestinyUpdate" or not (_names(e) <= BUMP_ACTIONS)]
-
 
 def canonical(node):
     """The events with what is per run made the same: the id of a transient hull (the reference numbers them from 4.2e15, eve.rs from one past), the item id of
@@ -79,7 +73,6 @@ def canonical(node):
             out.append([key, canonical(value)])
         return {"$dict": out}
     return {k: canonical(v) for k, v in node.items()}
-
 
 def test_a_hull_that_blows_up_beside_two_pilots_is_seen_as_it_was_in_the_reference():
     race = DEATH["races"][0]
@@ -121,12 +114,10 @@ def test_a_hull_that_blows_up_beside_two_pilots_is_seen_as_it_was_in_the_referen
             problems.extend(timing(moments(theirs), moments(ours), f"{label} ({who})", DETONATION_TOLERANCE, ("DoDestinyUpdate",)))
     assert problems == [], "\n".join(problems[:40])
 
-
 def m_text(raw):
     from evecli.describe import describe
 
     return describe(raw)
-
 
 def _names(event: dict) -> set:
     """The names of the destiny actions of an event."""
@@ -136,11 +127,9 @@ def _names(event: dict) -> set:
         return set()
     return {a["$tuple"][1]["$tuple"][0] for a in actions}
 
-
 # ── the pilot destroys its own ship ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 KEEP_ALIVE = {"SetBallPosition", "SetBallVelocity", "SetSpeedFraction", "Stop"}
-
 
 def victim_view(events: list) -> list:
     """What the pilot was told, as both servers can be compared: the events in order but for what a server may do differently (docs/reference/compat/DEVIATIONS.md
@@ -159,7 +148,6 @@ def victim_view(events: list) -> list:
     explosion = [v for v in view if v[1] and v[1][0] == "TerminalPlayDestructionEffect"]
     return explosion + [v for v in view if v not in explosion]
 
-
 def item_rows(events: list) -> list:
     """The rows of the `OnItemsChanged` events (in order) and where each came from."""
     out = []
@@ -169,7 +157,6 @@ def item_rows(events: list) -> list:
         rows, moved_from, _ = event["args"]["$tuple"][1]["$tuple"][1]["$tuple"]
         out.append((rows[0]["$row"] if "$row" in rows[0] else rows[0], moved_from))
     return out
-
 
 def test_a_pilot_who_destroys_its_own_ship_is_left_in_a_capsule_as_in_the_reference():
     race = DEATH["races"][0]
@@ -232,12 +219,10 @@ def test_a_pilot_who_destroys_its_own_ship_is_left_in_a_capsule_as_in_the_refere
             problems.append(f"{pod_label}: the watcher was sent {mine} in place of {theirs}")
     assert problems == [], "\n".join(problems[:40])
 
-
 def _row(event: dict) -> dict:
     """The fields of the item row of an `OnItemChange`, and what they changed from."""
     row, changed, _ = event["args"]["$tuple"][1]["$tuple"][1]["$tuple"]
     return row["$row"], dict(tuple(pair) for pair in changed["$dict"])
-
 
 def pod_view(events: list) -> list:
     """What a pilot whose capsule is destroyed was told, with what is per run made the same: the session change by the names it changes, the items by what they

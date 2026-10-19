@@ -10,11 +10,9 @@ from pathlib import Path
 from . import handshake, packet
 from .client import Client, filetime_to_unix
 
-
 def _show(value, limit=200) -> str:
     text = repr(value)
     return text if len(text) <= limit else text[:limit] + "..."
-
 
 def _find_official_exefile(launcher_root):
     if not launcher_root:
@@ -35,7 +33,6 @@ def _find_official_exefile(launcher_root):
             return executable.resolve()
     raise FileNotFoundError(f"No Launcher-managed exefile.exe found under {root}")
 
-
 def _launch_official_client(launcher_root, host, port, user, password, character_id=None):
     executable = _find_official_exefile(launcher_root)
     if any(":" in value for value in (host, user, password)):
@@ -46,7 +43,6 @@ def _launch_official_client(launcher_root, host, port, user, password, character
     if character_id is not None:
         command.append(f"/autoSelectCharacter:{character_id}")
     return subprocess.Popen(command, cwd=str(executable.parent.parent), env=environment)
-
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="evecli", description="A headless EVE client.")
@@ -113,7 +109,6 @@ def main(argv=None) -> int:
             print(f"call failed: {error}", file=sys.stderr)
             return 3
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())

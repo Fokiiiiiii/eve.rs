@@ -237,10 +237,20 @@ public sealed partial class NodeGraphService(NodeGraphRpcCallback? callback = nu
 
     private ValueTask<PyValue> Dispatch(ServiceCall call, NodeGraphOperation operation, PyValue result, bool messageKeyAllowed = true)
     {
-        if (messageKeyAllowed && callback is { } handler)
+        if (!messageKeyAllowed)
+            return ValueTask.FromResult(result);
+        if (IsQaOperation(operation) && !GameMasterRoles.Has(call.Session, GameMasterRoles.Staff))
+            return ValueTask.FromResult(result);
+        if (callback is { } handler)
             return ForwardAsync(handler, new NodeGraphRequest(operation, call.Args, call.Kwargs, call.Session), result, call.Cancellation);
         return ValueTask.FromResult(result);
     }
+
+    private static bool IsQaOperation(NodeGraphOperation operation) =>
+        operation is NodeGraphOperation.QaSubscribe or NodeGraphOperation.QaUnsubscribe
+            or NodeGraphOperation.QaStartNodeGraph or NodeGraphOperation.QaStopNodeGraph
+            or NodeGraphOperation.QaStartNode or NodeGraphOperation.QaStopNode
+            or NodeGraphOperation.QaStopActiveNodes;
 
     private static async ValueTask<PyValue> ForwardAsync(
         NodeGraphRpcCallback handler,

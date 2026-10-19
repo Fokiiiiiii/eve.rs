@@ -5,7 +5,6 @@ from unittest.mock import patch
 
 from evecli import __main__ as cli
 
-
 class OfficialClientLaunchTests(TestCase):
     def test_cli_passes_login_inputs_to_official_launcher(self):
         with patch.object(cli, "_launch_official_client", return_value=SimpleNamespace(pid=7)) as launch:

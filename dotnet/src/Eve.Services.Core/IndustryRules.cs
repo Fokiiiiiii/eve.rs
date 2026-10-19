@@ -14,7 +14,7 @@ public static class IndustryRules
     /// <summary>
     /// The activities a structure runs from its online service ids (STRUCTURE_SERVICE_ID): manufacturing needs a Manufacturing
     /// service (21 to 24); each science activity needs the Laboratory (30) or its own laboratory service (31 to 34); reactions need
-    /// a Reactions service (40 to 43). Any one of the listed services is enough (EveJS structureSupportsActivity).
+
     /// </summary>
     public static IReadOnlySet<int> StructureActivities(IEnumerable<int> onlineServices)
     {
@@ -88,7 +88,7 @@ public static class IndustryRules
     public static long MaterialQuantity(long baseQuantity, double modifier, long materialRuns, long runs)
     {
         var quantity = baseQuantity * modifier * materialRuns;
-        var rounded = Math.Round(quantity, 2, MidpointRounding.AwayFromZero);
+        var rounded = Math.Round(quantity, 2, MidpointRounding.ToEven);
         return Math.Max((long)Math.Ceiling(rounded), runs);
     }
 
@@ -106,7 +106,7 @@ public static class IndustryRules
         1.0 + attributePerLevelPercent * level / 100.0;
 
     /// <summary>The base job cost in ISK, rounded (the client's <c>int(round(job_cost))</c>).</summary>
-    public static long Round(double value) => (long)Math.Round(value, MidpointRounding.AwayFromZero);
+    public static long Round(double value) => (long)Math.Round(value, MidpointRounding.ToEven);
 
     /// <summary>
     /// Job cost parts, each a rounded share of the base cost: the system cost index, the facility tax, the SCC

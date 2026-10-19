@@ -420,7 +420,7 @@ public sealed partial class ShipStanceMgrService(
             throw Notify("SHIP_NOT_FOUND");
         if (setShipStanceAsync is null)
             throw Notify("ITEM_CREATE_FAILED");
-        // the wiki's rule: a tactical mode is switched in space (Tactical Destroyers, Mobile Depot aside); the client offers the buttons in station too
+
         if (isInSpace is not null && !isInSpace(call.Session))
             throw Notify("SHIP_STANCE_NOT_IN_SPACE");
 

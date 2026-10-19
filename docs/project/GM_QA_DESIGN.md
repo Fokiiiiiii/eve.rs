@@ -35,7 +35,7 @@ Headless tests and QA runs need the same game-master actions a human GM uses in 
 | `/pi program` | not built | the forced install needs the client's own inputs (DEVIATIONS G10) |
 
 ## GM and QA screen (client InsiderWnd)
-The client's dedicated screen is the Insider window (`eve/devtools/script/insider.py`, `InsiderWnd` and `InsiderService`). Its toolbar menus are gated by the session role (`session.role`, which the server sets to the account bits plus the base bits at character selection, `CharUnboundMgrService`): Tools, Macro, Ship, Charges, Drones, Implants need ROLE_GML; QA and UI need ROLE_QA; Tournament needs ROLE_TOURNAMENT. Most entries are client-local (windows, render and debug toggles, `GetMacros` reads the insider files). The server-facing calls are below.
+The client's dedicated screen is the Insider window (`eve/devtools/script/insider.py`, `InsiderWnd` and `InsiderService`). Its toolbar menus are gated by the session role (`session.role`, which the server sets to the account bits plus the base bits at character selection, `CharUnboundMgrService`): Tools, Macro, Ship, Charges, Drones, Implants need ROLE_GML; QA and UI need ROLE_QA; Tournament needs ROLE_TOURNAMENT. Most entries are client-local (windows, render and debug toggles, `GetMacros` reads the insider files). The server-facing calls are below. The seven `node_graph.qa_*` RPCs also require `GameMasterRoles.Staff` at the server entry before the sim callback; the two `process_client_*` methods retain their client-message contract.
 
 | Menu entry | Remote call (client code) | eve.rs |
 |---|---|---|

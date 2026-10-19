@@ -32,14 +32,12 @@ JITA_PLANET_ID = 40009080
 DOGMA_EFFECT_ID_ARMOR_REPAIR = 27
 DOGMA_EFFECT_ID_MODULE_BONUS_AFTERBURNER = 6731
 
-
 def _item_id(rows, type_id):
     return next(
         int(row.fields()["itemID"])
         for row in rows
         if int(row.fields()["typeID"]) == type_id
     )
-
 
 def _integer(value):
     if isinstance(value, int) and not isinstance(value, bool):
@@ -50,7 +48,6 @@ def _integer(value):
             if isinstance(number, int) and not isinstance(number, bool):
                 return number
     return None
-
 
 def _dicts(value):
     if isinstance(value, dict):
@@ -73,7 +70,6 @@ def _dicts(value):
         for item in value:
             yield from _dicts(item)
 
-
 def _abyssal_system_id(events):
     for event in events:
         if event.get("name") != "$sessionchange":
@@ -87,14 +83,11 @@ def _abyssal_system_id(events):
                 return system_id
     return None
 
-
 def _event(events, name):
     return next((event for event in events if event.get("name") == name), None)
 
-
 def _fields_with_keys(value, required):
     return next((fields for fields in _dicts(value) if required <= fields.keys()), None)
-
 
 def _warp_stopped(events):
     return any(
@@ -104,15 +97,11 @@ def _warp_stopped(events):
         for action in event.get("destiny", {}).get("actions", [])
     )
 
-
 def test_solo_filament_entry_reports_room_and_expiry():
     _run_abyssal_scenario()
 
-
 def test_solo_npc_combat_advances_three_rooms_and_returns_to_origin():
     _run_abyssal_scenario(combat=True)
-
-
 
 @pytest.mark.parametrize(
     ("game_mode_id", "ship_type_id", "filament_quantity"),
@@ -127,7 +116,6 @@ def test_fleet_manual_trace_activation_starts_entry_and_deadline(
         filament_quantity=filament_quantity,
     )
 
-
 def _trace_item_id(events):
     markers = {
         _integer(fields.get("itemID"))
@@ -136,7 +124,6 @@ def _trace_item_id(events):
     } - {None}
     assert len(markers) <= 1, f"deployment exposed ambiguous trace markers: {markers}"
     return next(iter(markers), None)
-
 
 def _run_abyssal_scenario(
     combat=False, game_mode_id=1, ship_type_id=THORAX_TYPE_ID, filament_quantity=1,
@@ -386,7 +373,7 @@ def _run_abyssal_scenario(
                 reconnected.call("keeper", "GetCurrentDungeonForCharacter")
             )
             if base.REFERENCE:
-                # The recorded EveJS relog query returns None. Keep that reference
+
                 # limitation distinct from authoritative dungeon restoration on RS.
                 assert current_dungeon is None or (
                     isinstance(current_dungeon, (list, tuple)) and len(current_dungeon) == 4
@@ -441,11 +428,9 @@ def _run_abyssal_scenario(
                     combat_modules, active_content_id, expiry_time,
                 )
 
-
-
 def _inventory_for(client, scope, item_id):
     if base.REFERENCE:
-        # EveJS GetInventoryFromId retains a raw BigInt in its bound context;
+
         # List/Add/MultiAdd then JSON.stringify it and return None on failure.
         # Its existing GetInventory route normalizes the same actual item ID.
         manager = client.call("invbroker", "MachoBindObject", scope, None)[0]
@@ -457,7 +442,6 @@ def _inventory_for(client, scope, item_id):
         )[1]
     assert bound is not None, f"inventory {item_id} did not bind"
     return bound
-
 
 def _prepare_combat_modules(client, ship_id, station_id):
     """Equip this disposable pilot before deployment using existing setup commands."""
@@ -572,7 +556,6 @@ def _prepare_combat_modules(client, ship_id, station_id):
             "afterburner": next(iter(modules[12058])), "ship": ship_id,
             "ammunition": int(spare[0]["itemID"]), "webs": webs, "capacitor_rigs": rig_ids}
 
-
 def _room_snapshot(client, ballpark):
     client.call_bound(ballpark, "UpdateStateRequest")
     events = timed_events(client, 2.0)
@@ -589,9 +572,6 @@ def _room_snapshot(client, ballpark):
             if item_id is not None and {"typeID", "groupID", "categoryID"} <= fields.keys():
                 entities[item_id] = fields
     return entities, events
-
-
-
 
 def _placement_observations(events, ship_id, entities):
     observations = []
@@ -610,7 +590,6 @@ def _placement_observations(events, ship_id, entities):
             )
     return observations
 
-
 def _check_deployment_position(client, ship_id, planet_id, game_mode_id):
     bound = client.call("beyonce", "MachoBindObject", JITA_SYSTEM_ID, None)
     assert isinstance(bound, (tuple, list)) and bound
@@ -626,7 +605,6 @@ def _check_deployment_position(client, ship_id, planet_id, game_mode_id):
         "planet_anchor": anchor,
     }, sort_keys=True), flush=True)
 
-
 def _has_item_id(value, item_id):
     if _integer(value) == item_id:
         return True
@@ -636,7 +614,6 @@ def _has_item_id(value, item_id):
         return any(_has_item_id(child, item_id) for child in value)
     return False
 
-
 def _destroyed_on_wire(events, target):
     actions = [
         action for event in events
@@ -645,7 +622,6 @@ def _destroyed_on_wire(events, target):
     ]
     names = {action.get("name") for action in actions}
     return {"TerminalPlayDestructionEffect", "RemoveBalls"} <= names
-
 
 def _cache_wreck_added_for_cache(events, cache_id):
     return any(
@@ -662,7 +638,6 @@ def _cache_wreck_added_for_cache(events, cache_id):
         )
         for event in events
     )
-
 
 def _shoot_entity(client, ballpark, dogma, modules, target, expiry_time, follow_distance, web_ids=None):
     """Use ordinary movement, target locks and loaded guns; never alter NPC health."""
@@ -772,8 +747,6 @@ def _shoot_entity(client, ballpark, dogma, modules, target, expiry_time, follow_
             continue
     pytest.fail(f"normal weapons did not destroy Abyssal entity {target} before the combat deadline")
 
-
-
 def _approach_static_entity(client, ballpark, ship_id, item_id, expiry_time):
     client.call_bound(ballpark, "CmdSetSpeedFraction", 1.0)
     client.call_bound(ballpark, "CmdFollowBall", item_id, 0)
@@ -783,7 +756,6 @@ def _approach_static_entity(client, ballpark, ship_id, item_id, expiry_time):
         if surface_distance(events, ship_id, item_id) <= 1000:
             return
     pytest.fail(f"ordinary approach did not reach Abyssal object {item_id}")
-
 
 def _loot_destroyed_cache(client, ballpark, ship_id, system_id, wreck_id, expiry_time):
     _approach_static_entity(client, ballpark, ship_id, wreck_id, expiry_time)
@@ -806,8 +778,6 @@ def _loot_destroyed_cache(client, ballpark, ship_id, system_id, wreck_id, expiry
     assert all(after.get(type_id, 0) == before.get(type_id, 0) + quantity
                for type_id, quantity in expected.items()), (before, expected, after)
     assert not list(client.call_bound(opened, "List")), "looted cache still held the transferred items"
-
-
 
 def _support_module_cycle_duration_ms(dogma_info, module_id):
     module = next(
@@ -836,7 +806,6 @@ def _support_module_cycle_duration_ms(dogma_info, module_id):
     )
     return float(duration)
 
-
 def _support_module_stopped(events, module_id, expected_effect_id):
     for event in events:
         if event.get("name") != "OnGodmaShipEffect":
@@ -852,7 +821,6 @@ def _support_module_stopped(events, module_id, expected_effect_id):
             return True
     return False
 
-
 def _is_inactive_support_error(error, module_name):
     envelope = _fields_with_keys(error, {"msg", "dict"})
     notification = _fields_with_keys(error, {"notify"})
@@ -861,7 +829,6 @@ def _is_inactive_support_error(error, module_name):
         and notification is not None
         and notification["notify"] == f"{module_name} is not active."
     )
-
 
 def _stop_support_module(client, dogma, module_id, effect, expected_effect_id, module_name, dogma_info):
     cycle_ms = _support_module_cycle_duration_ms(dogma_info, module_id)
@@ -881,7 +848,6 @@ def _stop_support_module(client, dogma, module_id, effect, expected_effect_id, m
         f"{module_name} Deactivate returned success but no inactive OnGodmaShipEffect arrived "
         f"within its {cycle_ms:g} ms cycle"
     )
-
 
 def test_support_stop_uses_computed_cycle_and_matching_godma_event():
     module_id = 1990000015
@@ -904,7 +870,6 @@ def test_support_stop_uses_computed_cycle_and_matching_godma_event():
     assert not _support_module_stopped([other_effect_inactive], module_id, DOGMA_EFFECT_ID_MODULE_BONUS_AFTERBURNER)
     assert not _support_module_stopped([online_inactive], module_id, DOGMA_EFFECT_ID_MODULE_BONUS_AFTERBURNER)
     assert _support_module_stopped([inactive], module_id, DOGMA_EFFECT_ID_MODULE_BONUS_AFTERBURNER)
-
 
 def test_cache_wreck_wait_observes_spawn_after_empty_snapshots():
     cache_id = 7001
@@ -929,7 +894,6 @@ def test_cache_wreck_wait_observes_spawn_after_empty_snapshots():
     assert _cache_wreck_added_for_cache(
         [event("SetState", wreck_id, 48120, cache_id)], cache_id,
     )
-
 
 def _complete_three_rooms(client, ship_id, system_id, ballpark, modules, content_id, expiry_time):
     for room in (1, 2, 3):
@@ -1000,7 +964,7 @@ def _complete_three_rooms(client, ship_id, system_id, ballpark, modules, content
         )
         if room == 3:
             # The return receipt follows the ordinary public ballpark bootstrap.
-            # EveJS otherwise expires its pending return with no Finished notification.
+
             returned = client.call("beyonce", "MachoBindObject", JITA_SYSTEM_ID, None)
             assert isinstance(returned, (tuple, list)) and returned
             client.call_bound(returned[0], "UpdateStateRequest")

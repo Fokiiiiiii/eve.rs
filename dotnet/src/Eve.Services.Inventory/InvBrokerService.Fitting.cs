@@ -117,7 +117,8 @@ public sealed partial class InvBrokerService
         }
 
         // the modules and rigs: one of each, into the slot it names (EveJS module loop)
-        var fitted = (await items.InLocationAsync(ship.Id, character, ct)).Select(i => ((long)i.Flag, (long)i.TypeId)).ToHashSet();
+        var fittedItems = (await items.InLocationAsync(ship.Id, character, ct)).ToDictionary(i => i.Id);
+        var fitted = fittedItems.Values.Select(i => ((long)i.Flag, (long)i.TypeId)).ToHashSet();
         foreach (var (flag, typeId) in modules)
         {
             if (!fitRigs && Slots.FamilyOfFlag((int)flag) == SlotFamily.Rig)
@@ -128,6 +129,22 @@ public sealed partial class InvBrokerService
             {
                 continue;
             }
+
+            // A saved fit replaces an occupied high, mid, or low slot. Move the old item
+            // through the same ship mutation path so dogma and item notifications stay in sync.
+            if (Slots.FamilyOfFlag((int)flag) is SlotFamily.High or SlotFamily.Medium or SlotFamily.Low)
+            {
+                foreach (var occupant in fittedItems.Values.Where(i => i.Flag == flag).ToList())
+                {
+                    if (await ships.MoveAsync(character, occupant.Id, ship.Id, station, ItemFlags.Hangar, null, ct) is ShipChanged removed)
+                    {
+                        outcomes.Add(removed);
+                        fittedItems.Remove(occupant.Id);
+                        fitted.Remove((flag, occupant.TypeId));
+                    }
+                }
+            }
+
             var placed = false;
             if (candidates.TryGetValue(typeId, out var list))
             {

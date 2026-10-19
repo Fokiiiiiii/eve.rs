@@ -53,7 +53,6 @@ STATION_POSITION = (311989870775.0, -13069156275.0, 156646281447.0)
 STATION_RADIUS = 70000.0
 DOCKING_RANGE = 2500.0
 
-
 @pytest.mark.parametrize("race", MOVEMENT["races"], ids=lambda r: f"race-{r['raceID']}")
 def test_orders_in_space_make_the_updates_the_reference_sent(race):
     run = uuid.uuid4().hex[:10]
@@ -84,7 +83,6 @@ def test_orders_in_space_make_the_updates_the_reference_sent(race):
             problems += compare_events(step["events"], events, where, mapping)
     assert problems == [], "\n".join(problems[:40])
 
-
 def distance_from_surface(events: list, ship_id: int):
     """How far off the station's surface the ship is, from the state among the events (None when they hold none)."""
     state = ego_state(events, ship_id)
@@ -93,7 +91,6 @@ def distance_from_surface(events: list, ship_id: int):
     (x, y, z), radius = state
     gap = sum((a - b) ** 2 for a, b in zip((x, y, z), STATION_POSITION)) ** 0.5
     return gap - radius - STATION_RADIUS
-
 
 @SLOW
 @pytest.mark.parametrize("race", APPROACH["races"], ids=lambda r: f"race-{r['raceID']}")

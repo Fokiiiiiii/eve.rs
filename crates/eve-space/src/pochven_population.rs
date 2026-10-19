@@ -8,7 +8,6 @@
 //!
 //! The shot of a turret is the SDE's damage times the hull's damage multiplier, once every [`SHOT_CYCLE_MS`]: the SDE gives no cycle for these types, so the
 //! cycle is the rule of this module.
-
 use std::collections::HashMap;
 use std::sync::OnceLock;
 

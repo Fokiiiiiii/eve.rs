@@ -18,6 +18,7 @@
 | `dotnet/src/Eve.Services.Core` (45 C# files) | 1,148 | 874 | 2026-10-19 |
 | `tools/dev` (19 Python files) | 106 | 97 | 2026-10-19 |
 | `crates/eve-space` (128 Rust files) | 3649 | 3499 | 2026-10-19 |
+| `crates/eve-space` (doc-comment spacing pass, 128 Rust files) | 3505 | 3505 | 2026-10-19 |
 | `crates/eve-destiny` (4 Rust files) | 185 | 182 | 2026-10-19 |
 | `crates/eve-behaviors` (183 Rust files) | 2412 | 2333 | 2026-10-19 |
 | `crates/eve-oracle` (8 Rust files) | 105 | 102 | 2026-10-19 |

@@ -1,5 +1,4 @@
 //! NPC ship.
-
 /// The Pochven region (SDE `mapRegions` 10000070).
 pub const POCHVEN_REGION_ID: i32 = 10_000_070;
 

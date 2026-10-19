@@ -4,7 +4,6 @@
 //! `0.5 ^ (tracking² + range²)` with `tracking = angular velocity × turret signature resolution / (tracking speed × target signature radius)` and
 //! `range = max(0, surface distance − optimal) / falloff`; one roll decides everything: at or above the chance the shot misses, below 1 % it is a
 //! wrecking shot (three times the damage), otherwise the damage is multiplied by `0.49 + roll`. The hit quality the combat log shows is one of the
-
 mod fire;
 mod math;
 pub use self::math::angular_velocity;

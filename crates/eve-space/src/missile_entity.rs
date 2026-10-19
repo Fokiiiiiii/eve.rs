@@ -2,7 +2,6 @@
 //!
 //! A launcher does not hurt anything itself. Each cycle it makes a [`MissileEntity`], which keeps where it was launched from, where it is, how fast it flies, how long it has to
 //! live, who fired it (the pilot, the ship, the launcher module) and what it flies at, and which the scene moves on at every poll: it homes on its target (a missile turns at once),
-
 //! client's warhead is due by then, lands all the same), or loses its target (the target warped, was destroyed, left) and is gone. The damage is done when it lands, by the numbers of
 //! the missile ([`crate::missiles::Missile::applied`]) against the signature and the speed the target has then.
 //!
@@ -13,7 +12,6 @@
 //! A missile is kept apart from the ships: it has no place among the pilots, no slim item of a ship, no lock (nothing can target it), and no shield, armor or hull; the only way
 //! to hurt it is the `hit_points` it carries, and the only things that do are the interceptors named by [`Interceptor`] (a smartbomb goes off among them; a defender missile
 //! and a point defense battery are shot at them: `Scene::intercept_missile` and `Scene::damage_missile` are what they call).
-
 use std::collections::BTreeSet;
 
 use eve_destiny::ball::LegacyMode;

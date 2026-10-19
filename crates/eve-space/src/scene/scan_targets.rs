@@ -1,8 +1,6 @@
 //! The scan targets of a scene for the host's probe scans (command 27, protocol 52). The host decides what each one is worth; the scene says what is there.
 //! A target is a ship (a player's or an NPC's), a drone or a fighter squadron (the companions of a ship), or a deployable a probe can scan: a cynosural field,
-
 //! scanned with probes"). Wrecks, containers, asteroids, missiles, the scanner probes and the other deployables are not targets.
-
 use crate::deployable::Role;
 use crate::link::ScanTarget;
 use crate::scene::{Command, Out, Scene, SessionId};

@@ -5,7 +5,6 @@
 //! type of station, its undock points in the station model's own frame. The ship leaves at the first point of the category that suits its size,
 //! facing the point's direction, both turned by the station's orientation (the reference authors one for two stations and leaves the others as
 //! they are in the model).
-
 use std::collections::HashMap;
 use std::sync::OnceLock;
 

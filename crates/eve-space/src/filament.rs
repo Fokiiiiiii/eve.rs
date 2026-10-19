@@ -1,8 +1,6 @@
 //! (build 3396210, `typeDogma`, attributes `mjdShipJumpCap`, `filamentSpoolupTimeSeconds`, `mjfgRadius`, `lightYearDistanceMax`); the trace rules are the
-
 //! match the SDE's 30 s and 45 s for the Cladistic and Pochven-system filaments). The destinations are not in the client extract (the location lists 4510 to
 //! 4569 are not in it), so this module gives the rules and not the jump's target: the jump is not built.
-
 /// Where a filament leads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Direction {

@@ -93,8 +93,8 @@ These are code-review classifications from the current worktree and targeted sou
 | Industry exactness | `INDUSTRY_STATUS.md` is authoritative project status, but exact EveJS parity and all cost/time/material branches were not walked here. | Unknown; do not infer parity from tests alone. |
 | Corp tax on bounties / mission LP | TODO records corporation LP tax as open at least for FW; NPC bounty path was not traced. | Defect/open for LP tax; bounty path unknown. |
 | Structure 1% market tax | The V24 sell preview uses Accounting-adjusted `limits['acc']` for transaction tax. `MarketQuote.GetBaseTax` reads a structure's MARKET_TAX setting for the broker fee; EveJS defaults it to 1% and adds the 0.5% SCC surcharge. eve.rs now has a separate structure-rate calculation regression. Its settlement route still resolves SDE `StationCatalog` entries only. | Rate semantics reconciled; structure order settlement remains open. |
-| Failed sell order refunds fees | Transaction tests exist; failed-sell fee atomicity not established. | Unknown. |
-| Buy Multiple | Market RPC and transaction tests exist; Buy Multiple client path not checked. | Unknown. |
+| Failed sell order refunds fees | A failed order insert rolls back the broker debit and item move with the placement transaction; retrying the operation key produces one successful charge. | No defect found; the injected post-charge failure regression proves rollback and idempotent retry. |
+| Buy Multiple | V24 calls `marketsvc.BuyMulti(stationID, itemList, useCorp)` with each line carrying typeID, price, quantity and minVolume. eve.rs now places all valid lines through one serializable transaction. | Defect fixed: a later line failure rolls back every line; retry and replay tests cover transaction and RPC paths. |
 | Login closes another account client | `ClientSession`/character selection exist; duplicate-account transport behavior not evidenced in reviewed tests. | Unknown. |
 | Gateway disconnect does not crash | Gateway/runtime error isolation not specifically checked. | Unknown. |
 | Site expiry freezes fixed | Dungeon lifecycle exists; concurrency/stall test not checked. | Unknown. |
@@ -112,7 +112,7 @@ Before porting each row, require exact V24 callsite or static-data evidence from
 1. DONE (defects fixed and selected warp range verified): Destiny updates flush on whole-second boundaries, out-of-range dock requests complete on arrival, and selected warp range is covered by a boundary regression. Focused `eve-sim` and `eve-space` tests cover the changes.
 2. DONE (defect fixed): Host account-session admission now atomically replaces an existing same-account client and sends its clean disconnect reason; `ConnectedSessionsTests` covers replacement, stale close, and concurrent opens.
 3. DONE (calculation split): NPC station transaction tax remains 7.5% base reduced by Accounting; a structure's owner-set 1% value is its broker fee, plus the 0.5% SCC surcharge. The structure order settlement route remains open because `MarketTrading` uses `StationCatalog` locations.
-4. Verify failed sell refund and Buy Multiple transaction flows (M): both expose wallet/inventory correctness and retries.
+4. DONE (failed-sell defect not found; Buy Multiple defect fixed): the failed sell rollback and retry are covered by an injected database failure; Buy Multiple uses one transaction and its RPC regression covers later-line failure, retry and replay. eve.rs deliberately makes multi-buy atomic across lines, while EveJS v261018.1 calls `executeBuyRequest` once per line and can commit earlier lines before a later line fails.
 5. Trace industry calculation and Corp Deliveries against V24 client calculation (L): highest confidence route to resolve broad parity claims.
 6. Complete corporate bounty and mission LP tax trace (M): existing TODO already records a real LP tax gap.
 7. Test T3 rig removal and saved-fit overwrite semantics (S): bounded existing fitting domain with existing tests.

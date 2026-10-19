@@ -2,7 +2,7 @@
 
 The workflows are currently in the automatic mode while the repository is public. `ci.yml` uses push and weekly schedule triggers; `live-slow.yml` remains dispatch-only. When the repository becomes private again run `python3 tools/dev/ci-mode.py manual` and push. This makes every workflow manual only through `workflow_dispatch`; it removes push, schedule, and pull request triggers. Use `python3 tools/dev/ci-mode.py --check` to print the current mode. Run `python3 tools/dev/ci-mode.py auto` to restore automatic triggers. The automatic trigger definitions are kept in the script.
 
-`ci.yml` runs its Linux jobs on pushes to `main` except documentation-only changes and `.github/dependabot.yml`. Every push SHA has a unique concurrency group, so later pushes do not cancel or replace its run. Manual `workflow_dispatch` runs can cancel older manual runs and select jobs. Windows coverage is selected for platform-sensitive paths, a manual `windows` selection, and the weekly schedule. It provisions PostgreSQL 18 on the Windows runner and runs Rust, .NET, Python, and a login-to-character walk. Windows has a 45-minute job timeout and is currently excluded from the `Required CI gate` while its runner checks are being repaired; the gate waits only for Linux jobs. `live-slow.yml` is dispatch-only and runs each selected headless-client test file in its own matrix job. The CI workflow builds and tests with Rust 1.99.0; `Cargo.toml` retains the Rust 1.94 minimum supported version.
+`ci.yml` runs its Linux jobs on pushes to `main` except documentation-only changes and `.github/dependabot.yml`. Push runs share a branch concurrency group with `cancel-in-progress: false`; GitHub keeps the running run and the newest pending SHA, replacing older pending runs. Manual runs use a separate interactive group and can cancel older manual runs. Manual `workflow_dispatch` runs can cancel older manual runs and select jobs. Windows coverage is selected for platform-sensitive paths, a manual `windows` selection, and the weekly schedule. It provisions PostgreSQL 18 on the Windows runner and runs Rust, .NET, Python, and a login-to-character walk. Windows has a 45-minute job timeout and is currently excluded from the `Required CI gate` while its runner checks are being repaired; the gate waits only for Linux jobs. `live-slow.yml` is dispatch-only and runs each selected headless-client test file in its own matrix job. The CI workflow builds and tests with Rust 1.99.0; `Cargo.toml` retains the Rust 1.94 minimum supported version.
 
 ## Read the result for a commit
 
@@ -12,11 +12,12 @@ Set `GH_TOKEN` or `GITHUB_TOKEN` in the environment, then run:
 python3 tools/dev/ci-status.py status --branch main
 python3 tools/dev/ci-status.py status --sha <commit-sha>
 python3 tools/dev/ci-status.py status --sha <commit-sha> --workflow ci.yml
+python3 tools/dev/ci-status.py cancel-queued --branch main --workflow ci.yml
 ```
 
 The status command lists run URLs, per-job conclusions and durations, failing steps, and a failing-step log tail when the token can download job logs. To save output while a run is still active, add `--no-logs`.
 
-Push runs use their commit SHA in the concurrency group and continue independently. The `Required CI gate` job prints its `GITHUB_SHA` and all dependency results; use `status --sha` to verify that the completed run's `head_sha` matches the commit being checked.
+Push runs are serialized by branch, with one replaceable pending run, so runner queues remain bounded while the newest push receives a verdict. The `Required CI gate` prints its `GITHUB_SHA` and dependency results; use `status --sha` to verify the completed run's `head_sha` matches the commit being checked.
 
 ## Dispatch
 
@@ -27,6 +28,8 @@ python3 tools/dev/ci-status.py dispatch ci.yml --ref main --jobs all
 python3 tools/dev/ci-status.py dispatch ci.yml --ref main --jobs python
 python3 tools/dev/ci-status.py dispatch ci.yml --ref main --jobs windows
 ```
+
+Use `cancel-queued` once to clear stale queued runs after changing the concurrency policy; it cancels queued runs matching the selected branch and optional workflow, and `--sha` preserves that commit.
 
 The slow-live workflow prints the last 500 lines of the Host, simulation and front logs when a selected walk fails. It also uploads those logs as a seven-day artifact for diagnosis.
 

@@ -129,6 +129,29 @@ public class MarketRpcTests
         Assert.Equal(95, (await r.Book.BookAsync(r.Station.RegionId, Tritanium, r.Now)).Asks.Single().VolumeRemaining);
     }
 
+
+    [PgFact]
+    public async Task Buy_multi_rolls_back_every_line_when_a_later_line_cannot_be_funded()
+    {
+        await using var r=await TradeRig.Create();
+        var actor=await r.Actor("Multi Buyer");
+        var seat=await SeatAsync(r,actor);
+
+        await Assert.ThrowsAsync<MachoWrappedException>(() => seat.Proxy.BuyMultipleItems(Call(seat.Session,"BuyMultipleItems",77,
+            new PyInt(r.Station.Id),new PyList([Line(Tritanium,10,10),Line(Tritanium,100,1000)]),PyBool.False)).AsTask());
+        Assert.Equal(10000m,(await r.WalletStore.GetAsync(actor))!.Isk);
+        Assert.Empty((await r.Book.BookAsync(r.Station.RegionId,Tritanium,r.Now)).Bids);
+        Assert.Empty(seat.Sink.Packets);
+
+        var result=await seat.Proxy.BuyMultipleItems(Call(seat.Session,"BuyMultipleItems",77,
+            new PyInt(r.Station.Id),new PyList([Line(Tritanium,10,10),Line(Tritanium,1,20)]),PyBool.False));
+        Assert.IsType<PyObject>(result);
+        Assert.Equal(9680m,(await r.WalletStore.GetAsync(actor))!.Isk);
+        var bids=(await r.Book.BookAsync(r.Station.RegionId,Tritanium,r.Now)).Bids.OrderBy(order => order.Price).ToArray();
+        Assert.Equal(2,bids.Length);
+        Assert.Equal(new[] { 10m,20m },bids.Select(order => order.Price));
+    }
+
     [PgFact]
     public async Task An_immediate_buy_that_matches_nothing_is_booked_with_its_escrow()
     {

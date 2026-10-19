@@ -1584,6 +1584,41 @@ public class SpaceServiceTests
         }
 
     [PgFact]
+    public async Task A_module_that_can_activate_in_gate_cloak_keeps_a_jump_cloak()
+    {
+        var rig = await Rig.CreateAsync(
+            jumpCloak: TimeSpan.FromMinutes(1),
+            staticsOverride: async statics =>
+            {
+                await statics.EnsureTypesAsync([3638]);
+                var gunType = statics.Type(3638)
+                    ?? throw new InvalidOperationException("The starter gun must be in the pinned SDE.");
+                var attribute = statics.AttributeId("canActivateInGateCloak")
+                    ?? throw new InvalidOperationException("The SDE must define canActivateInGateCloak.");
+                Assert.Equal(3123, attribute);
+                var attributes = new Dictionary<int, double>(gunType.Attributes) { [attribute] = 1 };
+                return statics.WithFixtures([gunType with { Attributes = attributes }]);
+            });
+        await using var _ = rig;
+
+        var character = await rig.NewCharacterAsync();
+        var session = await rig.SessionAsync(character);
+        var from = (int)session.GetInt("solarsystemid2")!.Value;
+        await InSpaceAsync(rig, session);
+        rig.Sim.Say(new SimJumped((ulong)session.SessionId, from, Gate, NextSystem, NextGate));
+        await Rig.UntilAsync(() => session.GetInt("solarsystemid") == NextSystem);
+        Events.Of(session);
+
+        var (_, _, gun, _) = await ShipAsync(rig, character);
+        var activationCount = rig.Sim.Heard.OfType<SimActivate>().Count();
+
+        await rig.Space.ActivateAsync(session, gun, "targetAttack", 1, 1, CancellationToken.None);
+
+        Assert.Equal(activationCount + 1, rig.Sim.Heard.OfType<SimActivate>().Count());
+        Assert.DoesNotContain(Events.Of(session), e => e.Name is "OnJumpCloakCancelled" or "OnInvulnCancelled");
+    }
+
+    [PgFact]
     public async Task A_gun_that_needs_no_charge_shoots_with_its_own_damage_after_the_skills_of_the_pilot()
     {
         var (rig, character, _) = await DockedAsync();

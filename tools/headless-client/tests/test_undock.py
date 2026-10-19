@@ -179,6 +179,12 @@ def _session_changes(recorded, ours, where, mapping) -> list[str]:
 
 def compare_events(recorded: list[dict], ours: list[dict], where: str, mapping: dict) -> list[str]:
     recorded, ours = collapse(recorded), collapse(ours)
+    # The simulation and the invulnerability timer publish independently. Keep checking the timer
+    # notice and its payload, but do not require it to arrive before or after an unrelated update.
+    recorded_timer = [event for event in recorded if event["name"] == "OnInvulnCancelled"]
+    ours_timer = [event for event in ours if event["name"] == "OnInvulnCancelled"]
+    recorded = [event for event in recorded if event["name"] != "OnInvulnCancelled"]
+    ours = [event for event in ours if event["name"] != "OnInvulnCancelled"]
     # DEVIATION #16: the reference sends the props of the stations one stamp after the state
     recorded = [e for e in recorded if not _is_props(e)]
     ours = [e for e in ours if not _is_props(e)]
@@ -187,6 +193,11 @@ def compare_events(recorded: list[dict], ours: list[dict], where: str, mapping: 
     out: list[str] = []
     for index, (a, b) in enumerate(zip(recorded, ours)):
         out += compare_event(a, b, f"{where}: event {index} {a['name']}", mapping)
+    if [(e["name"], e["idType"]) for e in recorded_timer] != [(e["name"], e["idType"]) for e in ours_timer]:
+        out.append(f"{where}: timer events {[e['name'] for e in ours_timer]} in place of {[e['name'] for e in recorded_timer]}")
+    else:
+        for index, (a, b) in enumerate(zip(recorded_timer, ours_timer)):
+            out += compare_event(a, b, f"{where}: timer event {index} {a['name']}", mapping)
     return out
 
 

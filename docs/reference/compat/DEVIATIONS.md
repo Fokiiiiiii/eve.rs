@@ -4896,3 +4896,8 @@ EveJS `assistanceModuleRuntime.js` restores the uncharged base repair amount whe
 ## Windows transport and developer entry points
 
 Windows selects local TCP for the Host front and simulation link (`HostConfiguration.DefaultEndpoint`, `DefaultSimSocket`, and `crates/eve-sim/src/bin/eve-sim.rs`); Unix builds keep their socket-path defaults. Both transports feed the same Host and simulation codecs, so this platform choice does not alter the EVE client wire contract. The existing `HostConfigurationTests` cover platform defaults and TCP binding. `tools/windows/check-all.ps1`, `pg18.ps1`, and `run-headless.ps1` provide PowerShell entry points for checks, an installed PostgreSQL 18 service, and headless tests. The CI workflow schedules native Windows builds, suites, and a login-to-character walk. The owner's graphical-client run and console shutdown behavior remain open pending a Windows runner result and machine-side acceptance.
+
+
+## Contracts design (2026-10-19)
+
+No compatibility deviation is recorded yet: the Host has no persisted contract implementation. `docs/project/CONTRACTS_DESIGN.md` records the V24 `GetLoginInfo` rowsets, supported contract/skill names, lifecycle, escrow ownership, and the RPC wire evidence boundary. Contract fee values are documented by EVE University’s [Contracts](https://wiki.eveuniversity.org/Contract) page; their exact calculation and rounding must be compared with V24 `contractscommon.py` and EveJS helpers before fee code is added. The client’s market fee rules are a separate system.

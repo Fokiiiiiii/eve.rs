@@ -14,3 +14,7 @@ tokio = { version = "1", features = ["rt", "net", "io-util", "sync", "time", "ma
 [dev-dependencies]
 eve-destiny = { path = "../eve-destiny" }
 tokio = { version = "1", features = ["rt", "net", "io-util", "sync", "time", "macros", "signal"] }
+
+[[bench]]
+name = "link_frames"
+harness = false

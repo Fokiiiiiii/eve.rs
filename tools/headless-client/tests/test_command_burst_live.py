@@ -100,8 +100,8 @@ def test_a_loaded_burst_changes_a_fleet_members_dogma_until_its_buff_expires():
         owner.call_bound(owner_dogma[0], "AddTarget", member_ship)
         targeting = wait_for_events(owner, lambda events: named(events, "OnTarget"), timeout=90)
         assert named(targeting, "OnTarget"), "pilot A did not acquire pilot B"
-        owner.call_bound(owner_ballpark[0], "CmdOrbit", member_ship, 5_000)
-        time.sleep(90)  # allow the client flight order to reach the burst's 15 km SDE range
+        owner.call_bound(owner_ballpark[0], "CmdFollowBall", member_ship, 1_000)
+        time.sleep(240)  # allow the client flight order to reach the burst's 15 km SDE range
         notifications_of(owner)
         notifications_of(member)
 

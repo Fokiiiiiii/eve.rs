@@ -547,6 +547,8 @@ public class CharMgrTests
         rig.SecurityStatuses[characterId] = -1.25;
         var character = (await rig.Characters.GetAsync(characterId))!;
         var (session, _) = Rig.Session(characterId);
+        session.Set("corpid", Id(character.CorporationId));
+        session.Set("rolesAtAll", Id(Eve.Corporations.CorporationRoles.PersonnelManager));
 
         var actual = await Rig.CallAsync(rig.CharMgr, session, "GetPrivateInfo", Id(characterId));
         var expected = Py.Rowset(
@@ -557,6 +559,22 @@ public class CharMgrTests
                 Py.Number(54321.75), Py.Number(-1.25),
             ])]);
         Assert.True(PyValue.DeepEquals(expected, actual));
+    }
+
+    [PgFact]
+    public async Task Private_member_info_requires_an_authorized_role_in_the_members_corporation()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var characterId = await rig.MakeAsync("Private Member");
+        var character = (await rig.Characters.GetAsync(characterId))!;
+        var (session, _) = Rig.Session(characterId);
+
+        Assert.IsType<PyNone>(await Rig.CallAsync(rig.CharMgr, session, "GetPrivateInfo", Id(characterId)));
+        session.Set("corpid", Id(character.CorporationId));
+        session.Set("rolesAtAll", Id(Eve.Corporations.CorporationRoles.PersonnelManager));
+        Assert.IsType<PyObject>(await Rig.CallAsync(rig.CharMgr, session, "GetPrivateInfo", Id(characterId)));
+        session.Set("corpid", Id(character.CorporationId + 1));
+        Assert.IsType<PyNone>(await Rig.CallAsync(rig.CharMgr, session, "GetPrivateInfo", Id(characterId)));
     }
 
     [PgFact]

@@ -1021,7 +1021,7 @@ Closed in slice B3 (2026-10-10): `GetAverageMarketPrices` answers each type with
 Done in slice C (DEVIATIONS.md, "Character selection and entry (slice C, 2026-10-10)"):
 - `populationCap`: the live per-system load, the nearest alternatives, the saved move, the selection refusal (`PopulationCapTests`).
 - `multiLoginBlocker.Login`: the computer hash and clone grade are recorded; the Alpha rule refuses a second account on the same computer (`MultiLoginBlockerTests`).
-- Host account admission enforces one active client per account across front connections; a later login disconnects the earlier client (`ConnectedSessionsTests`).
+- Host account admission enforces one active client per account across front connections; a later login disconnects the earlier client (`ConnectedSessionsTests`). The headless live walk with two clients on the same account received the replacement reason, observed the old connection close and confirmed the new session remained responsive.
 - `ToggleValidation` by role, `GetCharOmegaDowngradeStatus` answered (`ValidationAndOmegaTests`).
 - `OnCharacterSelected` expectation in the live walk corrected to zero arguments; new live step `test_the_population_cap_answers_through_its_moniker`.
 - Verified against the client and left as they are: `GetCharacterSelectionData` 4-tuple and row fields, `GetCharacterLockType`, `GetCohortsForUser`, the session attribute set, the reward checks, the entry hooks' order.

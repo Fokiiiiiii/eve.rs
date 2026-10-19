@@ -42,10 +42,9 @@ Date for entries: 2026-10-19. Questions with a recorded decision are marked deci
 
 - **Date:** 2026-10-19
 - **Question:** Should the C4 command-burst track be scheduled with a sim wire batch and a source-backed live buff value?
-- **Context:** The burst value chain is present in the SDE (DEVIATIONS track C5); the earlier zero-value finding was corrected. Recipient exchange and live buff delivery still need the shared protocol and buff-state path. The owner decision defers bursts and disallows zero-value behavior.
-- **Options:** (A) Defer until the value source is settled and schedule the shared wire/registry work together. (B) Approve a targeted research/implementation track to find authoritative values and add the wire/registry; this carries protocol compatibility and cross-service work.
-- **Recommended default:** A, defer until the shared recipient exchange and live buff delivery can be implemented together; do not add zero-value behavior.
-- **Status:** decided (recommended default), 2026-10-19
+- **Context:** The earlier zero-value finding was based on reading output attributes before tracing effect 6737 to charge multipliers and module inputs. SDE charge multipliers and module values produce nonzero results; `CommandBurstValueTests` checks Shield Harmonizing (-8 Tech I, -10 Tech II). The prior deferral relied on the incorrect zero-value finding.
+- **Decision:** Superseded 2026-10-19: build command bursts, including the shared recipient exchange and timed buff delivery.
+- **Status:** superseded by owner direction, 2026-10-19
 
 ## Q-07 — Weapon-bank semantics
 

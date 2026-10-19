@@ -591,7 +591,7 @@ Open, each with its blocker:
 
 Sources, the SDE facts and the blockers are in DEVIATIONS "Track C4". Summary of what is open, in order:
 
-- OPEN (data): the burst value chain (effect 6737, `warfareBuffNValue` = module value times the charge multiplier, module value default 0) evaluates to 0 on this SDE build, and EveJS reads the same chain. A reference trace of a live burst's buff values is needed before any value is written.
+- SUPERSEDED (2026-10-19): the earlier zero-value claim read output attributes 2469 etc. without tracing effect 6737 to charge multiplier attributes 2596–2599 and module dogma inputs. `CommandBurstValueTests` confirms nonzero Shield Harmonizing values (Tech I -8, Tech II -10). The owner directs implementation of command bursts; see section 21 and DEVIATIONS, Track C4.
 - BLOCKED (wire, one batch, one bump at the next free epoch): a burst action carrying the fleet's recipient list per cycle and the buff set; a live-numbers message for running recipient modules; the codecs, `tools/dev/gen-simlink-fixtures.py` and the fixtures.
 - NOT BUILT: the buff registry (persistent source list on `DogmaWorld` items, expiry by the scheduler, restart drops it, client `OnDogmaAttributeChanged` for the recipients). Built with its first consumer, the burst.
 - NOT BUILT: P.A.N.I.C. (42522). Its fleet effect needs the registry, the wire batch, and the simulation state for shield resistance, shield recharge, drone damage, weapons, mass, scan resolution, entosis and jump/dock/tether flags.

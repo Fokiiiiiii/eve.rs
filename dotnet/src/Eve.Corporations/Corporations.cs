@@ -54,6 +54,7 @@ public static class CorporationRoles
     public const long Director = 1;
     public const long RentOffice = 1L << 41;
     public const long PersonnelManager = 128;
+    public const long FactoryManager = 1024;
     public const long Accountant = 256;
     public const long JuniorAccountant = 4503599627370496;
     public const long Trader = 18014398509481984;

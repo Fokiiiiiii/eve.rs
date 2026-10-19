@@ -66,7 +66,7 @@ public sealed class ItemLockTests
     }
 
     [PgFact]
-    public async Task The_client_reads_its_corporations_locks_and_no_one_elses()
+    public async Task Corporate_lock_reads_require_persisted_accountant_authority()
     {
         await using var rig = await Rig.CreateAsync();
         var (actor, corporation) = await CreateCorporationAsync(rig);
@@ -78,23 +78,38 @@ public sealed class ItemLockTests
         Assert.True(service.HasMethod("GetItemsByLocation"));
         Assert.True(service.HasMethod("GetLockedItemLocations"));
 
-        var member = new ClientSession { CharacterId = actor };
-        member.Set("corpid", new PyInt(corporation.Id));
+        var director = new ClientSession { CharacterId = actor };
+        director.Set("corpid", new PyInt(corporation.Id));
         var items = Assert.IsType<PyDict>(await service.CallAsync(new ServiceCall
         {
-            Method = "GetItemsByLocation", Args = [new PyLong(LocationId)], Session = member,
+            Method = "GetItemsByLocation", Args = [new PyLong(LocationId)], Session = director,
         }));
         var entry = Assert.Single(items.Entries);
         Assert.Equal(InventoryWire.Id(itemId), entry.Key);
         Assert.IsType<PyObject>(entry.Value);
 
-        var outsider = new ClientSession { CharacterId = actor };
-        outsider.Set("corpid", new PyInt(corporation.Id + 1));
-        var none = Assert.IsType<PyDict>(await service.CallAsync(new ServiceCall
+        var ordinaryCharacter = await rig.CharacterAsync("Lock Member");
+        var (applicationId, _) = await store.CreateInvitationAsync(ordinaryCharacter, corporation.Id, actor);
+        await store.RespondAsync(ordinaryCharacter, applicationId, 2, "", "");
+        var ordinaryMember = new ClientSession { CharacterId = ordinaryCharacter };
+        ordinaryMember.Set("corpid", new PyInt(corporation.Id));
+        ordinaryMember.Set("corprole", new PyLong(CorporationRoles.Accountant));
+        await Assert.ThrowsAsync<CorporationError>(() => service.CallAsync(new ServiceCall
         {
-            Method = "GetItemsByLocation", Args = [new PyLong(LocationId)], Session = outsider,
+            Method = "GetItemsByLocation", Args = [new PyLong(LocationId)], Session = ordinaryMember,
+        }).AsTask());
+        await Assert.ThrowsAsync<CorporationError>(() => service.CallAsync(new ServiceCall
+        {
+            Method = "GetLockedItemLocations", Args = [], Session = ordinaryMember,
+        }).AsTask());
+
+        var persistedMember = Assert.IsType<Member>(await store.MemberAsync(ordinaryCharacter));
+        await store.UpdateMemberAsync(actor, persistedMember with { Masks = new RoleMasks(CorporationRoles.Accountant) });
+        var accountantItems = Assert.IsType<PyDict>(await service.CallAsync(new ServiceCall
+        {
+            Method = "GetItemsByLocation", Args = [new PyLong(LocationId)], Session = ordinaryMember,
         }));
-        Assert.Empty(none.Entries);
+        Assert.Single(accountantItems.Entries);
     }
 
     private static CorporationStore StoreWithLocks(Rig rig) => new(rig.Source, rig.Characters, rig.Wallets, rig.Transactions,

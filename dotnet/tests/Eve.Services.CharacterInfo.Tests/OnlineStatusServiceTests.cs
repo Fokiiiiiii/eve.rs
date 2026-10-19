@@ -59,7 +59,7 @@ public sealed class OnlineStatusServiceTests
         Assert.Equal(PyBool.False, await Call(service, query, "GetOnlineStatus", new PyInt(Observer)));
         Assert.Equal(PyBool.False, await Call(service, query, "GetOnlineStatus", new PyInt(Target)));
         sessions.Enter(Target, current);
-        Assert.Equal(PyBool.False, await Call(service, query, "GetOnlineStatus", new PyInt(Target)));
+        Assert.Equal(PyBool.True, await Call(service, query, "GetOnlineStatus", new PyInt(Target)));
         current.Close();
         Assert.Equal(PyBool.False, await Call(service, query, "GetOnlineStatus", new PyInt(Target)));
     }
@@ -135,7 +135,7 @@ public sealed class OnlineStatusServiceTests
     }
 
     [Fact]
-    public async Task Unselected_observer_gets_empty_initial_state_and_denies_known_presence()
+    public async Task Unselected_observer_gets_empty_initial_state_and_reads_raw_presence()
     {
         var sessions = new CharacterSessions();
         Enter(sessions, Target);
@@ -143,7 +143,7 @@ public sealed class OnlineStatusServiceTests
         var observer = new ClientSession();
         Assert.Empty(Rows(await Call(service, observer, "GetInitialState")));
         Assert.Empty(Rows(await Call(service, observer, "Prime")));
-        Assert.Equal(PyBool.False, await Call(service, observer, "GetOnlineStatus", new PyInt(Target)));
+        Assert.Equal(PyBool.True, await Call(service, observer, "GetOnlineStatus", new PyInt(Target)));
         Assert.Equal(PyBool.False, await Call(service, observer, "GetOnlineStatus", new PyInt(Target + 1)));
         Assert.Equal(PyBool.False, await Call(service, observer, "GetOnlineStatus"));
     }
@@ -177,6 +177,8 @@ public sealed class OnlineStatusServiceTests
 
         Assert.Equal(PyBool.True, await Call(new OnlineStatusService(sessions), new ClientSession(),
             "GetOnlineStatus", new PyInt(Target)));
+        Assert.Equal(PyBool.False, await Call(new OnlineStatusService(sessions), new ClientSession(),
+            "GetOnlineStatus", new PyInt(Target + 1)));
     }
 
     public static IEnumerable<object[]> NumericIds()

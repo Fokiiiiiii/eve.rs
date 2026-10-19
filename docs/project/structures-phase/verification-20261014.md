@@ -1,6 +1,6 @@
 # Structure integration verification - 2026-10-14
 
-Canonical checkout: C:/Users/yutai/eve.rs, main. Native client not run.
+Canonical checkout: repository root, main. Native client not run.
 
 Observed parent checks:
 - Host Debug build: 0 warnings, 0 errors.

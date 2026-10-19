@@ -20,7 +20,7 @@ DogmaAsync resolves each skill's name through the existing SDE-backed DogmaStati
 
 Character and skill metadata remain authoritative: the returned snapshot retains personal.Skills, so ShipSnapshot.TotalSkillPoints stays equal to the personal snapshot. DogmaInfo.ShipState in dotnet/src/Eve.Services.Dogma/DogmaInfo.cs takes wire skillPoints from s.TotalSkillPoints, while only the structure DogmaWorld modifier inputs are restricted to the four structure-specific skills. The PG test asserts both metadata/total preservation and the independent World item behavior. Existing pilot/structure authorization, read transaction, fitted-item state, and module condition handling are unchanged. No inventory writer or persistence mutation was added.
 
-## NOT RUN
+## not performed
 
 This agent did not run tests, builds, formatters, EveJS comparisons, or the graphical EVE client. No result from the parent's PG-backed regression test is recorded here.
 

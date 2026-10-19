@@ -2953,7 +2953,7 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
                     ["ownerCorpID"] = ownerCorporationId,
                     ["allianceID"] = ownerAllianceId,
                     ["profileID"] = profileId,
-                    ["serviceStates"] = new System.Text.Json.Nodes.JsonObject { ["1"] = 1, ["15"] = 1, ["999"] = 1 },
+                    ["serviceStates"] = new System.Text.Json.Nodes.JsonObject { ["1"] = 1, ["6"] = 1, ["15"] = 1, ["999"] = 1 },
                 },
             },
             ["structureProfiles"] = new()
@@ -2969,6 +2969,8 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
                             ["19"] = new System.Text.Json.Nodes.JsonArray(
                                 new System.Text.Json.Nodes.JsonObject { ["groupID"] = groupId, ["value"] = 1 },
                                 new System.Text.Json.Nodes.JsonObject { ["groupID"] = overrideGroupId, ["value"] = 1 }),
+                            ["23"] = new System.Text.Json.Nodes.JsonArray(
+                                new System.Text.Json.Nodes.JsonObject { ["groupID"] = groupId, ["value"] = 1 }),
                             ["34"] = new System.Text.Json.Nodes.JsonArray(
                                 new System.Text.Json.Nodes.JsonObject { ["groupID"] = 70003, ["value"] = 1 }),
                         },
@@ -3017,9 +3019,9 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
 
         var allowedServices = Assert.IsType<Eve.Marshal.PyDict>(
             await model.CharacterGetServicesAsync(allowedCharacterId, structureId, CancellationToken.None));
-        var visibleService = Assert.Single(allowedServices.Entries);
-        Assert.Equal(new Eve.Marshal.PyInt(1), visibleService.Key);
+        Assert.Equal(new long[] { 1, 6 }, allowedServices.Entries.Select(entry => ((Eve.Marshal.PyInt)entry.Key).Value).Order().ToArray());
         Assert.True(await model.CharacterHasServiceAsync(allowedCharacterId, structureId, 1, CancellationToken.None));
+        Assert.True(await model.CharacterHasServiceAsync(allowedCharacterId, structureId, Eve.Structures.StructureServiceIds.Medical, CancellationToken.None));
         Assert.False(await model.CharacterHasServiceAsync(allowedCharacterId, structureId, 15, CancellationToken.None));
         Assert.False(await model.CharacterHasServiceAsync(allowedCharacterId, structureId, 999, CancellationToken.None));
         Assert.True(await model.CharacterHasSettingAsync(allowedCharacterId, structureId, 19, CancellationToken.None));
@@ -3029,6 +3031,7 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
             await model.CharacterGetServicesAsync(deniedCharacterId, structureId, CancellationToken.None));
         Assert.Empty(deniedServices.Entries);
         Assert.False(await model.CharacterHasServiceAsync(deniedCharacterId, structureId, 1, CancellationToken.None));
+        Assert.False(await model.CharacterHasServiceAsync(deniedCharacterId, structureId, Eve.Structures.StructureServiceIds.Medical, CancellationToken.None));
         Assert.False(await model.CharacterHasServiceAsync(deniedCharacterId, structureId, 15, CancellationToken.None));
         Assert.False(await model.CharacterHasSettingAsync(deniedCharacterId, structureId, 19, CancellationToken.None));
         Assert.Equal(new[] { "structures", "structureProfiles", "accessGroups" }, tableReads.Distinct());

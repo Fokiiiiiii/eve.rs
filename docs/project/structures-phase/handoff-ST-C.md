@@ -13,7 +13,7 @@ Branch wt-stc (worktree /home/user/wt-stc). Increment 1 pushed to main with this
 - OperationalRpcServiceTests (Eve.Host.Tests): 12/12 passed. Also Eve.Services.Space.Tests CompressionHostTests + ModuleEffectsTests: 39/39 passed.
 
 ## Open (not in ST-C scope)
-- Graphical-client run of the compress action (unverified).
+- Graphical-client run of the compress action (not confirmed).
 
 ## Gotchas
 - Lock: always flock -o -w 1800 /tmp/eve-heavy.lock; dotnet test with -p:UseSharedCompilation=false, then dotnet build-server shutdown (a build server holding the fd stalls every session).

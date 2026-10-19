@@ -38,12 +38,15 @@ internal sealed partial class CharacterServicesComposition
             medical = services.GetValueOrDefault(Eve.Structures.StructureServiceIds.Medical);
             jumpClone = services.GetValueOrDefault(Eve.Structures.StructureServiceIds.JumpClone);
         }
-        // shortcut: the Medical service's access (its own setting, EVE.js characterHasStructureService) is not read; the docking right is the bay's rule
-        if (medical != Eve.Structures.ServiceState.Online
+
+        var hasMedicalAccess = medical == Eve.Structures.ServiceState.Online
+            && await structureDirectoryReadModel.CharacterHasServiceAsync(
+                characterId, structureId, Eve.Structures.StructureServiceIds.Medical, token);
+        if (!hasMedicalAccess
             && (jumpClone != Eve.Structures.ServiceState.Online || !await StructureDockingAllowedAsync(characterId, structureId, token)))
             return null;
 
-        // shortcut: a structure with no profile (ProfileId 0) takes the install fee; EVE.js reads the default profile of the owner
+        // A structure with no profile uses the default clone-bay fee.
         var fee = 900000m;
         if (record.ProfileId > 0
             && (await structureProfilesRpcBackend.GetProfileSettingsAsync(record.OwnerCorporationId, record.ProfileId, token))

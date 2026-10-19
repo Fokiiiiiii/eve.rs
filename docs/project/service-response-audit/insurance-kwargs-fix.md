@@ -2,7 +2,7 @@
 
 ## 結果・範囲
 
-**実装済、静的レビュー済。担当側のbuild/test/実サーバー検証はNOT RUN。親からInsuranceServiceTests Debug subsetの30 PASS／0 FAIL／0 SKIPが報告された。** 対象は`insuranceSvc.InsureShip`が`voidOld` kwargsを無視する1件だけ。監査の未比較177 RPCはこのsliceでは調査・実装していない。Host DB/native acceptanceは未確認。
+**実装済、静的レビュー済。担当側のbuild/test/実サーバー検証はnot performed。親からInsuranceServiceTests Debug subsetの30 PASS／0 FAIL／0 SKIPが報告された。** 対象は`insuranceSvc.InsureShip`が`voidOld` kwargsを無視する1件だけ。監査の未比較177 RPCはこのsliceでは調査・実装していない。Host DB/native acceptanceは未確認。
 
 - canonical root: `C:\Users\yutai\eve.rs`、branch: `main`。
 - 開始時HEAD: `c114dc0d8e292c056e8d71b37f496084f484676f`。
@@ -54,7 +54,7 @@ Hostはship/insurance contractをlockし、activeな旧契約についてReplace
 - `C:\Users\yutai\eve.rs\dotnet\src\Eve.Host\Persistence\Insurance\PersistenceInsuranceWriteModel.cs:54` — validation、ship lock/ownership/hangar、active contract確認、transaction/commit/postcommit notification。
 - Host配線の既読監査根拠: `C:\Users\yutai\eve.rs\dotnet\src\Eve.Host\Composition\CharacterComposition.cs:129`、`C:\Users\yutai\eve.rs\dotnet\src\Eve.Host\Rpc\MailRpc.cs:41`。このsliceでは配線を変更していない。
 
-## Regression tests（担当側NOT RUN）
+## Regression tests（担当側not performed）
 
 | 新規test | ケース数 | 確認する境界 |
 |---|---:|---|
@@ -86,12 +86,12 @@ dotnet test dotnet/tests/Eve.Services.Core.Tests/Eve.Services.Core.Tests.csproj 
 
 ## 親の検証結果追記・handoff
 
-ユーザー経由で受領した親の実行結果を記録する。担当自身の実行結果とは区別し、担当側NOT RUNの記録を維持する。
+ユーザー経由で受領した親の実行結果を記録する。担当自身の実行結果とは区別し、担当側not performedの記録を維持する。
 
 | 実行者・範囲 | 構成 | PASS | FAIL | SKIP | 証拠・状態 |
 |---|---|---:|---:|---:|---|
 | 親：InsuranceServiceTests subset | Debug | 30 | 0 | 0 | ユーザーからの親結果報告。担当による再実行なし |
-| 本担当：build/test | — | — | — | — | NOT RUN。親の直列実行指定を維持 |
+| 本担当：build/test | — | — | — | — | not performed。親の直列実行指定を維持 |
 
 この30件の結果をCore全体やHost DB/native acceptanceの合格へ拡張しない。Host DBでの契約・残高の原子更新、失敗時rollback、通知order、V24 native clientの再契約UI acceptanceは引き続き未確認。
 

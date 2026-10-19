@@ -14,7 +14,7 @@ Built from the sections below, as of 2026-10-19. **Status** is what the area doe
 | Ships, fitting, modules (7 to 9, 16, 17, 19 to 22, 29 to 32, 36) | Built and tested headless. not exercised as a whole on the graphical client. | Numbers from the SDE dogma; rules from CCP or the wiki, cited in DEVIATIONS. | Section 7 effects still refused (`EFFECT_NOT_IMPLEMENTED`); open rows of section 9; Polarized pin and reactive hardener not checked against CCP (8, 8b). |
 | Drones (6) | Built; flights covered headless. | As above. | Hybrid drones (open); mining and salvage drones on the client. |
 | Mining, salvage, tractor, targeting (10) | Built and tested headless. | As above. | Entosis link waits for structures (phase 3); mining scan list (open). |
-| P.A.N.I.C., superweapons, fighters, bursts, scanners (11 to 13, 20 to 26) | Owner decision 2026-10-19: command bursts remain deferred; do not add zero-value behavior. P.A.N.I.C. rules done, body blocked on a fleet-buff action (11). Superweapons partly (12). Fighters, bursts, scanners and probes built (13, 21, 22, 24). | As above. | Section 11 blocker; section 12 open rows (burst projectors, Area type); section 13 open rows. |
+| P.A.N.I.C., superweapons, fighters, bursts, scanners (11 to 13, 20 to 26) | Command bursts and the buff registry are built through C8; the SDE value chain is nonzero. P.A.N.I.C. is built. Superweapons partly (12). Fighters, scanners and probes built (13, 21, 22, 24). | As above. | Section 12 open rows (burst projectors, Area type); section 13 open rows. Command burst MITM walk remains open (section 22). |
 | Windows and production start (14) | Start scripts exist; Windows is not in CI. | Owner's choice: CI runs by hand only (`tools/dev/check-all.sh` is the pre-push check). | Windows console behaviour, PowerShell 5.1, `global.json` SDK path, Windows live runners, Host `tcp:` listener. |
 | Client preparation (`tools/client-patch`) | The patch exists. | Launch arguments are taken from the client. | Real-client check of the patched `start.ini` and launch arguments. |
 | Alliance registry (18) | Built. | Affiliation and wars follow the reference. | Open rows of section 18. |
@@ -587,11 +587,11 @@ Open, each with its blocker:
 - Probe lifecycle notifications (E-06: `OnNewProbe`, `OnProbeWarpStart` and the rest): not started; they depend on `LaunchProbes` (RC-7).
 - Client check: not exercised. The MITM recipe (tools/mitm/README.md) needs a live EVE.js run and a headless scenario that scripts a scanner; neither exists.
 
-## 20. Track C4: command bursts, buff registry, P.A.N.I.C. (2026-10-09): specified, not built
+## 20. Track C4: command bursts, buff registry, P.A.N.I.C. (2026-10-09): historical specification, superseded by C5–C8
 
-Sources, the SDE facts and the blockers are in DEVIATIONS "Track C4". Summary of what is open, in order:
+This section records the evidence and initial correction. Its 2026-10-09 open-item snapshot was superseded by section 22 (C6) and C8; current state and remaining checks are recorded there and in DEVIATIONS, tracks C4–C8.
 
-- SUPERSEDED (2026-10-19): the earlier zero-value claim read output attributes 2469 etc. without tracing effect 6737 to charge multiplier attributes 2596–2599 and module dogma inputs. `CommandBurstValueTests` confirms nonzero Shield Harmonizing values (Tech I -8, Tech II -10). The owner directs implementation of command bursts; see section 21 and DEVIATIONS, Track C4.
+- The earlier zero-value claim read `warfareBuffNValue` (2469 etc.) without tracing effect 6737 through charge multipliers 2596–2599 and module dogma inputs. Q-06 was superseded on 2026-10-19 by the owner direction to build command bursts. The value chain is covered by `CommandBurstValueTests`; implementation is recorded in sections 21 and 22 and DEVIATIONS, tracks C4–C8.
 - BLOCKED (wire, one batch, one bump at the next free epoch): a burst action carrying the fleet's recipient list per cycle and the buff set; a live-numbers message for running recipient modules; the codecs, `tools/dev/gen-simlink-fixtures.py` and the fixtures.
 - NOT BUILT: the buff registry (persistent source list on `DogmaWorld` items, expiry by the scheduler, restart drops it, client `OnDogmaAttributeChanged` for the recipients). Built with its first consumer, the burst.
 - NOT BUILT: P.A.N.I.C. (42522). Its fleet effect needs the registry, the wire batch, and the simulation state for shield resistance, shield recharge, drone damage, weapons, mass, scan resolution, entosis and jump/dock/tether flags.
@@ -618,9 +618,9 @@ Open, each with its exact blocker:
 - WP12 bastion and 1934 (keep running after logoff): not built. The wiki page says nothing about logoff; the SDE sets 1934 = 0. Needs a logged-off ship that stays in space.
 - WP17 sim-side assistance and jam overlays: not started; the part to build is not settled in the sources read.
 - E-06 probe lifecycle notifications: not started; needs the probe launcher (`LaunchProbes`, RC-7).
-## 21. Track C5: command bursts and the buff registry (2026-10-09)
+## 21. Track C5: command bursts and the buff registry (2026-10-09): built
 
-This supersedes the OPEN data item of section 20: the burst strength is on the SDE (the charge's multiplier, 2596, times the module's value, 2469), and the C4 reading of 0 was wrong. Sources and choices are in DEVIATIONS, "Command bursts and the buff registry (track C5, 2026-10-09)".
+The dogma library and recipient rule were implemented in C5. Section 22 supersedes the remaining C5 open items with the end-to-end implementation; C8 records persistence across entry and restart. The C4 reading of zero was wrong: effect 6737 derives strength from charge multiplier 2596 and module value 2469. Sources and choices are in DEVIATIONS, tracks C4–C8.
 
 DONE (dogma library and the host's recipient rule, tested on the real SDE where the data is):
 - Burst strength from the SDE: `CommandBurstValueTests` (Tech I Shield Harmonizing -8, Tech II -10; the shield resistance buff scales the ship's resonances by 0.9 and runs out at 60 s).

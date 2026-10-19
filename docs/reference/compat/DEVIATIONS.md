@@ -545,7 +545,7 @@ Precedence applied: SDE wins for numbers and attributes; the EVE University wiki
 
 ## Track C4: command bursts, the buff registry and P.A.N.I.C. (2026-10-09)
 
-Specified, not built. No code changed in this track. The sources below settle what a body needs. Two data facts block the buff values (rows marked OPEN), and the build needs one wire batch (ADR 0013, one bump by the integrator, next free epoch at build time: `origin/main` is at 39). The track rules also ask for a PG-backed run and a MITM capture; the worktree had about 2.1 GB free on `/home/user` (below the 3 GB floor), and the shared target (11 GB) belongs to the other tracks, so no build was started.
+Historical specification, superseded by the implemented C5–C8 tracks below. The original zero-value conclusion and the blockers in this snapshot were corrected after tracing effect 6737 through charge attributes 2596–2599 and module dogma inputs. Q-06 was superseded on 2026-10-19 by owner direction to build command bursts. Current implementation and remaining checks are recorded in TODO sections 21–22 and Track C8. The table below preserves the original investigation snapshot; its old blocker statuses are superseded by those implementation records.
 
 | Status | Item | What the sources show | What the body needs |
 |---|---|---|---|

@@ -132,6 +132,9 @@ impl Sim {
     pub(super) fn out_message(out: Out) -> Message {
         match out {
             Out::Notify { session, name, id_type, args } => {
+                if name == "OnDbuffUpdated" {
+                    eprintln!("eve-sim: emitting OnDbuffUpdated session={session}");
+                }
                 let args = eve_marshal::encode(&Value::Tuple(args)).expect("the sim's own values encode");
                 Message::Notify {
                     session_id: session,

@@ -68,7 +68,7 @@ Date for entries: 2026-10-19. Questions with a recorded decision are marked deci
 
 - **Date:** 2026-10-19
 - **Question:** Should Pochven Triglavian NPC kills pay bounties, and should their loot be changed?
-- **Decision:** Do not pay bounties for Pochven Triglavian NPCs. The owner rule is that non-pirate ships basically have no bounty and bounty payouts exist only in New Eden proper, essentially nowhere outside it. Leave loot and drops as currently implemented because this decision does not specify them.
+- **Decision:** Do not pay bounties for Pochven Triglavian NPCs. The owner rule is that non-pirate ships basically have no bounty and bounty payouts exist only in New Eden proper, essentially nowhere outside it. Leave loot and drops unchanged because this decision does not specify them.
 - **Status:** decided 2026-10-19
 
 ## Q-13 — Wormhole Local membership
@@ -77,20 +77,23 @@ Date for entries: 2026-10-19. Questions with a recorded decision are marked deci
 - **Question:** Which Local mode applies in wormhole systems?
 - **Decision:** Use DELAYED mode: the Local member list contains only characters who have spoken in that system.
 - **Status:** decided 2026-10-19
+- **Affected records:** TODO chat service and wormhole Local rows; DEVIATIONS, wormhole Local.
 
 ## Q-14 — Customs office tax defaults
 
 - **Date:** 2026-10-19
 - **Question:** Which POCO tax rates and standing discounts should planetary interaction use?
-- **Decision:** Follow the EVE University Wiki default rates and standing discounts. The owner-side tax may vary by standing; preserve that rule in the implementation and cite the source. Source: [EVE University Wiki, Colony management](https://wiki.eveuniversity.org/Colony_management).
+- **Decision:** Follow the EVE University Wiki default rates and standing discounts, including the high-security NPC component and Customs Code Expertise effects. Taxes apply on import and export and the owner-set portion is paid to the owning corporation wallet. Sources: [Planetary Industry](https://wiki.eveuniversity.org/Planetary_Industry), [Colony management](https://wiki.eveuniversity.org/Colony_management), and [Player Owned Customs Office](https://wiki.eveuniversity.org/Player_Owned_Customs_Office).
 - **Status:** decided 2026-10-19
+- **Affected records:** TODO customs office row; DEVIATIONS, Planetary interaction; PI_DESIGN.md.
 
 ## Q-15 — ESS linkable hulls in tests
 
 - **Date:** 2026-10-19
 - **Question:** How should ESS linkable hulls be selected and made available for acceptance tests?
-- **Decision:** Derive eligible hulls automatically from the SDE type list used by the link module. Grant an eligible hull to test characters with a GM command.
+- **Decision:** Derive eligible hulls from the SDE module fitting attributes. Grant an eligible hull fitted with an online ESS link module to test characters through a role-gated GM command.
 - **Status:** decided 2026-10-19
+- **Affected records:** TODO ESS row; DEVIATIONS, Encounter Surveillance System; GM_QA_DESIGN.md.
 
 ## Decisions already made by the owner
 
@@ -128,28 +131,3 @@ Date for entries: 2026-10-19. Questions with a recorded decision are marked deci
 - **Decision:** Do not pay bounties for Pochven Triglavian NPCs. Bounty payments are restricted to New Eden proper; other locations generally have none. Existing loot and drops are unchanged.
 - **Status:** decided 2026-10-19
 - **Affected records:** TODO bounty/loot status; DEVIATIONS, Encounter Surveillance System and NPC bounty rules.
-
-## Q-10 — Wormhole Local mode
-
-- **Date:** 2026-10-19
-- **Question:** Which Local member visibility mode applies in wormhole space?
-- **Decision:** Use delayed Local. Its member list contains only characters who have spoken.
-- **Status:** decided 2026-10-19
-- **Affected records:** TODO chat and wormhole Local status; DEVIATIONS, wormhole Local.
-
-## Q-11 — Customs office taxes
-
-- **Date:** 2026-10-19
-- **Question:** Which baseline POCO tax model should PI use?
-- **Decision:** Follow the EVE University Wiki default rates and standing discounts, including the high-security NPC component and Customs Code Expertise effects. Taxes apply on import and export and are paid to the owning corporation wallet for the owner-set portion.
-- **Evidence:** [Planetary Industry](https://wiki.eveuniversity.org/Planetary_Industry), [Colony management](https://wiki.eveuniversity.org/Colony_management), and [Player Owned Customs Office](https://wiki.eveuniversity.org/Player_Owned_Customs_Office).
-- **Status:** decided 2026-10-19
-- **Affected records:** TODO customs office row; DEVIATIONS, Planetary Interaction; PI_DESIGN.md.
-
-## Q-12 — ESS linkable hull for QA
-
-- **Date:** 2026-10-19
-- **Question:** How should ESS live-walk characters obtain a hull allowed by the ESS link module?
-- **Decision:** Derive eligible hulls from the SDE module fitting attributes and grant one, fitted with the module and online, using a role-gated GM command.
-- **Status:** decided 2026-10-19
-- **Affected records:** TODO ESS row; DEVIATIONS, Encounter Surveillance System; GM_QA_DESIGN.md.

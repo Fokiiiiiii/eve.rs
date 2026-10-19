@@ -954,6 +954,8 @@ private static PyValue RowField(PyValue value,string key)
             new PyWString("Denied"), new PyWString("Forged role"), graphics));
         var founderMedalId = Assert.IsType<PyInt>(await FounderRpc("CreateMedal",
             new PyWString("Founder"), new PyWString("For service"), graphics)).Value;
+        var forgedStatus = new PyDict([new(new PyInt(founderMedalId), new PyInt(2))]);
+        await Assert.ThrowsAsync<CorporationError>(async () => await MemberRpc("SetMedalStatus", forgedStatus));
         await Assert.ThrowsAsync<CorporationError>(async () => await MemberRpc("GiveMedalToCharacters",
             new PyInt(founderMedalId), new PyList([new PyInt(founder)]), new PyWString("Unauthorized")));
 

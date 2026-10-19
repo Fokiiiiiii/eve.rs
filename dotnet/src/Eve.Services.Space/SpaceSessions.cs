@@ -862,12 +862,26 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
                 case SimRemoteRepairCycle cycle:
                     HandleMutadaptiveRepairCycle(cycle);
                     break;
+                case SimNotify notify when notify.Name == "OnDbuffUpdated":
+                    if (_structureObservers.TryGetValue(notify.SessionId, out var observer))
+                    {
+                        _log?.Invoke($"simulation sent OnDbuffUpdated to structure observer session {notify.SessionId}");
+                        Forward(observer, notify);
+                    }
+                    else if (_pilots.TryGetValue(notify.SessionId, out var pilot))
+                    {
+                        _log?.Invoke($"simulation sent OnDbuffUpdated to session {notify.SessionId} for ship {pilot.ShipId}");
+                        Forward(pilot.Session, notify);
+                    }
+                    else
+                    {
+                        _log?.Invoke($"simulation sent OnDbuffUpdated for untracked session {notify.SessionId}");
+                    }
+                    break;
                 case SimNotify notify when _structureObservers.TryGetValue(notify.SessionId, out var observer):
                     Forward(observer, notify);
                     break;
                 case SimNotify notify when _pilots.TryGetValue(notify.SessionId, out var pilot):
-                    if (notify.Name == "OnDbuffUpdated")
-                        _log?.Invoke($"simulation sent OnDbuffUpdated to session {notify.SessionId} for ship {pilot.ShipId}");
                     Forward(pilot.Session, notify);
                     break;
                 case SimAccepted accepted when !_structureObservers.ContainsKey(accepted.SessionId) && accepted.Command != SimCommands.ControlStructure && _pilots.TryGetValue(accepted.SessionId, out var mover):

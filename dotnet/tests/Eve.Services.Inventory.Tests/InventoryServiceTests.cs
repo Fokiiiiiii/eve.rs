@@ -368,8 +368,11 @@ public class InvBrokerTests
         var cargo = await rig.AddAsync(Rig.Tritanium, Rig.Character, ship, flag: 5, quantity: 10);
         var session = Rig.Session();
 
-        var stationIds = Assert.IsType<PyList>(await rig.CallAsync(session, "ListStations"));
-        Assert.Contains(InventoryWire.Id(Rig.Station), stationIds.Items);
+        var stations = Assert.IsType<PyObject>(await rig.CallAsync(session, "ListStations"));
+        Assert.Equal("eve.common.script.sys.rowset.Rowset", JsSemantics.StringValue(stations.Name));
+        var stationRowset = Assert.IsType<PyDict>(stations.Args);
+        var stationRows = Assert.IsType<PyList>(stationRowset.Entries[3].Value);
+        Assert.Single(stationRows.Items);
         var stationItems = Rows(await rig.CallAsync(session, "ListStationItems", null, new PyLong(Rig.Station)));
         Assert.Contains(stationItems, row => PackedItemId(row) == ship);
         Assert.Equal(PyBool.True, await rig.CallAsync(session, "IsMyItemAtDockableLocation", null, new PyLong(ship), new PyLong(Rig.Station)));

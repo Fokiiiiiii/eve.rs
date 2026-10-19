@@ -4098,6 +4098,10 @@ Sources: EveJS `services/corporation/officeRentalBilling.js` (`getCurrentOfficeR
 - **Not verified.** The client's text of 43/44 (MITM open); the recipient rule against the TQ client; the notice's appearance in the graphical client.
 - **Tests.** `SovereigntyClaimNotificationTests` (1, PostgreSQL, Host: the recipients, the payload, the retry and a later claim); `SovHubClaimTests` (3) and `EntosisOwnerNotificationTests` (1) still pass with it.
 
+## Scheduler load audit (2026-10-19)
+
+The durable scheduler claims at most its configured batch size per query, executes up to configured concurrency, and commits each job handler in the same transaction as completion. A PostgreSQL regression on `eve_p3` processed 512 immediately due jobs using concurrency 8 and batch size 64 below a 20-second test bound; the cosmic-site expired replacement regression also passed. This measures scheduler throughput and one site's lifecycle. It does not measure a simultaneous expiry storm across many systems or prove the duration of every registered handler.
+
 ## Structure ST-16 (2026-10-16): station rent, observatory landmarks, destruction loot, customs
 
 Sources: EveJS `828823a75f211fdecb945b087a26c225f111491f` `services/corporation/officeRentalBilling.js` (`createNextOfficeRentalBill` creditor = station owner, `impoundStationOfficeForUnpaidBill`), `services/structure/structureDestructionLootState.js` (`handleStructureDestroyedLoot`), `services/structure/structureState.js` (the destruction branch), `services/security/contrabandInspectionRuntime.js` and `space/transitions.js` (`undockSession` 2543 and `jumpSessionViaStargate` 4230 call `inspectContrabandForTransition`); SDE build 3396210 (type 10167, attributes 162, 3101; group 365 holds control tower types). The wiki pages `Mobile_Observatory` and `Contraband` returned 404 to WebFetch in this session; `Deadspace` was read (no pocket radius is stated).

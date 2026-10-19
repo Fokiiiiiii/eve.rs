@@ -39,5 +39,36 @@ Reviewed 2026-10-19 against the Rust, .NET, Python tool, deployment, and workflo
 - Per-account throttling for expensive authenticated RPCs needs a dedicated pass; no complete inventory of costly calls and limits is recorded here.
 - The review sampled marshal and gateway frame parsing. JSON/protobuf payload handling and malformed-input exception isolation across every Host/RPC entry remain to be traced.
 - The container image CVE scan and external action-advisory review remain open. The image base references and workflow actions are now pinned, but this review did not evaluate advisories for the pinned revisions.
-- The 15 credential-oriented matches from the earlier heuristic secret scan still need individual adjudication. The matched values were not displayed in this review.
+- The earlier heuristic scan produced credential-oriented candidates. The direct token-shaped matches are classified below; the remaining keyword and entropy matches are heuristic candidates without enough recorded context to establish that they are credentials.
 - No live graphical-client security walk was performed for this review.
+
+## Public exposure review
+
+Reviewed 2026-10-19 across all 1,962 reachable commits and current tracked files. A local pattern scan covered added history lines for private-key blocks, common GitHub/OpenAI/AWS/Slack token forms, JWT-shaped strings, credential-bearing database URLs, password/secret assignments, and Windows user paths. It emitted only masked prefixes and paths; no scan output included full candidate values.
+
+### Findings
+
+- **JWT-shaped test fixtures, not live credentials.** Commit `ecc26420ba0e`, `dotnet/tests/Eve.Host.Tests/PublicGatewayTests.cs:25-26`, added two strings with the masked prefix `eyJh…`. They remain in HEAD. The file documents them as account-identity test tokens; the gateway test path does not validate their signatures. They are synthetic test inputs, not live account/session credentials. No rotation or revocation is indicated by this finding.
+- **Historical Windows path.** Commit `f5d8678eab3a`, `docs/IMPLEMENTATION_AUDIT.md:102`, contains a path beginning `C:\Us…`. That document is absent from HEAD. The username is not reproduced here. This is a historical path disclosure, not a credential; no credential rotation is indicated.
+- **Credential-like database strings in current configuration are development examples.** `docker-compose.yml:15,30`, `.devcontainer/devcontainer.json:31`, `.github/workflows/ci.yml`, `.github/workflows/live-slow.yml`, and `server.env.example` use local compose/CI/example database credentials. These are scoped to disposable local or CI databases and are not production credentials. No production credential was identified in these matches.
+- No private-key block or direct match for the scanned GitHub, OpenAI, AWS access-key, or Slack token formats was found in the reachable history additions. No capture dump, pcap, auth.json, or cookie file path was found in current or historical tracked paths. `tools/mitm/` contains recorder source and tests, not recorded traffic.
+- Commit metadata across reachable history uses the required owner noreply identity except for 17 commits authored as Claude and 15 by Dependabot. The owner’s real address was not found in commit metadata. The tracked-content scan for embedded contact addresses did not complete, so that part of the review remains open.
+
+### Public repository configuration
+
+- `.github/workflows/ci.yml` and `.github/workflows/live-slow.yml` declare `contents: read`; action references are pinned to full commit IDs. Neither uses `pull_request_target`. The reviewed workflow files contain no repository secret references. CI database values are test-only.
+- `.github/dependabot.yml` configures weekly updates for Cargo, NuGet, pip, GitHub Actions, and Docker. No issue or pull-request templates are tracked.
+- `LICENSE` is AGPL-3.0-only and `NOTICE` contains notices for the third-party code reviewed there. `NOTICE` says the repository contains no CCP client code or SDE copy; the embedded `client-*` data below needs an owner licensing decision before treating that statement as settled.
+
+### Game-data and large-file review
+
+No image, executable, client script, or binary archive was found among current tracked files. No tracked file exceeds 1 MiB except JSON fixtures/data. The largest are `dotnet/src/Eve.Dungeons/Data/catalog/v1/dungeons-01.json` (6,173,489 bytes), `oracle/fixtures/destiny/cases.json` (3,260,598 bytes), `dotnet/src/Eve.Npc/Data/npc_authority.json` (3,205,598 bytes), and `oracle/fixtures/npc/hull_weapons.json` (2,533,366 bytes). These are JSON catalogs/fixtures, not client binaries; keep them only with their source/provenance documented.
+
+The following compressed records are embedded and look client-derived. They contain EVE gameplay data and, in the mission file, mission templates/messages. The owner should confirm redistribution rights or replace them with data fetched/generated from a permitted source before continuing public distribution:
+
+| Tracked file | Compressed size | Contents | Recommendation |
+| --- | ---: | --- | --- |
+| `dotnet/src/Eve.Services.Core/Data/client-missions.jsonl.gz` | 72,072 bytes | 2,893 records with mission template/message fields | Review rights; remove or replace if redistribution is not authorized |
+| `dotnet/src/Eve.Universe/Data/client-systems.jsonl.gz` | 21,379 bytes | 8,114 solar-system records | Review rights; prefer the permitted official SDE source |
+| `dotnet/src/Eve.Universe/Data/client-spacecomponentsbytype.jsonl.gz` | 474 bytes | 10 space-component records | Review rights; prefer the permitted official SDE source |
+| `dotnet/src/Eve.Universe/Data/client-solarsystemcontent.jsonl.gz` | 384 bytes | 6 solar-system content records | Review rights; prefer the permitted official SDE source |

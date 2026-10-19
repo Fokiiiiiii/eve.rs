@@ -3351,6 +3351,23 @@ fn two_smartbombs_run_at_once_and_only_the_same_module_twice_is_refused() {
 }
 
 #[test]
+fn a_second_cloak_device_is_refused_while_the_ship_is_cloaked() {
+    let (mut scene, t) = crowd();
+    let mut first = cloaking_device();
+    first.module_id = MODULE + 500;
+    let mut second = cloaking_device();
+    second.module_id = MODULE + 501;
+
+    let started = scene.activate(A, first, t);
+    assert!(accepted(&started), "{:?}", labels(&started));
+    assert_eq!(scene.pilots[&A].cloak, crate::visibility::CloakState::Cloaked);
+    assert_eq!(
+        scene.activate(A, second, t + SECOND),
+        [Out::Refused { session: A, command: 17, reason: "MODULE_ALREADY_ACTIVE" }]
+    );
+}
+
+#[test]
 fn a_cloak_is_refused_while_a_module_that_cannot_be_deactivated_early_runs() {
     // disallowEarlyDeactivation 906 on a running module: the ship cannot cloak (EveJS CLOAK_MODULE_ACTIVE)
     let (mut scene, t) = crowd();

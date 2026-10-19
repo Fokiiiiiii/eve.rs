@@ -27,33 +27,23 @@ public sealed record MarketReceipt(string OperationKey,long? OrderId,long Filled
     public MarketOwnedOrder? ChangedOrder { get; init; }
     public string? ChangedOrderReason { get; init; }
 
-    /// <summary>The region and type books whose resting orders or fills this receipt changed (M4): a client's cached book for them is stale.</summary>
+    /// <summary>The region and type books whose resting orders or fills changed; cached books for them are stale.</summary>
     public IReadOnlyList<TouchedBook> TouchedBooks { get; init; } = [];
 }
 
 public sealed record TouchedBook(int RegionId,int TypeId);
 
 /// <summary>
-/// Orders, receipts, item custody and money share one transaction. No Node daemon or recovery Saga is required.
-/// <para>Lock order (M8; every entry point follows it, MarketLockOrderTests checks the order in the source):</para>
-/// <list type="number">
-/// <item>the command guard: an advisory lock on the operation key (a replay or a conflicting replay waits here);</item>
-/// <item>the character row (LockAndGetAsync), then the corporation row for a corporation order (MarketAuthorityAsync);</item>
-/// <item>the book's advisory lock, one per region and type;</item>
-/// <item>the order rows, FOR UPDATE, in book order (price, issue time, id);</item>
-/// <item>the wallet rows, FOR UPDATE, sorted by owner and account key (LockBalancesAsync);</item>
-/// <item>the item rows: the stock or escrow stacks the fills and the custody moves touch.</item>
-/// </list>
+/// Orders, receipts, custody and money share one transaction. Lock order: operation key, character and corporation, book, orders, wallet, then items.
 /// </summary>
 public sealed class MarketTrading(NpgsqlDataSource source,MarketStore store,PgCharacterStore characters,CorporationStore corporations,
     PgSkillStore skills,PgItemStore items,WalletTransactions wallets,StationCatalog stations,MarketTopology topology,Func<long> now,IMarketExpiryJobs expiryJobs)
 {
     private string Schema => store.Schema;
     private const long EscrowBase = 9200000000;
-    /// <summary>The number of resting-order rows the matching has locked over the life of this engine (diagnostics; M7 benchmark).</summary>
     public long CandidateRowsLocked => Interlocked.Read(ref _candidateRowsLocked);
     private long _candidateRowsLocked;
-    /// <summary>The rows one candidate read locks at most (M7): the book is read in batches of this size.</summary>
+    /// <summary>Maximum resting-order rows locked by one candidate read.</summary>
     public const int MatchBatchSize = 50;
     private sealed record HeldOrder(MarketOrder Row,long Actor,WalletAccount Wallet,long? ItemId,decimal Escrow,
         long SourceOwner,long SourceLocation,int SourceFlag);
@@ -79,10 +69,7 @@ public sealed class MarketTrading(NpgsqlDataSource source,MarketStore store,PgCh
             }
         }
     }
-    /// <summary>
-    /// The factional warfare upgrade level of a system for a character's orders, read in the caller's transaction (the host supplies it; null: no
-    /// factional warfare state, the level is 0).
-    /// </summary>
+    /// <summary>Factional warfare upgrade level from the caller's transaction; null means level 0.</summary>
     public Func<NpgsqlConnection,NpgsqlTransaction,long,long,CancellationToken,ValueTask<int>>? FactionWarfareUpgradeLevel { get; init; }
 
     private async Task<MarketContext> Context(NpgsqlConnection c,NpgsqlTransaction tx,long actor,Station station,CancellationToken token)
@@ -94,9 +81,7 @@ public sealed class MarketTrading(NpgsqlDataSource source,MarketStore store,PgCh
             Level(16598),Level(16594),Level(16622),Level(18580)),true,solarSystem:station.SolarSystemId,factionWarfareUpgradeLevel:upgrade);
     }
     /// <summary>
-    /// The resting orders a request can meet, and the fills planned over them (M7). The book is read in book order (price, then issue time,
-    /// then id) in batches of <see cref="MatchBatchSize"/> rows with FOR UPDATE, and the read stops as soon as the quantity is filled. A batch
-    /// locks only the rows it returns, so a call locks at most one batch more than the orders it fills.
+    /// Reads the book in (price, issue time, id) batches under FOR UPDATE and stops when filled; one final batch may contain unfilled rows.
     /// </summary>
     private async Task<(List<HeldOrder> Held,IReadOnlyList<MarketFillPlan> Fills)> MatchAsync(NpgsqlConnection c,NpgsqlTransaction tx,
         int typeId,bool buying,decimal priceLimit,long quantity,int range,Station station,long time,CancellationToken token)
@@ -119,7 +104,6 @@ public sealed class MarketTrading(NpgsqlDataSource source,MarketStore store,PgCh
         return (held,walk.Fills);
     }
 
-    /// <summary>The next batch of candidates after the cursor, in book order, locked FOR UPDATE.</summary>
     private async Task<IReadOnlyList<HeldOrder>> CandidateBatchAsync(NpgsqlConnection c,NpgsqlTransaction tx,int typeId,bool buying,
         decimal priceLimit,int regionId,long time,HeldOrder? after,CancellationToken token)
     {
@@ -128,7 +112,7 @@ public sealed class MarketTrading(NpgsqlDataSource source,MarketStore store,PgCh
         if (after is { } last)
         {
             values.AddRange(new object?[] { last.Row.Price,last.Row.IssuedMs,last.Row.Id });
-            // the range predicate lets the index start at the cursor; the OR picks up the rows after it in book order
+            // The range predicate starts the index at the cursor; the remaining predicate preserves book order.
             cursor=$"AND price {(buying ? ">=" : "<=")} $6 AND (price {(buying ? ">" : "<")} $6 OR (price = $6 AND (issued_ms > $7 OR (issued_ms = $7 AND id > $8))))";
         }
         await using var command=Command(c,tx,$"""
@@ -201,7 +185,7 @@ public sealed class MarketTrading(NpgsqlDataSource source,MarketStore store,PgCh
     private async Task<MarketReceipt> PlaceWithinTransactionAsync(
         NpgsqlConnection c,NpgsqlTransaction tx,MarketRequest request,string operationKey,CancellationToken token)
     {
-        // A command's operation key and participants are stable facts. A collision is never a successful replay.
+        // A replay key must keep the same participants and terms; collisions are conflicts.
         await using (var guard = Command(c,tx,"SELECT pg_advisory_xact_lock(hashtextextended($1,0))","market:"+Schema+":command:"+operationKey))
             await guard.ExecuteNonQueryAsync(token);
         var actor = await characters.LockAndGetAsync(c,tx,request.ActorId,token) ?? throw new MarketError("CHARACTER_NOT_FOUND");
@@ -229,8 +213,7 @@ public sealed class MarketTrading(NpgsqlDataSource source,MarketStore store,PgCh
         var context = await Context(c,tx,actor.Id,station,token);
         var current = new MarketLocation(actor.StationId,actor.SolarSystemId,actor.ConstellationId,actor.RegionId);
         var location = MarketLocation.From(station);
-        // an immediate buy (duration 0) takes what matches on the book and books its unfilled rest like any buy order; the booked order lasts the
-        // default buy duration, since an order of duration 0 rests nowhere
+        // A duration-0 buy matches immediately; any remainder rests for the default buy duration.
         var duration = request.Buying && request.Duration == 0 ? MarketRules.ImmediateBuyBookedDays : request.Duration;
         if (!request.Buying || duration>0)
         {
@@ -245,7 +228,7 @@ public sealed class MarketTrading(NpgsqlDataSource source,MarketStore store,PgCh
             await using var count = Command(c,tx,$"SELECT count(*) FROM {Schema}.orders WHERE actor_id=$1 AND state=0",actor.Id);
             if ((long)(await count.ExecuteScalarAsync(token))! >= context.Limits.Count) throw new MarketError("MARKET_ORDER_LIMIT");
         }
-        // The lock is per region/type book, not server-wide. Wallet participants use their shared owner/key order.
+        // Book locks are per region and type; wallet rows use the shared owner/key order.
         await using (var bookLock = Command(c,tx,"SELECT pg_advisory_xact_lock(hashtextextended($1,0))",$"market:{Schema}:book:{station.RegionId}:{request.TypeId}"))
             await bookLock.ExecuteNonQueryAsync(token);
         var (held,plans) = await MatchAsync(c,tx,request.TypeId,request.Buying,request.Price,request.Quantity,request.Range,station,time,token);
@@ -471,11 +454,11 @@ public Task<MarketReceipt> ModifyAsync(long actorId,long orderId,decimal newPric
             }
             if (current.State != 0 || order.Row.VolumeRemaining <= 0)
                 return await Save(new(operationKey,orderId,0,0m,[],[]));
-            // Q15: the client's view of the price and the issue time must still be the order's; a stale view is refused, not applied
+            // Require the client's price and issue time to match the order; reject stale views.
             if (expectedPrice is { } shownPrice && shownPrice != order.Row.Price ||
                 expectedIssuedMs is { } shownIssued && shownIssued != order.Row.IssuedMs)
                 throw new MarketError("MARKET_ORDER_STALE");
-            // Q3: a modification waits five minutes after the later of the issue and the last modification
+            // Modification waits five minutes after the later of issue and last modification.
             var readyAt = Math.Max(order.Row.IssuedMs,await LastModifiedAsync(c,tx,orderId,token)) + MarketRules.ModificationDelayMs;
             if (time < readyAt) throw new MarketError("MARKET_MODIFY_TOO_SOON",("remainingSeconds",(readyAt-time+999)/1000));
             var context=await Context(c,tx,actor.Id,station,token);
@@ -672,7 +655,7 @@ public Task<MarketReceipt> ModifyAsync(long actorId,long orderId,decimal newPric
         },token);
     }
 
-    /// <summary>The time of the order's last modification (0 when never modified); a modification restarts the duration (decision Q4).</summary>
+    /// <summary>Last modification time, or 0 if never modified; updates restart the order duration.</summary>
     private async Task<long> LastModifiedAsync(NpgsqlConnection c,NpgsqlTransaction tx,long orderId,CancellationToken token)
     {
         await using var command = Command(c,tx,$"SELECT last_modified_ms FROM {Schema}.orders WHERE id=$1",orderId);
@@ -708,7 +691,7 @@ public Task<MarketReceipt> ModifyAsync(long actorId,long orderId,decimal newPric
                 if (await r.ReadAsync(token))
                 {
                     if (JsonSerializer.Deserialize<ControlTerms>(r.GetString(0)) != terms) throw new MarketError("MARKET_OPERATION_CONFLICT");
-                    // an expiry is announced by the call that performed it; a replay has nothing new to announce (the sweep and the job may both reach it)
+                    // Only the call that expires an order announces it; duplicate workers and replays do not.
                     return expired ? null : JsonSerializer.Deserialize<MarketReceipt>(r.GetString(1))!;
                 }
             }
@@ -765,22 +748,19 @@ public Task<MarketReceipt> ModifyAsync(long actorId,long orderId,decimal newPric
             return result;
         },token);
 
-    // ---- expiry jobs (M3; market-decisions Q7) ---------------------------------------------------------------------------------------------------
 
-    /// <summary>Schedules the expiry job of a resting order in the transaction that places or moves it; an immediate order rests nowhere.</summary>
+    /// <summary>Schedules expiry in the placing transaction; immediate orders do not rest.</summary>
     private async Task ScheduleExpiryAsync(NpgsqlConnection c,NpgsqlTransaction tx,long orderId,long issuedMs,int durationDays,CancellationToken token)
     {
         if (durationDays <= 0) return;
         await expiryJobs.ScheduleAsync(c,tx,orderId,issuedMs+durationDays*86400000L+MarketExpiry.GraceMs,token);
     }
 
-    /// <summary>Cancels the expiry job of an order that is closed in the same transaction.</summary>
     private async Task CancelExpiryAsync(NpgsqlConnection c,NpgsqlTransaction tx,long orderId,CancellationToken token)
     {
         await expiryJobs.CancelAsync(c,tx,orderId,token);
     }
 
-    /// <summary>The issue time, expiry instant and state (0 active) of an order, or null when there is no such order.</summary>
     public async Task<(long IssuedMs,long ExpiresMs,int State)?> ExpiryStateAsync(long orderId,CancellationToken token = default)
     {
         await using var command=source.CreateCommand($"SELECT issued_ms,issued_ms+duration_days::bigint*86400000,state FROM {Schema}.orders WHERE id=$1");
@@ -790,7 +770,6 @@ public Task<MarketReceipt> ModifyAsync(long actorId,long orderId,decimal newPric
         return (r.GetInt64(0),r.GetInt64(1),Convert.ToInt32(r.GetValue(2)));
     }
 
-    /// <summary>Expires one resting order whose duration has run out (operation key expiry:{id}:{issued}); null when it is no longer active.</summary>
     public async Task<MarketReceipt?> ExpireOrderAsync(long orderId,CancellationToken token = default)
     {
         var state=await ExpiryStateAsync(orderId,token) ?? throw new MarketError("MARKET_ORDER_NOT_FOUND");
@@ -798,7 +777,7 @@ public Task<MarketReceipt> ModifyAsync(long actorId,long orderId,decimal newPric
         catch (MarketError error) when (error.Code is "MARKET_ORDER_NOT_ACTIVE" or "MARKET_ORDER_NOT_EXPIRED") { return null; }
     }
 
-    /// <summary>The resting orders still open (not NPC) with their expiry instants: a restart gives each one its job.</summary>
+    /// <summary>Resting orders whose expiry jobs must be restored after restart.</summary>
     public async Task<IReadOnlyList<(long OrderId,long ExpiresMs)>> OpenRestingExpiriesAsync(CancellationToken token = default)
     {
         var result=new List<(long OrderId,long ExpiresMs)>();
@@ -808,10 +787,7 @@ public Task<MarketReceipt> ModifyAsync(long actorId,long orderId,decimal newPric
         return result;
     }
 
-    /// <summary>
-    /// Who hears of a change to an order: its owner, the character acting on it, and for a corporation order every member with the
-    /// corporation's market rights at the station (G11; the test the client uses, buyThisTypeWindow.py:324). Zero ids are dropped.
-    /// </summary>
+    /// <summary>Recipients are the owner, actor, and corporation members with market rights; zero ids are dropped.</summary>
     private async Task<long[]> NoticeRecipientsAsync(NpgsqlConnection c,NpgsqlTransaction tx,long walletOwnerId,long orderActor,long stationId,long[] acting,CancellationToken token)
     {
         var ids=new List<long> { orderActor };
@@ -821,7 +797,7 @@ public Task<MarketReceipt> ModifyAsync(long actorId,long orderId,decimal newPric
         return [.. ids.Where(id => id > 0).Distinct()];
     }
 
-    /// <summary>An over-cap refund stays in escrow and can be retried after space is available; no credit is clipped.</summary>
+    /// <summary>Over-cap refunds remain in escrow for retry when space is available.</summary>
     public async Task<IReadOnlyList<MarketReceipt>> ExpireDueAsync(CancellationToken token = default)
     {
         var ids=new List<(long Id,long Issued)>();

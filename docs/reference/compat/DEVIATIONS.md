@@ -4933,6 +4933,10 @@ For ESS QA, the selected hull must come from the pinned SDE fitting restrictions
 
 The owner decided that Triglavian NPCs in Pochven do not pay bounties. Existing loot and drop behavior is unchanged. Bounty payments otherwise apply in New Eden proper and generally not outside it. Wormhole Local uses delayed visibility: its member list includes only characters who have spoken.
 
+## Station service standing check identity (2026-10-19)
+
+V24.01 `eve/client/script/ui/shared/dockedUI/controllers/stationController.py:76` invokes `DoStandingCheckForStationService(stationServiceID)` with no character ID. EveJS `server/src/services/corporation/corpStationMgrService.js:304-353` also accepts a second ID and uses it for standing and security checks. The Host now treats any positive second ID as an assertion that must equal `Session.CharacterId`, then reads standing for that session character only. This preserves the V24.01 call shape and closes the path where a caller could substitute another pilot's standing. Regression: `CorpStationMgrTests.The_standing_check_cannot_use_another_pilots_standing`.
+
 
 ## Research checkpoint reconciliation (2026-10-19)
 

@@ -360,6 +360,7 @@ public class InvBrokerTests
     }
 
 
+[PgFact]
     public async Task Station_inventory_rpcs_list_owned_items_and_set_a_ship_label()
     {
         await using var rig = await Rig.CreateAsync();

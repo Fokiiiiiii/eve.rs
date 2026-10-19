@@ -71,3 +71,24 @@ Date for entries: 2026-10-19. Questions with a recorded decision are marked deci
 - **Decision 10:** Decide autonomously; when EveJS lacks a feature, build it in Rust from game rules and the client contract. Code work requires both codebase-memory and Serena.
 
 - **Decisions 11–17 (2026-10-19):** Q-02 keep Arc 132 missions 17183–17186 held; Q-03 keep the approximately 1,100 untagged missions untagged until an authoritative level source exists; Q-04 defer the public insurgency gateway until its client call path and truthful progress/threshold rules exist; Q-05 keep PI survey limited to rule-derived values and do not synthesize an SH buffer; Q-06 superseded 2026-10-19: build command bursts, including recipient exchange and timed buff delivery; Q-07 keep weapon banks held on RC-5; Q-08 retain mutual-war invite refusal.
+
+## Q-09 — Embedded client exports while the repository is public
+
+- **Date:** 2026-10-19
+- **Question:** Should embedded `client-*` exports be removed or replaced during the temporary public period?
+- **Decision:** Keep the embedded data as it is while the repository is public; revisit the decision when the repository returns to private. No data change now.
+- **Status:** decided 2026-10-19
+
+## Q-10 — CI triggers after the repository returns to private
+
+- **Date:** 2026-10-19
+- **Question:** Which GitHub Actions triggers should run after the repository returns to private?
+- **Decision:** Make all workflows manual only: `workflow_dispatch` for `ci.yml`, `live-slow.yml`, and Windows jobs, with no push, schedule, or pull request triggers. The repository is public temporarily; the owner will switch it back and announce the change. Until then, keep the current automatic mode. `tools/dev/ci-mode.py` switches trigger blocks between modes.
+- **Status:** decided 2026-10-19
+
+## Q-11 — Placebo login hash exposure
+
+- **Date:** 2026-10-19
+- **Question:** How should the reusable login hash exposure be mitigated while preserving the unmodified V24.01 client contract?
+- **Decision:** Use per-connection nonce binding, validity windows, per-account and per-IP attempt limits, and never log the hash. Document TLS termination as the production setup. Security agent cx35 is implementing the server-side mitigations.
+- **Status:** decided 2026-10-19

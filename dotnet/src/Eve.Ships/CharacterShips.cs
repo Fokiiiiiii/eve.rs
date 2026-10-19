@@ -160,9 +160,10 @@ public sealed partial class CharacterShips(
         {
             return new NothingHappened();
         }
-        if (inShip && Slots.FamilyOfFlag(item.Flag) == SlotFamily.Rig && !toShip)
+        if (inShip && Slots.FamilyOfFlag(item.Flag) == SlotFamily.Rig && !toShip &&
+            (statics.Type(ship.TypeId) is not { } shipType || !FittingRules.CanUnfitRigWithoutDestruction(shipType)))
         {
-            return new NothingHappened(); // a rig cannot be taken out: it has to be destroyed
+            return new NothingHappened(); // rigs on other hulls remain non-removable here
         }
 
         var unpack = toShip && !ship.Singleton;

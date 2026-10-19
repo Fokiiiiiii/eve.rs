@@ -187,9 +187,9 @@ Known differences, not closed:
 Audit of the research side (copying, ME and TE research, invention, reaction, install and delivery, job slots, R&D agents)
 against eve-logic V24.01 (`industry/const.py`, `industry/job.py`), the pinned SDE and EveJS. Code changed: a comment only.
 
-Matches the client, no change needed:
+Matches the client after the rounding correction:
 - Activity ids and constants (`const.py`: 1, 3, 4, 5, 8, 9; `IndustryRules` carries the same values, the ten `RESEARCH_TIMES`).
-- Base cost: rounded once, then the cost, tax, SCC and security parts as in `job.py:127-133`. The SCC surcharge is halved for
+- Base cost: Python's `round()` ties-to-even is used for the base, each cost share and final duration, matching `job.py:127-133`, `_get_time` and Python's `round`; the former C# midpoint-away rule overcharged exact half-ISK shares and added a second to exact half-second durations. Material rounding also uses ties-to-even before `ceil`, matching `job.py:479`. The SCC surcharge is halved for
   research only (`job.py:144-145`), as `IndustryRules.CostParts` does.
 - Reverse engineering is not an activity of the V24.01 client (`ACTIVITIES` holds manufacturing, ME and TE research, copying,
   invention and reaction), so no job type exists to serve it. Not built.

@@ -434,6 +434,19 @@ public class CharMgrTests
     }
 
     [PgFact]
+    public async Task Paperdoll_state_ignores_a_client_supplied_other_character_id()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var ownId = await rig.MakeAsync("Doll Ann");
+        var otherId = await rig.MakeAsync("Doll Bob");
+        await rig.Characters.SetAppearanceAsync(otherId,
+            MarshalCodec.Encode(new PyDict([new(new PyStr("recorded"), new PyInt(1))])), true, null, false);
+        var (session, _) = Rig.Session(ownId);
+
+        Assert.Equal(new PyInt(2), await Rig.CallAsync(rig.CharMgr, session, "GetPaperdollState", Id(otherId)));
+    }
+
+    [PgFact]
     public async Task The_fixed_answers_are_the_recorded_ones()
     {
         await using var rig = await Rig.CreateAsync();

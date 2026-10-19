@@ -193,7 +193,7 @@ Each effect below is **OPEN — module wired, effect body pending**. Its handler
 | OPEN | `hackOrbital`: `DataSubverterEffect` (Data Subverter I, unpublished) | No EveJS reference was found for this effect name. Specify it from the client before writing the body. |
 | DONE (M-6) | `cargoScan`: `CargoScanEffect` (6 types, 4 published) | Built in track M-6, section 21: the hold reveal, `OnCargoScanComplete`, range 126 as a hard cutoff. |
 | DONE (M-6) | `shipScan`: `ShipScanEffect` (7 types, 3 published) | Built in track M-6, section 21: the fitted reveal with the falloff of attribute 510, `OnShipScanCompleted`. |
-| OPEN | `scanStrengthBonusPercentActivate`: `ScanStrengthActivateEffect` (44 types, none published) | The SDE effect carries four ship-scope `modifierInfo` entries (`scanRadarStrengthPercent` 1030 and siblings onto `scanRadarStrength` 208 and siblings, PostPercent). The body may be the existing `DogmaModifierEffect` path; decide that when it is written. |
+| DONE | `scanStrengthBonusPercentActivate` (44 types, none published) | `ScanStrengthEffect` uses the generic dogma modifier path. The SDE test checks its four ship-scope modifiers and effect registration; graphical client activation remains open. |
 | OPEN | `scanStrengthTargetPercentBonus`: `ScanStrengthTargetEffect` (7 types, none published) | A target effect: `maxRange` 54 and `falloff` 158, and four `targetID` modifiers (the same percent attributes). Reference: EveJS `space/modules/assistanceModuleRuntime.js` (lines 86-100 and 190-210, projected path). |
 
 Not wired here, and why:

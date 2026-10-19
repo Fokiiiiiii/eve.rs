@@ -631,7 +631,7 @@ shapes (the existing codecs were reused and extended by one action, tag 27, ADR 
 - **ECCM, self-applied (effect 2231 `scanStrengthBonusPercentActivate`).** SDE: four PostPercent modifiers on the ship's scan strengths (208 to 211)
   from the module's percents (1027 to 1030). Decided: its body is the generic dogma-modifier path (`ScanStrengthEffect` calls
   `DogmaModifierEffect.BuildModifier`), replacing the pending handler. Its types are unpublished in this build, so it is not one of the published-module
-  modifier names that `ModuleEffectsTests` checks. Wiki (Electronic warfare, "Countering ECM"): an ECCM script "doubles the sensor strength effect", which
+  modifier names that `ModuleEffectsTests` checks; a separate assertion checks its four SDE modifiers and handler registration. Wiki (Electronic warfare, "Countering ECM"): an ECCM script "doubles the sensor strength effect", which
   matches the SDE's +100 on the sensor strength bonus (2282). Tests: `ModuleScriptTests.An_ECCM_script_loaded_in_an_ECCM_module_...`.
 - **Projected ECCM (effect 2246 `scanStrengthTargetPercentBonus`).** Still pending: it is a target effect and needs the projected path.
 - **Scripts, flex (groups 1701 and 1702: Armor and Shield EM, thermal, kinetic and explosive scripts).** SDE: +200 on the hardener's EM resistance

@@ -394,6 +394,17 @@ public class ModuleEffectsTests
                 Assert.NotEmpty(effect.Modifiers);
             }
         }
+
+        var scanStrength = Assert.Single(statics.Effects, candidate =>
+            candidate.Name.Equals("scanStrengthBonusPercentActivate", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(4, scanStrength.Modifiers.Count);
+        Assert.All(scanStrength.Modifiers, modifier =>
+        {
+            Assert.Equal(ModifierFunc.Item, modifier.Func);
+            Assert.Equal("shipID", modifier.Domain);
+        });
+        Assert.Contains("scanStrengthBonusPercentActivate",
+            Eve.Services.Space.Effects.ModuleEffects.Default.Names, StringComparer.OrdinalIgnoreCase);
     }
 
 

@@ -28,7 +28,6 @@ pytestmark = pytest.mark.skipif(not base.LIVE, reason="set EVE_LIVE_HOST=host:po
 
 LAST_DOCKED_STEP = "the client asks for the transactions of its security status"
 
-
 def test_a_pilot_asks_crimewatch_for_its_states_and_sets_its_safety_as_in_the_reference():
     race = CRIMEWATCH["races"][0]
     run = uuid.uuid4().hex[:10]

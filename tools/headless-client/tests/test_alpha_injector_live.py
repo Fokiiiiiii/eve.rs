@@ -30,7 +30,6 @@ FILETIME_UNIX_EPOCH = 116_444_736_000_000_000
 FILETIME_TICKS_PER_SECOND = 10_000_000
 pytestmark = pytest.mark.skipif(not (LIVE and PG_URL), reason="set EVE_LIVE_HOST=host:port and EVE_PG_URL to test against a running server")
 
-
 def test_an_alpha_account_injects_once_per_downtime_and_the_clock_shows_the_next_one():
     run = uuid.uuid4().hex[:10]
     name = f"alpha-{run}"

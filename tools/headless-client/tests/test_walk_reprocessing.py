@@ -31,16 +31,13 @@ pytestmark = [
     pytest.mark.skipif(os.environ.get("EVE_LIVE_SERVER", "eve.rs") == "reference", reason="seeding needs the database: eve.rs only"),
 ]
 
-
 def pairs(value) -> list:
     """The (key, value) pairs of a dict or of a list of pairs, however the client decoded it."""
     return list(value.items()) if isinstance(value, dict) else [tuple(pair) for pair in value]
 
-
 def station_efficiency(quote) -> float:
     """The quote's efficiency for the station (the entry keyed None)."""
     return float(next(value for key, value in pairs(quote[1]) if key is None))
-
 
 def test_a_docked_pilot_reprocesses_a_portion_of_veldspar_into_the_rule_s_tritanium():
     race = HEALTH["races"][0]

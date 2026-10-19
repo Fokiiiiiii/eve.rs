@@ -41,14 +41,12 @@ for _position, _text in enumerate(STRING_TABLE):
 
 _OFFICIAL_TABLE_INDEX = {text: position + 1 for position, text in enumerate(OFFICIAL_STRING_TABLE)}
 
-
 def _table_index(table):
     if table is STRING_TABLE:
         return _TABLE_INDEX
     if table is OFFICIAL_STRING_TABLE:
         return _OFFICIAL_TABLE_INDEX
     return {text: position + 1 for position, text in enumerate(table)}
-
 
 class Op:
     NONE = 0x01
@@ -94,7 +92,6 @@ class Op:
     WSTRING_UTF8 = 0x2E
     VAR_INTEGER = 0x2F
 
-
 class DbType:
     EMPTY = 0x00
     I2 = 0x02
@@ -115,7 +112,6 @@ class DbType:
     STR = 0x81
     WSTR = 0x82
 
-
 def db_size_bits(db_type) -> int:
     if db_type in (DbType.CY, DbType.I8, DbType.UI8, DbType.FILETIME, DbType.R8):
         return 64
@@ -129,9 +125,7 @@ def db_size_bits(db_type) -> int:
         return 1
     return 0
 
-
 # ─── Errors ─────────────────────────────────────────────────────────────────
-
 
 class MarshalError(Exception):
     """A marshal failure. `kind` is the class of failure the JS reference reports:
@@ -142,41 +136,31 @@ class MarshalError(Exception):
         super().__init__(message)
         self.kind = kind
 
-
 # ─── Value types ────────────────────────────────────────────────────────────
-
 
 class Long(int):
     """An integer that is always written as PyLongLong."""
 
-
 class BigUnsigned(int):
     """A variable-width integer beyond 2**53 - 1 (decode only; written back as one)."""
-
 
 class PyString(bytes):
     """A Python 2 `str`: what the string opcodes decode to."""
 
-
 class Buffer(bytes):
     """A Python `buffer`: PyBuffer."""
-
 
 class WString(str):
     """A unicode string (PyWStringUTF8 / UCS-2)."""
 
-
 class Token(str):
     pass
-
 
 class CPickled(bytes):
     """Raw Python pickle bytes (cPicked)."""
 
-
 class List(list):
     """A marshal list (as opposed to a tuple)."""
-
 
 class Dict(list):
     """A marshal dict: (key, value) pairs in wire order. Keys need not be hashable
@@ -191,7 +175,6 @@ class Dict(list):
     def as_dict(self) -> dict:
         return {_hashable(key): value for key, value in self}
 
-
 def _key_matches(candidate, key) -> bool:
     if candidate == key:
         return True
@@ -199,7 +182,6 @@ def _key_matches(candidate, key) -> bool:
     if isinstance(candidate, (bytes, bytearray)) and isinstance(key, str):
         return candidate.decode("utf-8", "replace") == key
     return False
-
 
 def _hashable(key):
     if isinstance(key, (bytes, bytearray)):
@@ -209,12 +191,10 @@ def _hashable(key):
             return bytes(key)
     return key
 
-
 @dataclass
 class Object:
     name: Any
     args: Any
-
 
 @dataclass
 class ObjectEx:
@@ -223,11 +203,9 @@ class ObjectEx:
     items: list = field(default_factory=list)
     pairs: list = field(default_factory=list)  # (key, value) tuples
 
-
 @dataclass
 class SubStruct:
     value: Any
-
 
 @dataclass
 class SubStream:
@@ -236,12 +214,10 @@ class SubStream:
     value: Any = None
     raw: Optional[bytes] = None
 
-
 @dataclass
 class Checksummed:
     checksum: int
     value: Any
-
 
 @dataclass
 class Descriptor:
@@ -278,7 +254,6 @@ class Descriptor:
     def null_bit(self, index: int) -> int:
         return index + self.booleans
 
-
 @dataclass
 class PackedRow:
     descriptor: Descriptor
@@ -305,7 +280,6 @@ class PackedRow:
                 out[name] = _derive_singleton(out)
         return out
 
-
 def descriptor_columns(header) -> Optional[list]:
     """header.header[1][0] of a PyObjectEx DBRowDescriptor: the raw column entries."""
     if not isinstance(header, ObjectEx) or not isinstance(header.header, tuple):
@@ -316,14 +290,12 @@ def descriptor_columns(header) -> Optional[list]:
     columns = inner[1][0]
     return columns if isinstance(columns, tuple) else None
 
-
 def _text(value) -> Optional[str]:
     if isinstance(value, str):
         return str(value)
     if isinstance(value, (bytes, bytearray)):
         return bytes(value).decode("utf-8", "replace")
     return None
-
 
 def _column_type(value):
     if isinstance(value, bool):
@@ -333,7 +305,6 @@ def _column_type(value):
     if isinstance(value, float) and math.isfinite(value) and value == int(value):
         return int(value)
     return None
-
 
 def columns_from_header(header) -> list:
     entries = descriptor_columns(header)
@@ -347,10 +318,8 @@ def columns_from_header(header) -> list:
         columns.append((name if name is not None else f"col_{index}", _column_type(entry[1]) if len(entry) > 1 else None))
     return columns
 
-
 def make_descriptor(header, columns=None) -> Descriptor:
     return Descriptor(header, columns if columns is not None else columns_from_header(header))
-
 
 def _virtual_columns(header):
     if not isinstance(header, ObjectEx) or not isinstance(header.header, tuple) or len(header.header) < 3:
@@ -371,7 +340,6 @@ def _virtual_columns(header):
         out.append((name, resolver or ""))
     return out
 
-
 def _js_number(value) -> float:
     """`Number(value)` for a decoded field value."""
     if value is None:
@@ -385,14 +353,12 @@ def _js_number(value) -> float:
         return number_from_str(text)
     return math.nan
 
-
 def _derive_stack_size(fields: dict):
     quantity = _js_number(fields.get("quantity", math.nan))
     if not math.isfinite(quantity):
         return 0
     quantity = 1.0 if quantity < 0 else quantity
     return int(quantity) if quantity == int(quantity) and abs(quantity) <= 2**53 - 1 else quantity
-
 
 def _derive_singleton(fields: dict):
     quantity = _js_number(fields.get("quantity", math.nan))
@@ -401,9 +367,7 @@ def _derive_singleton(fields: dict):
     location = _js_number(fields.get("locationID", math.nan))
     return 1 if math.isfinite(location) and 30_000_000 <= location < 40_000_000 else 0
 
-
 _JS_WS = "\t\n\x0b\x0c\r \xa0                　﻿"
-
 
 def number_from_str(text: str) -> float:
     """JS `Number(text)`: NaN when the text is not a numeric literal."""
@@ -428,9 +392,7 @@ def number_from_str(text: str) -> float:
     except ValueError:
         return math.nan
 
-
 # ─── RLE ────────────────────────────────────────────────────────────────────
-
 
 def compress_rle(data: bytes) -> bytes:
     out = bytearray()
@@ -471,7 +433,6 @@ def compress_rle(data: bytes) -> bytes:
             out.pop()
     return bytes(out)
 
-
 def decompress_rle(data: bytes, expected: int) -> bytearray:
     out = bytearray(expected)
     read = written = 0
@@ -493,11 +454,9 @@ def decompress_rle(data: bytes, expected: int) -> bytearray:
                 break
     return out
 
-
 # ─── Encoding ───────────────────────────────────────────────────────────────
 
 _INT64 = 2**63
-
 
 def encode(value, *, string_table: tuple = STRING_TABLE) -> bytes:
     """Encode `value` as a marshal stream (0x7E, zero save count, value)."""
@@ -505,12 +464,10 @@ def encode(value, *, string_table: tuple = STRING_TABLE) -> bytes:
     _Encoder(out, string_table).value(value)
     return bytes(out)
 
-
 def encode_packet(value, *, string_table: tuple = STRING_TABLE) -> bytes:
     """A marshal stream with its 4-byte little-endian length prefix."""
     payload = encode(value, string_table=string_table)
     return struct.pack("<I", len(payload)) + payload
-
 
 class _Encoder:
     def __init__(self, out: bytearray, string_table: tuple):
@@ -750,7 +707,6 @@ class _Encoder:
             if size == 0:
                 self.value(row.values[index])
 
-
 def _pack_number(value) -> float:
     if value is None:
         return 0.0
@@ -767,7 +723,6 @@ def _pack_number(value) -> float:
             return 0.0
         number = number_from_str(text)
     return number if math.isfinite(number) else 0.0
-
 
 def _pack_i64(value) -> int:
     if value is None:
@@ -795,7 +750,6 @@ def _pack_i64(value) -> int:
         raise MarshalError("64-bit column out of range", "RangeError:ERR_OUT_OF_RANGE")
     return number
 
-
 def _pack_bool(value) -> bool:
     if isinstance(value, bool):
         return value
@@ -803,19 +757,16 @@ def _pack_bool(value) -> bool:
         return False
     return _pack_number(value) != 0.0
 
-
 def _to_uint32(number: float) -> int:
     if not math.isfinite(number):
         return 0
     return int(number) % 4294967296
-
 
 def _checked_int(value, low: int, high: int, column: str) -> int:
     number = int(_pack_number(value))  # trunc
     if number < low or number > high:
         raise MarshalError(f"{column} out of range", "RangeError:ERR_OUT_OF_RANGE")
     return number
-
 
 def _fixed_bytes(db_type, value) -> bytes:
     if db_type in (DbType.CY, DbType.I8, DbType.UI8, DbType.FILETIME):
@@ -838,26 +789,21 @@ def _fixed_bytes(db_type, value) -> bytes:
         return bytes((_to_uint32(float(int(_pack_number(value)))) & 0xFF,))
     return b""
 
-
 def _clamp_float32(number: float) -> float:
     """struct.pack('<f') raises on overflow where JS writes an infinity."""
     if abs(number) > 3.4028235677973366e38:
         return math.copysign(math.inf, number)
     return number
 
-
 # ─── Decoding ───────────────────────────────────────────────────────────────
-
 
 def decode(data: bytes, *, string_table: tuple = STRING_TABLE) -> Any:
     """Decode a marshal stream using the selected 1-based wire string table."""
     return _decode_stream(bytes(data), False, 0, string_table)
 
-
 def decode_exact(data: bytes, *, string_table: tuple = STRING_TABLE) -> Any:
     """Decode one complete marshal stream using the selected string table."""
     return _decode_stream(bytes(data), True, 0, string_table)
-
 
 def split_packet(data: bytes):
     """Split a [u32 length][payload] frame off the front of `data`.
@@ -869,7 +815,6 @@ def split_packet(data: bytes):
     if len(data) < 4 + length:
         return None
     return data[4 : 4 + length], data[4 + length :]
-
 
 def _decode_stream(data: bytes, require_exact: bool, depth: int, string_table: tuple = STRING_TABLE) -> Any:
     decoder = _Decoder(data, depth, string_table)
@@ -894,7 +839,6 @@ def _decode_stream(data: bytes, require_exact: bool, depth: int, string_table: t
             raise MarshalError("marshal stream has unconsumed save-table entries")
     return value
 
-
 class _Decoder:
     def __init__(self, data: bytes, depth: int, string_table: tuple):
         self.buf = data
@@ -905,7 +849,7 @@ class _Decoder:
         self.save_end: Optional[int] = None
         self.depth = depth
         self.saved_refs = 0
-        self.descriptor_cache: Optional[tuple] = None  # ((start, end), Descriptor)
+        self.descriptor_cache: Optional[tuple] = None
 
     def u8(self) -> int:
         if self.pos >= len(self.buf):
@@ -1156,7 +1100,6 @@ class _Decoder:
                 values[index] = self.value()
         return PackedRow(descriptor, values, bytes(rle))
 
-
 def _fixed_value(db_type, packed: bytearray, offset: int):
     if db_type in (DbType.CY, DbType.I8, DbType.UI8, DbType.FILETIME):
         (number,) = struct.unpack_from("<q", packed, offset)
@@ -1170,11 +1113,9 @@ def _fixed_value(db_type, packed: bytearray, offset: int):
     (number,) = struct.unpack_from(fmt, packed, offset)
     return number
 
-
 def _utf16(data: bytes) -> str:
     data = data[: len(data) // 2 * 2]
     return data.decode("utf-16-le", "replace")
-
 
 def _clone(value):
     """A deep copy, as the JS reference clones a saved element when it is referenced."""
@@ -1200,7 +1141,6 @@ def _clone(value):
     if isinstance(value, PackedRow):
         return PackedRow(value.descriptor, [_clone(v) for v in value.values], value.rle)
     return value
-
 
 def plain(value):
     """A Python-native view of a decoded value, for application code.

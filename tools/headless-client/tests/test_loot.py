@@ -36,7 +36,6 @@ TRITANIUM, PYERITE = 34, 35
 # what the reference's own rats and the recharge of the pilot's ship send meanwhile, which no server has to send the same
 NOISE = {"OnInvulnCancelled", "OnDamageMessage", "OnModuleAttributeChanges", "OnTarget"}
 
-
 def test_a_pilot_loots_a_can_as_in_the_reference():
     race = LOOT["races"][0]
     run = uuid.uuid4().hex[:10]
@@ -120,7 +119,6 @@ def test_a_pilot_loots_a_can_as_in_the_reference():
         step("the pilot asks for the room in its hold after", lambda: who.call_bound(flying, "GetCapacity", 5))
         step("the pilot asks for the can after", lambda: who.call_bound(opened, "List"))
     assert problems == [], "\n".join(problems[:40])
-
 
 def _is_the_rats(event: dict) -> bool:
     """Whether a destiny update is about the rats (their shots, the repairs of the pilot's ship, the damage it takes) and not about the can."""

@@ -31,7 +31,6 @@ pytestmark = pytest.mark.skipif(not base.LIVE, reason="set EVE_LIVE_HOST=host:po
 HOBGOBLIN, TRITANIUM = 2454, 34
 LAST_DOCKED_STEP = "the pilot puts a drone in the drone bay for the flight"
 
-
 def test_a_pilot_uses_its_drone_bay_as_in_the_reference():
     race = DRONES["races"][0]
     run = uuid.uuid4().hex[:10]

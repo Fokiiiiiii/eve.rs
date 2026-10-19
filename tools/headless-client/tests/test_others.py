@@ -29,7 +29,6 @@ pytestmark = [
     pytest.mark.skipif(os.environ.get("EVE_LIVE_SLOW") != "1", reason="four minutes: set EVE_LIVE_SLOW=1"),
 ]
 
-
 def watch(clients: dict, seconds: float, until=None) -> dict:
     """The events each client is sent in `seconds` (or until `until(all so far)`), with the seconds since the start each arrived at."""
     started = time.time()
@@ -44,14 +43,12 @@ def watch(clients: dict, seconds: float, until=None) -> dict:
         time.sleep(0.25)
     return out
 
-
 def hold_still(who, ballpark, seconds: float = 10.0) -> None:
     """The pilot's ship is stopped before a rat is called (`CmdStop`, then the events of the stop are watched): the server places the rat from where the
     ship is when the rat is called, and a ship that still flies (the Ibis at 339 m/s) is past its lock range (29.7 km: AddTarget refuses with
     TargetNotWithinRangeGeneric) by the time the rat is there."""
     who.call_bound(ballpark, "CmdStop")
     watch({"events": who}, seconds)
-
 
 def names(event: dict) -> list:
     if event["name"] != "DoDestinyUpdate":
@@ -62,20 +59,16 @@ def names(event: dict) -> list:
         return []
     return [action[1] for action in actions]
 
-
 def not_time_dependent(events: list) -> list:
     """The events without the end of the watcher's own undocking protection (thirty seconds after it undocked, whatever else is going on)."""
     return [e for e in events if e["name"] != "OnInvulnCancelled"]
 
-
 def in_order(events: list) -> list:
     return sorted(events, key=lambda e: e.get("at", 0.0))
-
 
 def without_noise(events: list) -> list:
     """The events without the state that was asked for and the balls the reference adds to a ballpark and takes out again."""
     return [e for e in events if names(e) not in (["SetState"],) and "AddBalls2" not in names(e)]
-
 
 def removed_by(event: dict, mapping: dict) -> list:
     """The ships a `PackagedAction` of `RemoveBalls` takes out (the reference's own additions to the ballpark left out)."""
@@ -83,12 +76,10 @@ def removed_by(event: dict, mapping: dict) -> list:
     packaged = actions[0][2]["$marshalled"]["$tuple"][0]["$tuple"][1]["$tuple"][1]["$tuple"][0]
     return [mapping.get(i["$long"] if isinstance(i, dict) else i, i["$long"] if isinstance(i, dict) else i) for i in packaged]
 
-
 def plain_race(race: dict, who: str) -> dict:
     """One of the two characters as the helpers of test_undock know a recorded character."""
     return {"create": race[who]["create"], "characterID": race[who]["characterID"], "shipID": race[who]["shipID"],
             "moduleIDs": [race[who]["shipID"] + 1, race[who]["shipID"] + 2, race[who]["shipID"] + 3]}
-
 
 def test_two_ships_see_each_other_as_they_did_in_the_reference():
     race = OTHERS["races"][0]
@@ -105,7 +96,7 @@ def test_two_ships_see_each_other_as_they_did_in_the_reference():
         def compared(label: str, got: dict, **filters) -> None:
             """What the actor and the watcher were sent in a step, against what was recorded."""
             for who, key in (("the actor", "events"), ("the watcher", "seen")):
-                # the end of the watcher's undocking protection comes thirty seconds after it undocked, whichever step that falls in
+
                 keep = filters.get(key, not_time_dependent if key == "seen" else (lambda events: events))
                 problems.extend(compare_events(keep(steps[label][key]), keep(got[key]), f"{label} ({who})", mapping))
 

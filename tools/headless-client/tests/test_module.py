@@ -38,7 +38,6 @@ CAPACITOR = 18
 # the steps whose error is the reference's own (a miner that has no rock to work on): only that they are refused is compared
 REFUSED_ANYWAY = ("the actor works the miner on the watcher",)
 
-
 def changes_of(event: dict):
     """The `(item, attribute, new, old)` lines of an `OnModuleAttributeChanges`."""
     try:
@@ -52,21 +51,17 @@ def changes_of(event: dict):
         out.append((item, t[3], t[5], t[6]))
     return out
 
-
 def is_capacitor(event: dict) -> bool:
     lines = changes_of(event) if event["name"] == "OnModuleAttributeChanges" else []
     return bool(lines) and all(attribute == CAPACITOR for _, attribute, _, _ in lines)
-
 
 def without_capacitor(events: list) -> list:
     """The events without the stream of the capacitor's charge, and without the attribute the reference tells of a module that has nothing to do with
     the effect (its miner's range, told again at every start and stop)."""
     return [e for e in events if not is_capacitor(e) and not (e["name"] == "OnModuleAttributeChanges" and [a for _, a, _, _ in changes_of(e)] == [54])]
 
-
 def capacitor_values(events: list) -> list:
     return [(e["at"], new, old) for e in events if is_capacitor(e) for _, _, new, old in changes_of(e)]
-
 
 def test_a_ship_works_its_afterburner_as_it_did_in_the_reference():
     race = MODULE["races"][0]

@@ -20,11 +20,9 @@ from tests.test_undock import STATION, arrive, number
 SERVICE = "accessGroupBookmarkMgr"
 pytestmark = pytest.mark.skipif(not base.LIVE, reason="set EVE_LIVE_HOST=host:port to test against a running server")
 
-
 def folder_id_of(folder) -> int:
     """The folderID of a folder answer (a util.KeyVal, not a tuple)."""
     return number(dict(describe(folder)["args"]["$dict"])["folderID"])
-
 
 def test_a_pilot_makes_and_deletes_a_personal_bookmark_folder_as_the_client_does():
     race = HEALTH["races"][0]

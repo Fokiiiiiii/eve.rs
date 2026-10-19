@@ -19,7 +19,6 @@ from tests.test_login_to_character import WALK, connect, revive
 LIVE = os.environ.get("EVE_LIVE_HOST", "")
 pytestmark = pytest.mark.skipif(not LIVE, reason="set EVE_LIVE_HOST=host:port to test against a running server")
 
-
 def enter_new_character(client, run: str) -> int:
     creation = next(step for step in WALK["steps"] if step["call"][1] == "CreateCharacterWithDoll" and "ok" in step)
     service, method, described = creation["call"]
@@ -27,7 +26,6 @@ def enter_new_character(client, run: str) -> int:
     client.notifications.clear()
     client.call("charUnboundMgr", "SelectCharacterID", charID=character_id, secondChoiceID=None, skipTutorial=False)
     return character_id
-
 
 def test_votes_and_reports_answer_true_and_playtime_answers_zero():
     run = uuid.uuid4().hex[:10]

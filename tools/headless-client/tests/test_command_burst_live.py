@@ -29,7 +29,6 @@ BURST_HULL = 37480  # Bifrost
 SHIELD_EM_RESONANCE = 271
 COMMAND_DESTROYERS = 37615
 
-
 def ship_attribute(answer, ship_id: int, attribute_id: int) -> float:
     ship_info = dict(describe(answer)["args"]["$dict"])["shipInfo"]["$dict"]
     for item_id, item in ship_info:
@@ -43,14 +42,12 @@ def ship_attribute(answer, ship_id: int, attribute_id: int) -> float:
             raise AssertionError(f"GetAllInfo omitted attribute {attribute_id} for ship {ship_id}")
     raise AssertionError(f"GetAllInfo omitted ship {ship_id}")
 
-
 def named(events: list[dict], name: str) -> list[dict]:
     return [
         event for event in events
         if event["name"] == name
         or any(action.get("name") == name for action in event.get("destiny", {}).get("actions", []))
     ]
-
 
 def test_a_loaded_burst_changes_a_fleet_members_dogma_until_its_buff_expires():
     race = HEALTH["races"][0]

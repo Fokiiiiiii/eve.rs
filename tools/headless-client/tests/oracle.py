@@ -7,21 +7,16 @@ import struct
 
 from evecli import marshal as m
 
-
 class JsNum(float):
     """A JS number: an integer iff it has no fraction (this includes -0)."""
-
 
 class JsBig(int):
     """A JS BigInt."""
 
-
 class JsBuf(bytes):
     """A JS Buffer."""
 
-
 UNKNOWN = None
-
 
 def parse_ejson(node):
     if node is None or isinstance(node, (bool, str)):
@@ -41,10 +36,8 @@ def parse_ejson(node):
         return {key: parse_ejson(value) for key, value in body.items()}
     raise ValueError(f"unknown EJSON tag {tag}")
 
-
 def _range_error(what):
     return m.MarshalError(f"{what} out of range", "RangeError:ERR_OUT_OF_RANGE")
-
 
 def _plain_number(number: float):
     if math.isfinite(number) and number == int(number):
@@ -53,12 +46,10 @@ def _plain_number(number: float):
         raise _range_error("integer beyond int64")
     return float(number)
 
-
 def _big_to_long(digits: int):
     if not -(2**63) <= digits < 2**63:
         raise _range_error("BigInt beyond int64")
     return m.Long(digits)
-
 
 def _pairs(node):
     if not isinstance(node, list):
@@ -70,14 +61,12 @@ def _pairs(node):
         pairs.append((js_to_value(entry[0]), js_to_value(entry[1])))
     return pairs
 
-
 def _items(node):
     if node is None:
         return []
     if not isinstance(node, list):
         raise m.MarshalError("items is not an array")
     return [js_to_value(item) for item in node]
-
 
 def _buffer_source(node) -> bytes:
     if node is None:
@@ -93,7 +82,6 @@ def _buffer_source(node) -> bytes:
         return bytes(out)
     raise m.MarshalError("byte source")
 
-
 def _js_number(node) -> float:
     if node is None:
         return 0.0
@@ -107,12 +95,10 @@ def _js_number(node) -> float:
         return m.number_from_str(node)
     return math.nan
 
-
 def _text(node) -> str:
     if not isinstance(node, str):
         raise m.MarshalError("expected a string")
     return node
-
 
 def js_to_value(js):
     if js is None or isinstance(js, bool):
@@ -131,11 +117,9 @@ def js_to_value(js):
         return _typed(js)
     raise m.MarshalError("cannot marshal value")
 
-
 def _field(js, name):
     value = js.get(name)
     return None if value is None else js_to_value(value)
-
 
 def _typed(js):
     kind = js.get("type")
@@ -189,15 +173,12 @@ def _typed(js):
         return m.CPickled(_buffer_source(js.get("data")))
     raise m.MarshalError("unknown marshal type")
 
-
 _WRAPPERS = ("int", "long", "float", "double", "bool", "wstring", "token", "rawstr")
-
 
 def _unwrap_scalar(js):
     while isinstance(js, dict) and js.get("type") in _WRAPPERS:
         js = js.get("value")
     return js
-
 
 def _packed_value(js, db_type):
     if m.db_size_bits(db_type) == 0:
@@ -215,14 +196,12 @@ def _packed_value(js, db_type):
         return m.Buffer(js)
     return m.List()  # anything else coerces to the fallback (zero / false)
 
-
 def _column(entry):
     if not isinstance(entry, list):
         raise m.MarshalError("invalid packed row: column entry is not an array")
     kind = entry[1] if len(entry) > 1 else None
     db_type = int(kind) if isinstance(kind, JsNum) and math.isfinite(kind) and kind == int(kind) else None
     return ("", db_type)
-
 
 def _packed_row(js):
     header = _field(js, "header")
@@ -236,9 +215,7 @@ def _packed_row(js):
     values = [_packed_value(cell, column[1]) for cell, column in zip(cells, columns)]
     return m.PackedRow(m.Descriptor(header, columns), values)
 
-
 # ─── Decoded value -> EJSON ─────────────────────────────────────────────────
-
 
 def _number(value):
     number = float(value)
@@ -247,14 +224,11 @@ def _number(value):
         return {"$int": str(int(number))}
     return {"$f64": struct.pack(">d", number).hex()}
 
-
 def _obj(**fields):
     return {"$obj": fields}
 
-
 def _pairs_json(pairs):
     return [[to_ejson(k), to_ejson(v)] for k, v in pairs]
-
 
 def to_ejson(value):
     if value is None or isinstance(value, bool):

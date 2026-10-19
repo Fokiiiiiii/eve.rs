@@ -38,7 +38,6 @@ pytestmark = [
 LAUNCHER, ROCKET = 10629, 266
 MISSILE_MODE, FREE_AND_MASSIVE = 5, 5
 
-
 def actions_of(event: dict) -> list:
     """The `(name, args)` of every action of a `DoDestinyUpdate`."""
     try:
@@ -46,7 +45,6 @@ def actions_of(event: dict) -> list:
     except (KeyError, TypeError):
         return []
     return [(a["$tuple"][1]["$tuple"][0], a["$tuple"][1]["$tuple"][1]["$tuple"]) for a in actions]
-
 
 def plain(value):
     """A described value as plain python: tuples and lists as lists, longs as ints, dictionaries as dicts."""
@@ -61,7 +59,6 @@ def plain(value):
     if isinstance(value, list):
         return [plain(v) for v in value]
     return value
-
 
 def ball_of(buffer: str) -> dict:
     """The fields of a missile ball (`encodeFreeBall` in `MISSILE` mode) a client reads; the places and the speed it starts at depend on where the pilot fired from."""
@@ -80,7 +77,6 @@ def ball_of(buffer: str) -> dict:
     out["followTarget"], out["followRange"], out["owner"], out["effectStamp"] = read("q"), read("f"), read("q"), read("i")
     return out
 
-
 def launches_of(events: list) -> list:
     """The missiles the pilot is shown: the ball, the slim item and the launch of each, from the updates that add them."""
     found = []
@@ -96,7 +92,6 @@ def launches_of(events: list) -> list:
         found.append({"ball": ball_of(buffer), "slim": added[1][0], "launch": plain(dict(actions)["LaunchMissile"]), "names": names})
     return found
 
-
 def removals_of(events: list, missiles: set) -> int:
     """How many of the missiles' balls are taken away."""
     count = 0
@@ -106,7 +101,6 @@ def removals_of(events: list, missiles: set) -> int:
                 if name == "RemoveBalls":
                     count += sum(1 for ball in plain(args[0]) if ball in missiles)
     return count
-
 
 def test_a_pilot_fires_a_launcher_and_sees_its_missiles_as_it_did_in_the_reference():
     race = MISSILE["races"][0]
@@ -226,7 +220,7 @@ def test_a_pilot_fires_a_launcher_and_sees_its_missiles_as_it_did_in_the_referen
                 problems.append(f"{where}: ball follows {b['ball']['followTarget']} for {b['ball']['owner']}")
             if b["launch"][0] != b["ball"]["id"] or b["launch"][1:] != [rat, ship, 1, 1]:
                 problems.append(f"{where}: the launch is {b['launch']}")
-        # with nothing in it the launcher is refused; the last missile is still on its way when the effect stops, and what it does comes in this step
+
         after_label = "the pilot fires the launcher with nothing in it"
         raw, error = outcome(lambda: who.call_bound(dogma[0], "Activate", launcher, "missileLaunching", rat, 1000))
         problems.extend(compare_answer(after_label, steps[after_label], raw, error, mapping))

@@ -26,7 +26,6 @@ RESCULPT_CERTIFICATE = 34132
 FULL_RECUSTOMIZING = 3
 pytestmark = pytest.mark.skipif(not (LIVE and PG_URL), reason="set EVE_LIVE_HOST=host:port and EVE_PG_URL to test against a running server")
 
-
 def test_a_resculpt_certificate_is_used_once_and_the_pilot_is_full_recustomizing():
     run = uuid.uuid4().hex[:10]
     with connect(f"resculpt-{run}") as client:

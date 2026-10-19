@@ -28,11 +28,9 @@ pytestmark = [
     pytest.mark.skipif(os.environ.get("EVE_LIVE_SERVER", "eve.rs") == "reference", reason="seeding needs the database: eve.rs only"),
 ]
 
-
 def dict_entries(described) -> list:
     """The (key, value) pairs of a described dict."""
     return described["$dict"]
-
 
 def all_numbers(described) -> list:
     """Every integer in a described value: the members of a set (the describer writes it as an object with its items inside)."""
@@ -51,11 +49,9 @@ def all_numbers(described) -> list:
             found += all_numbers(child)
     return found
 
-
 def field(keyval, name: str):
     """A field of a described util.KeyVal."""
     return dict(keyval["args"]["$dict"])[name]
-
 
 def test_a_corporation_locked_blueprint_is_listed_where_it_is_locked_and_not_elsewhere():
     race = HEALTH["races"][0]

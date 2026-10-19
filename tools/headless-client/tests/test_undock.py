@@ -35,20 +35,16 @@ SYSTEM = 30100032
 POSITION_ACTIONS = {"SetBallPosition", "SetBallVelocity", "GotoDirection"}  # #15: where the ship appears
 FIRST_BALL_ID = 10**12  # #16: the reference's customs offices and props have ids from here (the ship's is 9.9e12: it is the ego)
 
-
 def keyval(described) -> dict:
     return {k: v for k, v in described["args"]["$dict"]}
 
-
 def number(described):
     return described["$long"] if isinstance(described, dict) else described
-
 
 def args_of(event: dict) -> dict:
     """What an event carries, as a `$tuple`: the body is `(0, (1, arguments))`."""
     body = event["args"]["$tuple"]
     return body[1]["$tuple"][1] if isinstance(body[1], dict) and "$tuple" in body[1] else event["args"]
-
 
 def ids(described, mapping: dict):
     """A description with the ids of the recording replaced by this run's, and nothing else touched: a number that only happens to fit
@@ -64,7 +60,6 @@ def ids(described, mapping: dict):
         return mapping.get(described, described)
     return described
 
-
 def collapse(events: list[dict]) -> list[dict]:
     """The events with the bound objects that are let go, one after another, made one: how many an server announces depends on how many
     it kept (DEVIATION #18: the reference announces every object of the session again at a docking, one that has been announced once
@@ -76,22 +71,18 @@ def collapse(events: list[dict]) -> list[dict]:
         out.append(event)
     return out
 
-
 def actions_of(event: dict):
     """The `(stamp, (name, args))` actions of a DoDestinyUpdate and whether the client waits: `(actions, wait)`."""
     actions, wait = args_of(event)["$tuple"]
     return [(a["$tuple"][0], a["$tuple"][1]["$tuple"][0], a["$tuple"][1]["$tuple"][1]) for a in actions], wait
-
 
 def stamps_relative(actions) -> list[int]:
     """The stamps of actions as steps from the first: two servers run on different clocks."""
     first = actions[0][0]
     return [a[0] - first for a in actions]
 
-
 def slim_by_id(slims: list) -> dict:
     return {number(keyval(s)["itemID"]): s for s in slims}
-
 
 def compare_state(recorded: dict, ours: dict, where: str, mapping: dict) -> list[str]:
     """A `SetState`: the same fields, the same ego, and the slim item of each body both servers have equal (the buffer of balls is checked
@@ -117,7 +108,6 @@ def compare_state(recorded: dict, ours: dict, where: str, mapping: dict) -> list
         out.append(f"{where}: only {len(ours_slims)} slim items")
     return out
 
-
 def compare_actions(recorded: list, ours: list, where: str, mapping: dict) -> list[str]:
     """The destiny actions of one update: the same names in the same order at the same steps of the stamp, and the same values (the ship's
     numbers, not where it is: DEVIATION #15)."""
@@ -139,7 +129,6 @@ def compare_actions(recorded: list, ours: list, where: str, mapping: dict) -> li
             out += differences(base.blank_times(expected), base.blank_times(actual), f"{where}.{name}")
     return out
 
-
 def compare_add_balls(recorded: dict, ours: dict, where: str) -> list[str]:
     """`AddBalls2` of the ship: its slim item and damage state equal; the ball's bytes hold the place (DEVIATION #15) and are as long."""
     (buffer_r, extra_r), (buffer_o, extra_o) = recorded["$tuple"][0]["$tuple"], ours["$tuple"][0]["$tuple"]
@@ -148,7 +137,6 @@ def compare_add_balls(recorded: dict, ours: dict, where: str) -> list[str]:
         out.append(f"{where}: ball of {len(buffer_o['$buffer']) // 2} bytes in place of {len(buffer_r['$buffer']) // 2}")
     out += differences(base.blank_times(extra_r), base.blank_times(extra_o), f"{where}.slims")
     return out
-
 
 def compare_event(recorded: dict, ours: dict, where: str, mapping: dict) -> list[str]:
     if (recorded["name"], recorded["idType"]) != (ours["name"], ours["idType"]):
@@ -165,7 +153,6 @@ def compare_event(recorded: dict, ours: dict, where: str, mapping: dict) -> list
         return [] if shape(args_of(recorded)) == shape(args_of(ours)) else [f"{where}: {shape(args_of(ours))} in place of {shape(args_of(recorded))}"]
     return differences(base.blank_times(ids(args_of(recorded), mapping)), base.blank_times(args_of(ours)), f"{where}.{name}")
 
-
 def _session_changes(recorded, ours, where, mapping) -> list[str]:
     names = lambda d: [k for k, _ in d["$tuple"][4]["$tuple"][1]["$tuple"][1]["$dict"]]  # noqa: E731
     changed = lambda d: d["$tuple"][4]["$tuple"][1]["$tuple"][1]  # noqa: E731
@@ -175,7 +162,6 @@ def _session_changes(recorded, ours, where, mapping) -> list[str]:
     else:
         out += differences(ids(changed(recorded["args"]), mapping), changed(ours["args"]), f"{where}.changes")
     return out
-
 
 def compare_events(recorded: list[dict], ours: list[dict], where: str, mapping: dict) -> list[str]:
     recorded, ours = collapse(recorded), collapse(ours)
@@ -200,13 +186,11 @@ def compare_events(recorded: list[dict], ours: list[dict], where: str, mapping: 
             out += compare_event(a, b, f"{where}: timer event {index} {a['name']}", mapping)
     return out
 
-
 def _is_props(event: dict) -> bool:
     if event["name"] != "DoDestinyUpdate":
         return False
     actions, _ = actions_of(event)
     return len(actions) == 1 and actions[0][1] == "AddBalls2" and len(actions[0][2]["$tuple"][0]["$tuple"][1]) > 1
-
 
 def compare_answer(label: str, recorded: dict, ours: dict, where: str) -> list[str]:
     if label == "formations" and not REFERENCE:
@@ -218,7 +202,6 @@ def compare_answer(label: str, recorded: dict, ours: dict, where: str) -> list[s
         return differences(recorded, ours, where)
     # the objects and the times are per run: the shape is what the client reads
     return [] if shape(recorded) == shape(ours) else [f"{where}: answer {shape(ours)} in place of {shape(recorded)}"]
-
 
 def arrive(who, race: dict, run: str) -> tuple[int, int, list, dict]:
     """A character like the recorded one is created and chosen and stands in its station with its ship: `(character id, ship id, the
@@ -238,14 +221,12 @@ def arrive(who, race: dict, run: str) -> tuple[int, int, list, dict]:
     wait_quietly(who, 1.0)  # what the choosing of the character and the binds sent
     return character, ship_id, fitted, mapping
 
-
 def outcome(call):
     """What a call comes to: `(raw answer, None)` or `(None, the error described)`."""
     try:
         return call(), None
     except p.MachoError as failure:
         return None, describe(failure.payload)
-
 
 @pytest.mark.parametrize("race", UNDOCK["races"], ids=lambda r: f"race-{r['raceID']}")
 def test_a_ship_undocks_flies_and_docks_as_the_reference_did(race):

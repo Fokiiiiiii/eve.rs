@@ -57,18 +57,18 @@ STARTERS = load("starters.json")["starters"]
 RECORDED_RUN = re.search(r"(\d{6,})$", next(s["call"][2][0] for s in WALK["steps"] if s["call"][1] == "CreateCharacterWithDoll")).group(1)
 
 
-def connect(name: str, *, game_master: bool = True) -> Client:
+def connect(name: str) -> Client:
     host, _, port = LIVE.partition(":")
     address = (host or "127.0.0.1", int(port or 26000))
     if os.environ.get("EVE_IDENTITY_SCHEMA"):
-        # eve.rs creates the account at first login and reads its role at the next login.
+        # eve.rs with its database: the account is made by its first login and its role bits are read at a login, so the walk's account is a
+        # game master's (the slash commands need a staff role) by a fixture, and the walk logs in again after it
         first = Client(*address, timeout=30.0)
         first.login(name, "walk-password")
         first.close()
-        if game_master:
-            from tests import dbseed  # noqa: PLC0415  (only database walks need this)
+        from tests import dbseed  # noqa: PLC0415  (only the walks that run against the database need it)
 
-            dbseed.grant_roles(name)
+        dbseed.grant_roles(name)
     client = Client(*address, timeout=30.0)
     client.login(name, "walk-password")
     return client
@@ -147,7 +147,7 @@ def test_the_session_starts_with_the_recorded_keys_and_types():
 
 def test_the_recorded_walk_replays():
     run = uuid.uuid4().hex[:10]
-    walker = connect(f"walk-{run}", game_master=False)
+    walker = connect(f"walk-{run}")
     other = None
     ids: dict[int, int] = {}  # a recorded character id -> the id this server gave
     made = 0

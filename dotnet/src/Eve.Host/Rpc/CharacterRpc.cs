@@ -101,7 +101,8 @@ internal sealed partial class CharacterServicesComposition
                     });
                 },
                 async (characterId, token) => await characters.PaperdollStateAsync(characterId, token),
-                globalAssetsInventoryCall: call => ((IService)globalAssetsInventory).CallAsync(call)),
+                globalAssetsInventoryCall: call => ((IService)globalAssetsInventory).CallAsync(call),
+                readBalance: async (characterId, token) => (await wallets.GetAsync(characterId, token))?.Isk),
             new Eve.Services.CharacterInfo.HomeStationService(
                 homeStations,
                 characters.TryChangeHomeStationAsync,

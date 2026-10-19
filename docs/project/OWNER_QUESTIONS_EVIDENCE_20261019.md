@@ -94,7 +94,7 @@ This is a status scan of entries explicitly marked blocked or described as an ow
 
 | Item | Current blocker / status |
 |---|---|
-| C4 command bursts and buff registry | Owner decision 2026-10-19: defer command bursts and do not add zero-value behavior. The protocol recipient exchange and live buff delivery remain a shared implementation dependency. |
+| C4 command bursts and buff registry | Owner decision 2026-10-19 superseded Q-06 and directs implementation. The zero-value finding was corrected: charge multipliers 2596–2599 flow through effect 6737 into module buff values. `CommandBurstFamiliesTests` checks published charges in groups 1769, 1771–1774 and 4905. The earlier two-pilot walk's unchanged 0.92 came from dogmaIM creating a fresh world without syncing timed buffs; dogmaIM now syncs them and the host sends receiver dogma attributes on buff changes. Focused registry and host tests cover modifier scopes, resonance change and expiry reversion. The prior live walk has not been repeated; the graphical client remains open. |
 | E-07 weapon banks | Owner decision 2026-10-19: keep E-07 held on RC-5 grouped-activation semantics; do not infer activation, ammunition or cycle behavior. |
 | Insurgency public gateway | TODO line 1506 and DEVIATIONS lines 2758–2761: old “transport absent” rationale is stale; feature still lacks insurgency handlers/read model and client path remains affected by messenger failure (see Q-04). |
 | Mutual-war invites | Owner decision 2026-10-19: retain the explicit unavailable refusal until invite and blocked-state reads/writes are connected to an authoritative war owner. |

@@ -77,7 +77,7 @@ internal sealed partial class CharacterServicesComposition
                 unreadMailCount: ReadUnreadMailCount,
                 securityStatusOf: securityStatusOf,
                 population: SystemPopulationModel,
-                deletionPurge: new HostCharacterDeletionPurge(source, items, skills, fittingSchema,
+                deletionPurge: new HostCharacterDeletionPurge(source, items, skills, characters, fittingSchema,
                     async (corporationId, cancellationToken) => await corporations.GetAsync(corporationId, cancellationToken) is { IsNpc: true },
                     new CharacterPrivateStatePurge(mailCache, Environment.GetEnvironmentVariable("EVE_AGENTS_SCHEMA") ?? Eve.Agents.AgentMissionStore.DefaultSchema,
                         Environment.GetEnvironmentVariable("EVE_BOOKMARKS_SCHEMA") ?? Eve.Bookmarks.BookmarkStore.DefaultSchema,

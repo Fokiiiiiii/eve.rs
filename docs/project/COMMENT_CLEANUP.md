@@ -19,5 +19,6 @@
 | `crates/eve-destiny` (4 Rust files) | 185 | 182 | 2026-10-19 |
 | `crates/eve-behaviors` (183 Rust files) | 2412 | 2333 | 2026-10-19 |
 | `crates/eve-oracle` (8 Rust files) | 105 | 102 | 2026-10-19 |
+| `crates/eve-sde` (12 Rust files) | 116 | 115 | 2026-10-19 |
 
 The stdlib-only `tools/dev/prune-comments.py` identifies Rust, C#, and Python comments, removes process notes, stale prose, and separators, and compares code token streams before writing. `tools/dev/test_prune_comments.py` covers raw and nested strings/comments, attributes, preprocessor directives, and Python string markers.

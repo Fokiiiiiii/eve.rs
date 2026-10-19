@@ -484,6 +484,8 @@ public sealed class CharacterHostTests
             await transaction.CommitAsync();
         }
         await rig.SetSkillLevelAsync(character, 3300, 3);
+        var skillPlans = new Eve.Skills.PgSkillPlanStore(rig.Source, rig.SkillsSchema);
+        var skillPlanId = await skillPlans.CreateAsync(character, "Private plan", "", []);
         await using (var connection = await rig.Source.OpenConnectionAsync())
         await using (var queue = new NpgsqlCommand(
             $"INSERT INTO {rig.SkillsSchema}.skill_queue (character_id, position, type_id, to_level) VALUES ($1, 0, 3300, 4)", connection))
@@ -517,6 +519,8 @@ public sealed class CharacterHostTests
             count.Parameters.Add(new NpgsqlParameter { Value = character });
             Assert.Equal(0L, (long)(await count.ExecuteScalarAsync())!);
         }
+        Assert.Empty(await skillPlans.ListAsync(character));
+        Assert.Null(await skillPlans.GetAsync(character, skillPlanId));
         await using (var queueConnection = await rig.Source.OpenConnectionAsync())
         await using (var queueCount = new NpgsqlCommand(
             $"SELECT count(*) FROM {rig.SkillsSchema}.skill_queue WHERE character_id = $1", queueConnection))

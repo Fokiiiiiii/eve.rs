@@ -89,7 +89,7 @@ jobs:
       - id: sde-build
         run: echo "build=$(sed -n 's/^PINNED_BUILD=//p' sde/fetch.sh)" >> "$GITHUB_OUTPUT"
       - id: sde
-        uses: actions/cache@55cc834e66ea1d0cc317b6db6e4c053c1b0c62c9 # v6.1.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .cache/sde
           key: sde-${{ steps.sde-build.outputs.build }}
@@ -108,6 +108,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # stable toolchain channel
         with:
+          toolchain: stable
           components: clippy
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
@@ -126,7 +127,7 @@ jobs:
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: 10.0.x
-      - uses: actions/cache@55cc834e66ea1d0cc317b6db6e4c053c1b0c62c9 # v6.1.0
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.nuget/packages
           key: nuget-${{ runner.os }}-${{ hashFiles('dotnet/Directory.Packages.props', 'dotnet/**/*.csproj', 'dotnet/**/*.props', 'dotnet/**/*.targets') }}
@@ -181,7 +182,7 @@ jobs:
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: 10.0.x
-      - uses: actions/cache@55cc834e66ea1d0cc317b6db6e4c053c1b0c62c9 # v6.1.0
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.nuget/packages
           key: nuget-${{ runner.os }}-${{ hashFiles('dotnet/Directory.Packages.props', 'dotnet/**/*.csproj', 'dotnet/**/*.props', 'dotnet/**/*.targets') }}
@@ -193,7 +194,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - id: sde-build
         run: echo "build=$(sed -n 's/^PINNED_BUILD=//p' sde/fetch.sh)" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@55cc834e66ea1d0cc317b6db6e4c053c1b0c62c9 # v6.1.0
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .cache/sde
           key: sde-${{ steps.sde-build.outputs.build }}
@@ -289,7 +290,7 @@ jobs:
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: 10.0.x
-      - uses: actions/cache@55cc834e66ea1d0cc317b6db6e4c053c1b0c62c9 # v6.1.0
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.nuget/packages
           key: nuget-${{ runner.os }}-${{ hashFiles('dotnet/Directory.Packages.props') }}
@@ -303,7 +304,7 @@ jobs:
           python-version: "3.12"
       - id: sde-build
         run: echo "build=$(sed -n 's/^PINNED_BUILD=//p' sde/fetch.sh)" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@55cc834e66ea1d0cc317b6db6e4c053c1b0c62c9 # v6.1.0
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .cache/sde
           key: sde-${{ steps.sde-build.outputs.build }}

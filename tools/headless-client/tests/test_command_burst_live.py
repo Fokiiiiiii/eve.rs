@@ -92,17 +92,21 @@ def test_a_loaded_burst_changes_a_fleet_members_dogma_until_its_buff_expires():
         member.call_bound(member_dogma[0], "GetAllInfo", True, True, None)
         notifications_of(member)
 
+        member_safe = wait_for_events(member, lambda events: named(events, "OnInvulnCancelled"), timeout=50)
+        assert named(member_safe, "OnInvulnCancelled"), "pilot B remained protected after undocking"
+        owner_safe = wait_for_events(owner, lambda events: named(events, "OnInvulnCancelled"), timeout=50)
+        assert named(owner_safe, "OnInvulnCancelled"), "pilot A remained protected after undocking"
         owner_ballpark = owner.call("beyonce", "MachoBindObject", SYSTEM, None)
+        owner.call_bound(owner_dogma[0], "AddTarget", member_ship)
+        targeting = wait_for_events(owner, lambda events: named(events, "OnTarget"), timeout=90)
+        assert named(targeting, "OnTarget"), "pilot A did not acquire pilot B"
         owner.call_bound(owner_ballpark[0], "CmdOrbit", member_ship, 5_000)
-        time.sleep(30)  # let the normal flight order bring the burst ship inside its SDE-defined range
+        time.sleep(90)  # allow the client flight order to reach the burst's 15 km SDE range
         notifications_of(owner)
         notifications_of(member)
 
         owner.call_bound(owner_dogma[0], "SetModuleOnline", owner_ship, burst)
-        try:
-            owner.call_bound(owner_dogma[0], "Activate", burst, "moduleBonusWarfareLinkShield", None, 1000)
-        except Exception as error:
-            raise AssertionError(f"command burst activation failed: {error!r}; payload={getattr(error, 'payload', None)!r}") from error
+        owner.call_bound(owner_dogma[0], "Activate", burst, "moduleBonusWarfareLinkShield", None, 1000)
         active_events = wait_for_events(
             member,
             lambda events: named(events, "OnModuleAttributeChanges") and named(events, "OnDbuffUpdated"),
@@ -110,11 +114,16 @@ def test_a_loaded_burst_changes_a_fleet_members_dogma_until_its_buff_expires():
         )
         changes = named(active_events, "OnModuleAttributeChanges")
         dbuffs = named(active_events, "OnDbuffUpdated")
-        assert changes and dbuffs, "the receiver did not hear both its dogma attributes and buff state"
-        assert active_events.index(changes[0]) < active_events.index(dbuffs[0]), "dogma attributes must precede the buff-state update"
-
         active_info = member.call_bound(member_dogma[0], "GetAllInfo", True, True, None)
         active = ship_attribute(active_info, member_ship, SHIELD_EM_RESONANCE)
+        source_events = notifications_of(owner)
+        assert changes and dbuffs, (
+            f"the receiver did not hear both its dogma attributes and buff state; "
+            f"receiver resonance {before} -> {active}; receiver events {[event['name'] for event in active_events]}; "
+            f"source events {[event['name'] for event in source_events]}"
+        )
+        assert active_events.index(changes[0]) < active_events.index(dbuffs[0]), "dogma attributes must precede the buff-state update"
+
         assert active == pytest.approx(before * 0.92), f"shield resonance was {active}, expected an 8% resistance burst from {before}"
 
         notifications_of(member)

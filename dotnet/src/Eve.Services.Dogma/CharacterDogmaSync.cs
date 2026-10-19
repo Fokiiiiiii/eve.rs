@@ -24,13 +24,13 @@ public sealed class CharacterDogmaSync(DogmaStatic statics, CharacterShips ships
     public int NextBrainVersion(long characterId) => _brainVersions.AddOrUpdate(characterId, 1, (_, version) => version + 1);
 
     /// <summary>The character's attributes as two batches of changes, then the brain: what the client is sent after it asks for the character.</summary>
-    public void SendCharacter(ClientSession session, ShipSnapshot snapshot, long fileTime, int version)
+    public void SendCharacter(ClientSession session, ShipSnapshot snapshot, long fileTime, int version, Brain? brain = null)
     {
         foreach (var events in Info.CharacterAttributeEvents(snapshot, fileTime))
         {
             session.SendNotification("OnModuleAttributeChanges", "clientID", events);
         }
-        session.SendNotification("OnServerBrainUpdated", "clientID", Info.BrainUpdate(snapshot, version));
+        session.SendNotification("OnServerBrainUpdated", "clientID", Info.BrainUpdate(snapshot, version, brain));
     }
 
     private const string FittingBootstrapShipId = "loginFittingBootstrapShipId";

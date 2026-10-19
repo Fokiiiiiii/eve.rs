@@ -1640,6 +1640,28 @@ public class SpaceServiceTests
     }
 
     [PgFact]
+    public async Task A_refused_module_activation_keeps_a_jump_cloak()
+    {
+        var rig = await Rig.CreateAsync(jumpCloak: TimeSpan.FromMinutes(1));
+        await using var _ = rig;
+        rig.Sim.ActivateAnswer = new(false, 134351527136350000, "REFUSED");
+
+        var character = await rig.NewCharacterAsync();
+        var session = await rig.SessionAsync(character);
+        var from = (int)session.GetInt("solarsystemid2")!.Value;
+        await InSpaceAsync(rig, session);
+        rig.Sim.Say(new SimJumped((ulong)session.SessionId, from, Gate, NextSystem, NextGate));
+        await Rig.UntilAsync(() => session.GetInt("solarsystemid") == NextSystem);
+        Events.Of(session);
+
+        var (_, _, gun, _) = await ShipAsync(rig, character);
+
+        await rig.Space.ActivateAsync(session, gun, "targetAttack", 1, 1, CancellationToken.None);
+
+        Assert.Empty(Events.Of(session));
+    }
+
+    [PgFact]
     public async Task A_gun_that_needs_no_charge_shoots_with_its_own_damage_after_the_skills_of_the_pilot()
     {
         var (rig, character, _) = await DockedAsync();

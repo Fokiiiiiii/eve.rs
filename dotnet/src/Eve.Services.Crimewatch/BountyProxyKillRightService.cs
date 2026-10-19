@@ -19,7 +19,8 @@ public sealed class BountyProxyKillRightService(
     PgCrimewatchStore? store = null,
     Func<long, long, int, JsonObject, string?, CancellationToken, Task>? notificationWriter = null,
     Func<long>? nowUnixMs = null,
-    Func<ServiceCall, ValueTask<PyValue?>>? bountyRpcHandler = null) : IService
+    Func<ServiceCall, ValueTask<PyValue?>>? bountyRpcHandler = null,
+    Func<long, CancellationToken, Task<(long CorporationId, long AllianceId)>>? resolveOrganization = null) : IService
 {
     public string Name => "bountyProxy";
 
@@ -159,12 +160,10 @@ public sealed class BountyProxyKillRightService(
         if (characterId <= 0 || targetIds.Length == 0 || store is null)
             return new PyList([]);
 
-        var ownerIds = new[]
-        {
-            characterId,
-            call.Session.GetInt("corpid") ?? 0,
-            call.Session.GetInt("allianceid") ?? 0,
-        };
+        var organization = resolveOrganization is null
+            ? (CorporationId: 0L, AllianceId: 0L)
+            : await resolveOrganization(characterId, call.Cancellation);
+        var ownerIds = new[] { characterId, organization.CorporationId, organization.AllianceId };
         var rights = await store.AvailableKillRightsOnCharactersAsync(
             targetIds, ownerIds, NowUnixMs, call.Cancellation);
         return new PyList([.. rights.Select(Payload)]);

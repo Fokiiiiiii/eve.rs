@@ -882,7 +882,10 @@ public class RuntimeTests : IAsyncLifetime
         Assert.True(await Store.SetKillRightSaleAsync(6, allianceSale!.Value, 300m, 700, _now));
         Assert.True(await Store.SetKillRightSaleAsync(7, restrictedSale!.Value, 400m, 900, _now));
 
-        var service = (IService)new BountyProxyKillRightService(store: Store, nowUnixMs: () => _now);
+        var service = (IService)new BountyProxyKillRightService(
+            store: Store,
+            nowUnixMs: () => _now,
+            resolveOrganization: (_, _) => Task.FromResult((500L, 700L)));
         Assert.True(service.HasMethod("GetMyKillRights"));
         Assert.True(service.HasMethod("GetKillRightsOnCharacters"));
         Assert.True(service.HasMethod("GetBountiesAndKillRights"));
@@ -905,6 +908,16 @@ public class RuntimeTests : IAsyncLifetime
             Session = session,
         }));
         Assert.Equal([publicSale!.Value, corpSale!.Value, allianceSale!.Value], available.Items
+            .Select(row => (long)((PyLong)Assert.IsType<PyDict>(Assert.IsType<PyObject>(row).Args)
+                .Entries.Single(entry => entry.Key == new PyStr("killRightID")).Value).Value));
+        var staleSessionService = (IService)new BountyProxyKillRightService(store: Store, nowUnixMs: () => _now);
+        var staleSessionAvailable = Assert.IsType<PyList>(await staleSessionService.CallAsync(new ServiceCall
+        {
+            Method = "GetKillRightsOnCharacters",
+            Args = [new PyList([new PyLong(2)])],
+            Session = session,
+        }));
+        Assert.Equal([publicSale.Value], staleSessionAvailable.Items
             .Select(row => (long)((PyLong)Assert.IsType<PyDict>(Assert.IsType<PyObject>(row).Args)
                 .Entries.Single(entry => entry.Key == new PyStr("killRightID")).Value).Value));
         var myPayload = Assert.IsType<PyDict>(Assert.IsType<PyObject>(myRights.Items[0]).Args);

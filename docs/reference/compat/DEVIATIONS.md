@@ -714,6 +714,8 @@ Sources, in the user's order: the SDE for numbers (dogmaEffects 6732 to 6737, ty
 
 **Who a burst reaches (decided).** The simulation measures the reach: the ships of its scene within the range plus one metre, surface to surface (EveJS `isBurstRecipient`'s allowance). The simulation does not read fleets (ADR 0011, decision 5), so the host keeps the source's own ship always and another ship only when it is in the source's fleet (EveJS `isInSameFleet`), at most 256 with the source first (wiki: "up to 256 people"; the wiki does not say which are cut, so ids are taken in order, as C5 decided).
 
+**Headless live walk status.** Actions run 33 showed pilot A's activation events, but pilot B stayed at resonance 0.92 and received neither `OnModuleAttributeChanges` nor `OnDbuffUpdated`. Receiver delivery remains open pending a repair and a green rerun; this walk does not establish graphical-client behavior.
+
 **When a burst settles, and refresh (decided).** At each cycle's end, through the work path (ADR 0013). Each granted ship has the buffs for the buff duration (buffDuration 2535: 60 s, 80 s for the named and presidential bursts), so a later cycle refreshes them. Two bursts of one collection do not stack (C5: the aggregators of EveJS).
 
 **The last charge (decided).** A charged action that takes effect at its cycle's end runs that cycle to its end on its last round (`spend_round`, `ends_its_cycle`): a burst with N charges settles N cycles. A charged action that takes effect at the cycle's start keeps the rule it had (the power booster test pins it: its last round ends the effect at once). No source read states the last-round rule; the choice keeps the last cycle's buffs, which the cycle's answer grants.

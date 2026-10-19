@@ -510,6 +510,35 @@ public sealed class CharacterHostTests
             }
             await transaction.CommitAsync();
             await rig.AddCloneAsync(ownerId, rig.Station, "station", "Private clone", [10]);
+            await using var characterStateConnection = await rig.Source.OpenConnectionAsync();
+            foreach (var statement in new[]
+            {
+                $"INSERT INTO {rig.CharactersSchema}.nes_intro_states(character_id, state, updated_ms) VALUES ($1, 2, 1)",
+                $"INSERT INTO {rig.CharactersSchema}.project_discovery_tutorials(character_id, finished, tutorial_level, updated_ms) VALUES ($1, true, 1, 1)",
+            })
+            {
+                await using var state = new NpgsqlCommand(statement, characterStateConnection);
+                state.Parameters.Add(new NpgsqlParameter { Value = ownerId });
+                await state.ExecuteNonQueryAsync();
+            }
+            await using (var settlement = new NpgsqlCommand(
+                $"INSERT INTO {rig.CharactersSchema}.character_jump_clone_settlements(operation_id, character_id, jump_clone_id, location_id, location_kind, amount, offering_character_id) VALUES ($1, $2, $2, $3, 'station', 1, $4)", characterStateConnection))
+            {
+                settlement.Parameters.Add(new NpgsqlParameter { Value = $"delete-{ownerId}" });
+                settlement.Parameters.Add(new NpgsqlParameter { Value = ownerId });
+                settlement.Parameters.Add(new NpgsqlParameter { Value = rig.Station });
+                settlement.Parameters.Add(new NpgsqlParameter { Value = ownerId });
+                await settlement.ExecuteNonQueryAsync();
+            }
+        }
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var settlement = new NpgsqlCommand(
+            $"INSERT INTO {rig.CharactersSchema}.character_jump_clone_settlements(operation_id, character_id, jump_clone_id, location_id, location_kind, amount, offering_character_id) VALUES ('offered-by-deleted', $1, $1, $2, 'station', 1, $3)", connection))
+        {
+            settlement.Parameters.Add(new NpgsqlParameter { Value = otherCharacter });
+            settlement.Parameters.Add(new NpgsqlParameter { Value = rig.Station });
+            settlement.Parameters.Add(new NpgsqlParameter { Value = character });
+            await settlement.ExecuteNonQueryAsync();
         }
         await using (var connection = await rig.Source.OpenConnectionAsync())
         await using (var queue = new NpgsqlCommand(
@@ -552,8 +581,9 @@ public sealed class CharacterHostTests
         {
             foreach (var table in new[]
             {
-                "character_jump_clones", "character_titles", "character_equipped_titles", "achievement_trackers",
-                "achievement_completions", "achievement_event_counts",
+                "character_jump_clones", "character_jump_clone_settlements", "character_titles", "character_equipped_titles",
+                "achievement_trackers", "achievement_completions", "achievement_event_counts", "nes_intro_states",
+                "project_discovery_tutorials",
             })
             {
                 await using var deletedCount = new NpgsqlCommand(

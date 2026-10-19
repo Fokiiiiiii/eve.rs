@@ -21,6 +21,10 @@ internal sealed class CharacterPrivateStatePurge(GameStoreCache cache, string ag
         $"DELETE FROM {agentsSchema}.research_projects WHERE character_id = $1",
         $"DELETE FROM {agentsSchema}.locate_requests WHERE character_id = $1",
         $"DELETE FROM {spaceSchema}.scan_probes WHERE character_id = $1",
+        // These per-character records outlive ordinary session state and do not cascade from the tombstoned character row.
+        $"DELETE FROM {charactersSchema}.nes_intro_states WHERE character_id = $1",
+        $"DELETE FROM {charactersSchema}.project_discovery_tutorials WHERE character_id = $1",
+        // The account-scoped login milestone remains available to the account's other characters.
         // Skill plans and their dependent requirements/milestones/active selection belong to the character.
         $"DELETE FROM {skillsSchema}.skill_plans WHERE character_id = $1",
         // Achievement children reference their tracker header without cascade.
@@ -30,8 +34,10 @@ internal sealed class CharacterPrivateStatePurge(GameStoreCache cache, string ag
         // Remove the equipped row first; the owned-title row has no character-delete cascade.
         $"DELETE FROM {charactersSchema}.character_equipped_titles WHERE character_id = $1",
         $"DELETE FROM {charactersSchema}.character_titles WHERE character_id = $1",
-        // Clone implants cascade from the clone row. The last-jump timestamp lives on the tombstoned character row.
+        // Clone implants cascade from the clone row. Settlement idempotency rows reference either participant.
         $"DELETE FROM {charactersSchema}.character_jump_clones WHERE character_id = $1",
+        $"DELETE FROM {charactersSchema}.character_jump_clone_settlements WHERE character_id = $1 OR offering_character_id = $1",
+        // The last-jump timestamp lives on the tombstoned character row.
         $"UPDATE {charactersSchema}.characters SET time_last_clone_jump_filetime = 0 WHERE id = $1",
         // Owned bookmark folders cascade to bookmarks/subfolders; owned calendar events cascade responses.
         $"DELETE FROM {bookmarksSchema}.folders WHERE owner_id = $1",

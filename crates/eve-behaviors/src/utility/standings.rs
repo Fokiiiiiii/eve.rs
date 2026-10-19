@@ -19,7 +19,6 @@ pub fn classify_standings(hostile_threshold: f64, friendly_threshold: f64, stand
     }
 }
 
-/// `get_standings_between`: what my owner thinks of an item.
 pub fn get_standings_between(t: &mut TaskCtx<'_, '_>, to_id: i64) -> Option<f64> {
     let owner = get_owner_id(t)?;
     Some(t.world().standings_from_npc_to_item(owner, to_id))

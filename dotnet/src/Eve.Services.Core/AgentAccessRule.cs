@@ -1,22 +1,22 @@
 namespace Eve.Services.Core;
 
 /// <summary>
-/// A character's standings toward an agent's three owners, as the client reads them: the agent's faction, the agent's
-/// corporation and the agent itself (eve-logic standingsvc.py:100-104). Each is -10 to +10; an unknown owner is 0.
+
+
 /// </summary>
 public sealed record AgentStandings(double Faction, double Corporation, double Character);
 
 /// <summary>
-/// Whether a character may use an agent. A port of the V24.01 client rule (eve-logic eveCfg.py:112-143 <c>CanUseAgent</c>),
+
 /// with the skill bonuses of standingUtil.py:15-43. The rule has no quality term (the client has none; see the design
 /// document, section 4.1): the level threshold, the floor of -2, the research rule and the aura bypass are the whole of it.
 /// </summary>
 public static class AgentAccessRule
 {
-    /// <summary>SDE agent type 11 (eve-logic appConst.py:79 <c>agentTypeAura</c>): no standing rule.</summary>
+
     public const long AuraAgentType = 11;
 
-    /// <summary>SDE agent type 4 (eve-logic appConst.py:74 <c>agentTypeResearchAgent</c>).</summary>
+
     public const long ResearchAgentType = 4;
 
     /// <summary>Skill type IDs (eve-logic inventorycommon/const.py:1441, 1456, 1474).</summary>
@@ -65,7 +65,7 @@ public static class AgentAccessRule
         return PirateFactions.Contains(factionId) ? CriminalConnectionsSkill : ConnectionsSkill;
     }
 
-    /// <summary>The standing an agent's skill bonus raises it to (eveCfg.py:130-138): the effective agent standing AS of the research rate.</summary>
+
     public static double EffectiveStanding(double standing, long factionId, Func<int, int> trainedLevelOf) =>
         WithBonus(standing, factionId, trainedLevelOf);
 

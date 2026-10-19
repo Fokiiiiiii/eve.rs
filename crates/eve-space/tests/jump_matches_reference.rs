@@ -61,7 +61,6 @@ fn point(args: &Value) -> Vec3 {
     Vec3::new(a[1].as_f64().unwrap(), a[2].as_f64().unwrap(), a[3].as_f64().unwrap())
 }
 
-/// The last recorded `SetBallPosition` of a step.
 fn last_position(step: &Value) -> Vec3 {
     let (_, _, args) =
         destiny_actions(step).into_iter().rfind(|(_, name, _)| name == "SetBallPosition").unwrap();

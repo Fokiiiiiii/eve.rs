@@ -3,7 +3,7 @@ using Eve.Marshal;
 using Eve.Macho;
 
 /// <summary>
-/// The Host adapter exposes the owner rows from the existing character, corporation,
+
 /// alliance, and universe stores. The core service owns EVE.js filtering and wire shape.
 /// </summary>
 public interface ILookupDirectory

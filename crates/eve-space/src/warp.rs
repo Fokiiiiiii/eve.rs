@@ -1,4 +1,3 @@
-//! How a ship warps: where it comes out, how long each phase takes and where it is at each moment.
 //!
 //! The warp is the destiny kernel's own (Carbon's `Ballpark` warp: an exponential speed-up, a cruise if the distance is long enough and an
 //! exponential slowing down until the speed falls below what a ship can drop out at), so the numbers here are the ones the client works out

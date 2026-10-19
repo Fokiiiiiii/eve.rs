@@ -101,11 +101,11 @@ public delegate ValueTask ProcessSeasonClientEventCallback(
 [Service("seasonManager")]
 public sealed partial class SeasonManagerService(ProcessSeasonClientEventCallback? processEvent = null)
 {
-    /// <summary>No season is active on this server (EveJS answers the same): the client shows no season and reads no challenges.</summary>
+
     [Method("get_season_data_for_character")]
     public PyValue GetSeasonDataForCharacter(ServiceCall _) => PyNone.Instance;
 
-    /// <summary>Selecting a season has no effect while no season is active (EveJS records the call and answers None).</summary>
+
     [Method("select_season")]
     public PyValue SelectSeason(ServiceCall _) => PyNone.Instance;
 
@@ -113,7 +113,7 @@ public sealed partial class SeasonManagerService(ProcessSeasonClientEventCallbac
     public PyValue GetSeasonEndTime(ServiceCall _) => new PyLong(DateTime.UtcNow.ToFileTimeUtc());
 
     /// <summary>
-    /// The challenge reads with no season and no challenge definitions on this server (EveJS answers the same): no active challenge, no
+
     /// challenge expiry, no rewards to claim. Progress and claims need the season definitions, which no source here carries.
     /// </summary>
     [Method("get_max_active_challenges")]
@@ -140,7 +140,7 @@ public sealed partial class SeasonManagerService(ProcessSeasonClientEventCallbac
     [Method("claim_goal_reward")]
     public PyValue ClaimGoalReward(ServiceCall _) => PyBool.False;
 
-    /// <summary>The character's season progress with no active season (EveJS <c>buildNoActiveSeasonProgress</c>).</summary>
+
     [Method("get_character_progress_by_character_id")]
     public PyValue GetCharacterProgressByCharacterId(ServiceCall call) => Py.KeyVal(
         ("character_id", call.Session.CharacterId is { } characterId ? new PyLong(characterId) : PyNone.Instance),

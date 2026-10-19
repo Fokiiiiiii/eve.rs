@@ -37,7 +37,7 @@ public sealed class AbyssalFilamentConsumer(PgItemStore items, ItemTypeCatalog i
 
         if (item.OwnerId != request.CharacterId &&
             (request.CorporationId is not { } corporationId || item.OwnerId != corporationId))
-            throw AbyssalErrorAdapter.ClientError(4); // INVALID_OWNER
+            throw AbyssalErrorAdapter.ClientError(4);
 
         if (item.LocationId != request.ShipId || item.Flag != ItemFlags.Cargo)
             throw AbyssalErrorAdapter.ClientError(6, new PyInt(item.TypeId)); // ITEM_NOT_REACHABLE

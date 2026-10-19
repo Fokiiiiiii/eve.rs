@@ -10,7 +10,7 @@ namespace Eve.Services.Core;
 /// Industry manager protocol adapter. Job reads are snapshots; mutations cross the typed lifecycle port
 /// and must commit authoritative inventory, wallet, job, and outbox changes before reporting success.
 /// Starbase visibility/lifecycle and legacy inventory-flag resolution are supplied by Host callbacks.
-/// The client Job Browser requests owner-scoped active and completed job lists.
+
 /// </summary>
 
 /// <summary>The authenticated session facts needed by the industry domain; never copied from the job payload.</summary>
@@ -249,7 +249,7 @@ private async ValueTask<PyValue> MutateAsync(ServiceCall call)
         var activityId = RequiredInt(payload, "activityID");
         var blueprintId = RequiredLong(payload, "blueprintID");
         var blueprintTypeId = RequiredInt(payload, "blueprintTypeID");
-        // The client's job.dump() carries the wallet account and the character or corporation IDs, not the owner: the owner is the
+
         // corporation when the account is the corporation's, and the character otherwise. The blueprint's own location is read by the host.
         var accountOwner = AccountOwnerId(payload);
         var ownerId = OptionalPositiveField(payload, "ownerID")
@@ -296,7 +296,7 @@ private async ValueTask<PyValue> MutateAsync(ServiceCall call)
             ? materials.Entries.Select(entry => (int)Integer(entry.Key)).Where(id => id > 0).ToArray()
             : [];
 
-    /// <summary>The owner of the wallet account the job pays from (the character or corporation ID), or null when the payload names none.</summary>
+
     private static long? AccountOwnerId(PyValue payload)
     {
         var owner = WireField(payload, "accountOwnerID");

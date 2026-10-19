@@ -36,7 +36,7 @@ public sealed class PersistenceAgentResearch(
     public ResearchProjectStore Projects { get; } = projects;
 
     /// <summary>
-    /// The research fields of every R&amp;D agent, from the SDE: npcCharacters (the agent type and its skills), the group 333 datacores
+
     /// (published) and their required skill (dogma attribute 182). The reference builds the same table from these three files.
     /// </summary>
     public static async Task<IReadOnlyDictionary<long, IReadOnlyList<AgentResearchField>>> LoadFieldsAsync(SdeReader sde, CancellationToken cancellationToken)

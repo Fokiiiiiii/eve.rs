@@ -496,6 +496,31 @@ public class RuntimeTests : IAsyncLifetime
     }
 
     [PgFact]
+    public async Task A_war_check_with_one_thousand_unrelated_wars_has_bounded_latency()
+    {
+        await using var relations = await RelationsRig.Create(_source!, () => _now);
+        await using (var connection = await _source!.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            for (var index = 0; index < 1_000; index++)
+            {
+                await relations.Relations.SetAsync(connection, transaction, Eve.Relations.RelationKinds.War.Name,
+                    100_000_000 + index, 200_000_000 + index, 1, "performance fixture", cancellationToken: default);
+            }
+            await transaction.CommitAsync();
+        }
+
+        var wars = new RelationWars(relations.Relations);
+        var timer = global::System.Diagnostics.Stopwatch.StartNew();
+        Assert.False(await wars.AreAtWarAsync(1, 2, _now));
+        timer.Stop();
+        Assert.True(timer.Elapsed < TimeSpan.FromSeconds(2), $"war lookup across 1,000 unrelated wars took {timer.Elapsed}");
+
+        await relations.Set(Eve.Relations.RelationKinds.War.Name, 1, 2);
+        Assert.True(await wars.AreAtWarAsync(1, 2, _now));
+    }
+
+    [PgFact]
     public async Task A_process_that_starts_takes_up_the_wait_for_what_still_runs()
     {
         Pilot(1, System);

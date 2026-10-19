@@ -145,7 +145,7 @@ internal sealed partial class CharacterServicesComposition
         foreach (var entity in request.Entities)
         {
             var position = new[] { entity.Position.X, entity.Position.Y, entity.Position.Z };
-            // EveJS buildEnvironmentalObjectSpawnState publishes this direction, including scene-center objects.
+
             var direction = entity.Role == AbyssalEntityRole.Cloud
                 ? new[] { 0d, 1d, 0d }
                 : AbyssalRoomSpawnPlanner.DirectionToward(entity.Position, center);

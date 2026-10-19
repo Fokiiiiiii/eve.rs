@@ -44,7 +44,7 @@ public sealed class PersistenceCharMgrReadModel(
     Func<string, string, JsonNode?, WriteResult>? writePath = null,
     Func<string, string, WriteResult>? removePath = null)
 {
-    // ponytail: serialize personal-data read-modify-write, including the shared nextNoteID; split by owner plus a note-ID allocator if throughput matters.
+
     private readonly SemaphoreSlim _updateGate = new(1, 1);
     private const string DefaultFoldersLabel = "S:Folders";
     private const string DefaultFoldersNote = "1::F::0::Main|";

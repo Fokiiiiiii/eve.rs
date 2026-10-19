@@ -27,7 +27,7 @@ public sealed partial class RedeemService
 
     /// <summary>
     /// <c>ActivateMultiTraining(itemID, trainingID=...)</c>: uses a certificate item of the account. The item is consumed and the queue gets
-    /// 30 days. A refusal is the reference's CustomInfo text (EveJS and the wiki are the sources; EveJS itself only refreshes the slots).
+
     /// </summary>
     [Method("ActivateMultiTraining")]
     public async ValueTask<PyValue> ActivateMultiTraining(ServiceCall call)
@@ -108,22 +108,22 @@ public sealed partial class RedeemService
         return await OverrideUserCallAsync(call, activated ? PyBool.True : PyBool.False);
     }
 
-    /// <summary>GATE-C (owner decision): answers true and keeps nothing, as the reference does (EveJS <c>userService.js</c> 1104). The client does not read the answer.</summary>
+
     [Method("CastUpvote")]
     public async ValueTask<PyValue> CastUpvote(ServiceCall call) =>
         await OverrideUserCallAsync(call, PyBool.True);
 
-    /// <summary>GATE-C (owner decision): answers true and keeps nothing, as the reference does (EveJS <c>userService.js</c> 1109). The client does not read the answer.</summary>
+
     [Method("CastDownvote")]
     public async ValueTask<PyValue> CastDownvote(ServiceCall call) =>
         await OverrideUserCallAsync(call, PyBool.True);
 
-    /// <summary>GATE-C (owner decision): answers true and keeps nothing, as the reference does (EveJS <c>userService.js</c> 1115). The client does not read the answer.</summary>
+
     [Method("ReportBot")]
     public async ValueTask<PyValue> ReportBot(ServiceCall call) =>
         await OverrideUserCallAsync(call, PyBool.True);
 
-    /// <summary>GATE-C (owner decision): answers true and keeps nothing, as the reference does (EveJS <c>userService.js</c> 1122). The client does not read the answer.</summary>
+
     [Method("ReportISKSpammer")]
     public async ValueTask<PyValue> ReportISKSpammer(ServiceCall call) =>
         await OverrideUserCallAsync(call, PyBool.True);

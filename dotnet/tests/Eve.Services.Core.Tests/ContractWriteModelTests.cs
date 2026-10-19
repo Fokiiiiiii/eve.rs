@@ -22,6 +22,16 @@ public sealed class ContractWriteModelTests
             ContractCreationRules.ValidateItemExchangeTerms(Request(expiryMinutes: expiryMinutes)));
 
     [Fact]
+    public void Item_exchange_description_uses_the_client_four_thousand_character_limit()
+    {
+        ContractCreationRules.ValidateItemExchangeTerms(Request(description: new string('x', 4000)));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            ContractCreationRules.ValidateItemExchangeTerms(Request(description: new string('x', 4001))));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            ContractCreationRules.ValidateItemExchangeTerms(Request(title: new string('x', 51))));
+    }
+
+    [Fact]
     public void Item_exchange_terms_require_a_unique_positive_item_list_and_cents()
     {
         var duplicate = Request(items: [new ContractOfferedItem(20, 1), new ContractOfferedItem(20, 2)]);
@@ -46,7 +56,9 @@ public sealed class ContractWriteModelTests
         int availability = 0,
         long assigneeId = 0,
         decimal price = 5,
-        IReadOnlyList<ContractOfferedItem>? items = null) => new(
+        IReadOnlyList<ContractOfferedItem>? items = null,
+        string? title = null,
+        string? description = null) => new(
         IssuerCharacterId: 100,
         IssuerCorporationId: 200,
         IsCorporationIssued: false,
@@ -61,7 +73,7 @@ public sealed class ContractWriteModelTests
         Deposit: 0,
         SalesTax: 0,
         WalletAccountKey: 1000,
-        Title: "Exchange",
-        Description: "",
+        Title: title ?? "Exchange",
+        Description: description ?? "",
         Items: items ?? [new ContractOfferedItem(10, 1)]);
 }

@@ -152,6 +152,62 @@ public sealed class AnalysisBeaconHostTests
         Assert.NotNull(director);
     }
 
+
+    [PgFact]
+    public async Task A_crab_is_refused_within_ten_thousand_kilometres_of_an_asteroid_and_stays_in_the_hold()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await rig.UseBusAsync();
+        await DirectorAsync(rig);
+        var (session, _, beacon) = await PilotWithBeaconAsync(rig);
+        var point = await rig.Space.DropPointAsync(session, AnalysisBeaconRules.DeployDistanceMeters, CancellationToken.None);
+        Assert.NotNull(point);
+        var candidate = point.Value;
+        var asteroid = (await rig.Statics.TypesInCategoryAsync("Asteroid")).First();
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await rig.SpaceItems.SaveAsync(connection, transaction, new Eve.Ships.SpaceItem(
+                9_000_000_001, (int)NullSecSystem, [candidate.X, candidate.Y, candidate.Z], [1, 0, 0], 100, asteroid.GroupId,
+                0, 0, 0, 0, 0, 0, 0), CancellationToken.None);
+            await transaction.CommitAsync();
+        }
+
+        var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() => rig.Containers.LaunchFromShipAsync(session, beacon, CancellationToken.None));
+
+        Assert.Contains("10,000 km of an asteroid", Texts(refusal.Error.Payload));
+        Assert.DoesNotContain(rig.Sim.Heard, message => message is SimPlaceAnalysisBeacon);
+        Assert.Equal(CharacterShips.CargoFlag, (await rig.Items.GetAsync(beacon))!.Flag);
+    }
+
+
+    [PgFact]
+    public async Task A_crab_can_be_deployed_beyond_ten_thousand_kilometres_from_an_asteroid()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await rig.UseBusAsync();
+        await DirectorAsync(rig);
+        var (session, _, beacon) = await PilotWithBeaconAsync(rig);
+        var point = await rig.Space.DropPointAsync(session, AnalysisBeaconRules.DeployDistanceMeters, CancellationToken.None);
+        Assert.NotNull(point);
+        var candidate = point.Value;
+        var asteroid = (await rig.Statics.TypesInCategoryAsync("Asteroid")).First();
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await rig.SpaceItems.SaveAsync(connection, transaction, new Eve.Ships.SpaceItem(
+                9_000_000_002, (int)NullSecSystem, [candidate.X + 10_000_001, candidate.Y, candidate.Z], [1, 0, 0], 100, asteroid.GroupId,
+                0, 0, 0, 0, 0, 0), CancellationToken.None);
+            await transaction.CommitAsync();
+        }
+
+        var deployed = await rig.Containers.LaunchFromShipAsync(session, beacon, CancellationToken.None);
+
+        Assert.NotNull(deployed);
+        Assert.Contains(rig.Sim.Heard, message => message is SimPlaceAnalysisBeacon);
+        Assert.NotEqual(CharacterShips.CargoFlag, (await rig.Items.GetAsync(beacon))!.Flag);
+    }
+
     [PgFact]
     public async Task A_crab_is_refused_in_high_security_space_and_stays_in_the_hold()
     {

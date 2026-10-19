@@ -15,7 +15,7 @@ using Npgsql;
 
 namespace Eve.Host;
 
-/// <summary>ST-4 authorization reads the existing structure owner and docking policy; SDE supplies all geometry.</summary>
+
 public sealed class TetherAuthority(
     NpgsqlDataSource source, StructureStore structures, DogmaStatic statics,
     IStructureDirectoryReadCallbacks directory,

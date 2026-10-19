@@ -7,10 +7,10 @@ using Npgsql;
 namespace Eve.Host.Persistence.Structures;
 
 /// <summary>
-/// The destruction of a structure's contents (ST-16; EVE.js handleStructureDestroyed and handleStructureDestroyedLoot). In the destruction transaction: the rigs are
-/// destroyed; each owner's items at the structure are offered to its asset safety wrap first (EVE.js, per owner); whatever is still at the structure, the items of an owner
+
+
 /// the wrap did not take (a FLEX hull, a wormhole or Pochven system, a refused wrap), and the Quantum Core move into one Abandoned Container at the structure's position.
-/// Nothing to drop returns null. A refused wrap loots the owner's items (EVE.js would leave them at the destroyed structure: DEVIATIONS, ST-16).
+
 /// </summary>
 public sealed class StructureDestructionLootAuthority(
     PgItemStore items,
@@ -20,7 +20,7 @@ public sealed class StructureDestructionLootAuthority(
 {
     /// <summary>
     /// The asset safety wrap of a destruction over a read model that the composition creates later than the timers: the model is read when the destruction runs
-    /// (ST-19: the composition's wiring, which the Host test drives with a real model).
+
     /// </summary>
     public static Func<NpgsqlConnection, NpgsqlTransaction, long, long, long, bool, CancellationToken, Task<Eve.Services.Core.AssetSafetyActionState>> WrapWith(
         Func<PersistenceStructureAssetSafetyReadModel> readModel) =>
@@ -31,7 +31,7 @@ public sealed class StructureDestructionLootAuthority(
     private const int StructureDeedFlag = 180;
     private const long NeverExpires = long.MaxValue;
 
-    // EVE.js getOwnerKindForAssetSafety: the character ids are 140000000 to 199999999, everything else is a corporation
+
     private const long CharacterOwnerMin = 140_000_000;
     private const long CharacterOwnerMaxExclusive = 200_000_000;
 
@@ -63,7 +63,7 @@ public sealed class StructureDestructionLootAuthority(
             coreTypeId = (long)value;
         }
 
-        // the rigs are destroyed before any wrap, so no owner's wrap takes them
+
         foreach (var rig in await LockedAtStructureAsync(connection, transaction, structureId, IsRigFlag, cancellationToken))
         {
             await items.DeleteAsync(connection, transaction, rig.Id, cancellationToken);

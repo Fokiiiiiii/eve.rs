@@ -127,7 +127,7 @@ public sealed class PersistenceWeaponTargetContextReadModel(
         var targetAffiliation = await targetAffiliationTask;
         var targetState = await targetStateTask;
         var targetSecurity = await targetSecurityTask;
-        // RelationWars walks an entity's owner chain, so the structure corporation is the attacker identity.
+
         var activeWarState = await activeWar(ownerCorporationId, targetCharacterId, now, cancellationToken);
         var legalFriendlyFire = targetAffiliation.Corporation == ownerCorporationId
             && FriendlyFireIsEnabled(await corporationRowsTask, ownerCorporationId, now);

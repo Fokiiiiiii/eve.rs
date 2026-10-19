@@ -146,7 +146,6 @@ pub trait Spawning {
     /// `GetGroupAwarenessManager().on_entity_group_spawn(spawn_pool_id, entity_group_id)`.
     fn on_entity_group_spawn(&mut self, _spawn_pool_id: Option<i64>, _entity_group_id: i64) {}
 
-    /// `SpawnTableLoader().get_spawn_table(id).npcowner`.
     fn spawn_table_owner(&self, _spawn_table_id: Option<i64>) -> WorldResult<i64> {
         Err(super::WorldError::Key("spawn table".to_string()))
     }
@@ -181,7 +180,6 @@ pub trait Spawning {
     /// `reinforcementManager.GetReinforcedGroup(group_id).SetEntityUnitCount(count)`.
     fn set_reinforced_group_entity_unit_count(&mut self, _group_id: i64, _count: i64) {}
 
-    /// `spawnManager.SetRealItemRespawn(group_id, owner_id, spawn_data, min_delay_seconds, max_delay_seconds)`.
     fn set_real_item_respawn(
         &mut self,
         _group_id: Option<i64>,

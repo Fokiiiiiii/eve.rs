@@ -24,7 +24,7 @@ internal sealed partial class CharacterServicesComposition
     /// </summary>
     /// <summary>
     /// The sovereignty snapshot with its factional warfare occupations replaced by the factionwarfare state: the client's warzone occupation reads
-    /// the store, which is the owner of the occupier (the sovereignty document carries none of the state).
+
     /// </summary>
     private async ValueTask<Eve.Services.Core.SovFwReadSnapshot> FactionWarfareSnapshotAsync(Eve.Services.ServiceCall call)
     {
@@ -74,7 +74,7 @@ internal sealed partial class CharacterServicesComposition
 
     /// <summary>
     /// A pilot's kill of an NPC of a faction that fights the pilot's war faction, in a warzone system, is one kill on the pilot's and its corporation's
-    /// factional warfare rows. The wiki gives no victory points for kills (complexes only) and the ship-kill LP is not built, so only the kill count is
+
     /// recorded (DEVIATIONS "Factional warfare"). The check is the client's IsCombatEnemyFaction.
     /// </summary>
     private void RecordFactionWarfareNpcKill(Eve.Services.Space.NpcKill kill)
@@ -133,7 +133,7 @@ internal sealed partial class CharacterServicesComposition
     private Eve.Dungeons.DungeonCatalog? fwDungeons;
 
     /// <summary>
-    /// The open complexes of a system as the system scanner's anomaly overlay lists them (the <c>CosmicAnomalyInfo</c> fields of EveJS
+
     /// <c>buildAnomalySiteInfo</c>): the site is the complex's dungeon instance, the dungeon its template, and the target the first acceleration gate of its rooms.
     /// </summary>
     private async Task<IReadOnlyList<System.Text.Json.Nodes.JsonObject>> ComplexAnomaliesAsync(long solarSystemId, CancellationToken cancellationToken)
@@ -189,7 +189,7 @@ internal sealed partial class CharacterServicesComposition
         await using var transaction = await connection.BeginTransactionAsync();
         await factionWarfareStore.SeedSystemsAsync(connection, transaction, systems);
         await transaction.CommitAsync();
-        // the complexes are dungeon sites on the space runtime: without it there are none (the owner data and the pilots' sites are the space's)
+
         if (dungeonWavesDirector is null)
         {
             Console.Error.WriteLine("eve-host: factional warfare complexes need the space runtime; none are started");

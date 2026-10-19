@@ -245,7 +245,6 @@ impl WaitForAggressiveAct {
             return;
         };
         let Some(offending_owner) = t.world().inventory_item(source_owner_id) else {
-            // the client's `offendingOwner` was never assigned when `GetItem` raised
             t.raise(BehaviorError::Task(
                 "UnboundLocalError: local variable 'offendingOwner' referenced before assignment".to_string(),
             ));
@@ -489,7 +488,6 @@ impl Task for MonitorSecurityStatusLoss {
     }
 
     fn on_event(&mut self, t: &mut TaskCtx<'_, '_>, _handler: u16, args: &[Value]) {
-        // OnSecStatusLost(ownerID, shipID)
         let Some(ship) = args.get(1) else { return };
         if t.is_invalid() || ship.is_none() {
             return;
@@ -655,7 +653,7 @@ mod tests {
             &[Value::Int(900), Value::record(&[("typeID", Value::Int(600))])],
         );
         assert_eq!(combat_set(&mut rig), Value::Set(vec![Value::Int(40)]));
-        // an owner the inventory does not know is the client's unbound local
+
         tell(
             &mut rig,
             1,

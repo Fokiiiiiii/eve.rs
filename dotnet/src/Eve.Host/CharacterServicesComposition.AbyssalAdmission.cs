@@ -33,7 +33,7 @@ internal sealed partial class CharacterServicesComposition
                 pose.Position[0], pose.Position[1], pose.Position[2], pose.Deployment!.Warping, ct).ConfigureAwait(false) is { } dungeon &&
             dungeon is not PyNone)
             throw AbyssalErrorAdapter.ClientError(12);
-        // The current POS owner models an anchored hull, not a force-field entity/radius.
+
         // Do not substitute tower hull radius or an invented InsideForceField=false for that unavailable state.
         AbyssalDeploymentEligibility.ValidateShipEffects(pose);
         var combat = await crimewatchStore.StateOfAsync(request.CharacterId, ct).ConfigureAwait(false);

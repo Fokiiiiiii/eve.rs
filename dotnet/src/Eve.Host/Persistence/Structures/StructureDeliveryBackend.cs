@@ -13,7 +13,7 @@ using Npgsql;
 
 namespace Eve.Host;
 
-/// <summary>ST-5 inventory transfers; the simulation remains the owner of proximity and space restrictions.</summary>
+
 public sealed class StructureDeliveryBackend(
     NpgsqlDataSource source,
     PgItemStore items,
@@ -42,7 +42,7 @@ public sealed class StructureDeliveryBackend(
 
     /// <summary>
     /// Persists into the existing notifications mailbox using this connection/transaction and
-    /// the shared mailbox owner's serialization/fence. Do not commit or publish here, or expose
+
     /// the uncommitted row in the live cache. Return the saved ID and the shared publisher's
     /// post-commit callback, which must refresh the mailbox cache before sending its arguments.
     /// </summary>
@@ -52,7 +52,7 @@ public sealed class StructureDeliveryBackend(
 
     public sealed record DeliveryInboxCommit(long NotificationID, Func<PyValue[], ValueTask> PublishAsync);
 
-    // V24.01 notificationconst.py:199; EveJS notificationConstants.js: MISC=4.
+
     // structures.py StructureItemsDelivered.MakeData consumes [quantity, typeID], not the reverse.
     public sealed record DeliveryInboxNotification(
         long RecipientCharacterID, long SenderCharacterID, long CreatedFileTime, JsonObject Data)
@@ -243,7 +243,7 @@ public sealed class StructureDeliveryBackend(
         var type = dogma.Type(itemTypeID)!;
         if (dogma.GroupName(type.GroupId) == "Fuel Block")
             return true;
-        // SDE 3396210 names EveJS's typeColonyReagentLava (81143) Magmatic Gas.
+
         return dogma.Type(structureTypeID)?.Name == "Metenox Moon Drill"
             ? dogma.GroupName(type.GroupId) == "Colony Reagents" && type.Name == "Magmatic Gas"
             : type.Name == "Liquid Ozone";

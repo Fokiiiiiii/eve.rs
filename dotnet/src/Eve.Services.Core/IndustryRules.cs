@@ -14,7 +14,7 @@ public static class IndustryRules
     /// <summary>
     /// The activities a structure runs from its online service ids (STRUCTURE_SERVICE_ID): manufacturing needs a Manufacturing
     /// service (21 to 24); each science activity needs the Laboratory (30) or its own laboratory service (31 to 34); reactions need
-    /// a Reactions service (40 to 43). Any one of the listed services is enough (EveJS structureSupportsActivity).
+
     /// </summary>
     public static IReadOnlySet<int> StructureActivities(IEnumerable<int> onlineServices)
     {

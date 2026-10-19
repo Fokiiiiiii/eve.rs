@@ -163,7 +163,7 @@ fn a_missile_homes_on_its_target_and_reaches_it_when_it_gets_within_its_radius()
 #[test]
 fn a_missile_does_not_fly_through_a_target_in_one_long_step() {
     let mut missile = fired(&at_rest(0.0), &at_rest(1_000.0), scourge());
-    // a step of ten seconds takes it twenty kilometres further than the target is: the swept test still finds it
+
     assert_eq!(missile.advance(Some(&at_rest(1_000.0)), 10 * SECOND), Motion::Reached);
     assert!(missile.position.x < 1_000.0, "it stopped at the surface: {:?}", missile.position);
 }

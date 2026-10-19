@@ -17,7 +17,6 @@ pub fn super_weapon_ready() -> Address {
     Address::new(ScopeType::Item, "SUPER_WEAPON_READY")
 }
 
-/// `SUPER_WEAPON_TARGET_OWNER`.
 pub fn super_weapon_target_owner() -> Address {
     Address::new(ScopeType::Item, "SUPER_WEAPON_TARGET_OWNER")
 }

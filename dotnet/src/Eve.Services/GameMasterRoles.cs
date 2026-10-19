@@ -8,6 +8,11 @@ namespace Eve.Services;
 /// </summary>
 public static class GameMasterRoles
 {
+    public const long PinkChat = 1L << 6;      // ROLE_PINKCHAT
+    public const long Centurion = 1L << 11;    // ROLE_CENTURION
+    public const long ChtInvisible = 1L << 20; // ROLE_CHTINVISIBLE
+    public const long Legioneer = 1L << 18;    // ROLE_LEGIONEER
+    public const long Gms = 1L << 38;          // ROLE_GMS
     public const long ExtGm1 = 1L << 46;      // ROLE_EXT_GM1
     public const long ExtGm2 = 1L << 47;      // ROLE_EXT_GM2
     public const long ExtGm3 = 1L << 48;      // ROLE_EXT_GM3

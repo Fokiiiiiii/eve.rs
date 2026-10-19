@@ -92,7 +92,10 @@ def test_a_loaded_burst_changes_a_fleet_members_dogma_until_its_buff_expires():
         notifications_of(member)
 
         owner.call_bound(owner_dogma[0], "SetModuleOnline", owner_ship, burst)
-        owner.call_bound(owner_dogma[0], "Activate", burst, "moduleBonusWarfareLinkShield", None, 1000)
+        try:
+            owner.call_bound(owner_dogma[0], "Activate", burst, "moduleBonusWarfareLinkShield", None, 1000)
+        except Exception as error:
+            raise AssertionError(f"command burst activation failed: {error!r}; payload={getattr(error, 'payload', None)!r}") from error
         active_events = wait_for_events(
             member,
             lambda events: named(events, "OnModuleAttributeChanges") and named(events, "OnDbuffUpdated"),

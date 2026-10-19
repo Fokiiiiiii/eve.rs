@@ -62,6 +62,7 @@ public sealed partial class SpaceContainers
             Math.Max(0d, ship.World.Get(cycle.OwnerId, CommandBurstEffect.RangeAttribute)),
             _ => 0d,
             (first, second) => fleets.TryGetValue(first, out var fleetOfFirst) && fleets.TryGetValue(second, out var fleetOfSecond) && fleetOfFirst == fleetOfSecond);
+        _log?.Invoke($"command burst cycle {cycle.CycleId} resolved: pilots [{string.Join(",", pilots.Keys)}]; fleet ids [{string.Join(",", fleets.Select(pair => $"{pair.Key}:{pair.Value}"))}]; reached [{string.Join(",", reached)}]");
         foreach (var target in reached)
         {
             foreach (var (collection, value) in buffs)

@@ -133,6 +133,15 @@ public sealed partial class CharMgrService(
             ("medal1GraphicID", Nullable(medal1GraphicId)));
     }
 
+    private static bool CanReadPrivateCorporationMemberInfo(ServiceCall call, long targetCorporationId)
+    {
+        var callerCorporationId = call.Session.GetInt("corporationID") ?? call.Session.GetInt("corpid") ?? 0;
+        var roles = call.Session.GetInt("rolesAtAll") ?? call.Session.GetInt("corprole") ?? 0;
+        var permittedRoles = Eve.Corporations.CorporationRoles.Director | Eve.Corporations.CorporationRoles.PersonnelManager;
+        return targetCorporationId > 0 && callerCorporationId == targetCorporationId &&
+            (roles & permittedRoles) != 0;
+    }
+
     private async ValueTask<Character?> CharacterAsync(ServiceCall call)
     {
         var id = IdOf(call.Arg(0));
@@ -200,7 +209,8 @@ public sealed partial class CharMgrService(
     [Method("GetPrivateInfo")]
     public async ValueTask<PyValue> GetPrivateInfo(ServiceCall call)
     {
-        if (await CharacterAsync(call) is not { } character)
+        if (await CharacterAsync(call) is not { } character ||
+            !CanReadPrivateCorporationMemberInfo(call, character.CorporationId))
             return None;
         var balance = readBalance is null ? 0m : (await readBalance(character.Id, call.Cancellation)) ?? 0m;
         var security = await readCharacterSecurityStatus(character.Id, call.Cancellation);

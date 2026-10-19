@@ -1329,6 +1329,13 @@ private static PyValue RowField(PyValue value,string key)
             new PyInt(corporation.Id), new PyLong(stationId), new PyStr("deliveries")))));
         Assert.Equal(new PyLong(deliveryItemId), RowValues(Assert.Single(Lines(deliveryItems)))[0]);
 
+        var attacker = await rig.CharacterAsync("Corp RPC Attacker");
+        var forgedRoles = new ClientSession { CharacterId = attacker };
+        forgedRoles.Set("corpid", new PyInt(corporation.Id));
+        forgedRoles.Set("corprole", new PyInt(CorporationRoles.Accountant));
+        await Assert.ThrowsAsync<CorporationError>(async () => await service.GetAssetInventory(Call(
+            forgedRoles, "GetAssetInventory", new PyInt(corporation.Id), new PyStr("property"))));
+
         var mismatched = new ClientSession { CharacterId = founder };
         mismatched.Set("corpid", new PyInt(corporation.Id + 1));
         await Assert.ThrowsAsync<CorporationError>(async () => await service.GetAssetInventory(Call(

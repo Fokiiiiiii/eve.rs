@@ -67,6 +67,10 @@ public sealed partial class SpaceContainers
                 ReplyToWorkCycle(cycle, new WorkOutcome(last.Accepted, last.Reason, last.UnitsRemaining, last.DeliveredUnits, last.Complete));
                 return;
             }
+            if (cycle.IsModule && cycle.Command == SimModuleWorkCommands.Burst)
+            {
+                _log?.Invoke($"command burst cycle {cycle.CycleId} received: ship {cycle.ShipId}; candidates [{string.Join(",", cycle.Recipients ?? [])}]");
+            }
             var outcome = await SettleWorkCycleAsync(cycle);
             await RecordOutcomeAsync(cycle, outcome);
             ReplyToWorkCycle(cycle, outcome);

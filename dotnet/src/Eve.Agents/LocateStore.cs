@@ -2,7 +2,6 @@ using Npgsql;
 
 namespace Eve.Agents;
 
-/// <summary>A pilot's locate state with one locator agent: the character asked for (null when none is open) and when the agent last located for the pilot.</summary>
 public sealed record LocateRecord(long CharacterId, long AgentId, long? TargetCharacterId, DateTimeOffset? LocatedAt);
 
 /// <summary>

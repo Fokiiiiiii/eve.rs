@@ -52,7 +52,7 @@ public sealed partial class SpaceSessions
                 // the ship is on its way to the station; the client is told how far it was (the reference rounds half up)
                 throw MachoErrors.ThrowUserError("DockingApproach", ("distance", new PyInt((long)Math.Max(0, Math.Floor(distance + 0.5)))));
             }
-            // a module that disallows docking is running (disallowDocking 2354): the wording is EveJS's (beyonceService: DOCKING_DISALLOWED_BY_MODULE)
+
             if (reply.Reason == "DOCKING_DISALLOWED_BY_MODULE")
             {
                 throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("You cannot dock while a module that prevents docking is active.")));
@@ -74,7 +74,6 @@ public sealed partial class SpaceSessions
     public Task<PyValue> WarpAsync(ClientSession session, long targetId, double range, CancellationToken cancellationToken) =>
         WarpCommandAsync(session, SimCommands.WarpTo, [targetId, range], $"to {targetId}", cancellationToken);
 
-
     public Task<PyValue> WarpToPointAsync(
         ClientSession session,
         double x,
@@ -83,7 +82,6 @@ public sealed partial class SpaceSessions
         double range,
         CancellationToken cancellationToken) =>
         WarpCommandAsync(session, SimCommands.WarpToPoint, [x, y, z, range], "to coordinates", cancellationToken);
-
 
     public Task<WarpCoordinates?> WarpTargetPointAsync(
         ClientSession session,
@@ -136,7 +134,6 @@ public sealed partial class SpaceSessions
         QueryPositionAsync(session, SimCommands.PositionOf, [targetId], cancellationToken);
 
     /// <summary>
-    /// The place of a pilot's ship as the pilot boards a structure from space (ST-23): the ship stays in the scene, and its place is saved, because the simulation
     /// answers the pilot of a ship only and the return to the ship asks for the place later (<see cref="ScenePositionOfAsync"/>). Called while the session still pilots it.
     /// </summary>
     public async Task RecordBoardingPlaceAsync(ClientSession session, long shipId, CancellationToken cancellationToken)
@@ -155,7 +152,6 @@ public sealed partial class SpaceSessions
 
     /// <summary>
     /// Where a ship of the scene is, asked by a session that may no longer pilot it: a structure observer's own ship, boarded from space, stays in the scene
-    /// (ST-23, the return to the ship). The session's system is the answer's.
     /// </summary>
     public async Task<WarpCoordinates?> ScenePositionOfAsync(ClientSession session, long shipId, CancellationToken cancellationToken)
     {
@@ -268,7 +264,6 @@ public sealed partial class SpaceSessions
         throw Notify("You cannot warp there right now.");
     }
 
-
     /// <summary>Whether the pilot's ship carries an attribute of its own above zero, as it flies (its buffs; a fleet grant sets the ship's attributes).</summary>
     private async Task<bool> ShipAttributeAsync(Pilot pilot, int attributeId, CancellationToken cancellationToken) =>
         await FlownShipAsync(pilot, cancellationToken) is { } flown && flown.World.Get(flown.Ship.Id, attributeId) > 0;
@@ -340,7 +335,7 @@ public sealed partial class SpaceSessions
             _log?.Invoke($"jump of session {session.SessionId} through {gateId} refused: {reply.Reason}");
             throw JumpRefused(reply.Reason);
         }
-        // leaving a restricted system ends its emanation lock; entering one through a gate locks the pilot to the gate it arrived by (the wiki)
+
         // EVE.js jumpSessionViaStargate: the contraband of the ship is inspected in the system it arrives in
         await ApplyContrabandAsync(session, pilot.CharacterId, pilot.ShipId, destination, cancellationToken);
         _emanationLocks.Left(pilot.CharacterId, pilot.SolarSystemId);
@@ -354,7 +349,6 @@ public sealed partial class SpaceSessions
 
     /// <summary>
     /// The gate toll of the gate (the client's alignment-based toll, computed as the client computes it), charged to the pilot's wallet. Null when the
-    /// gate has no toll or the toll is zero for this pilot (a pirate-aligned pilot). The toll is a sink: no source names a payee (DEVIATIONS, slice 3).
     /// </summary>
     private async Task<(long CharacterId, string Key, decimal Amount)?> ChargeTollAsync(ClientSession session, Pilot pilot, long gateId, CancellationToken cancellationToken)
     {
@@ -388,7 +382,6 @@ public sealed partial class SpaceSessions
     private async Task<double> ShipMassAsync(Pilot pilot, CancellationToken cancellationToken) =>
         await FlownShipAsync(pilot, cancellationToken) is { } flown ? flown.World.Get(flown.Ship.Id, Eve.Services.Space.Effects.ModuleAttributes.Mass) : 0;
 
-    /// <summary>The stargate rules: the Pochven refusal of capital ships (the wiki, "Pochven"), then the client data's rules of the gate: the pilot's ship group
     /// against the gate's list, and the emanation lock of the system it is in.</summary>
     private async Task CheckGateRulesAsync(Pilot pilot, long gateId, CancellationToken cancellationToken)
     {
@@ -566,7 +559,7 @@ public sealed partial class SpaceSessions
                         inStructure
                             ? Py.Tuple(new PyStr("Structure"), InventoryWire.Id(stationId), new PyStr("StructureShipHangar"))
                             : Py.Tuple(new PyStr("Station"), InventoryWire.Id(stationId), new PyStr("StationHangar")));
-                    // the client needs the solar system while docked in a structure (EveJS applies it there for the hangar bootstrap)
+
                     if (inStructure)
                         session.Change(("stationid", None), ("structureid", new PyInt(stationId)), ("locationid", new PyInt(pilot.SolarSystemId)), ("solarsystemid", new PyInt(pilot.SolarSystemId)));
                     else

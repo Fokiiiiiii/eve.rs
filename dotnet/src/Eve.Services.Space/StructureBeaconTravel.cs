@@ -8,7 +8,6 @@ namespace Eve.Services.Space;
 public sealed record StructureBeaconInfo(int TypeId, long SolarSystemId, bool ServiceOnline);
 
 /// <summary>
-/// The structure cyno beacon (<c>structureCynoBeaconMgr</c>, EveJS <c>structureCynoBeaconMgrService.js</c> <c>resolveUsableBeacon</c>): the checks the reference
 /// makes before a jump to a Pharolux beacon, each with its notice. A beacon that passes every check is jumped through the jump drive (SpaceJumpDrive).
 /// </summary>
 public sealed class StructureBeaconTravel

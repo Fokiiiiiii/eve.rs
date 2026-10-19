@@ -3,13 +3,12 @@ using System.Collections.Concurrent;
 namespace Eve.Services.Space.Gates;
 
 /// <summary>
-/// The emanation lock of Zarzakh (EVE University wiki, "Zarzakh": "players are locked to that specific gate for six hours"; entering through
 /// another gate resets the timer and locks the player to that gate; leaving through any other gate is refused while the lock runs; exits by the
 /// Deathless Shipcaster, clone jump or pod are not refused; entry from outside is not affected). The lock is held in memory: a host restart drops it.
 /// </summary>
 public sealed class EmanationLocks
 {
-    /// <summary>The lock's length from entry: six hours (the wiki).</summary>
+
     public const long DurationMs = 6L * 60 * 60 * 1000;
 
     /// <summary>The systems that have the lock (Zarzakh, 30100000).</summary>

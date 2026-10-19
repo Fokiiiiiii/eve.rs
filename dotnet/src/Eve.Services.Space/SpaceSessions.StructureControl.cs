@@ -51,7 +51,7 @@ public sealed partial class SpaceSessions
         if (active && IsInSpace(session) && _pilots.TryGetValue(id, out var shipPilot)
             && shipPilot.TypeId != CharacterShips.CapsuleTypeId)
         {
-            // The control backend already verifies inventory ownership; this is its live pilot projection.
+
             var corporationId = session.GetInt("corpid") ?? 0;
             if (shipPilot.CharacterId != session.CharacterId || shipPilot.SolarSystemId != solarSystemId || corporationId <= 0)
                 throw Notify("The physical ship could not be verified for structure control.");

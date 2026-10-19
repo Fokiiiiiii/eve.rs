@@ -30,7 +30,7 @@ public sealed partial class SpaceSessions
     {
         var now = _nowUnixMs();
         await RestoreBuffsAsync(shipId, now, cancellationToken);
-        // the ship's buffs and the environment of the system it is in (its effect beacon, slice 7c) are the world's passive effects for it
+
         var effects = new List<Eve.Dogma.EffectDef>(Buffs.EffectsOf(shipId, now));
         effects.AddRange(EnvironmentOf(shipId));
         world.SetBuffs(shipId, effects);

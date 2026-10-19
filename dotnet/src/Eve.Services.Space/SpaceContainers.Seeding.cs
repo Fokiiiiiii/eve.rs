@@ -13,7 +13,6 @@ public sealed partial class SpaceContainers
     /// <summary>
     /// A belt holds a harvestable gas cloud beside its rock: the arrival that seeds the rock seeds the cloud too (the belt generation, reused). When no live cloud
     /// is left in the belt, a pilot's arrival makes one, of the published cloud type the belt's id picks (a belt keeps its kind). shortcut: CCP keeps gas clouds in
-    /// gas sites, not in belts; the site model is not built, so the belts carry the clouds here (docs/reference/compat/DEVIATIONS.md).
     /// </summary>
     private async Task SeedGasCloudAsync(SimArrived arrived)
     {
@@ -178,7 +177,6 @@ public sealed partial class SpaceContainers
                 return;
             }
 
-            // no rock is left in the belt: it is seeded with the ores its system's security holds (BeltOres, from the EVE University belt rows)
             // shortcut: a store error part-way through leaves the belt short of ores until the rocks it has deplete and it is seeded again
             var types = await _statics.TypesInCategoryAsync("Asteroid");
             var radiusId = _statics.AttributeId("radius");
@@ -228,7 +226,6 @@ public sealed partial class SpaceContainers
             _seedingBelts.TryRemove(belt, out _);
         }
     }
-
 
     internal async Task RestoreMoonFieldAsync(int system, long extractionId, CancellationToken cancellationToken = default)
     {

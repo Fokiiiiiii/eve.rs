@@ -169,10 +169,8 @@ public sealed class DungeonWaveDirector
         return new DungeonStart(started.Created, started.Id, started.Created ? null : "the pilot already has this dungeon running");
     }
 
-
     /// <summary>
     /// The rooms of a running site whose waves are all done (a room with no wave in the run is cleared). An acceleration gate out of a room is locked until
-    /// the room is cleared (the owner data: rooms are locked until their objectives are cleared).
     /// </summary>
     public async Task<IReadOnlySet<string>> ClearedRoomKeysAsync(long instanceId, CancellationToken cancellationToken = default)
     {
@@ -203,7 +201,6 @@ public sealed class DungeonWaveDirector
 
     /// <summary>
     /// The active dungeons: a mission pocket (its origin is 20 km ahead of the pilot) or an incursion site. Each is a deadspace pocket in the scene at its origin
-    /// (ST-23; EveJS takes every dungeon instance as a pocket, see DEVIATIONS), kept by the host's pocket job.
     /// </summary>
     public async Task<IReadOnlyList<DungeonPocket>> ActivePocketsAsync(CancellationToken cancellationToken = default)
     {
@@ -220,7 +217,6 @@ public sealed class DungeonWaveDirector
         return pockets;
     }
 
-    /// <summary>The owner of a dungeon that belongs to no pilot (an incursion's staging site): the global owner, which no character has.</summary>
     public const long NoPilotOwner = 0;
 
     /// <summary>

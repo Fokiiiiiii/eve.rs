@@ -7,7 +7,6 @@ namespace Eve.Services.Space.Effects;
 /// <summary>
 /// The Standup burst projectors (ST-8b): the structure modules (category 66) whose default effect is a burst family (doomsdayAOE ECM, sensor damp, web,
 /// paint, warp disruption bubble, weapon disruption, energy neutralization). The projected effect of the family is what each cycle lands on the ships in its
-/// reach; the simulation applies it only to the ships the Host authorizes for that pulse (the structure's owner corporation's rights, per pulse). The types are
 /// published in the SDE while their effects are not: a published type is not refused for its effect's publication. A ship-fitted burst projector (not a structure
 /// module) is not this handler's and stays refused.
 /// </summary>

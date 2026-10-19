@@ -95,10 +95,8 @@ public sealed partial class SpaceSessions
     /// <summary>The name of the effect an effect id of the static data names (the superweapon route names the effect by its id), or null when there is none.</summary>
     public string? EffectNameOf(long effectId) => effectId is > 0 and <= int.MaxValue ? _statics.Effect((int)effectId)?.Name : null;
 
-    /// <summary>Reads the current, controlled structure fit through its authoritative owner and control lease.</summary>
     public Func<ClientSession, ShipSnapshot, CancellationToken, ValueTask<ShipSnapshot?>>? StructureDogmaOf { get; set; }
 
-    /// <summary>Resolves attack legality from the structure owner's corporation, never the controlling character.</summary>
     public Func<long, long, CancellationToken, Task<WeaponTargetContext>>? StructureWeaponTargetContextOf { get; set; }
 
     /// <summary>
@@ -123,7 +121,7 @@ public sealed partial class SpaceSessions
             return structureObserver || session.GetInt("shipid") != pilot.ShipId ? ModuleResult.Refusal("REFUSED") : null;
         }
         CancelSafeLogoff(session);
-        // a module under nanite repair does not run (the EVE University wiki, Overheating)
+
         if (pilot.Repairs.ContainsKey(moduleId) && snapshot.Fitted.FirstOrDefault(m => m.Id == moduleId) is { } repairing)
         {
             return ModuleResult.Refusal("MODULE_REPAIRING", repairing.TypeId, _statics.Type(repairing.TypeId)?.Name ?? "");
@@ -135,12 +133,11 @@ public sealed partial class SpaceSessions
         {
             throw MachoErrors.ThrowUserError(forbidden);
         }
-        // a cynosural field generator is lit by a fleet member and never in high-security space (EVE University wiki, Cynosural Field Generator: the
-        // generator does not carry attribute 1970, so the rule is the wiki's; EveJS activationSpaceRestrictions.js says the same)
+
         if (snapshot.Fitted.FirstOrDefault(m => m.Id == moduleId) is { } cynoModule
             && _statics.Type(cynoModule.TypeId)?.GroupId == Eve.Services.Space.Effects.CynoFieldTypes.GeneratorGroup)
         {
-            // the fleet is asked first: the order of the two refusals is the host's choice (EveJS checks the security first); with the fleet first both are reachable
+
             if (IsInFleetAsync is not { } inFleet || !await inFleet(pilot.CharacterId, cancellationToken).ConfigureAwait(false))
             {
                 return ModuleResult.Refusal("CYNO_NOT_IN_FLEET", cynoModule.TypeId, _statics.Type(cynoModule.TypeId)?.Name ?? "");
@@ -266,7 +263,7 @@ public sealed partial class SpaceSessions
         {
             targetTypeId = npc.TypeId;
         }
-        // a target's resistance weakens a remote effect that lands on it (FP-8, EVE.js resolveTargetResistanceMultiplier): the host resolves it from the target's attributes
+
         IReadOnlyDictionary<int, double>? targetAttributes = null;
         // the target as it flies: the overlays of its running modules (a siege, a triage) are in the numbers it has
         if (targetPilot is { CharacterId: > 0 } resisting && await FlownShipAsync(resisting, cancellationToken) is { } resistingSnapshot)
@@ -349,8 +346,7 @@ public sealed partial class SpaceSessions
         }
 
         // an ECM burst jams friends too and draws CONCORD in high security space, so it is not activated there unless the pilot's safety is set to none (red)
-        // (EVE University wiki, Electronic Countermeasures; EVE.js refuses only the smartbomb here)
-        // a ship-fitted ECM burst projector (ST-17 d) is the same family: the same rule
+
         if (!structureObserver && package.Action is SimAction.EcmBurst or SimAction.StructureBurst { What: SimRemote.Jam }
             && securityClass is { } burstWhere && Security.IsHighSecOrHigher(burstWhere))
         {
@@ -361,7 +357,6 @@ public sealed partial class SpaceSessions
             }
         }
 
-        // Structure safety is always green, and its attack authority belongs to its owner corporation rather than the ACL controller.
         var attack = IsOffensive(package);
         var victim = !structureObserver && attack && targetPilot is { CharacterId: > 0 } && targetPilot.CharacterId != characterId
             ? targetPilot
@@ -372,8 +367,7 @@ public sealed partial class SpaceSessions
         {
             return ModuleResult.Refusal(WeaponSafety.Refusal, made.ModuleType, made.ModuleName);
         }
-        // A structure controller never records personal crimewatch flags; the owner-corporation legality gate above still applies.
-        // a ship-fitted burst projector is an area effect as the smartbomb is: its pulses hit the ships in range, friends included (ST-17 d)
+
         if (!structureObserver && securityClass is { } empire && (attack || package.Action is SimAction.Smartbomb or SimAction.StructureBurst))
         {
             var level = SafetyLevelOf is { } ask ? await ask(characterId, cancellationToken) : SafetyLevel.Full;
@@ -396,7 +390,7 @@ public sealed partial class SpaceSessions
             }
         }
         // a smartbomb is lit only at the red safety in low, high or safe space: the client's GetRequiredSafetyLevelForEffect asks none there for a targetless
-        // offensive effect with a range, and the wiki (Smartbombs) says the same for high security space
+
         if (package.Action is SimAction.Smartbomb && securityClass is { } bombWhere && Security.IsLowSecOrHigher(bombWhere))
         {
             var bombSafety = SafetyLevelOf is { } askBomb ? await askBomb(characterId, cancellationToken) : SafetyLevel.Full;
@@ -405,7 +399,7 @@ public sealed partial class SpaceSessions
                 return ModuleResult.Refusal(WeaponSafety.Refusal, made.ModuleType, made.ModuleName);
             }
         }
-        // an analyzer's container is checked before the cycle starts (EveJS moduleOperation.js _resolveAnalyzerHackingContext)
+
         if (string.Equals(effectName, AnalyzerEffectName, StringComparison.OrdinalIgnoreCase) && HackingService is { } analyzerChecks
             && await analyzerChecks.AnalyzerRefusalAsync(characterId, targetId, AnalyzerValuesOf(snapshot, moduleId, made.ModuleType), cancellationToken) is { } analyzerRefusal)
         {
@@ -437,7 +431,7 @@ public sealed partial class SpaceSessions
         }
         catch
         {
-            // A cancelled or lost SIM reply is ambiguous; retain owner tracking so a late charge event cannot fall back to the controller.
+
             if (markedHere)
             {
                 pilot.ActiveModules.TryRemove(moduleId, out _);
@@ -469,7 +463,7 @@ public sealed partial class SpaceSessions
         AnnounceModeChange(pilot, snapshot, moduleId, started: true);
         await SendShipAsync(id, pilot, SimShips.VitalsOf(snapshot), cancellationToken);
         made.Accepted?.Invoke();
-        // the analyzer opens its attempt once the simulation accepted the start (EveJS: the attempt starts with the accepted activation)
+
         if (string.Equals(effectName, AnalyzerEffectName, StringComparison.OrdinalIgnoreCase) && HackingService is { } analyzerOpen)
         {
             await analyzerOpen.OpenAnalyzerAttemptAsync(session, characterId, targetId, AnalyzerValuesOf(snapshot, moduleId, made.ModuleType), cancellationToken);
@@ -510,11 +504,9 @@ public sealed partial class SpaceSessions
     /// </summary>
     public Func<AggressionRequest, CancellationToken, Task>? Aggression { get; set; }
 
-
     public Func<AggressionRequest, int, CancellationToken, Task<PolicyDecision>>? RemoteAssistancePolicyOf { get; set; }
 
     public Func<AggressionRequest, CancellationToken, Task>? RecordRemoteAssistance { get; set; }
-
 
     /// <summary>Host supplies the persisted Crimewatch state used to enforce criminal movement restrictions.</summary>
     public Func<long, CancellationToken, Task<CombatState>>? CrimewatchStateOf { get; set; }
@@ -530,7 +522,6 @@ public sealed partial class SpaceSessions
 
     /// <summary>The ship safety level of a character (set by the host that keeps them; full when it is not set). See <see cref="WeaponSafety"/>.</summary>
     public Func<long, CancellationToken, Task<int>>? SafetyLevelOf { get; set; }
-
 
     /// <summary>Resolves current Crimewatch flags and pair-specific legal permissions for a player ship target.</summary>
     public Func<long, long, CancellationToken, Task<WeaponTargetContext>>? WeaponTargetContextOf { get; set; }

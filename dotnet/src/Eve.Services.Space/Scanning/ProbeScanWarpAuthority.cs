@@ -29,7 +29,6 @@ public sealed class ProbeScanWarpAuthority
     public double[]? Resolve(ClientSession session, int solarSystemId, long targetId) =>
         Resolve(session, solarSystemId, targetId.ToString(System.Globalization.CultureInfo.InvariantCulture));
 
-    /// <summary>The same for a target the client names by text, as it names a cosmic site by its code (<c>ABC-123</c>, in any case: EVE.js keeps them in upper case).</summary>
     public double[]? Resolve(ClientSession session, int solarSystemId, string target) =>
         _bySession.TryGetValue(session, out var completed) && completed.SolarSystemId == solarSystemId && completed.Places.TryGetValue(target.Trim(), out var place)
             ? place

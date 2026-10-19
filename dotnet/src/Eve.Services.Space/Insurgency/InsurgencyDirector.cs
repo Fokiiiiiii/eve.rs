@@ -13,7 +13,6 @@ using Npgsql;
 namespace Eve.Services.Space.Insurgency;
 
 /// <summary>
-/// The pirate insurgencies on the space runtime (slice 2): a campaign starts in each warzone that has none open (a durable hourly job), one site of the pirate
 /// faction starts in each covered system when the campaign becomes active, the first completed site of a system scores the pirates' point there, the kills of a
 /// covered system are the contributions to the victory payout, and the sites end with their campaign.
 /// </summary>
@@ -30,14 +29,11 @@ public sealed class InsurgencyDirector
     public static readonly TimeSpan StartTick = TimeSpan.FromHours(1);
 
     /// <summary>
-    /// The pirate sites of the owner catalog (archetype titles of the client): 72 Pirate Laundering Center and 74 Warehouse Raid. Their first wave draws the
     /// warzone's pool, so a warzone's pirate sites are its pool's templates.
     /// </summary>
     private static readonly long[] PirateArchetypes = [72, 74];
 
     /// <summary>
-    /// The empire sites (Suppression): 73 Anti-Pirate Security Post, 75 to 78 Corporate Outpost Raid (the wiki: the Empire militia destroys the pirate NPCs and
-    /// captures the point) and 79 Mining Fleet Ambush (the wiki: the Empire militia destroys the ransoming pirates). Project rule, DEVIATIONS "Insurgency sites".
     /// </summary>
     private static readonly long[] EmpireArchetypes = [73, 75, 76, 77, 78, 79];
 

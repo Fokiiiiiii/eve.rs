@@ -21,7 +21,6 @@ public sealed partial class BeyonceService(SpaceSessions space, Func<long> nowUn
         _ => null,
     };
 
-
     /// <summary>Resolves a bookmark only when the caller may warp to it. The host supplies the persisted/access-checked lookup.</summary>
     public Func<long, long, CancellationToken, Task<WarpCoordinates?>>? BookmarkTargetForCharacter { get; set; }
 
@@ -250,7 +249,7 @@ public Func<long, long, CancellationToken, Task<int>>? SkillLevelOfCharacter { g
         }
 
         var coordinate = type == "position" ? Coordinates(call.Arg(1)) : null;
-        // a cosmic site's scan result is named by its code (ABC-123), which the client sends as text; every other target is a number
+
         var scanCode = type == "scan" ? JsSemantics.StringValue(call.Arg(1)) : null;
         var requestedTarget = type == "position" || scanCode is not null ? null : Number(call.Arg(1));
         if (type == "position")
@@ -516,12 +515,8 @@ public Func<long, long, CancellationToken, Task<int>>? SkillLevelOfCharacter { g
         return None;
     }
 
-
     private static MachoWrappedException WarpRefusal() =>
         MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("You cannot warp there right now.")));
-
-
-
 
     /// <summary>Autopilot uses the same warp command but arrives 10 km from its destination.</summary>
     [Method("CmdWarpToStuffAutopilot")]

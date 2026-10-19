@@ -15,7 +15,6 @@ namespace Eve.Services.Space.Effects;
 /// module's duration and capacitor after dogma); the attempt itself opens in the host once the simulation accepts the start
 /// (<see cref="SpaceSessions.AnalyzerEffectName"/>, <c>SpaceSessions.Hacking.cs</c>), and the container's checks are the host's. The virus values are the
 /// module's <c>virusCoherence</c> 1909, <c>virusStrength</c> 1910 and <c>virusElementSlots</c> 1911 after dogma; <c>maxRange</c> 54 is the reach of the window.
-/// Reference: EveJS v0.12.9 <c>server/src/services/dogma/dogmaService/moduleOperation.js</c>, the analyzer section.
 /// </summary>
 internal sealed class DataAnalyzerEffect : ShipEffect
 {
@@ -40,7 +39,6 @@ internal sealed class DataAnalyzerEffect : ShipEffect
 
 /// <summary>
 /// <c>hackOrbital</c> (effect 4773, guid <c>effects.TargetScan</c>, category 2): the Data Subverter I (type 3793, unpublished, group 538 Data Miners). It has no
-/// rangeAttributeID of its own; its type carries <c>maxRange</c> 54 (5000 m) and <c>accessDifficultyBonus</c> 902 (15). No EveJS reference was found for this
 /// effect name; the body is not written yet and needs the client's specification first.
 /// </summary>
 internal sealed class DataSubverterEffect : PendingModuleEffect
@@ -54,7 +52,6 @@ internal sealed class DataSubverterEffect : PendingModuleEffect
 /// other projectors. The SDE effect carries four <c>modifierInfo</c> entries that change the target's scan strengths by the module's percent attributes, as the
 /// self-applied ECCM does. The effect's rangeAttributeID is 54 (<c>maxRange</c>, 20 km on ECCM Projector I) and its falloffAttributeID is 158 (<c>falloff</c>).
 /// Reads: <c>maxRange</c> 54, <c>falloff</c> 158, <c>duration</c> and <c>capacitorNeed</c> (the shared attributes above).
-/// Reference: EveJS v0.12.9 <c>server/src/space/modules/assistanceModuleRuntime.js</c> is the projected-assistance path (the scan-strength attributes at lines
 /// 86-100, the modifier entries at 190-210), and it names no handler by this effect name.
 /// </summary>
 internal sealed class ScanStrengthTargetEffect : PendingModuleEffect

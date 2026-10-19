@@ -50,7 +50,6 @@ public sealed partial class SpaceContainers
         return record.TypeId == typeId && record.GroupId == groupId;
     }
 
-    /// <summary>The owner-0 shell stays public; a pilot may move only its own selected cargo from a looted site container.</summary>
     private async Task<bool> CanTakeFromSiteContainerAsync(long characterId, Item container, IReadOnlyList<long>? itemIds, CancellationToken cancellationToken)
     {
         if (itemIds is not { Count: > 0 } ||

@@ -19,7 +19,6 @@ internal sealed class TurretEffect : ShipEffect
 {
     private const string TurretFitted = "turretfitted";
 
-    /// <summary>Gunnery (typeGunnery): a tracking disruptor or computer reaches a turret whose type requires it (FP-10).</summary>
     private const int GunnerySkill = 3300;
 
     public override IReadOnlyCollection<string> EffectNames { get; } = ["targetAttack", "projectileFired", "targetDisintegratorAttack", "ChainLightning", "lightningWeapon"];
@@ -113,7 +112,6 @@ internal sealed class TurretEffect : ShipEffect
 
 /// <summary>
 /// A turret's barrage (<c>barrage</c>; its SDE falloff 328 and damage multiplier 326 are not read). It was run as a plain shot, which the reference does not give: it is a
-/// pending handler, so the activation is refused as not implemented and the effect stays uncovered (docs/project/TODO.md section 9).
 /// </summary>
 internal sealed class BarragePendingEffect : PendingModuleEffect
 {

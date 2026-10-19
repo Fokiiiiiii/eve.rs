@@ -57,7 +57,7 @@ internal static class ModuleEffects
         .Register(new FueledShieldBoostingEffect())
         // the Nexus invulnerability core (P.A.N.I.C., track C6): its start waits for the host's grant of the fleet's buffs (SpaceContainers.Burst.cs)
         .Register(new IndustrialInvulnerabilityEffect())
-        // the superweapons of group 588 (not P.A.N.I.C.): wired, each refused by its own name until its body exists (Effects/SuperWeaponEffects.cs, docs/project/TODO.md section 12)
+
         .Register(new DoomsdayTitanEffect())
         .Register(new LanceEffect())
         .Register(new ReaperEffect())
@@ -68,9 +68,9 @@ internal static class ModuleEffects
         .Register(new PointDefenseEffect())
         // the Standup burst projectors (ST-8b): each pulse reaches the ships the Host authorizes for it (StructureBurstEffects.cs)
         .Register(new StructureBurstProjectorEffect())
-        // the ship-fitted burst projectors (ST-17 d): the same engine, for the pilot's ship
+
         .Register(new ShipBurstProjectorEffect())
-        // the entosis link works on a sovereignty hub (ST-9 b), see StructureModuleEffects.cs
+
         .Register(new EntosisLinkEffect())
         // the ship compressors: a facility for the fleet while they run (CompressionModuleEffect.cs)
         .Register(new CompressionModuleEffect())

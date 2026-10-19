@@ -44,7 +44,6 @@ public sealed partial class SpaceSessions : IDisposable, ISpaceTargeting, ISpace
 
         public int SolarSystemId { get; set; } = solarSystemId;
 
-
         /// <summary>The scene the simulator currently owns for this ship; unlike SolarSystemId it includes an Abyssal run and room.</summary>
         public SimSceneKey SimulationScene { get; set; } = SimSceneKey.SolarSystem(solarSystemId);
 
@@ -107,7 +106,6 @@ public sealed partial class SpaceSessions : IDisposable, ISpaceTargeting, ISpace
         /// <summary>The modules whose overheat the pilot asked for (accepted by the simulation as the request, applied at its next cycle): dogma sees them Overloaded.</summary>
         public ConcurrentDictionary<long, byte> Overheated { get; } = new();
 
-        /// <summary>Owner IDs for fitted modules whose charge counts the simulation may report after activation.</summary>
         public ConcurrentDictionary<long, long> ModuleChargeOwners { get; } = new();
 
         /// <summary>Module IDs activated on a controlled structure; cleared when structure control is released.</summary>
@@ -119,7 +117,6 @@ public sealed partial class SpaceSessions : IDisposable, ISpaceTargeting, ISpace
             return Interlocked.Exchange(ref _ended, 1) == 0;
         }
     }
-
 
     private readonly ISimulation _sim;
     private readonly CharacterShips _ships;
@@ -166,7 +163,6 @@ public sealed partial class SpaceSessions : IDisposable, ISpaceTargeting, ISpace
     /// <summary>Blockers owned by adjacent systems (crime timers, targeting, fleet, drone and movement state).</summary>
     public Func<ShipLifecycleAction, ClientSession, long?, CancellationToken, ValueTask<IReadOnlyList<string>>>? LifecycleBlockers { get; set; }
 
-    /// <summary>Invalidates the former owner's insurance after an outsider successfully boards their ejected ship.</summary>
     public Func<ShipBoarded, CancellationToken, ValueTask>? InvalidateInsuranceForBoarding { get; set; }
 
     private sealed record EjectedShip(
@@ -278,7 +274,6 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
 
     public Func<long, long, int, CancellationToken, Task<IReadOnlyList<int>>>? InspectUndockContrabandAsync { get; set; }
 
-    /// <summary>The contraband penalty of an undock or a stargate jump (ST-16 C): the fine charged and the contraband removed; null when there is none.</summary>
     public Func<long, long, int, CancellationToken, Task<ContrabandPenalty?>>? ApplyContrabandPenaltyAsync { get; set; }
 
     /// <summary>The host put the wreck of a destroyed ship (or the corpse of a pilot) in space.</summary>
@@ -314,7 +309,6 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
         get => _transitions.Events;
         set => _transitions.Events = value;
     }
-
 
     public TransitionRuntime Transitions => _transitions;
 
@@ -438,7 +432,6 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
     /// <summary>The solar system the session's ship is in, or null when it is not in space.</summary>
     public int? SolarSystemOf(ClientSession session) => _pilots.TryGetValue((ulong)session.SessionId, out var pilot) ? pilot.SolarSystemId : null;
 
-
     public long? ShipIdOf(ClientSession session) =>
         _pilots.TryGetValue((ulong)session.SessionId, out var pilot) ? pilot.ShipId : null;
 
@@ -447,9 +440,6 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
         _pilots.TryGetValue((ulong)session.SessionId, out var pilot) ? pilot.TypeId : null;
 
     public bool IsWarping(ClientSession session) => _warping.ContainsKey((ulong)session.SessionId);
-
-
-
 
     public ClientSession? ClientSessionOf(ulong sessionId) =>
         _pilots.TryGetValue(sessionId, out var pilot) ? pilot.Session : null;
@@ -508,7 +498,6 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
     public int? RegionOfSystem(int solarSystemId) => _systems.Get(solarSystemId)?.RegionId;
 
     private static MachoWrappedException Notify(string text) => MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr(text)));
-
 
     private static MachoWrappedException MovementRefused(PolicyDecision decision, string action) =>
         Notify(decision.BlockReason switch
@@ -873,7 +862,7 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
                         _warping.TryRemove(accepted.SessionId, out _);
                     if (accepted.Command != SimCommands.Dock)
                         EndInvulnerability(mover);
-                    // a warp closes the hacking window of the pilot (EveJS hackingMgrService: the window closes when the ship enters warp)
+
                     if (accepted.Command == SimCommands.WarpTo && HackingService is { } hackingWindow)
                         Background(() => hackingWindow.CloseOnWarpAsync(mover.Session, mover.CharacterId, CancellationToken.None).AsTask());
                     break;
@@ -963,7 +952,7 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
                 case SimChargeSpent spent when _pilots.TryGetValue(spent.SessionId, out var shooter):
                     var chargeOwnerId = shooter.ModuleChargeOwners.TryGetValue(spent.ModuleId, out var moduleOwner) ? moduleOwner : shooter.CharacterId;
                     _charges.Enqueue(spent.SessionId, chargeOwnerId, spent.ModuleId, spent.RoundsLeft);
-                    // Structure charges are persisted by owner, but the character's reload UI is for personal ships only.
+
                     if (!IsStructureObserver(shooter.Session)
                         && shooter.RunningModules.TryGetValue(spent.ModuleId, out var gun) && gun.Reloads && spent.RoundsLeft < gun.PerCycle)
                     {
@@ -997,7 +986,6 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
         }
     }
 
-
     private void HandleMutadaptiveRepairCycle(SimRemoteRepairCycle cycle)
     {
         var amount = 0d;
@@ -1022,9 +1010,6 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
             Eve.Services.Space.Effects.ProjectedEffect.MutadaptiveSpool.CompleteCycle(cycle.ModuleId, cycle.CycleId);
         }
     }
-
-
-
 
     private void Forward(ClientSession session, SimNotify notify)
     {

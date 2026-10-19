@@ -282,7 +282,6 @@ public sealed partial class SpaceSessions
         }
     }
 
-
     /// <summary>Reads one authoritative pose for the active ship in its public source system, before an Abyssal run exists.</summary>
     public async Task<AbyssalParticipantPoseResult> GetAbyssalDeploymentPoseAsync(
         long shipId,
@@ -483,7 +482,6 @@ public sealed partial class SpaceSessions
             cancellationToken);
     }
 
-
     /// <summary>Transfers a participant with the caller-saved authoritative pose and an internally allocated SimLink request id.</summary>
     public Task<string?> MoveAbyssalParticipantAsync(
         string contentId,
@@ -506,7 +504,6 @@ public sealed partial class SpaceSessions
     }
 
     /// <summary>Spawns a domain-reserved Abyssal NPC without enabling ordinary bounty or wreck handling.</summary>
-
     /// <summary>Builds a run-owned Abyssal NPC ship from the pinned SDE and NPC weapon rules; position is absolute in the private scene.</summary>
     public async Task<SimSpawnReply> SpawnAbyssalNpcAsync(
         string contentId,

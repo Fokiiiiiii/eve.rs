@@ -187,7 +187,6 @@ public sealed partial class SpaceSessions
     private PgBountyStore? _bounties;
     private int _paying;
 
-    /// <summary>Raised for each bounty that was paid into a wallet (the wallet's owner is told of its new balance by whoever announces wallets).</summary>
     public event Action<BountyPaid>? BountyPaidOut;
 
     /// <summary>
@@ -415,12 +414,10 @@ public sealed partial class SpaceSessions
 
     /// <summary>
     /// <c>buildSpawnStateForDefinition</c>: how far from the anchor the NPC of a batch comes (what its profile says, a random amount either way that grows with the
-    /// size of the batch, and a step for each one before it so they are not on top of each other), at least a kilometre.
     /// </summary>
     internal static double NpcSpawnDistance(NpcProfile profile, int index, int total, double random) =>
         NpcSpawnDistance(Math.Max(1_000, profile.SpawnDistanceMeters), Math.Min(6_000, 800 + total * 600), NpcFormationSpacing, index, random);
 
-    /// <summary>As above, from the distance, the window of chance either way and the step between ones of a batch that are given.</summary>
     internal static double NpcSpawnDistance(double baseDistance, double window, double step, int index, double random)
     {
         var jitter = (random * 2 - 1) * window;
@@ -428,7 +425,6 @@ public sealed partial class SpaceSessions
         return Math.Max(1_000, baseDistance + jitter + spacing);
     }
 
-    /// <summary>The step between the NPCs of a batch (<c>formationSpacingMeters</c> of the reference's default).</summary>
     private const double NpcFormationSpacing = 1_250;
 
     /// <summary>
@@ -643,7 +639,6 @@ public sealed partial class SpaceSessions
             : new NpcSpawnReport(null, [], selection.Name, composition, plan.Profiles.Count, unarmed);
     }
 
-
     /// <summary>Spawns the authored response pool around an active high-sec criminal; its response timer guarantees the criminal ship is lost.</summary>
     public async Task<bool> RespondToCriminalAsync(
         long attackerCharacterId,
@@ -732,10 +727,7 @@ public sealed partial class SpaceSessions
         return Task.CompletedTask;
     }
 
-
     /// <summary>Spawns the configured CONCORD response fleet around an active criminal and schedules the ship loss after the response ships engage.</summary>
-
-
     /// <summary>One order about a pilot's modules or targets is asked of the simulation at a time (the answers are matched by what was asked); an unreachable simulation is a message the client shows.</summary>
     private async Task<CommandReply> AskSimAsync(ulong id, Func<Task<CommandReply>> ask, ClientSession session)
     {

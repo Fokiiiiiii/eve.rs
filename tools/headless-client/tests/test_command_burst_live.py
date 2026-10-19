@@ -19,6 +19,7 @@ from tests import dbseed, gm
 from tests import test_login_to_character as base
 from tests.test_health import HEALTH
 from tests.test_undock import STATION, SYSTEM, arrive, number
+from tests.test_warp import names as destiny_names
 
 pytestmark = pytest.mark.skipif(not base.LIVE, reason="set EVE_LIVE_HOST=host:port to test against a running server")
 
@@ -89,6 +90,17 @@ def test_a_loaded_burst_changes_a_fleet_members_dogma_until_its_buff_expires():
         member_dogma = member.call("dogmaIM", "MachoBindObject", (SYSTEM, 5), None)
         owner.call_bound(owner_dogma[0], "GetAllInfo", True, True, None)
         member.call_bound(member_dogma[0], "GetAllInfo", True, True, None)
+        notifications_of(member)
+
+        owner_ballpark = owner.call("beyonce", "MachoBindObject", SYSTEM, None)
+        owner.call_bound(owner_ballpark[0], "CmdWarpToStuff", "item", member_ship, minRange=0)
+        arrived = wait_for_events(
+            owner,
+            lambda events: any("Stop" in destiny_names(event) for event in events),
+            timeout=200,
+        )
+        assert any("Stop" in destiny_names(event) for event in arrived), "pilot A did not arrive at pilot B before the burst"
+        notifications_of(owner)
         notifications_of(member)
 
         owner.call_bound(owner_dogma[0], "SetModuleOnline", owner_ship, burst)

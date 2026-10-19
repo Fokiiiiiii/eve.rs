@@ -92,7 +92,7 @@ These are code-review classifications from the current worktree and targeted sou
 | Saved fit applies over existing fit | Fitting service exists; overwrite semantics not inspected. | Unknown. |
 | Industry exactness | `INDUSTRY_STATUS.md` is authoritative project status, but exact EveJS parity and all cost/time/material branches were not walked here. | Unknown; do not infer parity from tests alone. |
 | Corp tax on bounties / mission LP | TODO records corporation LP tax as open at least for FW; NPC bounty path was not traced. | Defect/open for LP tax; bounty path unknown. |
-| Structure 1% market tax | Current TODO explicitly states server sales tax 7.5%; structure 1% parity is not established and the release note conflicts with current recorded status. | Candidate defect; verify whether 7.5% applies only NPC station sales before changing. |
+| Structure 1% market tax | The V24 sell preview uses Accounting-adjusted `limits['acc']` for transaction tax. `MarketQuote.GetBaseTax` reads a structure's MARKET_TAX setting for the broker fee; EveJS defaults it to 1% and adds the 0.5% SCC surcharge. eve.rs now has a separate structure-rate calculation regression. Its settlement route still resolves SDE `StationCatalog` entries only. | Rate semantics reconciled; structure order settlement remains open. |
 | Failed sell order refunds fees | Transaction tests exist; failed-sell fee atomicity not established. | Unknown. |
 | Buy Multiple | Market RPC and transaction tests exist; Buy Multiple client path not checked. | Unknown. |
 | Login closes another account client | `ClientSession`/character selection exist; duplicate-account transport behavior not evidenced in reviewed tests. | Unknown. |
@@ -111,7 +111,7 @@ Before porting each row, require exact V24 callsite or static-data evidence from
 
 1. DONE (defects fixed and selected warp range verified): Destiny updates flush on whole-second boundaries, out-of-range dock requests complete on arrival, and selected warp range is covered by a boundary regression. Focused `eve-sim` and `eve-space` tests cover the changes.
 2. DONE (defect fixed): Host account-session admission now atomically replaces an existing same-account client and sends its clean disconnect reason; `ConnectedSessionsTests` covers replacement, stale close, and concurrent opens.
-3. Reconcile market tax semantics against V24 formula and NPC/structure location (S): TODO's 7.5% and release 1% statement need a precise split.
+3. DONE (calculation split): NPC station transaction tax remains 7.5% base reduced by Accounting; a structure's owner-set 1% value is its broker fee, plus the 0.5% SCC surcharge. The structure order settlement route remains open because `MarketTrading` uses `StationCatalog` locations.
 4. Verify failed sell refund and Buy Multiple transaction flows (M): both expose wallet/inventory correctness and retries.
 5. Trace industry calculation and Corp Deliveries against V24 client calculation (L): highest confidence route to resolve broad parity claims.
 6. Complete corporate bounty and mission LP tax trace (M): existing TODO already records a real LP tax gap.

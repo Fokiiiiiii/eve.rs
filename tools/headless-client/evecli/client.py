@@ -31,11 +31,10 @@ class Client:
         self.service_info: dict[str, Any] = {}
         self.global_config: dict[str, Any] = {}
         self._service_nodes: dict[str, Any] = {}
-        # the client's dialogs: scripted answers per method (queued in order), and every server call it was asked
+        # Dialog answers are queued by method; dialogs record server calls that need answers.
         self.scripted: dict[str, list] = {}
         self.dialogs: list[tuple[str, tuple]] = []
 
-    # ── connection ──
 
     def login(self, user: str, password: str) -> handshake.SessionInfo:
         self.close()
@@ -65,7 +64,6 @@ class Client:
     def __exit__(self, *exc) -> None:
         self.close()
 
-    # ── packets ──
 
     def _next_call_id(self) -> int:
         self._call_id += 1
@@ -148,7 +146,7 @@ class Client:
             if received.command == packet.ERRORRESPONSE:
                 raise packet.MachoError.from_packet(received)
             if received.command == command and received.destination.call_id in (call_id, None):
-                # a provisional answer (the server's deferred call) is not the result: the dialog it raised is answered, then the result comes
+                # Provisional call responses are followed by a dialog answer and the final result.
                 if _is_provisional(received):
                     continue
                 return received

@@ -20,17 +20,13 @@ import re
 import sys
 
 SUPPORTED_BUILD = "3396210"
-# The unmodified bin64/exefile.exe for build 3396210: size and SHA-256 as recorded
-# in EveJS tools/ClientSETUP/crash_upload_patch_recipe.json ("source"). Fingerprints only.
 EXE_RELPATH = os.path.join("bin64", "exefile.exe")
 EXE_SIZE = 1003152
 EXE_SHA256 = "2aaf7a9a8dfcde85e4adb50c1eccd3756a4d29aeb854dfe69629846ba56ee979"
 BACKUP_NAME = "start.ini.eve-rs-backup"
 DEFAULT_SERVER = "127.0.0.1:26000"
 DEFAULT_PORT = 26000
-# The only crypto pack eve.rs speaks (crates/eve-net/src/handshake.rs).
 CRYPTO_PACK = "Placebo"
-# start.ini key aliases, as EveJS tools/ClientSETUP/ClientSetup.ps1 reads them.
 SERVER_KEYS = ("server", "serverip")
 CRYPTO_KEYS = ("cryptopack",)
 

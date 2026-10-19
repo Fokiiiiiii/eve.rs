@@ -170,8 +170,8 @@ public sealed record InsuranceMutationResult(
 
 /// <summary>
 /// Host callbacks must perform each mutation in one database transaction. Purchase debits the
-/// selected owner through WalletTransactions and updates the existing insuranceContracts table;
-/// settlement credits the recorded contract owner and claims payoutLedgerByLossID in that same
+
+
 /// transaction. Each callback must re-read and validate the authoritative ship, price, and contract
 /// rows under the write transaction. No parallel insurance ledger is introduced.
 /// </summary>
@@ -181,19 +181,19 @@ public sealed record InsuranceMutationResult(
     /// entry in one database transaction; a journal or persistence failure must roll the entire
     /// operation back.
     ///
-    /// Purchase must revalidate ship ownership/location and the existing shipInsurancePrices row
+
     /// inside the transaction, map PremiumCents with InsuranceQuotes.ForPremium, debit the
     /// character or corporation wallet, and update insuranceContracts.contractsByShipID and
     /// contractHistoryByID. Replacement with voidOld must void the old policy and buy the new one
     /// in that same transaction.
     ///
-    /// Cancellation voids the active row and appends its history in one transaction. CCP/Wiki do
+
     /// not publish a manual-cancellation refund formula, so implementations must not invent a
     /// prorated credit.
     ///
     /// Loss settlement must use payoutLedgerByLossID as the idempotency authority, enforce the
     /// existing contract's term and void conditions (including CONCORD and corporation boarding),
-    /// credit the contract owner, and update the contract, history, and payout ledger atomically.
+
     /// The insuranceContracts grouped table already provides all three maps; no parallel insurance
     /// table or SQL migration is required.
     /// </summary>
@@ -203,19 +203,19 @@ public sealed record InsuranceMutationResult(
     /// entry in one database transaction; a journal or persistence failure must roll the entire
     /// operation back. Use WalletTransactions.AdjustAsync with that same connection and transaction.
     ///
-    /// Purchase must revalidate ship ownership/location and the existing shipInsurancePrices row
+
     /// inside the transaction, map PremiumCents with InsuranceQuotes.ForPremium, debit the
     /// character or corporation wallet, and update insuranceContracts.contractsByShipID and
     /// contractHistoryByID. Replacement with voidOld must void the old policy and buy the new one
     /// in that same transaction.
     ///
-    /// Cancellation voids the active row and appends its history in one transaction. CCP/Wiki do
+
     /// not publish a manual-cancellation refund formula, so implementations must not invent a
     /// prorated credit.
     ///
     /// Loss settlement must use payoutLedgerByLossID as the idempotency authority, enforce the
     /// existing contract's term and void conditions (including CONCORD and corporation boarding),
-    /// credit the contract owner, and update the contract, history, and payout ledger atomically.
+
     /// The insuranceContracts grouped table already provides all three maps; no parallel insurance
     /// table or SQL migration is required.
     /// </summary>

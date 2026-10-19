@@ -7,7 +7,7 @@ namespace Eve.Services.Core;
 /// returns its client-compatible PyValue without this RPC adapter changing row order or field types.
 /// </summary>
 /// <summary>
-/// Reads owner-scoped structure directory maps from deployed structure records.
+
 /// SDE data may supply metadata for a persisted deployment, but must not create a deployed entry by itself.
 /// </summary>
 public interface IStructureDirectoryReadCallbacks
@@ -30,7 +30,7 @@ public interface IStructureDirectoryReadCallbacks
     /// <summary>Returns valid war-HQ rows only for the authenticated corporation or alliance.</summary>
     ValueTask<PyValue> GetValidWarHQsAsync(ServiceCall call, long ownerId, CancellationToken cancellationToken);
 
-    /// <summary>Updates a persisted structure description after Host ownership and role checks.</summary>
+
     ValueTask<bool> SetStructureDescriptionAsync(ServiceCall call);
 
     /// <summary>Returns IDs of persisted, deployed structures with online docking in one system.</summary>
@@ -44,9 +44,9 @@ public interface IStructureDirectoryReadCallbacks
     /// <summary>
     /// Returns exactly the requested deployed structures' profile data for the Docking service.
     /// The Host must resolve the setting through its existing SDE/client mapping (SettingIdForService),
-    /// include owner corporation/alliance and every assigned access list, and mark any missing profile,
+
     /// setting, or access-list data incomplete. A built-in default profile may be represented only by
-    /// its explicit authoritative owner-corporation rule. Do not synthesize structures from static type data.
+
     /// </summary>
     ValueTask<IReadOnlyList<StructureDockingAccessSnapshot>> GetDockingAccessSnapshotsAsync(
         long characterId,
@@ -406,7 +406,7 @@ public sealed class StructureGuestsService(
 /// <summary>
 /// Read callbacks for the client's structureSettings RPCs.
 /// Implementations must read deployed structure state (not SDE type rows) and enforce each structure's
-/// owner corporation/alliance and persisted access-profile/access-group rules for the supplied character.
+
 /// CharacterGetServices returns a service-ID keyed map; absent or inaccessible structures return an empty map,
 /// and the two Has calls return false.
 /// </summary>
@@ -564,9 +564,9 @@ public interface IStructureAssetSafetyReadCallbacks
         CancellationToken cancellationToken);
 
     /// <summary>
-    /// Atomically charges the correct fee and delivers this owner's persisted wrap to a valid same-system
-    /// NPC station/outpost/Upwell destination after day five; mark it delivered and notify the owner.
-    /// Revalidate wrap ownership, timer, source system, destination type and state in the transaction.
+
+
+
     /// </summary>
     ValueTask<AssetSafetyActionState> MoveSafetyWrapToStructureAsync(
         ServiceCall call,

@@ -67,6 +67,39 @@ public class ItemMutationStoreTests : IAsyncLifetime
     }
 
     [PgFact]
+    public async Task Moving_items_uses_bounded_row_lookups_with_ten_thousand_items_present()
+    {
+        var source = Source();
+        var schema = NewSchema();
+        var items = new PgItemStore(source, schema);
+        await PgItemStore.MigrateAsync(source, schema);
+
+        await using var connection = await source.OpenConnectionAsync();
+        await using var transaction = await connection.BeginTransactionAsync();
+        var sample = new long[100];
+        for (var index = 0; index < 10_000; index++)
+        {
+            var id = await items.CreateAsync(connection, transaction,
+                new NewItem(34, Character, 60_015_249, ItemFlags.Hangar, 1));
+            if (index < sample.Length) sample[index] = id;
+        }
+        await transaction.CommitAsync();
+
+        var timer = System.Diagnostics.Stopwatch.StartNew();
+        await using (var moveTransaction = await connection.BeginTransactionAsync())
+        {
+            foreach (var itemId in sample)
+                await items.MoveAsync(connection, moveTransaction, itemId, 60_015_250, ItemFlags.Hangar);
+            await moveTransaction.CommitAsync();
+        }
+        timer.Stop();
+
+        Assert.True(timer.Elapsed < TimeSpan.FromSeconds(2), $"100 row-locked moves among 10,000 items took {timer.Elapsed}");
+        foreach (var itemId in sample)
+            Assert.Equal(60_015_250, (await items.GetAsync(itemId))!.LocationId);
+    }
+
+    [PgFact]
     public async Task The_provenance_table_is_applied_with_the_item_migrations()
     {
         var source = Source();

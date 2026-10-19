@@ -9,7 +9,7 @@ namespace Eve.Services.Core;
 /// <summary>
 /// The client's <c>accessGroupBookmarkMgr</c>: the bookmark folders (personal and shared), their subfolders and bookmarks. The store is
 /// <see cref="BookmarkStore"/>; who may do what is <see cref="FolderAccess"/>, given the character's access lists (<c>listsOf</c>, the
-/// owner groups of <see cref="AccessGroupStore"/>). The payloads are the reference's (<c>bookmarkPayloads.js</c>). A change to a shared
+
 /// folder is heard after the response by the characters that have the folder active, as <c>OnSharedBookmarksFolderUpdated</c> (one update
 /// per notification) or <c>OnSharedBookmarksFolderDeleted</c>.
 /// </summary>

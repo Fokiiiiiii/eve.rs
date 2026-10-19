@@ -38,7 +38,7 @@ namespace Eve.Host;
 internal sealed partial class CharacterServicesComposition
 {
     /// <summary>Achievements, milestones, operations, missions, abyssal, void space and the new-player experience.</summary>
-    /// <summary>The achievement tracker record as the client's two maps (EveJS <c>legacyTracker</c>): completions by achievement id, counts by event name.</summary>
+
     private static AchievementTrackerPersistedState ToPersisted(AchievementTrackerRecord record) => new(
         new PyDict([.. record.EventCounts.Select(e => new KeyValuePair<PyValue, PyValue>(new PyStr(e.Name), new PyLong(e.Count)))]),
         new PyDict([.. record.Completed.Select(c => new KeyValuePair<PyValue, PyValue>(new PyInt(c.AchievementId), new PyLong(c.CompletedFileTime)))]));

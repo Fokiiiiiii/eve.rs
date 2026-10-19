@@ -5,9 +5,9 @@ using Eve.Services.Slash;
 namespace Eve.Host;
 
 /// <summary>
-/// The game master's agent missions on this host (<see cref="IAgentControl"/>): the store's transitions (offer, accept, quit, reset) and the mission runtime's
-/// hooks on accept and quit, as the client's agent window runs them; a completion is the runtime's <c>GmCompleteAsync</c> (the rewards a completion pays).
-/// The offer is the composition's picker (<paramref name="pickOffer"/>), the same the agent's conversation uses.
+
+
+
 /// </summary>
 internal sealed class HostAgentControl(
     AgentMissionStore store,

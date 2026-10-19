@@ -5,8 +5,8 @@ using Eve.Services.Slash;
 namespace Eve.Host;
 
 /// <summary>
-/// The game master's industry helper on this host (<see cref="IGmIndustry"/>): an owner's blueprint items are the blueprint manager's read, and its jobs are the
-/// industry job table's rows that name the owner (<c>ownerID</c>).
+
+
 /// </summary>
 internal sealed class HostGmIndustry(
     Func<long, CancellationToken, ValueTask<IReadOnlyList<BlueprintRecord>>> blueprints,

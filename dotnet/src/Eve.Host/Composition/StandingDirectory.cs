@@ -6,9 +6,9 @@ using Eve.Services.Slash;
 namespace Eve.Host;
 
 /// <summary>
-/// The owners and pilots the standing commands name: the SDE's faction names (<see cref="DogmaStatic.FactionNames"/>), the corporation store, the agents of the
-/// agent catalog and the character store. A corporation or an agent is named by its ID; only factions are also named by their name (the stores keep no
-/// corporation or agent names index for a name lookup).
+
+
+
 /// </summary>
 internal sealed class HostStandingDirectory(DogmaStatic statics, Eve.Corporations.CorporationStore corporations,
     IReadOnlyDictionary<long, AgentMissionAgentData> agents, Eve.Characters.PgCharacterStore characters) : IStandingDirectory
@@ -29,7 +29,7 @@ internal sealed class HostStandingDirectory(DogmaStatic statics, Eve.Corporation
 
     public async Task<IReadOnlyList<StandingOwner>> AgentOwnersAsync(CancellationToken cancellationToken)
     {
-        // As EveJS getAllAgentStandingOwners: the agents' corporations, then the distinct factions of those corporations (npcCorporations.factionID).
+
         var owners = new List<StandingOwner>();
         var factions = new SortedSet<long>();
         foreach (var corporationId in agents.Values.Select(agent => agent.CorporationId).Where(id => id > 0).Distinct().Order())

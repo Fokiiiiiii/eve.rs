@@ -6,9 +6,9 @@ using Eve.Services;
 namespace Eve.Services.Core;
 
 /// <summary>
-/// The client's <c>ownerGroupManager</c>: the owner groups (access lists) the access pickers and the access list window use. The rules are
+
 /// <see cref="AccessRules"/> and the state is <see cref="AccessGroupStore"/>. A change is heard after its response, by the sessions whose
-/// character, corporation, alliance or everyone entry the change names (<c>OnOwnerGroupsUpdated</c>, one dict of group id to change codes).
+
 /// </summary>
 [Service("ownerGroupManager")]
 public sealed partial class OwnerGroupManagerService(AccessGroupStore store, Func<long, ValueTask<MemberKind?>> kindOf, CharacterSessions? sessions,

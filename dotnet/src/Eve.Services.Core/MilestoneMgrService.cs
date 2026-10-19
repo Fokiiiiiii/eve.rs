@@ -6,7 +6,7 @@ using Eve.Services;
 namespace Eve.Services.Core;
 
 /// <summary>
-/// The login milestone (EveJS <c>milestoneMgrService</c>): the online time of an account counts toward a two-hour milestone. When it is reached
+
 /// the character is told, and <c>ClaimRewards</c> pays the reward once. The timer lives in this process; the progress is kept in PostgreSQL and
 /// written when the character leaves (a restart without a leave loses the time since the last write, as the reference does).
 /// </summary>

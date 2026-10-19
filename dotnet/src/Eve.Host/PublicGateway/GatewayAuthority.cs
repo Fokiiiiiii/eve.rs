@@ -7,7 +7,7 @@ namespace Eve.Host.PublicGateway;
 /// Who a public gateway request is for. The identity the client puts in the request (the active character) is not trusted on its own: the
 /// account is the subject of the bearer token the client sends (the login JWT, <c>USER:EVE:&lt;account&gt;</c>, the subject the client's own
 /// token decoder reads), and the active character must belong to that account. The token's signature is not checked: the identity
-/// service's signing key is not in this repository (DEVIATIONS, character phase S9).
+
 /// </summary>
 internal sealed class GatewayAuthority(Func<long, CancellationToken, Task<long?>> accountOfCharacter, Func<DateTimeOffset> now)
 {

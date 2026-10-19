@@ -13,7 +13,7 @@ namespace Eve.Host;
 /// <summary>A read-only projection of the real structure record and its matching SDE type; never a physical ship or a health store.</summary>
 public sealed record StructureControlView(Item Item, TypeDef Type, int SolarSystemId);
 
-/// <summary>ST-5: the persisted owner, observer acknowledgement and client session transition.</summary>
+
 public sealed class StructureControlBackend
 {
     // V24.01 structures/settings.py SETTING_DEFENSE_CAN_CONTROL_STRUCTURE.

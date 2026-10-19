@@ -161,8 +161,8 @@ public sealed class PersistenceSovFwReadModel(
     private const long SkyhookTypeId = 81080;
 
     /// <summary>
-    /// E-03, ST-17 c: whether the system runs its Cynosural Suppression upgrade: EVE.js isCynoSuppressionUpgradeOnline, the upgrade's power state is online. The
-    /// state is derived (<see cref="SovUpgradeBudget"/>) from the installed upgrades in install order, the owner's online switches, the star power (EVE.js
+
+
     /// fallback) and the workforce of the system's active skyhooks; nothing is stored for it. No hub gives false.
     /// </summary>
     public async ValueTask<bool> IsCynoSuppressionOnlineAsync(long solarSystemId, CancellationToken cancellationToken)

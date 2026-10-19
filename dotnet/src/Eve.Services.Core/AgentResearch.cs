@@ -2,19 +2,19 @@ using Eve.Agents;
 
 namespace Eve.Services.Core;
 
-/// <summary>A science specialty field an R&amp;D agent takes: the skill, and the datacore that research in it produces.</summary>
+
 public sealed record AgentResearchField(long SkillTypeId, long DatacoreTypeId, string DatacoreName);
 
 /// <summary>An SDE type as the research fields read it: its English name, and the skill its datacore requires (dogma attribute 182).</summary>
 public sealed record AgentResearchTypeRow(long TypeId, string EnglishName, long GroupId, bool Published, long? RequiredSkill1);
 
-/// <summary>An SDE NPC character as the research fields read it: the agent, its agent type, and the skills it offers (npcCharacters.skills).</summary>
+
 public sealed record AgentResearchAgentRow(long AgentId, int AgentTypeId, IReadOnlyList<long> Skills);
 
 /// <summary>What the server holds for the R&amp;D agents: the fields from the SDE, and the project store and the datacore purchase.</summary>
 public interface IAgentResearchPort
 {
-    /// <summary>The fields one R&amp;D agent offers (its own skills, ascending). Empty for an agent with none.</summary>
+
     IReadOnlyList<AgentResearchField> FieldsFor(long agentId);
 
     ResearchProjectStore Projects { get; }
@@ -40,7 +40,7 @@ public static class AgentResearchFields
     public const long DatacoreGroupId = 333;
 
     /// <summary>
-    /// The research fields of each R&amp;D agent: the agent's own skills (npcCharacters.skills on the research agent type), each with
+
     /// the datacore that names it as its required skill (dogma attribute 182). A datacore is a published group 333 type. When two
     /// datacores name one skill, the higher type id wins, the reference's last-wins order. A field with no datacore stays listed;
     /// buying it is refused. Fields are in ascending skill order, as the reference lists them.

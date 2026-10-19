@@ -14,7 +14,7 @@ namespace Eve.Host;
 
 /// <summary>
 /// The Encounter Surveillance Systems: their store, the calls of the client's essMgr and dynamic resource cache, the ESS ball each one has in space, the clock
-/// that works them, and the systems the operator places (<c>EVE_ESS_SYSTEMS</c>: <c>solarSystemId:essId[:ownerId]</c>, comma separated). With no entries there
+
 /// is no ESS in any system.
 /// </summary>
 internal sealed partial class CharacterServicesComposition
@@ -180,7 +180,7 @@ internal sealed partial class CharacterServicesComposition
         }
     }
 
-    /// <summary>The clock of the ESS (<c>space.ess.tick</c>): thefts, link ends, owner payouts and reserve pulses, told to the pilots of their systems.</summary>
+
     private async Task TickEssAsync(CancellationToken cancellationToken)
     {
         var events = await Ess.TickAsync(now(), cancellationToken);

@@ -1,6 +1,6 @@
 namespace Eve.Services.Core;
 
-/// <summary>How far the located character is from the locator agent: the same system, constellation, region, or another region.</summary>
+
 public enum LocateDistance
 {
     SameSystem = 0,
@@ -10,9 +10,9 @@ public enum LocateDistance
 }
 
 /// <summary>
-/// The locator agent's rules (agents track, AG-3 / A7). Source: EVE University wiki, "Locator Agents" (community, not CCP): the
-/// fee and the cooldown by agent level and distance, the faction standing each level needs, and "wormholes are excluded".
-/// The wiki gives the fee in its table and says "for a fee" in its prose; when the fee is charged is not stated, so the rule
+
+
+
 /// only prices a locate. A level-one locator cannot locate beyond its constellation and a level-two one cannot locate in another region (the table's "cannot").
 /// </summary>
 public static class LocatorRules
@@ -53,7 +53,7 @@ public static class LocatorRules
         return RequiredStanding[agentLevel - 1];
     }
 
-    /// <summary>The distance tier between the agent's system and the target's system (the same system is the first tier).</summary>
+
     public static LocateDistance Classify(long agentSystemId, long agentConstellationId, long agentRegionId,
         long targetSystemId, long targetConstellationId, long targetRegionId)
     {
@@ -63,7 +63,7 @@ public static class LocatorRules
         return LocateDistance.OtherRegion;
     }
 
-    /// <summary>Wormhole systems (the J-space ids) cannot be located: the wiki says "wormholes are excluded".</summary>
+
     public static bool IsWormhole(long solarSystemId) => solarSystemId is >= 31_000_000 and < 32_000_000;
 
     private static void ValidateLevel(int agentLevel)

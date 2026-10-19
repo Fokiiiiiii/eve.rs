@@ -1084,7 +1084,7 @@ public sealed record SimModuleWorkCycle(
     double MiningAmountM3, double WasteVolumeMultiplier, double WasteProbability, double CritProbability, double CritQuantityMultiplier,
     double AccessDifficultyBonus, double WasteRoll, double RoundingRoll, double CritRoll,
     /// <summary>The ships a command burst reaches (<see cref="SimModuleWorkCommands.Burst"/> only; null or empty for every other command): the ships of the scene within reach.</summary>
-    IReadOnlyList<long>? Recipients = null) : SimMessage;
+    IReadOnlyList<long>? Recipients = null, int ChargeTypeId = 0) : SimMessage;
 
 /// <summary>The host's decision for one module work cycle; the fields are those of <see cref="SimDroneWorkResult"/>.</summary>
 public sealed record SimModuleWorkResult(

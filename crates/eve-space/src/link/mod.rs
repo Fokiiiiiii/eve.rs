@@ -39,7 +39,7 @@ use crate::weapons::{Aoe, Arc, Charge, Spool, Turret};
 use crate::world::StructureStatus;
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 80;
+pub const PROTOCOL_VERSION: u16 = 81;
 
 /// A battlefield's capture point the host puts in space (protocol 77): a ball the pilots of its system see. Its factions (the attacker and the
 /// occupier, 0 for none) and its next point time (a FILETIME, 0 for none) are the dynamic slim fields the client reads from it.
@@ -1323,6 +1323,8 @@ pub enum Message {
         target_id: i64,
         cycle_id: u64,
         command: u8,
+        /// The SDE charge type for a burst after its last round is consumed; zero for other work.
+        charge_type_id: i32,
         mining_amount_m3: f64,
         waste_multiplier: f64,
         waste_probability: f64,

@@ -97,8 +97,6 @@ public Func<long, long, CancellationToken, Task<int>>? SkillLevelOfCharacter { g
         return Py.Tuple(bound, result);
     }
 
-    private const long BeyonceViewRoleMask = 140667119611150336L;
-
     /// <summary>The host can provide the live bubble lookup when the simulation exposes it.</summary>
     public Func<ServiceCall, long, CancellationToken, ValueTask<long?>>? BubbleIdForItem { get; set; }
 
@@ -111,10 +109,7 @@ public Func<long, long, CancellationToken, Task<int>>? SkillLevelOfCharacter { g
             PyLong integer => integer.Value,
             _ => 0,
         };
-        var roleMask = call.Session.GetInt("role") ??
-            call.Session.GetInt("accountRole") ??
-            call.Session.GetInt("accountRoles") ?? 0;
-        if (itemId <= 0 || (roleMask & BeyonceViewRoleMask) == 0)
+        if (itemId <= 0 || !GameMasterRoles.Has(call.Session, GameMasterRoles.Staff))
             return None;
 
         var bubbleId = BubbleIdForItem is { } lookup

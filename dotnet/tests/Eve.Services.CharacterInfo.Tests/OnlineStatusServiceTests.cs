@@ -177,6 +177,8 @@ public sealed class OnlineStatusServiceTests
 
         Assert.Equal(PyBool.True, await Call(new OnlineStatusService(sessions), new ClientSession(),
             "GetOnlineStatus", new PyInt(Target)));
+        Assert.Equal(PyBool.False, await Call(new OnlineStatusService(sessions), new ClientSession(),
+            "GetOnlineStatus", new PyInt(Target + 1)));
     }
 
     public static IEnumerable<object[]> NumericIds()

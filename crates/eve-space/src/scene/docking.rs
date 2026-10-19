@@ -175,7 +175,12 @@ impl Scene {
         }
         let distance = surface_distance(&pilot.ship, station.position, station.radius);
         if distance > DOCKING_RANGE {
-            return self.approach(session, station_id, distance, now);
+            let out = self.approach(session, station_id, distance, now);
+            if out.iter().any(|event| matches!(event, Out::Approaching { .. })) {
+                self.pilots.get_mut(&session).expect("the caller checked").docking_approach =
+                    Some(station_id);
+            }
+            return out;
         }
         let mut out = self.accept_docking(session, station_id, now);
         out.push(Out::Accepted { session, command: code, at: now });

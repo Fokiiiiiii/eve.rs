@@ -418,6 +418,10 @@ impl Scene {
             }
         }
         if matches!(effect.action.as_ref(), Some(Action::Cloak { .. })) {
+            // FakeCloaking.PreStartChecks refuses a second device while the ship is cloaked; EveJS reports MODULE_ALREADY_ACTIVE.
+            if pilot.cloak != crate::visibility::CloakState::Uncloaked {
+                return vec![Out::Refused { session, command: CODE, reason: "MODULE_ALREADY_ACTIVE" }];
+            }
             // a module that cannot be deactivated early (disallowEarlyDeactivation 906) runs: the ship does not cloak (EveJS CLOAK_MODULE_ACTIVE)
             if pilot.modules.running.iter().any(|r| r.effect.rules.disallow_early_deactivation) {
                 return vec![Out::Refused { session, command: CODE, reason: "CLOAK_MODULE_ACTIVE" }];

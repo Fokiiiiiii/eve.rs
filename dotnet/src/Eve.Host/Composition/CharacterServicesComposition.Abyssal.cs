@@ -30,7 +30,10 @@ internal sealed partial class CharacterServicesComposition
         abyssalRuntime = new AbyssalContentRuntime(foundations.Content, foundations.Events, foundations.Scheduler);
         abyssalDeathSettlement = new AbyssalDeathSettlementProcessor(ships, characters, items, itemTypes, catalog, stations);
         if (spaceSessions is null)
-            throw new InvalidOperationException("Abyssal Host integration requires the initialized SpaceSessions facade.");
+        {
+            // Abyssal runs need the simulation session facade; keep the rest of the host available when simulation is disabled.
+            return;
+        }
         spaceSessions.RookieShipOfRace = raceId => catalog.Race(raceId)?.ShipTypeId;
         spaceSessions.AbyssalEnvironmentEffects = ResolveAbyssalDogmaEffects;
 

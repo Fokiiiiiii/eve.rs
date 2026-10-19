@@ -44,7 +44,7 @@ internal sealed partial class CharacterServicesComposition
     /// <summary>The wave director of the dungeons (set by the space composition, which runs first).</summary>
     private Eve.Services.Space.Waves.DungeonWaveDirector? dungeonWavesDirector;
 
-    /// <summary>The kill missions' runtime (A-X1), built with the agent missions.</summary>
+
     private MissionDungeonRuntime? missionDungeons;
 
     async Task<JsonObject?> ReadCharacterGameStoreRowAsync(long characterId, CancellationToken cancellationToken)
@@ -175,7 +175,7 @@ internal sealed partial class CharacterServicesComposition
             .Where(row => row.Doc.TryGetProperty("factionID", out var faction) && faction.ValueKind == System.Text.Json.JsonValueKind.Number)
             .ToDictionary(row => row.Key, row => row.Doc.GetProperty("factionID").GetInt64());
         agentMissionAgentById = agentMissionAgentRows.ToDictionary(agent => agent.AgentId);
-        // The official mission build (sde_mission). Nothing is read from the EveJS authority tables.
+
         agentMissionStatic = await MissionStaticCatalog.LoadAsync(new SdeReader(source, MissionStaticCatalog.DefaultSchema));
         if (agentMissionStatic.IsLoaded)
         {
@@ -200,10 +200,10 @@ internal sealed partial class CharacterServicesComposition
             ReadSolarSystemOfAgent: (agentId, _) => ValueTask.FromResult<long?>(
                 agentMissionAgentById.TryGetValue(agentId, out var agent) ? agent.SolarSystemId : null),
             ReadHeldMission: ReadHeldMissionAsync);
-        // the R&D agents: the science fields from the SDE, and the datacore purchase in the store's transaction (AG-4 / A6)
+
         var researchPort = new PersistenceAgentResearch(source, agentResearchProjects, economyWallets, items, itemTypes, characterSessions,
             await PersistenceAgentResearch.LoadFieldsAsync(sde, CancellationToken.None), () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
-        // the locator agents: the pilot by name, the place from the online session and the SDE, the fee and the result (AG-4 / A7)
+
         var locatorPort = new PersistenceAgentLocator(source, agentLocates, characters, characterSessions, solarSystems, economyWallets,
             foundations.Events, () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
         // the located notification: written by the subscriber, keyed by the event so a retry writes it once (the outbox row is the fee's)
@@ -215,7 +215,7 @@ internal sealed partial class CharacterServicesComposition
         agentMissionService = new AgentMissionService(
             async (characterId, ct) =>
             {
-                // the game store's record, with the agents store's offers and accepted missions laid over it (AG-2 / A5)
+
                 var state = await ReadGameStoreTableAsync("missionRuntimeState", ct);
                 var character = (state["charactersByID"] as JsonObject)?[characterId.ToString(System.Globalization.CultureInfo.InvariantCulture)] as JsonObject;
                 var stored = await agentMissionStore.ReadAsync(characterId, ct);
@@ -247,7 +247,7 @@ internal sealed partial class CharacterServicesComposition
             rpcCallbacks: agentMissionRpcCallbacks,
             dialogue: new Eve.Services.Core.AgentDialogueSources(
                 agentMissionStore,
-                // the standings are the relations rows (subject: the faction, the corporation or the agent; object: the character);
+
                 // a missing row is 0, the reference's value for an unknown standing
                 async ValueTask<Eve.Services.Core.AgentStandings> (long characterId, long agentId, long corporationId, long factionId, CancellationToken ct) =>
                     new Eve.Services.Core.AgentStandings(
@@ -264,12 +264,12 @@ internal sealed partial class CharacterServicesComposition
                     return level;
                 },
                 corporationId => npcFactions.GetValueOrDefault(corporationId),
-                // the offer is the next step of the agent's epic arc (EpicArcOffers: the official arc sequence, the held-back sites kept
-                // out by owner decision), else the basic kill mission of a level 4 or 5 security agent (BasicKillOffers). Other basic
+
+
                 // agents have no official mission link and offer nothing.
                 PickOfferAsync,
                 () => DateTimeOffset.UtcNow,
-                // a talk step completes when the pilot talks to the next agent, in the station or in space in the agent's system (A-X3)
+
                 async (characterId, agent, atLocation, ct) =>
                 {
                     if (missionDungeons is null) return;
@@ -289,7 +289,7 @@ internal sealed partial class CharacterServicesComposition
 
     /// <summary>
     /// The kill missions run their dungeons: a durable sweep starts the dungeon of an accepted kill mission when the pilot is in space in the
-    /// agent's system, and the dungeon's outcome (content.dungeon.*) decides the mission. Registered before the bus starts.
+
     /// </summary>
     private async Task AttachMissionDungeonsAsync()
     {
@@ -346,10 +346,10 @@ internal sealed partial class CharacterServicesComposition
     /// <summary>The faction of each NPC corporation (npcCorporations.factionID), read at start (the storyline counter and the offers use it).</summary>
     private IReadOnlyDictionary<long, long> npcFactions = new Dictionary<long, long>();
 
-    /// <summary>Whether the mission is a storyline trade mission of the client: handed in at its agent like a fetch (DEVIATIONS X13).</summary>
+
     private bool IsTradeMission(long missionId) => clientMissionTemplates.GetValueOrDefault(missionId) == ClientMissionTemplates.TradeTemplate;
 
-    /// <summary>Whether the mission is a basic mining mission of the client: a dungeon whose ore is handed in at its agent.</summary>
+
     private bool IsMiningMission(long missionId) => clientMissionTemplates.GetValueOrDefault(missionId) == ClientMissionTemplates.MiningTemplate;
 
     /// <summary>
@@ -391,7 +391,7 @@ internal sealed partial class CharacterServicesComposition
         Console.Error.WriteLine($"eve-host: missions: client texts {messages.Count} missions, {ids.Count} message IDs ({skipped} rows not read)");
     }
 
-    /// <summary>The held mission of the character with the bound agent (offered or accepted), with its briefing text ID.</summary>
+
     private async ValueTask<Eve.Services.Core.HeldMissionView?> ReadHeldMissionAsync(long characterId, long agentId, CancellationToken cancellationToken)
     {
         var record = await agentMissionStore.ReadAsync(characterId, agentId, cancellationToken);
@@ -403,7 +403,7 @@ internal sealed partial class CharacterServicesComposition
     }
 
     /// <summary>
-    /// The cargo of a courier mission: the SDE's item and its volume, the pilot's holding, the pickup (the agent's station) and the destination of the
+
     /// same seed the runtime uses. Null when the mission carries no courier objective, or no destination is in range.
     /// </summary>
     private async ValueTask<Eve.Services.Core.CourierObjectiveView?> CourierObjectiveAsync(long characterId, Eve.Agents.AgentMissionRecord record, CancellationToken cancellationToken)
@@ -420,8 +420,8 @@ internal sealed partial class CharacterServicesComposition
     }
 
     /// <summary>
-    /// The objective item of a fetch step: the SDE's type and volume, the pilot's holding, and the agent's station and corporation (where the item is
-    /// handed in). Null when the mission fetches nothing or the agent has no station.
+
+
     /// </summary>
     private async ValueTask<Eve.Services.Core.FetchObjectiveView?> FetchObjectiveAsync(long characterId, Eve.Agents.AgentMissionRecord record, CancellationToken cancellationToken)
     {
@@ -492,8 +492,8 @@ internal sealed partial class CharacterServicesComposition
             cancellationToken, storylineCounters, await CountedFactionOfAsync(characterId, agentId, cancellationToken));
 
     /// <summary>
-    /// The faction and level a completion counts toward the storyline offers: a basic mission of a basic agent (not an arc step, not a trade
-    /// mission, not Faction Warfare or storyline agents, which are other agent types). Null when it does not count.
+
+
     /// </summary>
     private async Task<(long FactionId, long Level)?> CountedFactionOfAsync(long characterId, long agentId, CancellationToken cancellationToken)
     {
@@ -549,7 +549,7 @@ internal sealed partial class CharacterServicesComposition
             return false;
         }
         if (change is null) return false;
-        // a counted completion (a basic mission of a basic agent) adds one to its faction and level toward the storyline offers
+
         if (counters is not null && counted is { } countedAs)
             await counters.IncrementAsync(connection, transaction, characterId, countedAs.FactionId, countedAs.Level, cancellationToken);
         // the objective items leave with the completion
@@ -571,7 +571,7 @@ internal sealed partial class CharacterServicesComposition
         return true;
     }
 
-    /// <summary>The objective items of a fetch step: the pilot's holding of the type is topped up to the quantity in the hangar of the station.</summary>
+
     private async Task GrantObjectiveItemAsync(long characterId, int typeId, long quantity, long stationId, CancellationToken cancellationToken)
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
@@ -597,7 +597,7 @@ internal sealed partial class CharacterServicesComposition
         await transaction.CommitAsync(cancellationToken);
     }
 
-    /// <summary>Takes a courier's cargo back: the stacks of the type tagged with the mission are removed, in one transaction (the agent takes it back).</summary>
+
     private async Task TakeCargoAsync(long characterId, long missionId, int typeId, CancellationToken cancellationToken)
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
@@ -623,10 +623,10 @@ internal sealed partial class CharacterServicesComposition
         await transaction.CommitAsync(cancellationToken);
     }
 
-    /// <summary>The offer an agent makes a character (the dialogue request and the game master's offer): the next step of the epic arc, else a basic kill, courier or mining mission.</summary>
+
     internal async ValueTask<Eve.Agents.AgentMissionContent?> PickOfferAsync(AgentMissionAgentData agent, long characterId, CancellationToken ct)
     {
-        // a storyline agent with a pending storyline offer makes it first
+
         if (await StorylineOffersService.PickAsync(agent, characterId, ct) is { } storylineOffer) return storylineOffer;
         var completed = await agentMissionStore.ReadCompletedAsync(characterId, ct);
         var failed = await agentMissionStore.ReadFailedAsync(characterId, ct);
@@ -640,7 +640,7 @@ internal sealed partial class CharacterServicesComposition
                     dungeon => dungeonWavesDirector?.StartRefusalOf(dungeon) is null, IsMiningMission)) is not { } missionId ||
             agentMissionStatic.Mission(missionId) is not { } mission)
             return null;
-        // the mission type label is the agent's kind (encounter, epicArc): the journal shows no mission without one
+
         return new Eve.Agents.AgentMissionContent(mission.MissionId, mission.NameId, mission.NameEn, agent.MissionKind, agent.ImportantMission);
     }
 }

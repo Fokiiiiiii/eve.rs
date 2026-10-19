@@ -2940,6 +2940,55 @@ fn tether_scene() -> Scene {
     near_the_structure(35_832, 27, 111)
 }
 
+#[test]
+fn a_crab_link_immediately_ends_tether_until_the_status_tail_clears() {
+    let mut scene = tether_scene();
+    let linked_ship_id = scene.pilots[&SESSION].ship.spec.ship_id;
+    let a = scene.pilots[&SESSION].ship.position;
+    let crab_id = 4_250_000_000_000_050;
+    let idle = crate::link::AnalysisBeaconState {
+        active: true,
+        activate_at: 0,
+        deployed_at: NOON,
+        activation_seconds: 20,
+        link_state: 1,
+        link_complete_at: 0,
+        linked_ship_id: 0,
+    };
+    scene.place_analysis_beacon(
+        crate::link::AnalysisBeaconPlacement {
+            deployable_id: crab_id,
+            solar_system_id: 30_000_001,
+            name: "CONCORD Rogue Analysis Beacon".to_string(),
+            type_id: 60_244,
+            group_id: 4_137,
+            position: [a.x + 1_000.0, a.y, a.z],
+            radius: 100.0,
+            owner_id: 1,
+            corporation_id: 1,
+            alliance_id: 0,
+            ship_id: linked_ship_id,
+            state: idle,
+        },
+        NOON,
+    );
+    assert_eq!(tether_changes(&grant_tether(&mut scene, NOON)), vec![(SESSION, 0, STRUCTURE, false)]);
+
+    let link_done = NOON + 240 * SECOND;
+    let changed = scene.set_analysis_beacon_state(
+        crab_id,
+        crate::link::AnalysisBeaconState {
+            link_state: 2,
+            link_complete_at: link_done,
+            linked_ship_id,
+            ..idle
+        },
+        NOON,
+    );
+    assert_eq!(tether_changes(&changed), vec![(SESSION, STRUCTURE, 0, false)]);
+    assert!(!scene.is_tethered_session(SESSION, NOON + SECOND));
+}
+
 fn tether_candidates(range: f64) -> Vec<crate::link::TetherCandidate> {
     vec![crate::link::TetherCandidate { structure_id: STRUCTURE, range }]
 }

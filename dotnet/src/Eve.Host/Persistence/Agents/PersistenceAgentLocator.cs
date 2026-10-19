@@ -19,7 +19,7 @@ public sealed record LocateDelivered(long CharacterId, long AgentId, JsonObject 
 }
 
 /// <summary>
-/// The locator agents' server side (AG-4 / A7): the pilot by name, the pilot's place from the session that is online, the place of a
+
 /// system from the SDE, and the delivery of a located result. The fee, the cooldown and the result event are one transaction: the result
 /// is an outbox row, so a located pilot is always told once the fee is taken (the subscriber retries until the notification is written).
 /// </summary>

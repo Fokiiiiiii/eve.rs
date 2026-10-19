@@ -4,7 +4,7 @@ using Eve.Marshal;
 
 namespace Eve.Host;
 
-/// <summary>Builds keeper.GetCurrentDungeonForCharacter from the active Domain room and its SDE-backed EveJS environment profile.</summary>
+
 public static class AbyssalDungeonProjection
 {
     public static PyValue CurrentInfo(

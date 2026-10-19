@@ -552,7 +552,7 @@ public async ValueTask<Eve.Services.Core.PersistedStructureInfo?> GetStructureIn
             _ => string.Empty,
         };
         var description = text[..Math.Min(1000, text.Length)];
-        // the structures schema owns the description (ST-0); the game store's table is no longer written
+
         await setDescriptionAsync(structureId, description, call.Cancellation);
         return true;
     }

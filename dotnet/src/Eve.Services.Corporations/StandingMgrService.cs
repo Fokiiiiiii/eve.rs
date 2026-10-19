@@ -187,7 +187,8 @@ public sealed partial class StandingMgrService
     {
         var fromId = PositiveId(call.Arg(0));
         var toId = PositiveId(call.Arg(1));
-        if (fromId == 0 || toId == 0)
+        var characterId = call.Session.CharacterId.GetValueOrDefault();
+        if (fromId == 0 || toId == 0 || characterId <= 0 || toId != characterId)
         {
             return new PyList([]);
         }
@@ -210,7 +211,9 @@ public sealed partial class StandingMgrService
     {
         var fromId = PositiveId(call.Arg(0));
         var corporationId = PositiveId(call.Arg(1));
-        if (fromId == 0 || corporationId == 0 ||
+        var characterId = call.Session.CharacterId.GetValueOrDefault();
+        if (characterId <= 0 || fromId == 0 || corporationId == 0 ||
+            (await _corporations.MemberAsync(characterId, call.Cancellation))?.CorporationId != corporationId ||
             await _corporations.GetAsync(corporationId, call.Cancellation) is not { IsNpc: false })
         {
             return EmptyCompositionRowset();

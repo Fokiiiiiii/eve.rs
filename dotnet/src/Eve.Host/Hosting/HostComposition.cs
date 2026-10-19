@@ -36,7 +36,7 @@ using static Eve.Host.HostConfiguration;
 namespace Eve.Host;
 
 /// <summary>Builds the host: accounts and foundations, the legacy GameStore, the character services, the RPC registry and the server.
-/// The order is the original order of Program.cs; every step of it is observable (log lines, scheduler registration, RPC registration).</summary>
+
 internal static class HostComposition
 {
     /// <summary>The ids of the SDE's character titles (characterTitles, keyed by uuid text).</summary>

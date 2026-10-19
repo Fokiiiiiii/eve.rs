@@ -8,7 +8,7 @@ internal sealed partial class CharacterServicesComposition
 {
     private AccessGroupStore accessGroups = default!;
 
-    /// <summary>The owner groups (schema <c>access_groups</c>, or <c>EVE_ACCESS_GROUPS_SCHEMA</c>).</summary>
+
     private async Task AccessGroupStores()
     {
         var schema = Env("EVE_ACCESS_GROUPS_SCHEMA", AccessGroupStore.DefaultSchema);

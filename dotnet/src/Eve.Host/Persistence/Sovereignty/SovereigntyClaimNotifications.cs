@@ -5,7 +5,7 @@ using Eve.Host.Persistence.Mail;
 namespace Eve.Host.Persistence.Sovereignty;
 
 /// <summary>
-/// ST-9 e: the claim notices of a neutral Sovereignty Hub's new owner. V24.01 names two (eve-logic notificationUtil: 43 AllianceClaimAquired for the alliance,
+
 /// 44 CorpClaimAquired for the corporation), both with the payload corpID and allianceID. The recipients are our rule: the client names none, and EVE.js writes
 /// no mail for a claim. The alliance's members get 43, the claiming corporation's members get 44. The key holds the hub, the claim time and the type, so a
 /// retried handover writes nothing twice, and a later claim of the same hub is a new notice.

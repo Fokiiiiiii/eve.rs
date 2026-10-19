@@ -12,11 +12,11 @@ using Npgsql;
 namespace Eve.Host;
 
 /// <summary>
-/// The rent of a corporation office at a structure falls due (ST-12). The job is kept per office and runs at the open bill's due time. A bill that is paid by auto-pay
+
 /// renews the office; an unpaid one (auto-pay off, or short of funds) gives the office up: the corporation's items at the structure go to asset safety and the office
-/// ends, as EVE.js processUnpaidOfficeRentalBill does for a structure. A station office (ST-16) is impounded when unpaid, as EVE.js impoundStationOfficeForUnpaidBill
+
 /// does: its items go to the Impounded location and the office ends. The corporation hears of the due rent and of the eviction by a notification (type 10, group
-/// Bills). A station bill with no creditor (a rent taken before ST-16) is not handled here.
+
 /// </summary>
 internal sealed class StructureOfficeRentDue(
     NpgsqlDataSource source,
@@ -172,7 +172,7 @@ internal sealed class StructureOfficeRentDue(
     }
 
     /// <summary>
-    /// A structure that is destroyed or unanchored closes its offices (ST-12): each office's rent job is due now, in the state change's transaction, and gives the
+
     /// office up (its corporation's items go to asset safety, its bills are cancelled). The job runs right after the commit.
     /// </summary>
     public void SubscribeClosures(EventBus events)
@@ -191,8 +191,8 @@ internal sealed class StructureOfficeRentDue(
     }
 
     /// <summary>
-    /// The one-time creditor migration (ST-16): a station's rent bills taken before ST-16 have no creditor, so their due job did nothing. Each such station's bills
-    /// get the station's owner (the owner the station's rent is credited to now), and the open ones get their due job. A station that is not in the catalog (a
+
+
     /// structure) is left alone. A second run changes nothing.
     /// </summary>
     public async Task CreditStationBillsAsync(Func<long, long?> stationOwnerOf, CancellationToken cancellationToken = default)

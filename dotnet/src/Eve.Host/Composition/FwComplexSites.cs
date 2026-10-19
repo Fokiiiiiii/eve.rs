@@ -11,7 +11,7 @@ namespace Eve.Host;
 /// <summary>
 /// The dungeon sites of the factional warfare complexes on the space runtime. A complex's site is a dungeon of its size's SDE archetype (the first
 /// startable template is picked by the complex id), started for the complex; its NPC defenders are its waves, and the site is completed when they are all
-/// destroyed. The pilots inside a complex are the pilots within its capture radius of the site's point (the wiki: 30 km of the capture point).
+
 /// </summary>
 internal sealed class FwComplexSites(
     DungeonWaveDirector sites,
@@ -90,7 +90,7 @@ internal sealed class FwComplexSites(
     public async Task<bool> DefendersClearedAsync(long instanceId, CancellationToken cancellationToken) =>
         await content.GetAsync(instanceId, cancellationToken) is { State: "completed" };
 
-    /// <summary>The capture radius of a complex, metres (the wiki: a pilot must stay within 30 km of the capture point).</summary>
+
     public const double CaptureRadiusMeters = 30_000;
 
     public async Task<IReadOnlyList<FwComplexPilot>> PilotsInsideAsync(long solarSystemId, long instanceId, CancellationToken cancellationToken)

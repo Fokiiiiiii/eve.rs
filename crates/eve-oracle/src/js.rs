@@ -8,7 +8,7 @@ use serde_json::{Map, Value as Json};
 pub enum Js {
     Null,
     Bool(bool),
-    /// Any JS number (the IEEE-754 double itself).
+
     Num(f64),
     /// A BigInt, as its decimal digits.
     Big(String),

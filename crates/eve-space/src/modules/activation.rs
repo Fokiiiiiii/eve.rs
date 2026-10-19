@@ -179,6 +179,11 @@ impl Scene {
             return vec![Out::Refused { session, command: CODE, reason: "NOT_IMPLEMENTED" }];
         }
         self.settle_all(now);
+        if matches!(effect.action.as_ref(), Some(Action::Cloak { .. }))
+            && self.link_effects_active(session, now)
+        {
+            return vec![Out::Refused { session, command: CODE, reason: "LINK_HOLD" }];
+        }
         let pilot = &self.pilots[&session];
         if pilot.modules.running.iter().any(|r| r.effect.module_id == effect.module_id)
             || pilot.modules.pending_starts.iter().any(|start| start.effect.module_id == effect.module_id)

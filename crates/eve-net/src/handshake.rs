@@ -268,7 +268,7 @@ where
             other => return Err(protocol(format!("expected the client's version tuple, got {other:?}"))),
         }
         match receive(reader).await? {
-            Value::Tuple(items) if items.len() == 3 => break, // (None, "VK", key)
+            Value::Tuple(items) if items.len() == 3 => break,
             Value::Tuple(items) if items.len() == 2 => {
                 send(writer, &Value::Int(0)).await?;
             }

@@ -183,7 +183,7 @@ internal static class HostComposition
         // machoNet's configuration: the settings, with the administrator's writes on top (saved in PostgreSQL when it is configured)
         var config = await GlobalConfigStore.OpenAsync(GlobalConfig.Build(options), globalConfigPersistence);
         HostServer? server = null;
-        var info = new HostMachoNetInfo(registry, config.Current);
+        var info = new HostMachoNetInfo(registry, config.Current, characterSessions);
         registry.Register(new MachoNetService(info, now, GlobalConfigWrites.Create(config, connected, () => server?.PublishClusterConfig())));
 
         var dispatcher = new PacketDispatcher(registry, now) { StrictRpc = settings.StrictRpc };

@@ -86,11 +86,11 @@ Both sides ignore ordinary unused args for the no-argument methods. GetGlobalCon
 
 GetGlobalConfig/GetInitVals type inspection is included in the eight source comparisons, but **full config-field parity is not declared**. None of these comparisons establishes exact current wire bytes under a live session.
 
-### Missing four machoNet exports
+### Remaining three machoNet exports
 
 | RPC | EveJS result / effect | Current RS / V24 evidence |
 |---|---|---|
-| GetClusterGameStatisticsForClient | tuple({}, {}, 1), a nonzero divisor for empty pilot statistics | no export; mapSvc.py:429 calls ('EVE', ({},{},0)), unpacks 3 values and divides by divisor. Unknown method produces AttributeError. Verified client-used missing exit; do not synthesize arbitrary populated statistics. JS :500-509; RS method table MachoNetService.cs:76-164 |
+| GetClusterGameStatisticsForClient | tuple(systemCounts, dockedCounts, 1), counts from active character sessions | mapSvc.py:428-442 calls ('EVE', ({},{},0)), unpacks 3 values, maps system IDs to solarSystemIDs and divides by divisor. HostMachoNetInfo derives system and docked counts from session state; MachoNetService returns the supplied default for other cluster keys. |
 | GetNodeFromAddress | protocol node integer | no export. Carbon internal method exists, but direct current client ProxySvc reachability was not established. JS :485-494 |
 | ReloadClientCodeHash | client code-hash payload; broadcasts reload hash | no export. Current V24 direct caller unverified. JS :439-448 |
 | ForwardCharacterNotification | None; forwards requested notification to target character's sessions | no export. Current V24 direct caller/authorization contract unverified. JS :450-483 |
@@ -268,7 +268,7 @@ All rows below have a source-verified type/table plus concrete Host inclusion in
 | calendarProxy | 2 | GetEventDetails, GetEventList | U | `C:/Users/yutai/eve.rs/dotnet/src/Eve.Services.Core/CalendarMgrService.cs:205` |
 | charFittingMgr | 7 | DeleteFitting, DeleteManyFittings, GetFittings, SaveFitting, SaveManyFittings, UpdateFitting, UpdateNameAndDescription | U | `C:/Users/yutai/eve.rs/dotnet/src/Eve.Services.Core/FittingMgrServices.cs:316` |
 | charMgr | 33 | AddContact, AddOwnerNote, BlockOwners, DeleteCharacterSetting, DeleteContacts, EditContactsRelationshipID, EditOwnerNote, GetCharacterCreationDate, GetCharacterDescription, GetCharacterSettings, GetCohortsForCharacter, GetContactList, GetHomeStation, GetHomeStationRow, GetLabels, GetNote, GetOrganizationInfoForCharacters, GetOwnerNote, GetOwnerNoteLabels, GetPaperdollState, GetPrivateInfoOnCorpChange, GetPublicInfo, GetPublicInfo3, GetRecentShipKillsAndLosses, GetSettingsInfo, LogSettings, MachoResolveObject, RemoveOwnerNote, SaveCharacterSetting, SetActivityStatus, SetCharacterDescription, SetNote, UnblockOwners | U | `C:/Users/yutai/eve.rs/dotnet/src/Eve.Services.CharacterInfo/CharMgrService.cs:628` |
-| charUnboundMgr | 16 | CancelCharacterDeletePrepare, CreateCharacterWithDoll, GetCharacterInfo, GetCharacterLockType, GetCharacterSelectionData, GetCharactersToSelect, GetCharOmegaDowngradeStatus, GetCohortsForUser, GetNumCharacters, GetQAStarterSystemIDs, GetValidRandomName, SelectCharacterID, ToggleValidation, UpdateCharacterBloodline, UpdateCharacterGender, ValidateNameEx | U | `C:/Users/yutai/eve.rs/dotnet/src/Eve.Services.CharacterSelect/CharUnboundMgrService.cs:428` |
+| charUnboundMgr | 18 | CancelCharacterDeletePrepare, CreateCharacterWithDoll, DeleteCharacter, GetCharacterInfo, GetCharacterLockType, GetCharacterSelectionData, GetCharactersToSelect, GetCharOmegaDowngradeStatus, GetCohortsForUser, GetNumCharacters, GetQAStarterSystemIDs, GetValidRandomName, PrepareCharacterForDelete, SelectCharacterID, ToggleValidation, UpdateCharacterBloodline, UpdateCharacterGender, ValidateNameEx | U | `dotnet/src/Eve.Services.CharacterSelect/CharUnboundMgrService.cs:470` |
 | characterEnergyMgr | 1 | GetMyEnergyState | U | `C:/Users/yutai/eve.rs/dotnet/src/Eve.Host/CharacterRpcServices.cs:19` |
 | characterMiningLedger | 1 | GetCharacterLogs | U | `C:/Users/yutai/eve.rs/dotnet/src/Eve.Services.Core/MiningLedgerService.cs:18` |
 | chatAuthenticationService | 1 | GetAuthenticationToken | U | `C:/Users/yutai/eve.rs/dotnet/src/Eve.Services.Core/SessionStartupRpcServices.cs:12` |

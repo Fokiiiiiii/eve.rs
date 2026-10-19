@@ -724,10 +724,19 @@ public sealed class StructureCompositionTests : IAsyncLifetime
     /// </summary>
     private static async Task<HostRuntime> BuildWithSpaceServicesAsync()
     {
+        var previousSimulation = Environment.GetEnvironmentVariable("EVE_SIM");
+        var previousSocket = Environment.GetEnvironmentVariable("EVE_SIM_SOCKET");
         Environment.SetEnvironmentVariable("EVE_SIM", "on");
         Environment.SetEnvironmentVariable("EVE_SIM_SOCKET", Path.Combine(Path.GetTempPath(), "eve-no-sim-" + Guid.NewGuid().ToString("N") + ".sock"));
-        try { return await HostComposition.BuildAsync(Settings()); }
-        finally { Environment.SetEnvironmentVariable("EVE_SIM", "off"); }
+        try
+        {
+            return await HostComposition.BuildAsync(Settings());
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("EVE_SIM", previousSimulation);
+            Environment.SetEnvironmentVariable("EVE_SIM_SOCKET", previousSocket);
+        }
     }
 
     [PgFact]

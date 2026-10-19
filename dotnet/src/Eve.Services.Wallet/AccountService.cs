@@ -9,6 +9,151 @@ namespace Eve.Services.Wallet;
 public sealed partial class AccountService(PgWalletStore wallets, Eve.Corporations.CorporationStore? corporations = null, WalletTransactions? transactions = null)
 {
     /// <summary><c>GetCashBalance(corporation=0)</c>: the ISK the character has, as a real number.</summary>
+    /// <summary>Lists wallet divisions the persisted corporation membership permits the character to read.</summary>
+    /// <summary>Returns the caller's recent or month-filtered wallet journal transactions.</summary>
+    // V24's accountingEntryTypes.fsdbinary is not part of the matching 3396210 SDE export.
+    // These metadata tuples follow the EveJS account service mapping for that client resource.
+    private static readonly (int Id, string Name, int? NameMessageId, int? JournalMessageId)[] EntryTypeMetadata =
+    [
+        (1, "PlayerTrading", 59793, 234499),
+        (2, "MarketTransaction", 59794, 234500),
+        (3, "GMCashTransfer", 59795, 234502),
+        (10, "PlayerDonation", 59802, 234508),
+        (13, "OfficeRentalFee", null, null),
+        (16, "Bounty", 59808, null),
+        (17, "BountyPrize", 59809, null),
+        (19, "Insurance", 59811, null),
+        (33, "AgentMissionReward", 59825, 234515),
+        (34, "AgentMissionTimeBonusReward", 59826, 234516),
+        (93, "AgentMissionRewardCorporationTax", 59885, 234555),
+        (94, "AgentMissionTimeBonusRewardCorporationTax", 59886, 234556),
+        (41, "ReleaseOfImpoundedProperty", null, null),
+        (42, "MarketEscrow", 59834, null),
+        (46, "BrokersFee", 59838, null),
+        (48, "AllianceRegistrationFee", null, null),
+        (50, "AllianceMaintainanceFee", null, null),
+        (54, "TransactionTax", 59846, 234580),
+        (55, "JumpCloneInstallationFee", 59847, 234617),
+        (85, "BountyPrizes", 59877, null),
+        (96, "PlanetaryImportTax", 59888, null),
+        (97, "PlanetaryExportTax", 59889, null),
+        (98, "PlanetaryConstruction", 59890, null),
+        (128, "JumpCloneActivationFee", 312132, 516539),
+        (141, "SkillPurchase", 543737, 543653),
+        (149, "SccSurcharge", 559228, null),
+    ];
+
+    [Method("GetEntryTypes")]
+    public ValueTask<PyValue> GetEntryTypes(ServiceCall call)
+    {
+        var rows = new PyList(EntryTypeMetadata.Select(entry => Py.KeyVal([
+            new KeyValuePair<PyValue, PyValue>(new PyStr("entryTypeID"), new PyInt(entry.Id)),
+            new KeyValuePair<PyValue, PyValue>(new PyStr("entryTypeNameID"),
+                entry.NameMessageId is { } nameId ? new PyInt(nameId) : PyNone.Instance),
+            new KeyValuePair<PyValue, PyValue>(new PyStr("entryTypeName"), new PyStr(entry.Name)),
+            new KeyValuePair<PyValue, PyValue>(new PyStr("entryJournalMessageID"),
+                entry.JournalMessageId is { } journalId ? new PyInt(journalId) : PyNone.Instance),
+        ])).ToArray());
+        return ValueTask.FromResult(Eve.Services.ObjectCaching.MethodResult(
+            rows, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
+    }
+
+    [Method("GetTransactions")]
+    public async ValueTask<PyValue> GetTransactions(ServiceCall call)
+    {
+        if (transactions is not { } walletTransactions)
+            throw new InvalidOperationException("Account transaction storage is not configured.");
+        if (call.Session.CharacterId is not { } characterId)
+            return new PyList([]);
+
+        var accountKey = WalletKey(call.Kwarg("accountKey") ?? call.Arg(0));
+        var ownerId = characterId;
+        var isCorpWallet = JsSemantics.Truthy(call.Kwarg("isCorpWallet") ?? call.Arg(3));
+        if (isCorpWallet)
+        {
+            if (corporations is not { } corporationStore)
+                throw CorporationWalletAccessDenied();
+
+            try
+            {
+                var account = await corporationStore.WalletAccountAsync(characterId, accountKey, false, call.Cancellation);
+                ownerId = account.OwnerId;
+            }
+            catch (Eve.Corporations.CorporationError)
+            {
+                throw CorporationWalletAccessDenied();
+            }
+        }
+
+        var year = Integral(call.Arg(1));
+        var month = Integral(call.Arg(2));
+        var filterByMonth = year > 0 && month is >= 1 and <= 12;
+        var recentAfter = DateTimeOffset.UtcNow.AddDays(-30).ToUnixTimeMilliseconds();
+        var limit = isCorpWallet ? 1000 : 100; // EveJS retains the latest 100 character wallet journal entries.
+        var entries = await walletTransactions.JournalForAccountAsync(ownerId, accountKey, limit: limit,
+            cancellationToken: call.Cancellation);
+        var rows = entries.Where(entry => filterByMonth
+                ? DateTimeOffset.FromUnixTimeMilliseconds(entry.TimeMs).UtcDateTime.Year == year &&
+                  DateTimeOffset.FromUnixTimeMilliseconds(entry.TimeMs).UtcDateTime.Month == month
+                : entry.TimeMs >= recentAfter)
+            .Select(WalletTransactionInfo)
+            .ToArray();
+        return new PyList(rows);
+    }
+
+    private static PyValue WalletTransactionInfo(Eve.Wallet.JournalEntry entry)
+    {
+        var transactionDate = DateTimeOffset.FromUnixTimeMilliseconds(entry.TimeMs).UtcDateTime.ToFileTimeUtc();
+        return Py.KeyVal([
+            new KeyValuePair<PyValue, PyValue>(new PyStr("transactionID"), new PyLong(entry.Id)),
+            new KeyValuePair<PyValue, PyValue>(new PyStr("transactionDate"), new PyLong(transactionDate)),
+            new KeyValuePair<PyValue, PyValue>(new PyStr("referenceID"), new PyLong(entry.ReferenceId ?? 0)),
+            new KeyValuePair<PyValue, PyValue>(new PyStr("entryTypeID"), new PyInt(entry.RefTypeId)),
+            new KeyValuePair<PyValue, PyValue>(new PyStr("ownerID1"), new PyLong(entry.OwnerId)),
+            new KeyValuePair<PyValue, PyValue>(new PyStr("ownerID2"), new PyLong(entry.CounterpartyId)),
+            new KeyValuePair<PyValue, PyValue>(new PyStr("accountKey"), new PyInt(entry.AccountKey)),
+            new KeyValuePair<PyValue, PyValue>(new PyStr("amount"), new PyReal((double)entry.Amount)),
+            new KeyValuePair<PyValue, PyValue>(new PyStr("balance"), new PyReal((double)entry.Balance)),
+            new KeyValuePair<PyValue, PyValue>(new PyStr("description"), new PyStr(entry.Reason)),
+            new KeyValuePair<PyValue, PyValue>(new PyStr("currency"), new PyInt(1)),
+            new KeyValuePair<PyValue, PyValue>(new PyStr("sortValue"), new PyInt(1)),
+        ]);
+    }
+
+    [Method("GetWalletDivisionsInfo")]
+    public async ValueTask<PyValue> GetWalletDivisionsInfo(ServiceCall call)
+    {
+        if (call.Session.CharacterId is not { } characterId || corporations is not { } corporationStore ||
+            transactions is not { } walletTransactions)
+            return PyNone.Instance;
+
+        var divisions = new List<PyValue>();
+        if (call.Session.GetInt("corpid") is { } corporationId && corporationId > 0)
+        {
+            for (var accountKey = 1000; accountKey <= 1006; accountKey++)
+            {
+                if (!await corporationStore.CanReadWalletDivisionAsync(characterId, accountKey, call.Cancellation))
+                    continue;
+
+                var account = await corporationStore.WalletAccountAsync(characterId, accountKey, false, call.Cancellation);
+                var balance = await walletTransactions.AccountBalanceAsync(account, call.Cancellation) ?? 0m;
+                divisions.Add(WalletDivisionInfo(accountKey, balance));
+            }
+
+            return new PyList(divisions);
+        }
+
+        var personal = await wallets.GetAsync(characterId, call.Cancellation);
+        if (personal is not null)
+            divisions.Add(WalletDivisionInfo(1000, personal.Isk));
+        return new PyList(divisions);
+    }
+
+    private static PyValue WalletDivisionInfo(int accountKey, decimal balance) => Py.KeyVal([
+        new KeyValuePair<PyValue, PyValue>(new PyStr("key"), new PyInt(accountKey)),
+        new KeyValuePair<PyValue, PyValue>(new PyStr("balance"), new PyReal((double)balance)),
+    ]);
+
     [Method("GetCashBalance")]
     public async ValueTask<PyValue> GetCashBalance(ServiceCall call)
     {
@@ -161,6 +306,10 @@ public sealed partial class AccountService(PgWalletStore wallets, Eve.Corporatio
             ? decimal.Round(amount, 2, MidpointRounding.AwayFromZero)
             : 0m;
     }
+
+    private static Exception CorporationWalletAccessDenied() => MachoErrors.ThrowUserError(
+        "CrpAccessDenied",
+        ("reason", Py.Tuple(new PyInt(101), new PyStr("UI/Corporations/AccessRestrictions/NoAccessToWalletDivision"))));
 
     private static int WalletKey(PyValue value)
     {

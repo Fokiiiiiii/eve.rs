@@ -14,7 +14,8 @@ public sealed record ControlledStructureInventory(Item Structure, IReadOnlyList<
 [Service("invbroker")]
 public sealed partial class InvBrokerService(
     PgItemStore items, ItemTypeCatalog types, StationCatalog stations, CharacterShips ships, DogmaStatic statics, Func<long> nowUnixMs, ISpaceContainers? space = null, ISpaceDroneBays? droneBays = null, CorporationHangarAccess? corporationHangarAccess = null, IReadOnlyList<Eve.Services.ICharacterEntryHook>? entryHooks = null,
-    Func<ClientSession, long, CancellationToken, ValueTask<ControlledStructureInventory?>>? controlledStructureInventory = null) : IBoundObjectReleaseHandler
+    Func<ClientSession, long, CancellationToken, ValueTask<ControlledStructureInventory?>>? controlledStructureInventory = null,
+            Func<IReadOnlyCollection<long>, CancellationToken, Task<IReadOnlyDictionary<long, double>>>? crystalDamage = null) : IBoundObjectReleaseHandler
 {
     /// <summary>The container the client asks for to get the hangar of the station it is docked at.</summary>
     public const int ContainerHangar = 10004;
@@ -45,6 +46,9 @@ public sealed partial class InvBrokerService(
 
         /// <summary>The current pilot's structure inventory; this binding never grants mutation access.</summary>
         Structure,
+
+        /// <summary>All personal assets for the bound character's global assets window.</summary>
+        GlobalAssets,
 
         /// <summary>The selected character's learned skills, primed by godma as a location.</summary>
         Character,
@@ -227,6 +231,12 @@ public sealed partial class InvBrokerService(
             return await HangarAsync(session, cancellationToken);
         if (context.Kind == Kind.Space || session.CharacterId is not { } character)
             return [];
+        if (context.Kind == Kind.GlobalAssets)
+        {
+            if (context.ItemId != character)
+                return [];
+            return await RowsAsync(await items.OwnedByAsync(character, cancellationToken), cancellationToken);
+        }
         if (context.Kind == Kind.Character)
         {
             if (context.ItemId != character || await ships.LoadAsync(character, cancellationToken) is not { } snapshot)
@@ -459,12 +469,14 @@ public sealed partial class InvBrokerService(
             var contents = controlled is not null
                 ? await RowsAsync(controlled.Contents, call.Cancellation)
                 : await ContentsAsync(context, call.Session, call.Cancellation);
+            if (context.Kind == Kind.GlobalAssets)
+                contents = contents.Where(row => stations.Get(row.LocationId) is not null).ToArray();
             var chosen = flag is { } f ? contents.Where(r => r.Flag == f).ToList() : [.. contents];
             result = context.Kind == Kind.Ship && flag is null && StationOf(call.Session) is not null
                 ? InventoryWire.Set(chosen.Select(r => InventoryWire.PackedRow(r, r.CategoryId == PlayerCategory ? new PyStr("") : PyNone.Instance)))
                 : chosen.Count == 0 && flag is not null
                     ? InventoryWire.EmptySet()
-                    : new PyList([.. chosen.Select(r => controlled is not null ? InventoryWire.PackedRow(r, new PyStr("")) : InventoryWire.PackedRow(r))]);
+                    : new PyList([.. chosen.Select(row => controlled is not null ? InventoryWire.PackedRow(row, new PyStr("")) : InventoryWire.PackedRow(row))]);
         }
         return await CompleteInventoryRpcAsync(call, result);
     }
@@ -513,6 +525,43 @@ public sealed partial class InvBrokerService(
         return await CompleteInventoryRpcAsync(call, result);
     }
 
+
+    [Method("GetDamageForCrystals")]
+    public async ValueTask<PyValue> GetDamageForCrystals(ServiceCall call)
+    {
+        var requestedIds = call.Arg(0) switch
+        {
+            PyTuple tuple => tuple.Items,
+            PyList list => list.Items,
+            PyObjectEx { Header: PyTuple { Items.Count: 2 } header }
+                when header.Items[0] is PyToken { Value: "__builtin__.set" }
+                     && header.Items[1] is PyTuple { Items.Count: 1 } setArguments
+                     && setArguments.Items[0] is PyList values => values.Items,
+            _ => []
+        };
+        var itemIds = requestedIds.Select(IdOf).Where(id => id is not null).Select(id => id!.Value).ToHashSet();
+        if (itemIds.Count == 0 || call.Session.CharacterId is not { } characterId
+            || statics.AttributeId("crystalsGetDamaged") is not { } damageAttributeId)
+            return new PyDict([]);
+
+        var ownedItems = (await items.OwnedByAsync(characterId, call.Cancellation))
+            .Where(item => itemIds.Contains(item.Id))
+            .ToArray();
+        await statics.EnsureTypesAsync(ownedItems.Select(item => item.TypeId), call.Cancellation);
+        var damageableIds = ownedItems
+            .Where(item => statics.Type(item.TypeId)?.Attributes.GetValueOrDefault(damageAttributeId) > 0)
+            .Select(item => item.Id)
+            .ToArray();
+        if (damageableIds.Length == 0)
+            return new PyDict([]);
+        if (crystalDamage is null)
+            throw new InvalidOperationException("Crystal damage state is not configured.");
+
+        var damageByItem = await crystalDamage(damageableIds, call.Cancellation);
+        return new PyDict(damageableIds.Select(itemId => new KeyValuePair<PyValue, PyValue>(
+            new PyLong(itemId), new PyReal(Math.Clamp(damageByItem.GetValueOrDefault(itemId), 0d, 1d)))).ToArray());
+    }
+
     /// <summary>Everything in the inventory as a <c>Rowset</c>.</summary>
     [Method("GetContainerContents")]
     public async ValueTask<PyValue> GetContainerContents(ServiceCall call)
@@ -538,31 +587,48 @@ public sealed partial class InvBrokerService(
 [Method("ListStations")]
     public async ValueTask<PyValue> ListStations(ServiceCall call)
     {
-        if (call.Session.CharacterId is not { } character) return new PyList([]);
-        var owned = await items.OwnedByAsync(character, call.Cancellation);
-        var ids = owned.Select(item => item.LocationId).Where(id => stations.Get(id) is not null).ToHashSet();
-        var corporationId = CorporationIdOf(call.Session);
-        if (corporationId > 0 && corporationId != character && corporationHangarAccess is not null)
-        {
-            var corpItems = await items.OwnedByAsync(corporationId, call.Cancellation);
-            foreach (var group in corpItems.Where(item => ItemFlags.IsCorporationHangar(item.Flag) && stations.Get(item.LocationId) is not null)
-                         .GroupBy(item => (item.LocationId, item.Flag)))
-            {
-                if (await CorporationAccessAsync(character, corporationId, group.Key.LocationId, group.Key.Flag,
-                        CorporationHangarOperation.Query, call.Cancellation))
-                    ids.Add(group.Key.LocationId);
-            }
-        }
-        return new PyList([.. ids.Order().Select(InventoryWire.Id)]);
+        var context = ContextOf(call);
+        var character = context is { Kind: Kind.GlobalAssets } ? context.ItemId : call.Session.CharacterId;
+        if (character is not { } characterId)
+            return Py.Rowset(
+                ["stationID", "solarSystemID", "typeID", "itemCount", "upkeepState"],
+                []);
+
+        var owned = await items.OwnedByAsync(characterId, call.Cancellation);
+        var rows = owned
+            .Where(item => item.Quantity != 0 && stations.Get(item.LocationId) is not null)
+            .GroupBy(item => item.LocationId)
+            .Select(group => stations.Get(group.Key) is { } station
+                ? (Station: station, ItemCount: group.Count())
+                : default)
+            .Where(group => group.Station is not null)
+            .OrderBy(group => group.Station!.SolarSystemId)
+            .ThenBy(group => group.Station!.Id)
+            .Select(group => Py.Tuple([
+                InventoryWire.Id(group.Station!.Id),
+                InventoryWire.Id(group.Station.SolarSystemId),
+                new PyInt(group.Station.TypeId),
+                new PyInt(group.ItemCount),
+                PyNone.Instance
+            ]));
+
+        return Py.Rowset(
+            ["stationID", "solarSystemID", "typeID", "itemCount", "upkeepState"],
+            rows);
     }
 
     [Method("ListStationItems")]
     public async ValueTask<PyValue> ListStationItems(ServiceCall call)
     {
-        if (call.Session.CharacterId is not { } character || IdOf(call.Arg(0)) is not { } station || stations.Get(station) is null)
+        var context = ContextOf(call);
+        var character = context is { Kind: Kind.GlobalAssets } ? context.ItemId : call.Session.CharacterId;
+        if (character is not { } characterId || IdOf(call.Arg(0)) is not { } station || stations.Get(station) is null)
             return new PyList([]);
-        var itemsAtStation = await StationItemsAsync(call.Session, character, station, call.Cancellation);
-        var rows = await RowsAsync(itemsAtStation, call.Cancellation);
+
+        var stationItems = context is { Kind: Kind.GlobalAssets }
+            ? await items.InLocationAsync(station, characterId, call.Cancellation)
+            : await StationItemsAsync(call.Session, characterId, station, call.Cancellation);
+        var rows = await RowsAsync(stationItems.Where(item => item.Quantity != 0), call.Cancellation);
         return new PyList([.. rows.Select(row => InventoryWire.PackedRow(row))]);
     }
 
@@ -594,12 +660,42 @@ public sealed partial class InvBrokerService(
     [Method("GetAssetWorth")]
     public async ValueTask<PyValue> GetAssetWorth(ServiceCall call)
     {
-        if (call.Session.CharacterId is not { } character) return Py.Number(0d);
-        var owned = await items.OwnedByAsync(character, call.Cancellation);
-        var typesById = await types.GetAsync(owned.Select(item => item.TypeId), call.Cancellation);
-        var worth = owned.Sum(item => typesById.GetValueOrDefault(item.TypeId)?.BasePrice
-            * Math.Max(1, item.Singleton ? 1 : item.Quantity) ?? 0m);
-        return Py.Number((double)worth);
+        const int PlexTypeId = 44992;
+        const int BlueprintCategoryId = 9;
+        var context = ContextOf(call);
+        var character = context is { Kind: Kind.GlobalAssets } ? context.ItemId : call.Session.CharacterId;
+        if (character is not { } characterId)
+            return Py.Tuple([Py.Number(0d), Py.Number(0d)]);
+
+        var owned = await items.OwnedByAsync(characterId, call.Cancellation);
+        var typesById = await types.GetAsync(owned.Select(item => item.TypeId).Append(PlexTypeId), call.Cancellation);
+        decimal assetWorth = 0m;
+        decimal plexWorth = 0m;
+        var plexUnitPrice = typesById.GetValueOrDefault(PlexTypeId)?.BasePrice ?? 0m;
+
+        foreach (var item in owned)
+        {
+            if (item.Quantity == 0 || !typesById.TryGetValue(item.TypeId, out var type))
+                continue;
+
+            var units = item.Singleton ? 1 : Math.Max(0, item.Quantity);
+            if (units == 0)
+                continue;
+
+            if (item.TypeId == PlexTypeId)
+            {
+                plexWorth += plexUnitPrice * units;
+                continue;
+            }
+
+            if (type.CategoryId != BlueprintCategoryId && type.BasePrice > 0)
+                assetWorth += type.BasePrice * units;
+        }
+
+        return Py.Tuple([
+            Py.Number((double)Math.Round(assetWorth, MidpointRounding.AwayFromZero)),
+            Py.Number((double)Math.Round(plexWorth, MidpointRounding.AwayFromZero))
+        ]);
     }
 
     [Method("IsMyItemAtDockableLocation")]
@@ -1174,27 +1270,41 @@ private async ValueTask<bool> IsDockedShipContextAsync(ClientSession session, lo
     [Method("MachoBindObject")]
     public async ValueTask<PyValue> MachoBindObject(ServiceCall call)
     {
-        var parameters = call.Arg(0) switch { PyTuple t when t.Items.Count > 0 => t.Items[0], PyList l when l.Items.Count > 0 => l.Items[0], var other => other };
-        var opened = await ((IService)this).CallAsync(new ServiceCall
+        var bindArguments = call.Arg(0) switch
         {
-            Method = IdOf(parameters) == ContainerHangar ? "GetInventory" : "GetInventoryFromId",
-            Args = [parameters],
-            Session = call.Session,
-            CallId = call.CallId,
-            Cancellation = call.Cancellation,
-        });
+            PyTuple tuple => tuple.Items,
+            PyList list => list.Items,
+            _ => []
+        };
+        var parameters = bindArguments.Count > 0 ? bindArguments[0] : call.Arg(0);
+        var sessionCharacterId = call.Session.CharacterId;
+        var globalAssets = sessionCharacterId is { } boundCharacterId
+            && bindArguments.Count > 1
+            && IdOf(bindArguments[0]) == boundCharacterId
+            && IdOf(bindArguments[1]) == 10002;
+        var opened = globalAssets
+            ? Bind(new Context(Kind.GlobalAssets, call.Session.CharacterId!.Value, 0), call.Session)
+            : await ((IService)this).CallAsync(new ServiceCall
+            {
+                Method = IdOf(parameters) == ContainerHangar ? "GetInventory" : "GetInventoryFromId",
+                Args = [parameters],
+                Session = call.Session,
+                CallId = call.CallId,
+                Cancellation = call.Cancellation,
+            });
         if (opened is not PySubStruct)
-        {
             return None;
-        }
+
         PyValue result = None;
         if (call.Arg(1) is PyTuple { Items.Count: > 0 } nested && JsSemantics.StringValue(nested.Items[0]) is { } method)
         {
-            var oid = (JsSemantics.StringValue(((PyTuple)((PySubStream)((PySubStruct)opened).Value).Decoded!).Items[0]));
+            var oid = JsSemantics.StringValue(((PyTuple)((PySubStream)((PySubStruct)opened).Value).Decoded!).Items[0]);
             result = await ((IService)this).CallAsync(new ServiceCall
             {
                 Method = method,
-                Args = nested.Items.Count > 1 && nested.Items[1] is PyTuple or PyList ? (nested.Items[1] is PyTuple a ? a.Items : ((PyList)nested.Items[1]).Items) : [],
+                Args = nested.Items.Count > 1 && nested.Items[1] is PyTuple or PyList
+                    ? nested.Items[1] is PyTuple argsTuple ? argsTuple.Items : ((PyList)nested.Items[1]).Items
+                    : [],
                 Kwargs = nested.Items.Count > 2 ? nested.Items[2] : None,
                 Session = call.Session,
                 CallId = call.CallId,

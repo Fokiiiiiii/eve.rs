@@ -13,7 +13,7 @@ export CARGO_TERM_COLOR=always CARGO_INCREMENTAL=0
 export DOTNET_NOLOGO=1 DOTNET_CLI_TELEMETRY_OPTOUT=1
 export EVE_MARKET_SEED=skip   # the host would seed the NPC market from CCP's ESI on its first start
 
-TOOLCHAIN="${RUST_TOOLCHAIN:-1.94.1}"   # the toolchain CI pins (Cargo.toml's rust-version is 1.94)
+TOOLCHAIN="${RUST_TOOLCHAIN:-1.99.0}"   # the toolchain CI pins (Cargo.toml's rust-version is 1.94)
 PG_URL="$(tools/dev/pg18.sh url)"
 # the .NET tests take an Npgsql keyword string (some hand the variable to Npgsql unchanged)
 PG_NPGSQL="Host=127.0.0.1;Port=${PGPORT:-5432};Username=postgres;Password=postgres;Database=eve"

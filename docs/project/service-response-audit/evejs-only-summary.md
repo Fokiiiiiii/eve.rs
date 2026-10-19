@@ -42,7 +42,7 @@ named RPC表のV24列全体では、caller／forwarding-source根拠が40行、�
 
 ### 代表的なclient操作
 
-- **mapのpilot人数表示**：V24は3要素の結果を読み、人数計算の除数を使います。`machoNet.GetClusterGameStatisticsForClient` の出口がないため、その呼出しはmissing-method経路になります。EveJSの空状態は2つのdictと除数1です。[EJS-0220](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:471)
+- **mapのpilot人数表示**：V24は3要素の結果を読みます。`machoNet.GetClusterGameStatisticsForClient` は、現在のキャラクターセッションをsystem別・dock状態別に集計し、EVEキーに対して2つのdictと除数1を返します。対象外のcluster keyにはcallerのdefaultを返します。[EJS-0220](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:471)
 - **character選択画面のbiomass**：削除予約はFILETIME、削除は結果を受けて次の表示へ進みます。`PrepareCharacterForDelete`／`DeleteCharacter` の出口不足をcaller付きで記録しています。[EJS-0082](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:333)、[EJS-0076](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:327)
 - **惑星施設の編集・物資操作**：惑星一覧が返っても、planetをbindして情報を読み、network変更後のcolonyを受け取る後続処理が必要です。そのbinder・後続出口の不足を別に追っています。[EJS-0306](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:557)、[EJS-0296](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:547)、[EJS-0311](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:562)
 - **Agentのjournal・replay**：Agent初回bindの修正は反映済みですが、journal取得やreplay timestamp等の不足は別件です。[EJS-0020](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:271)、[EJS-0022](C:/Users/yutai/eve.rs/docs/project/service-response-audit/evejs-only-responses.md:273)

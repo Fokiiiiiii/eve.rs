@@ -58,7 +58,9 @@ internal sealed class Rig : IAsyncDisposable
         Modules = new PgModuleStateStore(source, _schema + "f");
         Ships = new CharacterShips(source, statics, Characters, Items, Skills, Modules);
         Service = new InvBrokerService(Items, new ItemTypeCatalog(new SdeReader(source)), Stations, Ships, statics,
-            () => ClockMs, corporationHangarAccess: corporationHangarAccess);
+            () => ClockMs, corporationHangarAccess: corporationHangarAccess,
+            crystalDamage: async (itemIds, token) => (await Modules.ModuleConditionsAsync(itemIds, token))
+                .ToDictionary(entry => entry.Key, entry => entry.Value.Damage));
     }
 
     /// <summary>Ships that these reads never ask anything of.</summary>
@@ -504,8 +506,12 @@ public class InvBrokerTests
         var cargo = await rig.AddAsync(Rig.Tritanium, Rig.Character, ship, flag: 5, quantity: 10);
         var session = Rig.Session();
 
-        var stations = Assert.IsType<PyList>(await rig.CallAsync(session, "ListStations"));
-        Assert.Contains(InventoryWire.Id(Rig.Station), stations.Items);
+        var stations = Assert.IsType<PyObject>(await rig.CallAsync(session, "ListStations"));
+        Assert.Equal("eve.common.script.sys.rowset.Rowset", JsSemantics.StringValue(stations.Name));
+        var assetWorth = Assert.IsType<PyTuple>(await rig.CallAsync(session, "GetAssetWorth"));
+        Assert.Equal(2, assetWorth.Items.Count);
+        Assert.DoesNotContain(PyNone.Instance, assetWorth.Items);
+
         var stationItems = Rows(await rig.CallAsync(session, "ListStationItems", null, new PyLong(Rig.Station)));
         Assert.Contains(stationItems, row => PackedItemId(row) == ship);
         Assert.Equal(PyBool.True, await rig.CallAsync(session, "IsMyItemAtDockableLocation", null, new PyLong(ship), new PyLong(Rig.Station)));
@@ -516,6 +522,62 @@ public class InvBrokerTests
 
         Assert.Equal(PyNone.Instance, await rig.CallAsync(session, "SetLabel", null, new PyLong(ship), new PyStr("Test fit")));
         Assert.Equal("Test fit", (await rig.Items.GetAsync(ship))!.CustomName);
+    }
+
+    [PgFact]
+    public async Task Global_assets_bind_lists_personal_station_assets_and_nested_container_items()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var ship = await rig.AddAsync(Rig.Cockroach, Rig.Character, Rig.Station, singleton: true);
+        var cargo = await rig.AddAsync(Rig.Tritanium, Rig.Character, ship, flag: 5, quantity: 10);
+        var session = Rig.Session();
+
+        var binding = Assert.IsType<PyTuple>(await rig.CallAsync(
+            session,
+            "MachoBindObject",
+            null,
+            new PyTuple([new PyLong(Rig.Character), new PyLong(10002)]),
+            new PyTuple([new PyStr("ListStations"), new PyTuple([]), PyNone.Instance])));
+        var opened = Assert.IsType<PySubStruct>(binding.Items[0]);
+        var oid = Rig.OidOf(opened);
+        Assert.IsType<PyObject>(binding.Items[1]);
+
+        Assert.Contains(Rows(await rig.CallAsync(session, "List", oid)), row => PackedItemId(row) == ship);
+        Assert.Contains(Rows(await rig.CallAsync(session, "ListStationItems", oid, new PyLong(Rig.Station))),
+            row => PackedItemId(row) == ship);
+        var all = Rows(await rig.CallAsync(session, "ListIncludingContainers", oid));
+        Assert.Contains(all, row => PackedItemId(row) == ship);
+        Assert.Contains(all, row => PackedItemId(row) == cargo);
+        Assert.Equal(2, Assert.IsType<PyTuple>(await rig.CallAsync(session, "GetAssetWorth", oid)).Items.Count);
+        Assert.Equal(PyNone.Instance, await rig.CallAsync(Rig.Session(id: 2), "List", oid));
+    }
+
+
+    [PgFact]
+    public async Task Crystal_damage_lists_only_owned_damageable_crystals_from_persisted_module_conditions()
+    {
+        await using var rig = await Rig.CreateAsync();
+        const int crystalTypeId = 12552;
+        await rig.Statics.EnsureTypesAsync([crystalTypeId]);
+        var attributeId = Assert.IsType<int>(rig.Statics.AttributeId("crystalsGetDamaged"));
+        Assert.True(rig.Statics.Type(crystalTypeId)!.Attributes.GetValueOrDefault(attributeId) > 0);
+
+        var damagedCrystal = await rig.AddAsync(crystalTypeId, Rig.Character, Rig.Station, singleton: true);
+        var freshCrystal = await rig.AddAsync(crystalTypeId, Rig.Character, Rig.Station, singleton: true);
+        var foreignCrystal = await rig.AddAsync(crystalTypeId, Rig.Character + 1, Rig.Station, singleton: true);
+        var tritanium = await rig.AddAsync(Rig.Tritanium, Rig.Character, Rig.Station);
+        await rig.Modules.SetModuleConditionsAsync(new Dictionary<long, Eve.Fitting.ModuleCondition>
+        {
+            [damagedCrystal] = new(0.375, 0, 0, false),
+        });
+
+        var result = Assert.IsType<PyDict>(await rig.CallAsync(
+            Rig.Session(), "GetDamageForCrystals", null,
+            PyValue.PythonSet([new PyLong(damagedCrystal), new PyLong(freshCrystal), new PyLong(foreignCrystal), new PyLong(tritanium)])));
+        Assert.Equal(new PyReal(0.375), Assert.Single(result.Entries, entry => entry.Key == new PyLong(damagedCrystal)).Value);
+        Assert.Equal(new PyReal(0), Assert.Single(result.Entries, entry => entry.Key == new PyLong(freshCrystal)).Value);
+        Assert.DoesNotContain(result.Entries, entry => entry.Key == new PyLong(foreignCrystal));
+        Assert.DoesNotContain(result.Entries, entry => entry.Key == new PyLong(tritanium));
     }
 
     [PgFact]

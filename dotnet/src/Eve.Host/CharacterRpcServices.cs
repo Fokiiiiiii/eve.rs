@@ -293,3 +293,23 @@ public sealed class PaperDollServerRpcService : IService
     private static long Long(PyValue? value) => value switch { PyInt i => i.Value, PyLong l => l.Value, PyReal r when double.IsFinite(r.Value) => (long)r.Value, _ => 0 };
     private static bool BooleanOrDefault(PyValue value, bool fallback) => value is PyNone ? fallback : value switch { PyBool b => b == PyBool.True, PyInt i => i.Value != 0, PyLong l => l.Value != 0, _ => fallback };
 }
+
+public sealed class ClientStatLoggerRpcService : IService
+{
+    private readonly Action<string> _log;
+
+    public ClientStatLoggerRpcService(Action<string>? log = null)
+        => _log = log ?? (message => Console.Error.WriteLine($"[ClientStatLogger] LogString {System.Text.Json.JsonSerializer.Serialize(message)}"));
+
+    public string Name => "clientStatLogger";
+    public bool HasMethod(string method) => method == "LogString";
+
+    public ValueTask<PyValue> CallAsync(ServiceCall call)
+    {
+        if (!HasMethod(call.Method)) return ValueTask.FromResult<PyValue>(PyNone.Instance);
+        call.Cancellation.ThrowIfCancellationRequested();
+        var message = call.Arg(0) is PyNone ? "" : JsSemantics.StringValue(call.Arg(0)) ?? "";
+        _log(message);
+        return ValueTask.FromResult<PyValue>(PyNone.Instance);
+    }
+}

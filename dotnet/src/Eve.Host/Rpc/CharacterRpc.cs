@@ -46,6 +46,20 @@ internal sealed partial class CharacterServicesComposition
             catalog,
             ReadHomeStationStructureAsync,
             ReadHomeStationOfficeLocationsAsync);
+        var globalAssetsInventory = HostInventoryServiceFactory.CreateInvBroker(
+            items,
+            itemTypes,
+            stations,
+            ships,
+            dogma,
+            now,
+            spaceContainers,
+            spaceDrones,
+            corporations,
+            characterEntryHooks,
+            controlledStructureInventory: structureControlReadModel.InventoryAsync,
+            crystalDamage: async (itemIds, token) => (await modules.ModuleConditionsAsync(itemIds, token))
+                .ToDictionary(entry => entry.Key, entry => entry.Value.Damage));
         return [
             new SkillMgr2Service(),
             skillHandler,
@@ -86,13 +100,15 @@ internal sealed partial class CharacterServicesComposition
                             Math.Max(0, warFactionId));
                     });
                 },
-                async (characterId, token) => await characters.PaperdollStateAsync(characterId, token)),
+                async (characterId, token) => await characters.PaperdollStateAsync(characterId, token),
+                globalAssetsInventoryCall: call => ((IService)globalAssetsInventory).CallAsync(call)),
             new Eve.Services.CharacterInfo.HomeStationService(
                 homeStations,
                 characters.TryChangeHomeStationAsync,
                 characters.ResetRemoteHomeStationChangeTimeAsync,
                 () => DateTimeOffset.FromUnixTimeMilliseconds(now()).ToFileTime()),
             new Eve.Services.CharacterInfo.OnlineStatusService(characterSessions, ReadWatchlistAsync),
+            new ClientStatLoggerRpcService(),
         ];
     }
 

@@ -3757,7 +3757,7 @@ Owner decisions (X9, X10). The courier rules below are eve.rs's project rules, n
 
 ### Wormhole space: final status (2026-10-12)
 
-Owner decision Q-13 (2026-10-19): Local in wormhole space uses DELAYED mode; the member list contains only characters who have spoken in that system. The player chat service that will apply this rule is open.
+Owner decision Q-13 (2026-10-19): Local in wormhole space uses DELAYED mode; the member list contains only characters who have spoken in that system. The Host public gateway now implements Local roster requests, speaker-only wormhole membership, system-change membership notices and message delivery. Implementation follows V24.01 `chat/client/local_chat/messenger.py` request and notice field contracts. It escapes HTML, caps messages at 1,024 UTF-8 bytes and limits a session to five messages per ten seconds. Corp/alliance/fleet/wing/squad/private channels, ignore/block handling, MOTD and a live two-character walk remain open.
 
 The implemented work, its evidence and its open items are in `docs/project/TODO.md` ("Wormhole space: final status"). This section lists the places where eve.rs differs from the reference or where a project rule stands in for a published value.
 

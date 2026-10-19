@@ -1,5 +1,12 @@
 # Inventory RPC fixes — canonical main handoff
 
+## Follow-up (2026-10-19)
+
+The `charMgr` global-assets root gap is partially closed. `ListStations` and global `List` now resolve personal items through parent containers to either static stations or persistently deployed structures; `List` returns root items and `ListStations` reports location rows. `ListStationItems` returns personal items stored directly at either root, and `ListIncludingContainers` retains descendant items that resolve to a valid root. Structure IDs and location metadata come from the existing deployed-structure directory source; nested contents come from the authoritative inventory store. Focused `eve_p2` regression `Global_assets_resolve_structure_roots_and_nested_personal_items` passed. The Host wrapper end-to-end regression remains open in `docs/project/TODO.md`.
+
+`contractProxy.GetLoginInfo` has a confirmed V24 callsite (`eve/client/script/ui/shared/neocom/contracts/contracts.py:190-205`). It remains open because the Host has no persisted contract records or read model. The ledger row is updated with the client fields and concrete missing state owner.
+
+
 日付: 2026-10-13。root: `repository root`。branch: `main`。
 開始HEAD: `dda03ca0464043822e68c8348604ff34eadedcac`。
 保存前に観測したHEAD: `b2557b42e8077fe8c6376a9189f8a0072a7d26be`。親がmainを進行中。以下の修正はそのworking treeにある未commit差分を含む。

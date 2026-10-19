@@ -1,5 +1,10 @@
 # Deviations from the reference server
 
+## Global assets follow-up (2026-10-19)
+
+`charMgr` global assets now resolves a personal item's root by walking inventory parent locations to a static station or persistently deployed structure. The V24 callsite in `eve-logic/eve/client/script/environment/invCache.py` and EveJS `charMgrGlobalAssets.js` use this root to list root items and nested-container contents. eve.rs reads personal items from `PgItemStore` and structure metadata from the existing deployed-structure directory source. A focused `eve_p2` regression covers a structure root, a container directly stored there, and a child item. The Host wrapper end-to-end regression and exact structure `upkeepState` parity remain open; this batch records no intentional client behavior difference.
+
+
 The reference (EVE.js) is matched by default (`docs/design/adr/0001-external-compatibility-only.md`).
 A deliberate difference goes here, with the evidence that the client cannot tell or that it
 is better off, and how it is tested. A behaviour is either:

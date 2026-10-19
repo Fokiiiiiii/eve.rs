@@ -500,4 +500,15 @@ public class RulesTests
         Assert.Equal(ItemState.Offline, world.Item(3005)!.State);
         Assert.Equal([3002L, 3003L, 3004L, 3005L], changes.Select(change => change.ModuleId));
     }
+
+
+    [Theory]
+    [InlineData(963, true)]
+    [InlineData(26, false)]
+    public void Rigs_can_be_removed_without_destruction_only_from_strategic_cruisers(int shipGroupId, bool expected)
+    {
+        var shipType = new TypeDef(1, shipGroupId, 6, new Dictionary<int, double>(), []);
+
+        Assert.Equal(expected, FittingRules.CanUnfitRigWithoutDestruction(shipType));
+    }
 }

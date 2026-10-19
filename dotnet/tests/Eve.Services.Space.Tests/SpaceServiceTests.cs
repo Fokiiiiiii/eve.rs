@@ -73,6 +73,28 @@ public class SpaceServiceTests
 {
     private static long Id(PyValue value) => Events.Number(value);
 
+    [PgFact]
+    public async Task A_tengu_rig_can_be_removed_to_the_hangar_without_being_destroyed()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var character = await rig.NewCharacterAsync();
+        const int tenguTypeId = 29984;
+        const int mediumRigTypeId = 31790;
+        await rig.Statics.EnsureTypesAsync([tenguTypeId, mediumRigTypeId]);
+        Assert.Equal(963, rig.Statics.Type(tenguTypeId)!.GroupId);
+        var tengu = (await rig.Ships.GrantAsync(character.CharacterId, tenguTypeId, 1, singleton: true))!.Single().After;
+        var rigItem = (await rig.Ships.GrantAsync(character.CharacterId, mediumRigTypeId, 1, singleton: true))!.Single().After;
+
+        var fitted = await rig.Ships.MoveAsync(character.CharacterId, rigItem.Id, Rig.Station, tengu.Id, 92, null);
+        Assert.IsType<Eve.Ships.ShipChanged>(fitted);
+        var removed = await rig.Ships.MoveAsync(character.CharacterId, rigItem.Id, tengu.Id, Rig.Station, null, null);
+
+        Assert.IsType<Eve.Ships.ShipChanged>(removed);
+        var saved = await rig.Items.GetAsync(rigItem.Id);
+        Assert.NotNull(saved);
+        Assert.Equal((Rig.Station, Eve.Inventory.ItemFlags.Hangar), (saved.LocationId, saved.Flag));
+    }
+
     [Fact]
     public async Task Admin_get_bubble_id_requires_server_staff_role_and_uses_available_bubble_sources()
     {

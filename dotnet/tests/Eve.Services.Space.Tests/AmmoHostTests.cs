@@ -196,12 +196,17 @@ public class AmmoHostTests
         var writer = new HeldWriter(rig);
         rig.Space.ChargeWriter = writer.WriteAsync;
         rig.Sim.Say(new SimChargeSpent((ulong)session.SessionId, gun, 70));
+        var system = (int)session.GetInt("solarsystemid")!.Value;
 
         session.Close();
         await Task.Delay(700);
-        Assert.NotEqual(ItemFlags.Hangar, (await rig.Items.GetAsync(character.ShipId))!.Flag); // not put back yet
+        Assert.Null(await rig.SpaceItems.GetAsync(character.ShipId)); // disconnect waits for the rounds before saving the position
         writer.Gate.SetResult();
-        await Rig.UntilAsync(() => rig.Items.GetAsync(character.ShipId).GetAwaiter().GetResult()!.Flag == ItemFlags.Hangar);
+        await rig.Space.QuiesceAsync();
+        var ship = (await rig.Items.GetAsync(character.ShipId))!;
+        Assert.Equal((long)system, ship.LocationId);
+        Assert.Equal(Eve.Ships.CharacterShips.InSpaceFlag, ship.Flag);
+        Assert.Equal(system, (await rig.SpaceItems.GetAsync(character.ShipId))!.SolarSystemId);
         Assert.Equal(70, (await rig.Ships.LoadAsync(character.CharacterId, CancellationToken.None))!.Charges.Single().Quantity);
 
         // and when the host stops

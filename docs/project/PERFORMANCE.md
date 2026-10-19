@@ -1,5 +1,9 @@
 # Performance measurements
 
+## Proposed load scenarios
+
+The candidate engineering SLOs and scenario list from the 2026-10-19 supplied research report are tracked in [TODO.md](TODO.md): handshake storm, 24-48 hour soak, movement-heavy load, dense grid, weapon activation burst, market hotspot, jump storm, mission wave burst, forced restart, cold SDE boot and malformed-protocol fuzz. These are proposals pending owner adoption, not measured targets.
+
 ## dogmaIM.GetAllInfo (docked fitted rookie ship)
 
 - Scenario: one Dogma service call and its deferred notifications per iteration against a newly created Caldari rookie character with its starter fit, using the Dogma test rig and loaded SDE. Ten warmup calls and 100 measured calls. Reports p50/p95 wall time and process-wide allocated bytes per call. In the same run, it measures one extra `BuildBrain` operation, which reconstructs the prior duplicate work.

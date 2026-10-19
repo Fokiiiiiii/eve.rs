@@ -9,6 +9,7 @@ Date for entries: 2026-10-19. Questions with a recorded decision are marked deci
 - **Context:** Matching server SDE build 3396210 contains only dungeon 14100; the client static export contains all four dungeon/objective graphs but no complete NPC site rosters. EveJS has no matching templates. Generic sites would not reproduce the named AIR simulations.
 - **Options:** (A) Keep all four unavailable until a reliable manifest is found; the arc remains incomplete. (B) Approve generic objective-category sites; the missions become offerable with intentionally approximate content and unsupported counts/waves.
 - **Recommended default:** A, keep them held.
+- **New evidence 2026-10-19:** Arc 132 report adds mission-by-mission kits, objectives, object counts and rewards. The AIR tutorial pack is newly available in the 261018.1 zip; NPC type IDs, dungeon mapping and time limits remain to be established. Recommended default remains holding the four missions.
 - **Status:** decided (recommended default), 2026-10-19
 
 ## Q-03 — Untagged mission levels
@@ -18,6 +19,7 @@ Date for entries: 2026-10-19. Questions with a recorded decision are marked deci
 - **Context:** The SDE rows lack mission-level fields; agent level, division, title, reward, and standing do not define a stable mission-level conversion. Counts: courier 311, kill 187, mining 0, trade 451, other 151.
 - **Options:** (A) Keep current level tags only where an explicit SDE/rule source exists. (B) Approve a separately documented mapping for specific rows, accepting its stated evidence and limitations.
 - **Recommended default:** A; do not derive tags from proxies.
+- **New evidence 2026-10-19:** Report 2 identifies an 2026-08-19 mission backend data-processing update after the proposed June 16 checkpoint. No new level evidence changes the current decision.
 - **Status:** decided (recommended default), 2026-10-19
 
 ## Q-04 — Public insurgency gateway
@@ -27,6 +29,7 @@ Date for entries: 2026-10-19. Questions with a recorded decision are marked deci
 - **Context:** The client contract, generic HTTP/2 protobuf gateway, and campaign/site-point owner exist. Insurgency handlers, truthful aggregation, threshold data, and notice producers are incomplete; EveJS's gateway response uses placeholders. The client messenger path has a recorded client-side failure.
 - **Options:** (A) Defer until the call path and rules can produce truthful UI state. (B) Implement contract-shaped reads/notices over the existing campaign owner after resolving both inputs; cost includes an authoritative progress formula and notification sequencing.
 - **Recommended default:** A until the inputs are established, then implement B without placeholder values.
+- **New evidence 2026-10-19:** Report 1 supplies candidate cumulative stage effects but no thresholds, decay rule or gateway protobuf definitions. Recommended default remains deferring the public gateway until truthful progress and thresholds are sourced.
 - **Status:** decided (recommended default), 2026-10-19
 
 ## Q-05 — Planetary Interaction survey
@@ -36,6 +39,7 @@ Date for entries: 2026-10-19. Questions with a recorded decision are marked deci
 - **Context:** The native CCP resource harmonic algorithm/data and `SH` buffer format are absent; the client also has a proximity tuple unpack error in the trained/in-range path. Current server calls can return resource identities/project-derived values but not CCP survey bands.
 - **Options:** (A) Keep the honest limited response without survey bands. (B) Define and label a project approximation and support a modified client. (C) Defer complete CCP-like survey until native inputs/format and a client-path fix are available.
 - **Recommended default:** A now; C for any claim of CCP-like survey behavior.
+- **New evidence 2026-10-19:** Report 1 lists Remote Sensing range and PI cycle figures, but the resource yield numbers are player measurements and SH inputs remain absent. No change to the limited survey default.
 - **Status:** decided (recommended default), 2026-10-19
 
 ## Q-06 — Command burst wire and buff registry
@@ -44,6 +48,7 @@ Date for entries: 2026-10-19. Questions with a recorded decision are marked deci
 - **Question:** Should the C4 command-burst track be scheduled with a sim wire batch and a source-backed live buff value?
 - **Context:** The earlier zero-value finding was based on reading output attributes before tracing effect 6737 to charge multipliers and module inputs. SDE charge multipliers and module values produce nonzero results; `CommandBurstValueTests` checks Shield Harmonizing (-8 Tech I, -10 Tech II), and `CommandBurstFamiliesTests` checks every published burst charge. The owner superseded the prior deferral on 2026-10-19 and directed the full command-burst build; Host coverage now checks delivery for all six families, including Mining Foreman collection 2474. A new level-V strength regression expects -12 for Armor Energizing, -12 for Shield Harmonizing and +60 for Mining Laser Field Enhancement from pinned SDE inputs. The two-pilot walk is included in the selected slow-workflow check. The live two-pilot trace showed both recipient ids arriving with the cycle, then a Host snapshot with no charge and four zero buff ids. Simlink protocol 81 now carries the consumed SDE charge type into settlement for DogmaWorld evaluation. The selected two-pilot Actions walk still needs a green end-to-end run to confirm receiver notifications, changed dogma and expiry.
 - **Decision:** Superseded 2026-10-19: build command bursts, including the shared recipient exchange and timed buff delivery.
+- **New evidence 2026-10-19:** Report 1 lists dogma attribute IDs and example charge values, while formula ordering and stacking remain open. Current charge registry/tests cover published families; retain the full build decision.
 - **Status:** superseded by owner direction, 2026-10-19
 
 ## Q-07 — Weapon-bank semantics
@@ -53,6 +58,7 @@ Date for entries: 2026-10-19. Questions with a recorded decision are marked deci
 - **Context:** TODO records E-07 as blocked on RC-5. Grouped weapons affect activation, ammo/cycle handling, and client-visible state.
 - **Options:** (A) Keep E-07 held until RC-5 is resolved. (B) Approve a dedicated evidence-gathering track for the RC-5 contract and then implementation.
 - **Recommended default:** A; do not invent grouping rules.
+- **New evidence 2026-10-19:** Report 1 gives the grouped activation/reload/unoffline behavior as a candidate from Quantum Rise. This does not establish current client RPC contract or edge behavior. Keep the RC-5 check open.
 - **Status:** decided (recommended default), 2026-10-19
 
 ## Q-08 — Mutual-war invite provider
@@ -62,6 +68,7 @@ Date for entries: 2026-10-19. Questions with a recorded decision are marked deci
 - **Context:** TODO records an explicit unavailable refusal for pending/blocked reads and invite send/withdraw/respond/block writes. Returning success without connected state would fabricate behavior.
 - **Options:** (A) Keep the explicit refusal until the provider and notifications are connected. (B) Prioritize a provider-backed implementation with permissions, state transitions, idempotency, and target notifications.
 - **Recommended default:** A until a complete provider-backed flow is ready.
+- **New evidence 2026-10-19:** Report 1 found no transition rules for mutual-war invites. Retain the provider-backed flow requirement.
 - **Status:** decided (recommended default), 2026-10-19
 
 ## Q-12 — Pochven Triglavian NPC bounty payouts
@@ -103,11 +110,11 @@ Date for entries: 2026-10-19. Questions with a recorded decision are marked deci
 
 - **Decisions 11–17 (2026-10-19):** Q-02 keep Arc 132 missions 17183–17186 held; Q-03 keep the approximately 1,100 untagged missions untagged until an authoritative level source exists; Q-04 defer the public insurgency gateway until its client call path and truthful progress/threshold rules exist; Q-05 keep PI survey limited to rule-derived values and do not synthesize an SH buffer; Q-06 superseded 2026-10-19: build command bursts, including recipient exchange and timed buff delivery; Q-07 keep weapon banks held on RC-5; Q-08 retain mutual-war invite refusal.
 
-## Q-09 — Embedded client exports while the repository is public
+## Q-09 — Embedded client data
 
 - **Date:** 2026-10-19
 - **Question:** Should embedded `client-*` exports be removed or replaced during the temporary public period?
-- **Decision:** Keep the embedded data as it is while the repository is public; revisit the decision when the repository returns to private. No data change now.
+- **Decision:** Keep the embedded client data as is. No data change now.
 - **Status:** decided 2026-10-19
 
 ## Q-10 — CI triggers after the repository returns to private
@@ -131,3 +138,52 @@ Date for entries: 2026-10-19. Questions with a recorded decision are marked deci
 - **Decision:** Do not pay bounties for Pochven Triglavian NPCs. Bounty payments are restricted to New Eden proper; other locations generally have none. Existing loot and drops are unchanged.
 - **Status:** decided 2026-10-19
 - **Affected records:** TODO bounty/loot status; DEVIATIONS, Encounter Surveillance System and NPC bounty rules.
+
+
+## Q-16 — Single ruleset checkpoint
+
+- **Date:** 2026-10-19
+- **Question:** Should `24.01@2026-06-16` and SDE release 2026-06-16 be the single target for client build 3396210, with later patch changes excluded?
+- **Context:** Supplied report 2 proposes this mapping and identifies a conflict: current FW Battlefield reward code uses 150,000 LP while the report says the checkpoint value was 50,000 LP before the 2026-07-01 change.
+- **Recommended default:** Adopt the report's checkpoint pending primary metadata confirmation; correct post-checkpoint values in a separate implementation task.
+- **Status:** open
+
+## Q-17 — AIR arc 132 simulation sites
+
+- **Date:** 2026-10-19
+- **Question:** Should the project reconstruct arc 132 sites from the UniWiki mission descriptions and the EveJS air-tutorial pack, using generic hostile hulls by faction and size where NPC identities are absent?
+- **Context:** The report adds mission objectives, kits and counts; exact hostile type IDs, dungeon mapping and time limits remain missing. This could change Q-02's current keep-held default.
+- **Recommended default:** Keep missions held until hostile identities and client dungeon mapping are established.
+- **Status:** open
+
+## Q-18 — Advanced Contracting skill value
+
+- **Date:** 2026-10-19
+- **Question:** Should Advanced Contracting +4 outstanding contracts per level be adopted after a source check?
+- **Context:** Supplied report itself flags this figure as doubtful.
+- **Recommended default:** Do not adopt until corroborated.
+- **Status:** open
+
+## Q-19 — Zarzakh rules coverage
+
+- **Date:** 2026-10-19
+- **Question:** Which Zarzakh facts from the report should be prioritized for code reconciliation against the pinned client and SDE?
+- **Context:** The report lists patch facts alongside multiple unknown operational mechanics.
+- **Recommended default:** Reconcile only rules that have a current implementation path and source.
+- **Status:** open
+
+## Q-20 — CRAB candidate mechanics
+
+- **Date:** 2026-10-19
+- **Question:** Should the reported CEQ/interference regeneration, 60-second link tail, resistance bonus, exclusive reward window, BPC cost/materials and deployment limits be added to CRAB reconciliation as acceptance criteria?
+- **Context:** The current design records several constants but these additional details need direct source/code comparison.
+- **Recommended default:** Use the report as a checklist only; adopt each value after primary/client/reference verification.
+- **Status:** open
+
+## Q-21 — Mission LP formula
+
+- **Date:** 2026-10-19
+- **Question:** Should the reported mission LP formula be used after independent corroboration?
+- **Context:** Supplied report labels the formula high confidence but also says its sources do not corroborate the formula.
+- **Recommended default:** Do not encode it until source-backed.
+- **Status:** open

@@ -88,6 +88,8 @@ def test_a_loaded_burst_changes_a_fleet_members_dogma_until_its_buff_expires():
         member.call_bound(member_ship_service[0], "Undock", member_ship, False)
         owner_dogma = owner.call("dogmaIM", "MachoBindObject", (SYSTEM, 5), None)
         member_dogma = member.call("dogmaIM", "MachoBindObject", (SYSTEM, 5), None)
+        owner.call("beyonce", "MachoBindObject", SYSTEM, None)
+        member.call("beyonce", "MachoBindObject", SYSTEM, None)
         owner.call_bound(owner_dogma[0], "GetAllInfo", True, True, None)
         member.call_bound(member_dogma[0], "GetAllInfo", True, True, None)
         notifications_of(member)

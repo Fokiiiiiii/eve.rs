@@ -42,9 +42,9 @@ public sealed class FwBattlefieldRulesTests
     }
 
     [Fact]
-    public void Loyalty_points_go_to_the_first_thirty_winners_by_character_id_and_the_pool_is_150_000()
+    public void Loyalty_points_go_to_the_first_thirty_winners_by_character_id_and_the_pool_is_50_000()
     {
-        Assert.Equal(150_000, FwBattlefields.LpEach * FwBattlefields.LpParticipants);
+        Assert.Equal(49_980, FwBattlefields.LpEach * FwBattlefields.LpParticipants);
         var recipients = FwBattlefields.LpRecipients(Enumerable.Range(1, 35).Reverse().Select(id => (long)id));
         Assert.Equal(30, recipients.Count);
         Assert.Equal(1, recipients[0]);

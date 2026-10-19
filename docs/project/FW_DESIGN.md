@@ -192,4 +192,4 @@ Pilots enter a complex's rooms through acceleration gates. The API for the FW co
 
 ## Research reconciliation (2026-10-19)
 
-The supplied candidate report describes Battlefield LP as 150,000 after the 2026-07-01 change and says build 3396210 predates it, implying a 50,000 LP checkpoint value. Current `FwBattlefields.LpPool` is 150,000. The checkpoint conflict is open under Q-16 and in `RULESET_BOUNDARY.md`; do not treat the current constant as checkpoint-confirmed. The report's 30 km capture, three-hour cooldown, 2,000 VP and 30-recipient maximum match current constants; blocker details and pod eligibility need explicit comparison to the current walk.
+Owner decision Q-16 applies the checkpoint per item: build 3396210 uses a 50,000 LP pool per battlefield; the 150,000 increase began on 2026-07-01. `FwBattlefields.LpPool` is 50,000, divided into integer 1,666 LP shares for up to 30 winners (49,980 LP paid when all 30 qualify). The 30 km capture, three-hour cooldown, 2,000 VP and 30-recipient maximum remain as implemented; blocker details and pod eligibility still need comparison to the current walk.

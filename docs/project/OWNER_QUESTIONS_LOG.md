@@ -146,7 +146,8 @@ Date for entries: 2026-10-19. Questions with a recorded decision are marked deci
 - **Question:** Should `24.01@2026-06-16` and SDE release 2026-06-16 be the single target for client build 3396210, with later patch changes excluded?
 - **Context:** Supplied report 2 proposes this mapping and identifies a conflict: current FW Battlefield reward code uses 150,000 LP while the report says the checkpoint value was 50,000 LP before the 2026-07-01 change.
 - **Recommended default:** Adopt the report's checkpoint pending primary metadata confirmation; correct post-checkpoint values in a separate implementation task.
-- **Status:** open
+- **Decision:** Adopt the per-item checkpoint calls. FW Battlefield LP at build 3396210 is 50,000 per battlefield; the 150,000 increase on 2026-07-01 is excluded. Other post-checkpoint values are corrected only when the report and patch timeline agree, with evidence recorded per item.
+- **Status:** decided 2026-10-19
 
 ## Q-17 — AIR arc 132 simulation sites
 
@@ -154,7 +155,8 @@ Date for entries: 2026-10-19. Questions with a recorded decision are marked deci
 - **Question:** Should the project reconstruct arc 132 sites from the UniWiki mission descriptions and the EveJS air-tutorial pack, using generic hostile hulls by faction and size where NPC identities are absent?
 - **Context:** The report adds mission objectives, kits and counts; exact hostile type IDs, dungeon mapping and time limits remain missing. This could change Q-02's current keep-held default.
 - **Recommended default:** Keep missions held until hostile identities and client dungeon mapping are established.
-- **Status:** open
+- **Decision:** Keep missions 17183-17186 held. EveJS 261018.1 air-tutorial pack has four unrelated tutorial templates (9103, 9105, 10461, 9245), no mission IDs 17183-17186 or dungeons 14097-14100, and no spawn profiles. It cannot supply the required NPC identities/compositions or simulation dungeon structure. EveJS authored content is approximate and not client-verified.
+- **Status:** decided 2026-10-19
 
 ## Q-18 — Advanced Contracting skill value
 
@@ -162,7 +164,8 @@ Date for entries: 2026-10-19. Questions with a recorded decision are marked deci
 - **Question:** Should Advanced Contracting +4 outstanding contracts per level be adopted after a source check?
 - **Context:** Supplied report itself flags this figure as doubtful.
 - **Recommended default:** Do not adopt until corroborated.
-- **Status:** open
+- **Decision:** Adopt Advanced Contracting +4 outstanding contracts per level as an approximate, unconfirmed configurable value; add only a limit hook at the contract owner seam.
+- **Status:** decided 2026-10-19
 
 ## Q-19 — Zarzakh rules coverage
 
@@ -178,7 +181,8 @@ Date for entries: 2026-10-19. Questions with a recorded decision are marked deci
 - **Question:** Should the reported CEQ/interference regeneration, 60-second link tail, resistance bonus, exclusive reward window, BPC cost/materials and deployment limits be added to CRAB reconciliation as acceptance criteria?
 - **Context:** The current design records several constants but these additional details need direct source/code comparison.
 - **Recommended default:** Use the report as a checklist only; adopt each value after primary/client/reference verification.
-- **Status:** open
+- **Decision:** Adopt all CRAB values in report 1 section 9 as the target ruleset. Preserve existing owner-decided constants where the report is silent, including per-type bounties, wave 2 rosters and integer internals.
+- **Status:** decided 2026-10-19
 
 ## Q-21 — Mission LP formula
 
@@ -186,4 +190,5 @@ Date for entries: 2026-10-19. Questions with a recorded decision are marked deci
 - **Question:** Should the reported mission LP formula be used after independent corroboration?
 - **Context:** Supplied report labels the formula high confidence but also says its sources do not corroborate the formula.
 - **Recommended default:** Do not encode it until source-backed.
-- **Status:** open
+- **Decision:** Adopt the reported mission LP formula as an approximate, unconfirmed configuration value, including the reported Security Connections bonus.
+- **Status:** decided 2026-10-19

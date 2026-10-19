@@ -8,7 +8,6 @@ The fitted module and its one charge are seeded in the pilot's ship; fitting and
 
 from __future__ import annotations
 
-import time
 import uuid
 
 import pytest
@@ -92,17 +91,9 @@ def test_a_loaded_burst_changes_a_fleet_members_dogma_until_its_buff_expires():
         member.call_bound(member_dogma[0], "GetAllInfo", True, True, None)
         notifications_of(member)
 
-        owner_ballpark = owner.call("beyonce", "MachoBindObject", SYSTEM, None)
-        owner.call_bound(owner_ballpark[0], "CmdOrbit", member_ship, 5_000)
-        time.sleep(30)  # let the normal flight order bring the burst ship inside its SDE-defined range
-        notifications_of(owner)
         notifications_of(member)
 
-        owner.call_bound(owner_dogma[0], "SetModuleOnline", owner_ship, burst)
-        try:
-            owner.call_bound(owner_dogma[0], "Activate", burst, "moduleBonusWarfareLinkShield", None, 1000)
-        except Exception as error:
-            raise AssertionError(f"command burst activation failed: {error!r}; payload={getattr(error, 'payload', None)!r}") from error
+        owner.call_bound(owner_dogma[0], "Activate", burst, "moduleBonusWarfareLinkShield", None, 1000)
         active_events = wait_for_events(
             member,
             lambda events: named(events, "OnModuleAttributeChanges") and named(events, "OnDbuffUpdated"),

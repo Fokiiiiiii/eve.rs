@@ -257,8 +257,16 @@ fn verify(path: &Path, source: &str, expect: &Expect) -> Result<(), FetchError> 
             return Err(FetchError::Sha256 { source: source.to_owned(), expected: expected.clone(), actual });
         }
     }
-    let archive = zip::ZipArchive::new(File::open(path)?)?;
-    if !archive.file_names().any(|name| base_name(name) == Some("_sde.jsonl")) {
+    let mut archive = zip::ZipArchive::new(File::open(path)?)?;
+    let mut has_metadata = false;
+    for index in 0..archive.len() {
+        let entry = archive.by_index(index)?;
+        if base_name(entry.name()?.as_ref()) == Some("_sde.jsonl") {
+            has_metadata = true;
+            break;
+        }
+    }
+    if !has_metadata {
         return Err(FetchError::BadArchive("it has no _sde.jsonl".to_owned()));
     }
     Ok(())
@@ -322,7 +330,8 @@ fn extract_into(archive: &Path, partial: &Path, only: Option<&[String]>) -> Resu
         if entry.is_dir() {
             continue;
         }
-        let Some(name) = base_name(entry.name()).map(str::to_owned) else { continue };
+        let member = entry.name()?.into_owned();
+        let Some(name) = base_name(&member).map(str::to_owned) else { continue };
         if only.is_some_and(|wanted| name != "_sde.jsonl" && !wanted.contains(&name)) {
             continue;
         }

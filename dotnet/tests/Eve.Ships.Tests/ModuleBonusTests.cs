@@ -18,7 +18,7 @@ public class ModuleBonusTests
     private const int BastionModuleI = 33400, TriageModuleI = 27951, CapitalIndustrialCoreI = 28583;
     private const int ShieldCommandBurstI = 42529, ShieldHarmonizing = 42695, CovertCloakII = 11578, CovertCynosuralGeneratorI = 28646;
     private const int CommandDestroyers = 37615;
-    private const int Sleipnir = 22444, CommandShips = 23950, SleipnirRole = 33098, CommandShipStrength = 1924;
+    private const int Drake = 24698, Sleipnir = 22444, CommandShips = 23950, SleipnirRole = 33098, CommandShipStrength = 1924;
 
     private const int MaxVelocity = 37, WarpScrambleStatus = 104, DisallowDocking = 2354;
     private const int RemoteRepairImpedance = 2116, RemoteAssistanceImpedance = 2135, SensorDampenerResistance = 2112;
@@ -174,20 +174,17 @@ public class ModuleBonusTests
     [PgFact]
     public async Task Armor_shield_and_mining_burst_strength_uses_the_level_five_sde_skill_bonus()
     {
-        await using var rig = await Rig.CreateAsync();
-        (int Module, int Charge, int StrengthSkill, double Expected)[] cases =
+        (int Hull, int Module, int Charge, int StrengthSkill, double Expected)[] cases =
         [
-            (42526, 42832, 11569, -12), // Armor Energizing: -8 * (1 + 50%)
-            (42529, 42695, 3351, -12),  // Shield Harmonizing: -8 * (1 + 50%)
-            (42528, 42829, 0, 60),      // Mining Foreman is the module's required skill: 40 * (1 + 50%)
+            (Drake, 42526, 42832, 11569, -12),      // Armor Energizing: -8 * (1 + 50%)
+            (Drake, 42529, 42695, 3351, -12),       // Shield Harmonizing: -8 * (1 + 50%)
+            (Rorqual, 42528, 42829, 28374, 50),     // Capital Industrial Ships: 40 * (1 + skill 5 * 5%)
         ];
 
-        foreach (var (moduleTypeId, chargeTypeId, strengthSkill, expected) in cases)
+        foreach (var (hullTypeId, moduleTypeId, chargeTypeId, strengthSkill, expected) in cases)
         {
-            var started = strengthSkill == 0
-                ? await FitAndStartAsync(rig, 587, moduleTypeId, chargeTypeId)
-                : await FitAndStartAsync(rig, 587, moduleTypeId, chargeTypeId, strengthSkill);
-            var (_, burst, running) = started;
+            await using var rig = await Rig.CreateAsync();
+            var (_, burst, running) = await FitAndStartAsync(rig, hullTypeId, moduleTypeId, chargeTypeId, strengthSkill);
             Assert.Equal(expected, running.World.Get(burst, BuffValue), 9);
         }
     }

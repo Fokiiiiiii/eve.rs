@@ -268,3 +268,8 @@ dotnet test dotnet/tests/Eve.Services.Inventory.Tests/Eve.Services.Inventory.Tes
 
 ## Parent verification checkpoint (2026-10-13)
 After the analyzer/string-wire fixture repairs, the parent observed the full Inventory Debug suite passing 63 tests, 0 failed/skipped. A selected Space suite covering abandon/control/structures/batch movement passed 18 tests, 0 failed/skipped. The existing Rust rename-only slim broadcast gap and graphical acceptance remain open.
+
+
+## Follow-up: contracts read owner (2026-10-19)
+
+`GetLoginInfo` and `GetMyContractEscrow` now use `PersistenceContractReadModel` and the PostgreSQL contracts schema. Core rowset tests (2) and the `eve_p3` Host read test (1) passed. Contract creation and lifecycle writes remain open; see `docs/project/CONTRACTS_DESIGN.md` and the contract row in `docs/project/TODO.md`.

@@ -70,11 +70,15 @@ internal static class HostComposition
         var connected = new ConnectedSessions();
         CharacterSessions? characterSessions = null;
         PublicGateway.PublicGatewayRoutes? publicGateway = null;
+        Eve.Services.Core.IContractReadModel? contractReadModel = null;
         NpgsqlDataSource? dataSource = null; // owned by the runtime: shut down with it, so its pooled connections return to the server
         if (Env("EVE_PG_URL", "") is { Length: > 0 } pgUrl)
         {
             var schema = Env("EVE_IDENTITY_SCHEMA", PgAccountDirectory.DefaultSchema);
             var source = dataSource = NpgsqlDataSource.Create(PgConnection.ToConnectionString(pgUrl));
+            var contractSchema = Env("EVE_CONTRACTS_SCHEMA", Eve.Host.Persistence.PersistenceContractReadModel.DefaultSchema);
+            await Eve.Host.Persistence.PersistenceContractReadModel.MigrateAsync(source, contractSchema);
+            contractReadModel = new Eve.Host.Persistence.PersistenceContractReadModel(source, contractSchema);
             var applied = await PgAccountDirectory.MigrateAsync(source, schema);
             Console.Error.WriteLine($"eve-host: accounts in PostgreSQL, schema {schema}{(applied.Count > 0 ? "; applied " + string.Join(", ", applied) : "")}");
             var directory = new PgAccountDirectory(source, accountOptions, schema);
@@ -160,7 +164,8 @@ internal static class HostComposition
             isShipInSpace: space is null ? null : (Func<ClientSession, bool>)space.IsInSpace,
             unanchorControlTower: space is null ? null : (session, itemId, cancellationToken) => space.ControlTowerUnanchor is { } unanchor
                 ? new ValueTask(unanchor(session, itemId, cancellationToken))
-                : throw new InvalidOperationException("the control towers are not wired on this server")))
+                : throw new InvalidOperationException("the control towers are not wired on this server"),
+            contractReadModel: contractReadModel))
         {
             registry.Register(service);
         }

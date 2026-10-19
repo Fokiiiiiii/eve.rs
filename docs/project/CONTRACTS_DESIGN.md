@@ -4,7 +4,7 @@
 
 The V24.01 client has three contract types: item exchange, auction, and courier. Its client code imports the skills `Contracting`, `Advanced Contracting`, and `Corporation Contracting`; it has no `Public Contracts` skill identifier. A loan contract is not in the V24 client type flow. The first implementation slice must follow the client type and skill tables in `eve/common/script/util/contractscommon.py` and `inventorycommon/const.py`, rather than introducing another type or skill.
 
-The startup read is established by V24 `eve/client/script/ui/shared/neocom/contracts/contracts.py:190-205`: `GetLoginInfo()` returns a KeyVal with `assignedToMe` rows (`issuerID`, `contractID`), `needsAttention` rows (`contractID`, `state`), and `inProgress` rows (`contractID`, `startStationID`, `endStationID`, `expires`). EveJS v0.12.9 `contractProxyService.js` and `contractRuntimeState.js` build these from persisted contract records. Current eve.rs registers `GetMyContractEscrow`, but it returns zeros and has no contract records; `GetLoginInfo` is absent. The service-response audit also records the startup read and contract exits.
+The startup read is established by V24 `eve/client/script/ui/shared/neocom/contracts/contracts.py:190-205`: `GetLoginInfo()` returns a KeyVal with `assignedToMe` rows (`issuerID`, `contractID`), `needsAttention` rows (`contractID`, `state`), and `inProgress` rows (`contractID`, `startStationID`, `endStationID`, `expires`). EveJS v0.12.9 `contractProxyService.js` and `contractRuntimeState.js` build these from persisted contract records. eve.rs now migrates PostgreSQL `contract_records`, `contract_items`, and `contract_bids` and wires `GetLoginInfo` and `GetMyContractEscrow` to its read model. The current slice has no contract writer, so the tables receive no gameplay records yet. Unit tests cover the V24 rowset fields; a PostgreSQL Host test covers personal/corporation scopes, expiry, accepted courier rows, and escrow sums. The service-response audit retains all remaining contract operations as open work.
 
 Primary client references: `eve/client/script/ui/shared/neocom/contracts/contracts.py`, `contractsearch.py`, `createContractWnd.py`, and `eve/common/script/util/contractscommon.py` in eve-logic V24.01. Behaviour comparison: EveJS v0.12.9 `server/src/services/_other/contractProxyService.js` and `server/src/services/contracts/contractRuntimeState.js`.
 
@@ -45,7 +45,7 @@ Publish the V24 contract notifications only after the corresponding transaction 
 
 ## Delivery slices
 
-1. Persisted contract schema/store and authoritative login, escrow, and personal-list reads with PostgreSQL tests.
+1. **Built:** PostgreSQL contract header, escrow-item, and bid tables; Host wiring for `GetLoginInfo` and `GetMyContractEscrow`; Core wire-shape tests and a PostgreSQL Host read test passed. The personal-list read remains open.
 2. Item exchange create/accept/delete/expiry with inventory and wallet journaling, notifications, failure and retry coverage.
 3. Public/region search, corporation issuance and item selection, availability checks, and contract-limit enforcement.
 4. Auction bids, outbid refunds, buyout/expiry settlement, and bid reads.

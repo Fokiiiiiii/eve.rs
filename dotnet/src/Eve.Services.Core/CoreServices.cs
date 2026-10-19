@@ -29,7 +29,8 @@ public static class CoreServices
         SuperWeaponRpcCallbacks? superWeaponRpcCallbacks = null,
         TourneyQueryCallback? tourneyQueryCallback = null,
         ISpaceModules? spaceModules = null,
-        Func<ClientSession, bool>? isShipInSpace = null)
+        Func<ClientSession, bool>? isShipInSpace = null,
+        IContractReadModel? contractReadModel = null)
     {
         gameRpcCallbacks ??= new GameRpcCallbacks();
         var licenses = new OmegaLicenses(accounts, nowUnixMs);
@@ -61,7 +62,7 @@ public static class CoreServices
             new TourneyMgrService(tourneyQueryCallback),
             new RaffleMgrService(gameRpcCallbacks.SeedRafflesAsync),
             new RaffleProxyService(),
-            new ContractProxyService(),
+            new ContractProxyService(contractReadModel),
             new JumpCloneService(gameRpcCallbacks.JumpClones, gameRpcCallbacks.JumpCloneSpace),
             new ServiceGatewayMgrService(gameRpcCallbacks.SetHijackMode, gameRpcCallbacks.IsHijackModeEnabled),
             new SharedSettingsMgrService(gameRpcCallbacks.ReadSharedSettings, gameRpcCallbacks.WriteSharedSettingsAsync, nowUnixMs),

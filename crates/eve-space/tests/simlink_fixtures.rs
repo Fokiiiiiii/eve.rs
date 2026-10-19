@@ -1216,6 +1216,7 @@ fn message_of(case: &Value) -> Message {
             target_id: wide(case, "targetId"),
             cycle_id: wide(case, "cycleId") as u64,
             command: number("command") as u8,
+            charge_type_id: case.get("chargeTypeId").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
             mining_amount_m3: case["miningAmountM3"].as_f64().unwrap(),
             waste_multiplier: case["wasteMultiplier"].as_f64().unwrap(),
             waste_probability: case["wasteProbability"].as_f64().unwrap(),

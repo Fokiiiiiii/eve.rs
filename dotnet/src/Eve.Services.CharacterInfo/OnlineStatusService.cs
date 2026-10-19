@@ -37,7 +37,7 @@ public sealed partial class OnlineStatusService(
             return false;
         }
 
-        // An unselected session cannot query another character's presence.
+        // Like the reference, a call without a selected observer reads raw presence.
         if (observerId > 0 && observerId != targetId)
         {
             var contacts = observerWatchlist ?? await Watchlist(observerId, cancellation);

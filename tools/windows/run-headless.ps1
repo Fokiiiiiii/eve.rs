@@ -13,8 +13,10 @@ if (Test-Path -LiteralPath $venvPython) { $Python = $venvPython }
 Push-Location $client
 try {
     if ($Live) { $env:EVE_LIVE_SERVER = 'eve.rs' }
+    $global:LASTEXITCODE = 0
     & $Python -m pytest -q -rs @PytestArgs
-    if ($LASTEXITCODE -ne 0) { throw "pytest failed with exit code $LASTEXITCODE" }
+    $pytestExitCode = $LASTEXITCODE
+    if ($pytestExitCode -ne 0) { throw "pytest failed with exit code $pytestExitCode" }
 } finally {
     if ($Live) { Remove-Item Env:EVE_LIVE_SERVER -ErrorAction SilentlyContinue }
     Pop-Location

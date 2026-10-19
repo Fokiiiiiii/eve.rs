@@ -1869,6 +1869,7 @@ impl Message {
                 let rounding_roll = r.f64()?;
                 let crit_roll = r.f64()?;
                 let recipients = read_recipients(&mut r)?;
+                let charge_type_id = r.i32()?;
                 let numbers = [mining_amount_m3, waste_multiplier, crit_multiplier, access_difficulty_bonus];
                 // probabilities are at most one, the rolls below one, and every number finite and not negative; a mining cycle mines something
                 if cycle_id == 0
@@ -1895,6 +1896,8 @@ impl Message {
                             || crit_multiplier != 0.0
                             || access_difficulty_bonus != 0.0))
                     || (!matches!(command, 12 | 13) && !recipients.is_empty())
+                    || (command == 12 && charge_type_id <= 0)
+                    || (command != 12 && charge_type_id != 0)
                 {
                     return Err(DecodeError::BadValue("module work cycle"));
                 }
@@ -1907,6 +1910,7 @@ impl Message {
                     target_id,
                     cycle_id,
                     command,
+                    charge_type_id,
                     mining_amount_m3,
                     waste_multiplier,
                     waste_probability,

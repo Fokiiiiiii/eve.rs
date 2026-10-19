@@ -52,7 +52,7 @@ public sealed partial class SpaceContainers
             _log?.Invoke($"command burst cycle {cycle.CycleId} refused: source ship {cycle.ShipId} is not in space system {cycle.SolarSystemId}");
             return WorkOutcome.Refuse("NO_SHIP");
         }
-        var buffs = CommandBurstBuffs.Of(ship.World, _statics, cycle.OwnerId);
+        var buffs = CommandBurstBuffs.Of(ship.World, _statics, cycle.OwnerId, cycle.ChargeTypeId);
         var duration = CommandBurstBuffs.DurationOf(ship.World, cycle.OwnerId);
         if (buffs.Count == 0 || duration <= 0)
         {

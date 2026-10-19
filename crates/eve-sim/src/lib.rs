@@ -57,8 +57,12 @@ fn delay_to_next_second(now: SystemTime) -> Duration {
 
 fn hold_tick_aligned(messages: Vec<Message>, held: &mut Vec<Message>) -> Vec<Message> {
     let mut immediate = Vec::with_capacity(messages.len());
+    let mut preserve_notification_order = !held.is_empty();
     for message in messages {
         if matches!(&message, Message::Notify { name, .. } if name == "DoDestinyUpdate") {
+            held.push(message);
+            preserve_notification_order = true;
+        } else if preserve_notification_order && matches!(&message, Message::Notify { .. }) {
             held.push(message);
         } else {
             immediate.push(message);
@@ -137,21 +141,38 @@ mod tests {
     }
 
     #[test]
-    fn tick_aligned_updates_are_held_while_other_link_replies_remain_immediate() {
+    fn tick_aligned_updates_preserve_notification_order_and_keep_replies_immediate() {
+        let destiny = Message::Notify {
+            session_id: 1,
+            name: "DoDestinyUpdate".into(),
+            id_type: "clientID".into(),
+            args: Vec::new(),
+        };
+        let followup = Message::Notify {
+            session_id: 1,
+            name: "OnInvulnCancelled".into(),
+            id_type: "clientID".into(),
+            args: Vec::new(),
+        };
+        let reply = Message::Accepted { session_id: 1, command: 4, at: 0 };
         let mut held = Vec::new();
-        let immediate = hold_tick_aligned(
-            vec![
+        let immediate = hold_tick_aligned(vec![destiny.clone(), reply.clone()], &mut held);
+        assert_eq!(immediate.as_slice(), std::slice::from_ref(&reply));
+        assert_eq!(held, [destiny,]);
+
+        let immediate = hold_tick_aligned(vec![followup.clone(), reply.clone()], &mut held);
+        assert_eq!(immediate, [reply]);
+        assert_eq!(
+            held,
+            [
                 Message::Notify {
                     session_id: 1,
                     name: "DoDestinyUpdate".into(),
                     id_type: "clientID".into(),
                     args: Vec::new(),
                 },
-                Message::Accepted { session_id: 1, command: 4, at: 0 },
-            ],
-            &mut held,
+                followup,
+            ]
         );
-        assert_eq!(immediate, [Message::Accepted { session_id: 1, command: 4, at: 0 }]);
-        assert!(matches!(held.as_slice(), [Message::Notify { name, .. }] if name == "DoDestinyUpdate"));
     }
 }

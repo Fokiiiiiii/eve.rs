@@ -70,14 +70,43 @@ public sealed partial class RaffleProxyService
 
 
 [Service("contractProxy")]
-public sealed partial class ContractProxyService
+public sealed partial class ContractProxyService(Eve.Services.Core.IContractReadModel? readModel = null)
 {
-    // shortcut: contract records are not persisted; calculate escrow from the contract store once it exists.
+    [Method("GetLoginInfo")]
+    public async Task<PyValue> GetLoginInfo(ServiceCall call)
+    {
+        var store = readModel ?? throw new InvalidOperationException("contract read model is not wired");
+        var characterId = call.Session.CharacterId
+            ?? throw new InvalidOperationException("contract login reads require a character session");
+        var corporationId = call.Session.GetInt("corpid") ?? 0;
+        var allianceId = call.Session.GetInt("allianceid") ?? 0;
+        var now = Eve.Services.Py.FileTimeFromUnixMs(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        var info = await store.GetLoginInfoAsync(characterId, corporationId, allianceId, now, call.Cancellation);
+        return Eve.Services.Py.KeyVal(
+            ("needsAttention", Eve.Services.Py.Rowset(
+                ["contractID", "state"],
+                info.NeedsAttention.Select(row => Eve.Services.Py.Tuple(new PyInt(row.ContractId), new PyInt(row.State))))),
+            ("inProgress", Eve.Services.Py.Rowset(
+                ["contractID", "startStationID", "endStationID", "expires"],
+                info.InProgress.Select(row => Eve.Services.Py.Tuple(
+                    new PyInt(row.ContractId), new PyInt(row.StartStationId), new PyInt(row.EndStationId), new PyLong(row.Expires))))),
+            ("assignedToMe", Eve.Services.Py.Rowset(
+                ["contractID", "issuerID"],
+                info.AssignedToMe.Select(row => Eve.Services.Py.Tuple(new PyInt(row.ContractId), new PyInt(row.IssuerId))))));
+    }
+
     [Method("GetMyContractEscrow")]
-    public PyValue GetMyContractEscrow(ServiceCall _) =>
-        Eve.Services.Py.KeyVal(
-            ("iskEscrow", Eve.Services.Py.Number(0d)),
-            ("itemsEscrow", new PyInt(0)));
+    public async Task<PyValue> GetMyContractEscrow(ServiceCall call)
+    {
+        var store = readModel ?? throw new InvalidOperationException("contract read model is not wired");
+        var characterId = call.Session.CharacterId
+            ?? throw new InvalidOperationException("contract escrow reads require a character session");
+        var corporationId = call.Session.GetInt("corpid") ?? 0;
+        var escrow = await store.GetMyContractEscrowAsync(characterId, corporationId, call.Cancellation);
+        return Eve.Services.Py.KeyVal(
+            ("iskEscrow", Eve.Services.Py.Number((double)escrow.IskEscrow)),
+            ("itemsEscrow", new PyInt(escrow.ItemsEscrow)));
+    }
 }
 
 [Service("serviceGatewayMgr")]

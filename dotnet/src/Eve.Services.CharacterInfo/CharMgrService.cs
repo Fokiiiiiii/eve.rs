@@ -51,7 +51,8 @@ public sealed partial class CharMgrService(
     Func<long, PyValue, CancellationToken, ValueTask>? writeLogSettings = null,
     Func<long, CancellationToken, ValueTask<long?>>? readCorporationMemberStartedMs = null,
     Func<IReadOnlyList<Character>, CancellationToken, ValueTask<IReadOnlyDictionary<long, CharMgrOrganizationInfo>>>? readOrganizationInfo = null,
-    Func<long, CancellationToken, ValueTask<int?>>? readRecustomizationState = null)
+    Func<long, CancellationToken, ValueTask<int?>>? readRecustomizationState = null,
+    Func<ServiceCall, ValueTask<PyValue>>? globalAssetsInventoryCall = null)
 {
 
     /// <summary>
@@ -238,6 +239,31 @@ public sealed partial class CharMgrService(
             ? new PyInt(Eve.Macho.MachoMessage.ProxyNodeId)
             : None;
     }
+
+    private ValueTask<PyValue> CallGlobalAssetsInventory(ServiceCall call)
+    {
+        if (globalAssetsInventoryCall is null)
+            throw new InvalidOperationException("The global assets inventory provider is not configured.");
+        return globalAssetsInventoryCall(call);
+    }
+
+    [Method("MachoBindObject")]
+    public ValueTask<PyValue> MachoBindObject(ServiceCall call) => CallGlobalAssetsInventory(call);
+
+    [Method("ListStations")]
+    public ValueTask<PyValue> ListGlobalAssetStations(ServiceCall call) => CallGlobalAssetsInventory(call);
+
+    [Method("ListStationItems")]
+    public ValueTask<PyValue> ListGlobalAssetStationItems(ServiceCall call) => CallGlobalAssetsInventory(call);
+
+    [Method("List")]
+    public ValueTask<PyValue> ListGlobalAssets(ServiceCall call) => CallGlobalAssetsInventory(call);
+
+    [Method("ListIncludingContainers")]
+    public ValueTask<PyValue> ListGlobalAssetsIncludingContainers(ServiceCall call) => CallGlobalAssetsInventory(call);
+
+    [Method("GetAssetWorth")]
+    public ValueTask<PyValue> GetGlobalAssetWorth(ServiceCall call) => CallGlobalAssetsInventory(call);
 
     /// <summary>
     /// The recustomization state (the reference's <c>Paperdoll.State</c>): the state a re-sculpt certificate set (1 resculpting, 3 full, ended by the

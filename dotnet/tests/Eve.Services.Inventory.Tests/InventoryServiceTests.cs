@@ -523,6 +523,34 @@ public class InvBrokerTests
     }
 
     [PgFact]
+    public async Task Global_assets_bind_lists_personal_station_assets_and_nested_container_items()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var ship = await rig.AddAsync(Rig.Cockroach, Rig.Character, Rig.Station, singleton: true);
+        var cargo = await rig.AddAsync(Rig.Tritanium, Rig.Character, ship, flag: 5, quantity: 10);
+        var session = Rig.Session();
+
+        var binding = Assert.IsType<PyTuple>(await rig.CallAsync(
+            session,
+            "MachoBindObject",
+            null,
+            new PyTuple([new PyLong(Rig.Character), new PyLong(10002)]),
+            new PyTuple([new PyStr("ListStations"), new PyTuple([]), PyNone.Instance])));
+        var opened = Assert.IsType<PySubStruct>(binding.Items[0]);
+        var oid = Rig.OidOf(opened);
+        Assert.IsType<PyObject>(binding.Items[1]);
+
+        Assert.Contains(Rows(await rig.CallAsync(session, "List", oid)), row => PackedItemId(row) == ship);
+        Assert.Contains(Rows(await rig.CallAsync(session, "ListStationItems", oid, new PyLong(Rig.Station))),
+            row => PackedItemId(row) == ship);
+        var all = Rows(await rig.CallAsync(session, "ListIncludingContainers", oid));
+        Assert.Contains(all, row => PackedItemId(row) == ship);
+        Assert.Contains(all, row => PackedItemId(row) == cargo);
+        Assert.Equal(2, Assert.IsType<PyTuple>(await rig.CallAsync(session, "GetAssetWorth", oid)).Items.Count);
+        Assert.Equal(PyNone.Instance, await rig.CallAsync(Rig.Session(id: 2), "List", oid));
+    }
+
+    [PgFact]
     public async Task The_station_is_the_item_the_hangar_is_in_as_a_util_row_and_as_a_packed_row()
     {
         await using var rig = await Rig.CreateAsync();

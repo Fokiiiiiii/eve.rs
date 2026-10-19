@@ -1652,7 +1652,6 @@ private static bool HasValidBlueprintRuns(AbyssalLootPlan loot)
     private static bool IsFinite(AbyssalPosition position) =>
         double.IsFinite(position.X) && double.IsFinite(position.Y) && double.IsFinite(position.Z);
 
-
     private static bool IsFinite(AbyssalRotation rotation) =>
         double.IsFinite(rotation.X) && double.IsFinite(rotation.Y) && double.IsFinite(rotation.Z);
 }

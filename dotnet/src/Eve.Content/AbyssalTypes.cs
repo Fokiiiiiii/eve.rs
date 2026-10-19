@@ -30,7 +30,6 @@ public enum AbyssalParticipantStatus
     Returned,
 }
 
-
 public enum AbyssalDeathSettlementCause
 {
     ShipDestroyed = 1,
@@ -129,7 +128,6 @@ public sealed record AbyssalRoomPlan(
     /// <summary>Catalog-resolved functional objects, persisted with this run. Empty is a valid source result.</summary>
     public IReadOnlyList<AbyssalEnvironmentObjectPlan> EnvironmentObjects { get; init; } = Array.Empty<AbyssalEnvironmentObjectPlan>();
 
-    /// <summary>Artifacts and their individually allocated loot; main-cache ownership is exclusive with <see cref="Loot"/>.</summary>
     public IReadOnlyList<AbyssalArtifactPlan> Artifacts { get; init; } = Array.Empty<AbyssalArtifactPlan>();
 }
 
@@ -143,7 +141,6 @@ public sealed record AbyssalLootPlan(int TypeId, int Count)
     /// <summary>One immutable run count (1..5) per blueprint copy in <see cref="Count"/>.</summary>
     public IReadOnlyList<int>? BlueprintRunsPerCopy { get; init; }
 }
-
 
 /// <summary>Catalog rotation components, preserved without Domain interpretation.</summary>
 public sealed record AbyssalRotation(double X, double Y, double Z);

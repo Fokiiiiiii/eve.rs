@@ -10,7 +10,6 @@ namespace Eve.Content;
 /// The shared runtime for missions, anomalies, incursions and everything else that has objectives. A feature defines content (a <see cref="ContentDefinition"/>: objectives, a
 /// duration, actions), starts instances of it, and lets domain events advance the objectives; the runtime keeps the state in PostgreSQL, ends the content when its objectives are
 /// met or its time is up (a scheduler job), and announces the end as an event (<c>content.&lt;kind&gt;.completed|failed|expired|abandoned</c>) so the feature's own subscribers pay
-/// out, spawn the next thing or clean up. A feature does not keep a table of its running content, a timer for its deadline or a listener for its kills. See <c>docs/design/FOUNDATIONS.md</c>.
 /// </summary>
 public sealed class ContentRuntime
 {
@@ -303,7 +302,6 @@ public sealed class ContentRuntime
     }
 
     /// <summary>
-    /// Starts an instance of a definition for an owner, in the caller's transaction. With a <paramref name="uniqueKey"/> only one active instance of the kind may have it (an anomaly in
     /// a system): asking again returns the one that exists. The first objective (every objective, for parallel content) is active at once.
     /// </summary>
     public async Task<StartResult> StartAsync(
@@ -494,7 +492,6 @@ public sealed class ContentRuntime
     }
 
     /// <summary>
-    /// Advances an objective by hand (a <c>manual</c> objective: "the player spoke to the agent"), by its id or its index, in the caller's transaction. Returns whether the objective was
     /// active and moved.
     /// </summary>
     public async Task<bool> ProgressAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long instanceId, string objectiveId, double delta = 1, CancellationToken cancellationToken = default)
@@ -596,7 +593,6 @@ public sealed class ContentRuntime
         return (await LoadAsync(connection, null, instanceId, false, cancellationToken))?.Info;
     }
 
-    /// <summary>The active content of a kind that belongs to an owner.</summary>
     public async Task<IReadOnlyList<ContentInstance>> ActiveOfAsync(string kind, long owner, CancellationToken cancellationToken = default)
     {
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);

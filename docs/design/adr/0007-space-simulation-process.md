@@ -222,7 +222,7 @@ not exist is the scene: which balls a system has, who is where, how commands cha
 
 - 2026-10-03, version 4, the rounds of a gun that runs: the simulation keeps the rounds of a turret that fires a charge while it runs, so when a pilot loads or unloads the gun in space the host asks the simulation first.
   `AdjustCharge` (33: `request_id u64`, `session_id u64`, `module_id i64`, the kind of charge `i32`, an op `u8`: 0 add with the capacity `i64` and what the hold has `i64`, 1 remove with the quantity `i64`, 0 for all, and an unused `i64`)
-  is answered with `ChargeAdjusted` (34: `request_id u64`, `running u8`, the rounds before `i64` and after `i64`): for a gun that does not run `running` is 0 and nothing was changed (the host has its rounds). Adding takes the gun up
+  is answered with `ChargeAdjusted` (34: `request_id u64`, `running u8`, the rounds before `i64` and after `i64`): for a gun that does not exercised `running` is 0 and nothing was changed (the host has its rounds). Adding takes the gun up
   to the capacity and no more than the hold has, and only of the kind it fires; removing takes out what is asked, and a gun left with fewer rounds than a cycle spends stops at the end of its cycle with `NoCharges` and no shot.
   The answer follows every `ChargeSpent` the simulation told before it on the link, so the host orders what it does about the inventory with the counts (`ChargeSpentQueue.EnqueueWork`). `Hello` and `HelloAck` carry 4.
   `oracle/fixtures/simlink/messages.json` holds the frames; `docs/reference/compat/DEVIATIONS.md` #57 says what differs from the reference.

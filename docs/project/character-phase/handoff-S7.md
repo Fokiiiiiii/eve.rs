@@ -15,7 +15,7 @@ Worktree `/home/user/wt-ch-s7`, branch `ch-s7`. Push: `git fetch origin main && 
 
 - Item 1 done; full solution builds (0 errors); Services.Core 745 passed; Host subset (CharacterHostTests, JumpClone, PlayerBounty) 17 passed, all under eve_p3.
 - Merged S6's clone install settlements (origin 3b1decc6): CloneJump sits on top of `JumpCloneService` and `HostJumpCloneStore`.
-- Not run: the CH-16 live headless test (`tools/headless-client/tests/test_clone_jump_live.py`) against a running host; the Skills and Space death tests with the merged tree.
+- not exercised: the CH-16 live headless test (`tools/headless-client/tests/test_clone_jump_live.py`) against a running host; the Skills and Space death tests with the merged tree.
 
 ## Not done (next session)
 

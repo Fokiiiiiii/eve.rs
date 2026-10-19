@@ -5,7 +5,7 @@
 ## Source pins and confidence
 
 - V24.01 client logic: `Fokiiiiiii/eve-logic` commit `1dbb5711a072a146e1d228365668ac05655eefe1`. The decompiled Abyss packages identify the embedded release as V24.01, build 3396210.
-- Executable EveJS reference: local `C:/Users/yutai/evejs-v0.12.9`, HEAD `828823a75f211fdecb945b087a26c225f111491f`. This is the canonical executable reference for the headless baseline, combat scenarios, and catalog batch comparisons.
+- Executable EveJS reference: local `EveJS repository`, HEAD `828823a75f211fdecb945b087a26c225f111491f`. This is the canonical executable reference for the headless baseline, combat scenarios, and catalog batch comparisons.
 - Supplemental GitHub main snapshot: `Fokiiiiiii/evejs-v0.12.9` commit `7cc6f323c7c5c92c2738476a62768318799d8077`. It is not the local executable checkout. The selected Abyssal and dungeon files in the comparison table below have identical Git blob IDs at both commits, so their source text is shared.
 - The transition-profile source records `TQTranquilAbyssal5.txt`, segment `2026-07-15T23:20:22--2026-07-15T23:28:56`, but that raw file was not found in the repository or local captures. The profile is evidence recorded in EveJS, not a fresh packet capture in this investigation.
 - `docs/design/REFERENCE-TRACES.md` requires same-scenario EveJS/eve.rs capture and `mitm diff --ignore-volatile`. The final JS three-room combat/Origin capture and the RS reconnect/entry baseline now pass. Full same-scenario EveJS/eve.rs combat parity and RS all-four acceptance remain pending; see the evidence table below.
@@ -46,7 +46,7 @@ Abyss gate item types are dispatched in `menusvc.GetAbyssalGateFunction`; they d
 | `OnAbyssalLocationEntered` | `charid`; one dictionary with `difficulty_tier`, `content_id`, `location_id`, `nebula_graphic_id` | `AbyssalService` updates the active content, room, nebula, and objective state. |
 | `OnAddExpiryDurationForAbyssalContent` | `charid`; `[expiryFileTime]` (logged by EveJS as `int64`) | Client argument is `end_time`; the client schedules warnings at 300, 120, and 30 seconds before expiry. |
 | `OnExitingDungeon` | `shipid`; `[dungeonID]` | Generic dungeon exit event. |
-| `OnAbyssalLocationExited` | `charid`; `[]` | EveJS publishes it on room/final exit. A matching handler was not found in `AbyssalService`; its full client-side effect remains unverified. |
+| `OnAbyssalLocationExited` | `charid`; `[]` | EveJS publishes it on room/final exit. A matching handler was not found in `AbyssalService`; its full client-side effect remains not confirmed. |
 | `OnAbyssalContentFinished` | `charid`; `[contentID, ABYSSAL_TIMER_TYPE_NORMAL_PVE]` | Client clears expiry state only when `contentID` matches its active content. |
 | `OnAddExpiryDurationForAbyssalPvpContent` | client handler accepts `end_time` | PvP is outside this PvE contract; no matching PvE publisher is assumed. |
 
@@ -73,7 +73,7 @@ The T0 Dark transition profile records this packet/event sequence:
 5. `OnAbyssalLocationEntered`.
 6. `OnAbyssalLocationExited`.
 
-The runtime stages commit the source room, move the activating participant, move the other eligible participants, clean the source room, prepare/publish the destination, activate its controllers, and commit the transition. The stored order is a capture-derived profile whose named raw trace file remains unavailable. A final JS three-room Origin capture and an RS reconnect/entry baseline are listed below; full same-scenario EveJS/eve.rs combat parity remains unverified.
+The runtime stages commit the source room, move the activating participant, move the other eligible participants, clean the source room, prepare/publish the destination, activate its controllers, and commit the transition. The stored order is a capture-derived profile whose named raw trace file remains unavailable. A final JS three-room Origin capture and an RS reconnect/entry baseline are listed below; full same-scenario EveJS/eve.rs combat parity remains not confirmed.
 
 ### Final Origin exit
 
@@ -147,7 +147,7 @@ The protocol-74 and protocol-75 component snapshots below are historical. The la
 - Earlier Host integration snapshot (Hilbert): build 0 warnings / 0 errors (43.23 s); specified PostgreSQL 22 PASS, 0 skipped (eligibility 19 + post-drain RPC 2 + materialization 1). The protocol-75 Host/PG/binary gates were still pending at that historical snapshot; protocol79 attempt12 is recorded below and covers one fit/scenario.
 - Earlier protocol-74 real-simulator cleanup regression: cargo build passed (46.22 s); simulator SHA-256 450a13f4fb5bcafbcbbb1deb47b5b177211e5b925a8f81f18720c0975669096c. Real_sim_cleanup... with --no-build passed 1 / 0 failed / 0 skipped (16.36 s), covering all three scenes plus trace cleanup, one committed participant receipt, zero remaining items, retention of the other run, and successful replay. It remains a named historical cleanup regression and does not establish RS all4 end-to-end acceptance.
 - Keep these named suites distinct. Do not add older focused suites or overlapping materialization/partial subsets into a unique test count.
-- The final JS three-room Origin exit now passes. RS reconnect/entry also passes; RS all-four and same-scenario combat parity remain unverified. Feature status is PARTLY.
+- The final JS three-room Origin exit now passes. RS reconnect/entry also passes; RS all-four and same-scenario combat parity remain not confirmed. Feature status is PARTLY.
 
 ### Later shared-owner and Host integration evidence
 
@@ -172,7 +172,7 @@ The latest origin/main source is 235ee85a882f2a5a36067192874d842f1ec22828 (the d
 
 ### Executed headless captures
 
-Capture root: C:/Users/yutai/.codex/worktrees/0b7f/abyssal-verification. Raw packets, logs, credentials, and tool reasoning are kept outside this document.
+Capture root: external abyssal verification workspace. Raw packets, logs, credentials, and tool reasoning are kept outside this document.
 
 | Scenario / run | Observed result | Interpretation |
 |---|---|---|
@@ -189,8 +189,8 @@ Capture root: C:/Users/yutai/.codex/worktrees/0b7f/abyssal-verification. Raw pac
 | RS StationId-fix baseline: `rs-stationid-fix-baseline-1792144800043` | 1 FAIL; 122.00 s; cleanup_ok=true | Initial entry, room and expiry passed; relog did not restore the private system. Superseded by the reconnect/session-attribute fix below. |
 | RS reconnect/login baseline: `rs-reconnect-login-baseline-1792147356535` | 1 PASS, 0 FAIL, 0 SKIP; 91.11 s; exit 0; cleanup_ok=true | Invalid-item Error 3 matches the JS capture. Valid deployment, hidden-system entry, room/expiry, relogin with both system IDs, real bind and ClientIsReady passed; the expiry FILETIME remained unchanged. This is one baseline scenario, not RS all4 or combat/loot/Origin acceptance. |
 | RS attempt11: `rs-fit5-web2-reload-20261018-11` | Four gameplay checks passed; runner exit 1; `cleanup_verified=false` | Cleanup failed with retained native NPC wrecks. Keep this attempt as a separate failed cleanup result; attempt12 does not erase it. |
-| RS attempt12 protocol79: `rs-fit5-web2-reload-20261018-12` | Four integration tests PASS, 0 SKIP; pytest/test/runner exit 0; cleanup verified | One five-gun fit with three-room combat and Origin return. Room 1–3 scene acknowledgements and trace removal passed; terminal receipt count 1, validated owned IDs remaining 0 (34 IDs, then 33 on idempotent retry); all 15 claim checks matched and the parent item was preserved. Exact typed scopes for rooms 1–3 had no rows, private residue 0, identity mismatches 0, simulator cleanup diagnostics 0, owned schemas 0. Evidence: `C:/Users/yutai/.codex/worktrees/0b7f/abyssal-verification/rs-fit5-web2-reload-20261018-12/attempt12-evidence-summary.json` and `binary-manifest.json`; source commit `b9c435a76b21b8c27a272a131e20fca16359d7ef`, protocol79. This is one fit/scenario run, not all-four or other-tier acceptance. |
-| RS all4 / other fit tiers | NOT RUN | Attempt12 covers one five-gun fit/scenario. RS all4, other tiers/fits and full same-scenario JS/RS parity remain open. |
+| RS attempt12 protocol79: `rs-fit5-web2-reload-20261018-12` | Four integration tests PASS, 0 SKIP; pytest/test/runner exit 0; cleanup verified | One five-gun fit with three-room combat and Origin return. Room 1–3 scene acknowledgements and trace removal passed; terminal receipt count 1, validated owned IDs remaining 0 (34 IDs, then 33 on idempotent retry); all 15 claim checks matched and the parent item was preserved. Exact typed scopes for rooms 1–3 had no rows, private residue 0, identity mismatches 0, simulator cleanup diagnostics 0, owned schemas 0. Evidence: `external abyssal verification workspace/rs-fit5-web2-reload-20261018-12/attempt12-evidence-summary.json` and `binary-manifest.json`; source commit `b9c435a76b21b8c27a272a131e20fca16359d7ef`, protocol79. This is one fit/scenario run, not all-four or other-tier acceptance. |
+| RS all4 / other fit tiers | not exercised | Attempt12 covers one five-gun fit/scenario. RS all4, other tiers/fits and full same-scenario JS/RS parity remain open. |
 
 **Auxiliary Inventory binding difference (source-confirmed):** This is separate from the five Abyssal action/readiness RPC contracts. In pinned EveJS server/src/services/inventory/invBrokerService.js, GetInventoryFromId retains a raw itemid BigInt in boundContext.inventoryID. List/Add/MultiAdd evaluate a debug JSON.stringify(boundContext), which throws Do not know how to serialize a BigInt; the catch path returns null. The coordinating agent matched this source behavior to js-combat-1792124296256/server.log lines 814–822. The reference source is unchanged. JS test setup/loot uses its existing GetInventory(itemID) path, whose _normalizeInventoryId converts the ID to Number. RS uses its working GetInventoryFromId; RS GetInventory serves hangar access. These source-supported auxiliary binding paths differ, and the captures must record that difference. No claim of complete equality of all MITM traffic is made; the JS serialization bug is not ported to RS.
 
@@ -203,7 +203,7 @@ The recipe in docs/design/REFERENCE-TRACES.md still requires the same meaningful
 - RS all-four-scenario capture, including RS combat, loot transfer and final Origin return; JS combat Origin now passes on the reference run.
 - Full transition/notification-order comparison, plus the remaining co-op, reconnect, expiry/death-race, and restart acceptance scenarios where not already covered by a named component gate.
 - The merged local source integration uses protocol75: public kinds90..93 remain, and Abyssal kinds are94..120. Peirce reports SDK10.0.401 Eve.Space build0 warnings/errors; codec/golden/SimClient412/412 PASS; Rust eve-space890 + eve-net31 =921/0 ignored; eve-simlink5/5 PASS. origin/main235ee contributes public PLACE_DEADSPACE_POCKET kind93, retained by the local remapping. Final Rust/PG/Host/binary gate remains in progress. No wire renumbering is made in this documentation update. JS combat Origin and RS reconnect baseline pass; RS all4 and same-scenario capture parity remain open.
-- GUI/native-client behavior remains unverified. No GUI/client launch was performed or authorized.
+- GUI/native-client behavior remains not confirmed. No GUI/client launch was performed or authorized.
 
 ### Intentional differences and gameplay boundaries
 
@@ -269,13 +269,13 @@ Client sources use the separate EveLogic commit and blob IDs below.
 | `spacecomponents/client/components/activate.py` | `e4b259dccbf713f47ba16dcf0c10ec8cbd116ae0` |
 | `eve/client/script/spacecomponents/activatecontroller.py` | `40560ad6bbd03eb13e379c716c90f5e9748e52d2` |
 
-## Unverified items
+## Not confirmed items
 
-- Feature status remains PARTLY: JS three-room combat/final Origin and the single-scenario RS reconnect baseline now pass; RS all4 and full same-scenario JS/RS capture parity remain unverified.
+- Feature status remains PARTLY: JS three-room combat/final Origin and the single-scenario RS reconnect baseline now pass; RS all4 and full same-scenario JS/RS capture parity remain not confirmed.
 - The latest RS reconnect/entry baseline passes, but it does not establish RS all-four or same-scenario combat/loot/Origin parity with EveJS.
 - Historical JS failures remain recorded in the captures above (ammo exhaustion/death path, BigInt Inventory setup failure, and fifth-run repair/proximity failures). Those partial runs are superseded for the solo three-room path by js-combat-origin-1792142413084 (1 PASS, 485.13 s, final Origin/Finished); RS reconnect baseline also passes. RS all4, RS combat/loot/Origin and full same-scenario parity remain open.
 - The old retail transition profile has not been independently reproduced as a complete successful same-scenario sequence. New headless captures exist and are listed separately.
-- A matching handler for OnAbyssalLocationExited was not found in AbyssalService; its full application elsewhere in V24.01 remains unverified.
+- A matching handler for OnAbyssalLocationExited was not found in AbyssalService; its full application elsewhere in V24.01 remains not confirmed.
 - Source confirms the EveJS startup path selects one owner ship. The all-participant eve.rs recovery policy is intentional; live multi-participant restart/downtime acceptance remains pending.
-- GUI/native-client acceptance is unverified; GUI/client launch is prohibited in this task.
+- GUI/native-client acceptance is not confirmed; GUI/client launch is prohibited in this task.
 - Final component/capture results must be supplied with scenario identity and cleanup result. Preserve failure history and distinguish overlapping subsets from unique test counts.

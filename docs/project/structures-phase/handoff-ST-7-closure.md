@@ -44,7 +44,7 @@ Predecessor state: `handoff-ST-7.md` (fuel, compression, jammer E-03/E-15 and th
 - Eve.Services.Space.Tests: StructureBeaconTravelTests, BeaconHostTests and the new test passed (22 of 23 before the new test; the new test then passed alone). Full Eve.Services.Space.Tests: 860 passed, 0 failed, 0 skipped (16 min).
 - Jump to a structure beacon through the drive (open item 1, jump): CynoJumpHostTests.A_revelation_jumps_to_an_accessible_structure_beacon_as_it_does_to_a_field (PgFact): the spool is the sim CynoJump with the structure id, the fuel is debited, the fatigue and cooldown are written. CynoJumpHostTests passes 24 of 24. The host-level refusals (access, jammer, service) run through structureCynoBeaconMgr in StructureCompositionTests.
 - The full Eve.Host.Tests was rerun after the E-15 refactor: 330 passed and 15 failed with the connection-limit error of the shared PostgreSQL; those 15 rerun alone and pass (17 of 17 in the five classes).
-- Not run: graphical client.
+- not exercised: graphical client.
 
 ## Update: corporation-office compression source (2026-10-15, later)
 

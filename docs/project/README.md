@@ -24,7 +24,7 @@ A route count does not prove wire-shape parity or a connected runtime provider. 
 - After that fast-forward, affected suites passed: `Eve.Services.Space.Tests` 453/453, `Eve.Space.Tests` 217/217, and `Eve.Services.Dogma.Tests` 121/121. `cargo test --workspace --locked` passed.
 - `dotnet build dotnet/src/Eve.Host/Eve.Host.csproj -c Release -m:1 --no-restore`: succeeded, 0 warnings / 0 errors.
 - `git diff --check`: passed.
-- Native V24.01 client verification was not run; graphical acceptance remains open.
+- Native V24.01 client verification was not exercised; graphical acceptance remains open.
 
 ## Closed in the latest RPC work
 

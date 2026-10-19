@@ -357,6 +357,7 @@ impl Dogma for SceneWorld<'_> {
             fx: weapon.turret.fx.clone(),
             duration_ms: weapon.cycle_ms,
             capacitor_need: weapon.capacitor_need,
+            fallback_capacitor_need: 0.0,
             repeat: i32::try_from(repeat.max(1)).unwrap_or(i32::MAX),
             target_id: target_id.unwrap_or(0),
             turret: Some(weapon.turret),

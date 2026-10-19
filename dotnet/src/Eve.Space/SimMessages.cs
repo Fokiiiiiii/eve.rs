@@ -517,7 +517,9 @@ public sealed record SimEffect(
     bool BurnsFuel = false,
     /// <summary>The module rules of the module's type (the group and its limit, the early deactivation, the industrial core and the reactivation delay): what the
     /// simulation enforces on the activation. Null when the host sends none (a module the rules do not name).</summary>
-    SimModuleRules? Rules = null);
+    SimModuleRules? Rules = null,
+    /// <summary>The capacitor cost of each cycle after a charged effect's charges are exhausted.</summary>
+    double FallbackCapacitorNeed = 0);
 
 /// <summary>
 /// The module rules of an effect the simulation enforces: the group the module belongs to and how many of it run at once (<paramref name="MaxGroupActive"/>, 0 for no

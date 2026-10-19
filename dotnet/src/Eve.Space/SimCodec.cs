@@ -27,7 +27,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// </summary>
 public static partial class SimCodec
 {
-    public const ushort ProtocolVersion = 79;
+    public const ushort ProtocolVersion = 80;
 
     /// <summary>The longest name of a dynamic slim-item field, in bytes (protocol 76).</summary>
     public const int SlimFieldNameMax = 64;

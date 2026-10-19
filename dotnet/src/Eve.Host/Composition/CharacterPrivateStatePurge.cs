@@ -8,7 +8,7 @@ namespace Eve.Host;
 /// go in the deletion's transaction. The game-store paths go through the cache: a row removed underneath the cache would be written
 /// back by its next flush. Only rows that belong to the character are removed; corporation-owned data stays.
 /// </summary>
-internal sealed class CharacterPrivateStatePurge(GameStoreCache cache, string agentsSchema, string bookmarksSchema, string spaceSchema)
+internal sealed class CharacterPrivateStatePurge(GameStoreCache cache, string agentsSchema, string bookmarksSchema, string spaceSchema, string skillsSchema = "skills")
 {
     private const string CalendarSchema = Eve.Calendar.CalendarStore.DefaultSchema;
 
@@ -21,6 +21,8 @@ internal sealed class CharacterPrivateStatePurge(GameStoreCache cache, string ag
         $"DELETE FROM {agentsSchema}.research_projects WHERE character_id = $1",
         $"DELETE FROM {agentsSchema}.locate_requests WHERE character_id = $1",
         $"DELETE FROM {spaceSchema}.scan_probes WHERE character_id = $1",
+        // character skill plans and their dependent requirements/milestones/active selection are character owned
+        $"DELETE FROM {skillsSchema}.skill_plans WHERE character_id = $1",
         // the bookmark folders the character owns (their bookmarks and subfolders cascade); the calendar events it owns (their responses cascade)
         $"DELETE FROM {bookmarksSchema}.folders WHERE owner_id = $1",
         $"DELETE FROM {CalendarSchema}.events WHERE owner_id = $1",

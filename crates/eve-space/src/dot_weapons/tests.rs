@@ -84,6 +84,7 @@ fn launch_pod_at_b(scene: &mut Scene, missile: Missile, t: i64) -> Vec<Out> {
         fx: String::new(),
         duration_ms: 5_000.0,
         capacitor_need: 0.0,
+        fallback_capacitor_need: 0.0,
         repeat: 1,
         target_id: scene.pilots[&B].ship.spec.ship_id,
         turret: Some(Turret {

@@ -644,6 +644,8 @@ pub struct Effect {
     pub duration_ms: f64,
     /// The capacitor a cycle takes, taken at its start.
     pub capacitor_need: f64,
+    /// The capacitor cost of each cycle after a charged effect's charges are exhausted.
+    pub fallback_capacitor_need: f64,
     /// How many cycles the pilot asked for.
     pub repeat: i32,
     pub target_id: i64,

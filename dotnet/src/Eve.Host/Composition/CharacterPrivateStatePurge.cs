@@ -37,6 +37,9 @@ internal sealed class CharacterPrivateStatePurge(GameStoreCache cache, string ag
         ("lpWallets", $"/characterWallets/{id}"),
         ("characterNotes", $"/characters/{id}"),
         ("characters", $"/{id}/characterSettings"),
+        ("skillQueues", $"/{id}"),
+        ("skillPlans", $"/{id}"),
+        ("skillTradingState", $"/{id}"),
         ("characterExpertSystems", $"/{id}"),
         ("missionRuntimeState", $"/charactersByID/{id}"),
         ("researchRuntimeState", $"/charactersByID/{id}"),
@@ -61,9 +64,25 @@ internal sealed class CharacterPrivateStatePurge(GameStoreCache cache, string ag
         foreach (var (table, path) in GameStorePaths(characterId))
         {
             await cache.LoadAsync(table, cancellationToken);
-            var removed = cache.Remove(table, path);
-            if (!removed.Success && removed.ErrorMsg != "ENTRY_NOT_FOUND")
-                throw new InvalidOperationException($"Could not purge {table}{path}: {removed.ErrorMsg}");
+            if (table == "skillPlans")
+            {
+                // EveJS stores all skill plans under the table root and rewrites that map after deleting one owner.
+                var plans = cache.Read(table, "/");
+                if (!plans.Success || plans.Data is not System.Text.Json.Nodes.JsonObject root)
+                    throw new InvalidOperationException($"Could not read {table} before purging character {characterId}.");
+                if (root.Remove(characterId.ToString(System.Globalization.CultureInfo.InvariantCulture)))
+                {
+                    var write = cache.Write(table, "/", root);
+                    if (!write.Success)
+                        throw new InvalidOperationException($"Could not purge {table}/{characterId}: {write.ErrorMsg}");
+                }
+            }
+            else
+            {
+                var removed = cache.Remove(table, path);
+                if (!removed.Success && removed.ErrorMsg != "ENTRY_NOT_FOUND")
+                    throw new InvalidOperationException($"Could not purge {table}{path}: {removed.ErrorMsg}");
+            }
             tables.Add(table);
         }
         foreach (var table in tables)

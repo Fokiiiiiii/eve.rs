@@ -162,7 +162,6 @@ impl<'a> Decoder<'a> {
         (start, end)
     }
 
-    /// [`Decoder::range`] as a borrowed slice.
     fn bytes(&mut self, length: usize) -> &'a [u8] {
         let (start, end) = self.range(length);
         &self.buf[start..end]

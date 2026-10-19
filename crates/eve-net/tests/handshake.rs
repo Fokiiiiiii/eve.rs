@@ -136,7 +136,6 @@ async fn a_login_completes_and_the_client_sees_what_the_evecli_tests_expect() {
 
 #[tokio::test]
 async fn a_normal_account_logs_in_with_the_base_role_bits_only() {
-    // Recording grants the account role 0, an ordinary player (EveJS isGM:false, eve.rs NewAccountRole default)
     let (_, session) = run(Recording(Mutex::new(Vec::new())), "pilot").await;
     let session = session.unwrap();
     assert_eq!(dict_get(&session.session_init, "role").and_then(int_of), Some(0x6000_0000_8000_0000));
@@ -148,7 +147,6 @@ async fn a_normal_account_logs_in_with_the_base_role_bits_only() {
 
 #[tokio::test]
 async fn the_cluster_user_count_is_at_least_one_while_the_first_login_is_made() {
-    // no session is open yet: the reference still reports one user (EveJS getClusterUserCount)
     let (client_end, server_end) = duplex(1 << 16);
     let mut empty = environment();
     empty.user_count = 0;

@@ -206,7 +206,6 @@ fn a_bomb_goes_off_where_it_is_and_hurts_the_ships_in_its_blast_but_not_its_laun
 #[test]
 fn a_cynosural_field_is_lit_where_the_ship_is_as_its_activation_ends_and_is_taken_out_when_its_lifetime_is_up()
  {
-    // the wiki: a field is lit after the generator's activation time; the SDE: a field lives its explosionDelay (600000 ms) and does not explode
     let (mut scene, t) = crowd();
     let field = Action::CynoField {
         ball: Spec {
@@ -401,7 +400,6 @@ fn a_control_tower_is_in_space_unanchored_until_the_host_anchors_it_and_stops_no
     assert!(accepted(&lit), "a control tower stops no field: {lit:?}");
 }
 
-/// Pochven (SDE region 10000070) is a region-wide cynosural jammer: no field lights there, a covert or an industrial one neither (the wiki, "Pochven":
 /// "stops anyone from lighting a cyno"), and the same field lights in a system of another region. Each scene is made anew from its system, as a restarted
 /// simulation makes it: the region is the static data's and nothing of the refusal is kept.
 #[test]
@@ -572,7 +570,7 @@ fn a_defender_launcher_shoots_down_the_hostile_missile_in_its_reach() {
     use crate::missile_entity::{MISSILE_ID_BASE, MissileEntity, Shooter};
     use crate::missiles::Missile;
     let (mut scene, t) = crowd();
-    // a missile of another owner flies from B at A: five kilometres off, with little hit points
+
     let incoming = Missile {
         charge_type_id: 27_000,
         group_id: 385,
@@ -722,7 +720,7 @@ fn third_ship(scene: &mut Scene, corporation: i32, metres: f64, t: i64) -> i64 {
 #[test]
 fn an_fof_launch_goes_for_the_nearest_enemy_that_fired_on_the_shooter_and_locks_none() {
     let (mut scene, t) = crowd();
-    // B is of another corporation and fired on A (the wiki: the nearest enemy that has previously fired on you); the corporation-mate below is A's
+
     scene.pilots.get_mut(&B).unwrap().ship.spec.corporation_id = 98_000_001;
     let a_corp = scene.pilots[&A].ship.spec.corporation_id;
     let b_ship = scene.pilots[&B].ship.spec.ship_id;

@@ -4,7 +4,6 @@ use crate::consts::CATEGORY_STRUCTURE;
 use crate::env::SlimItem;
 use crate::tree::TaskCtx;
 
-/// `can_dock_at_structure`: the structure's docking setting for my group's owner, its faction and no one else.
 pub fn can_dock_at_structure(t: &mut TaskCtx<'_, '_>, structure_id: i64) -> Option<bool> {
     let corporation_id = crate::utility::groups::get_my_entity_group_owner_id(t)?;
     let alliance_id = t.world().corporation_faction_id(corporation_id);

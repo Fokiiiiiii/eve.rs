@@ -62,7 +62,6 @@ pub fn is_member(t: &mut TaskCtx<'_, '_>, item_id: i64) -> bool {
     }
 }
 
-/// `GetGroupOwnerId`: raises when there is no group.
 pub fn get_group_owner_id(t: &mut TaskCtx<'_, '_>) -> Option<i64> {
     let has_group = has_entity_group(t);
     if !has_group {

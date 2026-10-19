@@ -667,7 +667,6 @@ impl Scene {
         self.effect_ended(session, run, owner, ship_id, now, Ending::TargetLost)
     }
 
-    /// Park one controlled-structure damage application until the Host returns its exact owner-corp authorization result.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn request_structure_damage_candidates(
         &mut self,
@@ -680,7 +679,7 @@ impl Scene {
         now: i64,
     ) -> Vec<Out> {
         const MAX_CANDIDATES: usize = 4_096;
-        // a structure burst's source is the structure or, for a ship-fitted projector, the pilot's ship (ST-17 d); the other operations need a structure
+
         let is_burst = matches!(operation, PendingStructureDamageOperation::StructureBurst { .. });
         let source =
             if is_burst { self.burst_source_id(session) } else { self.controlled_structure_id(session) };
@@ -783,7 +782,6 @@ impl Scene {
         }]
     }
 
-    /// Applies a Host-authorized damage step only when every field still names the live structure lease, activation, module cycle and ordinal.
     #[allow(clippy::too_many_arguments)]
     pub fn structure_damage_candidates_result(
         &mut self,
@@ -814,7 +812,6 @@ impl Scene {
         )
     }
 
-    /// Settles a correlated structure result with its complete per-step HOG disposition partition.
     #[allow(clippy::too_many_arguments)]
     pub fn structure_field_damage_candidates_result(
         &mut self,

@@ -7,7 +7,7 @@ public sealed record MarketFillPlan(MarketOrder Order,long Quantity,decimal Gros
 
 /// <summary>
 /// The fill walk over one book (M7). Candidates are offered one at a time in book order (price, then issue time, then id), so a caller can
-/// read the book in batches and stop as soon as the quantity is filled. Each decision depends only on the candidates before it, so the
+
 /// fills of a batched read are the fills of the whole book.
 /// </summary>
 public sealed class MarketFillWalk

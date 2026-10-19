@@ -5,7 +5,6 @@ pub trait Logging {
     /// `logger.error(...)` of a task that finds something authored wrong.
     fn log_error(&mut self, _message: &str) {}
 
-    /// `eventLogger.log_behavior_aggressed(ownerId, behaviorId, groupBehaviorId, targetTypeId, aggressorId)`.
     fn log_behavior_aggressed(
         &mut self,
         _owner_id: Option<i64>,
@@ -27,7 +26,6 @@ pub trait Logging {
     ) {
     }
 
-    /// `eventLogger.log_behavior_task(behaviorEvent, ownerId, behaviorId, typeId)`.
     fn log_behavior_task(
         &mut self,
         _event: &crate::value::Value,
@@ -37,7 +35,6 @@ pub trait Logging {
     ) {
     }
 
-    /// `eventLogger.log_behavior_group_destroyed(ownerId, behaviorId, combatTargets)`.
     fn log_behavior_group_destroyed(
         &mut self,
         _owner_id: Option<i64>,
@@ -46,7 +43,6 @@ pub trait Logging {
     ) {
     }
 
-    /// `eventLogger.log_killed_and_fled_players(ownerId, behaviorId, targetSet, entityGroupMembers)`.
     fn log_killed_and_fled_players(
         &mut self,
         _owner_id: Option<i64>,
@@ -55,7 +51,7 @@ pub trait Logging {
         _members: &[i64],
     ) {
     }
-    /// `eventLogger.log_adding_spawn_points(ownerId, spawnPoolId, requested, min, max, actual, extraContext)`.
+
     fn log_adding_spawn_points(
         &mut self,
         _owner_id: Option<i64>,

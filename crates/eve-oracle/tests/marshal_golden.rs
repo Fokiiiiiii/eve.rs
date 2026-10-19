@@ -2,7 +2,6 @@
 //!
 //! Encoding must reproduce the recorded bytes exactly; decoding must produce
 //! the recorded value (compared in EJSON, where every number keeps its exact
-//! IEEE-754 bits); failures must be the same class of failure.
 
 use eve_marshal::{decode, decode_exact, encode};
 use eve_oracle::fixtures;

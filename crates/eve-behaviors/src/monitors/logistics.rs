@@ -101,7 +101,6 @@ impl Task for ManageRemoteRepairEffect {
     }
 
     fn on_event(&mut self, t: &mut TaskCtx<'_, '_>, _handler: u16, args: &[Value]) {
-        // _apply_effect_on_best_target_if_repair_effect(effect_id)
         if args.first().is_some_and(|effect| effect.py_eq(&self.repair_effect_id)) {
             self.apply_effect_on_best_target(t);
         }

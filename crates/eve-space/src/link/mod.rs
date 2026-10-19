@@ -1,6 +1,5 @@
-//! The messages between the service host and the simulation (`docs/design/adr/0007-space-simulation-process.md`).
 //!
-//! A frame is `u32 length | u8 kind | body`, little endian, text as `u16 length + UTF-8` and byte strings as
+
 //! `u32 length + bytes`, like the front's link (ADR 0002). [`Message::encode`] writes a whole frame and
 //! [`Message::decode`] reads a frame's payload (the kind and the body), so the same functions serve any framing layer.
 //! `oracle/fixtures/simlink/messages.json` pins the layout for both sides.
@@ -89,7 +88,6 @@ pub enum SlimValue {
     Tuple(Vec<SlimValue>),
 }
 
-/// Maximum candidate or allowed target IDs in a structure-damage authorization step.
 pub const MAX_STRUCTURE_DAMAGE_CANDIDATES: usize = 4096;
 pub const MAX_ABYSSAL_MODIFIERS: usize = 256;
 pub const MAX_ABYSSAL_FIELDS: usize = 64;
@@ -287,7 +285,6 @@ pub struct DirectionalTarget {
     pub warping: bool,
 }
 
-/// An Upwell structure the host puts in space (protocol 59): its ball, its owner and the slim fields it has now. It stays until the host takes it out.
 #[derive(Debug, Clone, PartialEq)]
 pub struct StructurePlacement {
     pub structure_id: i64,
@@ -1153,7 +1150,7 @@ pub enum Message {
         solar_system_id: i32,
         structure_beacon_id: i64,
     },
-    /// A Sim-created damageable entity's validated-at-Host owner identity, registered after creation (protocol 69).
+
     DamageableEntityUpserted {
         solar_system_id: i32,
         entity_id: i64,
@@ -1163,7 +1160,7 @@ pub enum Message {
         alliance_id: i64,
         war_faction_id: i64,
     },
-    /// Removes a Sim-created damageable entity from the Host owner-resolution registry (protocol 69).
+
     DamageableEntityRemoved {
         solar_system_id: i32,
         entity_id: i64,
@@ -1215,7 +1212,6 @@ pub enum Message {
     /// The host puts a battlefield's scoreboard in space (protocol 78); see `ScoreboardPlacement`.
     PlaceBattlefieldScoreboard(Box<ScoreboardPlacement>),
     /// A Mobile Observatory's decloaking ping in its system (protocol 72): each cloaked ship whose cloak is stabilized is not reached, the others are
-    /// decloaked with a chance of 40% (EVE.js `processRemoteDecloakPing`, the wiki's Mobile Observatory).
     RemoteDecloakPing {
         solar_system_id: i32,
         observatory_id: i64,
@@ -1298,7 +1294,7 @@ pub enum Message {
         pulse_hop_ordinal: u32,
         allowed_target_ids: Vec<i64>,
     },
-    /// A kind-86 result with the SDE-backed moved/held partition for a transport-field pulse.
+
     StructureDamageCandidatesFieldResult {
         session_id: u64,
         structure_id: i64,
@@ -1344,7 +1340,7 @@ pub enum Message {
         ship_id: i64,
         entries: Vec<BuffEntry>,
     },
-    /// The host's decision for one module work cycle (the same fields as a drone's `DroneWorkResult`).
+
     ModuleWorkResult {
         session_id: u64,
         module_id: i64,

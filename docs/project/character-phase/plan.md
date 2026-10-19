@@ -84,7 +84,7 @@ Lanes are the PostgreSQL databases from `docs/project/DATABASES.md`: `eve_p2` (l
 
 | ID | Package | Depends on | Wave | Lane | Parallel with |
 |---|---|---|---|---|---|
-| CH-1 | Character deletion: prepare, cancel, delete | none | 1 | eve_p2 | CH-3, CH-6, CH-10, CH-12 |
+| CH-1 | Character deletion: prepare, cancel, delete, and purge character-owned skill plans with the deletion transaction | none | 1 | eve_p2 | CH-3, CH-6, CH-10, CH-12 |
 | CH-2 | Alpha injections, and acceptance of the injector correction | none | 1 | eve_p3 | CH-5, CH-7, CH-9 |
 | CH-3 | Skill handler: CheckAndSendNotifications, GetSkillBundleInfo, skill notification order | none | 1 | eve_p2 | CH-1, CH-6, CH-10, CH-12 |
 | CH-4 | Tutorial and season read surfaces | none | 1 | eve_p4 | CH-8, CH-11, CH-13, CH-14 |

@@ -135,7 +135,7 @@ public sealed class OnlineStatusServiceTests
     }
 
     [Fact]
-    public async Task Unselected_observer_gets_empty_initial_state_and_raw_presence_like_reference()
+    public async Task Unselected_observer_gets_empty_initial_state_and_reads_raw_presence()
     {
         var sessions = new CharacterSessions();
         Enter(sessions, Target);
@@ -170,7 +170,7 @@ public sealed class OnlineStatusServiceTests
     }
 
     [Fact]
-    public async Task Unselected_sessions_read_raw_presence_like_the_reference()
+    public async Task Unselected_sessions_read_raw_presence()
     {
         var sessions = new CharacterSessions();
         Enter(sessions, Target);

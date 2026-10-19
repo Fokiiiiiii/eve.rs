@@ -88,7 +88,9 @@ public sealed class CompatibilityRpcServiceTests
 
         Assert.IsType<PyDict>(await cosmetics.CallAsync(Call("GetEnabledCosmetics", args: [new PyInt(10)])));
         Assert.IsType<PyNone>(await cosmetics.CallAsync(Call("GetFirstPartySkinData", args: [new PyInt(20), new PyInt(30)])));
-        Assert.IsType<PyNone>(await cosmetics.CallAsync(Call("GiveSkin", Session(20), new PyInt(30))));
+        var gmSession = Session(20);
+        gmSession.Set("accountRole", new PyLong(Eve.Services.GameMasterRoles.Gml));
+        Assert.IsType<PyNone>(await cosmetics.CallAsync(Call("GiveSkin", gmSession, new PyInt(30))));
 
         var state = Assert.IsType<PyObjectEx>(await energy.CallAsync(Call("GetMyEnergyState", Session(20))));
         Assert.Equal(ObjectExKind.Ex1, state.Kind);
@@ -206,9 +208,11 @@ public sealed class CompatibilityRpcServiceTests
             Assert.Equal(new PyInt(900), Assert.Single(enabled.Entries).Value);
 
             var cosmetics = new ShipCosmeticsMgrRpcService(cache, cache, nowUnixMs: () => now);
+            var gmSession = Session(20);
+            gmSession.Set("accountRole", new PyLong(Eve.Services.GameMasterRoles.Gml));
             await cosmetics.CallAsync(new ServiceCall
             {
-                Method = "GiveSkin", Args = [new PyInt(900)], Session = session,
+                Method = "GiveSkin", Args = [new PyInt(900)], Session = gmSession,
                 Kwargs = Py.Dict(("duration", new PyInt(30)), ("isSingleUse", PyBool.True)),
             });
             Assert.IsType<PyObject>(await cosmetics.CallAsync(Call("GetFirstPartySkinData", session, new PyInt(20), new PyInt(900))));
@@ -250,9 +254,20 @@ public sealed class CompatibilityRpcServiceTests
             Assert.True(cache.Read("shipCosmetics", $"/ships/{shipItemId}").Success);
             await wiredCosmetics.CallAsync(Call("RemoveSkin", session, new PyInt(license.SkinId), new PyInt(20)));
             Assert.IsType<PyNone>(await wiredCosmetics.CallAsync(Call("GetFirstPartySkinData", session, new PyInt(20), new PyInt(license.SkinId))));
-            await wiredCosmetics.CallAsync(Call("GiveSkin", session, new PyInt(license.SkinId)));
-            await wiredCosmetics.CallAsync(Call("GMExpireSkinLicense", session, new PyInt(license.SkinId)));
-            Assert.IsType<PyNone>(await wiredCosmetics.CallAsync(Call("GetFirstPartySkinData", session, new PyInt(20), new PyInt(license.SkinId))));
+            var ordinaryGiveSkinSession = Session(20);
+            ordinaryGiveSkinSession.CharacterId = 20;
+            await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(() => wiredCosmetics.CallAsync(
+                Call("GiveSkin", ordinaryGiveSkinSession, new PyInt(license.SkinId))).AsTask());
+            var gmSkinSession = Session(20);
+            gmSkinSession.CharacterId = 20;
+            gmSkinSession.Set("accountRole", new PyLong(Eve.Services.GameMasterRoles.Gml));
+            await wiredCosmetics.CallAsync(Call("GiveSkin", gmSkinSession, new PyInt(license.SkinId)));
+            var ordinaryExpirySession = Session(20);
+            ordinaryExpirySession.CharacterId = 20;
+            await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(() => wiredCosmetics.CallAsync(
+                Call("GMExpireSkinLicense", ordinaryExpirySession, new PyInt(license.SkinId))).AsTask());
+            await wiredCosmetics.CallAsync(Call("GMExpireSkinLicense", gmSkinSession, new PyInt(license.SkinId)));
+            Assert.IsType<PyNone>(await wiredCosmetics.CallAsync(Call("GetFirstPartySkinData", gmSkinSession, new PyInt(20), new PyInt(license.SkinId))));
 
             var itemTypes = new ItemTypeCatalog(sde);
             Assert.Equal(9, (await itemTypes.GetAsync(681))?.CategoryId);

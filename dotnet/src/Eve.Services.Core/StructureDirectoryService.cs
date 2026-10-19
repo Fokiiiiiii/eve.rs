@@ -715,8 +715,9 @@ public sealed class StructureAssetSafetyService(IStructureAssetSafetyReadCallbac
             {
                 var assetWrapId = PositiveId(call.Arg(0));
                 var days = PositiveId(call.Arg(1));
-                var role = call.Session?.GetInt("role") ?? 0;
-                if ((role & (1L << 54)) == 0 || assetWrapId <= 0 || days is not 5 and not 30)
+                if (call.Session is null ||
+                    !Eve.Services.GameMasterRoles.Has(call.Session, Eve.Services.GameMasterRoles.Gml) ||
+                    assetWrapId <= 0 || days is not 5 and not 30)
                     throw MoveEjectTimeDenied();
                 if (!await _read.MoveEjectTimeGMAsync(call, assetWrapId, (int)days, call.Cancellation))
                     throw MoveEjectTimeDenied();

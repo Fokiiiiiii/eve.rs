@@ -224,9 +224,8 @@ public sealed partial class PersistenceStructureAssetSafetyReadModel : Eve.Servi
         System.Threading.CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        const long roleGml = 1L << 54;
-        if (assetWrapId <= 0 || days is not (5 or 30) ||
-            ((call.Session?.GetInt("role") ?? 0) & roleGml) == 0)
+        if (assetWrapId <= 0 || days is not (5 or 30) || call.Session is null ||
+            !Eve.Services.GameMasterRoles.Has(call.Session, Eve.Services.GameMasterRoles.Gml))
             return false;
 
         var deltaMs = checked((long)days * DayMs);

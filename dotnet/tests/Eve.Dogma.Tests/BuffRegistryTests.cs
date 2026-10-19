@@ -123,6 +123,44 @@ public class BuffRegistryTests
     }
 
     [Fact]
+    public void A_collection_reads_each_SDE_modifier_scope_and_applies_location_modifiers_to_fitted_items()
+    {
+        using var document = System.Text.Json.JsonDocument.Parse("""
+            {
+              "operationName":"PostPercent",
+              "aggregateMode":"Maximum",
+              "itemModifiers":[{"dogmaAttributeID":271}],
+              "locationModifiers":[{"dogmaAttributeID":272}],
+              "locationGroupModifiers":[{"dogmaAttributeID":273,"groupID":2}],
+              "locationRequiredSkillModifiers":[{"dogmaAttributeID":274,"skillID":123}]
+            }
+            """);
+        var collection = Assert.IsType<BuffCollection>(BuffCollection.From(22, document.RootElement));
+        Assert.Equal(
+            [ModifierFunc.Item, ModifierFunc.Location, ModifierFunc.LocationGroup, ModifierFunc.LocationRequiredSkill],
+            collection.Shape.Select(modifier => modifier.Func));
+
+        const long module = 200;
+        const int moduleType = 2;
+        var statics = new DogmaStatic(
+            [], [],
+            [
+                new TypeDef(ShipType, 1, 6, new Dictionary<int, double> { [271] = 100 }, []),
+                new TypeDef(moduleType, 2, 7, new Dictionary<int, double> { [272] = 100, [273] = 100, [274] = 100, [182] = 123 }, [])
+            ],
+            categoryOfGroup: new Dictionary<int, int> { [2] = 7 });
+        var world = new DogmaWorld(statics, 0, Ship);
+        world.Add(new DogmaItem(Ship, ShipType, Owner, 0, 0, ItemState.Online));
+        world.Add(new DogmaItem(module, moduleType, Owner, Ship, 0, ItemState.Online));
+        world.SetBuffs(Ship, [collection.EffectFor(-10)]);
+
+        Assert.Equal(90, world.Get(Ship, 271), 9);
+        Assert.Equal(90, world.Get(module, 272), 9);
+        Assert.Equal(90, world.Get(module, 273), 9);
+        Assert.Equal(90, world.Get(module, 274), 9);
+    }
+
+    [Fact]
     public void The_state_of_an_item_is_each_collections_value_with_the_latest_expiry_of_its_active_inputs()
     {
         var registry = new BuffRegistry();

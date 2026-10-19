@@ -82,6 +82,7 @@ internal sealed partial class CharacterServicesComposition
                 controlledStructureSnapshot: structureControlReadModel.DogmaAsync,
                 log: message => Console.Error.WriteLine($"eve-host: ammo: {message}"),
                 localTimers: foundations.LocalTimers,
-                augmentations: new PilotAugmentationRpc(pilotImplants, skillHandler.UseBoosterAsync, announcer, dogma)).ListeningForDryGuns(),
+                augmentations: new PilotAugmentationRpc(pilotImplants, skillHandler.UseBoosterAsync, announcer, dogma),
+                prepareSpaceDogma: spaceSessions!.PrepareSpaceDogmaAsync).ListeningForDryGuns(),
     ];
 }

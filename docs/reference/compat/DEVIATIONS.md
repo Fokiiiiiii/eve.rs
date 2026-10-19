@@ -678,8 +678,7 @@ shapes (the existing codecs were reused and extended by one action, tag 27, ADR 
   Open.
 - **Sim-side overlays (WP17, assistance and jam).** Not started in this track. The B6c notes name them as the sim-side part of the assistance and jam
   overlays (EveJS `hostileModuleRuntime.js`, `assistanceModuleRuntime.js`), and the definition of that part is not settled in the sources read. Open.
-- **Probe launcher and probe lifecycle notifications (E-06).** Not started. Depends on the probe launcher (`LaunchProbes`, RC-7), which eve.rs does not
-  have. Open.
+- **Probe launcher and probe lifecycle notifications (E-06).** Built with RC-7, the probe scan/recovery paths, simulation messages and persistence. Host tests cover launch, recall and lifecycle notifications; the launch test passed on eve_p3 on 2026-10-19. Graphical-client verification remains open.
 - **Protocol.** 40 to 41 (one bump for this track): tag 27 `CynoField`, and the two version constants. `oracle/fixtures/simlink/messages.json` gained the
   two entries the generator writes for the field.
 ## Command bursts and the buff registry (track C5, 2026-10-09)

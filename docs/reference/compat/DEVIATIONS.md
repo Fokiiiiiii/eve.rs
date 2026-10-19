@@ -3810,7 +3810,7 @@ Tests: `crates/eve-space` 799 passed. dotnet: `Eve.Space.Tests` 313 passed, `Eve
 
 ## Emergency hull energizer burnout (2026-10-19)
 
-V24 `eve/common/script/dogma/pythonEffects/emergencyHullEnergizer.py:Start` sets module damage to the module's hit points when activation starts. EveJS v0.12.9 `server/src/space/runtime/moduleHeat.js:913-926` applies one structure-HP of damage on activation. eve.rs now persists full damage to the existing module condition after the simulation accepts activation, while the simulation sends the same burnout attribute update to the client. The focused PostgreSQL regression passed on eve_p3. A direct repeated activation is not refused by the Space Host yet; graphical-client behavior was not exercised.
+V24 `eve/common/script/dogma/pythonEffects/emergencyHullEnergizer.py:Start` sets module damage to the module's hit points when activation starts. EveJS v0.12.9 `server/src/space/runtime/moduleHeat.js:913-926` applies one structure-HP of damage on activation. eve.rs persists full damage to the existing module condition after the simulation accepts activation, while the simulation sends the same burnout attribute update to the client. `ModulePackages.Of` refuses a module whose persisted damage is full or whose condition is incapacitated; `ModuleRefusals.Of` returns the existing `MODULE_INCAPACITATED` client message. The persistence and refusal regressions passed on eve_p3. Graphical-client behavior was not exercised.
 
 ## Refusals reviewed against a basis (2026-10-13)
 

@@ -199,7 +199,7 @@ def test_the_recorded_walk_replays():
             if method == "GetNumCharacters" and not REFERENCE:
                 recorded_ok = min(recorded_ok, 3)  # DEVIATION (slots), see above
             if method == "ToggleValidation":
-                # The recording and this walk both use a GM account (role bit 54), whose first toggle disables validation.
+                # The recording and this walk use a GM account (role bit 54), whose first toggle disables validation.
                 # The headless-client fixture grants staff roles for this account; the elevated path is also pinned by
                 # ValidationAndOmegaTests in the .NET suite.
                 recorded_ok = False

@@ -138,6 +138,17 @@ public sealed partial class PgAccountDirectory : IAccountDirectory, IAccountLook
         return slots;
     }
 
+    /// <summary>Returns persisted slot expiries for Host scheduler recovery.</summary>
+    public async Task<IReadOnlyList<(uint AccountId, DateTimeOffset EndsAt)>> TrainingSlotExpiriesAsync(CancellationToken cancellationToken)
+    {
+        await using var command = _source.CreateCommand($"SELECT account_id, ends_at FROM {Schema}.account_training_slots ORDER BY account_id, slot");
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        var slots = new List<(uint AccountId, DateTimeOffset EndsAt)>();
+        while (await reader.ReadAsync(cancellationToken))
+            slots.Add((checked((uint)reader.GetInt32(0)), reader.GetFieldValue<DateTimeOffset>(1)));
+        return slots;
+    }
+
     /// <summary>How many of the account's extra training queues run at <paramref name="now"/> (synchronous: the training rules read it).</summary>
     public int ActiveTrainingSlotCount(uint accountId, DateTimeOffset now)
     {

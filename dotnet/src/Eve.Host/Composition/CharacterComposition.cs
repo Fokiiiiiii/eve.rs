@@ -120,8 +120,17 @@ internal sealed partial class CharacterServicesComposition
         announcer.Attach();
         multipleTrainingExpiry = new MultipleTrainingSlotExpiry(
             foundations.Scheduler, training, announcer, characterSessions,
-            async (accountId, token) => [.. (await characters.ForAccountAsync(checked((int)accountId), token)).Select(c => c.Id)]);
+            async (accountId, token) => [.. (await characters.ForAccountAsync(checked((int)accountId), token)).Select(c => c.Id)],
+            async token =>
+            {
+                if (accounts is not Eve.Identity.PgAccountDirectory pgAccounts)
+                    return Array.Empty<(long AccountId, DateTimeOffset EndsAt)>();
+                return (await pgAccounts.TrainingSlotExpiriesAsync(token))
+                    .Select(slot => (AccountId: (long)slot.AccountId, slot.EndsAt))
+                    .ToArray();
+            });
         multipleTrainingExpiry.Register();
+        await multipleTrainingExpiry.ReconcileSavedSlotsAsync(CancellationToken.None);
         readAugmentations = SkillHandlerService.CreateAugmentationReader(items, dogma, skills, now);
         skillHandler = new SkillHandlerService(
             skills, skillCatalog, training, characters, items, dogma, announcer, now, readAugmentations,

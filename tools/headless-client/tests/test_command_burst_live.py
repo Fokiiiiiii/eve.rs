@@ -28,12 +28,17 @@ BURST_HULL = 37480  # Bifrost
 SHIELD_EM_RESONANCE = 271
 
 
-def ship_attributes(answer, ship_id: int) -> dict[int, float]:
+def ship_attribute(answer, ship_id: int, attribute_id: int) -> float:
     ship_info = dict(describe(answer)["args"]["$dict"])["shipInfo"]["$dict"]
     for item_id, item in ship_info:
         if int(number(item_id)) == ship_id:
             fields = dict(item["args"]["$dict"])
-            return {int(attribute): float(value) for attribute, value in fields["attributes"]["$dict"]}
+            for attribute, value in fields["attributes"]["$dict"]:
+                if int(number(attribute)) == attribute_id:
+                    while isinstance(value, dict) and len(value) == 1:
+                        value = next(iter(value.values()))
+                    return float(value)
+            raise AssertionError(f"GetAllInfo omitted attribute {attribute_id} for ship {ship_id}")
     raise AssertionError(f"GetAllInfo omitted ship {ship_id}")
 
 
@@ -67,14 +72,14 @@ def test_a_loaded_burst_changes_a_fleet_members_dogma_until_its_buff_expires():
         burst_flag = next(flag for flag in dbseed.HIGH_SLOTS if flag not in occupied)
         burst = dbseed.new_item(BURST_MODULE, owner=owner_character, location=owner_ship,
                                 flag=burst_flag, singleton=True)
-        charge = dbseed.new_item(BURST_CHARGE, owner=owner_character, location=owner_ship,
-                                 flag=5, quantity=1)
+        charge = dbseed.new_item(BURST_CHARGE, owner=owner_character, location=STATION,
+                                 flag=dbseed.HANGAR, quantity=1)
         station_dogma = owner.call("dogmaIM", "MachoBindObject", (STATION, 15), None)
         owner.call_bound(station_dogma[0], "LoadAmmo", owner_ship, m.List([burst]), m.List([charge]), STATION)
 
         member_station_dogma = member.call("dogmaIM", "MachoBindObject", (STATION, 15), None)
         before_info = member.call_bound(member_station_dogma[0], "GetAllInfo", True, True, None)
-        before = ship_attributes(before_info, member_ship)[SHIELD_EM_RESONANCE]
+        before = ship_attribute(before_info, member_ship, SHIELD_EM_RESONANCE)
 
         owner_ship_service = owner.call("ship", "MachoBindObject", (STATION, 15), None)
         member_ship_service = member.call("ship", "MachoBindObject", (STATION, 15), None)
@@ -86,7 +91,11 @@ def test_a_loaded_burst_changes_a_fleet_members_dogma_until_its_buff_expires():
         member.call_bound(member_dogma[0], "GetAllInfo", True, True, None)
         notifications_of(member)
 
-        owner.call_bound(owner_dogma[0], "Activate", burst, "moduleBonusWarfareLinkShield", None, 1000)
+        owner.call_bound(owner_dogma[0], "SetModuleOnline", owner_ship, burst)
+        try:
+            owner.call_bound(owner_dogma[0], "Activate", burst, "moduleBonusWarfareLinkShield", None, 1000)
+        except Exception as error:
+            raise AssertionError(f"command burst activation failed: {error!r}; payload={getattr(error, 'payload', None)!r}") from error
         active_events = wait_for_events(
             member,
             lambda events: named(events, "OnModuleAttributeChanges") and named(events, "OnDbuffUpdated"),
@@ -98,7 +107,7 @@ def test_a_loaded_burst_changes_a_fleet_members_dogma_until_its_buff_expires():
         assert active_events.index(changes[0]) < active_events.index(dbuffs[0]), "dogma attributes must precede the buff-state update"
 
         active_info = member.call_bound(member_dogma[0], "GetAllInfo", True, True, None)
-        active = ship_attributes(active_info, member_ship)[SHIELD_EM_RESONANCE]
+        active = ship_attribute(active_info, member_ship, SHIELD_EM_RESONANCE)
         assert active == pytest.approx(before * 0.92), f"shield resonance was {active}, expected an 8% resistance burst from {before}"
 
         notifications_of(member)
@@ -110,5 +119,5 @@ def test_a_loaded_burst_changes_a_fleet_members_dogma_until_its_buff_expires():
         assert named(expired_events, "OnModuleAttributeChanges"), "buff expiry did not restore receiver dogma attributes"
         assert named(expired_events, "OnDbuffUpdated"), "buff expiry did not update receiver buff state"
         after_info = member.call_bound(member_dogma[0], "GetAllInfo", True, True, None)
-        after = ship_attributes(after_info, member_ship)[SHIELD_EM_RESONANCE]
+        after = ship_attribute(after_info, member_ship, SHIELD_EM_RESONANCE)
         assert after == pytest.approx(before), f"expired shield resonance stayed at {after}, baseline was {before}"

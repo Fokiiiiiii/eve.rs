@@ -451,6 +451,29 @@ public class InvBrokerTests
         Assert.False((await rig.Items.GetAsync(itemId))!.Singleton);
     }
 
+    [PgFact]
+    public async Task Repackaging_refuses_items_owned_by_another_character()
+    {
+        await using var rig = await Rig.CreateAsync(activeShip: true);
+        var foreignItemId = await rig.AddAsync(Rig.Tritanium, Rig.Character + 1, Rig.Station, singleton: true);
+        var service = new RepackagingService(rig.Service);
+        var request = new PyDict([
+            new(new PyLong(Rig.Station), new PyList([
+                PyTuple.Of(new PyLong(foreignItemId), new PyLong(Rig.Station)),
+            ])),
+        ]);
+
+        var result = await ((IService)service).CallAsync(new ServiceCall
+        {
+            Method = "RepackageItems",
+            Session = Rig.Session(),
+            Args = [request],
+        });
+
+        Assert.Equal(PyNone.Instance, result);
+        Assert.True((await rig.Items.GetAsync(foreignItemId))!.Singleton);
+    }
+
 
     [PgFact]
     public async Task Corporation_ship_inventory_reads_and_docked_add_and_multiadd_enforce_division_access()

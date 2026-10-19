@@ -172,10 +172,21 @@ jobs:
           EVE_RUN: tools/headless-client/.venv/bin/python -m pytest -q tools/headless-client/tests/${{ matrix.test_file }} -rs
           EVE_LIVE_SLOW: "1"
         run: tools/dev/run-eve-live.sh
+      - name: Show the stack logs after a failure
+        if: failure()
+        run: |
+          for log in .live-logs/host.out .live-logs/sim.out .live-logs/net.out; do
+            if [ -f "$log" ]; then
+              echo "--- $log (last 500 lines) ---"
+              tail -n 500 "$log"
+            fi
+          done
       - name: Keep the logs of the stack
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: live-slow-logs-${{ matrix.test_file }}
           path: .live-logs
-          if-no-files-found: ignore
+          if-no-files-found: error
+          retention-days: 7
+          include-hidden-files: true

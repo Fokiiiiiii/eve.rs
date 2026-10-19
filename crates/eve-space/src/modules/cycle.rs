@@ -565,6 +565,11 @@ impl Scene {
             Action::CommandBurst { range_meters } => self.burst_recipients(session, *range_meters),
             _ => Vec::new(),
         };
+        if command == WORK_BURST {
+            eprintln!(
+                "eve-sim: command burst cycle ship={ship_id} module={module_id} target={target_id} recipients={recipients:?}"
+            );
+        }
         Some(Out::ModuleWorkCycle {
             session,
             character_id,

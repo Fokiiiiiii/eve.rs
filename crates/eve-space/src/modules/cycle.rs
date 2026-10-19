@@ -127,6 +127,11 @@ impl Scene {
         // a refresh the host sent takes effect at this cycle's start, before what the cycle costs is worked out
         let refresh = refresh_running(&mut pilot.modules.running[index], session, owner, at);
         let run = pilot.modules.running[index].clone();
+        let cycle_capacitor_need = if run.rounds.is_some_and(|rounds| rounds <= 0) {
+            run.effect.fallback_capacitor_need
+        } else {
+            run.effect.capacitor_need
+        };
         let npc_self_repair = pilot.ship.npc.as_ref().is_some_and(|identity| {
             identity.self_repairs.iter().any(|repair| {
                 repair.is_valid()
@@ -135,7 +140,7 @@ impl Scene {
             })
         });
         let affordable =
-            pilot.modules.capacitor.as_ref().is_some_and(|c| c.charge_at(at) >= run.effect.capacitor_need);
+            pilot.modules.capacitor.as_ref().is_some_and(|c| c.charge_at(at) >= cycle_capacitor_need);
         let more = run.cycles < run.effect.repeat;
         if run.stopping || !more || !affordable || !target_ok {
             let ending = if target_ok { Ending::Done } else { Ending::TargetGone };
@@ -163,7 +168,7 @@ impl Scene {
         }
         out.extend(refresh);
         let (before, after) = match pilot.modules.capacitor.as_mut() {
-            Some(capacitor) => capacitor.draw(at, run.effect.capacitor_need),
+            Some(capacitor) => capacitor.draw(at, cycle_capacitor_need),
             None => (0.0, 0.0),
         };
         let next = &mut pilot.modules.running[index];

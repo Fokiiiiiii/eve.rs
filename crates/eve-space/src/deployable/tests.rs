@@ -60,6 +60,7 @@ fn module(module_id: i64, action: Action, duration_ms: f64) -> Effect {
         fx: String::new(),
         duration_ms,
         capacitor_need: 0.0,
+        fallback_capacitor_need: 0.0,
         repeat: 1,
         target_id: 0,
         turret: None,

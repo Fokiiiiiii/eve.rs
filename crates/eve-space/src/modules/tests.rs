@@ -49,6 +49,7 @@ pub(crate) fn afterburner() -> Effect {
         fx: "effects.Afterburner".to_string(),
         duration_ms: 10_000.0,
         capacitor_need: 5.0,
+        fallback_capacitor_need: 0.0,
         repeat: 1000,
         target_id: 0,
         turret: None,
@@ -77,6 +78,7 @@ fn micro_jump_drive() -> Effect {
         fx: "effects.MicroJumpDriveEngage".to_string(),
         duration_ms: 12_000.0,
         capacitor_need: 0.0,
+        fallback_capacitor_need: 0.0,
         repeat: 1,
         action: Some(Action::MicroJumpDrive { distance_meters: 100_000.0, cooldown_ms: 180_000 }),
         on: None,
@@ -637,6 +639,7 @@ fn repairer(layer: Layer, amount: f64, when: Applies) -> Effect {
         fx: "effects.ArmorRepair".to_string(),
         duration_ms: 5_000.0,
         capacitor_need: 20.0,
+        fallback_capacitor_need: 0.0,
         repeat: 1000,
         target_id: 0,
         turret: None,
@@ -687,6 +690,7 @@ fn ancillary_repair_consumes_loaded_charges_each_cycle_then_uses_its_fallback() 
     let before = layers(&scene, t).armor;
     let mut effect = repairer(Layer::Armor, 10.0, Applies::CycleEnd);
     effect.repeat = 3;
+    effect.fallback_capacitor_need = 10.0;
     effect.action = Some(Action::Charged {
         action: Box::new(Action::Repair { layer: Layer::Armor, amount: 10.0, when: Applies::CycleEnd }),
         fallback: Some(Box::new(Action::Repair {
@@ -711,11 +715,16 @@ fn ancillary_repair_consumes_loaded_charges_each_cycle_then_uses_its_fallback() 
         spent.iter().any(|event| matches!(event, Out::ChargeSpent { module_id: MODULE, rounds_left: 0, .. }))
     );
     assert!((after_first - (before + 10.0).min(137.5)).abs() < 1e-3);
-    let (_, second_cycle) = poll_until(&mut scene, first_cycle, 5.1);
+    let (second, second_cycle) = poll_until(&mut scene, first_cycle, 5.1);
     let after_second = layers(&scene, second_cycle).armor;
     assert!((after_second - (after_first + 10.0).min(137.5)).abs() < 1e-3);
     let (third, third_cycle) = poll_until(&mut scene, second_cycle, 5.1);
     assert!(!third.iter().any(|event| matches!(event, Out::ChargeSpent { module_id: MODULE, .. })));
+    let fallback_capacitor = charges(&second);
+    assert!(
+        fallback_capacitor.iter().any(|(new, old)| old - new > 1.0),
+        "the unloaded cycle pays capacitor: {fallback_capacitor:?}"
+    );
     let after_third = layers(&scene, third_cycle).armor;
     assert!((after_third - (after_second + 5.0).min(137.5)).abs() < 1e-3);
 }
@@ -769,6 +778,7 @@ fn a_power_booster_transfers_to_its_own_ship_and_spends_one_charge_per_cycle() {
         fx: "effects.CapacitorBooster".to_string(),
         duration_ms: 5_000.0,
         capacitor_need: 0.0,
+        fallback_capacitor_need: 0.0,
         repeat: 2,
         target_id: ship_id,
         turret: None,
@@ -868,6 +878,7 @@ fn projected(what: Remote, when: Applies, target: i64) -> Effect {
         fx: "effects.RemoteArmorRepair".to_string(),
         duration_ms: 5_000.0,
         capacitor_need: 20.0,
+        fallback_capacitor_need: 0.0,
         repeat: 1000,
         target_id: target,
         turret: None,
@@ -2148,6 +2159,7 @@ fn hardener(module: i64) -> Effect {
         fx: "effects.AdaptiveArmorHardener".to_string(),
         duration_ms: 10_000.0,
         capacitor_need: 42.0,
+        fallback_capacitor_need: 0.0,
         // a toggle: it runs until the pilot stops it (the type does not disallow repeating)
         repeat: 1000,
         target_id: 0,

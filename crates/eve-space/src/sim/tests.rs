@@ -122,6 +122,7 @@ fn abyssal_rebind_combat_death_loot_return_cleanup_retires_only_scene_projectile
         fx: "effects.MissileDeployment".to_string(),
         duration_ms: 2_500.0,
         capacitor_need: 0.0,
+        fallback_capacitor_need: 0.0,
         repeat: 1,
         target_id: npc_ship_id,
         turret: Some(crate::weapons::Turret {
@@ -429,6 +430,7 @@ fn afterburner(module: i64) -> crate::modules::Effect {
         fx: "effects.Afterburner".to_string(),
         duration_ms: 10_000.0,
         capacitor_need: 5.0,
+        fallback_capacitor_need: 0.0,
         repeat: 1000,
         target_id: 0,
         turret: None,

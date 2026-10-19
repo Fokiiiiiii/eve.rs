@@ -31,7 +31,6 @@ fn extract_flattens_marks_complete_and_keeps_every_file_inside_the_directory() {
 
     assert_eq!(names_in(&dir), [".complete", "_sde.jsonl", "evil.jsonl", "groups.jsonl", "types.jsonl"]);
     assert_eq!(fs::read_to_string(dir.join("types.jsonl")).unwrap(), "{\"_key\":1}\n");
-    // Nothing escaped: the only entries next to the directory are its parent's own.
     assert_eq!(names_in(dir.parent().unwrap()), ["build"]);
     assert!(!scratch.path("evil.jsonl").exists());
 }
@@ -77,7 +76,6 @@ fn an_extracted_build_is_used_without_touching_any_source() {
     assert!(matches!(extracted.origin, Origin::LocalArchive(_)));
     assert!(archive.exists(), "the caller's archive is never deleted");
 
-    // Second start: the sources are unreachable and nothing is downloaded.
     let second =
         options(&scratch, 11, vec![file_url(&scratch.path("does-not-exist.zip"))], Expect::Sha256(hash));
     let again = fetch::ensure_extracted(&second).unwrap();
@@ -106,7 +104,6 @@ fn a_source_that_fails_or_has_the_wrong_hash_is_skipped_for_the_next() {
         fs::read_to_string(extracted.dir.join("types.jsonl")).unwrap(),
         "{\"_key\":587,\"groupID\":25}\n"
     );
-    // The archive was deleted once extracted, and no partial file is left.
     assert_eq!(names_in(&scratch.path("cache")), ["eve-online-static-data-21-jsonl"]);
 }
 

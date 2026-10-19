@@ -56,3 +56,8 @@ A slice is complete only when its wire values, persisted state, side effects, no
 ## Persisted terms migration
 
 Migration `0002_contract_terms` extends the existing PostgreSQL header with availability, price, collateral, creation fee, deposit, sales tax, title, and description. Each monetary column is nonnegative with two-decimal precision, and availability is constrained to the four client modes (private, public, corporation, alliance). Existing rows receive zero-valued terms and remain readable. This schema supports later creation and settlement writes; it does not itself create contracts or move inventory or ISK.
+
+
+## Advanced Contracting capacity rule
+
+`ApproximateContractLimitConfiguration` defaults to +4 outstanding contracts per Advanced Contracting level, as directed by Q-18. The value is approximate and unconfirmed. `ApproximateContractLimitRules` exposes the additional-capacity hook while the contract creation and limit provider remains open; no contract limit is reported as enforced yet. See `docs/reference/compat/DEVIATIONS.md`.

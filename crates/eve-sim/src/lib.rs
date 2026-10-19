@@ -8,12 +8,12 @@
 
 use std::io;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use eve_space::link::{Message, PROTOCOL_VERSION};
 use eve_space::sim::{POLL_HZ, Sim, Universe};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use tokio::time::MissedTickBehavior;
+use tokio::time::{Instant, MissedTickBehavior};
 
 /// The largest frame accepted (a ship's numbers are a few hundred bytes; this is generous).
 const MAX_FRAME: usize = 1 << 20;
@@ -54,6 +54,23 @@ async fn write_all<W: AsyncWrite + Unpin>(writer: &mut W, messages: &[Message]) 
     if bytes.is_empty() { Ok(()) } else { writer.write_all(&bytes).await }
 }
 
+fn delay_to_next_second(now: SystemTime) -> Duration {
+    let millis = now.duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() % 1000;
+    Duration::from_millis(1000 - millis as u64)
+}
+
+fn hold_tick_aligned(messages: Vec<Message>, held: &mut Vec<Message>) -> Vec<Message> {
+    let mut immediate = Vec::with_capacity(messages.len());
+    for message in messages {
+        if matches!(&message, Message::Notify { name, .. } if name == "DoDestinyUpdate") {
+            held.push(message);
+        } else {
+            immediate.push(message);
+        }
+    }
+    immediate
+}
+
 /// Serves one host over a connected stream until it closes it or says something the simulation cannot take.
 ///
 /// `clock` says what time it is (a FILETIME); tests pass their own.
@@ -66,6 +83,10 @@ where
     let mut sim = Sim::new(universe);
     let mut poll = tokio::time::interval(Duration::from_millis(1000 / u64::from(POLL_HZ)));
     poll.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    let first_flush = Instant::now() + delay_to_next_second(SystemTime::now());
+    let mut flush = tokio::time::interval_at(first_flush, Duration::from_secs(1));
+    flush.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    let mut held = Vec::new();
 
     // the host speaks first
     let hello = read_frame(&mut reader).await?.ok_or_else(|| {
@@ -97,12 +118,45 @@ where
                 let Some(payload) = frame? else { return Ok(()) };
                 let message = Message::decode(&payload).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
                 let replies = sim.handle(message, clock()).map_err(io::Error::other)?;
-                write_all(&mut writer, &replies).await?;
+                write_all(&mut writer, &hold_tick_aligned(replies, &mut held)).await?;
             }
             _ = poll.tick() => {
                 let due = sim.poll(clock());
-                write_all(&mut writer, &due).await?;
+                write_all(&mut writer, &hold_tick_aligned(due, &mut held)).await?;
+            }
+            _ = flush.tick() => {
+                write_all(&mut writer, &std::mem::take(&mut held)).await?;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_destiny_update_waits_for_the_next_whole_second_boundary() {
+        let now = UNIX_EPOCH + Duration::from_millis(12_345);
+        assert_eq!(delay_to_next_second(now), Duration::from_millis(655));
+    }
+
+    #[test]
+    fn tick_aligned_updates_are_held_while_other_link_replies_remain_immediate() {
+        let mut held = Vec::new();
+        let immediate = hold_tick_aligned(
+            vec![
+                Message::Notify {
+                    session_id: 1,
+                    name: "DoDestinyUpdate".into(),
+                    id_type: "clientID".into(),
+                    args: Vec::new(),
+                },
+                Message::Accepted { session_id: 1, command: 4, at: 0 },
+            ],
+            &mut held,
+        );
+        assert_eq!(immediate, [Message::Accepted { session_id: 1, command: 4, at: 0 }]);
+        assert!(matches!(held.as_slice(), [Message::Notify { name, .. }] if name == "DoDestinyUpdate"));
     }
 }

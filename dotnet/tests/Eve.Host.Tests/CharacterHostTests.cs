@@ -486,6 +486,31 @@ public sealed class CharacterHostTests
         await rig.SetSkillLevelAsync(character, 3300, 3);
         var skillPlans = new Eve.Skills.PgSkillPlanStore(rig.Source, rig.SkillsSchema);
         var skillPlanId = await skillPlans.CreateAsync(character, "Private plan", "", []);
+        var otherCharacter = await rig.CreateCharacterAsync();
+        var titleId = Guid.NewGuid();
+        foreach (var ownerId in new[] { character, otherCharacter })
+        {
+            await using var connection = await rig.Source.OpenConnectionAsync();
+            await using var transaction = await connection.BeginTransactionAsync();
+            foreach (var statement in new[]
+            {
+                $"INSERT INTO {rig.CharactersSchema}.character_titles(character_id, title_id, granted_ms) VALUES ($1, $2, 1)",
+                $"INSERT INTO {rig.CharactersSchema}.character_equipped_titles(character_id, title_id) VALUES ($1, $2)",
+                $"INSERT INTO {rig.CharactersSchema}.achievement_trackers(character_id, updated_ms) VALUES ($1, 1)",
+                $"INSERT INTO {rig.CharactersSchema}.achievement_completions(character_id, achievement_id, completed_filetime) VALUES ($1, 1, 1)",
+                $"INSERT INTO {rig.CharactersSchema}.achievement_event_counts(character_id, event_name, event_count) VALUES ($1, 'login', 1)",
+                $"UPDATE {rig.CharactersSchema}.characters SET time_last_clone_jump_filetime = 123 WHERE id = $1",
+            })
+            {
+                await using var command = new NpgsqlCommand(statement, connection, transaction);
+                command.Parameters.Add(new NpgsqlParameter { Value = ownerId });
+                if (statement.Contains("title_id", StringComparison.Ordinal))
+                    command.Parameters.Add(new NpgsqlParameter { Value = titleId });
+                await command.ExecuteNonQueryAsync();
+            }
+            await transaction.CommitAsync();
+            await rig.AddCloneAsync(ownerId, rig.Station, "station", "Private clone", [10]);
+        }
         await using (var connection = await rig.Source.OpenConnectionAsync())
         await using (var queue = new NpgsqlCommand(
             $"INSERT INTO {rig.SkillsSchema}.skill_queue (character_id, position, type_id, to_level) VALUES ($1, 0, 3300, 4)", connection))
@@ -523,6 +548,28 @@ public sealed class CharacterHostTests
         }
         Assert.Empty(await skillPlans.ListAsync(character));
         Assert.Null(await skillPlans.GetAsync(character, skillPlanId));
+        await using (var purgeConnection = await rig.Source.OpenConnectionAsync())
+        {
+            foreach (var table in new[]
+            {
+                "character_jump_clones", "character_titles", "character_equipped_titles", "achievement_trackers",
+                "achievement_completions", "achievement_event_counts",
+            })
+            {
+                await using var deletedCount = new NpgsqlCommand(
+                    $"SELECT count(*) FROM {rig.CharactersSchema}.{table} WHERE character_id = $1", purgeConnection);
+                deletedCount.Parameters.Add(new NpgsqlParameter { Value = character });
+                Assert.Equal(0L, (long)(await deletedCount.ExecuteScalarAsync())!);
+                await using var retainedCount = new NpgsqlCommand(
+                    $"SELECT count(*) FROM {rig.CharactersSchema}.{table} WHERE character_id = $1", purgeConnection);
+                retainedCount.Parameters.Add(new NpgsqlParameter { Value = otherCharacter });
+                Assert.Equal(1L, (long)(await retainedCount.ExecuteScalarAsync())!);
+            }
+            await using var lastJump = new NpgsqlCommand(
+                $"SELECT time_last_clone_jump_filetime FROM {rig.CharactersSchema}.characters WHERE id = $1", purgeConnection);
+            lastJump.Parameters.Add(new NpgsqlParameter { Value = character });
+            Assert.Equal(0L, (long)(await lastJump.ExecuteScalarAsync())!);
+        }
         await using (var queueConnection = await rig.Source.OpenConnectionAsync())
         await using (var queueCount = new NpgsqlCommand(
             $"SELECT count(*) FROM {rig.SkillsSchema}.skill_queue WHERE character_id = $1", queueConnection))

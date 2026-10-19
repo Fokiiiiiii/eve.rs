@@ -8,7 +8,7 @@ namespace Eve.Host;
 /// go in the deletion's transaction. The game-store paths go through the cache: a row removed underneath the cache would be written
 /// back by its next flush. Only rows that belong to the character are removed; corporation-owned data stays.
 /// </summary>
-internal sealed class CharacterPrivateStatePurge(GameStoreCache cache, string agentsSchema, string bookmarksSchema, string spaceSchema, string skillsSchema = "skills")
+internal sealed class CharacterPrivateStatePurge(GameStoreCache cache, string agentsSchema, string bookmarksSchema, string spaceSchema, string skillsSchema = "skills", string charactersSchema = "characters")
 {
     private const string CalendarSchema = Eve.Calendar.CalendarStore.DefaultSchema;
 
@@ -21,9 +21,19 @@ internal sealed class CharacterPrivateStatePurge(GameStoreCache cache, string ag
         $"DELETE FROM {agentsSchema}.research_projects WHERE character_id = $1",
         $"DELETE FROM {agentsSchema}.locate_requests WHERE character_id = $1",
         $"DELETE FROM {spaceSchema}.scan_probes WHERE character_id = $1",
-        // character skill plans and their dependent requirements/milestones/active selection are character owned
+        // Skill plans and their dependent requirements/milestones/active selection belong to the character.
         $"DELETE FROM {skillsSchema}.skill_plans WHERE character_id = $1",
-        // the bookmark folders the character owns (their bookmarks and subfolders cascade); the calendar events it owns (their responses cascade)
+        // Achievement children reference their tracker header without cascade.
+        $"DELETE FROM {charactersSchema}.achievement_completions WHERE character_id = $1",
+        $"DELETE FROM {charactersSchema}.achievement_event_counts WHERE character_id = $1",
+        $"DELETE FROM {charactersSchema}.achievement_trackers WHERE character_id = $1",
+        // Remove the equipped row first; the owned-title row has no character-delete cascade.
+        $"DELETE FROM {charactersSchema}.character_equipped_titles WHERE character_id = $1",
+        $"DELETE FROM {charactersSchema}.character_titles WHERE character_id = $1",
+        // Clone implants cascade from the clone row. The last-jump timestamp lives on the tombstoned character row.
+        $"DELETE FROM {charactersSchema}.character_jump_clones WHERE character_id = $1",
+        $"UPDATE {charactersSchema}.characters SET time_last_clone_jump_filetime = 0 WHERE id = $1",
+        // Owned bookmark folders cascade to bookmarks/subfolders; owned calendar events cascade responses.
         $"DELETE FROM {bookmarksSchema}.folders WHERE owner_id = $1",
         $"DELETE FROM {CalendarSchema}.events WHERE owner_id = $1",
         $"DELETE FROM {CalendarSchema}.responses WHERE character_id = $1",

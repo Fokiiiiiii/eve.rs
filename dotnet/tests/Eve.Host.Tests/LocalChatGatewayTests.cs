@@ -85,7 +85,7 @@ public sealed class LocalChatGatewayTests
 
         var valid = new ProtoWriter();
         valid.String(1, "hello");
-        for (var i = 0; i < 5; i++)
+        for (var i = 0; i < 3; i++)
             Assert.Equal(200U, (await gateway[BroadcastRequest](Request(BroadcastRequest, 1001, valid.ToArray()), CancellationToken.None)).StatusCode);
         Assert.Equal(429U, (await gateway[BroadcastRequest](Request(BroadcastRequest, 1001, valid.ToArray()), CancellationToken.None)).StatusCode);
     }

@@ -20,14 +20,16 @@ internal sealed class LocalChatGateway
     private const string MemberRefreshNotice = Prefix + "MembershipRefreshedNotice";
     private const string MessageNotice = Prefix + "MessageBroadcastNotice";
     private const int MaxMessageBytes = 1024;
-    private const int MaxMessagesPerWindow = 5;
-    private static readonly TimeSpan FloodWindow = TimeSpan.FromSeconds(10);
+    private const int MaxMessagesPerWindow = 3;
+    private static readonly TimeSpan FloodWindow = TimeSpan.FromSeconds(1);
+    private static readonly TimeSpan IdleMemberRemovalTime = TimeSpan.FromSeconds(900);
 
     private readonly ConnectedSessions _sessions;
     private readonly NoticeHub _notices;
     private readonly ConcurrentDictionary<ClientSession, Queue<DateTimeOffset>> _messageTimes = new(ReferenceEqualityComparer.Instance);
     private readonly object _gate = new();
     private readonly Dictionary<long, HashSet<long>> _speakersBySystem = [];
+    private readonly Dictionary<(long SystemId, long CharacterId), DateTimeOffset> _lastSpoke = [];
     private readonly Dictionary<long, long> _systemByCharacter = [];
     private readonly Dictionary<ClientSession, long> _characterBySession = new(ReferenceEqualityComparer.Instance);
 
@@ -84,6 +86,7 @@ internal sealed class LocalChatGateway
             if (!_speakersBySystem.TryGetValue(systemId, out var speakers))
                 _speakersBySystem[systemId] = speakers = [];
             joined = speakers.Add(characterId);
+            _lastSpoke[(systemId, characterId)] = DateTimeOffset.UtcNow;
         }
 
         if (joined && IsDelayed(systemId))
@@ -186,6 +189,7 @@ internal sealed class LocalChatGateway
             if (_speakersBySystem.TryGetValue(systemId, out var speakers))
             {
                 speakers.Remove(characterId);
+                _lastSpoke.Remove((systemId, characterId));
                 if (speakers.Count == 0) _speakersBySystem.Remove(systemId);
             }
         }
@@ -227,7 +231,14 @@ internal sealed class LocalChatGateway
         lock (_gate)
         {
             if (!_speakersBySystem.TryGetValue(systemId, out var speakers)) return [];
-            speakers.RemoveWhere(id => !current.ContainsKey(id));
+            var now = DateTimeOffset.UtcNow;
+            speakers.RemoveWhere(id =>
+            {
+                var stale = !_lastSpoke.TryGetValue((systemId, id), out var lastSpoke)
+                    || now - lastSpoke >= IdleMemberRemovalTime;
+                if (stale) _lastSpoke.Remove((systemId, id));
+                return stale || !current.ContainsKey(id);
+            });
             if (speakers.Count == 0) _speakersBySystem.Remove(systemId);
             return [.. speakers.Where(current.ContainsKey).Select(id => current[id])];
         }

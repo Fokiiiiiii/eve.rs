@@ -13,3 +13,7 @@ eve-destiny = { path = "../eve-destiny" }
 eve-marshal = { path = "../eve-marshal" }
 eve-sde = { path = "../eve-sde" }
 serde_json = { version = "1", features = ["float_roundtrip"] }
+
+[[bench]]
+name = "sim_tick"
+harness = false

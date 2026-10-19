@@ -4403,7 +4403,7 @@ donation sections it marks outdated. Design: `docs/project/FW_DESIGN.md`.
   Entry: the complex's gate, when the template has rooms, is the acceleration gate of `DungeonRoomLayout`; a single-room site needs none (EVE:
   the wiki's acceleration gate of a complex is not reproduced by a room layout).
 - **Battlefield: project rules (built; the objective, archetype 67, is not built).** Live: `tests/test_fw_battlefield_walk.py` (eve_p4, MITM capture)
-  takes a battlefield by its gate and holds its centre point until the win (FW_DESIGN "Battlefields"). The battlefield's site is a gated room of the SDE archetype 68
+  takes a battlefield by its gate, checks the centre contest and both side points' faction holders, then wins it by holding the centre (FW_DESIGN "Battlefields"). The walk uses the staff-only `/tr me pos` QA tool to place pilots at the SDE-derived 80 km side points because ordinary movement from the room's entry would take roughly 70 s each way. The battlefield's site is a gated room of the SDE archetype 68
   (one of the nine battlefield templates of the owner catalog, chosen by the battlefield id); it starts with the first pilot in the system, as a complex's
   does (a site started with no pilot has its waves refused and ends before its gate is placed). Its site point is the complexes' site point of the system
   moved 300 km along x (`FwBattlefields.SiteOffsetMeters`): the complexes of a system share one point, and a battlefield's room and points would

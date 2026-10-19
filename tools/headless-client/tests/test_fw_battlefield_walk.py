@@ -4,7 +4,7 @@
 
 The battlefield of a system has three capture points (the centre and 80 km either side) and a scoreboard. Its site (a gated room, SDE archetype 68) starts with the
 first pilot in the system. Each pilot (the owner's test ship, the Cockroach, with the QA Smartbomb) enlists in the occupier's enemy, flies the stargates to the
-system, warps to the battlefield's gate and takes it into the room. The pilots contest the centre, then fly to and hold opposite side points (about 70 s flight), before returning to the centre for the capture. A point is held by the side whose pilots are within its 30 km range alone: its hold timer runs, and each 20 s tick moves the score one point toward that side.
+system, warps to the battlefield's gate and takes it into the room. The pilots contest the centre, then the GM /tr position tool places them at the two SDE-derived side points 80 km away; each holds one side point. They contest the centre again, the occupier leaves it, and the attacker wins. A point is held by the side whose pilots are within its 30 km range alone: its hold timer runs, and each 20 s tick moves the score one point toward that side.
 The battlefield is won at +150 (the attackers): the system's attacker points rise by 2,000, the winners get OnFwScoreboardWon and OnVictoryPointStateUpdated, their
 victory points (2,000 split evenly) and their loyalty points (5,000 each, from the militia) are recorded, and the site ends.
 The capture (the MITM file named by EVE_FW_CAPTURE) must hold the points' and the scoreboard's slim fields.
@@ -36,6 +36,7 @@ from tests.test_undock import STATION, SYSTEM, arrive, outcome
 
 SDE_DIR = os.environ.get("EVE_SDE_DIR", "")
 CAPTURE = os.environ.get("EVE_FW_CAPTURE", "")
+SIDE_POINT_SPACING_METERS = 80_000  # FwBattlefields.PointSpacingMeters
 OPEN_LIMIT_S = 180.0
 SETTLE_LIMIT_S = 240.0  # the points take their holders on the first tick after the pilots are in place
 HOLD_LIMIT_S = 3900.0  # 150 points at one point a 20 s tick: 3,000 s; the limit leaves room for the placement and the notices
@@ -63,16 +64,27 @@ def jump_when_out_of_warp(who, ballpark, ship_id: int, gate: int, dest_gate: int
             watch({"events": who}, 3.0)
 
 
+def bind_ballpark(who, system: int, limit: float = 60.0):
+    """Waits for a system's ballpark after a stargate jump; the session can briefly change systems before the bound object is ready."""
+    started = time.monotonic()
+    while time.monotonic() - started < limit:
+        ballpark = who.call("beyonce", "MachoBindObject", system, None)
+        if ballpark is not None:
+            return ballpark
+        watch({"events": who}, 2.0)
+    raise AssertionError(f"the ballpark for system {system} was not ready in {int(limit)} s")
+
+
 def fly_route(who, ship_id: int, hops) -> tuple:
     """The flight of tests/test_mission_walk.fly with each jump asked again until the ship is out of warp (pilots fly at once, so a stale Stop is no sign)."""
-    ballpark = who.call("beyonce", "MachoBindObject", SYSTEM, None)
+    ballpark = bind_ballpark(who, SYSTEM)
     dogma = None
     for gate, dest_gate, dest_system in hops:
         warp_to_gate(who, ballpark, gate)
         until_stopped(who)
         jump_when_out_of_warp(who, ballpark, ship_id, gate, dest_gate)
         wait_quietly(who, 6.0)
-        ballpark = who.call("beyonce", "MachoBindObject", dest_system, None)
+        ballpark = bind_ballpark(who, dest_system)
         dogma = who.call("dogmaIM", "MachoBindObject", (dest_system, 5), None)
         wait_quietly(who, 3.0)
     return ballpark, dogma
@@ -147,10 +159,10 @@ def test_a_pilot_holds_a_battlefield_point_and_the_battlefield_is_won_for_its_fa
                 break
         assert not missing, f"points {missing} have no faction info in the capture: {[point_ids[i] for i in missing]}"
 
-        # The opposing militia pilot contests the centre, then the two pilots fly to opposite side points. The points are 80 km from the battlefield origin,
-        # beyond the room's entry range, so these are ordinary client movement orders rather than seeded positions.
+        # The opposing militia pilot contests the centre. The room's GM /tr pos tool places each pilot at an SDE-derived side point:
+        # the points sit 80 km from the origin, outside the room's entry range, and each faction holds one side point.
         with base.connect(f"walk-fw-battlefield-{run}-occupier") as defender:
-            defender_race = plain_race(DEATH["races"][0], "defender")
+            defender_race = plain_race(DEATH["races"][0], "watcher")
             _, defender_ship, defender_ballpark, _ = setup_pilot(defender, defender_race, run + "-occupier", occupier, hops)
             enter_by_gate(defender, defender_ballpark, gate)
             watch({"events": who}, 12.0)
@@ -158,30 +170,39 @@ def test_a_pilot_holds_a_battlefield_point_and_the_battlefield_is_won_for_its_fa
             watch({"events": who}, 25.0)
             assert fw.battlefield_row(battlefield)[0] == contested_score, "the centre capture score advanced while both factions were in point range"
 
-            for client, pilot_ballpark, ship, index, faction in (
-                (who, ballpark, ship_id, 1, enemy),
-                (defender, defender_ballpark, defender_ship, 2, occupier),
-            ):
-                client.call_bound(pilot_ballpark[0], "CmdSetSpeedFraction", 1.0)
-                client.call_bound(pilot_ballpark[0], "CmdFollowBall", point_ids[index], 0)
-                started = time.monotonic()
-                while fw.battlefield_points(battlefield)[index][2] != faction and time.monotonic() - started < SETTLE_LIMIT_S:
-                    watch({"events": client}, 8.0)
-                holder = fw.battlefield_points(battlefield)[index][2]
-                assert holder == faction, f"side point {index} was not held by faction {faction}: {fw.battlefield_points(battlefield)}"
+            entry = fw.battlefield_entry(target)
+            origin = [entry[0] - fw.ROOM_ENTRY_OFFSET_METERS, entry[1], entry[2]]
+            side_positions = {
+                1: [origin[0] + SIDE_POINT_SPACING_METERS, origin[1], origin[2]],
+                2: [origin[0] - SIDE_POINT_SPACING_METERS, origin[1], origin[2]],
+            }
+            for client, index in ((who, 1), (defender, 2)):
+                position = side_positions[index]
+                answer = m.plain(client.call("slash", "SlashCmd", f"/tr me pos={position[0]:.0f},{position[1]:.0f},{position[2]:.0f}"))
+                assert "Transported me" in str(answer), f"GM relocation to side point {index} failed: {answer}"
 
-            who.call_bound(ballpark[0], "CmdFollowBall", point_ids[0], 0)
-            defender.call_bound(defender_ballpark[0], "CmdFollowBall", point_ids[0], 0)
             started = time.monotonic()
             while time.monotonic() - started < SETTLE_LIMIT_S:
                 watch({"events": who}, 8.0)
-                if fw.battlefield_points(battlefield)[0][2] == enemy:
+                watch({"events": defender}, 8.0)
+                points = fw.battlefield_points(battlefield)
+                if points[1][2] == enemy and points[2][2] == occupier:
                     break
-            assert fw.battlefield_points(battlefield)[0][2] == enemy, "the attacking pilot did not return to the centre point"
+            points = fw.battlefield_points(battlefield)
+            assert points[1][2] == enemy, f"attacking pilot did not hold side point 1: {points}"
+            assert points[2][2] == occupier, f"occupying pilot did not hold side point 2: {points}"
+
+            centre = origin
+            for client in (who, defender):
+                answer = m.plain(client.call("slash", "SlashCmd", f"/tr me pos={centre[0]:.0f},{centre[1]:.0f},{centre[2]:.0f}"))
+                assert "Transported me" in str(answer), f"GM relocation to the centre failed: {answer}"
             watch({"events": who}, 12.0)
             contested_score = fw.battlefield_row(battlefield)[0]
             watch({"events": who}, 25.0)
             assert fw.battlefield_row(battlefield)[0] == contested_score, "the centre capture score advanced during the live contest"
+            away = side_positions[2]
+            answer = m.plain(defender.call("slash", "SlashCmd", f"/tr me pos={away[0]:.0f},{away[1]:.0f},{away[2]:.0f}"))
+            assert "Transported me" in str(answer), f"occupier did not leave the centre: {answer}"
 
         # the centre point is held by the pilot inside its 30 km range (the room's entry is 15 km from it): the holder changes to the attackers
         started = time.time()

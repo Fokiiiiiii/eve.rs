@@ -51,6 +51,63 @@ The token can list runs and jobs (`GET /actions/runs` and `GET /actions/runs/{ru
 
 Record runner job durations for validation runs below. Matrix jobs count separately even when they run concurrently.
 
+### Duration profile and test layout
+
+Run 256 was the latest green full gate before the current change (commit `866916fc`, 2026-10-19). Its Required CI gate finished in 20.8 minutes. Run 269 (`a3a1f373`) provides the most recent detailed .NET project timings, although its all-other-tests job failed in `Eve.Services.Core.Tests` and is used here only as a duration sample. The same run's successful job times were: Host 20.2 minutes, Space 8.3 minutes, all other .NET 9.9 minutes, end-to-end 7.2 minutes, .NET build 2.7 minutes, Rust tests 2.9 minutes, Rust format/clippy 0.4 minutes, Python 0.2 minutes, and fixture generation 0.1 minutes. The 20.8-minute gate time on run 256 is the elapsed time to the longest required job, not the sum of runner-minutes.
+
+The per-project durations below are VSTest `Duration:` lines from run 269's all-other-tests job. The failing Core project did not print a duration.
+
+| Test project | Duration |
+|---|---:|
+| Eve.AccessGroups.Tests | 0.9 s |
+| Eve.Agents.Tests | 0.8 s |
+| Eve.Bookmarks.Tests | 2 s |
+| Eve.Characters.Tests | 4 s |
+| Eve.Content.Tests | 7 s |
+| Eve.Corporations.Tests | 20 s |
+| Eve.Crimewatch.Tests | 0.4 s |
+| Eve.Dogma.Tests | 21 s |
+| Eve.Dungeons.Tests | 0.8 s |
+| Eve.Events.Tests | 1 s |
+| Eve.FactionWarfare.Tests | 22 s |
+| Eve.Fitting.Tests | 4 s |
+| Eve.GameStore.Import.Tests | 2 s |
+| Eve.GameStore.Tests | 2 s |
+| Eve.Hacking.Tests | 0.2 s |
+| Eve.Identity.Tests | 0.8 s |
+| Eve.Insurgency.Tests | 0.8 s |
+| Eve.Inventory.Tests | 8 s |
+| Eve.Market.Tests | 37 s |
+| Eve.Marshal.Tests | 0.4 s |
+| Eve.Npc.Tests | 2 s |
+| Eve.Planets.Tests | 0.6 s |
+| Eve.ReadSide.Tests | 0.3 s |
+| Eve.Relations.Tests | 1 s |
+| Eve.Scheduler.Tests | 1 s |
+| Eve.Services.CharacterInfo.Tests | 3 s |
+| Eve.Services.CharacterSelect.Tests | 10 s |
+| Eve.Services.Core.Tests | 5 s (one failed test; run did not print a successful summary) |
+| Eve.Services.Crimewatch.Tests | 3 s |
+| Eve.Services.Dogma.Tests | 1 m 6 s |
+| Eve.Services.Generator.Tests | 1 s |
+| Eve.Services.Inventory.Tests | 29 s |
+| Eve.Services.Skills.Tests | 22 s |
+| Eve.Services.Station.Tests | 6 s |
+| Eve.Services.Tests | 0.1 s |
+| Eve.Services.Wallet.Tests | 0.6 s |
+| Eve.Ships.Tests | 1 m 50 s |
+| Eve.Skills.Tests | 3 s |
+| Eve.Space.Tests | 0.5 s |
+| Eve.Structures.Tests | 3 s |
+| Eve.Trade.Tests | 1 s |
+| Eve.Universe.Tests | 1 s |
+| Eve.Wallet.Tests | 4 s |
+| Eve.Wormholes.Tests | 0.8 s |
+
+The test job now uses four Host shards. `tools/dev/shard-dotnet-tests.py` discovers the Host test cases from the built assembly, assigns whole test classes to shards by test count, and supplies a VSTest filter to each shard. Each shard retains the complete class test sequence and has its own PostgreSQL service. `tools/dev/shard-dotnet-projects.py` assigns the remaining test projects to three jobs using the recent VSTest durations above; each project runs once, and each job has its own PostgreSQL service. New projects are included with a five-second initial weight. Space remains an independent project job. All jobs download the same Release build artifact produced once by `.NET build`. CI runs use the job matrix and the Required CI gate waits for every selected matrix job.
+
+The before/after elapsed time will be recorded from the first green run containing this matrix. No post-change Actions result is available yet.
+
 | Run | Commit | Result | Sum of job durations |
 |---|---|---|---|
 | Baseline manual run 80 | [`235ee85a`](https://github.com/Fokiiiiiii/eve.rs/actions/runs/38888008879) | success, 2026-10-16 | 71.7 runner-minutes |

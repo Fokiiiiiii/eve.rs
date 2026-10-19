@@ -45,7 +45,8 @@ public sealed class GameRpcServicesTests
                 return ValueTask.FromResult<int?>(quantity ?? 8);
             });
         var services = CoreServices.Create(new NoAccounts(), () => 1_700_000_000_000,
-            gameRpcCallbacks: callbacks);
+            gameRpcCallbacks: callbacks,
+            contractReadModel: new EmptyContractReadModel());
         var raffle = services.Single(service => service.Name == "raffleMgr");
         var raffleProxy = services.Single(service => service.Name == "raffleProxy");
         var contractProxy = services.Single(service => service.Name == "contractProxy");
@@ -56,8 +57,9 @@ public sealed class GameRpcServicesTests
         Assert.Equal(3, seededQuantity);
         Assert.Equal(new PyInt(8), await raffle.CallAsync(Call("QA_SeedRaffles")));
         Assert.Equal(PyBool.False, await raffleProxy.CallAsync(Call("AmIBanned")));
+        var contractSession = new ClientSession { CharacterId = 1 };
         Assert.Equal(Py.KeyVal(("iskEscrow", Py.Number(0d)), ("itemsEscrow", new PyInt(0))),
-            await contractProxy.CallAsync(Call("GetMyContractEscrow")));
+            await contractProxy.CallAsync(Call("GetMyContractEscrow", contractSession)));
         Assert.Equal(new PyInt(Eve.Macho.MachoMessage.ProxyNodeId),
             await jumpClone.CallAsync(Call("MachoResolveObject")));
 
@@ -231,6 +233,23 @@ public sealed class GameRpcServicesTests
     {
         var dict = Assert.IsType<PyDict>(value.Args);
         return dict.Entries.Single(entry => JsSemantics.StringValue(entry.Key) == name).Value;
+    }
+
+    private sealed class EmptyContractReadModel : IContractReadModel
+    {
+        public ValueTask<ContractLoginInfo> GetLoginInfoAsync(
+            long characterId,
+            long corporationId,
+            long allianceId,
+            long nowFileTime,
+            CancellationToken cancellationToken) =>
+            ValueTask.FromResult(new ContractLoginInfo([], [], []));
+
+        public ValueTask<ContractEscrowSummary> GetMyContractEscrowAsync(
+            long characterId,
+            long corporationId,
+            CancellationToken cancellationToken) =>
+            ValueTask.FromResult(new ContractEscrowSummary(0m, 0));
     }
 
     private sealed class NoAccounts : IOmegaAccountStore

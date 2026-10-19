@@ -84,9 +84,9 @@ These are code-review classifications from the current worktree and targeted sou
 
 | EveJS fix | eve.rs finding | Verdict / next evidence |
 |---|---|---|
-| 1 Hz space updates | Space runtime has simulation/tick scheduling, but this review did not establish emitted update cadence from source and test together. | Unknown; compare `Eve.Space` tick publisher and timing tests. |
-| Warp lands at selected range | No source/test result in this assessment proved selected-range preservation. | Unknown. |
-| Dock from outside range flies in then docks | Station/docking exists; no proof of approach transition found. | Unknown. |
+| Tick-aligned Destiny updates | `eve-sim` polls at 4 Hz for due simulation work; this is not the notification cadence. The sim link now holds `DoDestinyUpdate` until the next whole-second boundary, matching EveJS `server/src/network/tickAlignedSends.js:27-81`. | Defect fixed; boundary-delay, immediate-reply, and sim-link ordering tests pass. |
+| Warp lands at selected range | `warp_target_point` preserves the selected range for ordinary bodies; the boundary regression passes (`scene::tests::a_range_within_the_jump_range_changes_nothing_and_one_beyond_it_sets_the_sphere_that_far_out`). | No defect found in selected-range calculation. |
+| Dock from outside range flies in then docks | A dock request only started `FollowBall`; arrival did not accept docking, so the client had to issue a second dock command. The scene now rechecks eligibility at arrival and begins normal docking. | Defect fixed; `a_dock_request_from_out_of_range_approaches_and_completes_docking_on_arrival` passes. |
 | Abyssal 60 s protection on entry/room change | TODO labels abyssal client-ready work open; no matching protection assertion reviewed. | Unknown, likely high priority to check; see `Eve.Services.Space/SpaceSessions.Abyssal.cs`, TODO `ABYSSAL_DEADSPACE.md`. |
 | T3 cruiser rigs removable | Fitting service and fitting tests exist; exact T3 rig removal branch not checked. | Unknown; `FittingMgrServicesTests` is relevant but not proof. |
 | Saved fit applies over existing fit | Fitting service exists; overwrite semantics not inspected. | Unknown. |
@@ -109,7 +109,7 @@ Before porting each row, require exact V24 callsite or static-data evidence from
 
 ## Recommended next 15 implementation/research slices
 
-1. Verify the eve.rs space tick cadence, warp selected range, and approach docking (M): three fundamental visible movement cases are explicit upstream fixes.
+1. DONE (defects fixed and selected warp range verified): Destiny updates flush on whole-second boundaries, out-of-range dock requests complete on arrival, and selected warp range is covered by a boundary regression. Focused `eve-sim` and `eve-space` tests cover the changes.
 2. DONE (defect fixed): Host account-session admission now atomically replaces an existing same-account client and sends its clean disconnect reason; `ConnectedSessionsTests` covers replacement, stale close, and concurrent opens.
 3. Reconcile market tax semantics against V24 formula and NPC/structure location (S): TODO's 7.5% and release 1% statement need a precise split.
 4. Verify failed sell refund and Buy Multiple transaction flows (M): both expose wallet/inventory correctness and retries.

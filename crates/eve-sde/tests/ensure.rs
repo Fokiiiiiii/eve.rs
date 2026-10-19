@@ -1,9 +1,3 @@
-//! First-start provisioning against a real PostgreSQL:
-//!
-//!   EVE_PG_URL=postgres://postgres@127.0.0.1:5432/eve cargo test -p eve-sde
-//!
-//! The tests use scratch schemas and are skipped (loudly) when it is not set.
-
 use eve_sde::ensure::{self, EnsureError, Outcome};
 use eve_sde::fetch::{Expect, FetchError, Origin};
 use postgres::{Client, NoTls};

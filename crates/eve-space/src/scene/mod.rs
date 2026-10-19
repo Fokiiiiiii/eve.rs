@@ -582,6 +582,7 @@ pub(crate) struct Pilot {
     /// The moment the ship's position and velocity are those of.
     settled_at: i64,
     docking: Option<PendingDock>,
+    docking_approach: Option<i64>,
     /// The warp the ship is in, from the command until it is at rest again.
     pub(crate) flight: Option<Flight>,
     /// What the ship's last warp was to (the body), kept until the next warp: where it came to rest is judged against it.
@@ -638,6 +639,7 @@ impl Pilot {
             ship,
             settled_at: now,
             docking: None,
+            docking_approach: None,
             flight: None,
             warp_target: None,
             jump: None,

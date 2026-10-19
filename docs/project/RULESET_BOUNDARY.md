@@ -1,13 +1,13 @@
 # Ruleset boundary
 
-Target profile: client V24.01 build 3396210. The supplied report proposes static data dated 2026-06-16; treat `24.01@2026-06-16` as the working checkpoint pending owner decision Q-16. Build-to-SDE date mapping is a candidate claim from the supplied report, not independently validated here.
+Target profile: client V24.01 build 3396210. Owner decision Q-16 adopts `24.01@2026-06-16` per item using the supplied report timeline. The build-to-SDE date mapping remains a report claim; the battlefield correction follows the specific 2026-07-01 patch boundary.
 
 ## After-checkpoint changes: do not apply
 
 | Change in supplied report | Checkpoint treatment | Current-code check / follow-up |
 |---|---|---|
 | 2026-06-19 Military Campaign and NPC attribute adjustments | after-checkpoint: do not apply | Confirm relevant NPC/static inputs against pinned SDE; TODO added. |
-| 2026-07-01 FW Battlefield LP 50,000 to 150,000; freighter removal | after-checkpoint: do not apply. Candidate checkpoint value: 50,000 LP. | Current `FwBattlefields.LpPool` is 150,000 at `dotnet/src/Eve.FactionWarfare/FwBattlefields.cs:35`; TODO to resolve against build data and owner profile decision. |
+| 2026-07-01 FW Battlefield LP 50,000 to 150,000; freighter removal | after-checkpoint: exclude the increase; apply checkpoint value: 50,000 LP. | `FwBattlefields.LpPool` is 50,000, following the per-item owner decision Q-16 and report 2 patch timeline. The 150,000 value was introduced after the checkpoint. |
 | 2026-07..08 Rogue Drone Fabricator waves, AoE immunity and respawn | after-checkpoint: do not apply | No targeted code comparison completed. |
 | 2026-08-19 mission backend data-processing update | after-checkpoint: do not apply | `AgentMissionService` is implementation; mission source data needs version check. |
 | 2026-08-25 Python 3 migration | after-checkpoint; regression-test lesson only | No game rules adopted. |

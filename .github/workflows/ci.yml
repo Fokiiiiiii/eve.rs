@@ -27,7 +27,7 @@ on:
         type: string
 
 concurrency:
-  group: ci-${{ github.ref }}-${{ github.event_name == 'push' && github.sha || 'interactive' }}
+  group: ${{ github.event_name == 'push' && format('ci-push-{0}', github.ref) || format('ci-{0}-interactive', github.ref) }}
   cancel-in-progress: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request' }}
 
 permissions:

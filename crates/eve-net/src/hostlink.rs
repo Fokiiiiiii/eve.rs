@@ -1,8 +1,4 @@
-//! The messages between the front and the service host (`docs/design/adr/0002-front-host-link.md`).
-//!
-//! A frame is `u32 length | u8 kind | body`. [`Message::encode`] writes a whole frame and
-//! [`Message::decode`] reads a frame's payload (kind and body), so the same functions serve the framing
-//! layer. `oracle/fixtures/hostlink/messages.json` pins the layout for both sides.
+//! Front-to-host frames use `u32 length | u8 kind | body`.
 
 use bytes::{BufMut, Bytes, BytesMut};
 

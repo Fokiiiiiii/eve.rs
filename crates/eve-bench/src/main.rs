@@ -1,13 +1,5 @@
-//! Throughput benchmarks in the same shape as `tools/bench/run.js`, so a Rust
-//! result can be set beside the JS baseline recorded on the same machine.
-//!
-//!   cargo run --release -p eve-bench                     run and print
-//!   cargo run --release -p eve-bench -- --compare        ... with ratios against oracle/bench/baseline.json
-//!   cargo run --release -p eve-bench -- --filter decode  only benchmarks whose name contains "decode"
-//!
-//! Before timing a marshal workload the benchmark checks that the Rust encoder
-//! produces the exact bytes (by FNV-1a hash) the JS benchmark recorded, so both
-//! sides measure the same payload.
+//! Usage: `cargo run --release -p eve-bench [-- --compare|--filter NAME]`.
+//! Marshal payloads are checked against the recorded baseline before timing.
 
 use std::hint::black_box;
 use std::path::PathBuf;
@@ -39,8 +31,6 @@ fn fnv1a64(bytes: &[u8]) -> String {
     format!("{hash:016x}")
 }
 
-// ─── Workloads (kept identical to tools/bench/run.js) ───────────────────────
-
 fn wstring(text: &'static str) -> Value {
     Value::WString(text.into())
 }
@@ -62,7 +52,7 @@ fn dict_200() -> Value {
         .map(|index| {
             let value = match index % 3 {
                 0 => Value::Int(index * 7),
-                // JS numbers: an integer-valued product is encoded as an integer.
+                // Preserve integer wire encoding when the product is integral.
                 1 => plain_number(index as f64 * 0.37).expect("finite"),
                 _ => Value::string(format!("value-{index}")),
             };
@@ -123,7 +113,6 @@ fn buffers() -> Value {
     Value::Tuple((0..64).map(|index| Value::Buffer(vec![index as u8; 4096].into())).collect())
 }
 
-/// The 500-ship scene of `tools/bench/run.js`'s `makeShip`.
 fn ships() -> Vec<BallEntity> {
     (0..500)
         .map(|index| BallEntity {
@@ -159,10 +148,7 @@ fn check(name: &str, actual: &[u8], baseline: Option<&Json>) {
     }
 }
 
-// ─── The scene (no counterpart in the JS baseline: it needs the whole service graph and the generated tables) ───
-
 const TICKS_PER_SECOND: i64 = 10_000_000;
-/// 2026-09-29 12:00:00 UTC as a FILETIME.
 const NOON: i64 = 134_351_688_000_000_000;
 
 fn bench_system() -> std::sync::Arc<SolarSystem> {
@@ -236,7 +222,7 @@ fn bench_ship(index: u64) -> ShipSpec {
     }
 }
 
-/// A scene with `ships` ships that came out of the station, have bound the ballpark and see one another.
+/// Build a scene with the ships spawned, bound and visible to one another.
 fn crowded(ships: u64) -> Scene {
     let mut scene = Scene::new(bench_system());
     for index in 1..=ships {
@@ -249,7 +235,6 @@ fn crowded(ships: u64) -> Scene {
 
 fn scene_benches(benches: &mut Vec<Bench>) {
     for ships in [1u64, 10, 100, 500] {
-        // one poll of the scene a quarter of a second after the last: every ship's motion brought on, and what each sees checked
         let mut scene: Option<Scene> = None;
         let mut now = NOON + 3_600 * TICKS_PER_SECOND;
         benches.push(Bench {
@@ -262,7 +247,6 @@ fn scene_benches(benches: &mut Vec<Bench>) {
                 black_box(scene.poll(black_box(now)));
             }),
         });
-        // one order given to a ship that every other ship has in view: the update is told to all of them
         let mut scene: Option<Scene> = None;
         let mut now = NOON + 3_600 * TICKS_PER_SECOND;
         let mut fraction = 0.5;
@@ -283,7 +267,7 @@ fn scene_benches(benches: &mut Vec<Bench>) {
 struct Bench {
     name: String,
     bytes_per_op: Option<usize>,
-    /// How many operations one call of `run` performs (default 1).
+    /// Operations performed per benchmark run.
     ops_per_run: usize,
     run: Box<dyn FnMut()>,
 }
@@ -321,7 +305,6 @@ fn build(baseline: Option<&Json>) -> Vec<Bench> {
             }),
         });
         let length = encoded.len();
-        // The input as a socket read would hand it over: already a `Bytes`.
         let input = Bytes::from(encoded);
         benches.push(Bench {
             name: format!("marshal.decode.{name}"),
@@ -333,7 +316,6 @@ fn build(baseline: Option<&Json>) -> Vec<Bench> {
         });
     }
 
-    // Destiny kernels.
     let (position, velocity, acceleration) =
         (Vec3::new(1234.5, -987.25, 42.0), Vec3::new(120.5, 3.25, -60.0), Vec3::new(10.0, 0.0, -2.0));
     let step = integrate_carbon_motion(position, velocity, acceleration, 1_200_000.0, 1_000_000.0, 0.1);

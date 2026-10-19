@@ -81,7 +81,17 @@ def test_orders_in_space_make_the_updates_the_reference_sent(race):
             events = wait_quietly(who, WAITS.get(label, 1.5))
             if "ok" in step:
                 problems += compare_answer(label, step["ok"], describe(raw), where)
-            problems += compare_events(step["events"], events, where, mapping)
+            expected_events = step["events"]
+            if label == "align to the station":
+                # Movement updates and the pilot's independent invulnerability timer are produced by the
+                # simulation and timer loops. Both notifications and their payloads are contractual, but
+                # either loop can publish first when the timer expires during this order.
+                expected_timer_events = [event for event in expected_events if event["name"] == "OnInvulnCancelled"]
+                actual_timer_events = [event for event in events if event["name"] == "OnInvulnCancelled"]
+                expected_events = [event for event in expected_events if event["name"] != "OnInvulnCancelled"]
+                events = [event for event in events if event["name"] != "OnInvulnCancelled"]
+                problems += compare_events(expected_timer_events, actual_timer_events, where, mapping)
+            problems += compare_events(expected_events, events, where, mapping)
     assert problems == [], "\n".join(problems[:40])
 
 

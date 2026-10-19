@@ -1,11 +1,9 @@
-//! eve-net: the network front.
-//!
 //!   EVE_NET_LISTEN   address clients connect to           (default 127.0.0.1:26000)
 //!   EVE_HOST         the service host: a socket path, `unix:/path` or `tcp:host:port`
 //!                                                          (default /tmp/eve-host.sock; tcp:127.0.0.1:26010 off Unix)
 //!   EVE_NODE_ID      the proxy node id clients are told   (default 65450)
 //!
-//! The host is waited for (up to 60 s) so the two can be started in either order.
+//! Wait up to 60 s so the front and host can start in either order.
 
 use std::process::ExitCode;
 use std::sync::Arc;

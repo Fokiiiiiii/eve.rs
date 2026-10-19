@@ -1259,7 +1259,7 @@ fn a_speed_fraction_keeps_the_course_but_wakes_a_stopped_ship() {
 }
 
 #[test]
-fn a_ship_that_follows_the_station_comes_to_rest_in_docking_range_and_docks_when_asked_again() {
+fn a_dock_request_from_out_of_range_approaches_and_completes_docking_on_arrival() {
     let mut scene = scene();
     // 50 km off the station's surface, at rest
     scene.pilots.get_mut(&SESSION).unwrap().ship.position =
@@ -1267,16 +1267,17 @@ fn a_ship_that_follows_the_station_comes_to_rest_in_docking_range_and_docks_when
     scene.pilots.get_mut(&SESSION).unwrap().ship.velocity = Vec3::ZERO;
     let first = scene.command(SESSION, Command::Dock { station_id: STATION }, NOON);
     assert_eq!(first.last(), Some(&Out::Approaching { session: SESSION, command: 4, distance: 50_000.0 }));
-    assert!(scene.poll(NOON + seconds(400)).is_empty(), "it does not dock by itself");
+    let arrival = scene.poll(NOON + seconds(400));
+    assert!(arrival.iter().any(|out| matches!(out, Out::Notify { name: "OnDockingAccepted", .. })));
+    assert!(arrival.iter().any(|out| matches!(out, Out::Accepted { command: 4, .. })));
+    let ship = scene.ship(SESSION, NOON + seconds(400)).unwrap();
+    assert_eq!(ship.course, Course::Stop);
 
-    let ship = scene.ship(SESSION, NOON + seconds(400)).unwrap().clone();
-    let gap = ((ship.position.x - 1_000_000.0).powi(2) + ship.position.y.powi(2)).sqrt() - 47.0 - 1_000.0;
-    assert!((2_400.0..=2_500.0).contains(&gap), "it stands {gap} m off the surface");
-    assert!(speed(&ship) < 1.0);
-
-    let second = scene.command(SESSION, Command::Dock { station_id: STATION }, NOON + seconds(400));
-    assert_eq!(action_names(&second[1]), ["SetBallMassive", "Stop"]);
-    assert_eq!(second.last(), Some(&accepted(4, NOON + seconds(400))));
+    let completed = scene.poll(NOON + seconds(404));
+    assert!(
+        completed.iter().any(|out| matches!(out, Out::Docked { session: SESSION, station_id: STATION, .. }))
+    );
+    assert!(scene.ship(SESSION, NOON + seconds(404)).is_none());
 }
 
 #[test]

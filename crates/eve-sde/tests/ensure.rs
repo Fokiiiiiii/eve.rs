@@ -1,9 +1,3 @@
-//! First-start provisioning against a real PostgreSQL:
-//!
-//!   EVE_PG_URL=postgres://postgres@127.0.0.1:5432/eve cargo test -p eve-sde
-//!
-//! The tests use scratch schemas and are skipped (loudly) when it is not set.
-
 use eve_sde::ensure::{self, EnsureError, Outcome};
 use eve_sde::fetch::{Expect, FetchError, Origin};
 use postgres::{Client, NoTls};
@@ -54,8 +48,6 @@ fn the_first_start_fetches_and_loads_and_the_second_does_nothing() {
     let count: i64 = client.query_one(&format!("SELECT count(*) FROM {schema}.types"), &[]).unwrap().get(0);
     assert_eq!(count, 1);
 
-    // Second start, with a fresh cache and a source that cannot be reached:
-    // the database already has the build, so nothing is fetched and nothing is created.
     let fresh = Scratch::new("ensure-first-again");
     let again = options(&fresh, 71, vec![file_url(&fresh.path("missing.zip"))], Expect::Unchecked);
     assert_eq!(ensure::ensure_loaded_into(&mut client, &again, &schema).unwrap(), Outcome::AlreadyLoaded);

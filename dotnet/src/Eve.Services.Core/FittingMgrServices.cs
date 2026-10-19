@@ -14,6 +14,9 @@ public interface IFittingHost
     /// <summary>Whether the character holds the corporation Fitting Manager role (EveJS <c>sessionHasFittingManagerRole</c>).</summary>
     Task<bool> HasFittingManagerRoleAsync(long characterId, CancellationToken cancellationToken);
 
+    /// <summary>Whether the character currently belongs to the named fitting owner.</summary>
+    Task<bool> CanAccessOwnerAsync(long characterId, long ownerId, FittingOwnerScope scope, CancellationToken cancellationToken);
+
     /// <summary>The executor corporation of an alliance, or null.</summary>
     Task<long?> AllianceExecutorAsync(long allianceId, CancellationToken cancellationToken);
 
@@ -34,7 +37,7 @@ public sealed class FittingMgrCalls(PgSavedFittingStore store, IFittingHost host
     public async ValueTask<PyValue> GetFittings(ServiceCall call, FittingOwnerScope scope)
     {
         var owner = OwnerOf(call, scope);
-        Access(call, owner, scope);
+        await AccessAsync(call, owner, scope);
         var fittings = await store.ListAsync(scope, owner, call.Cancellation);
         var answer = new PyDict([.. fittings.Select(f => new KeyValuePair<PyValue, PyValue>(new PyLong(f.FittingId), FittingKeyVal(f)))]);
         // a corporation's list is cached by the client for 15 minutes; the changes invalidate it (Notify), as the reference does
@@ -153,9 +156,11 @@ public sealed class FittingMgrCalls(PgSavedFittingStore store, IFittingHost host
     };
 
     /// <summary>EveJS <c>assertSessionCanAccessOwner</c>: the owner is the session's own.</summary>
-    private static void Access(ServiceCall call, long owner, FittingOwnerScope scope)
+    private async ValueTask AccessAsync(ServiceCall call, long owner, FittingOwnerScope scope)
     {
-        if (owner > 0 && owner == SessionOwner(call.Session, scope))
+        var characterId = call.Session.CharacterId ?? call.Session.GetInt("charid") ?? 0;
+        if (owner > 0 && owner == SessionOwner(call.Session, scope) &&
+            await host.CanAccessOwnerAsync(characterId, owner, scope, call.Cancellation))
         {
             return;
         }
@@ -165,7 +170,7 @@ public sealed class FittingMgrCalls(PgSavedFittingStore store, IFittingHost host
     /// <summary>EveJS <c>assertSessionCanMutateOwner</c>: a corporation needs the Fitting Manager role; an alliance also needs its executor corporation.</summary>
     private async ValueTask MutateAccessAsync(ServiceCall call, long owner, FittingOwnerScope scope)
     {
-        Access(call, owner, scope);
+        await AccessAsync(call, owner, scope);
         if (scope == FittingOwnerScope.Character)
         {
             return;

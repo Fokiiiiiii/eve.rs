@@ -45,8 +45,33 @@ internal sealed partial class CharacterServicesComposition
                 industryJobOperations.ReadJobsAsync,
                 industryJobOperations,
                 currentFileTime: () => checked(116444736000000000L + now() * 10_000L)),
-            new Eve.Services.Core.BlueprintManagerService(ReadBlueprintAsync, ReadOwnedBlueprintsAsync, ReadActiveJobsAsync),
+            new Eve.Services.Core.BlueprintManagerService(
+                ReadBlueprintAsync,
+                ReadOwnedBlueprintsAsync,
+                ReadActiveJobsAsync,
+                async (characterId, corporationId, stationId, token) =>
+                {
+                    var member = await corporations.MemberAsync(characterId, token);
+                    if (member is null || member.CorporationId != corporationId ||
+                        await corporations.GetAsync(corporationId, token) is not { } corporation)
+                        return null;
+                    return Eve.Corporations.CorporationRoles.Session(
+                        corporation, member, stationId, await corporations.TitlesAsync(corporationId, token));
+                }),
             new Eve.Services.Core.CharacterMiningLedgerService(miningLedgerReads, () => Eve.Ships.MiningLedgerStore.FileTimeOf(now())),
-            new Eve.Services.Core.CorpMiningLedgerService(miningLedgerReads, () => Eve.Ships.MiningLedgerStore.FileTimeOf(now())),
+            new Eve.Services.Core.CorpMiningLedgerService(
+                miningLedgerReads,
+                async (corporationId, characterId, token) =>
+                {
+                    var corporation = await corporations.GetAsync(corporationId, token);
+                    var member = await corporations.MemberAsync(characterId, token);
+                    if (corporation is null || member is null || member.CorporationId != corporationId)
+                        return false;
+                    var roles = Eve.Corporations.CorporationRoles.Session(
+                        corporation, member, null, await corporations.TitlesAsync(corporationId, token));
+                    const long ledgerRoleMask = 1L | 256L | (1L << 52);
+                    return (roles.AtAll & ledgerRoleMask) != 0;
+                },
+                () => Eve.Ships.MiningLedgerStore.FileTimeOf(now())),
     ];
 }

@@ -110,7 +110,7 @@ public sealed class AnalysisBeaconHostTests
         (await rig.Items.InLocationAsync(shipId, session.CharacterId!.Value)).Where(item => item.TypeId == typeId && item.Flag == CharacterShips.CargoFlag).Sum(item => item.Quantity);
 
     [PgFact]
-    public async Task A_standard_crab_dropped_from_the_hold_is_in_space_and_is_active_after_twenty_seconds_with_its_first_wave()
+    public async Task A_standard_crab_dropped_from_the_hold_activates_after_twenty_seconds_and_waits_for_linking_before_its_first_wave()
     {
         await using var rig = await Rig.CreateAsync();
         await rig.UseBusAsync();
@@ -148,7 +148,7 @@ public sealed class AnalysisBeaconHostTests
         var active = Assert.Single(rig.Sim.Heard.OfType<SimSetAnalysisBeaconState>());
         Assert.Equal(beacon, active.DeployableId);
         Assert.True(active.State.Active);
-        Assert.Equal(4, rig.Sim.Heard.OfType<SimSpawn>().Count());
+        Assert.Empty(rig.Sim.Heard.OfType<SimSpawn>());
         Assert.NotNull(director);
     }
 
@@ -215,6 +215,7 @@ public sealed class AnalysisBeaconHostTests
         var complete = Assert.Single(rig.Sim.Heard.OfType<SimSetAnalysisBeaconState>());
         Assert.Equal(3, complete.State.LinkState);
         Assert.Equal(shipId, complete.State.LinkedShipId);
+        Assert.Equal(4, rig.Sim.Heard.OfType<SimSpawn>().Count());
     }
 
     [PgFact]
@@ -245,6 +246,8 @@ public sealed class AnalysisBeaconHostTests
         await rig.Containers.LaunchFromShipAsync(session, beacon, CancellationToken.None);
         rig.Sim.Heard.Clear();
         await AdvanceAsync(rig, TwentySeconds);
+        Assert.Empty(rig.Sim.Heard.OfType<SimSpawn>());
+        await CompleteLinkAsync(rig, session, beacon);
         var drones = rig.Sim.Heard.OfType<SimSpawn>().Select(spawn => spawn.Ship.ShipId).ToList();
         Assert.Equal(4, drones.Count);
 
@@ -289,12 +292,14 @@ public sealed class AnalysisBeaconHostTests
         await rig.Containers.LaunchFromShipAsync(session, beacon, CancellationToken.None);
         rig.Sim.Heard.Clear();
         await AdvanceAsync(rig, TwentySeconds);
+        Assert.Empty(rig.Sim.Heard.OfType<SimSpawn>());
+        await CompleteLinkAsync(rig, session, beacon);
         var first = rig.Sim.Heard.OfType<SimSpawn>().Select(spawn => spawn.Ship.ShipId).ToList();
         Assert.Equal(4, first.Count);
         Kill(rig, session, first);
         await RunAsync(rig);
 
-        // the scan reaches half (five minutes) at 320 seconds after the launch: the second wave comes then, and not before
+        // the scan reaches half (five minutes) after link completion: the second wave comes then, and not before
         await AdvanceAsync(rig, 290_000);
         Assert.Equal(4, rig.Sim.Heard.OfType<SimSpawn>().Count());
         await AdvanceAsync(rig, 10_000);
@@ -312,6 +317,14 @@ public sealed class AnalysisBeaconHostTests
         Assert.Equal(0, await AddedToCargoAsync(rig, session, shipId, RewardAnalysisData));
         await AdvanceAsync(rig, 10_000);
         Assert.Equal(1441, await AddedToCargoAsync(rig, session, shipId, RewardAnalysisData));
+    }
+
+    private static async Task CompleteLinkAsync(Rig rig, ClientSession session, long beacon)
+    {
+        var bound = await rig.BindBeyonceAsync(session);
+        await rig.BeyonceCallAsync(session, "CallComponentFromClient", bound, new PyLong(beacon), PyStrOfClient("linkWithShip"), PyStrOfClient("InitiateLink"));
+        await RunAsync(rig);
+        await AdvanceAsync(rig, FourMinutes);
     }
 
     /// <summary>A Python <c>str</c> as the client sends it: the bytes of the text (a PyBytes on the wire).</summary>
@@ -367,7 +380,7 @@ public sealed class AnalysisBeaconHostTests
             await RunAsync(rig, restartedScheduler, restartedBus);
         }
         Assert.Contains(rig.Sim.Heard, m => m is SimSetAnalysisBeaconState active && active.DeployableId == beacon && active.State.Active);
-        Assert.Equal(4, rig.Sim.Heard.OfType<SimSpawn>().Count());
+        Assert.Empty(rig.Sim.Heard.OfType<SimSpawn>());
 
         rig.Sim.Heard.Clear();
         var record = (await rig.Deployed.GetAsync(beacon))!;
@@ -376,4 +389,39 @@ public sealed class AnalysisBeaconHostTests
         Assert.True(put.State.Active, "the restored beacon is active, as its row says");
         Assert.Equal(beacon, put.DeployableId);
     }
+
+    [PgFact]
+    public async Task Character_energy_and_system_interference_are_spent_once_and_regenerate_after_link_attempts()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await AnalysisBeaconDirector.MigrateAsync(rig.Source, rig.SpaceSchema);
+        var store = new AnalysisBeaconStore(rig.Source, rig.SpaceSchema);
+        var characterId = 90001L;
+        var systemId = (int)NullSecSystem;
+
+        async Task<bool> Spend(long character, int system, int typeId)
+        {
+            await using var connection = await rig.Source.OpenConnectionAsync();
+            await using var transaction = await connection.BeginTransactionAsync();
+            var allowed = await store.TryConsumeLinkResourcesAsync(connection, transaction, character, system, typeId, rig.Now, CancellationToken.None);
+            await transaction.CommitAsync();
+            return allowed;
+        }
+
+        Assert.True(await Spend(characterId, systemId, StandardCrab));
+        Assert.True(await Spend(characterId, systemId, StandardCrab));
+        Assert.True(await Spend(characterId, systemId, StandardCrab));
+        Assert.False(await Spend(characterId, systemId, StandardCrab));
+
+        var attempts = await Task.WhenAll(Enumerable.Range(0, 6).Select(_ => Spend(characterId + 1, systemId + 1, StandardCrab)));
+        Assert.Equal(3, attempts.Count(allowed => allowed));
+
+        var systemAttempts = await Task.WhenAll(Enumerable.Range(0, 40).Select(index => Spend(100_000 + index, systemId + 2, StandardCrab)));
+        Assert.Equal(34, systemAttempts.Count(allowed => allowed));
+        Assert.False(await Spend(100_100, systemId + 2, StandardCrab));
+
+        rig.Now += 22 * 60 * 60 * 1000L;
+        Assert.True(await Spend(characterId, systemId, CarrierCrab));
+    }
+
 }

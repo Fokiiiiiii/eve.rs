@@ -27,6 +27,7 @@ BURST_MODULE = 42529  # Shield Command Burst I
 BURST_CHARGE = 42695  # Shield Harmonizing Charge
 BURST_HULL = 37480  # Bifrost
 SHIELD_EM_RESONANCE = 271
+COMMAND_DESTROYERS = 37615
 
 
 def ship_attribute(answer, ship_id: int, attribute_id: int) -> float:
@@ -44,7 +45,11 @@ def ship_attribute(answer, ship_id: int, attribute_id: int) -> float:
 
 
 def named(events: list[dict], name: str) -> list[dict]:
-    return [event for event in events if event["name"] == name]
+    return [
+        event for event in events
+        if event["name"] == name
+        or any(action.get("name") == name for action in event.get("destiny", {}).get("actions", []))
+    ]
 
 
 def test_a_loaded_burst_changes_a_fleet_members_dogma_until_its_buff_expires():
@@ -68,6 +73,7 @@ def test_a_loaded_burst_changes_a_fleet_members_dogma_until_its_buff_expires():
 
         gm.give_skill(owner, 3348, 1)  # Leadership, the module and charge requirement
         gm.give_skill(owner, 3350, 1)  # Shield Command, the module and charge requirement
+        gm.give_skill(owner, COMMAND_DESTROYERS, 1)
         dbseed.set_hull(owner_ship, BURST_HULL)
         occupied = {dbseed.flag_of(item) for item in owner_modules}
         burst_flag = next(flag for flag in dbseed.HIGH_SLOTS if flag not in occupied)
@@ -126,7 +132,8 @@ def test_a_loaded_burst_changes_a_fleet_members_dogma_until_its_buff_expires():
         )
         assert active_events.index(changes[0]) < active_events.index(dbuffs[0]), "dogma attributes must precede the buff-state update"
 
-        assert active == pytest.approx(before * 0.92), f"shield resonance was {active}, expected an 8% resistance burst from {before}"
+        # The SDE's Bifrost bonus adds 2% burst strength per Command Destroyers level: -8% * (1 + 2%) = -8.16%.
+        assert active == pytest.approx(before * 0.9184), f"shield resonance was {active}, expected the SDE-derived -8.16% from {before}"
 
         notifications_of(member)
         expired_events = wait_for_events(

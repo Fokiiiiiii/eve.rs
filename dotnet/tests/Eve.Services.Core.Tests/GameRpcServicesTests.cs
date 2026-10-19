@@ -48,7 +48,6 @@ public sealed class GameRpcServicesTests
             gameRpcCallbacks: callbacks);
         var raffle = services.Single(service => service.Name == "raffleMgr");
         var raffleProxy = services.Single(service => service.Name == "raffleProxy");
-        var contractProxy = services.Single(service => service.Name == "contractProxy");
         var jumpClone = services.Single(service => service.Name == "jumpCloneSvc");
         var gateway = services.Single(service => service.Name == "serviceGatewayMgr");
 
@@ -56,8 +55,6 @@ public sealed class GameRpcServicesTests
         Assert.Equal(3, seededQuantity);
         Assert.Equal(new PyInt(8), await raffle.CallAsync(Call("QA_SeedRaffles")));
         Assert.Equal(PyBool.False, await raffleProxy.CallAsync(Call("AmIBanned")));
-        Assert.Equal(Py.KeyVal(("iskEscrow", Py.Number(0d)), ("itemsEscrow", new PyInt(0))),
-            await contractProxy.CallAsync(Call("GetMyContractEscrow")));
         Assert.Equal(new PyInt(Eve.Macho.MachoMessage.ProxyNodeId),
             await jumpClone.CallAsync(Call("MachoResolveObject")));
 

@@ -1,5 +1,9 @@
 # Deviations from the reference server
 
+## Account session exclusivity (2026-10-19)
+
+Host admission replaces an existing live connection when the same account opens a later client. The server sends the old connection a disconnect reason and updates the shared `ConnectedSessions` owner atomically; a late close from the old session cannot remove the new session. The V24.01 selection call paths and the release `multiLoginBlockerService.js:87-90` only address different accounts on one computer, while CCP's [Alpha clone guidance](https://support.eveonline.com/hc/en-us/articles/213811425-Alpha-Clones-and-Omega-Clone-lapsing-Quick-Facts) states an Alpha client prevents another client login. eve.rs applies one active client per account across its front connections. This slice has Host unit coverage for replacement and concurrent account opens; no graphical-client walk was performed.
+
 ## Global assets follow-up (2026-10-19)
 
 `charMgr` global assets now resolves a personal item's root by walking inventory parent locations to a static station or persistently deployed structure. The V24 callsite in `eve-logic/eve/client/script/environment/invCache.py` and EveJS `charMgrGlobalAssets.js` use this root to list root items and nested-container contents. eve.rs reads personal items from `PgItemStore` and structure metadata from the existing deployed-structure directory source. A focused `eve_p2` regression covers a structure root, a container directly stored there, and a child item. The Host wrapper end-to-end regression and exact structure `upkeepState` parity remain open; this batch records no intentional client behavior difference.
@@ -4928,6 +4932,6 @@ The owner decided that Triglavian NPCs in Pochven do not pay bounties. Existing 
 
 ## Research checkpoint reconciliation (2026-10-19)
 
-The supplied research reports identify a possible ruleset boundary conflict: `FwBattlefields.LpPool` is 150,000, while report 2 says client build 3396210 predates the 2026-07-01 increase and should use 50,000. Q-16 is open. CRAB's standard and Carrier scan durations are recorded in `AnalysisBeaconRules.cs`; report 1's remaining candidate mechanics (link tail, resistances, CEQ, system interference and reward access window) remain to be reconciled item by item. See `docs/project/RESEARCH_RECONCILIATION.md`.
+Q-16 adopts the June 16 checkpoint per item for build 3396210. CCP’s [Version 24.01 patch notes](https://www.eveonline.com/news/view/patch-notes-version-24-01) date the battlefield increase to July 1; `FwBattlefields.LpPool` is 50,000. Other later values listed in `docs/project/RULESET_BOUNDARY.md` are excluded. The CRAB details are tracked in that reconciliation and the CRAB section above.
 
 - **Advanced Contracting capacity configuration (Q-18).** `ApproximateContractLimitConfiguration` defaults to +4 outstanding contracts per skill level and its limit hook is unit-tested. The value is approximate and unconfirmed. The current contracts track has no creation/limit provider to call the hook; limit enforcement remains open.

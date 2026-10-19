@@ -6,7 +6,7 @@ Built from the sections below, as of 2026-10-19. **Status** is what the area doe
 
 | Area (sections) | Status | Project rule | Cut or open |
 |---|---|---|---|
-| Ruleset checkpoint and research reconciliation | OPEN | Target client build 3396210; proposed `24.01@2026-06-16` needs owner confirmation (Q-16). | Reconcile post-checkpoint values already present, pre-checkpoint SDE changes, and candidate report claims; see RULESET_BOUNDARY.md and RESEARCH_RECONCILIATION.md. |
+| Ruleset checkpoint and research reconciliation | PARTLY DONE | Q-16 adopts `24.01@2026-06-16` per item for client build 3396210; official 24.01 notes confirm the post-checkpoint dates listed in RULESET_BOUNDARY.md. | Post-checkpoint rules are excluded, and FW Battlefield LP is 50,000. Pre-checkpoint SDE changes and report claims remain open; see RULESET_BOUNDARY.md and RESEARCH_RECONCILIATION.md. |
 | Security regression matrix (security agent) | OPEN | Report 2 candidate security cases; adopt as regression coverage only after mapping to real handlers. | Zero-ISK donation must not reveal balances; response projection; idempotency keys; CALL_REQ before SessionInit; admin-only service access; nested substream bounds. |
 | Performance SLO and benchmark scenarios (perf agent) | OPEN | Proposed SLOs are engineering targets, not CCP limits. | Add handshake storm, soak, movement-heavy, dense grid, weapon burst, market hotspot, jump storm, mission wave, restart, cold boot and malformed protocol scenarios; link from PERFORMANCE.md. |
 | Protocol parser state machine and limits (security/protocol agent) | OPEN | Frame, marshal and packet behavior must follow observed V24.01 contract. | Document and cover length/payload/decode/session/auth/dispatch states, oversized inputs, nested substreams, partial/coalesced frames. |
@@ -1020,6 +1020,7 @@ Closed in slice B3 (2026-10-10): `GetAverageMarketPrices` answers each type with
 Done in slice C (DEVIATIONS.md, "Character selection and entry (slice C, 2026-10-10)"):
 - `populationCap`: the live per-system load, the nearest alternatives, the saved move, the selection refusal (`PopulationCapTests`).
 - `multiLoginBlocker.Login`: the computer hash and clone grade are recorded; the Alpha rule refuses a second account on the same computer (`MultiLoginBlockerTests`).
+- Host account admission enforces one active client per account across front connections; a later login disconnects the earlier client (`ConnectedSessionsTests`).
 - `ToggleValidation` by role, `GetCharOmegaDowngradeStatus` answered (`ValidationAndOmegaTests`).
 - `OnCharacterSelected` expectation in the live walk corrected to zero arguments; new live step `test_the_population_cap_answers_through_its_moniker`.
 - Verified against the client and left as they are: `GetCharacterSelectionData` 4-tuple and row fields, `GetCharacterLockType`, `GetCohortsForUser`, the session attribute set, the reward checks, the entry hooks' order.
@@ -1028,6 +1029,7 @@ Open after slice C:
 | Status | Item | Owner / where |
 |---|---|---|
 | OPEN | `charMgr.GetSettingsInfo`: the client's native `Crypto.Verify` needs CCP's signing key; the failure is logged and `LogSettings` is skipped | DEVIATIONS, slice C; needs a decision on signing |
+| DONE | Account session exclusivity: a later same-account session replaces and cleanly disconnects the previous client | Host `ConnectedSessions` and `HostServer`; `ConnectedSessionsTests` |
 | OPEN | SSO login: the computer hash and the token are not produced, so `multiLoginBlocker.Login` is not reached | slice A gap G1 (DEVIATIONS "Single sign-on login") |
 | OPEN | `SelectCharacterID` population check and the entry are not atomic (two selections into a full system can both pass) | DEVIATIONS, slice C |
 | OPEN | `populationCap` alternatives are the nearest systems by distance; the reference's neighbours (stargates) need a stargate table in the static data | static data (Slice B follow-up) |

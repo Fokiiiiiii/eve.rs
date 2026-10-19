@@ -162,7 +162,6 @@ fn check(name: &str, actual: &[u8], baseline: Option<&Json>) {
 // ─── The scene (no counterpart in the JS baseline: it needs the whole service graph and the generated tables) ───
 
 const TICKS_PER_SECOND: i64 = 10_000_000;
-/// 2026-09-29 12:00:00 UTC as a FILETIME.
 const NOON: i64 = 134_351_688_000_000_000;
 
 fn bench_system() -> std::sync::Arc<SolarSystem> {

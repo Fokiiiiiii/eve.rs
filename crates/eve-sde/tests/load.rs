@@ -127,7 +127,6 @@ fn loads_into_postgres_and_round_trips_awkward_content() {
     let count: i64 = client.query_one(&format!("SELECT count(*) FROM {schema}.types"), &[]).unwrap().get(0);
     assert_eq!(count, 3);
 
-    // A jsonb field, a key that is a number and one that is text.
     let row = client
         .query_one(
             &format!(
@@ -139,7 +138,6 @@ fn loads_into_postgres_and_round_trips_awkward_content() {
     assert_eq!(row.get::<_, String>(0), "リフター");
     assert_eq!(row.get::<_, f64>(1), 1067000.0);
 
-    // Tabs, newlines, backslashes and quotes survive COPY.
     let name: String = client
         .query_one(&format!("SELECT doc->'name'->>'en' FROM {schema}.types WHERE key = '588'"), &[])
         .unwrap()
@@ -151,7 +149,6 @@ fn loads_into_postgres_and_round_trips_awkward_content() {
         .get(0);
     assert_eq!(note, "C:\\path\\to\ttab");
 
-    // ord is the line number: the blank line 2 is skipped but counted.
     let ords: Vec<i64> = client
         .query(&format!("SELECT ord FROM {schema}.types ORDER BY ord"), &[])
         .unwrap()
@@ -160,13 +157,11 @@ fn loads_into_postgres_and_round_trips_awkward_content() {
         .collect();
     assert_eq!(ords, [1, 3, 4]);
 
-    // The build is recorded, and verify agrees with the files.
     let build: i64 =
         client.query_one(&format!("SELECT build_number FROM {schema}._build"), &[]).unwrap().get(0);
     assert_eq!(build, 3396210);
     assert!(load::verify_in(&mut client, &manifest, &schema).unwrap().is_empty());
 
-    // Loading again replaces the tables rather than adding to them.
     load::load_into(&mut client, &manifest, &schema).unwrap();
     let count: i64 = client.query_one(&format!("SELECT count(*) FROM {schema}.types"), &[]).unwrap().get(0);
     assert_eq!(count, 3);
@@ -183,7 +178,6 @@ fn a_failed_load_leaves_the_previous_one_intact() {
     mini_sde(&good);
     load::load_into(&mut client, &SdeManifest::read(&good.0).unwrap(), &schema).unwrap();
 
-    // The same file with a duplicate key: the whole load must roll back.
     let bad = Scratch::new("atomic-bad");
     bad.write("types.jsonl", "{\"_key\":1}\n{\"_key\":1}\n");
     bad.write("groups.jsonl", "{\"_key\":99}\n");

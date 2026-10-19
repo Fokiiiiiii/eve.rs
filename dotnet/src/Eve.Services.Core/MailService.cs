@@ -123,6 +123,9 @@ private async ValueTask<PyValue> SendMailAsync(ServiceCall call)
 
     private async ValueTask<PyValue> PokePlayerAboutChatMsgGmAsync(ServiceCall call)
     {
+        if (!Eve.Services.GameMasterRoles.Has(call.Session, Eve.Services.GameMasterRoles.Gml))
+            return PyNone.Instance;
+
         var characterId = PositiveId(call.Arg(0));
         if (characterId <= 0 || _pokePlayerAboutChatMsgGm is null)
             return PyNone.Instance;

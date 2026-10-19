@@ -766,6 +766,60 @@ fn an_active_cloak_hides_a_ship_from_locking_until_the_module_ends() {
 }
 
 #[test]
+fn a_crab_link_blocks_new_cloak_activation_until_the_status_tail_clears() {
+    let (mut scene, t) = reaching(5_000.0);
+    let ship_id = scene.pilots[&A].ship.spec.ship_id;
+    let crab_id = 4_250_000_000_000_050;
+    let idle = crate::link::AnalysisBeaconState {
+        active: true,
+        activate_at: 0,
+        deployed_at: t,
+        activation_seconds: 20,
+        link_state: 1,
+        link_complete_at: 0,
+        linked_ship_id: 0,
+    };
+    let p = scene.pilots[&A].ship.position;
+    scene.place_analysis_beacon(
+        crate::link::AnalysisBeaconPlacement {
+            deployable_id: crab_id,
+            solar_system_id: 30_000_001,
+            name: "CONCORD Rogue Analysis Beacon".to_string(),
+            type_id: 60_244,
+            group_id: 4_137,
+            position: [p.x + 1_000.0, p.y, p.z],
+            radius: 100.0,
+            owner_id: 1,
+            corporation_id: 1,
+            alliance_id: 0,
+            ship_id,
+            state: idle,
+        },
+        t,
+    );
+    let link_done = t + 240 * SECOND;
+    scene.set_analysis_beacon_state(
+        crab_id,
+        crate::link::AnalysisBeaconState {
+            link_state: 2,
+            link_complete_at: link_done,
+            linked_ship_id: ship_id,
+            ..idle
+        },
+        t,
+    );
+    let mut cloak = repairer(Layer::Armor, 1.0, Applies::CycleStart);
+    cloak.effect_id = 197;
+    cloak.fx = "effects.Cloaking".to_string();
+    cloak.action = Some(Action::Cloak { warp_safe: false, targeting_delay_ms: 0.0 });
+
+    let refused = scene.activate(A, cloak.clone(), t);
+    assert!(refused.iter().any(|event| matches!(event, Out::Refused { reason: "LINK_HOLD", .. })));
+    let accepted = scene.activate(A, cloak, link_done + 61 * SECOND);
+    assert!(accepted.iter().any(|event| matches!(event, Out::Accepted { command: 17, .. })));
+}
+
+#[test]
 fn a_power_booster_transfers_to_its_own_ship_and_spends_one_charge_per_cycle() {
     let (mut scene, t) = reaching(2_000.0);
     let ship_id = scene.pilots[&A].ship.spec.ship_id;

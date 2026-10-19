@@ -1193,6 +1193,17 @@ fn a_linked_ship_is_held_until_its_link_is_complete_and_out_of_warp_for_a_minute
     assert!(!held(&scene.command(A, Command::Stop, t), "LINK_HOLD"), "a stop is never held");
     assert!(!held(&scene.command(B, goto, t), "LINK_HOLD"), "another pilot's ship is not held");
 
+    assert!(scene.link_blocks_cloak_or_tether(A, t), "link restrictions start with the link");
+    assert!(
+        scene.link_blocks_cloak_or_tether(A, link_done + 59 * SECOND),
+        "link restrictions include the 60-second tail"
+    );
+    assert!(
+        !scene.link_blocks_cloak_or_tether(A, link_done + 60 * SECOND),
+        "link restrictions clear after the tail"
+    );
+    assert!(!scene.link_blocks_cloak_or_tether(B, t), "another pilot is not restricted");
+
     let after_link = link_done + SECOND;
     assert!(
         !held(&scene.command(A, goto, after_link), "LINK_HOLD"),

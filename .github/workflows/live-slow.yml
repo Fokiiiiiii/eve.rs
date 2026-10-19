@@ -189,3 +189,4 @@ jobs:
           path: .live-logs
           if-no-files-found: error
           retention-days: 7
+          include-hidden-files: true

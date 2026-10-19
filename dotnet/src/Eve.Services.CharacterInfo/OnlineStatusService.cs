@@ -37,7 +37,7 @@ public sealed partial class OnlineStatusService(
             return false;
         }
 
-        // Like the reference, a call without a selected observer reads raw presence.
+        // An unselected session cannot query another character's presence.
         if (observerId > 0 && observerId != targetId)
         {
             var contacts = observerWatchlist ?? await Watchlist(observerId, cancellation);
@@ -55,10 +55,8 @@ public sealed partial class OnlineStatusService(
     [Method("GetOnlineStatus")]
     public async ValueTask<PyValue> GetOnlineStatus(ServiceCall call)
     {
-        if (call.Session.CharacterId is not > 0)
-            return PyBool.False;
         return PyValue.Of(await IsOnline(Eve.Macho.JsSemantics.ToPositiveInteger(call.Arg(0)),
-            call.Session.CharacterId.Value, call.Cancellation));
+            call.Session.CharacterId ?? 0, call.Cancellation));
     }
 
     [Method("GetInitialState")]

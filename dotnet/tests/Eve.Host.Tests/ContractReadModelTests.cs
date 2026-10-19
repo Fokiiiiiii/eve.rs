@@ -1,5 +1,7 @@
 using Eve.Data;
 using Eve.Host.Persistence;
+using Eve.Inventory;
+using Eve.Wallet;
 using Npgsql;
 using Xunit;
 
@@ -7,6 +9,137 @@ namespace Eve.Host.Tests;
 
 public sealed class ContractReadModelTests
 {
+    [Fact]
+    public async Task Item_exchange_creation_stages_stack_and_wallet_charges_in_one_transaction()
+    {
+        var connectionString = Environment.GetEnvironmentVariable("EVE_PG_URL")
+            ?? throw new InvalidOperationException("EVE_PG_URL must name the assigned PostgreSQL lane");
+        var suffix = Guid.NewGuid().ToString("N");
+        var contractsSchema = $"contract_write_{suffix}";
+        var inventorySchema = $"contract_items_{suffix}";
+        var walletSchema = $"contract_wallet_{suffix}";
+        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(connectionString));
+        await PersistenceContractReadModel.MigrateAsync(source, contractsSchema);
+        await PgItemStore.MigrateAsync(source, inventorySchema);
+        await PgWalletStore.MigrateAsync(source, walletSchema);
+        try
+        {
+            var itemStore = new PgItemStore(source, inventorySchema);
+            var wallets = new WalletTransactions(source, walletSchema);
+            await using (var connection = await source.OpenConnectionAsync())
+            await using (var transaction = await connection.BeginTransactionAsync())
+            {
+                await wallets.EnsureAsync(connection, transaction, 100);
+                await using var seed = new NpgsqlCommand($"UPDATE {walletSchema}.balances SET isk=1000 WHERE owner_id=100 AND account_key=1000", connection, transaction);
+                await seed.ExecuteNonQueryAsync();
+                await transaction.CommitAsync();
+            }
+            long itemId;
+            await using (var connection = await source.OpenConnectionAsync())
+            await using (var transaction = await connection.BeginTransactionAsync())
+            {
+                itemId = await itemStore.CreateAsync(connection, transaction,
+                    new NewItem(34, 100, 600, ItemFlags.Hangar, Quantity: 5), CancellationToken.None);
+                await transaction.CommitAsync();
+            }
+
+            var writer = new PersistenceContractWriteModel(source, itemStore, wallets, () => 1_800_000_000_000, contractsSchema);
+            var created = await writer.CreateItemExchangeAsync(new Eve.Services.Core.CreateItemExchangeRequest(
+                IssuerCharacterId: 100,
+                IssuerCorporationId: 200,
+                IsCorporationIssued: false,
+                StartStationId: 600,
+                StartStationDivision: ItemFlags.Hangar,
+                Availability: 0,
+                AssigneeId: 0,
+                ExpiryMinutes: 1440,
+                Price: 100,
+                Reward: 50,
+                BrokerFee: 1,
+                Deposit: 0,
+                SalesTax: 1,
+                WalletAccountKey: 1000,
+                Title: "Test exchange",
+                Description: "",
+                Items: [new Eve.Services.Core.ContractOfferedItem(itemId, 2)]), CancellationToken.None);
+
+            Assert.Single(created.EscrowItemIds);
+            var sourceItem = await itemStore.GetAsync(itemId, CancellationToken.None);
+            Assert.NotNull(sourceItem);
+            Assert.Equal(3, sourceItem.Quantity);
+            var escrowItem = await itemStore.GetAsync(created.EscrowItemIds[0], CancellationToken.None);
+            Assert.NotNull(escrowItem);
+            Assert.Equal((long)1, escrowItem.OwnerId);
+            Assert.Equal(9_300_000_000 + created.ContractId, escrowItem.LocationId);
+            Assert.Equal(2, escrowItem.Quantity);
+            await using (var read = source.CreateCommand($"SELECT price_isk, reward_escrow FROM {contractsSchema}.contract_records WHERE contract_id=$1"))
+            {
+                read.Parameters.AddWithValue(created.ContractId);
+                await using var reader = await read.ExecuteReaderAsync();
+                Assert.True(await reader.ReadAsync());
+                Assert.Equal(100m, reader.GetDecimal(0));
+                Assert.Equal(50m, reader.GetDecimal(1));
+            }
+            Assert.Equal(948m, await wallets.AccountBalanceAsync(new WalletAccount(100), CancellationToken.None));
+
+            await Assert.ThrowsAsync<InvalidOperationException>(() => writer.CreateItemExchangeAsync(
+                new Eve.Services.Core.CreateItemExchangeRequest(
+                    IssuerCharacterId: 100,
+                    IssuerCorporationId: 200,
+                    IsCorporationIssued: false,
+                    StartStationId: 600,
+                    StartStationDivision: ItemFlags.Hangar,
+                    Availability: 0,
+                    AssigneeId: 0,
+                    ExpiryMinutes: 1440,
+                    Price: 10,
+                    Reward: 0,
+                    BrokerFee: 1,
+                    Deposit: 0,
+                    SalesTax: 0,
+                    WalletAccountKey: 1000,
+                    Title: "Rollback exchange",
+                    Description: "",
+                    Items: [new Eve.Services.Core.ContractOfferedItem(itemId, 5)]), CancellationToken.None).AsTask());
+            Assert.Equal(948m, await wallets.AccountBalanceAsync(new WalletAccount(100), CancellationToken.None));
+            await using (var read = source.CreateCommand($"SELECT count(*) FROM {contractsSchema}.contract_records"))
+                Assert.Equal(1L, (long)(await read.ExecuteScalarAsync())!);
+            Assert.Equal(3, (await itemStore.GetAsync(itemId, CancellationToken.None))!.Quantity);
+
+            await Assert.ThrowsAsync<InsufficientFundsException>(() => writer.CreateItemExchangeAsync(
+                new Eve.Services.Core.CreateItemExchangeRequest(
+                    IssuerCharacterId: 100,
+                    IssuerCorporationId: 200,
+                    IsCorporationIssued: false,
+                    StartStationId: 600,
+                    StartStationDivision: ItemFlags.Hangar,
+                    Availability: 0,
+                    AssigneeId: 0,
+                    ExpiryMinutes: 1440,
+                    Price: 10,
+                    Reward: 10_000,
+                    BrokerFee: 1,
+                    Deposit: 0,
+                    SalesTax: 0,
+                    WalletAccountKey: 1000,
+                    Title: "Insufficient balance",
+                    Description: "",
+                    Items: [new Eve.Services.Core.ContractOfferedItem(itemId, 1)]), CancellationToken.None).AsTask());
+            Assert.Equal(948m, await wallets.AccountBalanceAsync(new WalletAccount(100), CancellationToken.None));
+            Assert.Equal(3, (await itemStore.GetAsync(itemId, CancellationToken.None))!.Quantity);
+            await using (var read = source.CreateCommand($"SELECT count(*) FROM {contractsSchema}.contract_records"))
+                Assert.Equal(1L, (long)(await read.ExecuteScalarAsync())!);
+        }
+        finally
+        {
+            foreach (var schema in new[] { contractsSchema, inventorySchema, walletSchema })
+            {
+                await using var cleanup = source.CreateCommand($"DROP SCHEMA IF EXISTS \"{schema}\" CASCADE");
+                await cleanup.ExecuteNonQueryAsync();
+            }
+        }
+    }
+
     [Fact]
     public async Task Login_and_escrow_reads_use_persisted_contract_rows_and_owner_scopes()
     {

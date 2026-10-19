@@ -588,21 +588,26 @@ public sealed class StructureCompositionTests : IAsyncLifetime
         var manager = await Assert.ThrowsAsync<MachoWrappedException>(async () => await deployment.CallAsync(Call(RoleSession(characterId, Corporation, 2048), "Unanchor", 1, new PyInt(StructureId))));
         Assert.Equal("CrpAccessDenied", Refusal(manager).Name);
 
+        var noCorporation = await Assert.ThrowsAsync<MachoWrappedException>(async () => await deployment.CallAsync(
+            Call(RoleSession(characterId, 0, 1), "Unanchor", 2, new PyInt(StructureId))));
+        Assert.Equal("CrpAccessDenied", Refusal(noCorporation).Name);
+        Assert.Equal(0, (await store.GetAsync(StructureId))!.Snapshot.UnanchorEndsMs);
+
         var director = RoleSession(characterId, Corporation, 1);
         var before = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        await deployment.CallAsync(Call(director, "Unanchor", 2, new PyInt(StructureId)));
+        await deployment.CallAsync(Call(director, "Unanchor", 3, new PyInt(StructureId)));
         var after = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         var unanchoring = (await store.GetAsync(StructureId))!.Snapshot.UnanchorEndsMs;
         Assert.InRange(unanchoring, before + StructureTimes.UnanchoringMs, after + StructureTimes.UnanchoringMs);
 
         // asking again while it runs changes nothing (EVE.js answers success)
-        await deployment.CallAsync(Call(director, "Unanchor", 3, new PyInt(StructureId)));
+        await deployment.CallAsync(Call(director, "Unanchor", 4, new PyInt(StructureId)));
         Assert.Equal(unanchoring, (await store.GetAsync(StructureId))!.Snapshot.UnanchorEndsMs);
 
-        await deployment.CallAsync(Call(director, "CancelUnanchor", 4, new PyInt(StructureId)));
+        await deployment.CallAsync(Call(director, "CancelUnanchor", 5, new PyInt(StructureId)));
         Assert.Equal(0, (await store.GetAsync(StructureId))!.Snapshot.UnanchorEndsMs);
         // nothing to cancel is not an error
-        await deployment.CallAsync(Call(director, "CancelUnanchor", 5, new PyInt(StructureId)));
+        await deployment.CallAsync(Call(director, "CancelUnanchor", 6, new PyInt(StructureId)));
         await host.ShutdownAsync();
     }
 

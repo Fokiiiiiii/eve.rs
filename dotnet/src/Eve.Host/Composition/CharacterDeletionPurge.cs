@@ -1,3 +1,4 @@
+using Eve.Characters;
 using Eve.Fitting;
 using Eve.Inventory;
 using Eve.Services.CharacterSelect;
@@ -12,7 +13,7 @@ namespace Eve.Host;
 /// character's corporation was an NPC corporation. Its skills and saved fittings are cleared.
 /// </summary>
 internal sealed class HostCharacterDeletionPurge(
-    NpgsqlDataSource source, PgItemStore items, PgSkillStore skills, string fittingSchema,
+    NpgsqlDataSource source, PgItemStore items, PgSkillStore skills, PgCharacterStore characters, string fittingSchema,
     Func<long, CancellationToken, Task<bool>> isNpcCorporation, CharacterPrivateStatePurge privateState) : ICharacterDeletionPurge
 {
     /// <summary>The corporation deliveries hangar (EveJS <c>CORPORATION_DELIVERIES_FLAG_ID</c>).</summary>
@@ -53,6 +54,7 @@ internal sealed class HostCharacterDeletionPurge(
         };
         await fittings.ExecuteNonQueryAsync(cancellationToken);
         await privateState.PurgePostgresAsync(connection, transaction, characterId, cancellationToken);
+        await characters.ClearAppearanceAsync(connection, transaction, characterId, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         await privateState.PurgeGameStoreAsync(characterId, cancellationToken);
     }

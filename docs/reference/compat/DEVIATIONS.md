@@ -266,7 +266,7 @@ decisions.
 | The character's ISK and PLEX are the reference's development values (100000 and 2222) unless `EVE_START_ISK` / `EVE_START_PLEX` say otherwise; `balanceChange` is always 0 (no journal yet) | S3 (wallet journal) |
 | `charUnboundMgr.GetCharCreationInfo`, `GetCharNewExtraCreationInfo`, `IsUserReceivingCharacter`, and `GetCharacterToSelect` have no V24.01 client callsite; `GetTopBounties` is called through `bountyProxy`, not `charUnboundMgr` | Client contract: `eve/client/script/ui/login/charSelection/characterSelection.py` and `eve/client/script/ui/shared/bountySvc.py` |
 | The reference's login takeover (`loginTakeoverEnabled`, evicting the earlier session) and browser-pilot control checks on choosing a character; eve.rs always refuses a character that is already online | with the session model of S3 |
-| The login function also patches portrait upload (`photoUploadSvc`) and seeds the skill-extractor token | S2 (portraits), S3 (skills) |
+| The login function also patches portrait upload (`photoUploadSvc`) and seeds the skill-extractor token. On deletion, the character store clears `doll_info`, `portrait_info` and `paperdoll_state` in the asset/private-state purge transaction; no separate image-file store is wired into this character path | S2 (portraits), S3 (skills) |
 | `machoNet.SetGlobalConfigValue`, `ForwardCharacterNotification`, `ReloadClientCodeHash`, `GetNodeFromAddress`, `GetClusterGameStatisticsForClient` | as the client calls them |
 | The service table lists about 150 service names; eve.rs lists the services it implements | each service group |
 | Store entries in the global config (`newEdenStore`) | S3 |

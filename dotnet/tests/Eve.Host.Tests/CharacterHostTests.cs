@@ -31,6 +31,7 @@ public sealed class CharacterHostTests
         var character = await rig.CreateCharacterAsync();
         var sink = new RecordingPacketSink();
         var session = new ClientSession { CharacterId = character, Sink = sink };
+        session.Set("charid", new PyLong(character));
         session.Set("stationid", new PyInt(rig.Station));
         var service = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("jumpCloneSvc"));
         foreach (var method in new[]
@@ -89,12 +90,26 @@ public sealed class CharacterHostTests
         Assert.Equal(new[] { first, other }, Rows(Field(afterRestart, "clones")).Select(row => ((PyLong)row.Items[0]).Value).ToArray());
         Assert.Equal("Renamed", ((PyWString)Rows(Field(afterRestart, "clones"))[0].Items[2]).Value);
 
-        // destroy removes the clone; the last jump reset is persisted as zero
+        // destroy removes the clone and persists the same notification row returned by notificationMgr
         Assert.IsType<PyNone>(await BoundAsync(restarted, session, "DestroyInstalledClone", new PyLong(other)));
         Assert.Equal(new[] { first }, Rows(Field(await BoundAsync(restarted, session, "GetCloneState"), "clones"))
             .Select(row => ((PyLong)row.Items[0]).Value).ToArray());
-        Assert.IsType<PyNone>(await BoundAsync(restarted, session, "ResetLastCloneJumpTime"));
-        Assert.Equal(new PyLong(0), Field(await BoundAsync(restarted, session, "GetCloneState"), "timeLastJump"));
+        var notifications = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("notificationMgr"));
+        var deleted = Assert.Single(Assert.IsType<PyList>(await CallAsync(notifications, "GetAllNotifications", session)).Items);
+        Assert.Equal(new PyInt(56), Field(deleted, "typeID"));
+        var deletionData = Field(deleted, "data");
+        Assert.Equal(new PyInt(character), Field(deletionData, "locationOwnerID"));
+        Assert.Equal(new PyInt(character), Field(deletionData, "destroyerID"));
+        Assert.Empty(Assert.IsType<PyList>(Field(deletionData, "typeIDs")).Items);
+
+        await rig.RestartAsync();
+        var notificationsAfterRestart = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("notificationMgr"));
+        var persistedDeletion = Assert.Single(Assert.IsType<PyList>(await CallAsync(notificationsAfterRestart, "GetAllNotifications", session)).Items);
+        Assert.Equal(new PyInt(56), Field(persistedDeletion, "typeID"));
+
+        var restartedClones = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("jumpCloneSvc"));
+        Assert.IsType<PyNone>(await BoundAsync(restartedClones, session, "ResetLastCloneJumpTime"));
+        Assert.Equal(new PyLong(0), Field(await BoundAsync(restartedClones, session, "GetCloneState"), "timeLastJump"));
     }
 
     [PgFact]
@@ -953,7 +968,12 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
 
     private static PyValue Field(PyValue keyVal, string key)
     {
-        var entries = Assert.IsType<PyDict>(Assert.IsType<PyObject>(keyVal).Args).Entries;
+        var entries = keyVal switch
+        {
+            PyObject obj => Assert.IsType<PyDict>(obj.Args).Entries,
+            PyDict dict => dict.Entries,
+            _ => throw new Xunit.Sdk.XunitException($"Expected a dictionary, got {keyVal.GetType().Name}"),
+        };
         return entries.Single(entry => ((PyStr)entry.Key).Value == key).Value;
     }
 

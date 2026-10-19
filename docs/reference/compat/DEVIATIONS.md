@@ -4277,6 +4277,8 @@ Sources: EveJS `services/skills/trading/skillTradingAuthority.js` and `skillTrad
 
 ## Character phase S7 (clone jump, lapses)
 
+`jumpCloneSvc.DestroyInstalledClone` follows EveJS by deleting the caller's clone and creating the type 56 miscellaneous notification with the caller as both owner and destroyer. eve.rs persists the notification through the existing notification store and publishes it to the active session. `CharacterHostTests.Jump_clones_are_read_changed_and_kept_through_the_host_registry_and_a_restart` checks the fields returned by `notificationMgr` and persistence after a Host restart. The V24.01 client invokes this RPC only for the logged-in pilot's confirmed deletion; no client callsite for the type 57 other-destroyer case was found.
+
 - **Clone jump implants (CH-16).** The body that jumps keeps all its implants in a clone at the origin (wiki, Jump clone: implants stay with the old body). EveJS `followsJumpClones` has no SDE attribute in this data, so no implant is exempt. Test: `CharacterHostTests.Clone_jump_moves_the_body...`.
 - **Clone jump boosters (CH-16, not done).** The wiki says normal boosters end on a jump; eve.rs does not end them yet (the jump only moves the body and its implants). Cerebral accelerators stay active (DEVIATIONS S4).
 - **Clone jump destinations (CH-16).** Only station clones are jumped to: structure and ship clones are not installed in this data path (CH-15 open).

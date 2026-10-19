@@ -207,6 +207,7 @@ internal sealed partial class CharacterServicesComposition
     private Task CharacterEntryHooks()
     {
         publicQaSlashService = null;
+        jumpCloneSpace.CloneDeletedNotification = mailSendWriter.WriteJumpCloneDeletedNotificationAsync;
         gameRpcCallbacks = new Eve.Services.Core.GameRpcCallbacks(
             ReadSharedSettings: () => mailCache.Read("sharedSettings", "/").Data as JsonObject,
                     ReadOverviewPresets: () => mailCache.Read("overviewSharedPresets", "/").Data as JsonObject,

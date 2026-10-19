@@ -50,7 +50,7 @@ def slim_value(v):  # a dynamic slim-item field value (protocol 76): a tag (0 no
     raise ValueError(tag)
 
 
-def s(text):  # u16 length + UTF-8
+def s(text):
     data = text.encode("utf-8")
     return struct.pack("<H", len(data)) + data
 
@@ -194,7 +194,7 @@ def turret(t):
             body += bytes([1]) + struct.pack("<d", c["damageLossTarget"])
     else:
         body += bytes([0])
-    # whether the weapon requires Gunnery: a tracking disruptor or computer reaches only such a weapon (FP-10)
+
     return body + bytes([1 if t.get("requiresGunnery", False) else 0])
 
 
@@ -680,7 +680,7 @@ def build(m):
                      + i64(m["ownerId"]) + struct.pack("<ii", m["corporationId"], m["allianceId"]) + i64(m["shipId"]))
     if k == "SetDisruptorActive":
         return frame(k, i64(m["deployableId"]) + bytes([1 if m["active"] else 0]))
-    if k == "PlaceAnalysisBeacon":  # a CRAB (protocol 61): its ball and owner, then its state (the client's activation and link, see analysis_beacon_state)
+    if k == "PlaceAnalysisBeacon":
         return frame(k, i64(m["deployableId"]) + struct.pack("<i", m["solarSystemId"]) + s(m["typeName"]) + struct.pack("<ii", m["typeId"], m["groupId"])
                      + struct.pack("<3d", *m["position"]) + struct.pack("<d", m["radius"]) + i64(m["ownerId"])
                      + struct.pack("<ii", m["corporationId"], m["allianceId"]) + i64(m["shipId"]) + analysis_beacon_state(m["state"]))
@@ -1116,7 +1116,7 @@ valid = [
                 "durationMs": 240000.0, "capacitorNeed": 0.0, "repeat": 1, "targetId": "0",
                 "action": {"kind": "panic", "rangeMeters": 200000.0},
                 "onChanges": [], "offChanges": []}},
-    # protocol 70 (ST-9 b): an Entosis Link I (34593, effect 6063): one cycle of 300 s, reaching 20 km, on a structure the pilot holds the lock on (no charge, fuel per cycle)
+
     {"name": "activate an entosis link (Entosis Link I, 20 km, a locked structure)", "kind": "Activate", "sessionId": "1790646377000015",
      "effect": {"moduleId": "9988400002813", "moduleType": 34593, "effectId": 6063, "fx": "",
                 "durationMs": 300000.0, "capacitorNeed": 0.0, "repeat": 1, "targetId": "1040000000777",
@@ -1496,7 +1496,7 @@ valid = [
      "wasteMultiplier": 0.0, "wasteProbability": 0.0, "critProbability": 0.0, "critMultiplier": 0.0,
      "accessDifficultyBonus": 0.0, "wasteRoll": 0.25, "roundingRoll": 0.5, "critRoll": 0.75,
      "recipients": ["9988400001939", "9988400001940"]},
-    # protocol 70 (ST-9 b): an entosis link's cycle asks the host to settle the capture (command 14); it carries no mining numbers
+
     {"name": "module work cycle of an entosis link's cycle (command 14), no numbers", "kind": "ModuleWorkCycle", "sessionId": "1790646377000015",
      "characterId": "140000342", "shipId": "9988400001939", "solarSystemId": 30100032, "moduleId": "9988400002813",
      "targetId": "1040000000777", "cycleId": "7301444403200000006", "command": 14, "miningAmountM3": 0.0,
@@ -1635,7 +1635,7 @@ valid = [
                 "durationMs": 1000.0, "capacitorNeed": 0.0, "repeat": 1000, "targetId": "0",
                 "action": {"kind": "autoTarget", "range": 50000.0}, "onChanges": [], "offChanges": []}},
 ]
-# Shared unpublished protocol-71 artifact contracts. Health is from SDE 3396210 typeDogma for 47951.
+
 CACHE_ENTITY = dict(BARE, shipId="9840000000101", characterId="0", ownerId="140000342",
                     typeId=47951, groupId=2009, categoryId=11, name="Triglavian Bioadaptive Cache",
                     maxVelocity=0.0, signatureRadius=1000.0, shieldRechargeMs=86400000.0,

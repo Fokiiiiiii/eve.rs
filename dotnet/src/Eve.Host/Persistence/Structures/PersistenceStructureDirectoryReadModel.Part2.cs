@@ -269,7 +269,7 @@ public sealed partial class PersistenceStructureDirectoryReadModel
     }
 
     /// <summary>
-    /// The rent a renewal of a structure's office takes (EVE.js processPaidOfficeRentalBill: getProfileSettingValueForStructure with no session): the group-0 value of the
+
     /// profile's Corporation Office Rent setting. Null when the id is no persistently deployed structure or the profile has no such group: the rent then stays.
     /// </summary>
     public async ValueTask<decimal?> RenewalRentAsync(long structureId, CancellationToken cancellationToken)

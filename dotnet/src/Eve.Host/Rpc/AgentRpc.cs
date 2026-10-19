@@ -37,7 +37,7 @@ namespace Eve.Host;
 
 internal sealed partial class CharacterServicesComposition
 {
-    /// <summary>Agent missions, alliances, the public QA slash service and the ship and beyonce services.</summary>
+
     private IReadOnlyList<IService> AgentRpc()
     {
         // the cynosural field generator's lighting needs a fleet: the fleet store answers it for the space sessions

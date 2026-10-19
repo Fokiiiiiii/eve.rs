@@ -6,7 +6,7 @@ using Npgsql;
 namespace Eve.Host;
 
 /// <summary>
-/// The structure side of corporation offices (ST-12): a structure as an office site, and the access and rent of its Corporation Offices service, read from the
+
 /// structure records and the profile directory that the structure services use.
 /// </summary>
 internal sealed class StructureOfficeSites(

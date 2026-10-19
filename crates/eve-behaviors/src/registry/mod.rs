@@ -50,9 +50,9 @@ pub enum AttributeKind {
     BlackboardAddressByFleetType,
     /// `FleetTypeAttribute`.
     FleetType,
-    /// `OwnerIdToSpawnTableIdDictionaryAttribute`.
+
     OwnerIdToSpawnTableIdDictionary,
-    /// `OwnerIdToSpawnlistIdDictionaryAttribute`: a dictionary whose keys are whole numbers.
+
     IntKeyDictionary,
 }
 

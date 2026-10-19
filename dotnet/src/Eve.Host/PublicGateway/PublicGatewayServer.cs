@@ -20,7 +20,7 @@ internal sealed record PublicGatewayRoutes(IReadOnlyDictionary<string, GatewayHa
 
 /// <summary>
 /// The public protobuf gateway of the V24.01 client, served on an HTTP/2 listener without TLS (h2c; the client reaches it through
-/// EVE_PUBLIC_GATEWAY_ADDRESS). The routes are those of EveJS publicGatewayLocal.js: Requests/Send answers one response frame per request
+
 /// frame, in order; the Ping calls answer an empty frame; Events/Publish is acknowledged and not stored (the reference keeps no events either).
 /// Notices/Consume is a stream the client keeps open: the request frames name the active character, and the notices routed to it (or to the
 /// token's account) are written to it. A request's character is trusted only when the account of the request's bearer token owns it

@@ -36,7 +36,6 @@ pub fn get_entity_group_member_count(t: &mut TaskCtx<'_, '_>, group_id: i64) -> 
     }
 }
 
-/// `get_my_entity_group_owner_id`: raises when my group is not there.
 pub fn get_my_entity_group_owner_id(t: &mut TaskCtx<'_, '_>) -> Option<i64> {
     if !my_entity_group_exists(t) {
         missing(t, "GetGroupOwnerId");

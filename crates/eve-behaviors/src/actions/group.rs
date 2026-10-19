@@ -203,36 +203,32 @@ enter_task!(
     }
 );
 
-enter_task!(
-    /// Adds the loot tables that go with my group's owner to the ones on the blackboard, and has them assigned to the entities.
-    AssignExtraLootTableByOwnerIdAndEntityGroupId,
-    |t| {
-        t.set_status_to_success();
-        let Some(owner_id) = get_group_owner_id(t) else { return };
-        let Some(new_extra_loot) = extra_loot_tables_for_owner(owner_id) else { return };
-        if new_extra_loot.is_empty() {
-            return;
-        }
-        let Some(address) = t.required_address("additionalLootTablesAddress") else { return };
-        let last = t.get_last_blackboard_value(&address);
-        let stored = last.truthy();
-        let mut extra_loot = if stored { last } else { Value::Dict(Vec::new()) };
-        for (entity_group_id, loot_table_ids) in new_extra_loot {
-            let key = Value::Int(entity_group_id);
-            let mut tables = extra_loot.dict_get(&key).cloned().unwrap_or_else(|| Value::set(std::iter::empty()));
-            for table in loot_table_ids {
-                tables.set_add(Value::Int(table));
-            }
-            extra_loot.dict_insert(key, tables);
-        }
-        if stored {
-            update_stored_value(t, &address, &extra_loot);
-        }
-        t.send_blackboard_value(&address, extra_loot);
-        let group = t.ctx().my_entity_group_id;
-        t.world().assign_additional_loot_to_group_entities(group);
+enter_task!(AssignExtraLootTableByOwnerIdAndEntityGroupId, |t| {
+    t.set_status_to_success();
+    let Some(owner_id) = get_group_owner_id(t) else { return };
+    let Some(new_extra_loot) = extra_loot_tables_for_owner(owner_id) else { return };
+    if new_extra_loot.is_empty() {
+        return;
     }
-);
+    let Some(address) = t.required_address("additionalLootTablesAddress") else { return };
+    let last = t.get_last_blackboard_value(&address);
+    let stored = last.truthy();
+    let mut extra_loot = if stored { last } else { Value::Dict(Vec::new()) };
+    for (entity_group_id, loot_table_ids) in new_extra_loot {
+        let key = Value::Int(entity_group_id);
+        let mut tables = extra_loot.dict_get(&key).cloned().unwrap_or_else(|| Value::set(std::iter::empty()));
+        for table in loot_table_ids {
+            tables.set_add(Value::Int(table));
+        }
+        extra_loot.dict_insert(key, tables);
+    }
+    if stored {
+        update_stored_value(t, &address, &extra_loot);
+    }
+    t.send_blackboard_value(&address, extra_loot);
+    let group = t.ctx().my_entity_group_id;
+    t.world().assign_additional_loot_to_group_entities(group);
+});
 
 const HANDLER_UNSPAWN_GROUP: u16 = 0;
 
@@ -649,7 +645,7 @@ mod tests {
         let loot = rig.last(ScopeType::Item, "Loot");
         assert_eq!(loot, Value::Dict(vec![(Value::Int(1767), Value::set([Value::Int(10198)]))]));
         assert_eq!(rig.world.take_calls(), ["assign_additional_loot(Some(10))"]);
-        // an owner that has none adds nothing
+
         rig.world.groups.insert(10, TestGroup { members: vec![1], owner_id: Some(5), ..Default::default() });
         rig.run(Box::new(AssignExtraLootTableByOwnerIdAndEntityGroupId), attrs);
         assert!(rig.world.take_calls().is_empty());

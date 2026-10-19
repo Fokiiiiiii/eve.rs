@@ -13,7 +13,7 @@ namespace Eve.Host;
 internal sealed class HostJumpCloneSpace(SpaceSessions? space, CharacterShips ships, DogmaStatic dogma, CharacterSessions sessions,
     Func<long, long, CancellationToken, ValueTask<StructureCloneBay?>> structureBay) : IJumpCloneSpace
 {
-    /// <summary>EveJS <c>TYPE_CLONE_VAT_BAY_I</c>: the Clone Vat Bay I module.</summary>
+
     private const int CloneVatBayI = 23735;
 
     /// <summary>The SDE attributes of a hull: maxJumpClones (979), canReceiveCloneJumps (982) and maxOperationalDistance (715).</summary>

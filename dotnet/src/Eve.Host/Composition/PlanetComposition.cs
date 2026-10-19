@@ -13,7 +13,7 @@ internal sealed partial class CharacterServicesComposition
 
     /// <summary>
     /// The planetary interaction (planetMgr): the colony store (schema <c>planets</c>, or <c>EVE_PLANETS_SCHEMA</c>) and the static data
-    /// of the planets, pins and schematics read from the SDE tables. The owner is told of each change after its commit.
+
     /// </summary>
     private async Task Planets()
     {

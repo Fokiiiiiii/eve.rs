@@ -26,7 +26,6 @@ struct Recording {
     world: Arc<eve_space::world::SolarSystem>,
 }
 
-/// A race of the recording seen as a plain one: the step with this label under the name the helpers look for.
 fn as_plain(race: &Value, label: &str, events: Value) -> Value {
     let _ = race;
     json!({"steps": [{"label": "bind the ballpark", "events": events, "from": label}]})

@@ -4,7 +4,7 @@ using Npgsql;
 namespace Eve.Host;
 
 /// <summary>
-/// The private state a deleted character leaves behind, removed as EveJS <c>purgePrivateCharacterState</c> does. The PostgreSQL rows
+
 /// go in the deletion's transaction. The game-store paths go through the cache: a row removed underneath the cache would be written
 /// back by its next flush. Only rows that belong to the character are removed; corporation-owned data stays.
 /// </summary>
@@ -45,7 +45,7 @@ internal sealed class CharacterPrivateStatePurge(GameStoreCache cache, string ag
         $"DELETE FROM {CalendarSchema}.responses WHERE character_id = $1",
     ];
 
-    /// <summary>The game-store paths of the character (EveJS <c>removeTablePathIfPresent</c>), in the reference's order.</summary>
+
     private static (string Table, string Path)[] GameStorePaths(long id) =>
     [
         ("mail", $"/mailboxes/{id}"),
@@ -82,7 +82,7 @@ internal sealed class CharacterPrivateStatePurge(GameStoreCache cache, string ag
             await cache.LoadAsync(table, cancellationToken);
             if (table == "skillPlans")
             {
-                // EveJS stores all skill plans under the table root and rewrites that map after deleting one owner.
+
                 var plans = cache.Read(table, "/");
                 if (!plans.Success || plans.Data is not System.Text.Json.Nodes.JsonObject root)
                     throw new InvalidOperationException($"Could not read {table} before purging character {characterId}.");

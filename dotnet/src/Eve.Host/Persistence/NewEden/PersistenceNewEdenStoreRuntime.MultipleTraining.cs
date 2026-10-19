@@ -17,7 +17,7 @@ public sealed partial class PersistenceNewEdenStoreRuntime
 {
     /// <summary>
     /// The certificate types: 34133 (Multiple Pilot Training Certificate, the soulbound redeem token) and 63188 (Multiple Pilot Training).
-    /// The same two as EveJS userService's MULTIPLE_CHARACTER_TRAINING_TOKEN_TYPE_IDS.
+
     /// </summary>
     private static readonly int[] TrainingCertificateTypeIds = [34133, 63188];
 

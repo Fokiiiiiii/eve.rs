@@ -16,9 +16,9 @@ namespace Eve.Host;
 
 /// <summary>
 /// The compression of <c>structureCompressionMgr</c>: a pilot compresses ore, ice and moon ore in the hangar (or in the ship) it has at a structure, and
-/// decompresses gas there. The gates are EveJS's (<c>mining/miningIndustry.js</c> <c>resolveReprocessingContext</c>, <c>compressInventoryItem</c>,
+
 /// <c>decompressGasInStructure</c>): the session is docked at a structure whose Reprocessing service is online, the item is the pilot's in the hangar or
-/// in the ship docked there, and the type is in the compression list (336) or a compressed gas. Every refusal is a named <c>CustomNotify</c>; EveJS answers
+
 /// None. The stack is replaced in one transaction: the output joins a stack of its type the container has, or is created, and the source is deleted (the
 /// ship's compression does the same, <c>CharacterShips.CompressAsync</c>). The efficiencies are the SDE's (see DEVIATIONS).
 /// </summary>
@@ -43,7 +43,7 @@ public sealed class StructureCompressionAuthority
     private readonly CharacterSessions _sessions;
     private IReadOnlyDictionary<int, int>? _sourceOf;
 
-    /// <summary>Whether the corporation has an active office rented at the station (EveJS getCorporationOfficeByInventoryID with the station check).</summary>
+
     public delegate Task<bool> OfficeAtStation(NpgsqlConnection connection, NpgsqlTransaction transaction, long corporationId, long stationId, CancellationToken cancellationToken);
 
     /// <param name="hangarAccess">The corporation division access of the inventory (the same rule as the take and deposit of the hangar).</param>
@@ -100,7 +100,7 @@ public sealed class StructureCompressionAuthority
             throw Refusal("That item is not compressed gas.");
         }
         var total = Math.Min(1.0, await StructureEfficiencyAsync(structure.TypeId, cancellationToken) + await CharacterEfficiencyAsync(connection, transaction, characterId, cancellationToken));
-        // the rounding of EveJS floorAfterNormalizing: 0.8 + 0.03 times 1000 is 830, not a float's 829
+
         var output = (long)Math.Floor(Math.Round(item.Quantity * total, 9));
         if (output <= 0)
         {
@@ -115,7 +115,7 @@ public sealed class StructureCompressionAuthority
 
     /// <summary>
     /// <c>GetMyGasDecompressionEfficiency</c>: the structure's and the pilot's efficiency. Zero and zero when the pilot is not docked at a structure with its
-    /// Reprocessing service online (the EveJS answer then).
+
     /// </summary>
     public async Task<(double Structure, double Character)> EfficiencyAsync(ServiceCall call, CancellationToken cancellationToken = default)
     {
@@ -153,7 +153,7 @@ public sealed class StructureCompressionAuthority
 
     /// <summary>
     /// The item is the pilot's in the hangar of the structure, or in the ship it flies when that ship is docked there, or a corporation hangar item of the
-    /// pilot's corporation in its office at the structure that the pilot may take from (EveJS <c>itemIsInStructureCompressionSource</c>, with
+
     /// <c>itemIsInDockableCorpOfficeWithTakeAccess</c>).
     /// </summary>
     private async Task<Item> SourceItemAsync(ServiceCall call, NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId, long structureId, long shipId, long itemId, CancellationToken cancellationToken)
@@ -204,7 +204,7 @@ public sealed class StructureCompressionAuthority
         return _sourceOf.TryGetValue(compressedTypeId, out var source) ? source : null;
     }
 
-    /// <summary>A compressed gas: its source belongs to a gas group (the group's name says gas or cloud, as EveJS <c>resolveGasDecompressionSourceType</c>).</summary>
+
     private async Task<int?> GasSourceOfAsync(int compressedTypeId, CancellationToken cancellationToken)
     {
         if (await SourceOfAsync(compressedTypeId, cancellationToken) is not { } source)
@@ -250,7 +250,7 @@ public sealed class StructureCompressionAuthority
 
     /// <summary>
     /// Replaces a stack by <paramref name="quantity"/> of <paramref name="typeId"/> in the same place: the output joins a stack of that type the container has
-    /// (same owner and flag, not a singleton), or is created, and the source is deleted. One transaction.
+
     /// </summary>
     private async Task<(StructureCompressionOutcome Outcome, IReadOnlyList<ItemChanged> Changes)> ReplaceAsync(
         NpgsqlConnection connection, NpgsqlTransaction transaction, Item source, int typeId, long quantity, CancellationToken cancellationToken)
@@ -279,7 +279,7 @@ public sealed class StructureCompressionAuthority
 
     /// <summary>
     /// The pilot's client hears each item that changed (the stack that left, the output), as the ship's compression tells it. A corporation hangar item
-    /// changes the corporation's office hangar: the members online who may query that division are told too (EveJS tells the members watching it).
+
     /// </summary>
     private async Task<StructureCompressionOutcome> AnnounceAsync(ServiceCall call, (StructureCompressionOutcome Outcome, IReadOnlyList<ItemChanged> Changes) result,
         Item source, long structureId, CancellationToken cancellationToken)

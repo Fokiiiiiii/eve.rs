@@ -13,7 +13,6 @@ use super::combat::combat_targets_set;
 /// `GUARD_OBJECT_DEFAULT_CATEGORIES`.
 pub const GUARD_OBJECT_DEFAULT_CATEGORIES: [i64; 3] = [CATEGORY_SHIP, CATEGORY_DRONE, CATEGORY_FIGHTER];
 
-/// `CreateGuardObjectBehavior(validOwnerIds, includedCategories, invalidOwnerIds)`.
 pub fn create_guard_object_behavior(
     valid_owner_ids: Value,
     included_categories: Value,

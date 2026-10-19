@@ -170,7 +170,7 @@ pub struct Combat {
     /// The categories the proximity sensors report (`includedCategories`): ships, drones and fighters by default, the entities too for a fleet
     /// that fights NPCs of another faction (`create_pochven_npc_behavior_tree`).
     pub included_categories: Value,
-    /// The owners whose ships the proximity sensors do not report (`invalidOwnerIds`): none by default.
+
     pub invalid_owner_ids: Value,
 }
 
@@ -235,7 +235,6 @@ pub fn create_combat_behavior(args: Combat) -> Node {
         .add(create_attack_target_behavior(&args.orbit_velocity, &args.target_address))
 }
 
-/// `CreateOwnerAggressionBehavior`.
 pub fn create_owner_aggression_behavior(owner_ids: Value) -> Node {
     Node::class("ForceFailure").named("Owner Aggression").add(
         Node::class("TargetWithOwnerEnteredBubbleMonitor")

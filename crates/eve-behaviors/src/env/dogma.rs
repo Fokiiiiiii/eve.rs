@@ -100,7 +100,6 @@ pub trait Dogma {
         1.0
     }
 
-    /// `dogmaLM.ActivateWithContext(ownerId, moduleId, effectId, targetid=, repeat=, context=)`: an effect that is `None` is the module's default.
     fn activate_with_context(
         &mut self,
         _owner_id: i64,

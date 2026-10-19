@@ -8,7 +8,6 @@ use sha2::{Digest, Sha256};
 
 pub const OFFICIAL_BASE: &str = "https://developers.eveonline.com/static-data";
 
-/// `sde/lock.json`, compiled in: the pinned build, its SHA-256 and where to get it.
 pub const LOCK: &str = include_str!("../../../sde/lock.json");
 
 #[derive(Debug)]

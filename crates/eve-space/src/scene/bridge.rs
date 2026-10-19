@@ -1,10 +1,8 @@
-//! The jump bridges and the conduit jumps (EVE University wiki, "Jump drives"). A Titan's Jump Portal Generator, a Black Ops' Covert one or a Rorqual's
 //! Industrial one opens a bridge where the ship is, to a cynosural field lit in another system; the fleet ships within the bridge's range of it jump through
 //! to the field (command 31). A Black Ops with its Covert generator fitted makes a conduit jump instead (command 32): the ship and the fleet ships in its
 //! 10 km jump with it at once. Command 30 opens a bridge. The host has checked the module, the fleet, the range, the fuel and the passengers' eligibility.
 use super::*;
 
-/// The conduit's reach: the ships within 10 km of the anchor go with it (EveJS conduitJumpRuntime.js CONDUIT_JUMP_RANGE_METERS; the wiki: a 10 km radius).
 pub(crate) const CONDUIT_RANGE_METERS: f64 = 10_000.0;
 
 /// The reason a ship cannot start a jump now, by the rules the stargate and cynosural jumps share (immobile, cloaked, disrupted, spooling, docking, in warp).

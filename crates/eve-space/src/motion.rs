@@ -1,14 +1,13 @@
 //! How a ship moves: it eases towards the speed it is asked for (the carbon integrator, as the client integrates it), along a heading that is
 //! set, or that follows from a target (approaching it, circling it).
 //!
-//! The heading is the one asked for at once (docs/reference/compat/DEVIATIONS.md #17). A course that depends on where the ship is (following,
+
 //! orbiting) is worked out in steps of at most a quarter of a second.
 
 use eve_destiny::{DESTINY_SPACE_FRICTION, Vec3, integrate_carbon_motion};
 
 use crate::ship::{Course, Ship};
 
-/// The longest step a course that depends on the ship's place is worked out in one go.
 const MAX_STEP: f64 = 0.25;
 
 /// What a ship follows or orbits: where it is, how it moves and how big it is.
@@ -135,14 +134,12 @@ const APPROACH_EASE: f64 = 3.0;
 const ARRIVED_DISTANCE: f64 = 1.0;
 const ARRIVED_SPEED: f64 = 1.0;
 
-/// One step of following: towards the point on the line from the target to the body that is the standoff away from the target, at a speed that falls
 /// as the point comes near, so that the body comes to rest at it.
 fn follow_step(body: &mut Kinematics, range: f64, target: Target, seconds: f64) {
     let standoff = range * FOLLOW_STANDOFF_SHARE + body.radius + target.radius;
     approach_step(body, standoff, target, seconds);
 }
 
-/// One step of approaching a point `standoff` metres from the target's centre (the follow step, with the standoff given; a goto point is a target at
 /// rest with a standoff of nothing, so the body stops on the point).
 fn approach_step(body: &mut Kinematics, standoff: f64, target: Target, seconds: f64) {
     let away = sub(body.position, target.position);
@@ -172,7 +169,6 @@ fn approach_step(body: &mut Kinematics, standoff: f64, target: Target, seconds: 
     integrate(body, course, speed, seconds);
 }
 
-/// One step of orbiting: along the tangent of the circle about the target at the orbit's radius, drawn in or out to it.
 fn orbit_step(body: &mut Kinematics, distance: f64, target: Target, seconds: f64) {
     let radius = distance + body.radius + target.radius;
     let away = sub(body.position, target.position);
@@ -193,13 +189,11 @@ fn orbit_step(body: &mut Kinematics, distance: f64, target: Target, seconds: f64
     integrate(body, direction, length(wanted).min(speed), seconds);
 }
 
-/// Where a target that moves was `remaining` seconds before the place it is given at (a step steers by the positions at its start, as the body
 /// and the target then are the same time apart).
 fn target_at_start(target: Target, remaining: f64) -> Target {
     Target { position: sub(target.position, scale(target.velocity, remaining)), ..target }
 }
 
-/// Moves a body that a tractor beam pulls for `seconds`: it follows its puller at `range` (the follow step, in steps of at most [`MAX_STEP`]).
 pub(crate) fn pull(body: &mut Kinematics, range: f64, target: Target, seconds: f64) {
     let mut remaining = seconds;
     while remaining > 1e-9 {
@@ -211,7 +205,6 @@ pub(crate) fn pull(body: &mut Kinematics, range: f64, target: Target, seconds: f
 
 /// Moves `ship` for `seconds`. `target` is what the ship follows or orbits, when its course has one and the scene knows it.
 pub fn advance(ship: &mut Ship, seconds: f64, target: Option<Target>) {
-    // no time, a step back in time and not a number all leave the ship where it is
     if seconds.is_nan() || seconds <= 0.0 {
         return;
     }

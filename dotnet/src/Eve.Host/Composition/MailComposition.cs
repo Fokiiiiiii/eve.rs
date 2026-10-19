@@ -207,7 +207,7 @@ internal sealed partial class CharacterServicesComposition
         }
     }
 
-    /// <summary>The notifications mailbox, shared with the corporation office jobs (ST-16: rent due and eviction notices).</summary>
+
     private Eve.Host.Persistence.Mail.PersistenceTransactionMailbox? notificationMailbox;
 
     private void SubscribeMoonOwnerNotifications()

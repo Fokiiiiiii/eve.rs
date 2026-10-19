@@ -270,7 +270,6 @@ const STRUCTURE_DISABLED_STATES: [i32; 8] = [0, 1, 2, 102, 113, 114, 115, 116];
 /// How far past the surface of its anchor body a ship that is put in space at the anchor is placed, metres (the clearance of EVE.js's spawn state).
 const ANCHOR_CLEARANCE: f64 = 5_000.0;
 
-/// Whether a body is one a ship docks at or undocks from: a station, or an Upwell structure (ST-1 c).
 pub(super) fn is_dock_body(body: &crate::world::Body) -> bool {
     matches!(body.kind, BodyKind::Station | BodyKind::Structure)
 }
@@ -285,8 +284,6 @@ fn hull_size(ship_group: i32) -> u8 {
     }
 }
 
-/// The largest hull a structure type takes in its docks (the wiki's "Max docking": Astrahus subcapitals, Fortizar capitals, Keepstar supercapitals).
-/// Other types are taken as subcapital only; their own limits are not in the sim yet (DEVIATIONS "Structure docking (ST-1 c)").
 fn largest_hull_docked(structure_type: i32) -> u8 {
     match structure_type {
         35_834 => 3,

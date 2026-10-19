@@ -19,7 +19,7 @@ public static class SessionInitialState
     {
         // The keys and their order are the reference's. maxSessionTime and inDetention are not sent: the reference's
         // notification omits None-valued keys, and the client reads an absent session attribute as None.
-        // The login session's role is the account's bits plus the base bits every session has (EveJS composeSessionRoleMask).
+
         var state = Py.Dict(
             ("languageID", new PyStr(language)),
             ("countryCode", new PyStr(countryCode)),

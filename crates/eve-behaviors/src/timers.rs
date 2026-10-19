@@ -1,5 +1,4 @@
 //! Timers that send their id to a channel when they start and `None` when they run out (`behaviors/timers/__init__.py`). The client sleeps a tasklet
-//! in simulation time; here the owner of the system asks which timers are due (`due`) and clears them.
 
 use std::collections::BTreeMap;
 

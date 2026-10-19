@@ -15,7 +15,7 @@ pub use crate::packed_row::{Descriptor, PackedColumn, PackedRow};
 /// string opcode decodes to a `Buffer`, every small integer to a `number`).
 /// This model keeps them apart because the distinction is meaningful on the
 /// wire: [`Value::Bytes`] is a Python `str`, [`Value::Buffer`] a `buffer`,
-/// [`Value::Str`] a string-table or UTF-8 string produced by the server.
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     None,
@@ -31,14 +31,14 @@ pub enum Value {
     /// A variable-width integer that does not fit in a JS safe integer, as
     /// minimal little-endian bytes (no trailing zero byte).
     BigUnsigned(Vec<u8>),
-    /// A string-table item or a UTF-8 string chosen by the sender.
+
     Str(Cow<'static, str>),
     /// A Python `str`: PyEmptyString, PyCharString, PyShortString or
     /// PyLongString.
     Bytes(Bytes),
     /// A Python `buffer`: PyBuffer.
     Buffer(Bytes),
-    /// A unicode string: PyWStringUTF8 (or a UCS-2 form when decoding).
+
     WString(Cow<'static, str>),
     Token(Cow<'static, str>),
     Tuple(Vec<Value>),
@@ -68,9 +68,8 @@ pub enum Value {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ObjectExKind {
-    /// PyObjectEx1 (0x22)
     Ex1,
-    /// PyObjectEx2 (0x23)
+
     Ex2,
 }
 

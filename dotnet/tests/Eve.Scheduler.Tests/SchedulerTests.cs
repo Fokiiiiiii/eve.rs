@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Eve.Data;
 
 namespace Eve.Scheduler.Tests;
@@ -303,6 +304,26 @@ public class SchedulerTests
         await real.StopAsync();
         Assert.Equal(0, await rig.Count());
         Assert.True(rig.Log.Count == 0, string.Join(" | ", rig.Log));   // the loop ran without an error of its own
+    }
+
+    [PgFact]
+    public async Task A_burst_of_due_jobs_finishes_with_bounded_scheduler_latency()
+    {
+        await using var rig = await Rig.Create(new SchedulerOptions { Concurrency = 8, BatchSize = 64 });
+        var completed = 0;
+        rig.Scheduler.Register("t.expire", (_, _) => { Interlocked.Increment(ref completed); return Task.CompletedTask; });
+        for (var i = 0; i < 512; i++)
+        {
+            await rig.Scheduler.ScheduleAsync(new JobSpec("t.expire", rig.Now) { Key = $"site:{i}" });
+        }
+
+        var timer = Stopwatch.StartNew();
+        Assert.Equal(512, await rig.Scheduler.RunDueAsync(maxJobs: 512));
+        timer.Stop();
+
+        Assert.Equal(512, completed);
+        Assert.Equal(0, await rig.Count());
+        Assert.True(timer.Elapsed < TimeSpan.FromSeconds(20), $"512 due jobs took {timer.Elapsed}");
     }
 
     [PgFact]

@@ -168,7 +168,6 @@ impl Scene {
         self.pilots.get(&session)?.ship.npc.as_ref()?.drone.as_ref().map(|link| link.controller)
     }
 
-    /// The `OnDroneStateChange` of a drone as it goes in the stream of the controller: `(drone, owner, controlling ship, state, type, owner, target)`.
     pub(super) fn drone_state_action(&self, stamp: u32, session: SessionId) -> Value {
         payload::action(stamp, "OnDroneStateChange", self.drone_state_args(session))
     }

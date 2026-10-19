@@ -41,7 +41,6 @@ pub const MAX_PLAYER_OWNER: i64 = 2_147_483_647;
 pub const MIN_PLAYER_ITEM: i64 = 100_000_000;
 pub const MIN_FAKE_ITEM: i64 = 9_000_000_000_000_000_000;
 
-/// `idCheckers.IsPlayerOwner`.
 pub fn is_player_owner(owner_id: i64) -> bool {
     (MIN_PLAYER_OWNER..=MAX_PLAYER_OWNER).contains(&owner_id)
 }
@@ -56,7 +55,6 @@ pub fn is_npc_corporation(owner_id: i64) -> bool {
     (1_000_000..=1_999_999).contains(&owner_id)
 }
 
-/// `idCheckers.IsNPC`: an owner that is neither the system nor a player.
 pub fn is_npc(owner_id: i64) -> bool {
     MAX_SYSTEM_ITEM < owner_id && owner_id < MIN_PLAYER_OWNER
 }

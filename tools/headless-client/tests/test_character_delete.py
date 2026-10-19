@@ -25,7 +25,6 @@ pytestmark = pytest.mark.skipif(not LIVE, reason="set EVE_LIVE_HOST=host:port to
 
 FILETIME_EPOCH = 116_444_736_000_000_000  # 1601-01-01 in 100 ns ticks
 
-
 def enter_new_character(client, run: str) -> int:
     creation = next(step for step in WALK["steps"] if step["call"][1] == "CreateCharacterWithDoll" and "ok" in step)
     service, method, described = creation["call"]
@@ -33,7 +32,6 @@ def enter_new_character(client, run: str) -> int:
     client.notifications.clear()
     client.call("charUnboundMgr", "SelectCharacterID", charID=character_id, secondChoiceID=None, skipTutorial=False)
     return character_id
-
 
 def test_a_character_is_queued_refused_while_waiting_cancelled_and_refused_without_a_queue():
     run = uuid.uuid4().hex[:10]

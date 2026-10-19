@@ -5,7 +5,6 @@
 //! The orders are the client's movement commands and the recall and abandon the pilot gives (`ExecuteMovementCommandOnFighters`, `RecallFightersToTubes`,
 //! `CmdAbandonFighter`). A squadron that lands is reported as [`Out::FighterLanded`] and one that is let go as [`Out::FighterReleased`]; the host moves the
 //! item in each case. Abilities and damage are not in this module: a squadron is refused what it cannot do, with its reason.
-
 use crate::drones::{DEPARTING, DroneFlight, DroneWorkProfile, FIGHTER_RECOVERY_DISTANCE, Task};
 use crate::payload;
 use crate::scene::{Out, Scene, SessionId};

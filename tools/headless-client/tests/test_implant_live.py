@@ -30,23 +30,20 @@ pytestmark = pytest.mark.skipif(not LIVE, reason="set EVE_LIVE_HOST=host:port to
 
 GUNNERY = 3300
 CYBERNETICS = 3411
-CEREBRAL_ACCELERATOR = 49539  # Standard Cerebral Accelerator, booster slot 10 (the wiki's slot), +10 on each learning attribute, one day
+CEREBRAL_ACCELERATOR = 49539
 MEMORY_AUGMENTATION_BASIC = 9941
 PILOT_IMPLANT_FLAG = 89
 BOOSTER_FLAG = 88
 HANGAR_FLAG = 4
 
-
 def queue_lines(client) -> list[dict]:
     """The skill queue as the client reads it: each line is a util.KeyVal of the training fields."""
     return [line[1] for line in m.plain(client.call("skillHandler", "GetSkillQueue"))]
-
 
 def training_rate(client) -> float:
     """Skill points per FILETIME tick of the line in training (its destination less its start, over its length)."""
     line = queue_lines(client)[0]
     return (line["trainingDestinationSP"] - line["trainingStartSP"]) / (line["trainingEndTime"] - line["trainingStartTime"])
-
 
 def contains(value, wanted: int) -> bool:
     if isinstance(value, bool):
@@ -59,7 +56,6 @@ def contains(value, wanted: int) -> bool:
         return any(contains(item, wanted) for item in value)
     return False
 
-
 def names_in_order(client, expected: list[str], seconds: float = 3.0) -> bool:
     """Whether the expected notifications arrive in this order (other notifications may come between them)."""
     deadline = time.monotonic() + seconds
@@ -71,7 +67,6 @@ def names_in_order(client, expected: list[str], seconds: float = 3.0) -> bool:
         if time.monotonic() >= deadline:
             return False
         time.sleep(0.2)
-
 
 def test_a_booster_speeds_the_training_then_an_implant_is_plugged_in_refused_twice_and_unplugged():
     run = uuid.uuid4().hex[:10]

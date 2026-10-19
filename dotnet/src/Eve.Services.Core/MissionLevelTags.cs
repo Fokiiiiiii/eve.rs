@@ -2,29 +2,29 @@ using System.Text.Json;
 
 namespace Eve.Services.Core;
 
-/// <summary>One level tag of a basic mission: the official mission ID, its level (1 to 5), the provenance class and the owner's confidence.</summary>
+
 public sealed record MissionLevelTag(long MissionId, int Level, string Provenance, string Confidence);
 
 /// <summary>
-/// The answer for a mission's level. <c>Provenance</c> is the class of the tag: <c>client</c>, <c>tq-log</c>, <c>wiki</c>,
-/// <c>rule</c>, or <c>owner</c> for an owner-supplied file. It is <c>unknown</c>, with the reason, when the mission has no tag.
+
+
 /// A mission is never given a default level.
 /// </summary>
 public sealed record MissionLevelAnswer(long MissionId, int? Level, string Provenance, string? Confidence, string? Reason);
 
 /// <summary>
 /// The level tags of basic missions, keyed by the official mission ID. The committed file
-/// (<c>Data/mission-level-tags.v1.json</c>, an embedded resource) holds, by the repository owner's approval, four fields per
+
 /// row and nothing else: <c>missionID</c>, <c>level</c>, <c>provenance</c> and <c>confidence</c>. Client-derived and
-/// TQ-log-derived rows are in that file under that approval only. An owner may add tags from a file named by the
-/// <c>EVE_MISSION_LEVEL_TAGS</c> environment variable (a path; same schema; provenance <c>owner</c>). Duplicates are refused.
+
+
 /// </summary>
 public sealed class MissionLevelTags
 {
     /// <summary>The schema every tag file carries.</summary>
     public const string Schema = "eve.rs.mission-level-tags.v1";
 
-    /// <summary>The optional owner-supplied file: a path, not a set of values.</summary>
+
     public const string OptionalFileVariable = "EVE_MISSION_LEVEL_TAGS";
 
     /// <summary>The fields a tag row may carry. Any other field is refused; the committed file is held to this set by a test.</summary>
@@ -58,7 +58,7 @@ public sealed class MissionLevelTags
 
     public IReadOnlyCollection<MissionLevelTag> All => _tags.Values;
 
-    /// <summary>The committed tags, plus the owner's file when <see cref="OptionalFileVariable"/> names one.</summary>
+
     public static MissionLevelTags LoadDefault()
     {
         var path = Environment.GetEnvironmentVariable(OptionalFileVariable);

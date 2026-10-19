@@ -18,7 +18,6 @@ LIVE = os.environ.get("EVE_LIVE_HOST", "")
 PG_URL = os.environ.get("EVE_PG_URL", "")
 pytestmark = pytest.mark.skipif(not (LIVE and PG_URL), reason="set EVE_LIVE_HOST=host:port and EVE_PG_URL to test against a running server")
 
-
 def test_personal_contact_labels_can_be_created_edited_and_deleted_live():
     run = uuid.uuid4().hex[:10]
     with connect(f"contact-label-{run}") as client:

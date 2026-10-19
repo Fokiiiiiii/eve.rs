@@ -3,7 +3,6 @@
 //! Space: what a solar system holds, how a ship moves in it, and what the client is sent about it.
 //!
 //! `world` builds a system's stations and celestials from the static data; `slim` and `payload` put them in the shapes
-
 pub mod brains;
 pub mod crowd;
 pub mod death;

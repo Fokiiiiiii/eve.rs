@@ -38,7 +38,6 @@ pytestmark = [
     pytest.mark.skipif(os.environ.get("EVE_LIVE_SLOW") != "1", reason="a warp of about two minutes: set EVE_LIVE_SLOW=1"),
 ]
 
-
 def toll_journal_rows() -> int | None:
     """The journal rows of the gate toll in the live run's wallet schema, or None when no database is named."""
     url = os.environ.get("EVE_PG_URL")
@@ -52,7 +51,6 @@ def toll_journal_rows() -> int | None:
                               capture_output=True, text=True, check=True).stdout.strip()
         total += int(rows or 0)
     return total
-
 
 def test_a_ship_from_turnur_warps_to_the_zarzakh_gate_and_jumps_into_zarzakh():
     race = JUMP["races"][0]

@@ -1,7 +1,6 @@
 //! Small constructors for the values a destiny payload is made of, typed the way the client saw them from the reference:
 //! a whole number is an int (a long beyond 32 bits), a fraction is a real, and what the reference always sends as a real
 //! stays one however whole it is (`1.0`).
-
 use std::borrow::Cow;
 
 use eve_marshal::Value;

@@ -27,7 +27,6 @@ pytestmark = pytest.mark.skipif(not LIVE, reason="set EVE_LIVE_HOST=host:port to
 START_STATION = 60015249
 MEDICAL_SKILL_LABEL = "UI/Medical/JumpCloneSkillReqNotMet"
 
-
 def enter_new_character(client, run: str) -> int:
     creation = next(step for step in WALK["steps"] if step["call"][1] == "CreateCharacterWithDoll" and "ok" in step)
     service, method, described = creation["call"]
@@ -36,16 +35,13 @@ def enter_new_character(client, run: str) -> int:
     client.call("charUnboundMgr", "SelectCharacterID", charID=character_id, secondChoiceID=None, skipTutorial=False)
     return character_id
 
-
 def bound_jump_clones(client):
     """The bound object of jumpCloneSvc at the start station, as the client's moniker makes it."""
     return client.call("jumpCloneSvc", "MachoBindObject", (START_STATION, 15), None)[0]
 
-
 def fields(keyval) -> dict:
     """A util.KeyVal or a rowset as plain values: (name, {attribute: value})."""
     return m.plain(keyval)[1]
-
 
 def test_the_jump_clone_state_of_a_new_character_is_empty_and_its_refusals_are_the_clients_labels():
     run = uuid.uuid4().hex[:10]

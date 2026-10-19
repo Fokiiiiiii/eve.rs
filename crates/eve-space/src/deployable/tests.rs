@@ -1,7 +1,6 @@
 //! The warp-disruption sources and the bombs of the simulation (`deployable`): a bubble holds the ships in its range unless they are immune, a cloak that is not
 //! warp-safe holds its ship, a probe holds the ships in its range until its lifetime is up and is then taken out, and a bomb's blast reaches the ships within its
 //! radius but not its launcher.
-
 use super::*;
 use crate::link::SlimValue;
 use crate::modules::{Action, Effect};

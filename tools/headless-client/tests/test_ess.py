@@ -40,9 +40,8 @@ ESS_KEYS = {
 }
 DETAIL_KEYS = {"autopaymentWindowState", "activeLinks", "totalPulses", "reserveTimeWindowState", "reserveTimeChosen"}
 SDE_RESERVE_KEYS = {57714, 57715, 57716, 57717, 57718, 57719, 57720, 57721}
-# the 15 and 45 keys of each quadrant (SDE names ESS-NW-15, ESS-NW-45 and so on)
-QUADRANT_KEY_PAIRS = [{57714, 57715}, {57716, 57719}, {57717, 57718}, {57720, 57721}]
 
+QUADRANT_KEY_PAIRS = [{57714, 57715}, {57716, 57719}, {57717, 57718}, {57720, 57721}]
 
 def _placed_entry() -> tuple[int, int] | None:
     """The placement the host was started with (solarSystemId, essId), or None when the test expects no ESS."""
@@ -51,7 +50,6 @@ def _placed_entry() -> tuple[int, int] | None:
         return None
     system, ess = raw.split(":")
     return int(system), int(ess)
-
 
 def test_a_docked_character_reads_its_systems_ess_as_the_client_does():
     run = uuid.uuid4().hex[:10]

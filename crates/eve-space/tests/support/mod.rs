@@ -1,5 +1,4 @@
 //! Reading what the reference recorded (`oracle/fixtures/scenarios/undock.json`) so the tests can hold the world to it.
-
 #![allow(dead_code)]
 
 use std::path::PathBuf;

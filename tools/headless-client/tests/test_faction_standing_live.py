@@ -29,7 +29,6 @@ pytestmark = [
 
 GURISTAS = 500010
 
-
 def test_a_pilot_that_shoots_a_faction_npc_dead_is_told_its_new_standing_with_the_faction():
     race = plain_race(DEATH["races"][0], "victim")
     run = uuid.uuid4().hex[:10]

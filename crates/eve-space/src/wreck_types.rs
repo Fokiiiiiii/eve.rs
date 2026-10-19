@@ -3,7 +3,6 @@
 //! The rules are the reference's: the wreck is named after the ship's race and hull class (`Caldari Frigate Wreck`), with its special cases (the
 //! Drifters, the titans and dreadnoughts of the pirate factions, the capsule), and the name is looked up among the item types; the registry here is
 //! built from the static data, in the order of the type ids, as the reference builds its own from its tables.
-
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::sde::{Sde, SdeError, english, i};

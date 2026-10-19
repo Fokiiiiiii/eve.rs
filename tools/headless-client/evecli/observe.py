@@ -9,7 +9,6 @@ from . import packet as p
 from .client import Client
 from .describe import buffer_bytes, decode_marshaled, describe, destiny_state_header
 
-
 def _sequence(value):
     if isinstance(value, (list, tuple)):
         return list(value)
@@ -17,14 +16,12 @@ def _sequence(value):
         return value["$tuple"]
     return None
 
-
 def _plain_name(value):
     if isinstance(value, str):
         return value
     if isinstance(value, dict):
         return value.get("$token") or value.get("$unicode")
     return None
-
 
 def _notification_body(packet):
     try:
@@ -39,7 +36,6 @@ def _notification_body(packet):
         return open_buffers(describe(m.decode(bytes(data))))
     except Exception as error:
         return {"$decodeError": type(error).__name__, "payload": describe(packet.payload)}
-
 
 def _notification_event(packet):
     raw = packet.raw if isinstance(packet.raw, (tuple, list)) else ()
@@ -93,7 +89,6 @@ def _notification_event(packet):
         event["kind"] = "notification"
     return event
 
-
 def _session_event(packet, initial: bool = False):
     payload = _sequence(getattr(packet, "payload", None)) or []
     session = {"sid": describe(payload[0]) if payload else None}
@@ -121,7 +116,6 @@ def _session_event(packet, initial: bool = False):
         "session": session,
     }
 
-
 def _notification_call_args(args):
     values = _sequence(args)
     if values is None:
@@ -131,7 +125,6 @@ def _notification_call_args(args):
     if len(values) >= 2 and values[0] == 1:
         return _sequence(values[1]) or []
     return values
-
 
 def _expand_destiny_actions(encoded):
     actions = []
@@ -155,7 +148,6 @@ def _expand_destiny_actions(encoded):
         actions.append({"stamp": stamp, "name": name, "args": arguments})
     return actions
 
-
 def _set_state_fields(arguments):
     values = _sequence(arguments)
     bag = values[0] if values else arguments
@@ -168,7 +160,6 @@ def _set_state_fields(arguments):
             if isinstance(pair, (list, tuple)) and len(pair) == 2
         }
     return {}
-
 
 def _destiny_update_view(args):
     payload = _notification_call_args(args)
@@ -195,7 +186,6 @@ def _destiny_update_view(args):
         view["ballparkResets"] = resets
     return view
 
-
 def notifications_of(client: Client) -> list[dict]:
     """The named notifications emitted since the client last looked."""
     client.ping()
@@ -206,7 +196,6 @@ def notifications_of(client: Client) -> list[dict]:
     ]
     client.notifications.clear()
     return out
-
 
 def events_of(client: Client) -> list[dict]:
     """Notifications and session state received since the previous read, in wire order."""
@@ -221,7 +210,6 @@ def events_of(client: Client) -> list[dict]:
             out.append(_session_event(packet, initial=True))
     client.notifications.clear()
     return out
-
 
 def open_buffers(described):
     """A description with nested marshal buffers decoded for packet comparison."""
@@ -239,7 +227,6 @@ def open_buffers(described):
         return {key: open_buffers(value) for key, value in described.items()}
     return described
 
-
 def hangar_and_ship(client: Client, mgr, ship_id: int) -> dict:
     """What the station hangar and the dogma manager say is where, after a change: the hangar's rows and the ship's info."""
     hangar = client.call_bound(mgr, "GetInventory", 10004)
@@ -252,18 +239,15 @@ def hangar_and_ship(client: Client, mgr, ship_id: int) -> dict:
         fitted.append({k: row[k] for k in ("itemID", "typeID", "locationID", "flagID")})
     return {"hangar": rows, "shipInfo": fitted}
 
-
 def ship_of(client: Client) -> int:
     """The item id of the ship a character docked in its station has: the one the hangar lists."""
     manager = client.call("invbroker", "MachoBindObject", (60015249, 15), None)[0]
     hangar = client.call_bound(manager, "GetInventory", 10004)
     return int(client.call_bound(hangar, "List")[0].fields()["itemID"])
 
-
 def queue_of(described) -> list:
     """A queue as the client reads it: each entry as its fields (`{"trainingTypeID": ..}`), in order."""
     return [{k: v for k, v in entry["args"]["$dict"]} for entry in described]
-
 
 def training_view(who: Client) -> dict:
     """What the skill window shows after a step: the queue, the totals, and the skills that are in training or were changed."""
@@ -276,7 +260,6 @@ def training_view(who: Client) -> dict:
         skills[type_id] = {"level": header[1]["$tuple"][1], "points": header[1]["$tuple"][2], "inTraining": state.get("inTraining")}
     return {"queue": queue_of(fields["queue"]), "skillPoints": fields["skillPoints"], "freeSkillPoints": fields["freeSkillPoints"], "skills": skills}
 
-
 def wait_for_events(who: Client, done, timeout: float = 15.0) -> list:
     """The events the server sends until `done(all so far)` is true (the reference finishes a level in the background)."""
     seen: list = []
@@ -288,7 +271,6 @@ def wait_for_events(who: Client, done, timeout: float = 15.0) -> list:
         time.sleep(0.2)
     return seen
 
-
 def wait_quietly(client: Client, seconds: float, until=None) -> list:
     """The events that arrive in `seconds` (or until `until(all so far)` is true)."""
     seen: list = []
@@ -299,7 +281,6 @@ def wait_quietly(client: Client, seconds: float, until=None) -> list:
             break
         time.sleep(0.25)
     return seen
-
 
 def timed_events(who: Client, seconds: float, until=None) -> list:
     """`wait_quietly` with the seconds since the call each event arrived at (`at`): what a ship that flies somewhere takes to get there."""
@@ -314,7 +295,6 @@ def timed_events(who: Client, seconds: float, until=None) -> list:
         time.sleep(0.25)
     return seen
 
-
 def _integer(value):
     if isinstance(value, int) and not isinstance(value, bool):
         return value
@@ -323,7 +303,6 @@ def _integer(value):
         if isinstance(value, int) and not isinstance(value, bool):
             return value
     return None
-
 
 def _ego_ball_from_state(state, ship_id: int):
     import math
@@ -352,7 +331,6 @@ def _ego_ball_from_state(state, ship_id: int):
             and all(math.isfinite(v) for v in position)
         ):
             return position, radius
-
 
 def ego_state(events: list, ship_id: int):
     """The ego ball from the latest official SetState Destiny action, or None."""

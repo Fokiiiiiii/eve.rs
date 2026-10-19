@@ -36,7 +36,6 @@ pytestmark = [
     pytest.mark.skipif(os.environ.get("EVE_START_STATION") != STATION, reason=f"start the server with EVE_START_STATION={STATION} EVE_BELT_RAT_CHANCE=1"),
 ]
 
-
 def test_a_warp_to_a_belt_brings_the_rats_of_the_belt(monkeypatch):
     monkeypatch.setattr(test_undock, "STATION", int(STATION))
     race = plain_race(DEATH["races"][0], "victim")

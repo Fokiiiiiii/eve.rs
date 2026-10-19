@@ -36,16 +36,13 @@ pytestmark = [
 LOCK_TOLERANCE = 1.0
 WARP_TOLERANCE = 3.0
 
-
 def plain_race(race: dict, who: str) -> dict:
     return {"create": race[who]["create"], "characterID": race[who]["characterID"], "shipID": race[who]["shipID"],
             "moduleIDs": [race[who]["shipID"] + 1, race[who]["shipID"] + 2, race[who]["shipID"] + 3]}
 
-
 def only(*wanted: str):
     """A filter that keeps the events of these names."""
     return lambda events: [e for e in events if e["name"] in wanted]
-
 
 def user_error(payload: dict | None):
     """`(name, values)` of a user error, from its described payload."""
@@ -54,7 +51,6 @@ def user_error(payload: dict | None):
     except (KeyError, TypeError):
         return None
     return name, {k: v for k, v in values["$dict"]}
-
 
 def compare_answer(label: str, recorded: dict, got: dict | None, error: dict | None, mapping: dict, exact: tuple = ()) -> list[str]:
     """What the call answered: the same shape, or the same user error with the same values where a value is the same on every server."""
@@ -84,7 +80,6 @@ def compare_answer(label: str, recorded: dict, got: dict | None, error: dict | N
         return [f"{label}: answered {base.brief(describe(got))} in place of {base.brief(ids(recorded['ok'], mapping))}"]
     return []
 
-
 def timing(recorded: list[dict], got: list[dict], where: str, tolerance: float, wanted=("OnTarget",)) -> list[str]:
     """The seconds each event of these names arrived at, against the recording."""
     theirs = [e for e in recorded if e["name"] in wanted]
@@ -94,7 +89,6 @@ def timing(recorded: list[dict], got: list[dict], where: str, tolerance: float, 
         if abs(a["at"] - b["at"]) > tolerance:
             out.append(f"{where}: event {index} {a['name']} after {b['at']} s, in the recording after {a['at']} s")
     return out
-
 
 def test_a_ship_locks_others_as_it_did_in_the_reference():
     race = TARGET["races"][0]

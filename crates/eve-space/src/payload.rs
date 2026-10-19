@@ -1,5 +1,4 @@
 //! The destiny stream's payloads: the state buffer, `AddBalls2`, `SetState`, and the actions a command is answered with.
-
 use eve_destiny::{BallEntity, BallError, encode_entity_ball};
 use eve_marshal::Value;
 

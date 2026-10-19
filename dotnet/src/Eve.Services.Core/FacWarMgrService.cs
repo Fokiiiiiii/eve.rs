@@ -30,7 +30,7 @@ public sealed class FacWarMgrUserErrorException(string messageKey, params (strin
 /// <summary>
 /// facWarMgr (V24.01 client <c>facWarSvc.py</c> calls): corporation and alliance enlistment, character enlistment, the militia rank from the
 /// standing, the system LP pools and the LP donation, and the character and corporation statistics. The faction, militia, alliance, top and
-/// rank-overview statistics are not served (TODO, DEVIATIONS "Factional warfare"); the kill producer that fills the statistics is not connected.
+
 /// </summary>
 public sealed class FacWarMgrService(FwService factionWarfare, FacWarMgrCallbacks callbacks) : IService
 {
@@ -225,8 +225,8 @@ public sealed class FacWarMgrService(FwService factionWarfare, FacWarMgrCallback
     }
 
     /// <summary>
-    /// The top and all values of the characters, the corporations and the alliances: the top is the largest window of an owner, the all is the sum over the
-    /// owners. Two dicts, keyed by the group (1 character, 2 corporation, 32 alliance), each with the six keys of the statistics.
+
+
     /// </summary>
     private async ValueTask<PyValue> TopAndAllAsync(long now, CancellationToken cancellation)
     {

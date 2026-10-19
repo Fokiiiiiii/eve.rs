@@ -25,16 +25,13 @@ import mitm  # noqa: E402
 
 DISPATCH = json.loads((ROOT / "oracle" / "fixtures" / "services" / "dispatch.json").read_text(encoding="utf-8"))
 
-
 def frame(payload: bytes) -> bytes:
     return struct.pack("<I", len(payload)) + payload
-
 
 def fixture_steps():
     for scenario in DISPATCH:
         for step in scenario["steps"]:
             yield scenario["id"], step
-
 
 def records_of(payloads, direction="c2s"):
     """Feed framed payloads through a Stream into a capture file and read the records back."""
@@ -49,7 +46,6 @@ def records_of(payloads, direction="c2s"):
         journal.close()
         return mitm.load(path)
 
-
 def test_fixture_packets_decode_and_survive_an_encode_round_trip():
     count = 0
     for _, step in fixture_steps():
@@ -60,7 +56,6 @@ def test_fixture_packets_decode_and_survive_an_encode_round_trip():
             assert describe(m.decode(m.encode(value))) == describe(value)
             count += 1
     assert count >= 144
-
 
 def test_request_fixtures_come_out_as_call_records():
     payloads = [bytes.fromhex(step["packet"]) for _, step in fixture_steps()]
@@ -78,14 +73,12 @@ def test_request_fixtures_come_out_as_call_records():
     assert first["service"] == expected.destination.service
     assert first["call_id"] == expected.source.call_id
 
-
 def test_zlib_wrapped_payloads_are_inflated_and_recorded_as_zlib():
     payload = bytes.fromhex(next(fixture_steps())[1]["packet"])
     wrapped = zlib.compress(payload)
     assert wrapped[:1] == b"\x78"
     (record,) = records_of([wrapped])
     assert record["encoding"] == "zlib" and record["type"] == "CallReq"
-
 
 def test_a_frame_split_across_reads_is_reassembled():
     payload = bytes.fromhex(next(fixture_steps())[1]["packet"])
@@ -101,14 +94,12 @@ def test_a_frame_split_across_reads_is_reassembled():
         records = mitm.load(path)
     assert [r["type"] for r in records] == ["CallReq", "CallReq"]
 
-
 def test_an_undecodable_payload_is_logged_as_hex_and_the_stream_goes_on():
     good = bytes.fromhex(next(fixture_steps())[1]["packet"])
     garbage = b"\x7e\xff\xff\xff\xff not marshal"
     records = records_of([garbage, good])
     assert records[0]["stage"] == "undecoded" and records[0]["hex"] == garbage[:256].hex()
     assert records[1]["type"] == "CallReq"
-
 
 def test_an_oversized_length_stops_parsing_that_direction_only():
     journal = mitm.Journal(None)
@@ -118,7 +109,6 @@ def test_an_oversized_length_stops_parsing_that_direction_only():
     stream.feed(struct.pack("<I", mitm.MAX_FRAME + 1))
     stream.feed(frame(b"\x7e"))
     assert len(written) == 1 and "exceeds" in written[0]["error"] and stream.dead
-
 
 def test_the_proxy_forwards_bytes_unchanged_and_logs_both_directions(tmp_path):
     requests = [frame(bytes.fromhex(step["packet"])) for _, step in list(fixture_steps())[:5]]
@@ -171,21 +161,17 @@ def test_the_proxy_forwards_bytes_unchanged_and_logs_both_directions(tmp_path):
     assert [r["dir"] for r in records if r.get("type") == "CallReq"] == ["c2s"] * 5
     assert [r["dir"] for r in records if r.get("type") == "CallRsp"] == ["s2c"] * 5
 
-
 def call(seq, method, service="machoNet", call_id=1, args=None, conn=1):
     return {"seq": seq, "dir": "c2s", "conn": conn, "stage": "macho", "encoding": "marshal", "type": "CallReq",
             "service": service, "method": method, "call_id": call_id, "args": args or {"$tuple": []}}
-
 
 def result(seq, value, service="machoNet", call_id=1, conn=1):
     return {"seq": seq, "dir": "s2c", "conn": conn, "stage": "macho", "encoding": "marshal", "type": "CallRsp",
             "service": service, "call_id": call_id, "result": value}
 
-
 def write(path, records):
     path.write_text("".join(json.dumps(r) + "\n" for r in records), encoding="utf-8")
     return path
-
 
 def diff(tmp_path, reference, candidate, *, ignore, extra=()):
     a = write(tmp_path / "a.jsonl", reference)
@@ -193,12 +179,10 @@ def diff(tmp_path, reference, candidate, *, ignore, extra=()):
     args = ["diff", str(a), str(b)] + (["--ignore-volatile"] if ignore else []) + list(extra)
     return mitm.main(args)
 
-
 def test_identical_calls_are_identical(tmp_path, capsys):
     run = [call(1, "GetInitVals"), result(2, {"$dict": []})]
     assert diff(tmp_path, run, run, ignore=False) == 0
     assert "identical" in capsys.readouterr().out
-
 
 def test_a_different_call_order_is_the_first_divergence(tmp_path, capsys):
     a = [call(1, "GetInitVals"), result(2, {"$dict": []}), call(3, "GetTime", call_id=2), result(4, {"$long": 1}, call_id=2)]
@@ -207,13 +191,11 @@ def test_a_different_call_order_is_the_first_divergence(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "first divergence at event 0" in out and "call order" in out
 
-
 def test_a_result_shape_change_is_reported_even_when_volatile_fields_are_ignored(tmp_path, capsys):
     a = [call(1, "GetInitVals"), result(2, {"$tuple": [{"$long": 1}]})]
     b = [call(1, "GetInitVals"), result(2, {"$tuple": [{"$long": 1}, {"$long": 2}]})]
     assert diff(tmp_path, a, b, ignore=True) == 1
     assert "result shape" in capsys.readouterr().out
-
 
 def test_session_ids_and_times_only_count_without_ignore_volatile(tmp_path):
     session = lambda v: {"$dict": [["sessionID", {"$long": v}], ["name", "x"]]}  # noqa: E731
@@ -221,7 +203,6 @@ def test_session_ids_and_times_only_count_without_ignore_volatile(tmp_path):
     b = [call(1, "Logon"), result(2, session(2))]
     assert diff(tmp_path, a, b, ignore=True) == 0
     assert diff(tmp_path, a, b, ignore=False) == 1
-
 
 def test_the_session_id_that_leads_a_session_notification_is_volatile(tmp_path):
     def initial(session_id):
@@ -231,13 +212,11 @@ def test_the_session_id_that_leads_a_session_notification_is_volatile(tmp_path):
     assert diff(tmp_path, [initial(1)], [initial(2)], ignore=True) == 0
     assert diff(tmp_path, [initial(1)], [initial(2)], ignore=False) == 1
 
-
 def test_get_time_values_and_bound_object_ids_are_volatile(tmp_path):
     a = [call(1, "GetTime"), result(2, {"$long": 100}), call(3, "Do", service="OID+1", call_id=2), result(4, {"$none": None}, service="OID+1", call_id=2)]
     b = [call(1, "GetTime"), result(2, {"$long": 999}), call(3, "Do", service="OID+7", call_id=2), result(4, {"$none": None}, service="OID+7", call_id=2)]
     assert diff(tmp_path, a, b, ignore=True) == 0
     assert diff(tmp_path, a, b, ignore=False) == 1
-
 
 def test_show_filters_by_service_method_and_notifications(tmp_path, capsys):
     records = [call(1, "GetInitVals"), call(2, "GetTime", service="other", call_id=2),
@@ -248,7 +227,6 @@ def test_show_filters_by_service_method_and_notifications(tmp_path, capsys):
     mitm.main(["show", str(path), "--notifications-only"])
     out = capsys.readouterr().out
     assert "OnThing" in out and "GetInitVals" not in out
-
 
 def test_a_login_and_a_call_through_the_proxy_are_logged_and_answered(tmp_path):
     """The real handshake frames and a call go through the proxy to a scripted server and back, all decoded."""
@@ -272,7 +250,6 @@ def test_a_login_and_a_call_through_the_proxy_are_logged_and_answered(tmp_path):
     assert any(r.get("type") == "CallRsp" and r["dir"] == "s2c" for r in records)
     assert [r for r in records if r["stage"] == "undecoded"] == []
 
-
 def test_key_order_of_a_dictionary_is_a_divergence_unless_ignored(tmp_path, capsys):
     a = [call(1, "Logon"), result(2, {"$dict": [["userid", 1], ["role", {"$long": 4}]]})]
     b = [call(1, "Logon"), result(2, {"$dict": [["role", {"$long": 4}], ["userid", 1]]})]
@@ -280,12 +257,10 @@ def test_key_order_of_a_dictionary_is_a_divergence_unless_ignored(tmp_path, caps
     assert diff(tmp_path, a, b, ignore=False, extra=["--ignore-key-order"]) == 0
     assert "identical" in capsys.readouterr().out
 
-
 def test_key_order_does_not_hide_a_changed_value(tmp_path):
     a = [call(1, "Logon"), result(2, {"$dict": [["userid", 1], ["role", {"$long": 4}]]})]
     b = [call(1, "Logon"), result(2, {"$dict": [["role", {"$long": 8}], ["userid", 1]]})]
     assert diff(tmp_path, a, b, ignore=False, extra=["--ignore-key-order"]) == 1
-
 
 def test_notices_in_another_order_are_a_divergence_unless_compared_as_a_set(tmp_path, capsys):
     def notice(seq, method, value):
@@ -297,7 +272,6 @@ def test_notices_in_another_order_are_a_divergence_unless_compared_as_a_set(tmp_
     assert diff(tmp_path, a, b, ignore=False) == 1
     assert diff(tmp_path, a, b, ignore=False, extra=["--ignore-notification-order"]) == 0
     assert "identical" in capsys.readouterr().out
-
 
 def test_a_missing_notice_is_still_a_divergence_when_notices_are_a_set(tmp_path):
     def notice(seq, method):

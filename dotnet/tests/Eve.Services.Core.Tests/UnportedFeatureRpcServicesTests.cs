@@ -268,10 +268,43 @@ public sealed class UnportedFeatureRpcServicesTests
     }
 
 
+[Fact]
+    public async Task Every_nodegraph_qa_rpc_refuses_non_staff_before_forwarding()
+    {
+        var methods = new (string Method, PyValue Refusal)[]
+        {
+            ("qa_subscribe", new PyDict([])),
+            ("qa_unsubscribe", PyNone.Instance),
+            ("qa_start_node_graph", PyNone.Instance),
+            ("qa_stop_node_graph", PyNone.Instance),
+            ("qa_start_node", PyNone.Instance),
+            ("qa_stop_node", PyNone.Instance),
+            ("qa_stop_active_nodes", PyNone.Instance),
+        };
+        var forwarded = 0;
+        var service = (IService)new NodeGraphService((_, _) =>
+        {
+            forwarded++;
+            return ValueTask.CompletedTask;
+        });
+
+        foreach (var (method, refusal) in methods)
+        {
+            var nonStaff = new ClientSession();
+            nonStaff.Set("role", new PyLong(1L << 52));
+            nonStaff.Set("rolesAtAll", new PyLong(1L << 52));
+            var result = await service.CallAsync(Call(method, nonStaff));
+            Assert.Equal(refusal, result);
+        }
+
+        Assert.Equal(0, forwarded);
+    }
+
     [Fact]
     public async Task Nodegraph_rpc_shapes_match_evelogic_calls_and_evejs_fallbacks()
     {
         var session = new ClientSession();
+        session.Set("accountRole", new PyLong(1L << 52));
         var kwargs = new PyDict([
             new KeyValuePair<PyValue, PyValue>(new PyStr("source"), new PyStr("client")),
         ]);
@@ -283,6 +316,7 @@ public sealed class UnportedFeatureRpcServicesTests
                 [new PyInt(10), new PyInt(20), new PyStr("health")], false),
             ("qa_subscribe", NodeGraphOperation.QaSubscribe, [], true),
             ("qa_unsubscribe", NodeGraphOperation.QaUnsubscribe, [], false),
+            ("qa_start_node_graph", NodeGraphOperation.QaStartNodeGraph, [new PyInt(20)], false),
             ("qa_stop_node_graph", NodeGraphOperation.QaStopNodeGraph, [new PyInt(20)], false),
             ("qa_start_node", NodeGraphOperation.QaStartNode, [new PyInt(20), new PyInt(3)], false),
             ("qa_stop_node", NodeGraphOperation.QaStopNode, [new PyInt(20), new PyInt(3)], false),

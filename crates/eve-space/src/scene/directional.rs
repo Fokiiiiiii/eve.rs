@@ -1,5 +1,4 @@
 //! combat recon ships, the cloaked and the warping ships are not seen, nor the normal NPCs; the cosmic signatures and anomalies are not objects of the scene).
-
 use crate::deployable::Role;
 use crate::link::DirectionalTarget;
 use crate::scene::{Command, Out, Scene, SessionId};

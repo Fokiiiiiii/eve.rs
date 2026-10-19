@@ -27,7 +27,6 @@ TITLE_API = "eve_public.cosmetic.character.title.api."
 BATTLECRUISER_SMITH = uuid.UUID("00851de7-b7ca-5136-871e-d07429563c06")  # SDE characterTitles, granted to the pilot below
 STARKMAN_CHAMPION = uuid.UUID("04ae6e1f-d39a-5f5b-b9f4-7a2b3e426a38")  # SDE characterTitles, not granted
 
-
 def test_a_title_is_listed_worn_refused_when_not_owned_and_taken_off_through_the_gateway():
     run = uuid.uuid4().hex[:10]
     with connect(f"titles-{run}") as client:

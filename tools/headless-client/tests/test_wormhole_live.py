@@ -34,10 +34,8 @@ WARP_SECONDS = 20.0  # the warp from the station to the near end, then the time 
 JUMP_SECONDS = 120.0
 FLY_SECONDS = 25.0  # the flight in from about 12 km at full speed  # the time the simulation takes to put the ship in the other system
 
-
 def system_of(character: int) -> int:
     return int(psql(f"SELECT solar_system_id FROM {schema('EVE_CHARACTERS_SCHEMA')}.characters WHERE id = {character}"))
-
 
 def wait_for(predicate, seconds: float) -> bool:
     deadline = time.monotonic() + seconds
@@ -46,7 +44,6 @@ def wait_for(predicate, seconds: float) -> bool:
             return True
         time.sleep(0.5)
     return predicate()
-
 
 def jump_when_in_range(who, end: int, seconds: float) -> None:
     """Asks for the jump until the simulation takes it: a refusal (too far) is answered by the warp still going on."""
@@ -59,7 +56,6 @@ def jump_when_in_range(who, end: int, seconds: float) -> None:
             if time.monotonic() > deadline:
                 raise
             wait_quietly(who, 3.0)
-
 
 def test_a_pilot_jumps_through_a_static_wormhole_and_back_through_its_far_end():
     run = uuid.uuid4().hex[:10]

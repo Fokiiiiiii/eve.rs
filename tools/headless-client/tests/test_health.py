@@ -34,18 +34,14 @@ pytestmark = [
 HEALTH_ATTRIBUTES = (3, 18, 264, 266)
 TOLERANCE = 1e-6
 
-
 def num(value):
     return value["$long"] if isinstance(value, dict) and "$long" in value else value
-
 
 def entries(dictionary: dict) -> list:
     return dictionary["$dict"]
 
-
 def keyval_fields(described: dict) -> dict:
     return {k: v for k, v in entries(described["args"])}
-
 
 def health_view(answer: dict, mapping: dict) -> dict:
     """What `GetAllInfo` says of what the ship and its modules have taken: their attributes, and the state rows next to them, by the ids of this run."""
@@ -59,7 +55,6 @@ def health_view(answer: dict, mapping: dict) -> dict:
         row = value["$row"]
         view["state"][mapping.get(num(key), num(key))] = {k: row[k] for k in ("damage", "charge", "armorDamage", "shieldCharge", "incapacitated", "online")}
     return view
-
 
 def compare_health(label: str, recorded: dict, ours: dict, mapping: dict) -> list[str]:
     a, b = health_view(recorded, mapping), health_view(ours, {})
@@ -76,10 +71,8 @@ def compare_health(label: str, recorded: dict, ours: dict, mapping: dict) -> lis
                     out.append(f"{label}: {part} of {item}: {key} is {got} in place of {expected}")
     return out
 
-
 def without_the_undocking_protection(events: list) -> list:
     return [e for e in events if e["name"] != "OnInvulnCancelled"]
-
 
 def ships_own_health(events: list, ship: int) -> list:
     """The events that are about this ship's health and nothing else: the attributes told to its pilot and its damage state in the stream. What the
@@ -97,7 +90,6 @@ def ships_own_health(events: list, ship: int) -> list:
             if names and set(names) == {"OnDamageStateChange"} and all(num(a["$tuple"][1]["$tuple"][1]["$tuple"][0]) == ship for a in actions):
                 kept.append(event)
     return kept
-
 
 def own_damage_state(events: list, ship: int, mapping: dict):
     """The ship's damage state `(shield, armor, structure)` in the first `SetState` of these events."""
@@ -129,7 +121,6 @@ def own_damage_state(events: list, ship: int, mapping: dict):
                 (shield, _tau, _time), armor, structure = found[0]["$tuple"], found[1], found[2]
                 return (shield, armor, structure)
     return None
-
 
 def test_a_ship_is_damaged_flown_hurt_and_mended_as_it_was_in_the_reference():
     race = HEALTH["races"][0]
@@ -193,7 +184,6 @@ def test_a_ship_is_damaged_flown_hurt_and_mended_as_it_was_in_the_reference():
         ours = ships_own_health(without_the_undocking_protection(healed), ship)
         problems.extend(compare_events(theirs, ours, "a heal in space", mapping))
     assert problems == [], "\n".join(problems[:40])
-
 
 def round6(value):
     return round(float(value), 6)

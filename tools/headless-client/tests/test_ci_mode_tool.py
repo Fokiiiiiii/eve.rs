@@ -12,7 +12,6 @@ assert spec and spec.loader
 ci_mode = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ci_mode)
 
-
 class CiModeTests(unittest.TestCase):
     def test_both_modes_are_idempotent_and_keep_workflow_content(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -48,7 +47,6 @@ class CiModeTests(unittest.TestCase):
                 if mode == "auto":
                     self.assertIn("- cron: '0 6 * * 1'", (workflows / "ci.yml").read_text(encoding="utf-8"))
             self.assertIn("The nightly schedule is switched off", originals["live-slow.yml"])
-
 
 if __name__ == "__main__":
     unittest.main()

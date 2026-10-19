@@ -71,7 +71,7 @@ public static class AgentMissionStoreRecords
 }
 
 /// <summary>
-/// Tells the character's session about a committed agent mission change (<c>OnAgentMissionChange(action, agentID)</c>,
+
 /// eve-logic agents.py:688). Only committed changes are announced (the store raises them after the commit).
 /// </summary>
 public sealed class AgentMissionAnnouncer : IDisposable

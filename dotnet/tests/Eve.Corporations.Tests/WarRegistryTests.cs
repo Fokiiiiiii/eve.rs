@@ -75,6 +75,27 @@ public sealed class WarRegistryTests
         Assert.NotEqual(PyNone.Instance, Field(await Payload(service, Declarer, mutual), "timeFinished"));
     }
 
+    [PgFact]
+    public async Task War_changes_refuse_a_session_without_persisted_director_authority()
+    {
+        await using var rig = await WarRig.CreateAsync();
+        var mutual = await rig.DeclareAsync(Declarer, Defender, mutual: true);
+        var open = await rig.DeclareAsync(Declarer, Defender, mutual: false);
+        var service = rig.Service((_, _, _) => Task.FromResult(false));
+
+        await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(new ServiceCall
+        {
+            Method = "RetractMutualWar", Args = [new PyInt(mutual)], Session = Session(Declarer),
+        }).AsTask());
+        await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(new ServiceCall
+        {
+            Method = "SetOpenForAllies", Args = [new PyInt(open), PyValue.Of(true)], Session = Session(Defender),
+        }).AsTask());
+
+        Assert.Equal(PyNone.Instance, Field(await Payload(service, Declarer, mutual), "retracted"));
+        Assert.Equal(new PyInt(0), Field(await Payload(service, Declarer, open), "openForAllies"));
+    }
+
     private static ClientSession Session(long corporationId)
     {
         var session = new ClientSession { CharacterId = corporationId + 1000 };
@@ -121,7 +142,9 @@ public sealed class WarRegistryTests
             return new WarRig(source, schemas, scheduler, new EventBus(source, scheduler, null, schemas[1]));
         }
 
-        public IService Service() => new WarRegistryService(_source, _relations, null, () => _now);
+        public IService Service(Func<long, long, CancellationToken, Task<bool>>? canManageWar = null) =>
+            new WarRegistryService(_source, _relations, null, () => _now,
+                canManageWar ?? ((_, _, _) => Task.FromResult(true)));
 
         /// <summary>Declares a war as the declarer does (the relation the war is kept in), with its attributes.</summary>
         public async Task<long> DeclareAsync(long declarer, long against, bool mutual)

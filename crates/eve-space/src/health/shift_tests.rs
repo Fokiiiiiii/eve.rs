@@ -1,6 +1,5 @@
 //! A reactive armor hardener's adaptive resonances on a ship's armor: the hits it counts, the cycle's move, the pin of a Polarized weapon, and a
 //! refit (the base changes, the profile stays).
-
 use super::*;
 
 /// An armor with no shield and plenty of hit points, so that a hit goes straight to the armor, whose base resonances are `base`.

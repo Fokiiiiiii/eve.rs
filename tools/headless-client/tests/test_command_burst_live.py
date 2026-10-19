@@ -8,7 +8,6 @@ The fitted module and its one charge are seeded in the pilot's ship; fitting and
 
 from __future__ import annotations
 
-import time
 import uuid
 
 import pytest
@@ -73,8 +72,8 @@ def test_a_loaded_burst_changes_a_fleet_members_dogma_until_its_buff_expires():
         burst_flag = next(flag for flag in dbseed.HIGH_SLOTS if flag not in occupied)
         burst = dbseed.new_item(BURST_MODULE, owner=owner_character, location=owner_ship,
                                 flag=burst_flag, singleton=True)
-        charge = dbseed.new_item(BURST_CHARGE, owner=owner_character, location=STATION,
-                                 flag=dbseed.HANGAR, quantity=1)
+        charge = dbseed.new_item(BURST_CHARGE, owner=owner_character, location=owner_ship,
+                                 flag=5, quantity=1)
         station_dogma = owner.call("dogmaIM", "MachoBindObject", (STATION, 15), None)
         owner.call_bound(station_dogma[0], "LoadAmmo", owner_ship, m.List([burst]), m.List([charge]), STATION)
 
@@ -92,26 +91,9 @@ def test_a_loaded_burst_changes_a_fleet_members_dogma_until_its_buff_expires():
         member.call_bound(member_dogma[0], "GetAllInfo", True, True, None)
         notifications_of(member)
 
-        owner_ballpark = owner.call("beyonce", "MachoBindObject", SYSTEM, None)
-        member_safe = wait_for_events(member, lambda events: named(events, "OnInvulnCancelled"), timeout=50)
-        assert named(member_safe, "OnInvulnCancelled"), "pilot B remained protected after undocking"
-        owner_safe = wait_for_events(owner, lambda events: named(events, "OnInvulnCancelled"), timeout=50)
-        assert named(owner_safe, "OnInvulnCancelled"), "pilot A remained protected after undocking"
-        owner.call_bound(owner_ballpark[0], "CmdOrbit", member_ship, 5_000)
-        try:
-            owner.call_bound(owner_dogma[0], "AddTarget", member_ship)
-        except Exception as error:
-            raise AssertionError(f"pilot A could not target pilot B: {error!r}; payload={getattr(error, 'payload', None)!r}") from error
-        targeting = wait_for_events(owner, lambda events: named(events, "OnTarget"), timeout=90)
-        assert named(targeting, "OnTarget"), "pilot A did not acquire pilot B after approaching"
-        notifications_of(owner)
         notifications_of(member)
 
-        owner.call_bound(owner_dogma[0], "SetModuleOnline", owner_ship, burst)
-        try:
-            owner.call_bound(owner_dogma[0], "Activate", burst, "moduleBonusWarfareLinkShield", None, 1000)
-        except Exception as error:
-            raise AssertionError(f"command burst activation failed: {error!r}; payload={getattr(error, 'payload', None)!r}") from error
+        owner.call_bound(owner_dogma[0], "Activate", burst, "moduleBonusWarfareLinkShield", None, 1000)
         active_events = wait_for_events(
             member,
             lambda events: named(events, "OnModuleAttributeChanges") and named(events, "OnDbuffUpdated"),

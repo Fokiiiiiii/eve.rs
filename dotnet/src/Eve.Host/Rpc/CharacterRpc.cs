@@ -93,6 +93,7 @@ internal sealed partial class CharacterServicesComposition
                 characters.ResetRemoteHomeStationChangeTimeAsync,
                 () => DateTimeOffset.FromUnixTimeMilliseconds(now()).ToFileTime()),
             new Eve.Services.CharacterInfo.OnlineStatusService(characterSessions, ReadWatchlistAsync),
+            new ClientStatLoggerRpcService(),
         ];
     }
 

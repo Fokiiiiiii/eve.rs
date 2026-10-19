@@ -1,15 +1,26 @@
 name: CI
 
-# Run by hand (it ran on every push to any branch until 2026-10-04): format, lint and test the Rust workspace, test the .NET solution against a
+# Run on pushes to main (except documentation-only changes) and by hand: format, lint and test the Rust workspace, test the .NET solution against a
 # PostgreSQL 18 service with the static data loaded, run the Python client's own tests, check that the golden
 # fixtures are what their generators write, and run the fast end-to-end tests (the whole server stack and the
 # headless client). The slow end-to-end tests are live-slow.yml (also by hand).
 
-# Manual only, by design: the repository is private and Actions minutes are limited, so nothing starts this workflow by itself.
-# Run it from the Actions tab or with `gh workflow run ci.yml`. The same jobs, in the same order and environment, run locally
-# with tools/dev/check-all.sh, the primary check before a push.
+# Manual runs accept a comma-separated job selection; the default runs every required gate. The same checks can be run locally
+# with tools/dev/check-all.sh.
 on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+      - '.github/dependabot.yml'
   workflow_dispatch:
+    inputs:
+      jobs:
+        description: 'Comma-separated jobs: rust-fmt,rust-test,dotnet,python,fixtures,live (or all)'
+        required: true
+        default: all
+        type: string
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -26,21 +37,37 @@ env:
   CARGO_INCREMENTAL: "0"
   DOTNET_NOLOGO: "1"
   DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_CLI_USE_MSBUILD_SERVER: "0"
   # the host seeds the NPC market from CCP's ESI on its first start (minutes, and a load on ESI): not in CI
   EVE_MARKET_SEED: skip
 
 jobs:
-  rust:
-    name: Rust (fmt, clippy, test)
+  rust-fmt:
+    name: Rust format and clippy
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.jobs == 'all' || contains(inputs.jobs, 'rust-fmt') }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+
+  rust-test:
+    name: Rust tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.jobs == 'all' || contains(inputs.jobs, 'rust-test') }}
     services:
       postgres:
         image: postgres:18
         env:
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: eve
-          # the Host tests open many pools at once; the default of 100 connections runs out (53300)
           POSTGRES_INITDB_ARGS: "-c max_connections=400 -c shared_buffers=512MB -c fsync=off -c full_page_writes=off -c synchronous_commit=off"
         ports:
           - 5432:5432
@@ -56,7 +83,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
-          components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - id: sde-build
         run: echo "build=$(sed -n 's/^PINNED_BUILD=//p' sde/fetch.sh)" >> "$GITHUB_OUTPUT"
@@ -65,17 +91,14 @@ jobs:
         with:
           path: .cache/sde
           key: sde-${{ steps.sde-build.outputs.build }}
-      # the tests that compare against the reference need the static data (they skip without it)
       - name: Fetch the static data
         if: steps.sde.outputs.cache-hit != 'true'
         run: cargo run -q -p eve-sde -- ensure
-      - run: cargo fmt --all --check
-      - run: cargo clippy --workspace --all-targets -- -D warnings
-      - name: Test
-        run: cargo test --workspace
+      - run: cargo test --workspace
 
   rust-latest:
     name: Rust on the latest stable (advisory)
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.jobs == 'all' || contains(inputs.jobs, 'rust-fmt') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     continue-on-error: true
@@ -89,10 +112,42 @@ jobs:
           key: latest
       - run: cargo clippy --workspace --all-targets -- -D warnings
 
+  dotnet-build:
+    name: .NET build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.jobs == 'all' || contains(inputs.jobs, 'dotnet') }}
+    env:
+      DOTNET_CLI_USE_MSBUILD_SERVER: "0"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+      - uses: actions/cache@v6
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('dotnet/Directory.Packages.props', 'dotnet/**/*.csproj', 'dotnet/**/*.props', 'dotnet/**/*.targets') }}
+          restore-keys: nuget-${{ runner.os }}-
+      - name: Build
+        working-directory: dotnet
+        run: |
+          dotnet build EveRs.slnx -c Release -nologo --verbosity minimal -nodeReuse:false
+          dotnet build-server shutdown
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dotnet-build
+          path: |
+            dotnet/**/bin/Release/**
+            dotnet/**/obj/project.assets.json
+          if-no-files-found: error
+
   dotnet:
     name: .NET (${{ matrix.shard.name }})
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    needs: dotnet-build
+    if: ${{ always() && needs.dotnet-build.result == 'success' && (github.event_name != 'workflow_dispatch' || inputs.jobs == 'all' || contains(inputs.jobs, 'dotnet')) }}
     strategy:
       fail-fast: false
       matrix:
@@ -118,6 +173,7 @@ jobs:
           --health-retries 20
     env:
       EVE_PG_URL: postgres://postgres:postgres@127.0.0.1:5432/eve
+      DOTNET_CLI_USE_MSBUILD_SERVER: "0"
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-dotnet@v6
@@ -126,7 +182,7 @@ jobs:
       - uses: actions/cache@v6
         with:
           path: ~/.nuget/packages
-          key: nuget-${{ runner.os }}-${{ hashFiles('dotnet/Directory.Packages.props') }}
+          key: nuget-${{ runner.os }}-${{ hashFiles('dotnet/Directory.Packages.props', 'dotnet/**/*.csproj', 'dotnet/**/*.props', 'dotnet/**/*.targets') }}
           restore-keys: nuget-${{ runner.os }}-
       # the static data is loaded into PostgreSQL by the Rust tool, as the server does on its first start
       - uses: dtolnay/rust-toolchain@master
@@ -143,9 +199,10 @@ jobs:
         run: |
           cargo run -q -p eve-sde -- ensure --pg "$EVE_PG_URL"
           cargo run -q -p eve-sde -- ensure --missions --pg "$EVE_PG_URL"
-      - name: Build
-        working-directory: dotnet
-        run: dotnet build EveRs.slnx -c Release -nologo --verbosity minimal
+      - uses: actions/download-artifact@v7
+        with:
+          name: dotnet-build
+          path: dotnet
       - name: Test
         working-directory: dotnet
         env:
@@ -160,14 +217,18 @@ jobs:
             else
               [ "$name" != "Eve.Services.Space.Tests" ] && [ "$name" != "Eve.Host.Tests" ] || continue
             fi
-            dotnet test "$proj" -c Release --no-build -nologo --verbosity minimal || status=1
+            dotnet test "$proj" -c Release --no-build -nologo --verbosity minimal -nodeReuse:false || status=1
           done
           exit $status
+      - name: Shut down build servers
+        if: always()
+        run: dotnet build-server shutdown
 
   python:
     name: Python client (golden and mock-server tests)
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.jobs == 'all' || contains(inputs.jobs, 'python') }}
     defaults:
       run:
         working-directory: tools/headless-client
@@ -186,6 +247,7 @@ jobs:
     name: Fixtures match their generators
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.jobs == 'all' || contains(inputs.jobs, 'fixtures') }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -202,6 +264,7 @@ jobs:
     name: End to end (server stack + headless client)
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.jobs == 'all' || contains(inputs.jobs, 'live') }}
     services:
       postgres:
         image: postgres:18
@@ -262,3 +325,18 @@ jobs:
           name: live-logs
           path: .live-logs
           if-no-files-found: ignore
+
+  gate:
+    name: Required CI gate
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [rust-fmt, rust-test, dotnet-build, dotnet, python, fixtures, live]
+    steps:
+      - name: Require all selected jobs to succeed
+        env:
+          RESULTS: ${{ toJSON(needs.*.result) }}
+        run: |
+          echo "$RESULTS"
+          if echo "$RESULTS" | grep -qE '"(failure|cancelled)"'; then
+            exit 1
+          fi

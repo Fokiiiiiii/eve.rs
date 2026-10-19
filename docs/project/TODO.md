@@ -15,7 +15,7 @@ Built from the sections below, as of 2026-10-19. **Status** is what the area doe
 | Drones (6) | Built; flights covered headless. | As above. | Hybrid drones (open); mining and salvage drones on the client. |
 | Mining, salvage, tractor, targeting (10) | Built and tested headless. | As above. | Entosis link waits for structures (phase 3); mining scan list (open). |
 | P.A.N.I.C., superweapons, fighters, bursts, scanners (11 to 13, 20 to 26) | Command bursts and the buff registry are built through C8; the SDE value chain is nonzero. P.A.N.I.C. is built. Superweapons partly (12). Fighters, scanners and probes built (13, 21, 22, 24). | As above. | Section 12 open rows (burst projectors, Area type); section 13 open rows. Command burst MITM walk remains open (section 22). |
-| Windows and production start (14) | Start scripts exist; Windows is not in CI. | Owner's choice: CI runs by hand only (`tools/dev/check-all.sh` is the pre-push check). | Windows console behaviour, PowerShell 5.1, `global.json` SDK path, Windows live runners, Host `tcp:` listener. |
+| Windows and production start (14) | Start scripts exist; Windows is not in CI. | CI runs on pushes to `main` except documentation-only changes, and can be dispatched with a selected job set; `tools/dev/check-all.sh` remains the local check. | Windows console behaviour, PowerShell 5.1, `global.json` SDK path, Windows live runners, Host `tcp:` listener. |
 | Client preparation (`tools/client-patch`) | The patch exists. | Launch arguments are taken from the client. | Real-client check of the patched `start.ini` and launch arguments. |
 | Alliance registry (18) | Built. | Affiliation and wars follow the reference. | Open rows of section 18. |
 | Market (42) | M1 to M9 done; the live walk passed (M9). | The server charges the 7.5% sales tax; rules are data (`rules.json`) and replayed. | Client preview of the sales and security tax (the client reads its own flag source); the client label table is partial. |
@@ -437,7 +437,7 @@ Re-read these files before implementing a provider; the Host composition root de
 
 ## 15. CI hygiene and the pre-push check (2026-10-09)
 
-The primary check before a push is `tools/dev/check-all.sh`: the jobs of `.github/workflows/ci.yml` (manual only: the repository is private and Actions minutes are limited) in the same order and environment, on a local PostgreSQL 18. `CHECK_SKIP=live,dotnet` leaves steps out.
+The primary check before a push is `tools/dev/check-all.sh`: the jobs of `.github/workflows/ci.yml` (push-triggered on `main` except documentation-only changes, with manual job selection) in the same order and environment, on a local PostgreSQL 18. `CHECK_SKIP=live,dotnet` leaves steps out.
 
 | Status | Item | Where |
 |---|---|---|

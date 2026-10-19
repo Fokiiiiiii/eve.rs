@@ -667,6 +667,29 @@ public class CharMgrTests
 
 
     [PgFact]
+    public async Task EditContact_updates_relationship_and_watchlist_through_the_client_method()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var characterId = await rig.MakeAsync("Ann Lee");
+        var state = new CharMgrPersonalData(
+            [new CharMgrContact(2001, false, 0, 3)], [],
+            new Dictionary<long, CharMgrContactLabel> { [1] = new("Fleet", 7) }, [],
+            new Dictionary<long, string>());
+        var service = rig.CreateCharMgr(
+            (ownerId, _) => ValueTask.FromResult<CharMgrPersonalData?>(ownerId == characterId ? state : null),
+            (_, update, _) =>
+            {
+                state = update(state);
+                return ValueTask.FromResult<CharMgrPersonalData?>(state);
+            });
+        var (session, _) = Rig.Session(characterId);
+        var result = await Rig.CallAsync(service, session, "EditContact", [Id(2001), Id(-10), PyBool.True]);
+        Assert.IsType<PyNone>(result);
+        Assert.Equal(new CharMgrContact(2001, true, -10, 3), Assert.Single(state.Contacts));
+    }
+
+
+    [PgFact]
     public async Task Get_private_info_on_corporation_change_returns_the_reference_keyval_shape()
     {
         await using var rig = await Rig.CreateAsync();

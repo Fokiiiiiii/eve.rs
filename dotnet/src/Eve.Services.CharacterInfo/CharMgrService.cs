@@ -783,6 +783,9 @@ public sealed partial class CharMgrService(
         return new PyDict(entries);
     }
 
+    [Method("EditContact")]
+    public ValueTask<PyValue> EditContact(ServiceCall call) => AddContact(call);
+
     [Method("AddContact")]
     public async ValueTask<PyValue> AddContact(ServiceCall call)
     {

@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime
 import io
 import json
 import os
+import re
 import sys
 import urllib.error
 import urllib.parse
@@ -37,6 +39,58 @@ def request(path: str, token: str, *, method: str = "GET", body: dict | None = N
 def api_json(path: str, token: str):
     _, body, _ = request(path, token)
     return json.loads(body)
+
+
+def download_job_logs(job_id: int, token: str) -> tuple[bytes, str]:
+    class NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            return None
+
+    headers = {**HEADERS, "Authorization": f"Bearer {token}"}
+    req = urllib.request.Request(f"{API}/actions/jobs/{job_id}/logs", headers=headers)
+    opener = urllib.request.build_opener(NoRedirect)
+    try:
+        with opener.open(req, timeout=60) as response:
+            return response.read(), response.headers.get("Content-Type", "")
+    except urllib.error.HTTPError as response:
+        if response.code not in (301, 302, 303, 307, 308):
+            detail = response.read().decode("utf-8", "replace")
+            raise RuntimeError(f"GitHub API GET /actions/jobs/{job_id}/logs failed: HTTP {response.code}: {detail[:500]}") from None
+        location = response.headers.get("Location")
+        if not location:
+            raise RuntimeError(f"GitHub API GET /actions/jobs/{job_id}/logs returned a redirect without a destination") from None
+    # GitHub returns a short-lived signed download URL. Fetch it without forwarding the API token.
+    with urllib.request.urlopen(location, timeout=60) as response:
+        return response.read(), response.headers.get("Content-Type", "")
+
+
+def failing_step_tail(payload: bytes, content_type: str, job_id: int, step: dict) -> list[str]:
+    if zipfile.is_zipfile(io.BytesIO(payload)):
+        with zipfile.ZipFile(io.BytesIO(payload)) as archive:
+            suffix = f"{step['number']}_{step['name']}.txt"
+            candidates = [name for name in archive.namelist() if name.endswith(suffix)]
+            if not candidates:
+                candidates = [name for name in archive.namelist() if name.endswith(".txt")]
+            if not candidates:
+                return []
+            return archive.read(candidates[0]).decode("utf-8", "replace").splitlines()[-40:]
+
+    lines = payload.decode("utf-8", "replace").splitlines()
+    start, end = step.get("started_at"), step.get("completed_at")
+    if start and end:
+        # Job logs prefix every line with an RFC3339 timestamp. Isolate the failing step's time window.
+        start_time = datetime.fromisoformat(start.replace("Z", "+00:00"))
+        end_time = datetime.fromisoformat(end.replace("Z", "+00:00"))
+        window = []
+        for line in lines:
+            match = re.match(r"(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z) ", line)
+            if match:
+                timestamp = datetime.fromisoformat(match.group(1).replace("Z", "+00:00"))
+                if start_time <= timestamp <= end_time:
+                    window.append(line)
+        if window:
+            return window[-40:]
+    return lines[-40:]
 
 
 def dispatch(args, token: str) -> None:
@@ -71,16 +125,14 @@ def print_run(run, token: str, show_logs: bool) -> None:
             print(f"    failing step: {step['name']}")
             if show_logs:
                 try:
-                    _, payload, _ = request(f"/actions/jobs/{job['id']}/logs", token)
-                    with zipfile.ZipFile(io.BytesIO(payload)) as archive:
-                        candidates = [n for n in archive.namelist() if n.endswith(f"{step['number']}_{step['name']}.txt")]
-                        if not candidates:
-                            candidates = [n for n in archive.namelist() if n.endswith(".txt")]
-                        for name in candidates[:1]:
-                            lines = archive.read(name).decode("utf-8", "replace").splitlines()
-                            print("      " + "\n      ".join(lines[-40:]))
-                except (RuntimeError, zipfile.BadZipFile) as error:
+                    payload, content_type = download_job_logs(job["id"], token)
+                    lines = failing_step_tail(payload, content_type, job["id"], step)
+                    if lines:
+                        print("      " + "\n      ".join(lines))
+                except RuntimeError as error:
                     print(f"    log tail unavailable: {error}")
+                except (urllib.error.URLError, zipfile.BadZipFile):
+                    print("    log tail unavailable: the log download could not be read")
 
 
 def main() -> int:

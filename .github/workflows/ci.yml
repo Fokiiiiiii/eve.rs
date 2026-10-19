@@ -156,9 +156,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Every shard has its own PostgreSQL service. Host cases and other projects are assigned as separate, balanced shards.
+        # Every shard has its own PostgreSQL service. Host and Space cases and other projects are assigned as separate shards.
         shard:
-          - { name: "space tests", only: "Eve.Services.Space.Tests", index: 0, count: 1 }
+          - { name: "space tests 1/2", only: "Eve.Services.Space.Tests", index: 0, count: 2 }
+          - { name: "space tests 2/2", only: "Eve.Services.Space.Tests", index: 1, count: 2 }
           - { name: "host tests 1/4", only: "Eve.Host.Tests", index: 0, count: 4 }
           - { name: "host tests 2/4", only: "Eve.Host.Tests", index: 1, count: 4 }
           - { name: "host tests 3/4", only: "Eve.Host.Tests", index: 2, count: 4 }
@@ -222,13 +223,11 @@ jobs:
           SHARD_COUNT: ${{ matrix.shard.count }}
         run: |
           status=0
-          if [ "$ONLY" = "Eve.Host.Tests" ]; then
+          if [ "$ONLY" = "Eve.Host.Tests" ] || [ "$ONLY" = "Eve.Services.Space.Tests" ]; then
             proj="tests/$ONLY/$ONLY.csproj"
-            dotnet test "$proj" -c Release --no-build -nologo --verbosity minimal -nodeReuse:false --list-tests > /tmp/host-test-list.txt
-            filter="$(python3 ../tools/dev/shard-dotnet-tests.py /tmp/host-test-list.txt "$SHARD_INDEX" "$SHARD_COUNT")"
+            dotnet test "$proj" -c Release --no-build -nologo --verbosity minimal -nodeReuse:false --list-tests > /tmp/test-list.txt
+            filter="$(python3 ../tools/dev/shard-dotnet-tests.py /tmp/test-list.txt "$SHARD_INDEX" "$SHARD_COUNT")"
             dotnet test "$proj" -c Release --no-build -nologo --verbosity minimal -nodeReuse:false --filter "$filter" || status=1
-          elif [ "$ONLY" = "Eve.Services.Space.Tests" ]; then
-            dotnet test "tests/$ONLY/$ONLY.csproj" -c Release --no-build -nologo --verbosity minimal -nodeReuse:false || status=1
           else
             projects="$(python3 ../tools/dev/shard-dotnet-projects.py "$SHARD_INDEX" "$SHARD_COUNT" tests/*/*.csproj)"
             for name in $projects; do

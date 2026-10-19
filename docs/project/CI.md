@@ -53,7 +53,28 @@ Record runner job durations for validation runs below. Matrix jobs count separat
 
 ### Duration profile and test layout
 
-Run 256 was the latest green full gate before the current change (commit `866916fc`, 2026-10-19). Its Required CI gate finished in 20.8 minutes. Run 269 (`a3a1f373`) provides the most recent detailed .NET project timings, although its all-other-tests job failed in `Eve.Services.Core.Tests` and is used here only as a duration sample. The same run's successful job times were: Host 20.2 minutes, Space 8.3 minutes, all other .NET 9.9 minutes, end-to-end 7.2 minutes, .NET build 2.7 minutes, Rust tests 2.9 minutes, Rust format/clippy 0.4 minutes, Python 0.2 minutes, and fixture generation 0.1 minutes. The 20.8-minute gate time on run 256 is the elapsed time to the longest required job, not the sum of runner-minutes.
+Run 272 (`f153f9c1`, 2026-10-19) is the latest green full gate before the Space split. From the first job start at 23:16:08 UTC until the Required CI gate completed at 23:34:08 UTC, the run took 18.0 minutes wall time. The Space job took 15.2 minutes, of which its `dotnet test` step used 12.85 minutes; static-data loading, artifact download and setup used about 2.3 minutes. End-to-end took 8.8 minutes. The per-project VSTest durations below remain the detailed project profile from run 269 (`a3a1f373`); its all-other-tests job failed in `Eve.Services.Core.Tests`, so it is a project duration sample rather than a green-run result.
+
+Run 272's successful job durations and .NET test step timing were:
+
+| Job | Duration |
+|---|---:|
+| .NET build | 2.6 min |
+| Host tests 1/4 | 2.3 min |
+| Host tests 2/4 | 2.6 min |
+| Host tests 3/4 | 1.8 min |
+| Host tests 4/4 | 2.1 min |
+| Space tests | 15.2 min (12.85 min test step) |
+| Other tests 1/3 | 4.9 min |
+| Other tests 2/3 | 5.6 min |
+| Other tests 3/3 | 5.5 min |
+| End-to-end | 8.8 min |
+| Rust tests | 2.5 min |
+| Rust format and clippy | 0.5 min |
+| Python client | 0.2 min |
+| Fixture generation | 0.1 min |
+
+The preceding red run 270 (`ec9575b0`) had a 16.2-minute Space job; all other jobs completed in 6.8 minutes or less except the 9.0-minute end-to-end job. `other tests 3/3` failed after 4.0 minutes, while its sibling jobs passed. Its retained job summary does not include per-project VSTest durations; run 269 remains the source of the project duration table.
 
 The per-project durations below are VSTest `Duration:` lines from run 269's all-other-tests job. The failing Core project did not print a duration.
 
@@ -104,9 +125,9 @@ The per-project durations below are VSTest `Duration:` lines from run 269's all-
 | Eve.Wallet.Tests | 4 s |
 | Eve.Wormholes.Tests | 0.8 s |
 
-The test job now uses four Host shards. `tools/dev/shard-dotnet-tests.py` discovers the Host test cases from the built assembly, assigns whole test classes to shards by test count, and supplies a VSTest filter to each shard. Each shard retains the complete class test sequence and has its own PostgreSQL service. `tools/dev/shard-dotnet-projects.py` assigns the remaining test projects to three jobs using the recent VSTest durations above; each project runs once, and each job has its own PostgreSQL service. New projects are included with a five-second initial weight. Space remains an independent project job. All jobs download the same Release build artifact produced once by `.NET build`. CI runs use the job matrix and the Required CI gate waits for every selected matrix job.
+The test job uses four Host shards and now splits `Eve.Services.Space.Tests` into two shards. `tools/dev/shard-dotnet-tests.py` discovers test cases from each built assembly, assigns whole test classes to shards by case count, and supplies a VSTest filter to each shard. Every class is assigned to exactly one shard; each shard has its own PostgreSQL service. `tools/dev/shard-dotnet-projects.py` assigns the remaining test projects to three jobs using the recent VSTest durations above; each project runs once, and each job has its own PostgreSQL service. New projects are included with a five-second initial weight. All jobs download the same Release build artifact produced once by `.NET build`. CI runs use the job matrix and the Required CI gate waits for every selected matrix job.
 
-The before/after elapsed time will be recorded from the first green run containing this matrix. No post-change Actions result is available yet.
+The post-change wall time and shard durations will be recorded from the first green run containing the Space split.
 
 | Run | Commit | Result | Sum of job durations |
 |---|---|---|---|

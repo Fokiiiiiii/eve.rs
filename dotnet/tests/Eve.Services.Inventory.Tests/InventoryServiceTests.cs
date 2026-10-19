@@ -360,7 +360,6 @@ public class InvBrokerTests
     }
 
 
-    [PgFact]
     public async Task Station_inventory_rpcs_list_owned_items_and_set_a_ship_label()
     {
         await using var rig = await Rig.CreateAsync();
@@ -369,9 +368,13 @@ public class InvBrokerTests
         var session = Rig.Session();
 
         var stationRowset = Assert.IsType<PyObject>(await rig.CallAsync(session, "ListStations"));
+        Assert.Equal("eve.common.script.sys.rowset.Rowset", JsSemantics.StringValue(stationRowset.Name));
         var stationArgs = Assert.IsType<PyDict>(stationRowset.Args);
+        var stationRows = Assert.IsType<PyList>(stationArgs.Entries[3].Value);
+        Assert.Single(stationRows.Items);
         var stationLines = Assert.IsType<PyList>(stationArgs.Entries.Single(entry => entry.Key == new PyStr("lines")).Value);
         Assert.Contains(stationLines.Items, row => row is PyTuple tuple && tuple.Items[0] == InventoryWire.Id(Rig.Station));
+
         var stationItems = Rows(await rig.CallAsync(session, "ListStationItems", null, new PyLong(Rig.Station)));
         Assert.Contains(stationItems, row => PackedItemId(row) == ship);
         Assert.Equal(PyBool.True, await rig.CallAsync(session, "IsMyItemAtDockableLocation", null, new PyLong(ship), new PyLong(Rig.Station)));

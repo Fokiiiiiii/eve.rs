@@ -25,6 +25,16 @@ public sealed class PublicGatewayTests
     private const string UserToken = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJVU0VSOkVWRToxIiwidGVuYW50IjoiZXZlLXRlc3QiLCJ0aWVyIjoiZGV2IiwiZXhwIjo0MTAyNDQ0ODAwfQ.dW5zaWduZWQtdGVzdC1zaWduYXR1cmU";
     private const string OtherUserToken = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJVU0VSOkVWRToyIiwidGVuYW50IjoiZXZlLXRlc3QiLCJ0aWVyIjoiZGV2IiwiZXhwIjo0MTAyNDQ0ODAwfQ.dW5zaWduZWQtdGVzdC1zaWduYXR1cmU";
 
+    [Fact]
+    public void A_frame_with_a_declared_length_above_the_host_limit_is_rejected_before_its_body_arrives()
+    {
+        var frame = new List<byte> { 0, 0x01, 0, 0, 1 };
+
+        var error = Assert.Throws<FormatException>(() => GatewayEnvelope.TakeFrames(frame));
+
+        Assert.Contains(GatewayEnvelope.MaxFrameLength.ToString(), error.Message);
+    }
+
     [PgFact]
     public async Task Skill_plans_are_created_read_changed_activated_and_deleted_through_the_gateway_and_survive_a_restart()
     {

@@ -580,6 +580,28 @@ public class InvBrokerTests
         Assert.DoesNotContain(result.Entries, entry => entry.Key == new PyLong(tritanium));
     }
 
+
+    [PgFact]
+    public async Task Container_open_validation_accepts_owned_items_and_expires_foreign_location_cache_entries()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var session = Rig.Session();
+        var ownContainer = await rig.AddAsync(Rig.Tritanium, Rig.Character, Rig.Station, singleton: true);
+        var foreignContainer = await rig.AddAsync(Rig.Tritanium, Rig.Character + 1, Rig.Station, singleton: true);
+        var hangar = await rig.HangarAsync(session);
+        var ownRow = Assert.Single(Rows(await rig.CallAsync(session, "List", hangar)));
+
+        Assert.Equal(PyBool.True, await rig.CallAsync(session, "ValidateItemCanBeOpened", null, ownRow));
+        Assert.Equal(PyBool.False, await rig.CallAsync(session, "ValidateItemCanBeOpened", null, new PyLong(foreignContainer)));
+        Assert.Equal(PyBool.False, await rig.CallAsync(session, "ValidateItemCanBeOpened", null, new PyLong(ownContainer + 1000)));
+
+        var invalid = Assert.IsType<PyList>(await rig.CallAsync(session, "ValidateItemListCanBeOpened", null,
+            PyList.Of(ownRow, new PyLong(foreignContainer))));
+        Assert.Equal(new PyList([new PyLong(foreignContainer)]), invalid);
+        Assert.Equal(PyBool.True, await rig.CallAsync(session, "ValidateItemCanBeOpened", null, PyNone.Instance));
+    }
+
+
     [PgFact]
     public async Task The_station_is_the_item_the_hangar_is_in_as_a_util_row_and_as_a_packed_row()
     {

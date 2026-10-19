@@ -481,6 +481,7 @@ public sealed partial class InvBrokerService(
         return await CompleteInventoryRpcAsync(call, result);
     }
 
+
     /// <summary><c>ListByFlags(flags)</c>: the rows in any of the flags, as a list (empty when there are none).</summary>
     [Method("ListByFlags")]
     public async ValueTask<PyValue> ListByFlags(ServiceCall call)
@@ -560,6 +561,82 @@ public sealed partial class InvBrokerService(
         var damageByItem = await crystalDamage(damageableIds, call.Cancellation);
         return new PyDict(damageableIds.Select(itemId => new KeyValuePair<PyValue, PyValue>(
             new PyLong(itemId), new PyReal(Math.Clamp(damageByItem.GetValueOrDefault(itemId), 0d, 1d)))).ToArray());
+    }
+
+
+    [Method("ValidateItemCanBeOpened")]
+    public async ValueTask<PyValue> ValidateItemCanBeOpened(ServiceCall call)
+    {
+        var itemId = InventoryItemId(call.Arg(0));
+        return itemId is null or <= 0 || await CanOpenInventoryItemAsync(call, itemId.Value)
+            ? PyBool.True
+            : PyBool.False;
+    }
+
+    [Method("ValidateItemListCanBeOpened")]
+    public async ValueTask<PyValue> ValidateItemListCanBeOpened(ServiceCall call)
+    {
+        var values = call.Arg(0) switch
+        {
+            PyTuple tuple => tuple.Items,
+            PyList list => list.Items,
+            _ => []
+        };
+        var invalid = new List<PyValue>();
+        foreach (var value in values)
+        {
+            if (InventoryItemId(value) is { } itemId && itemId > 0
+                && !await CanOpenInventoryItemAsync(call, itemId))
+                invalid.Add(new PyLong(itemId));
+        }
+        return PyList.Of([.. invalid]);
+    }
+
+    private async Task<bool> CanOpenInventoryItemAsync(ServiceCall call, long itemId)
+    {
+        if (space?.IsInSpace(call.Session) == true)
+            return await space.OpenAsync(call.Session, itemId, call.Cancellation) is not null;
+        if (call.Session.CharacterId is not { } characterId
+            || await items.GetAsync(itemId, call.Cancellation) is not { } item)
+            return false;
+
+        if (StationOf(call.Session) is { } stationId
+            && item.LocationId == stationId
+            && item.Flag == ItemFlags.Hangar
+            && item.OwnerId != characterId)
+            return false;
+        if (ItemFlags.IsCorporationHangar(item.Flag)
+            && !await CanAccessCorporationItemAsync(call.Session, item, CorporationHangarOperation.Query, call.Cancellation))
+            return false;
+        return true;
+    }
+
+    private static long? InventoryItemId(PyValue value) => value switch
+    {
+        PyInt or PyLong => IdOf(value),
+        PyPackedRow row => row.Fields()
+            .Where(field => string.Equals(field.Key, "itemID", StringComparison.Ordinal))
+            .Select(field => IdOf(field.Value))
+            .FirstOrDefault(),
+        PyDict dict => InventoryItemId(dict),
+        _ => null
+    };
+
+    private static long? InventoryItemId(PyDict dict)
+    {
+        var direct = dict.Entries
+            .Where(entry => entry.Key is PyStr { Value: "itemID" })
+            .Select(entry => IdOf(entry.Value))
+            .FirstOrDefault();
+        if (direct is not null)
+            return direct;
+
+        var header = dict.Entries.Where(entry => entry.Key is PyStr { Value: "header" }).Select(entry => entry.Value).FirstOrDefault();
+        var line = dict.Entries.Where(entry => entry.Key is PyStr { Value: "line" }).Select(entry => entry.Value).FirstOrDefault();
+        var headers = header switch { PyList list => list.Items, PyTuple tuple => tuple.Items, _ => [] };
+        var values = line switch { PyList list => list.Items, PyTuple tuple => tuple.Items, _ => [] };
+        var itemIdIndex = headers.ToList().FindIndex(value => value is PyStr { Value: "itemID" });
+        return itemIdIndex >= 0 && itemIdIndex < values.Count ? IdOf(values[itemIdIndex]) : null;
     }
 
     /// <summary>Everything in the inventory as a <c>Rowset</c>.</summary>

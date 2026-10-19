@@ -16,7 +16,8 @@ public sealed record BlueprintRecord(long ItemId, int TypeId, long OwnerId, long
 public sealed partial class BlueprintManagerService(
     Func<long, CancellationToken, ValueTask<BlueprintRecord?>> readBlueprint,
     Func<long, CancellationToken, ValueTask<IReadOnlyList<BlueprintRecord>>> readOwned,
-    Func<long, CancellationToken, ValueTask<IReadOnlyDictionary<long, long>>> readActiveJobs)
+    Func<long, CancellationToken, ValueTask<IReadOnlyDictionary<long, long>>> readActiveJobs,
+    Func<long, long, long?, CancellationToken, ValueTask<Eve.Corporations.SessionRoles?>> readCorporationRoles)
 {
     /// <summary>The most blueprints one listing returns (<c>GetLimits</c> of the reference).</summary>
     public const int MaxBlueprintResults = 500;
@@ -33,7 +34,10 @@ public sealed partial class BlueprintManagerService(
     {
         var itemId = Integral(call.Arg(0)) ?? 0;
         var blueprint = itemId > 0 ? await readBlueprint(itemId, call.Cancellation) : null;
-        if (blueprint is null || !CanRead(blueprint, call.Session))
+        var roles = blueprint is null || blueprint.OwnerId == call.Session.CharacterId
+            ? null
+            : await CorporationRolesAsync(blueprint.OwnerId, call);
+        if (blueprint is null || !CanRead(blueprint, call.Session, roles))
             throw MachoErrors.ThrowUserError("IndustryBlueprintNotFound");
         var jobs = await readActiveJobs(blueprint.OwnerId, call.Cancellation);
         return Payload(blueprint, jobs.TryGetValue(blueprint.ItemId, out var job) ? job : null);
@@ -48,10 +52,11 @@ public sealed partial class BlueprintManagerService(
     {
         var owner = Integral(call.Arg(0)) ?? 0;
         var facility = Integral(call.Arg(1));
-        if (!CanListOwner(owner, call.Session))
+        var roles = owner == call.Session.CharacterId ? null : await CorporationRolesAsync(owner, call);
+        if (!CanListOwner(owner, call.Session, roles))
             return Py.Tuple(new PyList([]), new PyDict([]));
         var owned = await readOwned(owner, call.Cancellation);
-        var held = owned.Where(blueprint => CanRead(blueprint, call.Session)).ToArray();
+        var held = owned.Where(blueprint => CanRead(blueprint, call.Session, roles)).ToArray();
         var jobs = await readActiveJobs(owner, call.Cancellation);
         IEnumerable<PyValue> listed = facility is null
             ? held.Take(MaxBlueprintResults).Select(blueprint => Payload(blueprint, jobs.TryGetValue(blueprint.ItemId, out var job) ? job : null))
@@ -61,30 +66,26 @@ public sealed partial class BlueprintManagerService(
     }
 
     /// <summary>The character or corporation the session acts for: the owner's own blueprints only.</summary>
-    private static bool CanRead(BlueprintRecord blueprint, ClientSession session)
+    private async ValueTask<Eve.Corporations.SessionRoles?> CorporationRolesAsync(long owner, ServiceCall call)
     {
-        if (blueprint.OwnerId == session.CharacterId)
-            return true;
-        if (!HoldsCorporation(blueprint.OwnerId, session))
-            return false;
-
-        var roles = new Eve.Corporations.SessionRoles(
-            session.GetInt("corprole") ?? 0,
-            session.GetInt("rolesAtAll") ?? 0,
-            session.GetInt("rolesAtHQ") ?? 0,
-            session.GetInt("rolesAtBase") ?? 0,
-            session.GetInt("rolesAtOther") ?? 0,
-            session.GetInt("hqID"),
-            session.GetInt("baseID"),
-            (int)(session.GetInt("corpAccountKey") ?? 1000));
-        return (roles.CorpRole & Eve.Corporations.CorporationRoles.FactoryManager) != 0 &&
-            Eve.Corporations.CorporationRoles.HasHangarAccess(roles, blueprint.LocationId, blueprint.Flag, take: false);
+        var characterId = call.Session.CharacterId ?? 0;
+        if (owner <= 0 || owner != (call.Session.GetInt("corpid") ?? 0) || characterId <= 0)
+            return null;
+        return await readCorporationRoles(characterId, owner, call.Session.DockedLocationId, call.Cancellation);
     }
 
-    private static bool CanListOwner(long owner, ClientSession session) =>
+    private static bool CanRead(BlueprintRecord blueprint, ClientSession session, Eve.Corporations.SessionRoles? roles) =>
+        blueprint.OwnerId == session.CharacterId ||
+        HoldsCorporation(blueprint.OwnerId, session) &&
+        roles is { } currentRoles &&
+        (currentRoles.CorpRole & Eve.Corporations.CorporationRoles.FactoryManager) != 0 &&
+        Eve.Corporations.CorporationRoles.HasHangarAccess(currentRoles, blueprint.LocationId, blueprint.Flag, take: false);
+
+    private static bool CanListOwner(long owner, ClientSession session, Eve.Corporations.SessionRoles? roles) =>
         owner > 0 && (owner == session.CharacterId ||
             HoldsCorporation(owner, session) &&
-            ((session.GetInt("corprole") ?? 0) & Eve.Corporations.CorporationRoles.FactoryManager) != 0);
+            roles is { } currentRoles &&
+            (currentRoles.CorpRole & Eve.Corporations.CorporationRoles.FactoryManager) != 0);
 
     private static bool HoldsCorporation(long owner, ClientSession session) =>
         owner > 0 && owner == (session.GetInt("corpid") ?? 0);

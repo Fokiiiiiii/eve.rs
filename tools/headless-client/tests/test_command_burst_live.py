@@ -93,7 +93,10 @@ def test_a_loaded_burst_changes_a_fleet_members_dogma_until_its_buff_expires():
         notifications_of(member)
 
         owner_ballpark = owner.call("beyonce", "MachoBindObject", SYSTEM, None)
-        owner.call_bound(owner_ballpark[0], "CmdWarpToStuff", "item", member_ship, minRange=0)
+        try:
+            owner.call_bound(owner_ballpark[0], "CmdWarpToStuff", "item", member_ship, minRange=0)
+        except Exception as error:
+            raise AssertionError(f"pilot A could not warp to pilot B: {error!r}; payload={getattr(error, 'payload', None)!r}") from error
         arrived = wait_for_events(
             owner,
             lambda events: any("Stop" in destiny_names(event) for event in events),

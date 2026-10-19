@@ -110,7 +110,7 @@ Before porting each row, require exact V24 callsite or static-data evidence from
 ## Recommended next 15 implementation/research slices
 
 1. Verify the eve.rs space tick cadence, warp selected range, and approach docking (M): three fundamental visible movement cases are explicit upstream fixes.
-2. Add/account-session exclusivity review and regression (S): prevents simultaneous account sessions and is a bounded server policy.
+2. DONE (defect fixed): Host account-session admission now atomically replaces an existing same-account client and sends its clean disconnect reason; `ConnectedSessionsTests` covers replacement, stale close, and concurrent opens.
 3. Reconcile market tax semantics against V24 formula and NPC/structure location (S): TODO's 7.5% and release 1% statement need a precise split.
 4. Verify failed sell refund and Buy Multiple transaction flows (M): both expose wallet/inventory correctness and retries.
 5. Trace industry calculation and Corp Deliveries against V24 client calculation (L): highest confidence route to resolve broad parity claims.

@@ -219,6 +219,7 @@ internal sealed class FrontConnection : IAsyncDisposable
     {
         var session = new ClientSession { SessionId = unchecked((long)open.SessionId), ClientId = unchecked((long)open.ClientId) };
         session.Sink = new LinkSink(this, open.SessionId);
+        session.AttachDisconnectClient(reason => Disconnect(open.SessionId, reason));
         session.UserId = open.UserId;
         session.Set("clientID", new PyLong(unchecked((long)open.ClientId)));
         // The account's role is kept apart: the client's own `role` only comes with a character (SelectCharacterID).
@@ -228,12 +229,12 @@ internal sealed class FrontConnection : IAsyncDisposable
         session.Set("languageID", new PyStr(open.Language));
         session.Set("countryCode", new PyStr(open.CountryCode));
 
-        _options.SessionOpened?.Invoke(session);
         var actor = new SessionActor(session, _dispatcher, _options, Disconnect: reason => Disconnect(open.SessionId, reason), ct);
         if (!_sessions.TryAdd(open.SessionId, actor))
         {
             throw new HostLinkException(HostLinkError.BadStatus, $"session {open.SessionId} is already open");
         }
+        _options.SessionOpened?.Invoke(session);
         // The client waits for this before anything else; it goes out ahead of every reply.
         session.Send(SessionInitialState.Build(open.SessionId, open.ClientId, open.UserId, open.Role, open.Address, open.Language, open.CountryCode));
         actor.Start();

@@ -230,6 +230,29 @@ public sealed class ClientSession
     public event Action? Closed;
 
     /// <summary>Ends the session. Later calls do nothing.</summary>
+private Action<string>? _disconnectClient;
+
+    /// <summary>Sets the front link action used to close this account's previous connection.</summary>
+    public void AttachDisconnectClient(Action<string> disconnect)
+    {
+        ArgumentNullException.ThrowIfNull(disconnect);
+        lock (_gate)
+        {
+            _disconnectClient = disconnect;
+        }
+    }
+
+    /// <summary>Requests a clean front-link disconnect with the supplied client-visible reason.</summary>
+    public void RequestDisconnect(string reason)
+    {
+        Action<string> disconnect;
+        lock (_gate)
+        {
+            disconnect = _disconnectClient ?? throw new InvalidOperationException("The session has no front-link disconnect action.");
+        }
+        disconnect(reason);
+    }
+
     public void Close()
     {
         if (Interlocked.Exchange(ref _closed, 1) == 0)

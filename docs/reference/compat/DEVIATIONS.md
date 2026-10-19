@@ -1,5 +1,9 @@
 # Deviations from the reference server
 
+## Account session exclusivity (2026-10-19)
+
+Host admission replaces an existing live connection when the same account opens a later client. The server sends the old connection a disconnect reason and updates the shared `ConnectedSessions` owner atomically; a late close from the old session cannot remove the new session. The V24.01 selection call paths and the release `multiLoginBlockerService.js:87-90` only address different accounts on one computer, while CCP's [Alpha clone guidance](https://support.eveonline.com/hc/en-us/articles/213811425-Alpha-Clones-and-Omega-Clone-lapsing-Quick-Facts) states an Alpha client prevents another client login. eve.rs applies one active client per account across its front connections. This slice has Host unit coverage for replacement and concurrent account opens; no graphical-client walk was performed.
+
 ## Global assets follow-up (2026-10-19)
 
 `charMgr` global assets now resolves a personal item's root by walking inventory parent locations to a static station or persistently deployed structure. The V24 callsite in `eve-logic/eve/client/script/environment/invCache.py` and EveJS `charMgrGlobalAssets.js` use this root to list root items and nested-container contents. eve.rs reads personal items from `PgItemStore` and structure metadata from the existing deployed-structure directory source. A focused `eve_p2` regression covers a structure root, a container directly stored there, and a child item. The Host wrapper end-to-end regression and exact structure `upkeepState` parity remain open; this batch records no intentional client behavior difference.

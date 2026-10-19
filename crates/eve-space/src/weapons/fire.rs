@@ -37,7 +37,7 @@ impl Scene {
     }
 
     /// Whether a precursor weapon that builds its damage up (a spool) has its target past its optimal range (with the shooter's range disruption
-    /// counted): the turret then stops, and what it built goes with it. The reference has no falloff for it (wiki: Entropic Disintegrator).
+
     pub(crate) fn spool_target_out_of_optimal(&self, session: SessionId, effect: &Effect) -> bool {
         let Some(turret) = effect.turret.as_ref() else { return false };
         if turret.spool.is_none() {
@@ -75,7 +75,6 @@ impl Scene {
         })
     }
 
-    /// The character that owns a ship, or its owner when nobody flies it (what the combat log says the shot was fired by).
     pub(crate) fn combat_owner(&self, session: SessionId) -> i64 {
         self.pilots.get(&session).map_or(0, |pilot| {
             let spec = &pilot.ship.spec;
@@ -151,8 +150,7 @@ impl Scene {
             return self.stop_module(session, effect.module_id, at);
         }
         let owner = self.combat_owner(session);
-        // EVE.js server/src/space/modules/smartbombRuntime.js (828823a75f211fdecb945b087a26c225f111491f)
-        // runs empWave per cycle; eve-logic EMPWave.py (1dbb5711a072a146e1d228365668ac05655eefe1)
+
         // renders the field and impacts from the source ship and module type.
         // Advance past the previous one-shot's expiry before reusing this module ID.
         let _ = self.next_stamp(at);
@@ -364,7 +362,7 @@ impl Scene {
                 .is_some_and(|structure_id| self.control_lease_generation(session, structure_id).is_some())
             && turret.aoe.is_some()
             && turret.arc.is_some();
-        // Piloted ships retain EveJS's ordinary arc selection. A controlled structure waits for a fresh,
+
         // correlated Host authorization on each link before applying its secondary damage.
         let arc_victims = match (turret.aoe, turret.arc, structure_arc) {
             (Some(_), Some(arc), false) if shot.hit => {

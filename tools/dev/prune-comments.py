@@ -50,7 +50,14 @@ def rust_cs_comments(src: str, csharp: bool) -> list[tuple[int, int, str]]:
                 end = src.find(closing, i + m.end())
                 i = n if end < 0 else end + len(closing)
                 continue
+            if src[i] == "'" and re.match(r"'(?:\\.|[^'\\])'", src[i:]):
+                m = re.match(r"'(?:\\.|[^'\\])'", src[i:])
+                i += len(m.group(0))
+                continue
             if src[i] in ('"', "'"):
+                if src[i] == "'":
+                    i += 1
+                    continue
                 q = src[i]; i += 1
                 while i < n:
                     if src[i] == '\\': i += 2

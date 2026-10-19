@@ -101,11 +101,11 @@ pub const TETHER_POLICY: u8 = 80;
 pub const TETHER_CHANGED: u8 = 81;
 /// Simulation-to-host damageable candidates for one structure pulse or ordered chain hop (protocol 68).
 pub const STRUCTURE_DAMAGE_CANDIDATES_REQUEST: u8 = 85;
-/// Host-to-simulation allowed targets for exactly the same correlated damage step (protocol 68).
+
 pub const STRUCTURE_DAMAGE_CANDIDATES_RESULT: u8 = 86;
 /// The host removes a structure-owned cyno beacon from its solar-system scene (protocol 68).
 pub const REMOVE_CYNO_BEACON: u8 = 87;
-/// The simulation registers or updates a created damageable entity's owner identity (protocol 69).
+
 pub const DAMAGEABLE_ENTITY_UPSERTED: u8 = 88;
 /// The simulation removes a non-destroyed damageable entity from the Host identity registry (protocol 69).
 pub const DAMAGEABLE_ENTITY_REMOVED: u8 = 89;
@@ -116,7 +116,7 @@ pub const REMOTE_DECLOAK_PING: u8 = 91;
 /// The host puts a player control tower in space where its pilot launched it, anchored or not (protocol 73): a disruptor's placement, with range 0.
 pub const PLACE_CONTROL_TOWER: u8 = 92;
 /// The host puts a deadspace pocket of a dungeon (a mission pocket or an incursion site) in space at its origin, with its radius (protocol 74): a disruptor's
-/// placement with type, group and range 0 and no owner. It is in no client ball.
+
 pub const PLACE_DEADSPACE_POCKET: u8 = 93;
 /// The host creates or refreshes a static-free Abyssal room scene (protocol 75).
 pub const ENSURE_ABYSSAL_SCENE: u8 = 98;

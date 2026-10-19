@@ -1,5 +1,5 @@
 //! The Standup burst projectors of a controlled structure (ST-8b). The structure's pilot runs the module. Each pulse first asks the Host which of the
-//! ships in reach the structure's owner may affect (the per-pulse authorization of the point defense and the strikes, Kind 85 and Kind 86), and only
+
 //! the ships the Host returns are reached. What a pulse lands is the projected effect of the family (`Remote`), with the ship effect's numbers.
 
 use super::{Effect, PendingStructureDamageOperation, Remote};

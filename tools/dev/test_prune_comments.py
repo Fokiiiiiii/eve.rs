@@ -20,6 +20,9 @@ class PruneCommentsTests(unittest.TestCase):
 fn f() { let s = r###"// intact /* intact */"###; /* outer /* inner */ tail */ }
 ''', 'rs')
 
+    def test_rust_lifetime_does_not_hide_comments(self):
+        self.check("fn f<'a>(x: &'a str) { // TODO: stale\n let _ = x; }\n", 'rs')
+
     def test_csharp_verbatim_interpolated_raw_and_directive(self):
         self.check('''#nullable enable
 /// <summary>TODO: stale</summary>

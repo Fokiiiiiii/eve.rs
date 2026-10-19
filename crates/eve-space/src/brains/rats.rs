@@ -60,7 +60,7 @@ pub fn pochven_tree_kind(behavior: &str) -> Option<bool> {
 }
 
 /// The tree of a Pochven NPC: the rat's tree, with entities in its sensors' reports (the fleets of the other factions are entities, category 11), the
-/// owners it attacks only the ones given (`pochven_population::owners_for`), and, for a sentry, no movement.
+
 pub fn create_pochven_behavior_tree(stationary: bool, owners: &Owners) -> BehaviorTree {
     fighter(
         if stationary { "Pochven sentry" } else { "Pochven NPC" },
@@ -86,7 +86,6 @@ pub fn create_pochven_behavior_tree(stationary: bool, owners: &Owners) -> Behavi
     )
 }
 
-/// A list of owner ids for a sensor's filter.
 fn owner_list(owners: &[i64]) -> Value {
     Value::List(owners.iter().map(|owner| Value::Int(*owner)).collect())
 }

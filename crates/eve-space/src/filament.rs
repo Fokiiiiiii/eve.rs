@@ -1,6 +1,5 @@
-//! Pochven's filaments (`docs/project/POCHVEN_DESIGN.md`): the travel items that carry a fleet into and out of Pochven. The numbers are the SDE's
 //! (build 3396210, `typeDogma`, attributes `mjdShipJumpCap`, `filamentSpoolupTimeSeconds`, `mjfgRadius`, `lightYearDistanceMax`); the trace rules are the
-//! EVE University wiki's (Filament, Pochven, read 2026-10-12). Where the wiki and the SDE differ the SDE is used (the wiki's "Pochven Inbound 60 s" does not
+
 //! match the SDE's 30 s and 45 s for the Cladistic and Pochven-system filaments). The destinations are not in the client extract (the location lists 4510 to
 //! 4569 are not in it), so this module gives the rules and not the jump's target: the jump is not built.
 
@@ -23,7 +22,7 @@ pub struct Filament {
     pub direction: Direction,
     /// The most subcapital ships it carries (`mjdShipJumpCap`).
     pub ship_cap: u32,
-    /// How long the owner spools the filament up before the jump, seconds (`filamentSpoolupTimeSeconds`).
+
     pub spool_up_s: u32,
     /// The distance from the trace within which fleet members link to it, metres (`mjfgRadius`).
     pub link_radius_m: f64,
@@ -188,11 +187,10 @@ pub const FILAMENTS: [Filament; 17] = [
     },
 ];
 
-/// A filament's trace cannot be jumped for this long after its first use (wiki, Pochven: "up to 3.5 minutes after initial use"), seconds.
 pub const OUTBOUND_TRACE_COOLDOWN_S: u32 = 210;
-/// A trace closes this long after it first appears (wiki, Filament), seconds.
+
 pub const TRACE_LIFETIME_S: u32 = 900;
-/// A linked character that goes beyond this distance from the trace is unlinked, and a broken link cannot be made again (wiki, Filament), metres.
+
 pub const UNLINK_DISTANCE_M: f64 = 30_000.0;
 /// One light-year, metres.
 pub const LIGHT_YEAR_M: f64 = 9.460_730_472_580_8e15;

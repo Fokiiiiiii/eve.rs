@@ -27,7 +27,7 @@ impl Scene {
     }
 
     /// The Host's current structure-pilot record version for this controller lease.
-    /// The source of a structure burst (ST-17 d): the structure the pilot controls, or else the pilot's own ship (a ship-fitted burst projector).
+
     pub(crate) fn burst_source_id(&self, session: SessionId) -> Option<i64> {
         self.controlled_structure_id(session)
             .or_else(|| self.pilots.get(&session).map(|pilot| pilot.ship.spec.ship_id))

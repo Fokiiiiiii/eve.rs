@@ -1,5 +1,3 @@
-//! What a system's security status looks like to the client: its class, the icon on a stargate, the warning before a step down.
-
 fn pseudo(security: f64) -> f64 {
     let clamped = if security.is_finite() { security.clamp(0.0, 1.0) } else { 0.0 };
     if clamped > 0.0 && clamped < 0.05 { 0.05 } else { clamped }

@@ -356,7 +356,7 @@ pub enum Out {
         bonus_per_cycle: f64,
         bonus_max: f64,
     },
-    /// Fresh candidates for one controlled-structure damage pulse or chain hop; Host returns an owner-corp-approved subset using the complete correlation tuple.
+
     StructureDamageCandidatesRequest {
         session: SessionId,
         structure_id: i64,

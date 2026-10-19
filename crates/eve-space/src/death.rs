@@ -204,7 +204,7 @@ impl Scene {
         {
             let ship_id = spec.ship_id;
             // Keep the hull's current position, velocity, and damage while applying
-            // the new pilot's ship specification and ownership.
+
             pilot.ship.spec = spec;
             pilot.bound = widow.bound;
             pilot.entered = self.next_entry();

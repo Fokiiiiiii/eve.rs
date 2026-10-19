@@ -68,7 +68,8 @@ internal sealed class Rig : IAsyncDisposable
     new(Characters, homeStations ?? CreateHomeStationResolver(Characters), ReadRecentShipKillmailPageAsync,
         ReadCharacterDescriptionAsync, WriteCharacterDescriptionAsync, ReadSecurityStatusAsync, ReadMedal1GraphicIdAsync,
         readPersonalData, updatePersonalData, writeActivityStatus, writeLogSettings,
-        readCorporationMemberStartedMs, readOrganizationInfo);
+        readCorporationMemberStartedMs, readOrganizationInfo,
+        readBalance: async (characterId, token) => (await Wallets.GetAsync(characterId, token))?.Isk);
 
 public static HomeStationResolver CreateHomeStationResolver(
     PgCharacterStore characters,
@@ -522,6 +523,27 @@ public class CharMgrTests
         Assert.Equal(await Rig.CallAsync(rig.CharMgr, session, "GetCharacterCreationDate", Id(characterId)), fields["startDateTime"]);
         Assert.Equal(Py.Number(-2.5), fields["securityStatus"]);
         Assert.Equal(Id(9876), fields["medal1GraphicID"]);
+    }
+
+
+    [PgFact]
+    public async Task Private_info_returns_the_authoritative_member_editor_row()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var characterId = await rig.MakeAsync("Ann Lee", isk: 54321.75m);
+        rig.SecurityStatuses[characterId] = -1.25;
+        var character = (await rig.Characters.GetAsync(characterId))!;
+        var (session, _) = Rig.Session(characterId);
+
+        var actual = await Rig.CallAsync(rig.CharMgr, session, "GetPrivateInfo", Id(characterId));
+        var expected = Py.Rowset(
+            ["characterID", "gender", "createDateTime", "raceID", "bloodlineID", "ancestryID", "balance", "securityRating"],
+            [new PyList([
+                Id(characterId), new PyInt(character.Gender), await Rig.CallAsync(rig.CharMgr, session, "GetCharacterCreationDate", Id(characterId)),
+                new PyInt(character.RaceId), new PyInt(character.BloodlineId), new PyInt(character.AncestryId),
+                Py.Number(54321.75), Py.Number(-1.25),
+            ])]);
+        Assert.True(PyValue.DeepEquals(expected, actual));
     }
 
     [PgFact]

@@ -199,10 +199,10 @@ def test_the_recorded_walk_replays():
             if method == "GetNumCharacters" and not REFERENCE:
                 recorded_ok = min(recorded_ok, 3)  # DEVIATION (slots), see above
             if method == "ToggleValidation":
-                # The recording was made from a GM session (role bit 54), whose first toggle turns the check off. The walk's
-                # account is not elevated, and for such a session the answer is True (charService.js:1883-1891). The elevated
-                # answer is pinned by ValidationAndOmegaTests in the dotnet suite.
-                recorded_ok = True
+                # The recording and this walk both use a GM account (role bit 54), whose first toggle disables validation.
+                # The headless-client fixture grants staff roles for this account; the elevated path is also pinned by
+                # ValidationAndOmegaTests in the .NET suite.
+                recorded_ok = False
             problems += same_way(recorded_ok, outcome, where)
 
         # Compare the recorded session and skills packets after checking eve.rs's extra selection notification.

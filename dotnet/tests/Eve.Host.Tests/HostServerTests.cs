@@ -1221,7 +1221,8 @@ public class HostServerTests : IAsyncLifetime
             Npgsql.NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest("Host=127.0.0.1;Port=1;Database=unused")),
             new Dictionary<string, string> { [Eve.Services.Core.MiningLedgerQueries.SpaceSchema] = "unused" }));
         var characterMining = new Eve.Services.Core.CharacterMiningLedgerService(ledgerReads);
-        var corporationMining = new Eve.Services.Core.CorpMiningLedgerService(ledgerReads);
+        var corporationMining = new Eve.Services.Core.CorpMiningLedgerService(
+            ledgerReads, (_, _, _) => ValueTask.FromResult(false));
         var agents = new Eve.Services.Core.AgentMissionService(
             (_, _) => ValueTask.FromResult<System.Text.Json.Nodes.JsonObject?>(null),
             (_, _, _) => ValueTask.FromResult<IReadOnlyDictionary<long, System.Text.Json.Nodes.JsonObject>>(new Dictionary<long, System.Text.Json.Nodes.JsonObject>()),

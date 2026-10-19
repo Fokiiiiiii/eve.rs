@@ -2692,6 +2692,10 @@ The simulation writer now appends encoded frames directly to its batch buffer. T
 - **ESS:** Extend the live walk through link, reserve bank interaction, and key consumption. Select a link-module-compatible hull automatically from SDE fitting restrictions and grant it fitted and online with a role-gated GM command (Q-25).
 
 
+## Chat transport inventory (2026-10-19)
+
+The reviewed V24.01 contract and coverage matrix are recorded in `docs/reference/compat/DEVIATIONS.md`, “V24.01 chat transport inventory”. The client uses XMPP for room discovery, membership, private conversations, presence, group messages, invites, and MOTD subjects; it has no Macho `LSC` callsite or `OnLSC` consumer. eve.rs currently serves the Local protobuf requests/notices and Local/group channel behavior only. Open work: XMPP authentication and room transport, private conversations, ignore/block enforcement, channel MOTD, XMPP staff presence, channel administration RPCs, native LSC method shape compatibility as a separate surface, and a two-character headless live walk covering K-space Local, corporation chat, private conversation, and delayed J-space Local.
+
 ## Research tasks from 2026-10-19 reports
 
 - **Security agent:** add regression cases for zero-value donation response projection, idempotent duplicate requests, pre-SessionInit calls, admin-only service authorization, and bounded nested substreams.

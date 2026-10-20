@@ -50,6 +50,10 @@ The Host rejects repeated private-room invitations from one character within one
 
 `fleetObject.SendBroadcast` fans out to current fleet members and now consumes 10 units from the shared per-session rolling-minute RPC budget. Beyond the configured allowance, the dispatcher returns `SessionRpcBudgetExceeded`; calls within the allowance retain the existing notification shape and delivery rules. `DispatchGoldenTests.Expensive_market_calls_have_a_named_per_session_budget` verifies that an over-budget broadcast is refused.
 
+## Character note RPC text bounds (2026-10-20)
+
+`charMgr.AddOwnerNote` and `EditOwnerNote` cap owner-note labels at 82 characters and bodies at the V24.01 notepad counter limit of 3,900 characters; `SetNote` refuses item notes above the client's 5,000-character save slice. Over-limit direct RPC calls receive named refusals before personal data persistence. The focused CharacterInfo regression verifies refusal and unchanged stored note values.
+
 ## Project status
 
 Summary of this file, as of 2026-10-18. The task list with the same areas is the "Project status" table at the top of `docs/project/TODO.md`. **Status** is the state of the area; **Project rule** is the rule a deviation stands on; **Cut** lists what the owner or the evidence has cut, with the entry that records it. A cut item without an entry here or in its section is a bug in this file.

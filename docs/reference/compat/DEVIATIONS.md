@@ -26,9 +26,17 @@ The V24.01 trade window builds a two-pilot money manifest and a set of offered i
 
 `account.GetTransactions`, `GiveCash`, and `GiveCashFromCorpAccount` now consume the existing per-session weighted RPC budget. The budget returns the named `SessionRpcBudgetExceeded` response after the configured minute allowance. This is server-side resource accounting and does not alter a call's result while it remains within budget. `DispatchGoldenTests.Expensive_wallet_calls_have_a_named_per_session_budget` covers refusal after the limit.
 
+## Persisted anti-addiction session history (2026-10-20)
+
+EveJS 261018.1 returns the configurable `accruedSessions` list, empty by default. V24.01 `antiaddiction.Session.PreLoad` consumes each row as a session ID and start/end clock ticks, then retains the history in client settings. eve.rs persists authenticated account session intervals in PostgreSQL and returns the same row shape; an active session uses the current clock for its end value, and Host close stores its end. `PgAccruedTimeStoreTests` verifies persistence across store restart and `test_a_new_account_is_omega_until_2100_on_every_answer` checks the live client response.
+
+## Login service discovery boundary (2026-10-20)
+
+The player service table does not advertise `loadService` or `externalQueueMgr`. V24.01 client sources contain no login callsites for these names: `loadService` is server-side test-load generation, while `externalQueueMgr` is used by server cluster and Dogma telemetry publishers. EveJS 261018.1 records external queue calls for audit but does not deliver them. `ServiceAdvertisementTests` verifies both names have no client route. Post-login Dogma telemetry delivery remains a separate open service path.
+
 ## Inventory RPC work budget (2026-10-20)
 
-Inventory open, list, and asset-enumeration RPCs consume 2 units each in the shared 120-unit per-session rolling-minute budget. This preserves inventory navigation across hangars and ships while retaining a refusal for excessive enumeration. The budget is an intentional server-side limit with no response change while within allowance. `DispatchGoldenTests.Expensive_market_calls_have_a_named_per_session_budget` verifies direct opens followed by bound inventory reads and refusal after the test allowance is consumed.
+Inventory open, list, and asset-enumeration RPCs consume 2 units each in the shared 120-unit per-session rolling-minute budget. This preserves inventory navigation across hangars and ships while retaining a refusal for excessive enumeration. The budget is an intentional server-side limit with no response change while within allowance. `DispatchGoldenTests.Expensive_market_calls_have_a_named_per_session_budget` verifies direct opens followed by bound inventory reads and refusal after the test allowance is consumed. `test_a_new_characters_inventories_are_those_of_the_reference` confirms the recorded new-character walk completes for all four races.
 
 ## LP store singleton grant bound (2026-10-20)
 

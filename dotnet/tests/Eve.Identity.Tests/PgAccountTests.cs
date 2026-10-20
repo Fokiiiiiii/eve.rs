@@ -60,6 +60,20 @@ public class PgAccountTests
     }
 
     [PgFact]
+    public async Task Account_age_gate_comes_from_persisted_verification_state()
+    {
+        await using var schema = await PgSchema.CreateAsync();
+        var directory = new PgAccountDirectory(schema.Source, new AccountOptions { AutoCreate = true }, schema.Name);
+        var login = Assert.IsType<LoggedIn>(await directory.LoginAsync(new LoginAttempt("pilot", new byte[] { 1 }, "EN", "x"), CancellationToken.None));
+        Assert.False(await directory.IsUnderageAsync(login.AccountId, CancellationToken.None));
+        Assert.True(await directory.SetUnderageAsync(login.AccountId, true));
+        var restarted = new PgAccountDirectory(schema.Source, new AccountOptions { AutoCreate = true }, schema.Name);
+        Assert.True(await restarted.IsUnderageAsync(login.AccountId, CancellationToken.None));
+        Assert.True(await restarted.SetUnderageAsync(login.AccountId, false));
+        Assert.False(await directory.IsUnderageAsync(login.AccountId, CancellationToken.None));
+    }
+
+    [PgFact]
     public async Task A_successful_login_is_stamped_and_a_refused_one_is_not()
     {
         await using var schema = await PgSchema.CreateAsync();

@@ -138,6 +138,16 @@ public sealed record ContextualOfferEvent(
 [Service("localizationServer")]
 public sealed partial class LocalizationServerService
 {
+    private readonly PyValue? _configuredTextChanges;
+
+    public LocalizationServerService(PyValue? configuredTextChanges = null)
+    {
+        if (configuredTextChanges is not null &&
+            (configuredTextChanges is not PyTuple { Items.Count: 3 } changes || changes.Items.Any(value => value is not PyDict)))
+            throw new ArgumentException("Localization text changes must be a tuple of three dictionaries.", nameof(configuredTextChanges));
+        _configuredTextChanges = configuredTextChanges;
+    }
+
     public Func<ServiceCall, ValueTask<PyValue?>>? RpcHandler { get; set; }
 
     private int _qaWrapActive;
@@ -158,10 +168,10 @@ public sealed partial class LocalizationServerService
 
     [Method("GetAllTextChanges")]
     public ValueTask<PyValue> GetAllTextChanges(ServiceCall call) =>
-        !CompatibilityRpc.IsStaff(call) ? ValueTask.FromResult<PyValue>(Py.Tuple(new PyDict([]), new PyDict([]), new PyDict([]))) : CompatibilityRpc.Invoke(call, RpcHandler, () =>
+        CompatibilityRpc.Invoke(call, RpcHandler, () =>
         {
             Record(call, "get_all_text_changes");
-            return Py.Tuple(new PyDict([]), new PyDict([]), new PyDict([]));
+            return _configuredTextChanges ?? Py.Tuple(new PyDict([]), new PyDict([]), new PyDict([]));
         });
 
     [Method("ReloadFSDPickle")]

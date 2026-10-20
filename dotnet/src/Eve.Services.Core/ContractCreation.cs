@@ -112,6 +112,7 @@ public sealed record ContractCreationInfo(
     {
         PyStr value => value.Value,
         PyWString value => value.Value,
+        PyBytes value => System.Text.Encoding.UTF8.GetString(value.Value.Span),
         _ => string.Empty,
     };
 

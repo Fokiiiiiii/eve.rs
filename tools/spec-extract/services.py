@@ -12,12 +12,10 @@ import pathlib
 import re
 import sys
 
-# Calls that name a service the client reaches over the wire.
 REMOTE_SVC = re.compile(r"""RemoteSvc\(\s*['"]([A-Za-z0-9_]+)['"]\s*\)(?:\s*\.\s*([A-Za-z_][A-Za-z0-9_]*))?""")
 CONNECT = re.compile(
     r"""(?:ConnectToRemoteService|ConnectToAnyService|ConnectToSolServerService|"""
     r"""ConnectToProxyServerService|ConnectToService)\(\s*['"]([A-Za-z0-9_]+)['"]""")
-
 
 def main(root: pathlib.Path) -> None:
     pairs = collections.Counter()
@@ -48,7 +46,6 @@ def main(root: pathlib.Path) -> None:
     remote = sum(1 for s in names if "RemoteSvc" in via[s])
     print(f"# scanned {files} files: {len(names)} service names ({remote} via RemoteSvc), "
           f"{len(pairs)} service.method pairs", file=sys.stderr)
-
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:

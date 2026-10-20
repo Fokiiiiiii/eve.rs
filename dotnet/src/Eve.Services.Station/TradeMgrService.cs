@@ -17,6 +17,7 @@ public sealed partial class TradeMgrService(CharacterSessions sessions, TradeAut
 {
     private const string MonikerName = "carbon.common.script.net.moniker.Moniker";
     private const string RowName = "carbon.common.script.sys.row.Row";
+    internal const int MaxTradeBulkItems = 256;
 
     /// <summary>The header of the trade's list row, in the client's order (the client reads <c>tradeContainerID</c>, <c>traders</c>, <c>money</c> and <c>items</c>).</summary>
     private static readonly string[] ListHeader = ["tradeContainerID", "traders", "state", "money", "items"];
@@ -164,7 +165,7 @@ public sealed partial class TradeMgrService(CharacterSessions sessions, TradeAut
     public async ValueTask<PyValue> MultiAdd(ServiceCall call)
     {
         var view = await BoundViewAsync(call).ConfigureAwait(false);
-        var ids = ArgsOf(call.Arg(0)).Select(IdOf).Where(id => id is > 0).Select(id => id!.Value).Distinct().ToList();
+        var ids = ItemIdsOf(call.Arg(0));
         if (ids.Count == 0)
             return PyBool.False;
         foreach (var itemId in ids)
@@ -177,7 +178,7 @@ public sealed partial class TradeMgrService(CharacterSessions sessions, TradeAut
     public async ValueTask<PyValue> OfferMoney(ServiceCall call)
     {
         var view = await BoundViewAsync(call).ConfigureAwait(false);
-        var amount = Math.Round((decimal)NumberOf(call.Arg(0)), 2);
+        var amount = Math.Round(AmountOf(call.Arg(0)), 2);
         try
         {
             var change = await trades!.SetMoneyAsync(view.TradeId, CharacterOf(call.Session), amount, call.Cancellation).ConfigureAwait(false);
@@ -362,12 +363,11 @@ public sealed partial class TradeMgrService(CharacterSessions sessions, TradeAut
     internal static (long Container, List<decimal> Money, HashSet<long> Items) ManifestOf(PyValue manifest)
     {
         var container = IdOf(FieldOf(manifest, "tradeContainerID")) ?? 0;
-        var money = ArgsOf(FieldOf(manifest, "money")).Select(v => Math.Round((decimal)NumberOf(v), 2)).ToList();
-        var items = new HashSet<long>();
-        foreach (var entry in ArgsOf(FieldOf(manifest, "tradeItems")))
-        {
-            if (ItemIdOf(entry) is { } id) items.Add(id);
-        }
+        var moneyValues = ArgsOf(FieldOf(manifest, "money")).Take(3).ToArray();
+        if (moneyValues.Length != 2)
+            throw Notify("The trade offer is malformed.");
+        var money = moneyValues.Select(v => Math.Round(AmountOf(v), 2)).ToList();
+        var items = ItemIdsOf(FieldOf(manifest, "tradeItems")).ToHashSet();
         return (container, money, items);
     }
 
@@ -420,19 +420,45 @@ public sealed partial class TradeMgrService(CharacterSessions sessions, TradeAut
 
     private static PyValue Kwarg(PyValue kwargs, string name) => FieldOf(kwargs, name);
 
+    internal static List<long> ItemIdsOf(PyValue value)
+    {
+        var requested = ArgsOf(value).Take(MaxTradeBulkItems + 1).ToArray();
+        if (requested.Length > MaxTradeBulkItems)
+            throw Notify("The trade item list exceeds the limit.");
+        var ids = new List<long>(requested.Length);
+        foreach (var entry in requested)
+        {
+            var id = ItemIdOf(entry);
+            if (id is not > 0)
+                throw Notify("The trade item list contains an invalid item.");
+            ids.Add(id.Value);
+        }
+        return ids.Distinct().ToList();
+    }
+
+    private static decimal AmountOf(PyValue value)
+    {
+        try
+        {
+            return value switch
+            {
+                PyInt number => number.Value,
+                PyLong number => number.Value,
+                PyReal real when double.IsFinite(real.Value) => checked((decimal)real.Value),
+                _ => throw Notify("The trade amount is invalid."),
+            };
+        }
+        catch (OverflowException)
+        {
+            throw Notify("The trade amount is outside the supported range.");
+        }
+    }
+
     private static long? IdOf(PyValue value) => value switch
     {
         PyInt number => number.Value,
         PyLong number => number.Value,
         _ => null,
-    };
-
-    private static double NumberOf(PyValue value) => value switch
-    {
-        PyInt number => number.Value,
-        PyLong number => number.Value,
-        PyReal real => real.Value,
-        _ => 0,
     };
 
     private static long PositiveCharacterId(PyValue value) => value switch

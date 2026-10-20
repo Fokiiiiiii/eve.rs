@@ -96,6 +96,7 @@ public sealed partial class SpaceSessions
             _log?.Invoke($"bridge jump of session {session.SessionId} through ship {bridgeShipId} refused: {reply.Reason}");
             throw BridgeRefusal(reply.Reason);
         }
+        await CancelShipSelfDestructAsync(pilot.ShipId, cancellationToken);
         SendJumpQueueUpdate(session, pilot.CharacterId, destination);
         return Py.Tuple(boundObjectId is null ? None : new PyStr(boundObjectId), new PyLong(Py.FileTimeFromUnixMs(_nowUnixMs() + SessionChangeCooldownMs)));
     }
@@ -145,6 +146,8 @@ public sealed partial class SpaceSessions
             _log?.Invoke($"conduit jump of session {session.SessionId} to field {fieldId} refused: {reply.Reason}");
             throw BridgeRefusal(reply.Reason);
         }
+        foreach (var jumper in jumpingPilots)
+            await CancelShipSelfDestructAsync(jumper.ShipId, cancellationToken);
         SendJumpQueueUpdate(session, pilot.CharacterId, destination);
         return Py.Tuple(boundObjectId is null ? None : new PyStr(boundObjectId), new PyLong(Py.FileTimeFromUnixMs(_nowUnixMs() + SessionChangeCooldownMs)));
     }
@@ -224,6 +227,7 @@ public sealed partial class SpaceSessions
             }
             throw JumpRefused(reply.Reason);
         }
+        await CancelShipSelfDestructAsync(pilot.ShipId, cancellationToken);
         SendJumpQueueUpdate(session, pilot.CharacterId, destination);
         return Py.Tuple(boundObjectId is null ? None : new PyStr(boundObjectId), new PyLong(Py.FileTimeFromUnixMs(_nowUnixMs() + SessionChangeCooldownMs)));
     }

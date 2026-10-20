@@ -120,6 +120,7 @@ public sealed partial class SpaceSessions : IDisposable, ISpaceTargeting, ISpace
 
     private readonly ISimulation _sim;
     private readonly CharacterShips _ships;
+    public DurableScheduler? TimedActions { get; set; }
     private readonly PgSpaceItemStore? _spaceItems;
     public Func<long, CancellationToken, Task<bool>>? StructureExistsAsync { get; set; }
 
@@ -1205,6 +1206,8 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
         _targeting.TryRemove(id, out _); // not disposed: an order may still be waiting on it
         if (!_pilots.TryRemove(id, out var pilot))
             return;
+        try { await CancelShipSelfDestructAsync(pilot.ShipId, CancellationToken.None); }
+        catch (Exception error) { _log?.Invoke($"self-destruct cleanup on disconnect failed: {error.Message}"); }
 
         if (abyssalResident && pilot.AbyssalContentId is { } disconnectedContent)
         {

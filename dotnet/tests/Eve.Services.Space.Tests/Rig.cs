@@ -141,6 +141,13 @@ private readonly Dictionary<long, ClientSession> _fleetSessions = new();
         Space = new SpaceSessions(Sim, Ships, statics, stations, systems, () => Now, Log.Add, protection, jumpCloak, localTimers, spaceItems: SpaceItems) { Registry = Registry, RookieShipOfRace = race => catalog.Race(race)?.ShipTypeId, Npcs = new Eve.Npc.NpcSelector(npcAuthorityOf), NpcWrecks = npcLoot ? new NpcWrecks(_ => LootTable, () => Task.FromResult(new Eve.Npc.NpcLoot(LootPool)), Ships, () => 0) : null, BeltRats = beltRats is null ? null : new Eve.Npc.BeltRats(npcAuthorityOf, beltRats, type => Eve.Npc.NpcHull.HasHitPoints(statics.Type(type))) };
         Space.UseBounties(Bounties);
         Scheduler = new Eve.Scheduler.DurableScheduler(source, () => Now, null, _schemas[7]);
+        Space.TimedActions = Scheduler;
+        Scheduler.Register(SpaceSessions.ShipSelfDestructJobKind, async (context, token) =>
+        {
+            var countdown = context.Payload<Eve.Services.ShipSelfDestructCountdown>()
+                ?? throw new InvalidDataException("A ship self-destruct deadline has no payload.");
+            await Space.CompleteShipSelfDestructAsync(countdown, token);
+        });
         Containers = new SpaceContainers(Sim, Ships, Items, SpaceItems, new Eve.Ships.PgWorkCycleLedger(source, _schemas[6]), new EventBusFacts(Events), statics, Space, () => Now, Log.Add, deployed: Deployed, scheduler: Scheduler);
         Scheduler.Register(SpaceContainers.AnchorJob, async (context, token) => await Containers.AnchorAsync(context.Payload<SpaceContainers.DisruptorAnchorDue>()!.DeployableId, token));
         Scheduler.Register(SpaceContainers.ObservatoryPingJob, async (context, token) => await Containers.PingObservatoryAsync(context.Payload<SpaceContainers.ObservatoryPingDue>()!.DeployableId, token));

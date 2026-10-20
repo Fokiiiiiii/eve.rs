@@ -238,6 +238,65 @@ public class PlayerDeathTests
     }
 
     [PgFact]
+    public async Task Bound_ship_self_destruct_is_durable_duplicate_safe_and_abortable()
+    {
+        var (rig, character, session) = await InSpaceAsync();
+        await using var _ = rig;
+        var bound = await rig.BindShipInSpaceAsync(session);
+        var wrongShip = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            rig.ShipCallAsync(session, "SelfDestruct", bound, new PyLong(character.ShipId + 1)));
+        Assert.Equal("CustomNotify", wrongShip.Error.UserErrorMessage);
+        Assert.Null(await rig.Scheduler.FindAsync(SpaceSessions.ShipSelfDestructJobKind, $"self-destruct:{character.ShipId}"));
+
+        Assert.Equal(PyNone.Instance, await rig.ShipCallAsync(session, "SelfDestruct", bound, new PyLong(character.ShipId)));
+        var key = $"self-destruct:{character.ShipId}";
+        var job = Assert.IsType<Eve.Scheduler.JobInfo>(await rig.Scheduler.FindAsync(SpaceSessions.ShipSelfDestructJobKind, key));
+        Assert.Equal("pending", job.State);
+        Assert.Equal(rig.Now + 120_000, job.RunAtMs);
+        await using var restartedScheduler = new Eve.Scheduler.DurableScheduler(rig.Source, () => rig.Now, null, rig.SchedulerSchema);
+        rig.Space.TimedActions = restartedScheduler;
+        var restored = await restartedScheduler.FindAsync(SpaceSessions.ShipSelfDestructJobKind, key);
+        Assert.Equal(job.RunAtMs, restored?.RunAtMs);
+        await rig.Space.RefreshSelfDestructCountdownAsync(session, CancellationToken.None);
+        Assert.Equal(new SimSetSlimField(character.ShipId, "selfDestructTime", new SimSlimInt(116444736000000000L + job.RunAtMs * 10_000L)),
+            rig.Sim.Heard.OfType<SimSetSlimField>().Last());
+        Assert.Equal(PyNone.Instance, await rig.ShipCallAsync(session, "SelfDestruct", bound, new PyLong(character.ShipId)));
+        Assert.Equal(job.RunAtMs, (await restartedScheduler.FindAsync(SpaceSessions.ShipSelfDestructJobKind, key))?.RunAtMs);
+        Assert.Empty(rig.Sim.Heard.OfType<SimDestroy>());
+
+        rig.Space.LifecycleBlockers = (_, _, _, _) => ValueTask.FromResult<IReadOnlyList<string>>([]);
+        Assert.NotEmpty(Assert.IsType<PyList>(await rig.ShipCallAsync(session, "SafeLogoff", bound)).Items);
+
+        Assert.Equal(PyNone.Instance, await rig.ShipCallAsync(session, "AbortSelfDestruct", bound, new PyLong(character.ShipId)));
+        rig.Space.TimedActions = rig.Scheduler;
+        Assert.Null(await rig.Scheduler.FindAsync(SpaceSessions.ShipSelfDestructJobKind, key));
+        Assert.Equal(new SimSetSlimField(character.ShipId, "selfDestructTime", new SimSlimNone()), rig.Sim.Heard.OfType<SimSetSlimField>().Last());
+        Assert.Empty(rig.Sim.Heard.OfType<SimDestroy>());
+    }
+
+    [PgFact]
+    public async Task Bound_ship_self_destruct_runs_the_existing_death_settlement_after_its_persisted_deadline()
+    {
+        var (rig, character, session) = await InSpaceAsync();
+        await using var _ = rig;
+        var bound = await rig.BindShipInSpaceAsync(session);
+        await rig.ShipCallAsync(session, "SelfDestruct", bound, new PyLong(character.ShipId));
+        Assert.Empty(rig.Sim.Heard.OfType<SimDestroy>());
+        Assert.Equal(0, await rig.Scheduler.RunDueAsync());
+
+        rig.Now += 120_000;
+        var running = rig.Scheduler.RunDueAsync();
+        await Rig.UntilAsync(() => rig.Sim.Heard.OfType<SimDestroy>().Any());
+        Assert.Equal(character.ShipId, rig.Sim.Heard.OfType<SimDestroy>().Single().ShipId);
+        rig.Sim.Say(Destroyed(session, character.ShipId, FrigateWreck));
+        await rig.Space.QuiesceAsync();
+        Assert.Equal(1, await running);
+        await Rig.UntilAsync(() => session.GetInt("shipid") != character.ShipId);
+        Assert.Null(await rig.Scheduler.FindAsync(SpaceSessions.ShipSelfDestructJobKind, $"self-destruct:{character.ShipId}"));
+        Assert.Single(rig.Sim.Heard.OfType<SimPlaceWreck>());
+    }
+
+    [PgFact]
     public async Task Self_destruction_asks_the_simulation_and_answers_with_the_wreck_and_the_capsule_when_the_death_is_done()
     {
         var (rig, c, session) = await InSpaceAsync();

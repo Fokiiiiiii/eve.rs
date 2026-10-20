@@ -44,7 +44,13 @@ internal sealed partial class CharacterServicesComposition
                 "map",
                 incursionAnomalyReadModel.ReadIncursionsAsync,
                 incursionAnomalyReadModel.ReadAnomaliesAsync,
-                new MapService(foundations.Reads, now) { ReadDataHook = ReadMapRpcDataAsync },
+                  new MapService(foundations.Reads, now, corporationId =>
+                      characterSessions.OfCorporation(corporationId)
+                          .Select(session => (
+                              CharacterId: session.CharacterId ?? 0,
+                              LocationId: session.GetInt("solarsystemid2") ?? session.GetInt("solarsystemid") ?? 0))
+                          .ToArray())
+                  { ReadDataHook = ReadMapRpcDataAsync },
                 now),
             new Eve.Services.Core.DungeonService(dungeonReadModel.ReadEditorCatalogAsync),
             new Eve.Services.Core.DungeonInstanceCacheMgrService(dungeonReadModel.ReadCacheSnapshotAsync, now),

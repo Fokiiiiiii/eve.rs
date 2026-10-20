@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text.Json;
 using Eve.Crimewatch;
 using Eve.Events;
 using Eve.Inventory;
@@ -18,6 +19,132 @@ namespace Eve.Services.Space;
 
 public sealed partial class SpaceSessions
 {
+    public const string ShipSelfDestructJobKind = "ship.self-destruct";
+    private static readonly TimeSpan ShipSelfDestructDuration = TimeSpan.FromSeconds(120);
+    private const string SelfDestructTimeField = "selfDestructTime";
+    private static readonly JsonSerializerOptions SelfDestructJson = new(JsonSerializerDefaults.Web);
+
+    private static string ShipSelfDestructJobKey(long shipId) => $"self-destruct:{shipId}";
+
+    private static long FileTimeOfUnixMs(long unixMs) => checked(116444736000000000L + unixMs * 10_000L);
+
+    private static void TellSelfDestruct(ClientSession session, string message) =>
+        session.SendNotification("OnRemoteMessage", "clientID", new PyStr(message), new PyDict([]));
+
+    private static MachoWrappedException SelfDestructError(string message) =>
+        MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr(message)));
+
+    public async ValueTask<PyValue> StartSelfDestructAsync(ClientSession session, long? requestedShipId, CancellationToken cancellationToken)
+    {
+        if (TimedActions is not { } scheduler || !_pilots.TryGetValue((ulong)session.SessionId, out var pilot) ||
+            !IsInSpace(session) || session.CharacterId != pilot.CharacterId || requestedShipId != pilot.ShipId ||
+            session.GetInt("shipid") != pilot.ShipId || await _ships.LoadAsync(pilot.CharacterId, cancellationToken) is not { } flown ||
+            flown.Ship.Id != pilot.ShipId)
+            throw SelfDestructError("The active ship cannot self-destruct here.");
+
+        var key = ShipSelfDestructJobKey(pilot.ShipId);
+        var existing = await scheduler.FindAsync(ShipSelfDestructJobKind, key, cancellationToken);
+        if (existing is not null)
+        {
+            if (existing.State != "pending")
+                throw SelfDestructError("The ship self-destruct is already completing.");
+            var prior = JsonSerializer.Deserialize<ShipSelfDestructCountdown>(existing.PayloadJson, SelfDestructJson);
+            if (prior?.ShipId != pilot.ShipId || prior.CharacterId != pilot.CharacterId ||
+                prior.SolarSystemId != pilot.SolarSystemId || prior.InstanceId != pilot.SimulationScene.InstanceId)
+                throw SelfDestructError("The active ship cannot self-destruct here.");
+            _sim.SetSlimField(pilot.ShipId, SelfDestructTimeField, new SimSlimInt(FileTimeOfUnixMs(existing.RunAtMs)));
+            return None;
+        }
+
+        var expiresAtMs = checked(_nowUnixMs() + (long)ShipSelfDestructDuration.TotalMilliseconds);
+        var countdown = new ShipSelfDestructCountdown(
+            pilot.ShipId, pilot.CharacterId, pilot.SolarSystemId, pilot.SimulationScene.InstanceId, expiresAtMs);
+        await scheduler.ScheduleAsync(new JobSpec(ShipSelfDestructJobKind, expiresAtMs)
+        {
+            Key = key, Payload = countdown, OnDuplicate = OnDuplicate.Keep,
+        }, cancellationToken);
+        var admitted = await scheduler.FindAsync(ShipSelfDestructJobKind, key, cancellationToken);
+        var admittedPayload = admitted is { State: "pending" }
+            ? JsonSerializer.Deserialize<ShipSelfDestructCountdown>(admitted.PayloadJson, SelfDestructJson)
+            : null;
+        if (admittedPayload != countdown)
+            throw SelfDestructError("The ship self-destruct could not be started.");
+        try
+        {
+            _sim.SetSlimField(pilot.ShipId, SelfDestructTimeField, new SimSlimInt(FileTimeOfUnixMs(expiresAtMs)));
+        }
+        catch
+        {
+            await scheduler.CancelAsync(ShipSelfDestructJobKind, key, CancellationToken.None);
+            throw;
+        }
+        CancelSafeLogoff(session);
+        TellSelfDestruct(session, "SelfDestructInitiatedOther");
+        return None;
+    }
+
+    public async ValueTask<PyValue> AbortSelfDestructAsync(ClientSession session, long? requestedShipId, CancellationToken cancellationToken)
+    {
+        if (TimedActions is not { } scheduler || !_pilots.TryGetValue((ulong)session.SessionId, out var pilot) ||
+            !IsInSpace(session) || session.CharacterId != pilot.CharacterId || requestedShipId != pilot.ShipId ||
+            session.GetInt("shipid") != pilot.ShipId)
+            throw SelfDestructError("The active ship cannot abort its self-destruct.");
+
+        var key = ShipSelfDestructJobKey(pilot.ShipId);
+        var job = await scheduler.FindAsync(ShipSelfDestructJobKind, key, cancellationToken);
+        if (job is null) return None;
+        var countdown = JsonSerializer.Deserialize<ShipSelfDestructCountdown>(job.PayloadJson, SelfDestructJson);
+        if (job.State != "pending" || countdown?.CharacterId != pilot.CharacterId)
+            throw SelfDestructError("The ship self-destruct can no longer be aborted.");
+        if (!await scheduler.CancelAsync(ShipSelfDestructJobKind, key, cancellationToken))
+            throw SelfDestructError("The ship self-destruct can no longer be aborted.");
+        _sim.SetSlimField(pilot.ShipId, SelfDestructTimeField, new SimSlimNone());
+        TellSelfDestruct(session, "SelfDestructAbortedOther2");
+        return None;
+    }
+
+    public async Task RefreshSelfDestructCountdownAsync(ClientSession session, CancellationToken cancellationToken)
+    {
+        if (TimedActions is not { } scheduler || !_pilots.TryGetValue((ulong)session.SessionId, out var pilot) ||
+            !IsInSpace(session) || session.GetInt("shipid") != pilot.ShipId) return;
+        var job = await scheduler.FindAsync(ShipSelfDestructJobKind, ShipSelfDestructJobKey(pilot.ShipId), cancellationToken);
+        if (job is not { State: "pending" }) return;
+        var countdown = JsonSerializer.Deserialize<ShipSelfDestructCountdown>(job.PayloadJson, SelfDestructJson);
+        if (countdown?.CharacterId == pilot.CharacterId && countdown.SolarSystemId == pilot.SolarSystemId &&
+            countdown.InstanceId == pilot.SimulationScene.InstanceId)
+            _sim.SetSlimField(pilot.ShipId, SelfDestructTimeField, new SimSlimInt(FileTimeOfUnixMs(job.RunAtMs)));
+        else if (await scheduler.CancelAsync(ShipSelfDestructJobKind, ShipSelfDestructJobKey(pilot.ShipId), cancellationToken))
+            _sim.SetSlimField(pilot.ShipId, SelfDestructTimeField, new SimSlimNone());
+    }
+
+    public async Task CompleteShipSelfDestructAsync(ShipSelfDestructCountdown countdown, CancellationToken cancellationToken)
+    {
+        if (_nowUnixMs() < countdown.ExpiresAtMs)
+            throw new InvalidOperationException("A ship self-destruct job ran before its deadline.");
+        var pilot = _pilots.Values.FirstOrDefault(candidate =>
+            candidate.CharacterId == countdown.CharacterId && candidate.ShipId == countdown.ShipId);
+        if (pilot is null)
+        {
+            _sim.SetSlimField(countdown.ShipId, SelfDestructTimeField, new SimSlimNone());
+            return;
+        }
+        if (pilot.SolarSystemId != countdown.SolarSystemId || pilot.SimulationScene.InstanceId != countdown.InstanceId)
+        {
+            _sim.SetSlimField(countdown.ShipId, SelfDestructTimeField, new SimSlimNone());
+            return;
+        }
+        TellSelfDestruct(pilot.Session, "SelfDestructImmediateOther");
+        if (await SelfDestructAsync(pilot.Session, cancellationToken) is null)
+            throw new InvalidOperationException("The ship self-destruct could not complete the active ship death.");
+    }
+
+    private async Task CancelShipSelfDestructAsync(long shipId, CancellationToken cancellationToken)
+    {
+        if (TimedActions is not { } scheduler) return;
+        await scheduler.CancelAsync(ShipSelfDestructJobKind, ShipSelfDestructJobKey(shipId), cancellationToken);
+        _sim.SetSlimField(shipId, SelfDestructTimeField, new SimSlimNone());
+    }
+
     /// <summary>How long <c>/suicide</c> waits for the simulation and the character's items before it says it failed.</summary>
     private static readonly TimeSpan SelfDestructWait = TimeSpan.FromSeconds(20);
 

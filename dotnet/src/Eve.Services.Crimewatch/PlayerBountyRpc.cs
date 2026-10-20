@@ -14,7 +14,6 @@ public sealed record PlayerBountyOwner(BountyOwnerKind Kind, long CorporationId 
 public sealed record BountyPlacement(long PlacerId, long TargetId, BountyOwnerKind Kind, long CorporationId, long AllianceId, decimal Amount, string Key);
 
 /// <summary>
-/// The player bounty methods of <c>bountyProxy</c> (EveJS <c>bountyProxyService.js</c> and <c>playerBountyState.js</c>): placing a bounty debits the
 /// placer's wallet once, in the same transaction that records it; the reads answer the stored pools, contributions and rankings. Methods this
 /// class does not answer are left to <see cref="BountyProxyKillRightService"/>.
 /// </summary>
@@ -27,11 +26,10 @@ public sealed class PlayerBountyRpc(
     Func<long> nowUnixMs,
     Func<BountyPlacement, CancellationToken, ValueTask>? notifyPlaced = null)
 {
-    /// <summary>The journal entry type of a bounty placement (EveJS <c>JOURNAL_ENTRY_TYPE.BOUNTY</c>).</summary>
+
     private const int BountyJournalEntryType = 16;
     private const int RankedRows = 10;
 
-    /// <summary>The minimum placement per target kind (EveJS <c>MINIMUM_BOUNTY_BY_KIND</c>).</summary>
     public static decimal MinimumFor(BountyOwnerKind kind) => kind switch
     {
         BountyOwnerKind.Character => 1_000_000m,
@@ -102,7 +100,6 @@ public sealed class PlayerBountyRpc(
         return Payload(pool);
     }
 
-    /// <summary>The placement is told to its recipients after it is recorded (EveJS <c>bountyNotifications.js</c>); none when the host has no notifier.</summary>
     private async ValueTask NotifyPlacedAsync(BountyPlacement placement, CancellationToken cancellationToken)
     {
         if (notifyPlaced is not null)
@@ -177,7 +174,6 @@ public sealed class PlayerBountyRpc(
         return Py.KeyVal(entries.ToArray());
     }
 
-    /// <summary>The targets a call asks about, or the placer's own owners when it names none (EveJS <c>buildKnownBountyOwnerIds</c>).</summary>
     private static IReadOnlyList<long> RequestedIds(ServiceCall call)
     {
         var arg = call.Arg(0);

@@ -66,6 +66,7 @@
 | `dotnet/src/Eve.Planets` (8 C# files; migrations reviewed) | 218 | 198 | 2026-10-20 |
 | `dotnet/src/Eve.Services.Generator` (2 C# files) | 6 | 0 | 2026-10-20 |
 | `dotnet/tests/Eve.Agents.Tests` (4 C# files) | 8 | 6 | 2026-10-20 |
+| `dotnet/tests/Eve.Hacking.Tests` (2 C# files) | 2 | 2 | 2026-10-20 |
 | `dotnet/src/Eve.Insurgency` (5 C# files; migrations reviewed) | 99 | 87 | 2026-10-20 |
 | `dotnet/src/Eve.Dungeons` (5 C# files) | 101 | 49 | 2026-10-20 |
 | `dotnet/src/Eve.Fitting` (8 C# files; migrations reviewed) | 97 | 78 | 2026-10-20 |

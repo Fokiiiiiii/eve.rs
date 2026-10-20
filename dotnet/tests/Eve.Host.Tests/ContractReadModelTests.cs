@@ -103,6 +103,39 @@ public sealed class ContractReadModelTests
                 Assert.Equal("OnContractCreated", (string?)await notices.ExecuteScalarAsync());
             }
 
+            long foreignItemId;
+            await using (var connection = await source.OpenConnectionAsync())
+            await using (var transaction = await connection.BeginTransactionAsync())
+            {
+                foreignItemId = await itemStore.CreateAsync(connection, transaction,
+                    new NewItem(34, 101, 600, ItemFlags.Hangar, Quantity: 1), CancellationToken.None);
+                await transaction.CommitAsync();
+            }
+            await Assert.ThrowsAsync<Eve.Services.Core.ContractUserErrorException>(() => writer.CreateItemExchangeAsync(
+                new Eve.Services.Core.CreateItemExchangeRequest(
+                    IssuerCharacterId: 100,
+                    IssuerCorporationId: 200,
+                    IsCorporationIssued: false,
+                    StartStationId: 600,
+                    StartStationDivision: ItemFlags.Hangar,
+                    Availability: 0,
+                    AssigneeId: 0,
+                    ExpiryMinutes: 1440,
+                    Price: 10,
+                    Reward: 0,
+                    BrokerFee: 1,
+                    Deposit: 0,
+                    SalesTax: 0,
+                    WalletAccountKey: 1000,
+                    Title: "Foreign item",
+                    Description: "",
+                    OutstandingLimit: 500,
+                    Items: [new Eve.Services.Core.ContractOfferedItem(foreignItemId, 1)]), CancellationToken.None).AsTask());
+            Assert.Equal(948m, await wallets.AccountBalanceAsync(new WalletAccount(100), CancellationToken.None));
+            Assert.Equal((long)101, (await itemStore.GetAsync(foreignItemId, CancellationToken.None))!.OwnerId);
+            await using (var read = source.CreateCommand($"SELECT count(*) FROM {contractsSchema}.contract_records"))
+                Assert.Equal(1L, (long)(await read.ExecuteScalarAsync())!);
+
             await Assert.ThrowsAsync<Eve.Services.Core.ContractUserErrorException>(() => writer.CreateItemExchangeAsync(
                 new Eve.Services.Core.CreateItemExchangeRequest(
                     IssuerCharacterId: 100,

@@ -215,8 +215,12 @@ internal static class HostComposition
         registry.Register(new MachoNetService(info, now, GlobalConfigWrites.Create(config, connected, () => server?.PublishClusterConfig())));
         if (xmppSettings.Enabled)
         {
+            var charMgr = characterServices.OfType<Eve.Services.CharacterInfo.CharMgrService>().FirstOrDefault();
+            Func<long, CancellationToken, ValueTask<IReadOnlyList<long>>>? readBlockedOwners =
+                charMgr is null ? null : charMgr.ReadBlockedOwnersAsync;
             var xmppHub = new Eve.Host.Xmpp.XmppChatHub(connected,
-                new Eve.Host.Xmpp.XmppChatSettings(xmppSettings.Domain, xmppSettings.ConnectHost));
+                new Eve.Host.Xmpp.XmppChatSettings(xmppSettings.Domain, xmppSettings.ConnectHost),
+                readBlockedOwners);
             registry.Register(new Eve.Host.Xmpp.XmppChatMgrService(xmppHub));
             if (xmppSettings.CertificatePath is { } certificatePath)
                 xmppCertificate = System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadPkcs12FromFile(

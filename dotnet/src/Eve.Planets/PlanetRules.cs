@@ -24,7 +24,7 @@ public static class PlanetRules
     /// <summary>PROGRAM_INSTALLATION_COOLDOWN (ecuPin.py:14): an installed program cannot be changed or stopped before it.</summary>
     public const long ProgramInstallCooldown = 1 * Min;
     public const long ExpeditedMinTime = 5 * Min;
-    /// <summary>Uncollected launches are lost when their timer ends (EVE University wiki, Planetary Interaction): 5 days.</summary>
+
     public const long LaunchLifetime = 5L * 24 * Hour;
 
     /// <summary>Power output, CPU output and upgrade cost per command center level 0..5 (planetCommon.py:149-154).</summary>

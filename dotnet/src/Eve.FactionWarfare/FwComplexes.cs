@@ -2,7 +2,6 @@ using Npgsql;
 
 namespace Eve.FactionWarfare;
 
-/// <summary>The complex sizes of the wiki's Rank/Size table that the SDE archetypes 33 to 36 carry (Scout, Small, Medium, Large).</summary>
 public enum ComplexSize : short
 {
     Scout = 1,
@@ -60,14 +59,9 @@ public sealed record FwComplexPilot(long CharacterId, long WarFactionId);
 /// </summary>
 public sealed record FwComplexResolution(long ComplexId, long SolarSystemId, ComplexSize Size, long OccupierId, long AttackerId, bool AttackersWon,
     long VictoryPoints, long AttackerPoints, IReadOnlyList<long> WinnerIds, long PilotShare);
-
-/// <summary>
-/// The complex rules of factional warfare (wiki "Faction warfare": Complexes, Complex types, Victory points). The sizes, capture times and hull limits are the
-/// wiki's Rank/Size table; the victory points are the wiki's table where it has the size, and a project rule for Medium (DEVIATIONS "Factional warfare").
-/// </summary>
 public static class FwComplexes
 {
-    /// <summary>The basic variant of each size (Scout BSC, Small NVY, Large NVY) and the Medium rule. Medium: no wiki value, project rule 150 victory points.</summary>
+
     public static readonly IReadOnlyList<ComplexSpec> Specs =
     [
         new(ComplexSize.Scout, 33, 300, 1, 50),
@@ -76,7 +70,6 @@ public static class FwComplexes
         new(ComplexSize.Large, 36, 900, 5, 250),
     ];
 
-    /// <summary>A complex of a size comes back this long after the last one of it in the system was captured (wiki: about 30 minutes).</summary>
     public static readonly TimeSpan Respawn = TimeSpan.FromMinutes(30);
 
     /// <summary>How often the complexes are ticked. shortcut: the wiki gives no tick; the capture timers are advanced by at most one tick per run.</summary>
@@ -89,7 +82,6 @@ public static class FwComplexes
 
     /// <summary>
     /// The capture timer after one tick: it advances for the side that is alone in the complex (attackers up, defenders down) and pauses when both or neither are present.
-    /// The step is capped at one tick, so a restart or a busy server does not credit the downtime to a capture.
     /// </summary>
     public static long Advance(long progressMs, bool attackersPresent, bool defendersPresent, long elapsedMs, long tickMs)
     {
@@ -111,7 +103,6 @@ public static class FwComplexes
 
 /// <summary>
 /// One tick of the complexes in one transaction: a complex (with its dungeon site) is spawned in each occupied system for each size that has none open (after
-/// its respawn time). A complex's capture timer advances only once its NPC defenders are destroyed (the wiki: the defending NPC must be killed first), by the
 /// pilots inside it (their war factions): the attackers' side up, the occupier's down. A resolved complex moves victory points and ends its site.
 /// </summary>
 public static class FwComplexTicker
@@ -170,7 +161,7 @@ public static class FwComplexTicker
             long attackerFaction = FwFactions.OccupationEnemyOf(system.OccupierId);
             long points = await store.AddAttackerPointsSignedAsync(connection, transaction, system.SolarSystemId, won.Value ? spec.VictoryPoints : -spec.VictoryPoints,
                 nowMs, cancellationToken);
-            // the winning side's pilots inside split the complex's victory points (the wiki gives the points to the complex, not to a pilot)
+
             long winningFaction = won.Value ? attackerFaction : system.OccupierId;
             var winners = inside.Where(pilot => pilot.WarFactionId == winningFaction).Select(pilot => pilot.CharacterId).Distinct().ToList();
             long share = winners.Count == 0 ? 0 : spec.VictoryPoints / winners.Count;

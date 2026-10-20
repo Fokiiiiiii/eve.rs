@@ -161,6 +161,33 @@ public class CatalogTests
     }
 
     [PgFact]
+    public async Task ReadByFieldAsync_returns_types_in_requested_groups()
+    {
+        var (_, source) = await LoadAsync();
+        var reader = new SdeReader(source);
+
+        var rows = await reader.ReadByFieldAsync("types", "groupID", [6, 7, 8, 9]);
+
+        Assert.NotEmpty(rows);
+        Assert.All(rows, row => Assert.Contains(row.Doc.GetProperty("groupID").GetInt64(), new long[] { 6, 7, 8, 9 }));
+        Assert.Equal(rows.Count, rows.Select(row => row.Key).Distinct().Count());
+    }
+
+    [PgFact]
+    public async Task ReadContainingAsync_finds_type_dogma_rows_for_an_effect()
+    {
+        var (_, source) = await LoadAsync();
+        var reader = new SdeReader(source);
+
+        var rows = await reader.ReadContainingAsync("typeDogma", """{"dogmaEffects":[{"effectID":101}]}""");
+
+        Assert.NotEmpty(rows);
+        Assert.All(rows, row => Assert.Contains(
+            row.Doc.GetProperty("dogmaEffects").EnumerateArray(),
+            effect => effect.GetProperty("effectID").GetInt32() == 101));
+    }
+
+    [PgFact]
     public async Task The_sde_reader_refuses_a_table_name_that_could_carry_sql_and_reads_a_real_one()
     {
         var (_, source) = await LoadAsync();

@@ -1,5 +1,17 @@
 # Performance measurements
 
+## PostgreSQL and Rust profile (2026-10-20)
+
+- Scope: PostgreSQL 18 on `eve_p4` only. The workload comprised the existing live walk (60 passed, 8 skipped) and the serial Host test collection (296 assertions passed before the test host aborted after an expected handler exception). The Host database log covers fixture and service setup across the test collection; it is not a steady-state single-host profile.
+- Query ranking by accumulated PostgreSQL execution duration during the Host test window: (1) numeric `types` field filters, 534,910 ms over 466 calls; (2) full `types` reads, 275,299 ms over 85; (3) projected `types` reads, 219,165 ms over 118; (4) full `typeDogma` reads, 216,838 ms over 200; (5) full `mapSolarSystems` reads, 85,299 ms over 474. The captured ranking is setup-heavy and repeated static-data loading dominates it.
+- First query fix: `ReadByFieldAsync("types", "groupID", ...)` used a sequential scan. For groups 6–9, the baseline `EXPLAIN (ANALYZE, BUFFERS)` returned 59 rows in 1,385.984 ms with 15,220 blocks read. After `types_group_id_idx`, the same query used a bitmap index scan and returned 59 rows in 11.277 ms with 10 blocks read (123x faster in this pair of runs).
+- Second query fix: `ReadContainingAsync("typeDogma", ...)` used a sequential scan. For effect 101, the baseline returned 179 rows in 137.189 ms with 2,416 blocks read. After `type_dogma_doc_gin_idx` (`jsonb_path_ops`), it used a bitmap index scan and returned 179 rows in 1.498 ms with 0 blocks read (92x faster in this pair of runs).
+- `eve-sde ensure` provisions both indexes after loading the SDE (and when the requested build is already present). `SdeReader.BuildAsync` remains read-only. Provisioning is serialized per schema; PostgreSQL table and index storage grows. The indexes are a partial B-tree on numeric `types.groupID` and a GIN index over `typeDogma.doc`.
+- The targeted PostgreSQL tests for both reader paths passed after the index changes. The broader Host test collection reported 296 passed, 0 failed, then aborted at the test-host process level; this is recorded separately from a completed test run.
+- Rust benchmark profile: `CARGO_PROFILE_RELEASE_OPT_LEVEL=0`, 256 codegen units, LTO disabled, system allocator. Top functions: `marshal.encode.rowset-1000` 251 ops/s (32.8 MB/s, 5.24x JS); `destiny.ball.encode.500-ships` 789,841 ops/s (3.85x); `marshal.encode.small-call` 355,843 ops/s (2.60x). These are low-optimization baselines and do not describe the default release profile.
+- PostgreSQL measurement used `ALTER DATABASE eve_p4 SET log_min_duration_statement=0` and `track_io_timing=on`; the settings are database-scoped. `pg_stat_statements` was not active because the running server lacks the required shared preload configuration.
+
+
 ## Proposed load scenarios
 
 The candidate engineering SLOs and scenario list from the 2026-10-19 supplied research report are tracked in [TODO.md](TODO.md): handshake storm, 24-48 hour soak, movement-heavy load, dense grid, weapon activation burst, market hotspot, jump storm, mission wave burst, forced restart, cold SDE boot and malformed-protocol fuzz. These are proposals pending owner adoption, not measured targets.

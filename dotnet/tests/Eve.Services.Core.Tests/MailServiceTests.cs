@@ -2,6 +2,7 @@ using System.IO.Compression;
 using System.Text;
 using System.Text.Json.Nodes;
 using Eve.Marshal;
+using Eve.Macho;
 
 namespace Eve.Services.Core.Tests;
 
@@ -589,6 +590,48 @@ public sealed class MailServiceTests
     }
 
 [Fact]
+    public async Task SendMail_refuses_recipient_subject_and_body_over_client_limits()
+    {
+        var sendCount = 0;
+        var service = new MailService(
+            _ => throw new InvalidOperationException("SendMail must not read the mailbox."),
+            (_, _, _, _) => throw new InvalidOperationException("SendMail must not mark a message read."),
+            (_, _, _) =>
+            {
+                sendCount++;
+                return Task.FromResult<long?>(701);
+            });
+        var recipients = new PyList(Enumerable.Range(1, 51).Select(id => (PyValue)new PyInt(id)).ToArray());
+
+        var recipientRefusal = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            service.CallAsync(Request("SendMail", recipients, PyNone.Instance, PyNone.Instance, new PyStr("Title"), new PyStr("Body"))).AsTask());
+        var subjectRefusal = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            service.CallAsync(Request("SendMail", new PyList([]), PyNone.Instance, PyNone.Instance, new PyStr(new string('x', 151)), new PyStr("Body"))).AsTask());
+        var bodyRefusal = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            service.CallAsync(Request("SendMail", new PyList([]), PyNone.Instance, PyNone.Instance, new PyStr("Title"), new PyStr(new string('x', 8001)))).AsTask());
+
+        Assert.Equal("MAIL_RECIPIENT_LIMIT_EXCEEDED", MailInfo(recipientRefusal));
+        Assert.Equal("MAIL_SUBJECT_LIMIT_EXCEEDED", MailInfo(subjectRefusal));
+        Assert.Equal("MAIL_BODY_LIMIT_EXCEEDED", MailInfo(bodyRefusal));
+        Assert.Equal(0, sendCount);
+    }
+
+[Fact]
+    public async Task Mail_header_and_mark_read_batches_refuse_more_than_500_ids()
+    {
+        var service = Service(new JsonObject());
+        var ids = new PyList(Enumerable.Range(1, 501).Select(id => (PyValue)new PyInt(id)).ToArray());
+
+        var headersRefusal = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            service.CallAsync(Request("GetMailHeaders", ids)).AsTask());
+        var markRefusal = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            service.CallAsync(Request("MarkAsRead", ids)).AsTask());
+
+        Assert.Equal("MAIL_BULK_LIMIT_EXCEEDED", MailInfo(headersRefusal));
+        Assert.Equal("MAIL_BULK_LIMIT_EXCEEDED", MailInfo(markRefusal));
+    }
+
+[Fact]
     public async Task SendMail_forwards_each_client_recipient_route_and_reply_forward_reference()
     {
         var sent = new List<MailSendRequest>();
@@ -742,6 +785,16 @@ public sealed class MailServiceTests
 
     private static PyValue Field(PyValue value, string name) =>
         Assert.IsType<PyDict>(Assert.IsType<PyObject>(value).Args).Entries.Single(pair => pair.Key == new PyStr(name)).Value;
+
+    private static string MailInfo(MachoWrappedException error)
+    {
+        var payload = Assert.IsType<PyObjectEx>(error.Error.Payload);
+        var header = Assert.IsType<PyTuple>(payload.Header);
+        var values = Assert.IsType<PyTuple>(header.Items[1]);
+        var arguments = Assert.IsType<PyDict>(values.Items[1]);
+        var info = arguments.Entries.Single(entry => entry.Key is PyStr key && key.Value == "info").Value;
+        return Assert.IsType<PyStr>(info).Value;
+    }
 
     private static ServiceCall Request(string method, params PyValue[] args)
     {

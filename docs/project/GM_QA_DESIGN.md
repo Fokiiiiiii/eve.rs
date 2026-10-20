@@ -92,4 +92,4 @@ Every command the screen sends is served. A word that no command serves still an
 
 ## ESS link hull grant (owner decision Q-15, 2026-10-19)
 
-The ESS live walk needs a hull permitted by the ESS link module. Choose the hull from the pinned SDE `canFitShipGroup` and `canFitShipType` attributes, then add a role-gated slash command that grants the hull with the module fitted and online. The live walk must exercise linking, reserve-bank interaction, and key consumption.
+The role-gated /ess grant command selects the first published ship in SDE type list 231 (ESSLinkableShips) and grants it to the docked staff character's station hangar. /ess link submits the normal AttemptLinkToMainBank RPC, so the ESS store still checks the active ship, system, range, and link state. The pinned official SDE has no active ESS link module type; the grant uses the owner-approved hull-list fallback and does not create a module item. The successful main-bank link, reserve-bank payout, and key-consumption live walk remains open.

@@ -82,10 +82,6 @@ public sealed partial class GameStoreCache : IAsyncDisposable
         }
     }
 
-    /// <summary>
-    /// Replays this owner's unfinished journal. Call once, before loading tables,
-    /// so the cache starts from the state a crashed predecessor had committed to.
-    /// </summary>
     public async Task<int> RecoverAsync(CancellationToken ct = default)
     {
         if (_session is null)
@@ -138,8 +134,6 @@ public sealed partial class GameStoreCache : IAsyncDisposable
     }
 
     public bool IsLoaded(string table) => StateOf(table) is not null;
-
-    // ── reads ───────────────────────────────────────────────────────────────
 
     /// <summary>A copy of the value at <paramref name="path"/> (<c>/</c> is the whole table).</summary>
     public ReadResult Read(string table, string? path = "/")

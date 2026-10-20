@@ -523,6 +523,12 @@ public class AllianceTests
             await service.CallAsync(Call(executor,"DeleteLabel",new Eve.Marshal.PyInt(labelId)));
             Assert.Equal(0,Assert.Single(await store.AllianceContactsAsync(alliance.Id)).LabelMask);
             Assert.Empty(await store.AllianceContactLabelsAsync(alliance.Id));
+            var oversizedContacts = new Eve.Marshal.PyList(Enumerable.Range(1, 501)
+                .Select(id => (Eve.Marshal.PyValue)new Eve.Marshal.PyInt(id)).ToArray());
+            var bulkRefusal = await Assert.ThrowsAsync<Eve.Corporations.CorporationError>(async () =>
+                await service.CallAsync(Call(executor,"RemoveAllianceContacts",oversizedContacts)));
+            Assert.Equal("ALLIANCE_BULK_LIMIT_EXCEEDED",bulkRefusal.Code);
+
             await service.CallAsync(Call(executor,"RemoveAllianceContacts",
                 new Eve.Marshal.PyList([new Eve.Marshal.PyInt(outsiderCorp.Id)])));
             Assert.Empty(await store.AllianceContactsAsync(alliance.Id));

@@ -91,7 +91,6 @@ public sealed partial class PersistenceStore
         return changed;
     }
 
-
     public async Task<int> ApplyChangesAsync(
         NpgsqlConnection connection,
         NpgsqlTransaction transaction,

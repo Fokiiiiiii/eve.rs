@@ -35,7 +35,6 @@ public sealed partial class CorporationStore
         },token);
     }
 
-
     public async Task<IReadOnlyList<CorporationShareholding>> SharesByShareholderAsync(
         long ownerId,long? corporationFilter,CancellationToken token = default)
     {

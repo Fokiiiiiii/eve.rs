@@ -15,7 +15,6 @@ public sealed record KillRight(
     decimal? SalePrice,
     long? RestrictedToOwnerId);
 
-
 public sealed record KillRightActivation(
     long ActivationId,
     long KillRightId,
@@ -52,8 +51,6 @@ public delegate Task<KillRightPaymentResult> KillRightPayment(
     decimal amount,
     long timeUnixMs,
     CancellationToken cancellationToken);
-
-
 
 public static class SecurityStatusEventTypeIds
 {
@@ -205,7 +202,6 @@ public sealed class PgCrimewatchStore
     }
 
     /// <summary>
-    /// Changes what crimewatch keeps for the character as one step no other step of the character overlaps (the row is locked while <paramref name="change"/> works on what it was).
     /// Returns what it was and what it is now.
     /// </summary>
     public async Task<(CombatState Before, CombatState After)> UpdateAsync(long characterId, Func<CombatState, CombatState> change, long nowMs, CancellationToken cancellationToken = default)
@@ -273,7 +269,6 @@ public sealed class PgCrimewatchStore
             """), cancellationToken, characterId, (short)level, nowMs);
         return level;
     }
-
 
     /// <summary>Creates one active right per victim/offender pair; null means a usable right already existed.</summary>
     public async Task<long?> CreateKillRightAsync(
@@ -411,8 +406,6 @@ public sealed class PgCrimewatchStore
         return true;
     }
 
-
-    /// <summary>Sets or removes a listing; this is the persistence hook for the future SellKillRight RPC.</summary>
     public async Task<bool> SetKillRightSaleAsync(
         long ownerCharacterId,
         long killRightId,
@@ -526,7 +519,6 @@ public sealed class PgCrimewatchStore
         return new(right, activation, null);
     }
 
-    /// <summary>Active entries a future killmail consumer can match and consume.</summary>
     public async Task<IReadOnlyList<KillRightActivation>> ActiveKillRightActivationsForTargetAsync(
         long targetCharacterId,
         long nowUnixMs,
@@ -553,8 +545,6 @@ public sealed class PgCrimewatchStore
         return activations;
     }
 
-
-    /// <summary>Future killmail hook: choose the active right matching the final attacker, then consume it once.</summary>
     public async Task<KillRightActivation?> ConsumeKillRightAfterKillAsync(
         long targetCharacterId,
         long finalAttackerCharacterId,
@@ -626,7 +616,6 @@ public sealed class PgCrimewatchStore
     private static KillRightActivation ReadKillRightActivation(NpgsqlDataReader row) => new(
         row.GetInt64(0), row.GetInt64(1), row.GetInt64(2), row.GetInt64(3), row.GetInt64(4),
         row.GetInt64(5), row.GetInt64(6), row.GetDecimal(7), row.GetString(8));
-
 
     /// <summary>Creates one active right per victim/offender pair; null means a usable right already existed.</summary>
     /// <summary>

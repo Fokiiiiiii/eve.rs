@@ -267,7 +267,7 @@ public sealed class PacketDispatcher
     {
         if (method == "GetAllInfo")
             return 10;
-        if (service == "marketProxy" && method is "GetOrders" or "GetStationAsks" or "GetSystemAsks" or "GetRegionBest" or "GetMarketOrderHistory")
+        if (service == "marketProxy" && method is "GetOrders" or "GetStationAsks" or "GetSystemAsks" or "GetRegionBest" or "GetMarketOrderHistory" or "BuyMultipleItems" or "GetHistoryForManyTypeIDs")
             return 10;
         if (method == "GetMailHeaders")
             return 10;

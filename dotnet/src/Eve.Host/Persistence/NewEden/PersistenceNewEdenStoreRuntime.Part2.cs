@@ -116,6 +116,11 @@ public sealed partial class PersistenceNewEdenStoreRuntime
         await _gate.WaitAsync(cancellationToken);
         try
         {
+            await using var connection = await source.OpenConnectionAsync(cancellationToken);
+            await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+            await using (var lockCommand = new NpgsqlCommand("SELECT pg_advisory_xact_lock(882701, 1)", connection, transaction))
+                await lockCommand.ExecuteNonQueryAsync(cancellationToken);
+
             var accountsTable = await PersistenceReadHelpers.ReadOptionalTableAsync(store, SeasonalCampaignTable, cancellationToken);
             var accounts = accountsTable[SeasonalCampaignRow] as JsonObject ?? new JsonObject();
             var accountKey = request.Player.UserId.ToString(System.Globalization.CultureInfo.InvariantCulture);
@@ -187,10 +192,6 @@ public sealed partial class PersistenceNewEdenStoreRuntime
             account["history"] = history;
             accounts[accountKey] = account;
             redeemAccounts[accountKey] = tokens;
-            await using var connection = await source.OpenConnectionAsync(cancellationToken);
-            await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-            await using (var lockCommand = new NpgsqlCommand("SELECT pg_advisory_xact_lock(882701, 1)", connection, transaction))
-                await lockCommand.ExecuteNonQueryAsync(cancellationToken);
             await store.ApplyChangesAsync(connection, transaction, SeasonalCampaignTable,
                 [new RowUpsert(SeasonalCampaignRow, accounts.ToJsonString())], [], ownerFence, cancellationToken);
             await store.ApplyChangesAsync(connection, transaction, RedeemTable,

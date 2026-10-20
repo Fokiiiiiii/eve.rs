@@ -32,7 +32,9 @@ public sealed class PublicGatewayTests
         var authority = new GatewayAuthority((_, _) => Task.FromResult<long?>(null), () => now);
 
         Assert.Equal(71, authority.AccountOf(token));
-        Assert.Null(authority.AccountOf(token[..^1] + (token[^1] == 'A' ? "B" : "A")));
+        var signatureStart = token.LastIndexOf('.') + 1;
+        var changedSignature = token[..signatureStart] + (token[signatureStart] == 'A' ? "B" : "A") + token[(signatureStart + 1)..];
+        Assert.Null(authority.AccountOf(changedSignature));
         Assert.Null(new GatewayAuthority((_, _) => Task.FromResult<long?>(null), () => now.AddMinutes(11)).AccountOf(token));
     }
 

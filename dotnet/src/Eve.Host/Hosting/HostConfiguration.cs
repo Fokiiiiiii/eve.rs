@@ -34,7 +34,19 @@ using Eve.Services.Wallet;
 
 namespace Eve.Host;
 
-internal sealed record HostSettings(string Endpoint, string NewCharacterExperienceMode, ClusterOptions Options, AccountOptions AccountOptions, bool StrictRpc);
+internal sealed record XmppSettings(
+    bool Enabled,
+    string BindAddress,
+    int Port,
+    string Domain,
+    string ConnectHost,
+    string? CertificatePath,
+    string? CertificatePassword)
+{
+    internal static XmppSettings Disabled { get; } = new(false, "127.0.0.1", 5222, "localhost", "localhost", null, null);
+}
+
+internal sealed record HostSettings(string Endpoint, string NewCharacterExperienceMode, ClusterOptions Options, AccountOptions AccountOptions, bool StrictRpc, XmppSettings? Xmpp = null);
 
 /// <summary>Every EVE_* read of the host, in one place. The catalogue of variables is below.</summary>
 internal static class HostConfiguration
@@ -116,6 +128,28 @@ internal static class HostConfiguration
             SkipPasswordCheck = Flag("EVE_DEV_SKIP_PASSWORD", false),
             AutoCreate = Flag("EVE_DEV_AUTO_CREATE", false),
         };
-        return new HostSettings(endpoint, newCharacterExperienceMode, options, accountOptions, Flag("EVE_STRICT_RPC", false));
+        var xmppPortText = Env("EVE_XMPP_PORT", "5222");
+        if (!int.TryParse(xmppPortText, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var xmppPort)
+            || xmppPort is < 1 or > 65535)
+            throw new InvalidOperationException("EVE_XMPP_PORT must be a TCP port between 1 and 65535.");
+        var xmpp = new XmppSettings(
+            Enabled: Flag("EVE_XMPP_ENABLED", false),
+            BindAddress: Env("EVE_XMPP_BIND_ADDRESS", "127.0.0.1").Trim(),
+            Port: xmppPort,
+            Domain: Env("EVE_XMPP_DOMAIN", "localhost").Trim(),
+            ConnectHost: Env("EVE_XMPP_CONNECT_HOST", "localhost").Trim(),
+            CertificatePath: NullIfEmpty(Env("EVE_XMPP_CERTIFICATE_PATH", "").Trim()),
+            CertificatePassword: NullIfEmpty(Env("EVE_XMPP_CERTIFICATE_PASSWORD", "")));
+        if (xmpp.Enabled)
+        {
+            if (!System.Net.IPAddress.TryParse(xmpp.BindAddress, out _))
+                throw new InvalidOperationException("EVE_XMPP_BIND_ADDRESS must be a numeric IP address.");
+            if (xmpp.Domain.Length == 0 || xmpp.ConnectHost.Length == 0)
+                throw new InvalidOperationException("EVE_XMPP_DOMAIN and EVE_XMPP_CONNECT_HOST must be non-empty when XMPP is enabled.");
+        }
+        return new HostSettings(endpoint, newCharacterExperienceMode, options, accountOptions,
+            Flag("EVE_STRICT_RPC", false), xmpp);
     }
+
+    private static string? NullIfEmpty(string value) => value.Length == 0 ? null : value;
 }

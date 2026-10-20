@@ -5193,6 +5193,10 @@ The market parser rejects floating-point prices beyond the market maximum before
 `insurance.GetInsurancePrices` accepts at most 500 raw type IDs per request and returns `InsuranceBulkLimitExceeded` before reading price data for a larger batch. The V24 client primes the service with the set of missing ship type IDs; normal client batches retain their existing results. `InsuranceServiceTests.Insurance_price_batch_refuses_more_than_500_type_ids_before_the_read_model` covers the refusal.
 
 
+## Insurance ship identifier validation (2026-10-20)
+
+The insurance RPCs accept positive integer ship IDs. Fractional or malformed values are refused before the read model or purchase writer can act on the truncated ID. `InsuranceServiceTests.Fractional_ship_identifiers_are_refused_before_read_or_purchase` covers both reads and purchases.
+
 ## Fitting bulk batch bound (2026-10-20)
 
 `SaveManyFittings` and `DeleteManyFittings` refuse raw lists above the owner collection limit before validating each fitting or querying/mutating the store. Character collections cap at 500 entries; corporation and alliance collections cap at 600. Individual fit-data lists retain the existing 500-item cap. `FittingMgrServicesTests.Fitting_bulk_batches_refuse_raw_counts_before_validation_or_deletion` covers oversized save and delete batches.

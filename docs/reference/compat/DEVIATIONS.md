@@ -32,7 +32,7 @@ The player service table does not advertise `loadService` or `externalQueueMgr`.
 
 ## Inventory RPC work budget (2026-10-20)
 
-Inventory reads consume 2 weighted per-session units per call, while the global rolling-minute allowance remains 120 units. This lets the recorded new-character walk open and inspect the hangar, station and starter ship before the normal budget applies. The `GetInventoryFromId` calls return the same ownership-checked containers; only their cost in the shared dispatch budget changed. `DispatchGoldenTests.Expensive_market_calls_have_a_named_per_session_budget` verifies inventory calls remain bounded, and `test_a_new_characters_inventories_are_those_of_the_reference` exercises the live new-character walk.
+Inventory open, list, and asset-enumeration RPCs consume 2 units each in the shared 120-unit per-session rolling-minute budget. This preserves inventory navigation across hangars and ships while retaining a refusal for excessive enumeration. The budget is an intentional server-side limit with no response change while within allowance. `DispatchGoldenTests.Expensive_market_calls_have_a_named_per_session_budget` verifies direct opens followed by bound inventory reads and refusal after the test allowance is consumed. `test_a_new_characters_inventories_are_those_of_the_reference` confirms the recorded new-character walk completes for all four races.
 
 ## LP store singleton grant bound (2026-10-20)
 

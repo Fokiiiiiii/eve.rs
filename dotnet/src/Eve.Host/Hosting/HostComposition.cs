@@ -153,6 +153,14 @@ internal static class HostComposition
             accounts = new InMemoryAccountDirectory(accountOptions);
         }
 
+        var activeSurveyId = HostConfiguration.ParseActiveSurveyId(Env("EVE_ACTIVE_SURVEY_ID", ""));
+        var configuredGameRpcCallbacks = gameRpcCallbacks ?? new Eve.Services.Core.GameRpcCallbacks();
+        gameRpcCallbacks = configuredGameRpcCallbacks with
+        {
+            ReadActiveSurveyIdAsync = configuredGameRpcCallbacks.ReadActiveSurveyIdAsync
+                ?? (_ => ValueTask.FromResult(activeSurveyId)),
+        };
+
         GameStoreCache? mailCache = legacy?.Cache;
         PersistenceStore? mailStore = legacy?.Store;
         var registry = new ServiceRegistry();

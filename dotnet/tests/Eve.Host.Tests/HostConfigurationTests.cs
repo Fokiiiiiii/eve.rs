@@ -15,6 +15,16 @@ public class HostConfigurationTests
     }
 
     [Fact]
+    public void Active_survey_configuration_requires_a_positive_integer()
+    {
+        Assert.Null(HostConfiguration.ParseActiveSurveyId(null));
+        Assert.Null(HostConfiguration.ParseActiveSurveyId(""));
+        Assert.Equal(73, HostConfiguration.ParseActiveSurveyId("73"));
+        Assert.Throws<InvalidOperationException>(() => HostConfiguration.ParseActiveSurveyId("0"));
+        Assert.Throws<InvalidOperationException>(() => HostConfiguration.ParseActiveSurveyId("survey"));
+    }
+
+    [Fact]
     public void The_Windows_defaults_are_numeric_addresses_the_listener_and_the_simulation_client_can_bind()
     {
         Assert.True(IPEndPoint.TryParse("127.0.0.1:26010", out _));

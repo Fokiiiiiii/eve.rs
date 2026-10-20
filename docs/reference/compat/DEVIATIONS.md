@@ -30,6 +30,10 @@ The V24.01 trade window builds a two-pilot money manifest and a set of offered i
 
 EveJS 261018.1 returns the configurable `accruedSessions` list, empty by default. V24.01 `antiaddiction.Session.PreLoad` consumes each row as a session ID and start/end clock ticks, then retains the history in client settings. eve.rs persists authenticated account session intervals in PostgreSQL and returns the same row shape; an active session uses the current clock for its end value, and Host close stores its end. `PgAccruedTimeStoreTests` verifies persistence across store restart. The live test asserts the response rows; the latest local live harness reached space initialization but did not open its client socket within 60 seconds.
 
+## Configured active survey (2026-10-20)
+
+V24.01 calls `survey.GetActiveSurveyID` from the character-selection banner and only requests it when the local active-survey feature is enabled. EveJS 261018.1 stores a nullable active ID (empty by default, set only through its test configuration hook). eve.rs reads a positive integer from `EVE_ACTIVE_SURVEY_ID`; no configured value returns `None`, while invalid values stop Host startup. The existing `GameRpcServicesTests.Survey_defaults_and_killmail_hash_follow_reference_shapes` covers the configured reply and empty reply, and `HostConfigurationTests.Active_survey_configuration_requires_a_positive_integer` covers configuration parsing.
+
 ## Account age gate (2026-10-20)
 
 V24.01 `antiaddiction.AmIUnderage` passes the login JWT to `authentication.AmUnderage`. EveJS 261018.1 reports its configured underage gate. eve.rs reads the authenticated account's persisted `underage` field; its account verification provider must set that field, and new accounts begin false. `PgAccountTests.Account_age_gate_comes_from_persisted_verification_state` checks state changes and persistence across directory restart.

@@ -94,6 +94,15 @@ internal static class HostConfiguration
     /// <summary>The default simulation endpoint, matching <see cref="DefaultEndpoint"/>: a local port on Windows.</summary>
     internal static string DefaultSimSocket(bool windows) => windows ? "tcp:127.0.0.1:26011" : "/tmp/eve-sim.sock";
 
+    internal static int? ParseActiveSurveyId(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return null;
+        if (!int.TryParse(value, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var id) || id <= 0)
+            throw new InvalidOperationException("EVE_ACTIVE_SURVEY_ID must be a positive integer.");
+        return id;
+    }
+
     internal static string Env(string name, string fallback) => Environment.GetEnvironmentVariable(name) is { Length: > 0 } value ? value : fallback;
 
     internal static bool Flag(string name, bool fallback) => Env(name, fallback ? "1" : "0") is "1" or "true" or "TRUE" or "yes";

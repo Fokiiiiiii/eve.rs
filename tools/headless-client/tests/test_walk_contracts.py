@@ -91,6 +91,10 @@ def test_two_characters_create_accept_and_settle_a_public_item_exchange():
         assert number(accepted_fields["acceptorID"]) == acceptor_id
         assert dbseed.owner_of(escrow_item_id) == acceptor_id
         assert dbseed.owner_of(item_id) == issuer_id, "the unoffered remainder of the split stack stays with its issuer"
+        remainder = int(dbseed.sql(
+            f"select quantity from {dbseed.schema('INVENTORY')}.items where id = {item_id}"
+        ))
+        assert remainder == 1
         assert dbseed.isk_of(acceptor_id) == acceptor_before - PRICE
         assert dbseed.isk_of(issuer_id) > issuer_before - 200_000, "the issuer receives the agreed price after listing costs"
         assert _wait_for_notification(issuer, "OnContractAccepted"), "issuer did not receive OnContractAccepted"

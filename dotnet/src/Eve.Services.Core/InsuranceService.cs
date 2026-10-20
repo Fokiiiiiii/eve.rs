@@ -278,6 +278,8 @@ private readonly IInsuranceWriteModel? _writeModel;
         _nowUnixMs = nowUnixMs;
     }
 
+    private const int MaximumInsurancePriceTypeIds = 500;
+
     [Method("GetInsurancePrice")]
     public async ValueTask<PyValue> GetInsurancePrice(ServiceCall call)
     {
@@ -604,8 +606,16 @@ private readonly IInsuranceWriteModel? _writeModel;
         return (roleMask & (CorporationAccountantRole | CorporationJuniorAccountantRole)) != 0;
     }
 
-    private static long[] ReadTypeIds(PyValue value) =>
-        [.. Values(value).Select(PositiveId).Where(id => id > 0).Distinct().OrderBy(id => id)];
+    private static long[] ReadTypeIds(PyValue value)
+    {
+        var values = Values(value).Take(MaximumInsurancePriceTypeIds + 1).ToArray();
+        if (values.Length > MaximumInsurancePriceTypeIds)
+        {
+            throw Eve.Services.MachoErrors.ThrowUserError("InsuranceBulkLimitExceeded");
+        }
+
+        return [.. values.Select(PositiveId).Where(id => id > 0).Distinct().OrderBy(id => id)];
+    }
 
     private static IEnumerable<PyValue> Values(PyValue value)
     {
@@ -645,11 +655,16 @@ private readonly IInsuranceWriteModel? _writeModel;
                 : PyNone.Instance);
     }
 
-    private static long PositiveId(PyValue? value)
+    private static long PositiveId(PyValue? value) => value switch
     {
-        var id = IntegerValue(value);
-        return id > 0 ? id : 0;
-    }
+        PyInt number when number.Value > 0 => number.Value,
+        PyLong number when number.Value > 0 => number.Value,
+        PyReal number when double.IsFinite(number.Value) &&
+            number.Value > 0 &&
+            Math.Truncate(number.Value) == number.Value &&
+            number.Value < 9.223372036854776E18 => (long)number.Value,
+        _ => 0
+    };
 
     private static long IntegerValue(PyValue? value) => value switch
     {

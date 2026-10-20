@@ -26,6 +26,20 @@ public sealed class InsuranceServiceTests
     }
 
     [Fact]
+    public async Task Insurance_price_batch_refuses_more_than_500_type_ids_before_the_read_model()
+    {
+        var model = new FakeInsuranceReadModel();
+        var service = Create(model);
+        var values = new PyList([.. Enumerable.Range(1, 501).Select(id => (PyValue)new PyInt(id))]);
+
+        var error = await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(async () =>
+            await service.CallAsync(Call(new ClientSession(), "GetInsurancePrices", values)));
+
+        Assert.NotNull(error);
+        Assert.Empty(model.LastPriceRequest);
+    }
+
+    [Fact]
     public async Task Prices_convert_from_cents_and_unknown_types_return_zero()
     {
         var model = new FakeInsuranceReadModel(new Dictionary<long, long> { [34] = 12_345 });
@@ -42,6 +56,30 @@ public sealed class InsuranceServiceTests
         Assert.Equal(new PyReal(123.45), Field(prices, 34));
         Assert.Equal(new PyInt(0), Field(prices, 999));
         Assert.Equal([34L, 999L], model.LastPriceRequest);
+    }
+
+    [Fact]
+    public async Task Fractional_ship_identifiers_are_refused_before_read_or_purchase()
+    {
+        var now = Eve.Services.Py.FileTimeFromUnixMs(NowUnixMs);
+        var model = new FakeInsuranceReadModel(contracts:
+        [
+            Contract(1, 123, 587, 100, InsuranceOwnerKind.Character, 0.7, now - 20_000, now + 70_000)
+        ]);
+        var writer = new FakeInsuranceWriteModel();
+        var service = Create(model, writer);
+        var session = Session(
+            ("charid", new PyInt(100)),
+            ("stationid", new PyInt(300)),
+            ("solarsystemid2", new PyInt(400)));
+
+        Assert.Same(PyNone.Instance, await service.CallAsync(Call(session, "GetContractForShip", new PyReal(123.75))));
+        Assert.Null(model.LastContractShipId);
+
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            service.CallAsync(Call(session, "InsureShip", new PyReal(123.75), new PyReal(356_011.65), PyBool.False)).AsTask());
+        Assert.Equal("InsureShipFailed", error.Error.UserErrorMessage);
+        Assert.Null(writer.Purchase);
     }
 
     [Fact]
@@ -616,6 +654,7 @@ private sealed class FakeInsuranceWriteModel : IInsuranceWriteModel
         private readonly IReadOnlyDictionary<long, long> _prices = prices ?? new Dictionary<long, long>();
         private readonly IReadOnlyList<InsuranceContractSnapshot> _contracts = contracts ?? [];
         public IReadOnlyList<long> LastPriceRequest { get; private set; } = [];
+        public long? LastContractShipId { get; private set; }
 
         public ValueTask<IReadOnlyDictionary<long, long>> GetInsurancePricesCentsAsync(
             IReadOnlyCollection<long> typeIds,
@@ -640,6 +679,7 @@ private sealed class FakeInsuranceWriteModel : IInsuranceWriteModel
         public ValueTask<InsuranceContractSnapshot?> GetContractForShipAsync(long shipId, CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            LastContractShipId = shipId;
             return ValueTask.FromResult(_contracts.FirstOrDefault(contract => contract.ShipId == shipId));
         }
     }

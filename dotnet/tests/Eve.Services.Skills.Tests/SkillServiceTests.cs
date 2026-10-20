@@ -344,6 +344,40 @@ public class SkillHandlerTests
         Assert.Null(catalog.ItemTypeId("Skill Injector"));
     }
 
+    [PgFact]
+    public async Task Skill_bulk_item_operations_refuse_more_than_500_raw_entries_before_mutation()
+    {
+        await using var rig = await Rig.CreateAsync(useCurrentSdeCatalog: true);
+        var characterId = rig.CharacterId;
+        const long station = 60_000_001;
+        var session = Rig.Session(characterId).Session;
+        session.Set("stationid", new PyInt(station));
+
+        var itemIds = new PyList([.. Enumerable.Range(1, 501).Select(id => (PyValue)new PyLong(id))]);
+        var injectionError = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            Rig.CallAsync(rig.Handler, session, "InjectSkillIntoBrain", itemIds));
+        Assert.Equal("SkillBulkLimitExceeded", injectionError.Error.UserErrorMessage);
+        Assert.Empty(await rig.Store.ForCharacterAsync(characterId));
+
+        var capsuleType = rig.CatalogForTest.ItemTypeId("Capsule");
+        var extractorType = rig.CatalogForTest.ItemTypeId("Skill Extractor");
+        var injectorType = rig.CatalogForTest.ItemTypeId("Large Skill Injector");
+        Assert.NotNull(capsuleType);
+        Assert.NotNull(extractorType);
+        Assert.NotNull(injectorType);
+        var capsule = await rig.CreateItemAsync(new Eve.Inventory.NewItem(capsuleType.Value, characterId, station, 4, 1, true));
+        var extractor = await rig.CreateItemAsync(new Eve.Inventory.NewItem(extractorType.Value, characterId, station, 4, 1, true));
+        session.Set("shipid", new PyLong(capsule));
+        var targets = new PyDict([.. Enumerable.Range(1, 501).Select(typeId =>
+            new KeyValuePair<PyValue, PyValue>(new PyInt(typeId), new PyLong(long.MaxValue))) ]);
+
+        var extractionError = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            Rig.CallAsync(rig.Handler, session, "ExtractSkills", new PyLong(extractor), targets));
+        Assert.Equal("SkillBulkLimitExceeded", extractionError.Error.UserErrorMessage);
+        Assert.NotNull(await rig.ItemStore.GetAsync(extractor));
+        Assert.DoesNotContain(await rig.ItemStore.InLocationAsync(station, characterId), item => item.TypeId == injectorType.Value);
+    }
+
 [PgFact]
     public async Task Injecting_a_skill_book_consumes_the_owned_book_and_adds_the_skill()
     {
@@ -581,7 +615,7 @@ public class SkillHandlerTests
 
         Assert.IsType<PyNone>(await Rig.CallAsync(rig.Handler, session, "ExtractSkills",
             new PyLong(extractor),
-            new PyDict([new(new PyInt(target.TypeId), new PyLong(500_000))])));
+            new PyList([Py.Tuple(new PyInt(target.TypeId), new PyLong(long.MaxValue - 5)), Py.Tuple(new PyInt(target.TypeId), new PyLong(10))])));
         Assert.Equal(77_002, seenAlphaAccount);
 
         Assert.Null(await rig.ItemStore.GetAsync(extractor));

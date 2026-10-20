@@ -3358,6 +3358,14 @@ public class SpaceServiceTests
 
         try
         {
+            var fractionalFleetResolution = await ((Eve.Services.IService)fleet).CallAsync(
+                new Eve.Services.ServiceCall
+                {
+                    Method = "MachoResolveObject",
+                    Args = [new PyReal(fleetId + 0.5)],
+                    Session = actor
+                });
+            Assert.IsType<PyNone>(fractionalFleetResolution);
             Assert.Equal(PyBool.False,
                 await FleetObjectCallAsync(fleet, fleetId, actor, "Invite", [new PyLong(secondLeaderId)]));
             Assert.Equal(PyBool.False,

@@ -218,6 +218,23 @@ public sealed class ContractProxyServiceTests
         Assert.Equal((999L, 42L, 84L, 126L, false, 1000, 3001L), writer.LastAccept);
     }
 
+[Fact]
+    public async Task Complete_contract_refuses_status_that_overflows_int32()
+    {
+        var writer = new RecordingWriteModel();
+        var service = new ContractProxyService(new RecordingReadModel(), writer);
+        var session = new ClientSession { CharacterId = 42 };
+        session.Set("corpid", new PyInt(84));
+
+        var error = await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(() => service.CompleteContract(new ServiceCall
+        {
+            Method = "CompleteContract", Args = [new PyInt(900), new PyLong(4_294_967_300L)], Session = session,
+        }));
+
+        Assert.NotNull(error);
+        Assert.Equal(default, writer.LastComplete);
+    }
+
     [Fact]
     public async Task Complete_contract_passes_status_station_and_corporation_role()
     {

@@ -4,11 +4,7 @@ using Npgsql;
 
 namespace Eve.Services.Skills;
 
-/// <summary>
-/// The end of an extra training queue (Multiple Character Training): when the account's extra slots run out, the running
-/// queues beyond the remaining slots are paused, the character with the fewest skill points first (wiki: "Multiple Character
-/// Training"). A durable job per granted slot runs at the slot's end; it is idempotent, so a late or repeated run changes nothing.
-/// </summary>
+/// <summary>Pauses over-capacity training queues when an account's extra slots expire; one durable job runs per slot.</summary>
 public sealed class MultipleTrainingSlotExpiry(
     DurableScheduler scheduler,
     CharacterTraining training,
@@ -61,7 +57,6 @@ public sealed class MultipleTrainingSlotExpiry(
     }
 
     /// <summary>Pauses the running queues that the account's remaining slots no longer cover, then tells the account's clients.</summary>
-
     public async Task PauseOverLimitAsync(long accountId, CancellationToken cancellationToken)
     {
         var characters = await accountCharacters(accountId, cancellationToken);

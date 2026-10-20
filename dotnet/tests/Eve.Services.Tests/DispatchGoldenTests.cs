@@ -274,9 +274,13 @@ public class DispatchGoldenTests
         var corporationSession = new ClientSession(corporationCapture) { SessionId = 905 };
         await dispatcher.DispatchAsync(CallRequestPacket("corpRegistry", "GetEveOwners"), corporationSession);
         await dispatcher.DispatchAsync(CallRequestPacket("corpRegistry", "GetMemberIDsByQuery"), corporationSession);
+        await dispatcher.DispatchAsync(CallRequestPacket("corpRegistry", "PayoutDividend"), corporationSession);
         Assert.Equal(1, corporationService.Calls);
+        Assert.Equal(3, corporationCapture.Sent.Count);
         Assert.Equal(ErrorResponseCommand, CommandOf(corporationCapture.Sent[1]));
         Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(corporationCapture.Sent[1])));
+        Assert.Equal(ErrorResponseCommand, CommandOf(corporationCapture.Sent[2]));
+        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(corporationCapture.Sent[2])));
 
         var inventoryCapture = new Capture();
         var inventorySession = new ClientSession(inventoryCapture) { SessionId = 902 };
@@ -486,7 +490,7 @@ public class DispatchGoldenTests
 
         public string Name => "corpRegistry";
 
-        public bool HasMethod(string method) => method is "GetEveOwners" or "GetMemberIDsByQuery";
+        public bool HasMethod(string method) => method is "GetEveOwners" or "GetMemberIDsByQuery" or "GetMembersPaged" or "PayoutDividend";
 
         public ValueTask<PyValue> CallAsync(ServiceCall call)
         {

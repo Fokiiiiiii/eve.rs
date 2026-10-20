@@ -28,6 +28,8 @@ public sealed partial class InvBrokerService(
     /// <summary>The category of characters: the one row the reference gives a custom info.</summary>
     private const int PlayerCategory = 1;
 
+    private const int MaxGetItemsIds = 500;
+
     /// <summary>The volume that holds what a station keeps for one character, when the hangar is asked how much it holds of a flag the reference gives no ship to.</summary>
     private const double HangarCapacity = 1_000_000;
 
@@ -529,7 +531,10 @@ public sealed partial class InvBrokerService(
         {
             return None;
         }
-        var wanted = (call.Arg(0) switch { PyTuple t => t.Items, PyList l => l.Items, _ => [] }).Select(IdOf).Where(v => v is not null).Select(v => v!.Value).ToHashSet();
+        var requested = call.Arg(0) switch { PyTuple t => t.Items, PyList l => l.Items, _ => [] };
+        if (requested.Count > MaxGetItemsIds)
+            throw MachoErrors.ThrowUserError("INVENTORY_BULK_LIMIT_EXCEEDED");
+        var wanted = requested.Select(IdOf).Where(v => v is not null).Select(v => v!.Value).ToHashSet();
         var contents = await ContentsAsync(context, call.Session, call.Cancellation);
         return new PyList([.. contents.Where(r => wanted.Contains(r.ItemId)).Select(r => InventoryWire.PackedRow(r))]);
     }

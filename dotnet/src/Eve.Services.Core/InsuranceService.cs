@@ -278,6 +278,8 @@ private readonly IInsuranceWriteModel? _writeModel;
         _nowUnixMs = nowUnixMs;
     }
 
+    private const int MaximumInsurancePriceTypeIds = 500;
+
     [Method("GetInsurancePrice")]
     public async ValueTask<PyValue> GetInsurancePrice(ServiceCall call)
     {
@@ -604,8 +606,16 @@ private readonly IInsuranceWriteModel? _writeModel;
         return (roleMask & (CorporationAccountantRole | CorporationJuniorAccountantRole)) != 0;
     }
 
-    private static long[] ReadTypeIds(PyValue value) =>
-        [.. Values(value).Select(PositiveId).Where(id => id > 0).Distinct().OrderBy(id => id)];
+    private static long[] ReadTypeIds(PyValue value)
+    {
+        var values = Values(value).Take(MaximumInsurancePriceTypeIds + 1).ToArray();
+        if (values.Length > MaximumInsurancePriceTypeIds)
+        {
+            throw Eve.Services.MachoErrors.ThrowUserError("InsuranceBulkLimitExceeded");
+        }
+
+        return [.. values.Select(PositiveId).Where(id => id > 0).Distinct().OrderBy(id => id)];
+    }
 
     private static IEnumerable<PyValue> Values(PyValue value)
     {

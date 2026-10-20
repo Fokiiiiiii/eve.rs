@@ -26,6 +26,20 @@ public sealed class InsuranceServiceTests
     }
 
     [Fact]
+    public async Task Insurance_price_batch_refuses_more_than_500_type_ids_before_the_read_model()
+    {
+        var model = new FakeInsuranceReadModel();
+        var service = Create(model);
+        var values = new PyList([.. Enumerable.Range(1, 501).Select(id => (PyValue)new PyInt(id))]);
+
+        var error = await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(async () =>
+            await service.CallAsync(Call(new ClientSession(), "GetInsurancePrices", values)));
+
+        Assert.NotNull(error);
+        Assert.Empty(model.LastPriceRequest);
+    }
+
+    [Fact]
     public async Task Prices_convert_from_cents_and_unknown_types_return_zero()
     {
         var model = new FakeInsuranceReadModel(new Dictionary<long, long> { [34] = 12_345 });

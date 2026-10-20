@@ -328,8 +328,7 @@ public sealed partial class ContractProxyService(
         };
         var status = call.Arg(1) switch
         {
-            PyInt value => (int)value.Value,
-            PyLong value => checked((int)value.Value),
+            PyInt or PyLong => ContractInt(call.Arg(1)),
             _ => throw MachoErrors.ThrowUserError("ConContractNotAvailable"),
         };
         try

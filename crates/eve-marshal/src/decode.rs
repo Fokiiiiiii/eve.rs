@@ -1,14 +1,17 @@
 use std::borrow::Cow;
+use std::cell::RefCell;
+use std::mem::size_of;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use bytes::Bytes;
 
-use crate::MAX_DEPTH;
 use crate::error::{MarshalError, Result};
 use crate::packed_row::{self, Descriptor};
 use crate::string_table::STRING_TABLE;
 use crate::value::{ObjectExKind, SubStream, Value};
 use crate::wire::{MARSHAL_HEADER, OPCODE_MASK, SAVE_MASK, op};
+use crate::{MAX_DECODE_ALLOCATION, MAX_DEPTH, MAX_ELEMENTS, MAX_INPUT_BYTES, MAX_STRING_BYTES};
 
 /// Decode a marshal stream, tolerating bytes after the root value.
 ///
@@ -21,23 +24,29 @@ use crate::wire::{MARSHAL_HEADER, OPCODE_MASK, SAVE_MASK, op};
 /// into it; use [`decode_bytes`] when the input is already a [`Bytes`] (a
 /// socket read buffer, say) to avoid even that copy.
 pub fn decode(bytes: &[u8]) -> Result<Value> {
+    if bytes.len() > MAX_INPUT_BYTES {
+        return Err(MarshalError::ResourceLimit("input byte"));
+    }
     decode_bytes(&Bytes::copy_from_slice(bytes))
 }
 
 /// [`decode`] without copying: strings and buffers in the result are
 /// reference-counted slices of `input`.
 pub fn decode_bytes(input: &Bytes) -> Result<Value> {
-    decode_stream(input, false, 0)
+    decode_stream(input, false, 0, Rc::new(RefCell::new(DecodeBudget::default())))
 }
 
 /// Decode a marshal stream and require that it is consumed exactly.
 pub fn decode_exact(bytes: &[u8]) -> Result<Value> {
+    if bytes.len() > MAX_INPUT_BYTES {
+        return Err(MarshalError::ResourceLimit("input byte"));
+    }
     decode_exact_bytes(&Bytes::copy_from_slice(bytes))
 }
 
 /// [`decode_exact`] without copying.
 pub fn decode_exact_bytes(input: &Bytes) -> Result<Value> {
-    decode_stream(input, true, 0)
+    decode_stream(input, true, 0, Rc::new(RefCell::new(DecodeBudget::default())))
 }
 
 /// Split a `[u32 length][payload]` frame off the front of `input`.
@@ -53,7 +62,105 @@ pub fn split_packet(input: &[u8]) -> Option<(&[u8], &[u8])> {
 /// `depth` is the nesting already used by enclosing streams: a nested
 /// PySubStream continues the count, so a chain of substreams cannot get
 /// around [`MAX_DEPTH`] and exhaust the stack.
-fn decode_stream(input: &Bytes, require_exact_end: bool, depth: usize) -> Result<Value> {
+fn clone_extra(value: &Value) -> usize {
+    match value {
+        Value::BigUnsigned(bytes) => bytes.len(),
+        Value::Str(text) | Value::WString(text) | Value::Token(text) => {
+            if matches!(text, Cow::Owned(_)) {
+                text.len()
+            } else {
+                0
+            }
+        }
+        Value::Tuple(items) | Value::List(items) => items
+            .len()
+            .saturating_mul(size_of::<Value>())
+            .saturating_add(items.iter().map(clone_extra).sum::<usize>()),
+        Value::Dict(entries) => entries.len().saturating_mul(size_of::<(Value, Value)>()).saturating_add(
+            entries
+                .iter()
+                .map(|(key, value)| clone_extra(key).saturating_add(clone_extra(value)))
+                .sum::<usize>(),
+        ),
+        Value::Object { name, args } => size_of::<Value>()
+            .saturating_mul(2)
+            .saturating_add(clone_extra(name))
+            .saturating_add(clone_extra(args)),
+        Value::ObjectEx { header, list, dict, .. } => size_of::<Value>()
+            .saturating_add(list.len().saturating_mul(size_of::<Value>()))
+            .saturating_add(dict.len().saturating_mul(size_of::<(Value, Value)>()))
+            .saturating_add(clone_extra(header))
+            .saturating_add(list.iter().map(clone_extra).sum::<usize>())
+            .saturating_add(
+                dict.iter()
+                    .map(|(key, value)| clone_extra(key).saturating_add(clone_extra(value)))
+                    .sum::<usize>(),
+            ),
+        Value::SubStruct(value) | Value::Checksummed { value, .. } => {
+            size_of::<Value>().saturating_add(clone_extra(value))
+        }
+        Value::SubStream(SubStream::Decoded(value)) => size_of::<Value>().saturating_add(clone_extra(value)),
+        Value::PackedRow(row) => size_of::<crate::value::PackedRow>()
+            .saturating_add(row.values.len().saturating_mul(size_of::<Value>()))
+            .saturating_add(row.values.iter().map(clone_extra).sum::<usize>()),
+        Value::None
+        | Value::Bool(_)
+        | Value::Int(_)
+        | Value::Long(_)
+        | Value::Real(_)
+        | Value::Bytes(_)
+        | Value::Buffer(_)
+        | Value::SubStream(SubStream::Raw(_))
+        | Value::CPickled(_) => 0,
+    }
+}
+
+fn clone_allocation(value: &Value) -> usize {
+    size_of::<Value>().saturating_add(clone_extra(value))
+}
+
+#[derive(Default)]
+struct DecodeBudget {
+    elements: usize,
+    allocation: usize,
+}
+
+impl DecodeBudget {
+    fn value(&mut self) -> Result<()> {
+        self.elements = self.elements.checked_add(1).ok_or(MarshalError::ResourceLimit("element count"))?;
+        if self.elements > MAX_ELEMENTS {
+            return Err(MarshalError::ResourceLimit("element count"));
+        }
+        self.allocate(size_of::<Value>())
+    }
+
+    fn container<T>(&mut self, count: usize) -> Result<()> {
+        if count > MAX_ELEMENTS {
+            return Err(MarshalError::ResourceLimit("element count"));
+        }
+        let bytes = count.checked_mul(size_of::<T>()).ok_or(MarshalError::ResourceLimit("allocation"))?;
+        self.allocate(bytes)
+    }
+
+    fn allocate(&mut self, bytes: usize) -> Result<()> {
+        self.allocation =
+            self.allocation.checked_add(bytes).ok_or(MarshalError::ResourceLimit("allocation"))?;
+        if self.allocation > MAX_DECODE_ALLOCATION {
+            return Err(MarshalError::ResourceLimit("allocation"));
+        }
+        Ok(())
+    }
+}
+
+fn decode_stream(
+    input: &Bytes,
+    require_exact_end: bool,
+    depth: usize,
+    budget: Rc<RefCell<DecodeBudget>>,
+) -> Result<Value> {
+    if input.len() > MAX_INPUT_BYTES {
+        return Err(MarshalError::ResourceLimit("input byte"));
+    }
     let bytes: &[u8] = input;
     let mut decoder = Decoder {
         input,
@@ -66,6 +173,7 @@ fn decode_stream(input: &Bytes, require_exact_end: bool, depth: usize) -> Result
         saved_refs: 0,
         descriptor: None,
         scratch: Vec::new(),
+        budget: Rc::clone(&budget),
     };
 
     let header = decoder.u8()?;
@@ -80,6 +188,10 @@ fn decode_stream(input: &Bytes, require_exact_end: bool, depth: usize) -> Result
             .checked_mul(4)
             .filter(|needed| bytes.len().saturating_sub(decoder.pos) >= *needed)
             .ok_or(MarshalError::SaveTable("save table larger than the stream"))?;
+        if save_count > MAX_ELEMENTS {
+            return Err(MarshalError::ResourceLimit("save table"));
+        }
+        decoder.budget.borrow_mut().container::<Value>(save_count)?;
         decoder.stored = vec![Value::None; save_count];
         decoder.save_pos = Some(bytes.len() - table_bytes);
         decoder.save_end = Some(bytes.len());
@@ -118,6 +230,7 @@ pub(crate) struct Decoder<'a> {
     descriptor: Option<CachedDescriptor>,
     /// Working space for a packed row's fixed-width block, reused across rows.
     pub(crate) scratch: Vec<u8>,
+    budget: Rc<RefCell<DecodeBudget>>,
 }
 
 impl<'a> Decoder<'a> {
@@ -147,10 +260,19 @@ impl<'a> Decoder<'a> {
     }
 
     fn size(&mut self) -> Result<usize> {
-        match self.u8()? {
-            0xff => Ok(self.u32()? as usize),
-            size => Ok(usize::from(size)),
+        let size = match self.u8()? {
+            0xff => self.u32()? as usize,
+            size => usize::from(size),
+        };
+        Ok(size)
+    }
+
+    fn byte_length(&mut self) -> Result<usize> {
+        let size = self.size()?;
+        if size > MAX_STRING_BYTES {
+            return Err(MarshalError::ResourceLimit("declared byte/string"));
         }
+        Ok(size)
     }
 
     /// The JS reference's `readBytes`: clamps to the input but always advances
@@ -191,7 +313,17 @@ impl<'a> Decoder<'a> {
         count.min(self.buf.len().saturating_sub(self.pos))
     }
 
+    fn charge_container<T>(&self, count: usize) -> Result<usize> {
+        if count > MAX_ELEMENTS {
+            return Err(MarshalError::ResourceLimit("element count"));
+        }
+        let capacity = self.capacity(count);
+        self.budget.borrow_mut().container::<T>(capacity)?;
+        Ok(capacity)
+    }
+
     pub(crate) fn value(&mut self) -> Result<Value> {
+        self.budget.borrow_mut().value()?;
         if self.depth >= MAX_DEPTH {
             return Err(MarshalError::TooDeep);
         }
@@ -229,6 +361,7 @@ impl<'a> Decoder<'a> {
         };
 
         if save && storage_index > 0 && storage_index <= self.stored.len() {
+            self.budget.borrow_mut().allocate(clone_allocation(&value))?;
             self.stored[storage_index - 1] = value.clone();
         }
         Ok(value)
@@ -279,7 +412,8 @@ impl<'a> Decoder<'a> {
     #[inline(never)]
     fn dict(&mut self) -> Result<Value> {
         let count = self.size()?;
-        let mut entries = Vec::with_capacity(self.capacity(count));
+        let capacity = self.charge_container::<(Value, Value)>(count)?;
+        let mut entries = Vec::with_capacity(capacity);
         for _ in 0..count {
             // The wire stores each pair value first, then key.
             let value = self.value()?;
@@ -294,8 +428,9 @@ impl<'a> Decoder<'a> {
         let length = self.size()?;
         let data = self.chunk(length);
         // A nested stream that does not decode is kept as raw bytes.
-        Ok(match decode_stream(&data, false, self.depth) {
+        Ok(match decode_stream(&data, false, self.depth, Rc::clone(&self.budget)) {
             Ok(inner) => Value::SubStream(SubStream::Decoded(Box::new(inner))),
+            Err(error @ MarshalError::ResourceLimit(_)) => return Err(error),
             Err(_) => Value::SubStream(SubStream::Raw(data)),
         })
     }
@@ -364,7 +499,7 @@ impl<'a> Decoder<'a> {
                 Value::Bytes(self.chunk(length))
             }
             op::LONG_STRING => {
-                let length = self.size()?;
+                let length = self.byte_length()?;
                 Value::Bytes(self.chunk(length))
             }
             op::STRING_TABLE_ITEM => {
@@ -377,32 +512,39 @@ impl<'a> Decoder<'a> {
             op::EMPTY_WSTRING => Value::WString(Cow::Borrowed("")),
             op::WSTRING_UCS2 => {
                 let units = self.size()?;
-                Value::WString(Cow::Owned(utf16_lossy(self.bytes(units.saturating_mul(2)))))
+                let bytes = units
+                    .checked_mul(2)
+                    .filter(|length| *length <= MAX_STRING_BYTES)
+                    .ok_or(MarshalError::ResourceLimit("declared byte/string"))?;
+                Value::WString(Cow::Owned(utf16_lossy(self.bytes(bytes))))
             }
             op::WSTRING_UCS2_CHAR => Value::WString(Cow::Owned(utf16_lossy(self.bytes(2)))),
             op::WSTRING_UTF8 => {
-                let length = self.size()?;
+                let length = self.byte_length()?;
                 Value::WString(Cow::Owned(String::from_utf8_lossy(self.bytes(length)).into_owned()))
             }
             op::TOKEN => {
-                let length = self.size()?;
+                let length = self.byte_length()?;
                 Value::Token(Cow::Owned(String::from_utf8_lossy(self.bytes(length)).into_owned()))
             }
             op::EMPTY_TUPLE => Value::Tuple(Vec::new()),
             op::EMPTY_LIST => Value::List(Vec::new()),
             op::BUFFER => {
-                let length = self.size()?;
+                let length = self.byte_length()?;
                 Value::Buffer(self.chunk(length))
             }
             op::CPICKLED => {
-                let length = self.size()?;
+                let length = self.byte_length()?;
                 Value::CPickled(self.chunk(length))
             }
             op::SAVED_STREAM_ELEMENT => {
                 self.saved_refs += 1;
                 let index = self.size()?;
                 match index.checked_sub(1).and_then(|slot| self.stored.get(slot)) {
-                    Some(stored) => stored.clone(),
+                    Some(stored) => {
+                        self.budget.borrow_mut().allocate(clone_allocation(stored))?;
+                        stored.clone()
+                    }
                     None => Value::None,
                 }
             }
@@ -414,7 +556,8 @@ impl<'a> Decoder<'a> {
 
     #[inline(never)]
     fn items(&mut self, count: usize) -> Result<Vec<Value>> {
-        let mut items = Vec::with_capacity(self.capacity(count));
+        let capacity = self.charge_container::<Value>(count)?;
+        let mut items = Vec::with_capacity(capacity);
         for _ in 0..count {
             items.push(self.value()?);
         }
@@ -460,6 +603,7 @@ impl<'a> Decoder<'a> {
                 self.pos += 1;
                 break;
             }
+            self.budget.borrow_mut().allocate(size_of::<Value>())?;
             list.push(self.value()?);
         }
 
@@ -471,6 +615,7 @@ impl<'a> Decoder<'a> {
             }
             let key = self.value()?;
             let value = self.value()?;
+            self.budget.borrow_mut().allocate(size_of::<(Value, Value)>())?;
             dict.push((key, value));
         }
 
@@ -497,6 +642,7 @@ static SINGLE_BYTES: [u8; 256] = {
 /// Node's `toString("utf16le")`: whole code units only, invalid surrogates
 /// replaced.
 fn utf16_lossy(bytes: &[u8]) -> String {
-    let units: Vec<u16> = bytes.as_chunks::<2>().0.iter().map(|pair| u16::from_le_bytes(*pair)).collect();
-    String::from_utf16_lossy(&units)
+    std::char::decode_utf16(bytes.as_chunks::<2>().0.iter().map(|pair| u16::from_le_bytes(*pair)))
+        .map(|decoded| decoded.unwrap_or(char::REPLACEMENT_CHARACTER))
+        .collect()
 }

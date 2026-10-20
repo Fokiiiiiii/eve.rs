@@ -1,4 +1,4 @@
-//! Usage: `cargo run --release -p eve-bench [-- --compare|--filter NAME]`.
+//! Usage: `cargo run --release -p eve-bench [-- --compare|--filter NAME|--latency]`.
 //! Marshal payloads are checked against the recorded baseline before timing.
 
 use std::hint::black_box;
@@ -21,6 +21,7 @@ static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
 const WARMUP: Duration = Duration::from_millis(300);
 const BATCH: Duration = Duration::from_millis(250);
 const BATCHES: usize = 9;
+const LATENCY_SAMPLES: usize = 20_000;
 
 fn fnv1a64(bytes: &[u8]) -> String {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
@@ -384,6 +385,26 @@ fn measure(bench: &mut Bench) -> f64 {
     median(&mut rates)
 }
 
+fn measure_latency(bench: &mut Bench) -> [f64; 3] {
+    let warmup_end = Instant::now() + WARMUP;
+    while Instant::now() < warmup_end {
+        (bench.run)();
+    }
+
+    let mut samples = Vec::with_capacity(LATENCY_SAMPLES);
+    for _ in 0..LATENCY_SAMPLES {
+        let start = Instant::now();
+        (bench.run)();
+        samples.push(start.elapsed().as_nanos());
+    }
+    samples.sort_unstable();
+
+    [50, 95, 99].map(|percentile| {
+        let index = (samples.len() * percentile).div_ceil(100).saturating_sub(1);
+        samples[index] as f64 / 1_000.0
+    })
+}
+
 fn thousands(value: f64) -> String {
     let digits = format!("{}", value.round() as u64);
     let mut out = String::new();
@@ -408,6 +429,7 @@ fn main() {
     let baseline: Option<Json> =
         std::fs::read_to_string(&baseline_path).ok().and_then(|text| serde_json::from_str(&text).ok());
     let compare = args.iter().any(|arg| arg == "--compare");
+    let latency = args.iter().any(|arg| arg == "--latency");
     if compare && baseline.is_none() {
         eprintln!("--compare needs {}", baseline_path.display());
         std::process::exit(2);
@@ -419,6 +441,11 @@ fn main() {
     );
     for mut bench in build(baseline.as_ref()) {
         if !bench.name.contains(&filter) {
+            continue;
+        }
+        if latency {
+            let [p50, p95, p99] = measure_latency(&mut bench);
+            println!("{:<40} p50={p50:.3} us p95={p95:.3} us p99={p99:.3} us", bench.name);
             continue;
         }
         let rate = measure(&mut bench);

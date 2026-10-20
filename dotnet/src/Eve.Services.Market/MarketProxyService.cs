@@ -18,18 +18,14 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
 
     private static int Int32(PyValue value, long fallback = 0)
     {
+        if (value is PyReal real && (!double.IsFinite(real.Value) || real.Value != Math.Truncate(real.Value)))
+            throw Error(new MarketError("MARKET_ARGUMENT_OUT_OF_RANGE"));
         var numeric = Integer(value, fallback);
         if (numeric is < int.MinValue or > int.MaxValue)
             throw Error(new MarketError("MARKET_ARGUMENT_OUT_OF_RANGE"));
         return (int)numeric;
     }
 
-    private static int NarrowInt32(long value)
-    {
-        if (value is < int.MinValue or > int.MaxValue)
-            throw Error(new MarketError("MARKET_ARGUMENT_OUT_OF_RANGE"));
-        return (int)value;
-    }
     private static decimal Money(PyValue v) => v switch
     {
         PyInt n => n.Value,PyLong n => n.Value,PyReal n when double.IsFinite(n.Value) && Math.Abs(n.Value)<=MarketRules.MaximumOrderPrice =>
@@ -465,10 +461,10 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
         var requests = new List<(MarketRequest Request,string OperationKey)>();
         foreach (var (entry,line) in entries.Select((entry,line)=>(entry,line)))
         {
-            var typeId = Integer(Field(entry, "typeID"));
+            var typeId = Int32(Field(entry, "typeID"));
             var quantity = Integer(Field(entry, "quantity"));
             if (typeId <= 0 || quantity <= 0) continue;
-            var request = new MarketRequest(actor, NarrowInt32(typeId), true, Money(Field(entry, "price")), quantity, stationId, 0,
+            var request = new MarketRequest(actor, typeId, true, Money(Field(entry, "price")), quantity, stationId, 0,
                 MarketRules.RangeStation, Math.Max(1, Integer(Field(entry, "minVolume"), 1)), UseCorporation: useCorporation);
             RefuseRepeatedPlacement(call, request);
             if (requests.Any(previous => previous.Request == request))

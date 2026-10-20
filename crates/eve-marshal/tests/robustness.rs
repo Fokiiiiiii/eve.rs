@@ -2,8 +2,8 @@
 //! reference gets from its runtime: bounded stack, bounded allocation.
 
 use eve_marshal::{
-    MAX_DEPTH, MarshalError, SubStream, Value, compress_rle, decode, decode_exact, decompress_rle, encode,
-    encode_packet, split_packet,
+    MAX_DEPTH, MAX_ELEMENTS, MAX_INPUT_BYTES, MarshalError, SubStream, Value, compress_rle, decode,
+    decode_exact, decompress_rle, encode, encode_packet, split_packet,
 };
 
 const HEADER: [u8; 5] = [0x7e, 0, 0, 0, 0];
@@ -63,7 +63,7 @@ fn a_chain_of_substreams_cannot_get_around_the_depth_limit() {
 fn a_huge_declared_count_does_not_allocate_for_it() {
     for opcode in [0x14u8 /* tuple */, 0x15 /* list */, 0x16 /* dict */] {
         let bytes = stream(&[opcode, 0xff, 0xff, 0xff, 0xff, 0xff]); // count = u32::MAX, no elements
-        assert_eq!(decode(&bytes), Err(MarshalError::UnexpectedEnd), "opcode {opcode:#x}");
+        assert_eq!(decode(&bytes), Err(MarshalError::ResourceLimit("element count")), "opcode {opcode:#x}");
     }
 }
 
@@ -71,6 +71,20 @@ fn a_huge_declared_count_does_not_allocate_for_it() {
 fn a_huge_declared_save_table_is_rejected() {
     let bytes = [0x7e, 0xff, 0xff, 0xff, 0x7f, 0x01];
     assert!(matches!(decode(&bytes), Err(MarshalError::SaveTable(_))));
+}
+
+#[test]
+fn marshal_input_size_is_bounded_before_decoding() {
+    let input = vec![0; MAX_INPUT_BYTES + 1];
+    assert_eq!(decode(&input), Err(MarshalError::ResourceLimit("input byte")));
+    assert_eq!(decode_exact(&input), Err(MarshalError::ResourceLimit("input byte")));
+}
+
+#[test]
+fn element_count_limit_rejects_a_large_declared_list_before_allocation() {
+    let count = (MAX_ELEMENTS as u32 + 1).to_le_bytes();
+    let bytes = stream(&[0x15, 0xff, count[0], count[1], count[2], count[3]]);
+    assert_eq!(decode(&bytes), Err(MarshalError::ResourceLimit("element count")));
 }
 
 #[test]
@@ -93,6 +107,39 @@ fn arbitrary_bytes_never_panic() {
         }
         let _ = decode(&bytes);
         let _ = decode_exact(&bytes);
+    }
+}
+
+fn generated_value(random: &mut XorShift, depth: usize) -> Value {
+    let choice = if depth == 0 { random.next() % 5 } else { random.next() % 8 };
+    match choice {
+        0 => Value::None,
+        1 => Value::Bool(random.next() & 1 != 0),
+        2 => Value::Int((random.next() as i16) as i64),
+        3 => Value::WString(format!("value-{}", random.next() % 10_000).into()),
+        4 => {
+            let length = (random.next() % 12) as usize;
+            Value::Bytes((0..length).map(|_| random.next() as u8).collect::<Vec<_>>().into())
+        }
+        5 => {
+            let count = (random.next() % 4) as usize;
+            Value::List((0..count).map(|_| generated_value(random, depth - 1)).collect())
+        }
+        6 => {
+            let count = (random.next() % 4) as usize;
+            Value::Tuple((0..count).map(|_| generated_value(random, depth - 1)).collect())
+        }
+        _ => Value::Buffer(vec![random.next() as u8; (random.next() % 16) as usize].into()),
+    }
+}
+
+#[test]
+fn generated_values_round_trip_through_the_marshal_codec() {
+    let mut random = XorShift(0x6a09_e667_f3bc_c909);
+    for iteration in 0..2_000 {
+        let value = generated_value(&mut random, 5);
+        let bytes = encode(&value).unwrap();
+        assert_eq!(decode_exact(&bytes), Ok(value), "generated value {iteration}");
     }
 }
 

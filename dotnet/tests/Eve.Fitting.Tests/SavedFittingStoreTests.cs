@@ -52,6 +52,34 @@ public class SavedFittingStoreTests : IAsyncLifetime
     }
 
     [Fact]
+    public void A_negative_fitting_quantity_is_refused()
+    {
+        var draft = Draft with { FitData = [new FittingItem(DamageControl, 11, -1)] };
+
+        var fault = SavedFittingRules.Check(draft, Categories);
+
+        Assert.Equal("FITTING_INVALID_QUANTITY", fault?.Code);
+        Assert.Equal(DamageControl, fault?.Value);
+    }
+
+    [Fact]
+    public void A_fitting_with_more_than_500_items_is_refused_before_category_lookups()
+    {
+        var draft = Draft with { FitData = Enumerable.Repeat(new FittingItem(DamageControl, 11, 1), 501).ToArray() };
+        var lookups = 0;
+
+        var fault = SavedFittingRules.Check(draft, id =>
+        {
+            lookups++;
+            return Categories(id);
+        });
+
+        Assert.Equal("FITTING_TOO_MANY_ITEMS", fault?.Code);
+        Assert.Equal(501, fault?.Value);
+        Assert.Equal(1, lookups);
+    }
+
+    [Fact]
     public void A_station_or_a_non_ship_is_refused_as_the_ship_type()
     {
         Assert.Equal("FITTING_INVALID_SHIP_TYPE", SavedFittingRules.Check(Draft with { ShipTypeId = Afterburner }, Categories)?.Code);

@@ -106,8 +106,9 @@ The original table above covers connection, authentication, and character entry.
 | `standingMgr.GetStandingCompositions` | Standings composition (`standingsvc.py:282-283`) | Implemented | Evidence and remaining provider work are linked in the caller path and current feature entries in `docs/project/TODO.md`. |
 | `LPSvc.GetAllMyCharacterWalletLPBalances` | Personal LP balances (`loyaltyPointsWalletSvc.py:31`) | Implemented | Evidence and remaining provider work are linked in the caller path and current feature entries in `docs/project/TODO.md`. |
 | `LPSvc.GetAllMyCorporationWalletLPBalances` | Corporation LP balances (`loyaltyPointsWalletSvc.py:37`) | Implemented | Evidence and remaining provider work are linked in the caller path and current feature entries in `docs/project/TODO.md`. |
-| `LPStoreMgr.GetAvailableOffersFromCorp` | LP store offers (`lpStoreSvc.py:98`); offer provider is data-dependent | Partial | Evidence and remaining provider work are linked in the caller path and current feature entries in `docs/project/TODO.md`. |
-| `LPStoreMgr.TakeOfferForCharacter` | LP purchase (`lpStoreSvc.py:249`); full client flow remains open | Partial | Evidence and remaining provider work are linked in the caller path and current feature entries in `docs/project/TODO.md`. |
+| `LPStoreMgr.GetAvailableOffersFromCorp` | LP store offers (`lpStoreSvc.py:98`) | Implemented | ESI-backed daily cache; provider outages retain stored offers. `LpStoreMgrServiceTests`; headless purchase walk in `test_agents_live.py`. |
+| `LPStoreMgr.TakeOfferForCharacter` | LP purchase (`lpStoreSvc.py:249`) | Implemented | Transactional LP, ISK, required items, grant and notifications; `LpStoreMgrServiceTests`; headless purchase walk in `test_agents_live.py`. |
+| `LPStoreMgr.TakeOfferForCorporation` | Corporation LP purchase (`lpStoreSvc.py:253`) | Implemented | Director authorization and corporation wallet debit; `LpStoreMgrServiceTests`. |
 | `calendarMgr.GetResponsesForCharacter` | Calendar response prime (`eveCalendarsvc.py:250-257`) | Implemented | Evidence and remaining provider work are linked in the caller path and current feature entries in `docs/project/TODO.md`. |
 | `calendarMgr.GetResponsesToEvent` | Calendar event response read (`eveCalendarsvc.py`) | Implemented | Evidence and remaining provider work are linked in the caller path and current feature entries in `docs/project/TODO.md`. |
 | `calendarMgr.CreatePersonalEvent` | Personal calendar event (`eveCalendarsvc.py:172-185`); notification producer open | Partial | Evidence and remaining provider work are linked in the caller path and current feature entries in `docs/project/TODO.md`. |
@@ -138,7 +139,7 @@ The original table above covers connection, authentication, and character entry.
 | `fleetMgr.RemoveFromWatchlist` | Fleet watchlist changes (`parklife/fleetSvc.py:719`); full session list flow open | Partial | Evidence and remaining provider work are linked in the caller path and current feature entries in `docs/project/TODO.md`. |
 | `fleetMgr.RegisterForDamageUpdates` | Fleet watchlist damage updates (`parklife/fleetSvc.py:795`) | Partial | Evidence and remaining provider work are linked in the caller path and current feature entries in `docs/project/TODO.md`. |
 
-Inventory baseline: 120 tracked rows: 69 implemented, 51 partial, and 0 missing routes. This combines 38 connection/character-entry entries (28 implemented and 10 partial) with 82 post-selection/first-screen entries (41 implemented and 41 partial).
+Inventory baseline: 121 tracked rows: 72 implemented, 49 partial, and 0 missing routes. This combines 38 connection/character-entry entries (28 implemented and 10 partial) with 83 post-selection/first-screen entries (44 implemented and 39 partial).
 
 ## Verification boundary
 

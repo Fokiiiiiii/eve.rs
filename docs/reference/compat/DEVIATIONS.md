@@ -1457,8 +1457,7 @@ Sources. The wiki: "Pochven" (https://wiki.eveuniversity.org/Pochven, fetched 20
   offer is served by eve.rs, so no tracking call is made. `localizationServer.UpdateLocalizationQAWrap` and
   `ReloadFSDPickle` change only in-process state. `communityTrackMgr` keeps its instances in memory (the community track
   state is not persisted). Status: open, each with its owner in TODO section 41.
-- **Loyalty point store.** `LPStoreMgr` answers no offers and refuses every take (False). The reference's offers come from
-  the loyalty point data that eve.rs does not have yet. Status: open (the agents and loyalty track).
+- **Loyalty point store (historical status, superseded by A9 below).** At this point `LPStoreMgr` answered no offers and refused every take. The current ESI-backed offer and purchase behavior is recorded in Agents slices AG-2/A9 and AG-3/A9.
 - **Map reads without a data source.** `map.GetSolarSystemVisits`, `GetHistory`, `GetConstellationLPData`,
   `GetAllRoamingWeatherSystems`, `GetMyExtraMapInfo`, `GetMyExtraMapInfoAgents`, `GetDeadspaceAgentsMap`,
   `GetDeadspaceComplexMap` and `GetFacWarZoneInfo` answer the reference's empty shape (a rowset, a dict, None, or the
@@ -1851,7 +1850,7 @@ Faction lists: `eve/common/lib/appConst.py:618-632`.
   without a caller cannot be checked against the client, so it is not added (the same rule as slice B3).
 - **No source credits loyalty points yet.** The store's `ApplyAsync` is ready for the first credit (missions, factional
   warfare, insurgency). Until then every balance is empty; the tests credit through the store.
-- **LPStoreMgr is unchanged** (still answers no offers and refuses every take); it is slice A9.
+- **LPStoreMgr status at this point (historical, superseded by A9 below):** the offer and purchase methods had not yet been implemented.
 
 - **The access rule is a port of the client's rule** (`AgentAccessRule`): the level threshold `m = 2(level-1) - 1`, the
   floor (the lowest of the three standings must exceed -2), the research rule (the corporation standing must reach `m - 2`),
@@ -2024,13 +2023,7 @@ document, `esi.evetech.net/meta/openapi.json`). Client: eve-logic `eve/client/sc
   Test: `LpStoreMgrServiceTests`.
 - **`LPStoreMgr` is a real service now** (`LpStoreMgrService`, Services.Wallet, registered with the agent services). It replaces the
   compatibility stub that answered an empty list and False (removed from Services.Core).
-- **Taking an offer is refused by name (open, part 2).** `TakeOfferForCharacter` and `TakeOfferForCorporation` answer
-  CustomInfo "This loyalty point store purchase is not available on this server yet." The purchase needs three things not
-  yet in the code: (1) the ISK debit's wallet journal reference type for an LP store purchase, which has no source in the pinned
-  SDE or in ESI's reference-type names (ESI names the types as strings, and the numeric ids were not readable); (2) the
-  announcement of the granted item to the client (`OnItemChange` is sent by the inventory RPC layer after its own mutations, not
-  by the stores); (3) the corporation wallet and director rules for the corporation take (EveJS `lpStoreMgrService.js:389-423`).
-  The LP and item halves of the purchase are the same transaction as the offer's ISK, and are written when (1) is decided.
+- **Historical status, superseded by AG-3 below.** At this point in the implementation, both take methods were refused. The following AG-3 section records the completed purchase path, its evidence and the remaining limitations.
 
 ## Agents slice AG-3, A9 (part 2): taking an offer (2026-10-11)
 

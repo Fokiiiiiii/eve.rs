@@ -5232,3 +5232,8 @@ Corporate contract creation, bidding, acceptance, completion, deletion, and corp
 ## Private corporation-member info role revocation (2026-10-20)
 
 `charMgr.GetPrivateInfo` still requires the session’s same-corporation Director or Personnel Manager role for the V24 call contract. The Host additionally checks current persisted membership and role before returning the target’s balance and security rating, so demotion during an active session removes access. `CharacterInfoTests.Private_member_info_requires_an_authorized_role_in_the_members_corporation` verifies access and refusal after the persisted-role callback is revoked.
+
+
+## Faction-warfare corporation role revocation (2026-10-20)
+
+The four corporation enlistment, leave, and withdrawal mutations retain the client Director-session-bit check and additionally validate the actor's current persisted corporation membership and Director role. A role removed during an active session therefore cannot approve or withdraw corporation faction-warfare changes. `FacWarMgrRpcTests.Corporation_enlistment_needs_the_director_role_and_is_pending_until_the_downtime` verifies that a stale Director session cannot leave an enlisted corporation. Alliance role authorization is handled separately and remains under review.

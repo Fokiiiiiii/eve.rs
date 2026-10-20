@@ -281,6 +281,8 @@ public sealed class PacketDispatcher
             return 10;
         if (service == "corpRegistry" && method is "GetEveOwners" or "GetMemberIDsByQuery" or "GetMemberIDsWithMoreThanAvgShares" or "GetMembersByIds" or "GetMembersPaged" or "GetMemberTrackingInfo" or "GetMemberTrackingInfoSimple" or "GetRecentKills" or "GetRecentLosses")
             return 10;
+        if (service == "allianceRegistry" && method is "GetEveOwners" or "GetRankedAlliances" or "GetAllianceMembers" or "GetMembers" or "GetEmploymentRecord" or "GetAllianceMembersOlderThan" or "GetAllianceApplications")
+            return 10;
         if (service == "charMgr" && method is "GetRecentShipKillsAndLosses")
             return 10;
         if (service == "corpRecProxy" && method is "SearchCorpAds")

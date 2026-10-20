@@ -72,7 +72,7 @@ public class ValidationTests
     [Fact]
     public void A_head_outside_the_area_of_influence_is_refused_and_the_heads_are_capped()
     {
-        // power caps a 1-planet colony at level 0 (6000 PG): ten heads need the level-5 command center (19000 PG)
+
         var colony = Fixtures.Chain();
         colony.ApplyCommands([new UpgradeCommandCenterCommand(1, 5)], Fixtures.Ctx(ccSkill: 5));
         // heads cannot change while a program runs (the client refuses it too): clear the program after its install cooldown

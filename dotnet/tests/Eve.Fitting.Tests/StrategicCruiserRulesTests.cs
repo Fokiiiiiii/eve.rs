@@ -2,7 +2,6 @@ using Eve.Fitting;
 
 namespace Eve.Fitting.Tests;
 
-/// <summary>The Strategic Cruiser's four subsystem classes: what it lacks, and when its fit is complete (SF-4; EveJS <c>liveFittingState.js</c>).</summary>
 public class StrategicCruiserRulesTests
 {
     [Fact]

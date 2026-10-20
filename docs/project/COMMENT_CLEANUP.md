@@ -76,6 +76,7 @@
 | `dotnet/tests/Eve.Dungeons.Tests` (4 C# files) | 6 | 4 | 2026-10-20 |
 | `dotnet/tests/Eve.Events.Tests` (3 C# files; reviewed) | 21 | 21 | 2026-10-20 |
 | `dotnet/tests/Eve.FactionWarfare.Tests` (11 C# files) | 28 | 26 | 2026-10-20 |
+| `dotnet/tests/Eve.Fitting.Tests` (5 C# files) | 51 | 50 | 2026-10-20 |
 | `dotnet/src/Eve.Insurgency` (5 C# files; migrations reviewed) | 99 | 87 | 2026-10-20 |
 | `dotnet/src/Eve.Dungeons` (5 C# files) | 101 | 49 | 2026-10-20 |
 | `dotnet/src/Eve.Fitting` (8 C# files; migrations reviewed) | 97 | 78 | 2026-10-20 |

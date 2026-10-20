@@ -42,6 +42,24 @@ public sealed class PersistenceContractWriteModel(
 
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        // serialises creations for one issuer so the outstanding count cannot race past the limit
+        await using (var lockCommand = new NpgsqlCommand("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", connection, transaction))
+        {
+            lockCommand.Parameters.AddWithValue($"contract-limit:{(request.IsCorporationIssued ? "corporation" : "character")}:{ownerId}");
+            await lockCommand.ExecuteScalarAsync(cancellationToken);
+        }
+        await using (var countCommand = new NpgsqlCommand(request.IsCorporationIssued
+            ? $"SELECT count(*) FROM {_schema}.contract_records WHERE status = 0 AND date_expired_filetime >= $1 AND is_corporation_issued AND issuer_corporation_id = $2"
+            : $"SELECT count(*) FROM {_schema}.contract_records WHERE status = 0 AND date_expired_filetime >= $1 AND NOT is_corporation_issued AND issuer_id = $2",
+            connection, transaction))
+        {
+            countCommand.Parameters.AddWithValue(nowFileTime);
+            countCommand.Parameters.AddWithValue(ownerId);
+            var outstanding = (long)(await countCommand.ExecuteScalarAsync(cancellationToken) ?? 0L);
+            if (outstanding >= request.OutstandingLimit)
+                throw new ContractUserErrorException("CustomInfo", ("info", new Eve.Marshal.PyStr(
+                    $"You have reached the maximum of {request.OutstandingLimit} outstanding contracts.")));
+        }
         long contractId;
         await using (var command = new NpgsqlCommand($"""
             INSERT INTO {_schema}.contract_records
@@ -87,7 +105,7 @@ public sealed class PersistenceContractWriteModel(
             if (item is null || item.OwnerId != ownerId || item.LocationId != request.StartStationId ||
                 item.Flag != division || offered.Quantity > (item.Singleton ? 1 : item.Quantity) ||
                 offered.Quantity <= 0 || item.Singleton && offered.Quantity != 1)
-                throw new InvalidOperationException("CONTRACT_ITEM_UNAVAILABLE");
+                throw new ContractUserErrorException("ConNotInStation");
 
             var moved = await items.MoveStackAsync(connection, transaction, item, offered.Quantity,
                 EscrowOwnerId, escrowLocationId, 0, cancellationToken);
@@ -102,6 +120,18 @@ public sealed class PersistenceContractWriteModel(
             itemCommand.Parameters.AddWithValue(moved.Singleton ? 1L : moved.Quantity);
             itemCommand.Parameters.AddWithValue(request.ContractType == 3);
             await itemCommand.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        foreach (var requested in request.RequestedItems ?? [])
+        {
+            await using var requestCommand = new NpgsqlCommand($"""
+                INSERT INTO {_schema}.contract_requested_items (contract_id, type_id, quantity)
+                VALUES ($1, $2, $3)
+                """, connection, transaction);
+            requestCommand.Parameters.AddWithValue(contractId);
+            requestCommand.Parameters.AddWithValue(requested.TypeId);
+            requestCommand.Parameters.AddWithValue(requested.Quantity);
+            await requestCommand.ExecuteNonQueryAsync(cancellationToken);
         }
 
         var wallet = new WalletAccount(ownerId, request.WalletAccountKey);

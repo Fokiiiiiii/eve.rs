@@ -10,6 +10,7 @@ public sealed class IndustryRulesTests
     [InlineData(1, 0.9, 10, 10, 10)]
     [InlineData(100, 1.0, 10, 10, 1000)]
     [InlineData(10, 1.015, 1, 1, 11)]
+    [InlineData(1, 1.0, 20, 2, 20)]
     public void Material_quantity_matches_client_round_then_ceil_and_per_run_floor(
         long baseQuantity, double modifier, long materialRuns, long runs, long expected)
     {
@@ -40,13 +41,30 @@ public sealed class IndustryRulesTests
     [Theory]
     [InlineData(1_000_000, 0.05, 0.10, true, 1, 50_000, 100_000, 40_000, 50_000)]
     [InlineData(1_000_000, 0.0, 0.0, false, 3, 0, 0, 20_000, 0)]
-    [InlineData(10_000, 0.01505, 0.00505, true, 1, 150, 50, 400, 500)]
+    [InlineData(10_000, 0.01505, 0.00505, true, 1, 151, 51, 400, 500)]
+    [InlineData(100.6, 0.5, 0.0, false, 1, 50, 0, 4, 0)]
     public void Install_cost_matches_client_rounded_base_shares(
         double baseCost, double costIndex, double facilityTax, bool highSecurity, int activity,
         long expectedCost, long expectedTax, long expectedScc, long expectedSecurityTax)
     {
         var parts = IndustryRules.CostParts(baseCost, costIndex, facilityTax, highSecurity, activity);
         Assert.Equal(new InstallCostParts(expectedCost, expectedTax, expectedScc, expectedSecurityTax), parts);
+    }
+
+    [Theory]
+    [InlineData(2.5, 3)]
+    [InlineData(100.5, 101)]
+    [InlineData(100.4, 100)]
+    public void Client_round_breaks_ties_away_from_zero_as_python_2_does(double value, long expected)
+    {
+        Assert.Equal(expected, IndustryRules.Round(value));
+    }
+
+    [Fact]
+    public void Two_industry_skills_multiply_as_dogma_post_percent_modifiers()
+    {
+        // Industry 5 (-20%) and Advanced Industry 5 (-15%) stack multiplicatively: 0.8 x 0.85, not 0.65.
+        Assert.Equal(680, IndustryRules.DurationSeconds(1000, [IndustryRules.SkillModifier(-4, 5), IndustryRules.SkillModifier(-3, 5)]));
     }
 
     [Fact]
@@ -59,7 +77,7 @@ public sealed class IndustryRulesTests
     [Theory]
     [InlineData(1200, 0.9, 0.8, 864)]
     [InlineData(100, 1.0, 0.0, 0)]
-    [InlineData(201, 0.5, 1.0, 100)]
+    [InlineData(201, 0.5, 1.0, 101)]
     public void Duration_matches_client_multiplier_order_and_rounding(
         double baseSeconds, double firstModifier, double secondModifier, long expected)
     {

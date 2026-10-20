@@ -4,7 +4,6 @@ using Eve.Wallet;
 namespace Eve.Services.Slash;
 
 /// <summary>
-/// The game master's loyalty point commands (EveJS <c>chatCommands.js</c>): <c>/lp</c> lists the pilot's LP per corporation (or one corporation's, when one is named),
 /// <c>/addlp &lt;amount&gt; &lt;corporation&gt;</c> gives LP (a negative amount takes it away) and <c>/setlp &lt;amount&gt; &lt;corporation&gt;</c> makes the balance the amount.
 /// The issuer is a corporation of the directory (its ID or exact name). Each change is one commit of the store, which announces it to the pilot; a change the store refuses
 /// (a balance below zero) is answered as EVE.js answers it.

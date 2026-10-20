@@ -11,7 +11,6 @@ public sealed class RelationWars(Eve.Relations.RelationStore relations) : Eve.Se
 {
     private enum WarSide { Aggressor, Defender }
 
-
     public readonly record struct AssistanceFacts(bool TargetInWar, bool HelperInWar, bool SameSide);
     private sealed record WarAllyAttributes(string? Side);
 
@@ -63,7 +62,6 @@ public sealed class RelationWars(Eve.Relations.RelationStore relations) : Eve.Se
             }
         }
 
-        // When both characters are war allies, their active ally relations are the only rows reachable from their owner chains.
         foreach (var attackerAlly in allies.Where(ally => attackerOwners.Contains(ally.Subject)))
         {
             if (knownWarIds.Contains(attackerAlly.Object) || SideOf(attackerAlly) is not { } attackerSide)
@@ -82,7 +80,6 @@ public sealed class RelationWars(Eve.Relations.RelationStore relations) : Eve.Se
 
         return false;
     }
-
 
     public async Task<AssistanceFacts> AssistanceFactsAsync(
         long assistantCharacterId,

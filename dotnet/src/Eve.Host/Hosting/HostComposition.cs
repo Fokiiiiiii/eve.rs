@@ -71,6 +71,8 @@ internal static class HostComposition
         CharacterSessions? characterSessions = null;
         PublicGateway.PublicGatewayRoutes? publicGateway = null;
         Eve.Services.Core.IContractReadModel? contractReadModel = null;
+        Eve.Services.Core.IContractWriteModel? contractWriteModel = null;
+        Func<long, int, CancellationToken, ValueTask<int>>? contractSkillLevel = null;
         NpgsqlDataSource? dataSource = null; // owned by the runtime: shut down with it, so its pooled connections return to the server
         if (Env("EVE_PG_URL", "") is { Length: > 0 } pgUrl)
         {
@@ -79,6 +81,18 @@ internal static class HostComposition
             var contractSchema = Env("EVE_CONTRACTS_SCHEMA", Eve.Host.Persistence.PersistenceContractReadModel.DefaultSchema);
             await Eve.Host.Persistence.PersistenceContractReadModel.MigrateAsync(source, contractSchema);
             contractReadModel = new Eve.Host.Persistence.PersistenceContractReadModel(source, contractSchema);
+            var contractItems = new PgItemStore(source, Env("EVE_INVENTORY_SCHEMA", PgItemStore.DefaultSchema));
+            var contractWallets = new WalletTransactions(source, Env("EVE_WALLET_SCHEMA", PgWalletStore.DefaultSchema));
+            var contractSkills = new PgSkillStore(source, Env("EVE_SKILLS_SCHEMA", PgSkillStore.DefaultSchema));
+            contractWriteModel = new Eve.Host.Persistence.PersistenceContractWriteModel(source, contractItems, contractWallets,
+                () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), contractSchema);
+            async Task<int> ReadContractSkillAsync(long characterId, int typeId, CancellationToken ct)
+            {
+                await using var connection = await source.OpenConnectionAsync(ct);
+                await using var transaction = await connection.BeginTransactionAsync(ct);
+                return await contractSkills.LevelAsync(connection, transaction, characterId, typeId, ct);
+            }
+            contractSkillLevel = (characterId, typeId, ct) => new ValueTask<int>(ReadContractSkillAsync(characterId, typeId, ct));
             var applied = await PgAccountDirectory.MigrateAsync(source, schema);
             Console.Error.WriteLine($"eve-host: accounts in PostgreSQL, schema {schema}{(applied.Count > 0 ? "; applied " + string.Join(", ", applied) : "")}");
             var directory = new PgAccountDirectory(source, accountOptions, schema);
@@ -168,7 +182,9 @@ internal static class HostComposition
             unanchorControlTower: space is null ? null : (session, itemId, cancellationToken) => space.ControlTowerUnanchor is { } unanchor
                 ? new ValueTask(unanchor(session, itemId, cancellationToken))
                 : throw new InvalidOperationException("the control towers are not wired on this server"),
-            contractReadModel: contractReadModel))
+            contractReadModel: contractReadModel,
+            contractWriteModel: contractWriteModel,
+            contractSkillLevel: contractSkillLevel))
         {
             registry.Register(service);
         }
@@ -194,7 +210,11 @@ internal static class HostComposition
         var info = new HostMachoNetInfo(registry, config.Current, characterSessions);
         registry.Register(new MachoNetService(info, now, GlobalConfigWrites.Create(config, connected, () => server?.PublishClusterConfig())));
 
-        var dispatcher = new PacketDispatcher(registry, now) { StrictRpc = settings.StrictRpc };
+        var dispatcher = new PacketDispatcher(registry, now)
+        {
+            StrictRpc = settings.StrictRpc,
+            MaxExpensiveRpcUnitsPerMinute = int.Parse(HostConfiguration.Env("EVE_MAX_EXPENSIVE_RPC_UNITS_PER_MINUTE", "120"), System.Globalization.CultureInfo.InvariantCulture),
+        };
         dispatcher.OnProblem = (message, error) =>
         {
             Console.Error.WriteLine($"eve-host: {message}{(error is null ? "" : ": " + error.Message)}");
@@ -204,6 +224,7 @@ internal static class HostComposition
         server = new HostServer(
             new HostOptions
             {
+                MaxPendingBytesPerSession = long.Parse(HostConfiguration.Env("EVE_MAX_PENDING_BYTES_PER_SESSION", "16777216"), System.Globalization.CultureInfo.InvariantCulture),
                 MaxQueuedOutboundPacketsPerSession = int.Parse(HostConfiguration.Env("EVE_MAX_QUEUED_OUTBOUND_PACKETS_PER_SESSION", "512"), System.Globalization.CultureInfo.InvariantCulture),
                 MaxQueuedOutboundBytesPerSession = long.Parse(HostConfiguration.Env("EVE_MAX_QUEUED_OUTBOUND_BYTES_PER_SESSION", "8388608"), System.Globalization.CultureInfo.InvariantCulture),
                 MaxQueuedOutboundPacketsPerConnection = int.Parse(HostConfiguration.Env("EVE_MAX_QUEUED_OUTBOUND_PACKETS_PER_CONNECTION", "8192"), System.Globalization.CultureInfo.InvariantCulture),

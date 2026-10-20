@@ -70,8 +70,116 @@ public sealed partial class RaffleProxyService
 
 
 [Service("contractProxy")]
-public sealed partial class ContractProxyService(Eve.Services.Core.IContractReadModel? readModel = null)
+public sealed partial class ContractProxyService(
+    Eve.Services.Core.IContractReadModel? readModel = null,
+    IContractWriteModel? writeModel = null,
+    Func<long, int, CancellationToken, ValueTask<int>>? readSkillLevel = null)
 {
+    private const long CorpRoleContractManager = 72057594037927936L; // appConst.corpRoleContractManager
+    private const int ContractingSkill = 25235;
+    private const int AdvancedContractingSkill = 73912;
+    private const int CorporationContractingSkill = 25233;
+    private const int AccountingSkill = 16622;
+    private const int BrokerRelationsSkill = 3446;
+    private const int HangarFlag = 4;
+    private const int CorporationDivisionFirstFlag = 115;
+    private const int CorporationWalletBase = 1000;
+    private const int PersonalWalletKey = 1000;
+
+    [Method("CreateContract")]
+    public async Task<PyValue> CreateContract(ServiceCall call)
+    {
+        var writer = writeModel ?? throw new InvalidOperationException("contract writer is not wired");
+        var skillLevel = readSkillLevel ?? throw new InvalidOperationException("contract skill reads are not wired");
+        var issuerId = call.Session.CharacterId ?? throw new InvalidOperationException("contract creation requires a character session");
+        var corporationId = call.Session.GetInt("corpid") ?? 0;
+        var allianceId = call.Session.GetInt("allianceid") ?? 0;
+        var info = ParseCreationInfo(call.Arg(0));
+
+        if (info.ContractType is < 1 or > 3)
+            throw MachoErrors.ThrowUserError("ConIllegalType");
+        if (info.ForCorp && ((call.Session.GetInt("corprole") ?? 0) & CorpRoleContractManager) == 0)
+            throw MachoErrors.ThrowUserError("ConNotContractManager");
+        if (call.Session.GetInt("stationid") != info.StartStationId)
+            throw MachoErrors.ThrowUserError("ConNotInStation");
+
+        var availability = AvailabilityOf(info, corporationId, allianceId);
+        var contracting = await skillLevel(issuerId, ContractingSkill, call.Cancellation);
+        var advanced = await skillLevel(issuerId, AdvancedContractingSkill, call.Cancellation);
+        var corporationContracting = info.ForCorp ? await skillLevel(issuerId, CorporationContractingSkill, call.Cancellation) : 0;
+        var accounting = await skillLevel(issuerId, AccountingSkill, call.Cancellation);
+        var brokerRelations = await skillLevel(issuerId, BrokerRelationsSkill, call.Cancellation);
+
+        // Corporation-assigned contracts count against the shared corporation maximum (the client's innerCorp rule).
+        var limit = availability == 2 ? ContractCreationLimits.MaxNumContracts
+            : info.ForCorp ? ContractCreationLimits.Corporation(corporationContracting)
+            : ContractCreationLimits.Personal(contracting, advanced);
+        var fees = ContractFeesCalculator.Calculate((short)info.ContractType, (short)availability, info.Price, info.Reward,
+            info.MinutesExpire, brokerRelations, accounting, brokerFeeAdjustment: 1m);
+        var courier = info.ContractType == 3;
+        var request = new CreateItemExchangeRequest(
+            IssuerCharacterId: issuerId,
+            IssuerCorporationId: corporationId,
+            IsCorporationIssued: info.ForCorp,
+            StartStationId: info.StartStationId,
+            StartStationDivision: info.ForCorp ? info.StartStationDivision : HangarFlag,
+            Availability: availability,
+            AssigneeId: availability == 0 ? 0 : info.AssignedToId,
+            ExpiryMinutes: info.MinutesExpire,
+            Price: info.Price,
+            Reward: info.Reward,
+            BrokerFee: fees.BrokerFee,
+            Deposit: fees.Deposit,
+            SalesTax: fees.SalesTax,
+            WalletAccountKey: info.ForCorp ? CorporationWalletBase + (info.StartStationDivision - CorporationDivisionFirstFlag) : PersonalWalletKey,
+            Title: info.Title,
+            Description: info.Description,
+            Items: info.ItemList,
+            OutstandingLimit: limit,
+            ContractType: (short)info.ContractType,
+            EndStationId: courier ? info.DestinationId : 0,
+            Collateral: info.Collateral,
+            NumDays: courier ? info.NumDays : 0,
+            RequestedItems: info.RequestedTypes);
+
+        try
+        {
+            var created = await writer.CreateContractAsync(request, call.Cancellation);
+            return new PyList([new PyInt(created.ContractId)]);
+        }
+        catch (ContractUserErrorException error)
+        {
+            throw MachoErrors.ThrowUserError(error.Message, error.Values.ToArray());
+        }
+        catch (ArgumentException)
+        {
+            throw MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr("The contract terms are outside the supported limits.")));
+        }
+    }
+
+    private static ContractCreationInfo ParseCreationInfo(PyValue value)
+    {
+        try
+        {
+            return ContractCreationInfo.Parse(value);
+        }
+        catch (ArgumentException)
+        {
+            throw MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr("The contract terms are malformed.")));
+        }
+    }
+
+    // Availability codes: 0 public, 1 private (one character), 2 my corporation, 3 my alliance (appConst conAvail*).
+    private static int AvailabilityOf(ContractCreationInfo info, long corporationId, long allianceId)
+    {
+        if (info.AssignedToId == 0)
+            return 0;
+        if (corporationId > 0 && info.AssignedToId == corporationId)
+            return 2;
+        if (allianceId > 0 && info.AssignedToId == allianceId)
+            return 3;
+        return 1;
+    }
     [Method("GetLoginInfo")]
     public async Task<PyValue> GetLoginInfo(ServiceCall call)
     {

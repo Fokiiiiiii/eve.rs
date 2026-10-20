@@ -4,10 +4,8 @@ using Eve.Relations;
 
 namespace Eve.Services.Slash;
 
-/// <summary>An owner a standing is held toward: a corporation, a faction or an agent. The name is empty when the directory does not know it.</summary>
 public sealed record StandingOwner(long Id, string Name, bool IsFaction = false, bool IsCorporation = false);
 
-/// <summary>What the standing commands look up: the owner a token names, the agents' owners, and a character by its ID or exact name.</summary>
 public interface IStandingDirectory
 {
     Task<StandingOwner?> FindOwnerAsync(string token, CancellationToken cancellationToken);
@@ -21,9 +19,6 @@ public interface IStandingDirectory
 }
 
 /// <summary>
-/// The game master's standing commands (EveJS <c>standings.js</c>): <c>/setstanding &lt;value&gt; &lt;owner name|id&gt; [target]</c> sets a pilot's standing toward one owner
-/// (-10 to 10), and <c>/fullstandings</c> (<c>/maxagentstandings</c>) sets it to 10 toward every agent owner. The target is the pilot unless a trailing token names a
-/// character. A standing is the relation row subject = owner, object = character (the mission rewards' direction, <see cref="RelationKinds.Standing"/>). The pilot is
 /// told each standing that changed, as <c>OnStandingSet</c>, after the commit.
 /// </summary>
 public sealed class StandingCommands(IStandingDirectory directory, RelationStore relations, Action<long, long, double>? notify = null)
@@ -35,7 +30,7 @@ public sealed class StandingCommands(IStandingDirectory directory, RelationStore
     public async Task<string> SetAsync(ClientSession session, string argument, CancellationToken cancellationToken)
     {
         var tokens = Tokens(argument);
-        // The client's channel standing tool sends owner first: /setstanding "<owner id>" <character id> <value> "<reason>".
+
         if (tokens.Count == 4 && long.TryParse(tokens[1], NumberStyles.None, CultureInfo.InvariantCulture, out _)
             && decimal.TryParse(tokens[2], NumberStyles.AllowLeadingSign | NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out _))
             tokens = [tokens[2], tokens[0], tokens[1]];
@@ -61,7 +56,6 @@ public sealed class StandingCommands(IStandingDirectory directory, RelationStore
         return $"Set standing with {Label(owner)} to {standing.ToString("F2", CultureInfo.InvariantCulture)} for {await PilotLabelAsync(target, cancellationToken)}.";
     }
 
-    /// <summary>Sets the standing toward every agent owner to 10 for the named pilot (the pilot, when no name is given).</summary>
     public async Task<string> MaxAgentAsync(ClientSession session, string argument, CancellationToken cancellationToken)
     {
         var token = string.Join(' ', Tokens(argument));

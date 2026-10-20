@@ -607,6 +607,16 @@ public sealed class ContractReadModelTests
             Assert.Empty(nextOwnerPage.Contracts);
             var attentionPage = await store.GetContractListForOwnerAsync(100, 200, 100, -1, 0, 0, 10, null, now, CancellationToken.None);
             Assert.Equal(new long[] { 5, 4 }, attentionPage.Contracts.Select(contract => contract.ContractId));
+
+            var myIssued = await store.GetMyCurrentContractListAsync(100, 200, false, false, now, CancellationToken.None);
+            Assert.Equal(1, Assert.Single(myIssued.Contracts).ContractId);
+            var accepted = await store.GetMyCurrentContractListAsync(100, 200, true, false, now, CancellationToken.None);
+            Assert.Equal(2, Assert.Single(accepted.Contracts).ContractId);
+            var myExpired = await store.GetMyExpiredContractListAsync(100, 200, false, now, CancellationToken.None);
+            Assert.Equal(new long[] { 5, 4 }, myExpired.Contracts.Select(contract => contract.ContractId));
+            var corpExpired = await store.GetMyExpiredContractListAsync(100, 200, true, now, CancellationToken.None);
+            Assert.Equal(3, Assert.Single(corpExpired.Contracts).ContractId);
+
             await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => store.GetMyBidsAsync(100, 0, true, now, CancellationToken.None).AsTask());
         }
         finally

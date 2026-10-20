@@ -46,6 +46,7 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
     private static MachoWrappedException MarketErrorPayload(MarketError error) => error.Code switch
     {
         "MktInvalidMinVolumeCannotExceedQuantity" => MachoErrors.ThrowUserError(error.Code),
+        "MARKET_BULK_LIMIT_EXCEEDED" => MachoErrors.ThrowUserError(error.Code),
         "MktBrokersFeeUnexpected2" => MachoErrors.ThrowUserError(error.Code,
             [.. error.Arguments.Select(argument => (argument.Name,(PyValue)Py.Number(Convert.ToDouble(argument.Value,System.Globalization.CultureInfo.InvariantCulture))))]),
         "MARKET_MODIFY_TOO_SOON" => MachoErrors.ThrowUserError("CustomInfo",("info",new PyStr(
@@ -102,7 +103,8 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
             ("solarSystemID",new PyInt(order.Location.SolarSystemId)),
             ("escrow",Py.Number(MarketRules.RoundIsk((double)owned.Escrow))));
     }
-private const int PlexTypeId = 44992;
+    private const int PlexTypeId = 44992;
+    private const int MaxBuyMultipleItems = 500;
     /// <summary>Q14: the window in which an identical placement from the same session is refused.</summary>
     private const long DuplicateWindowMs = 5_000;
     private readonly ConcurrentDictionary<long,(MarketRequest Request,long AtMs)> _lastPlacement = new();
@@ -430,11 +432,14 @@ private const int PlexTypeId = 44992;
     [Method("BuyMultipleItems")]
     public async ValueTask<PyValue> BuyMultipleItems(ServiceCall call)
     {
+        var entries = Sequence(call.Arg(1));
+        if (entries.Count > MaxBuyMultipleItems)
+            throw Error(new MarketError("MARKET_BULK_LIMIT_EXCEEDED"));
         var actor = Actor(call);
         var stationId = Integer(call.Arg(0));
         var useCorporation = JsSemantics.Truthy(call.Arg(2));
         var requests = new List<(MarketRequest Request,string OperationKey)>();
-        foreach (var (entry,line) in Sequence(call.Arg(1)).Select((entry,line)=>(entry,line)))
+        foreach (var (entry,line) in entries.Select((entry,line)=>(entry,line)))
         {
             var typeId = Integer(Field(entry, "typeID"));
             var quantity = Integer(Field(entry, "quantity"));

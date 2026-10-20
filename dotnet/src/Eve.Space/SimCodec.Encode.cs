@@ -817,7 +817,6 @@ private static void WriteStructureDamageCorrelation(
         w.I64(spec.ExpiryFileTime);
     }
 
-
     private static void WriteAbyssalSceneObject(Writer w, SimAbyssalSceneObject sceneObject)
     {
         WriteSceneKey(w, sceneObject.Scene);
@@ -1527,7 +1526,7 @@ private static void WriteStructureDamageCorrelation(
                 w.I64(m.ShipId);
                 break;
             case SimPlaceDeadspacePocket m:
-                // the disruptor layout, with no type, group, range or owner: the pocket is in no client ball (protocol 74)
+
                 w.U8(Kind.PlaceDeadspacePocket);
                 w.I64(m.DeployableId);
                 w.I32(m.SolarSystemId);
@@ -1544,7 +1543,7 @@ private static void WriteStructureDamageCorrelation(
                 w.I64(0);
                 break;
             case SimPlaceAccelerationGate m:
-                // the disruptor layout with no range, owner or ship; the gate is in a client ball (protocol 75)
+
                 w.U8(Kind.PlaceAccelerationGate);
                 w.I64(m.DeployableId);
                 w.I32(m.SolarSystemId);

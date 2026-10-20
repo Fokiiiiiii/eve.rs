@@ -817,7 +817,6 @@ private static PyValue RowField(PyValue value,string key)
         }
     }
 
-
     [PgFact]
     public async Task Corporation_core_and_role_rpcs_preserve_public_fields_and_role_contracts()
     {
@@ -1799,7 +1798,6 @@ private static PyValue RowField(PyValue value,string key)
         }, methods);
     }
 
-
     [PgFact]
     public async Task Vote_manager_replaces_ballots_and_uses_live_share_weight()
     {
@@ -2482,7 +2480,6 @@ private static PyValue RowField(PyValue value,string key)
         }
     }
 
-
     [PgFact]
     public async Task Corporation_store_persists_welcome_mail_per_corporation()
     {
@@ -2858,7 +2855,6 @@ private static PyValue RowField(PyValue value,string key)
             await Rpc(outsiderSession,"AddCorporateContact",new PyInt(contactId),new PyInt(1)));
         Assert.Equal(corp.Id,(await rig.Store.GetAsync(corp.Id))?.Id);
     }
-
 
     [PgFact]
     public async Task Corp_registry_dividends_settle_once_for_shareholders_and_members()

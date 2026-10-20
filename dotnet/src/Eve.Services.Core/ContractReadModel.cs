@@ -76,4 +76,20 @@ public interface IContractReadModel
         long? startContractId,
         long nowFileTime,
         CancellationToken cancellationToken);
+
+
+    ValueTask<ContractReadBundle> GetMyCurrentContractListAsync(
+        long characterId,
+        long corporationId,
+        bool isAccepted,
+        bool forCorporation,
+        long nowFileTime,
+        CancellationToken cancellationToken);
+
+    ValueTask<ContractReadBundle> GetMyExpiredContractListAsync(
+        long characterId,
+        long corporationId,
+        bool forCorporation,
+        long nowFileTime,
+        CancellationToken cancellationToken);
 }

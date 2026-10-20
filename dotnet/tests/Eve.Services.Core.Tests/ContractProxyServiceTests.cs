@@ -53,6 +53,41 @@ public sealed class ContractProxyServiceTests
     }
 
 
+[Fact]
+    public async Task Current_and_expired_contract_lists_return_rows_and_gate_corporation_reads()
+    {
+        var readModel = new RecordingReadModel();
+        var service = new ContractProxyService(readModel);
+        var personal = new ClientSession { CharacterId = 42 };
+        personal.Set("corpid", new PyInt(84));
+        var current = Assert.IsType<PyObject>(await service.GetMyCurrentContractList(new ServiceCall
+        {
+            Method = "GetMyCurrentContractList", Args = [PyBool.True, PyBool.False], Session = personal,
+        }));
+        Assert.Equal(42, readModel.CharacterId);
+        Assert.Equal(84, readModel.CorporationId);
+        Assert.True(readModel.IsAccepted);
+        Assert.False(readModel.ForCorporation);
+        Assert.Single(Assert.IsType<PyList>(Value(current, "contracts")).Items);
+
+        await Assert.ThrowsAsync<MachoWrappedException>(() => service.GetMyCurrentContractList(new ServiceCall
+        {
+            Method = "GetMyCurrentContractList", Args = [PyBool.False, PyBool.True], Session = personal,
+        }));
+        await Assert.ThrowsAsync<MachoWrappedException>(() => service.GetMyExpiredContractList(new ServiceCall
+        {
+            Method = "GetMyExpiredContractList", Args = [PyBool.True], Session = personal,
+        }));
+
+        personal.Set("corprole", new PyLong(72057594037927936L));
+        var corpExpired = Assert.IsType<PyObject>(await service.GetMyExpiredContractList(new ServiceCall
+        {
+            Method = "GetMyExpiredContractList", Args = [PyBool.True], Session = personal,
+        }));
+        Assert.Single(Assert.IsType<PyList>(Value(corpExpired, "contracts")).Items);
+        Assert.True(readModel.ForCorporation);
+    }
+
     [Fact]
     public async Task Get_my_bids_returns_persisted_contract_rows_and_requires_the_corporation_role()
     {
@@ -314,6 +349,42 @@ public sealed class ContractProxyServiceTests
     }
 
     [Fact]
+    public async Task Create_contract_refuses_nonfinite_out_of_range_and_oversized_terms_before_writing()
+    {
+        var writer = new RecordingWriteModel();
+        var service = new ContractProxyService(new RecordingReadModel(), writer,
+            (characterId, typeId, ct) => ValueTask.FromResult(0));
+        var session = new ClientSession { CharacterId = 42 };
+        session.Set("stationid", new PyInt(3001));
+        session.Set("corpid", new PyInt(84));
+        var tooManyItems = new PyList(Enumerable.Range(0, 501)
+            .Select(index => (PyValue)PyTuple.Of(new PyInt(9001 + index), new PyInt(1))).ToArray());
+        var tooManyRequestedTypes = new PyList(Enumerable.Range(0, 501)
+            .Select(index => (PyValue)PyTuple.Of(new PyInt(index + 1), new PyInt(1))).ToArray());
+        var malformedTerms = new[]
+        {
+            ContractInfo(contractType: new PyLong((long)int.MaxValue + 1)),
+            ContractInfo(minutesExpire: new PyLong((long)int.MinValue - 1)),
+            ContractInfo(startStationDivision: new PyLong((long)int.MaxValue + 1)),
+            ContractInfo(requested: new PyList([PyTuple.Of(new PyLong((long)int.MaxValue + 1), new PyInt(1))])),
+            ContractInfo(contractType: new PyReal(double.PositiveInfinity)),
+            ContractInfo(price: new PyReal(double.PositiveInfinity)),
+            ContractInfo(itemList: tooManyItems),
+            ContractInfo(requested: tooManyRequestedTypes),
+        };
+
+        foreach (var terms in malformedTerms)
+        {
+            await Assert.ThrowsAsync<MachoWrappedException>(() => service.CreateContract(new ServiceCall
+            {
+                Method = "CreateContract", Args = [terms], Session = session,
+            }));
+        }
+
+        Assert.Empty(writer.Requests);
+    }
+
+    [Fact]
     public async Task Accept_for_corporation_refuses_a_session_without_contract_manager_role()
     {
         var writer = new RecordingWriteModel();
@@ -357,22 +428,26 @@ public sealed class ContractProxyServiceTests
     private static PyObject ContractInfo(
         PyValue? itemList = null,
         PyValue? requested = null,
-        bool forCorp = false) => new(new PyStr("util.KeyVal"), new PyDict(
+        bool forCorp = false,
+        PyValue? contractType = null,
+        PyValue? minutesExpire = null,
+        PyValue? price = null,
+        PyValue? startStationDivision = null) => new(new PyStr("util.KeyVal"), new PyDict(
         [
-            Entry("contractType", new PyInt(1)),
+            Entry("contractType", contractType ?? new PyInt(1)),
             Entry("isPrivate", PyBool.False),
             Entry("assignedToID", new PyInt(0)),
-            Entry("minutesExpire", new PyInt(1440)),
+            Entry("minutesExpire", minutesExpire ?? new PyInt(1440)),
             Entry("numDays", new PyInt(0)),
             Entry("startStationID", new PyInt(3001)),
             Entry("destinationID", new PyInt(0)),
-            Entry("price", new PyInt(100)),
+            Entry("price", price ?? new PyInt(100)),
             Entry("reward", new PyInt(50)),
             Entry("collateral", new PyInt(0)),
             Entry("title", new PyStr("Parts")),
             Entry("description", new PyStr("")),
             Entry("itemList", itemList ?? new PyList([])),
-            Entry("startStationDivision", new PyInt(4)),
+            Entry("startStationDivision", startStationDivision ?? new PyInt(4)),
             Entry("requestItemTypeList", requested ?? new PyList([])),
             Entry("forCorp", forCorp ? PyBool.True : PyBool.False),
         ]));
@@ -450,6 +525,7 @@ public sealed class ContractProxyServiceTests
         public long AllianceId { get; private set; }
         public long NowFileTime { get; private set; }
         public bool ForCorporation { get; private set; }
+        public bool IsAccepted { get; private set; }
         public long OwnerId { get; private set; }
         public int OwnerStatus { get; private set; }
         public int OwnerPageSize { get; private set; }
@@ -491,6 +567,27 @@ public sealed class ContractProxyServiceTests
             OwnerStatus = status;
             OwnerPageSize = pageSize;
             OwnerStartContractId = startContractId;
+            return ValueTask.FromResult(new ContractReadBundle([Contract()]));
+        }
+
+public ValueTask<ContractReadBundle> GetMyCurrentContractListAsync(
+            long characterId, long corporationId, bool isAccepted, bool forCorporation,
+            long nowFileTime, CancellationToken cancellationToken)
+        {
+            CharacterId = characterId;
+            CorporationId = corporationId;
+            IsAccepted = isAccepted;
+            ForCorporation = forCorporation;
+            return ValueTask.FromResult(new ContractReadBundle([Contract()]));
+        }
+
+        public ValueTask<ContractReadBundle> GetMyExpiredContractListAsync(
+            long characterId, long corporationId, bool forCorporation, long nowFileTime,
+            CancellationToken cancellationToken)
+        {
+            CharacterId = characterId;
+            CorporationId = corporationId;
+            ForCorporation = forCorporation;
             return ValueTask.FromResult(new ContractReadBundle([Contract()]));
         }
 

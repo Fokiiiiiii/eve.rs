@@ -78,14 +78,23 @@ def test_two_characters_create_accept_and_settle_a_public_item_exchange():
         assert kind == "ok", base.brief(created)
         contract_id = number(created[0])
         assert contract_id > 0
-        assert dbseed.owner_of(item_id) == 1
+        escrow_item_id = int(dbseed.sql(
+            f"select item_id from {dbseed.schema('CONTRACTS')}.contract_items "
+            f"where contract_id = {contract_id} and in_crate"
+        ))
+        assert dbseed.owner_of(item_id) == issuer_id
         assert dbseed.isk_of(issuer_id) < issuer_before, "public listing fees and deposit are charged on creation"
 
         accepted = acceptor.call("contractProxy", "AcceptContract", contract_id, False)
         accepted_fields = dict(describe(accepted)["args"]["$dict"])
         assert number(accepted_fields["contractID"]) == contract_id
         assert number(accepted_fields["acceptorID"]) == acceptor_id
-        assert dbseed.owner_of(item_id) == acceptor_id
+        assert dbseed.owner_of(escrow_item_id) == acceptor_id
+        assert dbseed.owner_of(item_id) == issuer_id, "the unoffered remainder of the split stack stays with its issuer"
+        remainder = int(dbseed.sql(
+            f"select quantity from {dbseed.schema('INVENTORY')}.items where id = {item_id}"
+        ))
+        assert remainder == 1
         assert dbseed.isk_of(acceptor_id) == acceptor_before - PRICE
         assert dbseed.isk_of(issuer_id) > issuer_before - 200_000, "the issuer receives the agreed price after listing costs"
         assert _wait_for_notification(issuer, "OnContractAccepted"), "issuer did not receive OnContractAccepted"

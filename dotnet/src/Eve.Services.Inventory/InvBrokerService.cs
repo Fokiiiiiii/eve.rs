@@ -1271,12 +1271,15 @@ private async ValueTask<bool> IsDockedShipContextAsync(ClientSession session, lo
             || context.Kind is not (Kind.Ship or Kind.Container or Kind.Hangar)
             || IdOf(call.Arg(1)) is not { } source)
             return None;
-        IReadOnlyList<long> ids = call.Arg(0) switch
+        var requestedIds = call.Arg(0) switch
         {
-            PyList list => [.. list.Items.Select(IdOf).OfType<long>().Distinct()],
-            PyTuple tuple => [.. tuple.Items.Select(IdOf).OfType<long>().Distinct()],
+            PyList list => list.Items,
+            PyTuple tuple => tuple.Items,
             _ => [],
         };
+        if (requestedIds.Count > MaxGetItemsIds)
+            throw MachoErrors.ThrowUserError("INVENTORY_BULK_LIMIT_EXCEEDED");
+        IReadOnlyList<long> ids = [.. requestedIds.Select(IdOf).OfType<long>().Distinct()];
         if (ids.Count == 0) return None;
         var quantityValue = call.Kwarg("qty");
         if (quantityValue is null or PyNone) quantityValue = call.Kwarg("quantity");

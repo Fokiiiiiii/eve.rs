@@ -343,6 +343,98 @@ public sealed class PersistenceContractReadModel : IContractReadModel
         return await AttachChildrenAsync(connection, contracts, cancellationToken);
     }
 
+
+    public async ValueTask<ContractReadBundle> GetMyCurrentContractListAsync(
+        long characterId,
+        long corporationId,
+        bool isAccepted,
+        bool forCorporation,
+        long nowFileTime,
+        CancellationToken cancellationToken)
+    {
+        if (characterId <= 0 || corporationId < 0 || forCorporation && corporationId <= 0 || nowFileTime <= 0)
+            throw new ArgumentOutOfRangeException(nameof(characterId));
+
+        var ownerId = forCorporation ? corporationId : characterId;
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        var contracts = new List<ContractReadSnapshot>();
+        await using (var command = new NpgsqlCommand($"""
+            SELECT c.contract_id, c.contract_type, c.status, c.availability, c.issuer_id,
+                   c.issuer_corporation_id, c.is_corporation_issued, c.assignee_id, c.acceptor_id,
+                   c.created_at_filetime, c.date_expired_filetime, c.date_accepted_filetime,
+                   c.date_completed_filetime, c.num_days, c.start_station_id, c.end_station_id,
+                   c.price_isk, c.reward_isk, c.collateral_isk, c.title, c.description
+            FROM {_schema}.contract_records AS c
+            WHERE ((@accepted AND c.acceptor_id = @owner)
+                OR (NOT @accepted AND @forCorporation AND c.is_corporation_issued AND c.issuer_corporation_id = @owner)
+                OR (NOT @accepted AND NOT @forCorporation AND NOT c.is_corporation_issued AND c.issuer_id = @owner))
+              AND (c.status = 1 OR (c.status = 0 AND c.date_expired_filetime >= @now))
+            ORDER BY c.contract_id DESC
+            """, connection))
+        {
+            command.Parameters.AddWithValue("owner", ownerId);
+            command.Parameters.AddWithValue("forCorporation", forCorporation);
+            command.Parameters.AddWithValue("accepted", isAccepted);
+            command.Parameters.AddWithValue("now", nowFileTime);
+            await ReadContractRowsAsync(command, contracts, cancellationToken);
+        }
+
+        return await AttachChildrenAsync(connection, contracts, cancellationToken);
+    }
+
+    public async ValueTask<ContractReadBundle> GetMyExpiredContractListAsync(
+        long characterId,
+        long corporationId,
+        bool forCorporation,
+        long nowFileTime,
+        CancellationToken cancellationToken)
+    {
+        if (characterId <= 0 || corporationId < 0 || forCorporation && corporationId <= 0 || nowFileTime <= 0)
+            throw new ArgumentOutOfRangeException(nameof(characterId));
+
+        var ownerId = forCorporation ? corporationId : characterId;
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        var contracts = new List<ContractReadSnapshot>();
+        await using (var command = new NpgsqlCommand($"""
+            SELECT c.contract_id, c.contract_type, c.status, c.availability, c.issuer_id,
+                   c.issuer_corporation_id, c.is_corporation_issued, c.assignee_id, c.acceptor_id,
+                   c.created_at_filetime, c.date_expired_filetime, c.date_accepted_filetime,
+                   c.date_completed_filetime, c.num_days, c.start_station_id, c.end_station_id,
+                   c.price_isk, c.reward_isk, c.collateral_isk, c.title, c.description
+            FROM {_schema}.contract_records AS c
+            WHERE ((NOT c.is_corporation_issued AND c.issuer_id = @owner)
+                OR (c.is_corporation_issued AND c.issuer_corporation_id = @owner)
+                OR c.acceptor_id = @owner)
+              AND (c.status IN (6, 7) OR (c.status = 0 AND c.date_expired_filetime < @now))
+            ORDER BY c.contract_id DESC
+            """, connection))
+        {
+            command.Parameters.AddWithValue("owner", ownerId);
+            command.Parameters.AddWithValue("now", nowFileTime);
+            await ReadContractRowsAsync(command, contracts, cancellationToken);
+        }
+
+        return await AttachChildrenAsync(connection, contracts, cancellationToken);
+    }
+
+    private static async Task ReadContractRowsAsync(
+        NpgsqlCommand command,
+        List<ContractReadSnapshot> contracts,
+        CancellationToken cancellationToken)
+    {
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            contracts.Add(new ContractReadSnapshot(
+                reader.GetInt64(0), reader.GetInt16(1), reader.GetInt16(2), reader.GetInt16(3),
+                reader.GetInt64(4), reader.GetInt64(5), reader.GetBoolean(6), reader.GetInt64(7),
+                reader.GetInt64(8), reader.GetInt64(9), reader.GetInt64(10), reader.GetInt64(11),
+                reader.GetInt64(12), reader.GetInt32(13), reader.GetInt64(14), reader.GetInt64(15),
+                reader.GetDecimal(16), reader.GetDecimal(17), reader.GetDecimal(18), reader.GetString(19),
+                reader.GetString(20), [], []));
+        }
+    }
+
 private async ValueTask<ContractReadBundle> AttachChildrenAsync(
         NpgsqlConnection connection,
         IReadOnlyList<ContractReadSnapshot> contracts,

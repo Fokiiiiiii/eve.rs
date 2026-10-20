@@ -267,7 +267,7 @@ public sealed class PacketDispatcher
     {
         if (method == "GetAllInfo")
             return 10;
-        if (service == "marketProxy" && method is "GetOrders" or "GetStationAsks" or "GetSystemAsks" or "GetRegionBest" or "GetMarketOrderHistory" or "BuyMultipleItems" or "GetHistoryForManyTypeIDs")
+        if (service == "marketProxy" && method is "GetOrders" or "GetStationAsks" or "GetSystemAsks" or "GetRegionBest" or "GetMarketOrderHistory" or "BuyMultipleItems" or "PlaceMultiSellOrder" or "GetHistoryForManyTypeIDs")
             return 10;
         if (service == "mailMgr" && method is "SyncMail" or "GetMailHeaders" or "GetBody" or "MarkAsRead" or "SendMail" or "PokePlayerAboutChatMsgGm")
             return 10;
@@ -283,7 +283,7 @@ public sealed class PacketDispatcher
             return 10;
         if (service == "allianceRegistry" && method is "GetEveOwners" or "GetRankedAlliances" or "GetAllianceMembers" or "GetMembers" or "GetEmploymentRecord" or "GetAllianceMembersOlderThan" or "GetAllianceApplications")
             return 10;
-        if (service == "charMgr" && method is "GetRecentShipKillsAndLosses")
+        if (service == "charMgr" && method is "GetRecentShipKillsAndLosses" or "GetOrganizationInfoForCharacters" or "List" or "ListStations" or "ListStationItems" or "ListIncludingContainers" or "GetAssetWorth")
             return 10;
         if (service == "fleetObject" && method == "SendBroadcast")
             return 10;

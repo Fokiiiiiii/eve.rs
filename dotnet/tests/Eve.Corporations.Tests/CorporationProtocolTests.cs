@@ -2597,6 +2597,15 @@ private static PyValue RowField(PyValue value,string key)
             Assert.IsType<PyNone>(await registry.CallAsync(Call(managerSession,"SetCorpWelcomeMail",new PyWString(welcomeMail))));
             Assert.Equal(welcomeMail,Assert.IsType<PyWString>(await registry.CallAsync(Call(managerSession,"GetCorpWelcomeMail"))).Value);
 
+            var maximumWelcomeMail = new string('x',10_000);
+            Assert.IsType<PyNone>(await registry.CallAsync(Call(managerSession,"SetCorpWelcomeMail",new PyWString(maximumWelcomeMail))));
+            Assert.Equal(maximumWelcomeMail,Assert.IsType<PyWString>(await registry.CallAsync(Call(managerSession,"GetCorpWelcomeMail"))).Value);
+            var oversized = await Assert.ThrowsAsync<CorporationError>(async () =>
+                await registry.CallAsync(Call(managerSession,"SetCorpWelcomeMail",new PyWString(maximumWelcomeMail + "x"))));
+            Assert.Equal("CORPORATION_WELCOME_MAIL_LIMIT_EXCEEDED",oversized.Code);
+            Assert.Equal(maximumWelcomeMail,Assert.IsType<PyWString>(await registry.CallAsync(Call(managerSession,"GetCorpWelcomeMail"))).Value);
+            Assert.IsType<PyNone>(await registry.CallAsync(Call(managerSession,"SetCorpWelcomeMail",new PyWString(welcomeMail))));
+
             var ordinarySession = Session(ordinaryMember);
             Assert.Equal(welcomeMail,Assert.IsType<PyWString>(await registry.CallAsync(Call(ordinarySession,"GetCorpWelcomeMail"))).Value);
             await Assert.ThrowsAnyAsync<Exception>(async () =>

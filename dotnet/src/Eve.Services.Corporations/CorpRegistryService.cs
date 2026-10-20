@@ -893,7 +893,10 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
     {
         if (call.Session.CharacterId is not { } actor || await Current(call) is not { } corporation)
             throw new CorporationError("CORPORATION_ACCESS_DENIED");
-        await store.SetCorpWelcomeMailAsync(actor,corporation.Id,Text(call.Arg(0)),call.Cancellation);
+        var welcomeMail = Text(call.Arg(0));
+        if (welcomeMail.Length > 10_000)
+            throw new CorporationError("CORPORATION_WELCOME_MAIL_LIMIT_EXCEEDED");
+        await store.SetCorpWelcomeMailAsync(actor,corporation.Id,welcomeMail,call.Cancellation);
         return PyNone.Instance;
     }
 

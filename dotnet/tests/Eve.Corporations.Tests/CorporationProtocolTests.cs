@@ -855,6 +855,14 @@ private static PyValue RowField(PyValue value,string key)
         var actionLimitError = await Assert.ThrowsAsync<CorporationError>(async () =>
             await CorpRpc("ExecuteActions", new PyList([new PyInt(member)]), oversizedActions));
         Assert.Equal("CORPORATION_BULK_LIMIT_EXCEEDED", actionLimitError.Code);
+        var oversizedMemberQuery = new PyList(Enumerable.Range(0, 101).Select(_ => (PyValue)new PyList([])).ToArray());
+        var memberQueryLimitError = await Assert.ThrowsAsync<CorporationError>(async () =>
+            await CorpRpc("GetMemberIDsByQuery", oversizedMemberQuery));
+        Assert.Equal("CORPORATION_QUERY_LIMIT_EXCEEDED", memberQueryLimitError.Code);
+        var longMemberQuery = new PyList([new PyList([new PyStr("characterID"), new PyInt(9), new PyStr(new string('x', 257))])]);
+        var memberQueryTextLimitError = await Assert.ThrowsAsync<CorporationError>(async () =>
+            await CorpRpc("GetMemberIDsByQuery", longMemberQuery));
+        Assert.Equal("CORPORATION_QUERY_LIMIT_EXCEEDED", memberQueryTextLimitError.Code);
         var duplicateMemberUpdates = new PyList([
             new PyList([new PyInt(member)]), new PyList([new PyInt(member)])
         ]);

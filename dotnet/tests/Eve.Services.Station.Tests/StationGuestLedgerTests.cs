@@ -26,7 +26,6 @@ public sealed class StationGuestLedgerTests
         Assert.True(ledger.TryRecordGuestJoined(otherObserver, 60015249, 1001));
     }
 
-
     [Fact]
     public async Task Station_to_space_structure_to_space_changes_reach_each_observer_once()
     {

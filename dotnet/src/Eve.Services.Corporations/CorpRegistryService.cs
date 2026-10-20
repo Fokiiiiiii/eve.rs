@@ -1348,6 +1348,16 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
     private static long StarterCorporation(Eve.Characters.Character character) =>
         Eve.Characters.CreationCatalog.ResolveSchool(character.SchoolId,character.RaceId)?.CorporationId ?? 1000004;
 
+private static int MemberFieldInteger(PyValue value)
+    {
+        int narrowed;
+        try { narrowed = checked((int)Number(value)); }
+        catch (OverflowException) { throw new CorporationError("CORPORATION_INTEGER_OUT_OF_RANGE"); }
+        if (narrowed < 0)
+            throw new CorporationError("CORPORATION_INVALID_MEMBER_FIELD");
+        return narrowed;
+    }
+
     private async Task<(Member Before,Member After)> MemberUpdate(long character,IReadOnlyList<PyValue> values,bool bulk,long corporation,CancellationToken token)
     {
         var old = await store.MemberAsync(character,token);
@@ -1365,8 +1375,8 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
         var after = old with
         {
             Title = bulk || At(1) is PyNone ? old.Title : Text(At(1))[..Math.Min(100,Text(At(1)).Length)],
-            DivisionId = bulk || At(2) is PyNone ? old.DivisionId : (int)Number(At(2)),
-            SquadronId = bulk || At(3) is PyNone ? old.SquadronId : (int)Number(At(3)),
+            DivisionId = bulk || At(2) is PyNone ? old.DivisionId : MemberFieldInteger(At(2)),
+            SquadronId = bulk || At(3) is PyNone ? old.SquadronId : MemberFieldInteger(At(3)),
             Masks = masks,TitleMask = titleMask,BlockRoles = blockRoles,BaseId = baseId
         };
         return (old,after);

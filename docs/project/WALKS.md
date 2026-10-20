@@ -1,6 +1,6 @@
 # Headless play-through coverage
 
-This matrix records the live-client walks available for the cross-system play-through plan. A focused walk validates its own RPC sequence and persisted result; it does not imply that adjacent systems are joined into one play-through. Run live walks with an external five-minute limit (for example, `timeout 300s pytest ...`). Database-backed walks require the assigned lane's `EVE_PG_URL` and lock.
+This matrix records the live-client walks available for the cross-system play-through plan. A focused walk validates its own RPC sequence and persisted result; it does not imply that adjacent systems are joined into one play-through. `pytest.ini` enforces a 300-second timeout per test through `pytest-timeout`. Database-backed walks require the assigned lane's `EVE_PG_URL` and lock.
 
 | Activity | Existing live walk | What it exercises | Cross-system coverage |
 |---|---|---|---|

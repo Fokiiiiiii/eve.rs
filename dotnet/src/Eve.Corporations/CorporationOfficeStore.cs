@@ -159,7 +159,6 @@ public sealed class CorporationOfficeStore
         return bills;
     }
 
-
     public async Task<IReadOnlyList<CorporationOfficeRentBill>> BillsForCreditorAsync(
         long creditorId, Func<long, long?> stationOwnerOf, CancellationToken cancellationToken = default)
     {
@@ -235,10 +234,6 @@ public sealed class CorporationOfficeStore
         }
         await transaction.CommitAsync(cancellationToken);
     }
-
-    /// <summary>
-    /// The rent a renewal of a structure's office takes now (the Host sets it from the structure profile, ST-12). A null answer keeps the rent of the paid bill.
-    /// </summary>
     public Func<long, CancellationToken, Task<decimal?>>? RenewalRentSource { get; set; }
 
     public async Task<bool> PayBillAsync(
@@ -307,11 +302,6 @@ public sealed class CorporationOfficeStore
         await transaction.CommitAsync(cancellationToken);
         return true;
     }
-
-    /// <summary>
-    /// The stations whose rent bills have no creditor: a rent taken there before ST-16, when the owner was read from the station instead of being recorded.
-    /// A structure's bill always names its owner, so it is not among them.
-    /// </summary>
     public async Task<IReadOnlyList<long>> StationsWithoutCreditorAsync(CancellationToken cancellationToken = default)
     {
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
@@ -323,7 +313,6 @@ public sealed class CorporationOfficeStore
     }
 
     /// <summary>
-    /// The one-time creditor migration (ST-16): every rent bill of a station that has no creditor gets the station's owner as its creditor, as the bills taken
     /// from now on do. A bill that has a creditor is not touched, so a second run changes nothing. Answers the open bills it credited, for their due jobs.
     /// </summary>
     public async Task<IReadOnlyList<CorporationOfficeRentBill>> CreditStationBillsAsync(NpgsqlConnection connection, NpgsqlTransaction transaction,

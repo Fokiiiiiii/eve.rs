@@ -4561,7 +4561,7 @@ donation sections it marks outdated. Design: `docs/project/FW_DESIGN.md`.
   victory points, the pilot split of the points on the stats rows, capture by the defenders with the subtraction floor at 0 and the respawn after 30 minutes).
 
 
-- **Complexes: live capture walk (2026-10-17).** `tools/headless-client/tests/test_fw_capture_walk.py` passes on the eve_p4 lane through tools/mitm: the pilot
+- **Complexes: live capture walk (2026-10-17; rerun 2026-10-20).** `tools/headless-client/tests/test_fw_capture_walk.py` passed on the eve_p4 lane through tools/mitm; the rerun passed on eve_p3 using tools/dev/run-eve-live.sh without MITM: the pilot
   undocks, flies four gates to the nearest occupied system with an open scout complex, enlists in the occupier's enemy, warps to the complex gate, takes it,
   clears the three waves with the QA Smartbomb, and the capture timer completes; `OnFacWarDungeonCompleted (True, enemy)` is sent. Not checked: the EVE.js
   reference run (EveJS has no FW), the graphical client, and the per-pilot victory points.

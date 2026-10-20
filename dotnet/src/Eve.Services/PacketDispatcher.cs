@@ -263,7 +263,6 @@ public sealed class PacketDispatcher
     private static void SendCallResponse(MachoPacket packet, PyValue result, ClientSession session, string? serviceName) =>
         session.Send(ResponseBuilder.CallResponse(packet, result, session.Get("userid"), serviceName));
 
-    /// <summary>The provisional answer of a deferred call: an empty result with the OnAgentProvisionalResponse named payload, not wrapped (EveJS agentMgrService.js:932-946).</summary>
     private static void SendProvisional(MachoPacket packet, ClientSession session, string? serviceName) =>
         session.Send(ResponseBuilder.CallResponse(packet, new PyTuple([]), session.Get("userid"), serviceName, new CallResponseOptions
         {
@@ -271,7 +270,6 @@ public sealed class PacketDispatcher
             NamedPayloadEntries = [new(new PyStr("provisional"), Py.Tuple(new PyInt(86400), new PyStr("OnAgentProvisionalResponse"), new PyTuple([])))],
         }));
 
-    /// <summary>The client's answer to a server call: the body without its wire layers (EveJS consumeClientCallResponse, clientSession.js:1131-1144); null when cancelled.</summary>
     private static PyValue? ClientAnswer(MachoPacket packet)
     {
         var body = packet.Payload is PyTuple { Items.Count: 1 } tuple ? tuple.Items[0] : packet.Payload;

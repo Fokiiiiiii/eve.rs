@@ -32,7 +32,7 @@ public static class ObjectCaching
 /// <summary>The checksums the client's caches compare.</summary>
 public static class Checksums
 {
-    /// <summary>Adler-32 read as a signed 32-bit number, as the client's cache versions carry it.</summary>
+
     public static int SignedAdler32(ReadOnlySpan<byte> data)
     {
         const uint Mod = 65521;

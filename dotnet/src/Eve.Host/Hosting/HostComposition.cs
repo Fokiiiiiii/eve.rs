@@ -76,6 +76,7 @@ internal static class HostComposition
         Eve.Services.Core.IContractReadModel? contractReadModel = null;
         Eve.Services.Core.IContractWriteModel? contractWriteModel = null;
         Func<long, int, CancellationToken, ValueTask<int>>? contractSkillLevel = null;
+        Func<long, long, CancellationToken, ValueTask<decimal>>? contractBrokerFeeAdjustment = null;
         NpgsqlDataSource? dataSource = null; // owned by the runtime: shut down with it, so its pooled connections return to the server
         Eve.Host.Xmpp.XmppMotdStore? xmppMotdStore = null;
         if (Env("EVE_PG_URL", "") is { Length: > 0 } pgUrl)
@@ -118,7 +119,7 @@ internal static class HostComposition
             contractWriteModel = new Eve.Host.Persistence.PersistenceContractWriteModel(source, contractItems, contractWallets,
                 clock, contractSchema, contractExpiryJobs, foundations.Events);
             legacy = await LegacyGameStoreComposition.OpenAsync(source);
-            (characterServices, space, simulation, crimewatch, calendarStore, calendarAudience, gameRpcCallbacks, keeperRpcCallbacks, characterSessions) = await CharacterServicesComposition.CharacterServicesAsync(source, directory, online, clock, foundations, legacy.Store, legacy.Owner, legacy.Cache, options.NewCharacterExperienceMode, new AccountOmegaStore(directory), connected);
+            (characterServices, space, simulation, crimewatch, calendarStore, calendarAudience, gameRpcCallbacks, keeperRpcCallbacks, characterSessions, contractBrokerFeeAdjustment) = await CharacterServicesComposition.CharacterServicesAsync(source, directory, online, clock, foundations, legacy.Store, legacy.Owner, legacy.Cache, options.NewCharacterExperienceMode, new AccountOmegaStore(directory), connected);
             if (characterSessions is not null)
                 new Eve.Host.Persistence.ContractNotifications(characterSessions).Subscribe(foundations.Events);
             // the public gateway's skill plans: the tables are the skills module's (migration 0009, applied with its store)
@@ -194,7 +195,8 @@ internal static class HostComposition
             contractReadModel: contractReadModel,
             contractWriteModel: contractWriteModel,
             contractSkillLevel: contractSkillLevel,
-            calendarSessions: characterSessions))
+            calendarSessions: characterSessions,
+            contractBrokerFeeAdjustment: contractBrokerFeeAdjustment))
         {
             registry.Register(service);
         }

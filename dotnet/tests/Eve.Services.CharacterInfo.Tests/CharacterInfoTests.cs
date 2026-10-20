@@ -299,7 +299,6 @@ public class CharMgrTests
         Assert.Equal((PyBool.False, PyBool.False), (f["is_fallback"], f["isFallback"]));
     }
 
-
     [PgFact]
     public async Task Home_station_and_character_asset_resolution_use_persisted_character_state()
     {
@@ -538,7 +537,6 @@ public class CharMgrTests
         Assert.Equal(Id(9876), fields["medal1GraphicID"]);
     }
 
-
     [PgFact]
     public async Task Private_info_returns_the_authoritative_member_editor_row()
     {
@@ -658,7 +656,6 @@ public class CharMgrTests
         Assert.Equal(new PyStr(""), await Ask(second, "GetNote", Id(4001)));
     }
 
-
     [PgFact]
     public async Task Personal_contact_labels_can_be_created_edited_assigned_removed_and_deleted()
     {
@@ -696,7 +693,6 @@ public class CharMgrTests
             state.Contacts.OrderBy(contact => contact.ContactId));
     }
 
-
     [PgFact]
     public async Task EditContact_updates_relationship_and_watchlist_through_the_client_method()
     {
@@ -719,7 +715,6 @@ public class CharMgrTests
         Assert.Equal(new CharMgrContact(2001, true, -10, 3), Assert.Single(state.Contacts));
     }
 
-
     [PgFact]
     public async Task Get_private_info_on_corporation_change_returns_the_reference_keyval_shape()
     {
@@ -735,7 +730,6 @@ public class CharMgrTests
                 ("corporationDateTime", new PyLong(Py.FileTimeFromUnixMs(character!.CreatedAt.ToUnixTimeMilliseconds())))),
             await Rig.CallAsync(service, session, "GetPrivateInfoOnCorpChange", Id(characterId)));
     }
-
 
     [PgFact]
     public async Task Private_corporation_change_info_ignores_a_client_supplied_other_character_id()
@@ -863,7 +857,6 @@ public class CharMgrTests
         Assert.Equal(PyNone.Instance, await Rig.CallAsync(service, session, "DeleteCharacterSetting", new PyStr("fleetSetups")));
         Assert.Equal(new PyDict([]), await Rig.CallAsync(service, session, "GetCharacterSettings"));
     }
-
 
     [PgFact]
     public async Task Get_organization_info_for_local_chat_returns_keyed_keyvals_from_the_existing_stores()
@@ -1159,7 +1152,6 @@ public class CharMgrTests
         var errors = state.Entries.Single(entry => Assert.IsType<PyStr>(entry.Key).Value == "errors").Value;
         Assert.Equal(new PyList([new PyInt(code)]), errors);
     }
-
 
 }
 

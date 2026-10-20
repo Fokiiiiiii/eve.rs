@@ -273,6 +273,8 @@ public sealed class PacketDispatcher
             return 10;
         if (service == "mailingListsMgr")
             return 10;
+        if ((service is "charFittingMgr" or "corpFittingMgr" or "allianceFittingMgr") && (method is "GetFittings" or "SaveFitting" or "UpdateFitting" or "SaveManyFittings" or "DeleteFitting" or "DeleteManyFittings" or "UpdateNameAndDescription" or "GetCommunityFittings"))
+            return 10;
         if (service == "invbroker" && method is "MultiMerge" or "MultiAdd" or "StackAll" or "RepackageItems")
             return 10;
         if (service == "invbroker" && method is "GetInventory" or "GetInventoryFromId" or "GetContainerContents" or "GetItems" or "List" or "ListByFlags" or "ListStations" or "ListStationItems" or "ListIncludingContainers" or "GetAssetWorth" or "GetCapacity")

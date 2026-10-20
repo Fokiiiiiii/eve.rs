@@ -39,6 +39,10 @@ public static class SavedFittingRules
         {
             return new FittingFault("FITTING_DATA_EMPTY");
         }
+        if (draft.FitData.Count > 500)
+        {
+            return new FittingFault("FITTING_TOO_MANY_ITEMS", draft.FitData.Count);
+        }
         foreach (var item in draft.FitData)
         {
             if (categoryOf(item.TypeId) is null)
@@ -49,7 +53,7 @@ public static class SavedFittingRules
             {
                 return new FittingFault("FITTING_INVALID_FLAG", item.TypeId);
             }
-            if (item.Quantity == 0)
+            if (item.Quantity <= 0)
             {
                 return new FittingFault("FITTING_INVALID_QUANTITY", item.TypeId);
             }

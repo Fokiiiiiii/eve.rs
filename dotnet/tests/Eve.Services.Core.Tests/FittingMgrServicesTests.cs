@@ -157,6 +157,56 @@ public sealed class FittingMgrServicesTests : IAsyncLifetime
         Assert.Equal("CustomNotify", error.Error.UserErrorMessage);
     }
 
+
+    [FittingPgFact]
+    public async Task Fitting_identifiers_outside_int32_are_refused_before_storage()
+    {
+        var (_, _, calls) = await SetUpAsync();
+        var member = SessionOf(new Sink(), Character, Corporation);
+        IService service = new CharFittingMgrService(calls);
+        var overflow = (long)int.MaxValue + 1;
+        var invalidShip = Py.KeyVal(
+            ("name", new PyStr("overflow")),
+            ("description", new PyStr("text")),
+            ("shipTypeID", new PyLong(overflow)),
+            ("fitData", new PyList([Py.Tuple(new PyInt(DamageControl), new PyInt(11), new PyInt(1))])));
+        var invalidItem = Py.KeyVal(
+            ("name", new PyStr("overflow")),
+            ("description", new PyStr("text")),
+            ("shipTypeID", new PyInt(Tengu)),
+            ("fitData", new PyList([Py.Tuple(new PyLong(overflow), new PyInt(11), new PyInt(1))])));
+
+        await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(
+            Call("SaveFitting", member, new PyInt(Character), invalidShip)).AsTask());
+        await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(
+            Call("SaveFitting", member, new PyInt(Character), invalidItem)).AsTask());
+    }
+
+
+    [FittingPgFact]
+    public async Task Fitting_identifiers_outside_int32_are_refused_before_storage()
+    {
+        var (_, _, calls) = await SetUpAsync();
+        var member = SessionOf(new Sink(), Character, Corporation);
+        IService service = new CharFittingMgrService(calls);
+        var overflow = (long)int.MaxValue + 1;
+        var invalidShip = Py.KeyVal(
+            ("name", new PyStr("overflow")),
+            ("description", new PyStr("text")),
+            ("shipTypeID", new PyLong(overflow)),
+            ("fitData", new PyList([Py.Tuple(new PyInt(DamageControl), new PyInt(11), new PyInt(1))])));
+        var invalidItem = Py.KeyVal(
+            ("name", new PyStr("overflow")),
+            ("description", new PyStr("text")),
+            ("shipTypeID", new PyInt(Tengu)),
+            ("fitData", new PyList([Py.Tuple(new PyLong(overflow), new PyInt(11), new PyInt(1))])));
+
+        await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(
+            Call("SaveFitting", member, new PyInt(Character), invalidShip)).AsTask());
+        await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(
+            Call("SaveFitting", member, new PyInt(Character), invalidItem)).AsTask());
+    }
+
     [FittingPgFact]
     public async Task A_corporation_fitting_needs_the_fitting_manager_role_to_change_and_is_announced_to_the_corporation()
     {

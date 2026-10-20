@@ -387,6 +387,24 @@ public class DispatchGoldenTests
     }
 
     [Fact]
+    public async Task Fitting_manager_calls_use_the_named_per_session_budget()
+    {
+        var capture = new Capture();
+        var session = new ClientSession(capture) { SessionId = 917 };
+        var registry = new ServiceRegistry();
+        var service = new ExpensiveService("charFittingMgr");
+        registry.Register(service);
+        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 10 };
+
+        await dispatcher.DispatchAsync(CallRequestPacket("charFittingMgr", "GetFittings"), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("charFittingMgr", "GetFittings"), session);
+
+        Assert.Equal(1, service.Calls);
+        Assert.Equal(2, capture.Sent.Count);
+        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[1])));
+    }
+
+    [Fact]
     public async Task Alliance_member_enumeration_uses_the_named_per_session_budget()
     {
         var capture = new Capture();
@@ -573,7 +591,7 @@ public class DispatchGoldenTests
 
         public string Name => name;
 
-        public bool HasMethod(string method) => method is "GetOrders" or "BuyMultipleItems" or "PlaceMultiSellOrder" or "GetHistoryForManyTypeIDs" or "GetAllianceMembers" or "GetRankedAlliances" or "GetOrganizationInfoForCharacters" or "SendBroadcast" or "ExecuteActions" or "GetNumberOfPotentialCEOs";
+        public bool HasMethod(string method) => method is "GetOrders" or "BuyMultipleItems" or "PlaceMultiSellOrder" or "GetHistoryForManyTypeIDs" or "GetAllianceMembers" or "GetRankedAlliances" or "GetOrganizationInfoForCharacters" or "SendBroadcast" or "ExecuteActions" or "GetNumberOfPotentialCEOs" or "GetFittings";
 
         public ValueTask<PyValue> CallAsync(ServiceCall call)
         {

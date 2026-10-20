@@ -613,6 +613,10 @@ private static PyValue RowField(PyValue value,string key)
 
         var founderSession = Session(founder);
         var applicantSession = Session(applicant);
+        var rejectedApplication = await Assert.ThrowsAsync<CorporationError>(() => Rpc(applicantSession,"InsertApplication",
+            new PyInt(corp.Id),new PyStr(new string('x',1001))).AsTask());
+        Assert.Equal("CORPORATION_APPLICATION_TEXT_TOO_LONG",rejectedApplication.Code);
+        Assert.Empty(await rig.Store.ApplicationsAsync(character:applicant));
         var applicationId = Assert.IsType<PyInt>(await Rpc(applicantSession,"InsertApplication",
             new PyInt(corp.Id),new PyStr("Please consider my application."))).Value;
 
@@ -629,6 +633,15 @@ private static PyValue RowField(PyValue value,string key)
         Assert.Equal(new PyInt(0),application.Values[4]);
         Assert.Equal(PyBool.False,application.Values[6]);
         Assert.Equal(PyNone.Instance,application.Values[7]);
+
+        var oversizedUpdate = await Assert.ThrowsAsync<CorporationError>(() => Rpc(founderSession,"UpdateApplicationOffer",
+            new PyInt(applicationId),new PyInt(applicant),new PyInt(corp.Id),new PyStr(new string('x',1001)),new PyInt(5),new PyStr("")).AsTask());
+        Assert.Equal("CORPORATION_APPLICATION_TEXT_TOO_LONG",oversizedUpdate.Code);
+        var oversizedResponse = await Assert.ThrowsAsync<CorporationError>(() => Rpc(founderSession,"UpdateApplicationOffer",
+            new PyInt(applicationId),new PyInt(applicant),new PyInt(corp.Id),new PyStr(""),new PyInt(5),new PyStr(new string('x',1001))).AsTask());
+        Assert.Equal("CORPORATION_APPLICATION_RESPONSE_TOO_LONG",oversizedResponse.Code);
+        Assert.Equal(new PyWString("Please consider my application."),
+            GroupedRow(await Rpc(applicantSession,"GetMyApplications"),corp.Id,applicationId).Values[3]);
 
         var managedApplications = Assert.IsType<PyDict>(await Rpc(founderSession,"GetApplications"));
         Assert.Equal(applicant,Assert.IsType<PyInt>(managedApplications.Entries.Single().Key).Value);

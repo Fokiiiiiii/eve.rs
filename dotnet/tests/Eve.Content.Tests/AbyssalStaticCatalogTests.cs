@@ -44,7 +44,6 @@ public sealed class AbyssalStaticCatalogTests
         });
     }
 
-
     [PgFact]
     public async Task Telemetry_weather_final_loot_modes_and_blueprint_copies_are_deterministic()
     {
@@ -71,7 +70,6 @@ public sealed class AbyssalStaticCatalogTests
             }
         }
 
-        // T1 electrical has a captured stage-2 ball, but its live telemetry authority
         // bypasses that visual template and reaches both allowed runtime stages.
         foreach (var tier in new[] { 1, 4 })
         {

@@ -5110,3 +5110,23 @@ The writer serializes accept and bid operations by locking the contract row befo
 ## Contract headless walk (2026-10-20)
 
 `CreateContract` accepts the V24 `contracts.contractStruct.ContractStruct` object whose `OBJECT` arguments are the 17 positional constructor fields; the server maps those fields in client order, decodes title and description byte strings, and declines the unsupported multi-contract flag. The dictionary form remains accepted for internal callers. `tools/headless-client/tests/test_walk_contracts.py` sends the V24 `ContractStruct` positional object and exercises public item-exchange creation and acceptance through `contractProxy` using two connected characters. It checks the accepted row, issuer notification, item ownership, and wallet balances against PostgreSQL. The file is selectable in `.github/workflows/live-slow.yml`; its live result remains open until dispatched and completed successfully. The graphical client is a separate check.
+
+
+## Inventory bulk operation bounds (2026-10-20)
+
+The V24.01 client sends selected item collections to `invbroker.MultiAdd`; EveJS accepts the client collection without an entry limit. eve.rs now applies the existing 500-entry inventory bulk cap before deduplication or item lookups, matching the limit used by adjacent inventory batch RPCs. Normal client batches retain the same behavior. The focused PostgreSQL regression checks the named refusal at 501 entries; graphical-client acceptance is open.
+
+
+## Market bulk sell bound (2026-10-20)
+
+`marketProxy.PlaceMultiSellOrder` accepts a client list of sell entries. EveJS handles each entry in sequence without an entry cap. eve.rs now refuses more than 500 entries before market calls, matching the cap on adjacent multi-order RPCs. The focused PostgreSQL test checks the named refusal at 501 entries; dispatcher coverage checks the weighted per-session limit. Normal client batches retain their behavior. Graphical-client acceptance is open.
+
+
+## Corporation donation response (2026-10-20)
+
+EveJS `account.GiveCash` returns the donor and recipient corporation wallet balances after a character deposits ISK. The V24.01 `transferMoneyWnd.py` callsite ignores the RPC result, and the character donation panel only checks truthiness for its character-to-character path. eve.rs now returns no corporation balance data, returns a truthy acknowledgement for a successful personal gift, and refuses zero-value donations without settlement. `AccountRpcTests` verifies the response shape, debit and credit, and zero-value no-op. This narrows an information disclosure while retaining the client call flow; graphical-client acceptance is open.
+
+
+## Character manager global asset budget (2026-10-20)
+
+The V24.01 global asset methods route `charMgr.List`, `ListStations`, `ListStationItems`, `ListIncludingContainers`, and `GetAssetWorth` to inventory enumeration. EveJS handles these calls without a per-session work budget. eve.rs now charges each one 10 weighted units under the existing session budget before invoking the service. The focused dispatcher regression verifies that the first call reaches the service and the next call is refused with `SessionRpcBudgetExceeded`. Normal client asset browsing remains within the configured allowance; graphical-client acceptance is open.

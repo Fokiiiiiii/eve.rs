@@ -54,6 +54,7 @@
 | `dotnet/src/Eve.Sde` (1 C# file) | 21 | 21 | 2026-10-20 |
 | `dotnet/src/Eve.Hacking` (3 C# files) | 32 | 25 | 2026-10-20 |
 | `dotnet/src/Eve.GameStore` (14 C# files; generated file excluded) | 237 | 206 | 2026-10-20 |
+| `dotnet/src/Eve.Crimewatch` (6 C# files; migrations reviewed) | 109 | 98 | 2026-10-20 |
 | `dotnet/src/Eve.Dungeons` (5 C# files) | 101 | 49 | 2026-10-20 |
 | `dotnet/src/Eve.Fitting` (8 C# files; migrations reviewed) | 97 | 78 | 2026-10-20 |
 | `dotnet/src/Eve.Dogma` (10 C# files) | 285 | 280 | 2026-10-20 |

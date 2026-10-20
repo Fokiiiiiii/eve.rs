@@ -2,7 +2,7 @@ namespace Eve.Crimewatch;
 
 /// <summary>
 /// The ship safety level (the client's <c>shipSafetyLevel*</c>): how far the client lets a pilot go before it asks first. The server keeps it per character and tells it
-/// with the rest of the crimewatch states. Values outside the three are brought to the nearest (the reference does the same), a value that is no number is full.
+/// with the rest of the crimewatch states. Values outside the three are brought to the nearest; a value that is not a number is full.
 /// </summary>
 public static class SafetyLevel
 {

@@ -12,7 +12,6 @@ public sealed partial class SkillHandlerService
     public async ValueTask<PyValue> InjectSkillIntoBrain(ServiceCall call) =>
         await InjectSkillBooksAsync(call.Session, [.. ItemsOf(call.Arg(0)).Select(IdOf).OfType<long>()], call.Cancellation);
 
-
     public async Task<PyValue> InjectSkillBooksAsync(ClientSession session, IReadOnlyList<long> itemIds, CancellationToken cancellationToken)
     {
         if (session.CharacterId is not { } character || session.GetInt("stationid") is not { } station)
@@ -146,7 +145,7 @@ private long DiminishedInjectorSp(long totalSp, int typeId, long quantity, long 
                 await items.SetQuantityAsync(connection, transaction, itemId, item.Quantity - quantity, token);
             var before = new ItemRow(item.Id, item.TypeId, item.OwnerId, item.LocationId, item.Flag,
                 item.Singleton ? -1 : item.Quantity, type.GroupId, type.CategoryId);
-            // EveJS removes consumed items from the client's cache at location 6.
+
             var after = item.Singleton || quantity == item.Quantity
                 ? before with { LocationId = 6 }
                 : before with { Quantity = item.Quantity - quantity };
@@ -155,7 +154,6 @@ private long DiminishedInjectorSp(long totalSp, int typeId, long quantity, long 
         announcer.AnnounceInjectedPoints(call.Session, committed.Before, committed.After, committed.Balance);
         return new PyInt(committed.Award);
     }
-
 
     [Method("ExtractSkills")]
     public async ValueTask<PyValue> ExtractSkills(ServiceCall call)
@@ -366,7 +364,6 @@ private long DiminishedInjectorSp(long totalSp, int typeId, long quantity, long 
         PyList list => list.Items,
         _ => [],
     };
-
 
     private static IEnumerable<(long SkillTypeId, long Points)> ExtractionTargetsOf(PyValue value)
     {

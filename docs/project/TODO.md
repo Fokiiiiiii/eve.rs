@@ -1065,7 +1065,7 @@ Open after slice D:
 | OPEN | `bannedwords`: the reference's regular-expression list is empty here; no list source | owner decision |
 | OPEN | `alphaInjectorMgr.GetNextAvailableInjection` answers 0 (available now); the alpha injections are not recorded | skill trading |
 | OPEN | `contextualOfferMgr.Track*`, `localizationServer` and `communityTrackMgr` keep their state in memory only | the offers, content and community-track slices |
-| OPEN | `LPStoreMgr` answers no offers and refuses every take | the agents and loyalty track |
+| DONE (A9) | `LPStoreMgr` serves ESI-backed offers and performs character and Director corporation purchases transactionally; remaining gaps are standing requirements, Upwell structures and cross-session notifications | Agents slice AG-3, A9; `LpStoreMgrService`, `LpStorePurchases` |
 | OPEN | Map reads with no data source: visits, history, loyalty by constellation, roaming weather, my extra map info, deadspace, factional warfare zones answer the empty shape | each owning track |
 | OPEN | `map.GetEdencomFortressSystems`, `GetEdencomMinorVictorySystems`, `GetTriglavianMinorVictorySystems`: the reference's constant lists (no SDE or state source; provenance not established) | content / factional warfare |
 | OPEN | `map.GetBeaconCount` answers an empty dictionary while the mobile cynosural beacons exist | the ships track (other agent) |
@@ -1118,7 +1118,7 @@ section 4.7: A8 done for balances and notifications; A2 done as a rule; A3 done 
 | OPEN | `ExchangeConcordLP`: refused; the CONCORD exchange rate and rule are not in the sources read | design 4.6; EveJS stub `lpService.js:166-168` |
 | OPEN | Donations `TransferLPFromMyWalletToOtherCorp`, `TransferLPFromMyCorpWalletToOtherCorp`: refused; need EveJS's destination, Evermark, director and membership rules | `lpWalletState.js:610-740`; client `personalDonateLPPanel.py`, `corpDonateLPPanel.py` |
 | OPEN | No credit source: missions (Mi5), factional warfare and insurgency (I5) must call `LoyaltyPointStore.ApplyAsync` in their transaction | design 4.6, 5.5 |
-| OPEN | LP store (A9): `LPStoreMgr` still answers no offers and refuses every take | design 4.7 A9; `CoreCompatibilityServiceAdapters.cs` |
+| DONE (A9) | LP store offers and character/corporation purchases are implemented; see the remaining source and location gaps below | Agents slice AG-3, A9 |
 | OPEN | Access rule (A2) has no client-visible consumer yet; implants are not modelled in the skill bonus | `AgentAccessRule`; consumers A4, A5, Mi3 |
 | SOURCE FIXED (aab0dd10; not full Agent acceptance) | Bound agentMgr resolve and initial nested calls | Current MachoResolveObject and HasMethod-based nested dispatch are present; the old empty/DoAction-only BoundMethods finding is superseded. Remaining 13 unimplemented agentMgr exits (plus 1 client-local alternative and 2 legacy names) are separated in the EveJS response audit backlog; do not reopen the fixed binder. |
 | OPEN | Dialogue `DoAction` (A4): greeting, view, request, accept, decline and quit; needs offers (A5) and the dialogue texts of EveJS `agentMgrService.js:906-1120` | design 4.7 A4 |
@@ -1136,7 +1136,7 @@ Web research is recorded in DEVIATIONS.md, "Agents slice AG-2". Sources read: ES
 |---|---|---|
 | DONE (research) | Sources read and compared with the access rule: thresholds, the -2 floor and the research rule agree; the wiki's skill bonus target is wrong and the client (all three standings) wins | DEVIATIONS "Agents slice AG-2" |
 | OPEN | R&D missions: wiki "only two missions, a trade and a courier" vs CCP 2011 research missions (Q-AG-7) | design 4.8 |
-| OPEN | LP store offer data: no LP offer rows in the pinned SDE build 3396210 and none in eve-logic (A9 source gap) | DEVIATIONS "Agents slice AG-2" |
+| DONE (A9) | Runtime LP store offer rows come from the official ESI endpoint and are cached daily; the pinned SDE contains no offer table | DEVIATIONS "Agents slice AG-2, A9 (part 1)" |
 | OPEN | Research rates and datacore price: no source read (A6) | DEVIATIONS "Agents slice AG-2" |
 | OPEN | CONCORD LP exchange: wiki rates exist but no CCP source; stays refused | DEVIATIONS "Agents slice AG-2" |
 
@@ -1169,7 +1169,7 @@ Slice A9, part 1 (2026-10-11): DONE for the offers: ESI's official offers cached
 | Status | Item | Where / blocker |
 |---|---|---|
 | DONE (AG-3) | Take an offer for the character and for a corporation (Director): LP, ISK, required items, the granted item, one transaction, journal, notifications. ISK reference type 26 from the client constant | DEVIATIONS "Agents slice AG-3, A9 (part 2)"; `LpStoreMgrServiceTests` |
-| OPEN | Standing requirements of LP store offers: ESI returns none, so none is shown | DEVIATIONS "Agents slice AG-2, A9 (part 1)" |
+| OPEN | Standing requirements of LP store offers: ESI returns none, so none is shown; purchases in Upwell structures and cross-session notifications are also open | DEVIATIONS "Agents slice AG-2, A9 (part 1)" and "Agents slice AG-3, A9 (part 2)" |
 
 ## Agents slice AG-4 (2026-10-11)
 

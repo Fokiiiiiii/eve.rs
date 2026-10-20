@@ -190,8 +190,17 @@ public sealed class NewEdenStoreHostTests : IAsyncLifetime
             Assert.Equal(PyBool.True, await service.CallAsync(Call(session, "claim_reward", 2, [])));
             Assert.Equal(PyBool.False, await service.CallAsync(Call(session, "claim_reward", 3, [])));
             accountDirectory.SetSubscriptionEndsAt(account.AccountId, DateTimeOffset.UtcNow.AddDays(90));
-            Assert.Equal(PyBool.True, await service.CallAsync(Call(session, "claim_reward", 4, [])));
+            var competingHost = await BuildHostAsync();
+            var competingService = competingHost.Registry.Lookup("seasonalLoginCampaignManager")!;
+            var competingSession = new ClientSession(new Sink()) { SessionId = 403, UserId = account.AccountId, CharacterId = pilot };
+            var concurrentClaims = await Task.WhenAll(
+                service.CallAsync(Call(session, "claim_reward", 4, [])).AsTask(),
+                competingService.CallAsync(Call(competingSession, "claim_reward", 4, [])).AsTask());
+            Assert.Equal(1, concurrentClaims.Count(result => result == PyBool.True));
+            Assert.Equal(1, concurrentClaims.Count(result => result == PyBool.False));
             Assert.Equal(PyBool.False, await service.CallAsync(Call(session, "claim_reward", 5, [])));
+            await competingHost.ShutdownAsync();
+            _hosts.Remove(competingHost);
             await host.ShutdownAsync();
             _hosts.Remove(host);
             host = await BuildHostAsync();

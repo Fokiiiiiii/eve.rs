@@ -1483,7 +1483,8 @@ Sources. The wiki: "Pochven" (https://wiki.eveuniversity.org/Pochven, fetched 20
   state), `seasonalLoginCampaignManager.get_active_campaign` (a 4-tuple, with None when no campaign runs) and
   `loginRewardFacilities.get_my_clone_grade` (an int) are what `loginCampaignService.py` and `seasonalLoginCampaignService.py`
   read. Active seasonal campaign data comes from validated `EVE_SEASONAL_LOGIN_CAMPAIGN` JSON configuration; dates and reward catalogs
-  are configuration inputs while claim history and redeem tokens are persisted by account. The screen's call at
+  are configuration inputs while claim history and redeem tokens are persisted by account. A transaction-scoped database lock
+  serializes claims from separate Host instances before they read account state. The screen's call at
   `characterSelection.py:155` has no try, so a wrong shape would abort the screen's open; Host coverage checks active state,
   claim history, a successful claim and rejection of its replay. Status: implemented with focused Host coverage.
 - **Localization changes are supplied by deployment configuration.** V24.01 `LocalizationClient.OnCharacterSessionChanged` calls

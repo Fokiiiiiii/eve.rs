@@ -26,6 +26,10 @@ The V24.01 trade window builds a two-pilot money manifest and a set of offered i
 
 `account.GetTransactions`, `GiveCash`, and `GiveCashFromCorpAccount` now consume the existing per-session weighted RPC budget. The budget returns the named `SessionRpcBudgetExceeded` response after the configured minute allowance. This is server-side resource accounting and does not alter a call's result while it remains within budget. `DispatchGoldenTests.Expensive_wallet_calls_have_a_named_per_session_budget` covers refusal after the limit.
 
+## Inventory RPC work budget (2026-10-20)
+
+Inventory reads consume 2 weighted per-session units per call, while the global rolling-minute allowance remains 120 units. This lets the recorded new-character walk open and inspect the hangar, station and starter ship before the normal budget applies. The `GetInventoryFromId` calls return the same ownership-checked containers; only their cost in the shared dispatch budget changed. `DispatchGoldenTests.Expensive_market_calls_have_a_named_per_session_budget` verifies inventory calls remain bounded, and `test_a_new_characters_inventories_are_those_of_the_reference` exercises the live new-character walk.
+
 ## LP store singleton grant bound (2026-10-20)
 
 EveJS 261018.1 normalizes the requested LP store quantity but has no generated-item count cap. eve.rs refuses purchases whose singleton reward would create more than 256 items; ordinary stack offers retain the existing checked cost and quantity calculations. The focused PostgreSQL test verifies refusal before inventory or purchase history changes. Offer reads and purchase calls also consume the configured per-session RPC budget. Graphical-client acceptance remains open.

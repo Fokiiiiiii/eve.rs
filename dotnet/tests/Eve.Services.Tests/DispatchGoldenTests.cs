@@ -280,11 +280,11 @@ public class DispatchGoldenTests
 
         var inventoryCapture = new Capture();
         var inventorySession = new ClientSession(inventoryCapture) { SessionId = 902 };
-        await dispatcher.DispatchAsync(CallRequestPacket("invbroker", "ListIncludingContainers"), inventorySession);
-        await dispatcher.DispatchAsync(CallRequestPacket("invbroker", "ListIncludingContainers"), inventorySession);
-        Assert.Equal(1, inventoryService.Calls);
-        Assert.Equal(ErrorResponseCommand, CommandOf(inventoryCapture.Sent[1]));
-        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(inventoryCapture.Sent[1])));
+        for (var index = 0; index < 6; index++)
+            await dispatcher.DispatchAsync(CallRequestPacket("invbroker", "ListIncludingContainers"), inventorySession);
+        Assert.Equal(5, inventoryService.Calls);
+        Assert.Equal(ErrorResponseCommand, CommandOf(inventoryCapture.Sent[5]));
+        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(inventoryCapture.Sent[5])));
 
         now += 60_000;
         await dispatcher.DispatchAsync(CallRequestPacket("marketProxy", "GetOrders"), session);

@@ -634,7 +634,10 @@ def test_a_new_characters_inventories_are_those_of_the_reference(race):
         ids[race["shipID"]] = int(ship_id)
         for label, inventory in race["inventories"].items():
             opener, argument = inventory["open"]["call"][1], revive(inventory["open"]["call"][2][0], run, ids, RECORDED_INVENTORY_RUN)
-            handle = client.call("invbroker", opener, argument)
+            try:
+                handle = client.call("invbroker", opener, argument)
+            except p.MachoError as error:
+                raise AssertionError(f"race {race['raceID']} {label}.{opener}({argument}): {brief(describe(error.payload))}") from error
             opened = describe(handle)
             problems += same_way(
                 blank(inventory["open"]["ok"], "$substruct", "$substream", "$tuple"), blank(opened, "$substruct", "$substream", "$tuple"), f"{label}: {opener}")

@@ -3761,6 +3761,17 @@ public class SpaceServiceTests
             sessionForCharacter: id => id == leaderId ? leaderSession : id == memberId ? memberSession : null);
         try
         {
+            var tooManyMembers = Enumerable.Range(1, Eve.Services.Space.FleetStore.MaxMembers + 1)
+                .Select(id => (PyValue)new PyLong(leaderId + 100 + id)).ToArray();
+            await Assert.ThrowsAsync<MachoWrappedException>(() => FleetObjectCallAsync(
+                fleet, fleetId, leaderSession, "MassInvite",
+                [new PyList(tooManyMembers), new PyLong(firstWing), new PyLong(firstSquad),
+                 new PyInt(Eve.Services.Space.FleetStore.Member)]));
+            await Assert.ThrowsAsync<MachoWrappedException>(() => FleetObjectCallAsync(
+                fleet, fleetId, leaderSession, "MassMoveMembers",
+                [new PyList(tooManyMembers), new PyLong(firstWing), new PyLong(firstSquad),
+                 new PyInt(Eve.Services.Space.FleetStore.Member)]));
+
             var inviteResult = await FleetObjectCallAsync(fleet, fleetId, leaderSession, "MassInvite",
                 [new PyList([new PyLong(memberId), new PyLong(leaderId)]),
                  new PyLong(firstWing), new PyLong(firstSquad), new PyInt(Eve.Services.Space.FleetStore.Member)]);

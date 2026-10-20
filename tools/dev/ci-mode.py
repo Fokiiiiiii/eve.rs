@@ -38,7 +38,6 @@ PUSH_TRIGGERS = {
 """,
 }
 
-
 def split_workflow(text: str) -> tuple[str, str, str, str]:
     """Return prefix, trigger header, dispatch event and suffix for a workflow."""
     lines = text.splitlines(keepends=True)
@@ -61,7 +60,6 @@ def split_workflow(text: str) -> tuple[str, str, str, str]:
         raise ValueError("workflow has no workflow_dispatch trigger")
     return "".join(lines[:start]), header, dispatch, "".join(lines[end:])
 
-
 def rewrite(path: Path, mode: str) -> bool:
     original = path.read_text(encoding="utf-8")
     prefix, header, dispatch, suffix = split_workflow(original)
@@ -79,7 +77,6 @@ def rewrite(path: Path, mode: str) -> bool:
         return True
     return False
 
-
 def current_mode(paths: list[Path]) -> str:
     modes = set()
     for path in paths:
@@ -92,7 +89,6 @@ def current_mode(paths: list[Path]) -> str:
         is_auto = "push" in events and "schedule" in events
         modes.add("auto" if is_auto else "manual")
     return next(iter(modes)) if len(modes) == 1 else "mixed"
-
 
 def main() -> int:
     parser = argparse.ArgumentParser()
@@ -111,7 +107,6 @@ def main() -> int:
     changed = [str(path.relative_to(ROOT)) for path in paths if rewrite(path, args.mode)]
     print(f"{args.mode}: updated {len(changed)} workflow(s)" if changed else f"{args.mode}: already current")
     return 0
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

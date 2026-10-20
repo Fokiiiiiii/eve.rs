@@ -36,7 +36,6 @@ BAND_DIFFICULTY = {
     "relic": {"lowsec": [1, 4], "nullsec": [2, 5]},
 }
 
-
 def sde_dungeons():
     sql = "select key, doc->'name'->>'en', doc->>'archetypeID', coalesce(doc->>'factionID','') from sde.dungeons order by ord"
     text = subprocess.run(["psql", PG, "-At", "-F|", "-c", sql], capture_output=True, text=True, check=True).stdout
@@ -46,16 +45,13 @@ def sde_dungeons():
         by_name.setdefault(name.lower(), []).append((int(key), int(archetype), int(faction) if faction else None))
     return by_name
 
-
 def pools():
     with open(NPC, encoding="utf-8") as handle:
         return {p["id"] for p in json.load(handle)["pools"]}
 
-
 def middle(family, bands):
     ranges = [BAND_DIFFICULTY[family][b] for b in bands if b in BAND_DIFFICULTY[family]]
     return max(1, round(sum((lo + hi) / 2 for lo, hi in ranges) / len(ranges))) if ranges else 1
-
 
 def waves(template, only_on_load_first=False):
     result = []
@@ -65,13 +61,11 @@ def waves(template, only_on_load_first=False):
         result.append({"query": e["spawnQuery"], "amount": int(e["amount"])})
     return result
 
-
 def containers(template):
     result = []
     for c in template["populationHints"].get("containers", []):
         result.append({"role": c.get("role", ""), "analyzer": c.get("analyzer"), "count": int(c.get("count", 1)), "types": c.get("typeNameCandidates") or []})
     return result
-
 
 def main():
     with open(AUTHORITY, encoding="utf-8") as handle:
@@ -84,7 +78,6 @@ def main():
     def client_facts(dungeon_id):
         c = client.get(dungeon_id) or {}
         return c.get("dungeonNameID"), c.get("entryObjectTypeID"), c.get("difficulty")
-
 
     for t in templates:
         if t.get("source") != "eve-university" or t.get("siteFamily") != "combat" or t.get("siteKind") not in ("anomaly", "signature"):
@@ -131,6 +124,5 @@ def main():
     for t in ordered:
         by[(t["kind"], t["family"])] = by.get((t["kind"], t["family"]), 0) + 1
     print(len(ordered), by)
-
 
 main()

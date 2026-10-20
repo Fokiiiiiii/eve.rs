@@ -38,11 +38,17 @@ public sealed class ContractUserErrorException(string messageKey, params (string
 
 public sealed record CreatedContract(long ContractId, IReadOnlyList<long> EscrowItemIds);
 
+public sealed record AcceptedContract(long ContractId, short Type, short Status, long IssuerId, long IssuerCorporationId,
+    bool IsCorporationIssued, long AcceptorId, long StartStationId, long EndStationId, long DateAcceptedFileTime, int NumDays);
+
 public interface IContractWriteModel
 {
     ValueTask<CreatedContract> CreateContractAsync(
         CreateItemExchangeRequest request,
         CancellationToken cancellationToken);
+
+    ValueTask<AcceptedContract> AcceptItemExchangeAsync(long contractId, long characterId, long corporationId,
+        long allianceId, bool acceptForCorporation, int acceptorWalletKey, CancellationToken cancellationToken);
 
     ValueTask<CreatedContract> CreateItemExchangeAsync(
         CreateItemExchangeRequest request,

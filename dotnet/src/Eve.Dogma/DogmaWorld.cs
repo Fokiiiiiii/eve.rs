@@ -55,11 +55,9 @@ public sealed class DogmaItem
 /// <summary>
 /// The items whose attributes are being worked out (a character, the skills and implants it has, the ship it flies and what is fitted to it)
 /// and the modifiers between them. Attribute values are computed on demand and remembered until the world changes.
-/// Not thread-safe: one world belongs to one owner (a session's fitting, a ship in a scene).
 /// </summary>
 /// <remarks>
 /// The rules are the client's (<c>dogma/const.py</c>, <c>dogma/attributes</c>): a base value, then the modifiers in operation order, with the
-/// stacking penalty on attributes that are not stackable, cut to the attribute's cap and floor. See docs/design/adr/0004-dogma-is-a-pure-library.md.
 /// </remarks>
 public sealed class DogmaWorld
 {

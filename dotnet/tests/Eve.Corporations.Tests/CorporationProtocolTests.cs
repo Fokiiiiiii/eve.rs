@@ -805,6 +805,10 @@ private static PyValue RowField(PyValue value,string key)
         async Task<PyPackedRow> MemberRow() => Assert.IsType<PyPackedRow>(MarshalCodec.Decode(MarshalCodec.Encode(
             await ((IService)new CorpRegistryService(rig.Store,rig.Characters,() => rig.Now)).CallAsync(Call(memberSession,"GetMember",new PyInt(member))))));
 
+        var tooManyMemberIds = new PyList(Enumerable.Range(1, 501).Select(id => (PyValue)new PyInt(id)).ToArray());
+        var limitError = await Assert.ThrowsAsync<CorporationError>(async () => await CorpRpc("GetMembersByIds", tooManyMemberIds));
+        Assert.Equal("CORPORATION_BULK_LIMIT_EXCEEDED", limitError.Code);
+
         var emptyKick = Assert.IsType<PyDict>(await CorpRpc("KickOutMembers",new PyList([])));
         Assert.Empty(Assert.IsType<PyList>(emptyKick.Entries.Single(e => e.Key == new PyStr("kicked")).Value).Items);
         Assert.Empty(Assert.IsType<PyList>(emptyKick.Entries.Single(e => e.Key == new PyStr("notKicked")).Value).Items);

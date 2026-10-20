@@ -202,7 +202,9 @@ public class DispatchGoldenTests
         var session = new ClientSession(capture) { SessionId = 901 };
         var registry = new ServiceRegistry();
         var service = new ExpensiveService();
+        var inventoryService = new InventoryBudgetService();
         registry.Register(service);
+        registry.Register(inventoryService);
         var now = FixedNowMs;
         var dispatcher = new PacketDispatcher(registry, () => now) { MaxExpensiveRpcUnitsPerMinute = 10 };
 
@@ -213,6 +215,14 @@ public class DispatchGoldenTests
         Assert.Equal(2, capture.Sent.Count);
         Assert.Equal(ErrorResponseCommand, CommandOf(capture.Sent[1]));
         Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[1])));
+
+        var inventoryCapture = new Capture();
+        var inventorySession = new ClientSession(inventoryCapture) { SessionId = 902 };
+        await dispatcher.DispatchAsync(CallRequestPacket("invbroker", "ListIncludingContainers"), inventorySession);
+        await dispatcher.DispatchAsync(CallRequestPacket("invbroker", "ListIncludingContainers"), inventorySession);
+        Assert.Equal(1, inventoryService.Calls);
+        Assert.Equal(ErrorResponseCommand, CommandOf(inventoryCapture.Sent[1]));
+        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(inventoryCapture.Sent[1])));
 
         now += 60_000;
         await dispatcher.DispatchAsync(CallRequestPacket("marketProxy", "GetOrders"), session);
@@ -227,6 +237,21 @@ public class DispatchGoldenTests
         public string Name => "marketProxy";
 
         public bool HasMethod(string method) => method == "GetOrders";
+
+        public ValueTask<PyValue> CallAsync(ServiceCall call)
+        {
+            Calls++;
+            return ValueTask.FromResult<PyValue>(PyNone.Instance);
+        }
+    }
+
+    private sealed class InventoryBudgetService : IService
+    {
+        public int Calls { get; private set; }
+
+        public string Name => "invbroker";
+
+        public bool HasMethod(string method) => method == "ListIncludingContainers";
 
         public ValueTask<PyValue> CallAsync(ServiceCall call)
         {

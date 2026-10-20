@@ -49,28 +49,22 @@ def slim_value(v):  # a dynamic slim-item field value (protocol 76): a tag (0 no
         return bytes([5]) + struct.pack("<H", len(v["items"])) + b"".join(slim_value(item) for item in v["items"])
     raise ValueError(tag)
 
-
 def s(text):
     data = text.encode("utf-8")
     return struct.pack("<H", len(data)) + data
 
-
 def b(data):  # u32 length + bytes
     return struct.pack("<I", len(data)) + data
-
 
 def frame(kind, body):
     payload = bytes([KINDS[kind]]) + body
     return struct.pack("<I", len(payload)) + payload
 
-
 def i64(value):
     return struct.pack("<q", int(value))
 
-
 def u64(value):
     return struct.pack("<Q", int(value))
-
 
 def scene_key(value):
     if "scene" in value:
@@ -78,11 +72,9 @@ def scene_key(value):
         return struct.pack("<iqi", key["locationId"], int(key["instanceId"]), key["roomIndex"])
     return struct.pack("<iqi", value["solarSystemId"], 0, 0)
 
-
 def abyssal_modifiers(modifiers):
     return (struct.pack("<I", len(modifiers))
             + b"".join(struct.pack("<iBd", m["attributeId"], m["operation"], m["value"]) for m in modifiers))
-
 
 def abyssal_scene_spec(spec):
     out = scene_key({"scene": spec["scene"]})
@@ -97,9 +89,7 @@ def abyssal_scene_spec(spec):
         out += struct.pack("<2d", point["distanceOutsideMeters"], point["appliedDamagePerSecond"])
     return out + i64(boundary["terminalExposureMs"]) + i64(spec["expiryFileTime"])
 
-
 TRACE_STATUSES = {"Created": 0, "AlreadyPresent": 1, "Removed": 2, "AlreadyAbsent": 3, "Failed": 255}
-
 
 def abyssal_trace_payload(trace):
     out = struct.pack("<i", trace["solarSystemId"]) + i64(trace["itemId"])
@@ -111,16 +101,13 @@ def abyssal_trace_payload(trace):
     out += struct.pack("<diii", trace["speedFraction"], trace["gameModeId"], trace["filamentTypeId"], trace["difficultyTier"])
     return out + i64(trace["expiresAtMs"])
 
-
 def abyssal_result(m):
     return u64(m["requestId"]) + bytes([0 if m["ok"] else 1]) + s("" if m["ok"] else m["reason"])
-
 
 def analysis_beacon_state(state):
     """A CRAB's state (protocol 61): active flag, activate-at and deployed-at FILETIMEs, activation seconds, link state, link-complete FILETIME, linked ship."""
     return (bytes([1 if state["active"] else 0]) + i64(state["activateAt"]) + i64(state["deployedAt"])
             + struct.pack("<ii", state["activationSeconds"], state["linkState"]) + i64(state["linkCompleteAt"]) + i64(state["linkedShipId"]))
-
 
 def ship(m):
     body = i64(m["shipId"]) + i64(m["characterId"]) + struct.pack("<iii", m["typeId"], m["groupId"], m["categoryId"])
@@ -142,31 +129,25 @@ def ship(m):
         body += b"\x01" + struct.pack("<i", stance["oldStance"]) + i64(stance["switchedAt"]) + struct.pack("<i", stance["stance"])
     return body
 
-
 def vitals(v):
     r = v["resonances"]
     # the armor's pin: a fitted Polarized weapon holds the armor's resonances at one (one byte, 0 or 1)
     return (struct.pack("<15d", v["shieldCapacity"], v["armorHp"], v["structureHp"], *r["shield"], *r["armor"], *r["structure"])
             + bytes([int(v.get("armorPinned", False))]))
 
-
 def condition(c):
     return struct.pack("<4d", c["damage"], c["armorDamage"], c["shieldCharge"], c["charge"])
 
-
 def numbers(n):
     return struct.pack("<3d", n["mass"], n["maxVelocity"], n["signatureRadius"])
-
 
 def changes(items):
     return struct.pack("<I", len(items)) + b"".join(
         i64(c["itemId"]) + struct.pack("<id", c["attributeId"], c["value"]) for c in items)
 
-
 def dot_bytes(d):
     # a breacher pod's damage over time (protocol 42): a flag, then its duration, its cap per tick and its percentage per tick
     return bytes([1]) + struct.pack("<3d", d["durationMs"], d["maxDamagePerTick"], d["maxHpPercentPerTick"]) if d else bytes([0])
-
 
 def turret(t):
     body = struct.pack("<i", t["weaponTypeId"]) + s(t["fx"])
@@ -197,14 +178,11 @@ def turret(t):
 
     return body + bytes([1 if t.get("requiresGunnery", False) else 0])
 
-
 LAYERS = {"shield": 0, "armor": 1, "structure": 2}
 FAMILIES = {"ore": 0, "ice": 1, "gas": 2}
 
-
 def deployable(d):
     return struct.pack("<ii", d["chargeTypeId"], d["groupId"]) + s(d["name"]) + struct.pack("<d", d["radius"])
-
 
 def action(a):
     kind = a["kind"]
@@ -319,7 +297,6 @@ def action(a):
     body = bytes([1, 1 if a["when"] == "end" else 0]) + struct.pack("<dd", a["optimal"], a["falloff"]) + s(a["jam"])
     return body + remote_what(a)
 
-
 def remote_what(a):
     """A remote effect's kind and numbers (the tags of the remote action; a structure burst, tag 32, carries the same)."""
     what = a["what"]
@@ -348,7 +325,6 @@ def remote_what(a):
         body += struct.pack("<dddd", a["velocityPercent"], a["delayPercent"], a["aoeVelocityPercent"], a["aoeCloudPercent"])
     return body
 
-
 def effect(e):
     body = i64(e["moduleId"]) + struct.pack("<ii", e["moduleType"], e["effectId"]) + s(e["fx"])
     body += struct.pack("<ddi", e["durationMs"], e["capacitorNeed"], e["repeat"]) + i64(e["targetId"])
@@ -369,16 +345,13 @@ def effect(e):
         body += struct.pack("<iiBddd", rules["groupId"], rules["maxGroupActive"], bits, rules["reactivationDelayMs"], rules.get("maxVelocityLimit", 0.0), rules.get("minVelocityLimit", 0.0))
     return body
 
-
 def weapon(w):
     return i64(w["moduleId"]) + struct.pack("<idd", w["effectId"], w["cycleMs"], w["capacitorNeed"]) + turret(w)
-
 
 # what the host sends for a drone with no weapon: no module, no turret
 EMPTY_WEAPON = {"moduleId": 0, "effectId": 0, "cycleMs": 0.0, "capacitorNeed": 0.0, "weaponTypeId": 0, "fx": "", "requiresGunnery": False,
                 "rawDamage": [0.0, 0.0, 0.0, 0.0], "optimalRange": 0.0, "falloff": 0.0, "trackingSpeed": 0.0,
                 "signatureResolution": 0.0}
-
 
 def identity(i):
     body = struct.pack("<qqd", i["hostileResponseThreshold"], i["friendlyResponseThreshold"], i["aggressionRange"])
@@ -391,12 +364,10 @@ def identity(i):
         body += struct.pack("<i4d", repair["effectId"], repair["amount"], repair["cycleMs"], repair["capacitorCost"], repair["delayChance"])
     return body + wreck_kind(i.get("wreck")) + bytes([1 if i.get("hull") else 0, 1 if i.get("hostWreck") else 0])
 
-
 def wreck_kind(wreck):
     if wreck:
         return bytes([1]) + struct.pack("<i", wreck["typeId"]) + s(wreck["name"]) + struct.pack("<i", wreck["graphicId"])
     return bytes([0])
-
 
 def structure_status(d):  # protocol 59: state, upkeep, a flagged timer (start, end, a flagged pause), a flagged unanchoring time, repairing (0 none, 1 no, 2 yes)
     out = struct.pack("<ii", d["state"], d["upkeepState"])
@@ -410,7 +381,6 @@ def structure_status(d):  # protocol 59: state, upkeep, a flagged timer (start, 
     repairing = d.get("repairing")
     return out + bytes([0 if repairing is None else (2 if repairing else 1)])
 
-
 def structure_health(m):  # protocol 60: the vitals (points, then the resonances of the shield, armor and hull), the shield's recharge, the per-second limits and the repair pauses
     v = m["vitals"]
     out = struct.pack("<3d", v["shieldCapacity"], v["armorHp"], v["structureHp"])
@@ -418,13 +388,11 @@ def structure_health(m):  # protocol 60: the vitals (points, then the resonances
         out += struct.pack("<4d", *v["resonances"][layer])
     return out + struct.pack("<d", m["shieldRechargeMs"]) + struct.pack("<6d", *(m["perSecond"] + m["repairPause"]))
 
-
 def abyssal_static_object(obj):
     body = scene_key({"scene": obj["scene"]}) + i64(obj["itemId"])
     body += struct.pack("<iii", obj["typeId"], obj["groupId"], obj["categoryId"]) + i64(obj["ownerId"])
     body += struct.pack("<di", obj["radius"], obj["graphicId"]) + s(obj["name"])
     return body + struct.pack("<6d", *obj["position"], *obj["direction"]) + bytes([1 if obj["isOpen"] else 0])
-
 
 def abyssal_point_defense(pulse):
     if pulse is None:
@@ -433,7 +401,6 @@ def abyssal_point_defense(pulse):
     for key in ("includedCategories", "includedGroups", "includedTypes", "excludedCategories", "excludedGroups", "excludedTypes"):
         body += struct.pack("<I", len(pulse[key])) + b"".join(struct.pack("<i", value) for value in pulse[key])
     return body + s(pulse["effectName"])
-
 
 def build(m):
     k = m["kind"]
@@ -753,7 +720,6 @@ def build(m):
     if k == "Destroy":
         return frame(k, i64(m["shipId"]) + i64(m["characterId"]) + i64(m["corporationId"]) + i64(m["allianceId"]) + i64(m["warFactionId"]))
     raise ValueError(k)
-
 
 IBIS = {"shipId": "9988400001939", "characterId": "140000342", "typeId": 601, "groupId": 237, "categoryId": 6,
         "name": "Ibis", "ownerId": "140000342", "corporationId": 1000006, "allianceId": 0, "warFactionId": 0,
@@ -1726,7 +1692,6 @@ pinned_flag_two = {"kind": "ShipSpec", "sessionId": "1790646377000015", "ship": 
 drone_negative = {"kind": "ShipSpec", "sessionId": "1790646377000015", "ship": dict(IBIS, droneDamageMultiplier=-0.5)}
 def named(name):
     return next(c for c in valid if c["name"] == name)
-
 
 burst = named("activate a command burst (Shield Command Burst I, a Shield Harmonizing charge loaded)")
 burst_cycle = named("module work cycle of a command burst reaching two ships")

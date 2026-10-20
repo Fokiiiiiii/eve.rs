@@ -1,7 +1,6 @@
 namespace Eve.Dogma;
 
 /// <summary>
-/// A solar system's environment as dogma modifiers on the ships in it (slice 7c; the wormholes' effects first, the Abyssal, Pochven and
 /// Triglavian ones later). The effect beacon's attributes are the static data's: "&lt;name&gt;Multiplier" multiplies the attribute "&lt;name&gt;"
 /// (PostMul, the beacon's value is the multiplier), and "&lt;name&gt;Bonus" adds its percentage to "&lt;name&gt;" (PostPercent). They reach the ship and
 /// the items located in it (its modules), as a buff of the same shape does. An attribute whose base name has no dogma attribute is not applied and

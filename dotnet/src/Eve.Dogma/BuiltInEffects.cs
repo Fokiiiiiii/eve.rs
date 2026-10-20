@@ -91,7 +91,6 @@ public static class BuiltInEffects
     /// <summary>The activation block a running module puts on what needs its skill, and the strength of it (the client's 1349 and 1350).</summary>
     public const int ActivationBlocked = 1349, ActivationBlockedStrength = 1350;
 
-    /// <summary>The modifiers the client adds to an effect the static data leaves out, for the effects the loader reads (the client's table, approved for WP16: EVE University and the SDE agree that the bastion stops micro jump drives; the client's row is <c>SKILL_MODIFIER_CHANGES_FOR_LOCATION</c>, 4385 to 1349, in <c>bastionMode.py</c>).</summary>
     public static IReadOnlyList<Modifier> ClientModifiers(int effectId) =>
         effectId == BastionMode
             ? [new Modifier(ModifierFunc.LocationRequiredSkill, "shipID", Operation.ModAdd, ActivationBlocked, ActivationBlockedStrength, SkillTypeId: MicroJumpDriveOperation)]

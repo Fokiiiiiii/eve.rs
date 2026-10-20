@@ -18,7 +18,6 @@ public static class CorporationWire
             _ => None,
         } : fallback ?? None;
 
-
     public static long? FactionId(Corporation? corporation)
     {
         return corporation is null ? null : PositiveSetting(corporation, "factionID");
@@ -250,7 +249,6 @@ private static readonly (string Name,int Type)[] MemberTrackingColumns =
         [.. titles.Select(t => new KeyValuePair<PyValue,PyValue>(new PyInt(t.Id),
             new PyPackedRow(TitleDescriptor,[new PyInt(t.Id),new PyWString(t.Name),.. Masks(t.Masks)])))]);
 }
-
 
 [Eve.Services.Service("voteManager")]
 public sealed partial class VoteManagerService(Eve.Corporations.CorporationStore store)

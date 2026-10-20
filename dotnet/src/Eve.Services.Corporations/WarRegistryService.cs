@@ -9,7 +9,6 @@ namespace Eve.Services.Corporations;
 
 /// <summary>
 /// The client's <c>warRegistry</c>: the wars of a corporation or an alliance, read from the war relations, and the two changes a war's
-/// owner makes on its own war (open for allies, mutual retraction). The war negotiations (ally offers, surrenders) are not built: no
 /// negotiation can be opened here, so the calls that act on one are refused, and the lists of them are empty.
 /// </summary>
 [Service("warRegistry")]
@@ -53,7 +52,6 @@ public sealed partial class WarRegistryService(
     [Method("IsAllianceOrCorpLocal")]
     public PyValue IsAllianceOrCorpLocal(ServiceCall call) => new PyInt(1);
 
-    /// <summary>The wars the owner (an argument, or the session's alliance or corporation) is in, keyed by war id.</summary>
     [Method("GetWars")]
     public async ValueTask<PyValue> GetWars(ServiceCall call)
     {

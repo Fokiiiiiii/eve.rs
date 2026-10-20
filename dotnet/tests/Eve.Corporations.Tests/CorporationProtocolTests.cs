@@ -3129,6 +3129,10 @@ private static PyValue RowField(PyValue value,string key)
         var defender = await rig.CharacterAsync("War Defender");
         var corp = await rig.Store.CreateAsync(founder,new("War Works","WAR","","",0.05m),"corp-war");
         var target = await rig.Store.CreateAsync(defender,new("Defender Works","DEF","","",0.05m),"corp-war-target");
+        var ordinaryMember = await rig.CharacterAsync("War Ordinary Member");
+        var application = await rig.Store.ApplyAsync(ordinaryMember,corp.Id,"");
+        await rig.Store.RespondAsync(founder,application,6,"","");
+        await rig.Store.RespondAsync(ordinaryMember,application,2,"","");
         var sessions = new CharacterSessions();
         var sink = new PacketSink();
         var session = new ClientSession(sink);
@@ -3148,6 +3152,15 @@ private static PyValue RowField(PyValue value,string key)
         {
             Session=session,Method="DeclareWarAgainst",Args=[new PyInt(target.Id),new PyInt(60000001)],CallId=new PyInt(9003)
         };
+        var ordinarySession = new ClientSession { CharacterId=ordinaryMember };
+        ordinarySession.Set("corpid",new PyInt(corp.Id));
+        sessions.Enter(ordinaryMember,ordinarySession);
+        await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(new ServiceCall
+        {
+            Session=ordinarySession,Method="DeclareWarAgainst",Args=[new PyInt(target.Id),new PyInt(60000001)],CallId=new PyInt(9004)
+        }).AsTask());
+        Assert.Null(received);
+
         var declaration = Assert.IsType<PyObject>(await service.CallAsync(DeclareCall()));
         Assert.Empty(sink.Packets);
         session.RunAfterResponse();

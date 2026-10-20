@@ -1851,6 +1851,8 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
           if (corporation is not { IsNpc:false,Deleted:false } || actor <= 0 ||
               againstId is null || againstId.Value == corporation.Id)
               return PyNone.Instance;
+          if (!await CanAdminister(call))
+              throw CorporationAccessDenied();
           if (declareWar is null)
               throw new CorporationError("WAR_DECLARATION_UNAVAILABLE");
           var declaredAt = Number(CorporationWire.Time(now()));

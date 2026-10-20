@@ -6,7 +6,7 @@ Host admission replaces an existing live connection when the same account opens 
 
 ## Global assets follow-up (2026-10-19)
 
-`charMgr` global assets now resolves a personal item's root by walking inventory parent locations to a static station or persistently deployed structure. The V24 callsite in `eve-logic/eve/client/script/environment/invCache.py` and EveJS `charMgrGlobalAssets.js` use this root to list root items and nested-container contents. eve.rs reads personal items from `PgItemStore` and structure metadata from the existing deployed-structure directory source. A focused `eve_p2` regression covers a structure root, a container directly stored there, and a child item. The Host wrapper end-to-end regression and exact structure `upkeepState` parity remain open; this batch records no intentional client behavior difference.
+`charMgr` global assets resolves a personal item's root by walking inventory parent locations to a static station or persistently deployed structure. The V24 callsite in `eve-logic/eve/client/script/environment/invCache.py` and EveJS `charMgrGlobalAssets.js` use this root to list root items and nested-container contents. eve.rs reads personal items from `PgItemStore` and structure metadata from the existing deployed-structure directory source. Focused inventory-store tests cover a structure root, a container directly stored there, and a child item. `CharacterHostTests` exercises the Host registry wrapper, while the headless login walk resolves container 10002 and reads the selected character's active ship. Exact structure `upkeepState` parity remains open; this batch records no intentional client behavior difference.
 
 
 The reference (EVE.js) is matched by default (`docs/design/adr/0001-external-compatibility-only.md`).

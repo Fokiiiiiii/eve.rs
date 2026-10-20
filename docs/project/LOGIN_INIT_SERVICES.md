@@ -146,7 +146,7 @@ The original table above covers connection, authentication, and character entry.
 | `fleetMgr.RemoveFromWatchlist` | Fleet watchlist changes (`parklife/fleetSvc.py:719`); full session list flow open | Partial | Evidence and remaining provider work are linked in the caller path and current feature entries in `docs/project/TODO.md`. |
 | `fleetMgr.RegisterForDamageUpdates` | Fleet watchlist damage updates (`parklife/fleetSvc.py:795`) | Partial | Evidence and remaining provider work are linked in the caller path and current feature entries in `docs/project/TODO.md`. |
 
-Inventory baseline: 122 tracked rows: 85 implemented, 37 partial, and 0 missing routes. The entry-phase and post-selection subtotals are shown by their section counts above.
+Inventory baseline: 122 tracked rows: 93 implemented, 28 partial, 0 missing routes, and 1 not applicable. The entry-phase and post-selection subtotals are shown by their section counts above.
 
 ## Verification boundary
 

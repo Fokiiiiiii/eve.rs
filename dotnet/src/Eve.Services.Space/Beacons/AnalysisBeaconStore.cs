@@ -6,7 +6,7 @@ namespace Eve.Services.Space.Beacons;
 /// <summary>One CRAB's own record (the host's, in the space schema): its activation, its link and its scan, and how it ended (null while it runs).</summary>
 public sealed record BeaconRow(
     long DeployableId, int TypeId, int SolarSystemId, long OwnerId, long ShipId, long DeployedMs, long ActivateAtMs, bool Active, int LinkState,
-    long LinkCompleteMs, long LinkedShipId, long ScanMs, long ScanUpdatedMs, string? Outcome, bool Rewarded, int WavesMade);
+    long LinkCompleteMs, long LinkedShipId, long ScanMs, long ScanUpdatedMs, string? Outcome, bool Rewarded, int WavesMade, long LinkedCharacterId = 0);
 
 /// <summary>
 /// The tables of the CRAB runtime (<see cref="AnalysisBeaconDirector"/>): one row per beacon, and one row per Rogue Drone it has made, so a kill is a delete and the
@@ -60,8 +60,10 @@ public sealed class AnalysisBeaconStore(NpgsqlDataSource source, string schema)
         );
         """;
 
+    private const string LinkingPilotText = "ALTER TABLE analysis_beacons ADD COLUMN linked_character_id bigint NOT NULL DEFAULT 0;";
+
     private const string Columns =
-        "deployable_id, type_id, solar_system_id, owner_id, ship_id, deployed_ms, activate_at_ms, active, link_state, link_complete_ms, linked_ship_id, scan_ms, scan_updated_ms, outcome, rewarded, waves_made";
+        "deployable_id, type_id, solar_system_id, owner_id, ship_id, deployed_ms, activate_at_ms, active, link_state, link_complete_ms, linked_ship_id, scan_ms, scan_updated_ms, outcome, rewarded, waves_made, linked_character_id";
 
     private readonly NpgsqlDataSource _source = source;
     private readonly string _schema = Sql.CheckSchema(schema);
@@ -70,7 +72,7 @@ public sealed class AnalysisBeaconStore(NpgsqlDataSource source, string schema)
 
     /// <summary>Creates the tables in the schema (applied once; a second start changes nothing).</summary>
     public static Task<IReadOnlyList<string>> MigrateAsync(NpgsqlDataSource source, string schema, CancellationToken cancellationToken = default) =>
-        Migrations.ApplyAsync(source, schema, [new Migration(MigrationName, MigrationText), new Migration("002_analysis_beacon_waves", WavesText), new Migration("003_analysis_beacon_resources", ResourcesText)], cancellationToken);
+        Migrations.ApplyAsync(source, schema, [new Migration(MigrationName, MigrationText), new Migration("002_analysis_beacon_waves", WavesText), new Migration("003_analysis_beacon_resources", ResourcesText), new Migration("004_analysis_beacon_linking_pilot", LinkingPilotText)], cancellationToken);
 
     /// <summary>The row of a beacon, or null when it has none.</summary>
     public async Task<BeaconRow?> GetAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, long deployableId, bool forUpdate, CancellationToken cancellationToken)
@@ -175,11 +177,11 @@ public sealed class AnalysisBeaconStore(NpgsqlDataSource source, string schema)
     }
 
     /// <summary>A link that can start: the beacon is idle and has no ship. Answers whether the link was taken (a second request does not take it again).</summary>
-    public async Task<bool> StartLinkAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long deployableId, long shipId, long completeMs, CancellationToken cancellationToken)
+    public async Task<bool> StartLinkAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long deployableId, long shipId, long characterId, long completeMs, CancellationToken cancellationToken)
     {
-        var sql = Q("UPDATE {schema}.analysis_beacons SET link_state = 2, linked_ship_id = $2, link_complete_ms = $3 " +
+        var sql = Q("UPDATE {schema}.analysis_beacons SET link_state = 2, linked_ship_id = $2, linked_character_id = $3, link_complete_ms = $4 " +
                     "WHERE deployable_id = $1 AND link_state = 1 AND linked_ship_id = 0 AND outcome IS NULL");
-        return await Sql.ExecuteAsync(connection, transaction, sql, cancellationToken, deployableId, shipId, completeMs) > 0;
+        return await Sql.ExecuteAsync(connection, transaction, sql, cancellationToken, deployableId, shipId, characterId, completeMs) > 0;
     }
 
     /// <summary>The link is complete (it was running and its time is up).</summary>
@@ -219,7 +221,7 @@ public sealed class AnalysisBeaconStore(NpgsqlDataSource source, string schema)
     private static BeaconRow Read(System.Data.Common.DbDataReader reader) => new(
         reader.GetInt64(0), reader.GetInt32(1), reader.GetInt32(2), reader.GetInt64(3), reader.GetInt64(4), reader.GetInt64(5), reader.GetInt64(6),
         reader.GetBoolean(7), reader.GetInt32(8), reader.GetInt64(9), reader.GetInt64(10), reader.GetInt64(11), reader.GetInt64(12),
-        reader.IsDBNull(13) ? null : reader.GetString(13), reader.GetBoolean(14), reader.GetInt32(15));
+        reader.IsDBNull(13) ? null : reader.GetString(13), reader.GetBoolean(14), reader.GetInt32(15), reader.GetInt64(16));
 
     /// <summary>The store's source, for the director's own transactions.</summary>
     internal NpgsqlDataSource Source => _source;

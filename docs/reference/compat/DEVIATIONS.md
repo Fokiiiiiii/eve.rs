@@ -38,6 +38,10 @@ The Host rejects repeated private-room invitations from one character within one
 
 `mailMgr` mailbox reads, status writes, sends, and the staff mail-poke RPC consume weighted per-session units in the existing rolling-minute budget. The configured `SessionRpcBudgetExceeded` refusal applies when a session exceeds its allowance; calls within the allowance retain their existing response and mailbox state transitions. `DispatchGoldenTests.Mailbox_reads_and_writes_have_a_named_per_session_budget` covers the refusal.
 
+## Mailing-list RPC resource bounds (2026-10-20)
+
+`mailingListsMgr` operations consume the weighted per-session RPC budget. Member-role changes and entity-access updates refuse raw collections above 1,000 entries with `MAILING_LIST_BULK_LIMIT_EXCEEDED` before forwarding to Host persistence. Collections within the limit retain the existing owner/operator checks and notification flow. `MailingListServiceTests.Mailing_list_bulk_mutations_reject_oversized_raw_collections_before_host_callbacks` and `DispatchGoldenTests.Mailing_list_work_has_a_named_per_session_budget` cover the refusals. Graphical-client acceptance remains open.
+
 ## Project status
 
 Summary of this file, as of 2026-10-18. The task list with the same areas is the "Project status" table at the top of `docs/project/TODO.md`. **Status** is the state of the area; **Project rule** is the rule a deviation stands on; **Cut** lists what the owner or the evidence has cut, with the entry that records it. A cut item without an entry here or in its section is a bug in this file.

@@ -271,6 +271,8 @@ public sealed class PacketDispatcher
             return 10;
         if (service == "mailMgr" && method is "SyncMail" or "GetMailHeaders" or "GetBody" or "MarkAsRead" or "SendMail" or "PokePlayerAboutChatMsgGm")
             return 10;
+        if (service == "mailingListsMgr")
+            return 10;
         if (service == "invbroker" && method is "GetInventory" or "GetInventoryFromId" or "GetContainerContents" or "GetItems" or "List" or "ListByFlags" or "ListStations" or "ListStationItems" or "ListIncludingContainers" or "GetAssetWorth")
             return 10;
         if (service == "account" && method is "GetTransactions" or "GiveCash" or "GiveCashFromCorpAccount")

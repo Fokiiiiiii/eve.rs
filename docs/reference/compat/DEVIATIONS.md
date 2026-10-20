@@ -28,7 +28,15 @@ The V24.01 trade window builds a two-pilot money manifest and a set of offered i
 
 ## Persisted anti-addiction session history (2026-10-20)
 
-EveJS 261018.1 returns the configurable `accruedSessions` list, empty by default. V24.01 `antiaddiction.Session.PreLoad` consumes each row as a session ID and start/end clock ticks, then retains the history in client settings. eve.rs persists authenticated account session intervals in PostgreSQL and returns the same row shape; an active session uses the current clock for its end value, and Host close stores its end. `PgAccruedTimeStoreTests` verifies persistence across store restart and `test_a_new_account_is_omega_until_2100_on_every_answer` checks the live client response.
+EveJS 261018.1 returns the configurable `accruedSessions` list, empty by default. V24.01 `antiaddiction.Session.PreLoad` consumes each row as a session ID and start/end clock ticks, then retains the history in client settings. eve.rs persists authenticated account session intervals in PostgreSQL and returns the same row shape; an active session uses the current clock for its end value, and Host close stores its end. `PgAccruedTimeStoreTests` verifies persistence across store restart. The live test asserts the response rows; the latest local live harness reached space initialization but did not open its client socket within 60 seconds.
+
+## Configured active survey (2026-10-20)
+
+V24.01 calls `survey.GetActiveSurveyID` from the character-selection banner and only requests it when the local active-survey feature is enabled. EveJS 261018.1 stores a nullable active ID (empty by default, set only through its test configuration hook). eve.rs reads a positive integer from `EVE_ACTIVE_SURVEY_ID`; no configured value returns `None`, while invalid values stop Host startup. The existing `GameRpcServicesTests.Survey_defaults_and_killmail_hash_follow_reference_shapes` covers the configured reply and empty reply, and `HostConfigurationTests.Active_survey_configuration_requires_a_positive_integer` covers configuration parsing.
+
+## Account age gate (2026-10-20)
+
+V24.01 `antiaddiction.AmIUnderage` passes the login JWT to `authentication.AmUnderage`. EveJS 261018.1 reports its configured underage gate. eve.rs reads the authenticated account's persisted `underage` field; its account verification provider must set that field, and new accounts begin false. `PgAccountTests.Account_age_gate_comes_from_persisted_verification_state` checks state changes and persistence across directory restart.
 
 ## Login service discovery boundary (2026-10-20)
 
@@ -1474,8 +1482,19 @@ Sources. The wiki: "Pochven" (https://wiki.eveuniversity.org/Pochven, fetched 20
 - **Reward checks on the screen are answered in the client's shape.** `loginCampaignManager.get_client_campaign_state` (None or the
   state), `seasonalLoginCampaignManager.get_active_campaign` (a 4-tuple, with None when no campaign runs) and
   `loginRewardFacilities.get_my_clone_grade` (an int) are what `loginCampaignService.py` and `seasonalLoginCampaignService.py`
-  read. The screen's call at `characterSelection.py:155` has no try, so a wrong shape would abort the screen's open; the answers
-  are covered by `RewardsServiceTests`. Status: verified (slice C).
+  read. Active seasonal campaign data comes from validated `EVE_SEASONAL_LOGIN_CAMPAIGN` JSON configuration; dates and reward catalogs
+  are configuration inputs while claim history and redeem tokens are persisted by account. The screen's call at
+  `characterSelection.py:155` has no try, so a wrong shape would abort the screen's open; Host coverage checks active state,
+  claim history, a successful claim and rejection of its replay. Status: implemented with focused Host coverage.
+- **Localization changes are supplied by deployment configuration.** V24.01 `LocalizationClient.OnCharacterSessionChanged` calls
+  `localizationServer.GetAllTextChanges(hashData)` when localization hashes are available and the client is unpackaged. The Host
+  makes the configured three-map tuple from `EVE_LOCALIZATION_TEXT_CHANGES` available to ordinary sessions; with no configured change catalog it returns the
+  empty three-map tuple used by EveJS 261018.1. Parsing and service response shapes have focused tests.
+- **Security and client alert startup responses follow the observed schemas.** V24.01 `securitySvc.Initialize` iterates
+  `securityMgr.get_modified_systems`; since this server changes no solar-system security values, it returns the matching empty
+  `CIndexedRowset` and descriptor. `alert.BeanCount` returns `(None, None)` so the client requests a trace; the Host assigns a
+  stable per-stack-hash ID and returns detail mode `D`, as EveJS 261018.1 does for its non-live cluster. Focused service tests
+  check the descriptor and repeated-hash behavior.
 
 ## Station entry, account requests and the live suite (slice D, 2026-10-10)
 
@@ -4430,7 +4449,7 @@ Sources: EveJS `services/skills/trading/skillTradingAuthority.js` and `skillTrad
 ## Character phase S9 (2026-10-17): pod death session, gateway identity, notices, canonical plans
 
 - **Pod-death session transition (checked 2026-10-19).** `tools/headless-client/tests/test_death.py` passed with `EVE_LIVE_SLOW=1` on eve_p3/port 26112 against `oracle/fixtures/scenarios/death.json`. The victim's station transition includes `stationid2` through `CharacterSessionRelocation.Docked`; the previously recorded session and watcher notification differences no longer reproduce.
-- **The gateway's identity is the login token's account (CH-20 open item, S9).** A Requests or Notices request counts a character only when the account of its bearer token owns it: no token is 401, another account's character is 403 (`GatewayAuthority`). The token is the `authorization` metadata: the login JWT whose subject is `USER:EVE:<account>` (eve-logic `publicGateway/publicGatewaySvc.py` gives the gateway the user's JWT through `monolithconfig.get_user_jwt` and `set_auth_token`; `eve/common/lib/jwt/__init__.py` reads the same `USER:EVE:<id>` subject in the local dev token). The native gRPC module that attaches the token is not in this repository, so the metadata key is the gRPC standard. Difference from EveJS (`publicGatewayLocal.js`, `observeRequestCharacterIdentity`), which trusts the identity without a token. Open: the token's signature is not checked. The identity service's signing key is not in this repository, and every decode in the V24.01 client uses `verify=False`; a deployment with the key needs the check first.
+- **The gateway's identity is the login token's account (CH-20 open item, S9).** A Requests or Notices request counts a character only when the account of its bearer token owns it: no token is 401, another account's character is 403 (`GatewayAuthority`). The token is the `authorization` metadata: the login JWT whose subject is `USER:EVE:<account>` (eve-logic `publicGateway/publicGatewaySvc.py` gives the gateway the user's JWT through `monolithconfig.get_user_jwt` and `set_auth_token`; `eve/common/lib/jwt/__init__.py` reads the same `USER:EVE:<id>` subject in the local dev token). The native gRPC module that attaches the token is not in this repository, so the metadata key is the gRPC standard. Difference from EveJS (`publicGatewayLocal.js`, `observeRequestCharacterIdentity`), which trusts the identity without a token. Host-issued tokens are signed with a process-local HS256 key, carry the authenticated account and selected character, and expire after ten minutes; the gateway verifies signature and expiry. A process restart invalidates earlier Host-issued tokens. The gateway accepts the Host-issued tokens; tokens issued elsewhere are refused.
 - **Transport (CH-20 TLS, S9).** The client connects in clear text to `EVE_PUBLIC_GATEWAY_ADDRESS` (eve-logic `publicGateway/grpc/connectionConfig.py`: `connection.connect(address)` without a root file) and over TLS with the certifi roots to the discovered `<tier>-public-gateway.evetech.net`. eve.rs serves the clear-text HTTP/2 listener on `EVE_PUBLIC_GATEWAY` and does not terminate TLS. A discovered production address needs a TLS-terminating proxy in front of that listener; none is in this repository.
 - **Notices/Consume (CH-20, S9).** Served. The stream stays open after the request body ends; each request frame names the active character, which counts only when the token's account owns it. Notices are routed by character and by account (EveJS `shouldDeliverNoticeToState`). The solar system, corporation, alliance and application-instance target groups are not published by eve.rs yet. The response headers are flushed when the stream starts (Kestrel otherwise holds them until a body is written).
 - **Title notices (CH-22, S9).** `SetNotice` is published to the character's notice streams on equip and on unequip (EveJS `achievementGatewayService.js`, the `title-set` event). Not done: `GrantedNotice` and `RevokedNotice` (EveJS publishes them on the `title-granted` and `title-revoked` events, which a reward claim raises; eve.rs has no reward claim through the gateway yet).

@@ -16,6 +16,7 @@ Skipped unless EVE_LIVE_HOST is set. tools/dev/run-eve-live.sh starts eve.rs and
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
@@ -268,6 +269,13 @@ def test_a_new_account_is_omega_until_2100_on_every_answer():
         assert m.plain(client.call("charUnboundMgr", "GetCharOmegaDowngradeStatus")) is False
         account_row = m.plain(client.call("charUnboundMgr", "GetCharacterSelectionData"))[0][0][1]
         assert account_row["subscriptionEndTime"] == OMEGA_END_FILETIME
+        token = m.plain(client.call("userSvc", "GetUserToken"))
+        header, payload, signature = token.split(".")
+        claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+        assert header == "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"
+        assert claims["sub"].startswith("USER:EVE:")
+        assert int(claims["exp"]) > int(datetime.now(timezone.utc).timestamp())
+        assert signature
         accrued = m.plain(client.call("authentication", "AccruedTime"))
         assert len(accrued) == 2
         assert [int(row[0]) for row in accrued] == sorted(int(row[0]) for row in accrued)

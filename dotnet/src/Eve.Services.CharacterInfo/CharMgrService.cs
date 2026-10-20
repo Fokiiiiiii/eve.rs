@@ -56,6 +56,15 @@ public sealed partial class CharMgrService(
     Func<long, CancellationToken, ValueTask<decimal?>>? readBalance = null)
 {
 
+    /// <summary>Blocked owner identifiers used by client chat filtering.</summary>
+    public async ValueTask<IReadOnlyList<long>> ReadBlockedOwnersAsync(long characterId, CancellationToken cancellationToken = default)
+    {
+        var data = readPersonalData is null
+            ? CharMgrPersonalData.Empty
+            : await readPersonalData(characterId, cancellationToken) ?? CharMgrPersonalData.Empty;
+        return data.BlockedSenders;
+    }
+
     /// <summary>
     /// The empire a corporation's members are shown under. The reference names four of the starting corporations and
     /// falls back to the corporation's faction for the others.

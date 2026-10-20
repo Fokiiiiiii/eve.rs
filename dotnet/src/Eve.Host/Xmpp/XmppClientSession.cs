@@ -33,7 +33,10 @@ internal sealed class XmppClientSession(XmppChatHub hub, Action<string> send, Ac
     }
 
     /// <summary>Handles one complete element under the stream.</summary>
-    public void OnStanza(XmppElement element)
+    public void OnStanza(XmppElement element) =>
+        OnStanzaAsync(element, CancellationToken.None).AsTask().GetAwaiter().GetResult();
+
+    public async ValueTask OnStanzaAsync(XmppElement element, CancellationToken cancellationToken)
     {
         if (_phase != Phase.Bound && element.Name is "presence" or "message")
         {
@@ -53,7 +56,7 @@ internal sealed class XmppClientSession(XmppChatHub hub, Action<string> send, Ac
                 OnPresence(element);
                 break;
             case "message":
-                OnMessage(element);
+                await OnMessageAsync(element, cancellationToken);
                 break;
             default:
                 if (_phase != Phase.Bound)
@@ -80,7 +83,7 @@ internal sealed class XmppClientSession(XmppChatHub hub, Action<string> send, Ac
             StanzaError(stanza, "auth", "not-authorized");
     }
 
-    private void OnMessage(XmppElement stanza)
+    private async ValueTask OnMessageAsync(XmppElement stanza, CancellationToken cancellationToken)
     {
         if (_link is not { } link || !TryRoomAddress(stanza.Attribute("to"), out var room, out _, requireNickname: false))
         {
@@ -94,7 +97,7 @@ internal sealed class XmppClientSession(XmppChatHub hub, Action<string> send, Ac
             var target = invite.Attribute("to")?.Split('@')[0];
             var reason = invite.Child("reason")?.Text ?? "";
             if (!long.TryParse(target, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var targetCharacterId)
-                || !hub.InvitePrivateParticipant(link, room, targetCharacterId, reason))
+                || !await hub.InvitePrivateParticipantAsync(link, room, targetCharacterId, reason, cancellationToken))
                 StanzaError(stanza, "cancel", "not-allowed");
             return;
         }
@@ -111,7 +114,7 @@ internal sealed class XmppClientSession(XmppChatHub hub, Action<string> send, Ac
             return;
         }
         var body = stanza.Child("body")?.Text ?? "";
-        if (!hub.SendRoomMessage(link, room, body))
+        if (!await hub.SendRoomMessageAsync(link, room, body, cancellationToken))
             StanzaError(stanza, "wait", "resource-constraint");
     }
 

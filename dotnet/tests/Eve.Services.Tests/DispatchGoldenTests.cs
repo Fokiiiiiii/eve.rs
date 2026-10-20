@@ -209,7 +209,7 @@ public class DispatchGoldenTests
         var dispatcher = new PacketDispatcher(registry, () => now) { MaxExpensiveRpcUnitsPerMinute = 10 };
 
         await dispatcher.DispatchAsync(CallRequestPacket("marketProxy", "GetOrders"), session);
-        await dispatcher.DispatchAsync(CallRequestPacket("marketProxy", "GetOrders"), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("marketProxy", "BuyMultipleItems"), session);
 
         Assert.Equal(1, service.Calls);
         Assert.Equal(2, capture.Sent.Count);
@@ -236,7 +236,7 @@ public class DispatchGoldenTests
 
         public string Name => "marketProxy";
 
-        public bool HasMethod(string method) => method == "GetOrders";
+        public bool HasMethod(string method) => method is "GetOrders" or "BuyMultipleItems";
 
         public ValueTask<PyValue> CallAsync(ServiceCall call)
         {

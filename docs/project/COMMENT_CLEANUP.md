@@ -88,6 +88,8 @@
 | `dotnet/tests/Eve.ReadSide.Tests` (1 C# file; reviewed) | 1 | 1 | 2026-10-20 |
 | `dotnet/tests/Eve.Relations.Tests` (3 C# files; reviewed) | 7 | 7 | 2026-10-20 |
 | `dotnet/tests/Eve.Scheduler.Tests` (3 C# files; reviewed) | 21 | 21 | 2026-10-20 |
+| `dotnet/tests/Eve.Services.CharacterInfo.Tests` (3 C# files) | 11 | 10 | 2026-10-20 |
+| `dotnet/tests/Eve.Services.CharacterSelect.Tests` (7 C# files) | 64 | 57 | 2026-10-20 |
 | `dotnet/src/Eve.Insurgency` (5 C# files; migrations reviewed) | 99 | 87 | 2026-10-20 |
 | `dotnet/src/Eve.Dungeons` (5 C# files) | 101 | 49 | 2026-10-20 |
 | `dotnet/src/Eve.Fitting` (8 C# files; migrations reviewed) | 97 | 78 | 2026-10-20 |

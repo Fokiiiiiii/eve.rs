@@ -127,7 +127,30 @@ The per-project durations below are VSTest `Duration:` lines from run 269's all-
 
 The test job uses four Host shards and now splits `Eve.Services.Space.Tests` into two shards. `tools/dev/shard-dotnet-tests.py` discovers test cases from each built assembly, assigns whole test classes to shards by case count, and supplies a VSTest filter to each shard. Every class is assigned to exactly one shard; each shard has its own PostgreSQL service. `tools/dev/shard-dotnet-projects.py` assigns the remaining test projects to three jobs using the recent VSTest durations above; each project runs once, and each job has its own PostgreSQL service. New projects are included with a five-second initial weight. All jobs download the same Release build artifact produced once by `.NET build`. CI runs use the job matrix and the Required CI gate waits for every selected matrix job.
 
-The post-change wall time and shard durations will be recorded from the first green run containing the Space split.
+The Space split is measured in green runs 273 and 274. Run 273 (`e2c4be90`, 2026-10-19) completed in 9.2 minutes from first job start to the required gate; run 274 (`08314189`, 2026-10-20) completed in 9.1 minutes. Compared with run 272's 18.0-minute gate, the latest green run is about 49% shorter and meets the 15-minute goal. End-to-end is now the critical path at 9.0–9.1 minutes. The largest .NET shard takes 6.4 minutes, and no .NET test job exceeds 6.4 minutes.
+
+Run 274's successful job durations:
+
+| Job | Duration |
+|---|---:|
+| End-to-end | 9.0 min |
+| Rust tests | 3.0 min |
+| .NET build | 1.8 min |
+| Host tests 1/4 | 2.7 min |
+| Host tests 2/4 | 2.3 min |
+| Host tests 3/4 | 2.3 min |
+| Host tests 4/4 | 1.8 min |
+| Space tests 1/2 | 2.2 min |
+| Space tests 2/2 | 2.2 min |
+| Other tests 1/3 | 5.9 min |
+| Other tests 2/3 | 6.4 min |
+| Other tests 3/3 | 4.2 min |
+| Rust format and clippy | 0.5 min |
+| Rust latest stable (advisory) | 0.4 min |
+| Python client | 0.3 min |
+| Fixture generation | 0.1 min |
+
+The per-project durations above remain the available detailed VSTest project profile from run 269. The .NET matrix now writes one TRX file per test project/shard and uploads it even when a test job fails. This keeps individual test durations available for identifying slow cases in future runs without changing test selection or assertions.
 
 | Run | Commit | Result | Sum of job durations |
 |---|---|---|---|

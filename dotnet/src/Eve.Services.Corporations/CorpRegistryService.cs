@@ -1590,9 +1590,15 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
       [Method("PayoutDividend")]
       public async ValueTask<PyValue> PayoutDividend(ServiceCall call)
       {
-          var corporation = await Current(call);
-          if (corporation is not { IsNpc:false,Deleted:false })
+          Corporation corporation;
+          try
+          {
+              corporation = await RequireCorporationSocialRole(call, CorporationRoles.WalletTakeRole(1000));
+          }
+          catch (MachoWrappedException)
+          {
               return PyNone.Instance;
+          }
           decimal payoutAmount;
           try
           {

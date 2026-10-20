@@ -114,7 +114,8 @@ public interface IMissionDungeonHost
     /// accepted (a replay): then nothing is written.
     /// </summary>
     Task<bool> CompleteMissionAsync(long characterId, long agentId, DateTimeOffset now, string reference,
-        IReadOnlyList<MissionStandingGain> standings, IReadOnlyList<(int TypeId, long Quantity, string? Tag)> consume, CancellationToken cancellationToken);
+        IReadOnlyList<MissionStandingGain> standings, IReadOnlyList<(int TypeId, long Quantity, string? Tag)> consume,
+        long loyaltyPoints, long issuerCorporationId, CancellationToken cancellationToken);
 
     /// <summary>
 
@@ -148,8 +149,8 @@ public sealed record MissionStandingGain(long EntityId, double Amount, bool Dimi
 /// <summary>
 
 
-/// and a replayed outcome pays nothing twice. Rewards: the official base ISK of <c>missionRewards.reward</c> when its type is ISK (29);
-/// the bonus window and the LP are not paid here (DEVIATIONS "Mission execution X1").
+/// and a replayed outcome pays nothing twice. Rewards: the official base ISK of <c>missionRewards.reward</c> when its type is ISK (29), plus the
+/// configured approximate loyalty-point rule; the timed bonus window is not paid here (DEVIATIONS "Mission execution X1").
 /// </summary>
 public sealed class MissionDungeonRuntime(
     AgentMissionStore store,
@@ -159,7 +160,10 @@ public sealed class MissionDungeonRuntime(
     Func<DateTimeOffset> now,
     Func<long, long, MissionAgentPlace, long?, Station?>? courierDestination = null,
     Func<long, bool>? isTrade = null,
-    Func<long, bool>? isMining = null)
+    Func<long, bool>? isMining = null,
+    Func<long, string, CancellationToken, Task<int>>? divisionConnectionsLevelOf = null,
+    Func<int, decimal?>? systemSecurityOf = null,
+    ApproximateMissionRewardConfiguration? missionRewardConfiguration = null)
 {
     /// <summary>The ISK type ID (EVE item type 29 "ISK" in the SDE reward records).</summary>
     public const long IskTypeId = 29;
@@ -379,7 +383,18 @@ public sealed class MissionDungeonRuntime(
             gains.Add(new MissionStandingGain(record.AgentId, basic.AgentIncrease, true));
             gains.Add(new MissionStandingGain(place.CorporationId, basic.CorporationIncrease, true));
         }
-        await host.CompleteMissionAsync(owner, record.AgentId, now(), reference, gains, consume ?? [], cancellationToken);
+        var lp = 0L;
+        var issuerCorporationId = place?.CorporationId ?? 0;
+        if (place is not null && !record.Content.Important && issuerCorporationId > 0)
+        {
+            var missionLevel = catalog.Level(record.Content.MissionId).Level;
+            if (missionLevel is null && place.AgentLevel is >= 1 and <= 5) missionLevel = (int)place.AgentLevel.Value;
+            var security = systemSecurityOf?.Invoke(checked((int)place.SolarSystemId));
+            if (missionLevel is { } rewardLevel && security is { } systemSecurity)
+                lp = ApproximateMissionRewardRules.LoyaltyPoints(record.Content.MissionTypeLabel, rewardLevel, systemSecurity,
+                    divisionConnectionsLevelOf is null ? 0 : await divisionConnectionsLevelOf(owner, record.Content.MissionTypeLabel, cancellationToken), missionRewardConfiguration);
+        }
+        await host.CompleteMissionAsync(owner, record.AgentId, now(), reference, gains, consume ?? [], lp, issuerCorporationId, cancellationToken);
     }
 
     private static async Task<AgentMissionChange?> TransitionAsync(Func<Task<AgentMissionChange?>> transition)

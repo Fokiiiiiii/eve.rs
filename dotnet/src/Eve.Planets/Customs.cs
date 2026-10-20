@@ -4,7 +4,6 @@ namespace Eve.Planets;
 /// Customs offices of the planets (the import and export of commodities between a launchpad and the customs office). The rates and
 /// the tax formula are the client's (eve-logic <c>eve/common/script/planet/entities/spaceportPin.py</c> GetImportTax / GetExportTax, and
 /// <c>eveplanet/taxRate.py</c>); the numbers are the SDE's dogma attributes 1638 (importTax), 1639 (exportTax), 1640 (importTaxMultiplier;
-/// the commodity's base value per unit, EVE University wiki: R0 5 ISK, P1 400 ISK), and the wiki's office rates.
 /// </summary>
 public static class Customs
 {
@@ -28,9 +27,9 @@ public static class Customs
     public const int CustomsCodeExpertise = 33467;
     /// <summary>The security status from which a system is high-security for the rate (EVE: 0.5 displayed; 0.45 rounds to it).</summary>
     public const double HighSecurity = 0.45;
-    /// <summary>NPC office rate in high-security space, before Customs Code Expertise (wiki: 10%, the owner's share 0 for an NPC office).</summary>
+
     public const double NpcRateHighSecurity = 0.10;
-    /// <summary>NPC office rate outside high-security space; not reduced by the skill (wiki: 17%).</summary>
+
     public const double NpcRateOutside = 0.17;
 
     public static long OfficeId(long planetId) => OfficeIdBase + planetId;
@@ -46,7 +45,6 @@ public static class Customs
     /// <summary>The five standing bands used by the V24.01 customs-office tax calculator.</summary>
     public enum StandingTier { Excellent, Good, Neutral, Bad, Terrible }
 
-    /// <summary>Owner-configured rates by relationship; values are decimal fractions (for example, 0.05 is five percent).</summary>
     public sealed record OwnerTaxRates(
         double Corporation,
         double Alliance,
@@ -75,7 +73,6 @@ public static class Customs
         };
     }
 
-    /// <summary>The total displayed rate: the owner-configured component plus the NPC component, capped at the published 100% maximum.</summary>
     public static double CombinedRate(double npcRate, double ownerRate) =>
         Math.Clamp(npcRate + ownerRate, 0, 1);
 

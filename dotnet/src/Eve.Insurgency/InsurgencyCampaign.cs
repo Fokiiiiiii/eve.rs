@@ -23,7 +23,6 @@ public sealed record Campaign(
 /// <summary>A state change: the states before and after, and the moment it happened (the campaign's own deadline, not the time it was noticed).</summary>
 public sealed record CampaignTransition(int From, int To, long AtMs);
 
-/// <summary>The result of a step: the campaign after it, the transitions in order, and whether a point was accepted (points count only while active).</summary>
 public sealed record MachineStep(Campaign Campaign, IReadOnlyList<CampaignTransition> Transitions, bool Accepted = false);
 
 /// <summary>The campaign state machine: pure functions over <see cref="Campaign"/>; the service stores the result and publishes the transitions.</summary>
@@ -92,7 +91,6 @@ public static class CampaignMachine
         return new MachineStep(c, [], true);
     }
 
-    /// <summary>The FOB of an active campaign is destroyed: the empire side wins (the wiki: destroying the FOB ends the insurgency in an Empire win).</summary>
     public static MachineStep FobDestroyed(Campaign campaign, long nowMs) =>
         campaign.State == CampaignStates.Active ? Won(campaign, CampaignStates.AntipirateWin, nowMs) : new MachineStep(campaign, [], false);
 

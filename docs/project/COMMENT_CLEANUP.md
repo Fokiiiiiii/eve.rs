@@ -42,6 +42,11 @@
 | `dotnet/src/Eve.Services.Slash` (25 C# files) | 275 | 240 | 2026-10-20 |
 | `dotnet/src/Eve.Services.Crimewatch` (15 C# files) | 144 | 127 | 2026-10-20 |
 | `dotnet/src/Eve.Services` (25 C# files) | 342 | 334 | 2026-10-20 |
+| `dotnet/src/Eve.Services.Inventory` (5 C# files) | 127 | 111 | 2026-10-20 |
+| `dotnet/src/Eve.Services.Market` (5 C# files) | 76 | 58 | 2026-10-20 |
+| `dotnet/src/Eve.Calendar` (1 C# file; migration reviewed) | 2 | 2 | 2026-10-20 |
+| `dotnet/src/Eve.Services.Station` (7 C# files) | 178 | 144 | 2026-10-20 |
+| `dotnet/src/Eve.Identity` (3 C# files; migrations reviewed) | 66 | 61 | 2026-10-20 |
 | `dotnet/src/Eve.Fitting` (8 C# files; migrations reviewed) | 97 | 78 | 2026-10-20 |
 | `dotnet/src/Eve.Dogma` (10 C# files) | 285 | 280 | 2026-10-20 |
 | `dotnet/src/Eve.Relations` (3 C# files; migrations reviewed) | 51 | 43 | 2026-10-20 |

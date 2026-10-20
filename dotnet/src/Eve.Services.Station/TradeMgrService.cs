@@ -28,8 +28,6 @@ public sealed partial class TradeMgrService(CharacterSessions sessions, TradeAut
 
     public void OnBoundObjectReleased(string oid, ClientSession? session) => _bound.TryRemove(oid, out _);
 
-    // ── InitiateTrade ────────────────────────────────────────────────────────
-
     [Method("InitiateTrade")]
     public async ValueTask<PyValue> InitiateTrade(ServiceCall call)
     {
@@ -109,8 +107,6 @@ public sealed partial class TradeMgrService(CharacterSessions sessions, TradeAut
         }
         return Py.Tuple(bound, result);
     }
-
-    // ── the bound trade ──────────────────────────────────────────────────────
 
     /// <summary>The trade the bound call is for, checked against the caller: it must be open, the caller must be in it, and it must be docked where the trade is.</summary>
     private async ValueTask<TradeView> BoundViewAsync(ServiceCall call)
@@ -242,8 +238,6 @@ public sealed partial class TradeMgrService(CharacterSessions sessions, TradeAut
         return PyBool.True;
     }
 
-    // ── changes and what the pilots are told ─────────────────────────────────
-
     private async Task StageAsync(TradeView view, long characterId, long itemId, long quantity, CancellationToken cancellationToken)
     {
         TradeChange change;
@@ -332,8 +326,6 @@ public sealed partial class TradeMgrService(CharacterSessions sessions, TradeAut
         return new PyDict(differences);
     }
 
-    // ── rows ─────────────────────────────────────────────────────────────────
-
     private async Task<PyValue> ListRowAsync(TradeView view, CancellationToken cancellationToken)
     {
         var items = new List<PyValue>();
@@ -365,8 +357,6 @@ public sealed partial class TradeMgrService(CharacterSessions sessions, TradeAut
         Py.Tuple(new PyStr("trademgr"), new PyInt(MachoMessage.ProxyNodeId), Py.Tuple(new PyLong(tradeId)), None));
 
     private long Now() => nowUnixMs?.Invoke() ?? DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-
-    // ── argument reading ─────────────────────────────────────────────────────
 
     /// <summary>The manifest of <c>MakeOffer</c>: the container, the ISK in trader order and the item ids of the set (each item an object with <c>itemID</c>).</summary>
     internal static (long Container, List<decimal> Money, HashSet<long> Items) ManifestOf(PyValue manifest)
@@ -405,10 +395,7 @@ public sealed partial class TradeMgrService(CharacterSessions sessions, TradeAut
         return None;
     }
 
-    /// <summary>
-    /// The item id of one element of a trade's item set: a plain id, an object with <c>itemID</c>, a packed row, or a row object whose
-    /// <c>line</c> starts with the id (the forms EveJS reads, <c>tradeMgrService.js</c> <c>getItemIDFromManifestEntry</c>).
-    /// </summary>
+    /// <summary>The item id of a trade item, read from plain ids, itemID fields, packed rows, or row objects whose line starts with the id.</summary>
     private static long? ItemIdOf(PyValue entry)
     {
         if (IdOf(entry) is { } direct) return direct;

@@ -618,8 +618,32 @@ internal sealed partial class CharacterServicesComposition
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-        await economyWallets.AdjustAsync(connection, transaction, characterId, amount, counterpartyId, refTypeId, reason,
-            now(), operationKey, cancellationToken);
+        BountyTaxTerms? terms = null;
+        if (refTypeId == 33 && amount >= NpcBounty.MinimumCorporationTax)
+        {
+            var member = await corporations.MemberAsync(characterId, cancellationToken);
+            var corporation = member is null ? null : await corporations.GetAsync(member.CorporationId, cancellationToken);
+            if (corporation is not null)
+                terms = new BountyTaxTerms(corporation.Id, corporation.IsNpc, corporation.TaxRate);
+        }
+
+        var tax = terms is null ? 0m : NpcBounty.CorporationTaxOf(amount, terms.TaxRate);
+        var paidAt = now();
+        var memberReason = tax > 0
+            ? reason + "\n" + string.Create(System.Globalization.CultureInfo.InvariantCulture,
+                $"{NpcBounty.CorporationTaxRefType}: [{terms!.CorporationId}, {tax:0.########}]")
+            : reason;
+        if (amount - tax > 0)
+        {
+            await economyWallets.AdjustAsync(connection, transaction, characterId, amount - tax, counterpartyId, refTypeId, memberReason,
+                paidAt, operationKey, cancellationToken);
+        }
+
+        if (tax > 0 && terms is { IsNpc: false, CorporationId: > 0 })
+        {
+            await economyWallets.AdjustAsync(connection, transaction, new WalletAccount(terms.CorporationId), tax, characterId, 59885,
+                "Corporation tax on agent mission rewards", paidAt, operationKey + ":corp-tax", operationKey + ":corp-tax", cancellationToken);
+        }
         await transaction.CommitAsync(cancellationToken);
     }
 

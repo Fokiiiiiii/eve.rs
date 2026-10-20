@@ -1,10 +1,5 @@
 namespace Eve.Identity;
 
-/// <summary>
-/// Multiple Character Training: an account has two extra skill-training queues (slots 2 and 3, the numbers the client and EveJS use),
-/// so up to three of its characters train at once. Each slot runs until its end time. A certificate or a purchase adds 30 days to one slot:
-/// a free slot is opened from now, otherwise the slot that ends first is extended (or the slot the client named is extended).
-/// </summary>
 public static class MultipleTrainingRules
 {
     /// <summary>The first extra queue: the number of the first slot the client knows.</summary>

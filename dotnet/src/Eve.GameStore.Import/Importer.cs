@@ -11,7 +11,6 @@ public sealed class ImportException(string message, Exception? inner = null) : E
 /// Apply the source's journaled-but-unacknowledged batches on top of its rows. Without it, a source that
 /// still has journaled batches is refused: importing only the rows would silently drop those changes.
 /// </param>
-/// <param name="IgnoreLease">Import although the source shows a live owner lease (the old server may still be running).</param>
 /// <param name="Verify">Read every imported table back and compare it with the source.</param>
 public sealed record ImportOptions(
     string SqlitePath,

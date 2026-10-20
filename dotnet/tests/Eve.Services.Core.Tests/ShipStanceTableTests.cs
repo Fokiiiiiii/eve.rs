@@ -5,7 +5,6 @@ using Eve.Services.Core;
 namespace Eve.Services.Core.Tests;
 
 /// <summary>
-/// The stance table of the T3D hulls against the pinned SDE (SF-6): every hull is a Tactical Destroyer (group 1305) or the Anhinga (group 1201), each has three
 /// distinct mode items of group 1306, the Defense, Propulsion and Sharpshooter modes are named for their stance, and the switch time (attribute 1985) that the
 /// cooldown reads is in the static data for every hull.
 /// </summary>

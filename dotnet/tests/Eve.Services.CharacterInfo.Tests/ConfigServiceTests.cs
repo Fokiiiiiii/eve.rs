@@ -182,7 +182,6 @@ public sealed class ConfigServiceTests
         Assert.Equal(13.2d, Assert.IsType<PyReal>(entry["adjustedPrice"]).Value);
     }
 
-    /// <summary>One corporation, one live alliance and one deleted alliance, the rows the owner tests read.</summary>
     private static async Task SeedCorporationsAsync(NpgsqlDataSource source, string schema)
     {
         await using var seed = source.CreateCommand($"""

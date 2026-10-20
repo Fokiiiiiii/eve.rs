@@ -87,8 +87,6 @@ internal static class HostComposition
             var contractItems = new PgItemStore(source, Env("EVE_INVENTORY_SCHEMA", PgItemStore.DefaultSchema));
             var contractWallets = new WalletTransactions(source, Env("EVE_WALLET_SCHEMA", PgWalletStore.DefaultSchema));
             var contractSkills = new PgSkillStore(source, Env("EVE_SKILLS_SCHEMA", PgSkillStore.DefaultSchema));
-            contractWriteModel = new Eve.Host.Persistence.PersistenceContractWriteModel(source, contractItems, contractWallets,
-                () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), contractSchema);
             async Task<int> ReadContractSkillAsync(long characterId, int typeId, CancellationToken ct)
             {
                 await using var connection = await source.OpenConnectionAsync(ct);
@@ -113,8 +111,15 @@ internal static class HostComposition
             globalConfigPersistence = new PgGlobalConfigPersistence(source, configSchema);
             Func<long> clock = () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             foundations = await Foundations.CreateAsync(source, clock, Env, message => Console.Error.WriteLine($"eve-host: {message}"));
+            var contractExpiryJobs = new Eve.Host.Persistence.ContractExpiryJobs(source, contractItems, contractWallets,
+                foundations.Scheduler, contractSchema, foundations.Events);
+            contractExpiryJobs.Register();
+            contractWriteModel = new Eve.Host.Persistence.PersistenceContractWriteModel(source, contractItems, contractWallets,
+                clock, contractSchema, contractExpiryJobs, foundations.Events);
             legacy = await LegacyGameStoreComposition.OpenAsync(source);
             (characterServices, space, simulation, crimewatch, calendarStore, calendarAudience, gameRpcCallbacks, keeperRpcCallbacks, characterSessions) = await CharacterServicesComposition.CharacterServicesAsync(source, directory, online, clock, foundations, legacy.Store, legacy.Owner, legacy.Cache, options.NewCharacterExperienceMode, new AccountOmegaStore(directory), connected);
+            if (characterSessions is not null)
+                new Eve.Host.Persistence.ContractNotifications(characterSessions).Subscribe(foundations.Events);
             // the public gateway's skill plans: the tables are the skills module's (migration 0009, applied with its store)
             var gateway = new Dictionary<string, PublicGateway.GatewayHandler>(StringComparer.Ordinal);
             var skillCatalog = await Eve.Skills.SkillCatalog.LoadAsync(new Eve.Sde.SdeReader(source, Env("EVE_SDE_SCHEMA", Eve.Sde.SdeReader.DefaultSchema)));
@@ -187,7 +192,8 @@ internal static class HostComposition
                 : throw new InvalidOperationException("the control towers are not wired on this server"),
             contractReadModel: contractReadModel,
             contractWriteModel: contractWriteModel,
-            contractSkillLevel: contractSkillLevel))
+            contractSkillLevel: contractSkillLevel,
+            calendarSessions: characterSessions))
         {
             registry.Register(service);
         }
@@ -214,8 +220,12 @@ internal static class HostComposition
         registry.Register(new MachoNetService(info, now, GlobalConfigWrites.Create(config, connected, () => server?.PublishClusterConfig())));
         if (xmppSettings.Enabled)
         {
+            var charMgr = characterServices.OfType<Eve.Services.CharacterInfo.CharMgrService>().FirstOrDefault();
+            Func<long, CancellationToken, ValueTask<IReadOnlyList<long>>>? readBlockedOwners =
+                charMgr is null ? null : charMgr.ReadBlockedOwnersAsync;
             var xmppHub = new Eve.Host.Xmpp.XmppChatHub(connected,
-                new Eve.Host.Xmpp.XmppChatSettings(xmppSettings.Domain, xmppSettings.ConnectHost));
+                new Eve.Host.Xmpp.XmppChatSettings(xmppSettings.Domain, xmppSettings.ConnectHost),
+                readBlockedOwners);
             registry.Register(new Eve.Host.Xmpp.XmppChatMgrService(xmppHub));
             if (xmppSettings.CertificatePath is { } certificatePath)
                 xmppCertificate = System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadPkcs12FromFile(

@@ -5,7 +5,6 @@ namespace Eve.Marshal.Tests;
 /// <summary>
 /// Replays oracle/fixtures/marshal against the C# codec. Encoding must reproduce the recorded bytes
 /// exactly; decoding must produce the recorded value (compared in EJSON, where every number keeps
-/// its exact IEEE-754 bits); failures must be the same class of failure.
 /// </summary>
 public class GoldenTests
 {

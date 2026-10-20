@@ -6,7 +6,7 @@ namespace Eve.Services.CharacterSelect.Tests;
 /// <summary>The name-validation toggle (per session, by role) and the lapsed-Omega answer of the selection screen.</summary>
 public class ValidationAndOmegaTests
 {
-    /// <summary>The GML role bit (EveJS ROLE_GML); the toggle is open to this role.</summary>
+
     private const ulong RoleGml = 1UL << 54;
 
     [PgFact]

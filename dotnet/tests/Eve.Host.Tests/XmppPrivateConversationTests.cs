@@ -9,6 +9,26 @@ namespace Eve.Host.Tests;
 public sealed class XmppPrivateConversationTests
 {
     [Fact]
+    public void Private_invites_are_rejected_when_the_target_blocks_the_inviter()
+    {
+        var sessions = new ConnectedSessions();
+        sessions.Add(Character(42, "first-token"));
+        sessions.Add(Character(77, "second-token"));
+        var hub = new XmppChatHub(sessions, new XmppChatSettings("chat.example", "127.0.0.1"),
+            (characterId, _) => ValueTask.FromResult<IReadOnlyList<long>>(characterId == 77 ? [42] : []));
+        var firstOutput = new List<string>();
+        var secondOutput = new List<string>();
+        var first = Connect(hub, 42, "first-token", firstOutput);
+        _ = Connect(hub, 77, "second-token", secondOutput);
+
+        first.OnStanza(Parse("<presence to='private_42_77@conference.chat.example/Alpha'><x xmlns='http://jabber.org/protocol/muc'/></presence>"));
+        first.OnStanza(Parse("<message to='private_42_77@conference.chat.example'><x xmlns='http://jabber.org/protocol/muc#user'><invite to='77@chat.example'/></x></message>"));
+
+        Assert.Contains(firstOutput, item => item.Contains("not-allowed", StringComparison.Ordinal));
+        Assert.DoesNotContain(secondOutput, item => item.Contains("<invite", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Private_room_invitation_and_messages_are_limited_to_the_character_pair()
     {
         var sessions = new ConnectedSessions();

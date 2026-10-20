@@ -70,7 +70,6 @@ public static partial class SimCodec
         return spec;
     }
 
-
     private static int[] ReadAbyssalTypeIds(ref Reader r)
     {
         var count = r.U32();

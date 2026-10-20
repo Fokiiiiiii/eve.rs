@@ -458,6 +458,42 @@ private static PyValue RowField(PyValue value,string key)
         Assert.Single(memberRows.Items);
     }
 
+    [PgFact]
+    public async Task Dividend_payout_requires_master_wallet_take_role()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var founder = await rig.CharacterAsync("Founder One");
+        var member = await rig.CharacterAsync("Member One");
+        var corp = await rig.Store.CreateAsync(founder, new("Orbital Works", "ORBIT", "", "", 0.05m), "first");
+        var application = await rig.Store.ApplyAsync(member, corp.Id, "Join");
+        await rig.Store.RespondAsync(founder, application, 6, "Join", "");
+        await rig.Store.RespondAsync(member, application, 2, "Join", "");
+
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await rig.Transactions.TransferAsync(connection, transaction, new Eve.Wallet.WalletAccount(founder),
+                new Eve.Wallet.WalletAccount(corp.Id, 1000), 1000m, 10, "Deposit", rig.Now, "dividend-deposit", "test");
+            await transaction.CommitAsync();
+        }
+
+        var service = new CorpRegistryService(rig.Store, rig.Characters, () => rig.Now);
+        var session = new ClientSession();
+        session.Set("charid", new PyInt(member));
+        session.Set("corpid", new PyInt(corp.Id));
+        var before = (await rig.Wallets.GetAsync(corp.Id))!.Isk;
+        var memberBefore = (await rig.Wallets.GetAsync(member))!.Isk;
+        Assert.IsType<PyNone>(await service.PayoutDividend(Call(session, "PayoutDividend", PyBool.False, new PyInt(100))));
+        Assert.Equal(before, (await rig.Wallets.GetAsync(corp.Id))!.Isk);
+        Assert.Equal(memberBefore, (await rig.Wallets.GetAsync(member))!.Isk);
+
+        var persisted = (await rig.Store.MemberAsync(member))!;
+        await rig.Store.UpdateMemberAsync(founder, persisted with { Masks = new RoleMasks(CorporationRoles.WalletTakeRole(1000)) });
+        Assert.IsType<PyNone>(await service.PayoutDividend(Call(session, "PayoutDividend", PyBool.False, new PyInt(100))));
+        Assert.Equal(before - 100m, (await rig.Wallets.GetAsync(corp.Id))!.Isk);
+        Assert.Equal(memberBefore + 50m, (await rig.Wallets.GetAsync(member))!.Isk);
+    }
+
     private static void AssertTransactionField(PyObject row, string name, PyValue expected) =>
         Assert.Contains(Assert.IsType<PyDict>(row.Args).Entries,
             entry => entry.Key.Equals(new PyStr(name)) && entry.Value.Equals(expected));
@@ -811,6 +847,22 @@ private static PyValue RowField(PyValue value,string key)
         var tooManyMemberUpdates = new PyList(Enumerable.Range(0, 501).Select(_ => (PyValue)new PyList([])).ToArray());
         var updateLimitError = await Assert.ThrowsAsync<CorporationError>(async () => await CorpRpc("UpdateMembers", tooManyMemberUpdates));
         Assert.Equal("CORPORATION_BULK_LIMIT_EXCEEDED", updateLimitError.Code);
+        var oversizedActionTargets = new PyList(Enumerable.Range(1, 501).Select(id => (PyValue)new PyInt(id)).ToArray());
+        var actionTargetLimitError = await Assert.ThrowsAsync<CorporationError>(async () =>
+            await CorpRpc("ExecuteActions", oversizedActionTargets, new PyList([])));
+        Assert.Equal("CORPORATION_BULK_LIMIT_EXCEEDED", actionTargetLimitError.Code);
+        var oversizedActions = new PyList(Enumerable.Range(0, 501).Select(_ => (PyValue)new PyList([])).ToArray());
+        var actionLimitError = await Assert.ThrowsAsync<CorporationError>(async () =>
+            await CorpRpc("ExecuteActions", new PyList([new PyInt(member)]), oversizedActions));
+        Assert.Equal("CORPORATION_BULK_LIMIT_EXCEEDED", actionLimitError.Code);
+        var oversizedMemberQuery = new PyList(Enumerable.Range(0, 101).Select(_ => (PyValue)new PyList([])).ToArray());
+        var memberQueryLimitError = await Assert.ThrowsAsync<CorporationError>(async () =>
+            await CorpRpc("GetMemberIDsByQuery", oversizedMemberQuery));
+        Assert.Equal("CORPORATION_QUERY_LIMIT_EXCEEDED", memberQueryLimitError.Code);
+        var longMemberQuery = new PyList([new PyList([new PyStr("characterID"), new PyInt(9), new PyStr(new string('x', 257))])]);
+        var memberQueryTextLimitError = await Assert.ThrowsAsync<CorporationError>(async () =>
+            await CorpRpc("GetMemberIDsByQuery", longMemberQuery));
+        Assert.Equal("CORPORATION_QUERY_LIMIT_EXCEEDED", memberQueryTextLimitError.Code);
         var duplicateMemberUpdates = new PyList([
             new PyList([new PyInt(member)]), new PyList([new PyInt(member)])
         ]);
@@ -2558,10 +2610,12 @@ private static PyValue RowField(PyValue value,string key)
         var aboveAverage = Assert.IsType<PyList>(await service.CallAsync(Call(session,"GetMemberIDsWithMoreThanAvgShares")));
         Assert.Equal(new[] { new PyInt(member) },aboveAverage.Items);
 
+        await rig.Store.UpdateTitleAsync(founder,corp.Id,new CorporationTitle(1,"Private title scheme",new RoleMasks()));
         var info = await service.CallAsync(Call(session,"GetInfoWindowDataForChar",new PyInt(member)));
         Assert.Equal(new PyInt(corp.Id),Field(info,"corpID"));
         Assert.Equal(new PyWString(""),Field(info,"title"));
-        Assert.Equal(new PyWString(""),Field(info,"title1"));
+        Assert.Same(PyNone.Instance,Field(info,"title1"));
+        Assert.All(Enumerable.Range(2,15),index => Assert.Same(PyNone.Instance,Field(info,$"title{index}")));
         var suggestions = Assert.IsType<PyList>(await service.CallAsync(Call(session,"GetSuggestedTickerNames")));
         var ticker = Assert.IsType<PyStr>(Field(suggestions.Items.Single(),"tickerName")).Value;
         Assert.Equal(4,ticker.Length);

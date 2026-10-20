@@ -3,7 +3,6 @@ using Eve.Wallet;
 namespace Eve.Market.Tests;
 
 /// <summary>
-/// The rules M2 settles (market-decisions.md Q3 to Q5, Q12 and Q15): the modification delay, the duration reset, the price ticks, the matching
 /// order and the stale-view refusal. Each runs on the trading engine with the rig of the trading tests, on PostgreSQL.
 /// </summary>
 public class ModificationRulesTests

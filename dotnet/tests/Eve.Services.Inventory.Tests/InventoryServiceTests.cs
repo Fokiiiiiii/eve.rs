@@ -110,7 +110,6 @@ internal sealed class Rig : IAsyncDisposable
         return rig;
     }
 
-
     public const long Corporation = 1_000_001;
 
     private async Task SeedCharacterAsync(bool activeShip, int characterTypeId)
@@ -372,7 +371,6 @@ public class InvBrokerTests
         Assert.Equal([ship], rows.Select(r => ((PyLong)r.Values[0]).Value));
     }
 
-
 [PgFact]
     public async Task Station_inventory_rpcs_list_owned_items_and_set_a_ship_label()
     {
@@ -473,7 +471,6 @@ public class InvBrokerTests
         Assert.Equal(PyNone.Instance, result);
         Assert.True((await rig.Items.GetAsync(foreignItemId))!.Singleton);
     }
-
 
     [PgFact]
     public async Task Corporation_ship_inventory_reads_and_docked_add_and_multiadd_enforce_division_access()
@@ -594,7 +591,6 @@ public class InvBrokerTests
         Assert.Equal(PyNone.Instance, await rig.CallAsync(Rig.Session(id: 2), "List", oid));
     }
 
-
     [PgFact]
     public async Task Global_assets_resolve_structure_roots_and_nested_personal_items()
     {
@@ -635,7 +631,6 @@ public class InvBrokerTests
         Assert.Contains(all, row => PackedItemId(row) == nestedItem);
     }
 
-
     [PgFact]
     public async Task Crystal_damage_lists_only_owned_damageable_crystals_from_persisted_module_conditions()
     {
@@ -663,7 +658,6 @@ public class InvBrokerTests
         Assert.DoesNotContain(result.Entries, entry => entry.Key == new PyLong(tritanium));
     }
 
-
     [PgFact]
     public async Task Container_open_validation_accepts_owned_items_and_expires_foreign_location_cache_entries()
     {
@@ -684,7 +678,6 @@ public class InvBrokerTests
         Assert.Equal(PyBool.True, await rig.CallAsync(session, "ValidateItemCanBeOpened", null, PyNone.Instance));
     }
 
-
     [PgFact]
     public async Task The_station_is_the_item_the_hangar_is_in_as_a_util_row_and_as_a_packed_row()
     {
@@ -695,7 +688,7 @@ public class InvBrokerTests
         var row = (PyObject)await rig.CallAsync(session, "GetItem", hangar);
         Assert.Equal("util.Row", JsSemantics.StringValue(row.Name));
         var line = (PyTuple)((PyDict)row.Args).Entries[1].Value;
-        // the station: its type, its owner, itself as the place, no flag, a stack of one, group 15 of category 3
+
         Assert.Equal(
             new PyTuple([new PyInt(Rig.Station), new PyInt(92885), new PyInt(1000413), new PyInt(Rig.Station), new PyInt(0), new PyInt(1), new PyInt(15), new PyInt(3), new PyStr(""), new PyInt(1), new PyInt(1)]),
             line);
@@ -769,7 +762,6 @@ public class InvBrokerTests
         Assert.Empty(Rows(await rig.CallAsync(session, "List", inventory)));
         Assert.Equal(PyNone.Instance, await rig.CallAsync(session, "GetSelfInvItem", inventory));
     }
-
 
     [PgFact]
     public async Task Owned_docked_containers_can_be_opened_listed_and_traversed_when_nested()
@@ -866,7 +858,6 @@ public class InvBrokerTests
         Assert.NotEqual(first, second);
     }
 
-
     [PgFact]
     public async Task MultiMerge_moves_the_requested_quantity_between_owned_stacks()
     {
@@ -882,7 +873,6 @@ public class InvBrokerTests
         Assert.Equal(10, (await rig.Items.GetAsync(source))!.Quantity);
         Assert.Equal(25, (await rig.Items.GetAsync(destination))!.Quantity);
     }
-
 
     [PgFact]
     public async Task A_bound_inventory_answers_only_the_session_that_opened_it_and_only_until_it_is_released()
@@ -1232,7 +1222,6 @@ public class InvBrokerTests
         Assert.Equal(InventoryWire.DescriptorHeader, service.GetItemDescriptor(new ServiceCall { Method = "GetItemDescriptor", Args = [], Session = new ClientSession() }));
     }
 
-
     [PgFact]
     public async Task Available_turret_slots_are_a_python_integer_zero_when_the_bound_session_has_no_character()
     {
@@ -1242,7 +1231,6 @@ public class InvBrokerTests
 
         Assert.Equal(new PyInt(0), await rig.CallAsync(session, "GetAvailableTurretSlots", hangar));
     }
-
 
     [PgFact]
     public async Task Available_turret_slots_without_a_bound_object_uses_the_prepared_active_ship()

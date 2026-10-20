@@ -45,13 +45,18 @@ public sealed class XmppLink
 public sealed partial class XmppChatHub
 {
     private readonly ConnectedSessions _sessions;
+    private readonly Func<long, CancellationToken, ValueTask<IReadOnlyList<long>>>? _readBlockedOwners;
     private readonly object _gate = new();
     private readonly Dictionary<long, XmppLink> _linkByCharacter = [];
 
-    public XmppChatHub(ConnectedSessions sessions, XmppChatSettings settings)
+    public XmppChatHub(
+        ConnectedSessions sessions,
+        XmppChatSettings settings,
+        Func<long, CancellationToken, ValueTask<IReadOnlyList<long>>>? readBlockedOwners = null)
     {
         _sessions = sessions;
         Settings = settings;
+        _readBlockedOwners = readBlockedOwners;
     }
 
     public XmppChatSettings Settings { get; }
@@ -98,6 +103,30 @@ public sealed partial class XmppChatHub
 
     private ClientSession? SessionOf(long characterId) =>
         _sessions.Snapshot().FirstOrDefault(session => session.CharacterId == characterId);
+
+    internal async ValueTask<bool> IsBlockedByAsync(long recipientCharacterId, long senderCharacterId, CancellationToken cancellationToken)
+    {
+        var blocked = await ReadBlockedOwnersAsync(recipientCharacterId, cancellationToken);
+        if (blocked.Count == 0)
+            return false;
+        var sender = SessionOf(senderCharacterId);
+        return blocked.Contains(senderCharacterId)
+            || sender?.GetInt("corpid") is { } corporationId && corporationId > 0 && blocked.Contains(corporationId)
+            || sender?.GetInt("allianceid") is { } allianceId && allianceId > 0 && blocked.Contains(allianceId);
+    }
+
+    internal async ValueTask<bool> IsCharacterBlockedByAsync(long recipientCharacterId, long senderCharacterId, CancellationToken cancellationToken)
+    {
+        var blocked = await ReadBlockedOwnersAsync(recipientCharacterId, cancellationToken);
+        return blocked.Contains(senderCharacterId);
+    }
+
+    private async ValueTask<IReadOnlyList<long>> ReadBlockedOwnersAsync(long recipientCharacterId, CancellationToken cancellationToken)
+    {
+        if (_readBlockedOwners is null || recipientCharacterId <= 0)
+            return [];
+        return await _readBlockedOwners(recipientCharacterId, cancellationToken);
+    }
 
     internal IReadOnlyList<string> StaticAccessChannels(ClientSession session)
     {

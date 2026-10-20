@@ -45,7 +45,6 @@ internal sealed class Sink : IPacketSink
         }
     }
 
-    /// <summary>What was sent, and forgets it, in one step: nothing sent in between is lost.</summary>
     public IReadOnlyList<PyValue> Take()
     {
         lock (_gate)
@@ -129,10 +128,8 @@ internal sealed class Rig : IAsyncDisposable
 
     public WalletTransactions Transactions { get; }
 
-    /// <summary>The owners and pilots the standing commands name, as a test sets them.</summary>
     public FakeStandingDirectory StandingDirectory { get; } = new();
 
-    /// <summary>The <c>OnStandingSet</c> notices the standing commands sent: the pilot, the owner and the new standing.</summary>
     public List<(long Character, long Owner, double Standing)> StandingNotices { get; } = [];
 
     public Eve.Wallet.LoyaltyPointStore Loyalty { get; }

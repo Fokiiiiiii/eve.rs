@@ -924,7 +924,6 @@ public sealed class StructureDirectoryServiceTests
     }
 }
 
-
 public sealed class StructureSettingsServiceTests
 {
     [Fact]

@@ -117,6 +117,34 @@ public sealed class TradeMgrRpcTests
         Assert.Equal(new HashSet<long> { 61, 62, 1_000_000_000_050 }, items);
     }
 
+    [Fact]
+    public void Bulk_trade_item_lists_are_bounded_and_require_positive_ids()
+    {
+        var tooMany = new PyList(Enumerable.Range(1, TradeMgrService.MaxTradeBulkItems + 1).Select(id => (PyValue)new PyInt(id)).ToList());
+        var error = Assert.Throws<MachoWrappedException>(() => TradeMgrService.ItemIdsOf(tooMany));
+        Assert.Equal("CustomNotify", error.Error.UserErrorMessage);
+
+        error = Assert.Throws<MachoWrappedException>(() => TradeMgrService.ItemIdsOf(new PyList([new PyInt(1), new PyInt(-2)])));
+        Assert.Equal("CustomNotify", error.Error.UserErrorMessage);
+        Assert.Equal([1L, 2L], TradeMgrService.ItemIdsOf(new PyList([new PyInt(1), new PyInt(2), new PyInt(1)])));
+    }
+
+    [Fact]
+    public void Trade_manifests_reject_non_finite_and_overflowing_isk_amounts()
+    {
+        foreach (PyValue amount in new PyValue[] { new PyReal(double.NaN), new PyReal(double.PositiveInfinity), new PyReal(double.NegativeInfinity), new PyReal(1e300) })
+        {
+            var manifest = new PyObjectEx(ObjectExKind.Ex1, new PyStr("KeyVal"), [], [
+                new(new PyStr("tradeContainerID"), new PyLong(1)),
+                new(new PyStr("money"), new PyList([amount, new PyInt(0)])),
+                new(new PyStr("tradeItems"), new PyList([])),
+            ]);
+
+            var error = Assert.Throws<MachoWrappedException>(() => TradeMgrService.ManifestOf(manifest));
+            Assert.Equal("CustomNotify", error.Error.UserErrorMessage);
+        }
+    }
+
     private static ClientSession Session(long characterId, long? stationId = null, long? structureId = null)
     {
         var session = new ClientSession { CharacterId = characterId };

@@ -52,6 +52,9 @@
 | `dotnet/src/Eve.Services.Skills` (16 C# files) | 170 | 146 | 2026-10-20 |
 | `dotnet/src/Eve.Services.Dogma` (13 C# files) | 208 | 200 | 2026-10-20 |
 | `dotnet/src/Eve.Services.Ships` (5 C# files) | 85 | 82 | 2026-10-20 |
+| `dotnet/src/Eve.Space` (7 C# files) | 636 | 616 | 2026-10-20 |
+| `dotnet/src/Eve.Corporations` (18 C# files; migrations reviewed) | 51 | 41 | 2026-10-20 |
+| `dotnet/src/Eve.Macho` (6 C# files) | 93 | 93 | 2026-10-20 |
 | `dotnet/src/Eve.GameStore.Import` (4 C# files) | 22 | 21 | 2026-10-20 |
 | `dotnet/src/Eve.Sde` (1 C# file) | 21 | 21 | 2026-10-20 |
 | `dotnet/src/Eve.Hacking` (3 C# files) | 32 | 25 | 2026-10-20 |
@@ -62,6 +65,37 @@
 | `dotnet/src/Eve.ReadSide` (2 C# files) | 42 | 41 | 2026-10-20 |
 | `dotnet/src/Eve.Planets` (8 C# files; migrations reviewed) | 218 | 198 | 2026-10-20 |
 | `dotnet/src/Eve.Services.Generator` (2 C# files) | 6 | 0 | 2026-10-20 |
+| `dotnet/tests/Eve.Agents.Tests` (4 C# files) | 8 | 6 | 2026-10-20 |
+| `dotnet/tests/Eve.Hacking.Tests` (2 C# files) | 2 | 2 | 2026-10-20 |
+| `dotnet/tests/Eve.AccessGroups.Tests` (4 C# files) | 7 | 3 | 2026-10-20 |
+| `dotnet/tests/Eve.Bookmarks.Tests` (5 C# files) | 25 | 24 | 2026-10-20 |
+| `dotnet/tests/Eve.Characters.Tests` (12 C# files) | 31 | 29 | 2026-10-20 |
+| `dotnet/tests/Eve.Content.Tests` (4 C# files) | 11 | 10 | 2026-10-20 |
+| `dotnet/tests/Eve.Crimewatch.Tests` (3 C# files) | 11 | 10 | 2026-10-20 |
+| `dotnet/tests/Eve.Dogma.Tests` (15 C# files) | 138 | 134 | 2026-10-20 |
+| `dotnet/tests/Eve.Dungeons.Tests` (4 C# files) | 6 | 4 | 2026-10-20 |
+| `dotnet/tests/Eve.Events.Tests` (3 C# files; reviewed) | 21 | 21 | 2026-10-20 |
+| `dotnet/tests/Eve.FactionWarfare.Tests` (11 C# files) | 28 | 26 | 2026-10-20 |
+| `dotnet/tests/Eve.Fitting.Tests` (5 C# files) | 51 | 50 | 2026-10-20 |
+| `dotnet/tests/Eve.GameStore.Import.Tests` (2 C# files; reviewed) | 5 | 5 | 2026-10-20 |
+| `dotnet/tests/Eve.GameStore.Tests` (8 C# files) | 30 | 28 | 2026-10-20 |
+| `dotnet/tests/Eve.Identity.Tests` (7 C# files; reviewed) | 18 | 18 | 2026-10-20 |
+| `dotnet/tests/Eve.Insurgency.Tests` (3 C# files; reviewed) | 10 | 10 | 2026-10-20 |
+| `dotnet/tests/Eve.Market.Tests` (23 C# files) | 182 | 175 | 2026-10-20 |
+| `dotnet/tests/Eve.Marshal.Tests` (4 C# files) | 51 | 49 | 2026-10-20 |
+| `dotnet/tests/Eve.Npc.Tests` (11 C# files) | 78 | 74 | 2026-10-20 |
+| `dotnet/tests/Eve.Planets.Tests` (7 C# files) | 29 | 28 | 2026-10-20 |
+| `dotnet/tests/Eve.ReadSide.Tests` (1 C# file; reviewed) | 1 | 1 | 2026-10-20 |
+| `dotnet/tests/Eve.Relations.Tests` (3 C# files; reviewed) | 7 | 7 | 2026-10-20 |
+| `dotnet/tests/Eve.Scheduler.Tests` (3 C# files; reviewed) | 21 | 21 | 2026-10-20 |
+| `dotnet/tests/Eve.Services.CharacterInfo.Tests` (3 C# files) | 11 | 10 | 2026-10-20 |
+| `dotnet/tests/Eve.Services.CharacterSelect.Tests` (7 C# files) | 64 | 57 | 2026-10-20 |
+| `dotnet/tests/Eve.Services.Core.Tests` (79 C# files) | 214 | 163 | 2026-10-20 |
+| `dotnet/tests/Eve.Services.Crimewatch.Tests` (4 C# files) | 40 | 36 | 2026-10-20 |
+| `dotnet/tests/Eve.Services.Dogma.Tests` (39 C# files) | 204 | 195 | 2026-10-20 |
+| `dotnet/tests/Eve.Services.Generator.Tests` (1 C# file) | 3 | 3 | 2026-10-20 |
+| `dotnet/tests/Eve.Services.Inventory.Tests` (4 C# files) | 43 | 40 | 2026-10-20 |
+| `dotnet/tests/Eve.Services.Skills.Tests` (5 C# files) | 49 | 45 | 2026-10-20 |
 | `dotnet/src/Eve.Insurgency` (5 C# files; migrations reviewed) | 99 | 87 | 2026-10-20 |
 | `dotnet/src/Eve.Dungeons` (5 C# files) | 101 | 49 | 2026-10-20 |
 | `dotnet/src/Eve.Fitting` (8 C# files; migrations reviewed) | 97 | 78 | 2026-10-20 |

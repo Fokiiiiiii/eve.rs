@@ -20,11 +20,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
     public SimLinkError Error { get; } = error;
 }
 
-/// <summary>
-/// The wire layout of <see cref="SimMessage"/>: <c>u32 length | u8 kind | body</c>, little endian, text as <c>u16 length + UTF-8</c>,
-/// byte strings as <c>u32 length + bytes</c>. The Rust simulation and this codec are both checked against
-/// oracle/fixtures/simlink/messages.json.
-/// </summary>
+/// <summary>The wire uses little-endian integers and length-prefixed text and byte strings.</summary>
 public static partial class SimCodec
 {
     public const ushort ProtocolVersion = 81;

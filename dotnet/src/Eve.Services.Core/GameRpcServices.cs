@@ -180,6 +180,29 @@ public sealed partial class ContractProxyService(
             return 3;
         return 1;
     }
+
+    private static bool TryPositiveBidAmount(PyValue value, out decimal amount)
+    {
+        if (value is PyInt integer)
+        {
+            amount = integer.Value;
+            return amount > 0;
+        }
+        if (value is PyLong longInteger)
+        {
+            amount = longInteger.Value;
+            return amount > 0;
+        }
+        if (value is PyReal real && double.IsFinite(real.Value) &&
+            decimal.TryParse(real.Value.ToString("R", System.Globalization.CultureInfo.InvariantCulture),
+                System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture,
+                out amount))
+            return amount > 0;
+
+        amount = 0;
+        return false;
+    }
+
     [Method("PlaceBid")]
     public async Task<PyValue> PlaceBid(ServiceCall call)
     {
@@ -194,13 +217,8 @@ public sealed partial class ContractProxyService(
             PyLong value => value.Value,
             _ => throw MachoErrors.ThrowUserError("ConContractNotFound"),
         };
-        var amount = call.Arg(1) switch
-        {
-            PyInt value => (decimal)value.Value,
-            PyLong value => (decimal)value.Value,
-            PyReal value => (decimal)value.Value,
-            _ => throw MachoErrors.ThrowUserError("ConBidTooLow"),
-        };
+        if (!TryPositiveBidAmount(call.Arg(1), out var amount))
+            throw MachoErrors.ThrowUserError("ConBidTooLow");
         var bidForCorporation = call.Arg(2) switch
         {
             PyBool value => value.Value,
@@ -260,8 +278,9 @@ public sealed partial class ContractProxyService(
             if (walletKeyValue is < 1000 or > 1006)
                 throw MachoErrors.ThrowUserError("ConNotContractManager");
             var acceptorWalletKey = (int)walletKeyValue;
-            var accepted = await writer.AcceptItemExchangeAsync(contractId, characterId, corporationId, allianceId,
-                acceptForCorporation, acceptorWalletKey, call.Cancellation);
+            var currentStationId = call.Session.GetInt("stationid") ?? call.Session.GetInt("stationid2") ?? 0;
+            var accepted = await writer.AcceptContractAsync(contractId, characterId, corporationId, allianceId,
+                acceptForCorporation, acceptorWalletKey, currentStationId, call.Cancellation);
             return Eve.Services.Py.KeyVal(
                 ("contractID", new PyInt(accepted.ContractId)),
                 ("type", new PyInt(accepted.Type)),
@@ -274,6 +293,63 @@ public sealed partial class ContractProxyService(
                 ("numDays", new PyInt(accepted.NumDays)),
                 ("startStationID", new PyInt(accepted.StartStationId)),
                 ("endStationID", new PyInt(accepted.EndStationId)));
+        }
+        catch (ContractUserErrorException error)
+        {
+            throw MachoErrors.ThrowUserError(error.Message, error.Values.ToArray());
+        }
+    }
+
+    [Method("CompleteContract")]
+    public async Task<PyValue> CompleteContract(ServiceCall call)
+    {
+        var writer = writeModel ?? throw new InvalidOperationException("contract writer is not wired");
+        var characterId = call.Session.CharacterId
+            ?? throw new InvalidOperationException("contract completion requires a character session");
+        var corporationId = call.Session.GetInt("corpid") ?? 0;
+        var contractId = call.Arg(0) switch
+        {
+            PyInt value => value.Value,
+            PyLong value => value.Value,
+            _ => throw MachoErrors.ThrowUserError("ConContractNotFound"),
+        };
+        var status = call.Arg(1) switch
+        {
+            PyInt value => (int)value.Value,
+            PyLong value => checked((int)value.Value),
+            _ => throw MachoErrors.ThrowUserError("ConContractNotAvailable"),
+        };
+        try
+        {
+            var currentStationId = call.Session.GetInt("stationid") ?? call.Session.GetInt("stationid2") ?? 0;
+            var isCorpManager = ((call.Session.GetInt("corprole") ?? 0) & CorpRoleContractManager) != 0;
+            return await writer.CompleteContractAsync(contractId, status, characterId, corporationId,
+                currentStationId, isCorpManager, call.Cancellation) ? PyBool.True : PyBool.False;
+        }
+        catch (ContractUserErrorException error)
+        {
+            throw MachoErrors.ThrowUserError(error.Message, error.Values.ToArray());
+        }
+    }
+
+    [Method("DeleteContract")]
+    public async Task<PyValue> DeleteContract(ServiceCall call)
+    {
+        var writer = writeModel ?? throw new InvalidOperationException("contract writer is not wired");
+        var characterId = call.Session.CharacterId
+            ?? throw new InvalidOperationException("contract deletion requires a character session");
+        var corporationId = call.Session.GetInt("corpid") ?? 0;
+        var contractId = call.Arg(0) switch
+        {
+            PyInt value => value.Value,
+            PyLong value => value.Value,
+            _ => throw MachoErrors.ThrowUserError("ConContractNotFound"),
+        };
+        try
+        {
+            var hasCorpContractManager = ((call.Session.GetInt("corprole") ?? 0) & CorpRoleContractManager) != 0;
+            return await writer.DeleteContractAsync(contractId, characterId, corporationId,
+                hasCorpContractManager, call.Cancellation) ? PyBool.True : PyBool.False;
         }
         catch (ContractUserErrorException error)
         {

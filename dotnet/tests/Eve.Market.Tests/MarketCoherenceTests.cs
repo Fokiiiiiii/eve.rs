@@ -8,7 +8,6 @@ using Eve.Wallet;
 namespace Eve.Market.Tests;
 
 /// <summary>
-/// M4: two sessions in one region. The client keeps a book (GetOrders, the station and system asks) and its owner lists in objectCaching until
 /// the server drops them with InvalidateCachedMethodCall (objectCaching.py:222-238). Each change sends that invalidation before its notices,
 /// the next read shows the change, and a session in another region is not asked to drop this region's book.
 /// </summary>

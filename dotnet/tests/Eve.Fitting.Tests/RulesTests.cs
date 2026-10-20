@@ -151,7 +151,6 @@ public class RulesTests
         Assert.Null(FittingRules.Check(three, s3, ShipId, Candidate(three, SkilledModule), Slots.HighFirst));
     }
 
-
     [Fact]
     public void Boarding_skill_check_requires_each_hull_skill_at_its_published_level()
     {
@@ -257,7 +256,6 @@ public class RulesTests
         Fit(world, 7002, Slots.RigFirst + 1, 3001);
         Assert.Null(Why(world, statics, Candidate(world, 7002), Slots.RigFirst + 2)); // 450 of 450
     }
-
 
     [Fact]
     public void Current_sde_rig_sizes_must_match_and_installed_rigs_share_calibration()
@@ -431,7 +429,6 @@ public class RulesTests
         Assert.Equal([3002L, 3003L, 3004L, 3005L], changes.Select(change => change.ModuleId));
     }
 
-
     [Fact]
     public void Rebased_hitpoints_keep_absolute_layer_damage_and_identify_hull_collapse()
     {
@@ -511,7 +508,6 @@ public class RulesTests
         Assert.Equal(ItemState.Offline, world.Item(3005)!.State);
         Assert.Equal([3002L, 3003L, 3004L, 3005L], changes.Select(change => change.ModuleId));
     }
-
 
     [Theory]
     [InlineData(963, true)]

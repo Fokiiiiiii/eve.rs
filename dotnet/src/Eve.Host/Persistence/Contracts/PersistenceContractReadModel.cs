@@ -100,6 +100,14 @@ public sealed class PersistenceContractReadModel : IContractReadModel
                 ADD COLUMN wallet_account_key integer NOT NULL DEFAULT 1000 CHECK (wallet_account_key BETWEEN 1000 AND 1006),
                 ADD COLUMN is_refunded boolean NOT NULL DEFAULT false;
             """),
+        new Eve.Data.Migration("0007_courier_state", """
+            ALTER TABLE contract_records
+                ADD COLUMN plastic_wrap_item_id bigint NOT NULL DEFAULT 0 CHECK (plastic_wrap_item_id >= 0),
+                ADD COLUMN acceptor_is_corporation boolean NOT NULL DEFAULT false,
+                ADD COLUMN acceptor_wallet_account_key integer NOT NULL DEFAULT 1000 CHECK (acceptor_wallet_account_key BETWEEN 1000 AND 1006),
+                ADD COLUMN collateral_escrow numeric(28, 2) NOT NULL DEFAULT 0 CHECK (collateral_escrow >= 0),
+                ADD COLUMN date_completed_filetime bigint NOT NULL DEFAULT 0;
+            """),
     ];
 
     public static Task MigrateAsync(

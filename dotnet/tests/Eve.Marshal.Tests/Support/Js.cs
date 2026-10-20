@@ -19,7 +19,6 @@ internal sealed record JsNull : Js
 
 internal sealed record JsBool(bool Value) : Js;
 
-/// <summary>Any JS number (the IEEE-754 double itself).</summary>
 internal sealed record JsNum(double Value) : Js;
 
 /// <summary>A BigInt, as its decimal digits.</summary>

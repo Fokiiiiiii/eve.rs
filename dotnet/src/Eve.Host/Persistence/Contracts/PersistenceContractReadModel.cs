@@ -226,6 +226,176 @@ public sealed class PersistenceContractReadModel : IContractReadModel
         return new ContractEscrowSummary(reader.GetDecimal(0), reader.GetInt64(1));
     }
 
+
+    public async ValueTask<ContractReadBundle> GetMyBidsAsync(
+        long characterId,
+        long corporationId,
+        bool forCorporation,
+        long nowFileTime,
+        CancellationToken cancellationToken)
+    {
+        if (characterId <= 0 || corporationId < 0 || forCorporation && corporationId == 0 || nowFileTime <= 0)
+            throw new ArgumentOutOfRangeException(nameof(characterId));
+
+        var bidderId = forCorporation ? corporationId : characterId;
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        var contracts = new List<ContractReadSnapshot>();
+        await using (var command = new NpgsqlCommand($"""
+            SELECT c.contract_id, c.contract_type, c.status, c.availability, c.issuer_id,
+                   c.issuer_corporation_id, c.is_corporation_issued, c.assignee_id, c.acceptor_id,
+                   c.created_at_filetime, c.date_expired_filetime, c.date_accepted_filetime,
+                   c.date_completed_filetime, c.num_days, c.start_station_id, c.end_station_id,
+                   c.price_isk, c.reward_isk, c.collateral_isk, c.title, c.description
+            FROM {_schema}.contract_records AS c
+            WHERE c.status = $1 AND c.contract_type = 2 AND c.date_expired_filetime >= $4
+              AND EXISTS (
+                  SELECT 1 FROM {_schema}.contract_bids AS b
+                  WHERE b.contract_id = c.contract_id AND b.bidder_id = $2
+                    AND b.bidder_is_corporation = $3 AND NOT b.is_refunded)
+            ORDER BY c.contract_id DESC
+            """, connection))
+        {
+            command.Parameters.AddWithValue(Outstanding);
+            command.Parameters.AddWithValue(bidderId);
+            command.Parameters.AddWithValue(forCorporation);
+            command.Parameters.AddWithValue(nowFileTime);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                contracts.Add(new ContractReadSnapshot(
+                    reader.GetInt64(0), reader.GetInt16(1), reader.GetInt16(2), reader.GetInt16(3),
+                    reader.GetInt64(4), reader.GetInt64(5), reader.GetBoolean(6), reader.GetInt64(7),
+                    reader.GetInt64(8), reader.GetInt64(9), reader.GetInt64(10), reader.GetInt64(11),
+                    reader.GetInt64(12), reader.GetInt32(13), reader.GetInt64(14), reader.GetInt64(15),
+                    reader.GetDecimal(16), reader.GetDecimal(17), reader.GetDecimal(18), reader.GetString(19),
+                    reader.GetString(20), [], []));
+            }
+        }
+
+        return await AttachChildrenAsync(connection, contracts, cancellationToken);
+    }
+
+
+    public async ValueTask<ContractReadBundle> GetContractListForOwnerAsync(
+        long characterId,
+        long corporationId,
+        long ownerId,
+        int status,
+        int contractType,
+        long issuedBy,
+        int pageSize,
+        long? startContractId,
+        long nowFileTime,
+        CancellationToken cancellationToken)
+    {
+        if (characterId <= 0 || corporationId < 0 || ownerId != characterId && ownerId != corporationId ||
+            issuedBy < 0 || pageSize is < 1 or > 100 || startContractId is <= 0 || nowFileTime <= 0 ||
+            status is not (-1 or 0 or 1 or 4) || contractType is < 0 or > 3)
+            throw new ArgumentOutOfRangeException(nameof(ownerId));
+
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        var contracts = new List<ContractReadSnapshot>();
+        await using (var command = new NpgsqlCommand($"""
+            SELECT c.contract_id, c.contract_type, c.status, c.availability, c.issuer_id,
+                   c.issuer_corporation_id, c.is_corporation_issued, c.assignee_id, c.acceptor_id,
+                   c.created_at_filetime, c.date_expired_filetime, c.date_accepted_filetime,
+                   c.date_completed_filetime, c.num_days, c.start_station_id, c.end_station_id,
+                   c.price_isk, c.reward_isk, c.collateral_isk, c.title, c.description
+            FROM {_schema}.contract_records AS c
+            WHERE (
+                    ($2 AND ((c.is_corporation_issued AND c.issuer_corporation_id = $1) OR c.acceptor_id = $1 OR c.assignee_id = $1))
+                 OR (NOT $2 AND ((NOT c.is_corporation_issued AND c.issuer_id = $1) OR c.acceptor_id = $1 OR c.assignee_id = $1))
+              )
+              AND ($3 = 0 OR c.contract_type = $3)
+              AND ($4 = 0 OR c.issuer_id = $4 OR c.is_corporation_issued AND c.issuer_corporation_id = $4)
+              AND ($5 = 0 OR c.contract_id < $5)
+              AND (
+                    ($6 = 0 AND c.status = 0 AND c.date_expired_filetime >= $8)
+                 OR ($6 = 1 AND c.status = 1)
+                 OR ($6 = 4 AND c.status IN (2, 3, 4, 5, 8, 9))
+                 OR ($6 = -1 AND (c.status IN (6, 7) OR (c.status = 0 AND c.date_expired_filetime < $8)))
+              )
+            ORDER BY c.contract_id DESC
+            LIMIT $7
+            """, connection))
+        {
+            command.Parameters.AddWithValue(ownerId);
+            command.Parameters.AddWithValue(ownerId == corporationId && corporationId > 0);
+            command.Parameters.AddWithValue(contractType);
+            command.Parameters.AddWithValue(issuedBy);
+            command.Parameters.AddWithValue(startContractId ?? 0);
+            command.Parameters.AddWithValue(status);
+            command.Parameters.AddWithValue(pageSize);
+            command.Parameters.AddWithValue(nowFileTime);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                contracts.Add(new ContractReadSnapshot(
+                    reader.GetInt64(0), reader.GetInt16(1), reader.GetInt16(2), reader.GetInt16(3),
+                    reader.GetInt64(4), reader.GetInt64(5), reader.GetBoolean(6), reader.GetInt64(7),
+                    reader.GetInt64(8), reader.GetInt64(9), reader.GetInt64(10), reader.GetInt64(11),
+                    reader.GetInt64(12), reader.GetInt32(13), reader.GetInt64(14), reader.GetInt64(15),
+                    reader.GetDecimal(16), reader.GetDecimal(17), reader.GetDecimal(18), reader.GetString(19),
+                    reader.GetString(20), [], []));
+            }
+        }
+
+        return await AttachChildrenAsync(connection, contracts, cancellationToken);
+    }
+
+private async ValueTask<ContractReadBundle> AttachChildrenAsync(
+        NpgsqlConnection connection,
+        IReadOnlyList<ContractReadSnapshot> contracts,
+        CancellationToken cancellationToken)
+    {
+        if (contracts.Count == 0)
+            return new ContractReadBundle(contracts);
+
+        var contractIds = contracts.Select(contract => contract.ContractId).ToArray();
+        var itemsByContract = new Dictionary<long, List<ContractReadItemSnapshot>>();
+        await using (var command = new NpgsqlCommand($"""
+            SELECT contract_id, item_id, type_id, quantity, in_crate, is_package
+            FROM {_schema}.contract_items WHERE contract_id = ANY($1) ORDER BY contract_id, item_id
+            """, connection))
+        {
+            command.Parameters.AddWithValue(contractIds);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                var contractId = reader.GetInt64(0);
+                if (!itemsByContract.TryGetValue(contractId, out var items))
+                    itemsByContract[contractId] = items = [];
+                items.Add(new ContractReadItemSnapshot(reader.GetInt64(1), reader.GetInt32(2), reader.GetInt64(3),
+                    reader.GetBoolean(4), reader.GetBoolean(5)));
+            }
+        }
+
+        var bidsByContract = new Dictionary<long, List<ContractReadBidSnapshot>>();
+        await using (var command = new NpgsqlCommand($"""
+            SELECT contract_id, bid_id, bidder_id, amount, created_at_filetime, bidder_is_corporation
+            FROM {_schema}.contract_bids WHERE contract_id = ANY($1) AND NOT is_refunded
+            ORDER BY contract_id, amount DESC, created_at_filetime DESC, bid_id DESC
+            """, connection))
+        {
+            command.Parameters.AddWithValue(contractIds);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                var contractId = reader.GetInt64(0);
+                if (!bidsByContract.TryGetValue(contractId, out var bids))
+                    bidsByContract[contractId] = bids = [];
+                bids.Add(new ContractReadBidSnapshot(reader.GetInt64(1), reader.GetInt64(2), reader.GetDecimal(3),
+                    reader.GetInt64(4), reader.GetBoolean(5)));
+            }
+        }
+
+        return new ContractReadBundle(contracts.Select(contract => contract with
+        {
+            Items = itemsByContract.GetValueOrDefault(contract.ContractId, []),
+            Bids = bidsByContract.GetValueOrDefault(contract.ContractId, []),
+        }).ToArray());
+    }
+
     private static string ValidateSchema(string schema) => Regex.IsMatch(schema, "^[a-z_][a-z0-9_]{0,62}$")
         ? schema
         : throw new ArgumentException("not a usable schema name", nameof(schema));

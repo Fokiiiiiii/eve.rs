@@ -586,6 +586,31 @@ public sealed class ContractReadModelTests
         {
             var now = 134_000_000_000_000_000L;
             await SeedAsync(source, schema, now);
+            await using (var seedAuction = source.CreateCommand($"""
+                UPDATE "{schema}".contract_records SET title = 'Auction', price_isk = 5000, reward_isk = 200
+                WHERE contract_id = 6
+                """))
+            {
+                await seedAuction.ExecuteNonQueryAsync();
+            }
+            await using (var seedItem = source.CreateCommand($"""
+                INSERT INTO "{schema}".contract_items (contract_id, item_id, type_id, quantity, in_crate)
+                VALUES (6, 9006, 34, 2, true)
+                """))
+            {
+                await seedItem.ExecuteNonQueryAsync();
+            }
+            await using (var seedBids = source.CreateCommand($"""
+                INSERT INTO "{schema}".contract_bids
+                    (contract_id, bidder_id, amount, created_at_filetime, bidder_is_corporation, wallet_account_key, is_refunded)
+                VALUES (6, 100, 5000, $1, false, 1000, false),
+                       (7, 200, 6000, $1, true, 1000, false),
+                       (6, 101, 5500, $1, false, 1000, true)
+                """))
+            {
+                seedBids.Parameters.AddWithValue(now);
+                await seedBids.ExecuteNonQueryAsync();
+            }
             var store = new PersistenceContractReadModel(source, schema);
 
             var login = await store.GetLoginInfoAsync(100, 200, 300, now, CancellationToken.None);
@@ -597,6 +622,25 @@ public sealed class ContractReadModelTests
                 await store.GetMyContractEscrowAsync(100, 200, CancellationToken.None));
             Assert.Equal(new Eve.Services.Core.ContractEscrowSummary(27m, 1),
                 await store.GetMyContractEscrowAsync(101, 200, CancellationToken.None));
+
+            var personalBids = await store.GetMyBidsAsync(100, 200, false, now, CancellationToken.None);
+            var personalBid = Assert.Single(personalBids.Contracts);
+            Assert.Equal(6, personalBid.ContractId);
+            Assert.Equal("Auction", personalBid.Title);
+            Assert.Equal(5000m, personalBid.Price);
+            Assert.Equal(new Eve.Services.Core.ContractReadItemSnapshot(9006, 34, 2, true, false), Assert.Single(personalBid.Items));
+            Assert.Equal(new Eve.Services.Core.ContractReadBidSnapshot(1, 100, 5000m, now, false), Assert.Single(personalBid.Bids));
+
+            var corporationBids = await store.GetMyBidsAsync(100, 200, true, now, CancellationToken.None);
+            Assert.Equal(7, Assert.Single(corporationBids.Contracts).ContractId);
+
+            var ownerPage = await store.GetContractListForOwnerAsync(100, 200, 100, 0, 1, 0, 1, null, now, CancellationToken.None);
+            Assert.Equal(1, Assert.Single(ownerPage.Contracts).ContractId);
+            var nextOwnerPage = await store.GetContractListForOwnerAsync(100, 200, 100, 0, 1, 0, 1, 1, now, CancellationToken.None);
+            Assert.Empty(nextOwnerPage.Contracts);
+            var attentionPage = await store.GetContractListForOwnerAsync(100, 200, 100, -1, 0, 0, 10, null, now, CancellationToken.None);
+            Assert.Equal(new long[] { 5, 4 }, attentionPage.Contracts.Select(contract => contract.ContractId));
+            await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => store.GetMyBidsAsync(100, 0, true, now, CancellationToken.None).AsTask());
         }
         finally
         {

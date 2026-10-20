@@ -177,7 +177,11 @@ public sealed class StructureDirectoryService(IStructureDirectoryReadCallbacks r
                 var characterId = call.Session?.CharacterId ?? 0;
                 var corporationId = call.Session?.GetInt("corpid") ?? 0;
                 var allianceId = call.Session?.GetInt("allianceid") ?? 0;
-                var requested = PositiveIds(call.Arg(0));
+                var requestedInput = call.Arg(0);
+                if ((requestedInput is PyList requestedList && requestedList.Items.Count > 500) ||
+                    (requestedInput is PyTuple requestedTuple && requestedTuple.Items.Count > 500))
+                    throw Eve.Services.MachoErrors.ThrowUserError("StructureBulkLimitExceeded");
+                var requested = PositiveIds(requestedInput);
                 if (characterId <= 0 || requested.Count == 0)
                     return new PyList([]);
 

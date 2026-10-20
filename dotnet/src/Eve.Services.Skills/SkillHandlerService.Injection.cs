@@ -8,12 +8,22 @@ namespace Eve.Services.Skills;
 
 public sealed partial class SkillHandlerService
 {
+    private const int MaximumSkillOperationEntries = 500;
+
     [Method("InjectSkillIntoBrain")]
-    public async ValueTask<PyValue> InjectSkillIntoBrain(ServiceCall call) =>
-        await InjectSkillBooksAsync(call.Session, [.. ItemsOf(call.Arg(0)).Select(IdOf).OfType<long>()], call.Cancellation);
+    public async ValueTask<PyValue> InjectSkillIntoBrain(ServiceCall call)
+    {
+        var itemIds = ItemsOf(call.Arg(0)).Take(MaximumSkillOperationEntries + 1)
+            .Select(IdOf).OfType<long>().ToArray();
+        if (itemIds.Length > MaximumSkillOperationEntries)
+            throw MachoErrors.ThrowUserError("SkillBulkLimitExceeded");
+        return await InjectSkillBooksAsync(call.Session, itemIds, call.Cancellation);
+    }
 
     public async Task<PyValue> InjectSkillBooksAsync(ClientSession session, IReadOnlyList<long> itemIds, CancellationToken cancellationToken)
     {
+        if (itemIds.Count > MaximumSkillOperationEntries)
+            throw MachoErrors.ThrowUserError("SkillBulkLimitExceeded");
         if (session.CharacterId is not { } character || session.GetInt("stationid") is not { } station)
             throw MachoErrors.ThrowUserError("SkillExtractorNotDockedInStation");
         var shipId = session.GetInt("shipid");
@@ -187,12 +197,19 @@ private long DiminishedInjectorSp(long totalSp, int typeId, long quantity, long 
             || extractor.LocationId != station || extractor.Flag != HangarFlag || extractor.Quantity < 1)
             throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("That skill extractor cannot be used.")));
 
-        var requested = call.Args
+        var rawTargets = call.Args
             .Where((_, index) => index != extractorArgument)
             .SelectMany(ExtractionTargetsOf)
+            .Take(MaximumSkillOperationEntries + 1)
+            .ToArray();
+        if (rawTargets.Length > MaximumSkillOperationEntries)
+            throw MachoErrors.ThrowUserError("SkillBulkLimitExceeded");
+
+        var requested = rawTargets
             .Where(target => target.SkillTypeId is >= 0 and <= int.MaxValue && target.Points > 0)
             .GroupBy(target => (int)target.SkillTypeId)
-            .Select(group => (SkillTypeId: group.Key, Points: group.Aggregate(0L, (sum, target) => target.Points == long.MaxValue ? long.MaxValue : Math.Min(long.MaxValue, sum + target.Points))))
+            .Select(group => (SkillTypeId: group.Key, Points: group.Aggregate(0L, (sum, target) =>
+                target.Points >= long.MaxValue - sum ? long.MaxValue : sum + target.Points)))
             .ToArray();
         if (requested.Length == 0)
             throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Select skills to extract.")));

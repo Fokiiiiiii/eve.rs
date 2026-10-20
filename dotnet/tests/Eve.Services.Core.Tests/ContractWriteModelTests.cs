@@ -62,6 +62,23 @@ public sealed class ContractWriteModelTests
             ContractCreationRules.ValidateItemExchangeTerms(Request(contractType: 2, endStationId: 700)));
     }
 
+    [Fact]
+    public void Outstanding_limit_must_be_within_the_client_maximum()
+    {
+        ContractCreationRules.ValidateItemExchangeTerms(Request(outstandingLimit: 500));
+        Assert.Throws<ArgumentOutOfRangeException>(() => ContractCreationRules.ValidateItemExchangeTerms(Request(outstandingLimit: 0)));
+        Assert.Throws<ArgumentOutOfRangeException>(() => ContractCreationRules.ValidateItemExchangeTerms(Request(outstandingLimit: 501)));
+    }
+
+    [Fact]
+    public void Contract_limits_follow_the_client_skill_tables()
+    {
+        Assert.Equal(28, ContractCreationLimits.Personal(0, 0));
+        Assert.Equal(46, ContractCreationLimits.Personal(5, 5));
+        Assert.Equal(5, ContractCreationLimits.Corporation(0));
+        Assert.Throws<ArgumentOutOfRangeException>(() => ContractCreationLimits.Personal(6, 0));
+    }
+
     private static CreateItemExchangeRequest Request(
         int expiryMinutes = 1440,
         int availability = 0,
@@ -72,7 +89,8 @@ public sealed class ContractWriteModelTests
         int numDays = 0,
         IReadOnlyList<ContractOfferedItem>? items = null,
         string? title = null,
-        string? description = null) => new(
+        string? description = null,
+        int outstandingLimit = 500) => new(
         IssuerCharacterId: 100,
         IssuerCorporationId: 200,
         IsCorporationIssued: false,
@@ -90,6 +108,7 @@ public sealed class ContractWriteModelTests
         Title: title ?? "Exchange",
         Description: description ?? "",
         Items: items ?? [new ContractOfferedItem(10, 1)],
+        OutstandingLimit: outstandingLimit,
         ContractType: contractType,
         EndStationId: endStationId,
         Collateral: 0,

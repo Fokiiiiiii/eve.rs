@@ -52,7 +52,6 @@ public sealed class BountyProxyKillRightService(
         _ => ValueTask.FromResult<PyValue>(PyNone.Instance),
     };
 
-
     private async ValueTask<PyValue> BountyResponseAsync(ServiceCall call, PyValue fallback)
     {
         if (bountyRpcHandler is null)
@@ -150,7 +149,6 @@ public sealed class BountyProxyKillRightService(
             .Where(right => right.ExpiresAtUnixMs > now)
             .Select(Payload)]);
     }
-
 
     private async ValueTask<PyValue> ReadAvailableKillRightsAsync(ServiceCall call, PyValue targetsValue)
     {

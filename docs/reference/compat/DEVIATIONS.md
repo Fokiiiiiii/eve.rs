@@ -5167,3 +5167,8 @@ The market parser rejects floating-point prices beyond the market maximum before
 ## Corporation member field integer bounds (2026-10-20)
 
 `corpRegistry.UpdateMember` rejects negative division and squadron values as `CORPORATION_INVALID_MEMBER_FIELD` and values outside Int32 range as `CORPORATION_INTEGER_OUT_OF_RANGE` before persistence. This prevents overflowing client integers from wrapping into unrelated values; in-range V24.01 values retain their existing wire and persistence behavior. `Corp_member_update_refuses_negative_and_out_of_range_division_and_squadron_values` covers negative values, positive and negative overflow, and confirms the stored member row is unchanged.
+
+
+## Alliance standing input validation (2026-10-20)
+
+`allianceRegistry.SetRelationship` now accepts only finite numeric standings from -10 through 10; malformed or out-of-range values return `ALLIANCE_RELATIONSHIP_INVALID` before persistence. This prevents a wrong-typed value from being coerced to neutral standing while preserving valid integer and fractional standing values. `Alliance_public_updates_relationships_and_application_decisions_notify_clients` verifies that malformed text leaves the current standing unchanged.

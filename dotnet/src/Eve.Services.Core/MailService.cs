@@ -31,6 +31,11 @@ public sealed class MailService(
     private readonly Func<MailSendRequest, ClientSession, CancellationToken, Task<long?>>? _sendMail = sendMail;
     private readonly GmChatPokeMailCallback? _pokePlayerAboutChatMsgGm = pokePlayerAboutChatMsgGm;
 
+    private const int MaxCharacterRecipients = 50;
+    private const int MaxMailboxMessageIds = 500;
+    private const int MaxSubjectCharacters = 150;
+    private const int MaxBodyCharacters = 8000;
+
     public string Name => "mailMgr";
 
     public bool HasMethod(string method) => method is "SyncMail" or "GetMailHeaders" or "GetBody" or "GetLabels" or "MarkAsRead" or "SendMail" or "PokePlayerAboutChatMsgGm";
@@ -43,9 +48,12 @@ public sealed class MailService(
 
         if (call.Method == "MarkAsRead")
         {
+            var requestedIds = Items(call.Arg(0));
+            if (requestedIds.Count > MaxMailboxMessageIds)
+                throw MailLimitRefusal("MAIL_BULK_LIMIT_EXCEEDED");
             var requestingCharacterId = call.Session.CharacterId.GetValueOrDefault();
             if (requestingCharacterId > 0)
-                foreach (var id in Items(call.Arg(0)).Select(PositiveId).Where(id => id > 0).Distinct())
+                foreach (var id in requestedIds.Select(PositiveId).Where(id => id > 0).Distinct())
                     await _markAsRead(requestingCharacterId, id, call.Session, call.Cancellation);
             return PyNone.Instance;
         }
@@ -66,8 +74,11 @@ public sealed class MailService(
                 return SyncMail(messages, statuses, call.Arg(0), call.Arg(1));
             case "GetMailHeaders":
             {
+                var requestedIds = Items(call.Arg(0));
+                if (requestedIds.Count > MaxMailboxMessageIds)
+                    throw MailLimitRefusal("MAIL_BULK_LIMIT_EXCEEDED");
                 var headers = new List<PyValue>();
-                foreach (var id in Items(call.Arg(0)).Select(PositiveId).Where(id => id > 0).Distinct())
+                foreach (var id in requestedIds.Select(PositiveId).Where(id => id > 0).Distinct())
                     if (Entry(messages, statuses, id) is { } entry)
                         headers.Add(Header(entry.Message));
                 return new PyList(headers);
@@ -108,13 +119,15 @@ private async ValueTask<PyValue> SendMailAsync(ServiceCall call)
         if (_sendMail is null)
             throw new InvalidOperationException("mailMgr.SendMail requires a durable persistence callback.");
 
+        var title = BoundedText(call.Arg(3), MaxSubjectCharacters, "MAIL_SUBJECT_LIMIT_EXCEEDED");
+        var body = BoundedText(call.Arg(4), MaxBodyCharacters, "MAIL_BODY_LIMIT_EXCEEDED");
         var request = new MailSendRequest(
             characterId,
             RecipientIds(call.Arg(0)),
             OptionalPositiveId(call.Arg(1)),
             OptionalRecipientIds(call.Arg(2)),
-            StringArgument(call.Arg(3)),
-            StringArgument(call.Arg(4)),
+            title,
+            body,
             OptionalPositiveId(call.Arg(5)),
             OptionalPositiveId(call.Arg(6)));
         var messageId = await _sendMail(request, call.Session, call.Cancellation);
@@ -153,6 +166,8 @@ private async ValueTask<PyValue> SendMailAsync(ServiceCall call)
             PyNone => [],
             _ => [value],
         };
+        if (values.Count > MaxCharacterRecipients)
+            throw MailLimitRefusal("MAIL_RECIPIENT_LIMIT_EXCEEDED");
         return [.. values.Select(PositiveId).Where(id => id > 0).Distinct()];
     }
 
@@ -239,6 +254,19 @@ private static IReadOnlyList<long>? OptionalRecipientIds(PyValue value) =>
 private static PyValue OptionalIds(JsonNode? value) => value is JsonArray ids
         ? new PyList([.. ids.Select(Integer).Where(id => id > 0).Select(id => (PyValue)new PyInt(id))])
         : OptionalId(value);
+
+    private static string BoundedText(PyValue value, int maximumCharacters, string refusalCode)
+    {
+        var text = StringArgument(value);
+        var characters = 0;
+        foreach (var _ in text.EnumerateRunes())
+            if (++characters > maximumCharacters)
+                throw MailLimitRefusal(refusalCode);
+        return text;
+    }
+
+    private static MachoWrappedException MailLimitRefusal(string refusalCode) =>
+        MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr(refusalCode)));
 
     private static IReadOnlyList<PyValue> Items(PyValue value) => value switch
     {

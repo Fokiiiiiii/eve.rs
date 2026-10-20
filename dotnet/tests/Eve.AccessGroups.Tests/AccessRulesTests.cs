@@ -1,6 +1,5 @@
 namespace Eve.AccessGroups.Tests;
 
-/// <summary>The rules of owner groups as the EVE University wiki's access list page states them, without a database.</summary>
 public sealed class AccessRulesTests
 {
     private const long Character = 90000001;

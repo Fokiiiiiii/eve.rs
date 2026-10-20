@@ -330,6 +330,25 @@ public class DispatchGoldenTests
     }
 
     [Fact]
+    public async Task Alliance_rankings_use_the_named_per_session_budget()
+    {
+        var capture = new Capture();
+        var session = new ClientSession(capture) { SessionId = 910 };
+        var registry = new ServiceRegistry();
+        var service = new ExpensiveService("allianceRegistry");
+        registry.Register(service);
+        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 10 };
+
+        await dispatcher.DispatchAsync(CallRequestPacket("allianceRegistry", "GetRankedAlliances"), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("allianceRegistry", "GetRankedAlliances"), session);
+
+        Assert.Equal(1, service.Calls);
+        Assert.Equal(2, capture.Sent.Count);
+        Assert.Equal(ErrorResponseCommand, CommandOf(capture.Sent[1]));
+        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[1])));
+    }
+
+    [Fact]
     public async Task Expensive_wallet_calls_have_a_named_per_session_budget()
     {
         var capture = new Capture();
@@ -459,7 +478,7 @@ public class DispatchGoldenTests
 
         public string Name => name;
 
-        public bool HasMethod(string method) => method is "GetOrders" or "BuyMultipleItems" or "GetHistoryForManyTypeIDs" or "GetAllianceMembers" or "SendBroadcast";
+        public bool HasMethod(string method) => method is "GetOrders" or "BuyMultipleItems" or "GetHistoryForManyTypeIDs" or "GetAllianceMembers" or "GetRankedAlliances" or "SendBroadcast";
 
         public ValueTask<PyValue> CallAsync(ServiceCall call)
         {

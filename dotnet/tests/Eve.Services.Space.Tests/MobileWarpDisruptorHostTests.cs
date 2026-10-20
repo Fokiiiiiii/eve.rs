@@ -6,7 +6,6 @@ using Eve.Space;
 namespace Eve.Services.Space.Tests;
 
 /// <summary>
-/// The mobile warp disruptors (WP-8; EVE.js <c>mobileWarpDisruptorRuntime</c>): a pilot drops one from the hold into space, where it is anchored when its anchoring
 /// delay is over (the durable job); it leaves with its item when its time is up; a restart puts it back in space with the state its record gives; and a pilot without
 /// the skill it needs cannot drop it.
 /// </summary>

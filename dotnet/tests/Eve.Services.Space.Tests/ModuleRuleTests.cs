@@ -7,7 +7,6 @@ using Npgsql;
 
 namespace Eve.Services.Space.Tests;
 
-/// <summary>The module rules the static data states as attributes (docs/project/TODO.md section 9): the constants name the SDE's attributes, and what is not run is refused.</summary>
 public class ModuleRuleTests
 {
     /// <summary>The constants of <see cref="ModuleAttributes"/> for the module rules, each with the SDE name it stands for.</summary>

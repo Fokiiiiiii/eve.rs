@@ -268,8 +268,6 @@ public class PlayerDeathTests
         Assert.Empty(rig.Sim.Heard.OfType<SimDestroy>());
     }
 
-    // ── a capsule ────────────────────────────────────────────────────────────
-
     private static async Task<(Rig Rig, Eve.Characters.Created Character, ClientSession Session, long CapsuleId)> InCapsuleAsync()
     {
         var (rig, c, session) = await InSpaceAsync();

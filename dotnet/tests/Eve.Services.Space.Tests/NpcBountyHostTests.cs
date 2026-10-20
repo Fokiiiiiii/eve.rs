@@ -58,7 +58,7 @@ public class NpcBountyHostTests
     [PgFact]
     public async Task A_sim_resident_triglavian_in_Pochven_pays_no_bounty()
     {
-        // the Werpost has an SDE entityKillBounty, but the owner's Pochven rule suppresses the payout
+
         var (rig, c, session) = await InSpaceAsync();
         await using var _ = rig;
         var pochven = rig.Systems.Systems.First(system => system.RegionId == Eve.Services.Space.Pochven.PochvenRules.RegionId);

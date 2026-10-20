@@ -9,7 +9,6 @@ using Npgsql;
 namespace Eve.Services.Space.Tests;
 
 /// <summary>
-/// The superweapon family of static data group 588 (docs/project/TODO.md section 12): every activation effect of every type in the group is refused by the reason
 /// its family names, before a package is built, so no simulation action, no fuel and no success. P.A.N.I.C. (42522) has its own handler and is
 /// checked in IndustrialInvulnerabilityTests.
 /// </summary>

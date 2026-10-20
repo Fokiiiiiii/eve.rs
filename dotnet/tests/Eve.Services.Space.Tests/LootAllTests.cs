@@ -180,7 +180,6 @@ public class LootAllTests
         Assert.Empty(Events.Of(f.Session));
     }
 
-
     [PgFact]
     public async Task Abandon_loot_requires_existing_rights_is_idempotent_and_keeps_the_contents()
     {

@@ -93,7 +93,7 @@ public class NpcSpawnTests
         // one in a batch of one: 800 + 600 = 1400 either way
         Assert.Equal(8_000 - 1_400, SpaceSessions.NpcSpawnDistance(profile, 0, 1, 0), 6);
         Assert.Equal(8_000 + 1_400, SpaceSessions.NpcSpawnDistance(profile, 0, 1, 1), 6);
-        // the window stops growing at 6 km (a batch of 9 or more), the step at 12 km
+
         Assert.Equal(8_000 + 6_000, SpaceSessions.NpcSpawnDistance(profile, 0, 9, 1), 6);
         Assert.Equal(8_000 + 6_000, SpaceSessions.NpcSpawnDistance(profile, 0, 50, 1), 6);
         Assert.Equal(8_000 + 3_750, SpaceSessions.NpcSpawnDistance(profile, 3, 1, 0.5), 6);

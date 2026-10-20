@@ -6,8 +6,6 @@ using Eve.Space;
 
 namespace Eve.Services.Space.Tests;
 
-
-
 public sealed class FleetLoginHookTests
 {
     [Fact]
@@ -325,7 +323,6 @@ public class SpaceServiceTests
             ((await rig.Items.GetAsync(capsuleId))!.LocationId, (await rig.Items.GetAsync(capsuleId))!.Flag));
     }
 
-
     [PgFact]
     public async Task Ejecting_from_a_battleship_with_a_usable_frigate_escape_bay_respawns_in_the_frigate()
     {
@@ -401,7 +398,6 @@ public class SpaceServiceTests
         Assert.Equal((await rig.Characters.GetAsync(character.CharacterId))!.ShipId, capsuleId);
         Assert.Null(await rig.Items.GetAsync(shipId));
     }
-
 
     [PgFact]
     public async Task Ejecting_that_loses_the_mechanics_hull_bonus_destroys_the_abandoned_ship_through_the_loss_path()
@@ -685,7 +681,6 @@ public class SpaceServiceTests
         return (oid, answer);
     }
 
-
     private static SimEnter AssertUndockSimulationMessages(Rig rig)
     {
         var enter = Assert.Single(rig.Sim.Heard.OfType<SimEnter>());
@@ -726,8 +721,6 @@ public class SpaceServiceTests
         return undocked;
     }
 
-    // ── binding ──────────────────────────────────────────────────────────────
-
     [PgFact]
     public async Task The_ship_service_binds_to_the_station_the_character_is_at_and_to_no_other_place()
     {
@@ -749,8 +742,6 @@ public class SpaceServiceTests
         Assert.Equal(PyNone.Instance, await rig.ShipCallAsync(session, "Undock", "N=65450:999", new PyLong(1), PyBool.False));
         Assert.Empty(rig.Sim.Heard);
     }
-
-    // ── undocking ────────────────────────────────────────────────────────────
 
     [PgFact]
     public async Task Undocking_tells_the_client_in_the_reference_order_and_answers_with_the_object_and_the_time()
@@ -1020,8 +1011,6 @@ public class SpaceServiceTests
         Assert.Equal(1, inspections);
     }
 
-    // ── in space ─────────────────────────────────────────────────────────────
-
     [PgFact]
     public async Task The_ballpark_binds_only_for_a_ship_in_space_and_once_the_answer_has_gone_the_simulation_sends_the_scene()
     {
@@ -1130,8 +1119,6 @@ public class SpaceServiceTests
         Assert.Equal(["DoDestinyUpdate"], Events.Of(session).Select(e => e.Name));
     }
 
-    // ── targets ──────────────────────────────────────────────────────────────
-
     private static string Describe(TargetingResult? result) =>
         result is null ? "none" : $"{result.Ok} {result.Pending} [{string.Join(",", result.Targets)}] {result.Reason} {result.TargetType} {result.DesiredRange} {result.ActualDistance}";
 
@@ -1232,8 +1219,6 @@ public class SpaceServiceTests
         await Task.WhenAll(first, second);
         Assert.Equal([1.0, 2.0], rig.Sim.Heard.OfType<SimCommand>().Where(c => c.Code == SimCommands.AddTarget).SelectMany(c => c.Args).ToArray());
     }
-
-    // ── modules ──────────────────────────────────────────────────────────────
 
     /// <summary>The ship a new character has, as dogma sees it, and the id of one of its modules by type.</summary>
     private static async Task<(Eve.Ships.ShipSnapshot Snapshot, long Afterburner, long Gun, long Miner)> ShipAsync(Rig rig, Eve.Characters.Created character)
@@ -1428,8 +1413,6 @@ public class SpaceServiceTests
         snapshot.World.SetState(afterburner, Eve.Dogma.ItemState.Offline);
         Assert.Equal("MODULE_NOT_ONLINE", Why(afterburner, "moduleBonusAfterburner"));
     }
-
-
 
     [Fact]
     public void A_cloaking_device_packages_a_non_targeted_cloak_action()
@@ -1932,8 +1915,6 @@ public class SpaceServiceTests
         Assert.Equal("CustomNotify", ((PyStr)arguments[0]).Value);
     }
 
-    // ── warp ─────────────────────────────────────────────────────────────────
-
     [PgFact]
     public async Task Autopilot_warp_uses_the_reference_arrival_range_and_keeps_the_warp_refusal_contract()
     {
@@ -2243,7 +2224,6 @@ public class SpaceServiceTests
             rig.Sim.Heard.Skip(before).Select(Describe));
     }
 
-
     [PgFact]
     public async Task A_coordinate_warp_uses_the_supplied_position_and_range()
     {
@@ -2276,7 +2256,6 @@ public class SpaceServiceTests
             rig.Sim.Heard.Skip(before).Select(Describe));
     }
 
-
     [PgFact]
     public async Task Active_criminal_timer_blocks_warp_and_gate_jump_in_high_security_space()
     {
@@ -2296,7 +2275,6 @@ public class SpaceServiceTests
 
         Assert.Equal(before, rig.Sim.Heard.Count);
     }
-
 
     [PgFact]
     public async Task Concord_response_spawns_the_authored_fleet_and_enforces_ship_loss_after_timer()
@@ -2345,7 +2323,6 @@ public class SpaceServiceTests
         punishment.Done.TrySetResult();
         await Rig.UntilAsync(() => rig.Sim.Heard.OfType<SimDestroy>().Any(destroy => destroy.ShipId == character.ShipId));
     }
-
 
     [PgFact]
     public async Task A_ship_that_is_in_warp_is_told_so_when_it_is_asked_to_warp_or_to_stop_and_is_not_otherwise_answered()
@@ -2429,8 +2406,6 @@ public class SpaceServiceTests
         Assert.Empty(Events.Of(session));
     }
 
-    // ── jumps ────────────────────────────────────────────────────────────────
-
     private const long Gate = 50016630;
     private const long NextGate = 50016839;
     private const int NextSystem = 30100034;
@@ -2506,7 +2481,7 @@ public class SpaceServiceTests
         await InSpaceAsync(rig, session);
         var oid = await rig.BindBeyonceAsync(session);
         Events.Of(session);
-        // the gate of the rig's jump has a toll: the minimum for a small ship, 10000 ISK (client alignmentBasedToll, the wiki's "starts at 10k")
+
         var toll = new Eve.Universe.AlignmentToll(0.015, 1.1, -100_000, 10_000, 0.0, [500011, 500010]);
         rig.Space.GateRules = new Eve.Services.Space.Gates.GateRules(
             new Dictionary<long, int>(), new Dictionary<int, IReadOnlySet<int>>(), new Dictionary<long, long>(),
@@ -2789,8 +2764,6 @@ public class SpaceServiceTests
         Assert.Equal(["Diamond", "Arrow"], formations.Items.Select(f => JsSemantics.StringValue(((PyTuple)f).Items[0])));
     }
 
-    // ── what the simulation says ─────────────────────────────────────────────
-
     [PgFact]
     public async Task What_the_simulation_says_for_a_session_reaches_that_client_as_the_notification_it_named()
     {
@@ -2877,8 +2850,6 @@ public class SpaceServiceTests
         Assert.Equal(1_000_000_000_042, Id(customArgs["itemID"]));
         Assert.Equal(new PyReal(1234.568), customArgs["distanceMeters"]);
     }
-
-    // ── docking ──────────────────────────────────────────────────────────────
 
     [PgFact]
     public async Task A_dock_is_answered_with_the_time_it_was_accepted_and_with_nothing_when_it_was_not()
@@ -3003,8 +2974,6 @@ public class SpaceServiceTests
         Assert.IsType<PyTuple>(answer);
         Assert.True(rig.Space.IsInSpace(session));
     }
-
-    // ── losing the ship ──────────────────────────────────────────────────────
 
     [PgFact]
     public async Task When_the_simulation_is_lost_the_ship_docks_at_the_station_the_character_left()
@@ -3148,7 +3117,6 @@ public class SpaceServiceTests
         Assert.False(Eve.Services.Space.FleetStore.IsValidAssignment(Eve.Services.Space.FleetStore.Leader, 10, 20));
     }
 
-
     [Fact]
     public void Fleet_warp_formations_decode_settings_and_keep_relative_fleet_positions()
     {
@@ -3290,7 +3258,6 @@ public class SpaceServiceTests
             if (fleetId > 0) await store.DisbandAsync(fleetId, leaderId);
         }
     }
-
 
     [PgFact]
     public async Task Fleet_invites_and_membership_publish_client_notifications_and_session_changes()
@@ -3541,7 +3508,6 @@ public class SpaceServiceTests
             if (fleetId > 0) await store.DisbandAsync(fleetId, memberId);
         }
     }
-
 
     [Fact]
     public void Fleet_added_bound_manager_and_proxy_rpcs_are_registered_for_dispatch()
@@ -4500,6 +4466,5 @@ public class SpaceServiceTests
             }));
         return reply.Items[1];
     }
-
 
 }

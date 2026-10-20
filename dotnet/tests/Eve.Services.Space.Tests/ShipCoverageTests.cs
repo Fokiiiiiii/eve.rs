@@ -6,7 +6,6 @@ namespace Eve.Services.Space.Tests;
 /// <summary>
 /// The <c>ship</c> calls the client makes for fitting and hulls (invItemFunctions.py:189-197 for AssembleShip, the fitting window and the undock and
 /// drone calls). Each must be answered by a method of the service, or be listed as open. An open call is answered with None by the generator's
-/// default, which is a silent answer (AGENT_OVERRIDE.md). AssembleShip is answered by SF-4 (the Strategic Cruiser assembly), so nothing is open.
 /// </summary>
 public class ShipCoverageTests
 {

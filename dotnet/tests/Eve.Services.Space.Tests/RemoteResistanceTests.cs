@@ -3,7 +3,6 @@ using Eve.Space;
 
 namespace Eve.Services.Space.Tests;
 
-/// <summary>What a target's resistance does to a remote effect that lands on it (FP-8): which attribute, the multiplier, and the weakened effect.</summary>
 public class RemoteResistanceTests
 {
     private static double NoModuleAttribute(int _) => 0;

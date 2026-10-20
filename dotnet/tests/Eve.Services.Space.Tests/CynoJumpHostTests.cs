@@ -7,7 +7,6 @@ using Eve.Universe;
 namespace Eve.Services.Space.Tests;
 
 /// <summary>
-/// The capital jump drive to a lit cynosural field (EVE University wiki, "Jump drive" and "Jump fatigue"): a Revelation in a low-security system spools to a field
 /// lit by its fleet in another system within range, takes its fuel and sets its cooldown; a field that is not lit, a field of another fleet and a drive that cools
 /// down are refused, and the fuel and the fatigue are written together or not at all.
 /// </summary>
@@ -16,7 +15,7 @@ public class CynoJumpHostTests
     private const int Revelation = 19720, Helium = 16274, FuelBayFlag = CharacterShips.FuelBayFlag;
     private const long Field = 4_250_000_000_000_201, OtherField = 4_250_000_000_000_202;
     private const int Origin = 30100032, Destination = 30100099;
-    /// <summary>A wormhole system and a Pochven system, one light year from the origin each: a jump drive may not enter either (the wiki).</summary>
+
     private const int Wormhole = 31_000_500, Pochven = 30_003_500;
     private const long Minute = 60_000, Spool = 300_000;
 
@@ -100,7 +99,6 @@ public class CynoJumpHostTests
         Assert.True(fleet > 0);
     }
 
-    /// <summary>A field lit by <paramref name="owner"/> in the destination system, its life running out at ten minutes from now.</summary>
     private static async Task LightAsync(Rig rig, long field, long owner, long ship, int type = 21_094)
     {
         await rig.Deployed.SaveAsync(new DeployedRecord(
@@ -246,7 +244,7 @@ public class CynoJumpHostTests
         var passage = Assert.Single(rig.Sim.Heard.OfType<SimCommand>(), command => command.Code == SimCommands.BridgeJump);
         Assert.Equal(new double[] { ship, Field, Destination }, passage.Args.ToArray());
         Assert.Equal(50_000 - expectedFuel, await rig.Ships.FuelHeldAsync(character.CharacterId, ship, Helium));
-        // the passenger\x27s fatigue is the wiki\x27s for one light year: twenty minutes, and a two minute cooldown
+
         var state = await new PgJumpFatigueStore(rig.Source, rig.SpaceSchema).GetAsync(passengerCharacter.CharacterId);
         Assert.Equal((rig.Now + 20 * Minute, rig.Now + 2 * Minute), (state.FatigueUntilMs, state.CooldownUntilMs));
     }
@@ -350,7 +348,6 @@ public class CynoJumpHostTests
 
         await bridges.OpenAsync(session, Field, Destination, CancellationToken.None);
 
-        // the industrial generator: 20 seconds (SDE 1002), 2 500 metres (the wiki), 100 GJ of capacitor (SDE 6), and no hold (the wiki gives none)
         var opened = Assert.Single(rig.Sim.Heard.OfType<SimCommand>(), command => command.Code == SimCommands.OpenBridge);
         Assert.Equal(new double[] { Field, Destination, 20_000, 0, 2_500, 100 }, opened.Args.ToArray());
         Assert.Single(bridges.Open);
@@ -482,7 +479,6 @@ public class CynoJumpHostTests
         Assert.Equal(next, await fatigue.GetAsync(character.CharacterId));
     }
 
-    /// <summary>A Mobile Cynosural Beacon of <paramref name="type"/> in the destination system, owned by <paramref name="owner"/>: anchored (its activation time is
     /// past) or still waiting to anchor (the record the placement keeps: the activation is two minutes, a covert one a minute, after the drop).</summary>
     private static async Task BeaconAsync(Rig rig, long beacon, long owner, long ship, int type, bool anchored)
     {
@@ -544,7 +540,6 @@ public class CynoJumpHostTests
         await BeaconAsync(rig, Field, character.CharacterId, ship, 59_630, anchored: true);
         rig.Sim.Heard.Clear();
 
-        // the covert beacon is a covert field for the cyno rule (the wiki: only black ops battleships)
         await Assert.ThrowsAnyAsync<MachoWrappedException>(() => Bridges(rig).OpenAsync(session, Field, Destination, CancellationToken.None));
         Assert.DoesNotContain(rig.Sim.Heard.OfType<SimCommand>(), command => command.Code == SimCommands.OpenBridge);
     }
@@ -578,7 +573,6 @@ public class CynoJumpHostTests
         rig.Now += 2 * Minute;
         await rig.Containers.AnchorAsync(Field);
 
-        // the beacon is told as a deployable: its id, its system, its id as the beacon, its owner, and lit
         var lit = Assert.Single(Events.Of(session));
         Assert.Equal("OnFleetJumpBeaconDeployableChange", lit.Name);
         Assert.Equal(new long[] { Field, Destination, Field, character.CharacterId }, lit.Args.Take(4).Select(Events.Number).ToArray());
@@ -620,7 +614,6 @@ public class CynoJumpHostTests
         _ => "",
     };
 
-    /// <summary>A cynosural field lit by <paramref name="owner"/> in <paramref name="system"/> (the field's own system, not the destination), ten minutes of life.</summary>
     private static async Task FieldInAsync(Rig rig, long field, int system, long owner, long ship)
     {
         await rig.Deployed.SaveAsync(new DeployedRecord(
@@ -638,7 +631,6 @@ public class CynoJumpHostTests
         var drive = Drive(rig);
         rig.Sim.Heard.Clear();
 
-        // the wiki: jump drives cannot jump to systems in wormhole space, and cannot be used to enter Pochven (only to exit)
         var wormhole = await Assert.ThrowsAsync<MachoWrappedException>(() => drive.JumpToFieldAsync(session, Field, character.CharacterId, Wormhole, oid, CancellationToken.None));
         Assert.Contains("wormhole space", Texts(wormhole.Error.Payload));
         var pochven = await Assert.ThrowsAsync<MachoWrappedException>(() => drive.JumpToFieldAsync(session, OtherField, character.CharacterId, Pochven, oid, CancellationToken.None));

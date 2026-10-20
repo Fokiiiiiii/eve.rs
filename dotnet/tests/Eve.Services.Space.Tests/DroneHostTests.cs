@@ -148,7 +148,6 @@ public class DroneHostTests
         Assert.Equal(["OnGodmaPrimeItem", "OnItemChange"], told.Take(2));
     }
 
-
     [PgFact]
     public async Task A_pilot_reconnects_to_a_nearby_abandoned_drone()
     {
@@ -393,7 +392,6 @@ public class DroneHostTests
             (autoOrder.Command, autoOrder.TargetId, Assert.Single(autoOrder.DroneIds)));
     }
 
-
     [PgFact]
     public async Task A_drone_link_augmentor_adds_its_fitted_dogma_range_to_drone_commands()
     {
@@ -432,7 +430,6 @@ public class DroneHostTests
         await Rig.UntilAsync(() => Events.Of(flying.Session, clear: false).Any(e => e.Name == "OnItemChange"));
         Assert.Contains(Events.Of(flying.Session, clear: false), e => e.Name == "OnItemChange");
     }
-
 
     [PgFact]
     public async Task Inventory_add_and_get_capacity_use_the_drone_scene_and_complete_the_normal_scoop_notifications()
@@ -507,7 +504,6 @@ public class DroneHostTests
         Assert.Same(PyNone.Instance, refused);
         Assert.Equal((flying.System, CharacterShips.InSpaceFlag), ((await rig.Items.GetAsync(flying.Drone))!.LocationId, (await rig.Items.GetAsync(flying.Drone))!.Flag));
     }
-
 
     [PgFact]
     public async Task A_mining_drone_cycle_depletes_its_asteroid_and_persists_ore_before_acknowledgement()
@@ -624,7 +620,6 @@ public class DroneHostTests
         PyReal real => real.Value,
         _ => throw new InvalidOperationException(value.ToString()),
     };
-
 
     [PgFact]
     public async Task Inventory_turret_slot_rpc_returns_the_active_ships_nonnegative_remaining_count()

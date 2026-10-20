@@ -8,7 +8,6 @@ namespace Eve.Services.Space.Tests;
 
 /// <summary>
 /// The Standup burst projectors and the Standup HOG through the Host's structure path (ST-8b): a controlled structure's burst is sent to the simulation as a
-/// structure burst, each pulse asks the Host for its candidates, and the Host grants only the ships the structure's owner may affect (the owner corporation's facts).
 /// </summary>
 public sealed class StructureBurstAuthorizationTests
 {

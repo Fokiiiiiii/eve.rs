@@ -6,12 +6,9 @@ namespace Eve.Wormholes;
 public sealed record PlannedConnection(int SourceSystemId, int DestinationSystemId, string Code, int TypeId, double MassKg, ulong Seed);
 
 /// <summary>
-/// The static connections of J-space (the documented mechanic: the wiki's "Wormhole Types" and "Wormhole" pages). Each static's
 /// exit leads to a random system of the target class of its type (SDE 1381: high-, low- or null-sec for types 7, 8 and 9; a
 /// J-space class for the others), chosen among the systems of that class that do not already hold a connection from the source.
 /// The choice is seeded: the same world seed gives the same connections. The mass is the type's stable mass times a roll in
-/// 90% to 110% (wiki "Wormhole Types": the total is set at birth within that range). Probabilities are not published; the
-/// statics are fixed per system (client data and EveJS), so no roll decides whether a static exists.
 /// </summary>
 public static class WormholePlanner
 {

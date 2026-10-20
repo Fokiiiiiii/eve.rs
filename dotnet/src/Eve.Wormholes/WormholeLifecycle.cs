@@ -8,7 +8,6 @@ public enum TransitOutcome
     /// <summary>The ship went through and the wormhole has mass left.</summary>
     Passed,
 
-    /// <summary>The ship is heavier than the wormhole's individual limit (wiki: the aurora's ship limits).</summary>
     Refused,
 
     /// <summary>The ship's mass emptied the wormhole: it collapses behind the ship.</summary>

@@ -14,7 +14,6 @@ public sealed record WormholeEnd(long BodyId, int SolarSystemId, string Name, in
 
 /// <summary>
 /// The world of the wormholes in the host: the stored connections, their durable lifecycle, and the ends the host places in space.
-/// Rule (owner decision, slice 7): an end's position is 50 km from its system's centre on a bearing taken from the connection's seed; the
 /// far end's bearing is taken from the same seed with a different salt. The radius is 3,000 m. The positions are not published (DEVIATIONS).
 /// </summary>
 public sealed class WormholeWorld
@@ -67,7 +66,7 @@ public sealed class WormholeWorld
             {
                 await Jobs.OpenAsync(connection, transaction, planned, isStatic: true, nowMs, cancellationToken, _ => { });
             }
-            // Thera's connections (slice 8): their own seed, so the statics do not change when they do
+
             foreach (var planned in TheraConnections.Plan(_classes, _types, seed ^ 0x7E4A5A9EUL))
             {
                 await Jobs.OpenAsync(connection, transaction, planned, isStatic: true, nowMs, cancellationToken, _ => { });

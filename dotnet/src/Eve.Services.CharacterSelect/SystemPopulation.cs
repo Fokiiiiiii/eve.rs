@@ -23,7 +23,7 @@ public sealed class SystemPopulation
 
     private readonly CharacterSessions _sessions;
     private readonly SolarSystemCatalog _systems;
-    // the seats taken by entries that are not yet in a session: the check and the seat are one step under this lock
+
     private readonly object _gate = new();
     private readonly Dictionary<Seat, (long System, long Character)> _seats = [];
 

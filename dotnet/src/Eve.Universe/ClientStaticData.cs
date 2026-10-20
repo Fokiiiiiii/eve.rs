@@ -26,7 +26,6 @@ public static class ClientStaticData
 
     /// <summary>
     /// The file <paramref name="relativePath"/> of <paramref name="directory"/> when that directory is set and holds it; otherwise the
-    /// embedded resource <paramref name="resource"/> of <paramref name="owner"/>.
     /// </summary>
     public static Stream Open(Assembly owner, string? directory, string relativePath, string resource)
     {

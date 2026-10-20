@@ -44,7 +44,6 @@ public sealed partial class CharUnboundMgrService(
 
     private static readonly PyValue None = PyNone.Instance;
 
-    /// <summary>The roles that may switch name validation off: programmer, QA, GML and content (EveJS CHARACTER_CREATION_VALIDATION_ROLE_MASK).</summary>
     private const long ValidationToggleRoles = (1L << 51) | (1L << 52) | (1L << 54) | (1L << 55);
 
     private const string ValidationSessionKey = "characterCreationValidation";
@@ -297,7 +296,7 @@ public sealed partial class CharUnboundMgrService(
         if (character.IsQueuedForDeletion)
             throw Info("That character is queued for deletion and cannot enter the game.");
         // The population cap is checked here as well as on the selection screen, because the screen's answer can be stale by now. The room is
-        // checked and a seat taken in one step; the seat is given back when this call ends (the session counts from then on).
+
         using var seat = population is not null && character.SolarSystemId > 0
             ? population.TryReserve(character.SolarSystemId, character.Id) ?? throw Info("That solar system has no room for another pilot. Try again later.")
             : null;
@@ -457,9 +456,8 @@ public sealed partial class CharUnboundMgrService(
         return None;
     }
 
-    /// <summary>The biomass queue's waiting time before a queued character can be deleted (EveJS <c>characterDeletionDelayMinutes</c>, 600).</summary>
     private static readonly TimeSpan BiomassDelay = TimeSpan.FromMinutes(600);
-    /// <summary>The graveyard corporation a deleted character is moved into (EveJS <c>DOOMHEIM_CORPORATION_ID</c>).</summary>
+
     private const long DoomheimCorporationId = 1000001;
 
     private DateTimeOffset Now() => (clock ?? (() => DateTimeOffset.UtcNow))();
@@ -482,7 +480,6 @@ public sealed partial class CharUnboundMgrService(
 
     /// <summary>
     /// <c>DeleteCharacter(charID)</c>: deletes a queued character once its waiting time has passed. The character is then hidden
-    /// from its account. Its assets and private state are not moved or purged yet (CH-1 gap, see the handoff).
     /// </summary>
     [Method("DeleteCharacter")]
     public async ValueTask<PyValue> DeleteCharacter(ServiceCall call)
@@ -496,7 +493,7 @@ public sealed partial class CharUnboundMgrService(
         var originalCorporation = character.CorporationId;
         if (!await characters.MarkDeletedAsync(character.Id, account, now, Token(call)))
             throw Info("Failed to finalize that character deletion.");
-        // the graveyard corporation (EveJS DOOMHEIM_CORPORATION_ID), then the assets and the private state
+
         await characters.SetCorporationAsync(character.Id, DoomheimCorporationId, Token(call));
         if (deletionPurge is not null)
             await deletionPurge.PurgeAsync(character.Id, originalCorporation, Token(call));

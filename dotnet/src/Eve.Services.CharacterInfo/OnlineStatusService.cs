@@ -4,7 +4,6 @@ namespace Eve.Services.CharacterInfo;
 
 /// <summary>
 /// Live character presence, filtered through mutual personal buddy lists.
-/// Contract: EveJS 828823a/server/src/services/online/{onlineStatusService,onlineStatusRuntime}.js,
 /// serviceHelpers.buildDbRowset, and eve-logic 1dbb571/eve/client/script/ui/shared/comtool/onlineStatus.py.
 /// CCP's March 2016 release requires mutual buddy-list membership for another character's status.
 /// </summary>

@@ -26,8 +26,6 @@ public sealed class StationCatalog
     public IEnumerable<Station> All => _stations.Values;
 
     /// <summary>
-    /// A station is named <c>System Roman[ - Moon N] - Owner[ Operation]</c>: the system and the number of the planet it is at
-    /// (or that its moon orbits), the moon if it is at one, and its owner with the kind of station it is (for most stations).
     /// </summary>
     public static string NameOf(string system, int celestialIndex, int? moon, string owner, string? operation)
     {
@@ -82,7 +80,7 @@ public sealed class StationCatalog
             if (!systems.TryGetValue(system, out var place) || !corporations.TryGetValue(owner, out var corporation)
                 || !constellations.TryGetValue(place.Constellation, out var constellationName) || !regions.TryGetValue(place.Region, out var regionName))
             {
-                continue; // a station whose place or owner the data does not have cannot be named
+                continue;
             }
             var useOperation = doc.TryGetProperty("useOperationName", out var use) && use.ValueKind == JsonValueKind.True;
             int? moon = doc.TryGetProperty("orbitIndex", out var index) && index.ValueKind == JsonValueKind.Number ? index.GetInt32() : null;

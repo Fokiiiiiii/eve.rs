@@ -3,7 +3,6 @@ using Xunit;
 
 namespace Eve.Services.Core.Tests;
 
-/// <summary>The R&amp;D research rate, the project slots and the qualifying skills, as the EVE University wiki states them.</summary>
 public class AgentResearchFieldsTests
 {
     private const int ResearchAgentType = (int)AgentAccessRule.ResearchAgentType;

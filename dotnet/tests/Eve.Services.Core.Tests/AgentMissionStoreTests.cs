@@ -20,7 +20,6 @@ public sealed class AgentsPgFactAttribute : FactAttribute
     }
 }
 
-/// <summary>The agents store's offers and accepted missions reach the mission journal and the sessions (AG-2 / A5).</summary>
 public class AgentMissionStoreTests
 {
     private const long Pilot = 140000011;

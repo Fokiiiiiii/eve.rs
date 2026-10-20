@@ -4,10 +4,9 @@ using Eve.Services.Core;
 
 namespace Eve.Services.Core.Tests;
 
-/// <summary>The offer rule of the epic arcs, from a synthetic arc shaped like CCP's <c>epicArcs</c> record (a fork, a branch of another agent, a terminal).</summary>
 public sealed class EpicArcOffersTests
 {
-    // 9101 (agent 5001, a kill) forks to 9102 (agent 5001) and 9103 (agent 5002); both lead to the terminal 9104 (agent 5001).
+
     private const string Arc = """
         {"_key": 9001, "name": {"en": "Fixture Arc"}, "arcRestartInterval": 129600,
          "missions": [
@@ -18,7 +17,6 @@ public sealed class EpicArcOffersTests
          ]}
         """;
 
-    // A second arc of the same agent, with a lower mission ID than the first: the lowest offerable ID wins.
     private const string OtherArc = """
         {"_key": 9002, "name": {"en": "Other Fixture Arc"}, "arcRestartInterval": 129600,
          "missions": [{"_key": 9050, "agentID": 5001, "nextMissions": []}]}

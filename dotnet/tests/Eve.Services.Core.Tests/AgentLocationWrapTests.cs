@@ -3,7 +3,6 @@ using Eve.Services.Core;
 
 namespace Eve.Services.Core.Tests;
 
-/// <summary>The location wrap of a bound agent (GetAgentLocationWrap): a station agent, an agent in space, and the station type default.</summary>
 public class AgentLocationWrapTests
 {
     private static AgentMissionAgentData Agent(long? station, long? stationType, bool inSpace = false, long? dungeon = null, long? spawn = null, long? type = null) => new(

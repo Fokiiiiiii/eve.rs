@@ -2,7 +2,6 @@ using Eve.Services.Core;
 
 namespace Eve.Services.Core.Tests;
 
-/// <summary>The rule of the agents in space: 20 km from the system centre, the same place for the same agent, a different place for another agent.</summary>
 public class InSpaceAgentPlacementTests
 {
     [Fact]

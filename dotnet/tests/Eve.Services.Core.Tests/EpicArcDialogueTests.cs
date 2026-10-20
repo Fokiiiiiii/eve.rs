@@ -9,8 +9,6 @@ using Npgsql;
 namespace Eve.Services.Core.Tests;
 
 /// <summary>
-/// The epic arc offers through the dialogue on the PostgreSQL store: request offers the arc's current step, accept and completion
-/// move the store, and the next request offers the next step (EpicArcOffers with AgentDialogueMachine, the real store).
 /// </summary>
 public class EpicArcDialogueTests
 {
@@ -18,7 +16,6 @@ public class EpicArcDialogueTests
     private const long Agent = 5001;
     private static readonly DateTimeOffset Start = new(2026, 10, 11, 12, 0, 0, TimeSpan.Zero);
 
-    // 9101 (agent 5001, a generic site, switched on for this test) leads to 9102 (agent 5001), which leads to the terminal 9104 (agent 5001).
     private const string Arc = """
         {"_key": 9001, "name": {"en": "Fixture Arc"}, "arcRestartInterval": 129600,
          "missions": [

@@ -183,7 +183,6 @@ public sealed class MissionStaticCatalogTests
         Assert.NotNull(unknown.Reason);
     }
 
-    // Two arcs with one generic kill step each: 55 is on by default, 9001 is not.
     private const string OnByDefaultArc = """{"_key": 55, "name": {"en": "On By Default"}, "arcRestartInterval": 129600, "missions": [{"_key": 9501, "agentID": 3000001, "nextMissions": []}]}""";
     private const string OtherArc = """{"_key": 9001, "name": {"en": "Other"}, "arcRestartInterval": 129600, "missions": [{"_key": 9502, "agentID": 3000002, "nextMissions": []}]}""";
 

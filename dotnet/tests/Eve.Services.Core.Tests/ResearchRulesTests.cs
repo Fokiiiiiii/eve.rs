@@ -3,13 +3,12 @@ using Xunit;
 
 namespace Eve.Services.Core.Tests;
 
-/// <summary>The R&amp;D research rate, the project slots and the qualifying skills, as the EVE University wiki states them.</summary>
 public class ResearchRulesTests
 {
     [Fact]
     public void The_wiki_maximum_for_a_level_four_agent_is_reproduced_exactly()
     {
-        // Negotiation V, standing 10 (the top of the range), specialty V, agent level IV: (1 + 55/100) * 9^2.
+
         Assert.Equal(125.55, ResearchRules.PointsPerDay(5, 10, 5, 4), 9);
     }
 

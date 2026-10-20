@@ -7,7 +7,6 @@ using Xunit;
 namespace Eve.Services.Core.Tests;
 
 /// <summary>
-/// The ship clone installation through the jump clone service's dispatch (eve-logic <c>clonejumpsvc.py</c>; EveJS <c>jumpCloneRuntime.js</c>
 /// 2586-2717): the offer, the accept and the cancel, the notifications each pilot hears in the reference's order, and the refusals.
 /// </summary>
 public sealed class JumpCloneShipInstallTests

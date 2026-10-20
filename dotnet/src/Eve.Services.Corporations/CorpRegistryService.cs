@@ -660,7 +660,10 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
         for (var index = 0; index < 16; index++)
         {
             var titleId = 1 << index;
-            fields.Add(($"title{index+1}",new PyWString(titles.FirstOrDefault(title => title.Id == titleId)?.Name ?? "")));
+            var titleName = (member?.TitleMask & titleId) != 0
+                ? titles.FirstOrDefault(title => title.Id == titleId)?.Name
+                : null;
+            fields.Add(($"title{index+1}",titleName is null ? PyValue.None : new PyWString(titleName)));
         }
         return Py.KeyVal(fields.ToArray());
     }

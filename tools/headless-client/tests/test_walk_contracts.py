@@ -78,7 +78,7 @@ def test_two_characters_create_accept_and_settle_a_public_item_exchange():
         assert kind == "ok", base.brief(created)
         contract_id = number(created[0])
         assert contract_id > 0
-        assert dbseed.owner_of(item_id) == 1
+        assert dbseed.owner_of(item_id) == issuer_id
         assert dbseed.isk_of(issuer_id) < issuer_before, "public listing fees and deposit are charged on creation"
 
         accepted = acceptor.call("contractProxy", "AcceptContract", contract_id, False)

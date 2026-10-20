@@ -45,11 +45,11 @@ The headless login-to-character walk (`tools/headless-client/tests/test_login_to
 | `config.GetStationSolarSystemsByOwner` | Static/config startup | Implemented | Host reads server configuration/static catalog. |
 | `localizationServer.GetAllTextChanges` | Localization startup | Partial | Route is present; configured text-change data and locale-specific coverage remain to be established. |
 | `alert` / `securityMgr` initial calls | Startup gates | Partial | Concrete routes are registered; the client trace must identify the exact request and expected gate state for each deployment. |
-| `chatAuthenticationService.GetAuthenticationToken` | First world entry chat initialization | Partial | Route exists; validate token ownership, expiry and client notification/connection follow-up. |
+| `chatAuthenticationService.GetAuthenticationToken` | First world entry chat initialization | Implemented | Issues a cryptographic token scoped to the active session; `XmppChatHub` checks it against that session with constant-time comparison. `SessionStartupRpcServicesTests` and Host XMPP tests cover token use and authenticated chat. |
 | `authentication` / `sessionMgr` notifications | Login and world transition | Implemented | Session initialization and character-change notifications are covered by headless walk. |
 | `userSvc.UserLogOffCharacter` | Return to character selection | Implemented | Session remains connected without a selected character; a subsequent selection is covered in `test_login_to_character.py`. |
 
-Inventory baseline: 38 tracked service/RPC entries. Source review classifies 27 as implemented, 11 as partial, and 0 as missing routes. The partial count includes existing methods whose default/provider behavior still needs completion; route registration alone does not establish completion.
+Inventory baseline: 38 tracked service/RPC entries. Source review classifies 28 as implemented, 10 as partial, and 0 as missing routes. The partial count includes existing methods whose default/provider behavior still needs completion; route registration alone does not establish completion.
 
 ## Verification boundary
 

@@ -5119,4 +5119,4 @@ The V24.01 client sends selected item collections to `invbroker.MultiAdd`; EveJS
 
 ## Market bulk sell bound (2026-10-20)
 
-`marketProxy.PlaceMultiSellOrder` accepts a client list of sell entries. EveJS handles each entry in sequence without an entry cap. eve.rs now refuses more than 500 entries before market calls, matching the cap on adjacent multi-order RPCs. The focused PostgreSQL test checks the named refusal at 501 entries; normal client batches retain their behavior. Graphical-client acceptance is open.
+`marketProxy.PlaceMultiSellOrder` accepts a client list of sell entries. EveJS handles each entry in sequence without an entry cap. eve.rs now refuses more than 500 entries before market calls, matching the cap on adjacent multi-order RPCs. The focused PostgreSQL test checks the named refusal at 501 entries; dispatcher coverage checks the weighted per-session limit. Normal client batches retain their behavior. Graphical-client acceptance is open.

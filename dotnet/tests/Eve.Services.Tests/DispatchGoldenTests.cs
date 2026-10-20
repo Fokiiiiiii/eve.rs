@@ -231,6 +231,7 @@ public class DispatchGoldenTests
 
         await dispatcher.DispatchAsync(CallRequestPacket("marketProxy", "GetOrders"), session);
         await dispatcher.DispatchAsync(CallRequestPacket("marketProxy", "BuyMultipleItems"), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("marketProxy", "PlaceMultiSellOrder"), session);
 
         var fleetCapture = new Capture();
         var fleetSession = new ClientSession(fleetCapture) { SessionId = 908 };
@@ -241,9 +242,11 @@ public class DispatchGoldenTests
         Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(fleetCapture.Sent[1])));
 
         Assert.Equal(1, service.Calls);
-        Assert.Equal(2, capture.Sent.Count);
+        Assert.Equal(3, capture.Sent.Count);
         Assert.Equal(ErrorResponseCommand, CommandOf(capture.Sent[1]));
         Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[1])));
+        Assert.Equal(ErrorResponseCommand, CommandOf(capture.Sent[2]));
+        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[2])));
 
         var historyCapture = new Capture();
         var historySession = new ClientSession(historyCapture) { SessionId = 903 };
@@ -307,7 +310,7 @@ public class DispatchGoldenTests
         now += 60_000;
         await dispatcher.DispatchAsync(CallRequestPacket("marketProxy", "GetOrders"), session);
         Assert.Equal(4, service.Calls);
-        Assert.Equal(7, CommandOf(capture.Sent[2]));
+        Assert.Equal(7, CommandOf(capture.Sent[3]));
     }
 
     [Fact]
@@ -497,7 +500,7 @@ public class DispatchGoldenTests
 
         public string Name => name;
 
-        public bool HasMethod(string method) => method is "GetOrders" or "BuyMultipleItems" or "GetHistoryForManyTypeIDs" or "GetAllianceMembers" or "GetRankedAlliances" or "GetOrganizationInfoForCharacters" or "SendBroadcast";
+        public bool HasMethod(string method) => method is "GetOrders" or "BuyMultipleItems" or "PlaceMultiSellOrder" or "GetHistoryForManyTypeIDs" or "GetAllianceMembers" or "GetRankedAlliances" or "GetOrganizationInfoForCharacters" or "SendBroadcast";
 
         public ValueTask<PyValue> CallAsync(ServiceCall call)
         {

@@ -129,7 +129,6 @@ public class AgentMissionStoreTests
     [PgFact]
     public async Task An_offer_does_not_expire_so_a_late_accept_is_taken_and_the_sweep_leaves_it_alone()
     {
-        // the wiki's seven-day expiry is for COSMOS agents only (not identified in the data): other agents' offers stay until accepted or declined
         await using var rig = await Rig.Create();
         await rig.Store.OfferAsync(Character, Agent, Courier, Rig.Start, "offer:1");
         var late = Rig.Start + TimeSpan.FromDays(30);
@@ -187,7 +186,6 @@ public class AgentMissionStoreTests
         Assert.Equal(Rig.Start + Hour, quit.QuitAt);
         Assert.Equal(["offered:0>1", "accepted:1>2", "quit:2>6"], await rig.JournalAsync(Character, Agent));
     }
-
 
     [PgFact]
     public async Task A_reset_returns_an_accepted_mission_to_none_and_the_agent_offers_again()

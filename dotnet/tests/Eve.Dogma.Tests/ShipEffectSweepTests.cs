@@ -4,7 +4,6 @@ using Eve.Dogma;
 namespace Eve.Dogma.Tests;
 
 /// <summary>
-/// The dogma sweep of the ship-scope effects (SF-7): every effect of a published ship, a subsystem, or a Tactical Destroyer mode item (group 1306) is passive, and
 /// each of its modifiers is a function and a domain the engine applies to the ship. The sweep reads the pinned SDE and fails on any row it cannot explain, so a
 /// new function or domain in the static data is found here, not in a fight. Target and area effects (category 2 and 3) belong to modules and are not in this sweep.
 /// </summary>

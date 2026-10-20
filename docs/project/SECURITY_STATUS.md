@@ -4,9 +4,9 @@ Checked 2026-10-20.
 
 ## Dependency and image review
 
-- Rust: `cargo audit 0.22.2` loaded 1,338 RustSec advisories and scanned 114 dependencies in `Cargo.lock`; it exited successfully and reported no vulnerable packages. `cargo test -p eve-sde` passed (40 tests); `cargo fmt --check` and `cargo clippy -p eve-sde -- -D warnings` passed. CI on `1b867976` passed Rust tests, formatting, clippy, and the stable-toolchain advisory job.
-- .NET: `dotnet list dotnet/EveRs.slnx package --vulnerable --include-transitive` reported no vulnerable packages across the solution projects. GitHub Actions run 122 on `a7c25a09` passed the build and all three .NET test shards.
-- Python: `pip-audit 2.10.1` scanned both headless-client requirements files and reported no known vulnerabilities. The Python client job passed in GitHub Actions run 122 on `a7c25a09`.
+- Rust: `cargo audit 0.22.2 --file Cargo.lock` loaded 1,345 RustSec advisories and scanned 114 dependencies; it exited successfully and reported no vulnerable packages. `cargo deny` was not installed in the environment.
+- .NET: `dotnet list dotnet/EveRs.slnx package --vulnerable --include-transitive --no-restore` completed against `https://api.nuget.org/v3/index.json` on 2026-10-20 and found no vulnerable packages across the solution projects.
+- Python: `pip-audit 2.10.1` scanned `tools/headless-client/requirements.txt` and `tools/headless-client/requirements-dev.txt` on 2026-10-20 and reported no known vulnerabilities.
 - No tracked npm manifests or lockfiles were present. The Dockerfile uses those Rust and .NET version tags with pinned registry manifest digests. Docker Scout, Trivy, Grype, and Snyk were unavailable, so no image vulnerability database scan was completed.
 - Workflow action references are pinned to full commit IDs; no action-advisory scan was available.
 - GitHub Dependabot alerts are disabled for this repository. The GitHub secret-scanning MCP function was unavailable, and the REST alert endpoint was blocked by the environment proxy.

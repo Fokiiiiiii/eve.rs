@@ -1198,9 +1198,12 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
     {
         if (call.Session.CharacterId is not { } actor || await Current(call) is not { } corp)
             throw new CorporationError("CORPORATION_ACCESS_DENIED");
+        var requested = Items(call.Arg(0));
+        if (requested.Count > MaxBulkMemberIds)
+            throw new CorporationError("CORPORATION_BULK_LIMIT_EXCEEDED");
         var updates = new List<Member>();
         var beforeById = new Dictionary<long,Member>();
-        foreach (var raw in Items(call.Arg(0)))
+        foreach (var raw in requested)
         {
             var row = Items(raw);
             if (row.Count == 0 || PositiveId(row[0]) is not { } target)

@@ -23,6 +23,10 @@ public sealed class AccessGroupBookmarkMgrTests
         Assert.Equal(3, answer.Items.Count);
         var folders = Assert.IsType<PyList>(answer.Items[0]);
         var folder = Assert.IsType<PyObject>(Assert.Single(folders.Items));
+        var excessiveIds = new PyList(Enumerable.Range(1, 501).Select(id => (PyValue)new PyLong(id)).ToArray());
+        var limitError = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await Call(service, session, "DeleteBookmarks", new PyInt(0), excessiveIds));
+        Assert.Equal("BOOKMARK_BULK_LIMIT_EXCEEDED", limitError.Error.UserErrorMessage);
     }
 
     [PgFact]

@@ -264,7 +264,14 @@ public sealed partial class InvBrokerService(
 
         if (await items.GetAsync(context.ItemId, cancellationToken) is not { } container)
             return [];
+        if (container.CustomInfo?.StartsWith("analysis_beacon_loot:", StringComparison.Ordinal) == true
+            && (space is null || await space.OpenAsync(session, container.Id, cancellationToken) is null))
+            return [];
         var contents = await items.InContainerAsync(context.ItemId, cancellationToken);
+        if (container.CustomInfo == "analysis_beacon_wreck")
+            return await RowsAsync(contents, cancellationToken);
+        if (container.CustomInfo?.StartsWith("analysis_beacon_loot:", StringComparison.Ordinal) == true)
+            return await RowsAsync(contents.Where(item => item.OwnerId == character), cancellationToken);
         if (container.OwnerId == character)
             return await RowsAsync(contents.Where(item => item.OwnerId == character), cancellationToken);
         if (await CanAccessCorporationItemAsync(session, container, CorporationHangarOperation.Query, cancellationToken))

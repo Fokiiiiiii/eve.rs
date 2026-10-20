@@ -430,6 +430,11 @@ internal sealed class LocalChatGateway
       internal static string LocalChannelName(long systemId) =>
           $"{(IsDelayed(systemId) ? "wormhole" : "local")}_{systemId}";
 
+    internal static bool IsDelayedLocalChannel(string channelName) =>
+        channelName.StartsWith("wormhole_", StringComparison.Ordinal)
+        && long.TryParse(channelName["wormhole_".Length..], out var systemId)
+        && IsDelayed(systemId);
+
     private static string ReadString(ReadOnlyMemory<byte> payload, int number)
     {
         var field = ProtoReader.Fields(payload).FirstOrDefault(f => f.Number == number && f.WireType == 2);

@@ -2,7 +2,6 @@ using Eve.Services.Core;
 
 namespace Eve.Services.Core.Tests;
 
-/// <summary>The eve.rs rule for an agent's mission kind and importance (AgentMissionKindRules).</summary>
 public sealed class AgentMissionKindRulesTests
 {
     [Theory]
@@ -21,11 +20,11 @@ public sealed class AgentMissionKindRulesTests
     }
 
     [Theory]
-    [InlineData(2, 18)]   // R&D is no mission division on the wiki's Agent page
-    [InlineData(1, 22)]   // non-agent
-    [InlineData(5, 24)]   // CONCORD: the wiki does not describe it
+    [InlineData(2, 18)]
+    [InlineData(1, 22)]
+    [InlineData(5, 24)]
     [InlineData(8, 22)]   // event
-    [InlineData(12, 25)]  // career: no specific mission type on the wiki page
+    [InlineData(12, 25)]
     [InlineData(99, 24)]  // a type the SDE does not name
     [InlineData(2, 99)]   // a division the rule does not name
     public void A_type_or_division_the_rule_does_not_name_gets_no_kind(long typeId, long divisionId)

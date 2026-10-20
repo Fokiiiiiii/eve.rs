@@ -111,7 +111,7 @@ public class AgentResearchDialogueTests
 
         var project = Assert.IsType<ResearchProject>(await world.Projects.ReadAsync(Pilot, Agent));
         Assert.Equal(Quantum, project.SkillTypeId);
-        // Negotiation V, effective standing 10 (no Connections), specialty IV, agent level I: (1 + 55/100) * 5^2.
+
         Assert.Equal(38.75, project.PointsPerDay, 9);
         Assert.Equal(new (long, int)[] { (AgentDialogueToken.BuyDatacores, AgentDialogueButton.BuyDatacores), (AgentDialogueToken.CancelResearch, AgentDialogueButton.CancelResearch) },
             started.Actions.ToArray());

@@ -353,7 +353,6 @@ public class CalendarMgrServiceTests
     private static short ResponseStatus(FakeCalendarStore store, long eventId, long characterId) =>
         store.Responses.Single(row => row.EventId == eventId && row.CharacterId == characterId).Status;
 
-
     private static short ReadStatus(PyValue value)
     {
         var row = Assert.IsType<PyDict>(value);

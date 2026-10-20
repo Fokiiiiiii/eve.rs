@@ -46,7 +46,6 @@ public sealed class TargetedParityRpcTests
             Assert.True(publicQa.HasMethod(method), method));
     }
 
-
     [Fact]
     public async Task Public_qa_rpcs_require_staff_account_roles()
     {

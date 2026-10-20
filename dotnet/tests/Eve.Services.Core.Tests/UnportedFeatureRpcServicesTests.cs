@@ -267,7 +267,6 @@ public sealed class UnportedFeatureRpcServicesTests
         Assert.Null(observed);
     }
 
-
 [Fact]
     public async Task Every_nodegraph_qa_rpc_refuses_non_staff_before_forwarding()
     {

@@ -52,7 +52,6 @@ public sealed class ContractProxyServiceTests
         Assert.Equal(new PyInt(3), Value(response, "itemsEscrow"));
     }
 
-
     [Fact]
     public async Task Place_bid_uses_client_argument_order_and_returns_boolean_success()
     {

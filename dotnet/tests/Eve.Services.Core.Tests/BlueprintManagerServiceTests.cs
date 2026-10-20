@@ -5,7 +5,6 @@ using Eve.Services.Core;
 
 namespace Eve.Services.Core.Tests;
 
-/// <summary>The <c>blueprintManager</c> answers: the limit, a blueprint of the caller, the owner's listing with its counts, the job link.</summary>
 public sealed class BlueprintManagerServiceTests
 {
     private const long Owner = 90000200;

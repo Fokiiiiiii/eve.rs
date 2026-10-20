@@ -249,7 +249,6 @@ public sealed class StoreOffersServiceTests
     };
 }
 
-
 public sealed class RedeemServiceTests
 {
     [Fact]
@@ -427,8 +426,6 @@ public sealed class RedeemServiceTests
         }
     }
 }
-
-
 
 public sealed class VaultManagerServiceTests
 {

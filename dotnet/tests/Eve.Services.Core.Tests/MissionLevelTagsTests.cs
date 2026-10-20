@@ -3,7 +3,6 @@ using Eve.Services.Core;
 
 namespace Eve.Services.Core.Tests;
 
-/// <summary>The committed level tags: their fields, their counts and provenance, the owner's optional file, and the level answers.</summary>
 public sealed class MissionLevelTagsTests
 {
     private static string Tag(string rows) => "{\"schema\":\"eve.rs.mission-level-tags.v1\",\"tags\":[" + rows + "]}";
@@ -13,7 +12,7 @@ public sealed class MissionLevelTagsTests
     [Fact]
     public void The_committed_file_has_only_the_allowed_top_level_fields_and_only_the_allowed_row_fields()
     {
-        // Fails if the committed file ever gains a field the owner did not approve (names, message text, rewards, dungeon content, rule IDs, URLs).
+
         using var document = JsonDocument.Parse(MissionLevelTags.CommittedJson());
         foreach (var property in document.RootElement.EnumerateObject())
             Assert.Contains(property.Name, MissionLevelTags.AllowedTopFields);

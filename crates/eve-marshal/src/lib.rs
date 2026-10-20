@@ -25,3 +25,11 @@ pub use wire::{MARSHAL_HEADER, dbtype, op};
 /// only stops at the engine's stack limit; a native decoder fed by a network
 /// peer needs an explicit bound.
 pub const MAX_DEPTH: usize = 256;
+/// Largest marshal payload accepted by the network frame parser.
+pub const MAX_INPUT_BYTES: usize = 16 << 20;
+/// Maximum decoded values in one marshal payload, including nested streams.
+pub const MAX_ELEMENTS: usize = 4 << 20;
+/// Approximate heap budget for decoder-owned values and container storage.
+pub const MAX_DECODE_ALLOCATION: usize = 256 << 20;
+/// Maximum declared byte/string length in one marshal value.
+pub const MAX_STRING_BYTES: usize = MAX_INPUT_BYTES;

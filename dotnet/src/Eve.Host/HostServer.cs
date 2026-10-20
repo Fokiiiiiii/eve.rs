@@ -40,6 +40,101 @@ public sealed record HostOptions
 /// The service host: it accepts network fronts, and serves each front's sessions. Packets of one session
 /// are handled one at a time, in order; different sessions run in parallel.
 /// </summary>
+internal sealed class LoginAttemptLimiter
+{
+    private const long WindowMilliseconds = 15 * 60 * 1000;
+    private const int AccountFailureLimit = 10;
+    private const int AddressFailureLimit = 50;
+    private const int MaximumKeys = 4096;
+
+    private sealed class Failures(int limit)
+    {
+        public int Limit { get; } = limit;
+        public Queue<long> Times { get; } = new();
+        public long LastFailure { get; set; }
+    }
+
+    private readonly object _gate = new();
+    private readonly Dictionary<string, Failures> _failures = new(StringComparer.Ordinal);
+
+    public bool IsAllowed(string accountName, string address)
+    {
+        var now = Environment.TickCount64;
+        var accountKey = AccountKey(accountName);
+        var addressKey = AddressKey(address);
+        lock (_gate)
+            return (accountKey is null || Count(accountKey, now) < AccountFailureLimit)
+                && Count(addressKey, now) < AddressFailureLimit;
+    }
+
+    public void RecordFailure(string accountName, string address)
+    {
+        var now = Environment.TickCount64;
+        var accountKey = AccountKey(accountName);
+        var addressKey = AddressKey(address);
+        lock (_gate)
+        {
+            if (accountKey is not null) Add(accountKey, AccountFailureLimit, now);
+            Add(addressKey, AddressFailureLimit, now);
+        }
+    }
+
+    public void ClearAccountFailures(string accountName)
+    {
+        var accountKey = AccountKey(accountName);
+        if (accountKey is null) return;
+        lock (_gate) _failures.Remove(accountKey);
+    }
+
+    private int Count(string key, long now)
+    {
+        if (!_failures.TryGetValue(key, out var failures)) return 0;
+        while (failures.Times.TryPeek(out var timestamp) && now - timestamp >= WindowMilliseconds)
+            failures.Times.Dequeue();
+        if (failures.Times.Count == 0)
+        {
+            _failures.Remove(key);
+            return 0;
+        }
+        return failures.Times.Count;
+    }
+
+    private void Add(string key, int limit, long now)
+    {
+        _ = Count(key, now);
+        if (!_failures.TryGetValue(key, out var failures))
+        {
+            if (_failures.Count >= MaximumKeys)
+            {
+                var oldest = _failures.MinBy(entry => entry.Value.LastFailure).Key;
+                _failures.Remove(oldest);
+            }
+            failures = new Failures(limit);
+            _failures.Add(key, failures);
+        }
+        failures.Times.Enqueue(now);
+        failures.LastFailure = now;
+    }
+
+    private static string? AccountKey(string accountName) =>
+        Eve.Identity.AccountNames.IsAcceptable(accountName)
+            ? Digest("account:", accountName.ToUpperInvariant())
+            : null;
+
+    private static string AddressKey(string address)
+    {
+        var identity = System.Net.IPEndPoint.TryParse(address, out var endpoint)
+            ? endpoint.Address.MapToIPv6().ToString()
+            : System.Net.IPAddress.TryParse(address, out var ip)
+                ? ip.MapToIPv6().ToString()
+                : address;
+        return Digest("address:", identity);
+    }
+
+    private static string Digest(string prefix, string value) =>
+        prefix + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(value)));
+}
+
 public sealed class HostServer(
     HostOptions options,
     PacketDispatcher dispatcher,
@@ -64,6 +159,8 @@ public sealed class HostServer(
     }
 
     /// <summary>Accepts fronts on <paramref name="listener"/> until cancelled.</summary>
+private readonly LoginAttemptLimiter _loginAttemptLimiter = new();
+
     public async Task ServeAsync(Socket listener, CancellationToken cancellationToken)
     {
         try
@@ -87,7 +184,7 @@ public sealed class HostServer(
     public async Task RunAsync(Stream stream, CancellationToken cancellationToken)
     {
         Interlocked.Increment(ref _connections);
-        await using var connection = new FrontConnection(stream, options, dispatcher, accounts, clusterConfig);
+        await using var connection = new FrontConnection(stream, options, dispatcher, accounts, clusterConfig, _loginAttemptLimiter);
         _fronts[connection] = 0;
         try
         {
@@ -125,13 +222,16 @@ internal sealed class FrontConnection : IAsyncDisposable
     private readonly CancellationTokenSource _stop = new();
     private Task _writer = Task.CompletedTask;
 
-    public FrontConnection(Stream stream, HostOptions options, PacketDispatcher dispatcher, IAccountDirectory accounts, Func<ReadOnlyMemory<byte>> clusterConfig)
+private readonly LoginAttemptLimiter _loginAttemptLimiter;
+
+    public FrontConnection(Stream stream, HostOptions options, PacketDispatcher dispatcher, IAccountDirectory accounts, Func<ReadOnlyMemory<byte>> clusterConfig, LoginAttemptLimiter loginAttemptLimiter)
     {
         _stream = stream;
         _options = options;
         _dispatcher = dispatcher;
         _accounts = accounts;
         _clusterConfig = clusterConfig;
+        _loginAttemptLimiter = loginAttemptLimiter;
         if (options.MaxPendingPacketsPerSession <= 0 || options.MaxPendingBytesPerSession <= 0 || options.MaxQueuedOutboundPacketsPerSession <= 0 || options.MaxQueuedOutboundBytesPerSession <= 0 || options.MaxQueuedOutboundPacketsPerConnection <= 0 || options.MaxQueuedOutboundBytesPerConnection <= 0)
             throw new ArgumentOutOfRangeException(nameof(options), "Session and outbound queue limits must be positive.");
         _outgoing = Channel.CreateBounded<QueuedFrame>(new BoundedChannelOptions(options.MaxQueuedOutboundPacketsPerConnection)
@@ -216,10 +316,20 @@ internal sealed class FrontConnection : IAsyncDisposable
 
     private async Task AuthenticateAsync(AuthRequest request, CancellationToken ct)
     {
+        if (!_loginAttemptLimiter.IsAllowed(request.UserName, request.Address))
+        {
+            Post(new AuthReply(request.Corr, new Rejected(LoginRefused.BadCredentials)));
+            return;
+        }
+
         AuthOutcome outcome;
         try
         {
             var result = await _accounts.LoginAsync(new LoginAttempt(request.UserName, request.PasswordHash, request.Language, request.Address), ct);
+            if (result is LoggedIn)
+                _loginAttemptLimiter.ClearAccountFailures(request.UserName);
+            else if (result is LoginRefused { Reason: LoginRefused.BadCredentials })
+                _loginAttemptLimiter.RecordFailure(request.UserName, request.Address);
             outcome = result switch
             {
                 LoggedIn login => new Accepted(login.AccountId, login.Role, login.CountryCode),

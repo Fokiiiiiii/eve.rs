@@ -87,8 +87,6 @@ internal static class HostComposition
             var contractItems = new PgItemStore(source, Env("EVE_INVENTORY_SCHEMA", PgItemStore.DefaultSchema));
             var contractWallets = new WalletTransactions(source, Env("EVE_WALLET_SCHEMA", PgWalletStore.DefaultSchema));
             var contractSkills = new PgSkillStore(source, Env("EVE_SKILLS_SCHEMA", PgSkillStore.DefaultSchema));
-            contractWriteModel = new Eve.Host.Persistence.PersistenceContractWriteModel(source, contractItems, contractWallets,
-                () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), contractSchema);
             async Task<int> ReadContractSkillAsync(long characterId, int typeId, CancellationToken ct)
             {
                 await using var connection = await source.OpenConnectionAsync(ct);
@@ -113,6 +111,11 @@ internal static class HostComposition
             globalConfigPersistence = new PgGlobalConfigPersistence(source, configSchema);
             Func<long> clock = () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             foundations = await Foundations.CreateAsync(source, clock, Env, message => Console.Error.WriteLine($"eve-host: {message}"));
+            var contractExpiryJobs = new Eve.Host.Persistence.ContractExpiryJobs(source, contractItems, contractWallets,
+                foundations.Scheduler, contractSchema);
+            contractExpiryJobs.Register();
+            contractWriteModel = new Eve.Host.Persistence.PersistenceContractWriteModel(source, contractItems, contractWallets,
+                clock, contractSchema, contractExpiryJobs);
             legacy = await LegacyGameStoreComposition.OpenAsync(source);
             (characterServices, space, simulation, crimewatch, calendarStore, calendarAudience, gameRpcCallbacks, keeperRpcCallbacks, characterSessions) = await CharacterServicesComposition.CharacterServicesAsync(source, directory, online, clock, foundations, legacy.Store, legacy.Owner, legacy.Cache, options.NewCharacterExperienceMode, new AccountOmegaStore(directory), connected);
             // the public gateway's skill plans: the tables are the skills module's (migration 0009, applied with its store)

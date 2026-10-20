@@ -126,6 +126,7 @@ pub fn ensure_tables_into(
     if loaded_build(client, schema)? == i64::try_from(options.build).ok() {
         let loaded = loaded_tables(client, schema)?;
         if tables.iter().all(|table| loaded.iter().any(|name| name == table)) {
+            load::ensure_lookup_indexes(client, schema)?;
             return Ok(Outcome::AlreadyLoaded);
         }
     }
@@ -134,6 +135,9 @@ pub fn ensure_tables_into(
     let full_extract = options.cache_dir.join(&name);
     let result = load_from_archive(client, options, schema, tables, &scratch);
     discard(options, &name, &scratch, &full_extract);
+    if result.is_ok() {
+        load::ensure_lookup_indexes(client, schema)?;
+    }
     result
 }
 
@@ -176,6 +180,7 @@ pub fn ensure_loaded_into(
     schema: &str,
 ) -> Result<Outcome, EnsureError> {
     if loaded_build(client, schema)? == i64::try_from(options.build).ok() {
+        load::ensure_lookup_indexes(client, schema)?;
         return Ok(Outcome::AlreadyLoaded);
     }
     let extracted = fetch::ensure_extracted(options)?;
@@ -184,6 +189,7 @@ pub fn ensure_loaded_into(
         return Err(EnsureError::BuildMismatch { wanted: options.build, found: manifest.build_number });
     }
     let report = load::load_into(client, &manifest, schema)?;
+    load::ensure_lookup_indexes(client, schema)?;
     let records = report.tables.iter().map(|(_, count)| count).sum();
     Ok(Outcome::Loaded { origin: extracted.origin, tables: report.tables.len(), records })
 }

@@ -3,7 +3,6 @@ namespace Eve.Dogma.Tests;
 /// <summary>
 /// The command burst value chain on the static data: a charge's buff value (<c>warfareBuff1Multiplier</c>, 2596) multiplies the module's value
 /// (<c>warfareBuff1Value</c>, 2469; 1.0 for Tech I, 1.25 for Tech II) by effect 6737 (<c>chargeBonusWarfareCharge</c>, PostMul). The Shield Harmonizing
-/// charge (42695) carries -8 (the wiki's +8 % shield resistance bonus, shown inverted), so a Tech II Shield Command Burst II (43555) gives -10 and a Tech I
 /// (42529) -8. The buff is then applied to the ship's shield resonances through the registry, and it runs out at the module's buff duration (2535).
 /// </summary>
 public class CommandBurstValueTests

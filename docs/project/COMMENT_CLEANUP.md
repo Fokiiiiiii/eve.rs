@@ -70,6 +70,15 @@
 | `dotnet/tests/Eve.AccessGroups.Tests` (4 C# files) | 7 | 3 | 2026-10-20 |
 | `dotnet/tests/Eve.Bookmarks.Tests` (5 C# files) | 25 | 24 | 2026-10-20 |
 | `dotnet/tests/Eve.Characters.Tests` (12 C# files) | 31 | 29 | 2026-10-20 |
+| `dotnet/tests/Eve.Content.Tests` (4 C# files) | 11 | 10 | 2026-10-20 |
+| `dotnet/tests/Eve.Crimewatch.Tests` (3 C# files) | 11 | 10 | 2026-10-20 |
+| `dotnet/tests/Eve.Dogma.Tests` (15 C# files) | 138 | 134 | 2026-10-20 |
+| `dotnet/tests/Eve.Dungeons.Tests` (4 C# files) | 6 | 4 | 2026-10-20 |
+| `dotnet/tests/Eve.Events.Tests` (3 C# files; reviewed) | 21 | 21 | 2026-10-20 |
+| `dotnet/tests/Eve.FactionWarfare.Tests` (11 C# files) | 28 | 26 | 2026-10-20 |
+| `dotnet/tests/Eve.Fitting.Tests` (5 C# files) | 51 | 50 | 2026-10-20 |
+| `dotnet/tests/Eve.GameStore.Import.Tests` (2 C# files; reviewed) | 5 | 5 | 2026-10-20 |
+| `dotnet/tests/Eve.GameStore.Tests` (8 C# files) | 30 | 28 | 2026-10-20 |
 | `dotnet/src/Eve.Insurgency` (5 C# files; migrations reviewed) | 99 | 87 | 2026-10-20 |
 | `dotnet/src/Eve.Dungeons` (5 C# files) | 101 | 49 | 2026-10-20 |
 | `dotnet/src/Eve.Fitting` (8 C# files; migrations reviewed) | 97 | 78 | 2026-10-20 |

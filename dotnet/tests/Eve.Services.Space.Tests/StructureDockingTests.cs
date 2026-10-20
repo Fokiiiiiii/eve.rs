@@ -7,7 +7,6 @@ using Eve.Space;
 namespace Eve.Services.Space.Tests;
 
 /// <summary>
-/// ST-3 a: <c>structureDocking.Dock</c> on the host's space service (skipped without EVE_PG_URL; skipped is not passed). A structure is a record the host
 /// knows (<see cref="SpaceSessions.StructureExistsAsync"/>) and the character's access to it (<see cref="SpaceSessions.StructureDockingAllowedAsync"/>); the
 /// simulation is the fake one. A docking out of range is answered with the distance, in range the simulation is asked to accept it, and the ship and the
 /// session are in the structure when the simulation reports it docked.

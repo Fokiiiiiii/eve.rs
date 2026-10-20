@@ -59,6 +59,7 @@ public sealed class LpStorePurchases
     private const string Reason = "LP store purchase";
     private const long JunkLocation = 6;
     private const long MaximumCount = 1_000_000;
+    private const long MaximumGeneratedItems = 256;
 
     private readonly NpgsqlDataSource _source;
     private readonly string _schema;
@@ -217,7 +218,7 @@ public sealed class LpStorePurchases
             var singleton = rewardType.CategoryId is 6 or 9;
             var itemCount = singleton ? grantedQuantity : 1;
             var stackQuantity = singleton ? 1 : grantedQuantity;
-            if (itemCount > MaximumCount) throw Refused("INVALID_QUANTITY");
+            if (itemCount > MaximumGeneratedItems) throw Refused("INVALID_QUANTITY");
             for (var index = 0L; index < itemCount; index++)
             {
                 var itemId = await _items.CreateAsync(connection, transaction,

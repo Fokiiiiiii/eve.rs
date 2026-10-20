@@ -2,7 +2,6 @@ using Eve.Services.Space.Entosis;
 
 namespace Eve.Services.Space.Tests;
 
-/// <summary>ST-17 a, the command node rules (pure): the tally's outcomes, a node's progress with its links, and the completion time.</summary>
 public sealed class EntosisCommandNodeTests
 {
     private const long Start = 1_700_000_000_000;

@@ -7,7 +7,6 @@ using Eve.Space;
 namespace Eve.Services.Space.Tests;
 
 /// <summary>
-/// The Mobile Observatory (E-04's remote decloak ping; the wiki's rules and EveJS <c>mobileObservatoryRuntime</c>): a pilot with Anchoring III drops one from the hold
 /// 2,500 m ahead of the ship, in a system below 0.5 security; it is anchored ten minutes later, pings its system at that moment and every ten minutes after, and leaves
 /// with its item when its hundred minutes and thirty seconds are up. A second one within 10 km of the first is refused.
 /// </summary>
@@ -97,7 +96,7 @@ public class MobileObservatoryHostTests
         rig.Now += 2_000;
         await rig.Scheduler.RunDueAsync();
         Assert.Contains(rig.Sim.Heard, m => m is SimSetDisruptorActive anchored && anchored.DeployableId == observatory && anchored.Active);
-        // the first ping comes when it is anchored (the wiki), then one every ten minutes
+
         await rig.Scheduler.RunDueAsync();
         var first = Assert.Single(rig.Sim.Heard.OfType<SimRemoteDecloakPing>());
         Assert.Equal(system, first.SolarSystemId);
@@ -186,7 +185,7 @@ public class MobileObservatoryHostTests
     {
         await using var rig = await Rig.CreateAsync();
         var (session, items) = await PilotWithObservatoriesAsync(rig, 2, LowSecSystem);
-        // the drop point is 2 500 m ahead of the ship: a tower 50 km from it is too close, one 150 km away is not (the wiki's 100 km rule)
+
         rig.Containers.ReadControlTowers = (_, _) => Task.FromResult<IReadOnlyList<double[]>>([[52_500.0, 0.0, 0.0]]);
 
         var refused = await Assert.ThrowsAsync<MachoWrappedException>(() => rig.Containers.LaunchFromShipAsync(session, items[0], CancellationToken.None));
@@ -205,7 +204,7 @@ public class MobileObservatoryHostTests
     {
         await using var rig = await Rig.CreateAsync();
         var (session, items) = await PilotWithObservatoriesAsync(rig, 2, LowSecSystem);
-        // a site's anchor 500 km from the drop point is inside its pocket (EveJS 1e9 m); one 2 000 000 km away is not
+
         rig.Containers.ReadDeadspaceAnchors = (_, _) => Task.FromResult<IReadOnlyList<double[]>>([[502_500.0, 0.0, 0.0]]);
 
         var refused = await Assert.ThrowsAsync<MachoWrappedException>(() => rig.Containers.LaunchFromShipAsync(session, items[0], CancellationToken.None));
@@ -274,7 +273,6 @@ public class MobileObservatoryHostTests
     }
 
     /// <summary>
-    /// A dungeon's pocket (ST-23): the host places it in the scene at its origin with the pocket's radius, once; the record and the body go back after a restart; an
     /// observatory is refused inside it by the record; and the pocket is taken out when its dungeon is no longer running, which frees the place.
     /// </summary>
     [PgFact]

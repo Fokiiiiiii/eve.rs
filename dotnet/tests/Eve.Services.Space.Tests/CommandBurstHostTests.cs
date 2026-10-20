@@ -13,7 +13,7 @@ namespace Eve.Services.Space.Tests;
 /// </summary>
 public class CommandBurstHostTests
 {
-    /// <summary>A Shield Command Burst I (42529) with a Shield Harmonizing charge (42695): the shield resistance buff, -8 (the wiki's +8 %, shown inverted).</summary>
+
     private const int ShieldCommandBurstI = 42529, ShieldHarmonizing = 42695;
     private const int ShieldResistance = 10;
     private const long FleetId = 701;
@@ -41,7 +41,7 @@ public class CommandBurstHostTests
         [
             (42526, 42832), // Armor
             (42527, 42835), // Information
-            (42528, 42829), // Mining Foreman, including Enhanced Mining Scanner (2474)
+            (42528, 42829),
             (42529, 42695), // Shield
             (42530, 42838), // Skirmish
             (89608, 89612), // Expedition

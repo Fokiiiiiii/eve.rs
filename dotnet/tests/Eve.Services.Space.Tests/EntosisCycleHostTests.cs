@@ -5,7 +5,6 @@ using Eve.Services.Space.Entosis;
 namespace Eve.Services.Space.Tests;
 
 /// <summary>
-/// ST-9 c through the host's containers (PostgreSQL, the real rig and the fake simulation): a link's cycle is settled by the capture service as the work cycle
 /// of its module, the module's end report stops the link, and a pilot outside an alliance is refused by name (nothing is captured).
 /// </summary>
 public class EntosisCycleHostTests

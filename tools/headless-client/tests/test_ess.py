@@ -40,6 +40,7 @@ ESS_KEYS = {
 }
 DETAIL_KEYS = {"autopaymentWindowState", "activeLinks", "totalPulses", "reserveTimeWindowState", "reserveTimeChosen"}
 SDE_RESERVE_KEYS = {57714, 57715, 57716, 57717, 57718, 57719, 57720, 57721}
+SERVER = os.environ.get("EVE_LIVE_SERVER", "eve.rs").strip().lower()
 
 QUADRANT_KEY_PAIRS = [{57714, 57715}, {57716, 57719}, {57717, 57718}, {57720, 57721}]
 
@@ -68,6 +69,14 @@ def test_a_docked_character_reads_its_systems_ess_as_the_client_does():
 
         assert set(details) == DETAIL_KEYS
         assert thefts == [] and reserve_thefts == []
+        if SERVER != "reference":
+            grant = str(client.call("slash", "SlashCmd", "/ess grant"))
+            assert "SDE type list 231" in grant and "station hangar" in grant, grant
+            link = client.call("slash", "SlashCmd", "/ess link")
+            if isinstance(link, bytes):
+                link = link.decode("utf-8")
+            link = str(link)
+            assert link == "ESS main-bank link request sent. Check the ESS status notification for the result."
         if placed is None or placed[0] != system_id:
             # no ESS here: the client reads None as an offline system (dynamicResourceSvc.py:254) and no keys
             assert data is None

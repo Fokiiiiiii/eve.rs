@@ -10,7 +10,6 @@ using Npgsql;
 namespace Eve.Services.Space.Tests;
 
 /// <summary>
-/// A reactive armor hardener (type 4403) on a ship: what the host sends the simulation (its seed, its step and the armor's attributes, the ship's own
 /// resonances), what the client is told, and the Polarized weapon that pins the armor. The types, the attributes and the effect are the real SDE's; the
 /// fitting is set up here.
 /// </summary>
@@ -66,7 +65,7 @@ public class ReactiveArmorHardenerTests
         var type = statics.Type(AdaptiveArmorHardener)!;
 
         var shift = Assert.IsType<SimAction.ResistanceShift>(package.Action);
-        // the seed is the module's own resonances (the SDE's 0.85 each), in the simulation's order, and the step is the SDE's resistanceShiftAmount (6 points)
+
         Assert.Equal(ArmorIds.Select(id => type.Attributes[id]), shift.Seed);
         Assert.Equal(ArmorIds, shift.AttributeIds);
         Assert.Equal(type.Attributes[ResistanceShiftAmount] / 100.0, shift.Shift, 12);

@@ -87,7 +87,6 @@ internal sealed class FakeSim : ISimulation
             trace.RequestId, SimAbyssalTraceStatus.Removed, 0, null));
     }
 
-
     public Func<SimRemoveAbyssalParticipant, SimRemoveAbyssalParticipantReply>? RemoveAbyssalParticipantAnswer { get; set; }
 
     public Task<SimRemoveAbyssalParticipantReply> RemoveAbyssalParticipantAsync(

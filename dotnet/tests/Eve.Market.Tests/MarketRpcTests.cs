@@ -110,6 +110,20 @@ public class MarketRpcTests
     }
 
     [PgFact]
+    public async Task Market_history_multi_refuses_more_than_500_type_ids()
+    {
+        await using var r = await TradeRig.Create();
+        var actor = await r.Actor("Bounded History Reader");
+        var seat = await SeatAsync(r, actor);
+        var typeIds = new PyList(Enumerable.Range(1, 501).Select(id => (PyValue)new PyInt(id)).ToArray());
+
+        var refusal = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await seat.Proxy.GetHistoryForManyTypeIDs(Call(seat.Session, "GetHistoryForManyTypeIDs", 3, typeIds)));
+
+        Assert.Equal("MARKET_BULK_LIMIT_EXCEEDED", refusal.Error.UserErrorMessage);
+    }
+
+    [PgFact]
     public async Task Buy_multi_refuses_more_than_500_entries()
     {
         await using var r = await TradeRig.Create();

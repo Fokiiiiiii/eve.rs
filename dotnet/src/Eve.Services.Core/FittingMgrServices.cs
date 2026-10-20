@@ -207,8 +207,12 @@ public sealed class FittingMgrCalls(PgSavedFittingStore store, IFittingHost host
             fields.TryGetValue("name", out var n) ? JsSemantics.PlainText(n) : "",
             fields.TryGetValue("description", out var d) ? JsSemantics.PlainText(d) : "");
         var items = (fields.TryGetValue("fitData", out var data) ? data : PyNone.Instance) switch { PyTuple t => t.Items, PyList l => l.Items, _ => [] };
+        if (items.Count > 500)
+        {
+            throw Refusal("FITTING_TOO_MANY_ITEMS", items.Count);
+        }
         var draft = new FittingDraft(
-            fields.TryGetValue("shipTypeID", out var ship) ? (int)(IdOf(ship) ?? 0) : 0,
+            fields.TryGetValue("shipTypeID", out var ship) ? Int32Of(ship) : 0,
             name,
             description,
             [.. items.Select(Item).OfType<FittingItem>()]);
@@ -225,12 +229,22 @@ public sealed class FittingMgrCalls(PgSavedFittingStore store, IFittingHost host
         return draft;
     }
 
+    private static int Int32Of(PyValue value)
+    {
+        var number = IdOf(value);
+        if (number is null || number < int.MinValue || number > int.MaxValue)
+        {
+            throw Refusal("FITTING_INTEGER_OUT_OF_RANGE");
+        }
+        return (int)number.Value;
+    }
+
     private static FittingItem? Item(PyValue value)
     {
         var parts = value switch { PyTuple t => t.Items, PyList l => l.Items, _ => [] };
-        return parts.Count < 3 || IdOf(parts[0]) is not { } type || IdOf(parts[1]) is not { } flag || IdOf(parts[2]) is not { } quantity
+        return parts.Count < 3
             ? null
-            : new FittingItem((int)type, (int)flag, (int)quantity);
+            : new FittingItem(Int32Of(parts[0]), Int32Of(parts[1]), Int32Of(parts[2]));
     }
 
 
@@ -293,6 +307,8 @@ public sealed class FittingMgrCalls(PgSavedFittingStore store, IFittingHost host
         "FITTING_DATA_EMPTY" => MachoErrors.ThrowUserError("ParseFittingFittingDataEmpty"),
         "FITTING_INVALID_FLAG" => MachoErrors.ThrowUserError("InvalidFittingDataInvalidFlag", ("type", new PyInt(value))),
         "FITTING_INVALID_QUANTITY" => MachoErrors.ThrowUserError("InvalidFittingDataInvalidQuantity", ("type", new PyInt(value))),
+        "FITTING_TOO_MANY_ITEMS" => MachoErrors.ThrowUserError(Community, ("notify", new PyStr("This fitting contains too many items."))),
+        "FITTING_INTEGER_OUT_OF_RANGE" => MachoErrors.ThrowUserError(Community, ("notify", new PyStr("This fitting contains an out-of-range integer."))),
         "COMMUNITY_FITTINGS_READ_ONLY" => MachoErrors.ThrowUserError(Community, ("notify", new PyStr("Community fittings are read-only."))),
         "OWNER_SCOPE_DENIED" => MachoErrors.ThrowUserError(Community, ("notify", new PyStr("You do not have access to that fitting collection."))),
         "FITTING_MANAGER_ROLE_REQUIRED" => MachoErrors.ThrowUserError(Community, ("notify", new PyStr("You need the corporation Fitting Manager role to change shared fittings."))),

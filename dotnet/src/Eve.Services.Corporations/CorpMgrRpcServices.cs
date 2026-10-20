@@ -67,6 +67,16 @@ public sealed partial class CorpMgrService
     [Method("GetAggressionSettingsForCorps")]
     public async ValueTask<PyValue> GetAggressionSettingsForCorps(ServiceCall call)
     {
+        var requested = call.Arg(0) switch
+        {
+            PyList list => list.Items.Count,
+            PyTuple tuple => tuple.Items.Count,
+            PyDict dictionary => dictionary.Entries.Count,
+            _ => 0,
+        };
+        if (requested > 500)
+            throw new CorporationError("CORPMGR_BULK_LIMIT_EXCEEDED");
+
         var entries = new List<KeyValuePair<PyValue, PyValue>>();
         foreach (var corporationId in CorpMgrSequence(call.Arg(0))
                      .Select(value => CorpMgrLong(value))

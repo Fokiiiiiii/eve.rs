@@ -9,13 +9,18 @@ public class SlashCatalogTests
 {
     // Catalog discovery must not touch any store or simulation. Null collaborators are tripwires;
     // the real command handlers still enforce their normal argument/session guards when dispatched.
-    private static SlashService Service(bool death = false, bool suicide = false, bool npcs = false, bool items = false, bool skills = false) =>
+    private static SlashService Service(bool death = false, bool suicide = false, bool npcs = false, bool items = false, bool skills = false, bool ess = false, Action? essLinkAttempted = null) =>
         new(new ShipHealthCommands(null!, null!, () => 0),
             death ? new DeathTestCommands(null!, null!) : null,
             suicide ? new SuicideCommands(null!) : null,
             npcs ? new NpcCommands(null!) : null,
             items ? new ItemCommands(null!, null!, null!, () => 0) : null,
-            skills ? new SkillCommands(null!, null!, null!, null, () => 0) : null);
+            skills ? new SkillCommands(null!, null!, null!, null, () => 0) : null,
+            ess: ess ? new EssCommands(null!, null!, null!, (_, _) =>
+            {
+                essLinkAttempted?.Invoke();
+                return ValueTask.FromResult<PyValue>(PyNone.Instance);
+            }) : null);
 
     private static ClientSession Gm(ClientSession session)
     {
@@ -135,5 +140,19 @@ public class SlashCatalogTests
         var session = Gm(new ClientSession { CharacterId = 90000001 });
         Assert.Equal("Character not found: 90000002. Use me, a character ID, or an exact character name.",
             Assert.IsType<PyStr>(await CallAsync(service, "/giveskill 90000002 3300 5", session)).Value);
+    }
+
+    [Fact]
+    public async Task Ess_link_command_is_staff_gated_and_dispatches_the_normal_link_operation()
+    {
+        var attempts = 0;
+        var service = Service(ess: true, essLinkAttempted: () => attempts++);
+        Assert.Equal(SlashService.NotGameMaster,
+            Assert.IsType<PyStr>(await CallAsync(service, "/ess link", new ClientSession())).Value);
+        Assert.Equal(0, attempts);
+
+        Assert.Equal("ESS main-bank link request sent. Check the ESS status notification for the result.",
+            Assert.IsType<PyStr>(await CallAsync(service, "/ess link", Gm(new ClientSession()))).Value);
+        Assert.Equal(1, attempts);
     }
 }

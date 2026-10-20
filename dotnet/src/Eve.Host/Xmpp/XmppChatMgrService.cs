@@ -27,5 +27,5 @@ public sealed partial class XmppChatMgrService(XmppChatHub hub)
 
     [Method("ResyncSystemChannelAccess")]
     public PyValue ResyncSystemChannelAccess(ServiceCall call) =>
-        Eve.Services.Py.List(hub.StaticAccessChannels(call.Session).Select(channel => (PyValue)new PyStr(channel)).ToArray());
+        Eve.Services.Py.List(hub.ResyncChannels(call.Session).Select(channel => (PyValue)new PyStr(channel)).ToArray());
 }

@@ -47,6 +47,16 @@ public sealed partial class PlanetMgrService
             },
         };
         await command.ExecuteNonQueryAsync(cancellationToken);
+          await using var state = new NpgsqlCommand($"""
+              INSERT INTO {store.Schema}.customs_offices (office_id, owner_corporation_id)
+              SELECT id, owner_id FROM {inventorySchema}.items WHERE id = $1
+              ON CONFLICT (office_id) DO UPDATE SET owner_corporation_id = EXCLUDED.owner_corporation_id
+              WHERE customs_offices.owner_corporation_id <> EXCLUDED.owner_corporation_id
+              """, connection, transaction)
+          {
+              Parameters = { new() { Value = Customs.OfficeId(planetId) } },
+          };
+          await state.ExecuteNonQueryAsync(cancellationToken);
     }
 
     /// <summary>
@@ -111,16 +121,24 @@ public sealed partial class PlanetMgrService
 
     /// <summary>The office rate the character gets at this planet (creating the office if it does not exist yet); null when the planet has none.</summary>
     public async Task<double?> TaxRateAsync(long officeId, long characterId, CancellationToken cancellationToken)
-    {
-        if (Customs.PlanetOf(officeId) is not { } planetId) return null;
-        var body = await BodyAsync(planetId, cancellationToken);
-        await using var connection = await source.OpenConnectionAsync(cancellationToken);
-        await EnsureOfficeAsync(connection, null, planetId, body.SolarSystemId, cancellationToken);
-        var security = await PlanetCatalogLoader.SecurityAsync(source, body.SolarSystemId, cancellationToken);
-        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-        var skill = await skills.LevelAsync(connection, transaction, characterId, Customs.CustomsCodeExpertise, cancellationToken);
-        return Customs.Rate(security, skill);
-    }
+{
+    if (Customs.PlanetOf(officeId) is not { } planetId) return null;
+    var body = await BodyAsync(planetId, cancellationToken);
+    await using var connection = await source.OpenConnectionAsync(cancellationToken);
+    await EnsureOfficeAsync(connection, null, planetId, body.SolarSystemId, cancellationToken);
+    var ownerId = await OfficeOwnerAsync(connection, null, officeId, cancellationToken);
+    if (ownerId is null) return null;
+    await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+    var skill = await skills.LevelAsync(connection, transaction, characterId, Customs.CustomsCodeExpertise, cancellationToken);
+    var security = await PlanetCatalogLoader.SecurityAsync(source, body.SolarSystemId, cancellationToken);
+    var policy = await CustomsPolicyAsync(connection, transaction, officeId, ownerId.Value, cancellationToken);
+    var ownerRate = await OwnerTaxRateAsync(connection, transaction, policy, characterId, cancellationToken);
+    if (ownerRate is null) return null;
+    var npcRate = ownerId == CustomsOfficeOwner
+        ? Customs.Rate(security, skill)
+        : security >= Customs.HighSecurity ? Math.Max(0, Customs.NpcRateHighSecurity - 0.01 * Math.Clamp(skill, 0, 5)) : 0;
+    return Customs.CombinedRate(npcRate, ownerRate.Value);
+}
 
     /// <summary>ImportExportWithPlanet: see <see cref="Eve.Services.Inventory.ICustomsOffices"/>.</summary>
     public async ValueTask ImportExportAsync(ClientSession session, long officeId, long launchpadId, IReadOnlyDictionary<long, long> imports,
@@ -137,56 +155,64 @@ public sealed partial class PlanetMgrService
     }
 
     private async Task ImportExportCoreAsync(ClientSession session, long officeId, long launchpadId, IReadOnlyDictionary<long, long> imports,
-        IReadOnlyDictionary<int, long> exports, double taxRate, CancellationToken cancellationToken)
+    IReadOnlyDictionary<int, long> exports, double taxRate, CancellationToken cancellationToken)
+{
+    var owner = session.CharacterId ?? throw MachoErrors.ThrowUserError("CustomsOfficeAccessDenied");
+    var planetId = Customs.PlanetOf(officeId) ?? throw MachoErrors.ThrowUserError("CustomsOfficeNotFound");
+    var now = Ticks();
+    var body = await BodyAsync(planetId, cancellationToken);
+    await using var connection = await source.OpenConnectionAsync(cancellationToken);
+    await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+    var office = await items.LockAndGetAsync(connection, transaction, officeId, cancellationToken)
+        ?? throw MachoErrors.ThrowUserError("CustomsOfficeNotFound");
+    if (office.TypeId != Customs.OfficeTypeId || office.LocationId != body.SolarSystemId)
+        throw MachoErrors.ThrowUserError("CustomsOfficeNotFound");
+    var doc = await store.LockAsync(connection, transaction, owner, planetId, cancellationToken)
+        ?? throw MachoErrors.ThrowUserError("CannotManagePlanetWithoutCommandCenter");
+    var colony = doc.ToColony(catalog, field);
+    colony.RunTo(now);
+
+    var security = await PlanetCatalogLoader.SecurityAsync(source, body.SolarSystemId, cancellationToken);
+    var skill = await skills.LevelAsync(connection, transaction, owner, Customs.CustomsCodeExpertise, cancellationToken);
+    var policy = await CustomsPolicyAsync(connection, transaction, officeId, office.OwnerId, cancellationToken);
+    var ownerRate = await OwnerTaxRateAsync(connection, transaction, policy, owner, cancellationToken);
+    if (ownerRate is null) throw MachoErrors.ThrowUserError("CustomsOfficeAccessDenied");
+    var npcRate = office.OwnerId == CustomsOfficeOwner
+        ? Customs.Rate(security, skill)
+        : security >= Customs.HighSecurity ? Math.Max(0, Customs.NpcRateHighSecurity - 0.01 * Math.Clamp(skill, 0, 5)) : 0;
+    var rate = Customs.CombinedRate(npcRate, ownerRate.Value);
+    if (Math.Abs(rate - taxRate) > 1e-9) throw MachoErrors.ThrowUserError("TaxChanged");
+
+    var pad = colony.Pins.GetValueOrDefault(launchpadId) ?? throw MachoErrors.ThrowUserError("CannotImportEndpointNotFound");
+    var imported = new Dictionary<int, long>();
+    foreach (var (itemId, quantity) in imports)
     {
-        var owner = session.CharacterId ?? throw MachoErrors.ThrowUserError("CustomsOfficeAccessDenied");
-        var planetId = Customs.PlanetOf(officeId) ?? throw MachoErrors.ThrowUserError("CustomsOfficeNotFound");
-        var now = Ticks();
-        var body = await BodyAsync(planetId, cancellationToken);
-        await using var connection = await source.OpenConnectionAsync(cancellationToken);
-        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-        var office = await items.LockAndGetAsync(connection, transaction, officeId, cancellationToken)
-            ?? throw MachoErrors.ThrowUserError("CustomsOfficeNotFound");
-        if (office.TypeId != Customs.OfficeTypeId || office.LocationId != body.SolarSystemId)
-            throw MachoErrors.ThrowUserError("CustomsOfficeNotFound");
-        var doc = await store.LockAsync(connection, transaction, owner, planetId, cancellationToken)
-            ?? throw MachoErrors.ThrowUserError("CannotManagePlanetWithoutCommandCenter");
-        var colony = doc.ToColony(catalog, field);
-        colony.RunTo(now);
-
-        // the rate the client saw must be the rate now (the client asks again on TaxChanged)
-        var security = await PlanetCatalogLoader.SecurityAsync(source, body.SolarSystemId, cancellationToken);
-        var rate = Customs.Rate(security, await skills.LevelAsync(connection, transaction, owner, Customs.CustomsCodeExpertise, cancellationToken));
-        if (Math.Abs(rate - taxRate) > 1e-9) throw MachoErrors.ThrowUserError("TaxChanged");
-
-        var pad = colony.Pins.GetValueOrDefault(launchpadId) ?? throw MachoErrors.ThrowUserError("CannotImportEndpointNotFound");
-        var imported = new Dictionary<int, long>();
-        foreach (var (itemId, quantity) in imports)
-        {
-            var item = await items.LockAndGetAsync(connection, transaction, itemId, cancellationToken)
-                ?? throw MachoErrors.ThrowUserError("CannotImportEndpointNotFound");
-            if (item.LocationId != officeId || item.OwnerId != owner || item.Flag != HangarFlag)
-                throw MachoErrors.ThrowUserError("CannotImportEndpointNotFound");
-            if (quantity < 1 || quantity > item.Quantity)
-                throw MachoErrors.ThrowUserError("RouteFailedValidationExpeditedSourceLacksCommodityQty");
-            colony.ImportToLaunchpad(launchpadId, item.TypeId, quantity);
-            imported[item.TypeId] = imported.GetValueOrDefault(item.TypeId) + quantity;
-            if (quantity == item.Quantity) await items.DeleteAsync(connection, transaction, item.Id, cancellationToken);
-            else await items.SetQuantityAsync(connection, transaction, item.Id, item.Quantity - quantity, cancellationToken);
-        }
-        foreach (var (type, quantity) in exports)
-        {
-            colony.ExportFromLaunchpad(launchpadId, type, quantity);
-            await AddToOfficeAsync(connection, transaction, officeId, owner, type, quantity, cancellationToken);
-        }
-
-        var (importTax, exportTax) = Customs.Taxes(catalog, pad.TypeId, imported, exports, rate);
-        await ChargeAsync(connection, transaction, owner, importTax, RefPlanetaryImportTax, now, cancellationToken);
-        await ChargeAsync(connection, transaction, owner, exportTax, RefPlanetaryExportTax, now, cancellationToken);
-        await store.SaveAsync(connection, transaction, owner, planetId, ColonyDocument.From(colony), now, cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
-        await notify(owner, new PyInt(planetId));
+        var item = await items.LockAndGetAsync(connection, transaction, itemId, cancellationToken)
+            ?? throw MachoErrors.ThrowUserError("CannotImportEndpointNotFound");
+        if (item.LocationId != officeId || item.OwnerId != owner || item.Flag != HangarFlag)
+            throw MachoErrors.ThrowUserError("CannotImportEndpointNotFound");
+        if (quantity < 1 || quantity > item.Quantity)
+            throw MachoErrors.ThrowUserError("RouteFailedValidationExpeditedSourceLacksCommodityQty");
+        colony.ImportToLaunchpad(launchpadId, item.TypeId, quantity);
+        imported[item.TypeId] = imported.GetValueOrDefault(item.TypeId) + quantity;
+        if (quantity == item.Quantity) await items.DeleteAsync(connection, transaction, item.Id, cancellationToken);
+        else await items.SetQuantityAsync(connection, transaction, item.Id, item.Quantity - quantity, cancellationToken);
     }
+    foreach (var (type, quantity) in exports)
+    {
+        colony.ExportFromLaunchpad(launchpadId, type, quantity);
+        await AddToOfficeAsync(connection, transaction, officeId, owner, type, quantity, cancellationToken);
+    }
+
+    var (importTax, exportTax) = Customs.Taxes(catalog, pad.TypeId, imported, exports, rate);
+    var (ownerImportTax, ownerExportTax) = Customs.Taxes(catalog, pad.TypeId, imported, exports, ownerRate.Value);
+    await ChargeAsync(connection, transaction, owner, importTax, RefPlanetaryImportTax, now, cancellationToken);
+    await ChargeAsync(connection, transaction, owner, exportTax, RefPlanetaryExportTax, now, cancellationToken);
+    await CreditOfficeOwnerAsync(connection, transaction, office.OwnerId, owner, ownerImportTax + ownerExportTax, now, cancellationToken);
+    await store.SaveAsync(connection, transaction, owner, planetId, ColonyDocument.From(colony), now, cancellationToken);
+    await transaction.CommitAsync(cancellationToken);
+    await notify(owner, new PyInt(planetId));
+}
 
     public async ValueTask<long> MoveToOfficeAsync(ClientSession session, long officeId, long itemId, long quantity, CancellationToken cancellationToken)
     {

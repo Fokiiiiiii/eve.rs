@@ -251,6 +251,100 @@ public sealed class ContractReadModelTests
     }
 
     [Fact]
+    public async Task Auction_buyout_refunds_previous_bidder_and_transfers_items_and_sale_proceeds()
+    {
+        var connectionString = Environment.GetEnvironmentVariable("EVE_PG_URL")
+            ?? throw new InvalidOperationException("EVE_PG_URL must name the assigned PostgreSQL lane");
+        var suffix = Guid.NewGuid().ToString("N");
+        var contractsSchema = $"contract_bid_{suffix}";
+        var inventorySchema = $"contract_bid_items_{suffix}";
+        var walletSchema = $"contract_bid_wallet_{suffix}";
+        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(connectionString));
+        await PersistenceContractReadModel.MigrateAsync(source, contractsSchema);
+        await PgItemStore.MigrateAsync(source, inventorySchema);
+        await PgWalletStore.MigrateAsync(source, walletSchema);
+        try
+        {
+            var itemStore = new PgItemStore(source, inventorySchema);
+            var wallets = new WalletTransactions(source, walletSchema);
+            await using (var connection = await source.OpenConnectionAsync())
+            await using (var transaction = await connection.BeginTransactionAsync())
+            {
+                foreach (var owner in new long[] { 100, 300, 400 })
+                    await wallets.EnsureAsync(connection, transaction, owner);
+                await using var seed = new NpgsqlCommand($"UPDATE {walletSchema}.balances SET isk=50000 WHERE account_key=1000", connection, transaction);
+                await seed.ExecuteNonQueryAsync();
+                await transaction.CommitAsync();
+            }
+            long itemId;
+            await using (var connection = await source.OpenConnectionAsync())
+            await using (var transaction = await connection.BeginTransactionAsync())
+            {
+                itemId = await itemStore.CreateAsync(connection, transaction,
+                    new NewItem(34, 100, 600, ItemFlags.Hangar, Quantity: 2), CancellationToken.None);
+                await transaction.CommitAsync();
+            }
+            var writer = new PersistenceContractWriteModel(source, itemStore, wallets, () => 1_800_000_000_000, contractsSchema);
+            var created = await writer.CreateContractAsync(new Eve.Services.Core.CreateItemExchangeRequest(
+                IssuerCharacterId: 100,
+                IssuerCorporationId: 200,
+                IsCorporationIssued: false,
+                StartStationId: 600,
+                StartStationDivision: ItemFlags.Hangar,
+                Availability: 0,
+                AssigneeId: 0,
+                ExpiryMinutes: 1440,
+                Price: 10000,
+                Reward: 0,
+                BrokerFee: 0,
+                Deposit: 0,
+                SalesTax: 0,
+                WalletAccountKey: 1000,
+                Title: "Auction",
+                Description: "",
+                OutstandingLimit: 500,
+                Items: [new Eve.Services.Core.ContractOfferedItem(itemId, 2)],
+                ContractType: 2,
+                Collateral: 20000), CancellationToken.None);
+
+            Assert.True(await writer.PlaceBidAsync(created.ContractId, 300, 301, 0, false, 1000, 10000, CancellationToken.None));
+            Assert.True(await writer.PlaceBidAsync(created.ContractId, 400, 401, 0, false, 1000, 20000, CancellationToken.None));
+
+            Assert.Equal(70000m, await wallets.AccountBalanceAsync(new WalletAccount(100), CancellationToken.None));
+            Assert.Equal(50000m, await wallets.AccountBalanceAsync(new WalletAccount(300), CancellationToken.None));
+            Assert.Equal(30000m, await wallets.AccountBalanceAsync(new WalletAccount(400), CancellationToken.None));
+            var item = await itemStore.GetAsync(created.EscrowItemIds.Single(), CancellationToken.None);
+            Assert.NotNull(item);
+            Assert.Equal((400L, 600L, ItemFlags.Hangar), (item.OwnerId, item.LocationId, item.Flag));
+            await using var read = source.CreateCommand($"SELECT status, acceptor_id, reward_isk, reward_escrow FROM {contractsSchema}.contract_records WHERE contract_id=$1");
+            read.Parameters.AddWithValue(created.ContractId);
+            await using var reader = await read.ExecuteReaderAsync();
+            Assert.True(await reader.ReadAsync());
+            Assert.Equal((short)4, reader.GetInt16(0));
+            Assert.Equal(400L, reader.GetInt64(1));
+            Assert.Equal(0m, reader.GetDecimal(2));
+            Assert.Equal(0m, reader.GetDecimal(3));
+            await reader.DisposeAsync();
+            await using var bids = source.CreateCommand($"SELECT bidder_id, amount, is_refunded FROM {contractsSchema}.contract_bids WHERE contract_id=$1 ORDER BY bid_id");
+            bids.Parameters.AddWithValue(created.ContractId);
+            await using var bidReader = await bids.ExecuteReaderAsync();
+            Assert.True(await bidReader.ReadAsync());
+            Assert.Equal((300L, 10000m, true), (bidReader.GetInt64(0), bidReader.GetDecimal(1), bidReader.GetBoolean(2)));
+            Assert.True(await bidReader.ReadAsync());
+            Assert.Equal((400L, 20000m, false), (bidReader.GetInt64(0), bidReader.GetDecimal(1), bidReader.GetBoolean(2)));
+            Assert.False(await bidReader.ReadAsync());
+        }
+        finally
+        {
+            foreach (var schema in new[] { contractsSchema, inventorySchema, walletSchema })
+            {
+                await using var cleanup = source.CreateCommand($"DROP SCHEMA IF EXISTS \"{schema}\" CASCADE");
+                await cleanup.ExecuteNonQueryAsync();
+            }
+        }
+    }
+
+    [Fact]
     public async Task Outstanding_limit_refuses_creation_without_charging_and_requested_terms_are_stored()
     {
         var connectionString = Environment.GetEnvironmentVariable("EVE_PG_URL")

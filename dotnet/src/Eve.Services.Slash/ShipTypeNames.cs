@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using Eve.Dogma;
 using Eve.Sde;
 
 namespace Eve.Services.Slash;
@@ -49,6 +50,19 @@ public sealed partial class ShipTypeNames(SdeReader sde)
         {
             _gate.Release();
         }
+    }
+
+    /// <summary>Finds the first published ship named by an SDE type list.</summary>
+    public async Task<(int TypeId, string Name)?> FirstPublishedInTypeListAsync(DogmaStatic statics, int listId, CancellationToken cancellationToken = default)
+    {
+        var ships = (await ShipsAsync(cancellationToken)).Where(ship => ship.Published).ToArray();
+        await statics.EnsureTypesAsync(ships.Select(ship => ship.TypeId), cancellationToken);
+        foreach (var ship in ships)
+        {
+            if (await statics.TypeListNamesAsync(listId, ship.TypeId, cancellationToken))
+                return (ship.TypeId, ship.Name);
+        }
+        return null;
     }
 
     private static string Label((int TypeId, string Name, bool Published) ship) => $"{ship.Name} ({ship.TypeId}{(ship.Published ? "" : ", unpublished")})";

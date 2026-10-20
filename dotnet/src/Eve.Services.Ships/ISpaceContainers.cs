@@ -48,11 +48,9 @@ public interface ISpaceContainers
     /// <summary>Refreshes an active ship's presentation from committed inventory after its location-name notification.</summary>
     Task RefreshShipNameAsync(ClientSession session, long itemId, CancellationToken cancellationToken) => Task.CompletedTask;
 
-
     /// <summary>Abandons loot rights for owned cans or wrecks without moving their contents.</summary>
     Task AbandonLootAsync(ClientSession session, IReadOnlyList<long> containerIds, CancellationToken cancellationToken) =>
         throw new NotSupportedException("This space container service cannot abandon loot.");
-
 
     /// <summary>
     /// <c>ship.Scoop(itemID, password)</c>: takes an eligible marked space artifact into the active ship after the provider checks scene visibility, range, rights and cargo room.
@@ -73,8 +71,6 @@ public interface ISpaceContainers
     Task<long?> LaunchFromShipAsync(ClientSession session, long itemId, CancellationToken cancellationToken) => Task.FromResult<long?>(null);
 }
 
-
-/// <summary>The in-space drone-bay inventory boundary. Implementations must use live scene ownership and simulation commands.</summary>
 public interface ISpaceDroneBays
 {
     /// <summary>The active ship's in-space bay capacity and physical volume.</summary>

@@ -47,8 +47,15 @@ public interface IContractWriteModel
         CreateItemExchangeRequest request,
         CancellationToken cancellationToken);
 
+    ValueTask<AcceptedContract> AcceptContractAsync(long contractId, long characterId, long corporationId,
+        long allianceId, bool acceptForCorporation, int acceptorWalletKey, long currentStationId,
+        CancellationToken cancellationToken);
+
     ValueTask<AcceptedContract> AcceptItemExchangeAsync(long contractId, long characterId, long corporationId,
         long allianceId, bool acceptForCorporation, int acceptorWalletKey, CancellationToken cancellationToken);
+
+    ValueTask<bool> CompleteContractAsync(long contractId, int targetStatus, long characterId, long corporationId,
+        long currentStationId, bool hasCorpContractManager, CancellationToken cancellationToken);
 
     ValueTask<bool> PlaceBidAsync(long contractId, long characterId, long corporationId, long allianceId,
         bool bidForCorporation, int bidderWalletKey, decimal amount, CancellationToken cancellationToken);

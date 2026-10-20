@@ -1,6 +1,5 @@
 namespace Eve.Space;
 
-/// <summary>A message on the link between the service host and the simulation (docs/design/adr/0007-space-simulation-process.md).</summary>
 public abstract record SimMessage;
 
 /// <summary>Where an entity lives in the simulation: a public location, a content instance and its room.</summary>
@@ -356,8 +355,7 @@ public sealed record SimRefused(ulong SessionId, byte Command, string Reason) : 
 /// <summary>A command was accepted, after the update it made. A <c>Dock</c> is answered with the time (a FILETIME).</summary>
 public sealed record SimAccepted(ulong SessionId, byte Command, long At) : SimMessage;
 
-
-/// A requested target coordinate was resolved by the simulation.
+/// <summary>A requested target coordinate was resolved by the simulation.</summary>
 public sealed record SimPosition(ulong SessionId, byte Command, IReadOnlyList<double> Position) : SimMessage;
 
 /// <summary>Something a probe scan can find (protocol 52): the item id, its kind (1 ship, 2 drone, 3 fighter, 4 deployable), its type and where it is.</summary>
@@ -596,13 +594,11 @@ public abstract record SimAction
     /// </summary>
     public sealed record Smartbomb(double Range, IReadOnlyList<double> Damage, bool HurtsPilots) : SimAction;
 
-
     /// <summary>An ECM burst rolls against every nearby ship at cycle start and breaks successful targets' current locks without leaving a lasting jam.</summary>
     public sealed record EcmBurst(double Range, IReadOnlyList<double> Strength) : SimAction;
 
     /// <summary>Uses loaded charges at each cycle; after they run out the effect may switch to an uncharged action or stop.</summary>
     public sealed record Charged(SimAction Action, SimAction? Fallback, int ChargeTypeId, int ChargeFlag, int ChargePerCycle, long Charges) : SimAction;
-
 
     /// <summary>
     /// Engages the ship's active cloaking device (tag 5). A cloak that is not warp-safe (<paramref name="WarpSafe"/> false, a standard cloaking device) holds the
@@ -1086,7 +1082,6 @@ public sealed record SimModuleWorkCycle(
     /// <summary>The ships a command burst reaches (<see cref="SimModuleWorkCommands.Burst"/> only; null or empty for every other command): the ships of the scene within reach.</summary>
     IReadOnlyList<long>? Recipients = null, int ChargeTypeId = 0) : SimMessage;
 
-/// <summary>The host's decision for one module work cycle; the fields are those of <see cref="SimDroneWorkResult"/>.</summary>
 public sealed record SimModuleWorkResult(
     ulong SessionId, long ModuleId, long TargetId, ulong CycleId, bool Accepted, string Reason, long UnitsRemaining, long DeliveredUnits, bool Complete) : SimMessage;
 
@@ -1113,13 +1108,11 @@ public static class SimModuleEndReasons
 /// </summary>
 public sealed record SimModuleEnded(ulong SessionId, long ModuleId, byte Reason) : SimMessage;
 
-/// <summary>Inventory authority's decision for one completed drone cycle.</summary>
 public sealed record SimDroneWorkResult(
     ulong SessionId, long DroneId, long TargetId, ulong CycleId, bool Accepted, string Reason, long UnitsRemaining, long DeliveredUnits, bool Complete) : SimMessage;
 
 /// <summary>
 /// One eligible mutadaptive remote-repair cycle. CycleNumber is 1-based within the current running effect; CycleAtMs is the simulation-clock cycle-end time, and CycleDurationMs is that effect's SDE duration.
-/// Continue only for the same target, the next cycle number, and a time delta in [0, CycleDurationMs]. Exactly one duration remains consecutive; a larger gap expires the spool, and the current request then starts at one spool step. Ignore duplicate or older CycleId values. EndsEffectAfterCycle means Rust will not start another cycle after this result; target loss sends the normal effect-ended notification without a repair request.
 /// </summary>
 public sealed record SimRemoteRepairCycle(
     ulong SessionId, long ModuleId, long TargetId, ulong CycleId, int CycleNumber, long CycleAtMs, long CycleDurationMs, bool EndsEffectAfterCycle, double BaseAmount,
@@ -1201,10 +1194,7 @@ public sealed record SimChangeWreck(ulong SessionId, long WreckId, bool IsEmpty)
 /// <summary>Takes a wreck or a can out of space; <see cref="Effect"/> is the destruction effect the client plays first (0: none).</summary>
 public sealed record SimRemoveWreck(long WreckId, int Effect) : SimMessage;
 
-/// <summary>
-/// A cynosural field the host keeps a record of (protocol 44). The simulation says it was lit, with its place, owner, type and whole life; the host sends the
-/// same message back to put it in space after a restart, with what is left of its life then (<see cref="LifetimeMs"/>).
-/// </summary>
+/// <summary>A cynosural field record that the host replays after restart with its remaining lifetime.</summary>
 public sealed record SimDeployed(
     int SolarSystemId, long DeployableId, string Name, int TypeId, int GroupId, IReadOnlyList<double> Position, double Radius, long OwnerId, int CorporationId,
     int AllianceId, long ShipId, double LifetimeMs) : SimMessage;
@@ -1337,14 +1327,10 @@ public sealed record SimPlaceControlTower(
     long DeployableId, int SolarSystemId, string Name, int TypeId, int GroupId, IReadOnlyList<double> Position, double Radius, bool Active,
     long OwnerId, int CorporationId, int AllianceId, long ShipId) : SimMessage;
 
-/// <summary>A deadspace pocket of a dungeon (a mission pocket or an incursion site) the host keeps a record of, put in the scene at its origin with its radius (protocol 74).
-/// It is in no client ball; the wire carries it as a disruptor's placement with no type, group, range or owner.</summary>
+/// <summary>A dungeon pocket has no client ball; the wire uses the disruptor placement layout (protocol 74).</summary>
 public sealed record SimPlaceDeadspacePocket(long DeployableId, int SolarSystemId, string Name, IReadOnlyList<double> Position, double Radius) : SimMessage;
 
-/// <summary>
-/// An acceleration gate of a dungeon room, put in its system's space at the point the host gives (protocol 75): a stargate-kind ball, interactive, that the
-/// pilots of the system see. The wire carries it as a disruptor's placement with no range, owner or ship.
-/// </summary>
+/// <summary>An interactive stargate-kind ball for a dungeon acceleration gate (protocol 75).</summary>
 public sealed record SimPlaceAccelerationGate(long DeployableId, int SolarSystemId, string Name, int TypeId, int GroupId, IReadOnlyList<double> Position, double Radius) : SimMessage;
 
 /// <summary>A battlefield's scoreboard put in its system's space (protocol 78): a ball the pilots of the system see; its score is the dynamic slim field the host sets.</summary>
@@ -1359,11 +1345,9 @@ public sealed record SimPlaceCapturePoint(long DeployableId, int SolarSystemId, 
 /// <summary>A Mobile Observatory's decloaking ping in its solar system (protocol 72): the cloaked ships there whose cloak is not stabilized may be decloaked.</summary>
 public sealed record SimRemoteDecloakPing(int SolarSystemId, long ObservatoryId) : SimMessage;
 
-/// <summary>Registers or updates a Sim-created damageable entity's creation identity for Host-side owner resolution (protocol 69). Host validates these facts against authoritative type/owner sources.</summary>
 public sealed record SimDamageableEntityUpserted(
     int SolarSystemId, long EntityId, int TypeId, long OwnerId, long CorporationId, long AllianceId, long WarFactionId) : SimMessage;
 
-/// <summary>Removes a non-destroyed Sim-created damageable entity from the Host's owner-resolution registry (protocol 69).</summary>
 public sealed record SimDamageableEntityRemoved(int SolarSystemId, long EntityId) : SimMessage;
 
 /// <summary>The answer to <see cref="SimCommands.Measure"/>: metres from the centre of the ship to the surface of the wreck or can, or null when there is no such wreck.</summary>

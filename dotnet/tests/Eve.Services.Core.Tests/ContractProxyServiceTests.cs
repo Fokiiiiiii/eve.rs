@@ -79,6 +79,7 @@ public sealed class ContractProxyServiceTests
         var session = new ClientSession { CharacterId = 42 };
         session.Set("corpid", new PyInt(84));
         session.Set("allianceid", new PyInt(126));
+        session.Set("stationid", new PyInt(3001));
         var response = Assert.IsType<PyObject>(await service.AcceptContract(new ServiceCall
         {
             Method = "AcceptContract",
@@ -89,6 +90,26 @@ public sealed class ContractProxyServiceTests
         Assert.Equal(new PyInt(999), Value(response, "contractID"));
         Assert.Equal(new PyInt(4), Value(response, "status"));
         Assert.Equal(new PyInt(42), Value(response, "acceptorID"));
+        Assert.Equal((999L, 42L, 84L, 126L, false, 1000, 3001L), writer.LastAccept);
+    }
+
+    [Fact]
+    public async Task Complete_contract_passes_status_station_and_corporation_role()
+    {
+        var writer = new RecordingWriteModel();
+        var service = new ContractProxyService(new RecordingReadModel(), writer);
+        var session = new ClientSession { CharacterId = 42 };
+        session.Set("corpid", new PyInt(84));
+        session.Set("stationid", new PyInt(3002));
+        session.Set("corprole", new PyLong(72057594037927936L));
+
+        var response = await service.CompleteContract(new ServiceCall
+        {
+            Method = "CompleteContract", Args = [new PyInt(900), new PyInt(4)], Session = session,
+        });
+
+        Assert.Same(PyBool.True, response);
+        Assert.Equal((900L, 4, 42L, 84L, 3002L, true), writer.LastComplete);
     }
 
     [Fact]
@@ -172,6 +193,10 @@ public sealed class ContractProxyServiceTests
     {
         public List<CreateItemExchangeRequest> Requests { get; } = [];
 
+        public (long ContractId, long CharacterId, long CorporationId, long AllianceId, bool ForCorporation, int WalletKey, long StationId) LastAccept { get; private set; }
+
+        public (long ContractId, int Status, long CharacterId, long CorporationId, long StationId, bool IsManager) LastComplete { get; private set; }
+
         public (long ContractId, long CharacterId, long CorporationId, bool ForCorporation, int WalletKey, decimal Amount) LastBid { get; private set; }
 
         public ValueTask<CreatedContract> CreateContractAsync(CreateItemExchangeRequest request, CancellationToken cancellationToken)
@@ -180,9 +205,23 @@ public sealed class ContractProxyServiceTests
             return ValueTask.FromResult(new CreatedContract(777, [5001]));
         }
 
+        public ValueTask<AcceptedContract> AcceptContractAsync(long contractId, long characterId, long corporationId,
+            long allianceId, bool acceptForCorporation, int acceptorWalletKey, long currentStationId, CancellationToken cancellationToken)
+        {
+            LastAccept = (contractId, characterId, corporationId, allianceId, acceptForCorporation, acceptorWalletKey, currentStationId);
+            return ValueTask.FromResult(new AcceptedContract(contractId, 1, 4, 100, 200, false, characterId, 3001, 0, 123, 0));
+        }
+
         public ValueTask<AcceptedContract> AcceptItemExchangeAsync(long contractId, long characterId, long corporationId,
             long allianceId, bool acceptForCorporation, int acceptorWalletKey, CancellationToken cancellationToken) =>
-            ValueTask.FromResult(new AcceptedContract(contractId, 1, 4, 100, 200, false, characterId, 3001, 0, 123, 0));
+            AcceptContractAsync(contractId, characterId, corporationId, allianceId, acceptForCorporation, acceptorWalletKey, 3001, cancellationToken);
+
+        public ValueTask<bool> CompleteContractAsync(long contractId, int targetStatus, long characterId, long corporationId,
+            long currentStationId, bool hasCorpContractManager, CancellationToken cancellationToken)
+        {
+            LastComplete = (contractId, targetStatus, characterId, corporationId, currentStationId, hasCorpContractManager);
+            return ValueTask.FromResult(true);
+        }
 
         public ValueTask<bool> PlaceBidAsync(long contractId, long characterId, long corporationId, long allianceId,
             bool bidForCorporation, int bidderWalletKey, decimal amount, CancellationToken cancellationToken)

@@ -179,6 +179,20 @@ public class DispatchGoldenTests
             new PyTuple([.. head, .. Enumerable.Repeat<PyValue>(PyNone.Instance, 14 - head.Length)]));
     }
 
+    private static PyValue BoundCallRequestPacket(string objectId, string method)
+    {
+        var source = new PyTuple([new PyInt(MachoAddress.TypeClient), new PyLong(7), new PyInt(9), PyNone.Instance]);
+        var body = new PyTuple([new PyStr(objectId), new PyStr(method), new PyTuple([]), PyNone.Instance]);
+        var payload = new PyTuple([new PyTuple([new PyInt(0), new PySubStream(body)])]);
+        var head = new PyValue[]
+        {
+            new PyInt(6), source, MachoAddress.Any("").Encode(), new PyInt(90000002), payload, PyNone.Instance,
+        };
+        return new PyObject(
+            new PyStr("carbon.common.script.net.machoNetPacket.CallReq"),
+            new PyTuple([.. head, .. Enumerable.Repeat<PyValue>(PyNone.Instance, 14 - head.Length)]));
+    }
+
     private static string Clip(string text) => text.Length > 120 ? text[..120] + "…" : text;
 
     private sealed class EmptyProvider : IServiceProvider
@@ -224,6 +238,17 @@ public class DispatchGoldenTests
         Assert.Equal(ErrorResponseCommand, CommandOf(historyCapture.Sent[1]));
         Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(historyCapture.Sent[1])));
 
+        var boundCapture = new Capture();
+        var boundSession = new ClientSession(boundCapture) { SessionId = 904 };
+        const string marketObjectId = "N=900:904";
+        registry.RegisterBoundObject(marketObjectId, service);
+        await dispatcher.DispatchAsync(BoundCallRequestPacket(marketObjectId, "GetOrders"), boundSession);
+        await dispatcher.DispatchAsync(BoundCallRequestPacket(marketObjectId, "BuyMultipleItems"), boundSession);
+        Assert.Equal(3, service.Calls);
+        Assert.Equal(2, boundCapture.Sent.Count);
+        Assert.Equal(ErrorResponseCommand, CommandOf(boundCapture.Sent[1]));
+        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(boundCapture.Sent[1])));
+
         var inventoryCapture = new Capture();
         var inventorySession = new ClientSession(inventoryCapture) { SessionId = 902 };
         await dispatcher.DispatchAsync(CallRequestPacket("invbroker", "ListIncludingContainers"), inventorySession);
@@ -234,7 +259,7 @@ public class DispatchGoldenTests
 
         now += 60_000;
         await dispatcher.DispatchAsync(CallRequestPacket("marketProxy", "GetOrders"), session);
-        Assert.Equal(3, service.Calls);
+        Assert.Equal(4, service.Calls);
         Assert.Equal(7, CommandOf(capture.Sent[2]));
     }
 

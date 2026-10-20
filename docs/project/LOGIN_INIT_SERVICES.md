@@ -12,10 +12,10 @@ The headless login-to-character walk (`tools/headless-client/tests/test_login_to
 |---|---|---|---|
 | Front Hello / HelloAck / ClusterConfig | TCP front connection before authentication | Implemented | `dotnet/src/Eve.Host/HostServer.cs`, `HostCodec.cs`; protocol state machine is in the Host and Rust front. Headless live walk exercises login. |
 | `connection.Authenticate` / login auth | First client authentication request | Implemented | Host account directory and `FrontConnection.AuthenticateAsync`; wrong-password and account-create paths are in live-client harness. |
-| `loadService` and `externalQueueMgr` connect calls | Connect and queue admission | Partial | Routes are in dispatch; no client trace establishes a real queue/admission implementation for a single local host. Audit/implement queue semantics if the V24 caller requires them. |
+| `loadService` / `externalQueueMgr` service resolution | Connect and queue discovery; no named RPC method appears in the login fixture | Partial | `loadService` is intentionally not advertised in `ServiceAdvertisementTests` and the handshake record in `DEVIATIONS.md`; `externalQueueMgr` is an absent source candidate in `TODO.md` section 37. Neither is exercised by the login-to-character walk. Reconcile any V24 startup callsite with these established boundary decisions before adding a route. |
 | `cache.GetServerVersionAndBuild` | Startup / bug-report metadata | Implemented | Concrete cache service; build/version comes from Host configuration. |
 | `machoNet.GetTime` | Character selection and startup time sync | Implemented | Host MachoNet service; fixture records its result shape. |
-| `machoNet.GetClusterGameStatistics` | Startup cluster display | Partial | Current Host statistics are derived from selected sessions; cluster user count is currently zero. Determine whether this call is made in login UI and source the count if required. |
+| `machoNet.GetClusterGameStatisticsForClient` | Map solar-system display (`eve/client/script/ui/shared/maps/mapSvc.py:429`) | Implemented | `MachoNetService` returns the Host system/station counts, which `HostMachoNetInfo` derives from live selected sessions; `HostMachoNetInfoTests` covers the projection. |
 | `machoNet.GetGlobalConfig` / service discovery | Startup service resolution | Implemented | Registered service list and global config exposed by Host MachoNet. |
 | `sessionMgr.PerformSessionChange` | Character selection/create-to-world transition | Implemented | `SelectCharacterID` changes authenticated session and sends notification; walk compares session notification and the next world-facing requests. |
 | `charUnboundMgr.GetNumCharacters` | Character screen and creation limits | Implemented | Per-account persisted character count. |
@@ -39,7 +39,8 @@ The headless login-to-character walk (`tools/headless-client/tests/test_login_to
 | `subscriptionMgr.GetCloneGrade` | Character screen and clone UI | Implemented | Character/account subscription state is read by Host provider. |
 | `subscriptionMgr.GetSubscriptionTime` | Subscription UI after entry | Implemented | `SubscriptionMgrService` derives expiry and remaining days from the persisted account omega expiry. |
 | `survey.GetActiveSurveyID` | Character screen | Partial | Route is present; verify campaign configuration and result against current server data. |
-| `loginCampaignManager` / `seasonalLoginCampaignManager` | Login reward surfaces | Partial | Service names are registered; campaign state and rewards depend on configured data. Verify claim mutation, ownership, and persistence before counting these as complete. |
+| `loginCampaignManager.get_client_campaign_state` / `claim_reward` | Daily rookie login-reward panel | Implemented | The V24.01 `loginrewards/client/loginCampaignService.py` calls these methods. Host reads account progress and atomically creates the redeem token with the claim record; focused service and persistence tests cover the path. |
+| `seasonalLoginCampaignManager.get_active_campaign` / `get_claim_history` / `claim_reward` | Seasonal login-reward panel | Partial | V24.01 `loginrewards/client/seasonalLoginCampaignService.py` calls these methods. Host has the state and claim contract, but `PersistenceNewEdenStoreRuntime.GetSeasonalLoginCampaignAsync` currently supplies no configured campaign state. |
 | `milestoneMgr.ProcessCharacterLogon` / `ClaimRewards` | First logon and reward claims | Implemented | The Host uses `LoginMilestoneStore`; the milestone live test covers the logon timer and claim path. |
 | `rewardMgr.GetDelayedRewardsByGroupIDs` | Login reward UI | Implemented | Host reads pending loyalty points from the live incursion director; groups without pending rewards are omitted. |
 | `config.GetStationSolarSystemsByOwner` | Static/config startup | Implemented | Host reads server configuration/static catalog. |
@@ -139,7 +140,7 @@ The original table above covers connection, authentication, and character entry.
 | `fleetMgr.RemoveFromWatchlist` | Fleet watchlist changes (`parklife/fleetSvc.py:719`); full session list flow open | Partial | Evidence and remaining provider work are linked in the caller path and current feature entries in `docs/project/TODO.md`. |
 | `fleetMgr.RegisterForDamageUpdates` | Fleet watchlist damage updates (`parklife/fleetSvc.py:795`) | Partial | Evidence and remaining provider work are linked in the caller path and current feature entries in `docs/project/TODO.md`. |
 
-Inventory baseline: 121 tracked rows: 72 implemented, 49 partial, and 0 missing routes. This combines 38 connection/character-entry entries (28 implemented and 10 partial) with 83 post-selection/first-screen entries (44 implemented and 39 partial).
+Inventory baseline: 122 tracked rows: 74 implemented, 48 partial, and 0 missing routes. The entry-phase and post-selection subtotals are shown by their section counts above.
 
 ## Verification boundary
 

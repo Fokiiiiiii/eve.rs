@@ -26,6 +26,10 @@ The V24.01 trade window builds a two-pilot money manifest and a set of offered i
 
 `account.GetTransactions`, `GiveCash`, and `GiveCashFromCorpAccount` now consume the existing per-session weighted RPC budget. The budget returns the named `SessionRpcBudgetExceeded` response after the configured minute allowance. This is server-side resource accounting and does not alter a call's result while it remains within budget. `DispatchGoldenTests.Expensive_wallet_calls_have_a_named_per_session_budget` covers refusal after the limit.
 
+## Inventory RPC work budget (2026-10-20)
+
+Inventory open, list, and asset-enumeration RPCs consume 2 units each in the shared 120-unit per-session rolling-minute budget. This preserves inventory navigation across hangars and ships while retaining a refusal for excessive enumeration. The budget is an intentional server-side limit with no response change while within allowance. `DispatchGoldenTests.Expensive_market_calls_have_a_named_per_session_budget` verifies direct opens followed by bound inventory reads and refusal after the test allowance is consumed.
+
 ## LP store singleton grant bound (2026-10-20)
 
 EveJS 261018.1 normalizes the requested LP store quantity but has no generated-item count cap. eve.rs refuses purchases whose singleton reward would create more than 256 items; ordinary stack offers retain the existing checked cost and quantity calculations. The focused PostgreSQL test verifies refusal before inventory or purchase history changes. Offer reads and purchase calls also consume the configured per-session RPC budget. Graphical-client acceptance remains open.
@@ -41,6 +45,10 @@ The Host rejects repeated private-room invitations from one character within one
 ## Mailing-list RPC resource bounds (2026-10-20)
 
 `mailingListsMgr` operations consume the weighted per-session RPC budget. Member-role changes and entity-access updates refuse raw collections above 1,000 entries with `MAILING_LIST_BULK_LIMIT_EXCEEDED` before forwarding to Host persistence. Collections within the limit retain the existing owner/operator checks and notification flow. `MailingListServiceTests.Mailing_list_bulk_mutations_reject_oversized_raw_collections_before_host_callbacks` and `DispatchGoldenTests.Mailing_list_work_has_a_named_per_session_budget` cover the refusals. Graphical-client acceptance remains open.
+
+## Fleet broadcast RPC budget (2026-10-20)
+
+`fleetObject.SendBroadcast` fans out to current fleet members and now consumes 10 units from the shared per-session rolling-minute RPC budget. Beyond the configured allowance, the dispatcher returns `SessionRpcBudgetExceeded`; calls within the allowance retain the existing notification shape and delivery rules. `DispatchGoldenTests.Expensive_market_calls_have_a_named_per_session_budget` verifies that an over-budget broadcast is refused.
 
 ## Project status
 

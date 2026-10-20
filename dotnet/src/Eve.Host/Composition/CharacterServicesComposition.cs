@@ -37,7 +37,7 @@ namespace Eve.Host;
 
 internal sealed partial class CharacterServicesComposition
 {
-    internal static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimClient? Simulation, Eve.Services.Crimewatch.CrimewatchRuntime? Crimewatch, Eve.Calendar.ICalendarStore? CalendarStore, Eve.Calendar.ICalendarAudienceReader? CalendarAudience, Eve.Services.Core.GameRpcCallbacks? GameRpcCallbacks, Eve.Services.Core.KeeperRpcCallbacks? KeeperRpcCallbacks, CharacterSessions? CharacterSessions)> CharacterServicesAsync(NpgsqlDataSource source, PgAccountDirectory accounts, OnlineCharacters online, Func<long> now, Foundations foundations, PersistenceStore mailStore, OwnerSession mailStoreOwner, GameStoreCache mailCache, string newCharacterExperienceMode, IOmegaAccountStore omegaAccounts, ConnectedSessions connected)
+    internal static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimClient? Simulation, Eve.Services.Crimewatch.CrimewatchRuntime? Crimewatch, Eve.Calendar.ICalendarStore? CalendarStore, Eve.Calendar.ICalendarAudienceReader? CalendarAudience, Eve.Services.Core.GameRpcCallbacks? GameRpcCallbacks, Eve.Services.Core.KeeperRpcCallbacks? KeeperRpcCallbacks, CharacterSessions? CharacterSessions, Func<long, long, CancellationToken, ValueTask<decimal>>? ContractBrokerFeeAdjustment)> CharacterServicesAsync(NpgsqlDataSource source, PgAccountDirectory accounts, OnlineCharacters online, Func<long> now, Foundations foundations, PersistenceStore mailStore, OwnerSession mailStoreOwner, GameStoreCache mailCache, string newCharacterExperienceMode, IOmegaAccountStore omegaAccounts, ConnectedSessions connected)
         => await new CharacterServicesComposition(source, accounts, online, now, foundations, mailStore, mailStoreOwner, mailCache, newCharacterExperienceMode, omegaAccounts, connected).RunAsync();
 
     public CharacterServicesComposition(NpgsqlDataSource source, PgAccountDirectory accounts, OnlineCharacters online, Func<long> now, Foundations foundations, PersistenceStore mailStore, OwnerSession mailStoreOwner, GameStoreCache mailCache, string newCharacterExperienceMode, IOmegaAccountStore omegaAccounts, ConnectedSessions connected)
@@ -55,7 +55,7 @@ internal sealed partial class CharacterServicesComposition
         this.newCharacterExperienceMode = newCharacterExperienceMode;
     }
 
-    private async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimClient? Simulation, Eve.Services.Crimewatch.CrimewatchRuntime? Crimewatch, Eve.Calendar.ICalendarStore? CalendarStore, Eve.Calendar.ICalendarAudienceReader? CalendarAudience, Eve.Services.Core.GameRpcCallbacks? GameRpcCallbacks, Eve.Services.Core.KeeperRpcCallbacks? KeeperRpcCallbacks, CharacterSessions? CharacterSessions)> RunAsync()
+    private async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimClient? Simulation, Eve.Services.Crimewatch.CrimewatchRuntime? Crimewatch, Eve.Calendar.ICalendarStore? CalendarStore, Eve.Calendar.ICalendarAudienceReader? CalendarAudience, Eve.Services.Core.GameRpcCallbacks? GameRpcCallbacks, Eve.Services.Core.KeeperRpcCallbacks? KeeperRpcCallbacks, CharacterSessions? CharacterSessions, Func<long, long, CancellationToken, ValueTask<decimal>>? ContractBrokerFeeAdjustment)> RunAsync()
     {
         await MigrateCharacterStores();
 
@@ -65,7 +65,7 @@ internal sealed partial class CharacterServicesComposition
         if (buildVersion is null)
         {
             Console.Error.WriteLine("eve-host: the static data is not loaded (run `eve-sde ensure --pg $EVE_PG_URL`): no charUnboundMgr, no skills");
-            return ([], null, null, null, null, null, null, null, null);
+            return ([], null, null, null, null, null, null, null, null, null);
         }
         build = buildVersion.Value;
         await LoadCatalogsAndStores();
@@ -105,7 +105,13 @@ internal sealed partial class CharacterServicesComposition
         await AgentMissions();
         await CharacterEntryHooks();
         await CharacterServiceList();
-        return (services, spaceSessions, sim, crimewatchRuntime, calendarStore, calendarAudience, gameRpcCallbacks, keeperRpcCallbacks, characterSessions);
+        return (services, spaceSessions, sim, crimewatchRuntime, calendarStore, calendarAudience, gameRpcCallbacks, keeperRpcCallbacks, characterSessions,
+            async (characterId, solarSystemId, cancellationToken) =>
+            {
+                await using var connection = await source.OpenConnectionAsync(cancellationToken);
+                await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+                return 1m - 0.1m * await FactionWarfareUpgradeLevelAsync(connection, transaction, characterId, solarSystemId, cancellationToken);
+            });
     }
 
     private NpgsqlDataSource source;

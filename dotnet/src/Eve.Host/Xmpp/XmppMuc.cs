@@ -107,7 +107,10 @@ public sealed partial class XmppChatHub
             LeaveRoom(link, room);
     }
 
-    internal bool SendRoomMessage(XmppLink link, string room, string body)
+    internal bool SendRoomMessage(XmppLink link, string room, string body) =>
+        SendRoomMessageAsync(link, room, body, CancellationToken.None).AsTask().GetAwaiter().GetResult();
+
+    internal async ValueTask<bool> SendRoomMessageAsync(XmppLink link, string room, string body, CancellationToken cancellationToken)
     {
         if (Encoding.UTF8.GetByteCount(body) is 0 or > MaxRoomMessageBytes
             || body.Any(character => char.IsControl(character) && character is not '\n' and not '\t'))
@@ -139,6 +142,18 @@ public sealed partial class XmppChatHub
                 : [];
         }
 
+        if (recipients.Length > 1)
+        {
+            var allowed = new List<XmppOccupant>(recipients.Length);
+            foreach (var recipient in recipients)
+            {
+                if (ReferenceEquals(recipient.Link, link)
+                    || !await IsBlockedByAsync(recipient.Link.CharacterId, link.CharacterId, cancellationToken))
+                    allowed.Add(recipient);
+            }
+            recipients = allowed.ToArray();
+        }
+
         if (delayed && firstMessage)
         {
             foreach (var speaker in knownSpeakers)
@@ -160,6 +175,8 @@ public sealed partial class XmppChatHub
             return false;
         var session = SessionOf(link.CharacterId);
         if (session is null || !ReferenceEquals(SessionOf(link.CharacterId), session)
+            || session.GetInt("corpid") is not { } corporationId || corporationId <= 0
+            || room != $"corp_{corporationId}"
             || !StaticAccessChannels(session).Contains(room, StringComparer.Ordinal)
             || !IsCorporationDirector(session))
             return false;
@@ -292,7 +309,15 @@ internal static string? PrivateChannelName(long callerCharacterId, long targetCh
         return $"private_{first}_{second}";
     }
 
-    internal bool InvitePrivateParticipant(XmppLink inviter, string room, long targetCharacterId, string reason)
+    internal bool InvitePrivateParticipant(XmppLink inviter, string room, long targetCharacterId, string reason) =>
+        InvitePrivateParticipantAsync(inviter, room, targetCharacterId, reason, CancellationToken.None).AsTask().GetAwaiter().GetResult();
+
+    internal async ValueTask<bool> InvitePrivateParticipantAsync(
+        XmppLink inviter,
+        string room,
+        long targetCharacterId,
+        string reason,
+        CancellationToken cancellationToken)
     {
         if (!TryPrivateRoomMembers(room, out var first, out var second)
             || inviter.CharacterId != first && inviter.CharacterId != second
@@ -308,6 +333,9 @@ internal static string? PrivateChannelName(long callerCharacterId, long targetCh
                 || !_linkByCharacter.TryGetValue(targetCharacterId, out target))
                 return false;
         }
+
+        if (await IsCharacterBlockedByAsync(targetCharacterId, inviter.CharacterId, cancellationToken))
+            return false;
 
         var safeReason = reason.Length == 0 ? "" : $"<reason>{XmppXml.Escape(reason)}</reason>";
         var roomJid = $"{room}@{ConferenceDomain}";

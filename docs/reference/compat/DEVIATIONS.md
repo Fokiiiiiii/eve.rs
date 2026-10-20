@@ -5193,6 +5193,10 @@ The market parser rejects floating-point prices beyond the market maximum before
 `insurance.GetInsurancePrices` accepts at most 500 raw type IDs per request and returns `InsuranceBulkLimitExceeded` before reading price data for a larger batch. The V24 client primes the service with the set of missing ship type IDs; normal client batches retain their existing results. `InsuranceServiceTests.Insurance_price_batch_refuses_more_than_500_type_ids_before_the_read_model` covers the refusal.
 
 
+## Skill service bulk and arithmetic bounds (2026-10-20)
+
+`InjectSkillIntoBrain` and `ExtractSkills` refuse more than 500 raw entries before transactional item or skill changes. The shared skill numeric parser rejects non-finite and out-of-range real IDs; duplicate requested extraction points saturate at Int64 maximum before calculation. These checks preserve the V24.01 successful client flow and reject oversized or overflowing payloads. `SkillServiceTests.Skill_bulk_item_operations_refuse_more_than_500_raw_entries_before_mutation` covers both refusals, while the extraction success regression exercises duplicate point aggregation near the integer limit.
+
 ## Insurance ship identifier validation (2026-10-20)
 
 The insurance RPCs accept positive integer ship IDs. Fractional or malformed values are refused before the read model or purchase writer can act on the truncated ID. `InsuranceServiceTests.Fractional_ship_identifiers_are_refused_before_read_or_purchase` covers both reads and purchases.

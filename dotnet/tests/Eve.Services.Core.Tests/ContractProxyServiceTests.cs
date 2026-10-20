@@ -183,6 +183,40 @@ public sealed class ContractProxyServiceTests
     }
 
     [Fact]
+    public async Task Create_contract_applies_the_station_adjustment_to_the_broker_fee()
+    {
+        var writer = new RecordingWriteModel();
+        long callbackCharacterId = 0;
+        long callbackSystemId = 0;
+        var service = new ContractProxyService(new RecordingReadModel(), writer,
+            (characterId, typeId, ct) => ValueTask.FromResult(0),
+            (characterId, solarSystemId, ct) =>
+            {
+                callbackCharacterId = characterId;
+                callbackSystemId = solarSystemId;
+                return ValueTask.FromResult(0.5m);
+            });
+        var session = new ClientSession { CharacterId = 42 };
+        session.Set("stationid", new PyInt(3001));
+        session.Set("solarsystemid2", new PyInt(3002));
+        session.Set("corpid", new PyInt(84));
+        var contractStruct = new PyObject(new PyStr("contracts.contractStruct.ContractStruct"), PyTuple.Of(
+            new PyInt(1), PyBool.False, new PyInt(0), new PyInt(1440), new PyInt(0), new PyInt(3001),
+            new PyInt(0), new PyInt(10_000_000), new PyInt(0), new PyInt(0), new PyStr("Parts"), new PyStr(""),
+            new PyList([PyTuple.Of(new PyInt(9001), new PyInt(1))]), new PyInt(4),
+            new PyList([]), PyBool.False, PyBool.False));
+
+        await service.CreateContract(new ServiceCall
+        {
+            Method = "CreateContract", Args = [contractStruct], Session = session,
+        });
+
+        var request = Assert.Single(writer.Requests);
+        Assert.Equal((42L, 3002L), (callbackCharacterId, callbackSystemId));
+        Assert.Equal(20_000m, request.BrokerFee);
+    }
+
+    [Fact]
     public async Task Create_contract_reads_the_V24_positional_contract_struct()
     {
         var writer = new RecordingWriteModel();

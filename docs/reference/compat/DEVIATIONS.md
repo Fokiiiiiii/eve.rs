@@ -5237,3 +5237,8 @@ Corporate contract creation, bidding, acceptance, completion, deletion, and corp
 ## Faction-warfare corporation role revocation (2026-10-20)
 
 The four corporation enlistment, leave, and withdrawal mutations retain the client Director-session-bit check and additionally validate the actor's current persisted corporation membership and Director role. A role removed during an active session therefore cannot approve or withdraw corporation faction-warfare changes. `FacWarMgrRpcTests.Corporation_enlistment_needs_the_director_role_and_is_pending_until_the_downtime` verifies that a stale Director session cannot leave an enlisted corporation. Alliance role authorization is handled separately and remains under review.
+
+
+## Corporate insurance role revocation (2026-10-20)
+
+Corporate insurance reads, purchases, and cancellation preserve the client Accountant or Junior Accountant session-role check and also verify current persisted membership and effective role through the Host corporation store. Demotion during an active session therefore removes access to corporate insurance contracts and blocks new corporate purchases or cancellation. `InsuranceServiceTests.Corporate_insurance_refuses_a_stale_accountant_session_role` and `InsuranceServiceTests.Corporate_uninsurance_refuses_a_stale_accountant_session_role` both passed; each keeps stale session authority while persisted checks deny before the writer. The Host project built with zero warnings or errors.

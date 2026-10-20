@@ -204,7 +204,6 @@ public class DogmaServiceTests
         Assert.Equal([588, 21857, 3636, 3651], shipInfo.Entries.Select(e => (int)((PyInt)((PyPackedRow)Field(e.Value, "invItem")).Values[1]).Value));
     }
 
-
     [PgFact]
     public async Task GetAvailableTurretSlots_returns_the_active_ships_remaining_hardpoints_as_a_python_integer()
     {
@@ -219,7 +218,6 @@ public class DogmaServiceTests
         Assert.IsType<PyInt>(result);
         Assert.Equal(expected, Id(result));
     }
-
 
     [PgFact]
     public async Task Online_turret_damage_amplifiers_modify_matching_weapon_damage_with_SDE_stacking()

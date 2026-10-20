@@ -76,7 +76,6 @@ internal static class Notes
 
 /// <summary>
 /// A wait the test finishes by hand. <see cref="Reached"/> completes when the number of waits made reaches a count: the timers make their next wait
-/// after they have told the clients what changed, so a test that waits for that wait knows the notifications of the step are sent.
 /// </summary>
 internal sealed class Waits
 {
@@ -235,7 +234,6 @@ public class RuntimeTests : IAsyncLifetime
         Assert.Empty(Told(4));
     }
 
-
     [PgFact]
     public async Task Criminal_aggression_grants_a_persisted_kill_right_and_schedules_one_concord_response()
     {
@@ -278,7 +276,6 @@ public class RuntimeTests : IAsyncLifetime
         Assert.Equal((1L, System, 0.7), (response.AttackerCharacterId, response.SolarSystemId, response.Security));
         Assert.Equal(Start, response.CrimeAtUnixMs);
     }
-
 
     [PgFact]
     public async Task Low_security_grants_a_kill_right_only_for_a_criminal_capsule_attack_without_concord()
@@ -355,7 +352,6 @@ public class RuntimeTests : IAsyncLifetime
         Told(2);
         Assert.Equal(TimeSpan.FromMilliseconds(60_005), _waits.Made[^1].After);   // the first end, a moment after
 
-        // the end is told, then the next end is waited for: the step's notifications are sent by then (the timers tell before they make their next wait)
         _now = Start + 60_005;
         var made = _waits.Made.Count;
         _waits.Made[^1].Done.SetResult();
@@ -540,7 +536,6 @@ public class RuntimeTests : IAsyncLifetime
         Assert.Contains(_waits.Made, wait => wait.After == TimeSpan.FromMilliseconds(40_005));
         Assert.Contains("OnWeaponsTimerUpdate", Told(1).Select(n => n.Name));
     }
-
 
     [PgFact]
     public async Task An_active_criminal_timer_replays_the_concord_response_after_restart()
@@ -729,7 +724,7 @@ public class RuntimeTests : IAsyncLifetime
         using var runtime = Runtime();
         runtime.Legal = (_, _, _, _) => Task.FromResult(true);
         var first = await runtime.RecordAggressionAsync(Attack(1, 2, SecurityClass.HighSec, System, false));
-        // EveJS resolves an already-suspect target before the ordinary war check.
+
         Assert.Equal(AggressionReason.TargetFlagged, first.Outcome.Reason);
         Assert.Equal(Start + CrimewatchRuntime.LimitedEngagementDurationMs, _persistence.Engagements[(1, 2)]);
         Assert.Contains(Told(1), note => note.Name == "OnCrimewatchEngagementCreated");
@@ -848,7 +843,6 @@ public class RuntimeTests : IAsyncLifetime
         Assert.Equal([new PyInt(500), PyNone.Instance], ended[1].Args);
     }
 
-
     [Fact]
     public void Kill_right_manager_exposes_activation_and_purchase_rpcs()
     {
@@ -857,7 +851,6 @@ public class RuntimeTests : IAsyncLifetime
         Assert.True(service.HasMethod("ActivateKillRight"));
         Assert.True(service.HasMethod("BuyKillRight"));
     }
-
 
     [PgFact]
     public async Task GetKillRights_returns_sale_price_and_owner_restriction()
@@ -882,8 +875,6 @@ public class RuntimeTests : IAsyncLifetime
         Assert.Equal(new PyReal(250d), fields["price"]);
         Assert.Equal(InventoryWire.Id(9000001), fields["restrictedTo"]);
     }
-
-
 
     [PgFact]
     public async Task Bounty_proxy_read_rpcs_match_the_reference_routes_and_sale_access()
@@ -1029,7 +1020,6 @@ public class RuntimeTests : IAsyncLifetime
         Assert.Equal(KillRightNotificationTypes.UnavailableOpen, notifications[3].Type);
     }
 
-
     [PgFact]
     public async Task Killmail_hook_selects_the_final_attackers_activation_and_consumes_the_right_once()
     {
@@ -1050,7 +1040,6 @@ public class RuntimeTests : IAsyncLifetime
         Assert.Empty(await store.KillRightsOfAsync(1));
         Assert.Null(await store.ConsumeKillRightAfterKillAsync(2, 3, _now + 3));
     }
-
 
     [PgFact]
     public async Task Activating_an_owned_kill_right_persists_a_fifteen_minute_suspect_flag()

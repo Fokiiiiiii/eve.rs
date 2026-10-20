@@ -3,7 +3,6 @@ using Eve.Services.Slash;
 namespace Eve.Services.Dogma.Tests;
 
 /// <summary>
-/// The agent commands (<c>/agent</c>) without a database: a fake host answers each change, and the parsing, the usage checks and the words of the answers are the
 /// commands' own.
 /// </summary>
 public sealed class AgentCommandTests

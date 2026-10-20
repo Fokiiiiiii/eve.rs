@@ -3,12 +3,6 @@ using Eve.Scheduler;
 
 namespace Eve.Services.Market;
 
-/// <summary>
-/// Runs the expiry of resting orders as durable jobs (M3; market-decisions Q7). A resting order has one job, due at its expiry plus a grace
-/// (<see cref="MarketExpiry.GraceMs"/>), kept by <see cref="DurableExpiryJobs"/> in the transaction that places, moves or closes the order. A safety sweep every minute closes what is due, and a read-triggered
-/// sweep (at most once a second) does the same when a client reads the market (EVE.js marketProxyService.js:248). A restart makes sure every
-/// open order has its job again, so the expiry resumes; an overdue job runs at once.
-/// </summary>
 public sealed class MarketExpiryWorker
 {
     public const string OrderKind = "market.order.expire";

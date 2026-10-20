@@ -280,11 +280,16 @@ public class DispatchGoldenTests
 
         var inventoryCapture = new Capture();
         var inventorySession = new ClientSession(inventoryCapture) { SessionId = 902 };
-        await dispatcher.DispatchAsync(CallRequestPacket("invbroker", "ListIncludingContainers"), inventorySession);
-        await dispatcher.DispatchAsync(CallRequestPacket("invbroker", "ListIncludingContainers"), inventorySession);
-        Assert.Equal(1, inventoryService.Calls);
-        Assert.Equal(ErrorResponseCommand, CommandOf(inventoryCapture.Sent[1]));
-        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(inventoryCapture.Sent[1])));
+        const string inventoryObjectId = "N=901:902";
+        registry.RegisterBoundObject(inventoryObjectId, inventoryService);
+        await dispatcher.DispatchAsync(CallRequestPacket("invbroker", "GetInventoryFromId"), inventorySession);
+        for (var index = 0; index < 4; index++)
+            await dispatcher.DispatchAsync(BoundCallRequestPacket(inventoryObjectId, "ListIncludingContainers"), inventorySession);
+        await dispatcher.DispatchAsync(CallRequestPacket("invbroker", "GetInventoryFromId"), inventorySession);
+        Assert.Equal(5, inventoryService.Calls);
+        Assert.Equal(6, inventoryCapture.Sent.Count);
+        Assert.Equal(ErrorResponseCommand, CommandOf(inventoryCapture.Sent[5]));
+        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(inventoryCapture.Sent[5])));
 
         now += 60_000;
         await dispatcher.DispatchAsync(CallRequestPacket("marketProxy", "GetOrders"), session);
@@ -501,7 +506,7 @@ public class DispatchGoldenTests
 
         public string Name => "invbroker";
 
-        public bool HasMethod(string method) => method == "ListIncludingContainers";
+        public bool HasMethod(string method) => method is "GetInventoryFromId" or "ListIncludingContainers";
 
         public ValueTask<PyValue> CallAsync(ServiceCall call)
         {

@@ -519,6 +519,21 @@ public class AllianceTests
             await service.CallAsync(Call(executor,"DeleteLabel",new Eve.Marshal.PyInt(labelId)));
             Assert.Equal(0,Assert.Single(await store.AllianceContactsAsync(alliance.Id)).LabelMask);
             Assert.Empty(await store.AllianceContactLabelsAsync(alliance.Id));
+            var oversizedAllianceLabel = await Assert.ThrowsAsync<Eve.Corporations.CorporationError>(async () =>
+                await service.CallAsync(Call(executor,"CreateLabel",new Eve.Marshal.PyWString(new string('x',41)),new Eve.Marshal.PyInt(0))));
+            Assert.Equal("ALLIANCE_CONTACT_LABEL_NAME_LIMIT_EXCEEDED",oversizedAllianceLabel.Code);
+            var maximumAllianceLabelName = new string('A',40);
+            var maximumAllianceLabelId = Assert.IsType<Eve.Marshal.PyInt>(await service.CallAsync(Call(executor,"CreateLabel",
+                new Eve.Marshal.PyWString(maximumAllianceLabelName),new Eve.Marshal.PyInt(0)))).Value;
+            var maximumAllianceLabel = Assert.Single(await store.AllianceContactLabelsAsync(alliance.Id));
+            Assert.Equal(maximumAllianceLabelName,maximumAllianceLabel.Name);
+            var oversizedAllianceLabelEdit = await Assert.ThrowsAsync<Eve.Corporations.CorporationError>(async () =>
+                await service.CallAsync(Call(executor,"EditLabel",new Eve.Marshal.PyInt(maximumAllianceLabelId),
+                    new Eve.Marshal.PyWString(maximumAllianceLabelName + "x"),Eve.Marshal.PyNone.Instance)));
+            Assert.Equal("ALLIANCE_CONTACT_LABEL_NAME_LIMIT_EXCEEDED",oversizedAllianceLabelEdit.Code);
+            Assert.Equal(maximumAllianceLabelName,Assert.Single(await store.AllianceContactLabelsAsync(alliance.Id)).Name);
+            await service.CallAsync(Call(executor,"DeleteLabel",new Eve.Marshal.PyInt(maximumAllianceLabelId)));
+            Assert.Empty(await store.AllianceContactLabelsAsync(alliance.Id));
             var oversizedContacts = new Eve.Marshal.PyList(Enumerable.Range(1, 501)
                 .Select(id => (Eve.Marshal.PyValue)new Eve.Marshal.PyInt(id)).ToArray());
             var bulkRefusal = await Assert.ThrowsAsync<Eve.Corporations.CorporationError>(async () =>

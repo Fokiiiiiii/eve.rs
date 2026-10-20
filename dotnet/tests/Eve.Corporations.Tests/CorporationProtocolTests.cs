@@ -2865,6 +2865,21 @@ private static PyValue RowField(PyValue value,string key)
         var editedDiplomat = Assert.IsType<PyDict>(await Rpc(session,"GetLabels")).Entries.Single(entry => Integer(entry.Key) == labelId.Value).Value;
         Assert.Equal(new PyWString("Diplomacy"),Field(editedDiplomat,"name"));
         Assert.Equal(new PyInt(0x111111),Field(editedDiplomat,"color"));
+        var oversizedLabel = await Assert.ThrowsAsync<CorporationError>(async () =>
+            await ((CorpRegistryService)service).CreateLabel(Call(session,"CreateLabel",new PyWString(new string('x',41)),new PyInt(0))));
+        Assert.Equal("CORPORATION_CONTACT_LABEL_NAME_LIMIT_EXCEEDED",oversizedLabel.Code);
+        var maxLabelName = new string('M',40);
+        var maxLabelId = Assert.IsType<PyInt>(await Rpc(session,"CreateLabel",new PyWString(maxLabelName),new PyInt(0)));
+        Assert.Equal(new PyWString(maxLabelName),Field(Assert.IsType<PyDict>(await Rpc(session,"GetLabels"))
+            .Entries.Single(entry => Integer(entry.Key) == maxLabelId.Value).Value,"name"));
+        var oversizedLabelEdit = await Assert.ThrowsAsync<CorporationError>(async () =>
+            await ((CorpRegistryService)service).EditLabel(Call(session,"EditLabel",labelId,new PyWString(new string('x',41)),PyNone.Instance)));
+        Assert.Equal("CORPORATION_CONTACT_LABEL_NAME_LIMIT_EXCEEDED",oversizedLabelEdit.Code);
+        var diplomatAfterRefusal = Assert.IsType<PyDict>(await Rpc(session,"GetLabels")).Entries
+            .Single(entry => Integer(entry.Key) == labelId.Value).Value;
+        Assert.Equal(new PyWString("Diplomacy"),Field(diplomatAfterRefusal,"name"));
+        Assert.Equal(PyNone.Instance,await Rpc(session,"EditLabel",maxLabelId,new PyWString(maxLabelName),PyNone.Instance));
+        Assert.IsType<PyNone>(await Rpc(session,"DeleteLabel",maxLabelId));
         Assert.Equal(3,Integer(Field(Assert.IsType<PyDict>(await Rpc(session,"GetCorporateContacts"))
             .Entries.Single().Value,"labelMask")));
 

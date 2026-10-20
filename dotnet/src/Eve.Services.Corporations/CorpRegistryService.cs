@@ -1509,16 +1509,19 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
       }
 
       [Method("CreateLabel")]
-      public async ValueTask<PyValue> CreateLabel(ServiceCall call)
-      {
-          var corporation = await RequireCorporationSocialRole(call,CorporationRoles.Diplomat);
-          var name = Text(call.Arg(0)).Trim();
-          var color = Number(call.Arg(1));
-          if (color is < 0 or > 16777215)
-              throw CorporationAccessDenied();
-          var label = await store.CreateCorporationContactLabelAsync(corporation.Id,name,(int)color,call.Cancellation);
-          return CorporationMaskValue(label.LabelId);
-      }
+    public async ValueTask<PyValue> CreateLabel(ServiceCall call)
+    {
+        var corporation = await RequireCorporationSocialRole(call,CorporationRoles.Diplomat);
+        var rawName = Text(call.Arg(0));
+        if (rawName.Length > 40)
+            throw new CorporationError("CORPORATION_CONTACT_LABEL_NAME_LIMIT_EXCEEDED");
+        var name = rawName.Trim();
+        var color = Number(call.Arg(1));
+        if (color is < 0 or > 16777215)
+            throw CorporationAccessDenied();
+        var label = await store.CreateCorporationContactLabelAsync(corporation.Id,name,(int)color,call.Cancellation);
+        return CorporationMaskValue(label.LabelId);
+    }
 
       [Method("DeleteLabel")]
       public async ValueTask<PyValue> DeleteLabel(ServiceCall call)
@@ -1531,17 +1534,19 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
       }
 
       [Method("EditLabel")]
-      public async ValueTask<PyValue> EditLabel(ServiceCall call)
-      {
-          var corporation = await RequireCorporationSocialRole(call,CorporationRoles.Diplomat);
-          var labelId = Number(call.Arg(0));
-          var name = call.Args.Count > 1 ? Text(call.Arg(1)) : null;
-          var rawColor = call.Args.Count > 2 ? Number(call.Arg(2)) : (long?)null;
-          if (rawColor is < 0 or > 16777215)
-              throw CorporationAccessDenied();
-          await store.EditCorporationContactLabelAsync(corporation.Id,labelId,name,rawColor is { } color ? (int)color : null,call.Cancellation);
-          return PyNone.Instance;
-      }
+    public async ValueTask<PyValue> EditLabel(ServiceCall call)
+    {
+        var corporation = await RequireCorporationSocialRole(call,CorporationRoles.Diplomat);
+        var labelId = Number(call.Arg(0));
+        var name = call.Args.Count > 1 ? Text(call.Arg(1)) : null;
+        if (name is { Length: > 40 })
+            throw new CorporationError("CORPORATION_CONTACT_LABEL_NAME_LIMIT_EXCEEDED");
+        var rawColor = call.Args.Count > 2 ? Number(call.Arg(2)) : (long?)null;
+        if (rawColor is < 0 or > 16777215)
+            throw CorporationAccessDenied();
+        await store.EditCorporationContactLabelAsync(corporation.Id,labelId,name,rawColor is { } color ? (int)color : null,call.Cancellation);
+        return PyNone.Instance;
+    }
 
       [Method("AssignLabels")]
       public async ValueTask<PyValue> AssignLabels(ServiceCall call)

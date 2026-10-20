@@ -889,6 +889,8 @@ public AllianceRegistryService(CorporationStore store, PgCharacterStore characte
         var (actor,alliance) = await RequireAllianceExecutorDirector(call);
         RequireBoundAlliance(call,alliance);
         var name = JsSemantics.StringValue(call.Arg(0)) ?? "";
+        if (name.Length > 40)
+            throw new CorporationError("ALLIANCE_CONTACT_LABEL_NAME_LIMIT_EXCEEDED");
         var color = Number(call.Arg(1));
         if (color is < 0 or > 16777215) throw AllianceAccessDenied();
         var label = await store.CreateAllianceContactLabelAsync(actor,alliance,name,(int)color,call.Cancellation);
@@ -910,6 +912,8 @@ public AllianceRegistryService(CorporationStore store, PgCharacterStore characte
         var (actor,alliance) = await RequireAllianceExecutorDirector(call);
         RequireBoundAlliance(call,alliance);
         var name = call.Arg(1) is PyNone ? null : JsSemantics.StringValue(call.Arg(1));
+        if (name is { Length: > 40 })
+            throw new CorporationError("ALLIANCE_CONTACT_LABEL_NAME_LIMIT_EXCEEDED");
         int? color = null;
         if (call.Arg(2) is not PyNone)
         {

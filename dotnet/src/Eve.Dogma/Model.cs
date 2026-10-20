@@ -57,7 +57,6 @@ public enum ModifierFunc
     /// <summary>Items located in the domain item that need a skill.</summary>
     LocationRequiredSkill,
 
-    /// <summary>Items owned by the domain item's owner that need a skill.</summary>
     OwnerRequiredSkill,
 }
 

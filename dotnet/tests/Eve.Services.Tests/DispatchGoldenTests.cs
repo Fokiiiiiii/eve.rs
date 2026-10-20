@@ -22,7 +22,6 @@ public class DispatchGoldenTests
     private const int ErrorResponseCommand = 15;
 
     /// <summary>
-    /// The recorded steps (scenario id, note) whose answer is the reference's None: a call to an unknown service or
     /// method, or a handler that throws or rejects. The V24.01 server answers them with a wrapped error, so the recording
     /// is not replayed for them (DEVIATIONS.md, "Unknown service and method" and "A failing handler"); each one is still
     /// checked for its state.

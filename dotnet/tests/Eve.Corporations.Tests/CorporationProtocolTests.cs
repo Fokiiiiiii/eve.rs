@@ -830,6 +830,36 @@ private static PyValue RowField(PyValue value,string key)
         }
     }
 
+[PgFact]
+    public async Task Corp_member_update_refuses_negative_and_out_of_range_division_and_squadron_values()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var founder = await rig.CharacterAsync("Field Range Founder");
+        var member = await rig.CharacterAsync("Field Range Member");
+        var corp = await rig.Store.CreateAsync(founder,new("Field Range Works","FRW","","",0.05m),"field-range");
+        var application = await rig.Store.ApplyAsync(member,corp.Id,"");
+        await rig.Store.RespondAsync(founder,application,6,"","");
+        await rig.Store.RespondAsync(member,application,2,"","");
+        var session = new ClientSession { CharacterId = founder };
+        session.Set("corporationID",new PyInt(corp.Id));
+        var registry = (IService)new CorpRegistryService(rig.Store,rig.Characters,() => rig.Now);
+        var original = await rig.Store.MemberAsync(member);
+
+        var divisionError = await Assert.ThrowsAsync<CorporationError>(() => registry.CallAsync(
+            Call(session,"UpdateMember",new PyInt(member),PyNone.Instance,new PyLong((long)int.MaxValue+1),
+                new PyInt(0),PyNone.Instance)).AsTask());
+        Assert.Equal("CORPORATION_INTEGER_OUT_OF_RANGE",divisionError.Code);
+        var squadronError = await Assert.ThrowsAsync<CorporationError>(() => registry.CallAsync(
+            Call(session,"UpdateMember",new PyInt(member),PyNone.Instance,new PyInt(0),
+                new PyLong((long)int.MinValue-1),PyNone.Instance)).AsTask());
+        Assert.Equal("CORPORATION_INTEGER_OUT_OF_RANGE",squadronError.Code);
+        var negativeError = await Assert.ThrowsAsync<CorporationError>(() => registry.CallAsync(
+            Call(session,"UpdateMember",new PyInt(member),PyNone.Instance,new PyInt(-1),
+                new PyInt(0),PyNone.Instance)).AsTask());
+        Assert.Equal("CORPORATION_INVALID_MEMBER_FIELD",negativeError.Code);
+        Assert.Equal(original,await rig.Store.MemberAsync(member));
+    }
+
     [PgFact]
     public async Task Corporation_core_and_role_rpcs_preserve_public_fields_and_role_contracts()
     {

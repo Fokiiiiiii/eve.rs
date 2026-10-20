@@ -5162,3 +5162,8 @@ The market parser rejects floating-point prices beyond the market maximum before
 ## Corporation potential-CEO roster budget (2026-10-20)
 
 `corpRegistry.GetNumberOfPotentialCEOs` now consumes 10 units from the per-session rolling-minute budget because it returns the current corporation roster. `DispatchGoldenTests.Corporation_potential_CEO_member_enumeration_uses_the_named_per_session_budget` verifies refusal once the allowance is consumed.
+
+
+## Corporation member field integer bounds (2026-10-20)
+
+`corpRegistry.UpdateMember` rejects negative division and squadron values as `CORPORATION_INVALID_MEMBER_FIELD` and values outside Int32 range as `CORPORATION_INTEGER_OUT_OF_RANGE` before persistence. This prevents overflowing client integers from wrapping into unrelated values; in-range V24.01 values retain their existing wire and persistence behavior. `Corp_member_update_refuses_negative_and_out_of_range_division_and_squadron_values` covers negative values, positive and negative overflow, and confirms the stored member row is unchanged.

@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ci-windows-${{ github.ref }}
+  group: ci-windows-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
 permissions:

@@ -4,7 +4,6 @@ using Npgsql;
 
 namespace Eve.Data;
 
-/// <summary>One step of a module's schema: a name that never changes, and the SQL that runs once.</summary>
 public sealed record Migration(string Name, string Sql);
 
 /// <summary>

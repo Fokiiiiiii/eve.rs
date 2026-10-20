@@ -158,7 +158,10 @@ public sealed partial class ContractProxyService(
         }
         catch (ArgumentException error)
         {
-            Console.Error.WriteLine($"eve-host: contract writer rejected arguments ({error.GetType().Name}, parameter {error.ParamName ?? "none"})");
+            var detail = error.ParamName == nameof(request.Title)
+                ? $" (title blank={string.IsNullOrWhiteSpace(request.Title)}, length={request.Title.Length})"
+                : string.Empty;
+            Console.Error.WriteLine($"eve-host: contract writer rejected arguments ({error.GetType().Name}, parameter {error.ParamName ?? "none"}){detail}");
             throw MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr("The contract terms are outside the supported limits.")));
         }
     }
@@ -397,6 +400,117 @@ public sealed partial class ContractProxyService(
         return Eve.Services.Py.KeyVal(
             ("iskEscrow", Eve.Services.Py.Number((double)escrow.IskEscrow)),
             ("itemsEscrow", new PyInt(escrow.ItemsEscrow)));
+    }
+
+
+    [Method("GetMyBids")]
+    public async Task<PyValue> GetMyBids(ServiceCall call)
+    {
+        var store = readModel ?? throw new InvalidOperationException("contract read model is not wired");
+        var characterId = call.Session.CharacterId
+            ?? throw new InvalidOperationException("contract bid reads require a character session");
+        var corporationId = call.Session.GetInt("corpid") ?? 0;
+        var forCorporation = call.Arg(0) switch
+        {
+            PyBool value => value.Value,
+            PyInt value => value.Value != 0,
+            PyLong value => value.Value != 0,
+            _ => false,
+        };
+        if (forCorporation && (corporationId <= 0 || ((call.Session.GetInt("corprole") ?? 0) & CorpRoleContractManager) == 0))
+            throw MachoErrors.ThrowUserError("ConNotContractManager");
+
+        var nowFileTime = Eve.Services.Py.FileTimeFromUnixMs(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        var bundle = await store.GetMyBidsAsync(characterId, corporationId, forCorporation, nowFileTime, call.Cancellation);
+        return BuildContractBundle(bundle);
+    }
+
+
+    [Method("GetContractListForOwner")]
+    public async Task<PyValue> GetContractListForOwner(ServiceCall call)
+    {
+        var store = readModel ?? throw new InvalidOperationException("contract read model is not wired");
+        var characterId = call.Session.CharacterId
+            ?? throw new InvalidOperationException("contract list reads require a character session");
+        var corporationId = call.Session.GetInt("corpid") ?? 0;
+        var ownerId = ContractLong(call.Arg(0));
+        if (ownerId != characterId && ownerId != corporationId)
+            throw MachoErrors.ThrowUserError("ConContractNotFound");
+        if (ownerId == corporationId &&
+            (corporationId <= 0 || ((call.Session.GetInt("corprole") ?? 0) & CorpRoleContractManager) == 0))
+            throw MachoErrors.ThrowUserError("ConNotContractManager");
+
+        var status = ContractInt(call.Arg(1));
+        var contractType = call.Args.Count > 2 ? ContractInt(call.Arg(2)) : 0;
+        var issuedBy = call.Args.Count > 3 ? ContractLong(call.Arg(3)) : 0;
+        var pageSize = call.Kwarg("num") is { } numValue ? ContractInt(numValue) : 100;
+        var startContractId = call.Kwarg("startContractID") is { } startValue && startValue is not PyNone
+            ? ContractLong(startValue)
+            : (long?)null;
+        if (status is not (-1 or 0 or 1 or 4) || contractType is < 0 or > 3 || issuedBy < 0 ||
+            pageSize is < 1 or > 100 || startContractId is <= 0)
+            throw MachoErrors.ThrowUserError("ConContractNotAvailable");
+
+        var nowFileTime = Eve.Services.Py.FileTimeFromUnixMs(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        var bundle = await store.GetContractListForOwnerAsync(characterId, corporationId, ownerId,
+            status, contractType, issuedBy, pageSize, startContractId, nowFileTime, call.Cancellation);
+        return BuildContractBundle(bundle);
+    }
+
+    private static long ContractLong(PyValue value) => value switch
+    {
+        PyInt integer => integer.Value,
+        PyLong integer => integer.Value,
+        PyNone => 0,
+        _ => throw MachoErrors.ThrowUserError("ConContractNotAvailable"),
+    };
+
+
+    private static int ContractInt(PyValue value)
+    {
+        var integer = ContractLong(value);
+        return integer is >= int.MinValue and <= int.MaxValue
+            ? (int)integer
+            : throw MachoErrors.ThrowUserError("ConContractNotAvailable");
+    }
+
+    private static PyValue BuildContractBundle(ContractReadBundle bundle)
+    {
+        var rows = bundle.Contracts.Select(contract => (PyValue)Eve.Services.Py.KeyVal(
+            ("contractID", new PyInt(contract.ContractId)),
+            ("type", new PyInt(contract.Type)),
+            ("status", new PyInt(contract.Status)),
+            ("availability", new PyInt(contract.Availability)),
+            ("issuerID", new PyInt(contract.IssuerId)),
+            ("issuerCorpID", new PyInt(contract.IssuerCorporationId)),
+            ("forCorp", contract.IsCorporationIssued ? PyBool.True : PyBool.False),
+            ("assigneeID", new PyInt(contract.AssigneeId)),
+            ("acceptorID", new PyInt(contract.AcceptorId)),
+            ("dateIssued", new PyLong(contract.DateIssuedFileTime)),
+            ("dateExpired", new PyLong(contract.DateExpiredFileTime)),
+            ("dateAccepted", new PyLong(contract.DateAcceptedFileTime)),
+            ("dateCompleted", new PyLong(contract.DateCompletedFileTime)),
+            ("numDays", new PyInt(contract.NumDays)),
+            ("startStationID", new PyInt(contract.StartStationId)),
+            ("endStationID", new PyInt(contract.EndStationId)),
+            ("price", Eve.Services.Py.Number((double)contract.Price)),
+            ("reward", Eve.Services.Py.Number((double)contract.Reward)),
+            ("collateral", Eve.Services.Py.Number((double)contract.Collateral)),
+            ("title", new PyStr(contract.Title)),
+            ("description", new PyStr(contract.Description)))).ToArray();
+        var items = new PyDict(bundle.Contracts.Select(contract => new KeyValuePair<PyValue, PyValue>(
+            new PyInt(contract.ContractId),
+            Eve.Services.Py.List(contract.Items.Select(item => (PyValue)Eve.Services.Py.KeyVal(
+                ("itemID", new PyInt(item.ItemId)),
+                ("recordID", new PyInt(item.ItemId)),
+                ("itemTypeID", new PyInt(item.TypeId)),
+                ("typeID", new PyInt(item.TypeId)),
+                ("quantity", new PyInt(item.Quantity)),
+                ("inCrate", item.InCrate ? PyBool.True : PyBool.False),
+                ("isPackage", item.IsPackage ? PyBool.True : PyBool.False))).ToArray()))).ToArray());
+        return Eve.Services.Py.KeyVal(
+            ("contracts", Eve.Services.Py.List(rows)),
+            ("items", items));
     }
 }
 

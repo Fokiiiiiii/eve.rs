@@ -9,7 +9,6 @@ using Npgsql;
 
 namespace Eve.Services.Core.Tests;
 
-/// <summary>DoAction on the bound agent: the greeting, the standing refusal, request, accept, decline, quit and the refusals by name (A4).</summary>
 public class AgentDialogueTests
 {
     private const long Pilot = 140000021;
@@ -82,7 +81,6 @@ public class AgentDialogueTests
         ? Encoding.UTF8.GetString(MarshalCodec.Encode(wrapped.Error.Payload))
         : exception.ToString();
 
-    /// <summary>The agent's line of a reply: (message, contentID) inside the (agentSays, actions) pair.</summary>
     private static PyTuple SaysOf(AgentDialogueReply reply) =>
         Assert.IsType<PyTuple>(Assert.IsType<PyTuple>(reply.ToWire()).Items[0]).Items[0] is PyTuple says ? says : throw new InvalidOperationException("no agent line");
 

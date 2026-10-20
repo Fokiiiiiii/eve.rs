@@ -493,6 +493,9 @@ public class CharMgrTests
             await Rig.CallAsync(rig.CharMgr, session, "GetRecentShipKillsAndLosses", Id(2), Id(1)));
         Assert.Equal((characterId, 2, 1), rig.LastKillmailPage!.Value);
 
+        _ = await Rig.CallAsync(rig.CharMgr, session, "GetRecentShipKillsAndLosses", Id(1000), Id(0));
+        Assert.Equal((characterId, 25, 0), rig.LastKillmailPage!.Value);
+
         Assert.Equal(new PyList([]),
             await Rig.CallAsync(rig.CharMgr, session, "GetRecentShipKillsAndLosses", Id(2), Id(3)));
         Assert.Equal((characterId, 2, 3), rig.LastKillmailPage!.Value);
@@ -903,6 +906,15 @@ public class CharMgrTests
                         ("warFactionID", Id(0)))),
             ]),
             result);
+
+        var oversizedIds = new PyList(Enumerable.Range(1, 501)
+            .Select(id => (PyValue)Id(id)).ToArray());
+        var refusal = await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(() => Rig.CallAsync(
+            service, session, "GetOrganizationInfoForCharacters", oversizedIds));
+        Assert.Equal(MachoErrors.UserErrorClass, refusal.Error.ClassName);
+        var errorHeader = Assert.IsType<PyTuple>(Assert.IsType<PyObjectEx>(refusal.Error.Payload).Header);
+        Assert.Equal(new PyStr("CHARMGR_BULK_LIMIT_EXCEEDED"),
+            Assert.IsType<PyTuple>(errorHeader.Items[1]).Items[0]);
     }
 
     [PgFact]

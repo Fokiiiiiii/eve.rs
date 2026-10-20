@@ -195,7 +195,6 @@ public sealed class SovFwServiceTests
         Assert.Equal(1, membershipCalls());
     }
 
-
     [Fact]
     public async Task Sov_hub_writes_check_current_owner_and_forward_client_configuration()
     {
@@ -346,7 +345,6 @@ public sealed class SovFwServiceTests
         Assert.Equal(1, authorizationCalls);
         Assert.Equal(0, mutationCalls);
     }
-
 
     [Fact]
     public async Task Skyhook_callbacks_within_claim_window_return_only_processed_ids()
@@ -531,7 +529,6 @@ public sealed class SovFwServiceTests
             skyhookWriteOperations);
         return (services, () => membershipCalls);
     }
-
 
     private static SovHubWriteOperations HubWrites(
         Func<ServiceCall, long, SovHubRecord, ValueTask<bool>> canManageHubAsync) =>

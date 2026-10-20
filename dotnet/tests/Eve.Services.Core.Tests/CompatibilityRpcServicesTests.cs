@@ -55,7 +55,6 @@ public sealed class CompatibilityRpcServicesTests
         Assert.True(localization.QaWrapActive);
     }
 
-
     [Fact]
     public async Task Kiring_initialization_rpcs_keep_the_reference_shapes()
     {

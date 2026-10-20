@@ -97,7 +97,6 @@ public sealed class IndustryJobsServiceTests
         Assert.Equal(new PyInt(3), Field(jobs.Items[0], "status"));
     }
 
-
     [Fact]
     public async Task Legacy_filetimes_and_blueprint_location_flags_are_normalized()
     {

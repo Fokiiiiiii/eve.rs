@@ -20,7 +20,7 @@ public sealed class MilestoneMgrServiceTests
     [Fact]
     public async Task A_reached_milestone_is_paid_once_and_the_claim_survives_a_restart()
     {
-        if (PgUrl is null) return; // skipped without EVE_PG_URL (see tools/dev/pg18.sh)
+        if (PgUrl is null) return;
         var suffix = Guid.NewGuid().ToString("N")[..12];
         var characters = $"mc_{suffix}";
         var wallet = $"mw_{suffix}";

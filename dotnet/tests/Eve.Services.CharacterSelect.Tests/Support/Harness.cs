@@ -57,7 +57,6 @@ public sealed class Harness : IAsyncDisposable
             [2] = [new(3300, 3)],
         });
 
-    /// <summary>What a race-1 character starts with: 45255 + 250 + 0 points.</summary>
     public const long Race1Points = 45_505;
 
     public const long ClockUnixMs = 1_700_000_000_123;

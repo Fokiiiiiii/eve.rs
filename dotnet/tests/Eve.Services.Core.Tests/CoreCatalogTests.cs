@@ -2,8 +2,6 @@
 namespace Eve.Services.Core.Tests;
 
 /// <summary>The catalog of the core services.</summary>
-
-/// <summary>Wire contracts for the legacy client's lookupSvc owner searches.</summary>
 using Eve.Marshal;
 
 public sealed class LookupSvcTests
@@ -144,7 +142,6 @@ public sealed class LookupSvcTests
         Assert.Single(exact.Items);
         Assert.Equal(new Eve.Marshal.PyInt(200), Field(exact.Items[0], "ownerID"));
     }
-
 
     [Fact]
     public async Task Faction_lookup_returns_the_reference_owner_rows()
@@ -593,7 +590,6 @@ public class CoreCatalogTests
         Assert.Equal(expectedNames, createdNames);
         Assert.All(createdNames, name => Assert.Contains(name, CoreServices.Names));
     }
-
 
     [Fact]
     public async Task Core_factory_exposes_node_graph_callback_for_host_wiring()

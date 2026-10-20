@@ -2610,10 +2610,12 @@ private static PyValue RowField(PyValue value,string key)
         var aboveAverage = Assert.IsType<PyList>(await service.CallAsync(Call(session,"GetMemberIDsWithMoreThanAvgShares")));
         Assert.Equal(new[] { new PyInt(member) },aboveAverage.Items);
 
+        await rig.Store.UpdateTitleAsync(founder,corp.Id,new CorporationTitle(1,"Private title scheme",new RoleMasks()));
         var info = await service.CallAsync(Call(session,"GetInfoWindowDataForChar",new PyInt(member)));
         Assert.Equal(new PyInt(corp.Id),Field(info,"corpID"));
         Assert.Equal(new PyWString(""),Field(info,"title"));
-        Assert.Equal(new PyWString(""),Field(info,"title1"));
+        Assert.Same(PyNone.Instance,Field(info,"title1"));
+        Assert.All(Enumerable.Range(2,15),index => Assert.Same(PyNone.Instance,Field(info,$"title{index}")));
         var suggestions = Assert.IsType<PyList>(await service.CallAsync(Call(session,"GetSuggestedTickerNames")));
         var ticker = Assert.IsType<PyStr>(Field(suggestions.Items.Single(),"tickerName")).Value;
         Assert.Equal(4,ticker.Length);

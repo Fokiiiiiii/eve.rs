@@ -14,6 +14,7 @@ public sealed record CorpWarDeclarationResult(long WarId,long BillId);
 public sealed partial class CorpRegistryService(CorporationStore store,PgCharacterStore characters,Func<long> now,CharacterSessions? characterSessions = null,Eve.Inventory.PgItemStore? items = null,Func<long,bool,int,long?,CancellationToken,ValueTask<IReadOnlyList<PyValue>>>? readRecentCorporationKillmails = null,Func<long,CancellationToken,ValueTask<long>>? readCharacterAllyBaseCost = null,Func<CorpWarDeclarationRequest,CancellationToken,ValueTask<CorpWarDeclarationResult>>? declareWar = null)
 {
     private const int MaxBulkMemberIds = 500;
+    private const int MaxBulkCorporationActions = 500;
 
     public AllianceAffiliationMutationCallback? AllianceAffiliationWriter
     {
@@ -217,6 +218,8 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
             throw new CorporationError("CORPORATION_ACCESS_DENIED");
 
         var targetValues = Items(call.Arg(0));
+        if (targetValues.Count > MaxBulkMemberIds)
+            throw new CorporationError("CORPORATION_BULK_LIMIT_EXCEEDED");
         var targetIDs = new long[targetValues.Count];
         var distinctTargets = new HashSet<long>();
         for (var index = 0; index < targetValues.Count; index++)
@@ -227,8 +230,11 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
             targetIDs[index] = target;
         }
 
+        var actionValues = Items(call.Arg(1));
+        if (actionValues.Count > MaxBulkCorporationActions)
+            throw new CorporationError("CORPORATION_BULK_LIMIT_EXCEEDED");
         var actions = new List<(long Verb,PyValue Property,PyValue Value)>();
-        foreach (var rawAction in Items(call.Arg(1)))
+        foreach (var rawAction in actionValues)
         {
             var values = Items(rawAction);
             if (values.Count < 3)

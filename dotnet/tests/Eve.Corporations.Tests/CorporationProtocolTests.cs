@@ -847,6 +847,14 @@ private static PyValue RowField(PyValue value,string key)
         var tooManyMemberUpdates = new PyList(Enumerable.Range(0, 501).Select(_ => (PyValue)new PyList([])).ToArray());
         var updateLimitError = await Assert.ThrowsAsync<CorporationError>(async () => await CorpRpc("UpdateMembers", tooManyMemberUpdates));
         Assert.Equal("CORPORATION_BULK_LIMIT_EXCEEDED", updateLimitError.Code);
+        var oversizedActionTargets = new PyList(Enumerable.Range(1, 501).Select(id => (PyValue)new PyInt(id)).ToArray());
+        var actionTargetLimitError = await Assert.ThrowsAsync<CorporationError>(async () =>
+            await CorpRpc("ExecuteActions", oversizedActionTargets, new PyList([])));
+        Assert.Equal("CORPORATION_BULK_LIMIT_EXCEEDED", actionTargetLimitError.Code);
+        var oversizedActions = new PyList(Enumerable.Range(0, 501).Select(_ => (PyValue)new PyList([])).ToArray());
+        var actionLimitError = await Assert.ThrowsAsync<CorporationError>(async () =>
+            await CorpRpc("ExecuteActions", new PyList([new PyInt(member)]), oversizedActions));
+        Assert.Equal("CORPORATION_BULK_LIMIT_EXCEEDED", actionLimitError.Code);
         var duplicateMemberUpdates = new PyList([
             new PyList([new PyInt(member)]), new PyList([new PyInt(member)])
         ]);

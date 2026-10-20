@@ -279,6 +279,8 @@ public sealed class PacketDispatcher
             return 10;
         if (service == "invbroker" && method is "GetInventory" or "GetInventoryFromId" or "GetContainerContents" or "GetItems" or "List" or "ListByFlags" or "ListStations" or "ListStationItems" or "ListIncludingContainers" or "GetAssetWorth" or "GetCapacity")
             return 2;
+        if (service == "corpMgr" && (method is "GetAssetInventory" or "GetAssetInventoryForLocation" or "SearchAssets"))
+            return 10;
         if (service == "account" && method is "GetTransactions" or "GiveCash" or "GiveCashFromCorpAccount")
             return 10;
         if (service == "LPStoreMgr" && method is "GetAvailableOffersFromCorp" or "TakeOfferForCharacter" or "TakeOfferForCorporation")

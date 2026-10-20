@@ -1944,6 +1944,8 @@ Existing exact-name TODO evidence (same owner/work): [existing row](../../docs/p
 
 #### Named group: externalQueueMgr (3 exits)
 
+- `externalQueueMgr` remains an internal event-publishing path for cluster and Dogma telemetry after login. It has no player service route; add delivery only with a concrete consumer and client contract.
+
 [PublishEvent (EJS-0153)](../../docs/project/service-response-audit/evejs-only-responses.md:404); [PublishEventPayload (EJS-0154)](../../docs/project/service-response-audit/evejs-only-responses.md:405); [PublishProxyEvent (EJS-0155)](../../docs/project/service-response-audit/evejs-only-responses.md:406).
 
 #### Named group: facWarMgr (4 exits)

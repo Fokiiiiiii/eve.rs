@@ -69,6 +69,7 @@ public sealed class PgEssStore
     private readonly Func<NpgsqlConnection, NpgsqlTransaction, long, long, CancellationToken, ValueTask<bool>>? _consumeKey;
     private readonly Func<int, string?>? _quadrantOf;
     private readonly Func<int, CancellationToken, ValueTask<long?>>? _sovereigntyOwnerOf;
+    private readonly Func<long, CancellationToken, ValueTask<long?>>? _corporationOf;
     private readonly double _reserveMaxPayout;
 
     /// <param name="holderOf">
@@ -90,7 +91,8 @@ public sealed class PgEssStore
         Func<NpgsqlConnection, NpgsqlTransaction, long, long, CancellationToken, ValueTask<bool>>? consumeKey = null,
         Func<int, string?>? quadrantOf = null,
         Func<int, CancellationToken, ValueTask<long?>>? sovereigntyOwnerOf = null,
-        double reserveMaxPayout = EssRules.ReserveBankMaxPayout)
+        double reserveMaxPayout = EssRules.ReserveBankMaxPayout,
+        Func<long, CancellationToken, ValueTask<long?>>? corporationOf = null)
     {
         if (!System.Text.RegularExpressions.Regex.IsMatch(schema, "^[a-z_][a-z0-9_]{0,62}$"))
         {
@@ -104,6 +106,7 @@ public sealed class PgEssStore
         _consumeKey = consumeKey;
         _quadrantOf = quadrantOf;
         _sovereigntyOwnerOf = sovereigntyOwnerOf;
+        _corporationOf = corporationOf;
         _reserveMaxPayout = reserveMaxPayout;
     }
 
@@ -433,11 +436,23 @@ public sealed class PgEssStore
                 var share = EssRules.Money(payout / linked.Count);
                 if (share > 0)
                 {
+                    var sharesByCorporation = new Dictionary<long, decimal>();
                     foreach (var character in linked)
                     {
-                        await _wallet.AdjustAsync(connection, transaction, character, share, 0, EssRules.EssRefType, "ESS reserve bank payout",
-                            due, $"ess:reserve:{systemId}:{state.ReserveOpenedMs}:{pulse}:{character}", cancellationToken);
+                        var corporationId = _corporationOf is null
+                            ? throw new InvalidOperationException("ESS reserve payouts require the linked character's corporation")
+                            : await _corporationOf(character, cancellationToken);
+                        if (corporationId is not > 0)
+                            throw new InvalidOperationException($"ESS reserve recipient {character} has no corporation");
+                        sharesByCorporation[corporationId.Value] = sharesByCorporation.GetValueOrDefault(corporationId.Value) + share;
                         await InsertTheftAsync(connection, transaction, systemId, "reserve", character, share, due, cancellationToken);
+                    }
+                    foreach (var (corporationId, amount) in sharesByCorporation.OrderBy(pair => pair.Key))
+                    {
+                        await _wallet.OpenCorporationDivisionsAsync(connection, transaction, corporationId, cancellationToken);
+                        await _wallet.AdjustAsync(connection, transaction, new WalletAccount(corporationId, 1001), amount, 0, EssRules.EssRefType,
+                            "ESS reserve bank payout", due, $"ess:reserve:{systemId}:{state.ReserveOpenedMs}:{pulse}:{corporationId}",
+                            "ess-reserve", cancellationToken);
                     }
                     state = state with { ReserveValue = state.ReserveValue - share * linked.Count };
                 }

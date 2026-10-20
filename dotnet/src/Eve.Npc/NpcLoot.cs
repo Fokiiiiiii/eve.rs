@@ -4,7 +4,6 @@ using Eve.Sde;
 
 namespace Eve.Npc;
 
-/// <summary>A type that loot is drawn from: what the reference's roll reads of an item type (<c>readStaticRows(ITEM_TYPES)</c>).</summary>
 public sealed record LootType(int TypeId, string Name, string GroupName, int CategoryId);
 
 /// <summary>
@@ -15,7 +14,6 @@ public sealed record LootSelector(
     string Kind, string SizeBand, string Grade, IReadOnlyList<string> NameIncludes, IReadOnlyList<string> NameExcludes, IReadOnlyList<string> GroupNames,
     IReadOnlyList<int> CategoryIds, int? Weight, int? QuantityMin, int? QuantityMax);
 
-/// <summary>A loot table as the reference authored it. Only what its roll reads of the authored data is here (<see cref="NpcLoot"/> says what is left out).</summary>
 public sealed record LootTable(
     string Id, string Mode, int? MinEntries, int? MaxEntries, double EmptyChance, bool AllowDuplicates, bool DisableRandomLoot, int? StackableMin, int? StackableMax,
     IReadOnlyList<LootSelector> Selectors, bool HasSelectors);
@@ -23,12 +21,6 @@ public sealed record LootTable(
 /// <summary>An item an NPC leaves: what it is, how many (a stack of them) and whether it is a single unit item (a module or a ship: one each, not a stack).</summary>
 public sealed record LootDrop(int TypeId, string Name, long Quantity, bool Singleton);
 
-/// <summary>
-/// What an NPC leaves in its wreck (<c>rollNpcLootEntries</c> of <c>server/src/space/npc/npcLoot.js</c> of EVE.js, ADR 0009): a table either has rules (an empty wreck now and then, then a
-/// number of draws, each of a rule by its weight and an item that fits it, never the same item twice unless the table allows) or is a plain random draw from every published type
-/// (what the table <c>generic_random_any</c> is), or draws nothing. The authored tables use nothing else: the reference also reads fixed entries, guaranteed and required drops and a
-/// base table to build on from tables it generates for capital NPCs, which are not part of the authored data this is given.
-/// </summary>
 public sealed class NpcLoot
 {
     private const int MunitionCategory = 8, ModuleCategory = 7, BlueprintCategory = 9;
@@ -168,8 +160,6 @@ public sealed class NpcLoot
         return drops;
     }
 
-    // ── what fits a rule ─────────────────────────────────────────────────────
-
     private LootType[] CandidatesOf(LootSelector selector) => _candidates.GetOrAdd(selector, s => [.. _pool.Where(type => Matches(type, s))]);
 
     private static bool Matches(LootType type, LootSelector selector)
@@ -245,8 +235,6 @@ public sealed class NpcLoot
             _ => true,
         };
     }
-
-    // ── drawing ──────────────────────────────────────────────────────────────
 
     /// <summary>Charges, ammunition, minerals and the like are stacks of many; anything else is one unit of its own.</summary>
     private static bool IsStackable(LootType type) => type.CategoryId is 4 or 5 or 8 or 17 or 25;

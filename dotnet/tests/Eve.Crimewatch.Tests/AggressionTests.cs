@@ -157,7 +157,6 @@ public class AggressionTests
         }
     }
 
-
     [PgFact]
     public async Task Kill_rights_persist_once_per_pair_and_can_be_consumed()
     {
@@ -212,7 +211,6 @@ public class AggressionTests
             await Sql.ExecuteAsync(connection, null, $"DROP SCHEMA {schema} CASCADE", CancellationToken.None);
         }
     }
-
 
     [Fact]
     public void Weapon_safety_and_crimewatch_share_attack_legality_and_consequences()
@@ -270,11 +268,10 @@ public class AggressionTests
         Assert.Equal(Flag.None, PolicyEngine.Evaluate(new PolicyRequest(PolicyAction.RemoteAssistance, SecurityClass.HighSec, authorizedFight)).Consequence);
     }
 
-
     [Fact]
     public void Remote_assistance_is_held_back_by_the_safety_colour_the_pilot_has_set()
     {
-        // green stops a suspect or criminal action, yellow a criminal one and red neither (EVE University wiki, Remote assistance)
+
         var suspect = new PolicyFacts(AttackerIsPlayer: true, TargetIsPlayerProperty: true, TargetFlag: Flag.Suspect);
         var criminal = suspect with { TargetFlag = Flag.Criminal };
 

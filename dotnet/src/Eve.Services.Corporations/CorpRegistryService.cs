@@ -14,6 +14,9 @@ public sealed record CorpWarDeclarationResult(long WarId,long BillId);
 public sealed partial class CorpRegistryService(CorporationStore store,PgCharacterStore characters,Func<long> now,CharacterSessions? characterSessions = null,Eve.Inventory.PgItemStore? items = null,Func<long,bool,int,long?,CancellationToken,ValueTask<IReadOnlyList<PyValue>>>? readRecentCorporationKillmails = null,Func<long,CancellationToken,ValueTask<long>>? readCharacterAllyBaseCost = null,Func<CorpWarDeclarationRequest,CancellationToken,ValueTask<CorpWarDeclarationResult>>? declareWar = null)
 {
     private const int MaxBulkMemberIds = 500;
+    private const int MaxBulkCorporationActions = 500;
+    private const int MaxCorporationQueryCriteria = 100;
+    private const int MaxCorporationQueryTextLength = 256;
 
     public AllianceAffiliationMutationCallback? AllianceAffiliationWriter
     {
@@ -217,6 +220,8 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
             throw new CorporationError("CORPORATION_ACCESS_DENIED");
 
         var targetValues = Items(call.Arg(0));
+        if (targetValues.Count > MaxBulkMemberIds)
+            throw new CorporationError("CORPORATION_BULK_LIMIT_EXCEEDED");
         var targetIDs = new long[targetValues.Count];
         var distinctTargets = new HashSet<long>();
         for (var index = 0; index < targetValues.Count; index++)
@@ -227,8 +232,11 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
             targetIDs[index] = target;
         }
 
+        var actionValues = Items(call.Arg(1));
+        if (actionValues.Count > MaxBulkCorporationActions)
+            throw new CorporationError("CORPORATION_BULK_LIMIT_EXCEEDED");
         var actions = new List<(long Verb,PyValue Property,PyValue Value)>();
-        foreach (var rawAction in Items(call.Arg(1)))
+        foreach (var rawAction in actionValues)
         {
             var values = Items(rawAction);
             if (values.Count < 3)
@@ -398,18 +406,25 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
         if (await Current(call) is not { } corporation)
             return new PyList([]);
 
-        var members = await store.MembersAsync(corporation.Id,call.Cancellation);
+        var rawCriteria = Items(call.Arg(0));
+        if (rawCriteria.Count > MaxCorporationQueryCriteria)
+            throw new CorporationError("CORPORATION_QUERY_LIMIT_EXCEEDED");
         var criteria = new List<(long? Join,string Property,long Operator,PyValue Value)>();
-        foreach (var raw in Items(call.Arg(0)))
+        foreach (var raw in rawCriteria)
         {
             var values = raw is PyPackedRow row ? row.Values : Items(raw);
             if (values.Count < 3)
                 continue;
             var offset = values.Count >= 4 ? 1 : 0;
+            var operation = Number(values[offset+1]);
+            var value = values[offset+2];
+            if (operation is >= 9 and <= 13 && Text(value).Length > MaxCorporationQueryTextLength)
+                throw new CorporationError("CORPORATION_QUERY_LIMIT_EXCEEDED");
             criteria.Add((offset == 0 || values[0] is PyNone ? null : Number(values[0]),
-                Text(values[offset]),Number(values[offset+1]),values[offset+2]));
+                Text(values[offset]),operation,value));
         }
 
+        var members = await store.MembersAsync(corporation.Id,call.Cancellation);
         var includeImplied = Truth(call.Arg(1));
         var searchTitles = Truth(call.Arg(2));
         var titles = includeImplied || searchTitles
@@ -1590,9 +1605,15 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
       [Method("PayoutDividend")]
       public async ValueTask<PyValue> PayoutDividend(ServiceCall call)
       {
-          var corporation = await Current(call);
-          if (corporation is not { IsNpc:false,Deleted:false })
+          Corporation corporation;
+          try
+          {
+              corporation = await RequireCorporationSocialRole(call, CorporationRoles.WalletTakeRole(1000));
+          }
+          catch (MachoWrappedException)
+          {
               return PyNone.Instance;
+          }
           decimal payoutAmount;
           try
           {

@@ -14,7 +14,7 @@ public sealed class FwNpcStationTaxTests
     [Fact]
     public void The_factor_scales_a_facility_tax_as_the_client_applies_it()
     {
-        // 10 percent of the owner's facility tax at the table station for a pirate pilot; the client multiplies the base rate by the factor.
+
         var baseTax = 0.05m;
         Assert.Equal(0.005m, baseTax * (decimal)FwRules.NpcStationTaxModifier(FwRules.TaxModifiedStation, FwFactions.GuristasPirates));
     }

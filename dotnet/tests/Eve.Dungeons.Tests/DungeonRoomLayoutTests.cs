@@ -75,7 +75,7 @@ public sealed class DungeonRoomLayoutTests
     [Fact]
     public void A_large_acceleration_gate_is_placed_with_its_own_radius()
     {
-        // the owner data's large gates (type 35776, radius 14 000 m in the SDE)
+
         var dungeon = Shared.Value.Dungeons.First(d => d.Gates.Any(g => g.TypeID == 35776 && g.DestinationRoomKey is not null));
         var layout = DungeonRoomLayout.Build(dungeon, Origin, Radii);
         Assert.Contains(layout.Gates, g => g.TypeId == 35776 && g.Radius == 14_000);

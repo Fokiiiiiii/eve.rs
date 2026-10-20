@@ -264,6 +264,16 @@ public class CharMgrTests
             await Rig.CallAsync(rig.CharMgr, session, "SetCharacterDescription", new PyStr("ASCII bio")));
         Assert.Equal(new PyStr("ASCII bio"),
             await Rig.CallAsync(rig.CharMgr, session, "GetCharacterDescription", Id(id)));
+
+        var refusal = await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(() => Rig.CallAsync(
+            rig.CharMgr, session, "SetCharacterDescription", new PyWString(new string('x', 2501))));
+        Assert.Equal(MachoErrors.UserErrorClass, refusal.Error.ClassName);
+        var errorHeader = Assert.IsType<PyTuple>(Assert.IsType<PyObjectEx>(refusal.Error.Payload).Header);
+        Assert.Equal(new PyStr("CHARMGR_DESCRIPTION_LIMIT_EXCEEDED"),
+            Assert.IsType<PyTuple>(errorHeader.Items[1]).Items[0]);
+        Assert.Equal(new PyStr("ASCII bio"),
+            await Rig.CallAsync(rig.CharMgr, session, "GetCharacterDescription", Id(id)));
+
         Assert.Equal(PyNone.Instance,
             await Rig.CallAsync(rig.CharMgr, session, "GetCharacterDescription", Id(1)));
 

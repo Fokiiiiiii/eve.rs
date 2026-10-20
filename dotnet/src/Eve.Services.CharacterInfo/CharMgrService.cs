@@ -193,6 +193,7 @@ public sealed partial class CharMgrService(
     [Method("SetCharacterDescription")]
     public async ValueTask<PyValue> SetCharacterDescription(ServiceCall call)
     {
+        const int maxDescriptionLength = 2500;
         if (call.Session.CharacterId is not { } characterId || characterId <= 0 ||
             call.Args.Count == 0 ||
             await characters.GetAsync(characterId, call.Cancellation) is null)
@@ -204,6 +205,10 @@ public sealed partial class CharMgrService(
         if (description is null)
         {
             return None;
+        }
+        if (description.Length > maxDescriptionLength)
+        {
+            throw MachoErrors.ThrowUserError("CHARMGR_DESCRIPTION_LIMIT_EXCEEDED");
         }
 
         await writeCharacterDescription(characterId, description, call.Cancellation);

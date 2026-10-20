@@ -104,6 +104,12 @@ internal sealed class XmppClientSession(XmppChatHub hub, Action<string> send, Ac
             StanzaError(stanza, "cancel", "feature-not-implemented");
             return;
         }
+        if (stanza.Child("subject") is { } subject)
+        {
+            if (!hub.SetRoomMotd(link, room, subject.Text))
+                StanzaError(stanza, "auth", "not-allowed");
+            return;
+        }
         var body = stanza.Child("body")?.Text ?? "";
         if (!hub.SendRoomMessage(link, room, body))
             StanzaError(stanza, "wait", "resource-constraint");

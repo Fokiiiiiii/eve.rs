@@ -17,6 +17,7 @@ public sealed partial class XmppChatHub
     private readonly Dictionary<(string Room, long CharacterId), XmppOccupant> _occupants = [];
     private readonly Dictionary<long, DateTimeOffset> _lastRoomMessage = [];
     private readonly HashSet<(string Room, long CharacterId)> _visibleLocalSpeakers = [];
+    private readonly Dictionary<string, string> _roomMotd = new(StringComparer.Ordinal);
 
     internal string ConferenceDomain => $"conference.{Settings.Domain}";
 
@@ -67,6 +68,9 @@ public sealed partial class XmppChatHub
         link.Send(Presence(room, self, link.Jid, selfPresence: true));
         foreach (var occupant in occupants)
             link.Send(Presence(room, occupant, link.Jid, selfPresence: false));
+        var motd = RoomMotd(room);
+        if (motd.Length > 0)
+            link.Send(RoomSubject(room, "admin", link.Jid, motd));
         return true;
     }
 
@@ -148,6 +152,64 @@ public sealed partial class XmppChatHub
             recipient.Link.Send($"<message from='{XmppXml.Escape(from)}' to='{XmppXml.Escape(recipient.Link.Jid)}' type='groupchat'><body>{safeBody}</body></message>");
         return true;
     }
+
+    internal bool SetRoomMotd(XmppLink link, string room, string motd)
+    {
+        if (Encoding.UTF8.GetByteCount(motd) > 1024
+            || motd.Any(character => char.IsControl(character) && character is not '\n' and not '\t'))
+            return false;
+        var session = SessionOf(link.CharacterId);
+        if (session is null || !ReferenceEquals(SessionOf(link.CharacterId), session)
+            || !StaticAccessChannels(session).Contains(room, StringComparer.Ordinal)
+            || !IsCorporationDirector(session))
+            return false;
+
+        XmppOccupant[] recipients;
+        lock (_gate)
+        {
+            if (!_occupants.TryGetValue((room, link.CharacterId), out var occupant) || !ReferenceEquals(occupant.Link, link))
+                return false;
+            _roomMotd[room] = motd;
+            recipients = _occupants.Where(pair => pair.Key.Room == room).Select(pair => pair.Value).ToArray();
+        }
+        foreach (var recipient in recipients)
+            recipient.Link.Send(RoomSubject(room, link.CharacterId.ToString(System.Globalization.CultureInfo.InvariantCulture), recipient.Link.Jid, motd));
+        return true;
+    }
+
+    internal bool SetCorporationMotd(ClientSession session, string room, string motd)
+    {
+        if (session.GetInt("corpid") is not { } corporationId || corporationId <= 0
+            || room != $"corp_{corporationId}"
+            || !IsCorporationDirector(session)
+            || Encoding.UTF8.GetByteCount(motd) > 1024
+            || motd.Any(character => char.IsControl(character) && character is not '\n' and not '\t')
+            || session.CharacterId is not { } characterId
+            || !ReferenceEquals(SessionOf(characterId), session))
+            return false;
+
+        XmppOccupant[] recipients;
+        lock (_gate)
+        {
+            _roomMotd[room] = motd;
+            recipients = _occupants.Where(pair => pair.Key.Room == room).Select(pair => pair.Value).ToArray();
+        }
+        foreach (var recipient in recipients)
+            recipient.Link.Send(RoomSubject(room, "admin", recipient.Link.Jid, motd));
+        return true;
+    }
+
+    private static bool IsCorporationDirector(ClientSession session) =>
+        ((long)(session.GetInt("corprole") ?? 0) & Eve.Corporations.CorporationRoles.Director) != 0;
+
+    private string RoomMotd(string room)
+    {
+        lock (_gate)
+            return _roomMotd.GetValueOrDefault(room, "");
+    }
+
+    private string RoomSubject(string room, string nickname, string to, string motd) =>
+        $"<message from='{XmppXml.Escape(RoomJid(room, nickname))}' to='{XmppXml.Escape(to)}' type='groupchat'><subject>{XmppXml.Escape(motd)}</subject></message>";
 
     internal string LocalRoomItemsXml(XmppLink link)
     {

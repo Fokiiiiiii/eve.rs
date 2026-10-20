@@ -13,7 +13,7 @@ import uuid
 import pytest
 
 from evecli.describe import describe
-from evecli.marshal import Dict as MarshalDict, Object as MarshalObject
+from evecli.marshal import Object as MarshalObject
 from evecli.observe import notifications_of
 from tests import dbseed
 from tests import test_login_to_character as base
@@ -68,7 +68,12 @@ def test_two_characters_create_accept_and_settle_a_public_item_exchange():
             "forCorp": False,
             "multiContract": False,
         }
-        wire_creation = MarshalObject("contracts.contractStruct.ContractStruct", MarshalDict(creation.items()))
+        client_fields = (
+            "contractType", "isPrivate", "assignedToID", "minutesExpire", "numDays", "startStationID",
+            "destinationID", "price", "reward", "collateral", "title", "description", "itemList",
+            "startStationDivision", "requestItemTypeList", "forCorp", "multiContract",
+        )
+        wire_creation = MarshalObject("contracts.contractStruct.ContractStruct", tuple(creation[name] for name in client_fields))
         kind, created = base.attempt(issuer, "contractProxy", "CreateContract", wire_creation, True)
         assert kind == "ok", base.brief(created)
         contract_id = number(created[0])

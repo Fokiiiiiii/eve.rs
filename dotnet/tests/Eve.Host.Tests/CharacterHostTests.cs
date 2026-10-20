@@ -560,6 +560,7 @@ public sealed class CharacterHostTests
             await command.ExecuteNonQueryAsync();
         }
         Assert.IsType<PyNone>(await CallAsync(restarted, "DeleteCharacter", session, new PyLong(character)));
+        Assert.IsType<PyNone>(await CallAsync(restarted, "DeleteCharacter", session, new PyLong(character)));
 
         // the assets are in the corporation's deliveries (flag 62), the cargo still inside the ship, and the skills are gone
         var corporationItems = await new PgItemStore(rig.Source, rig.InventorySchema).OwnedByAsync(900_001_001);

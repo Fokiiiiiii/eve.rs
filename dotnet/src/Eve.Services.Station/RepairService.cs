@@ -176,16 +176,12 @@ public sealed partial class RepairService(NpgsqlDataSource source, PgItemStore i
     [Method("RepairItemsInStructure")]
     public PyValue RepairItemsInStructure(ServiceCall call) => throw Notify("Repair in structures is not available.");
 
-    // ── the bound station ───────────────────────────────────────────────────
-
     private long BoundStation(ServiceCall call)
     {
         if (call.BoundObjectId is not { } oid || !_bound.TryGetValue(oid, out var station) || call.Session.DockedLocationId != station)
             throw Notify("The repair shop is not available from here.");
         return station;
     }
-
-    // ── the health and the quote of one item ────────────────────────────────
 
     /// <summary>What one item is quoted with: the item, its health, the cost of one unit of damage, and its condition as the store keeps it.</summary>
     private sealed record Quoted(Item Item, int GroupId, int CategoryId, RepairRules.Health Health, double UnitCost, ShipCondition? ShipCondition)

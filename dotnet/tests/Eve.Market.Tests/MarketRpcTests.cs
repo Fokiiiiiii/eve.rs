@@ -124,6 +124,22 @@ public class MarketRpcTests
     }
 
     [PgFact]
+    public async Task Market_money_parser_refuses_decimal_boundary_values_without_overflowing()
+    {
+        await using var r = await TradeRig.Create();
+        var actor = await r.Actor("Decimal boundary buyer", 10000m);
+        var seat = await SeatAsync(r, actor);
+        var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() => seat.Proxy.PlaceBuyOrder(Call(
+            seat.Session, "PlaceBuyOrder", 1, new PyInt(r.Station.Id), new PyInt(Tritanium),
+            new PyReal((double)decimal.MaxValue), new PyInt(1), new PyInt(-1), new PyInt(1),
+            new PyInt(90), PyBool.False, PyNone.Instance)).AsTask());
+        var (label, arguments) = UserError(refusal);
+        Assert.Equal("CustomInfo", label);
+        Assert.Equal("That price is not a valid order price.", Assert.IsType<PyStr>(Field(arguments, "info")).Value);
+        Assert.Empty((await r.Book.BookAsync(r.Station.RegionId, Tritanium, r.Now)).Bids);
+    }
+
+    [PgFact]
     public async Task Market_type_ids_outside_int32_are_refused_before_order_creation()
     {
         await using var r = await TradeRig.Create();

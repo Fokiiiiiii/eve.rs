@@ -32,7 +32,7 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
     }
     private static decimal Money(PyValue v) => v switch
     {
-        PyInt n => n.Value,PyLong n => n.Value,PyReal n when double.IsFinite(n.Value) && Math.Abs(n.Value)<=(double)decimal.MaxValue =>
+        PyInt n => n.Value,PyLong n => n.Value,PyReal n when double.IsFinite(n.Value) && Math.Abs(n.Value)<=MarketRules.MaximumOrderPrice =>
             (decimal)MarketRules.RoundIsk(n.Value),_ => 0m,
     };
     private static IReadOnlyList<PyValue> Sequence(PyValue v) => v switch { PyList l => l.Items,PyTuple t => t.Items,_ => [] };

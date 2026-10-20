@@ -184,6 +184,24 @@ def test_character_entry_agent_reads_use_sde_and_character_state():
         assert journal == ([], [])
         arc_status = m.plain(client.call("agentMgr", "GetMyEpicArcStatus"))
         assert isinstance(arc_status, dict)
+
+        system_id = client.session.session_init.get("solarsystemid2")
+        assert isinstance(system_id, int) and system_id > 0
+        _, sov = m.plain(client.call("map", "GetCurrentSovData", system_id))
+        assert [str(column) for column in sov["header"]] == [
+            "locationID", "solarSystemID", "constellationID", "regionID", "ownerID",
+            "allianceID", "corporationID", "claimStructureID", "infrastructureHubID",
+            "stationID", "claimTime",
+        ]
+        assert all(len(row) == len(sov["header"]) for row in sov["lines"])
+
+        _, corp_locations = m.plain(client.call("map", "GetMyExtraMapInfo"))
+        assert [str(column) for column in corp_locations["header"]] == ["characterID", "locationID"]
+        assert all(len(row) == 2 and all(isinstance(value, int) and value > 0 for value in row)
+                   for row in corp_locations["lines"])
+        if not REFERENCE:
+            assert any(character == character_id and location == system_id
+                       for character, location in corp_locations["lines"])
         assert character_id > 0
 
 

@@ -881,6 +881,16 @@ def training_client(name: str, recording: dict, recorded_run: str, run: str, ids
     assert attempt(client, "charUnboundMgr", "SelectCharacterID", int(made), None, False) == ("ok", None)
     return client, int(made)
 
+def test_project_discovery_availability_is_enabled_after_character_selection():
+    run = uuid.uuid4().hex[:10]
+    race = TRAINING["races"][0]
+    client, _character = training_client(f"walk-project-discovery-{run}", race, RECORDED_TRAINING_RUN, run, {})
+    try:
+        assert m.plain(client.call("ProjectDiscovery", "is_enabled")) is True
+    finally:
+        client.close()
+
+
 def test_global_assets_moniker_resolves_and_lists_the_active_ship():
     run = uuid.uuid4().hex[:10]
     race = TRAINING["races"][0]

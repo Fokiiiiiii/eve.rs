@@ -97,6 +97,9 @@
 | `dotnet/tests/Eve.Services.Inventory.Tests` (4 C# files) | 43 | 40 | 2026-10-20 |
 | `dotnet/tests/Eve.Services.Skills.Tests` (5 C# files) | 49 | 45 | 2026-10-20 |
 | `dotnet/tests/Eve.Services.Space.Tests` (132 C# files) | 1428 | 1305 | 2026-10-20 |
+| `dotnet/tests/Eve.Services.Tests` (9 C# files) | 39 | 38 | 2026-10-20 |
+| `dotnet/tests/Eve.Services.Station.Tests` (7 C# files) | 23 | 21 | 2026-10-20 |
+| `dotnet/tests/Eve.Services.Wallet.Tests` (3 C# files) | 8 | 8 | 2026-10-20 |
 | `dotnet/src/Eve.Insurgency` (5 C# files; migrations reviewed) | 99 | 87 | 2026-10-20 |
 | `dotnet/src/Eve.Dungeons` (5 C# files) | 101 | 49 | 2026-10-20 |
 | `dotnet/src/Eve.Fitting` (8 C# files; migrations reviewed) | 97 | 78 | 2026-10-20 |

@@ -47,6 +47,10 @@ python3 tools/dev/ci-status.py dispatch live-slow.yml --ref main --test-file all
 
 The token can list runs and jobs (`GET /actions/runs` and `GET /actions/runs/{run_id}/jobs`, HTTP 200), dispatch both workflows (HTTP 204), and download a current failed job log (`GET /actions/jobs/{job_id}/logs`, HTTP 200). A request for an older job log returned HTTP 401. The helper reports log-download errors while retaining run, job, and failed-step information. If dispatch is denied elsewhere, it prints the HTTP status and API response.
 
+## Dependency audit
+
+`dependency-audit.yml` runs `cargo audit --file Cargo.lock` (cargo-audit 0.22.2), `dotnet list dotnet/EveRs.slnx package --vulnerable --include-transitive` (failing when NuGet reports a vulnerable package) and `pip-audit` 2.10.1 on both headless-client requirement files. It runs weekly, on manual dispatch, and on pushes to `main` that change a Cargo, NuGet, or Python dependency file. A finding fails the job; the workflow never runs on pull requests from forks.
+
 ## Minutes budget
 
 Record runner job durations for validation runs below. Matrix jobs count separately even when they run concurrently.

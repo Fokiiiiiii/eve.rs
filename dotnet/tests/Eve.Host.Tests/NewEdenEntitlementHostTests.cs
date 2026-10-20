@@ -332,6 +332,7 @@ public sealed class NewEdenEntitlementHostTests : IAsyncLifetime
 
     private static async Task<long> QaCertificateAsync(IService userSvc, ClientSession session, long callId, long quantity)
     {
+        session.Set("accountRole", new PyLong(Eve.Services.GameMasterRoles.Qa)); // the QA token tool is staff-only
         var call = new ServiceCall
         {
             Method = "CreateRedeemTokenQA",

@@ -20,10 +20,21 @@ public sealed record CreateItemExchangeRequest(
     string Title,
     string Description,
     IReadOnlyList<ContractOfferedItem> Items,
+    int OutstandingLimit,
     short ContractType = 1,
     long EndStationId = 0,
     decimal Collateral = 0,
-    int NumDays = 0);
+    int NumDays = 0,
+    IReadOnlyList<ContractRequestedItem>? RequestedItems = null);
+
+/// <summary>A type the acceptor must supply (requestItemTypeList entry); stored as terms, not escrowed.</summary>
+public sealed record ContractRequestedItem(int TypeId, long Quantity);
+
+/// <summary>A client-visible contract refusal; the RPC layer maps it to a user error with the same key.</summary>
+public sealed class ContractUserErrorException(string messageKey, params (string Name, Eve.Marshal.PyValue Value)[] values) : Exception(messageKey)
+{
+    public IReadOnlyList<(string Name, Eve.Marshal.PyValue Value)> Values { get; } = values;
+}
 
 public sealed record CreatedContract(long ContractId, IReadOnlyList<long> EscrowItemIds);
 
@@ -57,6 +68,12 @@ public static class ContractCreationRules
             new[] { request.Price, request.Reward, request.BrokerFee, request.Deposit, request.SalesTax }
             .Any(amount => decimal.Round(amount, 2) != amount) || decimal.Round(request.Collateral, 2) != request.Collateral)
             throw new ArgumentOutOfRangeException(nameof(request), "contract creation terms are outside supported limits");
+        if (request.OutstandingLimit is < 1 or > 500)
+            throw new ArgumentOutOfRangeException(nameof(request), "contract limit is outside the V24 contract limits");
+        if (request.RequestedItems is { } requested &&
+            (requested.Count > 500 || requested.Any(item => item.TypeId <= 0 || item.Quantity <= 0) ||
+             requested.Select(item => item.TypeId).Distinct().Count() != requested.Count))
+            throw new ArgumentOutOfRangeException(nameof(request), "requested items are outside the V24 contract limits");
         if (request.ContractType == 3 ? request.EndStationId <= 0 || request.NumDays <= 0 : request.EndStationId != 0 || request.NumDays != 0)
             throw new ArgumentException("only courier contracts require a destination and duration", nameof(request));
         if (request.Availability == 0 && request.AssigneeId != 0 || request.Availability != 0 && request.AssigneeId == 0)

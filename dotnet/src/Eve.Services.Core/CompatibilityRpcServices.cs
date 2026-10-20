@@ -155,6 +155,9 @@ public sealed class PaperDollServerRpcService
 
 internal static class CompatibilityRpc
 {
+    /// <summary>QA operations act only for a session whose server-set account role is staff; anything else skips the handler and any state change.</summary>
+    public static bool IsStaff(ServiceCall call) => GameMasterRoles.Has(call.Session, GameMasterRoles.Staff);
+
     public static async ValueTask<PyValue> Invoke(
         ServiceCall call,
         Func<ServiceCall, ValueTask<PyValue?>>? handler,

@@ -76,6 +76,14 @@ public sealed class PersistenceContractReadModel : IContractReadModel
                 ADD COLUMN title text NOT NULL DEFAULT '',
                 ADD COLUMN description text NOT NULL DEFAULT '';
             """),
+        new Eve.Data.Migration("0003_contract_requested_items", """
+            CREATE TABLE contract_requested_items (
+                contract_id bigint NOT NULL REFERENCES contract_records(contract_id) ON DELETE CASCADE,
+                type_id integer NOT NULL CHECK (type_id > 0),
+                quantity bigint NOT NULL CHECK (quantity > 0),
+                PRIMARY KEY (contract_id, type_id)
+            );
+            """),
     ];
 
     public static Task MigrateAsync(

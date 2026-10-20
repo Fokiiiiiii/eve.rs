@@ -29,3 +29,14 @@ def test_docker_base_images_are_pinned_to_digests():
         assert re.search(r"@sha256:[0-9a-f]{64}(?:\s|$)", line), (
             f"Dockerfile uses a mutable base image reference: {line}"
         )
+
+
+def test_dependency_audit_workflow_scans_every_ecosystem_on_schedule():
+    workflow = (WORKFLOWS / "dependency-audit.yml").read_text()
+
+    assert "schedule:" in workflow
+    assert "cargo audit --file Cargo.lock" in workflow
+    assert "dotnet list dotnet/EveRs.slnx package --vulnerable --include-transitive" in workflow
+    assert "has the following vulnerable packages" in workflow
+    assert "pip_audit --requirement tools/headless-client/requirements.txt" in workflow
+    assert "pull_request_target" not in workflow

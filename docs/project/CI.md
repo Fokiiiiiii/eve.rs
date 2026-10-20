@@ -53,7 +53,7 @@ Record runner job durations for validation runs below. Matrix jobs count separat
 
 ### Duration profile and test layout
 
-Run 272 (`f153f9c1`, 2026-10-19) is the latest green full gate before the Space split. From the first job start at 23:16:08 UTC until the Required CI gate completed at 23:34:08 UTC, the run took 18.0 minutes wall time. The Space job took 15.2 minutes, of which its `dotnet test` step used 12.85 minutes; static-data loading, artifact download and setup used about 2.3 minutes. End-to-end took 8.8 minutes. The per-project VSTest durations below remain the detailed project profile from run 269 (`a3a1f373`); its all-other-tests job failed in `Eve.Services.Core.Tests`, so it is a project duration sample rather than a green-run result.
+Run 272 (`f153f9c1`, 2026-10-19) is the latest green full gate before the Space split. From the first job start at 23:16:08 UTC until the Required CI gate completed at 23:34:08 UTC, the run took 18.0 minutes wall time. The Space job took 15.2 minutes, of which its `dotnet test` step used 12.85 minutes; static-data loading, artifact download and setup used about 2.3 minutes. End-to-end took 8.8 minutes. The detailed project timing profile below comes from the run 276 TRX artifacts; run 269 supplied the initial weights used by `tools/dev/shard-dotnet-projects.py`.
 
 Run 272's successful job durations and .NET test step timing were:
 
@@ -76,81 +76,104 @@ Run 272's successful job durations and .NET test step timing were:
 
 The preceding red run 270 (`ec9575b0`) had a 16.2-minute Space job; all other jobs completed in 6.8 minutes or less except the 9.0-minute end-to-end job. `other tests 3/3` failed after 4.0 minutes, while its sibling jobs passed. Its retained job summary does not include per-project VSTest durations; run 269 remains the source of the project duration table.
 
-The per-project durations below are VSTest `Duration:` lines from run 269's all-other-tests job. The failing Core project did not print a duration.
+Run 276 (commit `93ac5061`, 2026-10-20) TRX test-session durations and executed test counts:
 
-| Test project | Duration |
+| Test project / shard | TRX elapsed | Tests executed |
+|---|---:|---:|
+| Eve.AccessGroups.Tests | 2.1 s | 23 |
+| Eve.Agents.Tests | 1.5 s | 19 |
+| Eve.Bookmarks.Tests | 4.0 s | 33 |
+| Eve.Characters.Tests | 6.3 s | 120 |
+| Eve.Content.Tests | 8.3 s | 41 |
+| Eve.Corporations.Tests | 29.8 s | 135 |
+| Eve.Crimewatch.Tests | 1.3 s | 55 |
+| Eve.Dogma.Tests | 22.4 s | 128 |
+| Eve.Dungeons.Tests | 2.2 s | 60 |
+| Eve.Events.Tests | 2.2 s | 18 |
+| Eve.FactionWarfare.Tests | 21.6 s | 99 |
+| Eve.Fitting.Tests | 5.8 s | 78 |
+| Eve.GameStore.Import.Tests | 4.5 s | 15 |
+| Eve.GameStore.Tests | 3.4 s | 334 |
+| Eve.Hacking.Tests | 0.9 s | 26 |
+| Eve.Host.Tests shard 1/4 | 2 m 25 s | 127 |
+| Eve.Host.Tests shard 2/4 | 1 m 51 s | 127 |
+| Eve.Host.Tests shard 3/4 | 7 m 22 s | 125 |
+| Eve.Host.Tests shard 4/4 | 5 m 33 s | 126 |
+| Eve.Identity.Tests | 1.5 s | 48 |
+| Eve.Insurgency.Tests | 1.8 s | 18 |
+| Eve.Inventory.Tests | 12.2 s | 56 |
+| Eve.Market.Tests | 39.7 s | 116 |
+| Eve.Marshal.Tests | 1.6 s | 1107 |
+| Eve.Npc.Tests | 4.8 s | 167 |
+| Eve.Planets.Tests | 1.5 s | 51 |
+| Eve.ReadSide.Tests | 0.9 s | 6 |
+| Eve.Relations.Tests | 2.0 s | 12 |
+| Eve.Scheduler.Tests | 2.9 s | 20 |
+| Eve.Services.CharacterInfo.Tests | 5.1 s | 72 |
+| Eve.Services.CharacterSelect.Tests | 15.8 s | 61 |
+| Eve.Services.Core.Tests | 7.3 s | 799 |
+| Eve.Services.Crimewatch.Tests | 4.4 s | 44 |
+| Eve.Services.Dogma.Tests | 1 m 28 s | 286 |
+| Eve.Services.Generator.Tests | 3.7 s | 20 |
+| Eve.Services.Inventory.Tests | 39.1 s | 71 |
+| Eve.Services.Skills.Tests | 30.5 s | 70 |
+| Eve.Services.Space.Tests shard 1/2 | 4 m 9 s | 501 |
+| Eve.Services.Space.Tests shard 2/2 | 6 m 5 s | 500 |
+| Eve.Services.Station.Tests | 9.4 s | 60 |
+| Eve.Services.Tests | 0.9 s | 86 |
+| Eve.Services.Wallet.Tests | 1.5 s | 10 |
+| Eve.Ships.Tests | 2 m 37 s | 241 |
+| Eve.Skills.Tests | 5.1 s | 97 |
+| Eve.Space.Tests | 1.4 s | 445 |
+| Eve.Structures.Tests | 5.9 s | 105 |
+| Eve.Trade.Tests | 1.7 s | 9 |
+| Eve.Universe.Tests | 3.7 s | 67 |
+| Eve.Wallet.Tests | 6.2 s | 40 |
+| Eve.Wormholes.Tests | 1.5 s | 26 |
+
+Slowest individual tests in run 276, by TRX duration:
+
+| Test | Duration |
 |---|---:|
-| Eve.AccessGroups.Tests | 0.9 s |
-| Eve.Agents.Tests | 0.8 s |
-| Eve.Bookmarks.Tests | 2 s |
-| Eve.Characters.Tests | 4 s |
-| Eve.Content.Tests | 7 s |
-| Eve.Corporations.Tests | 20 s |
-| Eve.Crimewatch.Tests | 0.4 s |
-| Eve.Dogma.Tests | 21 s |
-| Eve.Dungeons.Tests | 0.8 s |
-| Eve.Events.Tests | 1 s |
-| Eve.FactionWarfare.Tests | 22 s |
-| Eve.Fitting.Tests | 4 s |
-| Eve.GameStore.Import.Tests | 2 s |
-| Eve.GameStore.Tests | 2 s |
-| Eve.Hacking.Tests | 0.2 s |
-| Eve.Identity.Tests | 0.8 s |
-| Eve.Insurgency.Tests | 0.8 s |
-| Eve.Inventory.Tests | 8 s |
-| Eve.Market.Tests | 37 s |
-| Eve.Marshal.Tests | 0.4 s |
-| Eve.Npc.Tests | 2 s |
-| Eve.Planets.Tests | 0.6 s |
-| Eve.ReadSide.Tests | 0.3 s |
-| Eve.Relations.Tests | 1 s |
-| Eve.Scheduler.Tests | 1 s |
-| Eve.Services.CharacterInfo.Tests | 3 s |
-| Eve.Services.CharacterSelect.Tests | 10 s |
-| Eve.Services.Core.Tests | 5 s (one failed test; run did not print a successful summary) |
-| Eve.Services.Crimewatch.Tests | 3 s |
-| Eve.Services.Dogma.Tests | 1 m 6 s |
-| Eve.Services.Generator.Tests | 1 s |
-| Eve.Services.Inventory.Tests | 29 s |
-| Eve.Services.Skills.Tests | 22 s |
-| Eve.Services.Station.Tests | 6 s |
-| Eve.Services.Tests | 0.1 s |
-| Eve.Services.Wallet.Tests | 0.6 s |
-| Eve.Ships.Tests | 1 m 50 s |
-| Eve.Skills.Tests | 3 s |
-| Eve.Space.Tests | 0.5 s |
-| Eve.Structures.Tests | 3 s |
-| Eve.Trade.Tests | 1 s |
-| Eve.Universe.Tests | 1 s |
-| Eve.Wallet.Tests | 4 s |
-| Eve.Wormholes.Tests | 0.8 s |
+| `Eve.Host.Tests.StructureCompositionTests.The_cyno_jammer_of_a_system_is_answered_through_the_registry_only_with_the_suppression_upgrade_online` | 33.7 s |
+| `Eve.Ships.Tests.ShipTests.Every_restricted_specialized_hold_accepts_a_current_SDE_sample_and_refuses_a_module` | 25.7 s |
+| `Eve.Host.Tests.CharacterHostTests.Installing_a_clone_at_a_structure_pays_its_owner_corporation_and_needs_its_clone_service` | 22.6 s |
+| `Eve.Host.Tests.CharacterHostTests.Jump_clones_are_read_changed_and_kept_through_the_host_registry_and_a_restart` | 22.6 s |
+| `Eve.Host.Tests.StructureCompositionTests.An_imported_structure_with_an_elapsed_deadline_advances_once_after_start_and_a_replay_changes_nothing` | 19.0 s |
+| `Eve.Host.Tests.StructureCompositionTests.A_structure_cyno_beacon_jump_is_refused_by_name_through_the_registry_for_a_jammed_system_and_for_no_access` | 17.2 s |
+| `Eve.Host.Tests.StructureOfficeTests.An_unpaid_office_is_given_up_when_its_rent_falls_due_and_its_items_go_to_asset_safety_after_a_restart` | 16.5 s |
+| `Eve.Services.Dogma.Tests.ReloadServiceTests.A_gun_that_runs_is_given_what_the_simulation_added_and_the_rounds_the_hold_was_short_of_are_given_back` | 16.4 s |
+| `Eve.Host.Tests.CharacterHostTests.Skill_injector_applies_sequential_awards_and_persists_points_and_inventory_through_host` | 16.1 s |
+| `Eve.Host.Tests.StructureCompositionTests.Reinforcement_change_notice_is_durable_formatted_and_scoped_to_the_owner_corporation` | 15.9 s |
 
-The test job uses four Host shards and splits `Eve.Services.Space.Tests` into two shards. `tools/dev/shard-dotnet-tests.py` discovers test cases from each built assembly, removes theory argument text before deriving class names, assigns whole test classes to shards by case count, and supplies a VSTest filter to each shard. Every class is assigned to exactly one shard; each shard has its own PostgreSQL service. Each .NET shard verifies that its TRX reports at least one executed test. `tools/dev/shard-dotnet-projects.py` assigns the remaining test projects to three jobs using the recent VSTest durations above; each project runs once, and each job has its own PostgreSQL service. New projects are included with a five-second initial weight. All jobs download the same Release build artifact produced once by `.NET build`. CI runs use the job matrix and the Required CI gate waits for every selected matrix job.
+The test job uses four Host shards and splits `Eve.Services.Space.Tests` into two shards. `tools/dev/shard-dotnet-tests.py` discovers test cases from each built assembly, removes theory argument text before deriving class names, assigns whole test classes to shards by case count, and supplies a VSTest filter to each shard. Every class is assigned to exactly one shard; each shard has its own PostgreSQL service. Each .NET shard verifies that its TRX reports at least one executed test. `tools/dev/shard-dotnet-projects.py` assigns the remaining test projects to three jobs; each project runs once, and each job has its own PostgreSQL service. New projects are included with a five-second initial weight. All jobs download the same Release build artifact produced once by `.NET build`. CI runs use the job matrix and the Required CI gate waits for every selected matrix job.
 
-Runs 273–275 produced green required-gate conclusions in 9.2, 9.1, and 8.3 minutes respectively, compared with 18.0 minutes in run 272. TRX results downloaded from run 275 show that the Host and Space shard filters executed zero tests: theory arguments containing fully qualified types were parsed as part of the test class name. Those timings therefore do not measure a complete test run and are excluded from the speedup claim. The shard generator now removes theory arguments before deriving class names, and every .NET test shard fails if its TRX report records zero executed tests. A valid post-fix timing is pending.
+Run 275 had a green required-gate conclusion in 8.3 minutes, but its Host and Space shard filters executed zero tests. Theory arguments containing fully qualified types had been parsed as part of the test class name. The shard generator now removes theory arguments before deriving class names, and every .NET test shard fails if its TRX report records zero executed tests.
 
-Run 274's successful job durations:
+Run 276 (`93ac5061`, 2026-10-20) is the first complete measured run after that correction ([run 276](https://github.com/Fokiiiiiii/eve.rs/actions/runs/39348892807)). From the first job start at 00:39:05 UTC to the Required CI gate completion at 00:51:30 UTC, wall time was 12.4 minutes. This is 31% shorter than run 272's 18.0-minute baseline and meets the 15-minute goal. The longest .NET job was Host shard 3/4 at 9.7 minutes; end-to-end took 7.2 minutes.
+
+Run 276 job durations:
 
 | Job | Duration |
 |---|---:|
-| End-to-end | 9.0 min |
-| Rust tests | 3.0 min |
-| .NET build | 1.8 min |
-| Host tests 1/4 | 2.7 min |
-| Host tests 2/4 | 2.3 min |
-| Host tests 3/4 | 2.3 min |
-| Host tests 4/4 | 1.8 min |
-| Space tests 1/2 | 2.2 min |
-| Space tests 2/2 | 2.2 min |
-| Other tests 1/3 | 5.9 min |
-| Other tests 2/3 | 6.4 min |
-| Other tests 3/3 | 4.2 min |
+| End-to-end | 7.2 min |
+| Rust tests | 2.8 min |
+| .NET build | 2.6 min |
+| Host tests 1/4 | 4.9 min |
+| Host tests 2/4 | 4.3 min |
+| Host tests 3/4 | 9.7 min |
+| Host tests 4/4 | 8.0 min |
+| Space tests 1/2 | 5.8 min |
+| Space tests 2/2 | 8.4 min |
+| Other tests 1/3 | 5.8 min |
+| Other tests 2/3 | 5.3 min |
+| Other tests 3/3 | 5.7 min |
 | Rust format and clippy | 0.5 min |
-| Rust latest stable (advisory) | 0.4 min |
-| Python client | 0.3 min |
+| Rust latest stable (advisory) | 0.5 min |
+| Python client | 0.2 min |
 | Fixture generation | 0.1 min |
 
-The per-project durations above remain the available detailed VSTest project profile from run 269. The .NET matrix now writes one TRX file per test project/shard and uploads it even when a test job fails. This keeps individual test durations available for identifying slow cases in future runs without changing test selection or assertions.
+The .NET matrix writes one TRX file per test project or shard and uploads it even when a test job fails. The project table above uses the TRX test-session start-to-finish span and records executed case counts; Host and Space test assemblies appear as separate shard rows.
 
 | Run | Commit | Result | Sum of job durations |
 |---|---|---|---|

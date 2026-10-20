@@ -2690,8 +2690,8 @@ The simulation writer now appends encoded frames directly to its batch buffer. T
 
 - **Pochven bounties:** No bounty payout for Triglavian NPCs in Pochven; leave loot and drops unchanged. See DEVIATIONS.md, “Owner decisions (2026-10-19): Pochven bounties and wormhole Local.”
 - **Wormhole Local:** Delayed mode; only characters who have spoken appear in the list. See the same DEVIATIONS entry.
-- **Planetary customs offices (Q-24):** Implement and test owner-set rates by standings tier, standing discounts, import/export charging, and corporation wallet payment according to the Wiki sources recorded in DEVIATIONS.md. PI_DESIGN.md and the existing partial tax path need alignment.
-- **ESS:** Extend tools/headless-client/tests/test_ess.py through a successful main-bank link, reserve-bank unlock/payout, and key-consumption path. /ess grant now selects a hull from SDE type list 231; no active link-module type exists in the official SDE.
+- **Planetary customs offices (Q-24):** PostgreSQL owner rates, corporation/alliance/standing-tier selection, import/export charging, and same-transaction owner-corporation wallet credit are built. CustomsOfficeHostTests covers rate settings through a Host restart. Open: a focused owner-wallet settlement regression and the import/export live walk. PI_DESIGN.md records the Wiki baseline and current status.
+- **ESS:** tools/headless-client/tests/test_ess.py now checks the GM hull grant and main-bank link request on eve.rs. Extend it through a successful main-bank link, reserve-bank unlock/payout, and key-consumption path. /ess grant selects a hull from SDE type list 231; no active link-module type exists in the official SDE.
 
 
 ## Chat transport inventory (2026-10-19)

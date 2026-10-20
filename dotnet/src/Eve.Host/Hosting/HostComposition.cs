@@ -220,6 +220,7 @@ internal static class HostComposition
         server = new HostServer(
             new HostOptions
             {
+                MaxPendingBytesPerSession = long.Parse(HostConfiguration.Env("EVE_MAX_PENDING_BYTES_PER_SESSION", "16777216"), System.Globalization.CultureInfo.InvariantCulture),
                 MaxQueuedOutboundPacketsPerSession = int.Parse(HostConfiguration.Env("EVE_MAX_QUEUED_OUTBOUND_PACKETS_PER_SESSION", "512"), System.Globalization.CultureInfo.InvariantCulture),
                 MaxQueuedOutboundBytesPerSession = long.Parse(HostConfiguration.Env("EVE_MAX_QUEUED_OUTBOUND_BYTES_PER_SESSION", "8388608"), System.Globalization.CultureInfo.InvariantCulture),
                 MaxQueuedOutboundPacketsPerConnection = int.Parse(HostConfiguration.Env("EVE_MAX_QUEUED_OUTBOUND_PACKETS_PER_CONNECTION", "8192"), System.Globalization.CultureInfo.InvariantCulture),

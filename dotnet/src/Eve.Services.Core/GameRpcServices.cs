@@ -40,6 +40,7 @@ public sealed partial class RaffleMgrService(Func<int?, CancellationToken, Value
     [Method("QA_SeedRaffles")]
     public async ValueTask<PyValue> QaSeedRaffles(ServiceCall call)
     {
+        if (!CompatibilityRpc.IsStaff(call)) return new PyInt(0);
         var seeded = seedRafflesAsync is null
             ? 0
             : await seedRafflesAsync(NullableInteger(call.Arg(0)), call.Cancellation).ConfigureAwait(false) ?? 0;
@@ -404,6 +405,7 @@ public sealed partial class ServiceGatewayMgrService(
     [Method("qa_enable_hijack_mode")]
     public PyValue QaEnableHijackMode(ServiceCall call)
     {
+        if (!CompatibilityRpc.IsStaff(call)) return PyNone.Instance;
         _enabled = true;
         setHijackMode?.Invoke(true, call.Arg(0), call.Arg(1));
         return PyNone.Instance;
@@ -412,6 +414,7 @@ public sealed partial class ServiceGatewayMgrService(
     [Method("qa_disable_hijack_mode")]
     public PyValue QaDisableHijackMode(ServiceCall call)
     {
+        if (!CompatibilityRpc.IsStaff(call)) return PyNone.Instance;
         _enabled = false;
         setHijackMode?.Invoke(false, PyNone.Instance, PyNone.Instance);
         return PyNone.Instance;
@@ -419,7 +422,8 @@ public sealed partial class ServiceGatewayMgrService(
 
     [Method("qa_is_hijack_mode_enabled")]
     public PyValue QaIsHijackModeEnabled(ServiceCall call) =>
-        (isHijackModeEnabled?.Invoke() ?? _enabled) ? PyBool.True : PyBool.False;
+        !CompatibilityRpc.IsStaff(call) ? PyBool.False :
+            (isHijackModeEnabled?.Invoke() ?? _enabled) ? PyBool.True : PyBool.False;
 }
 
 [Service("sharedSettingsMgr")]

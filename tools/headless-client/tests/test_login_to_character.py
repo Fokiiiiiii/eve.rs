@@ -1058,3 +1058,11 @@ def test_authentication_age_gate_uses_server_policy():
         kind, outcome = attempt(client, "authentication", "AmUnderage", None)
         assert kind == "ok", brief(outcome)
         assert outcome is expected, f"expected server policy {expected}, got {outcome!r}"
+
+
+def test_active_survey_id_uses_reference_default():
+    run = uuid.uuid4().hex[:10]
+    with connect(f"survey-default-{run}") as client:
+        kind, outcome = attempt(client, "survey", "GetActiveSurveyID")
+        assert kind == "ok", brief(outcome)
+        assert outcome is None, f"expected no active survey, got {outcome!r}"

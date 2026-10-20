@@ -19,8 +19,8 @@ public sealed record AnalysisBeaconDue(long DeployableId);
 
 /// <summary>
 /// The CONCORD Rogue Analysis Beacon (CRAB) of a pilot in low or null security space: deployed from the hold (EVE.js <c>mobileAnalysisBeaconRuntime</c>), active 20 seconds
-/// later, linked by a ship (four minutes), and scanning for 10 minutes (16 for the Carrier) while its Rogue Drones are dead. The first wave of Rogue Drones is made when
-/// pilot's ship (once). The beacon leaves when its hour is up, and its drones with it.
+/// later, linked by a ship (four minutes), and scanning for 10 minutes (16 for the Carrier) after link completion while its Rogue Drones are dead. The first wave is made then; the scan does not move while a drone lives. A completed scan puts its items in the beacon's hold, accessible to the linking pilot for 120 seconds
+/// before the beacon self-destructs into a public wreck. An unfinished beacon leaves when its hour is up, with its drones.
 /// <para>
 /// Each state change is written in one transaction, then told to the simulation (and the client, through its slim item) after the commit. The simulation keeps the ball;
 /// this class keeps the rules, the record and the durable jobs (activation, link end, the scan tick) on the shared scheduler.
@@ -34,6 +34,7 @@ public sealed class AnalysisBeaconDirector
     public const string ActivateJob = "space.analysis_beacon.activate";
     public const string LinkJob = "space.analysis_beacon.link";
     public const string ScanJob = "space.analysis_beacon.scan";
+    public const string RewardWreckJob = "space.analysis_beacon.reward_wreck";
     public const string KillSubscriber = "space.analysis_beacon.kills";
     public const string NpcKilledTopic = "npc.killed";
 
@@ -56,6 +57,7 @@ public sealed class AnalysisBeaconDirector
     private readonly DogmaStatic _statics;
     private readonly SpaceSessions _space;
     private readonly PgDeployedStore _deployed;
+    private readonly PgSpaceItemStore _spaceItems;
     private readonly IDungeonNpcSpawner _spawner;
     private readonly NpcSelector _selector;
     private readonly Func<long> _nowUnixMs;
@@ -70,6 +72,7 @@ public sealed class AnalysisBeaconDirector
         (_source, _rules, _scheduler, _bus, _sim, _ships, _items, _statics, _space, _deployed, _spawner, _selector, _nowUnixMs, _log) =
             (source, rules, scheduler, bus, sim, ships, items, statics, space, deployed, spawner, selector, nowUnixMs, log);
         _store = new AnalysisBeaconStore(source, schema);
+        _spaceItems = new PgSpaceItemStore(source, schema);
     }
 
     /// <summary>Creates the beacon tables in the space schema (applied once).</summary>
@@ -84,6 +87,7 @@ public sealed class AnalysisBeaconDirector
     {
         _scheduler.Register(ActivateJob, (context, token) => ActivateAsync(context.Payload<AnalysisBeaconDue>()!.DeployableId, token));
         _scheduler.Register(LinkJob, (context, token) => LinkCompleteAsync(context.Payload<AnalysisBeaconDue>()!.DeployableId, token));
+        _scheduler.Register(RewardWreckJob, (context, token) => CreateRewardWreckAsync(context.Payload<AnalysisBeaconDue>()!.DeployableId, token));
         _scheduler.Register(ScanJob, (_, token) => ScanTickAsync(token));
         _bus.Subscribe(KillSubscriber, [NpcKilledTopic], (context, token) => OnKilledAsync(context, token));
         await _scheduler.EnsureRecurringAsync(ScanJob, "scan", AnalysisBeaconRules.ScanTick);
@@ -280,7 +284,7 @@ public sealed class AnalysisBeaconDirector
             {
                 refusal = "the character lacks Complex Encryption Qubits or system signal interference is saturated";
             }
-            else if (!await _store.StartLinkAsync(connection, transaction, deployableId, shipId, now + (long)AnalysisBeaconRules.LinkDuration.TotalMilliseconds, cancellationToken))
+            else if (!await _store.StartLinkAsync(connection, transaction, deployableId, shipId, character, now + (long)AnalysisBeaconRules.LinkDuration.TotalMilliseconds, cancellationToken))
             {
                 refusal = "the beacon is already linked";
             }
@@ -350,7 +354,7 @@ public sealed class AnalysisBeaconDirector
 
     /// <summary>
     /// The scan tick: for each active beacon that has not ended, the progress moves by the time since it last moved, but not while a drone of it lives. A scan that reaches its
-    /// time (10 minutes, 16 for the Carrier) is completed in the same transaction as its items: they go into the hold of the pilot's ship (once).
+    /// time (10 minutes, 16 for the Carrier) is completed in the same transaction as its items: they enter the beacon's hold once, with the linking pilot's 120-second access window scheduled durably.
     /// </summary>
     public async Task ScanTickAsync(CancellationToken cancellationToken = default)
     {
@@ -389,29 +393,23 @@ public sealed class AnalysisBeaconDirector
                 {
                     continue;
                 }
-                var changes = new List<ItemChanged>();
                 var rewards = rule.Rewards;
-                var delivered = true;
+                await _statics.EnsureTypesAsync(rewards.Select(reward => reward.TypeId).ToArray(), cancellationToken);
+                var changes = new List<ItemChanged>();
                 foreach (var reward in rewards)
                 {
-                    var granted = await _ships.GrantToShipCargoAsync(connection, transaction, row.OwnerId, row.ShipId, reward.TypeId, reward.Quantity, cancellationToken);
-                    if (granted is null)
-                    {
-                        delivered = false;
-                        break;
-                    }
-                    changes.AddRange(granted);
+                    var id = await _items.CreateAsync(connection, transaction,
+                        new NewItem(reward.TypeId, row.LinkedCharacterId, row.DeployableId, CharacterShips.ContainerFlag, reward.Quantity), cancellationToken);
+                    changes.Add(new ItemChanged(new Item(id, reward.TypeId, row.LinkedCharacterId, row.DeployableId, CharacterShips.ContainerFlag, reward.Quantity, false, null), 0, 0, reward.Quantity));
                 }
-                if (delivered)
+                await _store.MarkRewardedAsync(connection, transaction, row.DeployableId, cancellationToken);
+                await _items.SetCustomInfoAsync(connection, transaction, row.DeployableId,
+                    $"analysis_beacon_loot:{row.LinkedCharacterId}:{now + 120_000}", cancellationToken);
+                await _store.EndAsync(connection, transaction, row.DeployableId, "completed", "the scan completed; its cargo is reserved for the linking pilot for 120 seconds", cancellationToken);
+                await _scheduler.ScheduleAsync(connection, transaction, new JobSpec(RewardWreckJob, now + 120_000)
                 {
-                    await _store.MarkRewardedAsync(connection, transaction, row.DeployableId, cancellationToken);
-                    await _store.EndAsync(connection, transaction, row.DeployableId, "completed", "the scan completed and its items were delivered", cancellationToken);
-                }
-                else
-                {
-                    // the ship that launched it is gone: nothing is granted, and the run says so
-                    await _store.EndAsync(connection, transaction, row.DeployableId, "completed", "the scan completed, but the launching ship is not there to take the items", cancellationToken);
-                }
+                    Key = $"reward-wreck:{row.DeployableId}", Payload = new AnalysisBeaconDue(row.DeployableId), OnDuplicate = OnDuplicate.Replace,
+                }, cancellationToken);
                 completed.Add((row, changes));
             }
             await transaction.CommitAsync(cancellationToken);
@@ -420,6 +418,8 @@ public sealed class AnalysisBeaconDirector
         {
             _spawner.Remove(failedDrones);
         }
+        if (completed.Count > 0)
+            _scheduler.Wake();
         foreach (var row in failed)
         {
             _log?.Invoke($"the beacon {row.DeployableId} failed in its scan: a wave was not made in full");
@@ -427,15 +427,53 @@ public sealed class AnalysisBeaconDirector
         }
         foreach (var (row, changes) in completed)
         {
-            if (_space.SessionOfShip(row.ShipId) is { } session)
+            if (_space.SessionOfShip(row.LinkedShipId) is { } session)
             {
                 foreach (var change in changes)
-                {
                     ShipNotifications.SendItemChange(session, change, RowOf);
+                try
+                {
+                    await _sim.ChangeWreckAsync((ulong)session.SessionId, row.DeployableId, isEmpty: false, cancellationToken: cancellationToken);
+                }
+                catch (SimUnavailableException error)
+                {
+                    _log?.Invoke($"the scene was not told that CRAB {row.DeployableId} contains its rewards: {error.Message}");
                 }
             }
             _sim.SetAnalysisBeaconState(row.DeployableId, StateOf(row with { Outcome = "completed" }));
         }
+    }
+
+    /// <summary>After the 120-second linking-pilot window, move the beacon cargo intact into its public wreck.</summary>
+    public async Task CreateRewardWreckAsync(long deployableId, CancellationToken cancellationToken = default)
+    {
+        var deployed = await _deployed.GetAsync(deployableId, cancellationToken);
+        if (deployed is null || deployed.Kind != Kind) return;
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        var row = await _store.GetAsync(connection, transaction, deployableId, forUpdate: true, cancellationToken);
+        if (row is not { Outcome: "completed", Rewarded: true }
+            || await _items.LockAndGetAsync(connection, transaction, deployableId, cancellationToken) is not { } beacon)
+            return;
+        var access = beacon.CustomInfo?.Split(':');
+        if (access is not { Length: 3 } || access[0] != "analysis_beacon_loot"
+            || !long.TryParse(access[2], out var accessUntil) || _nowUnixMs() < accessUntil)
+            return;
+        var contents = await _items.InContainerAsync(connection, transaction, deployableId, cancellationToken);
+        var wreckId = await _items.CreateAsync(connection, transaction,
+            new NewItem(beacon.TypeId, beacon.OwnerId, deployed.SolarSystemId, CharacterShips.InSpaceFlag, 1, true, CustomInfo: "analysis_beacon_wreck"), cancellationToken);
+        foreach (var item in contents)
+            await _items.MoveAsync(connection, transaction, item.Id, wreckId, CharacterShips.ContainerFlag, cancellationToken);
+        await _items.DeleteAsync(connection, transaction, deployableId, cancellationToken);
+        var radius = deployed.Radius;
+        await _spaceItems.SaveAsync(connection, transaction, new SpaceItem(wreckId, deployed.SolarSystemId, deployed.Position, [0, 0, 0], radius, 186,
+            0, 0, 0, 0, 0, _nowUnixMs() + (long)SpaceContainers.CanLifetime.TotalMilliseconds), cancellationToken);
+        await _deployed.RemoveAsync(connection, transaction, deployableId, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        _sim.RemoveDeployed(deployableId);
+        _sim.PlaceWreck(new SimPlaceWreck(SimSceneKey.SolarSystem(deployed.SolarSystemId), wreckId, 186,
+            new SimWreckKind(beacon.TypeId, beacon.CustomName ?? "CONCORD Rogue Analysis Beacon", _statics.Type(beacon.TypeId)?.GraphicId ?? 0), deployed.Position, [1, 0, 0], radius,
+            deployed.ShipId, new SimCredit(0, 0, 0, 0), contents.Count == 0));
     }
 
     // ── kills, expiry and restore ───────────────────────────────────────────
@@ -460,6 +498,26 @@ public sealed class AnalysisBeaconDirector
     /// </summary>
     public async Task ExpireAsync(DeployedRecord due)
     {
+        var now = _nowUnixMs();
+        await using (var connection = await _source.OpenConnectionAsync())
+        {
+            if (await _store.GetAsync(connection, null, due.DeployableId, forUpdate: false, CancellationToken.None) is { Outcome: "completed", Rewarded: true }
+                && await _items.GetAsync(due.DeployableId, CancellationToken.None) is { } beacon)
+            {
+                var fields = beacon.CustomInfo?.Split(':');
+                if (fields is { Length: 3 } && fields[0] == "analysis_beacon_loot"
+                    && long.TryParse(fields[2], out var accessUntil))
+                {
+                    if (now < accessUntil)
+                    {
+                        await _deployed.SaveAsync(due with { ExpiresAtMs = accessUntil }, CancellationToken.None);
+                        return;
+                    }
+                    await CreateRewardWreckAsync(due.DeployableId);
+                    return;
+                }
+            }
+        }
         IReadOnlyList<long> drones;
         await using (var connection = await _source.OpenConnectionAsync())
         await using (var transaction = await connection.BeginTransactionAsync())

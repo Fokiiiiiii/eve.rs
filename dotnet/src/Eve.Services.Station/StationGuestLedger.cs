@@ -8,7 +8,6 @@ public delegate void SeedObserverGuestLedgerCallback(
     long locationId,
     IReadOnlySet<long> guestCharacterIds);
 
-/// <summary>Per-observer station snapshot used by future guest join/leave broadcasters.</summary>
 public sealed class StationGuestLedger
 {
     private sealed class Entry(long locationId)

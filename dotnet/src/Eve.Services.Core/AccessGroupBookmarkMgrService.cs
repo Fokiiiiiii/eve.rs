@@ -298,8 +298,15 @@ public sealed partial class AccessGroupBookmarkMgrService(BookmarkStore store, F
     private static string Text(PyValue value) => Eve.Macho.JsSemantics.StringValue(value) ?? "";
 
     /// <summary>A bookmark id set: the client sends a Python set (an <c>ObjectEx</c> over <c>__builtin__.set</c>) or a list.</summary>
-    private static IReadOnlyList<long> IdsOf(PyValue value) =>
-        ArgsOf(value).Select(Integral).Where(id => id is > 0).Select(id => id!.Value).Distinct().ToList();
+private const int MaxBulkBookmarkIds = 500;
+
+    private static IReadOnlyList<long> IdsOf(PyValue value)
+    {
+        var candidates = ArgsOf(value).Take(MaxBulkBookmarkIds + 1).ToArray();
+        if (candidates.Length > MaxBulkBookmarkIds)
+            throw new BookmarkError("BOOKMARK_BULK_LIMIT_EXCEEDED");
+        return candidates.Select(Integral).Where(id => id is > 0).Select(id => id!.Value).Distinct().ToList();
+    }
 
     private static IEnumerable<PyValue> ArgsOf(PyValue value) => value switch
     {

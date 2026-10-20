@@ -33,8 +33,8 @@ public class AnalysisBeaconRulesTests
         Assert.Equal(2, rules.Types.Count);
         Assert.Equal([new BeaconWaveRule(0, "rogue_drones", 4), new BeaconWaveRule(0.5, "rogue_drones", 4)], rules.For(60244)!.Waves);
         Assert.Equal([new BeaconWaveRule(0, "rogue_drones_deadspace_pve", 6), new BeaconWaveRule(0.5, "rogue_drones_deadspace_pve", 6)], rules.For(92183)!.Waves);
-        Assert.Equal([new BeaconRewardRule(60459, 1441), new BeaconRewardRule(60466, 1), new BeaconRewardRule(60464, 1)], rules.For(60244)!.Rewards);
-        Assert.Equal([new BeaconRewardRule(60459, 2270), new BeaconRewardRule(60473, 1)], rules.For(92183)!.Rewards);
+        Assert.Equal([new BeaconRewardRule(60459, 1441), new BeaconRewardRule(60466, 1), new BeaconRewardRule(60463, 1), new BeaconRewardRule(60465, 1), new BeaconRewardRule(60464, 1)], rules.For(60244)!.Rewards);
+        Assert.Equal([new BeaconRewardRule(60459, 2270), new BeaconRewardRule(60473, 1), new BeaconRewardRule(60472, 1), new BeaconRewardRule(60474, 1), new BeaconRewardRule(60475, 1)], rules.For(92183)!.Rewards);
     }
 
     [Fact]
@@ -142,6 +142,14 @@ public class AnalysisBeaconRulesTests
         }
         // the SDE's English name of the reward item (the group is "Rogue Drone Analysis Data")
         Assert.Equal("Rogue Drone Infestation Data", statics.Type(60459)!.Name);
+        Assert.Equal("Exigent Heavy Drone Firepower Mutaplasmid", statics.Type(60464)!.Name);
+        Assert.Equal("Exigent Heavy Drone Projection Mutaplasmid", statics.Type(60466)!.Name);
+        Assert.Equal("Exigent Heavy Drone Navigation Mutaplasmid", statics.Type(60463)!.Name);
+        Assert.Equal("Exigent Heavy Drone Durability Mutaplasmid", statics.Type(60465)!.Name);
+        Assert.Equal("Exigent Medium Drone Firepower Mutaplasmid", statics.Type(60473)!.Name);
+        Assert.Equal("Exigent Medium Drone Navigation Mutaplasmid", statics.Type(60472)!.Name);
+        Assert.Equal("Exigent Medium Drone Durability Mutaplasmid", statics.Type(60474)!.Name);
+        Assert.Equal("Exigent Medium Drone Projection Mutaplasmid", statics.Type(60475)!.Name);
     }
 
     [PgFact]

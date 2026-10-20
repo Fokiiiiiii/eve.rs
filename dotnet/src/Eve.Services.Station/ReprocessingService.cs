@@ -161,11 +161,6 @@ public sealed partial class ReprocessingService(NpgsqlDataSource source, PgItemS
         return new PyList([new PyReal(plan.StationTax), new PyDict(efficiencies), new PyDict([.. quotes])]);
     }
 
-    /// <summary>
-    /// <c>Reprocess(itemIDs, fromLocationID, ownerID, outputLocationID, outputFlagID)</c>: splits the stacks too large for the client, consumes the
-    /// whole portions of each item (its leftovers stay), creates the yields where the caller asked (the sample item's place by default), and
-    /// charges the tax. Answers <c>[processedItemIDs, {typeID: quantity}]</c>.
-    /// </summary>
     [Method("Reprocess")]
     public async ValueTask<PyValue> Reprocess(ServiceCall call)
     {
@@ -278,8 +273,6 @@ public sealed partial class ReprocessingService(NpgsqlDataSource source, PgItemS
         return new PyList([new PyList([.. processed.Select(id => (PyValue)new PyLong(id))]), new PyDict([.. outputByType])]);
     }
 
-    // ── planning ─────────────────────────────────────────────────────────────
-
     private sealed record Plan(double StationTax, double StationEfficiency, long TaxRecipient, IReadOnlyList<(Item Item, ReprocessingRules.Quote Quote)> Lines,
         IReadOnlyList<(Item Item, IReadOnlyList<long> Chunks)> Oversized)
     {
@@ -381,11 +374,8 @@ public sealed partial class ReprocessingService(NpgsqlDataSource source, PgItemS
         return false;
     }
 
-    /// <summary>The standing toward the owner: the higher of the character's own and its corporation's (the wiki's rule).</summary>
     private async Task<double> StandingTowardAsync(long character, long owner, CancellationToken cancellationToken)
         => await relations.StandingTowardAsync(character, owner, cancellationToken).ConfigureAwait(false);
-
-    // ── rows and notices ─────────────────────────────────────────────────────
 
     private static PyValue QuoteValue(ReprocessingRules.Quote quote) => Py.KeyVal(
         ("itemID", InventoryWire.Id(quote.ItemId)),

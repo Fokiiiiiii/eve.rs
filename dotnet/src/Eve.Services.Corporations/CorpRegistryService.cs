@@ -1198,19 +1198,27 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
     {
         if (call.Session.CharacterId is not { } actor || await Current(call) is not { } corp)
             throw new CorporationError("CORPORATION_ACCESS_DENIED");
-        var updates = new List<Member>();
-        var beforeById = new Dictionary<long,Member>();
-        foreach (var raw in Items(call.Arg(0)))
+        var requested = Items(call.Arg(0));
+        if (requested.Count > MaxBulkMemberIds)
+            throw new CorporationError("CORPORATION_BULK_LIMIT_EXCEEDED");
+        List<IReadOnlyList<PyValue>> memberRows = [];
+        HashSet<long> targetIds = [];
+        foreach (var raw in requested)
         {
             var row = Items(raw);
-            if (row.Count == 0 || PositiveId(row[0]) is not { } target)
+            if (row.Count == 0 || PositiveId(row[0]) is not { } target || !targetIds.Add(target))
                 throw new CorporationError("CORPORATION_ACCESS_DENIED");
+            memberRows.Add(row);
+        }
+        var updates = new List<Member>();
+        var beforeById = new Dictionary<long,Member>();
+        foreach (var row in memberRows)
+        {
+            var target = PositiveId(row[0])!.Value;
             var (before,after) = await MemberUpdate(target,row,true,corp.Id,call.Cancellation);
             beforeById.Add(target,before);
             updates.Add(after);
         }
-        if (updates.Select(m => m.CharacterId).Distinct().Count() != updates.Count)
-            throw new CorporationError("CORPORATION_ACCESS_DENIED");
         var changed = await store.UpdateMembersAsync(actor,updates,call.Cancellation);
         foreach (var member in changed)
             CorporationNotificationAdapter.MemberChanged(characterSessions,call,corp.Id,member.CharacterId,beforeById[member.CharacterId],member);

@@ -44,7 +44,7 @@ The headless login-to-character walk (`tools/headless-client/tests/test_login_to
 | `milestoneMgr.ProcessCharacterLogon` / `ClaimRewards` | First logon and reward claims | Implemented | The Host uses `LoginMilestoneStore`; the milestone live test covers the logon timer and claim path. |
 | `rewardMgr.GetDelayedRewardsByGroupIDs` | Login reward UI | Implemented | Host reads pending loyalty points from the live incursion director; groups without pending rewards are omitted. |
 | `config.GetStationSolarSystemsByOwner` | Static/config startup | Implemented | Host reads server configuration/static catalog. |
-| `localizationServer.GetAllTextChanges` | Localization startup | Partial | Route is present; configured text-change data and locale-specific coverage remain to be established. |
+| `localizationServer.GetAllTextChanges` | First character session change (`carbon/client/script/localization/localizationClient.py:24-33`) | Implemented | V24 requests this only for an unpackaged client with non-empty local text hashes. EveJS 261018.1 returns three empty dictionaries; Host matches that shape. `CompatibilityRpcServicesTests.Unwired_responses_keep_the_EveJS_wire_shapes` and live `test_localization_text_changes_keep_the_reference_empty_shape` cover it. |
 | `alert` / `securityMgr` initial calls | Startup gates | Partial | Concrete routes are registered; the client trace must identify the exact request and expected gate state for each deployment. |
 | `chatAuthenticationService.GetAuthenticationToken` | First world entry chat initialization | Implemented | Issues a cryptographic token scoped to the active session; `XmppChatHub` checks it against that session with constant-time comparison. `SessionStartupRpcServicesTests` and Host XMPP tests cover token use and authenticated chat. |
 | `authentication` / `sessionMgr` notifications | Login and world transition | Implemented | Session initialization and character-change notifications are covered by headless walk. |
@@ -140,7 +140,7 @@ The original table above covers connection, authentication, and character entry.
 | `fleetMgr.RemoveFromWatchlist` | Fleet watchlist changes (`parklife/fleetSvc.py:719`); full session list flow open | Partial | Evidence and remaining provider work are linked in the caller path and current feature entries in `docs/project/TODO.md`. |
 | `fleetMgr.RegisterForDamageUpdates` | Fleet watchlist damage updates (`parklife/fleetSvc.py:795`) | Partial | Evidence and remaining provider work are linked in the caller path and current feature entries in `docs/project/TODO.md`. |
 
-Current inventory: 121 tracked rows: 94 implemented, 26 partial, 0 missing routes, and 1 not applicable. This batch records the reference-default `survey.GetActiveSurveyID` response with a live headless check. The preceding batch implements `authentication.AmUnderage` from the deployment policy with false/true live checks; an earlier batch persists accepted-warp history and verifies the character-bound skills path. Other partial entries and unenumerated startup callers remain listed below.
+Current inventory: 121 tracked rows: 95 implemented, 25 partial, 0 missing routes, and 1 not applicable. This batch verifies the reference empty localization text-change response through the service test and live headless route. The preceding batches verify the survey default, the configured underage gate, accepted-warp history, and character-bound skills. Other partial entries and unenumerated startup callers remain listed below.
 
 ## Verification boundary
 

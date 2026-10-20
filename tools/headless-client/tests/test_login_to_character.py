@@ -1066,3 +1066,12 @@ def test_active_survey_id_uses_reference_default():
         kind, outcome = attempt(client, "survey", "GetActiveSurveyID")
         assert kind == "ok", brief(outcome)
         assert outcome is None, f"expected no active survey, got {outcome!r}"
+
+
+def test_localization_text_changes_keep_the_reference_empty_shape():
+    run = uuid.uuid4().hex[:10]
+    expected = {"$tuple": [{"$dict": []}, {"$dict": []}, {"$dict": []}]}
+    with connect(f"localization-{run}") as client:
+        kind, outcome = attempt(client, "localizationServer", "GetAllTextChanges", m.Dict([]))
+        assert kind == "ok", brief(outcome)
+        assert outcome == expected, f"expected empty localization changes, got {outcome!r}"

@@ -114,7 +114,6 @@ public sealed class FwService
 
     /// <summary>
     /// Records a pilot's kill of an NPC of <paramref name="npcFactionId"/> in a warzone system, when that faction fights the pilot's war faction
-    /// (<see cref="FwFactions.IsCombatEnemy"/>). Returns whether it counted. The wiki gives no victory points for kills, so the kill is one count.
     /// </summary>
     public async Task<bool> RecordNpcKillAsync(long characterId, long corporationId, long warFactionId, long npcFactionId, long solarSystemId, long nowMs,
         CancellationToken cancellationToken = default)
@@ -166,7 +165,6 @@ public sealed class FwService
     /// <summary>
     /// Captures a vulnerable system: its occupier becomes the occupier's enemy (<see cref="FwFactions.OccupationEnemyOf"/>), and its attacker points and
     /// LP pool reset. Only a vulnerable system (at the vulnerability points) can change hands. The hub-destruction trigger is not connected yet
-    /// (TODO, DEVIATIONS "Factional warfare"); this is the state transition it will call.
     /// </summary>
     public async Task<CaptureOutcome> CaptureAsync(long solarSystemId, long nowMs, CancellationToken cancellationToken = default)
     {

@@ -345,6 +345,104 @@ public sealed class ContractReadModelTests
     }
 
     [Fact]
+    public async Task Courier_acceptance_and_failure_settle_collateral_and_return_the_package()
+    {
+        var connectionString = Environment.GetEnvironmentVariable("EVE_PG_URL")
+            ?? throw new InvalidOperationException("EVE_PG_URL must name the assigned PostgreSQL lane");
+        var suffix = Guid.NewGuid().ToString("N");
+        var contractsSchema = $"contract_courier_{suffix}";
+        var inventorySchema = $"contract_courier_items_{suffix}";
+        var walletSchema = $"contract_courier_wallet_{suffix}";
+        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(connectionString));
+        await PersistenceContractReadModel.MigrateAsync(source, contractsSchema);
+        await PgItemStore.MigrateAsync(source, inventorySchema);
+        await PgWalletStore.MigrateAsync(source, walletSchema);
+        try
+        {
+            var itemStore = new PgItemStore(source, inventorySchema);
+            var wallets = new WalletTransactions(source, walletSchema);
+            await using (var connection = await source.OpenConnectionAsync())
+            await using (var transaction = await connection.BeginTransactionAsync())
+            {
+                foreach (var owner in new long[] { 100, 300 })
+                    await wallets.EnsureAsync(connection, transaction, owner);
+                await using var seed = new NpgsqlCommand($"UPDATE {walletSchema}.balances SET isk=50000 WHERE account_key=1000", connection, transaction);
+                await seed.ExecuteNonQueryAsync();
+                await transaction.CommitAsync();
+            }
+            long itemId;
+            await using (var connection = await source.OpenConnectionAsync())
+            await using (var transaction = await connection.BeginTransactionAsync())
+            {
+                itemId = await itemStore.CreateAsync(connection, transaction,
+                    new NewItem(34, 100, 600, ItemFlags.Hangar, Quantity: 2), CancellationToken.None);
+                await transaction.CommitAsync();
+            }
+            var writer = new PersistenceContractWriteModel(source, itemStore, wallets, () => 1_800_000_000_000, contractsSchema);
+            var created = await writer.CreateContractAsync(new Eve.Services.Core.CreateItemExchangeRequest(
+                IssuerCharacterId: 100, IssuerCorporationId: 200, IsCorporationIssued: false, StartStationId: 600,
+                StartStationDivision: ItemFlags.Hangar, Availability: 0, AssigneeId: 0, ExpiryMinutes: 1440,
+                Price: 0, Reward: 5000, BrokerFee: 0, Deposit: 0, SalesTax: 0, WalletAccountKey: 1000,
+                Title: "Courier", Description: "", OutstandingLimit: 500,
+                Items: [new Eve.Services.Core.ContractOfferedItem(itemId, 2)], ContractType: 3,
+                EndStationId: 700, Collateral: 10000, NumDays: 7), CancellationToken.None);
+
+            var accepted = await writer.AcceptContractAsync(created.ContractId, 300, 301, 0, false, 1000, 600, CancellationToken.None);
+            Assert.Equal((short)1, accepted.Status);
+            Assert.Equal(40000m, await wallets.AccountBalanceAsync(new WalletAccount(300), CancellationToken.None));
+            Assert.True(await writer.CompleteContractAsync(created.ContractId, 5, 300, 301, 600, false, CancellationToken.None));
+
+            Assert.Equal(60000m, await wallets.AccountBalanceAsync(new WalletAccount(100), CancellationToken.None));
+            Assert.Equal(40000m, await wallets.AccountBalanceAsync(new WalletAccount(300), CancellationToken.None));
+            var item = await itemStore.GetAsync(created.EscrowItemIds.Single(), CancellationToken.None);
+            Assert.NotNull(item);
+            Assert.Equal((300L, 600L, ItemFlags.Hangar), (item.OwnerId, item.LocationId, item.Flag));
+            var wrapId = await source.CreateCommand($"SELECT plastic_wrap_item_id FROM {contractsSchema}.contract_records WHERE contract_id={created.ContractId}").ExecuteScalarAsync();
+            Assert.Equal(0L, (long)(wrapId ?? -1L));
+
+            long successItemId;
+            await using (var connection = await source.OpenConnectionAsync())
+            await using (var transaction = await connection.BeginTransactionAsync())
+            {
+                successItemId = await itemStore.CreateAsync(connection, transaction,
+                    new NewItem(35, 100, 600, ItemFlags.Hangar, Quantity: 1), CancellationToken.None);
+                await transaction.CommitAsync();
+            }
+            var successContract = await writer.CreateContractAsync(new Eve.Services.Core.CreateItemExchangeRequest(
+                IssuerCharacterId: 100, IssuerCorporationId: 200, IsCorporationIssued: false, StartStationId: 600,
+                StartStationDivision: ItemFlags.Hangar, Availability: 0, AssigneeId: 0, ExpiryMinutes: 1440,
+                Price: 0, Reward: 5000, BrokerFee: 0, Deposit: 0, SalesTax: 0, WalletAccountKey: 1000,
+                Title: "Courier success", Description: "", OutstandingLimit: 500,
+                Items: [new Eve.Services.Core.ContractOfferedItem(successItemId, 1)], ContractType: 3,
+                EndStationId: 700, Collateral: 10000, NumDays: 7), CancellationToken.None);
+            await writer.AcceptContractAsync(successContract.ContractId, 300, 301, 0, false, 1000, 600, CancellationToken.None);
+            await using (var connection = await source.OpenConnectionAsync())
+            await using (var transaction = await connection.BeginTransactionAsync())
+            {
+                await using var getWrap = new NpgsqlCommand($"SELECT plastic_wrap_item_id FROM {contractsSchema}.contract_records WHERE contract_id=$1", connection, transaction);
+                getWrap.Parameters.AddWithValue(successContract.ContractId);
+                var successWrapId = (long)(await getWrap.ExecuteScalarAsync() ?? 0L);
+                await itemStore.MoveToOwnerAsync(connection, transaction, successWrapId, 300, 700, ItemFlags.Hangar, CancellationToken.None);
+                await transaction.CommitAsync();
+            }
+            Assert.True(await writer.CompleteContractAsync(successContract.ContractId, 4, 300, 301, 700, false, CancellationToken.None));
+            Assert.Equal(55000m, await wallets.AccountBalanceAsync(new WalletAccount(100), CancellationToken.None));
+            Assert.Equal(45000m, await wallets.AccountBalanceAsync(new WalletAccount(300), CancellationToken.None));
+            var deliveredItem = await itemStore.GetAsync(successContract.EscrowItemIds.Single(), CancellationToken.None);
+            Assert.NotNull(deliveredItem);
+            Assert.Equal((100L, 700L, ItemFlags.Hangar), (deliveredItem.OwnerId, deliveredItem.LocationId, deliveredItem.Flag));
+        }
+        finally
+        {
+            foreach (var schema in new[] { contractsSchema, inventorySchema, walletSchema })
+            {
+                await using var cleanup = source.CreateCommand($"DROP SCHEMA IF EXISTS \"{schema}\" CASCADE");
+                await cleanup.ExecuteNonQueryAsync();
+            }
+        }
+    }
+
+    [Fact]
     public async Task Outstanding_limit_refuses_creation_without_charging_and_requested_terms_are_stored()
     {
         var connectionString = Environment.GetEnvironmentVariable("EVE_PG_URL")

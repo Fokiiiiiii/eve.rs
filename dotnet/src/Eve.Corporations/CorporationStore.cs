@@ -442,7 +442,6 @@ private readonly Func<NpgsqlConnection,NpgsqlTransaction,long,long,long,long,boo
         return result;
     }
 
-    /// <summary>Resolve the wallet from canonical membership, never from caller-supplied owner or cached session masks.</summary>
     public async Task<WalletAccount> WalletAccountAsync(long characterId,int accountKey,bool requireTake,CancellationToken token = default)
     {
         if (accountKey is < 1000 or > 1006) throw new CorporationError("CORPORATION_ACCESS_DENIED");
@@ -625,7 +624,6 @@ private readonly Func<NpgsqlConnection,NpgsqlTransaction,long,long,long,long,boo
             await update.ExecuteNonQueryAsync(token);
             return 0;
         },token);
-
 
     public async Task<string> GetCorpWelcomeMailAsync(long corporation,CancellationToken token = default)
     {

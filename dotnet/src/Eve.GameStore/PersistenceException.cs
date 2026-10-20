@@ -1,8 +1,7 @@
 namespace Eve.GameStore;
 
 /// <summary>
-/// A persistence failure with a stable machine-readable <see cref="Code"/>. The
-/// codes are the ones the reference server uses (PERSISTENCE_OWNER_STALE, ...).
+/// A persistence failure with a stable machine-readable <see cref="Code"/>.
 /// </summary>
 public sealed class PersistenceException : Exception
 {

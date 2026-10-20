@@ -10,13 +10,11 @@ namespace Eve.GameStore;
 /// The durable side of the game store on PostgreSQL. One table per logical
 /// table, <c>"&lt;schema&gt;"."&lt;table&gt;"(key text primary key, doc jsonb, rev bigint)</c>, plus:
 /// <list type="bullet">
-/// <item><c>_persistence_owners</c>: role leases with an epoch (the fence).</item>
 /// <item><c>_persistence_outbox</c>: at most one journaled batch per table, so
 /// an interrupted flush is replayed exactly, never re-derived.</item>
 /// <item><c>_migrations</c>: tables already imported from a legacy source.</item>
 /// </list>
-/// Every mutation validates its fence in its own transaction (row share lock on
-/// the owner row), so a successor that took over cannot be raced.
+/// Every mutation validates its fence in its own transaction.
 /// </summary>
 public sealed partial class PersistenceStore : IAsyncDisposable
 {
@@ -94,8 +92,6 @@ public sealed partial class PersistenceStore : IAsyncDisposable
             """, ct);
         await tx.CommitAsync(ct);
     }
-
-    // ── helpers ─────────────────────────────────────────────────────────────
 
     /// <summary>Serialises work that must not interleave, without holding a row lock.</summary>
     private Task LockAsync(NpgsqlConnection connection, NpgsqlTransaction tx, string name, CancellationToken ct) =>

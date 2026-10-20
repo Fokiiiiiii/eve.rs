@@ -21,7 +21,6 @@ public sealed record CombatTimers(TimerView Weapons, TimerView Pvp, TimerView Np
 /// <summary>
 /// What crimewatch keeps for a pilot besides its safety level: the weapons, PvP, NPC and disapproval timers, the one timer of the suspect or criminal flag, and the system the pilot was
 /// last in when it did something that counts (where the others are told it is flagged). Times are Unix milliseconds; a timer that has passed is idle. A port of the state of
-/// <c>crimewatchState.js</c> of EVE.js (ADR 0009), one flag in place of its penalty record. A new offence sets the kind of the flag and keeps the longer of the timer that runs and a fresh one, as the reference does (a criminal who then shoots a ship in low security is a suspect; EVE University does not say which wins, so nothing is invented here).
 /// </summary>
 public sealed record CombatState(long WeaponsUntilMs, long PvpUntilMs, long NpcUntilMs, long FlagUntilMs, Flag Flag, long DisapprovalUntilMs, long SolarSystemId)
 {
@@ -85,13 +84,12 @@ public sealed record CombatState(long WeaponsUntilMs, long PvpUntilMs, long NpcU
         return first;
     }
 
-    /// <summary>Flags the pilot: the kind is the one of the new offence, the timer the longer of the one that runs and a fresh one (<c>setNonTheftPenalty</c> of the reference).</summary>
+    /// <summary>Sets the flag kind to the new offence and keeps the longer active timer.</summary>
     internal CombatState Flagged(Flag flag, long nowMs)
     {
         var kept = FlagAt(nowMs) == Flag.None ? 0 : FlagUntilMs;
         return this with { Flag = flag, FlagUntilMs = Math.Max(kept, nowMs + FlagDurationMs) };
     }
-
 
     /// <summary>Sets the suspect flag for a kill-right activation, preserving any longer active flag timer.</summary>
     public CombatState FlagAsSuspect(long nowMs) => Flagged(Flag.Suspect, nowMs);

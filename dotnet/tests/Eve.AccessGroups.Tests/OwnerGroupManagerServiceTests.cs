@@ -7,7 +7,6 @@ using Eve.Services.Core;
 
 namespace Eve.AccessGroups.Tests;
 
-/// <summary>The client's ownerGroupManager: the RPC shapes, the refusals and the <c>OnOwnerGroupsUpdated</c> notifications.</summary>
 public sealed class OwnerGroupManagerServiceTests
 {
     private const long Alice = 90000001;
@@ -217,7 +216,6 @@ public sealed class OwnerGroupManagerServiceTests
         return heard;
     }
 
-    /// <summary>The arguments of each <c>OnOwnerGroupsUpdated</c> the session received.</summary>
     private static List<PyValue> Notifications(Sink sink)
     {
         var heard = new List<PyValue>();

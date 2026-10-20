@@ -50,6 +50,27 @@
 | `dotnet/src/Eve.Services.Planets` (3 C# files) | 114 | 74 | 2026-10-20 |
 | `dotnet/src/Eve.Services.Wallet` (5 C# files) | 52 | 32 | 2026-10-20 |
 | `dotnet/src/Eve.Services.Skills` (16 C# files) | 170 | 146 | 2026-10-20 |
+| `dotnet/src/Eve.Services.Dogma` (13 C# files) | 208 | 200 | 2026-10-20 |
+| `dotnet/src/Eve.Services.Ships` (5 C# files) | 85 | 82 | 2026-10-20 |
+| `dotnet/src/Eve.Space` (7 C# files) | 636 | 616 | 2026-10-20 |
+| `dotnet/src/Eve.Corporations` (18 C# files; migrations reviewed) | 51 | 41 | 2026-10-20 |
+| `dotnet/src/Eve.Macho` (6 C# files) | 93 | 93 | 2026-10-20 |
+| `dotnet/src/Eve.GameStore.Import` (4 C# files) | 22 | 21 | 2026-10-20 |
+| `dotnet/src/Eve.Sde` (1 C# file) | 21 | 21 | 2026-10-20 |
+| `dotnet/src/Eve.Hacking` (3 C# files) | 32 | 25 | 2026-10-20 |
+| `dotnet/src/Eve.GameStore` (14 C# files; generated file excluded) | 237 | 206 | 2026-10-20 |
+| `dotnet/src/Eve.Crimewatch` (6 C# files; migrations reviewed) | 109 | 98 | 2026-10-20 |
+| `dotnet/src/Eve.FactionWarfare` (9 C# files; migrations reviewed) | 256 | 228 | 2026-10-20 |
+| `dotnet/src/Eve.Marshal` (9 C# files; generated file excluded) | 414 | 407 | 2026-10-20 |
+| `dotnet/src/Eve.ReadSide` (2 C# files) | 42 | 41 | 2026-10-20 |
+| `dotnet/src/Eve.Planets` (8 C# files; migrations reviewed) | 218 | 198 | 2026-10-20 |
+| `dotnet/src/Eve.Services.Generator` (2 C# files) | 6 | 0 | 2026-10-20 |
+| `dotnet/tests/Eve.Agents.Tests` (4 C# files) | 8 | 6 | 2026-10-20 |
+| `dotnet/tests/Eve.Hacking.Tests` (2 C# files) | 2 | 2 | 2026-10-20 |
+| `dotnet/tests/Eve.AccessGroups.Tests` (4 C# files) | 7 | 3 | 2026-10-20 |
+| `dotnet/tests/Eve.Bookmarks.Tests` (5 C# files) | 25 | 24 | 2026-10-20 |
+| `dotnet/tests/Eve.Characters.Tests` (12 C# files) | 31 | 29 | 2026-10-20 |
+| `dotnet/src/Eve.Insurgency` (5 C# files; migrations reviewed) | 99 | 87 | 2026-10-20 |
 | `dotnet/src/Eve.Dungeons` (5 C# files) | 101 | 49 | 2026-10-20 |
 | `dotnet/src/Eve.Fitting` (8 C# files; migrations reviewed) | 97 | 78 | 2026-10-20 |
 | `dotnet/src/Eve.Dogma` (10 C# files) | 285 | 280 | 2026-10-20 |

@@ -9,6 +9,71 @@ namespace Eve.Host.Tests;
 public sealed class XmppOrganizationRoomTests
 {
     [Fact]
+    public void Corporation_motd_is_authorized_broadcast_and_returned_on_join()
+    {
+        var sessions = new ConnectedSessions();
+        var directorSession = Character(42, "director-token", 100, 200, 300);
+        directorSession.Set("corprole", new PyLong(Eve.Corporations.CorporationRoles.Director));
+        var memberSession = Character(77, "member-token", 100, 201, 301);
+        var laterSession = Character(88, "later-token", 100, 200, 302);
+        laterSession.Set("corprole", new PyLong(Eve.Corporations.CorporationRoles.Director));
+        sessions.Add(directorSession);
+        sessions.Add(memberSession);
+        sessions.Add(laterSession);
+        var hub = new XmppChatHub(sessions, new XmppChatSettings("chat.example", "127.0.0.1"));
+        var directorOutput = new List<string>();
+        var memberOutput = new List<string>();
+        var laterOutput = new List<string>();
+        var director = Connect(hub, 42, "director-token", directorOutput);
+        var member = Connect(hub, 77, "member-token", memberOutput);
+        director.OnStanza(Parse("<presence to='corp_100@conference.chat.example/Director'><x xmlns='http://jabber.org/protocol/muc'/></presence>"));
+        member.OnStanza(Parse("<presence to='corp_100@conference.chat.example/Member'><x xmlns='http://jabber.org/protocol/muc'/></presence>"));
+
+        director.OnStanza(Parse("<message type='groupchat' to='corp_100@conference.chat.example'><subject>Ops schedule</subject></message>"));
+        Assert.Contains(memberOutput, item => item.Contains("<subject>Ops schedule</subject>", StringComparison.Ordinal));
+        member.OnStanza(Parse("<message type='groupchat' to='corp_100@conference.chat.example'><subject>Denied notice</subject></message>"));
+        Assert.Contains(memberOutput, item => item.Contains("not-allowed", StringComparison.Ordinal));
+        Assert.DoesNotContain(directorOutput, item => item.Contains("<subject>Denied notice</subject>", StringComparison.Ordinal));
+
+        var later = Connect(hub, 88, "later-token", laterOutput);
+        later.OnStanza(Parse("<presence to='corp_100@conference.chat.example/Director'><x xmlns='http://jabber.org/protocol/muc'/></presence>"));
+        Assert.Contains(laterOutput, item => item.Contains("<subject>Ops schedule</subject>", StringComparison.Ordinal));
+
+        var memberService = new XmppChatMgrService(hub);
+        var denied = memberService.SetMotd(new ServiceCall { Method = "SetMotd", Args = [new PyStr("corp_100"), new PyStr("Denied")], Session = memberSession });
+        Assert.Same(PyBool.False, denied);
+        var directorService = new XmppChatMgrService(hub);
+        var accepted = directorService.SetMotd(new ServiceCall { Method = "SetMotd", Args = [new PyStr("corp_100"), new PyStr("New notice")], Session = directorSession });
+        Assert.Same(PyBool.True, accepted);
+        Assert.Contains(memberOutput, item => item.Contains("<subject>New notice</subject>", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Groupchat_delivery_respects_the_persisted_block_list_of_each_recipient()
+    {
+        var sessions = new ConnectedSessions();
+        sessions.Add(Character(42, "sender-token", 100, 200, 300));
+        sessions.Add(Character(77, "blocked-token", 100, 200, 301));
+        sessions.Add(Character(88, "allowed-token", 100, 200, 302));
+        var hub = new XmppChatHub(sessions, new XmppChatSettings("chat.example", "127.0.0.1"),
+            (characterId, _) => ValueTask.FromResult<IReadOnlyList<long>>(characterId == 77 ? [42] : []));
+        var senderOutput = new List<string>();
+        var blockedOutput = new List<string>();
+        var allowedOutput = new List<string>();
+        var sender = Connect(hub, 42, "sender-token", senderOutput);
+        var blocked = Connect(hub, 77, "blocked-token", blockedOutput);
+        var allowed = Connect(hub, 88, "allowed-token", allowedOutput);
+        sender.OnStanza(Parse("<presence to='corp_100@conference.chat.example/Sender'><x xmlns='http://jabber.org/protocol/muc'/></presence>"));
+        blocked.OnStanza(Parse("<presence to='corp_100@conference.chat.example/Blocked'><x xmlns='http://jabber.org/protocol/muc'/></presence>"));
+        allowed.OnStanza(Parse("<presence to='corp_100@conference.chat.example/Allowed'><x xmlns='http://jabber.org/protocol/muc'/></presence>"));
+
+        sender.OnStanza(Parse("<message type='groupchat' to='corp_100@conference.chat.example'><body>message to members</body></message>"));
+
+        Assert.DoesNotContain(blockedOutput, item => item.Contains("<body>message to members</body>", StringComparison.Ordinal));
+        Assert.Contains(allowedOutput, item => item.Contains("<body>message to members</body>", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task Corporation_alliance_and_fleet_rooms_follow_live_session_membership()
     {
         var sessions = new ConnectedSessions();

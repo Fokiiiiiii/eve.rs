@@ -139,7 +139,7 @@ public sealed class XmppListener : IAsyncDisposable
                             session.OnStreamOpened();
                             break;
                         case XmppStanza stanza:
-                            session.OnStanza(stanza.Element);
+                            await session.OnStanzaAsync(stanza.Element, connection.Cancellation);
                             break;
                         case XmppStreamClosed:
                             connection.CloseWith(null);

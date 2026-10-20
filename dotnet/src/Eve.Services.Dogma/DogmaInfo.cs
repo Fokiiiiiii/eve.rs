@@ -8,7 +8,6 @@ namespace Eve.Services.Dogma;
 /// <summary>
 /// Builds what <c>dogmaIM.GetAllInfo</c> answers: for the ship, what is fitted to it and the character, their attributes and the
 /// effects running, and the brain of the character. The attribute values are the engine's; which attributes are listed follows the
-/// reference (docs/reference/compat/DEVIATIONS.md #11 and #12).
 /// </summary>
 public sealed class DogmaInfo(DogmaStatic statics)
 {

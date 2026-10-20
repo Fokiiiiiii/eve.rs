@@ -1,6 +1,5 @@
 namespace Eve.FactionWarfare;
 
-/// <summary>The contest state of a system, from the attacking side's victory points (wiki "Faction Warfare": vulnerable at 75,000 VP).</summary>
 public enum ContestState
 {
     Stable,
@@ -10,7 +9,6 @@ public enum ContestState
 
 /// <summary>
 /// The formulas of factional warfare as the V24.01 client computes them (<c>facwarCommon.py</c>, <c>appConst.py</c> 1052-1059), with the
-/// project rules that the wiki and the client disagree on recorded in DEVIATIONS "Factional warfare".
 /// </summary>
 public static class FwRules
 {
@@ -28,10 +26,8 @@ public static class FwRules
     /// <summary>The standing a character or corporation needs to enlist: the client's <c>facwarMinStandingsToJoinDefault</c>, pirates included.</summary>
     public const double MinStandingToEnlist = -0.0001;
 
-    /// <summary>The victory points that make a system vulnerable (wiki "Faction Warfare": 75,000).</summary>
     public const long VulnerabilityPoints = 75_000;
 
-    /// <summary>The cooldown after a character leaves FW by a direct enlistment (wiki: 24 hours; the client checks the same window).</summary>
     public static readonly TimeSpan EnlistmentCooldown = TimeSpan.FromDays(1);
 
     /// <summary>

@@ -28,7 +28,7 @@ public static class ShipErrors
             case ShipRefusal.NotEnoughPower:
                 return Notify("You do not have enough powergrid to online that module.");
             // the client's UserError (locationDogmaItem.py CheckCanOnlineItem): the type and the group are tuples of the client's reference kinds (eveexceptions/const.py:
-            // UE_TYPEID = 4, UE_GROUPID = 7)
+
             case ShipRefusal.MaxGroupOnline:
                 return MachoErrors.ThrowUserError(
                     "CannotOnlineReachedMaxGroupOnline",

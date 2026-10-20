@@ -3,7 +3,6 @@ using Npgsql;
 
 namespace Eve.Agents.Tests;
 
-/// <summary>Research projects in PostgreSQL: the slot limit, the one project per agent, the accrual, persistence and the cancel.</summary>
 public class ResearchProjectStoreTests
 {
     private static readonly DateTimeOffset Start = new(2026, 10, 11, 12, 0, 0, TimeSpan.Zero);

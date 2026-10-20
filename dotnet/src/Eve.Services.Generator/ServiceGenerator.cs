@@ -5,11 +5,6 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 namespace Eve.Services.Generator;
 
-/// <summary>
-/// Writes the <c>IService</c> dispatch of every <c>[Service]</c> class: a switch on the method name that
-/// calls the <c>[Method]</c> methods directly (no reflection, no delegates), and a per-assembly catalog that
-/// registers the services.
-/// </summary>
 [Generator(LanguageNames.CSharp)]
 public sealed class ServiceGenerator : IIncrementalGenerator
 {
@@ -190,7 +185,6 @@ public sealed class ServiceGenerator : IIncrementalGenerator
             }
         }
 
-        // A service name (or alias) may name only one class.
         var valid = services.Where(s => s.Diagnostics.All(d => d.Severity != DiagnosticSeverity.Error)).ToList();
         var names = new Dictionary<string, ServiceModel>(StringComparer.Ordinal);
         var emitted = new List<ServiceModel>();

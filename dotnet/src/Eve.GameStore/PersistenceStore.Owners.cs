@@ -96,9 +96,8 @@ public sealed partial class PersistenceStore
         });
 
     /// <summary>
-    /// Checks the fence inside <paramref name="tx"/> and, for the default lock,
-    /// keeps a share lock on the owner row until the transaction ends: a
-    /// successor cannot advance the epoch between this check and the commit.
+    /// Checks the fence inside <paramref name="tx"/> and holds a share lock until
+    /// commit, preventing a successor from advancing the epoch in between.
     /// </summary>
     private async Task<OwnerFence> AssertActiveAsync(NpgsqlConnection connection, NpgsqlTransaction tx, OwnerFence? requested, CancellationToken ct, RowLock rowLock = RowLock.Share)
     {

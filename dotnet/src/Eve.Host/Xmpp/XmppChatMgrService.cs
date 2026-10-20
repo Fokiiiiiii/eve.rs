@@ -12,7 +12,15 @@ public sealed partial class XmppChatMgrService(XmppChatHub hub)
     [Method("GetDeprecatedPrefsFallback")]
     public PyValue GetDeprecatedPrefsFallback(ServiceCall call) => new PyStr(hub.Settings.ConnectHost);
 
-[Method("CreatePrivateChannel")]
+    [Method("SetMotd")]
+    public PyValue SetMotd(ServiceCall call)
+    {
+        var room = call.Arg(0) is PyStr roomName ? roomName.Value : "";
+        var motd = call.Arg(1) is PyStr text ? text.Value : "";
+        return hub.SetCorporationMotd(call.Session, room, motd) ? PyBool.True : PyBool.False;
+    }
+
+    [Method("CreatePrivateChannel")]
     public PyValue CreatePrivateChannel(ServiceCall call)
     {
         var targetCharacterId = call.Arg(0) switch

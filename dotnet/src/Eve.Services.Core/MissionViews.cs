@@ -5,7 +5,7 @@ namespace Eve.Services.Core;
 
 
 public sealed record HeldMissionView(MissionStatic Mission, AgentMissionRecord Record, long? BriefingMessageId, FetchObjectiveView? Fetch = null,
-    CourierObjectiveView? Courier = null);
+    CourierObjectiveView? Courier = null, long LoyaltyPoints = 0);
 
 
 
@@ -111,7 +111,7 @@ public static class MissionViews
             Field("bonusRewards", new PyList([])),
             Field("researchPoints", new PyInt(0)),
             Field("missionState", new PyInt((int)view.Record.State)),
-            Field("loyaltyPoints", new PyInt(0)),
+            Field("loyaltyPoints", new PyInt(view.LoyaltyPoints)),
             Field("missionTitleID", IdOrNone(mission.NameId)),
         ]);
     }

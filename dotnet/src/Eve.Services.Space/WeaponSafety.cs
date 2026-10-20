@@ -24,7 +24,6 @@ public readonly record struct WeaponTargetContext(
 /// Safety blocks only an unlawful player-on-player attack; legal flags, war, limited engagements,
 /// and attacks involving NPCs do not trigger this gate.
 /// </summary>
-
 public static class WeaponSafety
 {
     /// <summary>The error of the activation the safety stops (the reference's <c>errorMsg</c>; the client is shown it in <c>Failed to activate …</c>).</summary>

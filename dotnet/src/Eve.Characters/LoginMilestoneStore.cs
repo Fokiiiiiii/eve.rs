@@ -9,7 +9,7 @@ namespace Eve.Characters;
 /// </summary>
 public sealed class LoginMilestoneStore(NpgsqlDataSource source, string schema, WalletTransactions wallets)
 {
-    /// <summary>The online time a milestone takes (EveJS <c>MILESTONE_DURATION_MS</c>: two hours).</summary>
+
     public const long DurationMs = 2 * 60 * 60 * 1000;
 
     public readonly record struct Progress(long OnlineMs, bool Achieved, bool Claimed);

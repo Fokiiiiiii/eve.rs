@@ -24,7 +24,6 @@ public sealed partial class SpaceContainers
 
     /// <summary>
     /// A work cycle the simulation parks on and the host decides (ADR 0013): a drone's (mining or salvage) or a module's (a mining laser's or a salvager's). The
-    /// <see cref="OwnerId"/> is the drone or the module; the answer is recorded for the owner (<see cref="PgWorkCycleLedger"/>).
     /// </summary>
     private sealed record WorkCycle(
         bool IsModule, ulong SessionId, long CharacterId, long ShipId, int SolarSystemId, long OwnerId, long TargetId, ulong CycleId, byte Command,
@@ -44,7 +43,6 @@ public sealed partial class SpaceContainers
     }
 
     /// <summary>
-    /// The one path for the work cycles of drones and modules. A repeat of the owner's last settled cycle is answered from the record and never settled again, so
     /// a cycle the simulation re-sends (its answer was lost, or the host restarted) is not granted twice.
     /// </summary>
     private async Task HandleWorkCycleAsync(WorkCycle cycle)
@@ -202,7 +200,6 @@ public sealed partial class SpaceContainers
         return settled.Accepted ? new WorkOutcome(true, "") : WorkOutcome.Refuse(settled.Reason);
     }
 
-    /// <summary>The checks and the settlement of one work cycle: the owner must be the pilot's (a drone flown, or a module that runs), the target there, in reach.</summary>
     private async Task<WorkOutcome> SettleWorkCycleAsync(WorkCycle cycle)
     {
         // a command burst's cycle applies its buffs to the ships it reaches (track C6, SpaceContainers.Burst.cs)
@@ -219,7 +216,7 @@ public sealed partial class SpaceContainers
         {
             return await SettleScanAsync(cycle);
         }
-        // an entosis link's cycle moves the capture of its hub to now (ST-9 c, EntosisCaptureService; durable, in its own transaction)
+
         if (cycle.IsModule && cycle.Command == SimModuleWorkCommands.Entosis)
         {
             return await SettleEntosisAsync(cycle);
@@ -478,7 +475,6 @@ public sealed partial class SpaceContainers
             advanced = true;
         }
 
-        // EVE University maps salvage families by wreck faction; unknown families fall back to published SDE salvage types.
         var materialNames = SalvageMaterialNames(identity, advanced);
         IReadOnlyList<TypeDef> pool = materialNames is null
             ? products

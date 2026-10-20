@@ -31,7 +31,6 @@ public sealed record SpaceTransition(SpaceMove? Moved, string? Refusal)
     public static SpaceTransition Refused(string reason) => new(null, reason);
 }
 
-
 /// <summary>The active ship changed while its previous and next ships remain in the same hangar.</summary>
 public sealed record ShipTransitionEvent(
     string Kind,
@@ -87,7 +86,6 @@ public Func<Npgsql.NpgsqlConnection, Npgsql.NpgsqlTransaction, ShipTransitionEve
     /// <summary>The character's active ship, in space, is put in the hangar of a station of the solar system it is in, and the character is there.</summary>
     public Task<SpaceTransition> DockAsync(long characterId, long stationId, CancellationToken cancellationToken = default) =>
         DockAsync(characterId, stationId, null, cancellationToken);
-
 
     public async Task<SpaceTransition> DockAsync(
         long characterId,
@@ -192,7 +190,6 @@ public Func<Npgsql.NpgsqlConnection, Npgsql.NpgsqlTransaction, ShipTransitionEve
             character with { SolarSystemId = solarSystemId, ConstellationId = constellationId, RegionId = regionId }));
     }
 
-
     /// <summary>Prepares a capsule for leaving the docked ship; the client's following Board call switches to it.</summary>
     /// <summary>Ejects from a docked ship into the character's capsule, keeping the ship in its hangar.</summary>
     public async Task<Item?> LeaveShipAsync(long characterId, long stationId, long shipId, CancellationToken cancellationToken = default)
@@ -251,7 +248,7 @@ public Func<Npgsql.NpgsqlConnection, Npgsql.NpgsqlTransaction, ShipTransitionEve
         Func<long, CancellationToken, Task<bool>>? shouldRecover = null)
     {
         var recovered = 0;
-        // whoever owns something that is in space: a character's ship is one, the cans and wrecks of NPCs and of players are the others (only a ship of its owner is moved)
+
         foreach (var owner in await items.OwnersWithFlagAsync(InSpaceFlag, cancellationToken))
         {
             if (shouldRecover is not null && !await shouldRecover(owner, cancellationToken))

@@ -8,7 +8,6 @@ namespace Eve.Services.Space.Effects;
 /// <summary>
 /// The modules that are projected at another ship: what each does to its target every cycle, and whether that is done as the cycle ends (the remote armor and hull repairers, the
 /// nosferatu) or as it begins (the shield booster, the capacitor transmitter, the neutralizer): <c>shipModuleRemote*</c> and the falloff energy modules of the reference's
-/// <c>assistanceModuleRuntime.js</c> and <c>hostileModuleRuntime.js</c>; the timing of a cycle is the game's (EVE University: the armor repairs and the nosferatu come at the end).
 /// To add a projected effect, add a line here: its name and what it does to the target.
 /// </summary>
 internal sealed class ProjectedEffect : ShipEffect
@@ -113,7 +112,6 @@ internal sealed class ProjectedEffect : ShipEffect
 
     /// <summary>The focus scripts: their reach is the module's warp scramble range (attribute 103) times the script's own range bonus.</summary>
     private static readonly HashSet<string> FocusScripts = new(StringComparer.OrdinalIgnoreCase) { "shipModuleFocusedWarpDisruptionScript", "shipModuleFocusedWarpScramblingScript" };
-
 
     /// <summary>Whether an effect name is a focus script (a charge of a field generator, run by the module it is loaded in).</summary>
     internal static bool IsFocusScript(string effectName) => FocusScripts.Contains(effectName.Trim());
@@ -351,7 +349,6 @@ internal sealed class MutadaptiveRepairSpool
             }
         }
     }
-
 
     private static long MaximumCycles(double bonusPerCycle, double maximumBonus) =>
         bonusPerCycle > 0 && maximumBonus > 0

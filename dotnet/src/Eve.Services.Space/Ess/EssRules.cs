@@ -15,50 +15,38 @@ public static class EssRules
     /// <summary>The SDE type list of the ships that may link (<c>ESSLinkableShips</c>, list 231).</summary>
     public const int LinkableShipsTypeList = 231;
 
-    /// <summary>How far a linking ship may be from the ESS (client <c>ESS_MAX_LINK_DISTANCE_METERS</c>, EVE University wiki: 10 km).</summary>
     public const double MaxLinkDistanceMeters = 10_000;
 
-    /// <summary>The share of a bounty earned in an ESS system that is held in the Main Bank (EVE University wiki: 40%; EveJS <c>bountiesCut</c> 0.4).</summary>
     public const decimal MainBankShare = 0.40m;
 
     /// <summary>
     /// The share of a bounty earned in an ESS system that goes into the Reserve Bank. CCP's notes say "a smaller portion" without a number; a community
-    /// test of the high-security bank split reports 5% (forum thread "ESS Reserve Bank: An Underwhelming Design"). Owner decision: confirm this value.
     /// </summary>
     public const decimal ReserveBankShare = 0.05m;
 
-    /// <summary>The share of the Main Bank a thief receives (EVE University wiki: "about four-fifths").</summary>
     public const decimal ThiefShare = 0.80m;
 
     /// <summary>
-    /// The auto payment of the Main Bank to its owner (EVE University wiki: 2 hours 45 minutes; EveJS <c>autopaymentIntervalSeconds</c> 9900). CCP's 18.11
-    /// notes said 2 hours; the current wiki and the reference agree on this value.
     /// </summary>
     public const long AutoPayIntervalMs = 9_900_000;
 
-    /// <summary>How long a link to the Main Bank lasts before the bank is stolen (EVE University wiki: six minutes; EveJS <c>bufferTimeSeconds</c> 360).</summary>
     public const long LinkDurationMs = 360_000;
 
     /// <summary>The time between two pulses of a Reserve Bank (CCP 19.06: a payout every minute).</summary>
     public const long PulseIntervalMs = 60_000;
 
-    /// <summary>The output an ESS starts from (EveJS <c>equilibriumValue</c>; the reference's only source for it).</summary>
     public const double EquilibriumOutput = 1.5;
 
-    /// <summary>The reserve window (EveJS <c>reserveWindowAccessFactor</c>); the client's <c>GetPayout</c> takes the same factor.</summary>
     public const double ReserveWindowAccessFactor = 1.5;
 
-    /// <summary>The exponents of the Reserve Bank payout curve (EveJS <c>reservePayoutExponentLead</c>/<c>Tail</c>; the client's <c>GetPayout</c> takes them).</summary>
     public const double ReservePayoutExponentLead = 2;
     public const double ReservePayoutExponentTail = 2;
 
     /// <summary>
     /// The largest payout of one Reserve Bank pulse: 150 million ISK per minute, the peak that CCP's 2021 ESS reserve bank article gives (quoted by
-    /// tagn.wordpress.com, 2021-07-27). The pulse is one minute, so this is the per-pulse cap.
     /// </summary>
     public const double ReserveBankMaxPayout = 150_000_000;
 
-    /// <summary>The weapon timer a link starts (CCP patch notes 2021-11-09.1, version 19.10: "a 60-second weapon-timer"); it does not refresh the log-off timer.</summary>
     public const long WeaponsTimerMs = 60_000;
 
     /// <summary>
@@ -69,7 +57,6 @@ public static class EssRules
     public const double BallY = 0;
     public const double BallZ = 0;
 
-    /// <summary>The padding added to every pulse's payout (EveJS <c>reservePayoutPaddingValue</c> 0).</summary>
     public const double ReservePayoutPaddingValue = 0;
 
     /// <summary>The journal reference of ESS money (the client's <c>refESSMainBankAutopayment</c>, the only ESS reference the client names).</summary>
@@ -82,12 +69,10 @@ public static class EssRules
     /// <summary>The link ends because the pilot changed ship (the client's <c>UNLINKED_SHIP_CHANGE</c>).</summary>
     public const int UnlinkedShipChange = 2;
 
-    /// <summary>The autopayment window state the client shows (EveJS <c>deriveAutopaymentWindowState</c>; the client's <c>ESS_AUTOPAY_STATE_*</c>).</summary>
     public const int AutopayStateLong = 0;
     public const int AutopayStateMedium = 1;
     public const int AutopayStateShort = 2;
 
-    /// <summary>The reserve window state the client shows (EveJS <c>deriveReserveWindowState</c>; the client's <c>ESS_RESERVE_WINDOW_STATE_*</c>).</summary>
     public const int ReserveWindowInactive = 0;
     public const int ReserveWindowEarly = 1;
     public const int ReserveWindowBest = 2;

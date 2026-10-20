@@ -78,7 +78,7 @@ public sealed class StructureTravelRpcService : IService
 
         if (_travel is null)
         {
-            // a Pharolux or Upwell cynosural beacon is a structure: its state is kept by the structure service, which is not built (the structure phase)
+
             var text = Name == "structureCynoBeaconMgr"
                 ? "A Pharolux or Upwell cynosural beacon cannot be jumped to: the structure service that keeps the beacon's state (the Upwell structure phase) is not built on this server."
                 : "Structure travel is not wired on this server.";

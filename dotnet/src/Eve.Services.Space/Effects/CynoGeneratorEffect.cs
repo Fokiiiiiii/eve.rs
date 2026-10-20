@@ -5,7 +5,6 @@ namespace Eve.Services.Space.Effects;
 
 /// <summary>
 /// The cynosural field generators (group 658; effect <c>cynosuralGeneration</c>, 2857). The generator runs one cycle of its activation time (the SDE's duration:
-/// 600000 ms, 60000 for the covert one; the wiki's ten minutes and one tenth). At the end of the cycle the field of its type is lit where the ship is
 /// (<see cref="SimAction.CynoField"/>), and the field lives its explosionDelay. The cycle burns the generator's fuel (713, 714) through the shared mechanism
 /// (<c>BurnsFuel</c>, set by <see cref="ShipEffect"/>). The generator's own modifiers (its ship speed changes while it runs) are the dogma modifiers, as they are
 /// for any module (<see cref="DogmaModifierEffect.BuildModifier"/>).

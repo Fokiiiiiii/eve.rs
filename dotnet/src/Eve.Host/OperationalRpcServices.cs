@@ -86,9 +86,8 @@ public sealed partial class EncodedItemsRpcService(
         var characterId = call.Session.GetInt("charid") ?? 0;
         var corporationId = call.Session.GetInt("corpid") ?? 0;
         if (item.OwnerId > 0 &&
-            (characterId > 0 || corporationId > 0) &&
-            item.OwnerId != characterId &&
-            item.OwnerId != corporationId)
+            (characterId <= 0 ||
+             (item.OwnerId != characterId && item.OwnerId != corporationId)))
         {
             return PyNone.Instance;
         }

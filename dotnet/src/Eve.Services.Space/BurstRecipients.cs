@@ -8,13 +8,11 @@ public readonly record struct BurstShip(long ShipId, long CharacterId, long Affi
 /// <c>commandBurstRuntime.js</c>). The source ship itself always is, when it passes <paramref name="eligible"/>. Any other ship needs a shared explicit
 /// affinity group or a shared fleet (two different pilots in one fleet), or, for a burst that reaches every ship in range (a Phenomena Generator), nothing
 /// else; and it must be within the range (surface distance, plus one metre, as the reference allows). The caller passes only the ships that can interact
-/// with the source locally (the same system and bubble). A burst reaches at most <see cref="MaxRecipients"/> ships, the source among them (the wiki's
-/// "up to 256 people"; the wiki does not say which ones are cut, so the source is kept and the rest are taken in ship id order). The result is ordered by
 /// ship id, as the reference orders it.
 /// </summary>
 public static class BurstRecipients
 {
-    /// <summary>The most ships one burst reaches on a cycle, the source among them (EVE University wiki, Command Bursts: "up to 256 people").</summary>
+
     public const int MaxRecipients = 256;
 
     /// <summary>The ships the burst from <paramref name="source"/> reaches, at <paramref name="rangeMeters"/>.</summary>

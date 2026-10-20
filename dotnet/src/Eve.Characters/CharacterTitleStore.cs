@@ -4,7 +4,6 @@ namespace Eve.Characters;
 
 /// <summary>
 /// The titles of each character (tables <c>character_titles</c> and <c>character_equipped_titles</c>, migration 0013). Owned titles are
-/// granted by a reward (EveJS <c>grantTitle</c>); equipping needs an owned title (EveJS <c>equipTitle</c>). The title's definition is the
 /// SDE's; this store only knows the ids.
 /// </summary>
 public sealed class CharacterTitleStore(NpgsqlDataSource source, string schema)

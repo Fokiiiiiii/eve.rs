@@ -1,6 +1,7 @@
 using Eve.Macho;
 using Eve.Marshal;
 using Eve.Services;
+using System.Security.Cryptography;
 
 namespace Eve.Services.Core;
 
@@ -23,6 +24,15 @@ public sealed partial class ChatAuthenticationService(
         if (string.IsNullOrEmpty(token)) token = MapToken(call.Session.Get("xmppAuthenticationTokensByCharacterID"), characterId);
         if (string.IsNullOrEmpty(token) && tokenProvider is { } provideToken)
             token = await provideToken(call.Session, characterId, call.Cancellation);
+        if (string.IsNullOrEmpty(token) && characterId > 0)
+        {
+            token = Text(call.Session.Get("chatAuthenticationToken"));
+            if (string.IsNullOrEmpty(token))
+            {
+                token = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
+                call.Session.Set("chatAuthenticationToken", new PyStr(token));
+            }
+        }
         return string.IsNullOrEmpty(token) ? PyNone.Instance : new PyStr(token);
     }
 

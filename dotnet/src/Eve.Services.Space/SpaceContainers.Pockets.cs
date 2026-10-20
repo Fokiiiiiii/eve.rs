@@ -6,10 +6,7 @@ using Eve.Space;
 namespace Eve.Services.Space;
 
 /// <summary>
-/// The deadspace pockets of the dungeons (ST-23; EveJS <c>deadspaceWarpPolicy.js</c>): a dungeon that runs (a mission pocket or an incursion site) is a deadspace
-/// pocket in the scene at its origin, with the EveJS radius (<see cref="DeadspaceSiteRadiusMeters"/>). The pocket is a host record of kind <see cref="DeadspacePocketKind"/>
 /// and a simulation body with no client ball. A running dungeon with a room layout also has a pocket for each room after the entry, and an acceleration gate
-/// (a client ball, protocol 75) for each gate of its rooms (docs/project/ACCELERATION_GATES.md). A job keeps all of these in step with the running dungeons: they are
 /// placed when their dungeon is active, and taken out when it is not. An observatory is refused inside a pocket by its record.
 /// </summary>
 public sealed partial class SpaceContainers
@@ -38,7 +35,6 @@ public sealed partial class SpaceContainers
     private const string PocketName = "Deadspace Pocket";
     private const string AccelerationGateName = "Acceleration Gate";
 
-    /// <summary>The group of the acceleration gate (EveJS <c>ACCELERATION_GATE_SLIM_GROUP_ID</c>).</summary>
     private const int AccelerationGateGroupId = 366;
 
     /// <summary>The deployable id of a pocket.</summary>
@@ -74,7 +70,6 @@ public sealed partial class SpaceContainers
     }
 
     /// <summary>
-    /// Keeps the pockets and gates in step with the running dungeons: each active one is placed (see <see cref="PlaceDeadspacePocketAsync"/>), with its rooms
     /// and gates when its layout is known, and each pocket or gate whose dungeon is not active any more is taken out of the scene and forgotten.
     /// </summary>
     public async Task ReconcileDeadspacePocketsAsync(IReadOnlyList<DungeonPocket> active, CancellationToken cancellationToken = default)

@@ -9,7 +9,6 @@ using Eve.Space;
 namespace Eve.Services.Space;
 
 /// <summary>
-/// The mobile deployables a pilot drops from the hold (WP-8 and E-03; EVE.js <c>launchMobileWarpDisruptorFromShip</c> and <c>launchMobileCynoInhibitorFromShip</c>): a
 /// mobile warp disruptor and a Mobile Cynosural Inhibitor. Each is the host's item and its record (ADR 0012, kind <c>mobile_warp_disruptor</c> or
 /// <c>mobile_cyno_inhibitor</c>): it is in space from the drop, anchored when its anchoring time is over (a durable job, <see cref="AnchorJob"/>), and it leaves with its
 /// item when its record's time is up (the sweep). A restart puts it back in space with the anchored state its record gives.
@@ -31,7 +30,6 @@ public sealed partial class SpaceContainers
     /// <summary>The highsec authorized beacon: the SDE's own type with Polaris 5 for high security, so the security cutoff does not apply to it.</summary>
     private const int HighsecAuthorizedBeaconType = 58906;
 
-    /// <summary>The security at and above which a standard or covert beacon cannot be deployed (EveJS <c>MOBILE_CYNO_SECURITY_CUTOFF</c>).</summary>
     private const double BeaconSecurityCutoff = 0.45;
 
     /// <summary>The durable job that anchors a mobile deployable when its anchoring time is over (<see cref="AnchorAsync"/>).</summary>
@@ -50,7 +48,6 @@ public sealed partial class SpaceContainers
     private const int ControlTowerGroup = 365;
 
     /// <summary>
-    /// The record kind of a player control tower launched from a ship (protocol 73, ST-19): anchored by its durable job when its anchoring time (the SDE's) is over,
     /// in space until it is removed. It has no fuel or modules yet: the placing, anchoring and removal are all it does.
     /// </summary>
     internal const string ControlTowerKind = "control_tower";
@@ -64,21 +61,16 @@ public sealed partial class SpaceContainers
     /// <summary>The durable job that pings a Mobile Observatory's system (<see cref="PingObservatoryAsync"/>).</summary>
     public const string ObservatoryPingJob = "space.deployed.observatory_ping";
 
-    /// <summary>The security at and above which an observatory cannot be deployed (EveJS <c>MOBILE_OBSERVATORY_SECURITY_CUTOFF</c>; the wiki: not in highsec).</summary>
     private const double ObservatorySecurityCutoff = 0.45;
 
-    /// <summary>How close two observatories may be deployed, surface to surface (EveJS <c>MOBILE_OBSERVATORY_MIN_DISTANCE_FROM_OWN_GROUP_METERS</c>).</summary>
     private const double ObservatorySpacingMeters = 10_000;
 
     /// <summary>The distance an observatory keeps from a station, stargate or Upwell structure, surface to surface (EVE.js <c>MOBILE_OBSERVATORY_MIN_DISTANCE_FROM_STATION_STARGATE_UPWELL_METERS</c>).</summary>
     private const double ObservatoryLandmarkSpacingMeters = 1_000_000;
 
-    /// <summary>The spacing from a player control tower: 100 km (the wiki, Mobile Observatory).</summary>
     private const double ObservatoryControlTowerSpacingMeters = 100_000;
 
     /// <summary>
-    /// The radius of a deadspace pocket around its site's anchor: EveJS deadspaceWarpPolicy.js DEADSPACE_SITE_RADIUS_METERS (1e9 m). The wiki (Deadspace) gives no
-    /// pocket size and the SDE none, so the EveJS parity constant is used (DEVIATIONS, ST-16).
     /// </summary>
     private const double DeadspaceSiteRadiusMeters = 1_000_000_000;
 
@@ -97,13 +89,10 @@ public sealed partial class SpaceContainers
     /// <summary>The anchors (metres) of the deadspace pockets of a system: the cosmic sites' positions. An observatory cannot be anchored inside one.</summary>
     public Func<int, CancellationToken, Task<IReadOnlyList<double[]>>>? ReadDeadspaceAnchors { get; set; }
 
-    /// <summary>The anchoring time of an observatory: ten minutes (the wiki; EveJS <c>MOBILE_OBSERVATORY_ACTIVATION_DELAY_MS</c>; the SDE gives none for the type).</summary>
     private static readonly TimeSpan ObservatoryAnchoringTime = TimeSpan.FromMinutes(10);
 
-    /// <summary>The time between an anchored observatory's pings: ten minutes (the wiki, "Mobile Observatory"; EveJS <c>MOBILE_OBSERVATORY_PING_INTERVAL_MS</c>).</summary>
     private static readonly TimeSpan ObservatoryPingInterval = TimeSpan.FromMinutes(10);
 
-    /// <summary>How long an observatory lives: 100 minutes 30 seconds (EveJS <c>MOBILE_OBSERVATORY_LIFETIME_MS</c>; the wiki gives "up to 2 hours", see DEVIATIONS).</summary>
     private static readonly TimeSpan ObservatoryLifetime = TimeSpan.FromSeconds((60 + 40) * 60 + 30);
 
     /// <summary>The payload of the ping job: the observatory whose system it pings.</summary>
@@ -116,27 +105,19 @@ public sealed partial class SpaceContainers
     /// <summary>The radius attribute (162): the SDE's radius of the type, which the dogma statics carry as an intrinsic attribute.</summary>
     private const int RadiusAttribute = 162;
 
-    /// <summary>How far ahead of the ship, along its heading, a mobile deployable is dropped (EVE.js <c>DEPLOY_DISTANCE_METERS</c>). The wiki gives no deployment
-    /// distance and the SDE none for a ship's deployable, so the reference's value stands (DEVIATIONS, WP-8).</summary>
     private const double DropDistance = 2500;
 
-    /// <summary>The anchoring time of a Mobile Cynosural Inhibitor: two minutes (the wiki; EVE.js gives one minute, which the wiki's rule overrides).</summary>
     private static readonly TimeSpan InhibitorAnchoringTime = TimeSpan.FromMinutes(2);
 
-    /// <summary>How long a Mobile Cynosural Inhibitor lives: one hour (the wiki).</summary>
     private static readonly TimeSpan InhibitorLifetime = TimeSpan.FromHours(1);
 
-    /// <summary>The activation time of a beacon: two minutes, and one minute for the covert one (EveJS <c>MOBILE_CYNO_ACTIVATION_DELAY_MS</c>,
     /// <c>COVERT_MOBILE_CYNO_ACTIVATION_DELAY_MS</c>; the SDE carries no anchoring delay for the type).</summary>
     private static TimeSpan BeaconActivationDelay(int typeId) => typeId == JumpDriveRules.CovertBeaconType ? TimeSpan.FromMinutes(1) : TimeSpan.FromMinutes(2);
 
-    /// <summary>The life of a beacon: one hour, and thirty minutes for the covert one (EveJS <c>MOBILE_CYNO_LIFETIME_MS</c>, <c>COVERT_MOBILE_CYNO_LIFETIME_MS</c>).</summary>
     private static TimeSpan BeaconLifetime(int typeId) => typeId == JumpDriveRules.CovertBeaconType ? TimeSpan.FromMinutes(30) : TimeSpan.FromHours(1);
 
-    /// <summary>The range of a Mobile Cynosural Inhibitor: 200 km (the wiki, "Mobile Cynosural Inhibitor"; the SDE carries none for the type).</summary>
     private const double InhibitorRangeMeters = 200_000;
 
-    /// <summary>The closest two inhibitors may be dropped: two of 200 km fields would overlap inside 400 km (the wiki: a second inhibitor "cannot be placed where two cyno
     /// fields would overlap").</summary>
     private const double InhibitorMinimumSpacingMeters = 400_000;
 
@@ -144,7 +125,6 @@ public sealed partial class SpaceContainers
     public sealed record DisruptorAnchorDue(long DeployableId);
 
     /// <summary>
-    /// How long a mobile warp disruptor lives (EVE.js <c>CURRENT_SDE_LIFETIME_MS_BY_TYPE_ID</c>; the SDE gives no lifetime, and the wiki's only lifetime for a disruptor is
     /// the Tournament Bubble's two days, so the reference's table stands for the standard models): two days for the Mk I, seven for the Mk II, fourteen for the
     /// Syndicate ones.
     /// </summary>
@@ -214,18 +194,17 @@ public sealed partial class SpaceContainers
         {
             throw Refuse("That mobile warp disruptor has no warp disruption range.");
         }
-        // the security cutoff of a beacon (EveJS); the highsec authorized one is exempt, by its own type
+
         if (beacon && item.TypeId != HighsecAuthorizedBeaconType && _space.SecurityOfSystem(system) is { } beaconSecurity && beaconSecurity >= BeaconSecurityCutoff)
         {
             throw Refuse("Mobile Cynosural Beacons can only be deployed below 0.5 security.");
         }
-        // Pochven: a region-wide cynosural jammer stops anyone lighting a cyno there (the wiki, "Pochven"); the text is EveJS's. A beacon may be lit in wormhole
-        // space (the wiki, "Cynosural field": "they can be lit in wormhole space"); EveJS refuses it there, see DEVIATIONS, Track A8c
+
         if (beacon && _space.RegionOfSystem(system) == JumpDriveRules.PochvenRegionId)
         {
             throw Refuse("Mobile Cynosural Beacons cannot be deployed in Pochven.");
         }
-        // a Mobile Observatory is not deployed in wormhole space, in Pochven or above the security cutoff (the wiki, "Mobile Observatory"; EveJS's texts)
+
         if (observatory && system is >= AbyssalLocationMin and <= AbyssalLocationMax)
         {
             throw Refuse("Mobile Observatories cannot be deployed in Abyssal space.");
@@ -332,7 +311,7 @@ public sealed partial class SpaceContainers
                 OnDuplicate = OnDuplicate.Replace,
             }, cancellationToken);
         }
-        // a control tower's fuel period starts when it is anchored: the first hour is paid then, and an empty bay leaves it offline (ST-23)
+
         if (tower && _scheduler is not null)
         {
             await _scheduler.ScheduleAsync(new JobSpec(ControlTowerFuelJob, activateAt)
@@ -376,7 +355,7 @@ public sealed partial class SpaceContainers
                 }
             }
         }
-        // a dungeon's pocket is its record (ST-23): the body in the scene at the origin, with the pocket's radius
+
         if (_deployed is not null)
         {
             foreach (var record in await _deployed.InSystemAsync(system, cancellationToken))
@@ -404,7 +383,7 @@ public sealed partial class SpaceContainers
                 }
             }
         }
-        // a tower launched from a ship is a record of the host (ST-19), not a structure
+
         foreach (var tower in await _deployed!.InSystemAsync(system, cancellationToken))
         {
             if (tower.Kind == ControlTowerKind && MetersBetween(tower.Position, position) - radius < ObservatoryControlTowerSpacingMeters)
@@ -496,7 +475,7 @@ public sealed partial class SpaceContainers
         _sim.SetDisruptorActive(deployableId, true);
         if (record.Kind == ObservatoryKind && _scheduler is not null)
         {
-            // the first ping comes when the observatory is anchored (the wiki), then one every ten minutes while it is
+
             await _scheduler.ScheduleAsync(new JobSpec(ObservatoryPingJob, _nowUnixMs())
             {
                 Key = $"observatory:{deployableId}",
@@ -512,15 +491,12 @@ public sealed partial class SpaceContainers
     }
 
     /// <summary>
-    /// The activation time of a beacon that could not be lit: never (the wiki: an anchored Mobile Cynosural Inhibitor "prevents the activation of cynos" within its
     /// range; the record is kept to its end, so a restart does not light it either).
     /// </summary>
     internal const long NeverLit = long.MaxValue;
 
     /// <summary>
     /// Whether an anchored Mobile Cynosural Inhibitor covers a beacon at its activation: an inhibitor in its system whose anchoring time is past, whose record's time
-    /// is not up and whose range (the record's <c>RangeMeters</c>, 200 km) reaches the beacon. A covert beacon is not stopped (the wiki: "not covert cynos"). An
-    /// existing lit beacon is not asked: an inhibitor does not remove existing cynos (the wiki, Cynosural field).
     /// </summary>
     private async Task<bool> InhibitedAsync(DeployedRecord beacon, long now, CancellationToken cancellationToken)
     {

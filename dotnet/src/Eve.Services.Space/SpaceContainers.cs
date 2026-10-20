@@ -151,7 +151,6 @@ public sealed partial class SpaceContainers : ISpaceContainers, IDisposable
         return item;
     }
 
-    /// <summary>Whether the pilot may take what is in the container: it is the pilot's own, or its corporation's (a can's owner is the one who jettisoned into it).</summary>
     private async Task<bool> MayTakeFromAsync(long characterId, Item container, CancellationToken cancellationToken, SpaceItem? rights = null, IReadOnlyList<long>? itemIds = null)
     {
         if (Eve.Structures.StructureUnanchorDrop.IsFittingsContainer(container.TypeId, container.CustomInfo) ||
@@ -174,7 +173,6 @@ public sealed partial class SpaceContainers : ISpaceContainers, IDisposable
 
     /// <summary>
     /// Whether the pilot may pull the wreck or can with a tractor beam: the rights that its stored loot rights give (the same rights as taking from it:
-    /// abandoned, the owner's own, or its corporation's). Null when no wreck or can has that id, which the simulation refuses as not there.
     /// </summary>
     private async Task<bool?> MayPullAsync(long characterId, long wreckId, CancellationToken cancellationToken)
     {
@@ -321,8 +319,6 @@ public sealed partial class SpaceContainers : ISpaceContainers, IDisposable
         session.GetInt("shipid") == itemId && _space.IsInSpace(session)
             ? _space.RefreshShipAsync(session, cancellationToken)
             : Task.CompletedTask;
-
-
 
     /// <summary>
     /// What the client is told of a batch that was taken from a can or a wreck (recorded: <c>loot.json</c>): each stack that moved (<c>OnItemsChanged</c>, to the character, with no place for the
@@ -539,7 +535,6 @@ private void OnReceived(SimMessage message)
         }
     }
 
-    /// <summary>ST-9 c: the capture of Sovereignty Hubs by entosis links, set by the host. Without it an entosis link's cycle is refused by name.</summary>
     public Eve.Services.Space.Entosis.EntosisCaptureService? EntosisCaptures { get; set; }
 
     /// <summary>A module's end report: an entosis link stops counting (its capture is moved to now first). A failure is logged; the capture is then moved at its next event.</summary>
@@ -674,7 +669,6 @@ private void OnReceived(SimMessage message)
             _log?.Invoke($"what lies in space in system {system} was not put back: {error.Message}");
         }
     }
-
 
     internal void RemoveMoonFieldRocks(IEnumerable<long> asteroidIds)
     {

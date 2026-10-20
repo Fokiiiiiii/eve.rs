@@ -6,7 +6,6 @@ namespace Eve.Services.Space.Effects;
 /// <summary>
 /// The reapers and Catmageddon (<c>doomsdaySlash</c>: 40632, 41442, 41443, 41444, 37474): a two-point slash (<c>ActivateSlashModule</c>, SDE
 /// <c>isPointTargeted</c> 2). The client's arc is fixed geometry (V24 ArcPath): its centre (the midpoint of the two points) is <c>maxRange</c> beyond the hull, and
-/// its half span is <c>tan(15 degrees) * maxRange</c>, perpendicular to the centre (EveJS <c>superweaponRuntime.js</c>, the slash checks in
 /// <c>prepareSuperweaponActivation</c>). The reference runs a cylinder of <c>doomsdayDamageRadius</c> whose axis sweeps from the start point to the end point
 /// over the damage window, one pulse per cycle time (<c>resolveSlashDamageVolume</c>, <c>tickLanceEffect</c>). The simulation runs that sweep (protocol 28,
 /// <see cref="SimAction.Strike.SweepEnd"/>).
@@ -43,7 +42,7 @@ internal sealed class ReaperEffect : ShipEffect
         var halfSpan = Scale(Sub(end, start), 0.5);
         var expectedHalf = HalfSpanPerMaxRange * maxRange;
         var tolerance = maxRange * 0.01;
-        // the endpoints lie farther than the arc's reach: out of range (EveJS SLASH_POINTS_OUT_OF_RANGE)
+
         var reach = Math.Sqrt((maxRange * maxRange) + (expectedHalf * expectedHalf)) + tolerance;
         if (Length(start) > reach || Length(end) > reach)
         {

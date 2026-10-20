@@ -53,7 +53,6 @@ public sealed record AbyssalWeatherStageSelection(
     IReadOnlyList<double> SelectionWeights,
     IReadOnlyList<AbyssalWeatherEffect> Effects);
 
-/// <summary>Per-room client environment data from the EveJS resolver, keyed by its room layout profile ID.</summary>
 public sealed record AbyssalEnvironmentRoomDefinition(
     string EnvironmentProfileId,
     string ProfileId,
@@ -79,7 +78,6 @@ public sealed record AbyssalEnvironmentalObjectDefinition(string Key, string Pro
     public double? PresentationRadiusMeters { get; init; }
 }
 
-/// <summary>Pinned SDE identities, registered environmental placements and executable EveJS reward policies.</summary>
 public sealed class AbyssalStaticCatalog
 {
     public const long RequiredSdeBuild = 3396210;
@@ -175,7 +173,6 @@ public sealed class AbyssalStaticCatalog
 
     public IReadOnlyDictionary<AbyssalGameMode, IReadOnlySet<int>> AllowedShipTypeIdsByMode { get; }
 
-    /// <summary>Loads the matching SDE data and the pinned, embedded EveJS catalog resource.</summary>
     public static async Task<AbyssalStaticCatalog> LoadAsync(SdeReader sde, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(sde);
@@ -300,7 +297,7 @@ public sealed class AbyssalStaticCatalog
             .Concat(weatherIds)
             .Concat(EnvironmentalTypeIds.Select(x => (long)x))
             .Concat(proceduralInputs.Select(x => (long)ReadRequiredInt(x, "typeID")))
-            .Concat(new long[] { 47951, 49689 }) // EveJS main cache families, SDE group 2009.
+            .Concat(new long[] { 47951, 49689 })
             .Concat(environmentTypeIds.Select(x => (long)x))
             .Distinct()
             .ToArray();
@@ -726,7 +723,6 @@ public sealed class AbyssalStaticCatalog
     /// <summary>Filament stack size is a mode contract, independent of actual fleet size.</summary>
     public int RequiredFilamentsFor(AbyssalGameMode gameModeId) => GetMode(gameModeId).MaximumParticipants;
 
-    /// <summary>Main-cache family follows EveJS resolveMainAbyssalCacheFamily; loot is already final.</summary>
     public AbyssalSdeTypeDefinition MainCacheTypeFor(AbyssalGameMode gameModeId) =>
         StaticTypesById[RequiredFilamentsFor(gameModeId) == 1 ? 47951 : 49689];
 
@@ -774,7 +770,6 @@ public sealed class AbyssalStaticCatalog
             throw new ArgumentOutOfRangeException(nameof(explicitStage), stage, $"Stage is not allowed for tier {tier}.");
         }
 
-        // These profiles use QSNA/observed telemetry in every tier. The EveJS
         // authored-ball override applies only when all telemetry flags are false.
         var definition = _weatherStages[(weather, stage)];
         return new AbyssalWeatherStageSelection(
@@ -793,7 +788,6 @@ public sealed class AbyssalStaticCatalog
             return new AbyssalLootPlan(typeId, count);
         }
 
-        // EveJS applyAbyssalBlueprintCopyStates: individual copies, zero ME/TE,
         // each copy receives one uniformly sampled run count in the range 1..5.
         var random = CreateDeterministicRandom($"abyssal-blueprint-copies:{runId}:{roomIndex}:{typeId}");
         return new AbyssalLootPlan(typeId, count)
@@ -803,8 +797,6 @@ public sealed class AbyssalStaticCatalog
                 .Select(_ => 1 + (int)Math.Floor(random() * 5)).ToArray()),
         };
     }
-
-
 
     private (AbyssalSpawnFamily Family, Func<double> Random) SelectSpawnFamily(AbyssalPlanProfile profile, long traceItemId, string runId, int roomIndex)
     {
@@ -935,8 +927,6 @@ public sealed class AbyssalStaticCatalog
 
     private static double NormalizeRandom(double value) =>
         double.IsFinite(value) ? Math.Clamp(value, 0, 0.9999999999999999) : 0;
-
-
 
     private static uint Fnv1a32(string value)
     {
@@ -1394,6 +1384,5 @@ public sealed class AbyssalStaticCatalog
     private sealed record QuantityState(int Cost, int[] Quantities);
 
     private sealed record QuantityCandidate(int Total, int Cost, int[] Quantities);
-
 
 }

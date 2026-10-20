@@ -5,13 +5,10 @@ using Eve.Structures;
 
 namespace Eve.Services.Space;
 
-/// <summary>A system's Sovereignty Hub as the sovereignty records have it: the hub's item, its owner (null for a neutral hub) and its system.</summary>
 public sealed record SovHubBall(long HubId, int SolarSystemId, long? CorporationId, long? AllianceId);
 
 /// <summary>
-/// ST-9 (a): a system's Sovereignty Hub (type 32458, group 1012) is a structure ball in the simulation once a pilot comes into the system, as the
 /// sovereignty records have it: the system's infrastructure hub, when its structure row is a Sovereignty Hub. The hub is inert: nothing in the simulation
-/// acts on it until an entosis link targets it (ST-9 b). The ball sits at the system's origin, as the ESS ball does (DEVIATIONS "Sovereignty Hub ball").
 /// </summary>
 public sealed class SpaceSovHubs
 {
@@ -24,11 +21,9 @@ public sealed class SpaceSovHubs
     // the hub's typeDogma has no radius attribute (162); the SDE's types.radius of 32458 is 45 000 m (pinned build 3396210)
     private const double SovereigntyHubRadiusMeters = 45_000d;
 
-    /// <summary>ST-17 a: a command node's static type (SDE 34832, group 1316) and its radius (SDE types.radius 243 m).</summary>
     public const int TypeCommandNode = 34832;
     private const double CommandNodeRadiusMeters = 243d;
 
-    /// <summary>ST-17 a: the live command nodes of a system, put in space when a pilot comes into it (the Host supplies them).</summary>
     public Func<int, CancellationToken, Task<IReadOnlyList<long>>>? LiveCommandNodesOf { get; set; }
 
     private readonly ISimulation _sim;
@@ -92,7 +87,6 @@ public sealed class SpaceSovHubs
     }
 
     /// <summary>
-    /// Puts a hub back in space after its records changed (ST-9 d: a claim changes the owner the ball shows). The simulation's ball is taken out first.
     /// </summary>
     public async Task ReplaceAsync(long hubId, int solarSystemId, CancellationToken cancellationToken = default)
     {
@@ -101,7 +95,6 @@ public sealed class SpaceSovHubs
     }
 
     /// <summary>
-    /// ST-17 a: a command node of an active stage is a structure ball in the system. Its place is a ring 40 to 60 km from the system's origin, from its id
     /// (shortcut: EVE.js places the nodes around the system's sun; upgrade: the sun-relative spawn once the celestial data is read here).
     /// </summary>
     public async Task PlaceCommandNodeAsync(long nodeId, int solarSystemId, CancellationToken cancellationToken = default)
@@ -127,10 +120,8 @@ public sealed class SpaceSovHubs
         }
     }
 
-    /// <summary>ST-17 a: a hub destroyed by its command node stage leaves space (its ball; the records are written by the destruction job).</summary>
     public void RemoveHub(long hubId) => _sim.RemoveStructure(hubId);
 
-    /// <summary>ST-17 a: a command node that was captured or whose stage ended leaves space.</summary>
     public void RemoveCommandNode(long nodeId) => _sim.RemoveStructure(nodeId);
 
     private static SimPlaceStructure Placement(SovHubBall hub, Eve.Dogma.TypeDef type)

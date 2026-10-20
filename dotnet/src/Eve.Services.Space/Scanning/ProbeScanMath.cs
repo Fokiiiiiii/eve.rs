@@ -2,8 +2,6 @@ namespace Eve.Services.Space.Scanning;
 
 /// <summary>
 /// The arithmetic of a probe scan. The numbers come from the SDE (the probe types' base scan range, base sensor strength, base maximum deviation and range
-/// factor; the skills' bonuses) and the rules from the EVE University wiki "Probe scanning" as written: the scan range steps, the sensor strength at a range,
-/// the maximum deviation at a range (the wiki's formula), and the tiers of a result. The wiki gives no formula for the strength of a result of a target, and
 /// no signal strength for a ship; those come from EVE.js <c>scanMgrService</c> and <c>probeScanRuntime</c> (the reference), see DEVIATIONS "Track A7".
 /// </summary>
 public static class ProbeScanMath
@@ -11,10 +9,8 @@ public static class ProbeScanMath
     /// <summary>One astronomical unit in metres (EVE.js <c>AU_METERS</c>; the client's <c>probescanning.const.AU</c>).</summary>
     public const double AuMeters = 149_597_870_700.0;
 
-    /// <summary>The number of scan range steps a probe has (the client's <c>scanProbeNumberOfRangeSteps</c>; the wiki: 0.25 AU to 32 AU for core probes).</summary>
     public const int RangeStepCount = 8;
 
-    /// <summary>The result tiers (the client's <c>probeResultGood</c>, <c>probeResultInformative</c> and <c>probeResultPerfect</c>): the wiki's "type identified at 25%",
     /// "the name is revealed at 75%", "warpable at 100%".</summary>
     public const double ResultGroup = 0.25;
     public const double ResultName = 0.75;
@@ -23,18 +19,15 @@ public static class ProbeScanMath
     /// <summary>A result's certainty below this is worth nothing (the client's <c>probeResultUnusable</c>, EVE.js <c>PROBE_RESULT_UNUSABLE</c>).</summary>
     public const double ResultUnusable = 0.001;
 
-    /// <summary>The scan range of a step, in metres: the base scan range times the range factor to the step minus one (the client's
     /// <c>GetScanRangeStepsByTypeID</c>; SDE attributes 1370 and 1373).</summary>
     public static double ScanRangeMeters(double baseScanRangeAu, double rangeFactor, int rangeStep) =>
         baseScanRangeAu * Math.Pow(rangeFactor, rangeStep - 1) * AuMeters;
 
-    /// <summary>The sensor strength of a probe at a step: the base strength (SDE 1371, given at the base scan range) over the range factor to the step minus one,
     /// with the strength bonus in percent (EVE.js <c>resolveProbeStrengthAtRange</c>).</summary>
     public static double StrengthAtStep(double baseSensorStrength, double rangeFactor, int rangeStep, double strengthBonusPercent) =>
         Math.Max(0, baseSensorStrength / Math.Pow(rangeFactor, rangeStep - 1) * (1 + strengthBonusPercent / 100));
 
     /// <summary>
-    /// The largest deviation a result can have, in metres (the wiki: "Max Deviation = Base Maximum Deviation x (Scan Range / Base Scan Range) x (100 - Astrometrics
     /// x 5) / 100 x (100 - Astrometric Pinpointing x 5) / 100"). <paramref name="deviationFactor"/> is the product of the skills' factors (1 at no skill).
     /// </summary>
     public static double MaxDeviationMeters(double baseMaxDeviationAu, double baseScanRangeAu, double scanRangeMeters, double deviationFactor) =>
@@ -56,7 +49,6 @@ public static class ProbeScanMath
         Math.Max(0.25, Math.Max(1, sensorStrength) / Math.Max(1, signatureRadius) * 20);
 
     /// <summary>
-    /// The probe strength a cosmic signature of a level needs (the wiki, "Probe scanning", minimum sensor strength: 42, which a Core Scanner Probe's base 40 and Astrometrics I give, is enough
     /// for signatures up to level III; level IV needs 72 and level V needs 104). It stands where <see cref="RequiredStrength"/> does for a ship: a probe weaker than this finds the signature
     /// only in part.
     /// </summary>

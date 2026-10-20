@@ -7,7 +7,6 @@ namespace Eve.Services.Space;
 
 /// <summary>
 /// The superweapon activations the client sends to <c>superWeaponMgr</c> (its positional control): a point for a titan doomsday, a lance, a cone or the HOG,
-/// and a slash for a reaper. The point is the client's destination, in the client's space relative to the ship (EveJS <c>toWorldPoint</c>), so the aim is
 /// the point itself. The module's effect is started the way every module activation is (<see cref="SpaceSessions.ActivateAsync"/>, with the aim): its handler
 /// builds the package, or refuses it by name (<c>Effects/SuperWeaponEffects.cs</c>, <c>Effects/DoomsdayConeEffect.cs</c>), and a refusal is shown as the same user
 /// error as any module refusal (<see cref="ModuleRefusals"/>). A success is reported only once the simulation has accepted the start.

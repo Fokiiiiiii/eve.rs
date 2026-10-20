@@ -20,7 +20,6 @@ public sealed record AnalysisBeaconDue(long DeployableId);
 /// <summary>
 /// The CONCORD Rogue Analysis Beacon (CRAB) of a pilot in low or null security space: deployed from the hold (EVE.js <c>mobileAnalysisBeaconRuntime</c>), active 20 seconds
 /// later, linked by a ship (four minutes), and scanning for 10 minutes (16 for the Carrier) while its Rogue Drones are dead. The first wave of Rogue Drones is made when
-/// it is active (the owner's figures, <c>analysis-beacon-rules.json</c>); the scan does not move while a drone lives. A completed scan puts its items in the hold of the
 /// pilot's ship (once). The beacon leaves when its hour is up, and its drones with it.
 /// <para>
 /// Each state change is written in one transaction, then told to the simulation (and the client, through its slim item) after the commit. The simulation keeps the ball;

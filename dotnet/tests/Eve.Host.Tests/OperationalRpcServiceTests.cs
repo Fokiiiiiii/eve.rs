@@ -128,6 +128,28 @@ public sealed class OperationalRpcServiceTests
         Assert.Equal(new PyStr("https://assets.example/item.png"), actual);
     }
 
+[Fact]
+    public async Task Decode_item_refuses_owned_items_without_an_active_character()
+    {
+        var item = new Item(55, 123, 20, 400, 0, 1, true, null,
+            CustomInfo: """{"evejsEncodedItemUrl":"https://assets.example/item.png"}""");
+        var backendCalled = false;
+        IService service = new EncodedItemsRpcService(
+            (_, _) => ValueTask.FromResult<Item?>(item),
+            (_, _, _) =>
+            {
+                backendCalled = true;
+                return ValueTask.FromResult(true);
+            });
+        var session = Session(characterId: 0);
+        session.Set("corpid", new PyInt(0));
+
+        var actual = await service.CallAsync(Call("DecodeItem", session, new PyLong(55)));
+
+        Assert.IsType<PyNone>(actual);
+        Assert.False(backendCalled);
+    }
+
     [Fact]
     public async Task Decode_item_refuses_other_owners_before_consulting_resource_backends()
     {

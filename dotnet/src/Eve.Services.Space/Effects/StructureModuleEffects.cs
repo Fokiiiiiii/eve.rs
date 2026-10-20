@@ -6,7 +6,6 @@ using static Eve.Services.Space.Effects.ModuleAttributes;
 namespace Eve.Services.Space.Effects;
 
 /// <summary>
-/// The entosis link (<c>entosisLink</c>, effect 6063; ST-9 b): a cycle of 300 s on a sovereignty hub the pilot holds the lock on, within the link's reach (attribute 54,
 /// 20 km for Entosis Link I). The host checks the target and the alliance before the package is built (<c>SpaceSessions.Modules</c>: ENTOSIS_TARGET_NOT_SOV_HUB and
 /// ALLIANCE_MEMBERSHIP_REQUIRED); the simulation checks the lock and the reach, and at each cycle's end the host settles the capture (command 14). The effect is not
 /// offensive (EVE.js effect 6063, isOffensive false). Its cycle burns the consumption type of its module (713) through the shared mechanism.

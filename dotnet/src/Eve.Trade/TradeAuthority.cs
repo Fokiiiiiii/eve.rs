@@ -23,7 +23,6 @@ public sealed record TradeView(long TradeId, long LocationId, long SolarSystemId
 }
 
 /// <summary>
-/// An item as one change moved it: the state after, and the place, owner, flag and size it had before (what the client's
 /// <c>OnItemChange</c> reports). <see cref="Removed"/> marks a stack that was merged back into another (its size is now 0 for the client).
 /// </summary>
 public sealed record TradeItemMove(Item After, long PreviousOwnerId, long PreviousLocationId, int PreviousFlag, long PreviousQuantity, bool Removed = false);

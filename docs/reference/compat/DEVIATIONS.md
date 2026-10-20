@@ -30,6 +30,18 @@ The V24.01 trade window builds a two-pilot money manifest and a set of offered i
 
 EveJS 261018.1 normalizes the requested LP store quantity but has no generated-item count cap. eve.rs refuses purchases whose singleton reward would create more than 256 items; ordinary stack offers retain the existing checked cost and quantity calculations. The focused PostgreSQL test verifies refusal before inventory or purchase history changes. Offer reads and purchase calls also consume the configured per-session RPC budget. Graphical-client acceptance remains open.
 
+## Private chat invitation cadence (2026-10-20)
+
+The Host rejects repeated private-room invitations from one character within one second. The client still receives the existing chat refusal stanza for a rapid repeat; normal invitation and room-message flow is unchanged. The invite timestamp is scoped to the active character link and is cleared when that link closes. `XmppPrivateConversationTests.Private_room_invitation_and_messages_are_limited_to_the_character_pair` verifies that a repeated invite does not reach the recipient. Graphical-client acceptance remains open.
+
+## Mail RPC work budget (2026-10-20)
+
+`mailMgr` mailbox reads, status writes, sends, and the staff mail-poke RPC consume weighted per-session units in the existing rolling-minute budget. The configured `SessionRpcBudgetExceeded` refusal applies when a session exceeds its allowance; calls within the allowance retain their existing response and mailbox state transitions. `DispatchGoldenTests.Mailbox_reads_and_writes_have_a_named_per_session_budget` covers the refusal.
+
+## Mailing-list RPC resource bounds (2026-10-20)
+
+`mailingListsMgr` operations consume the weighted per-session RPC budget. Member-role changes and entity-access updates refuse raw collections above 1,000 entries with `MAILING_LIST_BULK_LIMIT_EXCEEDED` before forwarding to Host persistence. Collections within the limit retain the existing owner/operator checks and notification flow. `MailingListServiceTests.Mailing_list_bulk_mutations_reject_oversized_raw_collections_before_host_callbacks` and `DispatchGoldenTests.Mailing_list_work_has_a_named_per_session_budget` cover the refusals. Graphical-client acceptance remains open.
+
 ## Project status
 
 Summary of this file, as of 2026-10-18. The task list with the same areas is the "Project status" table at the top of `docs/project/TODO.md`. **Status** is the state of the area; **Project rule** is the rule a deviation stands on; **Cut** lists what the owner or the evidence has cut, with the entry that records it. A cut item without an entry here or in its section is a bug in this file.

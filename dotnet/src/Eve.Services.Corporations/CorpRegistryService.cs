@@ -872,7 +872,6 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
         return corporation;
     }
 
-
     [Method("GetCorpWelcomeMail")]
     public async ValueTask<PyValue> GetCorpWelcomeMail(ServiceCall call)
     {
@@ -953,7 +952,6 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
     {
         if (PositiveId(call.Arg(0)) is not { } applicationId || PositiveId(call.Arg(2)) is not { } corporation)
             return PyNone.Instance;
-        // ponytail: response lookup scans this corporation's open applications; add an ID lookup if that queue grows.
         var application = (await store.ApplicationsAsync(corporation:corporation,token:call.Cancellation))
             .FirstOrDefault(a => a.Id == applicationId);
         if (application is null) return PyNone.Instance;

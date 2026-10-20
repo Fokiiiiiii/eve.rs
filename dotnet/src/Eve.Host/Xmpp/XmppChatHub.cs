@@ -97,7 +97,10 @@ public sealed partial class XmppChatHub
         lock (_gate)
         {
             if (_linkByCharacter.TryGetValue(link.CharacterId, out var current) && ReferenceEquals(current, link))
+            {
                 _linkByCharacter.Remove(link.CharacterId);
+                _lastPrivateInvite.Remove(link.CharacterId);
+            }
         }
     }
 

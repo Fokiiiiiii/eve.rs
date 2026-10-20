@@ -522,7 +522,10 @@ public sealed partial class FleetObjectService(FleetStore store, Func<long> nowU
     {
         PyInt number => number.Value,
         PyLong number => number.Value,
-        PyReal number when double.IsFinite(number.Value) && number.Value >= long.MinValue && number.Value <= long.MaxValue => (long)number.Value,
+        PyReal number when double.IsFinite(number.Value) &&
+            number.Value >= -9_223_372_036_854_775_808d &&
+            number.Value < 9_223_372_036_854_775_808d &&
+            Math.Truncate(number.Value) == number.Value => (long)number.Value,
         PyStr text when long.TryParse(text.Value, out var parsed) => parsed,
         PyWString text when long.TryParse(text.Value, out var parsed) => parsed,
         _ => null

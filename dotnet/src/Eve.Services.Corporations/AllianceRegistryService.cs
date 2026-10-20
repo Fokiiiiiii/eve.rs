@@ -93,6 +93,20 @@ public AllianceRegistryService(CorporationStore store, PgCharacterStore characte
     }
 
     private static long Number(PyValue value) => value switch { PyInt n => n.Value,PyLong n => n.Value,PyTuple { Items.Count:>0 } t => Number(t.Items[0]),_ => 0 };
+private static double RelationshipValue(PyValue value)
+    {
+        var number = value switch
+        {
+            PyInt integer => integer.Value,
+            PyLong integer => (double)integer.Value,
+            PyReal real when double.IsFinite(real.Value) => real.Value,
+            _ => throw new CorporationError("ALLIANCE_RELATIONSHIP_INVALID")
+        };
+        if (!double.IsFinite(number) || number is < -10 or > 10)
+            throw new CorporationError("ALLIANCE_RELATIONSHIP_INVALID");
+        return number;
+    }
+
     private async Task<long> Id(ServiceCall call)
     {
         if (Number(call.Arg(0)) is > 0 and var requested) return requested;
@@ -780,7 +794,7 @@ public AllianceRegistryService(CorporationStore store, PgCharacterStore characte
     {
         var (actor,alliance) = await RequireAllianceExecutorDirector(call);
         RequireBoundAlliance(call,alliance);
-        var relationship = Number(call.Arg(0));
+        var relationship = RelationshipValue(call.Arg(0));
         var toId = Number(call.Arg(1));
         if (toId <= 0 || toId == alliance) throw AllianceAccessDenied();
         var relationStore = relations ?? throw new InvalidOperationException("Alliance relationship RPCs require RelationStore registration.");

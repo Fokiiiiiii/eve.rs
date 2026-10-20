@@ -49,6 +49,8 @@ public sealed partial class ShipService(
             return None;
         }
         var (bound, oid) = _binding.Bind(call.Session);
+        if (call.Session.GetInt("stationid") is null)
+            await space.RefreshSelfDestructCountdownAsync(call.Session, call.Cancellation);
         return Py.Tuple(bound, await Binding.NestedAsync(this, call, oid));
     }
 
@@ -218,6 +220,20 @@ public sealed partial class ShipService(
         }
         return await space.LeaveShipAsync(call.Session, shipId, call.Cancellation);
     }
+
+    /// <summary><c>SelfDestruct(shipID)</c> starts the ship's durable two-minute self-destruct countdown.</summary>
+    [Method("SelfDestruct")]
+    public ValueTask<PyValue> SelfDestruct(ServiceCall call) =>
+        _binding.Owns(call)
+            ? space.StartSelfDestructAsync(call.Session, IdOf(call.Arg(0)), call.Cancellation)
+            : ValueTask.FromResult<PyValue>(None);
+
+    /// <summary><c>AbortSelfDestruct(shipID)</c> cancels a pending ship self-destruct countdown.</summary>
+    [Method("AbortSelfDestruct")]
+    public ValueTask<PyValue> AbortSelfDestruct(ServiceCall call) =>
+        _binding.Owns(call)
+            ? space.AbortSelfDestructAsync(call.Session, IdOf(call.Arg(0)), call.Cancellation)
+            : ValueTask.FromResult<PyValue>(None);
 
     /// <summary><c>SafeLogoff()</c> starts the space logoff countdown when all server-side conditions allow it.</summary>
     [Method("SafeLogoff")]

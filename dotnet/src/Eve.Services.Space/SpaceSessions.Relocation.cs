@@ -58,6 +58,7 @@ public sealed partial class SpaceSessions
         var spec = SimShips.Of(snapshot, _statics, await SecurityStatusAsync(characterId, cancellationToken));
         if (wasInSpace)
         {
+            await CancelShipSelfDestructAsync(pilot!.ShipId, cancellationToken);
             // the scene the ship leaves: its rounds are written and its repairs end, as on a dock; the simulation lets the ship go
             EndTetherPilot(pilot!);
             await CancelRepairsAsync(pilot!, cancellationToken);

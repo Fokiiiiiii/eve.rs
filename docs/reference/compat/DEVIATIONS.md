@@ -5191,3 +5191,7 @@ The market parser rejects floating-point prices beyond the market maximum before
 ## Insurance price batch bound (2026-10-20)
 
 `insurance.GetInsurancePrices` accepts at most 500 raw type IDs per request and returns `InsuranceBulkLimitExceeded` before reading price data for a larger batch. The V24 client primes the service with the set of missing ship type IDs; normal client batches retain their existing results. `InsuranceServiceTests.Insurance_price_batch_refuses_more_than_500_type_ids_before_the_read_model` covers the refusal.
+
+## Ship self-destruct countdown (2026-10-20)
+
+The V24 `ship.SelfDestruct` and `ship.AbortSelfDestruct` bound calls now require the session's exact active ship. The start call schedules a durable 120-second action and publishes `selfDestructTime`; duplicate starts preserve the original deadline. Abort removes the pending action, while safe logoff is refused during the countdown. Expiry invokes the existing ship-death settlement. The countdown is restored to the scene when the bound ship service is re-created, and movement to another space scene cancels it. `PlayerDeathTests.Bound_ship_self_destruct_is_durable_duplicate_safe_and_abortable` and `Bound_ship_self_destruct_runs_the_existing_death_settlement_after_its_persisted_deadline` cover these paths.

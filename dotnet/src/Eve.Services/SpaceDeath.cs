@@ -1,5 +1,8 @@
 namespace Eve.Services;
 
+/// <summary>The durable ship and character identity attached to a pending self-destruct deadline.</summary>
+public sealed record ShipSelfDestructCountdown(long ShipId, long CharacterId, int SolarSystemId, long InstanceId, long ExpiresAtMs);
+
 /// <summary>One of the two things <c>/suicide</c> tells about: what was left in space or what the pilot is in now (a label, a name and an item id).</summary>
 public sealed record SelfDestructPart(string Label, string? Name, long? Id);
 

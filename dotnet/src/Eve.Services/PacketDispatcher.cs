@@ -285,6 +285,8 @@ public sealed class PacketDispatcher
             return 10;
         if (service == "charMgr" && method is "GetRecentShipKillsAndLosses")
             return 10;
+        if (service == "fleetObject" && method == "SendBroadcast")
+            return 10;
         if (service == "corpRecProxy" && method is "SearchCorpAds")
             return 10;
         if (service == "accessGroupBookmarkMgr" && method is "GetMyActiveBookmarks" or "SearchFoldersWithAdminAccess" or "DeleteBookmarks" or "MoveBookmarksToFolderAndSubfolder" or "CopyBookmarksToFolderAndSubfolder")

@@ -14,6 +14,9 @@ public sealed record HostOptions
     /// <summary>A session that has this many inbound packets waiting is cut off.</summary>
     public int MaxPendingPacketsPerSession { get; init; } = 10_000;
 
+    /// <summary>Maximum bytes held by one session actor, including the packet being processed.</summary>
+    public long MaxPendingBytesPerSession { get; init; } = 16 * 1024 * 1024;
+
     /// <summary>Maximum queued packets sent to one session.</summary>
     public int MaxQueuedOutboundPacketsPerSession { get; init; } = 512;
 
@@ -129,8 +132,8 @@ internal sealed class FrontConnection : IAsyncDisposable
         _dispatcher = dispatcher;
         _accounts = accounts;
         _clusterConfig = clusterConfig;
-        if (options.MaxQueuedOutboundPacketsPerSession <= 0 || options.MaxQueuedOutboundBytesPerSession <= 0 || options.MaxQueuedOutboundPacketsPerConnection <= 0 || options.MaxQueuedOutboundBytesPerConnection <= 0)
-            throw new ArgumentOutOfRangeException(nameof(options), "Outbound queue limits must be positive.");
+        if (options.MaxPendingPacketsPerSession <= 0 || options.MaxPendingBytesPerSession <= 0 || options.MaxQueuedOutboundPacketsPerSession <= 0 || options.MaxQueuedOutboundBytesPerSession <= 0 || options.MaxQueuedOutboundPacketsPerConnection <= 0 || options.MaxQueuedOutboundBytesPerConnection <= 0)
+            throw new ArgumentOutOfRangeException(nameof(options), "Session and outbound queue limits must be positive.");
         _outgoing = Channel.CreateBounded<QueuedFrame>(new BoundedChannelOptions(options.MaxQueuedOutboundPacketsPerConnection)
         {
             SingleReader = true,
@@ -446,6 +449,7 @@ internal sealed class SessionActor
     private readonly CancellationToken _ct;
     private readonly Channel<ReadOnlyMemory<byte>> _inbox = Channel.CreateUnbounded<ReadOnlyMemory<byte>>(new UnboundedChannelOptions { SingleReader = true });
     private int _pending;
+    private long _pendingBytes;
 
     public SessionActor(ClientSession session, PacketDispatcher dispatcher, HostOptions options, Action<string> Disconnect, CancellationToken ct)
     {
@@ -460,13 +464,21 @@ internal sealed class SessionActor
 
     public void Post(ReadOnlyMemory<byte> packet)
     {
-        if (Interlocked.Increment(ref _pending) > _options.MaxPendingPacketsPerSession)
+        var pending = Interlocked.Increment(ref _pending);
+        var pendingBytes = Interlocked.Add(ref _pendingBytes, packet.Length);
+        if (pending > _options.MaxPendingPacketsPerSession || pendingBytes > _options.MaxPendingBytesPerSession)
         {
-            _options.Log?.Invoke($"session {_session.SessionId}: {_pending} packets waiting; cutting it off");
+            Interlocked.Decrement(ref _pending);
+            Interlocked.Add(ref _pendingBytes, -packet.Length);
+            _options.Log?.Invoke($"session {_session.SessionId}: inbound queue exceeded its packet or byte budget; cutting it off");
             _disconnect("Overloaded");
             return;
         }
-        _inbox.Writer.TryWrite(packet);
+        if (!_inbox.Writer.TryWrite(packet))
+        {
+            Interlocked.Decrement(ref _pending);
+            Interlocked.Add(ref _pendingBytes, -packet.Length);
+        }
     }
 
     public void Complete() => _inbox.Writer.TryComplete();
@@ -514,6 +526,7 @@ internal sealed class SessionActor
             finally
             {
                 Interlocked.Decrement(ref _pending);
+                Interlocked.Add(ref _pendingBytes, -payload.Length);
             }
         }
     }

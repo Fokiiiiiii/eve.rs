@@ -9,7 +9,6 @@ namespace Eve.Services.Slash;
 /// The game master's skill command: <c>/giveskill me &lt;skill name|typeID|all|super&gt; [level]</c> sets a skill of the pilot (all the published ones, or every one) to a level
 /// (5 when none is given; 0 to 5). Its words are the reference's (<c>services/chat/commands/skills.js</c>, ADR 0009). The reference also serves another character, and
 /// mends the training queue and the skill session of a character that is online: here the target is the pilot, and the client is told what training tells it when a level
-/// is reached (<c>OnServerSkillsChanged</c>, <c>OnSkillLevelsTrained</c>, <c>OnSkillsChanged</c> and the ship and character after it) (<c>docs/reference/compat/DEVIATIONS.md</c>).
 /// </summary>
 public sealed class SkillCommands(SkillCatalog catalog, PgSkillStore store, NpgsqlDataSource source, ICharacterDogmaSync? dogma, Func<long> nowUnixMs)
 {
@@ -154,7 +153,6 @@ public sealed class SkillCommands(SkillCatalog catalog, PgSkillStore store, Npgs
     }
 
     /// <summary>
-    /// <c>/removeskill &lt;target&gt; &lt;skill|all&gt;</c> (EveJS <c>handleRemoveSkillCommand</c>): deletes the pilot's skill rows, or all of them. The pilot is told
     /// the skills are gone with the zeroed records EveJS sends. shortcut: the skill queue is not cleared (EveJS clears it), upgrade when a queue row survives a removal.
     /// </summary>
     public async Task<string> RemoveAsync(ClientSession session, string argument, CancellationToken cancellationToken)

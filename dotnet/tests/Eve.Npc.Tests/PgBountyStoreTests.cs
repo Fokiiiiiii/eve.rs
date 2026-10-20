@@ -9,6 +9,7 @@ public sealed class PgBountyStoreTests
     private const int Jita = 30000142;
     private const long Now = 1_700_000_000_000;
     private const long Window = NpcBounty.PayoutIntervalMs;
+    private const long Corporation = 98_000_001;
 
     private static BountyKill Kill(long ship, decimal amount = 15_000m, int system = Jita, long character = Character, int type = 23245) =>
         new(character, system, type, 4_100_000_000_000_000 + ship, amount);
@@ -97,6 +98,50 @@ public sealed class PgBountyStoreTests
         var entry = Assert.Single(await rig.Transactions.JournalAsync(Character));
         Assert.Equal(NpcBounty.PrizesRefType, entry.RefTypeId);
         Assert.Equal("NBL:\n  23245: 3\nsolarSystemID: 30000142\nkills: 3", entry.Reason);
+    }
+
+    [Fact]
+    public void The_corporation_tax_is_none_below_the_minimum_and_otherwise_the_rate_to_the_cent()
+    {
+        Assert.Equal(0m, NpcBounty.CorporationTaxOf(99_999.99m, 0.1m));
+        Assert.Equal(10_000m, NpcBounty.CorporationTaxOf(100_000m, 0.1m));
+        Assert.Equal(7_500.08m, NpcBounty.CorporationTaxOf(100_001.05m, 0.075m));
+        Assert.Equal(0m, NpcBounty.CorporationTaxOf(500_000m, 0m));
+    }
+
+    [PgFact]
+    public async Task A_bounty_pays_the_corporation_its_tax_in_the_same_payout_and_the_member_the_net()
+    {
+        await using var rig = await BountyRig.CreateAsync((_, _) => Task.FromResult<BountyTaxTerms?>(new BountyTaxTerms(Corporation, false, 0.1m)));
+        await rig.OpenWalletAsync(Character, 1_000m);
+        await rig.OpenWalletAsync(Corporation, 0m);
+        await rig.Store.RecordAsync(Kill(1, 60_000m), Now);
+        await rig.Store.RecordAsync(Kill(2, 60_000m), Now + 1);
+
+        var paid = Assert.Single(await rig.Store.PayDueAsync(Now + Window));
+
+        Assert.Equal((120_000m, 2, 109_000m), (paid.Amount, paid.Kills, paid.Balance));
+        Assert.Equal(12_000m, (await rig.Wallet.GetAsync(Corporation))!.Isk);
+        var member = Assert.Single(await rig.Transactions.JournalAsync(Character));
+        Assert.Equal((108_000m, NpcBounty.PrizesRefType), (member.Amount, member.RefTypeId));
+        Assert.Equal("NBL:\n  23245: 2\nsolarSystemID: 30000142\nkills: 2\n92: [98000001, 12000]", member.Reason);
+        var corporate = Assert.Single(await rig.Transactions.JournalAsync(Corporation));
+        Assert.Equal((12_000m, NpcBounty.CorporationTaxRefType, Character, "Corporation tax on pirate bounties"),
+            (corporate.Amount, corporate.RefTypeId, corporate.CounterpartyId, corporate.Reason));
+        Assert.Empty(await rig.Store.PendingAsync());
+    }
+
+    [PgFact]
+    public async Task An_npc_corporation_takes_its_tax_from_the_member_and_is_not_credited()
+    {
+        await using var rig = await BountyRig.CreateAsync((_, _) => Task.FromResult<BountyTaxTerms?>(new BountyTaxTerms(Corporation, true, 0.1m)));
+        await rig.OpenWalletAsync(Character, 0m);
+        await rig.Store.RecordAsync(Kill(1, 120_000m), Now);
+
+        var paid = Assert.Single(await rig.Store.PayDueAsync(Now + Window));
+
+        Assert.Equal(108_000m, paid.Balance);
+        Assert.Empty(await rig.Transactions.JournalAsync(Corporation));
     }
 
     [PgFact]

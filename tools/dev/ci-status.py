@@ -20,7 +20,6 @@ HEADERS = {
     "X-GitHub-Api-Version": "2022-11-28",
 }
 
-
 def request(path: str, token: str, *, method: str = "GET", body: dict | None = None):
     headers = {**HEADERS, "Authorization": f"Bearer {token}"}
     data = None
@@ -35,11 +34,9 @@ def request(path: str, token: str, *, method: str = "GET", body: dict | None = N
         detail = error.read().decode("utf-8", "replace")
         raise RuntimeError(f"GitHub API {method} {path} failed: HTTP {error.code}: {detail[:500]}") from None
 
-
 def api_json(path: str, token: str):
     _, body, _ = request(path, token)
     return json.loads(body)
-
 
 def download_job_logs(job_id: int, token: str) -> tuple[bytes, str]:
     class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -62,7 +59,6 @@ def download_job_logs(job_id: int, token: str) -> tuple[bytes, str]:
     # GitHub returns a short-lived signed download URL. Fetch it without forwarding the API token.
     with urllib.request.urlopen(location, timeout=60) as response:
         return response.read(), response.headers.get("Content-Type", "")
-
 
 def failing_step_tail(payload: bytes, content_type: str, job_id: int, step: dict) -> list[str]:
     if zipfile.is_zipfile(io.BytesIO(payload)):
@@ -92,7 +88,6 @@ def failing_step_tail(payload: bytes, content_type: str, job_id: int, step: dict
             return window[-40:]
     return lines[-40:]
 
-
 def dispatch(args, token: str) -> None:
     inputs = {}
     if args.workflow == "ci.yml":
@@ -106,7 +101,6 @@ def dispatch(args, token: str) -> None:
         body={"ref": args.ref, "inputs": inputs},
     )
     print(f"Dispatched {args.workflow} on {args.ref} (HTTP {status}).")
-
 
 def cancel_queued(args, token: str) -> None:
     query = {"per_page": 100, "status": "queued"}
@@ -155,7 +149,6 @@ def print_run(run, token: str, show_logs: bool) -> None:
                 except (urllib.error.URLError, zipfile.BadZipFile):
                     print("    log tail unavailable: the log download could not be read")
 
-
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -202,7 +195,6 @@ def main() -> int:
     except RuntimeError as error:
         print(error, file=sys.stderr)
         return 1
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

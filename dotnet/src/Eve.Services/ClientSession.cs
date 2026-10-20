@@ -195,7 +195,6 @@ public sealed class ClientSession
     /// </summary>
     /// <summary>
     /// Calls a client service and runs <paramref name="onResponse"/> with the client's answer (null when the client
-    /// cancels it). False when there is no sink to send to (EveJS sendClientCallRequest returns null then).
     /// </summary>
     public bool SendClientCall(string service, string method, IReadOnlyList<PyValue> args, Action<PyValue?> onResponse, PyDict? kwargs = null)
     {
@@ -223,7 +222,6 @@ public sealed class ClientSession
             Send(ClientNotification.Build(UserId ?? 0, NodeId, name, idType, args, ++_notificationSequence));
     }
 
-    /// <summary>Raised after committed session attributes change, for state owners that follow location and affiliation.</summary>
     public event Action<ClientSession, IReadOnlyList<string>>? AttributesChanged;
 
     /// <summary>Raised once, when the connection of this session has ended: modules release what the session held.</summary>

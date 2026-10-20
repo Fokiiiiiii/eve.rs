@@ -13,6 +13,8 @@ public sealed record CorpWarDeclarationResult(long WarId,long BillId);
 [Service("corpRegistry")]
 public sealed partial class CorpRegistryService(CorporationStore store,PgCharacterStore characters,Func<long> now,CharacterSessions? characterSessions = null,Eve.Inventory.PgItemStore? items = null,Func<long,bool,int,long?,CancellationToken,ValueTask<IReadOnlyList<PyValue>>>? readRecentCorporationKillmails = null,Func<long,CancellationToken,ValueTask<long>>? readCharacterAllyBaseCost = null,Func<CorpWarDeclarationRequest,CancellationToken,ValueTask<CorpWarDeclarationResult>>? declareWar = null)
 {
+    private const int MaxBulkMemberIds = 500;
+
     public AllianceAffiliationMutationCallback? AllianceAffiliationWriter
     {
         get => store.AllianceAffiliationWriter;
@@ -364,8 +366,12 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
     [Method("GetMembersByIds")]
     public async ValueTask<PyValue> GetMembersByIds(ServiceCall call)
     {
+        var memberIds = Items(call.Arg(0));
+        if (memberIds.Count > MaxBulkMemberIds)
+            throw new CorporationError("CORPORATION_BULK_LIMIT_EXCEEDED");
+
         var rows = new List<PyValue>();
-        foreach (var id in Items(call.Arg(0)))
+        foreach (var id in memberIds)
         {
             var row = await GetMember(new ServiceCall { Method="GetMember",Args=[id],Session=call.Session,Cancellation=call.Cancellation });
             if (row is not PyNone) rows.Add(row);

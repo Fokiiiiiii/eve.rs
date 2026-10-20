@@ -210,7 +210,11 @@ internal static class HostComposition
         var info = new HostMachoNetInfo(registry, config.Current, characterSessions);
         registry.Register(new MachoNetService(info, now, GlobalConfigWrites.Create(config, connected, () => server?.PublishClusterConfig())));
 
-        var dispatcher = new PacketDispatcher(registry, now) { StrictRpc = settings.StrictRpc };
+        var dispatcher = new PacketDispatcher(registry, now)
+        {
+            StrictRpc = settings.StrictRpc,
+            MaxExpensiveRpcUnitsPerMinute = int.Parse(HostConfiguration.Env("EVE_MAX_EXPENSIVE_RPC_UNITS_PER_MINUTE", "120"), System.Globalization.CultureInfo.InvariantCulture),
+        };
         dispatcher.OnProblem = (message, error) =>
         {
             Console.Error.WriteLine($"eve-host: {message}{(error is null ? "" : ": " + error.Message)}");
@@ -220,6 +224,7 @@ internal static class HostComposition
         server = new HostServer(
             new HostOptions
             {
+                MaxPendingBytesPerSession = long.Parse(HostConfiguration.Env("EVE_MAX_PENDING_BYTES_PER_SESSION", "16777216"), System.Globalization.CultureInfo.InvariantCulture),
                 MaxQueuedOutboundPacketsPerSession = int.Parse(HostConfiguration.Env("EVE_MAX_QUEUED_OUTBOUND_PACKETS_PER_SESSION", "512"), System.Globalization.CultureInfo.InvariantCulture),
                 MaxQueuedOutboundBytesPerSession = long.Parse(HostConfiguration.Env("EVE_MAX_QUEUED_OUTBOUND_BYTES_PER_SESSION", "8388608"), System.Globalization.CultureInfo.InvariantCulture),
                 MaxQueuedOutboundPacketsPerConnection = int.Parse(HostConfiguration.Env("EVE_MAX_QUEUED_OUTBOUND_PACKETS_PER_CONNECTION", "8192"), System.Globalization.CultureInfo.InvariantCulture),

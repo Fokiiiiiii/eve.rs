@@ -13,7 +13,7 @@ namespace Eve.Services.Crimewatch;
 /// </summary>
 public interface ICrimewatchPersistenceCallbacks
 {
-    /// <summary>Host should call RelationStore.HistoryAsync for security_status, RelationStore.World and int.MaxValue. Project AtMs, NewValue and exact Attrs keys eventTypeID/otherOwnerID/otherTypeID/locationID/modification; if eventTypeID is absent, use SecurityStatusEventTypeIds.FromHistoryReason(entry.Reason). Missing metadata stays null.</summary>
+
     Task<IReadOnlyList<SecurityStatusTransaction>> SecurityStatusTransactionsOfAsync(long characterId, CancellationToken cancellationToken);
 
     /// <summary>

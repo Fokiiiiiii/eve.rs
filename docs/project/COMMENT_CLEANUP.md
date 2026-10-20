@@ -48,6 +48,7 @@
 | `dotnet/src/Eve.Services.Station` (7 C# files) | 178 | 144 | 2026-10-20 |
 | `dotnet/src/Eve.Identity` (3 C# files; migrations reviewed) | 66 | 61 | 2026-10-20 |
 | `dotnet/src/Eve.Services.Planets` (3 C# files) | 114 | 74 | 2026-10-20 |
+| `dotnet/src/Eve.Services.Wallet` (5 C# files) | 52 | 32 | 2026-10-20 |
 | `dotnet/src/Eve.Fitting` (8 C# files; migrations reviewed) | 97 | 78 | 2026-10-20 |
 | `dotnet/src/Eve.Dogma` (10 C# files) | 285 | 280 | 2026-10-20 |
 | `dotnet/src/Eve.Relations` (3 C# files; migrations reviewed) | 51 | 43 | 2026-10-20 |

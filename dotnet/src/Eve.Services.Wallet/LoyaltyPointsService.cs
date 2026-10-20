@@ -68,11 +68,6 @@ public sealed class LoyaltyPointsService(LoyaltyPointStore store) : IService
     };
 }
 
-/// <summary>
-/// Tells the sessions a loyalty point balance changed (committed changes only): <c>OnLPChange</c> to the character's session,
-/// <c>OnCorpLPChange</c> to every session of the corporation (eve-logic loyaltyPointsWalletSvc.py:59-67; EveJS
-/// lpWalletState.js:348-390).
-/// </summary>
 public sealed class LoyaltyPointAnnouncer : IDisposable
 {
     private readonly LoyaltyPointStore _store;

@@ -50,6 +50,9 @@
 | `dotnet/src/Eve.Services.Planets` (3 C# files) | 114 | 74 | 2026-10-20 |
 | `dotnet/src/Eve.Services.Wallet` (5 C# files) | 52 | 32 | 2026-10-20 |
 | `dotnet/src/Eve.Services.Skills` (16 C# files) | 170 | 146 | 2026-10-20 |
+| `dotnet/src/Eve.GameStore.Import` (4 C# files) | 22 | 21 | 2026-10-20 |
+| `dotnet/src/Eve.Sde` (1 C# file) | 21 | 21 | 2026-10-20 |
+| `dotnet/src/Eve.Hacking` (3 C# files) | 32 | 25 | 2026-10-20 |
 | `dotnet/src/Eve.Dungeons` (5 C# files) | 101 | 49 | 2026-10-20 |
 | `dotnet/src/Eve.Fitting` (8 C# files; migrations reviewed) | 97 | 78 | 2026-10-20 |
 | `dotnet/src/Eve.Dogma` (10 C# files) | 285 | 280 | 2026-10-20 |

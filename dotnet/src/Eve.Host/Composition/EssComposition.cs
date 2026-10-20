@@ -21,6 +21,8 @@ internal sealed partial class CharacterServicesComposition
 {
     private string essSchema = default!;
     private PgEssStore? _ess;
+    private Eve.Services.Space.EssMgrService? _essMgrService;
+    private Eve.Services.Space.EssMgrService EssMgr => _essMgrService ??= new(EssCallbacks());
     private Dictionary<int, string> _essQuadrantBySystem = [];
 
     private PgEssStore Ess => _ess ??= new PgEssStore(

@@ -18,11 +18,6 @@ public sealed class Tile
     public (int Type, int Subtype)? Contents { get; set; }
 }
 
-/// <summary>
-/// The grid of one attempt. <see cref="Generate"/> places the content by the EVE University wiki rules (Rule of 8,
-/// Rule of Six, the difficulty tiers); the sizes and the defensive subsystem stats the wiki does not give are the
-/// constants below (decisions, recorded in DEVIATIONS).
-/// </summary>
 public sealed class HackingBoard
 {
     public const int CoreMinDistance = 8;
@@ -152,7 +147,6 @@ public sealed class HackingBoard
         _ => [HackingWire.SubtypeUeSelfRepair, HackingWire.SubtypeUeKernelRot, HackingWire.SubtypeUePolymorphicShield, HackingWire.SubtypeUeSecondaryVector],
     };
 
-    /// <summary>Coherence and strength by subtype. Decision: the wiki gives only the relative shape (firewall high coherence, anti-virus high strength).</summary>
     public static void ApplyDefenceStats(Tile tile)
     {
         (tile.Coherence, tile.Strength) = tile.Subtype switch

@@ -98,3 +98,21 @@ Measured on 2026-10-19 with the opt-in PostgreSQL market benchmark on `eve_p4`. 
 Rerun with `flock /tmp/eve-heavy-eve_p4.lock env EVE_PG_URL=postgres://postgres@127.0.0.1:5432/eve_p4 EVE_MARKET_BENCH=1 DOTNET_CLI_USE_MSBUILD_SERVER=0 dotnet test dotnet/tests/Eve.Market.Tests/Eve.Market.Tests.csproj --no-restore --filter FullyQualifiedName~Placement_on_a_10000_order_book_locks_a_bounded_number_of_rows -nodeReuse:false --logger 'console;verbosity=detailed'`. The benchmark source is `dotnet/tests/Eve.Market.Tests/OrderBookBenchmarkTests.cs`. It is a synthetic large-book database test, not a live client session. PostgreSQL statement-level totals were not available: `pg_stat_statements` is not installed in `eve_p4`, and `log_min_duration_statement` is `-1`; ranking the login/play query workload and capturing `EXPLAIN (ANALYZE, BUFFERS)` remain open.
 
 A single-query variant was measured against this baseline, with asks and bids split while reading one ordered result. It preserved the market book regression test but changed the 10,000-order book read from 67.8 ms to 177.3 ms, with the same 9,998 asks; the shared host is noisy, but this result does not show a gain, so the variant was reverted. The two-query implementation remains in place.
+
+
+## Protocol parser limits and benchmark (2026-10-20)
+
+The inbound path is length prefix → payload → marshal decode → Macho packet validation → session-state check → service/method authorization → typed argument validation → dispatch. TCP frame payloads must be 1 byte through 16 MiB. Marshal decoding accepts payloads through 16 MiB, nesting through 256 values, at most 4,194,304 decoded values, declared string/byte lengths through 16 MiB, and an estimated 256 MiB of decoder-owned allocation. Nested substreams share the element and allocation budgets. `PyString`, `PyBuffer`, and `PyCPickled` values continue to reference slices of the input `Bytes`; UTF-16 conversion no longer builds a second temporary code-unit vector. A zero-length frame is rejected before payload decoding.
+
+The V24-oriented Host regression `HostServerTests.An_undecodable_packet_is_dropped_and_the_session_carries_on` checks that a malformed marshal packet is discarded while a later valid ping from the same session receives a response. Rust parser property checks are `eve-marshal/tests/robustness.rs` (generated codec values, arbitrary malformed bytes, boundary limits) and `eve-net/tests/frame_properties.rs` (generated coalesced frames, empty/oversized declarations, and truncated frames). The focused marshal and frame test commands passed on this worktree; the Host isolation regression is recorded after its focused run.
+
+`cargo run --release -p eve-bench -- --filter marshal.decode` uses the system allocator, warms each workload for 300 ms, measures nine 250 ms batches, and reports their median throughput. Results:
+
+| Workload | Decode throughput | Input throughput |
+| --- | ---: | ---: |
+| `small-call` | 452,512 ops/s | 41.2 MB/s |
+| `dict-200` | 25,105 ops/s | 104.8 MB/s |
+| `rowset-1000` | 1,125 ops/s | 146.6 MB/s |
+| `buffers-64x4k` | 106,430 ops/s | 27,941.7 MB/s |
+
+The research proposal sets cheap-RPC compute p95 at or below 20 ms and end-to-end local RPC p95 at or below 100 ms. These microbenchmarks report median batch throughput; they do not sample per-call p95 or include TCP, session validation, authorization, dispatch, database work, or concurrent sessions. The recorded rates are parser baselines and do not establish the tail-latency SLOs. Multi-session load, long soak, malformed traffic under concurrency, and full request-to-response percentile measurements remain open.

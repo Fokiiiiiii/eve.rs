@@ -25,13 +25,6 @@ public enum Side
     Antipirate,
 }
 
-/// <summary>
-/// The numbers of insurgency campaigns, from patch 24.01 ("Patch Notes for 2026-09-22.1",
-/// https://www.eveonline.com/news/view/patch-notes-version-24-01): maximum length 7 days, FOB armor timer 3 h with 1 h variance, ambition modifier
-/// at most 5 (a side then needs 10 systems), spread at corruption level 3, contribution LP 1,500,000 maximum with multipliers 1x and 0.4x and 45 % share.
-/// The forecast (48 h), the wind-down (48 h) and the base requirement of 5 systems are the EVE University wiki's (https://wiki.eveuniversity.org/Insurgency).
-/// The wind-down after a win is not stated by either source; it is the EVE.js value (insurgencyFobRuntime.js INSURGENCY_WIND_DOWN_DURATION_MS), applied to every end.
-/// </summary>
 public static class InsurgencyRules
 {
     public const long ForecastMs = 48L * 3_600_000;
@@ -44,7 +37,6 @@ public static class InsurgencyRules
     public const int SpreadCorruptionLevel = 3;
     public const long MaxWinningContributionLp = 1_500_000;
 
-    /// <summary>The loyalty points a victory pays each contributor (the wiki's Insurgency page: "1,500,000 LP").</summary>
     public const long VictoryLp = MaxWinningContributionLp;
     public const double WinningMultiplier = 1.0;
     public const double LosingMultiplier = 0.4;

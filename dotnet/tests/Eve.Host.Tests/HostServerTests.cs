@@ -308,6 +308,29 @@ public class HostServerTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Repeated_bad_logins_are_bounded_per_account_and_source_address()
+    {
+        var calls = 0;
+        Start(accounts: new FixedAccounts(_ =>
+        {
+            calls++;
+            return new LoginRefused(LoginRefused.BadCredentials);
+        }));
+        var front = await Handshaken(await ConnectAsync());
+
+        for (var attempt = 0; attempt < 10; attempt++)
+            Assert.Equal(new Rejected(LoginRefused.BadCredentials), (await front.AuthenticateAsync("pilot", [1], (uint)(attempt + 1))).Outcome);
+        Assert.Equal(new Rejected(LoginRefused.BadCredentials), (await front.AuthenticateAsync("pilot", [1], 11u)).Outcome);
+        Assert.Equal(10, calls);
+
+        for (var attempt = 0; attempt < 40; attempt++)
+            Assert.Equal(new Rejected(LoginRefused.BadCredentials), (await front.AuthenticateAsync($"pilot{attempt}", [1], (uint)(attempt + 12))).Outcome);
+        Assert.Equal(50, calls);
+        Assert.Equal(new Rejected(LoginRefused.BadCredentials), (await front.AuthenticateAsync("another-pilot", [1], 99u)).Outcome);
+        Assert.Equal(50, calls);
+    }
+
+    [Fact]
     public async Task The_replies_carry_the_correlation_of_their_request()
     {
         Start();

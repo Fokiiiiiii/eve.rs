@@ -22,27 +22,17 @@ public sealed record DungeonLayout(IReadOnlyList<RoomPlacement> Rooms, IReadOnly
     public RoomPlacement? Room(string key) => Rooms.FirstOrDefault(room => room.Key == key);
 }
 
-/// <summary>
-/// The rooms and gates of a dungeon site in its system (docs/project/ACCELERATION_GATES.md). The client data gives a site's rooms, which room each gate leads
-/// to, and the gate type, but no coordinates: the placement is a rule, deterministic per site, so a restart places them where they were. The distances are
-/// EveJS's (<c>keeperService.js</c>: a room is 1 000 km out and 400 km further for each room after the first; a gate sits 22 km from its room's anchor; a pilot
-/// arrives 15 km out from the room's anchor, away from the site), and the offsets that EveJS hashes are spread evenly instead.
-/// </summary>
 public static class DungeonRoomLayout
 {
     /// <summary>The acceleration gate type (the client's gate, group 366, radius from the SDE). A gate whose type has no radius in the SDE is not placed.</summary>
     public const long AccelerationGateTypeId = 17_831;
 
-    /// <summary>The distance of the first room from the site, metres (EveJS <c>ROOM_ENTRY_BASE_DISTANCE_METERS</c>).</summary>
     public const double RoomBaseDistanceMeters = 1_000_000;
 
-    /// <summary>How much further each room after the first is from the site, metres (EveJS <c>ROOM_ENTRY_DISTANCE_STEP_METERS</c>).</summary>
     public const double RoomDistanceStepMeters = 400_000;
 
-    /// <summary>The vertical step of a room from the site per room, metres (EveJS <c>ROOM_ENTRY_VERTICAL_STEP_METERS</c>).</summary>
     public const double RoomVerticalStepMeters = 10_000;
 
-    /// <summary>How far a gate is from the anchor of the room it is in, metres (EveJS <c>buildContentOffset</c> base distance).</summary>
     public const double GateRingMeters = 22_000;
 
     /// <summary>How far in front of its room's anchor a pilot arrives, away from the site, metres.</summary>

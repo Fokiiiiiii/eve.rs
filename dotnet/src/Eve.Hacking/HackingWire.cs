@@ -2,7 +2,6 @@ namespace Eve.Hacking;
 
 // Wire values of the V24.01 client: eve-logic packages/hackingcommon/hackingConstants.py (types, subtypes, events) and
 // eve/client/script/ui/hacking/hackingUIConst.py (the grid). The client's names for the two defensive subsystems that the
-// wiki calls Virus Suppressor and Restoration Node are SUBTYPE_DS_HONEYPOT_STRENGTH and SUBTYPE_DS_HONEYPOT_HEALING.
 public static class HackingWire
 {
     public const int GameTypeHacking = 0;

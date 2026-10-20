@@ -7,9 +7,7 @@ namespace Eve.GameStore;
 /// </summary>
 public sealed record OwnerFence(string OwnerRole, long Epoch, string InstanceId, long? LeaseExpiresAt = null);
 
-/// <param name="Exclusive">Conflicts with every other active owner (implied for the maintenance role).</param>
 /// <param name="ForceTakeover">Take the role even though another instance holds a live lease.</param>
-/// <param name="ForceExclusive">Deactivate conflicting owners instead of failing. For a proven-offline maintenance transition only.</param>
 /// <param name="LeaseMs">Lease length; at least <see cref="PersistenceStore.MinLeaseMs"/>.</param>
 public sealed record AcquireOptions(
     bool Exclusive = false,

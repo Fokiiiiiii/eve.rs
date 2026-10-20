@@ -190,7 +190,6 @@ public static SkillAugmentationReader CreateAugmentationReader(
             .ToDictionary(booster => booster.ItemId);
     }
 
-    /// <summary>A cerebral accelerator is the booster of booster slot 10 (wiki: they share it, apart from all other boosters); it stays active through a clone jump or a pod death.</summary>
     public const int CerebralAcceleratorSlot = 10;
 
     public static bool IsCerebralAccelerator(Eve.Dogma.TypeDef? type) =>
@@ -326,7 +325,6 @@ public static SkillAugmentationReader CreateAugmentationReader(
 
     /// <summary>
     /// <c>UseBooster(itemID, locationID)</c>, the client's Consume: the booster is used from a station hangar or the cargo of the active ship (EVE
-    /// University wiki, Boosters: "right click on it and select Consume"). Returns what changed in the inventory and the training it rebased, for the
     /// client to be told (the caller announces them).
     /// </summary>
     public async Task<(IReadOnlyList<ItemChanged> Changes, TrainingUpdate? Training)> UseBoosterAsync(
@@ -350,10 +348,6 @@ public static SkillAugmentationReader CreateAugmentationReader(
         return await ConsumeAsync(characterId, candidate, candidateType, stationId, shipId, cancellationToken);
     }
 
-    /// <summary>
-    /// Takes a booster into its slot and returns what changed in the inventory. The running skill is rebased at the rate it has first, so the booster's
-    /// attributes apply from now on; the client is told that change. A booster for an occupied slot is refused (the wiki: a slot holds one active booster).
-    /// </summary>
     private async Task<(IReadOnlyList<ItemChanged> Changes, TrainingUpdate? Training)> ConsumeAsync(
         long characterId, Eve.Inventory.Item candidate, Eve.Dogma.TypeDef candidateType, long? stationId, long? shipId, CancellationToken cancellationToken)
     {
@@ -442,16 +436,11 @@ public static SkillAugmentationReader CreateAugmentationReader(
     private async ValueTask<IReadOnlyList<long>> AccountCharacters(ServiceCall call) =>
         call.Session.UserId is { } account ? [.. (await characters.ForAccountAsync((int)account, call.Cancellation)).Select(c => c.Id)] : [];
 
-    /// <summary>
-    /// <c>CheckAndSendNotifications()</c>: the reference answers an empty list and sends nothing (EveJS <c>skillMgrService.js</c> 594).
-    /// The client calls it only from a development provider (eve-logic <c>skillHistoryProvider.py</c>).
-    /// </summary>
     [Method("CheckAndSendNotifications")]
     public PyValue CheckAndSendNotifications(ServiceCall _) => new PyList([]);
 
     /// <summary>
     /// <c>GetSkillBundleInfo(skillBundleID)</c>: the client unpacks <c>name, icon</c> for the crate's loot line (eve-logic
-    /// <c>crate/lootItem.py</c> 87). No bundle name or icon exists in the SDE, EveJS or eve-logic, so the answer is the client's
     /// empty shape: an empty label and no icon (the client then falls back to its default icon). Recorded in DEVIATIONS.
     /// </summary>
     [Method("GetSkillBundleInfo")]
@@ -480,7 +469,6 @@ public static SkillAugmentationReader CreateAugmentationReader(
     [Method("GetFreeSkillPoints")]
     public async ValueTask<PyValue> GetFreeSkillPoints(ServiceCall call) =>
         new PyInt(CharacterOf(call) is { } id ? await store.FreeSkillPointsAsync(id, call.Cancellation) : 0L);
-
 
     [Method("GetSkillChangesForISIS")]
     public async ValueTask<PyValue> GetSkillChangesForISIS(ServiceCall call)

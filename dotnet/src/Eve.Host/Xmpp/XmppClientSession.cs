@@ -72,25 +72,46 @@ internal sealed class XmppClientSession(XmppChatHub hub, Action<string> send, Ac
 
         if (stanza.Attribute("type") == "unavailable")
         {
-            hub.LeaveLocalRoom(link, room);
+            hub.LeaveRoom(link, room);
             return;
         }
 
-        if (!hub.TryJoinLocalRoom(link, room, nickname, out _))
+        if (!hub.TryJoinRoom(link, room, nickname, out _))
             StanzaError(stanza, "auth", "not-authorized");
     }
 
     private void OnMessage(XmppElement stanza)
     {
-        if (_link is not { } link || stanza.Attribute("type") != "groupchat"
-            || !TryRoomAddress(stanza.Attribute("to"), out var room, out _, requireNickname: false))
+        if (_link is not { } link || !TryRoomAddress(stanza.Attribute("to"), out var room, out _, requireNickname: false))
         {
             StanzaError(stanza, "cancel", "feature-not-implemented");
             return;
         }
 
+        var invite = stanza.Child("x")?.Child("invite");
+        if (invite is not null)
+        {
+            var target = invite.Attribute("to")?.Split('@')[0];
+            var reason = invite.Child("reason")?.Text ?? "";
+            if (!long.TryParse(target, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var targetCharacterId)
+                || !hub.InvitePrivateParticipant(link, room, targetCharacterId, reason))
+                StanzaError(stanza, "cancel", "not-allowed");
+            return;
+        }
+
+        if (stanza.Attribute("type") != "groupchat")
+        {
+            StanzaError(stanza, "cancel", "feature-not-implemented");
+            return;
+        }
+        if (stanza.Child("subject") is { } subject)
+        {
+            if (!hub.SetRoomMotd(link, room, subject.Text))
+                StanzaError(stanza, "auth", "not-allowed");
+            return;
+        }
         var body = stanza.Child("body")?.Text ?? "";
-        if (!hub.SendLocalRoomMessage(link, room, body))
+        if (!hub.SendRoomMessage(link, room, body))
             StanzaError(stanza, "wait", "resource-constraint");
     }
 
@@ -126,7 +147,7 @@ internal sealed class XmppClientSession(XmppChatHub hub, Action<string> send, Ac
     {
         if (_link is { } link)
         {
-            hub.LeaveAllLocalRooms(link);
+            hub.LeaveAllRooms(link);
             hub.Unbind(link);
         }
     }

@@ -38,10 +38,9 @@ public sealed record AggressionOutcome(CombatState Attacker, AggressionReason Re
 }
 
 /// <summary>
-/// What an attack on the ship of another pilot does to the attacker. A port of <c>recordHighSecCriminalAggression</c> (and the <c>triggerHighSecCriminalOffense</c> it ends in) of
-/// <c>crimewatchState.js</c> of EVE.js (ADR 0009), for the part that is the attacker's own state: the weapons timer (a minute) and the PvP timer (fifteen minutes) run in every system
-/// whatever the law says; the flag is the crime. In high security the attacker is a criminal, in low security a suspect (a criminal for a capsule), in null security nothing, and nothing
-/// when the target is a criminal or a suspect already or the law allows the attack. The consequences of a crime (the security status, kill rights, CONCORD) are the caller's.
+/// What an attack does to the attacker: weapons and PvP timers run in every system.
+/// The flag depends on security class and target state; the caller applies any
+/// security status, kill-right and CONCORD consequences.
 /// </summary>
 public static class Aggression
 {
@@ -54,7 +53,6 @@ public static class Aggression
     public static AggressionOutcome Record(CombatState attacker, CombatState target, SecurityClass where, long solarSystemId, bool targetIsCapsule, bool legal, long nowMs) =>
         Record(attacker, target, where, solarSystemId, targetIsCapsule,
             new PolicyFacts(AttackerIsPlayer: true, TargetIsPlayerProperty: true, OtherLegalPermission: legal), nowMs);
-
 
     public static AggressionOutcome Record(CombatState attacker, CombatState target, SecurityClass where, long solarSystemId, bool targetIsCapsule, PolicyFacts facts, long nowMs)
     {
@@ -78,7 +76,6 @@ public static class Aggression
         return new AggressionOutcome(timed.Flagged(decision.Consequence, nowMs),
             decision.Consequence == Flag.Criminal ? AggressionReason.Criminal : AggressionReason.Suspect);
     }
-
 
     public static AggressionOutcome Assist(
         CombatState assistant,

@@ -244,8 +244,6 @@ public sealed partial class GameStoreCache
         });
     }
 
-    // ── dirty tracking ──────────────────────────────────────────────────────
-
     private static void MarkRowDirty(TableState state, string[] segments)
     {
         if (state.FullDirty)

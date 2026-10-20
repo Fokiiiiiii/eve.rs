@@ -109,7 +109,7 @@ internal sealed class XmppClientSession(XmppChatHub hub, Action<string> send, Ac
         }
         if (stanza.Child("subject") is { } subject)
         {
-            if (!hub.SetRoomMotd(link, room, subject.Text))
+            if (!await hub.SetRoomMotdAsync(link, room, subject.Text, cancellationToken).ConfigureAwait(false))
                 StanzaError(stanza, "auth", "not-allowed");
             return;
         }

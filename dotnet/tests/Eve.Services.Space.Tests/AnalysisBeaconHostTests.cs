@@ -88,7 +88,6 @@ public sealed class AnalysisBeaconHostTests
         }
     }
 
-    /// <summary>Moves the clock on in steps of the scan tick, running what is due at each step.</summary>
     private static async Task AdvanceAsync(Rig rig, long milliseconds)
     {
         for (var elapsed = 0L; elapsed < milliseconds; elapsed += Step)
@@ -161,7 +160,6 @@ public sealed class AnalysisBeaconHostTests
         Assert.NotNull(director);
     }
 
-
     [PgFact]
     public async Task A_crab_is_refused_within_ten_thousand_kilometres_of_an_asteroid_and_stays_in_the_hold()
     {
@@ -188,7 +186,6 @@ public sealed class AnalysisBeaconHostTests
         Assert.DoesNotContain(rig.Sim.Heard, message => message is SimPlaceAnalysisBeacon);
         Assert.Equal(CharacterShips.CargoFlag, (await rig.Items.GetAsync(beacon))!.Flag);
     }
-
 
     [PgFact]
     public async Task A_crab_can_be_deployed_beyond_ten_thousand_kilometres_from_an_asteroid()

@@ -7,7 +7,6 @@ namespace Eve.Services.Space.Tests;
 
 /// <summary>
 /// The Mobile Cynosural Beacon (SDE group 4093): a pilot drops one from the hold 2,500 m ahead of the ship; it is anchored after its activation time (two minutes, a
-/// covert one a minute: EveJS); it lives an hour (thirty minutes covert) and leaves with its item; a standard or covert one cannot be dropped at 0.45 security or
 /// above, the highsec authorized one can (its own SDE type); a pilot without the SDE's skills cannot drop one; a restart puts it back with the state its record gives.
 /// </summary>
 public class BeaconHostTests
@@ -16,9 +15,9 @@ public class BeaconHostTests
     private const int Anchoring = 11584, CynosuralFieldTheory = 21603, Polaris = 9955;
     /// <summary>A null-security system (security -1.0, RU-97T) outside Pochven, where a standard beacon may be dropped.</summary>
     private const long NullSecSystem = 30000377;
-    /// <summary>Kuharah (SDE region 10000070, Pochven): a beacon cannot be lit there (the wiki's region-wide jammer).</summary>
+
     private const long PochvenSystem = 30000021;
-    /// <summary>A wormhole system (SDE region 11000033): a beacon may be lit there (the wiki), though no jump drive may enter it.</summary>
+
     private const long WormholeSystem = 31000001;
     /// <summary>Jita (security 0.9): a standard or covert beacon may not be dropped there.</summary>
     private const long HighSecSystem = 30000142;
@@ -245,7 +244,6 @@ public class BeaconHostTests
         await InhibitorOnRecordAsync(rig, (int)NullSecSystem, at);
         rig.Sim.Heard.Clear();
 
-        // the wiki: an inhibitor "do not remove existing cynos": the lit beacon keeps its activation and is not sent away
         await rig.Containers.SweepAsync();
         Assert.Equal(lit, (await rig.Deployed.GetAsync(beacon))!.ActivateAtMs);
         Assert.DoesNotContain(rig.Sim.Heard, m => m is SimSetDisruptorActive off && off.DeployableId == beacon && !off.Active);

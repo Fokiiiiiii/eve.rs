@@ -6,7 +6,6 @@ using Eve.Space;
 namespace Eve.Services.Space.Tests;
 
 /// <summary>
-/// The host's side of the work cycles (ADR 0013): a module's cycle is settled by the dispatcher the drone's cycle uses, each owner's last settled cycle is kept in
 /// PostgreSQL (so a repeat is answered from it after a restart), and a module the simulation ends is taken out of the ship the host sends (FP-C1).
 /// </summary>
 public class WorkCycleHostTests
@@ -250,7 +249,6 @@ public class WorkCycleHostTests
     }
 
     /// <summary>A salvage cycle of a module: the access bonus is the module's, and the roll decides the chance (0 is a success at any chance).</summary>
-
     /// <summary>A wreck of an Amarr frigate in the pilot's system, with no contents: the salvager reaches it and the answer takes its product.</summary>
     private static async Task<long> WreckInSpaceAsync(Rig rig, DroneHostTests.Flying flying, int wreckTypeId)
     {

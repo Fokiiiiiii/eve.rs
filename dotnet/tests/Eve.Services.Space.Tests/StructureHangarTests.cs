@@ -7,7 +7,6 @@ using Eve.Space;
 namespace Eve.Services.Space.Tests;
 
 /// <summary>
-/// ST-3 c: the structure hangar of a docked pilot (skipped without EVE_PG_URL; skipped is not passed). The ship and the items the character keeps in the
 /// structure's hangar are the same rows a station's hangar keeps, at the structure's id, and the hangar lists them while the pilot is docked. A login
 /// while docked (the restart path) gives the session the structure, not a station.
 /// </summary>

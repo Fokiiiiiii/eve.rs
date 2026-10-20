@@ -33,7 +33,6 @@ public class MissileFamilyDataTests
     }
 
     /// <summary>
-    /// A launcher of the missile family, fitted and online, asked for the F.O.F. missile of its charge is refused by name (decision D2), before a target is asked for.
     /// The plain missile of the same launcher is not refused by that name.
     /// </summary>
     [PgFact]

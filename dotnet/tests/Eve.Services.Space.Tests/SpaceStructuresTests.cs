@@ -5,7 +5,6 @@ using Eve.Structures;
 namespace Eve.Services.Space.Tests;
 
 /// <summary>
-/// ST-1 d: the structures of a system in the simulation. A system's structures are put in space with the static data's vitals and the record's
 /// state, a record's state change reaches the simulation through the bus, and a hit is a state event of the record. The store, the timers and the bus
 /// are the real ones; the simulation is the fake one.
 /// </summary>

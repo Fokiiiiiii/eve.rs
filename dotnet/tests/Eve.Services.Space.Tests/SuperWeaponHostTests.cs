@@ -7,7 +7,6 @@ using Eve.Space;
 namespace Eve.Services.Space.Tests;
 
 /// <summary>
-/// The superweapons through the host (docs/project/TODO.md section 12): a cone, a HOG, a titan doomsday, a reaper and an unknown effect are refused by name, both
 /// through the module order and through the <c>superWeaponMgr</c> route, take no fuel from the ship and send nothing to the simulation.
 /// </summary>
 public class SuperWeaponHostTests

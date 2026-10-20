@@ -51,10 +51,9 @@ public sealed class GateRulesTests
     [Fact]
     public void The_toll_is_the_minimum_for_a_small_ship_and_the_client_formula_for_a_capital()
     {
-        // a 1000 t ship: (1e6 kg * 0.015) ^ 1.1 - 100000 is below the minimum, so the wiki's 10k ISK
+
         Assert.Equal(10_000, GateRules.TollAmount(Toll, 1e6, aligned: false));
 
-        // a 1e9 kg ship: (1.5e7) ^ 1.1 - 100000, about 77.8 million ISK (the wiki: "presumably goes as high as 100m ISK for capitals")
         var capital = GateRules.TollAmount(Toll, 1e9, aligned: false);
         Assert.InRange(capital, 77_000_000, 78_500_000);
     }

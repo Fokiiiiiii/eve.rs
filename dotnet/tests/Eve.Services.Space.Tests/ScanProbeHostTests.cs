@@ -292,7 +292,7 @@ public class ScanProbeHostTests
         // (an entry may restore a record more than once, each send is kept once by the simulation: the order of the first placements is what counts)
         Assert.Equal(new[] { ProbeBase + 500, ProbeBase + 1, ProbeBase + 2 }, Placed(rig).Select(p => p.ProbeId).Distinct().ToArray());
     }
-    /// <summary>The client's request for a scan: each probe with where it is to go and its range step (its fields as the client's probe key-values carry them).</summary>
+
     private static PyValue ScanRequest(params (long Probe, double[] Destination, int RangeStep)[] probes) => new PyDict([.. probes.Select(p =>
         new KeyValuePair<PyValue, PyValue>(new PyLong(p.Probe), Py.KeyVal(
             ("destination", new PyList([new PyReal(p.Destination[0]), new PyReal(p.Destination[1]), new PyReal(p.Destination[2])])),
@@ -378,7 +378,7 @@ public class ScanProbeHostTests
         var (session, _, launcher) = await LauncherInSpaceAsync(rig, probes: 8);
         await rig.Space.LaunchAsync(session, launcher, 2, CancellationToken.None);
         var probes = Placed(rig).Select(p => p.ProbeId).ToArray();
-        // the core probes scan cosmic signatures only (wiki: "Combat scanner probes can find structures, ships, and drones"); the ships are out of reach for them
+
         rig.Sim.ScanTargetsAnswer = [ProbeFrigate(ShipInSystem, [3_000.0, 0, -4_000.0]), ProbeFrigate(FarShip, [1e13, 0, 0])];
         Events.Of(session);
 

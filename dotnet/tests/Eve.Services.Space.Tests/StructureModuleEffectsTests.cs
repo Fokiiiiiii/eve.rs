@@ -3,7 +3,6 @@ using Eve.Services.Space.Effects;
 namespace Eve.Services.Space.Tests;
 
 /// <summary>
-/// The entosis link (<c>entosisLink</c>) is a handler with a body (ST-9 b): it is coverage, and its package is tested in <c>ModuleEffectsTests</c>. The ship
 /// compressor is not a structure module (<c>CompressionHostTests</c>).
 /// </summary>
 public sealed class StructureModuleEffectsTests

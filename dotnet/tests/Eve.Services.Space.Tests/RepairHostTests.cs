@@ -352,7 +352,6 @@ public class ProjectedHostTests
         Assert.Equal(0, effect.TargetId);
     }
 
-
     [PgFact]
     public async Task A_tracking_disruptor_takes_the_percentages_dogma_gives_from_the_range_the_falloff_and_the_tracking_of_its_target()
     {
@@ -422,7 +421,6 @@ public class ProjectedHostTests
         }
     }
 
-
     [PgFact]
     public async Task A_remote_sensor_booster_packages_positive_range_scan_and_sensor_strength_without_hostility()
     {
@@ -468,7 +466,6 @@ public class ProjectedHostTests
         Assert.Equal(0, safetyChecks);
         Assert.Empty(aggression);
     }
-
 
     [PgFact]
     public async Task Remote_tracking_computer_assistance_avoids_crimewatch_while_tracking_disruption_is_an_attack()
@@ -548,7 +545,6 @@ public class ProjectedHostTests
         Assert.Equal(1, safetyChecks);
         Assert.Single(aggression);
     }
-
 
     [PgFact]
     public async Task Mutadaptive_cycle_requests_receive_the_spooled_amount_and_clear_after_the_final_response()

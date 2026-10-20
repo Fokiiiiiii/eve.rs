@@ -37,7 +37,6 @@ public class ModuleEffectsTests
         }
     }
 
-
     [Fact]
     public void A_module_carries_the_rules_the_simulation_enforces_from_its_type()
     {
@@ -63,7 +62,7 @@ public class ModuleEffectsTests
     [Fact]
     public void A_module_that_disallows_repeating_activation_has_one_cycle_whatever_repeat_is_asked()
     {
-        // disallowRepeatingActivation (1014): the server's cycle budget is one, so a module that must fire once cannot be held on by a repeat (EveJS
+
         // moduleCycleSchedule.js); a module without it keeps the repeat asked for
         foreach (var (disallows, expected) in new[] { (1.0, 1), (0.0, 3) })
         {
@@ -160,7 +159,6 @@ public class ModuleEffectsTests
         Assert.Equal(new Eve.Space.SimNumbers(1_000_000, 200, 100), package.Off);
     }
 
-
     [Fact]
     public void An_entropic_disintegrator_builds_the_existing_turret_package_for_its_first_volley()
     {
@@ -187,7 +185,6 @@ public class ModuleEffectsTests
         Assert.Equal(new[] { 8d, 32d, 24d, 16d }, turret.RawDamage);
         Assert.Equal(6000, turret.OptimalRange);
     }
-
 
     [Fact]
     public void The_ancillary_remote_armor_repairer_spends_paste_then_keeps_its_unloaded_repair()
@@ -216,7 +213,6 @@ public class ModuleEffectsTests
         var fallback = Assert.IsType<Eve.Space.SimAction.Remote>(charged.Fallback);
         Assert.Equal(new Eve.Space.SimRemote.Repair(Eve.Space.SimLayer.Armor, 30), fallback.What);
     }
-
 
     [Fact]
     public void The_ancillary_remote_shield_booster_switches_between_cap_free_charges_and_capacitor()
@@ -406,7 +402,6 @@ public class ModuleEffectsTests
         Assert.Contains("scanStrengthBonusPercentActivate",
             Eve.Services.Space.Effects.ModuleEffects.Default.Names, StringComparer.OrdinalIgnoreCase);
     }
-
 
     [PgFact]
     public async Task A_real_railgun_routes_targetAttack_to_the_turret_handler_without_changing_weapon_values()
@@ -714,7 +709,6 @@ public class ModuleEffectsTests
         }
     }
 
-
     [PgFact]
     public async Task Mutadaptive_repair_spool_uses_each_published_modules_sde_cycle_bonus_and_resets_at_boundaries()
     {
@@ -904,7 +898,7 @@ public class ModuleEffectsTests
 
         // pending handlers (refusals) are not coverage, so their effects stay in currentSdeGaps; the built ones (the command bursts, P.A.N.I.C.,
         // the data and relic analyzers, hackOrbital, scanStrength) have left the manifest
-        // the burst projectors' families are handled on structures (StructureBurstEffects.cs) and on ships (ShipBurstProjectorEffect.cs, ST-17 d)
+
         var handledNames = Eve.Services.Space.Effects.ModuleEffects.Default.ImplementedNames
             .Concat(["missileLaunching", "torpedoLaunching"])
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -1210,7 +1204,6 @@ public class ModuleEffectsTests
     }
 
     /// <summary>
-    /// ST-9 b: an entosis link is a package of a 300 s cycle reaching 20 km (attribute 54), that burns its consumption type (713) each cycle and is aimed at the
     /// target it is given. A link with no target, or with no reach in its static data, is refused by name before any package is built.
     /// </summary>
     [Fact]

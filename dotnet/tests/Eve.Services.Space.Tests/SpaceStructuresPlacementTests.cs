@@ -5,7 +5,6 @@ using Eve.Structures;
 namespace Eve.Services.Space.Tests;
 
 /// <summary>
-/// ST-2 b: an anchored structure is put in space when a pilot is in its system (the gap of ST-1 d, closed by <see cref="SpaceStructures.PlaceAsync"/>). The pilot
 /// is the real login and undock path; the store, the timers and the bus are the real ones, the simulation is the fake one.
 /// </summary>
 public sealed class SpaceStructuresPlacementTests

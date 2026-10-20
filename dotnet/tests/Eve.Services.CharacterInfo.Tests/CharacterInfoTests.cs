@@ -694,6 +694,15 @@ public class CharMgrTests
         }, state.Labels);
         Assert.Equal(new[] { new CharMgrContact(2001, true, -10, 0), new CharMgrContact(2002, false, 0, 0) },
             state.Contacts.OrderBy(contact => contact.ContactId));
+        var beforeOversizedInput = state;
+        var oversizedIds = new PyList(Enumerable.Range(1, 501).Select(id => (PyValue)Id(id)).ToArray());
+        var refusal = await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(() =>
+            Call("BlockOwners", oversizedIds));
+        Assert.Equal(MachoErrors.UserErrorClass, refusal.Error.ClassName);
+        var errorHeader = Assert.IsType<PyTuple>(Assert.IsType<PyObjectEx>(refusal.Error.Payload).Header);
+        Assert.Equal(new PyStr("CHARMGR_BULK_LIMIT_EXCEEDED"),
+            Assert.IsType<PyTuple>(errorHeader.Items[1]).Items[0]);
+        Assert.Same(beforeOversizedInput, state);
     }
 
     [PgFact]

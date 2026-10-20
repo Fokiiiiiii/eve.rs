@@ -209,6 +209,7 @@ Customs-office binding previously bypassed `SpaceContainers.OpenAsync`, which ch
 
 ### Part 2 fixes (cx66)
 
+- **Oversized character contact batches.** `AssignLabels`, `RemoveLabels`, `BlockOwners`, `DeleteContacts`, `EditContactsRelationshipID`, and `UnblockOwners` now reject more than 500 IDs with `CHARMGR_BULK_LIMIT_EXCEEDED` before reading or writing personal data. `CharMgrTests.Personal_contact_labels_can_be_created_edited_assigned_removed_and_deleted` passes on `eve_p2` and verifies refusal leaves state unchanged.
 - **Free redeem-token grant (IDOR and privilege escalation).** `userSvc.CreateRedeemTokenQA` accepted any `userID`, `typeID` and quantity from any session; the store wrote a pending token that the account redeemed. The method is now staff-only (`accountRole`).
 - **Ungated QA flags and unbounded localization log.** `change_qa_mode`, `UpdateLocalizationQAWrap`, `GetAllTextChanges` and `ReloadFSDPickle` were callable by any session. Each now requires the staff account role before the handler is invoked. The localization event log still grows without a cap, but only staff can append to it now; a cap remains open.
 - **Not changed, recorded:** `CastUpvote`, `CastDownvote`, `ReportBot` and `ReportISKSpammer` answer True without storing anything (a stub, not a security gap); `PlaceKiringOrder` returns a generated string without a backing order.

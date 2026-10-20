@@ -13,7 +13,6 @@ public sealed record SkillGrant(int TypeId, int Level);
 public sealed record ExpertSystemEntry(long CharacterId, int TypeId, long InstalledAtMs, long ExpiresAtMs, long? SourceItemId, string GrantReason, long UpdatedAtMs);
 
 /// <summary>
-/// The expert system catalogue: the types, the skill levels each grants, and the installation limits. It is EveJS's static table
 /// (<c>tools/DatabaseCreator/staticTables/expertSystems/data.json</c>, the client's expertsystems.jsonl), embedded as <c>expert-systems.v1.json</c>
 /// by <c>tools/dev/gen-expert-system-catalog.py</c>: the pinned SDE has no expert system table.
 /// </summary>
@@ -55,7 +54,6 @@ public sealed class ExpertSystemCatalog(int maxInstallations, int topUpWindowDay
 
 /// <summary>
 /// What installed expert systems do to a character's skills. A skill an expert system grants at a level shows at the higher of its trained level and the
-/// granted level, with its trained points; training continues from the trained level (EveJS <c>expertSystemProjection.js</c>).
 /// </summary>
 public static class ExpertSystemRules
 {
@@ -98,7 +96,6 @@ public static class ExpertSystemRules
 
     /// <summary>
     /// Why an expert system of this type cannot be installed now, or null when it can. A type already installed is topped up instead, while it has
-    /// at most the top-up window left; a new type needs a free installation (EveJS <c>validateExpertSystemInstall</c>).
     /// </summary>
     public static string? RefusalOf(ExpertSystemCatalog catalog, ExpertSystemType? type, IReadOnlyList<ExpertSystemEntry> entries, long nowMs)
     {

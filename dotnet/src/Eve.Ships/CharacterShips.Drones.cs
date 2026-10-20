@@ -163,7 +163,6 @@ public sealed partial class CharacterShips
         return returned;
     }
 
-
     /// <summary>The in-space <c>invbroker.GetCapacity(87)</c> answer: the active ship's drone capacity and the volume physically in its bay.</summary>
     public async Task<Room?> DroneBayRoomInSpaceAsync(long characterId, long shipId, int solarSystemId, CancellationToken cancellationToken = default)
     {

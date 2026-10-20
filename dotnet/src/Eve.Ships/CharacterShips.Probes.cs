@@ -77,7 +77,6 @@ public sealed partial class CharacterShips
 
     /// <summary>
     /// Spends <paramref name="count"/> probes from the stack loaded in a launcher: what is left stays in the stack, and a stack that is used up is gone. Returns false
-    /// (and spends nothing) when the stack holds fewer now, since the decision is made on the row the lock finds.
     /// </summary>
     public async Task<bool> SpendProbesAsync(long characterId, long chargeId, int count, CancellationToken cancellationToken = default)
     {

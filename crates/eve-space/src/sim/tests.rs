@@ -837,6 +837,7 @@ fn abyssal_room_transfer_preserves_the_ship_and_rebinds_a_new_session_before_ori
         [Message::MoveAbyssalParticipantReply { request_id: 4, outcome: Ok(()) }],
         "Move updates the destination view but must not push a proactive snapshot"
     );
+    assert_eq!(sim.scenes[&first].pilots[&7].protected_until, NOON + 61 * SECOND);
     let prime = sim
         .handle(
             Message::Command {

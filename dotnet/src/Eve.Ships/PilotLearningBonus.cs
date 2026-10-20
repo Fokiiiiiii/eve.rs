@@ -8,7 +8,6 @@ namespace Eve.Ships;
 
 /// <summary>
 /// What a character's implants and active boosters add to its learning attributes, worked out by dogma (the same modifiers the pilot's dogma world
-/// carries, <see cref="ShipSnapshot.LoadAsync"/>). The training rate adds it to the base attribute. The EveJS reference does the same with the ModAdd
 /// bonuses of the active implants (<c>applyActiveImplantAttributeBonuses</c>, <c>services/dogma/implants/activeImplantModifiers.js</c>).
 /// </summary>
 public sealed class PilotLearningBonus(DogmaStatic statics, PgCharacterStore characters, PgItemStore items, PgSkillStore skills, Func<long> nowUnixMs)

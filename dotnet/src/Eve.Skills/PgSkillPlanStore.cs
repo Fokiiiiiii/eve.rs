@@ -3,7 +3,6 @@ using Npgsql;
 
 namespace Eve.Skills;
 
-/// <summary>The refusals of the skill plan store, named as the reference names them (EveJS <c>skillPlanState.js</c>).</summary>
 public enum SkillPlanError
 {
     NotFound,

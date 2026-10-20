@@ -124,6 +124,35 @@ public class MarketRpcTests
     }
 
     [PgFact]
+    public async Task Market_type_ids_outside_int32_are_refused_before_order_creation()
+    {
+        await using var r = await TradeRig.Create();
+        var actor = await r.Actor("Out of range type buyer", 10000m);
+        var seat = await SeatAsync(r, actor);
+        var invalidType = new PyLong((long)int.MaxValue + 1);
+
+        async Task AssertRefused(Task<PyValue> call)
+        {
+            var refusal = await Assert.ThrowsAsync<MachoWrappedException>(async () => await call);
+            var (label, arguments) = UserError(refusal);
+            Assert.Equal("CustomInfo", label);
+            Assert.Equal("One of the market values is outside the supported range.", Assert.IsType<PyStr>(Field(arguments, "info")).Value);
+        }
+
+        await AssertRefused(seat.Proxy.PlaceBuyOrder(Call(
+            seat.Session, "PlaceBuyOrder", 2, new PyInt(r.Station.Id), invalidType, new PyReal(5),
+            new PyInt(1), new PyInt(-1), new PyInt(1), new PyInt(90), PyBool.False, PyNone.Instance)).AsTask());
+        await AssertRefused(seat.Proxy.BuyMultipleItems(Call(
+            seat.Session, "BuyMultipleItems", 3, new PyInt(r.Station.Id),
+            new PyList([new PyDict([
+                new KeyValuePair<PyValue, PyValue>(new PyStr("typeID"), invalidType),
+                new KeyValuePair<PyValue, PyValue>(new PyStr("quantity"), new PyInt(1)),
+                new KeyValuePair<PyValue, PyValue>(new PyStr("price"), new PyReal(5)),
+            ])]), PyBool.False)).AsTask());
+        Assert.Empty((await r.Book.BookAsync(r.Station.RegionId, Tritanium, r.Now)).Bids);
+    }
+
+    [PgFact]
     public async Task Buy_multi_refuses_more_than_500_entries()
     {
         await using var r = await TradeRig.Create();

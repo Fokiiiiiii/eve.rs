@@ -15,6 +15,21 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
     {
         PyInt n => n.Value,PyLong n => n.Value,PyReal n when double.IsFinite(n.Value) && n.Value>=long.MinValue && n.Value<=long.MaxValue => (long)n.Value,_ => fallback,
     };
+
+    private static int Int32(PyValue value, long fallback = 0)
+    {
+        var numeric = Integer(value, fallback);
+        if (numeric is < int.MinValue or > int.MaxValue)
+            throw Error(new MarketError("MARKET_ARGUMENT_OUT_OF_RANGE"));
+        return (int)numeric;
+    }
+
+    private static int NarrowInt32(long value)
+    {
+        if (value is < int.MinValue or > int.MaxValue)
+            throw Error(new MarketError("MARKET_ARGUMENT_OUT_OF_RANGE"));
+        return (int)value;
+    }
     private static decimal Money(PyValue v) => v switch
     {
         PyInt n => n.Value,PyLong n => n.Value,PyReal n when double.IsFinite(n.Value) && Math.Abs(n.Value)<=(double)decimal.MaxValue =>
@@ -74,6 +89,7 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
         "MARKET_ORDER_STALE" => "That order has changed since it was shown. Reload the orders and try again.",
         "MARKET_DUPLICATE_PLACEMENT" => "An identical order was placed a moment ago, so it was not placed again.",
         "INVALID_MARKET_DURATION_OR_RANGE" => "That duration or range is not offered for a market order.",
+        "MARKET_ARGUMENT_OUT_OF_RANGE" => "One of the market values is outside the supported range.",
         _ => "The market refused the request.",
     };
     private readonly MarketNotifier notifier = new(wallets,characterSessions);
@@ -189,14 +205,14 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
     [Method("GetOldPriceHistory")]
     public async ValueTask<PyValue> GetOldPriceHistory(ServiceCall call)
     {
-        var type=(int)Integer(call.Arg(0));
+        var type=Int32(call.Arg(0));
         return MarketHistoryWire.Pair(now(),await HistoryForRegion(await MarketRegion(call),type,call.Cancellation)).Old;
     }
 
     [Method("GetNewPriceHistory")]
     public async ValueTask<PyValue> GetNewPriceHistory(ServiceCall call)
     {
-        var type=(int)Integer(call.Arg(0));
+        var type=Int32(call.Arg(0));
         return MarketHistoryWire.Pair(now(),await HistoryForRegion(await MarketRegion(call),type,call.Cancellation)).New;
     }
 
@@ -227,7 +243,7 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
     [Method("GetOrders")]
     public async ValueTask<PyValue> GetOrders(ServiceCall call)
     {
-        var type=(int)Integer(call.Arg(0));
+        var type=Int32(call.Arg(0));
         var c=call.Session.CharacterId is { } id ? await characters.GetAsync(id,call.Cancellation) : null;
         var viewer=c is null ? default : new MarketLocation(c.StationId,c.SolarSystemId,c.ConstellationId,c.RegionId);
         var book=c is null || type<=0 ? new MarketBook([],[]) : await store.BookAsync(c.RegionId,type,now(),call.Cancellation);
@@ -362,8 +378,8 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
     [Method("PlaceBuyOrder")]
     public async ValueTask<PyValue> PlaceBuyOrder(ServiceCall call)
     {
-        var request=new MarketRequest(Actor(call),(int)Integer(call.Arg(1)),true,Money(call.Arg(2)),Integer(call.Arg(3)),Integer(call.Arg(0)),
-            (int)Integer(call.Arg(6)),(int)Integer(call.Arg(4),-1),Integer(call.Arg(5),1),UseCorporation:JsSemantics.Truthy(call.Arg(7)),
+        var request=new MarketRequest(Actor(call),Int32(call.Arg(1)),true,Money(call.Arg(2)),Integer(call.Arg(3)),Integer(call.Arg(0)),
+            Int32(call.Arg(6)),Int32(call.Arg(4),-1),Integer(call.Arg(5),1),UseCorporation:JsSemantics.Truthy(call.Arg(7)),
             ExpectedBrokerFee:call.Arg(8) is PyReal quote ? quote.Value : call.Arg(8) is PyInt whole ? whole.Value : null);
         try
         {
@@ -385,14 +401,14 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
         var index = 0;
         var traded = false;
         foreach (var entry in entries)
-            traded |= await SellEntry(call, entry, JsSemantics.Truthy(call.Arg(1)), (int)Integer(call.Arg(2)), call.Arg(3), Key(call, "sell:" + index++));
+            traded |= await SellEntry(call, entry, JsSemantics.Truthy(call.Arg(1)), Int32(call.Arg(2)), call.Arg(3), Key(call, "sell:" + index++));
         return traded ? PyBool.True : PyBool.False;
     }
 
     /// <summary>One sell line (MarketTrading.PlaceAsync): the stack moves into the order's escrow, or fills the book at once. Answers whether it traded or rests.</summary>
     private async Task<bool> SellEntry(ServiceCall call, PyValue entry, bool useCorporation, int duration, PyValue expectedFee, string key)
     {
-        var request = new MarketRequest(Actor(call), (int)Integer(Field(entry, "typeID")), false, Money(Field(entry, "price")), Integer(Field(entry, "quantity")),
+        var request = new MarketRequest(Actor(call), Int32(Field(entry, "typeID")), false, Money(Field(entry, "price")), Integer(Field(entry, "quantity")),
             Integer(Field(entry, "stationID")), duration, ItemId: Integer(Field(entry, "itemID")), UseCorporation: useCorporation,
             ExpectedBrokerFee: expectedFee is PyReal quote ? quote.Value : expectedFee is PyInt whole ? whole.Value : null);
         try
@@ -452,7 +468,7 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
             var typeId = Integer(Field(entry, "typeID"));
             var quantity = Integer(Field(entry, "quantity"));
             if (typeId <= 0 || quantity <= 0) continue;
-            var request = new MarketRequest(actor, (int)typeId, true, Money(Field(entry, "price")), quantity, stationId, 0,
+            var request = new MarketRequest(actor, NarrowInt32(typeId), true, Money(Field(entry, "price")), quantity, stationId, 0,
                 MarketRules.RangeStation, Math.Max(1, Integer(Field(entry, "minVolume"), 1)), UseCorporation: useCorporation);
             RefuseRepeatedPlacement(call, request);
             if (requests.Any(previous => previous.Request == request))
@@ -481,7 +497,7 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
         var entry = call.Arg(0);
         if (Integer(Field(entry, "typeID")) != PlexTypeId)
             throw MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr("PLEX sell orders must use a PLEX inventory item.")));
-        var traded = await SellEntry(call, entry, JsSemantics.Truthy(call.Arg(1)), (int)Integer(call.Arg(2)), call.Arg(3), Key(call, "plex-sell:0"));
+        var traded = await SellEntry(call, entry, JsSemantics.Truthy(call.Arg(1)), Int32(call.Arg(2)), call.Arg(3), Key(call, "plex-sell:0"));
         return traded ? PyBool.True : PyBool.False;
     }
 
@@ -509,7 +525,7 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
     public async ValueTask<PyValue> CorpGetTransactions(ServiceCall call)
     {
         if (call.Session.CharacterId is not { } actor) return Py.List();
-        int? accountKey = call.Arg(1) is null or PyNone ? null : (int)Integer(call.Arg(1), 1000);
+        int? accountKey = call.Arg(1) is null or PyNone ? null : Int32(call.Arg(1), 1000);
         try
         {
             if (!await corporations.CanReadWalletDivisionAsync(actor, accountKey, call.Cancellation))

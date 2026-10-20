@@ -5138,3 +5138,8 @@ EveJS `account.GiveCash` returns the donor and recipient corporation wallet bala
 ## Character manager global asset budget (2026-10-20)
 
 The V24.01 global asset methods route `charMgr.List`, `ListStations`, `ListStationItems`, `ListIncludingContainers`, and `GetAssetWorth` to inventory enumeration. EveJS handles these calls without a per-session work budget. eve.rs now charges each one 10 weighted units under the existing session budget before invoking the service. The focused dispatcher regression verifies that the first call reaches the service and the next call is refused with `SessionRpcBudgetExceeded`. Normal client asset browsing remains within the configured allowance; graphical-client acceptance is open.
+
+
+## Market integer narrowing (2026-10-20)
+
+Market RPC integer values that the Host stores as 32-bit fields now refuse values outside that range before conversion, using the existing `CustomInfo` wire label. Previously, unchecked narrowing could wrap a large client-supplied type ID into a different item type. Normal V24.01 IDs and order terms retain their existing behavior. `MarketRpcTests.Market_type_ids_outside_int32_are_refused_before_order_creation` covers both single and bulk order placement.

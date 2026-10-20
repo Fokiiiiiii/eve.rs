@@ -1,7 +1,3 @@
--- Provenance of an abyssal mutated item (ADR 0016, D6 and D9): the mutaplasmid and the input that were consumed to make it,
--- the rolled multiplier of every mutated attribute, the source base value it was applied to, and the value it gave.
--- One row per mutated item; the row lives and dies with the item. The values are stored and never recomputed on load,
--- so a later change of the static data cannot move an item that already exists.
 CREATE TABLE item_mutations (
     item_id         bigint   PRIMARY KEY REFERENCES items (id) ON DELETE CASCADE,
     mutator_type_id integer  NOT NULL,

@@ -293,6 +293,70 @@ public class DispatchGoldenTests
         Assert.Equal(7, CommandOf(capture.Sent[2]));
     }
 
+    [Fact]
+    public async Task Expensive_wallet_calls_have_a_named_per_session_budget()
+    {
+        var capture = new Capture();
+        var session = new ClientSession(capture) { SessionId = 908 };
+        var registry = new ServiceRegistry();
+        var service = new WalletBudgetService();
+        registry.Register(service);
+        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 10 };
+
+        await dispatcher.DispatchAsync(CallRequestPacket("account", "GiveCash"), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("account", "GetTransactions"), session);
+
+        Assert.Equal(1, service.Calls);
+        Assert.Equal(2, capture.Sent.Count);
+        Assert.Equal(ErrorResponseCommand, CommandOf(capture.Sent[1]));
+        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[1])));
+    }
+
+    [Fact]
+    public async Task Loyalty_store_calls_have_a_named_per_session_budget()
+    {
+        var capture = new Capture();
+        var session = new ClientSession(capture) { SessionId = 909 };
+        var registry = new ServiceRegistry();
+        var service = new LoyaltyStoreBudgetService();
+        registry.Register(service);
+        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 10 };
+
+        await dispatcher.DispatchAsync(CallRequestPacket("LPStoreMgr", "TakeOfferForCharacter"), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("LPStoreMgr", "GetAvailableOffersFromCorp"), session);
+
+        Assert.Equal(1, service.Calls);
+        Assert.Equal(ErrorResponseCommand, CommandOf(capture.Sent[1]));
+        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[1])));
+    }
+
+    private sealed class LoyaltyStoreBudgetService : IService
+    {
+        public int Calls { get; private set; }
+        public string Name => "LPStoreMgr";
+        public bool HasMethod(string method) => method is "GetAvailableOffersFromCorp" or "TakeOfferForCharacter" or "TakeOfferForCorporation";
+        public ValueTask<PyValue> CallAsync(ServiceCall call)
+        {
+            Calls++;
+            return ValueTask.FromResult<PyValue>(PyNone.Instance);
+        }
+    }
+
+    private sealed class WalletBudgetService : IService
+    {
+        public int Calls { get; private set; }
+
+        public string Name => "account";
+
+        public bool HasMethod(string method) => method is "GetTransactions" or "GiveCash" or "GiveCashFromCorpAccount";
+
+        public ValueTask<PyValue> CallAsync(ServiceCall call)
+        {
+            Calls++;
+            return ValueTask.FromResult<PyValue>(PyNone.Instance);
+        }
+    }
+
     private sealed class ExpensiveService : IService
     {
         public int Calls { get; private set; }

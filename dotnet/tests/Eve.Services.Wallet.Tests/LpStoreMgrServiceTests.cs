@@ -119,6 +119,21 @@ public class LpStoreMgrServiceTests
         Assert.Single(await rig.ItemsAt(Character, Reward));
     }
 
+    [LpPgFact]
+    public async Task A_singleton_offer_cannot_expand_into_an_unbounded_item_grant()
+    {
+        await using var rig = await Rig.CreateAsync(new ItemType(Reward, 4, 6));
+        await rig.Store.ReplaceAsync(Corporation, [new LpStoreOffer(Corporation, Offer, Reward, 257, 0, 0, 0, [])], DateTimeOffset.UtcNow);
+        var service = rig.Service((_, _, _) => ValueTask.FromResult(false));
+
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(Call(
+            "TakeOfferForCharacter", rig.Pilot(new Sink()), new PyInt(Corporation), new PyInt(Offer), new PyInt(1))).AsTask());
+
+        Assert.Equal("CustomNotify", error.Error.UserErrorMessage);
+        Assert.Empty(await rig.ItemsAt(Character, Reward));
+        Assert.Equal(0, await rig.PurchaseRows(Character));
+    }
+
     private static ServiceCall Call(string method, ClientSession session, params PyValue[] args) =>
         new() { Method = method, Args = args, Session = session, CallId = new PyInt(1), Kwargs = PyNone.Instance };
 
@@ -141,7 +156,7 @@ public class LpStoreMgrServiceTests
         public PgItemStore Items { get; }
         public WalletTransactions Wallets { get; }
 
-        private Rig(NpgsqlDataSource source, string wallet, string inventory)
+        private Rig(NpgsqlDataSource source, string wallet, string inventory, ItemType rewardType)
         {
             _source = source;
             _wallet = wallet;
@@ -152,11 +167,11 @@ public class LpStoreMgrServiceTests
             Items = new PgItemStore(source, inventory);
             Wallets = new WalletTransactions(source, wallet);
             _purchases = new LpStorePurchases(source, wallet, Wallets, Loyalty, Items,
-                (typeId, _) => Task.FromResult<ItemType?>(typeId == Reward ? RewardType : typeId == Required ? RequiredType : null),
+                (typeId, _) => Task.FromResult<ItemType?>(typeId == Reward ? rewardType : typeId == Required ? RequiredType : null),
                 Offers);
         }
 
-        public static async Task<Rig> CreateAsync()
+        public static async Task<Rig> CreateAsync(ItemType? rewardType = null)
         {
             var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
             var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(url));
@@ -164,7 +179,7 @@ public class LpStoreMgrServiceTests
             var inventory = "lpi_" + Guid.NewGuid().ToString("N")[..12];
             await PgWalletStore.MigrateAsync(source, wallet);
             await PgItemStore.MigrateAsync(source, inventory);
-            return new Rig(source, wallet, inventory);
+            return new Rig(source, wallet, inventory, rewardType ?? RewardType);
         }
 
         public LpStoreMgrService Service(Func<long, long, CancellationToken, ValueTask<bool>> isDirector) =>

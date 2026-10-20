@@ -54,7 +54,6 @@ public class BookTests
         Assert.Contains(catalog.Groups,g => g.Id==4 && g.Name.Length>0);
     }
 
-
     [Fact]
     public void Tq_order_maps_to_a_persistable_npc_station_seed()
     {
@@ -79,7 +78,6 @@ public class BookTests
         Assert.Equal(30, seed.Duration);
     }
 }
-
 
 public sealed class MarketSeedV4Tests
 {

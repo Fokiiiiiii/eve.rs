@@ -18,7 +18,6 @@ public class ProtocolTests
         return Eve.Macho.JsSemantics.PlainText(address.Items[1])!;
     }
 
-
     private static PyTuple NotificationArguments(PyValue packet)
     {
         var fields=Assert.IsType<PyTuple>(Assert.IsType<PyObject>(packet).Args);
@@ -83,7 +82,7 @@ public class ProtocolTests
         var sell=Py.Dict(("stationID",new PyInt(r.Station.Id)),("typeID",new PyInt(34)),("itemID",new PyLong(bought.Id)),
             ("price",new PyReal(12)),("quantity",new PyInt(5)));
         Assert.Equal(PyBool.True,await proxy.PlaceMultiSellOrder(Call(session,"PlaceMultiSellOrder",6,new PyList([sell]),PyBool.False,new PyInt(90))));
-        // the immediate buy sends nothing (G8: no fabricated order-0 row); the sell sends the Created notification
+
         Assert.Single(sink.Packets);
         Assert.All(sink.Packets,packet => Assert.Equal("OnOwnOrdersChanged",NotificationName(packet)));
         var own=(await r.Book.BookAsync(r.Station.RegionId,34,r.Now)).Asks.Single(o => !o.IsNpc);
@@ -92,7 +91,6 @@ public class ProtocolTests
         Assert.All(sink.Packets,packet => Assert.Equal("OnOwnOrdersChanged",NotificationName(packet)));
         Assert.Equal(5,Assert.Single(await r.Items.InLocationAsync(r.Station.Id,actor)).Quantity);
     }
-
 
     [Fact]
     public void Order_wire_preserves_same_station_jump_sentinel()
@@ -108,7 +106,6 @@ public class ProtocolTests
 
         Assert.Equal(new PyInt(-1), line.Items[14]);
     }
-
 
     [PgFact]
     public async Task Market_client_plex_history_escrow_and_order_history_reads_are_native()
@@ -170,7 +167,7 @@ public class ProtocolTests
         Assert.Equal(PyNone.Instance,await proxy.PlaceBuyOrder(Call(session,"PlaceBuyOrder",24,
             new PyInt(r.Station.Id),new PyInt(plex),new PyReal(1000),new PyInt(1),new PyInt(-1),
             new PyInt(1),new PyInt(0),PyBool.False)));
-        // an immediate fill sends no notification: the fabricated order-0 row is gone (G8); M4 invalidates the caches instead
+
         Assert.Equal(2,sink.Packets.Count);
         var histories=Assert.IsType<PyDict>(await proxy.GetPlexHistory(Call(session,"GetPlexHistory",25)));
         var pair=Assert.IsType<PyList>(Assert.Single(histories.Entries).Value);
@@ -192,7 +189,6 @@ public class ProtocolTests
         Assert.Equal(new PyInt(3),historyLine.Items[19]);
         Assert.All(sink.Packets,packet => Assert.Equal("OnOwnOrdersChanged",NotificationName(packet)));
     }
-
 
     [PgFact]
     public async Task Market_price_history_is_scoped_to_the_callers_region()
@@ -242,7 +238,6 @@ public class ProtocolTests
         var manyRow=Assert.IsType<PyTuple>(Assert.Single(Assert.IsType<PyList>(Field(manyNew,"lines")).Items));
         Assert.Equal(new PyLong(1),manyRow.Items[4]);
     }
-
 
     [PgFact]
     public async Task Ask_summary_rpcs_are_type_ordered_and_exclude_unknown_player_structures()

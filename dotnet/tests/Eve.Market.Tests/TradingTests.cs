@@ -107,7 +107,6 @@ public class TradingTests
         Assert.Equal(10,(await r.Book.BookAsync(r.Station.RegionId,34,r.Now)).Asks.Single().VolumeRemaining);
     }
 
-
     [PgFact]
     public async Task A_failed_sell_refunds_its_broker_fee_and_the_same_key_retries_once()
     {

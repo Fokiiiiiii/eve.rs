@@ -314,6 +314,31 @@ public sealed partial class ContractProxyService(
         }
     }
 
+    [Method("DeleteContract")]
+    public async Task<PyValue> DeleteContract(ServiceCall call)
+    {
+        var writer = writeModel ?? throw new InvalidOperationException("contract writer is not wired");
+        var characterId = call.Session.CharacterId
+            ?? throw new InvalidOperationException("contract deletion requires a character session");
+        var corporationId = call.Session.GetInt("corpid") ?? 0;
+        var contractId = call.Arg(0) switch
+        {
+            PyInt value => value.Value,
+            PyLong value => value.Value,
+            _ => throw MachoErrors.ThrowUserError("ConContractNotFound"),
+        };
+        try
+        {
+            var hasCorpContractManager = ((call.Session.GetInt("corprole") ?? 0) & CorpRoleContractManager) != 0;
+            return await writer.DeleteContractAsync(contractId, characterId, corporationId,
+                hasCorpContractManager, call.Cancellation) ? PyBool.True : PyBool.False;
+        }
+        catch (ContractUserErrorException error)
+        {
+            throw MachoErrors.ThrowUserError(error.Message, error.Values.ToArray());
+        }
+    }
+
     [Method("GetLoginInfo")]
     public async Task<PyValue> GetLoginInfo(ServiceCall call)
     {

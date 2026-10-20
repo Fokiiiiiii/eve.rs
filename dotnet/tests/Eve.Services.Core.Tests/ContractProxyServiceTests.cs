@@ -113,6 +113,24 @@ public sealed class ContractProxyServiceTests
     }
 
     [Fact]
+    public async Task Delete_contract_passes_session_identity_and_corporation_role()
+    {
+        var writer = new RecordingWriteModel();
+        var service = new ContractProxyService(new RecordingReadModel(), writer);
+        var session = new ClientSession { CharacterId = 42 };
+        session.Set("corpid", new PyInt(84));
+        session.Set("corprole", new PyLong(72057594037927936L));
+
+        var response = await service.DeleteContract(new ServiceCall
+        {
+            Method = "DeleteContract", Args = [new PyLong(900)], Session = session,
+        });
+
+        Assert.Same(PyBool.True, response);
+        Assert.Equal((900L, 42L, 84L, true), writer.LastDelete);
+    }
+
+    [Fact]
     public async Task Create_contract_passes_client_terms_fees_and_skill_limits_to_the_writer()
     {
         var writer = new RecordingWriteModel();
@@ -197,6 +215,8 @@ public sealed class ContractProxyServiceTests
 
         public (long ContractId, int Status, long CharacterId, long CorporationId, long StationId, bool IsManager) LastComplete { get; private set; }
 
+        public (long ContractId, long CharacterId, long CorporationId, bool IsManager) LastDelete { get; private set; }
+
         public (long ContractId, long CharacterId, long CorporationId, bool ForCorporation, int WalletKey, decimal Amount) LastBid { get; private set; }
 
         public ValueTask<CreatedContract> CreateContractAsync(CreateItemExchangeRequest request, CancellationToken cancellationToken)
@@ -220,6 +240,13 @@ public sealed class ContractProxyServiceTests
             long currentStationId, bool hasCorpContractManager, CancellationToken cancellationToken)
         {
             LastComplete = (contractId, targetStatus, characterId, corporationId, currentStationId, hasCorpContractManager);
+            return ValueTask.FromResult(true);
+        }
+
+        public ValueTask<bool> DeleteContractAsync(long contractId, long characterId, long corporationId,
+            bool hasCorpContractManager, CancellationToken cancellationToken)
+        {
+            LastDelete = (contractId, characterId, corporationId, hasCorpContractManager);
             return ValueTask.FromResult(true);
         }
 

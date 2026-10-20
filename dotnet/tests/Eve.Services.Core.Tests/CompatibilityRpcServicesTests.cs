@@ -135,14 +135,18 @@ public sealed class CompatibilityRpcServicesTests
     }
 
     [Fact]
-    public async Task Localization_server_returns_the_three_configured_change_maps()
+    public async Task Localization_server_returns_configured_maps_and_bounds_public_read_events()
     {
         var expected = Py.Tuple(
             new PyDict([new(new PyStr("en"), new PyStr("configured text"))]),
             new PyDict([new(new PyStr("removed"), PyBool.True)]),
             new PyDict([]));
-        var service = (IService)new LocalizationServerService(expected);
-        Assert.Equal(expected, await service.CallAsync(Call("GetAllTextChanges", new PyDict([]))));
+        var service = new LocalizationServerService(expected);
+
+        for (var index = 0; index <= 1024; index++)
+            Assert.Equal(expected, await service.GetAllTextChanges(Call("GetAllTextChanges", new PyDict([]))));
+
+        Assert.Equal(1024, service.Events.Count);
         Assert.Throws<ArgumentException>(() => new LocalizationServerService(new PyDict([])));
     }
 

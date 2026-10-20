@@ -176,6 +176,10 @@ public sealed partial class ContractProxyService(
         {
             throw MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr("The contract terms are malformed.")));
         }
+        catch (OverflowException)
+        {
+            throw MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr("The contract terms are malformed.")));
+        }
     }
 
     // Availability codes: 0 public, 1 private (one character), 2 my corporation, 3 my alliance (appConst conAvail*).

@@ -53,16 +53,18 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
             corporation.CeoId != actor || corporation.CeoRolesSuspended)
             throw CorporationAccessDenied();
 
+        var applicationText = JsSemantics.StringValue(call.Arg(1)) ?? "";
+        if (applicationText.Length > 1000)
+            throw new CorporationError("ALLIANCE_APPLICATION_TEXT_TOO_LONG");
         var alliance = Number(call.Arg(0));
         var previousApplication = (await store.AllianceApplicationsAsync(alliance,call.Cancellation))
             .LastOrDefault(item => item.CorporationId == corporation.Id && !item.Archived);
-        var applicationText = JsSemantics.StringValue(call.Arg(1)) ?? "";
         long applicationId;
         try
         {
             applicationId = await store.ApplyToAllianceAsync(actor,alliance,applicationText,true,true,call.Cancellation);
         }
-        catch (CorporationError error) when (error.Code is "CORPORATION_ACCESS_DENIED" or "CHARACTER_NOT_FOUND" or "ALLIANCE_NOT_FOUND" or "CORPORATION_ALREADY_IN_ALLIANCE" or "ALLIANCE_APPLICATION_TEXT_TOO_LONG")
+        catch (CorporationError error) when (error.Code is "CORPORATION_ACCESS_DENIED" or "CHARACTER_NOT_FOUND" or "ALLIANCE_NOT_FOUND" or "CORPORATION_ALREADY_IN_ALLIANCE")
         {
             throw CorporationAccessDenied();
         }
@@ -893,7 +895,10 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
     {
         if (call.Session.CharacterId is not { } actor || await Current(call) is not { } corporation)
             throw new CorporationError("CORPORATION_ACCESS_DENIED");
-        await store.SetCorpWelcomeMailAsync(actor,corporation.Id,Text(call.Arg(0)),call.Cancellation);
+        var welcomeMail = Text(call.Arg(0));
+        if (welcomeMail.Length > 10_000)
+            throw new CorporationError("CORPORATION_WELCOME_MAIL_LIMIT_EXCEEDED");
+        await store.SetCorpWelcomeMailAsync(actor,corporation.Id,welcomeMail,call.Cancellation);
         return PyNone.Instance;
     }
 
@@ -937,7 +942,10 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
     {
         if (call.Session.CharacterId is not { } character || PositiveId(call.Arg(0)) is not { } corporation)
             return PyNone.Instance;
-        var id = await store.ApplyAsync(character,corporation,Text(call.Arg(1)),token:call.Cancellation);
+        var text = Text(call.Arg(1));
+        if (text.Length > 1000)
+            throw new CorporationError("CORPORATION_APPLICATION_TEXT_TOO_LONG");
+        var id = await store.ApplyAsync(character,corporation,text,token:call.Cancellation);
         return new PyInt(id);
     }
     [Method("InsertInvitation")]
@@ -962,6 +970,12 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
         if (PositiveId(call.Arg(1)) is { } character && character != application.CharacterId ||
             call.Session.CharacterId is not { } actor)
             throw new CorporationError("CORPORATION_ACCESS_DENIED");
+        var applicationText = Text(call.Arg(3));
+        var responseText = Text(call.Arg(5));
+        if (applicationText.Length > 1000)
+            throw new CorporationError("CORPORATION_APPLICATION_TEXT_TOO_LONG");
+        if (responseText.Length > 1000)
+            throw new CorporationError("CORPORATION_APPLICATION_RESPONSE_TOO_LONG");
         var recipients = new HashSet<long> { application.CharacterId, actor };
         if (await store.GetAsync(corporation,call.Cancellation) is { } corp) recipients.Add(corp.CeoId);
         foreach (var member in await store.MembersAsync(corporation,call.Cancellation))
@@ -969,7 +983,7 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
                 recipients.Add(member.CharacterId);
         var before = await store.MemberAsync(application.CharacterId,call.Cancellation);
         var status = Status(call.Arg(4));
-        var updated = await store.RespondAsync(actor,applicationId,status,Text(call.Arg(3)),Text(call.Arg(5)),call.Cancellation);
+        var updated = await store.RespondAsync(actor,applicationId,status,applicationText,responseText,call.Cancellation);
         CorporationNotificationAdapter.ApplicationChanged(characterSessions,call,corporation,updated.CharacterId,
             updated.Id,ApplicationRow(updated),recipients);
         Member? after = status == 2
@@ -1506,16 +1520,19 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
       }
 
       [Method("CreateLabel")]
-      public async ValueTask<PyValue> CreateLabel(ServiceCall call)
-      {
-          var corporation = await RequireCorporationSocialRole(call,CorporationRoles.Diplomat);
-          var name = Text(call.Arg(0)).Trim();
-          var color = Number(call.Arg(1));
-          if (color is < 0 or > 16777215)
-              throw CorporationAccessDenied();
-          var label = await store.CreateCorporationContactLabelAsync(corporation.Id,name,(int)color,call.Cancellation);
-          return CorporationMaskValue(label.LabelId);
-      }
+    public async ValueTask<PyValue> CreateLabel(ServiceCall call)
+    {
+        var corporation = await RequireCorporationSocialRole(call,CorporationRoles.Diplomat);
+        var rawName = Text(call.Arg(0));
+        if (rawName.Length > 40)
+            throw new CorporationError("CORPORATION_CONTACT_LABEL_NAME_LIMIT_EXCEEDED");
+        var name = rawName.Trim();
+        var color = Number(call.Arg(1));
+        if (color is < 0 or > 16777215)
+            throw CorporationAccessDenied();
+        var label = await store.CreateCorporationContactLabelAsync(corporation.Id,name,(int)color,call.Cancellation);
+        return CorporationMaskValue(label.LabelId);
+    }
 
       [Method("DeleteLabel")]
       public async ValueTask<PyValue> DeleteLabel(ServiceCall call)
@@ -1528,17 +1545,19 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
       }
 
       [Method("EditLabel")]
-      public async ValueTask<PyValue> EditLabel(ServiceCall call)
-      {
-          var corporation = await RequireCorporationSocialRole(call,CorporationRoles.Diplomat);
-          var labelId = Number(call.Arg(0));
-          var name = call.Args.Count > 1 ? Text(call.Arg(1)) : null;
-          var rawColor = call.Args.Count > 2 ? Number(call.Arg(2)) : (long?)null;
-          if (rawColor is < 0 or > 16777215)
-              throw CorporationAccessDenied();
-          await store.EditCorporationContactLabelAsync(corporation.Id,labelId,name,rawColor is { } color ? (int)color : null,call.Cancellation);
-          return PyNone.Instance;
-      }
+    public async ValueTask<PyValue> EditLabel(ServiceCall call)
+    {
+        var corporation = await RequireCorporationSocialRole(call,CorporationRoles.Diplomat);
+        var labelId = Number(call.Arg(0));
+        var name = call.Args.Count > 1 ? Text(call.Arg(1)) : null;
+        if (name is { Length: > 40 })
+            throw new CorporationError("CORPORATION_CONTACT_LABEL_NAME_LIMIT_EXCEEDED");
+        var rawColor = call.Args.Count > 2 ? Number(call.Arg(2)) : (long?)null;
+        if (rawColor is < 0 or > 16777215)
+            throw CorporationAccessDenied();
+        await store.EditCorporationContactLabelAsync(corporation.Id,labelId,name,rawColor is { } color ? (int)color : null,call.Cancellation);
+        return PyNone.Instance;
+    }
 
       [Method("AssignLabels")]
       public async ValueTask<PyValue> AssignLabels(ServiceCall call)
@@ -1832,6 +1851,8 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
           if (corporation is not { IsNpc:false,Deleted:false } || actor <= 0 ||
               againstId is null || againstId.Value == corporation.Id)
               return PyNone.Instance;
+          if (!await CanAdminister(call))
+              throw CorporationAccessDenied();
           if (declareWar is null)
               throw new CorporationError("WAR_DECLARATION_UNAVAILABLE");
           var declaredAt = Number(CorporationWire.Time(now()));

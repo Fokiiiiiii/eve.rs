@@ -400,7 +400,7 @@ public sealed partial class Colony
         if (ecu.ProgramType is not null && ecu.ExpiryTime > CurrentSimTime && ecu.InstallTime + PlanetRules.ProgramInstallCooldown > CurrentSimTime)
             throw new PlanetRefusal("CantInstallProgramNeedsCooldown");
         if (ecu.Heads.Count < 1) typeId = null;
-        if (headRadius < PlanetRules.RadiusMin || headRadius > PlanetRules.RadiusMax) throw new PlanetRefusal("InvalidProgramRadius");
+        if (!double.IsFinite(headRadius) || headRadius < PlanetRules.RadiusMin || headRadius > PlanetRules.RadiusMax) throw new PlanetRefusal("InvalidProgramRadius");
 
         long qtyToDistribute = 0;
         long cycle = 0;

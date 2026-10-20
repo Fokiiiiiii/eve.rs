@@ -5189,7 +5189,7 @@ The market parser rejects floating-point prices beyond the market maximum before
 
 ## Contract completion status bounds (2026-10-20)
 
-`contractProxy.CompleteContract` applies the shared checked Int32 parser to both V24 integer wire types. A status outside Int32 range returns `ConContractNotAvailable` before contract state is read or mutated; valid status values retain the existing transition behavior. `ContractProxyServiceTests.Complete_contract_refuses_status_that_overflows_int32` verifies the writer is not invoked.
+`contractProxy.CompleteContract` applies the shared checked Int32 parser to both V24 integer wire types. A status outside Int32 range returns `ConContractNotAvailable` before contract state is read or mutated; valid status values retain the existing transition behavior. `ContractProxyServiceTests.Complete_contract_refuses_status_that_overflows_int32` verifies the writer is not invoked. `PacketDispatcher` charges all `contractProxy` methods 10 per-session work units because every operation reads or mutates persisted contract state; `DispatchGoldenTests.Contract_operations_use_the_named_per_session_budget` verifies list calls are refused at the configured limit.
 
 
 ## Insurance price batch bound (2026-10-20)
@@ -5202,7 +5202,7 @@ The V24 `ship.SelfDestruct` and `ship.AbortSelfDestruct` bound calls now require
 
 ## Skill service bulk and arithmetic bounds (2026-10-20)
 
-`InjectSkillIntoBrain` and `ExtractSkills` refuse more than 500 raw entries before transactional item or skill changes. The shared skill numeric parser rejects non-finite and out-of-range real IDs; duplicate requested extraction points saturate at Int64 maximum before calculation. These checks preserve the V24.01 successful client flow and reject oversized or overflowing payloads. `SkillServiceTests.Skill_bulk_item_operations_refuse_more_than_500_raw_entries_before_mutation` covers both refusals, while the extraction success regression exercises duplicate point aggregation near the integer limit.
+`InjectSkillIntoBrain` and `ExtractSkills` refuse more than 500 raw entries before transactional item or skill changes. The shared skill numeric parser rejects non-finite and out-of-range real IDs; duplicate requested extraction points saturate at Int64 maximum before calculation, and both `GetDiminishedSpFromInjectors` and `InjectSkillpoints` cap the combined trained and free points at 80 million before addition, where marginal awards have reached their final tier. These checks preserve the V24.01 successful client flow and reject oversized or overflowing payloads. `SkillServiceTests.Skill_bulk_item_operations_refuse_more_than_500_raw_entries_before_mutation` covers both refusals, `SkillServiceTests.Injector_diminishing_total_saturates_without_overflowing_authoritative_point_balances` covers near-Int64 cumulative balances, and the extraction success regression exercises duplicate point aggregation near the integer limit. `SplitSkillInjector` refuses a quantity whose three-for-one output would exceed Int64 before inventory mutation; `SkillServiceTests.Splitting_an_oversized_skill_injector_stack_refuses_before_mutation` verifies that the original stack remains unchanged.
 
 ## Insurance ship identifier validation (2026-10-20)
 
@@ -5217,3 +5217,13 @@ The insurance RPCs accept positive integer ship IDs. Fractional or malformed val
 `CheckMyDockingAccessToStructures` refuses more than 500 raw structure IDs before invoking the access-list callback. Both this RPC and `GetMyDockableStructures` consume 10 units from the per-session expensive-RPC budget, returning `SessionRpcBudgetExceeded` when the session budget is exhausted. Regressions cover the batch refusal and repeated-query budget refusal.
 
 `structureDirectory.CheckMyDockingAccessToStructures` accepts up to 500 structure IDs. Larger lists return `StructureBulkLimitExceeded` before access-list snapshots are read. Normal structure-access results retain the existing per-list ACL evaluation and order. `StructureDirectoryServiceTests.Docking_access_refuses_more_than_500_structure_ids_before_the_callback` verifies no callback work on refusal.
+
+
+## Contract RPC current-role checks (2026-10-20)
+
+Corporate contract creation, bidding, acceptance, completion, deletion, and corporate list reads check the authenticated session role bit and then resolve the actor’s current corporation membership and Contract Manager role through the persisted `CorporationStore`. A role removed while the character remains logged in therefore no longer authorizes a corporate contract call. `ContractProxyServiceTests.Accept_for_corporation_refuses_a_stale_session_role_without_persisted_authority` supplies a stale positive session role with a persisted-role callback returning false and verifies refusal.
+
+
+## Corporation audit role revocation (2026-10-20)
+
+`corpMgr.AuditMember` now derives Director/Auditor access from the persisted member masks and titles on every request. Its session role attributes are not sufficient to expose corporation audit events or role history after a role change. `CorporationProtocolTests.Corp_mgr_audit_member_rechecks_persisted_auditor_role_after_login` creates an Auditor session, confirms access, removes the persisted role, then confirms that the same session is denied before audit-event reads.

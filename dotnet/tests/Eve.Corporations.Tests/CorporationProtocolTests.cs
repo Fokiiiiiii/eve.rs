@@ -1590,6 +1590,55 @@ private static PyValue RowField(PyValue value,string key)
         Assert.Equal(1, auditReads);
     }
 
+
+    [PgFact]
+    public async Task Corp_mgr_audit_member_rechecks_persisted_auditor_role_after_login()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var founder = await rig.CharacterAsync("Audit role Founder");
+        var auditorId = await rig.CharacterAsync("Audit role Member");
+        var targetId = await rig.CharacterAsync("Audit role Target");
+        var corporation = await rig.Store.CreateAsync(
+            founder, new NewCorporation("Audit role", "AUDIT", "", "", 0.05m),
+            "corp-audit-role-" + Guid.NewGuid().ToString("N"));
+
+        foreach (var characterId in new[] { auditorId, targetId })
+        {
+            var application = await rig.Store.ApplyAsync(characterId, corporation.Id, "Join");
+            await rig.Store.RespondAsync(founder, application, 6, "Join", "");
+            await rig.Store.RespondAsync(characterId, application, 2, "Join", "");
+        }
+
+        var auditor = (await rig.Store.MemberAsync(auditorId))!;
+        await rig.Store.UpdateMembersAsync(founder,
+            [auditor with { Masks = auditor.Masks with { Roles = 4096 } }]);
+        var login = new CorporationLoginHook(rig.Store, rig.Characters);
+        var session = new ClientSession { CharacterId = auditorId };
+        await login.OnCharacterEnteredAsync(session, auditorId, default);
+        Assert.NotEqual(0L, (session.GetInt("corprole") ?? 0) & 4096);
+
+        var auditReads = 0;
+        var service = new CorpMgrService(rig.Store, rig.Characters,
+            readAuditEvents: (_, _, _, _, _, _) =>
+            {
+                auditReads++;
+                return ValueTask.FromResult<IReadOnlyList<CorpMgrAuditEvent>>([]);
+            });
+        var authorized = await service.AuditMember(Call(
+            session, "AuditMember", new PyInt(targetId), new PyLong(0), new PyLong(0), new PyInt(10)));
+        Assert.Empty(Lines(Assert.IsType<PyTuple>(authorized).Items[0]));
+        Assert.Equal(1, auditReads);
+
+        auditor = (await rig.Store.MemberAsync(auditorId))!;
+        await rig.Store.UpdateMembersAsync(founder,
+            [auditor with { Masks = auditor.Masks with { Roles = 0 } }]);
+
+        var refused = await service.AuditMember(Call(
+            session, "AuditMember", new PyInt(targetId), new PyLong(0), new PyLong(0), new PyInt(10)));
+        Assert.Empty(Lines(Assert.IsType<PyTuple>(refused).Items[0]));
+        Assert.Equal(1, auditReads);
+    }
+
     [Fact]
     public async Task Corp_mgr_aggression_reads_refuse_more_than_500_corporations_before_storage_access()
     {

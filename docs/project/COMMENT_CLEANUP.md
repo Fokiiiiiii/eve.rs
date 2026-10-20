@@ -47,5 +47,6 @@
 | `dotnet/src/Eve.Relations` (3 C# files; migrations reviewed) | 51 | 43 | 2026-10-20 |
 | `dotnet/src/Eve.Data` (3 C# files) | 24 | 22 | 2026-10-20 |
 | `dotnet/src/Eve.Npc` (9 C# files; migration reviewed) | 208 | 184 | 2026-10-20 |
+| `dotnet/src/Eve.Inventory` (8 C# files; migrations reviewed) | 184 | 178 | 2026-10-20 |
 
 The stdlib-only `tools/dev/prune-comments.py` identifies Rust, C#, and Python comments, removes process notes, stale prose, separators, and decorated section dividers, compares code token streams before writing, collapses excess blank lines, keeps remaining Rust doc comments adjacent to their attributes and items, and skips fixture and generated-file paths. `tools/dev/test_prune_comments.py` covers raw and nested strings/comments, attributes, doc spacing, preprocessor directives, and Python string markers.

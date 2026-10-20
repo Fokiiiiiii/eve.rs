@@ -23,7 +23,7 @@ public sealed partial class ConfigService(
         ["corporationID", "tickerName", "shape1", "shape2", "shape3", "color1", "color2", "color3"];
     private static readonly string[] LocationColumns =
         ["locationID", "locationName", "solarSystemID", "x", "y", "z", "locationNameID"];
-    /// <summary>The owner type of a corporation (<c>typeCorporation</c>) and of an alliance (<c>typeAlliance</c>, 16159 in the SDE).</summary>
+
     private const long CorporationTypeId = 2;
     private const long AllianceTypeId = 16159;
 
@@ -65,7 +65,6 @@ public sealed partial class ConfigService(
     /// <summary>
     /// The average price of each type that has a recorded sale: the newest day's volume-weighted average (the market's fills,
     /// <c>MarketStore.LatestAverageSalesAsync</c>). A type with no sale has no entry, so the client's GetAveragePrice returns None
-    /// (typeHelpers.py:101-109). The market has no adjusted price, so it is the average (EveJS: buildAveragePriceEntry).
     /// </summary>
     [Method("GetAverageMarketPrices")]
     public async ValueTask<PyValue> GetAverageMarketPrices(ServiceCall call)
@@ -86,7 +85,6 @@ public sealed partial class ConfigService(
     }
 
     /// <summary>
-    /// The owners of the ids the client asks for: characters, corporations and alliances, from the stores. An id that is none
     /// of these has no row. The client's Prime logs the miss, and a later Get raises RecordNotFound (cfg.py:600-602, 643-645);
     /// no placeholder name is made up for it.
     /// </summary>
@@ -243,7 +241,6 @@ public sealed partial class ConfigService(
             .ToArray();
     }
 
-    /// <summary>A location row. A system has no position in the static data, so its coordinates are 0 (EveJS: buildLocationRow).</summary>
     private static PyTuple LocationRow(long id, string name, int? solarSystemId, double x = 0, double y = 0, double z = 0, string? nameId = null) =>
         Row(
             PyValue.Of(id),

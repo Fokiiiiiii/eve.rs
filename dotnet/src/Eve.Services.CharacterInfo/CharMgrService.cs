@@ -35,7 +35,6 @@ public sealed record CharMgrPersonalData(
         new Dictionary<string, PyValue>(StringComparer.Ordinal);
 }
 
-
 public sealed record CharMgrOrganizationInfo(long CorporationId, long AllianceId, long WarFactionId);
 [Service("charMgr")]
 public sealed partial class CharMgrService(
@@ -204,7 +203,6 @@ public sealed partial class CharMgrService(
     public async ValueTask<PyValue> GetCharacterCreationDate(ServiceCall call) =>
         await CharacterAsync(call) is { } character ? FileTime(character.CreatedAt) : None;
 
-
     /// <summary>The private character row used by the corporation member editor.</summary>
     [Method("GetPrivateInfo")]
     public async ValueTask<PyValue> GetPrivateInfo(ServiceCall call)
@@ -248,7 +246,6 @@ public sealed partial class CharMgrService(
 
     [Method("GetHomeStation")]
     public ValueTask<PyValue> GetHomeStation(ServiceCall call) => GetHomeStationRow(call);
-
 
     [Method("MachoResolveObject")]
     public PyValue MachoResolveObject(ServiceCall call)
@@ -517,8 +514,6 @@ public sealed partial class CharMgrService(
             ("blocked", Py.Rowset(["senderID"], blocked)));
     }
 
-
-
     [Method("GetLabels")]
 
     public async ValueTask<PyValue> GetLabels(ServiceCall call)
@@ -536,7 +531,6 @@ public sealed partial class CharMgrService(
             .ToArray();
         return new PyDict(entries);
     }
-
 
     [Method("CreateLabel")]
     public async ValueTask<PyValue> CreateLabel(ServiceCall call)
@@ -647,8 +641,6 @@ public sealed partial class CharMgrService(
         return None;
     }
 
-
-
     /// <summary>The reference exposes its default notes folder for a bound character.</summary>
     private static CharMgrOwnerNote? DefaultFoldersNote(CharMgrPersonalData data)
     {
@@ -690,7 +682,6 @@ public sealed partial class CharMgrService(
         return Py.Rowset(["noteID", "label"], rows);
     }
 
-    /// <summary>An absent note is returned in the one-row KeyVal list expected by the client.</summary>
     [Method("GetOwnerNote")]
 
     public async ValueTask<PyValue> GetOwnerNote(ServiceCall call)
@@ -719,7 +710,6 @@ public sealed partial class CharMgrService(
         return new PyStr(data.ItemNotes.GetValueOrDefault(itemId, ""));
     }
 
-
     [Method("GetPrivateInfoOnCorpChange")]
     public async ValueTask<PyValue> GetPrivateInfoOnCorpChange(ServiceCall call)
     {
@@ -742,7 +732,6 @@ public sealed partial class CharMgrService(
             ("corporationID", corporationId > 0 ? new PyInt(corporationId) : None),
             ("corporationDateTime", corporationDateTime));
     }
-
 
     [Method("GetOrganizationInfoForCharacters")]
     public async ValueTask<PyValue> GetOrganizationInfoForCharacters(ServiceCall call)
@@ -929,8 +918,6 @@ public sealed partial class CharMgrService(
         return None;
     }
 
-
-
     [Method("LogSettings")]
     public async ValueTask<PyValue> LogSettings(ServiceCall call)
     {
@@ -1060,7 +1047,6 @@ public sealed partial class CharMgrService(
         return new PyList(await readRecentShipKillmailPage(characterId, num, startIndex, call.Cancellation));
     }
 }
-
 
 /// <summary>The station data shared by the homeStation and charMgr read paths.</summary>
 public sealed record HomeStationLocation(

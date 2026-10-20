@@ -3,7 +3,6 @@ using Eve.Market;
 
 namespace Eve.Services.Market;
 
-/// <summary>marketProxy's order rows and DBRowDescriptor, ported from marketProxyService.js (828823a).</summary>
 public static class MarketWire
 {
     private static readonly (string Name,int Type)[] Columns = [
@@ -21,14 +20,12 @@ public static class MarketWire
                 new PyInt(o.Duration),new PyInt(o.Location.StationId),new PyInt(o.Location.RegionId),new PyInt(o.Location.SolarSystemId),
                 new PyInt(o.Location.ConstellationId),new PyInt(topology.OrderDistance(viewer,o.Location))))]))));
 
-
     public static PyValue BestByOrder(MarketOrder order,long quantity) => Py.KeyVal(
         ("price",Py.Number(MarketRules.RoundIsk((double)order.Price))),
         ("volRemaining",Py.Number(quantity)),
         ("typeID",new PyInt(order.TypeId)),
         ("stationID",new PyInt(order.Location.StationId)));
 }
-
 
 internal static class MarketHistoryWire
 {
@@ -46,10 +43,8 @@ internal static class MarketHistoryWire
                 Py.Number((double)row.High),Py.Number((double)row.Average),new PyLong(row.Volume),new PyInt(row.Orders)))]))));
 
     /// <summary>
-    /// The two rowsets of a history: "old" holds the days before today and "new" the day in progress (none when nothing traded today). The
-    /// client reads "new" as today: it fills the days from the last "old" row to yesterday with placeholders, then appends "new"
-    /// (marketsvc.py:344-366). The reference splits off the last row instead (marketProxyService.js:469-482), which puts a past trading day
-    /// in "new" behind the placeholders; eve.rs splits by the day (DEVIATIONS, market slice M5).
+    /// History is split by calendar day: "old" holds prior days and "new" holds today (none when nothing traded today). The client fills
+    /// missing days after the last "old" row, then appends "new".
     /// </summary>
     public static (PyValue Old,PyValue New) Pair(long nowMs,IReadOnlyList<MarketHistory> rows)
     {

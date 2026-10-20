@@ -54,6 +54,7 @@ internal static class HostComposition
     {
         var accountOptions = settings.AccountOptions;
         var options = settings.Options;
+        var xmppSettings = settings.Xmpp ?? XmppSettings.Disabled;
         IAccountDirectory accounts;
         IReadOnlyList<IService> characterServices = [];
         Eve.Services.Core.GameRpcCallbacks? gameRpcCallbacks = null;
@@ -68,6 +69,8 @@ internal static class HostComposition
         IGlobalConfigPersistence globalConfigPersistence = new InMemoryGlobalConfigPersistence();
         var online = new OnlineCharacters();
         var connected = new ConnectedSessions();
+        Eve.Host.Xmpp.XmppListener? xmppListener = null;
+        System.Security.Cryptography.X509Certificates.X509Certificate2? xmppCertificate = null;
         CharacterSessions? characterSessions = null;
         PublicGateway.PublicGatewayRoutes? publicGateway = null;
         Eve.Services.Core.IContractReadModel? contractReadModel = null;
@@ -209,6 +212,18 @@ internal static class HostComposition
         HostServer? server = null;
         var info = new HostMachoNetInfo(registry, config.Current, characterSessions);
         registry.Register(new MachoNetService(info, now, GlobalConfigWrites.Create(config, connected, () => server?.PublishClusterConfig())));
+        if (xmppSettings.Enabled)
+        {
+            var xmppHub = new Eve.Host.Xmpp.XmppChatHub(connected,
+                new Eve.Host.Xmpp.XmppChatSettings(xmppSettings.Domain, xmppSettings.ConnectHost));
+            registry.Register(new Eve.Host.Xmpp.XmppChatMgrService(xmppHub));
+            if (xmppSettings.CertificatePath is { } certificatePath)
+                xmppCertificate = System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadPkcs12FromFile(
+                    certificatePath, xmppSettings.CertificatePassword);
+            var bindAddress = System.Net.IPAddress.Parse(xmppSettings.BindAddress);
+            xmppListener = Eve.Host.Xmpp.XmppListener.Start(bindAddress, xmppSettings.Port, xmppHub, xmppCertificate);
+            Console.Error.WriteLine($"eve-host: XMPP listening on {bindAddress}:{xmppSettings.Port}");
+        }
 
         var dispatcher = new PacketDispatcher(registry, now)
         {
@@ -245,6 +260,6 @@ internal static class HostComposition
             accounts,
             () => MarshalCodec.Encode(config.Current()));
 
-        return new HostRuntime(server, registry, legacy, foundations, space, crimewatch, simulation, characterSessions, publicGateway, dataSource);
+        return new HostRuntime(server, registry, legacy, foundations, space, crimewatch, simulation, characterSessions, publicGateway, dataSource, xmppListener, xmppCertificate);
     }
 }

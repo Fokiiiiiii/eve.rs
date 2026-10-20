@@ -1,5 +1,3 @@
--- The transactional outbox: a domain event is a row written in the same transaction as the change it announces, so the event exists exactly when the change does. Subscribers
--- read the rows in order, each with a cursor of its own; nothing is "sent", so nothing can be lost between a commit and a message.
 CREATE TABLE outbox (
     -- ids are handed out in the order transactions ASK for them but become visible in the order they COMMIT; a reader therefore takes only the rows up to a horizon at which
     -- no publishing transaction is open (publishers hold a shared advisory lock until they commit, a reader takes it exclusively for a moment: see EventBus)

@@ -1,4 +1,3 @@
--- Idempotent publication receipts survive normal outbox retention.
 CREATE TABLE publication_receipts (
     topic text NOT NULL,
     publication_key text NOT NULL,

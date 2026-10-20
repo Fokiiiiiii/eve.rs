@@ -52,7 +52,6 @@ public sealed class JobContext
     public T? Payload<T>() => JsonSerializer.Deserialize<T>(PayloadJson, DurableScheduler.Json);
 
     /// <summary>
-    /// Do not finish: run this job again at <paramref name="atMs"/>, with a new payload when one is given (a state machine whose next step is a time, such as "the
     /// protection ends in 5 minutes"). The attempt count starts again.
     /// </summary>
     public void RunAgainAt(long atMs, object? payload = null)

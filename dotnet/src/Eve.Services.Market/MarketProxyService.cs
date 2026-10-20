@@ -132,7 +132,6 @@ private const int PlexTypeId = 44992;
             new PyStr(group.Description),PyNone.Instance,group.HasTypes ? PyBool.True : PyBool.False,
             group.IconId is { } icon ? new PyInt(icon) : PyNone.Instance,new PyInt(group.Id),PyNone.Instance,PyNone.Instance)));
 
-
     /// <summary>Ask summaries are currently encoded as named KeyVal fields; the V24 tuple-consumer path remains unresolved.</summary>
     private static PyValue AskSummary(MarketOrder order,long quantity) => MarketWire.BestByOrder(order,quantity);
 
@@ -173,7 +172,6 @@ private const int PlexTypeId = 44992;
         return new PyDict(entries);
     }
 
-
     private async Task<int> MarketRegion(ServiceCall call)
     {
         if (call.Session.CharacterId is not { } actor) return 0;
@@ -183,7 +181,6 @@ private const int PlexTypeId = 44992;
 
     private Task<IReadOnlyList<MarketHistory>> HistoryForRegion(int region,int type,CancellationToken token) =>
         region>0 && type>0 ? store.HistoryAsync(region,type,0,token) : Task.FromResult<IReadOnlyList<MarketHistory>>([]);
-
 
     [Method("GetOldPriceHistory")]
     public async ValueTask<PyValue> GetOldPriceHistory(ServiceCall call)
@@ -230,7 +227,6 @@ private const int PlexTypeId = 44992;
         return ObjectCaching.MethodResult(Py.Tuple(MarketWire.Orders(book.Asks,topology,viewer),MarketWire.Orders(book.Bids,topology,viewer)),
             now(),sessionInfo:"solarsystemid2");
     }
-
 
     private static PyValue OwnerOrderRowset(IReadOnlyList<MarketOwnedOrder> orders,bool? corporation)
     {
@@ -282,7 +278,6 @@ private const int PlexTypeId = 44992;
         }
         catch (Exception e) when (e is MarketError or Eve.Corporations.CorporationError) { throw Error(e); }
     }
-
 
     [Method("GetCharEscrow")]
     public async ValueTask<PyValue> GetCharEscrow(ServiceCall call)

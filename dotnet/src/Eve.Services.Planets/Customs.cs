@@ -9,15 +9,8 @@ using Npgsql;
 
 namespace Eve.Services.Planets;
 
-/// <summary>
-/// The customs offices of the planets (the client's importExportUI.py and planetInfoSvc): the office is an item of the server's
-/// inventory (type 2233, id 1.2e12 + planet id, at the planet's system, owned by an NPC owner) and, in space, an orbital of its planet
-/// (the simulation's ball, <see cref="PlaceOffice"/>). Imports take the pilot's stacks out of the office hangar onto the launchpad;
-/// exports put the launchpad's commodities into the office hangar. The fees are charged in the same transaction (ref 96 import, 97 export).
-/// </summary>
 public sealed partial class PlanetMgrService
 {
-    /// <summary>The owner label of the server's customs offices (an NPC owner, not a player's corporation).</summary>
     private const long CustomsOfficeOwner = 1000125;
     /// <summary>The hangar flag of an office's stacks (the client's flagHangar).</summary>
     private const int HangarFlag = 4;
@@ -195,8 +188,6 @@ public sealed partial class PlanetMgrService
         await notify(owner, new PyInt(planetId));
     }
 
-    /// <summary>Adds a commodity to the pilot's stack in the office hangar (a new stack when there is none).</summary>
-    /// <summary>The move of a pilot's stack from its ship's hold into the office hangar; the stack keeps its owner (importExportUI.MoveFromInventory).</summary>
     public async ValueTask<long> MoveToOfficeAsync(ClientSession session, long officeId, long itemId, long quantity, CancellationToken cancellationToken)
     {
         if (session.CharacterId is not { } owner) return 0;

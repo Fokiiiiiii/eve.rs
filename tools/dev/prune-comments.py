@@ -14,7 +14,6 @@ META = re.compile(r"owner|decision|\bQ-\d+|\b(?:TODO|FIXME|NOTE|HACK)\b|EveJS|EV
 WHY = re.compile(r"because|otherwise|must|never|invariant|ordering|race|deadlock|overflow|off-by-one|wire|layout|little-endian|SDE attribute|\bunit\b", re.I)
 LICENSE = re.compile(r"copyright|licensed under|SPDX-License-Identifier", re.I)
 
-
 def rust_cs_comments(src: str, csharp: bool) -> list[tuple[int, int, str]]:
     out = []
     i, n = 0, len(src)
@@ -80,7 +79,6 @@ def rust_cs_comments(src: str, csharp: bool) -> list[tuple[int, int, str]]:
         i += 1
     return out
 
-
 def python_comments(src: str) -> list[tuple[int, int, str]]:
     offsets = [0]
     offsets.extend(i + 1 for i, char in enumerate(src) if char == '\n')
@@ -92,25 +90,22 @@ def python_comments(src: str) -> list[tuple[int, int, str]]:
             result.append((a, b, src[a:b]))
     return result
 
-
 def clean_text(comment: str) -> str:
     return re.sub(r"^\s*(?://+|/\*+|\*+|#|<!--|-->|\*/)+\s?", "", comment, flags=re.M).replace("*/", "").strip()
-
 
 def should_remove(comment: str) -> bool:
     text = clean_text(comment)
     if LICENSE.search(text) or re.search(r"\bshortcut\s*:", text, re.I): return False
     if META.search(text): return True
-    if re.fullmatch(r"[\s=/_*#-]{3,}", text): return True
+    if re.fullmatch(r"[\s=/_*#–—−─━-]{3,}", text): return True
+    if re.fullmatch(r"[-–—−─━]{2,}\s+[A-Za-z][\w -]*\s+[-–—−─━]{2,}", text): return True
     lines = [x.strip() for x in text.splitlines() if x.strip()]
     prose = re.compile(r"\b(?:a|an|and|are|as|at|because|by|for|from|if|in|is|it|of|on|or|that|the|this|to|when|with)\b", re.I)
     if lines and all((x.endswith((';', '{', '}', ')')) and not re.search(r"[.!?]\s", x) and not prose.search(x)) for x in lines): return True
     return len(lines) > (3 if WHY.search(text) else 2)
 
-
 def comments(src: str, lang: str):
     return python_comments(src) if lang == 'py' else rust_cs_comments(src, lang == 'cs')
-
 
 def code_tokens(src: str, lang: str):
     spans = comments(src, lang)
@@ -122,7 +117,6 @@ def code_tokens(src: str, lang: str):
     if lang == 'py':
         return [(t.type, t.string) for t in tokenize.generate_tokens(io.StringIO(code).readline) if t.type not in (tokenize.ENCODING, tokenize.ENDMARKER, tokenize.NL, tokenize.NEWLINE, tokenize.INDENT, tokenize.DEDENT, tokenize.COMMENT)]
     return re.findall(r"(?:\w+)|(?:[^\s\w])", code, re.UNICODE)
-
 
 def transform(src: str, lang: str):
     spans = comments(src, lang)
@@ -138,7 +132,6 @@ def transform(src: str, lang: str):
     if code_tokens(src, lang) != code_tokens(result, lang):
         raise ValueError('code token stream changed')
     return result, len(spans), len(remove)
-
 
 def main():
     ap = argparse.ArgumentParser()
@@ -165,6 +158,5 @@ def main():
             if args.apply and updated != original: f.write_text(updated, encoding='utf-8')
             if removed: print(f'{f}: {before} comments, remove {removed}')
     print(f"files={totals['files']} comments={totals['comments']} removed={totals['removed']}")
-
 
 if __name__ == '__main__': main()

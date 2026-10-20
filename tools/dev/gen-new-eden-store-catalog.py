@@ -31,14 +31,12 @@ REAL_MONEY_OFFER_BASE = 9300000
 REAL_MONEY_CATEGORY_OMEGA = 9000001
 REAL_MONEY_CATEGORY_PACKS = 9000008
 
-
 def supported(fulfillment):
     if not isinstance(fulfillment, dict) or fulfillment.get("kind") not in SUPPORTED_KINDS:
         return False
     if fulfillment["kind"] == "bundle":
         return all(supported(grant) for grant in fulfillment.get("grants", []))
     return True
-
 
 def grant_type_ids(fulfillment):
     kind = fulfillment.get("kind")
@@ -53,7 +51,6 @@ def grant_type_ids(fulfillment):
     if kind == "bundle":
         return [t for grant in fulfillment["grants"] for t in grant_type_ids(grant)]
     return []
-
 
 def main():
     raw = Path(sys.argv[1]).read_bytes()
@@ -171,7 +168,6 @@ def main():
     OUT.write_text(json.dumps(catalog, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
     print(f"wrote {OUT} ({OUT.stat().st_size} bytes): store4 {len(store4['offers'])} offers, "
           f"store9 {len(real_offers)} offers, {len(public)} public offers, {len(fast_offers)} fast-checkout offers")
-
 
 if __name__ == "__main__":
     main()

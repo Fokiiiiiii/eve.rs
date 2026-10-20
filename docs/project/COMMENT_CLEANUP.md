@@ -22,7 +22,7 @@
 | `dotnet/src/Eve.Host` (83 C# files) | 1,054 | 832 | 2026-10-19 |
 | `dotnet/src/Eve.Services.Core` (45 C# files) | 1,148 | 874 | 2026-10-19 |
 | `dotnet/src/Eve.Services.Space` (107 C# files) | 2,959 | 2,562 | 2026-10-19 |
-| `tools/dev` (19 Python files) | 106 | 97 | 2026-10-19 |
+| `tools/dev` (21 Python files) | 106 | 105 | 2026-10-20 |
 | `crates/eve-space` (128 Rust files) | 3649 | 3499 | 2026-10-19 |
 | `crates/eve-space` (doc-comment spacing pass, 128 Rust files) | 3505 | 3505 | 2026-10-19 |
 | `crates/eve-destiny` (4 Rust files) | 185 | 182 | 2026-10-19 |
@@ -49,4 +49,4 @@
 | `dotnet/src/Eve.Scheduler` (4 C# files; migration reviewed) | 93 | 85 | 2026-10-20 |
 | `dotnet/src/Eve.Data` (3 C# files) | 24 | 22 | 2026-10-20 |
 
-The stdlib-only `tools/dev/prune-comments.py` identifies Rust, C#, and Python comments, removes process notes, stale prose, and separators, compares code token streams before writing, collapses excess blank lines, keeps remaining Rust doc comments adjacent to their attributes and items, and skips fixture and generated-file paths. `tools/dev/test_prune_comments.py` covers raw and nested strings/comments, attributes, doc spacing, preprocessor directives, and Python string markers.
+The stdlib-only `tools/dev/prune-comments.py` identifies Rust, C#, and Python comments, removes process notes, stale prose, separators, and decorated section dividers, compares code token streams before writing, collapses excess blank lines, keeps remaining Rust doc comments adjacent to their attributes and items, and skips fixture and generated-file paths. `tools/dev/test_prune_comments.py` covers raw and nested strings/comments, attributes, doc spacing, preprocessor directives, and Python string markers.

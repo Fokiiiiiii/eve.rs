@@ -24,7 +24,6 @@ EVEJS = sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, "..", "..", "..
 PACK = os.path.join(EVEJS, "content-packs", "evejs-wormhole-sites-1.2.0.json")
 BAND = "wormhole"
 
-
 def containers_of(hints):
     groups = {}
     for entry in hints["containers"]:
@@ -34,7 +33,6 @@ def containers_of(hints):
         group["count"] += entry["count"]
         group["types"] += [name for name in names if name not in group["types"]]
     return list(groups.values())
-
 
 def gas_template_of(record):
     gas = record["resourceComposition"]["gasTypeIDs"]
@@ -56,7 +54,6 @@ def gas_template_of(record):
         "containers": [],
         "clouds": gas,
     }
-
 
 def ore_template_of(record):
     rocks = record["populationHints"]["miningRocks"]
@@ -87,7 +84,6 @@ def ore_template_of(record):
         ],
     }
 
-
 def resource_templates(path_gas, path_ore):
     with open(path_gas, encoding="utf-8") as handle:
         gas = json.load(handle)["payload"]["dungeon"]["templatesByID"].values()
@@ -97,10 +93,8 @@ def resource_templates(path_gas, path_ore):
         ore_template_of(record) for record in ore if record.get("siteFamily") == "ore" and record.get("sourceDungeonID") in WORMHOLE_ORE_IDS
     ]
 
-
 WORMHOLE_GAS_IDS = {3555, 3556, 3557, 3558, 3559, 3560, 3561, 3562, 3563}
 WORMHOLE_ORE_IDS = {3807, 3811, 3813, 3814, 3815, 3817, 3818, 3820, 3822, 3823, 5605}
-
 
 def template_of(record):
     hints = record["populationHints"]
@@ -128,7 +122,6 @@ def template_of(record):
         "containers": containers,
     }
 
-
 def main():
     with open(PACK, encoding="utf-8") as handle:
         pack = json.load(handle)
@@ -141,7 +134,6 @@ def main():
         json.dump({"templates": templates}, handle, indent=1, ensure_ascii=False)
         handle.write("\n")
     print(f"wrote {len(templates)} templates to {os.path.normpath(OUT)}")
-
 
 if __name__ == "__main__":
     main()

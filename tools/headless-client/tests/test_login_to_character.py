@@ -881,6 +881,20 @@ def training_client(name: str, recording: dict, recorded_run: str, run: str, ids
     assert attempt(client, "charUnboundMgr", "SelectCharacterID", int(made), None, False) == ("ok", None)
     return client, int(made)
 
+def test_global_assets_moniker_resolves_and_lists_the_active_ship():
+    run = uuid.uuid4().hex[:10]
+    race = TRAINING["races"][0]
+    client, character = training_client(f"walk-global-assets-{run}", race, RECORDED_TRAINING_RUN, run, {})
+    try:
+        node_id = m.plain(client.call("charMgr", "MachoResolveObject", (character, 10002)))
+        assert node_id == 0xFFAA
+        bound = client.call("charMgr", "MachoBindObject", (character, 10002), ("List", (), None))[0]
+        asset_ids = {int(row.fields()["itemID"]) for row in client.call_bound(bound, "List")}
+        assert ship_of(client) in asset_ids
+    finally:
+        client.close()
+
+
 def test_personal_calendar_event_notifies_an_online_invitee_after_commit():
     run = uuid.uuid4().hex[:8]
     creator_run, invitee_run = f"{run}a", f"{run}b"

@@ -5217,3 +5217,8 @@ The insurance RPCs accept positive integer ship IDs. Fractional or malformed val
 `CheckMyDockingAccessToStructures` refuses more than 500 raw structure IDs before invoking the access-list callback. Both this RPC and `GetMyDockableStructures` consume 10 units from the per-session expensive-RPC budget, returning `SessionRpcBudgetExceeded` when the session budget is exhausted. Regressions cover the batch refusal and repeated-query budget refusal.
 
 `structureDirectory.CheckMyDockingAccessToStructures` accepts up to 500 structure IDs. Larger lists return `StructureBulkLimitExceeded` before access-list snapshots are read. Normal structure-access results retain the existing per-list ACL evaluation and order. `StructureDirectoryServiceTests.Docking_access_refuses_more_than_500_structure_ids_before_the_callback` verifies no callback work on refusal.
+
+
+## Ansiblex jump RPC audit (2026-10-20)
+
+V24 menu and autopilot call `structureJumpBridgeMgr.CmdJumpThroughStructureStargate`. `StructureTravelRpcService` registers that method but the Host composition currently supplies only `GetJbStructureDestination` and `GetLinkedStructure` callbacks. With no travel callback, the jump call returns the named structure-travel refusal. The existing `SpaceSessions.BridgeJumpAsync` path covers ship-mounted Titan, Black Ops and Rorqual bridges and is not an Ansiblex route. Ansiblex traversal, anchoring/setup, and associated scene alignment visuals remain open; the release delta records them separately.

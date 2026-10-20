@@ -5227,3 +5227,8 @@ Corporate contract creation, bidding, acceptance, completion, deletion, and corp
 ## Corporation audit role revocation (2026-10-20)
 
 `corpMgr.AuditMember` now derives Director/Auditor access from the persisted member masks and titles on every request. Its session role attributes are not sufficient to expose corporation audit events or role history after a role change. `CorporationProtocolTests.Corp_mgr_audit_member_rechecks_persisted_auditor_role_after_login` creates an Auditor session, confirms access, removes the persisted role, then confirms that the same session is denied before audit-event reads.
+
+
+## Private corporation-member info role revocation (2026-10-20)
+
+`charMgr.GetPrivateInfo` still requires the session’s same-corporation Director or Personnel Manager role for the V24 call contract. The Host additionally checks current persisted membership and role before returning the target’s balance and security rating, so demotion during an active session removes access. `CharacterInfoTests.Private_member_info_requires_an_authorized_role_in_the_members_corporation` verifies access and refusal after the persisted-role callback is revoked.

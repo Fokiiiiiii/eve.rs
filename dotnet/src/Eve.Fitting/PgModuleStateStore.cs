@@ -107,7 +107,6 @@ public sealed class PgModuleStateStore
         await transaction.CommitAsync(cancellationToken);
     }
 
-
     public async Task SetShipConditionAsync(
         NpgsqlConnection connection,
         NpgsqlTransaction transaction,

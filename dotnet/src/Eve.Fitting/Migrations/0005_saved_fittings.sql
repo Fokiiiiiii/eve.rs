@@ -1,5 +1,3 @@
--- The fittings the characters, corporations and alliances save (EveJS savedFittings, _secondary/fitting/fittingStore.js).
--- owner_scope: 1 character, 2 corporation, 3 alliance. fit_data is an array of [typeID, flag, quantity] (the client's fitData).
 CREATE TABLE saved_fitting (
     fitting_id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     owner_scope smallint NOT NULL CHECK (owner_scope BETWEEN 1 AND 3),

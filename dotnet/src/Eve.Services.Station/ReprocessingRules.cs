@@ -1,10 +1,5 @@
 namespace Eve.Services.Station;
 
-/// <summary>
-/// The reprocessing rules: the station's efficiency, the character's skills, the standing tax, and what a stack yields. The numbers are
-/// the SDE's (station rows, skill mutators, materials, portion sizes); the wiki gives the rules (EVE University, "Refining": base yield
-/// 30%–50% by station equipment, skill bonuses per level, tax 5% at zero standing and 0% at standing 6.67 with the owner).
-/// </summary>
 public static class ReprocessingRules
 {
     /// <summary>The SDE's Reprocessing skill (its mutator is the percentage per level).</summary>
@@ -22,10 +17,8 @@ public static class ReprocessingRules
     /// <summary>The dogma attribute of an item that names the skill its yield depends on (<c>reprocessingSkillType</c>).</summary>
     public const int ReprocessingSkillTypeAttribute = 790;
 
-    /// <summary>The efficiency of an NPC station whose static data gives none (the wiki: 50% with the best equipment).</summary>
     public const double DefaultStationEfficiency = 0.5;
 
-    /// <summary>The standing at which the NPC station tax is zero (wiki: 5% at 0, 0% at 6.67 with the owner).</summary>
     public const double StandingTaxZeroPoint = 6.67;
 
     /// <summary>The materials of a type, for one portion (the SDE's <c>typeMaterials</c>).</summary>
@@ -38,7 +31,6 @@ public static class ReprocessingRules
     public sealed record Quote(long ItemId, int TypeId, long QuantityToProcess, long LeftOvers, long Portions, double Efficiency,
         IReadOnlyList<Recoverable> Recoverables, double TotalIskCost);
 
-    /// <summary>The tax a station takes: its base rate, reduced by the standing toward its owner, zero at the zero point.</summary>
     public static double StationTax(double baseTax, double standing)
     {
         if (standing <= 0) return baseTax;

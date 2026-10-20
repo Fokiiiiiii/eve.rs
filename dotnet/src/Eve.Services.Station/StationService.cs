@@ -4,11 +4,6 @@ using Eve.Universe;
 
 namespace Eve.Services.Station;
 
-/// <summary>
-/// What the client asks about the station its character is docked at (<c>stationSvc</c>, also reached as <c>station</c>):
-/// the station's record, which it keeps for the whole run, the ownership tuple its station window is built from, who else
-/// is docked here, and the solar system it is in.
-/// </summary>
 [Service("stationSvc", Aliases = ["station"])]
 public sealed partial class StationService(StationCatalog stations, PgCharacterStore characters, OnlineCharacters online, Func<long> nowUnixMs, Func<long, CancellationToken, ValueTask<IReadOnlyList<long>>>? sovereigntySystemsForAlliance = null, Eve.Services.Corporations.OfficeManagerService? officeManager = null, SeedObserverGuestLedgerCallback? seedObserverGuestLedger = null, CharacterSessions? characterSessions = null)
 {
@@ -66,7 +61,6 @@ public sealed partial class StationService(StationCatalog stations, PgCharacterS
             ? ObjectCaching.MethodResult(Record(station), nowUnixMs())
             : None;
 
-    /// <summary><c>GetStationsForOwner(ownerID)</c> returns owner stations as the list of compact station KeyVals used by the LP store.</summary>
     [Method("GetStationsForOwner")]
     public PyValue GetStationsForOwner(ServiceCall call)
     {
@@ -92,7 +86,6 @@ public sealed partial class StationService(StationCatalog stations, PgCharacterS
         return new PyList(rows.ToArray());
     }
 
-    /// <summary><c>(ownerID, stationID, operationID, stationTypeID)</c> of the session's station: the columns of the row the client builds.</summary>
     [Method("GetStationItemBits")]
     public PyValue GetStationItemBits(ServiceCall call) =>
         StationOf(call.Session) is { } s
@@ -178,7 +171,6 @@ public sealed partial class StationService(StationCatalog stations, PgCharacterS
         var systems = await sovereigntySystemsForAlliance(allianceId, call.Cancellation);
         return new PyList([.. systems.Select(systemId => (PyValue)new PyInt(systemId))]);
     }
-
 
     private Eve.Services.Corporations.OfficeManagerService RequireOfficeManager() =>
         officeManager ?? throw new InvalidOperationException(

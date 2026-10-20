@@ -25,7 +25,6 @@ public interface ICustomsOffices
 
     /// <summary>
     /// The pilot's stack goes from its ship's hold into the office hangar (the client's importExportUI.MoveFromInventory); the stack keeps
-    /// its owner. Returns the id the stack is in the office as, or 0 when nothing moved.
     /// </summary>
     ValueTask<long> MoveToOfficeAsync(ClientSession session, long officeId, long itemId, long quantity, CancellationToken cancellationToken);
 }

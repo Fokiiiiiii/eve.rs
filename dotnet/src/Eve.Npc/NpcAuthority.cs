@@ -27,11 +27,6 @@ public sealed record NpcLookup<T>(NpcMatch<T>? Match, string? Error, IReadOnlyLi
     public bool Found => Match is not null;
 }
 
-/// <summary>
-/// The NPCs the reference authored, as it reads them (<c>server/src/space/npc/npcData.js</c> of EVE.js, ADR 0009): the profiles, the loadouts and the spawn
-/// pools, with the pools it derives from them, found by id or by what a player types (an id, a name or an alias; the whole of it, else a part that only one
-/// row has). The generated catalogs of the reference (capital, drifter, abyssal, mining, empire-security NPCs) are not part of it yet.
-/// </summary>
 public sealed partial class NpcAuthority
 {
     /// <summary>Commander, officer and faction-grade rats never join the derived standard pools.</summary>
@@ -43,7 +38,6 @@ public sealed partial class NpcAuthority
 
     private sealed record StandardPool(string BasePoolId, string PoolId, string Name, string[] Aliases, bool IncludeAllBaseEntries, string[] AllowedProfilePrefixes);
 
-    // `STANDARD_SPAWN_POOL_SPECS`
     private static readonly StandardPool[] StandardPools =
     [
         new("blood", "blood_standard", "Blood Raider Standard Hostiles", ["blood standard", "blood anomaly", "blood raider standard"], true, ["parity_blood_raider_pulse_", "parity_blood_raider_beam_"]),
@@ -97,7 +91,6 @@ public sealed partial class NpcAuthority
     /// <summary>The pirate faction that holds a region (<c>guristas</c>, <c>angels</c>, <c>blood</c>, <c>sanshas</c>, <c>serpentis</c> or <c>rogue_drones</c>), or null for a region none holds.</summary>
     public string? PirateOfRegion(int regionId) => _pirateRegions.GetValueOrDefault(regionId);
 
-    /// <summary>Which region holds which pirate faction (what <c>tools/dev/extract-npc-authority.py</c> found).</summary>
     public NpcAuthority WithPirateRegions(IEnumerable<KeyValuePair<int, string>> regions)
     {
         foreach (var (region, faction) in regions)
@@ -111,10 +104,8 @@ public sealed partial class NpcAuthority
 
     public NpcLookup<NpcPool> ResolvePool(string query) => _pools.Resolve(query);
 
-    /// <summary><c>normalizeQuery</c>: lower case, every run of what is not a letter or digit one space (and no trimming after that).</summary>
     internal static string NormalizeQuery(string? value) => NonAlphanumeric().Replace((value ?? "").Trim().ToLowerInvariant(), " ");
 
-    /// <summary><c>buildDerivedSpawnPoolRows</c>: the standard anomaly pools, each a base pool without its commanders and officers (or only what has the right prefix).</summary>
     private static IEnumerable<NpcPool> DerivedPools(List<NpcPool> authored)
     {
         var byId = authored.GroupBy(p => p.Id.Trim()).ToDictionary(g => g.Key, g => g.Last());
@@ -169,7 +160,6 @@ public sealed partial class NpcAuthority
 
         public T? ById(string id) => _byId.GetValueOrDefault(id.Trim());
 
-        /// <summary><c>resolveByQuery</c>.</summary>
         public NpcLookup<T> Resolve(string query)
         {
             var normalized = NormalizeQuery(query);
@@ -191,8 +181,6 @@ public sealed partial class NpcAuthority
         }
     }
 
-    // ── loading ──────────────────────────────────────────────────────────────
-
     private static readonly Lazy<NpcAuthority> Embedded = new(() =>
     {
         using var stream = typeof(NpcAuthority).Assembly.GetManifestResourceStream("npc_authority.json")
@@ -200,7 +188,6 @@ public sealed partial class NpcAuthority
         return FromJson(stream);
     });
 
-    /// <summary>What the reference authored, as the assembly carries it (<c>tools/dev/extract-npc-authority.py</c> made it).</summary>
     public static NpcAuthority Load() => Embedded.Value;
 
     public static NpcAuthority FromJson(Stream json)

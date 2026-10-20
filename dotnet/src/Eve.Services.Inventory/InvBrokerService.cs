@@ -131,7 +131,7 @@ public sealed partial class InvBrokerService(
         ControlledStructureInventory view, int? flag, CancellationToken cancellationToken)
     {
         await statics.EnsureTypesAsync([view.Structure.TypeId, .. view.Contents.Select(item => item.TypeId)], cancellationToken);
-        // EveJS owner bays without an SDE capacity use the existing unbounded inventory wire sentinel.
+
         var capacityAttribute = statics.AttributeId("capacity");
         var capacity = capacityAttribute is { } attribute && statics.Type(view.Structure.TypeId) is { } hull
             && hull.Attributes.TryGetValue(attribute, out var value) ? value : HangarCapacity;
@@ -145,8 +145,6 @@ public sealed partial class InvBrokerService(
         var used = await ships.VolumeOfAsync(view.Contents.Where(item => flag is null || item.Flag == flag), cancellationToken);
         return KeyVal(capacity, used);
     }
-
-    // ── the rows ─────────────────────────────────────────────────────────────
 
     private async Task<IReadOnlyList<ItemRow>> RowsAsync(IEnumerable<Item> list, CancellationToken cancellationToken)
     {
@@ -266,7 +264,14 @@ public sealed partial class InvBrokerService(
 
         if (await items.GetAsync(context.ItemId, cancellationToken) is not { } container)
             return [];
+        if (container.CustomInfo?.StartsWith("analysis_beacon_loot:", StringComparison.Ordinal) == true
+            && (space is null || await space.OpenAsync(session, container.Id, cancellationToken) is null))
+            return [];
         var contents = await items.InContainerAsync(context.ItemId, cancellationToken);
+        if (container.CustomInfo == "analysis_beacon_wreck")
+            return await RowsAsync(contents, cancellationToken);
+        if (container.CustomInfo?.StartsWith("analysis_beacon_loot:", StringComparison.Ordinal) == true)
+            return await RowsAsync(contents.Where(item => item.OwnerId == character), cancellationToken);
         if (container.OwnerId == character)
             return await RowsAsync(contents.Where(item => item.OwnerId == character), cancellationToken);
         if (await CanAccessCorporationItemAsync(session, container, CorporationHangarOperation.Query, cancellationToken))
@@ -314,8 +319,6 @@ public sealed partial class InvBrokerService(
         }
         return await items.GetAsync(context.ItemId, cancellationToken) is { } item ? (await RowsAsync([item], cancellationToken)).FirstOrDefault() : null;
     }
-
-    // ── handing out inventories ─────────────────────────────────────────────
 
     /// <summary>The descriptor the client reads item rows through.</summary>
     [Method("GetItemDescriptor")]
@@ -462,8 +465,6 @@ public sealed partial class InvBrokerService(
         return await space.OpenAsync(call.Session, id, call.Cancellation) is { } container ? Bind(new Context(Kind.Container, container.Id, 0, CharacterShips.ContainerFlag), call.Session) : None;
     }
 
-    // ── what the client asks a bound inventory ───────────────────────────────
-
     private static int? FlagOf(ServiceCall call) => call.Kwarg("flag") is { } named ? Flag(named) : call.Args.Count > 0 ? Flag(call.Args[0]) : null;
 
     private static int? Flag(PyValue value) => IdOf(value) is { } flag and not 0 ? (int)flag : null;
@@ -504,7 +505,6 @@ public sealed partial class InvBrokerService(
         }
         return await CompleteInventoryRpcAsync(call, result);
     }
-
 
     /// <summary><c>ListByFlags(flags)</c>: the rows in any of the flags, as a list (empty when there are none).</summary>
     [Method("ListByFlags")]
@@ -550,7 +550,6 @@ public sealed partial class InvBrokerService(
         return await CompleteInventoryRpcAsync(call, result);
     }
 
-
     [Method("GetDamageForCrystals")]
     public async ValueTask<PyValue> GetDamageForCrystals(ServiceCall call)
     {
@@ -586,7 +585,6 @@ public sealed partial class InvBrokerService(
         return new PyDict(damageableIds.Select(itemId => new KeyValuePair<PyValue, PyValue>(
             new PyLong(itemId), new PyReal(Math.Clamp(damageByItem.GetValueOrDefault(itemId), 0d, 1d)))).ToArray());
     }
-
 
     [Method("ValidateItemCanBeOpened")]
     public async ValueTask<PyValue> ValidateItemCanBeOpened(ServiceCall call)
@@ -673,8 +671,6 @@ public sealed partial class InvBrokerService(
         }
         return InventoryWire.Rowset(await ContentsAsync(context, call.Session, call.Cancellation));
     }
-
-    // ── room ─────────────────────────────────────────────────────────────────
 
     /// <summary>How the client is told the room of a bay: <c>util.KeyVal(capacity, used)</c>.</summary>
     private static PyValue KeyVal(double capacity, double used) => new PyObject(
@@ -972,7 +968,6 @@ public sealed partial class InvBrokerService(
         return KeyVal(flag == CharacterShips.CargoFlag ? BareCargoCapacity : HangarCapacity, used);
     }
 
-
     /// <summary>Remaining turret hardpoints, as queried from the inventory service by the fitting client.</summary>
     [Method("GetAvailableTurretSlots")]
     public async ValueTask<PyValue> GetAvailableTurretSlots(ServiceCall call)
@@ -1137,8 +1132,6 @@ public sealed partial class InvBrokerService(
         }
         return changes.Count > 0 ? PyBool.True : None;
     }
-
-    // ── moving items ─────────────────────────────────────────────────────────
 
     /// <summary>
     /// <c>Add(itemID, sourceLocationID, qty=None, flag=None)</c>: moves an item into this inventory: a module into a slot of the ship (or the first
@@ -1356,7 +1349,6 @@ private async ValueTask<bool> IsDockedShipContextAsync(ClientSession session, lo
     // ── binding by the inventory's own name ──────────────────────────────────
 
     /// <summary>Processes station-hangar repackaging requests.</summary>
-
     internal async ValueTask<PyValue> RepackageItems(ServiceCall call)
     {
         if (call.Session.CharacterId is not { } characterId
@@ -1440,8 +1432,6 @@ private async ValueTask<bool> IsDockedShipContextAsync(ClientSession session, lo
         }
         return None;
     }
-
-
 
     /// <summary>The proxy node serves every inventory.</summary>
     [Method("MachoResolveObject")]

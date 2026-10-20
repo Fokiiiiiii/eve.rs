@@ -5,20 +5,12 @@ using Eve.Wallet;
 
 namespace Eve.Services.Wallet;
 
-/// <summary>
-/// <c>LPStoreMgr</c>: the loyalty store of a corporation. <c>GetAvailableOffersFromCorp(corpID)</c> answers the offers the store holds
-/// (ESI's offers, through <see cref="LpStoreOfferCache"/>) as the reference's KeyVal rows (eve-logic lpStoreSvc.py:464-530; EveJS
-/// lpStoreOfferCatalog.js:133-147). <c>TakeOfferForCharacter</c> (the character pays) and <c>TakeOfferForCorporation</c> (a Director
-/// has the corporation pay) settle through <see cref="LpStorePurchases"/>; a refusal is a <c>CustomNotify</c> with the reference's
-/// text, so the client never reads a silent False as a success (eve-logic lpStoreSvc.py:249-266). The take is served only from a
-/// station: EveJS also serves Upwell structures that have the loyalty store service, which is not modelled (DEVIATIONS AG-3).
-/// </summary>
 public sealed class LpStoreMgrService(
     LpStoreOfferCache offers,
     LpStorePurchases purchases,
     Func<long, long, CancellationToken, ValueTask<bool>> isDirector) : IService
 {
-    /// <summary>The reference's messages for each refusal (EveJS lpStoreMgrService.js ERROR_MESSAGES).</summary>
+
     private static readonly Dictionary<string, string> Messages = new()
     {
         ["ACCESS_DENIED"] = "You do not have permission to spend your corporation's funds.",
@@ -78,8 +70,8 @@ public sealed class LpStoreMgrService(
         var corporationId = call.Session.GetInt("corporationID") is > 0 and var corporation
             ? corporation
             : Math.Max(0, call.Session.GetInt("corpid") ?? 0);
-        // The reference's rule (EveJS lpStoreMgrService.js:398-411, the client's CanCharacterUseCorpWallets): a Director of the
-        // corporation may spend its funds. The Director test reads the member's roles, not the session's copy.
+
+        // Authorize from the member's stored roles, not the session copy.
         if (corporationId <= 0 || characterId <= 0 || !await isDirector(characterId, corporationId, call.Cancellation))
             throw Refusal("ACCESS_DENIED");
         var accountKey = call.Session.GetInt("corpAccountKey") ?? call.Session.GetInt("corpaccountkey") ?? DefaultAccountKey;
@@ -111,7 +103,6 @@ public sealed class LpStoreMgrService(
 
     private static PyValue? Arg(ServiceCall call, int index) => index < call.Args.Count ? call.Args[index] : null;
 
-    /// <summary>The purchase quantity: the client's <c>numberOfOffers</c>, one when it is not sent (EveJS's default).</summary>
     private static long Quantity(ServiceCall call) => call.Args.Count > 2 ? Positive(call.Args[2]) : 1;
 
     /// <summary>The station the client is docked in; zero while in space or in a structure (not served, see the class summary).</summary>

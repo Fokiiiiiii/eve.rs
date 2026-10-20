@@ -42,7 +42,6 @@ public sealed record Item(long Id, int TypeId, long OwnerId, long LocationId, in
     public RunSpaceItemProvenance? RunSpaceProvenance { get; init; }
 }
 
-
 public sealed record ItemMergeResult(Item SourceBefore, Item DestinationBefore, Item DestinationAfter, Item? SourceAfter);
 
 public sealed record NewItem(int TypeId, long OwnerId, long LocationId, int Flag, long Quantity = 1,
@@ -51,7 +50,6 @@ public sealed record NewItem(int TypeId, long OwnerId, long LocationId, int Flag
 {
     public RunSpaceItemProvenance? RunSpaceProvenance { get; init; }
 }
-
 
 /// <summary>Identifies the exact Abyssal run and recipient for a space item.</summary>
 public sealed record RunSpaceItemScope(
@@ -76,7 +74,6 @@ public sealed record RunSpaceItemProvenance(
     long SourceCharacterId,
     long SourceShipId,
     long SourceItemId);
-
 
 public enum ShipContractInvalidationReason
 {
@@ -283,7 +280,6 @@ public sealed class PgItemStore
             await invalidator.InvalidateAsync(connection, transaction, id, ShipContractInvalidationReason.CorporationHangar, cancellationToken);
     }
 
-    /// <summary>Puts an item somewhere else and gives it another owner (what is taken out of a can or a wreck is the taker's), inside the caller's transaction.</summary>
     public async Task MoveToOwnerAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long id, long ownerId, long locationId, int flag, CancellationToken cancellationToken = default)
     {
         var item = await LockAndGetAsync(connection, transaction, id, cancellationToken);
@@ -343,7 +339,6 @@ public sealed class PgItemStore
         };
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
-
 
     public async Task<bool> SetCustomNameAsync(long id, string? customName, CancellationToken cancellationToken = default) =>
         await SetCustomNameCoreAsync(id, customName, null, cancellationToken) is not null;
@@ -562,7 +557,6 @@ private static void EnsureUnlocked(Item? item)
         return moved;
     }
 
-
     public async Task<ItemMergeResult?> MergeAsync(
         long sourceId, long destinationId, long quantity, long ownerId, long sourceLocationId, long destinationLocationId,
         CancellationToken cancellationToken = default)
@@ -611,7 +605,6 @@ private static void EnsureUnlocked(Item? item)
         return new ItemMergeResult(sourceItem, destinationItem, destinationItem with { Quantity = destinationItem.Quantity + moved }, sourceAfter);
     }
 
-
     public async Task<Item?> RepackageAsync(
         NpgsqlConnection connection,
         NpgsqlTransaction transaction,
@@ -652,7 +645,6 @@ private static void EnsureUnlocked(Item? item)
         return await reader.ReadAsync(cancellationToken) ? Read(reader) : null;
     }
 
-
     /// <summary>Finds and locks only items carrying this exact run/room/recipient scope.</summary>
     public async Task<IReadOnlyList<Item>> FindRunSpaceItemsAsync(
         NpgsqlConnection connection,
@@ -686,7 +678,6 @@ private static void EnsureUnlocked(Item? item)
         return results.AsReadOnly();
     }
 
-    /// <summary>The items an owner has at a location (a station), oldest first.</summary>
     public async Task<IReadOnlyList<Item>> InLocationAsync(long locationId, long ownerId, CancellationToken cancellationToken = default)
     {
         await using var command = _source.CreateCommand($"SELECT {Columns} FROM {_schema}.items WHERE location_id = $1 AND owner_id = $2 ORDER BY id");
@@ -731,7 +722,6 @@ private static void EnsureUnlocked(Item? item)
         return items;
     }
 
-    /// <summary>Locks the stacks an owner holds of a type, for a consumption in the caller's transaction (ordered by id, so a second taker waits and then sees them gone).</summary>
     public async Task<IReadOnlyList<Item>> LockOwnedOfTypeAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long ownerId, int typeId, CancellationToken cancellationToken = default)
     {
         await using var command = new NpgsqlCommand(

@@ -1,6 +1,3 @@
--- NPC bounties that are earned and not yet paid. A kill adds its bounty to the killer's bucket for the solar system it was in; the bucket is paid out in
--- one credit when its time comes (the first kill of a character starts a window, later kills before it ends join it). A bucket is deleted in the same
--- transaction that credits the wallet, so a crash pays it once.
 CREATE TABLE pending_bounties (
     -- character:solar system:payout time (a FILETIME)
     key               text         PRIMARY KEY,

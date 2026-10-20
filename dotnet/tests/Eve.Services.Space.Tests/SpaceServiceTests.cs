@@ -557,6 +557,69 @@ public class SpaceServiceTests
     }
 
     [PgFact]
+    public async Task Boarding_a_ship_is_refused_until_its_published_skill_requirements_are_trained()
+    {
+        var (rig, character, session) = await DockedAsync();
+        await using var _ = rig;
+        const int tenguTypeId = 29984;
+        await rig.Statics.EnsureTypesAsync([tenguTypeId], CancellationToken.None);
+        var shipType = rig.Statics.Type(tenguTypeId)!;
+        var required = Eve.Fitting.FittingRules.RequiredSkills(shipType).ToArray();
+        Assert.NotEmpty(required);
+
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await rig.Skills.ClearCharacterAsync(connection, transaction, character.CharacterId);
+            await transaction.CommitAsync();
+        }
+
+        var ship = (await rig.Ships.GrantAsync(character.CharacterId, tenguTypeId, 1, singleton: true))!.Single().After;
+        rig.Space.LifecycleBlockers = async (action, requestSession, shipId, token) =>
+        {
+            if (action != Eve.Services.Space.ShipLifecycleAction.Board)
+                return Array.Empty<string>();
+            if (shipId is not { } targetShipId)
+                return new[] { "missing_ship_type" };
+            var target = await rig.Items.GetAsync(targetShipId, token);
+            if (target is null)
+                return new[] { "missing_ship_type" };
+            await rig.Statics.EnsureTypesAsync([target.TypeId], token);
+            var type = rig.Statics.Type(target.TypeId);
+            if (type is null)
+                return new[] { "missing_ship_type" };
+            var levels = (await rig.Skills.ForCharacterAsync(requestSession.CharacterId!.Value, token))
+                .ToDictionary(skill => skill.TypeId, skill => (int)skill.Level);
+            return Eve.Fitting.FittingRules.HasRequiredSkills(type, skill => levels.GetValueOrDefault(skill))
+                ? Array.Empty<string>()
+                : new[] { "missing_ship_skill" };
+        };
+
+        var oid = await rig.BindShipAsync(session);
+        var denied = Assert.IsType<PyList>(await rig.ShipCallAsync(
+            session, "Board", oid, new PyLong(ship.Id), new PyLong(character.ShipId)));
+        Assert.Equal("missing_ship_skill", Assert.IsType<PyStr>(Assert.Single(denied.Items)).Value);
+        Assert.Equal(character.ShipId, session.GetInt("shipid"));
+        Assert.Equal(character.ShipId, (await rig.Characters.GetAsync(character.CharacterId))!.ShipId);
+        Assert.Equal((Rig.Station, Eve.Inventory.ItemFlags.Hangar),
+            ((await rig.Items.GetAsync(ship.Id))!.LocationId, (await rig.Items.GetAsync(ship.Id))!.Flag));
+
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await rig.Skills.GrantAsync(connection, transaction, character.CharacterId,
+                required.Select(skill => new Eve.Skills.CharacterSkill(skill.Skill, skill.Level, 0)));
+            await transaction.CommitAsync();
+        }
+
+        var boarded = Assert.IsType<PyTuple>(await rig.ShipCallAsync(
+            session, "Board", oid, new PyLong(ship.Id), new PyLong(character.ShipId)));
+        Assert.Equal(4, boarded.Items.Count);
+        Assert.Equal(ship.Id, session.GetInt("shipid"));
+        Assert.Equal(ship.Id, (await rig.Characters.GetAsync(character.CharacterId))!.ShipId);
+    }
+
+    [PgFact]
     public async Task Boarding_with_a_stale_current_ship_id_is_refused_without_changing_session_or_custody()
     {
         var (rig, character, session) = await DockedAsync();
@@ -3698,6 +3761,17 @@ public class SpaceServiceTests
             sessionForCharacter: id => id == leaderId ? leaderSession : id == memberId ? memberSession : null);
         try
         {
+            var tooManyMembers = Enumerable.Range(1, Eve.Services.Space.FleetStore.MaxMembers + 1)
+                .Select(id => (PyValue)new PyLong(leaderId + 100 + id)).ToArray();
+            await Assert.ThrowsAsync<MachoWrappedException>(() => FleetObjectCallAsync(
+                fleet, fleetId, leaderSession, "MassInvite",
+                [new PyList(tooManyMembers), new PyLong(firstWing), new PyLong(firstSquad),
+                 new PyInt(Eve.Services.Space.FleetStore.Member)]));
+            await Assert.ThrowsAsync<MachoWrappedException>(() => FleetObjectCallAsync(
+                fleet, fleetId, leaderSession, "MassMoveMembers",
+                [new PyList(tooManyMembers), new PyLong(firstWing), new PyLong(firstSquad),
+                 new PyInt(Eve.Services.Space.FleetStore.Member)]));
+
             var inviteResult = await FleetObjectCallAsync(fleet, fleetId, leaderSession, "MassInvite",
                 [new PyList([new PyLong(memberId), new PyLong(leaderId)]),
                  new PyLong(firstWing), new PyLong(firstSquad), new PyInt(Eve.Services.Space.FleetStore.Member)]);

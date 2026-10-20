@@ -1,6 +1,6 @@
 # Abyssal Deadspace Reference Contract
 
-**Status: PARTLY — protocol79 attempt12 passed its recorded headless combat/Origin and cleanup gates, while other fits/tiers, all-four acceptance, full JS/RS parity, and GUI acceptance remain open (2026-10-18).** This document records source contracts, verified component checks, executed headless captures, intentional differences, and unresolved acceptance gates. It does not claim feature completion. GUI/native-client launch remains prohibited; all reported execution is headless.
+**Status: PARTLY — protocol79 attempt12 passed its recorded headless combat/Origin and cleanup gates; focused verification on 2026-10-20 also passed the 60-second entry/room-transfer protection, NPC boundary damage, NPC weather recomputation, and Abyssal capsule-death checks. Other fits/tiers, all-four acceptance, full JS/RS parity, and graphical-client acceptance remain open.** This document records source contracts, verified component checks, executed headless captures, intentional differences, and unresolved acceptance gates. GUI/native-client launch remains prohibited; all reported execution is headless.
 
 ## Source pins and confidence
 

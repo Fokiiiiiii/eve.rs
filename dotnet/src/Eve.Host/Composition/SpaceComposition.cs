@@ -296,13 +296,24 @@ internal sealed partial class CharacterServicesComposition
             spaceSessions.SecurityStatusOf = securityStatusOf;   // the ship in space shows it
             spaceSessions.CrimewatchStateOf = crimewatchRuntime.StateOfAsync;
             spaceSessions.CriminalEnteredSystem = crimewatchRuntime.RespondToCriminalEntryAsync;
-            spaceSessions.LifecycleBlockers = async (action, session, _, token) =>
+            spaceSessions.LifecycleBlockers = async (action, session, shipId, token) =>
             {
                 if (session.CharacterId is not { } characterId || characterId <= 0)
                     return Array.Empty<string>();
+                var blockers = new List<string>();
+                if (action == Eve.Services.Space.ShipLifecycleAction.Board && shipId is { } boardShipId &&
+                    await items.GetAsync(boardShipId, token) is { } ship)
+                {
+                    await dogma.EnsureTypesAsync([ship.TypeId], token);
+                    if (dogma.Type(ship.TypeId) is { } shipType)
+                    {
+                        var trained = (await skills.ForCharacterAsync(characterId, token)).ToDictionary(skill => skill.TypeId, skill => (int)skill.Level);
+                        if (!Eve.Fitting.FittingRules.HasRequiredSkills(shipType, skillTypeId => trained.GetValueOrDefault(skillTypeId)))
+                            blockers.Add("missing_ship_skill");
+                    }
+                }
                 var state = await crimewatchRuntime.StateOfAsync(characterId, token);
                 var currentTime = now();
-                var blockers = new List<string>();
                 if (state.HasWeaponsTimer(currentTime))
                     blockers.Add("weapon_timer");
                 if (action == Eve.Services.Space.ShipLifecycleAction.SafeLogoff &&

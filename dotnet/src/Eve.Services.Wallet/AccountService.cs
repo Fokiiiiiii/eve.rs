@@ -12,7 +12,7 @@ public sealed partial class AccountService(PgWalletStore wallets, Eve.Corporatio
     /// <summary>Lists wallet divisions the persisted corporation membership permits the character to read.</summary>
     /// <summary>Returns the caller's recent or month-filtered wallet journal transactions.</summary>
     // V24's accountingEntryTypes.fsdbinary is not part of the matching 3396210 SDE export.
-    // These metadata tuples follow the EveJS account service mapping for that client resource.
+
     private static readonly (int Id, string Name, int? NameMessageId, int? JournalMessageId)[] EntryTypeMetadata =
     [
         (1, "PlayerTrading", 59793, 234499),
@@ -89,7 +89,7 @@ public sealed partial class AccountService(PgWalletStore wallets, Eve.Corporatio
         var month = Integral(call.Arg(2));
         var filterByMonth = year > 0 && month is >= 1 and <= 12;
         var recentAfter = DateTimeOffset.UtcNow.AddDays(-30).ToUnixTimeMilliseconds();
-        var limit = isCorpWallet ? 1000 : 100; // EveJS retains the latest 100 character wallet journal entries.
+        var limit = isCorpWallet ? 1000 : 100;
         var entries = await walletTransactions.JournalForAccountAsync(ownerId, accountKey, limit: limit,
             cancellationToken: call.Cancellation);
         var rows = entries.Where(entry => filterByMonth
@@ -184,7 +184,6 @@ public sealed partial class AccountService(PgWalletStore wallets, Eve.Corporatio
             ? new PyReal((double)balance.Isk)
             : PyNone.Instance;
     }
-
 
     /// <summary>Transfer ISK from the active character wallet to a character or corporation.</summary>
     [Method("GiveCash")]

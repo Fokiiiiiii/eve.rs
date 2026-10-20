@@ -10,7 +10,6 @@ namespace Eve.Events;
 /// into the caller's transaction, so the event exists exactly when the change it announces does. The bus's own pump loop (started by <see cref="StartAsync"/>) delivers each event, in order, to every subscriber whose topics match; each subscriber has a cursor, and a handler's writes are committed together with its cursor, so a
 /// PostgreSQL-only handler sees each event exactly once and any other handler at least once. A failing handler is retried with a back-off and, after its attempts, the event
 /// is set aside as a dead letter and the subscriber goes on. Features subscribe instead of calling each other, and publish instead of keeping their own event lists.
-/// See <c>docs/design/FOUNDATIONS.md</c>.
 /// </summary>
 /// <remarks>
 /// Visibility: row ids are handed out in the order publishers ask for them but become visible in the order they commit, so a cursor over ids alone could skip a row that commits
@@ -55,8 +54,6 @@ public sealed class EventBus
     /// <summary>The advisory lock of this bus: publishers share it until they commit, a pump takes it exclusively to find the horizon.</summary>
     private string LockName => "eve.events." + _schema;
     private long Now => _scheduler.Now;
-
-    // ---- subscribing -------------------------------------------------------------------------------------------------------------------------------
 
     /// <summary>
     /// Subscribes <paramref name="handler"/> under a name that never changes (the name is the cursor's identity). A topic is an exact name (<c>npc.killed</c>), a prefix ending in a
@@ -164,8 +161,6 @@ public sealed class EventBus
         }
     }
 
-    // ---- publishing --------------------------------------------------------------------------------------------------------------------------------
-
     /// <summary>Publishes in its own transaction. Returns the event's id.</summary>
     public async Task<long> PublishAsync(string topic, object? payload, string? key = null, CancellationToken cancellationToken = default)
     {
@@ -218,8 +213,6 @@ public sealed class EventBus
             Q("INSERT INTO {schema}.outbox (topic, key, payload, occurred_ms) VALUES ($1, $2, $3::text::jsonb, $4) RETURNING id"), cancellationToken, topic, key, json, Now))!;
         return id;
     }
-
-    // ---- delivering --------------------------------------------------------------------------------------------------------------------------------
 
     /// <summary>What one pump did: how many events it delivered, and when to look again if some subscriber is waiting out a back-off.</summary>
     public sealed record PumpResult(int Delivered, long? RetryAtMs);
@@ -403,8 +396,6 @@ public sealed class EventBus
         await transaction.CommitAsync(CancellationToken.None);
         return retryAt;
     }
-
-    // ---- housekeeping and looking ----------------------------------------------------------------------------------------------------------------------
 
     /// <summary>
     /// Deletes the events every subscriber has read and that are older than the retention, and the events older than the hard retention whoever has read them. Returns how many.

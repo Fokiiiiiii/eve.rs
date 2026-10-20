@@ -427,6 +427,14 @@ internal sealed class LocalChatGateway
     private static long CurrentSystem(ClientSession session) => session.GetInt("solarsystemid2") ?? session.GetInt("solarsystemid") ?? 0;
     private static bool IsDelayed(long systemId) => systemId is >= 31_000_000 and <= 31_999_999;
 
+      internal static string LocalChannelName(long systemId) =>
+          $"{(IsDelayed(systemId) ? "wormhole" : "local")}_{systemId}";
+
+    internal static bool IsDelayedLocalChannel(string channelName) =>
+        channelName.StartsWith("wormhole_", StringComparison.Ordinal)
+        && long.TryParse(channelName["wormhole_".Length..], out var systemId)
+        && IsDelayed(systemId);
+
     private static string ReadString(ReadOnlyMemory<byte> payload, int number)
     {
         var field = ProtoReader.Fields(payload).FirstOrDefault(f => f.Number == number && f.WireType == 2);

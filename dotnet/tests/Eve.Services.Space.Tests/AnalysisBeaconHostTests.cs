@@ -10,19 +10,17 @@ using Eve.Space;
 namespace Eve.Services.Space.Tests;
 
 /// <summary>
-/// The CONCORD Rogue Analysis Beacon in the space of the host (D-L1 and D-S1): a pilot drops it from the hold, it is active 20 seconds later and wakes its first wave of
-/// Rogue Drones, a ship links it for four minutes (the link list of the type), its scan runs for 10 minutes (16 for the Carrier) and not while a drone lives, a completed
-/// scan puts its items in the hold of the pilot's ship once, and it leaves when its hour is up. The simulation is the fake one; the rest is the host's own composition.
+/// The CONCORD Rogue Analysis Beacon in the space of the host (D-L1 and D-S1): a pilot drops it from the hold, links it for four minutes and scans for 10 minutes (16 for the Carrier). Its four mutaplasmid rewards enter the beacon hold, are restricted to the linking pilot for 120 seconds, then move intact to a public wreck. The simulation is the fake one; the rest is the host's own composition.
 /// </summary>
 public sealed class AnalysisBeaconHostTests
 {
     private const int StandardCrab = 60244, CarrierCrab = 92183, Cockroach = 11019, Anchoring3 = 11584;
     private const long NullSecSystem = 30000021, JitaSystem = 30000142;
     private const long TwentySeconds = 20_000, FourMinutes = 240_000, TenMinutes = 600_000, OneHour = 3_600_000, Step = 10_000;
-    private const int RewardAnalysisData = 60459, RewardHeavyFirepower = 60464, RewardHeavyProjection = 60466;
+    private const int RewardAnalysisData = 60459, RewardHeavyFirepower = 60464, RewardHeavyProjection = 60466, RewardHeavyNavigation = 60463, RewardHeavyDurability = 60465;
 
     /// <summary>A pilot in null-security space, flying a Cockroach, with a beacon of <paramref name="typeId"/> in its hold.</summary>
-    private static async Task<(ClientSession Session, long ShipId, long Beacon)> PilotWithBeaconAsync(Rig rig, int typeId = StandardCrab, bool skilled = true, string name = "Space Tester", int account = 1)
+    private static async Task<(ClientSession Session, long ShipId, long Beacon)> PilotWithBeaconAsync(Rig rig, int typeId = StandardCrab, bool skilled = true, string name = "Space Tester", int account = 1, long sessionId = 1)
     {
         var character = await rig.NewCharacterAsync(name, account);
         if (skilled)
@@ -35,11 +33,19 @@ public sealed class AnalysisBeaconHostTests
         var granted = (await rig.Ships.GrantAsync(character.CharacterId, typeId, 1, singleton: true))!.Single().After;
         var moved = await rig.Ships.MoveAsync(character.CharacterId, granted.Id, Rig.Station, character.ShipId, CharacterShips.CargoFlag, 1);
         Assert.True(moved is ShipChanged, moved.ToString());
-        var session = await rig.SessionAsync(character, 1);
+        // the pilot lives in the null-security system from the start, so the session and the pilot's space record agree on it
+        var place = rig.Systems.Get((int)NullSecSystem) ?? throw new InvalidOperationException($"the static data has no solar system {NullSecSystem}");
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await rig.Characters.SetLocationAsync(connection, transaction, character.CharacterId, (int)NullSecSystem, place.ConstellationId, place.RegionId);
+            await transaction.CommitAsync();
+        }
+        var session = await rig.SessionAsync(character, sessionId);
         var oid = await rig.BindShipAsync(session);
         await rig.ShipCallAsync(session, "Undock", oid, new PyLong(session.GetInt("shipid")!.Value), PyBool.False);
+        session.Set("solarsystemid", new PyInt(NullSecSystem));
         await rig.BindBeyonceAsync(session);
-        session.Set("solarsystemid2", new PyInt(NullSecSystem));
         return (session, character.ShipId, granted.Id);
     }
 
@@ -108,6 +114,9 @@ public sealed class AnalysisBeaconHostTests
     /// <summary>The quantity of a type in a ship's hold (the pilot's items in the ship).</summary>
     private static async Task<long> AddedToCargoAsync(Rig rig, ClientSession session, long shipId, int typeId) =>
         (await rig.Items.InLocationAsync(shipId, session.CharacterId!.Value)).Where(item => item.TypeId == typeId && item.Flag == CharacterShips.CargoFlag).Sum(item => item.Quantity);
+
+    private static async Task<long> InContainerAsync(Rig rig, long containerId, int typeId) =>
+        (await rig.Items.InContainerAsync(containerId)).Where(item => item.TypeId == typeId).Sum(item => item.Quantity);
 
     [PgFact]
     public async Task A_standard_crab_dropped_from_the_hold_activates_after_twenty_seconds_and_waits_for_linking_before_its_first_wave()
@@ -297,7 +306,7 @@ public sealed class AnalysisBeaconHostTests
     {
         await using var rig = await Rig.CreateAsync();
         await rig.UseBusAsync();
-        await DirectorAsync(rig);
+        var director = await DirectorAsync(rig);
         var (session, shipId, beacon) = await PilotWithBeaconAsync(rig);
         await rig.Containers.LaunchFromShipAsync(session, beacon, CancellationToken.None);
         rig.Sim.Heard.Clear();
@@ -329,13 +338,72 @@ public sealed class AnalysisBeaconHostTests
         await AdvanceAsync(rig, 5 * 60_000 - 10_000);
         Assert.Equal(0, await AddedToCargoAsync(rig, session, shipId, RewardAnalysisData));
         await AdvanceAsync(rig, 10_000);
-        Assert.Equal(1441, await AddedToCargoAsync(rig, session, shipId, RewardAnalysisData));
-        Assert.Equal(1, await AddedToCargoAsync(rig, session, shipId, RewardHeavyFirepower));
-        Assert.Equal(1, await AddedToCargoAsync(rig, session, shipId, RewardHeavyProjection));
+        Assert.Equal(1441, await InContainerAsync(rig, beacon, RewardAnalysisData));
+        Assert.Equal(1, await InContainerAsync(rig, beacon, RewardHeavyFirepower));
+        Assert.Equal(1, await InContainerAsync(rig, beacon, RewardHeavyProjection));
+        Assert.Equal(1, await InContainerAsync(rig, beacon, RewardHeavyNavigation));
+        Assert.Equal(1, await InContainerAsync(rig, beacon, RewardHeavyDurability));
+        Assert.Empty(rig.Sim.Heard.OfType<SimPlaceWreck>());
 
-        // a finished scan pays once: a later tick does not grant it again
-        await AdvanceAsync(rig, TenMinutes);
-        Assert.Equal(1441, await AddedToCargoAsync(rig, session, shipId, RewardAnalysisData));
+        // The linking pilot can open the cargo during its exclusive window; at 120 seconds it becomes a wreck.
+        var linkingPilot = session.CharacterId!.Value;
+        session.CharacterId = linkingPilot + 1;
+        Assert.Null(await rig.Containers.OpenAsync(session, beacon, CancellationToken.None));
+        session.CharacterId = linkingPilot;
+        var deployment = await rig.Deployed.GetAsync(beacon);
+        Assert.NotNull(deployment);
+        var earlyExpiry = deployment with { ExpiresAtMs = rig.Now };
+        await rig.Deployed.SaveAsync(earlyExpiry);
+        var protectedBeacon = await rig.Items.GetAsync(beacon);
+        Assert.StartsWith($"analysis_beacon_loot:{linkingPilot}:", protectedBeacon?.CustomInfo);
+        var accessUntil = long.Parse(protectedBeacon!.CustomInfo!.Split(':')[2]);
+        Assert.True(rig.Now < accessUntil);
+        await director.ExpireAsync(earlyExpiry);
+        Assert.Equal(accessUntil, (await rig.Deployed.GetAsync(beacon))?.ExpiresAtMs);
+        Assert.Empty(rig.Sim.Heard.OfType<SimPlaceWreck>());
+        Assert.NotNull(await rig.Containers.OpenAsync(session, beacon, CancellationToken.None));
+
+        var rewardBeacon = await rig.Items.GetAsync(beacon);
+        Assert.StartsWith($"analysis_beacon_loot:{linkingPilot}:", rewardBeacon?.CustomInfo);
+        Assert.Equal(4137, rig.Statics.Type(rewardBeacon!.TypeId)?.GroupId);
+        Assert.Equal(rig.Space.SolarSystemOf(session), checked((int)rewardBeacon.LocationId));
+        Assert.NotNull(await rig.Containers.OpenAsync(session, beacon, CancellationToken.None));
+        rig.Now += 119_999;
+        Assert.NotNull(await rig.Containers.OpenAsync(session, beacon, CancellationToken.None));
+        rig.Now += 1;
+        Assert.Null(await rig.Containers.OpenAsync(session, beacon, CancellationToken.None));
+        var restartedScheduler = new DurableScheduler(rig.Source, () => rig.Now, null, rig.SchedulerSchema);
+        var restartedBus = new EventBus(rig.Source, restartedScheduler, null, rig.EventsSchema);
+        var restarted = await DirectorAsync(rig, restartedScheduler, restartedBus);
+        await RunAsync(rig, restartedScheduler, restartedBus);
+        var wreck = Assert.Single(rig.Sim.Heard.OfType<SimPlaceWreck>());
+        Assert.NotEqual(beacon, wreck.WreckId);
+        var wreckRights = await rig.SpaceItems.GetAsync(wreck.WreckId);
+        Assert.NotNull(wreckRights);
+        Assert.Equal((0, 0, 0, 0), (wreckRights.CharacterId, wreckRights.CorporationId, wreckRights.AllianceId, wreckRights.WarFactionId));
+        Assert.Equal(1441, await InContainerAsync(rig, wreck.WreckId, RewardAnalysisData));
+        Assert.Equal(1, await InContainerAsync(rig, wreck.WreckId, RewardHeavyNavigation));
+        Assert.Equal(1, await InContainerAsync(rig, wreck.WreckId, RewardHeavyFirepower));
+        Assert.Equal(1, await InContainerAsync(rig, wreck.WreckId, RewardHeavyProjection));
+        Assert.Equal(1, await InContainerAsync(rig, wreck.WreckId, RewardHeavyDurability));
+        var (otherPilot, otherShip, _) = await PilotWithBeaconAsync(rig, name: "Wreck Loot Tester", account: 2, sessionId: 2);
+        Assert.NotEqual(session.SessionId, otherPilot.SessionId);
+        Assert.NotNull(await rig.Containers.OpenAsync(otherPilot, wreck.WreckId, CancellationToken.None));
+        var dataStack = Assert.Single(await rig.Items.InContainerAsync(wreck.WreckId), item => item.TypeId == RewardAnalysisData);
+        Assert.Equal((int)otherShip, otherPilot.GetInt("shipid"));
+        Assert.True(rig.Space.IsInSpace(otherPilot));
+        var cargoShip = await rig.Ships.LoadAsync(otherPilot.CharacterId!.Value, CancellationToken.None);
+        Assert.NotNull(cargoShip);
+        Assert.Equal(CharacterShips.InSpaceFlag, cargoShip.Ship.Flag);
+        Assert.Equal((await rig.Items.GetAsync(wreck.WreckId))?.LocationId, cargoShip.Ship.LocationId);
+        Assert.Equal(wreck.WreckId, dataStack.LocationId);
+        Assert.NotNull(await rig.Containers.MoveAsync(otherPilot, dataStack.Id, wreck.WreckId, otherShip, null, CancellationToken.None));
+        // Moving from the public wreck assigns the stack to the taking pilot and places it in the ship's cargo hold.
+        Assert.Equal(1441, (await rig.Items.InContainerAsync(otherShip)).Where(item => item.TypeId == RewardAnalysisData && item.Flag == CharacterShips.CargoFlag).Sum(item => item.Quantity));
+        var remainingData = (await rig.Items.InContainerAsync(wreck.WreckId)).Where(item => item.TypeId == RewardAnalysisData).ToList();
+        Assert.True(remainingData.Count == 0, string.Join(", ", remainingData.Select(item => $"id={item.Id} quantity={item.Quantity} owner={item.OwnerId} location={item.LocationId} flag={item.Flag}")));
+        await restarted.CreateRewardWreckAsync(beacon);
+        Assert.Equal(0, await InContainerAsync(rig, wreck.WreckId, RewardAnalysisData));
     }
 
     [PgFact]
@@ -372,7 +440,7 @@ public sealed class AnalysisBeaconHostTests
         await AdvanceAsync(rig, 290_000);
         Assert.Equal(0, await AddedToCargoAsync(rig, session, shipId, RewardAnalysisData));
         await AdvanceAsync(rig, 10_000);
-        Assert.Equal(1441, await AddedToCargoAsync(rig, session, shipId, RewardAnalysisData));
+        Assert.Equal(1441, await InContainerAsync(rig, beacon, RewardAnalysisData));
     }
 
     private static async Task CompleteLinkAsync(Rig rig, ClientSession session, long beacon)

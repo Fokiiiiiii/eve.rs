@@ -62,7 +62,7 @@ public sealed partial class CommunityTrackMgrService
 
     [Method("change_qa_mode")]
     public ValueTask<PyValue> ChangeQaMode(ServiceCall call) =>
-        CompatibilityRpc.Invoke(call, RpcHandler, () =>
+        !CompatibilityRpc.IsStaff(call) ? ValueTask.FromResult<PyValue>(PyNone.Instance) : CompatibilityRpc.Invoke(call, RpcHandler, () =>
         {
             Interlocked.Exchange(ref _qaMode, Truthy(call.Arg(0)) ? 1 : 0);
             return PyNone.Instance;
@@ -149,7 +149,7 @@ public sealed partial class LocalizationServerService
 
     [Method("UpdateLocalizationQAWrap")]
     public ValueTask<PyValue> UpdateLocalizationQAWrap(ServiceCall call) =>
-        CompatibilityRpc.Invoke(call, RpcHandler, () =>
+        !CompatibilityRpc.IsStaff(call) ? ValueTask.FromResult<PyValue>(PyNone.Instance) : CompatibilityRpc.Invoke(call, RpcHandler, () =>
         {
             Interlocked.Exchange(ref _qaWrapActive, Truthy(call.Arg(0)) ? 1 : 0);
             Record(call, "update_qa_wrap");
@@ -158,7 +158,7 @@ public sealed partial class LocalizationServerService
 
     [Method("GetAllTextChanges")]
     public ValueTask<PyValue> GetAllTextChanges(ServiceCall call) =>
-        CompatibilityRpc.Invoke(call, RpcHandler, () =>
+        !CompatibilityRpc.IsStaff(call) ? ValueTask.FromResult<PyValue>(Py.Tuple(new PyDict([]), new PyDict([]), new PyDict([]))) : CompatibilityRpc.Invoke(call, RpcHandler, () =>
         {
             Record(call, "get_all_text_changes");
             return Py.Tuple(new PyDict([]), new PyDict([]), new PyDict([]));
@@ -166,7 +166,7 @@ public sealed partial class LocalizationServerService
 
     [Method("ReloadFSDPickle")]
     public ValueTask<PyValue> ReloadFSDPickle(ServiceCall call) =>
-        CompatibilityRpc.Invoke(call, RpcHandler, () =>
+        !CompatibilityRpc.IsStaff(call) ? ValueTask.FromResult<PyValue>(PyBool.False) : CompatibilityRpc.Invoke(call, RpcHandler, () =>
         {
             Record(call, "reload_fsd_pickle");
             return PyBool.False;

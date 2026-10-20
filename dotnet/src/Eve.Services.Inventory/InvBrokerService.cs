@@ -568,6 +568,8 @@ public sealed partial class InvBrokerService(
                      && setArguments.Items[0] is PyList values => values.Items,
             _ => []
         };
+        if (requestedIds.Count > MaxGetItemsIds)
+            throw MachoErrors.ThrowUserError("INVENTORY_BULK_LIMIT_EXCEEDED");
         var itemIds = requestedIds.Select(IdOf).Where(id => id is not null).Select(id => id!.Value).ToHashSet();
         if (itemIds.Count == 0 || call.Session.CharacterId is not { } characterId
             || statics.AttributeId("crystalsGetDamaged") is not { } damageAttributeId)
@@ -609,6 +611,8 @@ public sealed partial class InvBrokerService(
             PyList list => list.Items,
             _ => []
         };
+        if (values.Count > MaxGetItemsIds)
+            throw MachoErrors.ThrowUserError("INVENTORY_BULK_LIMIT_EXCEEDED");
         var invalid = new List<PyValue>();
         foreach (var value in values)
         {
@@ -1072,6 +1076,8 @@ public sealed partial class InvBrokerService(
             PyTuple tuple => tuple.Items,
             _ => [],
         };
+        if (operations.Count > MaxGetItemsIds)
+            throw MachoErrors.ThrowUserError("INVENTORY_BULK_LIMIT_EXCEEDED");
         var mergedAny = false;
         foreach (var operation in operations)
         {
@@ -1362,6 +1368,7 @@ private async ValueTask<bool> IsDockedShipContextAsync(ClientSession session, lo
             return None;
 
         var requests = new List<RepackageItemRequest>();
+        var requestedCount = 0;
         var corporationId = CorporationIdOf(call.Session);
         foreach (var (stationKey, rawItems) in byStation.Entries)
         {
@@ -1374,6 +1381,9 @@ private async ValueTask<bool> IsDockedShipContextAsync(ClientSession session, lo
                 PyTuple tuple => tuple.Items,
                 _ => [],
             };
+            requestedCount += values.Count;
+            if (requestedCount > MaxGetItemsIds)
+                throw MachoErrors.ThrowUserError("INVENTORY_BULK_LIMIT_EXCEEDED");
             foreach (var raw in values)
             {
                 var parts = raw switch

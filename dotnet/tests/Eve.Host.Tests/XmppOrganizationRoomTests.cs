@@ -3,13 +3,14 @@ using Eve.Marshal;
 using Eve.Services;
 using Eve.Host.Xmpp;
 using Xunit;
+using Npgsql;
 
 namespace Eve.Host.Tests;
 
 public sealed class XmppOrganizationRoomTests
 {
     [Fact]
-    public void Corporation_motd_is_authorized_broadcast_and_returned_on_join()
+    public async Task Corporation_motd_is_authorized_broadcast_and_returned_on_join()
     {
         var sessions = new ConnectedSessions();
         var directorSession = Character(42, "director-token", 100, 200, 300);
@@ -40,12 +41,51 @@ public sealed class XmppOrganizationRoomTests
         Assert.Contains(laterOutput, item => item.Contains("<subject>Ops schedule</subject>", StringComparison.Ordinal));
 
         var memberService = new XmppChatMgrService(hub);
-        var denied = memberService.SetMotd(new ServiceCall { Method = "SetMotd", Args = [new PyStr("corp_100"), new PyStr("Denied")], Session = memberSession });
+        var denied = await memberService.SetMotd(new ServiceCall { Method = "SetMotd", Args = [new PyStr("corp_100"), new PyStr("Denied")], Session = memberSession });
         Assert.Same(PyBool.False, denied);
         var directorService = new XmppChatMgrService(hub);
-        var accepted = directorService.SetMotd(new ServiceCall { Method = "SetMotd", Args = [new PyStr("corp_100"), new PyStr("New notice")], Session = directorSession });
+        var accepted = await directorService.SetMotd(new ServiceCall { Method = "SetMotd", Args = [new PyStr("corp_100"), new PyStr("New notice")], Session = directorSession });
         Assert.Same(PyBool.True, accepted);
         Assert.Contains(memberOutput, item => item.Contains("<subject>New notice</subject>", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Corporation_motd_survives_store_reopen_and_is_sent_on_join()
+    {
+        var url = Environment.GetEnvironmentVariable("EVE_PG_URL")
+            ?? throw new InvalidOperationException("EVE_PG_URL is required for the MOTD persistence regression");
+        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(url));
+        var schema = "xmpp_motd_" + Guid.NewGuid().ToString("N")[..12];
+        try
+        {
+            var firstStore = await XmppMotdStore.OpenAsync(source, schema);
+            var sessions = new ConnectedSessions();
+            var directorSession = Character(42, "director-token", 100, 200, 300);
+            directorSession.Set("corprole", new PyLong(Eve.Corporations.CorporationRoles.Director));
+            sessions.Add(directorSession);
+            var firstHub = new XmppChatHub(sessions, new XmppChatSettings("chat.example", "127.0.0.1"), motdStore: firstStore);
+            var service = new XmppChatMgrService(firstHub);
+            var result = await service.SetMotd(new ServiceCall
+            {
+                Method = "SetMotd",
+                Args = [new PyStr("corp_100"), new PyStr("Persisted notice")],
+                Session = directorSession,
+            });
+            Assert.Same(PyBool.True, result);
+
+            var restartedStore = await XmppMotdStore.OpenAsync(source, schema);
+            var restartedHub = new XmppChatHub(sessions, new XmppChatSettings("chat.example", "127.0.0.1"), motdStore: restartedStore);
+            var output = new List<string>();
+            var client = Connect(restartedHub, 42, "director-token", output);
+            client.OnStanza(Parse("<presence to='corp_100@conference.chat.example/Director'><x xmlns='http://jabber.org/protocol/muc'/></presence>"));
+
+            Assert.Contains(output, item => item.Contains("<subject>Persisted notice</subject>", StringComparison.Ordinal));
+        }
+        finally
+        {
+            await using var command = source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
+            await command.ExecuteNonQueryAsync();
+        }
     }
 
     [Fact]
@@ -71,6 +111,32 @@ public sealed class XmppOrganizationRoomTests
 
         Assert.DoesNotContain(blockedOutput, item => item.Contains("<body>message to members</body>", StringComparison.Ordinal));
         Assert.Contains(allowedOutput, item => item.Contains("<body>message to members</body>", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Groupchat_rejects_oversized_bodies_and_enforces_the_per_character_cadence()
+    {
+        var sessions = new ConnectedSessions();
+        sessions.Add(Character(42, "sender-token", 100, 200, 300));
+        sessions.Add(Character(77, "recipient-token", 100, 200, 301));
+        var hub = new XmppChatHub(sessions, new XmppChatSettings("chat.example", "127.0.0.1"));
+        var senderOutput = new List<string>();
+        var recipientOutput = new List<string>();
+        var sender = Connect(hub, 42, "sender-token", senderOutput);
+        var recipient = Connect(hub, 77, "recipient-token", recipientOutput);
+        sender.OnStanza(Parse("<presence to='corp_100@conference.chat.example/Sender'><x xmlns='http://jabber.org/protocol/muc'/></presence>"));
+        recipient.OnStanza(Parse("<presence to='corp_100@conference.chat.example/Recipient'><x xmlns='http://jabber.org/protocol/muc'/></presence>"));
+
+        var oversized = new string('x', 2049);
+        sender.OnStanza(Parse($"<message type='groupchat' to='corp_100@conference.chat.example'><body>{oversized}</body></message>"));
+        Assert.Contains(senderOutput, item => item.Contains("resource-constraint", StringComparison.Ordinal));
+        Assert.DoesNotContain(recipientOutput, item => item.Contains(oversized, StringComparison.Ordinal));
+
+        sender.OnStanza(Parse("<message type='groupchat' to='corp_100@conference.chat.example'><body>first</body></message>"));
+        sender.OnStanza(Parse("<message type='groupchat' to='corp_100@conference.chat.example'><body>too soon</body></message>"));
+        Assert.Contains(recipientOutput, item => item.Contains("<body>first</body>", StringComparison.Ordinal));
+        Assert.DoesNotContain(recipientOutput, item => item.Contains("<body>too soon</body>", StringComparison.Ordinal));
+        Assert.Contains(senderOutput, item => item.Contains("resource-constraint", StringComparison.Ordinal));
     }
 
     [Fact]

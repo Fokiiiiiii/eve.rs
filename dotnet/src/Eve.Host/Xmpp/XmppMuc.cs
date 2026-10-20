@@ -217,6 +217,22 @@ public sealed partial class XmppChatHub
         return true;
     }
 
+    internal async ValueTask<bool> SetCorporationMotdAsync(ClientSession session, string room, string motd, CancellationToken cancellationToken)
+    {
+        if (session.GetInt("corpid") is not { } corporationId || corporationId <= 0
+            || room != $"corp_{corporationId}"
+            || !IsCorporationDirector(session)
+            || Encoding.UTF8.GetByteCount(motd) > 1024
+            || motd.Any(character => char.IsControl(character) && character is not '\n' and not '\t')
+            || session.CharacterId is not { } characterId
+            || !ReferenceEquals(SessionOf(characterId), session))
+            return false;
+
+        if (_motdStore is not null)
+            await _motdStore.SetAsync(room, motd, cancellationToken).ConfigureAwait(false);
+        return SetCorporationMotd(session, room, motd);
+    }
+
     private static bool IsCorporationDirector(ClientSession session) =>
         ((long)(session.GetInt("corprole") ?? 0) & Eve.Corporations.CorporationRoles.Director) != 0;
 

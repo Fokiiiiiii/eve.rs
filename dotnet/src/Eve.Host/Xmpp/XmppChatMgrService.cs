@@ -13,11 +13,13 @@ public sealed partial class XmppChatMgrService(XmppChatHub hub)
     public PyValue GetDeprecatedPrefsFallback(ServiceCall call) => new PyStr(hub.Settings.ConnectHost);
 
     [Method("SetMotd")]
-    public PyValue SetMotd(ServiceCall call)
+    public async Task<PyValue> SetMotd(ServiceCall call)
     {
         var room = call.Arg(0) is PyStr roomName ? roomName.Value : "";
         var motd = call.Arg(1) is PyStr text ? text.Value : "";
-        return hub.SetCorporationMotd(call.Session, room, motd) ? PyBool.True : PyBool.False;
+        return await hub.SetCorporationMotdAsync(call.Session, room, motd, call.Cancellation).ConfigureAwait(false)
+            ? PyBool.True
+            : PyBool.False;
     }
 
     [Method("CreatePrivateChannel")]

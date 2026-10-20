@@ -164,7 +164,29 @@ def age_projects(character_id, milliseconds):
 def run_id() -> str:
     return uuid.uuid4().hex[:10]
 
-@SKIP_REFERENCE
+def test_character_entry_agent_reads_use_sde_and_character_state():
+    with connect(f"entry-agents-{run_id()}") as client:
+        character_id = new_pilot(client, run_id())
+        rows = agents(client)
+        assert rows, "the loaded SDE supplies the client agent list"
+        agent_id = rows[0]["agentID"]
+        assert agent_id > 0
+
+        completed = m.plain(client.call("agentMgr", "GetCompletedCareerAgentIDs", [agent_id]))
+        assert isinstance(completed, dict) and completed.get(agent_id) is False
+        disabled = m.plain(client.call("agentMgr", "GetDisabledMissions"))
+        assert isinstance(disabled, list) and all(isinstance(mission_id, int) and mission_id > 0 for mission_id in disabled)
+        plausible = m.plain(client.call("agentMgr", "GetPlausibleMissionIDs", agent_id))
+        assert isinstance(plausible, list) and all(isinstance(mission_id, int) and mission_id > 0 for mission_id in plausible)
+
+        journal = m.plain(client.call("agentMgr", "GetMyJournalDetails"))
+        assert isinstance(journal, tuple) and len(journal) == 2
+        assert journal == ([], [])
+        arc_status = m.plain(client.call("agentMgr", "GetMyEpicArcStatus"))
+        assert isinstance(arc_status, dict)
+        assert character_id > 0
+
+
 def test_lp_store_purchase_takes_lp_and_isk_and_grants_the_item():
     wallet = schema("EVE_WALLET_SCHEMA")
     with connect(f"lp-{run_id()}") as client:

@@ -2685,7 +2685,7 @@ Open:
 
 ## Simulation and link performance (2026-10-19)
 
-The simulation writer now appends encoded frames directly to its batch buffer. The link frame golden tests pass; same-run median 64-frame batch time changed from 11.29 µs to 4.45 µs with the same 704 output bytes. See [PERFORMANCE.md](PERFORMANCE.md) for the command and benchmark. A stationary-pilot `Sim::poll` baseline now covers 1, 16 and 64 pilots. Phase attribution and measurements of spatial queries, marshal, SDE loading and process memory remain open.
+The simulation writer now appends encoded frames directly to its batch buffer. The link frame golden tests pass; same-run median 64-frame batch time changed from 11.29 µs to 4.45 µs with the same 704 output bytes. See [PERFORMANCE.md](PERFORMANCE.md) for the command and benchmark. The stationary-pilot `Sim::poll` baseline covers 1, 16 and 64 pilots. The `scene.poll.100-ships` profile identified pilot-order construction as a hot path; `Scene::in_entry_order` now uses one session vector and preserves the original ordering key. Two release-profile after runs increased throughput from 20 to a median of 29.5 polls/s. Phase attribution and measurements of spatial queries, marshal, SDE loading and process memory remain open.
 
 ## Owner decisions recorded 2026-10-19 — open implementation work
 

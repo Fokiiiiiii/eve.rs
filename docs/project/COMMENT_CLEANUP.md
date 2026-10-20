@@ -73,6 +73,7 @@
 | `dotnet/tests/Eve.Content.Tests` (4 C# files) | 11 | 10 | 2026-10-20 |
 | `dotnet/tests/Eve.Crimewatch.Tests` (3 C# files) | 11 | 10 | 2026-10-20 |
 | `dotnet/tests/Eve.Dogma.Tests` (15 C# files) | 138 | 134 | 2026-10-20 |
+| `dotnet/tests/Eve.Dungeons.Tests` (4 C# files) | 6 | 4 | 2026-10-20 |
 | `dotnet/src/Eve.Insurgency` (5 C# files; migrations reviewed) | 99 | 87 | 2026-10-20 |
 | `dotnet/src/Eve.Dungeons` (5 C# files) | 101 | 49 | 2026-10-20 |
 | `dotnet/src/Eve.Fitting` (8 C# files; migrations reviewed) | 97 | 78 | 2026-10-20 |

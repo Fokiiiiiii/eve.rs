@@ -51,6 +51,36 @@ internal sealed record HostSettings(string Endpoint, string NewCharacterExperien
 /// <summary>Every EVE_* read of the host, in one place. The catalogue of variables is below.</summary>
 internal static class HostConfiguration
 {
+    internal static PyValue? ParseLocalizationTextChanges(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        using var document = JsonDocument.Parse(value);
+        if (document.RootElement.ValueKind != JsonValueKind.Array || document.RootElement.GetArrayLength() != 3)
+            throw new InvalidOperationException("EVE_LOCALIZATION_TEXT_CHANGES must be a JSON array containing three dictionaries.");
+        var maps = document.RootElement.EnumerateArray().Select(element =>
+        {
+            if (element.ValueKind != JsonValueKind.Object)
+                throw new InvalidOperationException("Each EVE_LOCALIZATION_TEXT_CHANGES entry must be a JSON object.");
+            return (PyValue)new PyDict(element.EnumerateObject().Select(property =>
+                new KeyValuePair<PyValue, PyValue>(new PyStr(property.Name), LocalizationValue(property.Value))).ToArray());
+        }).ToArray();
+        return Py.Tuple(maps);
+    }
+
+    private static PyValue LocalizationValue(JsonElement value) => value.ValueKind switch
+    {
+        JsonValueKind.String => new PyStr(value.GetString()!),
+        JsonValueKind.Number when value.TryGetInt64(out var integer) => new PyLong(integer),
+        JsonValueKind.Number => new PyReal(value.GetDouble()),
+        JsonValueKind.True => PyBool.True,
+        JsonValueKind.False => PyBool.False,
+        JsonValueKind.Null => PyNone.Instance,
+        JsonValueKind.Array => new PyList(value.EnumerateArray().Select(LocalizationValue).ToArray()),
+        JsonValueKind.Object => new PyDict(value.EnumerateObject().Select(property =>
+            new KeyValuePair<PyValue, PyValue>(new PyStr(property.Name), LocalizationValue(property.Value))).ToArray()),
+        _ => throw new InvalidOperationException("EVE_LOCALIZATION_TEXT_CHANGES contains an unsupported JSON value."),
+    };
+
     // eve-host: the service host.
     //
     //   EVE_HOST               where to listen: a socket path, "unix:/path" or "tcp:host:port"   (default /tmp/eve-host.sock; tcp:127.0.0.1:26010 on Windows)
@@ -58,7 +88,6 @@ internal static class HostConfiguration
     //   EVE_PG_URL             PostgreSQL for accounts (postgres://... or an Npgsql string); without it accounts
     //                          live in memory and are lost when the host stops
     //   EVE_IDENTITY_SCHEMA    the schema of the accounts module                                  (default identity)
-    //   EVE_SAFE_STATE_UNDERAGE whether this deployment marks its login session as underage (default false)
     //   EVE_CHARACTERS_SCHEMA  the schema of the characters module                                (default characters)
     //   EVE_INVENTORY_SCHEMA   the schema of the inventory module                                 (default inventory)
     //   EVE_SKILLS_SCHEMA      the schema of the skills module                                    (default skills)
@@ -74,6 +103,8 @@ internal static class HostConfiguration
     //                          without charUnboundMgr, and a client cannot get past the character screen.
     //   EVE_MARKET_SEED        skip: do not fetch the NPC market's first orders from CCP's ESI (CI, development)  (default auto: fetch once per SDE build)
     //   EVE_SCHEDULER_SCHEMA, EVE_EVENTS_SCHEMA, EVE_RELATIONS_SCHEMA, EVE_CONTENT_SCHEMA   the schemas of the shared foundations (scheduler, event bus, relations, content)
+    //   EVE_SEASONAL_LOGIN_CAMPAIGN   active seasonal login campaign dates, turnover, and configured alpha/omega rewards (default unset)
+    //   EVE_LOCALIZATION_TEXT_CHANGES configured three-map JSON tuple served by localizationServer (default empty maps)
 
     //   EVE_CRIMEWATCH_SCHEMA  the schema of crimewatch (ship safety levels)                          (default crimewatch)
 
@@ -94,6 +125,15 @@ internal static class HostConfiguration
 
     /// <summary>The default simulation endpoint, matching <see cref="DefaultEndpoint"/>: a local port on Windows.</summary>
     internal static string DefaultSimSocket(bool windows) => windows ? "tcp:127.0.0.1:26011" : "/tmp/eve-sim.sock";
+
+    internal static int? ParseActiveSurveyId(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return null;
+        if (!int.TryParse(value, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var id) || id <= 0)
+            throw new InvalidOperationException("EVE_ACTIVE_SURVEY_ID must be a positive integer.");
+        return id;
+    }
 
     internal static string Env(string name, string fallback) => Environment.GetEnvironmentVariable(name) is { Length: > 0 } value ? value : fallback;
 

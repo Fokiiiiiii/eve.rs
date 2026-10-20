@@ -64,7 +64,7 @@ The Host rejects repeated private-room invitations from one character within one
 
 ## Underage login policy (2026-10-20)
 
-V24.01 `antiaddiction.AmIUnderage` passes the login JWT to `authentication.AmUnderage`. EveJS 261018.1 records whether a JWT was present but does not decode it; the answer comes from the deployment-wide `safeStateConfig.underage` boolean, false by default. Host now mirrors that policy through `EVE_SAFE_STATE_UNDERAGE` (default false). The JWT is neither logged nor decoded. `LoginSupportRpcTests` covers true and false callback values; `test_authentication_age_gate_uses_server_policy` passed against the Host with the setting both false and true.
+V24.01 `antiaddiction.AmIUnderage` passes the login JWT to `authentication.AmUnderage`. EveJS v261018.1 reports its configured underage gate. eve.rs reads the authenticated account's persisted `underage` field; the age verification provider writes this value, and new accounts begin false. The JWT is neither logged nor decoded. `PgAccountTests.Account_age_gate_comes_from_persisted_verification_state` checks changes and restart persistence; `test_authentication_age_gate_uses_verified_account_state` checks both states through the live login walk.
 
 ## Planetary industry input safety (2026-10-20)
 
@@ -5092,9 +5092,17 @@ The writer serializes accept and bid operations by locking the contract row befo
 
 `CreateContract` accepts the V24 `contracts.contractStruct.ContractStruct` object whose `OBJECT` arguments are the 17 positional constructor fields; the server maps those fields in client order and declines the unsupported multi-contract flag. The dictionary form remains accepted for internal callers. `tools/headless-client/tests/test_walk_contracts.py` sends the V24 `ContractStruct` positional object and exercises public item-exchange creation and acceptance through `contractProxy` using two connected characters. It checks the accepted row, issuer notification, item ownership, and wallet balances against PostgreSQL. The file is selectable in `.github/workflows/live-slow.yml`; its live result remains open until dispatched and completed successfully. The graphical client is a separate check.
 
+## Account age gate (2026-10-20)
+
+V24.01 `antiaddiction.AmIUnderage` passes the login JWT to `authentication.AmUnderage`. EveJS v261018.1 reports its configured underage gate. eve.rs reads the authenticated account's persisted `underage` field; the age verification provider writes this value, and new accounts begin false. The JWT is neither logged nor decoded. `PgAccountTests.Account_age_gate_comes_from_persisted_verification_state` checks changes and restart persistence; `test_authentication_age_gate_uses_verified_account_state` checks both states through the live login walk.
+
+### Contract summary entry reads (2026-10-20)
+
+V24.01 `contracts.py:191-205` reads `GetLoginInfo` and `contracts.py:770-782` reads escrow totals for the progression notifier. eve.rs builds the three login rowsets and the personal/corporation escrow totals from persisted contract records scoped to the selected character and its corporation. `ContractProxyServiceTests.Login_info_uses_the_three_client_rowsets_and_session_scope`, `ContractProxyServiceTests.Escrow_read_uses_the_persisted_summary`, and `ContractReadModelTests.Login_and_escrow_reads_use_persisted_contract_rows_and_owner_scopes` cover the service and Host paths. `test_new_account_enters_a_new_character_with_named_arguments` calls both RPCs after character selection and checks empty owner state and zero escrow.
+
 ### Login startup service verification: `userSvc.GetUserToken`
 
-V24.01 `eve/common/script/util/urlUtil.py` calls `userSvc.GetUserToken` when adding a `token` query parameter to external-link URLs. EveJS v261018.1 returns `evejs-local-token-<accountID>-<characterID>` from the active session, and eve.rs returns that same session-derived value. The post-selection headless login walk checks the account and selected character IDs used in the result. This compatibility value is local; a scoped credential for an external service remains open.
+V24.01 `eve/common/script/util/urlUtil.py` calls `userSvc.GetUserToken` when adding a `token` query parameter to external-link URLs. Host issues a ten-minute HS256 token scoped to the authenticated account and selected character. The public gateway verifies its signature and expiry. `PublicGatewayTests.User_tokens_are_signed_account_scoped_and_expire` covers valid use, tampering and expiry.
 
 ### First-space camera entry for characters without warp history
 

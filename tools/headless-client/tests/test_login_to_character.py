@@ -16,6 +16,7 @@ Skipped unless EVE_LIVE_HOST is set. tools/dev/run-eve-live.sh starts eve.rs and
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
@@ -252,6 +253,14 @@ def test_new_account_enters_a_new_character_with_named_arguments():
 
         assert m.plain(result) is None
         assert client.session.session_init.get("charid") == character_id
+
+        contract_login = dict(m.plain(client.call("contractProxy", "GetLoginInfo"))[1])
+        for name in ("needsAttention", "inProgress", "assignedToMe"):
+            assert m.plain(contract_login[name])[1]["lines"] == []
+        contract_escrow = dict(m.plain(client.call("contractProxy", "GetMyContractEscrow"))[1])
+        assert m.plain(contract_escrow["iskEscrow"]) == 0.0
+        assert m.plain(contract_escrow["itemsEscrow"]) == 0
+
         if not REFERENCE:
             selected = next(event for event in notifications_of(client) if event["name"] == "OnCharacterSelected")
             # Zero positional arguments: GameUI.OnCharacterSelected(self) and StationSvc.OnCharacterSelected(self)
@@ -275,6 +284,13 @@ def test_a_new_account_is_omega_until_2100_on_every_answer():
         assert m.plain(client.call("charUnboundMgr", "GetCharOmegaDowngradeStatus")) is False
         account_row = m.plain(client.call("charUnboundMgr", "GetCharacterSelectionData"))[0][0][1]
         assert account_row["subscriptionEndTime"] == OMEGA_END_FILETIME
+        token = m.plain(client.call("userSvc", "GetUserToken"))
+        header, payload, signature = token.split(".")
+        claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+        assert header == "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"
+        assert claims["sub"].startswith("USER:EVE:")
+        assert int(claims["exp"]) > int(datetime.now(timezone.utc).timestamp())
+        assert signature
         accrued = m.plain(client.call("authentication", "AccruedTime"))
         assert len(accrued) == 2
         assert [int(row[0]) for row in accrued] == sorted(int(row[0]) for row in accrued)
@@ -1051,13 +1067,20 @@ def test_a_queue_that_finishes_while_the_client_watches_is_told_level_by_level()
     assert problems == [], "\n".join(problems[:30])
 
 
-def test_authentication_age_gate_uses_server_policy():
+def test_authentication_age_gate_uses_verified_account_state():
+    from tests import dbseed
+
     run = uuid.uuid4().hex[:10]
-    expected = os.environ.get("EVE_SAFE_STATE_UNDERAGE", "0").lower() in {"1", "true", "yes"}
-    with connect(f"underage-{run}") as client:
+    user_name = f"underage-{run}"
+    with connect(user_name) as client:
+        dbseed.set_underage(user_name, False)
         kind, outcome = attempt(client, "authentication", "AmUnderage", None)
         assert kind == "ok", brief(outcome)
-        assert outcome is expected, f"expected server policy {expected}, got {outcome!r}"
+        assert outcome is False
+        dbseed.set_underage(user_name, True)
+        kind, outcome = attempt(client, "authentication", "AmUnderage", None)
+        assert kind == "ok", brief(outcome)
+        assert outcome is True
 
 
 def test_active_survey_id_uses_reference_default():

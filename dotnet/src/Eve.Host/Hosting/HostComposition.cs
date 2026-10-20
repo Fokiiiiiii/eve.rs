@@ -153,6 +153,14 @@ internal static class HostComposition
             accounts = new InMemoryAccountDirectory(accountOptions);
         }
 
+        var activeSurveyId = HostConfiguration.ParseActiveSurveyId(Env("EVE_ACTIVE_SURVEY_ID", ""));
+        var configuredGameRpcCallbacks = gameRpcCallbacks ?? new Eve.Services.Core.GameRpcCallbacks();
+        gameRpcCallbacks = configuredGameRpcCallbacks with
+        {
+            ReadActiveSurveyIdAsync = configuredGameRpcCallbacks.ReadActiveSurveyIdAsync
+                ?? (_ => ValueTask.FromResult(activeSurveyId)),
+        };
+
         GameStoreCache? mailCache = legacy?.Cache;
         PersistenceStore? mailStore = legacy?.Store;
         var registry = new ServiceRegistry();
@@ -183,7 +191,7 @@ internal static class HostComposition
                 .ActivateSlashAsync(request.Session, request.ModuleId, request.StartPoint, request.EndPoint, cancellationToken));
         IOmegaAccountStore omegaAccounts = new AccountOmegaStore(accounts as IAccountSubscriptions
             ?? throw new InvalidOperationException("the account directory keeps no subscription end times"));
-        var underage = Flag("EVE_SAFE_STATE_UNDERAGE", false);
+        var identityAccounts = accounts as PgAccountDirectory;
         Eve.Services.Core.AuthenticationRpcService? authentication = new(
             accruedTime: accruedTimeStore is { } accruedSessions
                 ? async (call, ct) =>
@@ -191,7 +199,9 @@ internal static class HostComposition
                         ? await accruedSessions.ReadWireValueAsync(accountId, DateTime.UtcNow.Ticks, ct)
                         : new Eve.Marshal.PyList([])
                 : null,
-            amUnderage: (_, _) => ValueTask.FromResult(underage));
+            amUnderage: async (call, ct) =>
+                identityAccounts is not null && call.Session.UserId is { } accountId
+                    && await identityAccounts.IsUnderageAsync(checked((uint)accountId), ct));
         foreach (var service in CoreServices.Create(
             omegaAccounts, now, calendarStore, calendarAudience,
             authentication: authentication,
@@ -209,7 +219,8 @@ internal static class HostComposition
             contractWriteModel: contractWriteModel,
             contractSkillLevel: contractSkillLevel,
             calendarSessions: characterSessions,
-            contractBrokerFeeAdjustment: contractBrokerFeeAdjustment))
+              contractBrokerFeeAdjustment: contractBrokerFeeAdjustment,
+              localizationTextChanges: HostConfiguration.ParseLocalizationTextChanges(Env("EVE_LOCALIZATION_TEXT_CHANGES", ""))))
         {
             registry.Register(service);
         }

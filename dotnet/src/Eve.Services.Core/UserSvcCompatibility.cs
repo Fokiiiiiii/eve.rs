@@ -170,8 +170,8 @@ public sealed partial class RedeemService
     [Method("GetUserToken")]
     public async ValueTask<PyValue> GetUserToken(ServiceCall call)
     {
-        if (await UserOverrideAsync(call).ConfigureAwait(false) is { } overridden) return overridden;
-        return new PyStr($"evejs-local-token-{call.Session.UserId ?? 0}-{call.Session.CharacterId ?? 0}");
+        if (await UserOverrideAsync(call).ConfigureAwait(false) is { } token) return token;
+        throw new InvalidOperationException("User token issuance is not wired on this host.");
     }
 
     private async ValueTask<PyValue> OverrideUserCallAsync(ServiceCall call, PyValue fallback) =>

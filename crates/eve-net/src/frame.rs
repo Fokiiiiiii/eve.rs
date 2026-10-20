@@ -28,9 +28,6 @@ impl<R: AsyncRead + Unpin> FrameReader<R> {
                 let length =
                     u32::from_le_bytes([self.buffer[0], self.buffer[1], self.buffer[2], self.buffer[3]])
                         as usize;
-                if length == 0 {
-                    return Err(io::Error::new(io::ErrorKind::InvalidData, "empty frame"));
-                }
                 if length > self.max {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidData,

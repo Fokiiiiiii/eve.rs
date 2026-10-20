@@ -36,9 +36,9 @@ async fn generated_coalesced_frames_round_trip_in_order() {
 }
 
 #[tokio::test]
-async fn empty_and_incomplete_frames_are_rejected() {
+async fn empty_frames_are_preserved_and_incomplete_frames_are_rejected() {
     let mut empty = FrameReader::new(Cursor::new([0u8; 4]), 16);
-    assert_eq!(empty.next().await.unwrap_err().kind(), ErrorKind::InvalidData);
+    assert_eq!(empty.next().await.unwrap().unwrap(), Bytes::new());
 
     let mut short_header = FrameReader::new(Cursor::new([1u8, 2]), 16);
     assert_eq!(short_header.next().await.unwrap_err().kind(), ErrorKind::UnexpectedEof);

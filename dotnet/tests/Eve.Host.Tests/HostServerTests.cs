@@ -302,7 +302,9 @@ public class HostServerTests : IAsyncLifetime
         var front = await Handshaken(await ConnectAsync());
         Assert.Equal(new Rejected("Unavailable"), (await front.AuthenticateAsync("pilot", [1], 1)).Outcome);
         Assert.Equal(new Rejected("Unavailable"), (await front.AuthenticateAsync("pilot", [1], 2)).Outcome); // still answering
-        Assert.Contains(_log, line => line.Contains("the database is down", StringComparison.Ordinal));
+        Assert.Contains(_log, line => line == "account authentication failed due to a host error");
+        Assert.DoesNotContain(_log, line => line.Contains("pilot", StringComparison.Ordinal));
+        Assert.DoesNotContain(_log, line => line.Contains("database is down", StringComparison.Ordinal));
     }
 
     [Fact]

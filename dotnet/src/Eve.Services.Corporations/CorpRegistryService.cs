@@ -15,6 +15,8 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
 {
     private const int MaxBulkMemberIds = 500;
     private const int MaxBulkCorporationActions = 500;
+    private const int MaxCorporationQueryCriteria = 100;
+    private const int MaxCorporationQueryTextLength = 256;
 
     public AllianceAffiliationMutationCallback? AllianceAffiliationWriter
     {
@@ -404,18 +406,25 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
         if (await Current(call) is not { } corporation)
             return new PyList([]);
 
-        var members = await store.MembersAsync(corporation.Id,call.Cancellation);
+        var rawCriteria = Items(call.Arg(0));
+        if (rawCriteria.Count > MaxCorporationQueryCriteria)
+            throw new CorporationError("CORPORATION_QUERY_LIMIT_EXCEEDED");
         var criteria = new List<(long? Join,string Property,long Operator,PyValue Value)>();
-        foreach (var raw in Items(call.Arg(0)))
+        foreach (var raw in rawCriteria)
         {
             var values = raw is PyPackedRow row ? row.Values : Items(raw);
             if (values.Count < 3)
                 continue;
             var offset = values.Count >= 4 ? 1 : 0;
+            var operation = Number(values[offset+1]);
+            var value = values[offset+2];
+            if (operation is >= 9 and <= 13 && Text(value).Length > MaxCorporationQueryTextLength)
+                throw new CorporationError("CORPORATION_QUERY_LIMIT_EXCEEDED");
             criteria.Add((offset == 0 || values[0] is PyNone ? null : Number(values[0]),
-                Text(values[offset]),Number(values[offset+1]),values[offset+2]));
+                Text(values[offset]),operation,value));
         }
 
+        var members = await store.MembersAsync(corporation.Id,call.Cancellation);
         var includeImplied = Truth(call.Arg(1));
         var searchTitles = Truth(call.Arg(2));
         var titles = includeImplied || searchTitles

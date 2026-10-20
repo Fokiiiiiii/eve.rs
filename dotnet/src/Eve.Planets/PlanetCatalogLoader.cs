@@ -24,17 +24,20 @@ public static class PlanetCatalogLoader
 
         var types = new Dictionary<int, (int Group, double Volume, long Price, double? Capacity)>();
         await using (var command = new NpgsqlCommand("""
-            SELECT t.key, t.doc::text FROM sde.types t JOIN sde.groups g ON g.key = t.doc->>'groupID'
+            SELECT t.key, t.doc->>'groupID', t.doc->>'volume', t.doc->>'basePrice', t.doc->>'capacity'
+            FROM sde.types t JOIN sde.groups g ON g.key = t.doc->>'groupID'
             WHERE g.key = ANY($1) OR g.doc->>'categoryID' = ANY($2)
             """, connection)
         { Parameters = { new() { Value = Groups }, new() { Value = Categories } } })
         await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
             while (await reader.ReadAsync(cancellationToken))
             {
-                var doc = JsonDocument.Parse(reader.GetString(1)).RootElement;
                 var id = int.Parse(reader.GetString(0), CultureInfo.InvariantCulture);
-                types[id] = (int.Parse(doc.GetProperty("groupID").GetRawText(), CultureInfo.InvariantCulture), Number(doc, "volume") ?? 0,
-                    (long)(Number(doc, "basePrice") ?? 0), Number(doc, "capacity"));
+                var group = int.Parse(reader.GetString(1), CultureInfo.InvariantCulture);
+                var volume = reader.IsDBNull(2) ? 0 : double.Parse(reader.GetString(2), CultureInfo.InvariantCulture);
+                var price = reader.IsDBNull(3) ? 0 : (long)double.Parse(reader.GetString(3), CultureInfo.InvariantCulture);
+                var capacity = reader.IsDBNull(4) ? (double?)null : double.Parse(reader.GetString(4), CultureInfo.InvariantCulture);
+                types[id] = (group, volume, price, capacity);
             }
 
         var keys = types.Keys.Select(k => k.ToString(CultureInfo.InvariantCulture)).ToArray();

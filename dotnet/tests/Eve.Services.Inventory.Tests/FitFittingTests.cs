@@ -8,7 +8,6 @@ using Eve.Skills;
 namespace Eve.Services.Inventory.Tests;
 
 /// <summary>
-/// The fitting of a saved fitting's modules onto a docked ship (EveJS <c>Handle_FitFitting</c>, module leg): the modules go into the slots they name, the
 /// ones that cannot go are the reply, and a ship that is not the one the fitting names is refused. Real moves, against the real static data.
 /// </summary>
 public class FitFittingTests
@@ -265,7 +264,6 @@ public class FitFittingTests
         Assert.Equal(Rig.Station, (await rig.Items.GetAsync(module))!.LocationId);
     }
 
-    /// <summary>The fit's changes are told to the pilot in one batch at the end (EveJS <c>_finalizeFitFittingBatch</c>), not one notice per move.</summary>
     [PgFact]
     public async Task A_fit_tells_the_pilot_its_changes_in_one_batch_at_the_end()
     {
@@ -287,7 +285,6 @@ public class FitFittingTests
         Assert.Empty(reply.Items);
         Assert.Equal((1, 1), (sink.Named("OnMultiEvent"), sink.Named("OnItemsChanged")));
     }
-
 
     [PgFact]
     public async Task A_saved_fit_replaces_an_occupied_module_slot_and_keeps_the_old_module_in_the_hangar()

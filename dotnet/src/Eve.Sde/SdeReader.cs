@@ -47,7 +47,27 @@ public sealed partial class SdeReader
             return null;
         }
         await using var read = new NpgsqlCommand($"SELECT build_number FROM {_schema}._build", connection);
-        return await read.ExecuteScalarAsync(cancellationToken) as long?;
+        var build = await read.ExecuteScalarAsync(cancellationToken) as long?;
+
+        await using var typesExist = new NpgsqlCommand("SELECT to_regclass($1) IS NOT NULL", connection) { Parameters = { new() { Value = $"{_schema}.types" } } };
+        if ((bool)(await typesExist.ExecuteScalarAsync(cancellationToken))!)
+        {
+            await using var index = new NpgsqlCommand(
+                $"CREATE INDEX IF NOT EXISTS types_group_id_idx ON {_schema}.\"types\" (((doc->>'groupID')::bigint)) WHERE jsonb_typeof(doc->'groupID') = 'number'",
+                connection);
+            await index.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        await using var typeDogmaExists = new NpgsqlCommand("SELECT to_regclass($1) IS NOT NULL", connection) { Parameters = { new() { Value = $"{_schema}.typeDogma" } } };
+        if ((bool)(await typeDogmaExists.ExecuteScalarAsync(cancellationToken))!)
+        {
+            await using var index = new NpgsqlCommand(
+                $"CREATE INDEX IF NOT EXISTS type_dogma_doc_gin_idx ON {_schema}.\"typeDogma\" USING gin (doc jsonb_path_ops)",
+                connection);
+            await index.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        return build;
     }
 
     /// <summary>

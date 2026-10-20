@@ -115,4 +115,13 @@ The V24-oriented Host regression `HostServerTests.An_undecodable_packet_is_dropp
 | `rowset-1000` | 1,125 ops/s | 146.6 MB/s |
 | `buffers-64x4k` | 106,430 ops/s | 27,941.7 MB/s |
 
-The research proposal sets cheap-RPC compute p95 at or below 20 ms and end-to-end local RPC p95 at or below 100 ms. These microbenchmarks report median batch throughput; they do not sample per-call p95 or include TCP, session validation, authorization, dispatch, database work, or concurrent sessions. The recorded rates are parser baselines and do not establish the tail-latency SLOs. Multi-session load, long soak, malformed traffic under concurrency, and full request-to-response percentile measurements remain open.
+The `--latency --filter marshal.decode` mode warms each workload for 300 ms, records 20,000 individual decode durations with `Instant`, and reports nearest-rank p50/p95/p99. Results (system allocator):
+
+| Workload | p50 | p95 | p99 |
+| --- | ---: | ---: | ---: |
+| `small-call` | 0.824 µs | 1.165 µs | 1.444 µs |
+| `dict-200` | 19.272 µs | 26.021 µs | 55.050 µs |
+| `rowset-1000` | 404.124 µs | 937.535 µs | 4,515.394 µs |
+| `buffers-64x4k` | 3.609 µs | 4.057 µs | 8.104 µs |
+
+Each codec-only workload's measured p95 is below the proposed cheap-RPC compute budget of 20 ms. These samples time marshal decode alone: they exclude TCP, session validation, authorization, dispatch, database work, and concurrent sessions. They do not establish the end-to-end local RPC p95 target of 100 ms. Multi-session load, long soak, malformed traffic under concurrency, and full request-to-response percentile measurements remain open.

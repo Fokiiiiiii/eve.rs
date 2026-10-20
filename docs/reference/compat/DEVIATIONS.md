@@ -5148,3 +5148,8 @@ Market RPC integer values that the Host stores as 32-bit fields now refuse fract
 ## Market price conversion bound (2026-10-20)
 
 The market parser rejects floating-point prices beyond the market maximum before converting them to decimal. This maps decimal-boundary values to the existing invalid-price refusal rather than risking an overflow during request parsing. `MarketRpcTests.Market_money_parser_refuses_decimal_boundary_values_without_overflowing` covers the response and confirms that no order is created.
+
+
+## Corporation member-action RPC budget (2026-10-20)
+
+`corpRegistry.ExecuteActions` now consumes 10 units from the configured per-session rolling-minute budget. The service reads the corporation member roster before applying its bounded action list, so repeated calls could otherwise repeat a full roster query. Calls within budget retain their existing result and notification flow. `DispatchGoldenTests.Corporation_member_actions_use_the_named_per_session_budget` verifies the second call is refused when the test allowance is exhausted.

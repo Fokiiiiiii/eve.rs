@@ -7,7 +7,6 @@ namespace Eve.Dungeons;
 /// <summary>
 /// The dungeon content the host reads, keyed by the official dungeon id. Every lookup answers: the content, or an explicit
 /// reason it has none. The data is embedded in this assembly (<c>Data/catalog/v1</c>, written by <c>tools/dev/extract-dungeon-catalog.py</c>);
-/// nothing is read from the EveJS tree or from an environment variable at run time.
 /// </summary>
 public sealed class DungeonCatalog
 {
@@ -176,7 +175,6 @@ public abstract record DungeonAnswer;
 
 public sealed record DungeonFound(Dungeon Dungeon) : DungeonAnswer;
 
-/// <summary>The official dungeon exists (a mission kills in it) but the owner data holds no template for it.</summary>
 public sealed record DungeonNoTemplate(long DungeonID, IReadOnlyList<long> MissionIDs, string Reason) : DungeonAnswer;
 
 public sealed record DungeonNotInCatalog(long DungeonID, string Reason) : DungeonAnswer;
@@ -187,13 +185,12 @@ public sealed record MissionFound(long MissionID, long DungeonID, DungeonAnswer 
 
 public enum MissionNoDungeonKind
 {
-    /// <summary>The owner data stores a broken killMission (a Python object repr); the record has no dungeon.</summary>
+
     Defect,
 
     /// <summary>A kill objective with no dungeon id; the mission has no dungeon.</summary>
     KillWithoutDungeon,
 
-    /// <summary>Epic-like in the owner data but not bound to a dungeon.</summary>
     NotBound,
 
     /// <summary>Not in the catalog.</summary>

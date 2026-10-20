@@ -35,6 +35,7 @@ public sealed partial class SpaceContainers : ISpaceContainers, IDisposable
 
     private const int CanGroup = 12;
     private const int WreckGroup = 186;
+    private const int AnalysisBeaconGroup = 4137;
     private const int CanDestructionEffect = 3;
     private const int RemovedCanLocation = 10;
     private const int CargoFlag = CharacterShips.CargoFlag;
@@ -123,12 +124,14 @@ public sealed partial class SpaceContainers : ISpaceContainers, IDisposable
         await _statics.EnsureTypesAsync([item.TypeId], cancellationToken);
         var type = _statics.Type(item.TypeId);
         if (type is null ||
-            (type.GroupId != CanGroup && type.GroupId != WreckGroup && type.GroupId != Customs.OfficeGroupId &&
+            (type.GroupId != CanGroup && type.GroupId != WreckGroup && type.GroupId != AnalysisBeaconGroup && type.GroupId != Customs.OfficeGroupId &&
              !Eve.Structures.StructureUnanchorDrop.IsFittingsContainer(item.TypeId, item.CustomInfo) &&
              !(await IsLootedSiteContainerAsync(item.Id, item.TypeId, type.GroupId, cancellationToken))))
         {
             return null;
         }
+        if (type.GroupId == AnalysisBeaconGroup && item.CustomInfo != "analysis_beacon_wreck"
+            && !HasAnalysisBeaconLootAccess(item, session.CharacterId)) return null;
         CommandReply reply;
         try
         {
@@ -153,6 +156,12 @@ public sealed partial class SpaceContainers : ISpaceContainers, IDisposable
 
     private async Task<bool> MayTakeFromAsync(long characterId, Item container, CancellationToken cancellationToken, SpaceItem? rights = null, IReadOnlyList<long>? itemIds = null)
     {
+        if (container.CustomInfo == "analysis_beacon_wreck")
+        {
+            return true;
+        }
+        if (container.CustomInfo?.StartsWith("analysis_beacon_loot:", StringComparison.Ordinal) == true)
+            return HasAnalysisBeaconLootAccess(container, characterId);
         if (Eve.Structures.StructureUnanchorDrop.IsFittingsContainer(container.TypeId, container.CustomInfo) ||
             _abandonedLoot.ContainsKey(container.Id) || container.OwnerId == characterId)
         {
@@ -169,6 +178,14 @@ public sealed partial class SpaceContainers : ISpaceContainers, IDisposable
         }
         return await _ships.CharacterAsync(characterId, cancellationToken) is { } pilot
             && await _ships.CharacterAsync(container.OwnerId, cancellationToken) is { } owner && owner.CorporationId == pilot.CorporationId;
+    }
+
+    private bool HasAnalysisBeaconLootAccess(Item item, long? characterId)
+    {
+        var fields = item.CustomInfo?.Split(':');
+        return characterId is > 0 && fields is { Length: 3 } && fields[0] == "analysis_beacon_loot"
+            && long.TryParse(fields[1], out var linkedPilot) && linkedPilot == characterId.Value
+            && long.TryParse(fields[2], out var accessUntil) && _nowUnixMs() < accessUntil;
     }
 
     /// <summary>

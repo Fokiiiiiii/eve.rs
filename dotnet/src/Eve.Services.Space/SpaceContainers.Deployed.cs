@@ -176,6 +176,10 @@ public sealed partial class SpaceContainers
             {
                 await expire(due);
             }
+            if (await _deployed.GetAsync(due.DeployableId) is { } current && current.ExpiresAtMs > nowUnixMs)
+            {
+                continue;
+            }
             await _deployed.RemoveAsync(due.DeployableId);
         }
     }

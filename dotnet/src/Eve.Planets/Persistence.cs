@@ -35,6 +35,7 @@ public sealed record ColonyDocument(long PlanetId, long OwnerId, int PlanetTypeI
 public sealed class PlanetStore(NpgsqlDataSource source, string schema = PlanetStore.DefaultSchema)
 {
     public const string DefaultSchema = "planets";
+      public string Schema => schema;
 
     public static Task<IReadOnlyList<string>> MigrateAsync(NpgsqlDataSource source, string schema = DefaultSchema, CancellationToken cancellationToken = default) =>
         Migrations.ApplyAsync(source, schema, Migrations.Embedded(typeof(PlanetStore).Assembly, "Migrations"), cancellationToken);

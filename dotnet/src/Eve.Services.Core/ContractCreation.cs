@@ -31,11 +31,11 @@ public sealed record ContractCreationInfo(
             _ => throw new ArgumentException("contract info must be a KeyVal or ContractStruct", nameof(value)),
         };
         return new ContractCreationInfo(
-            ContractType: (int)Integer(fields, "contractType"),
+            ContractType: checked((int)Integer(fields, "contractType")),
             IsPrivate: Flag(fields, "isPrivate"),
             AssignedToId: Integer(fields, "assignedToID"),
-            MinutesExpire: (int)Integer(fields, "minutesExpire"),
-            NumDays: (int)Integer(fields, "numDays"),
+            MinutesExpire: checked((int)Integer(fields, "minutesExpire")),
+            NumDays: checked((int)Integer(fields, "numDays")),
             StartStationId: Integer(fields, "startStationID"),
             DestinationId: Integer(fields, "destinationID"),
             Price: Money(fields, "price"),
@@ -44,8 +44,9 @@ public sealed record ContractCreationInfo(
             Title: Text(fields, "title"),
             Description: Text(fields, "description"),
             ItemList: Pairs(fields, "itemList").Select(pair => new ContractOfferedItem(pair.Key, pair.Value)).ToArray(),
-            StartStationDivision: (int)Integer(fields, "startStationDivision"),
-            RequestedTypes: Pairs(fields, "requestItemTypeList").Select(pair => new ContractRequestedItem((int)pair.Key, pair.Value)).ToArray(),
+            StartStationDivision: checked((int)Integer(fields, "startStationDivision")),
+            RequestedTypes: Pairs(fields, "requestItemTypeList")
+                .Select(pair => new ContractRequestedItem(checked((int)pair.Key), pair.Value)).ToArray(),
             ForCorp: Flag(fields, "forCorp"));
     }
 
@@ -86,7 +87,8 @@ public sealed record ContractCreationInfo(
     {
         PyInt value => value.Value,
         PyLong value => value.Value,
-        PyReal value when value.Value == Math.Floor(value.Value) => (long)value.Value,
+        PyReal value when double.IsFinite(value.Value) && value.Value == Math.Truncate(value.Value) =>
+            checked((long)value.Value),
         null or PyNone => 0,
         _ => throw new ArgumentException($"contract field {name} must be an integer", nameof(fields)),
     };
@@ -125,6 +127,9 @@ public sealed record ContractCreationInfo(
             null or PyNone => [],
             _ => throw new ArgumentException($"contract field {name} must be a list", nameof(fields)),
         };
+        if (items.Count > 500)
+            throw new ArgumentException($"contract field {name} exceeds the 500 entry limit", nameof(fields));
+
         foreach (var item in items)
         {
             var pair = item switch

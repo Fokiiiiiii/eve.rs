@@ -218,6 +218,13 @@ internal sealed partial class CharacterServicesComposition
                 });
             var npcWrecks = new NpcWrecks(npcAuthority, () => NpcLoot.LoadAsync(sde), ships);
             spaceSessions = new SpaceSessions(sim, ships, dogma, stations, solarSystems, now, message => Console.Error.WriteLine($"eve-host: space: {message}"), localTimers: foundations.LocalTimers, spaceItems: spaceItemStore) { RookieShipOfRace = race => catalog.Race(race)?.ShipTypeId, Npcs = new NpcSelector(npcAuthority), NpcWrecks = npcWrecks, BeltRats = new BeltRats(npcAuthority, BeltRatConfig.FromEnvironment(Environment.GetEnvironmentVariable), type => NpcHull.HasHitPoints(dogma.Type(type))), AutoReloadUsers = AutoReloadUserIds(Env("EVE_AUTO_RELOAD_ACCOUNTS", "")) };
+            spaceSessions.TimedActions = foundations.Scheduler;
+            foundations.Scheduler.Register(Eve.Services.Space.SpaceSessions.ShipSelfDestructJobKind, async (context, token) =>
+            {
+                var countdown = context.Payload<Eve.Services.ShipSelfDestructCountdown>()
+                    ?? throw new InvalidDataException("A ship self-destruct deadline has no payload.");
+                await spaceSessions.CompleteShipSelfDestructAsync(countdown, token);
+            });
             // the stargate lists and tolls: the embedded client data, or the export named by EVE_CLIENT_SDE_DIR where it holds the file
             var clientDirectory = Env(Eve.Universe.ClientStaticData.DirectoryVariable, "");
             spaceSessions.GateRules = await Eve.Services.Space.Gates.GateRules.LoadAsync(sde, clientDirectory);

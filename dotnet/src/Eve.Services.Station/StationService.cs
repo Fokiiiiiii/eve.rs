@@ -214,11 +214,16 @@ public sealed partial class MapService
     private const string StationCountQuery = "map.stationCount";
     private readonly Eve.ReadSide.ReadSide _reads;
     private readonly Func<long> _nowUnixMs;
+      private readonly Func<long, IEnumerable<(long CharacterId, long LocationId)>>? _readCorporationMemberLocations;
 
-    public MapService(Eve.ReadSide.ReadSide reads, Func<long> nowUnixMs)
+      public MapService(
+          Eve.ReadSide.ReadSide reads,
+          Func<long> nowUnixMs,
+          Func<long, IEnumerable<(long CharacterId, long LocationId)>>? readCorporationMemberLocations = null)
     {
         _reads = reads;
         _nowUnixMs = nowUnixMs;
+          _readCorporationMemberLocations = readCorporationMemberLocations;
         reads.Register(new Eve.ReadSide.RowsetQuery(
             StationInfoQuery,
             """
@@ -348,8 +353,20 @@ public sealed partial class MapService
         await ReadOrDefaultAsync(call, EmptyMapRowset("solarSystemID", "noOfJobs"));
 
     [Method("GetMyExtraMapInfo")]
-    public async ValueTask<PyValue> GetMyExtraMapInfo(ServiceCall call) =>
-        await ReadOrDefaultAsync(call, EmptyMapRowset("characterID", "locationID"));
+      public ValueTask<PyValue> GetMyExtraMapInfo(ServiceCall call)
+      {
+          var corporationId = call.Session.GetInt("corpid") ?? 0;
+          if (_readCorporationMemberLocations is not { } readLocations || corporationId <= 0)
+              return ReadOrDefaultAsync(call, EmptyMapRowset("characterID", "locationID"));
+
+          var rows = readLocations(corporationId)
+              .Where(row => row.CharacterId > 0 && row.LocationId > 0)
+              .Distinct()
+              .OrderBy(row => row.CharacterId)
+              .Select(row => (PyValue)Py.Tuple(new PyInt(row.CharacterId), new PyInt(row.LocationId)))
+              .ToArray();
+          return ValueTask.FromResult(Py.Rowset(["characterID", "locationID"], rows));
+      }
 
     [Method("GetMyExtraMapInfoAgents")]
     public async ValueTask<PyValue> GetMyExtraMapInfoAgents(ServiceCall call) =>

@@ -361,6 +361,40 @@ public class StationServiceTests
         Assert.Equal(system.GetProperty("regionID").GetInt32(), ((PyInt)first[7]).Value);
     }
 
+    [Fact]
+    public async Task Map_extra_info_lists_only_current_members_of_the_callers_corporation()
+    {
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest("Host=localhost"));
+        var sessions = new Eve.Services.CharacterSessions();
+        var firstMember = new ClientSession { CharacterId = 90000001 };
+        firstMember.Set("corpid", new PyInt(98000001));
+        firstMember.Set("solarsystemid2", new PyInt(30000142));
+        sessions.Enter(firstMember.CharacterId.Value, firstMember);
+        var secondMember = new ClientSession { CharacterId = 90000002 };
+        secondMember.Set("corpid", new PyInt(98000001));
+        secondMember.Set("solarsystemid", new PyInt(30000144));
+        sessions.Enter(secondMember.CharacterId.Value, secondMember);
+        var otherCorporationMember = new ClientSession { CharacterId = 90000003 };
+        otherCorporationMember.Set("corpid", new PyInt(98000002));
+        otherCorporationMember.Set("solarsystemid2", new PyInt(30000146));
+        sessions.Enter(otherCorporationMember.CharacterId.Value, otherCorporationMember);
+
+        var service = new MapService(new Eve.ReadSide.ReadSide(source), () => Data.ClockMs,
+            corporationId => sessions.OfCorporation(corporationId).Select(session => (
+                CharacterId: session.CharacterId ?? 0,
+                LocationId: session.GetInt("solarsystemid2") ?? session.GetInt("solarsystemid") ?? 0)));
+        var (caller, _) = Data.Session(null);
+        caller.Set("corpid", new PyInt(98000001));
+
+        var answer = Assert.IsType<PyObject>(await Data.CallAsync(service, caller, "GetMyExtraMapInfo"));
+        var fields = Data.Fields(answer);
+        Assert.Equal(["characterID", "locationID"], ((PyList)fields["header"]).Items.Select(JsSemantics.StringValue));
+        Assert.Equal(
+            [(90000001L, 30000142L), (90000002L, 30000144L)],
+            ((PyList)fields["lines"]).Items.Cast<PyTuple>().Select(row =>
+                (((PyInt)row.Items[0]).Value, ((PyInt)row.Items[1]).Value)));
+    }
+
     [PgFact]
     public async Task Map_security_modified_systems_and_station_counts_use_read_side()
     {

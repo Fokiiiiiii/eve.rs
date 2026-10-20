@@ -48,6 +48,9 @@ public sealed class XmppPrivateConversationTests
         first.OnStanza(Parse($"<message to='{room}@conference.chat.example'><x xmlns='http://jabber.org/protocol/muc#user'><invite to='77@chat.example'><reason>Private chat</reason></invite></x></message>"));
         Assert.Contains(secondOutput, item => item.Contains($"from='{room}@conference.chat.example'", StringComparison.Ordinal)
             && item.Contains("<invite from='42@chat.example'>", StringComparison.Ordinal));
+        var inviteCount = secondOutput.Count(item => item.Contains("<invite from='42@chat.example'>", StringComparison.Ordinal));
+        first.OnStanza(Parse($"<message to='{room}@conference.chat.example'><x xmlns='http://jabber.org/protocol/muc#user'><invite to='77@chat.example'/></x></message>"));
+        Assert.Equal(inviteCount, secondOutput.Count(item => item.Contains("<invite from='42@chat.example'>", StringComparison.Ordinal)));
 
         second.OnStanza(Parse($"<presence to='{room}@conference.chat.example/Beta'><x xmlns='http://jabber.org/protocol/muc'/></presence>"));
         first.OnStanza(Parse($"<message type='groupchat' to='{room}@conference.chat.example'><body>meet at the station</body></message>"));

@@ -3323,6 +3323,42 @@ public class SpaceServiceTests
         }
     }
 
+    [PgFact]
+    public async Task Fleet_invites_do_not_disclose_other_fleet_membership_to_non_members()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var actorId = Random.Shared.NextInt64(8_000_000_000_000, 8_999_999_999_000);
+        var firstLeaderId = actorId + 1;
+        var secondLeaderId = actorId + 2;
+        var unrelatedId = actorId + 3;
+        var store = rig.FleetStore;
+        var fleetId = await store.CreateAsync(firstLeaderId);
+        var otherFleetId = await store.CreateAsync(secondLeaderId);
+        var actor = new ClientSession(new Sink());
+        actor.Set("charid", new PyLong(actorId));
+        var fleet = new Eve.Services.Space.FleetObjectService(store, () => Rig.ClockMs);
+
+        try
+        {
+            Assert.Equal(PyBool.False,
+                await FleetObjectCallAsync(fleet, fleetId, actor, "Invite", [new PyLong(secondLeaderId)]));
+            Assert.Equal(PyBool.False,
+                await FleetObjectCallAsync(fleet, fleetId, actor, "Invite", [new PyLong(unrelatedId)]));
+
+            var hiddenMember = Assert.IsType<PyList>(await FleetObjectCallAsync(
+                fleet, fleetId, actor, "MassInvite", [new PyList([new PyLong(secondLeaderId)])]));
+            var unrelated = Assert.IsType<PyList>(await FleetObjectCallAsync(
+                fleet, fleetId, actor, "MassInvite", [new PyList([new PyLong(unrelatedId)])]));
+            Assert.Empty(hiddenMember.Items);
+            Assert.Empty(unrelated.Items);
+        }
+        finally
+        {
+            if (fleetId > 0) await store.DisbandAsync(fleetId, firstLeaderId);
+            if (otherFleetId > 0) await store.DisbandAsync(otherFleetId, secondLeaderId);
+        }
+    }
+
 [PgFact]
     public async Task Fleet_warp_is_scoped_to_the_commander_group_and_honors_opt_outs()
     {
@@ -3590,6 +3626,33 @@ public class SpaceServiceTests
             Assert.Equal(2, members.Entries.Count);
             Assert.Contains(members.Entries, entry => entry.Key == new PyLong(leader.CharacterId));
             Assert.Contains(members.Entries, entry => entry.Key == new PyLong(memberOne));
+        }
+        finally
+        {
+            if (fleetId > 0) await store.DisbandAsync(fleetId, leader.CharacterId);
+        }
+    }
+
+[PgFact]
+    public async Task Fleet_motd_is_bounded_before_store_and_notification_work()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var leader = await rig.NewCharacterAsync();
+        var session = await rig.SessionAsync(leader);
+        var store = rig.FleetStore;
+        var fleetId = await store.CreateAsync(leader.CharacterId);
+        var fleet = new Eve.Services.Space.FleetObjectService(store, () => Rig.ClockMs);
+
+        try
+        {
+            var before = await store.GetMotdAsync(fleetId);
+            var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+                FleetObjectCallAsync(fleet, fleetId, session, "SetMotdEx",
+                    [new PyWString(new string('x', 4097))]));
+            Assert.Equal(MachoErrors.UserErrorClass, refusal.Error.ClassName);
+            var errorHeader = Assert.IsType<PyTuple>(Assert.IsType<PyObjectEx>(refusal.Error.Payload).Header);
+            Assert.Equal(new PyStr("FleetError"), Assert.IsType<PyTuple>(errorHeader.Items[1]).Items[0]);
+            Assert.Equal(before, await store.GetMotdAsync(fleetId));
         }
         finally
         {

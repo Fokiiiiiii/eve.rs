@@ -28,6 +28,8 @@ internal sealed class EssRig : IAsyncDisposable
     /// <summary>What the key removal does inside the bank's transaction (a test writes a marker there, or fails after it).</summary>
     public Func<NpgsqlConnection, NpgsqlTransaction, Task>? KeyEffect { get; set; }
 
+    public const long LinkedCorporation = 900_000_001;
+
     /// <summary>The alliance that holds the sovereignty of the systems (null: none does).</summary>
     public long? SovereigntyOwner { get; set; }
 
@@ -72,7 +74,8 @@ internal sealed class EssRig : IAsyncDisposable
         },
         quadrantOf: _ => SystemQuadrant,
         sovereigntyOwnerOf: (_, _) => ValueTask.FromResult(SovereigntyOwner),
-        reserveMaxPayout: reserveMaxPayout);
+        reserveMaxPayout: reserveMaxPayout,
+        corporationOf: (_, _) => ValueTask.FromResult<long?>(LinkedCorporation));
 
     public static async Task<EssRig> CreateAsync()
     {
@@ -107,6 +110,18 @@ internal sealed class EssRig : IAsyncDisposable
         await Transactions.AccountBalanceAsync(new WalletAccount(owner)) ?? throw new InvalidOperationException($"no wallet for {owner}");
 
     /// <summary>Sets the reserve balance directly: a bounty's share is the only money that enters a reserve, and a test needs a funded one.</summary>
+    public async Task OpenCorporationAsync(long corporationId)
+    {
+        await using var connection = await Source.OpenConnectionAsync();
+        await using var transaction = await connection.BeginTransactionAsync();
+        await Transactions.OpenCorporationDivisionsAsync(connection, transaction, corporationId);
+        await transaction.CommitAsync();
+    }
+
+    public async Task<decimal> CorporationBalanceAsync(long corporationId) =>
+        await Transactions.AccountBalanceAsync(new WalletAccount(corporationId, 1001))
+        ?? throw new InvalidOperationException($"no corporation wallet for {corporationId}");
+
     public async Task FundReserveAsync(int solarSystemId, decimal isk)
     {
         await using var command = Source.CreateCommand($"UPDATE {_essSchema}.systems SET reserve_value = $2 WHERE solar_system_id = $1");
@@ -370,25 +385,31 @@ public sealed class PgEssStoreTests
     }
 
     [PgFact]
-    public async Task Each_reserve_pulse_that_is_due_pays_the_linked_characters_their_share_and_runs_the_bank_down()
+    public async Task Each_reserve_pulse_credits_the_linked_pilots_corporation_and_runs_the_bank_down()
     {
         await using var rig = await EssRig.CreateAsync();
         var store = rig.Store(reserveMaxPayout: 100);
         await store.RegisterAsync(Jita, EssId, null, Now);
         await rig.FundReserveAsync(Jita, 1000m);
-        await rig.OpenWalletAsync(Thief, 0);
-        await rig.OpenWalletAsync(Other, 0);
+        await rig.OpenCorporationAsync(EssRig.LinkedCorporation);
         await store.ExecuteAsync(Request(EssMgrOperation.RequestUnlockReserveBank, Jita, Thief, keyTypeId: 57714), Now);
         await store.ExecuteAsync(Request(EssMgrOperation.AttemptLinkToReserveBank, Jita, Thief), Now);
         await store.ExecuteAsync(Request(EssMgrOperation.AttemptLinkToReserveBank, Jita, Other), Now);
 
         await store.TickAsync(Now + EssRules.PulseIntervalMs);
 
-        // pulse 1 of 15 pays 100 * (1 / 10)^2 = 1.00, shared by the two linked characters
-        Assert.Equal(0.50m, await rig.BalanceAsync(Thief));
-        Assert.Equal(0.50m, await rig.BalanceAsync(Other));
+        // pulse 1 of 15 pays 1.00 ISK; two linked pilots in one corporation share it into that corporation's first wallet division
+        Assert.Equal(1.00m, await rig.CorporationBalanceAsync(EssRig.LinkedCorporation));
+        var journal = await rig.Transactions.JournalForAccountAsync(EssRig.LinkedCorporation, 1001);
+        var entry = Assert.Single(journal);
+        Assert.Equal(1.00m, entry.Amount);
+        Assert.Equal("ESS reserve bank payout", entry.Reason);
         var state = (await store.ReadAsync(Jita))!;
         Assert.Equal((999m, 14), (state.ReserveValue, state.PulsesRemaining));
         Assert.Equal(2, state.ReserveThefts.Count);
+
+        await rig.Store(reserveMaxPayout: 100).TickAsync(Now + EssRules.PulseIntervalMs);
+        Assert.Equal(1.00m, await rig.CorporationBalanceAsync(EssRig.LinkedCorporation));
+        Assert.Single(await rig.Transactions.JournalForAccountAsync(EssRig.LinkedCorporation, 1001));
     }
 }

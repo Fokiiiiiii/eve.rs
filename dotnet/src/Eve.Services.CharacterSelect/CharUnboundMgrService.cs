@@ -484,7 +484,15 @@ public sealed partial class CharUnboundMgrService(
     [Method("DeleteCharacter")]
     public async ValueTask<PyValue> DeleteCharacter(ServiceCall call)
     {
-        var (character, account) = await OwnedOfflineCharacter(call);
+        var (character, account) = await OwnedOfflineCharacter(call, includeDeleted: true);
+        if (character.IsDeleted)
+        {
+            if (deletionPurge is not null)
+                await deletionPurge.PurgeAsync(character.Id, character.CorporationId, Token(call));
+            await characters.SetCorporationAsync(character.Id, DoomheimCorporationId, Token(call));
+            return None;
+        }
+
         if (character.DeletePrepareAt is not { } readyAt)
             throw Info("That character is not in the biomass queue.");
         var now = Now();
@@ -500,7 +508,7 @@ public sealed partial class CharUnboundMgrService(
         return None;
     }
 
-    private async ValueTask<(Character Character, int Account)> OwnedOfflineCharacter(ServiceCall call)
+    private async ValueTask<(Character Character, int Account)> OwnedOfflineCharacter(ServiceCall call, bool includeDeleted = false)
     {
         var characterId = RequestCharacterId(call);
         var character = await characters.GetAsync(characterId, Token(call));
@@ -508,7 +516,7 @@ public sealed partial class CharUnboundMgrService(
             throw Info("That character no longer exists.");
         if (AccountOf(call) is not { } account)
             throw Info("Character deletion requires a valid authenticated account.");
-        if (character.AccountId != account || character.IsDeleted)
+        if (character.AccountId != account || (character.IsDeleted && !includeDeleted))
             throw Info("That character is not available on this account.");
         if (online.IsOnline(characterId))
             throw Info("That character is currently online and cannot be deleted.");

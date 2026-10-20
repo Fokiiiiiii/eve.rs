@@ -1,5 +1,3 @@
--- The durable scheduler's jobs. A job is "run the handler of this kind with this payload at this time"; it is a row, so a restart loses none and a job scheduled in the
--- same transaction as a change of state exists exactly when that change does. A finished job is deleted, a job that ran out of attempts stays as 'failed'.
 CREATE TABLE jobs (
     id             bigserial PRIMARY KEY,
     -- which handler runs it ("npc.bounty.payout"); a handler registers under one kind

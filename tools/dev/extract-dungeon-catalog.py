@@ -24,16 +24,13 @@ SPLIT_SIZE = 4000
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_OUT = os.path.join(HERE, "..", "..", "dotnet", "src", "Eve.Dungeons", "Data", "catalog", "v1")
 
-
 def load_json(path):
     with open(path, encoding="utf-8") as handle:
         return json.load(handle)
 
-
 def load_jsonl(path):
     with open(path, encoding="utf-8") as handle:
         return [json.loads(line) for line in handle if line.strip()]
-
 
 def merge_value(base, overlay):
     # the same rule as the reference's mergeClientContentValue: arrays and scalars are replaced, objects are merged key by key
@@ -47,16 +44,13 @@ def merge_value(base, overlay):
         return {k: merge_value(base_obj.get(k), overlay.get(k)) for k in keys}
     return overlay
 
-
 def int_or_none(value):
     return value if isinstance(value, int) and not isinstance(value, bool) else None
-
 
 def position(value):
     if not isinstance(value, dict):
         return None
     return {"x": value.get("x"), "y": value.get("y"), "z": value.get("z")}
-
 
 class Validation:
     def __init__(self, type_ids, archetype_ids):
@@ -79,7 +73,6 @@ class Validation:
                 self.mismatches["archetypeID"].append((value, where))
         else:
             self.client_only_archetypes += 1
-
 
 def project_template(dungeon_id, template, check):
     where = f"dungeon {dungeon_id}"
@@ -220,7 +213,6 @@ def project_template(dungeon_id, template, check):
         "miningLocks": mining,
         "lootProfiles": loot,
     }
-
 
 def main(argv):
     if len(argv) < 3:
@@ -395,8 +387,6 @@ def main(argv):
         print("  typeID", value, where)
     for value, where in check.mismatches["archetypeID"][:20]:
         print("  archetypeID", value, where)
-
-
 
 if __name__ == "__main__":
     main(sys.argv)

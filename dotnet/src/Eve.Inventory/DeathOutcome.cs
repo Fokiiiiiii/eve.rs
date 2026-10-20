@@ -31,7 +31,6 @@ public static class DeathOutcome
     private const int SubsystemFlagMax = 132;
 
     /// <summary>
-    /// Stacks up to this many units roll every unit separately; larger stacks draw their dropped count in one step (a roll costs about a
     /// microsecond, and a hold full of tritanium is tens of millions of units).
     /// </summary>
     public const long PerUnitDropRollLimit = 100;

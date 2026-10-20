@@ -34,7 +34,6 @@ public enum MutationRefusal
     AttributeMissingInSource,
 }
 
-/// <summary>The outcome of a mutation step: accepted with a value, or refused with a typed reason.</summary>
 public abstract record MutationOutcome<T>;
 
 public sealed record Accepted<T>(T Value) : MutationOutcome<T>;
@@ -116,7 +115,6 @@ public static class MutationMath
     }
 
     /// <summary>
-    /// The effective attributes of a mutated item (decision D1, D2): the source type's attributes, with the output type's
     /// skill requirements replacing the source's skill requirements, and each mutated attribute set to its source base value
     /// times its roll. Nothing else is taken from the output type.
     /// </summary>

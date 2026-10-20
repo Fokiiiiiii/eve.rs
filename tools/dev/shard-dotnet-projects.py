@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-# Seconds from the VSTest Duration lines recorded in docs/project/CI.md.
 # New projects receive a small default weight and are included automatically.
 DURATIONS = {
     "Eve.Corporations.Tests": 20,
@@ -18,7 +17,6 @@ DURATIONS = {
     "Eve.Services.Skills.Tests": 22,
     "Eve.Ships.Tests": 110,
 }
-
 
 def main() -> int:
     parser = argparse.ArgumentParser()
@@ -38,7 +36,6 @@ def main() -> int:
         loads[target] += DURATIONS.get(name, 5)
     print(" ".join(sorted(bins[args.index])))
     return 0
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

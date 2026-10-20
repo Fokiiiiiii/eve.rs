@@ -22,7 +22,6 @@ KEY_NAMES = {
     57721: "ESS-SW-45 Reserve Security Key",
 }
 
-
 def main() -> None:
     source_dir, target = sys.argv[1], sys.argv[2]
     rows = []
@@ -50,7 +49,6 @@ def main() -> None:
     with open(target, "w", encoding="utf-8") as handle:
         json.dump(document, handle, indent=2)
         handle.write("\n")
-
 
 if __name__ == "__main__":
     main()

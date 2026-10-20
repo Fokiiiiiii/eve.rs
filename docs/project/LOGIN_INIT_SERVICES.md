@@ -37,11 +37,11 @@ The headless login-to-character walk (`tools/headless-client/tests/test_login_to
 | `userSvc.GetUserToken` | Authentication/token consumers | Partial | Present in `RedeemService`; verify whether it returns a scoped live token or an empty default in Host registration. |
 | `userSvc.GetUserName` / `GetCreateDate` | Account display and character support UI | Implemented | Host account/character providers. |
 | `subscriptionMgr.GetCloneGrade` | Character screen and clone UI | Implemented | Character/account subscription state is read by Host provider. |
-| `subscriptionMgr.GetSubscriptionTime` | Subscription UI after entry | Partial | Route exists; current provider shape/state needs direct client-flow coverage. |
+| `subscriptionMgr.GetSubscriptionTime` | Subscription UI after entry | Implemented | `SubscriptionMgrService` derives expiry and remaining days from the persisted account omega expiry. |
 | `survey.GetActiveSurveyID` | Character screen | Partial | Route is present; verify campaign configuration and result against current server data. |
 | `loginCampaignManager` / `seasonalLoginCampaignManager` | Login reward surfaces | Partial | Service names are registered; campaign state and rewards depend on configured data. Verify claim mutation, ownership, and persistence before counting these as complete. |
-| `milestoneMgr.ProcessCharacterLogon` / `ClaimRewards` | First logon and reward claims | Partial | State is backed by the GameStore projection; verify idempotent claim and post-restart behavior. |
-| `rewardMgr.GetDelayedRewardsByGroupIDs` | Login reward UI | Partial | Route exists; verify account/character scope and persisted reward results. |
+| `milestoneMgr.ProcessCharacterLogon` / `ClaimRewards` | First logon and reward claims | Implemented | The Host uses `LoginMilestoneStore`; the milestone live test covers the logon timer and claim path. |
+| `rewardMgr.GetDelayedRewardsByGroupIDs` | Login reward UI | Implemented | Host reads pending loyalty points from the live incursion director; groups without pending rewards are omitted. |
 | `config.GetStationSolarSystemsByOwner` | Static/config startup | Implemented | Host reads server configuration/static catalog. |
 | `localizationServer.GetAllTextChanges` | Localization startup | Partial | Route is present; configured text-change data and locale-specific coverage remain to be established. |
 | `alert` / `securityMgr` initial calls | Startup gates | Partial | Concrete routes are registered; the client trace must identify the exact request and expected gate state for each deployment. |
@@ -49,7 +49,7 @@ The headless login-to-character walk (`tools/headless-client/tests/test_login_to
 | `authentication` / `sessionMgr` notifications | Login and world transition | Implemented | Session initialization and character-change notifications are covered by headless walk. |
 | `userSvc.UserLogOffCharacter` | Return to character selection | Implemented | Session remains connected without a selected character; a subsequent selection is covered in `test_login_to_character.py`. |
 
-Inventory baseline: 38 tracked service/RPC entries (24 implemented, 14 partial, 0 missing routes). The partial count includes existing methods whose default/provider behavior still needs completion; route registration alone does not establish completion.
+Inventory baseline: 38 tracked service/RPC entries. Source review classifies 27 as implemented, 11 as partial, and 0 as missing routes. The partial count includes existing methods whose default/provider behavior still needs completion; route registration alone does not establish completion.
 
 ## Verification boundary
 

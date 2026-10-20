@@ -29,7 +29,7 @@ The headless login-to-character walk (`tools/headless-client/tests/test_login_to
 | `charUnboundMgr.ValidateNameEx` | Character creation | Implemented | Name validation and conflict checks; exercised by walk. |
 | `charUnboundMgr.CreateCharacterWithDoll` | Character creation | Implemented | Persists character, ship, starter state and initialization hooks; walk covers slot limit and starter outcomes. |
 | `charUnboundMgr.SelectCharacterID` | Enter world | Implemented | Enforces account ownership and creates selected session; walk checks invalid and valid choices. |
-| `charUnboundMgr` delete preparation/cancel/delete | Character management | Partial | Some deletion routes exist; expiry/purge and retry semantics are not covered by the login walk. |
+| `charUnboundMgr` delete preparation/cancel/delete | Character management | Implemented | Persisted preparation expiry, cancellation, account/offline checks, purge, and retry-safe repeated deletion; covered by `Character_deletion_queues_waits_cancels_and_deletes_and_the_deleted_character_is_refused` in Host tests. |
 | `multiLoginBlocker.Login` | SSO computer/account login gate | Implemented | Host live-session policy is tested in `docs/reference/compat/DEVIATIONS.md` (same-account replacement behavior). |
 | `authentication.AccruedTime` | Account/clone UI initialization | Partial | Current service default returns an empty list when no provider is wired. Wire to persisted subscription/account state and test client consumer. |
 | `authentication.AmUnderage` | Account gate | Partial | Current default is false; Host must use authoritative account age state if the deployment supports age restrictions. |

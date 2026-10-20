@@ -38,6 +38,7 @@ public sealed partial class XmppChatHub
             || !StaticAccessChannels(session).Contains(room, StringComparer.Ordinal) && !HasPrivateRoomAccess(session, room))
             return false;
 
+        PruneRoomMembers(room);
         var delayed = Eve.Host.PublicGateway.LocalChatGateway.IsDelayedLocalChannel(room);
         lock (_gate)
         {
@@ -107,6 +108,11 @@ public sealed partial class XmppChatHub
         if (Encoding.UTF8.GetByteCount(body) is 0 or > MaxRoomMessageBytes
             || body.Any(character => char.IsControl(character) && character is not '\n' and not '\t'))
             return false;
+        PruneRoomMembers(room);
+        var session = SessionOf(link.CharacterId);
+        if (session is null || !StaticAccessChannels(session).Contains(room, StringComparer.Ordinal) && !HasPrivateRoomAccess(session, room))
+            return false;
+
         XmppOccupant sender;
         XmppOccupant[] recipients;
         XmppOccupant[] knownSpeakers;
@@ -115,7 +121,8 @@ public sealed partial class XmppChatHub
         var now = DateTimeOffset.UtcNow;
         lock (_gate)
         {
-            if (!_occupants.TryGetValue((room, link.CharacterId), out sender!))
+            if (!_occupants.TryGetValue((room, link.CharacterId), out sender!)
+                || !ReferenceEquals(sender.Link, link))
                 return false;
             if (_lastRoomMessage.TryGetValue(link.CharacterId, out var last) && now - last < TimeSpan.FromMilliseconds(750))
                 return false;
@@ -169,7 +176,44 @@ public sealed partial class XmppChatHub
         return $"<presence from='{XmppXml.Escape(from)}' to='{XmppXml.Escape(to)}'><x xmlns='{MucUserNamespace}'><item affiliation='member' role='participant'/>{self}</x></presence>";
     }
 
-internal string? PrivateRoomName(ClientSession caller, long targetCharacterId)
+    internal IReadOnlyList<string> ResyncChannels(ClientSession session)
+    {
+        var channels = StaticAccessChannels(session);
+        if (session.CharacterId is not { } characterId || characterId <= 0)
+            return channels;
+        var active = ReferenceEquals(SessionOf(characterId), session);
+        string[] staleRooms;
+        lock (_gate)
+        {
+            staleRooms = _occupants.Keys.Where(key => key.CharacterId == characterId
+                && (!active || !channels.Contains(key.Room, StringComparer.Ordinal) && !HasPrivateRoomAccess(session, key.Room)))
+                .Select(key => key.Room).Distinct(StringComparer.Ordinal).ToArray();
+        }
+        foreach (var room in staleRooms)
+        {
+            XmppLink? link;
+            lock (_gate)
+                link = _occupants.TryGetValue((room, characterId), out var occupant) ? occupant.Link : null;
+            if (link is not null)
+                LeaveRoom(link, room);
+        }
+        return channels;
+    }
+
+    private void PruneRoomMembers(string room)
+    {
+        XmppOccupant[] occupants;
+        lock (_gate)
+            occupants = _occupants.Where(pair => pair.Key.Room == room).Select(pair => pair.Value).ToArray();
+        foreach (var occupant in occupants)
+        {
+            var session = SessionOf(occupant.Link.CharacterId);
+            if (session is null || !StaticAccessChannels(session).Contains(room, StringComparer.Ordinal) && !HasPrivateRoomAccess(session, room))
+                LeaveRoom(occupant.Link, room);
+        }
+    }
+
+    internal string? PrivateRoomName(ClientSession caller, long targetCharacterId)
     {
         if (caller.CharacterId is not { } callerCharacterId || callerCharacterId <= 0
             || !ReferenceEquals(SessionOf(callerCharacterId), caller))

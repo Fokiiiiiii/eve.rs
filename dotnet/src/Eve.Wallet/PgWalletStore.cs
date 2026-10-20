@@ -3,7 +3,6 @@ using Npgsql;
 
 namespace Eve.Wallet;
 
-/// <summary>What an owner has: ISK to the cent and whole PLEX.</summary>
 public sealed record Balance(long OwnerId, decimal Isk, long Plex);
 
 /// <summary>Wallets in PostgreSQL, in the module's own schema (<c>wallet</c> unless told otherwise).</summary>
@@ -29,7 +28,6 @@ public sealed class PgWalletStore
     public static Task<IReadOnlyList<string>> MigrateAsync(NpgsqlDataSource source, string schema = DefaultSchema, CancellationToken cancellationToken = default) =>
         Migrations.ApplyAsync(source, schema, MigrationSet(), cancellationToken);
 
-    /// <summary>Opens a wallet with a starting balance inside the caller's transaction. An owner has one.</summary>
     public async Task OpenAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long ownerId, decimal isk, long plex, CancellationToken cancellationToken = default)
     {
         if (isk > WalletLimits.MaximumIsk) throw new MoneyLimitException();
@@ -39,7 +37,6 @@ public sealed class PgWalletStore
         };
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
-
 
     public async Task<long> AdjustPlexAsync(
         NpgsqlConnection connection,
@@ -131,7 +128,6 @@ public sealed class PgWalletStore
         return balances;
     }
 
-    /// <summary>The amount of the owner's latest ISK journal entry (the last ISK change the wallet shows), 0 when the owner has none.</summary>
     public async Task<decimal> LastIskChangeAsync(long ownerId, CancellationToken cancellationToken = default)
     {
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
@@ -142,11 +138,9 @@ public sealed class PgWalletStore
         return await command.ExecuteScalarAsync(cancellationToken) is decimal amount ? amount : 0m;
     }
 
-
     public async Task<Balance?> GetAsync(long ownerId, CancellationToken cancellationToken = default) =>
         (await ForOwnersAsync([ownerId], cancellationToken)).GetValueOrDefault(ownerId);
 
-    /// <summary>The balances of the owners that have a wallet.</summary>
     public async Task<IReadOnlyDictionary<long, Balance>> ForOwnersAsync(IEnumerable<long> ownerIds, CancellationToken cancellationToken = default)
     {
         var balances = new Dictionary<long, Balance>();

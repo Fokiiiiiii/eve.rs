@@ -5018,3 +5018,7 @@ Outstanding contract creation schedules one PostgreSQL-backed job keyed by contr
 ## Contract mutation concurrency (2026-10-20)
 
 The writer serializes accept and bid operations by locking the contract row before checking status or active bids. A focused PostgreSQL regression races two distinct acceptors and two equal opening bids. It checks that only one acceptor receives escrow and pays the price, and that only one bid is debited and active while the losing bidder balance is unchanged. This matches the V24 single-winner contract transitions and EveJS settlement order while keeping inventory, wallet, bid, and contract status changes in the same PostgreSQL transaction.
+
+## Contract headless walk (2026-10-20)
+
+`tools/headless-client/tests/test_walk_contracts.py` exercises public item-exchange creation and acceptance through the V24 `contractProxy` RPCs using two connected characters. It checks the accepted row, issuer notification, item ownership, and wallet balances against PostgreSQL. The file is selectable in `.github/workflows/live-slow.yml`; its live result remains open until dispatched and completed successfully. The graphical client is a separate check.

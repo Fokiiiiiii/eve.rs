@@ -62,6 +62,10 @@ The Host rejects repeated private-room invitations from one character within one
 
 `charMgr.AddOwnerNote` and `EditOwnerNote` cap owner-note labels at 82 characters and bodies at the V24.01 notepad counter limit of 3,900 characters; `SetNote` refuses item notes above the client's 5,000-character save slice. Over-limit direct RPC calls receive named refusals before personal data persistence. The focused CharacterInfo regression verifies refusal and unchanged stored note values.
 
+## Underage login policy (2026-10-20)
+
+V24.01 `antiaddiction.AmIUnderage` passes the login JWT to `authentication.AmUnderage`. EveJS 261018.1 records whether a JWT was present but does not decode it; the answer comes from the deployment-wide `safeStateConfig.underage` boolean, false by default. Host now mirrors that policy through `EVE_SAFE_STATE_UNDERAGE` (default false). The JWT is neither logged nor decoded. `LoginSupportRpcTests` covers true and false callback values; `test_authentication_age_gate_uses_server_policy` passed against the Host with the setting both false and true.
+
 ## Project status
 
 Summary of this file, as of 2026-10-18. The task list with the same areas is the "Project status" table at the top of `docs/project/TODO.md`. **Status** is the state of the area; **Project rule** is the rule a deviation stands on; **Cut** lists what the owner or the evidence has cut, with the entry that records it. A cut item without an entry here or in its section is a bug in this file.

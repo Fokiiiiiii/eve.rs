@@ -183,12 +183,15 @@ internal static class HostComposition
                 .ActivateSlashAsync(request.Session, request.ModuleId, request.StartPoint, request.EndPoint, cancellationToken));
         IOmegaAccountStore omegaAccounts = new AccountOmegaStore(accounts as IAccountSubscriptions
             ?? throw new InvalidOperationException("the account directory keeps no subscription end times"));
-        Eve.Services.Core.AuthenticationRpcService? authentication = accruedTimeStore is { } accruedSessions
-            ? new Eve.Services.Core.AuthenticationRpcService(accruedTime: async (call, ct) =>
-                call.Session.UserId is { } accountId
-                    ? await accruedSessions.ReadWireValueAsync(accountId, DateTime.UtcNow.Ticks, ct)
-                    : new Eve.Marshal.PyList([]))
-            : null;
+        var underage = Flag("EVE_SAFE_STATE_UNDERAGE", false);
+        Eve.Services.Core.AuthenticationRpcService? authentication = new(
+            accruedTime: accruedTimeStore is { } accruedSessions
+                ? async (call, ct) =>
+                    call.Session.UserId is { } accountId
+                        ? await accruedSessions.ReadWireValueAsync(accountId, DateTime.UtcNow.Ticks, ct)
+                        : new Eve.Marshal.PyList([])
+                : null,
+            amUnderage: (_, _) => ValueTask.FromResult(underage));
         foreach (var service in CoreServices.Create(
             omegaAccounts, now, calendarStore, calendarAudience,
             authentication: authentication,

@@ -58,6 +58,7 @@ internal static class HostConfiguration
     //   EVE_PG_URL             PostgreSQL for accounts (postgres://... or an Npgsql string); without it accounts
     //                          live in memory and are lost when the host stops
     //   EVE_IDENTITY_SCHEMA    the schema of the accounts module                                  (default identity)
+    //   EVE_SAFE_STATE_UNDERAGE whether this deployment marks its login session as underage (default false)
     //   EVE_CHARACTERS_SCHEMA  the schema of the characters module                                (default characters)
     //   EVE_INVENTORY_SCHEMA   the schema of the inventory module                                 (default inventory)
     //   EVE_SKILLS_SCHEMA      the schema of the skills module                                    (default skills)

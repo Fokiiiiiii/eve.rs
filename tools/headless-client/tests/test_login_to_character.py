@@ -1050,3 +1050,11 @@ def test_a_queue_that_finishes_while_the_client_watches_is_told_level_by_level()
         problems += view_problems(away["after"], training_view(back), "finished while away: after")
     assert problems == [], "\n".join(problems[:30])
 
+
+def test_authentication_age_gate_uses_server_policy():
+    run = uuid.uuid4().hex[:10]
+    expected = os.environ.get("EVE_SAFE_STATE_UNDERAGE", "0").lower() in {"1", "true", "yes"}
+    with connect(f"underage-{run}") as client:
+        kind, outcome = attempt(client, "authentication", "AmUnderage", None)
+        assert kind == "ok", brief(outcome)
+        assert outcome is expected, f"expected server policy {expected}, got {outcome!r}"

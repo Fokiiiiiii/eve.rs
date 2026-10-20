@@ -17,6 +17,9 @@ Checked 2026-10-19.
 
 ## Attack-surface review
 
+- **Inbound session resource bounds:** Session actors enforce both a pending-packet limit and a configurable pending-byte limit (`EVE_MAX_PENDING_BYTES_PER_SESSION`, default 16 MiB), counting the packet currently being dispatched. Exceeding either disconnects only the overloaded session. A Host regression covers an over-budget inbound frame.
+- **Expensive RPC rate bounds:** `PacketDispatcher` charges weighted per-session work units within a rolling minute for market order/region reads, `GetAllInfo`, and mail header reads. `EVE_MAX_EXPENSIVE_RPC_UNITS_PER_MINUTE` configures the 120-unit default. A named `SessionRpcBudgetExceeded` response refuses calls beyond the budget; a dispatcher regression covers refusal and window reset.
+
 Reviewed 2026-10-19 against the Rust, .NET, Python tool, deployment, and workflow sources listed below. This records source review and focused tests; it does not claim graphical-client or production deployment validation.
 
 - **Wire parsing and connection isolation:** Rust `eve-marshal` applies a nesting limit and checks cursor ranges before reads; its robustness suite runs 20,000 deterministic arbitrary byte inputs. Rust `eve-net` applies a frame limit and handshake timeout, and its per-client output queue has a capacity of 1,024 messages. The Rust sim-link reads bounded frames and its slice-backed reader checks ranges; the reviewed Abyssal count helper enforces a maximum before iteration. Existing tests cover malformed handshakes, oversized frames, and decoder boundaries. .NET `Eve.Marshal` tests cover truncated streams, oversized counts, and nesting limits. `GatewayEnvelope.TakeFrames` rejects a declared gRPC frame above 16 MiB before waiting for the body; the gateway test covers that rejection. No additional length arithmetic, wire-sized allocation, or connection-teardown issue was found in these reviewed paths.

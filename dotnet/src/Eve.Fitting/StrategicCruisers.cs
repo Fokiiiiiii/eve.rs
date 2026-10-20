@@ -2,7 +2,6 @@ namespace Eve.Fitting;
 
 /// <summary>
 /// The Strategic Cruiser (SDE group 963) rules for its subsystems: one subsystem of each of the four classes (Core 125, Defensive 126, Offensive 127,
-/// Propulsion 128) makes the hull complete, and a hull that is not complete is not used. Source: EveJS <c>liveFittingState.js</c>
 /// (<c>STRATEGIC_CRUISER_SUBSYSTEM_FLAGS</c>, <c>getStrategicCruiserSubsystemStatus</c>) and <c>shipService.js</c> (<c>_assertStrategicCruiserSubsystems</c>),
 /// which mirror the client's <c>assembleModularShip.py</c>. A hull's own <c>maxSubSystems</c> (1367) says five; the SDE holds four classes.
 /// </summary>

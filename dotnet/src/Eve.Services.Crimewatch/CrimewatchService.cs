@@ -204,7 +204,6 @@ public sealed partial class CrimewatchService(
     /// <summary><c>GetKillRights(toIDs)</c>: the caller's active kill rights against the requested characters.</summary>
 }
 
-
 [Service("killRightMgr")]
 public sealed partial class KillRightMgrService(
     PgCrimewatchStore store,
@@ -214,10 +213,6 @@ public sealed partial class KillRightMgrService(
     Func<long>? nowUnixMs = null,
     Action<string>? log = null)
 {
-    /// <summary>
-    /// Future notification-service hook: EveJS persists a kill-right-used notification for the owner
-    /// when somebody else activates it.
-    /// </summary>
     public Func<KillRightActivation, CancellationToken, Task>? KillRightUsedNotification { get; set; }
 
     /// <summary>

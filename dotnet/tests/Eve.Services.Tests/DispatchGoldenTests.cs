@@ -195,6 +195,46 @@ public class DispatchGoldenTests
         public ValueTask<PyValue> CallAsync(ServiceCall call) => ValueTask.FromResult<PyValue>(PyNone.Instance);
     }
 
+    [Fact]
+    public async Task Expensive_market_calls_have_a_named_per_session_budget()
+    {
+        var capture = new Capture();
+        var session = new ClientSession(capture) { SessionId = 901 };
+        var registry = new ServiceRegistry();
+        var service = new ExpensiveService();
+        registry.Register(service);
+        var now = FixedNowMs;
+        var dispatcher = new PacketDispatcher(registry, () => now) { MaxExpensiveRpcUnitsPerMinute = 10 };
+
+        await dispatcher.DispatchAsync(CallRequestPacket("marketProxy", "GetOrders"), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("marketProxy", "GetOrders"), session);
+
+        Assert.Equal(1, service.Calls);
+        Assert.Equal(2, capture.Sent.Count);
+        Assert.Equal(ErrorResponseCommand, CommandOf(capture.Sent[1]));
+        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[1])));
+
+        now += 60_000;
+        await dispatcher.DispatchAsync(CallRequestPacket("marketProxy", "GetOrders"), session);
+        Assert.Equal(2, service.Calls);
+        Assert.Equal(7, CommandOf(capture.Sent[2]));
+    }
+
+    private sealed class ExpensiveService : IService
+    {
+        public int Calls { get; private set; }
+
+        public string Name => "marketProxy";
+
+        public bool HasMethod(string method) => method == "GetOrders";
+
+        public ValueTask<PyValue> CallAsync(ServiceCall call)
+        {
+            Calls++;
+            return ValueTask.FromResult<PyValue>(PyNone.Instance);
+        }
+    }
+
     private sealed class KnownService : IService
     {
         public string Name => "knownSvc";

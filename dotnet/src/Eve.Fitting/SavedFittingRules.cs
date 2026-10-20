@@ -1,21 +1,17 @@
 namespace Eve.Fitting;
 
 /// <summary>
-/// A fault in a fitting the client sent: the code is the EveJS <c>errorMsg</c> (fittingStore.js <c>validateFittingRecord</c>), with the type or the flag it
 /// names, so the service can answer the client's own error message.
 /// </summary>
 public sealed record FittingFault(string Code, long Value = 0);
 
-/// <summary>What a saved fitting may hold (EveJS <c>validateFittingRecord</c>, <c>normalizeIncomingFitting</c>, <c>ALLOWED_NON_SLOT_FIT_FLAGS</c>).</summary>
 public static class SavedFittingRules
 {
     public const int CategoryShip = 6, CategoryStructure = 65;
     public const int MaxName = 50, MaxDescription = 500;
 
-    /// <summary>The cargo hold, the drone bay and the fighter bay: the flags a fitting may put items in besides the ship's slots (EveJS item flags 5, 87, 158).</summary>
     public static readonly int[] NonSlotFlags = [5, 87, 158];
 
-    /// <summary>The name trimmed and the two texts cut to the lengths the client allows (EveJS takes the first 50 and 500 characters).</summary>
     public static (string Name, string Description) Normalize(string? name, string? description) =>
         ((name ?? "").Trim() is var trimmed && trimmed.Length > MaxName ? trimmed[..MaxName] : trimmed,
          (description ?? "") is var text && text.Length > MaxDescription ? text[..MaxDescription] : text);

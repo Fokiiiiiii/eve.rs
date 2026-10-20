@@ -34,6 +34,12 @@ public sealed record HostOptions
 
     /// <summary>Called for every new session, before its first packet: attach what must be released when it ends.</summary>
     public Action<ClientSession>? SessionOpened { get; init; }
+
+    /// <summary>Persist account session start before the initial state is sent.</summary>
+    public Func<ClientSession, CancellationToken, Task>? SessionOpenedAsync { get; init; }
+
+    /// <summary>Persist account session end when its actor closes.</summary>
+    public Func<ClientSession, Task>? SessionClosedAsync { get; init; }
 }
 
 /// <summary>
@@ -266,16 +272,16 @@ private readonly LoginAttemptLimiter _loginAttemptLimiter;
 
             while (await ReadFrameAsync(ct) is { } frame)
             {
-                Handle(HostCodec.Decode(frame), ct);
+                await HandleAsync(HostCodec.Decode(frame), ct);
             }
         }
         finally
         {
-            foreach (var session in _sessions.Values)
-            {
-                session.Complete();
-            }
+            var closingSessions = _sessions.Values.ToArray();
             _sessions.Clear();
+            foreach (var session in closingSessions)
+                session.Complete();
+            await Task.WhenAll(closingSessions.Select(session => session.Completion));
             _outgoing.Writer.TryComplete();
             try
             {
@@ -287,7 +293,7 @@ private readonly LoginAttemptLimiter _loginAttemptLimiter;
         }
     }
 
-    private void Handle(HostMessage message, CancellationToken ct)
+    private async Task HandleAsync(HostMessage message, CancellationToken ct)
     {
         switch (message)
         {
@@ -295,12 +301,13 @@ private readonly LoginAttemptLimiter _loginAttemptLimiter;
                 _ = AuthenticateAsync(request, ct);
                 break;
             case SessionOpen open:
-                OpenSession(open, ct);
+                await OpenSessionAsync(open, ct);
                 break;
             case SessionClose close:
                 if (_sessions.TryRemove(close.SessionId, out var closing))
                 {
                     closing.Complete();
+                    await closing.Completion;
                 }
                 break;
             case Packet packet:
@@ -349,7 +356,7 @@ private readonly LoginAttemptLimiter _loginAttemptLimiter;
         Post(new AuthReply(request.Corr, outcome));
     }
 
-    private void OpenSession(SessionOpen open, CancellationToken ct)
+    private async Task OpenSessionAsync(SessionOpen open, CancellationToken ct)
     {
         var session = new ClientSession { SessionId = unchecked((long)open.SessionId), ClientId = unchecked((long)open.ClientId) };
         session.Sink = new LinkSink(this, open.SessionId);
@@ -368,7 +375,19 @@ private readonly LoginAttemptLimiter _loginAttemptLimiter;
         {
             throw new HostLinkException(HostLinkError.BadStatus, $"session {open.SessionId} is already open");
         }
-        _options.SessionOpened?.Invoke(session);
+        try
+        {
+            _options.SessionOpened?.Invoke(session);
+            if (_options.SessionOpenedAsync is { } opened)
+                await opened(session, ct);
+        }
+        catch
+        {
+            _sessions.TryRemove(open.SessionId, out _);
+            actor.Complete();
+            session.Close();
+            throw;
+        }
         // The client waits for this before anything else; it goes out ahead of every reply.
         session.Send(SessionInitialState.Build(open.SessionId, open.ClientId, open.UserId, open.Role, open.Address, open.Language, open.CountryCode));
         actor.Start();
@@ -570,7 +589,9 @@ internal sealed class SessionActor
         _ct = ct;
     }
 
-    public void Start() => _ = Task.Run(RunAsync, CancellationToken.None);
+    public Task Completion { get; private set; } = Task.CompletedTask;
+
+    public void Start() => Completion = Task.Run(RunAsync, CancellationToken.None);
 
     public void Post(ReadOnlyMemory<byte> packet)
     {
@@ -602,6 +623,17 @@ internal sealed class SessionActor
         finally
         {
             _session.Close();
+            if (_options.SessionClosedAsync is { } closed)
+            {
+                try
+                {
+                    await closed(_session);
+                }
+                catch (Exception error)
+                {
+                    _options.Log?.Invoke($"session {_session.SessionId}: could not persist session end ({error.GetType().Name})");
+                }
+            }
         }
     }
 

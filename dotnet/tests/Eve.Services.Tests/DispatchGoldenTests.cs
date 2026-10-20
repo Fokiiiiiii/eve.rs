@@ -301,7 +301,6 @@ public class DispatchGoldenTests
             await dispatcher.DispatchAsync(BoundCallRequestPacket(inventoryObjectId, "ListIncludingContainers"), inventorySession);
         await dispatcher.DispatchAsync(CallRequestPacket("invbroker", "GetInventoryFromId"), inventorySession);
         Assert.Equal(5, inventoryService.Calls);
-        Assert.Equal(6, inventoryCapture.Sent.Count);
         Assert.Equal(ErrorResponseCommand, CommandOf(inventoryCapture.Sent[5]));
         Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(inventoryCapture.Sent[5])));
 

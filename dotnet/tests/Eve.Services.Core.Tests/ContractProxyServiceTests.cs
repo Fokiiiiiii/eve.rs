@@ -54,6 +54,24 @@ public sealed class ContractProxyServiceTests
 
 
     [Fact]
+    public async Task Place_bid_uses_client_argument_order_and_returns_boolean_success()
+    {
+        var writer = new RecordingWriteModel();
+        var service = new ContractProxyService(new RecordingReadModel(), writer);
+        var session = new ClientSession { CharacterId = 42 };
+        session.Set("corpid", new PyInt(84));
+        var response = await service.PlaceBid(new ServiceCall
+        {
+            Method = "PlaceBid",
+            Args = [new PyInt(900), new PyInt(2500), PyBool.False],
+            Session = session,
+        });
+
+        Assert.Same(PyBool.True, response);
+        Assert.Equal((900L, 42L, 84L, false, 1000, 2500m), writer.LastBid);
+    }
+
+    [Fact]
     public async Task Accept_contract_returns_the_settled_row_and_uses_session_identity()
     {
         var writer = new RecordingWriteModel();
@@ -154,6 +172,8 @@ public sealed class ContractProxyServiceTests
     {
         public List<CreateItemExchangeRequest> Requests { get; } = [];
 
+        public (long ContractId, long CharacterId, long CorporationId, bool ForCorporation, int WalletKey, decimal Amount) LastBid { get; private set; }
+
         public ValueTask<CreatedContract> CreateContractAsync(CreateItemExchangeRequest request, CancellationToken cancellationToken)
         {
             Requests.Add(request);
@@ -163,6 +183,13 @@ public sealed class ContractProxyServiceTests
         public ValueTask<AcceptedContract> AcceptItemExchangeAsync(long contractId, long characterId, long corporationId,
             long allianceId, bool acceptForCorporation, int acceptorWalletKey, CancellationToken cancellationToken) =>
             ValueTask.FromResult(new AcceptedContract(contractId, 1, 4, 100, 200, false, characterId, 3001, 0, 123, 0));
+
+        public ValueTask<bool> PlaceBidAsync(long contractId, long characterId, long corporationId, long allianceId,
+            bool bidForCorporation, int bidderWalletKey, decimal amount, CancellationToken cancellationToken)
+        {
+            LastBid = (contractId, characterId, corporationId, bidForCorporation, bidderWalletKey, amount);
+            return ValueTask.FromResult(true);
+        }
     }
 
     private static PyObject Rowset(PyObject keyVal, string name) => Assert.IsType<PyObject>(Value(keyVal, name));

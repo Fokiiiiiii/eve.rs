@@ -26,8 +26,9 @@ public sealed record ContractCreationInfo(
         var fields = value switch
         {
             PyObject { Args: PyDict dict } => dict,
+            PyObject { Args: PyTuple tuple } => ClientContractFields(tuple),
             PyDict dict => dict,
-            _ => throw new ArgumentException("contract info must be a KeyVal", nameof(value)),
+            _ => throw new ArgumentException("contract info must be a KeyVal or ContractStruct", nameof(value)),
         };
         return new ContractCreationInfo(
             ContractType: (int)Integer(fields, "contractType"),
@@ -46,6 +47,27 @@ public sealed record ContractCreationInfo(
             StartStationDivision: (int)Integer(fields, "startStationDivision"),
             RequestedTypes: Pairs(fields, "requestItemTypeList").Select(pair => new ContractRequestedItem((int)pair.Key, pair.Value)).ToArray(),
             ForCorp: Flag(fields, "forCorp"));
+    }
+
+    private static PyDict ClientContractFields(PyTuple tuple)
+    {
+        string[] names =
+        [
+            "contractType", "isPrivate", "assignedToID", "minutesExpire", "numDays", "startStationID",
+            "destinationID", "price", "reward", "collateral", "title", "description", "itemList",
+            "startStationDivision", "requestItemTypeList", "forCorp", "multiContract",
+        ];
+        if (tuple.Items.Count != names.Length)
+        {
+            throw new ArgumentException("ContractStruct must contain all V24 fields", nameof(tuple));
+        }
+        if (tuple.Items[16] is PyBool { Value: true } or PyInt { Value: not 0 } or PyLong { Value: not 0 })
+        {
+            throw new ArgumentException("multiContract creation is not supported", nameof(tuple));
+        }
+        return new PyDict(names.Take(16)
+            .Select((name, index) => new KeyValuePair<PyValue, PyValue>(new PyStr(name), tuple.Items[index]))
+            .ToArray());
     }
 
     private static PyValue? Field(PyDict fields, string name)

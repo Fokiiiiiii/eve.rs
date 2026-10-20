@@ -560,7 +560,10 @@ public sealed partial class CharMgrService(
     [Method("CreateLabel")]
     public async ValueTask<PyValue> CreateLabel(ServiceCall call)
     {
-        var name = call.Args.Count > 0 ? Eve.Macho.JsSemantics.StringValue(call.Arg(0))?.Trim() ?? "" : "";
+        var rawName = call.Args.Count > 0 ? Eve.Macho.JsSemantics.StringValue(call.Arg(0)) ?? "" : "";
+        if (rawName.Length > 40)
+            throw MachoErrors.ThrowUserError("CHARMGR_CONTACT_LABEL_NAME_LIMIT_EXCEEDED");
+        var name = rawName.Trim();
         var color = call.Args.Count > 1 ? NormalizeInteger(call.Arg(1)) : 0;
         long labelId = 0;
         var updated = await UpdatePersonalDataAsync(call, data =>
@@ -618,6 +621,8 @@ public sealed partial class CharMgrService(
         var hasName = call.Args.Count > 1 && call.Arg(1) is not PyNone;
         var hasColor = call.Args.Count > 2 && call.Arg(2) is not PyNone;
         var name = hasName ? Eve.Macho.JsSemantics.StringValue(call.Arg(1)) ?? "" : "";
+        if (hasName && name.Length > 40)
+            throw MachoErrors.ThrowUserError("CHARMGR_CONTACT_LABEL_NAME_LIMIT_EXCEEDED");
         var color = hasColor ? NormalizeInteger(call.Arg(2)) : 0;
         await UpdatePersonalDataAsync(call, data =>
         {

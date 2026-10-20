@@ -5,7 +5,6 @@ using Npgsql;
 
 namespace Eve.Structures;
 
-/// <summary>A structure as the table holds it: the timeline, the place and the owner, and the remainder of the legacy record (<see cref="Doc"/>).</summary>
 public sealed record StructureRecord(
     StructureSnapshot Snapshot, int TypeId, int SolarSystemId, double X, double Y, double Z, double Yaw, long OwnerCorporationId, long AllianceId,
     string Name, string Bio, long ProfileId, JsonObject Doc, long Version);
@@ -17,7 +16,6 @@ public sealed record NewStructure(
     long AnchoringMs = StructureTimes.AnchoringMs);
 
 /// <summary>
-/// The structure records in PostgreSQL (schema <c>structures</c>, migration 0001): the one owner of Upwell structures (docs/design/adr/0003). Every method that changes a row takes the
 /// caller's connection and transaction, so a change, its event and its deadline job commit together (FOUNDATIONS rule 1). <see cref="ReadLegacyTableAsync"/> gives the directory
 /// read models the row shape EVE.js kept in the game store's <c>structures</c> table; <see cref="ImportAsync"/> copies those rows in once.
 /// </summary>
@@ -204,7 +202,6 @@ public sealed class StructureStore
     // ---- the legacy record ------------------------------------------------------------------------------------------------------------------------
 
     /// <summary>
-    /// The table as EVE.js kept it in the game store: a record per structure id (as text), with the field names of that record (<c>ownerCorpID</c>, <c>position</c>,
     /// <c>serviceStates</c>, <c>stateEndsAt</c> ...). The directory, profile and asset-safety read models read this shape.
     /// </summary>
     public async Task<JsonObject> ReadLegacyTableAsync(CancellationToken cancellationToken = default)
@@ -265,7 +262,7 @@ public sealed class StructureStore
         }
         SetIfPositive(row, "unanchoring", s.UnanchorEndsMs);
         SetIfPositive(row, "destroyedAt", s.DestroyedMs);
-        // the Corporation Offices service is always available to a structure (EVE University wiki: no module, no fuel), so it is reported online
+
         // unless a stored row says otherwise
         var states = new JsonObject { [StructureServiceIds.Offices.ToString(CultureInfo.InvariantCulture)] = ServiceState.Online };
         foreach (var (serviceId, state) in services)

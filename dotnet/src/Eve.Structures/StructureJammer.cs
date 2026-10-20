@@ -3,7 +3,6 @@ namespace Eve.Structures;
 /// <summary>
 /// The system-wide cyno jammer of the structures (E-03): a system is jammed from five minutes after its Standup Cynosural System Jammer I service came online
 /// (SDE 35914: "a 5 minute warmup period"). The state the client asks for (<c>GetCynoJammerState</c>) is the FILETIME the jammer starts at, 0 once it runs, or
-/// null when no jammer is online in the system (EveJS <c>sovSuppressionState.js</c> <c>getCynoJammerOnlineSimTime</c>: the same three answers).
 /// </summary>
 public static class StructureJammer
 {

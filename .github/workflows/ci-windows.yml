@@ -1,24 +1,8 @@
 name: Windows CI
 
-# Keep long Windows coverage outside the Linux required-gate run so it cannot hold the push queue.
+# Reused by ci.yml's required gate, and run separately on a schedule or by hand.
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'crates/**'
-      - 'dotnet/**'
-      - 'tools/windows/**'
-      - 'tools/dev/**'
-      - 'tools/headless-client/**'
-      - 'sde/**'
-      - '.cargo/**'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - 'rustfmt.toml'
-      - 'global.json'
-      - '.gitattributes'
-      - '.github/workflows/ci.yml'
-      - '.github/workflows/ci-windows.yml'
+  workflow_call:
   schedule:
     - cron: '0 */6 * * *'
   workflow_dispatch:

@@ -3,13 +3,11 @@ namespace Eve.Wormholes;
 /// <summary>One planned signature of a J-space system: its category and the site it leads to (its name and client dungeon key).</summary>
 public sealed record PlannedSignature(string Category, string SiteName, int DungeonKey);
 
-/// <summary>A site of the wiki's per-class lists (EVE University, "Wormhole sites") and the client dungeon key that names it.</summary>
 public sealed record Site(string Name, int DungeonKey);
 
 /// <summary>
 /// The sites of J-space (slices 9 and 10): the signatures of each system and the site each one leads to. The counts, the shares and the Drifter rule
 /// are the project's, where nothing is published (DEVIATIONS): 4 to 9 signatures per system from the seed; a category by share (combat 40%, relic 15%,
-/// data 15%, gas 20%, ore 10%); a site drawn from the pool of its category and class. The pools are the wiki's lists; C13 (Shattered) uses the class 6
 /// lists plus Shattered Debris Field; a Drifter system has exactly five combat sites (the class 6 anomalies).
 /// </summary>
 public static class WormholeSites

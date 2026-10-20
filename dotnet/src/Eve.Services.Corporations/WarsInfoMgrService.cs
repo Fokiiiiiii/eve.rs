@@ -5,8 +5,6 @@ using Eve.Marshal;
 
 namespace Eve.Services.Corporations;
 
-// Wire behavior follows EveJS v0.12.9 standingMgrService.js / standingRuntime.js (828823a75f211fdecb945b087a26c225f111491f)
-// and eve-logic V24.01 standingsvc.py (1dbb5711a072a146e1d228365668ac05655eefe1).
 /// <summary>The client's standing manager, backed by shared affiliation and standing relations.</summary>
 /// <summary>Read-only projection of war relations into the warsInfoMgr wire contract.</summary>
 [Eve.Services.Service("warsInfoMgr")]

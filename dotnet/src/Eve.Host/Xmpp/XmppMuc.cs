@@ -16,6 +16,7 @@ public sealed partial class XmppChatHub
 
     private readonly Dictionary<(string Room, long CharacterId), XmppOccupant> _occupants = [];
     private readonly Dictionary<long, DateTimeOffset> _lastRoomMessage = [];
+    private readonly Dictionary<long, DateTimeOffset> _lastPrivateInvite = [];
     private readonly HashSet<(string Room, long CharacterId)> _visibleLocalSpeakers = [];
     private readonly Dictionary<string, string> _roomMotd = new(StringComparer.Ordinal);
 
@@ -332,6 +333,11 @@ internal static string? PrivateChannelName(long callerCharacterId, long targetCh
             if (!_occupants.ContainsKey((room, inviter.CharacterId))
                 || !_linkByCharacter.TryGetValue(targetCharacterId, out target))
                 return false;
+            var now = DateTimeOffset.UtcNow;
+            if (_lastPrivateInvite.TryGetValue(inviter.CharacterId, out var lastInvite)
+                && now - lastInvite < TimeSpan.FromSeconds(1))
+                return false;
+            _lastPrivateInvite[inviter.CharacterId] = now;
         }
 
         if (await IsCharacterBlockedByAsync(targetCharacterId, inviter.CharacterId, cancellationToken))

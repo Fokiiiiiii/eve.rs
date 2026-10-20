@@ -33,7 +33,6 @@ public class CorporationTests
         Assert.All(history,e => Assert.True(e.EndedMs is null || e.EndedMs >= e.StartedMs));
     }
 
-
     [PgFact]
     public async Task Faction_warfare_policy_updates_keep_other_corporation_settings()
     {
@@ -47,7 +46,6 @@ public class CorporationTests
         Assert.True(settings.GetProperty("fw").GetProperty("existing").GetBoolean());
         Assert.Equal([500001L, 500002L], settings.GetProperty("fw").GetProperty("allowedEnlistmentFactions").EnumerateArray().Select(value => value.GetInt64()));
     }
-
 
     [PgFact]
     public async Task Character_login_restores_direct_war_faction_then_corporation_faction()
@@ -160,7 +158,6 @@ public class CorporationTests
         Assert.False(CorporationRoles.HasHangarAccess(null, corporation.StationId, 115, take: false));
     }
 
-
     [PgFact]
     public async Task Corporation_membership_projects_affiliation_without_an_alliance_zero_sentinel()
     {
@@ -206,7 +203,6 @@ public class CorporationTests
             }
         }
     }
-
 
     [PgFact]
     public async Task Accepted_application_and_leaving_move_the_corporation_membership_relation_at_runtime()
@@ -278,7 +274,6 @@ public class CorporationTests
             rig.Characters.AffiliationsAfterAsync(0, Eve.Characters.PgCharacterStore.CorporationAffiliationPageSize + 1));
     }
 
-
     [PgFact]
     public async Task Corporation_membership_and_relation_outbox_roll_back_together()
     {
@@ -331,7 +326,6 @@ public class CorporationTests
         }
     }
 }
-
 
 public sealed class CorporationOfficeTests
 {

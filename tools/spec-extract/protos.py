@@ -21,7 +21,6 @@ from google.protobuf import descriptor_pb2
 
 SERIALIZED = re.compile(r"serialized_pb=((?:b?'(?:[^'\\]|\\.)*')|(?:b?\"(?:[^\"\\]|\\.)*\"))", re.S)
 
-
 def load_descriptor(path: pathlib.Path):
     match = SERIALIZED.search(path.read_text(errors="replace"))
     if not match:
@@ -31,7 +30,6 @@ def load_descriptor(path: pathlib.Path):
     proto = descriptor_pb2.FileDescriptorProto()
     proto.ParseFromString(data)
     return proto
-
 
 def main(root: pathlib.Path) -> None:
     generated = root / "eveProto" / "generated"
@@ -67,7 +65,6 @@ def main(root: pathlib.Path) -> None:
     for path, reason in failed[:5]:
         print(f"  FAILED {path.relative_to(root)}: {reason}", file=sys.stderr)
     print(f"wrote {out / 'eve_proto.desc'}")
-
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:

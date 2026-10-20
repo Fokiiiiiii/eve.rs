@@ -9,7 +9,6 @@ using Npgsql;
 
 namespace Eve.Corporations.Tests;
 
-/// <summary>The <c>warRegistry</c> reads and the two changes a war's owner makes: open for allies, mutual retraction.</summary>
 public sealed class WarRegistryTests
 {
     private const long Declarer = 9100001;

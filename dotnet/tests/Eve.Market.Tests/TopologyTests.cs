@@ -32,7 +32,6 @@ public class TopologyTests
         Assert.False(topology.BidInRange(default,32767,here));
     }
 
-
     [Fact]
     public void Esi_four_jump_range_is_distinct_from_the_client_constellation_sentinel()
     {

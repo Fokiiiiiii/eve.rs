@@ -15,7 +15,7 @@ public class FactionWarfareBrokerFeeTests
     [Fact]
     public void The_upgrade_is_applied_before_the_standing_discounts_as_the_client_does()
     {
-        // Client order (marketutil/brokerFee.py): the base after the skill, the upgrade, then the station owner's standing.
+
         var context = MarketRules.Context(NoSkills, isStation: true, factionStanding: 10, corpStanding: 10, factionWarfareUpgradeLevel: 1);
         Assert.Equal(0.027 - 10 * 0.0003 - 10 * 0.0002, context.BrokerCommissionRate, 12);
     }

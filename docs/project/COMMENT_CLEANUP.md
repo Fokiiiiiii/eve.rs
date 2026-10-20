@@ -54,6 +54,7 @@
 | `dotnet/src/Eve.Services.Ships` (5 C# files) | 85 | 82 | 2026-10-20 |
 | `dotnet/src/Eve.Space` (7 C# files) | 636 | 616 | 2026-10-20 |
 | `dotnet/src/Eve.Corporations` (18 C# files; migrations reviewed) | 51 | 41 | 2026-10-20 |
+| `dotnet/src/Eve.Macho` (6 C# files) | 93 | 93 | 2026-10-20 |
 | `dotnet/src/Eve.GameStore.Import` (4 C# files) | 22 | 21 | 2026-10-20 |
 | `dotnet/src/Eve.Sde` (1 C# file) | 21 | 21 | 2026-10-20 |
 | `dotnet/src/Eve.Hacking` (3 C# files) | 32 | 25 | 2026-10-20 |

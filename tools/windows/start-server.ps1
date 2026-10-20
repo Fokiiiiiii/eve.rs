@@ -108,8 +108,16 @@ function Wait-Until([string]$name, $process, [scriptblock]$ready, [int]$seconds)
 
 function Start-Child([string]$name, [string]$file, [string]$argumentLine) {
     # NoNewWindow: the children share this console, so Ctrl-C reaches them and they shut down cleanly.
-    $process = Start-Process -FilePath $file -ArgumentList $argumentLine -WorkingDirectory $root -NoNewWindow -PassThru `
-        -RedirectStandardOutput (Join-Path $logDir "$name.out.log") -RedirectStandardError (Join-Path $logDir "$name.err.log")
+    $startParameters = @{
+        FilePath               = $file
+        WorkingDirectory       = $root
+        NoNewWindow            = $true
+        PassThru               = $true
+        RedirectStandardOutput = (Join-Path $logDir "$name.out.log")
+        RedirectStandardError  = (Join-Path $logDir "$name.err.log")
+    }
+    if (-not [string]::IsNullOrEmpty($argumentLine)) { $startParameters.ArgumentList = $argumentLine }
+    $process = Start-Process @startParameters
     [void]$children.Add([pscustomobject]@{ Name = $name; Process = $process })
     return $process
 }

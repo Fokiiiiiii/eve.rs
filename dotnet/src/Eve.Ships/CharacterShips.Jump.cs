@@ -74,7 +74,6 @@ public sealed partial class CharacterShips
     }
 
     /// <summary>
-    /// A passenger's jump through a bridge: the isotopes come from the bridging ship (the wiki: "use up isotopes from the bridger's fuel hold") and the
     /// passenger's fatigue state is written, in one transaction. False, with nothing changed, when the bridging ship holds too little.
     /// </summary>
     public async Task<bool> DebitBridgeAsync(

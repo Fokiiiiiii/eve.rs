@@ -29,7 +29,6 @@ public sealed partial class WalletTransactions
     public event Action<WalletBalanceChange>? BalanceCommitted;
     public void AnnounceCommitted(WalletBalanceChange change) => BalanceCommitted?.Invoke(change);
 
-    /// <summary>Locks in owner order, validates both wallets and the retry key, then journals both sides.</summary>
     public async Task TransferAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long from, long to,
         decimal amount, int refTypeId, string reason, long timeMs, string operationKey, CancellationToken cancellationToken = default)
     {
@@ -82,7 +81,6 @@ public sealed partial class WalletTransactions
         await ApplyAsync(connection, transaction, to, from, amount, refTypeId, reason, timeMs, operationKey, cancellationToken);
     }
 
-
     /// <summary>Commit an account-to-account transfer and return its journal receipt.</summary>
     public async Task<WalletSettlement> TransferAndCommitAsync(
         WalletAccount from, WalletAccount to, decimal amount, int refTypeId, string reason,
@@ -96,7 +94,6 @@ public sealed partial class WalletTransactions
         return settlement;
     }
 
-    /// <summary>Opens the zero balances (the default account and the four divisions) of an owner that has none yet, as a station owner's first credit needs; a no-op for the existing ones.</summary>
     public async Task EnsureAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long owner, CancellationToken cancellationToken = default)
     {
         await using var command = new NpgsqlCommand($"INSERT INTO {_schema}.balances(owner_id,account_key,isk,plex) SELECT $1,key,0,0 FROM generate_series(1000,1006) key ON CONFLICT DO NOTHING", connection, transaction);
@@ -142,7 +139,6 @@ public sealed partial class WalletTransactions
         return await ApplyAsync(connection, transaction, owner, counterparty, delta, refTypeId, reason, timeMs, operationKey, cancellationToken, referenceId, referenceType);
     }
 
-    /// <summary>Prelocks all wallets involved in a multi-party settlement in the same global owner order.</summary>
     public async Task LockAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, IEnumerable<long> owners,
         CancellationToken cancellationToken = default)
     {

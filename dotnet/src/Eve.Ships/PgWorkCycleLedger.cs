@@ -3,11 +3,9 @@ using Npgsql;
 
 namespace Eve.Ships;
 
-/// <summary>The answer the host gave to one work cycle of an owner (a drone or a module).</summary>
 public sealed record WorkCycleRecord(long OwnerId, long CycleId, bool Accepted, string Reason, long UnitsRemaining, long DeliveredUnits, bool Complete);
 
 /// <summary>
-/// The last work cycle the host settled for each owner, in PostgreSQL in the space schema (<c>space_work_cycles</c>). A repeated cycle id of an owner is answered from
 /// this record, so a cycle that is re-sent after a host restart is not granted twice (ADR 0013, rule 4).
 /// </summary>
 public sealed class PgWorkCycleLedger
@@ -29,14 +27,12 @@ public sealed class PgWorkCycleLedger
     public static Task<IReadOnlyList<string>> MigrateAsync(NpgsqlDataSource source, string schema = PgSpaceItemStore.DefaultSchema, CancellationToken cancellationToken = default) =>
         PgSpaceItemStore.MigrateAsync(source, schema, cancellationToken);
 
-    /// <summary>The last cycle settled for the owner, or null when none was.</summary>
     public async Task<WorkCycleRecord?> LastAsync(long ownerId, CancellationToken cancellationToken = default)
     {
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
         return await LastAsync(connection, null, ownerId, cancellationToken);
     }
 
-    /// <summary>The last cycle settled for the owner on the given connection (and transaction, when there is one), or null when none was.</summary>
     public async Task<WorkCycleRecord?> LastAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, long ownerId, CancellationToken cancellationToken = default)
     {
         await using var command = new NpgsqlCommand(
@@ -52,14 +48,12 @@ public sealed class PgWorkCycleLedger
             reader.GetInt64(0), reader.GetInt64(1), reader.GetBoolean(2), reader.GetString(3), reader.GetInt64(4), reader.GetInt64(5), reader.GetBoolean(6));
     }
 
-    /// <summary>Records the answer to the owner's cycle, in place of the one before it.</summary>
     public async Task RecordAsync(WorkCycleRecord record, CancellationToken cancellationToken = default)
     {
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
         await RecordAsync(connection, null, record, cancellationToken);
     }
 
-    /// <summary>Records the answer to the owner's cycle and publishes its fact on the bus, in one transaction: the fact is announced if and only if the answer is kept.</summary>
     public async Task RecordWithFactAsync(WorkCycleRecord record, IFactBus events, string topic, object payload, string key, CancellationToken cancellationToken = default)
     {
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
@@ -70,7 +64,6 @@ public sealed class PgWorkCycleLedger
         events.Wake();
     }
 
-    /// <summary>Records the answer to the owner's cycle on the given connection (and transaction, when there is one), in place of the one before it.</summary>
     public async Task RecordAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, WorkCycleRecord record, CancellationToken cancellationToken = default)
     {
         await using var command = new NpgsqlCommand(

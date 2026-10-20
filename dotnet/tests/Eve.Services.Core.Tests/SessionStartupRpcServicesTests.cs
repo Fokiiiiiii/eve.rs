@@ -35,6 +35,13 @@ public sealed class SessionStartupRpcServicesTests
             futureWired, "GetAuthenticationToken", providerSession)));
         Assert.Equal(1, providerCalls);
         IService empty = new ChatAuthenticationService();
+        var activeSession = new ClientSession();
+        activeSession.CharacterId = 21;
+        var issued = Assert.IsType<PyStr>(await empty.CallAsync(Call(empty, "GetAuthenticationToken", activeSession)));
+        Assert.Equal(64, issued.Value.Length);
+        Assert.Matches("^[0-9a-f]{64}$", issued.Value);
+        Assert.Equal(issued, activeSession.Get("chatAuthenticationToken"));
+        Assert.Equal(issued, await empty.CallAsync(Call(empty, "GetAuthenticationToken", activeSession)));
         Assert.Same(PyNone.Instance, await empty.CallAsync(
             Call(empty, "GetAuthenticationToken", new ClientSession())));
     }

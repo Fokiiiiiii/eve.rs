@@ -29,7 +29,6 @@ public sealed partial class WalletTransactions
         return await command.ExecuteScalarAsync(token) is decimal balance ? balance : null;
     }
 
-    /// <summary>Hold all participants in owner/key order before a multi-owner business transaction.</summary>
     public async Task<IReadOnlyDictionary<WalletAccount,decimal>> LockBalancesAsync(NpgsqlConnection connection,NpgsqlTransaction transaction,
         IEnumerable<WalletAccount> accounts,CancellationToken token = default) =>
         await LockAccountsAsync(connection,transaction,accounts,token);

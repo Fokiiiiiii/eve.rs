@@ -6,14 +6,12 @@ namespace Eve.Ships;
 
 /// <summary>
 /// <c>AssembleShip</c>: a packaged ship in a station's hangar becomes an assembled one, and a Strategic Cruiser takes the subsystems that complete it
-/// (EveJS <c>shipService.js</c> <c>Handle_AssembleShip</c> with its <c>_buildStrategicCruiserAssemblyPlan</c>; the client's
 /// <c>invItemFunctions.AssembleShip</c>). The subsystems and the assembly are one transaction per ship.
 /// </summary>
 public sealed partial class CharacterShips
 {
     private const int ShipCategory = 6, SubsystemCategory = 32;
 
-    /// <summary>The longest name an assembled ship is given (EveJS <c>SHIP_NAME_MAX_LENGTH</c>).</summary>
     public const int ShipNameMaxLength = 32;
 
     /// <summary>
@@ -131,7 +129,6 @@ public sealed partial class CharacterShips
 
     private bool IsSubsystem(int typeId) => statics.Type(typeId)?.CategoryId == SubsystemCategory;
 
-    /// <summary>The name a ship is given (EveJS <c>normalizeShipNameLabel</c>): no line breaks, trimmed, at most <see cref="ShipNameMaxLength"/> characters.</summary>
     public static string? NormalizeName(string? name)
     {
         if (name is null)

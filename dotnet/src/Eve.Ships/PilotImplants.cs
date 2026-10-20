@@ -9,10 +9,7 @@ namespace Eve.Ships;
 
 /// <summary>
 /// Plugging an implant into the pilot and destroying one (the dogma service's <c>InjectImplant</c> and <c>DestroyImplant</c>). An implant is an item at
-/// the implant flag of the pilot (<see cref="PilotAugmentations"/>). The rules are the reference's (EveJS <c>implantRuntime.js</c>): the item is an
 /// implant, its slot is free and the pilot has the skills the implant needs. Plugging in takes the implant from the station hangar or the cargo of the
-/// active ship (EVE University wiki, Implants: "right-click on the implant and choose Plug In"). Destroying removes an implant the pilot wears (the
-/// wiki: an implant that is removed is destroyed). The running skill is rebased first, at the rate it has, so the attributes change from now on.
 /// </summary>
 public sealed class PilotImplants(NpgsqlDataSource source, DogmaStatic statics, PgCharacterStore characters, PgItemStore items, PgSkillStore skills, CharacterTraining training)
 {

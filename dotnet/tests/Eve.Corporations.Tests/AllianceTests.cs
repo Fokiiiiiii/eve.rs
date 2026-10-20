@@ -362,6 +362,12 @@ public class AllianceTests
         Eve.Services.ServiceCall Call(Eve.Services.ClientSession session,string method,params Eve.Marshal.PyValue[] args) =>
             new() { Session=session,Method=method,Args=args };
 
+        var oversizedApplication = await Assert.ThrowsAsync<Eve.Corporations.CorporationError>(() =>
+            ((Eve.Services.IService)service).CallAsync(Call(applicantSession,"ApplyToJoinAlliance",
+                new Eve.Marshal.PyInt(alliance.Id),new Eve.Marshal.PyWString(new string('x',1001)))).AsTask());
+        Assert.Equal("ALLIANCE_APPLICATION_TEXT_TOO_LONG",oversizedApplication.Code);
+        Assert.Empty(await rig.Store.AllianceApplicationsAsync(alliance.Id));
+
         Eve.Marshal.PyValue[] applicationArgs =
         [
             new Eve.Marshal.PyInt(alliance.Id),

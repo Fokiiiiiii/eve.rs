@@ -72,7 +72,7 @@ PI program installs reject non-finite extractor head radii with the existing `In
 
 ## Corporation application text bound (2026-10-20)
 
-`corpRegistry.InsertApplication` and `UpdateApplicationOffer`, plus `ApplyToJoinAlliance`, reject application text or response text longer than 1,000 UTF-16 code units before persistence. This matches `crpApplicationMaxSize` and the V24.01 corporation application editor. Corporation RPC regressions cover over-limit submissions, application updates, response text, and unchanged stored state.
+`corpRegistry.InsertApplication` and `UpdateApplicationOffer`, plus `ApplyToJoinAlliance`, reject application text or response text longer than 1,000 UTF-16 code units before persistence. This matches `crpApplicationMaxSize` and the V24.01 corporation application editor. Corporation and alliance RPC regressions cover over-limit submissions, application updates, response text, and unchanged stored state.
 
 ## Contact-label name bound (2026-10-20)
 

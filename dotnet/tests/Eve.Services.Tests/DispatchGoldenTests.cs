@@ -341,6 +341,36 @@ public class DispatchGoldenTests
         }
     }
 
+    [Fact]
+    public async Task Mailbox_reads_and_writes_have_a_named_per_session_budget()
+    {
+        var capture = new Capture();
+        var session = new ClientSession(capture) { SessionId = 910 };
+        var registry = new ServiceRegistry();
+        var service = new MailBudgetService();
+        registry.Register(service);
+        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 10 };
+
+        await dispatcher.DispatchAsync(CallRequestPacket("mailMgr", "MarkAsRead"), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("mailMgr", "SendMail"), session);
+
+        Assert.Equal(1, service.Calls);
+        Assert.Equal(ErrorResponseCommand, CommandOf(capture.Sent[1]));
+        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[1])));
+    }
+
+    private sealed class MailBudgetService : IService
+    {
+        public int Calls { get; private set; }
+        public string Name => "mailMgr";
+        public bool HasMethod(string method) => method is "SyncMail" or "GetMailHeaders" or "GetBody" or "MarkAsRead" or "SendMail" or "PokePlayerAboutChatMsgGm";
+        public ValueTask<PyValue> CallAsync(ServiceCall call)
+        {
+            Calls++;
+            return ValueTask.FromResult<PyValue>(PyNone.Instance);
+        }
+    }
+
     private sealed class WalletBudgetService : IService
     {
         public int Calls { get; private set; }

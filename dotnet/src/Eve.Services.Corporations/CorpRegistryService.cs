@@ -393,8 +393,12 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
         var members = await Current(call) is { } c ? await store.MembersAsync(c.Id,call.Cancellation) : [];
         var page = call.Arg(0) is PyInt n ? Math.Max(1,n.Value) : 1;
         const int perPage = 50;
+        var pageOffset = page - 1;
+        var skip = pageOffset > members.Count / perPage
+            ? members.Count
+            : (int)(pageOffset * perPage);
         var rows = new List<PyValue>();
-        foreach (var m in members.Skip((int)Math.Min(members.Count,(page-1)*perPage)).Take(perPage))
+        foreach (var m in members.Skip(skip).Take(perPage))
             rows.Add(CorporationWire.Member(m,(await characters.GetAsync(m.CharacterId,call.Cancellation))!.Name));
         return new PyObjectEx(ObjectExKind.Ex1,Py.Tuple(new PyToken("eve.common.script.util.pagedCollection.PagedResultSet"),
             Py.Tuple(new PyList(rows),new PyInt(members.Count),new PyInt(page-1),new PyInt(perPage))),[],[]);

@@ -2664,6 +2664,32 @@ private static PyValue RowField(PyValue value,string key)
     }
 
     [PgFact]
+    public async Task Corp_member_pagination_clamps_huge_page_before_offset_arithmetic()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var founder = await rig.CharacterAsync("Paged Founder");
+        var corp = await rig.Store.CreateAsync(founder,new("Paged Works","PAGED","","",0.05m),"paged-members");
+        var session = new ClientSession { CharacterId=founder };
+        session.Set("corpid",new PyInt(corp.Id));
+        var registry = (IService)new CorpRegistryService(rig.Store,rig.Characters,() => rig.Now);
+
+        static PyTuple PageData(PyValue value)
+        {
+            var response = Assert.IsType<PyObjectEx>(value);
+            var envelope = Assert.IsType<PyTuple>(response.Header);
+            return Assert.IsType<PyTuple>(envelope.Items[1]);
+        }
+
+        var firstPage = PageData(await registry.CallAsync(Call(session,"GetMembersPaged",new PyInt(1))));
+        Assert.Single(Assert.IsType<PyList>(firstPage.Items[0]).Items);
+        Assert.Equal(new PyInt(1),firstPage.Items[1]);
+
+        var hugePage = PageData(await registry.CallAsync(Call(session,"GetMembersPaged",new PyInt(long.MaxValue))));
+        Assert.Empty(Assert.IsType<PyList>(hugePage.Items[0]).Items);
+        Assert.Equal(new PyInt(long.MaxValue-1),hugePage.Items[2]);
+    }
+
+    [PgFact]
     public async Task Corp_registry_structure_and_mail_settings_are_role_gated_and_persisted()
     {
         await using var rig = await Rig.CreateAsync();

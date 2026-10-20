@@ -5185,7 +5185,7 @@ The market parser rejects floating-point prices beyond the market maximum before
 
 ## Contract completion status bounds (2026-10-20)
 
-`contractProxy.CompleteContract` applies the shared checked Int32 parser to both V24 integer wire types. A status outside Int32 range returns `ConContractNotAvailable` before contract state is read or mutated; valid status values retain the existing transition behavior. `ContractProxyServiceTests.Complete_contract_refuses_status_that_overflows_int32` verifies the writer is not invoked.
+`contractProxy.CompleteContract` applies the shared checked Int32 parser to both V24 integer wire types. A status outside Int32 range returns `ConContractNotAvailable` before contract state is read or mutated; valid status values retain the existing transition behavior. `ContractProxyServiceTests.Complete_contract_refuses_status_that_overflows_int32` verifies the writer is not invoked. `PacketDispatcher` charges all `contractProxy` methods 10 per-session work units because every operation reads or mutates persisted contract state; `DispatchGoldenTests.Contract_operations_use_the_named_per_session_budget` verifies list calls are refused at the configured limit.
 
 
 ## Insurance price batch bound (2026-10-20)

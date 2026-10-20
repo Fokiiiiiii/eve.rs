@@ -293,6 +293,25 @@ public class DispatchGoldenTests
     }
 
     [Fact]
+    public async Task Alliance_member_enumeration_uses_the_named_per_session_budget()
+    {
+        var capture = new Capture();
+        var session = new ClientSession(capture) { SessionId = 909 };
+        var registry = new ServiceRegistry();
+        var service = new ExpensiveService("allianceRegistry");
+        registry.Register(service);
+        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 10 };
+
+        await dispatcher.DispatchAsync(CallRequestPacket("allianceRegistry", "GetAllianceMembers"), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("allianceRegistry", "GetAllianceMembers"), session);
+
+        Assert.Equal(1, service.Calls);
+        Assert.Equal(2, capture.Sent.Count);
+        Assert.Equal(ErrorResponseCommand, CommandOf(capture.Sent[1]));
+        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[1])));
+    }
+
+    [Fact]
     public async Task Expensive_wallet_calls_have_a_named_per_session_budget()
     {
         var capture = new Capture();
@@ -416,13 +435,13 @@ public class DispatchGoldenTests
         }
     }
 
-    private sealed class ExpensiveService : IService
+    private sealed class ExpensiveService(string name = "marketProxy") : IService
     {
         public int Calls { get; private set; }
 
-        public string Name => "marketProxy";
+        public string Name => name;
 
-        public bool HasMethod(string method) => method is "GetOrders" or "BuyMultipleItems" or "GetHistoryForManyTypeIDs";
+        public bool HasMethod(string method) => method is "GetOrders" or "BuyMultipleItems" or "GetHistoryForManyTypeIDs" or "GetAllianceMembers";
 
         public ValueTask<PyValue> CallAsync(ServiceCall call)
         {

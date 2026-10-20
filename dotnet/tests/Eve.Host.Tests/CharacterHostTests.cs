@@ -844,6 +844,9 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
         var node = await CallAsync(charMgr, "MachoResolveObject", session,
             new PyTuple([new PyLong(character), new PyInt(10002)]));
         Assert.Equal(new PyInt(ProxyNode), node);
+        var foreignNode = await CallAsync(charMgr, "MachoResolveObject", session,
+            new PyTuple([new PyLong(character + 1), new PyInt(10002)]));
+        Assert.IsType<PyNone>(foreignNode);
 
         var binding = Assert.IsType<PyTuple>(await CallAsync(charMgr, "MachoBindObject", session,
             new PyTuple([new PyLong(character), new PyInt(10002)]),

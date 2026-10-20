@@ -713,6 +713,8 @@ private static readonly System.Collections.Generic.HashSet<string> BroadcastName
     {
         if (FleetId(call) is not { } fleetId) return None;
         var motd = Text(call.Arg(0));
+        if (motd.Length > 4096)
+            throw MachoErrors.ThrowUserError("FleetError");
         if (!await store.SetMotdAsync(fleetId, CharacterId(call.Session), motd, call.Cancellation)) return None;
         var snapshot = await store.SnapshotAsync(fleetId, call.Cancellation);
         if (snapshot is not null)

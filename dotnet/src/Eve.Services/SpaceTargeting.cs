@@ -42,6 +42,6 @@ public interface ISpaceTargeting
 /// <summary>Answers whether two characters belong to opposite sides of an active war, including accepted war allies.</summary>
 public interface IWars
 {
-    /// <summary>Checks the owners of both characters at the supplied game time.</summary>
+
     Task<bool> AreAtWarAsync(long attackerCharacterId, long targetCharacterId, long nowUnixMs, CancellationToken cancellationToken = default);
 }

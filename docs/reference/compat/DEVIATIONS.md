@@ -5087,3 +5087,8 @@ The writer serializes accept and bid operations by locking the contract row befo
 ## Contract headless walk (2026-10-20)
 
 `CreateContract` accepts the V24 `contracts.contractStruct.ContractStruct` object whose `OBJECT` arguments are the 17 positional constructor fields; the server maps those fields in client order and declines the unsupported multi-contract flag. The dictionary form remains accepted for internal callers. `tools/headless-client/tests/test_walk_contracts.py` sends the V24 `ContractStruct` positional object and exercises public item-exchange creation and acceptance through `contractProxy` using two connected characters. It checks the accepted row, issuer notification, item ownership, and wallet balances against PostgreSQL. The file is selectable in `.github/workflows/live-slow.yml`; its live result remains open until dispatched and completed successfully. The graphical client is a separate check.
+
+
+## Inventory bulk operation bounds (2026-10-20)
+
+The V24.01 client sends selected item collections to `invbroker.MultiAdd`; EveJS accepts the client collection without an entry limit. eve.rs now applies the existing 500-entry inventory bulk cap before deduplication or item lookups, matching the limit used by adjacent inventory batch RPCs. Normal client batches retain the same behavior. The focused PostgreSQL regression checks the named refusal at 501 entries; graphical-client acceptance is open.

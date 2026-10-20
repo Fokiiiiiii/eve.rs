@@ -295,6 +295,8 @@ public sealed class PacketDispatcher
             return 10;
         if (service == "corpRecProxy" && method is "SearchCorpAds")
             return 10;
+        if (service == "structureDirectory" && method is "CheckMyDockingAccessToStructures" or "GetMyDockableStructures")
+            return 10;
         if (service == "accessGroupBookmarkMgr" && method is "GetMyActiveBookmarks" or "SearchFoldersWithAdminAccess" or "DeleteBookmarks" or "MoveBookmarksToFolderAndSubfolder" or "CopyBookmarksToFolderAndSubfolder")
             return 10;
         return 0;

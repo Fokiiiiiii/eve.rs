@@ -446,6 +446,25 @@ public class DispatchGoldenTests
     }
 
     [Fact]
+    public async Task Structure_docking_queries_use_the_named_per_session_budget()
+    {
+        var capture = new Capture();
+        var session = new ClientSession(capture) { SessionId = 911 };
+        var registry = new ServiceRegistry();
+        var service = new ExpensiveService("structureDirectory");
+        registry.Register(service);
+        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 10 };
+
+        await dispatcher.DispatchAsync(CallRequestPacket("structureDirectory", "CheckMyDockingAccessToStructures"), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("structureDirectory", "CheckMyDockingAccessToStructures"), session);
+
+        Assert.Equal(1, service.Calls);
+        Assert.Equal(2, capture.Sent.Count);
+        Assert.Equal(ErrorResponseCommand, CommandOf(capture.Sent[1]));
+        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[1])));
+    }
+
+    [Fact]
     public async Task Alliance_rankings_use_the_named_per_session_budget()
     {
         var capture = new Capture();
@@ -613,7 +632,7 @@ public class DispatchGoldenTests
 
         public string Name => name;
 
-        public bool HasMethod(string method) => method is "GetOrders" or "BuyMultipleItems" or "PlaceMultiSellOrder" or "GetHistoryForManyTypeIDs" or "GetAllianceMembers" or "GetRankedAlliances" or "GetOrganizationInfoForCharacters" or "SendBroadcast" or "ExecuteActions" or "GetNumberOfPotentialCEOs" or "GetFittings" or "GetAssetInventory" or "GetAssetInventoryForLocation" or "SearchAssets" or "GetAggressionSettingsForCorps" or "AuditMember";
+        public bool HasMethod(string method) => method is "GetOrders" or "BuyMultipleItems" or "PlaceMultiSellOrder" or "GetHistoryForManyTypeIDs" or "GetAllianceMembers" or "GetRankedAlliances" or "GetOrganizationInfoForCharacters" or "SendBroadcast" or "ExecuteActions" or "GetNumberOfPotentialCEOs" or "GetFittings" or "GetAssetInventory" or "GetAssetInventoryForLocation" or "SearchAssets" or "GetAggressionSettingsForCorps" or "AuditMember" or "CheckMyDockingAccessToStructures" or "GetMyDockableStructures";
 
         public ValueTask<PyValue> CallAsync(ServiceCall call)
         {

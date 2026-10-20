@@ -5195,4 +5195,6 @@ The market parser rejects floating-point prices beyond the market maximum before
 
 ## Structure docking access batch bound (2026-10-20)
 
+`CheckMyDockingAccessToStructures` refuses more than 500 raw structure IDs before invoking the access-list callback. Both this RPC and `GetMyDockableStructures` consume 10 units from the per-session expensive-RPC budget, returning `SessionRpcBudgetExceeded` when the session budget is exhausted. Regressions cover the batch refusal and repeated-query budget refusal.
+
 `structureDirectory.CheckMyDockingAccessToStructures` accepts up to 500 structure IDs. Larger lists return `StructureBulkLimitExceeded` before access-list snapshots are read. Normal structure-access results retain the existing per-list ACL evaluation and order. `StructureDirectoryServiceTests.Docking_access_refuses_more_than_500_structure_ids_before_the_callback` verifies no callback work on refusal.

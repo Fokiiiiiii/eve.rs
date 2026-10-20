@@ -2604,6 +2604,10 @@ Engine: `dotnet/src/Eve.Hacking` (pure rules, no Host). Sources: EVE University 
 
 Client calls are in eve-logic `eve/client/script/ui/services/eveCalendarsvc.py`; EveJS behavior is in `server/src/services/calendar/calendarMgrService.js` and `calendarNotifications.js`. The Host publishes notification packets after the PostgreSQL mutation returns successfully and before the RPC reply. Personal event creation notifies online invitees and other viewers, excluding the calling session; corporation and alliance creation notify online members. Edits notify current viewers, deletion notifies the viewer set captured before the soft delete, participant changes notify only actual additions/removals, and an event response notifies other viewers while excluding the responding session. The four packet payload shapes and order are covered by `CalendarMgrServiceTests`; the headless live invite walk confirms a second character receives `OnNewCalendarEvent` after the event can be read back.
 
+## Project Discovery availability
+
+`ProjectDiscovery.is_enabled` returns true in EveJS `projectDiscoveryService.js` and the Host service, matching the V24 startup contract. The service test and live login walk cover the result; player data and tutorial state remain tracked as separate provider routes.
+
 ## Moon extraction (ST-6a)
 
 - **Mutation gate (ST-5 integration, 2026-10-12).** Start, fracture and cancel require `shipid = structureid`, a persisted controller record for this character/session and the profile's moon service access. Structure and controller rows are locked inside the mutation transaction, so a concurrent controller release cannot pass the authorization check before commit. Forged/released sessions and revoked profiles raise `StructureDefenseDenied`. Pochven/online-drill checks and the cancel Station Manager rule remain. Source: EveJS `moonExtractionsService.js:279-305`, V24.01 structure control callsites; 11 PG moon Host tests pass.

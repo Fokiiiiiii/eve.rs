@@ -63,7 +63,6 @@ internal sealed class Rig : IAsyncDisposable
         return id;
     }
 
-
     public async Task SeedNpcCorporationAsync(long corporationId)
     {
         await using var connection = await Source.OpenConnectionAsync();

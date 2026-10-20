@@ -4,7 +4,6 @@ using Npgsql;
 
 namespace Eve.Fitting;
 
-/// <summary>Who keeps a saved fitting: the character, the corporation or the alliance (EveJS <c>OWNER_SCOPE</c>).</summary>
 public enum FittingOwnerScope : short
 {
     Character = 1,
@@ -12,18 +11,14 @@ public enum FittingOwnerScope : short
     Alliance = 3,
 }
 
-/// <summary>One fitting line: an item, the flag it goes to and the quantity (EveJS <c>fitData</c> tuple).</summary>
 public sealed record FittingItem(int TypeId, int Flag, int Quantity);
 
 /// <summary>A fitting as the client saves it, before the store gives it an id.</summary>
 public sealed record FittingDraft(int ShipTypeId, string Name, string Description, IReadOnlyList<FittingItem> FitData);
 
-/// <summary>A saved fitting: the draft, its id, its owner and the time it was saved (a FILETIME).</summary>
 public sealed record SavedFitting(long FittingId, long OwnerId, FittingDraft Draft, long SavedAtFileTime);
 
 /// <summary>
-/// The saved fittings of characters, corporations and alliances, in PostgreSQL in the fitting module's schema (migration 0005). The limit of an owner
-/// (EveJS <c>MAX_CHAR_FITTINGS</c> 500, <c>MAX_CORP_FITTINGS</c> and <c>MAX_ALLIANCE_FITTINGS</c> 600) is checked inside the same transaction as the insert.
 /// </summary>
 public sealed class PgSavedFittingStore
 {
@@ -40,7 +35,6 @@ public sealed class PgSavedFittingStore
         _schema = schema;
     }
 
-    /// <summary>The fittings an owner keeps, oldest first (EveJS <c>getOwnerFittingsResponse</c> orders them by id).</summary>
     public async Task<IReadOnlyList<SavedFitting>> ListAsync(FittingOwnerScope scope, long ownerId, CancellationToken cancellationToken = default)
     {
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
@@ -59,13 +53,12 @@ public sealed class PgSavedFittingStore
         return fittings;
     }
 
-    /// <summary>Saves drafts for an owner in one transaction. Returns the new ids in order, or null when the owner would go over <paramref name="limit"/>.</summary>
     public async Task<IReadOnlyList<long>?> SaveManyAsync(
         FittingOwnerScope scope, long ownerId, IReadOnlyList<FittingDraft> drafts, int limit, long savedAtFileTime, CancellationToken cancellationToken = default)
     {
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-        // serialises the saves of one owner, so the count and the inserts agree
+
         await Run(connection, transaction, "SELECT pg_advisory_xact_lock($1)", [OwnerLockKey(scope, ownerId)], cancellationToken);
         var existing = await Scalar(connection, transaction, $"SELECT count(*) FROM {_schema}.saved_fitting WHERE owner_scope = $1 AND owner_id = $2", [(short)scope, ownerId], cancellationToken);
         if (Convert.ToInt64(existing) + drafts.Count > limit)
@@ -87,7 +80,6 @@ public sealed class PgSavedFittingStore
         return ids;
     }
 
-    /// <summary>Replaces a fitting's draft. False when the owner has no fitting of that id (EveJS <c>FITTING_NOT_FOUND</c>).</summary>
     public async Task<bool> UpdateAsync(FittingOwnerScope scope, long ownerId, long fittingId, FittingDraft draft, long savedAtFileTime, CancellationToken cancellationToken = default)
     {
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
@@ -104,7 +96,6 @@ public sealed class PgSavedFittingStore
         return await command.ExecuteNonQueryAsync(cancellationToken) == 1;
     }
 
-    /// <summary>Renames a fitting. False when the owner has no fitting of that id.</summary>
     public async Task<bool> RenameAsync(FittingOwnerScope scope, long ownerId, long fittingId, string name, string description, long savedAtFileTime, CancellationToken cancellationToken = default)
     {
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
@@ -121,7 +112,6 @@ public sealed class PgSavedFittingStore
         return await command.ExecuteNonQueryAsync(cancellationToken) == 1;
     }
 
-    /// <summary>Deletes the owner's fittings among the ids. Returns the ids that were there (EveJS <c>deleteManyFittings</c>).</summary>
     public async Task<IReadOnlyList<long>> DeleteAsync(FittingOwnerScope scope, long ownerId, IReadOnlyCollection<long> fittingIds, CancellationToken cancellationToken = default)
     {
         if (fittingIds.Count == 0)
@@ -144,7 +134,6 @@ public sealed class PgSavedFittingStore
         return deleted;
     }
 
-    /// <summary>A saved fitting by id, whoever owns it (EveJS <c>findFittingByID</c>), or null when there is none.</summary>
     public async Task<SavedFitting?> FindAsync(long fittingId, CancellationToken cancellationToken = default)
     {
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
@@ -158,7 +147,6 @@ public sealed class PgSavedFittingStore
         return await reader.ReadAsync(cancellationToken) ? Read(reader, reader.GetInt64(6)) : null;
     }
 
-    /// <summary>The owner of a saved fitting (any scope), or null when there is none.</summary>
     public async Task<(FittingOwnerScope Scope, long OwnerId)?> OwnerOfAsync(long fittingId, CancellationToken cancellationToken = default)
     {
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);

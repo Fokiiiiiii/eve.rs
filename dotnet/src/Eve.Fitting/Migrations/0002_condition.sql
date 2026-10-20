@@ -1,5 +1,3 @@
--- What a ship and its fitted modules have taken, as fractions. A ship with no row has taken nothing (capacitor and shield full); a module with no row
--- was never damaged or mended. A row is kept for as long as the item exists: damage is the item's, not the slot's.
 CREATE TABLE ship_condition (
     item_id       bigint           PRIMARY KEY,
     damage        double precision NOT NULL CHECK (damage >= 0 AND damage <= 1),

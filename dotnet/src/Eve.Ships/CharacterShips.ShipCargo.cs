@@ -38,7 +38,6 @@ public sealed partial class CharacterShips
     }
 
     /// <summary>
-    /// Puts items in the cargo hold of the pilot's ship in space (what <c>/createitem</c> does, EveJS <c>createItemInActiveShipCargo</c>). Null when the ship is not
     /// the character's. shortcut: the hold's volume is not checked (EveJS refuses an item that does not fit), upgrade with the fitting volume rules.
     /// </summary>
     public async Task<IReadOnlyList<ItemChanged>?> CreateInShipCargoAsync(long characterId, long shipId, int typeId, long quantity, CancellationToken cancellationToken = default)

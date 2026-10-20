@@ -162,7 +162,6 @@ public static partial class MiningLedgerStore
         return added;
     }
 
-    /// <summary>One observer entry's owner is the observer; a character's entries carry the character's corporation (the EVE.js shape).</summary>
     private static Entry? ParseEntry(JsonObject row, string kind, long owner, long corporationOverride, long oldest)
     {
         var eventDate = Integer(row["eventDate"]);

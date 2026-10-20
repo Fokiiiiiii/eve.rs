@@ -82,7 +82,10 @@ public sealed partial class SkillHandlerService
     {
         PyInt number => number.Value,
         PyLong number => number.Value,
-        PyReal real when real.Value == Math.Floor(real.Value) => (long)real.Value,
+        PyReal real when double.IsFinite(real.Value) &&
+            Math.Truncate(real.Value) == real.Value &&
+            real.Value >= -9.223372036854776E18 &&
+            real.Value < 9.223372036854776E18 => (long)real.Value,
         _ => null,
     };
 

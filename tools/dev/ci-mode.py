@@ -15,28 +15,11 @@ AUTOMATIC_SCHEDULES = {
     "ci.yml": "  schedule:\n    - cron: '0 6 * * 1'\n",
     "ci-windows.yml": "  schedule:\n    - cron: '0 */6 * * *'\n",
 }
-AUTOMATIC_PUSH_WORKFLOWS = {"ci.yml", "ci-windows.yml"}
+AUTOMATIC_PUSH_WORKFLOWS = {"ci.yml"}
 PUSH_TRIGGERS = {
     "ci.yml": "  push:\n    branches: [main]\n    paths-ignore:\n      - 'docs/**'\n      - '**/*.md'\n      - '.github/dependabot.yml'\n",
-    "ci-windows.yml": """  push:
-    branches: [main]
-    paths:
-      - 'crates/**'
-      - 'dotnet/**'
-      - 'tools/windows/**'
-      - 'tools/dev/**'
-      - 'tools/headless-client/**'
-      - 'sde/**'
-      - '.cargo/**'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - 'rustfmt.toml'
-      - 'global.json'
-      - '.gitattributes'
-      - '.github/workflows/ci.yml'
-      - '.github/workflows/ci-windows.yml'
-""",
 }
+REUSABLE_EVENTS = {"ci-windows.yml": "  workflow_call:\n"}
 
 def split_workflow(text: str) -> tuple[str, str, str, str]:
     """Return prefix, trigger header, dispatch event and suffix for a workflow."""
@@ -63,14 +46,13 @@ def split_workflow(text: str) -> tuple[str, str, str, str]:
 def rewrite(path: Path, mode: str) -> bool:
     original = path.read_text(encoding="utf-8")
     prefix, header, dispatch, suffix = split_workflow(original)
+    reusable = REUSABLE_EVENTS.get(path.name, "")
     if mode == "manual":
-        new_block = header + dispatch
+        new_block = header + reusable + dispatch
     else:
-        if path.name in AUTOMATIC_PUSH_WORKFLOWS:
-            schedule = AUTOMATIC_SCHEDULES.get(path.name, "")
-            new_block = header + PUSH_TRIGGERS[path.name] + schedule + dispatch
-        else:
-            new_block = header + dispatch
+        push = PUSH_TRIGGERS.get(path.name, "")
+        schedule = AUTOMATIC_SCHEDULES.get(path.name, "")
+        new_block = header + push + schedule + reusable + dispatch
     updated = prefix + new_block + suffix
     if updated != original:
         path.write_text(updated, encoding="utf-8", newline="")

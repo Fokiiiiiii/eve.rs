@@ -1,13 +1,13 @@
 name: CI
 
 # Trigger mode is set by tools/dev/ci-mode.py (automatic by default; manual-only for private-repository operation).
-# Run on pushes to main (except documentation-only changes) and by hand: format, lint and test the Rust workspace, test the .NET solution against a
-# PostgreSQL 18 service with the static data loaded, run the Python client's own tests, check that the golden
-# fixtures are what their generators write, and run the fast end-to-end tests (the whole server stack and the
-# headless client). The slow end-to-end tests are live-slow.yml (also by hand).
+# Run on pushes to main (except documentation-only changes) and by hand: format, lint and test the Rust workspace,
+# build and test the .NET solution, run the Python client's tests, verify generated fixtures, exercise the Linux
+# server stack and headless client, and call the Windows build and live-client workflow. The slow end-to-end tests
+# are live-slow.yml (also by hand).
 
 # Push runs share a branch concurrency group with one running run and one replaceable pending SHA. Manual runs use a separate group, can cancel older manual runs, and accept a comma-separated job selection.
-# The default runs every required gate. The same checks can be run locally
+# The default runs every required gate. The Windows workflow runs on a native runner. The same local checks can be run
 # with tools/dev/check-all.sh.
 on:
   push:
@@ -21,7 +21,7 @@ on:
   workflow_dispatch:
     inputs:
       jobs:
-        description: 'Comma-separated jobs: rust-fmt,rust-test,dotnet,python,fixtures,live (or all)'
+        description: 'Comma-separated jobs: rust-fmt,rust-test,dotnet,python,fixtures,live,windows (or all)'
         required: true
         default: all
         type: string
@@ -372,12 +372,16 @@ jobs:
           path: .live-logs
           if-no-files-found: ignore
 
+  windows:
+    name: Windows Rust, .NET, Python and live client
+    if: ${{ github.event_name != 'schedule' && (github.event_name != 'workflow_dispatch' || inputs.jobs == 'all' || contains(inputs.jobs, 'windows')) }}
+    uses: ./.github/workflows/ci-windows.yml
+
   gate:
     name: Required CI gate
     runs-on: ubuntu-latest
     if: always()
-    # Windows coverage runs in ci-windows.yml; the required gate depends only on Linux jobs.
-    needs: [rust-fmt, rust-test, dotnet-build, dotnet, python, fixtures, live]
+    needs: [rust-fmt, rust-test, dotnet-build, dotnet, python, fixtures, live, windows]
     steps:
       - name: Require all selected jobs to succeed
         env:

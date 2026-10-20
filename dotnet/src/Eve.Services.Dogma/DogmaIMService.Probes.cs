@@ -5,7 +5,7 @@ using Eve.Services.Ships;
 namespace Eve.Services.Dogma;
 
 /// <summary>
-/// The scanner probe launch (<c>LaunchProbes(moduleID, count)</c>, EVE.js <c>Handle_LaunchProbes</c>). The probes and the checks are the ships' and space's
+/// The scanner probe launch (<c>LaunchProbes(moduleID, count)</c>). The probes and the checks are the ships' and space's
 /// (<see cref="ISpaceProbes"/>); this puts the call to them.
 /// </summary>
 public sealed partial class DogmaIMService

@@ -7,12 +7,22 @@ namespace Eve.Services.Core.Tests;
 public sealed class RedeemUserSvcCompatibilityTests
 {
     [Fact]
+    public async Task Get_user_token_requires_a_live_issuer()
+    {
+        var service = (IService)(object)new RedeemService(new FakeCallbacks());
+        var session = new ClientSession { UserId = 35, CharacterId = 90000003 };
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => Call(service, session, "GetUserToken"));
+    }
+
+    [Fact]
     public async Task User_svc_exposes_the_complete_reference_surface_and_uses_account_reads()
     {
         var service = (IService)(object)new RedeemService(
             new FakeCallbacks(),
             (userId, _) => ValueTask.FromResult<string?>(userId == 35 ? "capsuleer" : null),
-            (characterId, _) => ValueTask.FromResult<long?>(characterId == 90000003 ? 133801234567890123 : null));
+            (characterId, _) => ValueTask.FromResult<long?>(characterId == 90000003 ? 133801234567890123 : null),
+            (call, _) => ValueTask.FromResult<PyValue?>(call.Method == "GetUserToken" ? new PyStr("issued-token") : null));
         string[] methods =
         [
             "GetRedeemTokens", "ClaimRedeemTokens", "ReverseRedeem", "TrashRedeemTokens",
@@ -27,7 +37,7 @@ public sealed class RedeemUserSvcCompatibilityTests
         Assert.Equal(new PyLong(133801234567890123), await Call(service, session, "GetCreateDate"));
         Assert.Equal(new PyInt(0), await Call(service, session, "GetSessionPlaytimeMinutes"));
         Assert.Equal(new PyStr("capsuleer"), await Call(service, session, "GetUserName"));
-        Assert.Equal(new PyStr("evejs-local-token-35-90000003"), await Call(service, session, "GetUserToken"));
+        Assert.Equal(new PyStr("issued-token"), await Call(service, session, "GetUserToken"));
 
         // Without a Multiple Character Training store the account has no extra queues, and no activation grants one.
         Assert.Empty(Assert.IsType<PyDict>(await Call(service, session, "GetMultiCharactersTrainingSlots")).Entries);

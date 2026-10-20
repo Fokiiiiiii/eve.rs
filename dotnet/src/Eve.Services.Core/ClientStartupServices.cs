@@ -8,14 +8,31 @@ namespace Eve.Services.Core;
 [Service("securityMgr")]
 public sealed partial class SecurityMgrService
 {
+    private static PyValue EmptyModifiedSystems()
+    {
+        var descriptorHeader = new PyObjectEx(ObjectExKind.Ex1,
+            Py.Tuple(new PyToken("blue.DBRowDescriptor"), Py.Tuple(Py.Tuple(
+                Py.Tuple(new PyStr("solarSystemID"), new PyInt(0x03)),
+                Py.Tuple(new PyStr("security"), new PyInt(0x05)),
+                Py.Tuple(new PyStr("modifiedSecurity"), new PyInt(0x05))))), [], []);
+        var descriptor = Descriptor.FromHeader(descriptorHeader);
+        return new PyObjectEx(ObjectExKind.Ex2,
+            Py.Tuple(Py.Tuple(new PyToken("carbon.common.script.sys.crowset.CIndexedRowset")),
+                Py.Dict(("header", descriptor.Header), ("columnName", new PyStr("solarSystemID")))), [], []);
+    }
+
     [Method("get_modified_systems")]
-    public PyValue GetModifiedSystems(ServiceCall call) => new PyDict([]);
+    public PyValue GetModifiedSystems(ServiceCall call) => EmptyModifiedSystems();
 }
 
 [Service("alert")]
 public sealed partial class AlertService
 {
+    private const int MaxRememberedStackHashes = 10_000;
     private static long _nextErrorId;
+    private static readonly object ErrorIdGate = new();
+    private static readonly Dictionary<string, long> ErrorIdByStackHash = new(StringComparer.Ordinal);
+    private static readonly Queue<string> StackHashOrder = new();
 
     [Method("BeanCount")]
     public PyValue BeanCount(ServiceCall call) => new PyTuple([PyNone.Instance, PyNone.Instance]);
@@ -23,14 +40,46 @@ public sealed partial class AlertService
     [Method("SendClientStackTraceAlert")]
     public PyValue SendClientStackTraceAlert(ServiceCall call)
     {
-        var stackKey = call.Arg(0) is PyTuple stackId && stackId.Items.Count > 1
-            ? Limit(Text(stackId.Items[1]), 256)
-            : "unknown";
+        var stackId = call.Arg(0) switch
+        {
+            PyTuple tuple => tuple.Items,
+            PyList list => list.Items,
+            _ => [],
+        };
+        var stackHash = stackId.Count > 0 ? StableKey(stackId[0]) : null;
+        var stackKey = stackId.Count > 1 ? Limit(Text(stackId[1]), 256) : "";
         var mode = Limit(Text(call.Arg(2)), 32);
         var trace = Limit(Text(call.Arg(1)), 16_384);
         Console.Error.WriteLine($"eve-host: client stack trace {stackKey} ({mode})\n{trace}");
-        return new PyTuple([new PyLong(System.Threading.Interlocked.Increment(ref _nextErrorId)), new PyStr("D")]);
+        var key = stackHash is not null ? $"h:{stackHash}" : stackKey.Length > 0 ? $"k:{stackKey}" : null;
+        var errorId = ResolveErrorId(key);
+        return new PyTuple([new PyLong(errorId), new PyStr("D")]);
     }
+
+    private static long ResolveErrorId(string? key)
+    {
+        if (key is null) return Interlocked.Increment(ref _nextErrorId);
+        lock (ErrorIdGate)
+        {
+            if (ErrorIdByStackHash.TryGetValue(key, out var existing)) return existing;
+            var allocated = Interlocked.Increment(ref _nextErrorId);
+            if (ErrorIdByStackHash.Count == MaxRememberedStackHashes)
+                ErrorIdByStackHash.Remove(StackHashOrder.Dequeue());
+            ErrorIdByStackHash.Add(key, allocated);
+            StackHashOrder.Enqueue(key);
+            return allocated;
+        }
+    }
+
+    private static string? StableKey(PyValue value) => value switch
+    {
+        PyInt integer => $"i:{integer.Value.ToString(CultureInfo.InvariantCulture)}",
+        PyLong integer => $"l:{integer.Value.ToString(CultureInfo.InvariantCulture)}",
+        PyStr text => $"s:{Limit(text.Value, 256)}",
+        PyToken token => $"t:{Limit(token.Value, 256)}",
+        PyBytes bytes when bytes.Value.Length <= 256 => $"b:{Convert.ToHexString(bytes.Value.Span)}",
+        _ => null,
+    };
 
     private static string Limit(string value, int length) => value.Length > length ? value[..length] : value;
 

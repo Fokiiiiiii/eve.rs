@@ -769,7 +769,11 @@ public sealed class ContractReadModelTests
             Assert.Contains(scheduled, job => job.Key == created.ContractId.ToString(System.Globalization.CultureInfo.InvariantCulture)
                 && job.RunAtMs == createdAt + 86_400_000);
 
-            Assert.True(await jobs.SettleExpiredAsync(created.ContractId, 1_900_000_000_000, CancellationToken.None));
+            const long restartedAt = createdAt + 86_400_001;
+            var restartedScheduler = new Eve.Scheduler.DurableScheduler(source, () => restartedAt, schema: schedulerSchema);
+            var restartedJobs = new ContractExpiryJobs(source, itemStore, wallets, restartedScheduler, contractsSchema, events);
+            restartedJobs.Register();
+            Assert.Equal(1, await restartedScheduler.RunDueAsync());
             Assert.False(await jobs.SettleExpiredAsync(created.ContractId, 1_900_000_000_000, CancellationToken.None));
             var returned = await itemStore.GetAsync(created.EscrowItemIds.Single(), CancellationToken.None);
             Assert.NotNull(returned);

@@ -75,30 +75,52 @@ public static class ContractCreationRules
     public static void ValidateItemExchangeTerms(CreateItemExchangeRequest request)
     {
         ArgumentNullException.ThrowIfNull(request);
-        if (request.IssuerCharacterId <= 0 || request.IssuerCorporationId <= 0 || request.StartStationId <= 0 ||
-            request.ContractType is < 1 or > 3 || request.EndStationId < 0 || request.Collateral < 0 || request.NumDays is < 0 or > 28 ||
-            request.Availability is < 0 or > 3 || request.AssigneeId < 0 ||
-            !ItemExchangeExpiryOptions.Contains(request.ExpiryMinutes) ||
-            request.Price < 0 || request.Reward < 0 || request.Collateral < 0 || request.BrokerFee < 0 || request.Deposit < 0 || request.SalesTax < 0 ||
-            request.WalletAccountKey is < 1000 or > 1006 || string.IsNullOrWhiteSpace(request.Title) ||
-            request.Title.Length > 50 || request.Description.Length > 4000 || request.Items is null ||
-            request.Items.Count is 0 or > 500 || request.Items.Any(item => item.ItemId <= 0 || item.Quantity <= 0) ||
-            request.Items.Select(item => item.ItemId).Distinct().Count() != request.Items.Count ||
-            new[] { request.Price, request.Reward, request.BrokerFee, request.Deposit, request.SalesTax }
-            .Any(amount => decimal.Round(amount, 2) != amount) || decimal.Round(request.Collateral, 2) != request.Collateral)
-            throw new ArgumentOutOfRangeException(nameof(request), "contract creation terms are outside supported limits");
-        if (request.OutstandingLimit is < 1 or > 500)
-            throw new ArgumentOutOfRangeException(nameof(request), "contract limit is outside the V24 contract limits");
-        if (request.RequestedItems is { } requested &&
-            (requested.Count > 500 || requested.Any(item => item.TypeId <= 0 || item.Quantity <= 0) ||
-             requested.Select(item => item.TypeId).Distinct().Count() != requested.Count))
-            throw new ArgumentOutOfRangeException(nameof(request), "requested items are outside the V24 contract limits");
-        if (request.ContractType == 3 ? request.EndStationId <= 0 || request.NumDays <= 0 : request.EndStationId != 0 || request.NumDays != 0)
-            throw new ArgumentException("only courier contracts require a destination and duration", nameof(request));
+        Require(request.IssuerCharacterId > 0, nameof(request.IssuerCharacterId));
+        Require(request.IssuerCorporationId > 0, nameof(request.IssuerCorporationId));
+        Require(request.StartStationId > 0, nameof(request.StartStationId));
+        Require(request.ContractType is >= 1 and <= 3, nameof(request.ContractType));
+        Require(request.EndStationId >= 0, nameof(request.EndStationId));
+        Require(request.Collateral >= 0, nameof(request.Collateral));
+        Require(request.NumDays is >= 0 and <= 28, nameof(request.NumDays));
+        Require(request.Availability is >= 0 and <= 3, nameof(request.Availability));
+        Require(request.AssigneeId >= 0, nameof(request.AssigneeId));
+        Require(ItemExchangeExpiryOptions.Contains(request.ExpiryMinutes), nameof(request.ExpiryMinutes));
+        Require(request.Price >= 0, nameof(request.Price));
+        Require(request.Reward >= 0, nameof(request.Reward));
+        Require(request.BrokerFee >= 0, nameof(request.BrokerFee));
+        Require(request.Deposit >= 0, nameof(request.Deposit));
+        Require(request.SalesTax >= 0, nameof(request.SalesTax));
+        Require(request.WalletAccountKey is >= 1000 and <= 1006, nameof(request.WalletAccountKey));
+        Require(!string.IsNullOrWhiteSpace(request.Title), nameof(request.Title));
+        Require(request.Title.Length <= 50, nameof(request.Title));
+        Require(request.Description is not null && request.Description.Length <= 4000, nameof(request.Description));
+        var items = request.Items ?? throw new ArgumentOutOfRangeException(nameof(request.Items));
+        Require(items.Count is > 0 and <= 500, nameof(request.Items));
+        Require(items.All(item => item is not null && item.ItemId > 0 && item.Quantity > 0), nameof(request.Items));
+        Require(items.Select(item => item.ItemId).Distinct().Count() == items.Count, nameof(request.Items));
+        Require(new[] { request.Price, request.Reward, request.BrokerFee, request.Deposit, request.SalesTax }
+            .All(amount => decimal.Round(amount, 2) == amount), nameof(request.Price));
+        Require(decimal.Round(request.Collateral, 2) == request.Collateral, nameof(request.Collateral));
+        Require(request.OutstandingLimit is >= 1 and <= 500, nameof(request.OutstandingLimit));
+        Require(request.RequestedItems is null || request.RequestedItems.Count <= 500, nameof(request.RequestedItems));
+        Require(request.RequestedItems is null ||
+            request.RequestedItems.All(item => item is not null && item.TypeId > 0 && item.Quantity > 0), nameof(request.RequestedItems));
+        Require(request.RequestedItems is null ||
+            request.RequestedItems.Select(item => item.TypeId).Distinct().Count() == request.RequestedItems.Count, nameof(request.RequestedItems));
+        if (request.ContractType == 3
+            ? request.EndStationId <= 0 || request.NumDays <= 0
+            : request.EndStationId != 0 || request.NumDays != 0)
+            throw new ArgumentException("only courier contracts require a destination and duration", nameof(request.EndStationId));
         if (request.Availability == 0 && request.AssigneeId != 0 || request.Availability != 0 && request.AssigneeId == 0)
-            throw new ArgumentException("public contracts have no assignee and restricted contracts require one", nameof(request));
+            throw new ArgumentException("public contracts have no assignee and restricted contracts require one", nameof(request.AssigneeId));
         if (request.IsCorporationIssued && request.StartStationDivision is < 115 or > 121 ||
             !request.IsCorporationIssued && request.StartStationDivision != 4)
-            throw new ArgumentException("the selected division does not match the issuer", nameof(request));
+            throw new ArgumentException("the selected division does not match the issuer", nameof(request.StartStationDivision));
+    }
+
+    private static void Require(bool valid, string parameterName)
+    {
+        if (!valid)
+            throw new ArgumentOutOfRangeException(parameterName, "contract creation terms are outside supported limits");
     }
 }

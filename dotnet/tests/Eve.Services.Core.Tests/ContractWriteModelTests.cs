@@ -79,6 +79,15 @@ public sealed class ContractWriteModelTests
         Assert.Throws<ArgumentOutOfRangeException>(() => ContractCreationLimits.Personal(6, 0));
     }
 
+    [Fact]
+    public void Contract_creation_validation_identifies_the_rejected_field()
+    {
+        var request = Request() with { IssuerCorporationId = 0 };
+        var error = Assert.Throws<ArgumentOutOfRangeException>(() =>
+            ContractCreationRules.ValidateItemExchangeTerms(request));
+        Assert.Equal(nameof(CreateItemExchangeRequest.IssuerCorporationId), error.ParamName);
+    }
+
     private static CreateItemExchangeRequest Request(
         int expiryMinutes = 1440,
         int availability = 0,

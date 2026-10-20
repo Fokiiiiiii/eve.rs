@@ -3,7 +3,6 @@ using Xunit;
 
 namespace Eve.Services.Core.Tests;
 
-/// <summary>The locator's fee table, cooldowns and standings, as the EVE University wiki's table gives them.</summary>
 public class LocatorRulesTests
 {
     [Theory]

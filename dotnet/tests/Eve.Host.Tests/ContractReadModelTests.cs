@@ -18,10 +18,16 @@ public sealed class ContractReadModelTests
         var contractsSchema = $"contract_write_{suffix}";
         var inventorySchema = $"contract_items_{suffix}";
         var walletSchema = $"contract_wallet_{suffix}";
+        var schedulerSchema = $"contract_scheduler_{suffix}";
+        var eventsSchema = $"contract_events_{suffix}";
         await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(connectionString));
         await PersistenceContractReadModel.MigrateAsync(source, contractsSchema);
         await PgItemStore.MigrateAsync(source, inventorySchema);
         await PgWalletStore.MigrateAsync(source, walletSchema);
+        await Eve.Scheduler.DurableScheduler.MigrateAsync(source, schedulerSchema);
+        await Eve.Events.EventBus.MigrateAsync(source, eventsSchema);
+        var scheduler = new Eve.Scheduler.DurableScheduler(source, () => 1_800_000_000_000, schema: schedulerSchema);
+        var events = new Eve.Events.EventBus(source, scheduler, schema: eventsSchema);
         try
         {
             var itemStore = new PgItemStore(source, inventorySchema);
@@ -43,7 +49,7 @@ public sealed class ContractReadModelTests
                 await transaction.CommitAsync();
             }
 
-            var writer = new PersistenceContractWriteModel(source, itemStore, wallets, () => 1_800_000_000_000, contractsSchema);
+            var writer = new PersistenceContractWriteModel(source, itemStore, wallets, () => 1_800_000_000_000, contractsSchema, events: events);
             var created = await writer.CreateItemExchangeAsync(new Eve.Services.Core.CreateItemExchangeRequest(
                 IssuerCharacterId: 100,
                 IssuerCorporationId: 200,
@@ -86,6 +92,16 @@ public sealed class ContractReadModelTests
                 Assert.Equal(0, reader.GetInt32(5));
             }
             Assert.Equal(948m, await wallets.AccountBalanceAsync(new WalletAccount(100), CancellationToken.None));
+            await using (var journal = source.CreateCommand($"SELECT count(*) FROM {walletSchema}.journal WHERE operation_key LIKE $1"))
+            {
+                journal.Parameters.AddWithValue($"contract:{created.ContractId}:create:%");
+                Assert.Equal(3L, (long)(await journal.ExecuteScalarAsync())!);
+            }
+            await using (var notices = source.CreateCommand($"SELECT payload->>'name' FROM {eventsSchema}.outbox WHERE topic = $1 ORDER BY id"))
+            {
+                notices.Parameters.AddWithValue(Eve.Host.Persistence.ContractNotifications.Topic);
+                Assert.Equal("OnContractCreated", (string?)await notices.ExecuteScalarAsync());
+            }
 
             await Assert.ThrowsAsync<Eve.Services.Core.ContractUserErrorException>(() => writer.CreateItemExchangeAsync(
                 new Eve.Services.Core.CreateItemExchangeRequest(
@@ -134,12 +150,17 @@ public sealed class ContractReadModelTests
                     Items: [new Eve.Services.Core.ContractOfferedItem(itemId, 1)]), CancellationToken.None).AsTask());
             Assert.Equal(948m, await wallets.AccountBalanceAsync(new WalletAccount(100), CancellationToken.None));
             Assert.Equal(3, (await itemStore.GetAsync(itemId, CancellationToken.None))!.Quantity);
+            await using (var notices = source.CreateCommand($"SELECT count(*) FROM {eventsSchema}.outbox WHERE topic = $1"))
+            {
+                notices.Parameters.AddWithValue(Eve.Host.Persistence.ContractNotifications.Topic);
+                Assert.Equal(1L, (long)(await notices.ExecuteScalarAsync())!);
+            }
             await using (var read = source.CreateCommand($"SELECT count(*) FROM {contractsSchema}.contract_records"))
                 Assert.Equal(1L, (long)(await read.ExecuteScalarAsync())!);
         }
         finally
         {
-            foreach (var schema in new[] { contractsSchema, inventorySchema, walletSchema })
+            foreach (var schema in new[] { contractsSchema, inventorySchema, walletSchema, schedulerSchema, eventsSchema })
             {
                 await using var cleanup = source.CreateCommand($"DROP SCHEMA IF EXISTS \"{schema}\" CASCADE");
                 await cleanup.ExecuteNonQueryAsync();
@@ -706,11 +727,13 @@ public sealed class ContractReadModelTests
         var inventorySchema = $"contract_expiry_items_{suffix}";
         var walletSchema = $"contract_expiry_wallet_{suffix}";
         var schedulerSchema = $"contract_expiry_jobs_{suffix}";
+        var eventsSchema = $"contract_expiry_events_{suffix}";
         await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(connectionString));
         await PersistenceContractReadModel.MigrateAsync(source, contractsSchema);
         await PgItemStore.MigrateAsync(source, inventorySchema);
         await PgWalletStore.MigrateAsync(source, walletSchema);
         await Eve.Scheduler.DurableScheduler.MigrateAsync(source, schedulerSchema);
+        await Eve.Events.EventBus.MigrateAsync(source, eventsSchema);
         try
         {
             var itemStore = new PgItemStore(source, inventorySchema);
@@ -733,8 +756,9 @@ public sealed class ContractReadModelTests
             }
             const long createdAt = 1_800_000_000_000;
             var scheduler = new Eve.Scheduler.DurableScheduler(source, () => createdAt, schema: schedulerSchema);
-            var jobs = new ContractExpiryJobs(source, itemStore, wallets, scheduler, contractsSchema);
-            var writer = new PersistenceContractWriteModel(source, itemStore, wallets, () => createdAt, contractsSchema, jobs);
+            var events = new Eve.Events.EventBus(source, scheduler, schema: eventsSchema);
+            var jobs = new ContractExpiryJobs(source, itemStore, wallets, scheduler, contractsSchema, events);
+            var writer = new PersistenceContractWriteModel(source, itemStore, wallets, () => createdAt, contractsSchema, jobs, events);
             var created = await writer.CreateContractAsync(new Eve.Services.Core.CreateItemExchangeRequest(
                 IssuerCharacterId: 100, IssuerCorporationId: 200, IsCorporationIssued: false,
                 StartStationId: 600, StartStationDivision: ItemFlags.Hangar, Availability: 0, AssigneeId: 0,
@@ -757,10 +781,15 @@ public sealed class ContractReadModelTests
             Assert.True(await reader.ReadAsync());
             Assert.Equal((short)3, reader.GetInt16(0));
             Assert.Equal(0m, reader.GetDecimal(1));
+            await reader.DisposeAsync();
+            await using var notices = source.CreateCommand($"SELECT array_agg(payload->>'name' ORDER BY id) FROM {eventsSchema}.outbox WHERE topic = $1");
+            notices.Parameters.AddWithValue(Eve.Host.Persistence.ContractNotifications.Topic);
+            Assert.Equal(new[] { "OnContractCreated", "OnContractFailed" },
+                (string[])(await notices.ExecuteScalarAsync())!);
         }
         finally
         {
-            foreach (var schema in new[] { contractsSchema, inventorySchema, walletSchema, schedulerSchema })
+            foreach (var schema in new[] { contractsSchema, inventorySchema, walletSchema, schedulerSchema, eventsSchema })
             {
                 await using var cleanup = source.CreateCommand($"DROP SCHEMA IF EXISTS \"{schema}\" CASCADE");
                 await cleanup.ExecuteNonQueryAsync();

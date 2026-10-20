@@ -4,7 +4,6 @@ using Eve.Services.Slash;
 
 namespace Eve.Services.Dogma.Tests;
 
-/// <summary>The owners and pilots the standing commands name in a test: a faction, two corporations (one of them an agent corporation) and the names of pilots.</summary>
 public sealed class FakeStandingDirectory : IStandingDirectory
 {
     public const long CaldariState = 500001, CaldariCorp = 1000035, OtherAgency = 1000044;
@@ -48,7 +47,6 @@ public class StandingCommandTests
         Assert.Equal(5.0, await rig.Relations.ValueAsync(RelationKinds.Standing.Name, FakeStandingDirectory.CaldariCorp, pilot.CharacterId));
         Assert.Equal((pilot.CharacterId, FakeStandingDirectory.CaldariCorp, 5.0), Assert.Single(rig.StandingNotices));
 
-        // a quoted owner and a trailing pilot name: the faction is set toward the named pilot, not the GM's own
         var other = await rig.NewCharacterAsync("Second Pilot");
         rig.StandingDirectory.Characters["Second Pilot"] = other.CharacterId;
         Assert.Equal($"Set standing with Caldari State(500001) to -2.50 for {"Pilot " + other.CharacterId}({other.CharacterId}).",
@@ -66,7 +64,6 @@ public class StandingCommandTests
         rig.StandingDirectory.Characters["Owner First Pilot"] = pilot.CharacterId;
         var session = Rig.Session(pilot.CharacterId);
 
-        // /setstanding "<owner id>" <character id> <value> "<reason>", as the client's standings tool sends it
         Assert.StartsWith("Set standing with Caldari Test Corp(1000035) to 3.00 for",
             await rig.SlashAsync(session, $"/setstanding \"{FakeStandingDirectory.CaldariCorp}\" {pilot.CharacterId} 3 \"Mass standing change\""));
         Assert.Equal(3.0, await rig.Relations.ValueAsync(RelationKinds.Standing.Name, FakeStandingDirectory.CaldariCorp, pilot.CharacterId));

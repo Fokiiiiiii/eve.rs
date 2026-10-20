@@ -154,7 +154,6 @@ public sealed class ClientStartupServicesTests
         Assert.False(queried);
     }
 
-
     [Theory]
     [InlineData(37d, 37)]
     [InlineData(1002d, 999)]

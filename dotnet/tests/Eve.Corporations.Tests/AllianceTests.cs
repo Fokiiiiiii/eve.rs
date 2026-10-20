@@ -868,6 +868,24 @@ public class AllianceTests
         Assert.Equal(new Eve.Marshal.PyInt(Eve.Services.Corporations.EveOwnerTypeIds.Faction),
             factionOwner.Items[2]);
         Assert.Equal(Eve.Marshal.PyNone.Instance, factionOwner.Items[4]);
+
+        var duplicateOwners = Assert.IsType<Eve.Marshal.PyList>(await service.CallAsync(new Eve.Services.ServiceCall
+        {
+            Session = session,
+            Method = "GetEveOwners",
+            Args = [Eve.Services.Py.List(new Eve.Marshal.PyInt(actor),new Eve.Marshal.PyInt(actor))]
+        }));
+        Assert.Single(duplicateOwners.Items);
+        var oversizedOwners = new Eve.Marshal.PyList(Enumerable.Range(1,501)
+            .Select(id => (Eve.Marshal.PyValue)new Eve.Marshal.PyInt(id)).ToArray());
+        var bulkRefusal = await Assert.ThrowsAsync<Eve.Corporations.CorporationError>(async () =>
+            await service.CallAsync(new Eve.Services.ServiceCall
+            {
+                Session = session,
+                Method = "GetEveOwners",
+                Args = [oversizedOwners]
+            }));
+        Assert.Equal("ALLIANCE_BULK_LIMIT_EXCEEDED",bulkRefusal.Code);
     }
 
     [PgFact]

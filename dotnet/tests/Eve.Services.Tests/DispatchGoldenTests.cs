@@ -179,6 +179,20 @@ public class DispatchGoldenTests
             new PyTuple([.. head, .. Enumerable.Repeat<PyValue>(PyNone.Instance, 14 - head.Length)]));
     }
 
+    private static PyValue BoundCallRequestPacket(string objectId, string method)
+    {
+        var source = new PyTuple([new PyInt(MachoAddress.TypeClient), new PyLong(7), new PyInt(9), PyNone.Instance]);
+        var body = new PyTuple([new PyStr(objectId), new PyStr(method), new PyTuple([]), PyNone.Instance]);
+        var payload = new PyTuple([new PyTuple([new PyInt(0), new PySubStream(body)])]);
+        var head = new PyValue[]
+        {
+            new PyInt(6), source, MachoAddress.Any("").Encode(), new PyInt(90000002), payload, PyNone.Instance,
+        };
+        return new PyObject(
+            new PyStr("carbon.common.script.net.machoNetPacket.CallReq"),
+            new PyTuple([.. head, .. Enumerable.Repeat<PyValue>(PyNone.Instance, 14 - head.Length)]));
+    }
+
     private static string Clip(string text) => text.Length > 120 ? text[..120] + "…" : text;
 
     private sealed class EmptyProvider : IServiceProvider
@@ -203,8 +217,14 @@ public class DispatchGoldenTests
         var registry = new ServiceRegistry();
         var service = new ExpensiveService();
         var inventoryService = new InventoryBudgetService();
+        var corporationService = new CorporationBudgetService();
+        var characterService = new CharacterKillmailBudgetService();
+        var recruitmentService = new RecruitmentSearchBudgetService();
         registry.Register(service);
         registry.Register(inventoryService);
+        registry.Register(corporationService);
+        registry.Register(characterService);
+        registry.Register(recruitmentService);
         var now = FixedNowMs;
         var dispatcher = new PacketDispatcher(registry, () => now) { MaxExpensiveRpcUnitsPerMinute = 10 };
 
@@ -224,6 +244,41 @@ public class DispatchGoldenTests
         Assert.Equal(ErrorResponseCommand, CommandOf(historyCapture.Sent[1]));
         Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(historyCapture.Sent[1])));
 
+        var boundCapture = new Capture();
+        var boundSession = new ClientSession(boundCapture) { SessionId = 904 };
+        const string marketObjectId = "N=900:904";
+        registry.RegisterBoundObject(marketObjectId, service);
+        await dispatcher.DispatchAsync(BoundCallRequestPacket(marketObjectId, "GetOrders"), boundSession);
+        await dispatcher.DispatchAsync(BoundCallRequestPacket(marketObjectId, "BuyMultipleItems"), boundSession);
+        Assert.Equal(3, service.Calls);
+        Assert.Equal(2, boundCapture.Sent.Count);
+        Assert.Equal(ErrorResponseCommand, CommandOf(boundCapture.Sent[1]));
+        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(boundCapture.Sent[1])));
+
+        var recruitmentCapture = new Capture();
+        var recruitmentSession = new ClientSession(recruitmentCapture) { SessionId = 907 };
+        await dispatcher.DispatchAsync(CallRequestPacket("corpRecProxy", "SearchCorpAds"), recruitmentSession);
+        await dispatcher.DispatchAsync(CallRequestPacket("corpRecProxy", "SearchCorpAds"), recruitmentSession);
+        Assert.Equal(1, recruitmentService.Calls);
+        Assert.Equal(ErrorResponseCommand, CommandOf(recruitmentCapture.Sent[1]));
+        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(recruitmentCapture.Sent[1])));
+
+        var characterCapture = new Capture();
+        var characterSession = new ClientSession(characterCapture) { SessionId = 906 };
+        await dispatcher.DispatchAsync(CallRequestPacket("charMgr", "GetRecentShipKillsAndLosses"), characterSession);
+        await dispatcher.DispatchAsync(CallRequestPacket("charMgr", "GetRecentShipKillsAndLosses"), characterSession);
+        Assert.Equal(1, characterService.Calls);
+        Assert.Equal(ErrorResponseCommand, CommandOf(characterCapture.Sent[1]));
+        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(characterCapture.Sent[1])));
+
+        var corporationCapture = new Capture();
+        var corporationSession = new ClientSession(corporationCapture) { SessionId = 905 };
+        await dispatcher.DispatchAsync(CallRequestPacket("corpRegistry", "GetEveOwners"), corporationSession);
+        await dispatcher.DispatchAsync(CallRequestPacket("corpRegistry", "GetMemberIDsByQuery"), corporationSession);
+        Assert.Equal(1, corporationService.Calls);
+        Assert.Equal(ErrorResponseCommand, CommandOf(corporationCapture.Sent[1]));
+        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(corporationCapture.Sent[1])));
+
         var inventoryCapture = new Capture();
         var inventorySession = new ClientSession(inventoryCapture) { SessionId = 902 };
         await dispatcher.DispatchAsync(CallRequestPacket("invbroker", "ListIncludingContainers"), inventorySession);
@@ -234,7 +289,7 @@ public class DispatchGoldenTests
 
         now += 60_000;
         await dispatcher.DispatchAsync(CallRequestPacket("marketProxy", "GetOrders"), session);
-        Assert.Equal(3, service.Calls);
+        Assert.Equal(4, service.Calls);
         Assert.Equal(7, CommandOf(capture.Sent[2]));
     }
 
@@ -245,6 +300,51 @@ public class DispatchGoldenTests
         public string Name => "marketProxy";
 
         public bool HasMethod(string method) => method is "GetOrders" or "BuyMultipleItems" or "GetHistoryForManyTypeIDs";
+
+        public ValueTask<PyValue> CallAsync(ServiceCall call)
+        {
+            Calls++;
+            return ValueTask.FromResult<PyValue>(PyNone.Instance);
+        }
+    }
+
+    private sealed class RecruitmentSearchBudgetService : IService
+    {
+        public int Calls { get; private set; }
+
+        public string Name => "corpRecProxy";
+
+        public bool HasMethod(string method) => method == "SearchCorpAds";
+
+        public ValueTask<PyValue> CallAsync(ServiceCall call)
+        {
+            Calls++;
+            return ValueTask.FromResult<PyValue>(PyNone.Instance);
+        }
+    }
+
+    private sealed class CharacterKillmailBudgetService : IService
+    {
+        public int Calls { get; private set; }
+
+        public string Name => "charMgr";
+
+        public bool HasMethod(string method) => method == "GetRecentShipKillsAndLosses";
+
+        public ValueTask<PyValue> CallAsync(ServiceCall call)
+        {
+            Calls++;
+            return ValueTask.FromResult<PyValue>(PyNone.Instance);
+        }
+    }
+
+    private sealed class CorporationBudgetService : IService
+    {
+        public int Calls { get; private set; }
+
+        public string Name => "corpRegistry";
+
+        public bool HasMethod(string method) => method is "GetEveOwners" or "GetMemberIDsByQuery";
 
         public ValueTask<PyValue> CallAsync(ServiceCall call)
         {

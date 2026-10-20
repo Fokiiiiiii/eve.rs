@@ -99,7 +99,7 @@ public class ModuleScriptTests
     [PgFact]
     public async Task An_ECCM_script_loaded_in_an_ECCM_module_doubles_its_radar_strength_and_the_ship_takes_the_doubled_strength_when_it_runs()
     {
-        // the SDE: the ECCM script carries sensorStrengthBonusBonus +100 (2282) on the module's four strengths; the wiki (EVE University, Electronic warfare)
+
         // says the script "doubles the sensor strength effect". The ECCM module itself is category 7, the script category 8: they pair through otherID.
         var (rig, world, shipId, _, add) = await ShipAsync(ModuleScriptTypes);
         await using var _rig = rig;

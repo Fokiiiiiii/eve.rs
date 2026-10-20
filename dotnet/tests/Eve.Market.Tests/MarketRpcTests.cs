@@ -158,7 +158,6 @@ public class MarketRpcTests
         Assert.Equal(95, (await r.Book.BookAsync(r.Station.RegionId, Tritanium, r.Now)).Asks.Single().VolumeRemaining);
     }
 
-
     [PgFact]
     public async Task Buy_multi_rolls_back_every_line_when_a_later_line_cannot_be_funded()
     {

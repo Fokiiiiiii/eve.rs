@@ -77,6 +77,7 @@ internal static class HostComposition
         Eve.Services.Core.IContractWriteModel? contractWriteModel = null;
         Func<long, int, CancellationToken, ValueTask<int>>? contractSkillLevel = null;
         NpgsqlDataSource? dataSource = null; // owned by the runtime: shut down with it, so its pooled connections return to the server
+        Eve.Host.Xmpp.XmppMotdStore? xmppMotdStore = null;
         if (Env("EVE_PG_URL", "") is { Length: > 0 } pgUrl)
         {
             var schema = Env("EVE_IDENTITY_SCHEMA", PgAccountDirectory.DefaultSchema);
@@ -223,8 +224,11 @@ internal static class HostComposition
             var charMgr = characterServices.OfType<Eve.Services.CharacterInfo.CharMgrService>().FirstOrDefault();
             Func<long, CancellationToken, ValueTask<IReadOnlyList<long>>>? readBlockedOwners =
                 charMgr is null ? null : charMgr.ReadBlockedOwnersAsync;
+            if (dataSource is { } xmppDataSource)
+                xmppMotdStore = await Eve.Host.Xmpp.XmppMotdStore.OpenAsync(xmppDataSource, Env("EVE_XMPP_SCHEMA", "eve_xmpp"));
             var xmppHub = new Eve.Host.Xmpp.XmppChatHub(connected,
                 new Eve.Host.Xmpp.XmppChatSettings(xmppSettings.Domain, xmppSettings.ConnectHost),
+                xmppMotdStore,
                 readBlockedOwners);
             registry.Register(new Eve.Host.Xmpp.XmppChatMgrService(xmppHub));
             if (xmppSettings.CertificatePath is { } certificatePath)

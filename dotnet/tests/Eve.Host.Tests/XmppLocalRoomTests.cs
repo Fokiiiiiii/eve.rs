@@ -52,6 +52,32 @@ public sealed class XmppLocalRoomTests
     }
 
     [Fact]
+    public void Reconnected_session_starts_a_fresh_room_message_budget()
+    {
+        const long systemId = 30_000_142;
+        var sessions = new ConnectedSessions();
+        sessions.Add(Character(42, "first-token", systemId));
+        sessions.Add(Character(43, "second-token", systemId));
+        var hub = new XmppChatHub(sessions, new XmppChatSettings("chat.example", "127.0.0.1"));
+        var firstOutput = new List<string>();
+        var secondOutput = new List<string>();
+        var first = Connect(hub, 42, "first-token", firstOutput);
+        var second = Connect(hub, 43, "second-token", secondOutput);
+        first.OnStanza(Parse("<presence to='local_30000142@conference.chat.example/Alpha'><x xmlns='http://jabber.org/protocol/muc'/></presence>"));
+        second.OnStanza(Parse("<presence to='local_30000142@conference.chat.example/Beta'><x xmlns='http://jabber.org/protocol/muc'/></presence>"));
+        first.OnStanza(Parse("<message type='groupchat' to='local_30000142@conference.chat.example'><body>before reconnect</body></message>"));
+        Assert.Contains(secondOutput, item => item.Contains("before reconnect", StringComparison.Ordinal));
+
+        first.OnClosed();
+        firstOutput.Clear();
+        first = Connect(hub, 42, "first-token", firstOutput);
+        first.OnStanza(Parse("<presence to='local_30000142@conference.chat.example/Alpha'><x xmlns='http://jabber.org/protocol/muc'/></presence>"));
+        first.OnStanza(Parse("<message type='groupchat' to='local_30000142@conference.chat.example'><body>after reconnect</body></message>"));
+
+        Assert.Contains(secondOutput, item => item.Contains("after reconnect", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Wormhole_local_hides_silent_occupants_until_they_speak()
     {
         const long systemId = 31_000_142;

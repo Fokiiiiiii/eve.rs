@@ -180,6 +180,29 @@ public sealed partial class ContractProxyService(
             return 3;
         return 1;
     }
+
+    private static bool TryPositiveBidAmount(PyValue value, out decimal amount)
+    {
+        if (value is PyInt integer)
+        {
+            amount = integer.Value;
+            return amount > 0;
+        }
+        if (value is PyLong longInteger)
+        {
+            amount = longInteger.Value;
+            return amount > 0;
+        }
+        if (value is PyReal real && double.IsFinite(real.Value) &&
+            decimal.TryParse(real.Value.ToString("R", System.Globalization.CultureInfo.InvariantCulture),
+                System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture,
+                out amount))
+            return amount > 0;
+
+        amount = 0;
+        return false;
+    }
+
     [Method("PlaceBid")]
     public async Task<PyValue> PlaceBid(ServiceCall call)
     {
@@ -194,13 +217,8 @@ public sealed partial class ContractProxyService(
             PyLong value => value.Value,
             _ => throw MachoErrors.ThrowUserError("ConContractNotFound"),
         };
-        var amount = call.Arg(1) switch
-        {
-            PyInt value => (decimal)value.Value,
-            PyLong value => (decimal)value.Value,
-            PyReal value => (decimal)value.Value,
-            _ => throw MachoErrors.ThrowUserError("ConBidTooLow"),
-        };
+        if (!TryPositiveBidAmount(call.Arg(1), out var amount))
+            throw MachoErrors.ThrowUserError("ConBidTooLow");
         var bidForCorporation = call.Arg(2) switch
         {
             PyBool value => value.Value,

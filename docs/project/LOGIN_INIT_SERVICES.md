@@ -34,7 +34,7 @@ The headless login-to-character walk (`tools/headless-client/tests/test_login_to
 | `authentication.AccruedTime` | Account/clone UI initialization | Partial | Current service default returns an empty list when no provider is wired. Wire to persisted subscription/account state and test client consumer. |
 | `authentication.AmUnderage` | Account gate | Partial | Current default is false; Host must use authoritative account age state if the deployment supports age restrictions. |
 | `authentication.SetLanguageID` | Startup localization choice | Implemented | Stores the selected language in session. |
-| `userSvc.GetUserToken` | Authentication/token consumers | Partial | Present in `RedeemService`; verify whether it returns a scoped live token or an empty default in Host registration. |
+| `userSvc.GetUserToken` | External-link URL construction (`urlUtil.py:17-23`) | Partial | Host returns EveJS’s session-derived local token; the post-selection headless walk checks account and character IDs. A scoped credential for external services is not configured. |
 | `userSvc.GetUserName` / `GetCreateDate` | Account display and character support UI | Implemented | Host account/character providers. |
 | `subscriptionMgr.GetCloneGrade` | Character screen and clone UI | Implemented | Character/account subscription state is read by Host provider. |
 | `subscriptionMgr.GetSubscriptionTime` | Subscription UI after entry | Implemented | `SubscriptionMgrService` derives expiry and remaining days from the persisted account omega expiry. |
@@ -79,14 +79,14 @@ The original table above covers connection, authentication, and character entry.
 | `storeManager.get_offers` | In-game store catalog (`vgsClient.py:36`) | Partial | Evidence and remaining provider work are linked in the caller path and current feature entries in `docs/project/TODO.md`. |
 | `storeManager.get_categories` | In-game store navigation (`vgsClient.py:45`) | Partial | Evidence and remaining provider work are linked in the caller path and current feature entries in `docs/project/TODO.md`. |
 | `storeManager.get_products` | In-game store products (`vgsClient.py:54`) | Partial | Evidence and remaining provider work are linked in the caller path and current feature entries in `docs/project/TODO.md`. |
-| `achievementTrackerMgr.HasEverWarped` | Space camera startup (`enterSpaceCamera.py:40`) | Partial | Evidence and remaining provider work are linked in the caller path and current feature entries in `docs/project/TODO.md`. |
+| `achievementTrackerMgr.HasEverWarped` | Space camera startup (`enterSpaceCamera.py:39-42`) | Implemented | Host reads the persisted flag and returns false when absent. An accepted simulation warp sets session state and idempotently saves the character flag; store, accepted/refused/retry warp, and slow headless warp checks cover the flow. |
 | `achievementTrackerMgr.GetCompletedAchievementsAndClientEventCount` | Achievements state (`achievementSvc.py:129`) | Implemented | Evidence and remaining provider work are linked in the caller path and current feature entries in `docs/project/TODO.md`. |
 | `achievementTrackerMgr.UpdateClientAchievmentsAndCounters` | Persists client achievement state (`achievementSvc.py:229`) | Implemented | Evidence and remaining provider work are linked in the caller path and current feature entries in `docs/project/TODO.md`. |
-| `skillMgr2.GetMySkillHandler` | Resolves character skill handler (`skillsvc.py:128-131`) | Partial | Evidence and remaining provider work are linked in the caller path and current feature entries in `docs/project/TODO.md`. |
-| `skillHandler.GetSkills` | Character skill cache (`skillsvc.py:133-137`) | Partial | Evidence and remaining provider work are linked in the caller path and current feature entries in `docs/project/TODO.md`. |
-| `skillHandler.GetSkillQueueAndFreePoints` | Training queue and free points (`skillQueueSvc.py:75-78,116-117`) | Partial | Evidence and remaining provider work are linked in the caller path and current feature entries in `docs/project/TODO.md`. |
-| `skillHandler.GetAttributes` | Character attributes after implant/booster reads (`skillsvc.py:220-224`) | Partial | Evidence and remaining provider work are linked in the caller path and current feature entries in `docs/project/TODO.md`. |
-| `skillHandler.GetImplants` | Active character implants (`skillsvc.py:220-224`) | Partial | Evidence and remaining provider work are linked in the caller path and current feature entries in `docs/project/TODO.md`. |
+| `skillMgr2.GetMySkillHandler` | Resolves character skill handler (`skillsvc.py:128-131`) | Implemented | The race-parameterized post-selection headless walk checks the returned character-bound handler against the EveJS fixture. |
+| `skillHandler.GetSkills` | Character skill cache (`skillsvc.py:133-137`) | Implemented | The race-parameterized post-selection headless walk compares the skill dictionary to the EveJS fixture; `SkillHandlerTests` passes 44/44. |
+| `skillHandler.GetSkillQueueAndFreePoints` | Training queue and free points (`skillQueueSvc.py:75-78,116-117`) | Implemented | The race-parameterized post-selection headless walk compares the queue and free-point tuple to the EveJS fixture; `SkillHandlerTests` passes 44/44. |
+| `skillHandler.GetAttributes` | Character attributes after implant/booster reads (`skillsvc.py:220-224`) | Implemented | The race-parameterized post-selection headless walk compares character attributes to the EveJS fixture; `SkillHandlerTests` passes 44/44. |
+| `skillHandler.GetImplants` | Active character implants (`skillsvc.py:220-224`) | Implemented | The race-parameterized post-selection headless walk compares active implants to the EveJS fixture; `SkillHandlerTests` passes 44/44. |
 | `jumpCloneSvc.GetCloneState` | Jump clones and clone implants (`clonejumpsvc.py:52-79`) | Partial | Evidence and remaining provider work are linked in the caller path and current feature entries in `docs/project/TODO.md`. |
 | `jumpCloneSvc.GetStationCloneState` | Station clone list (`clonejumpsvc.py:90-94`) | Partial | Evidence and remaining provider work are linked in the caller path and current feature entries in `docs/project/TODO.md`. |
 | `jumpCloneSvc.GetShipCloneState` | Active ship clone list (`clonejumpsvc.py:82-88`) | Partial | Evidence and remaining provider work are linked in the caller path and current feature entries in `docs/project/TODO.md`. |
@@ -140,7 +140,7 @@ The original table above covers connection, authentication, and character entry.
 | `fleetMgr.RemoveFromWatchlist` | Fleet watchlist changes (`parklife/fleetSvc.py:719`); full session list flow open | Partial | Evidence and remaining provider work are linked in the caller path and current feature entries in `docs/project/TODO.md`. |
 | `fleetMgr.RegisterForDamageUpdates` | Fleet watchlist damage updates (`parklife/fleetSvc.py:795`) | Partial | Evidence and remaining provider work are linked in the caller path and current feature entries in `docs/project/TODO.md`. |
 
-Inventory baseline: 122 tracked rows: 85 implemented, 37 partial, and 0 missing routes. The entry-phase and post-selection subtotals are shown by their section counts above.
+Current inventory: 121 tracked rows: 90 implemented, 31 partial, and 0 missing routes. This batch persists accepted-warp history and verifies the character-bound skill handler, skill list, queue, attributes, and implants through focused tests and the headless walk. Other partial entries and unenumerated startup callers remain listed below.
 
 ## Verification boundary
 

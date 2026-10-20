@@ -91,6 +91,8 @@ def test_a_ship_warps_to_a_planet_as_the_reference_did(race):
             problems.append(f"{where}: error {base.brief(error)}")
         elif "error" in recorded or describe(raw) != recorded["ok"]:
             problems.append(f"{where}: answered {base.brief(describe(raw))} in place of {recorded['ok']}")
+        else:
+            assert who.call("achievementTrackerMgr", "HasEverWarped") is True
         events = timed_events(who, 1.0)
         while time.time() - started < 150 and not any("Stop" in names(e) for e in events):
             who.call_bound(ballpark[0], "UpdateStateRequest")

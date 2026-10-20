@@ -39,6 +39,25 @@ public sealed class AchievementTrackerStore(NpgsqlDataSource source, string sche
     }
 
     /// <summary>Replaces the character's record with what the client sent, in one transaction.</summary>
+    public async Task<bool> HasEverWarpedAsync(long characterId, CancellationToken cancellationToken = default)
+    {
+        await using var command = source.CreateCommand($"SELECT has_ever_warped FROM {schema}.achievement_trackers WHERE character_id = $1");
+        command.Parameters.Add(new NpgsqlParameter { Value = characterId });
+        return await command.ExecuteScalarAsync(cancellationToken) is true;
+    }
+
+    /// <summary>Records the first accepted warp without replacing the client-owned achievement maps.</summary>
+    public async Task RecordWarpAsync(long characterId, long nowMs, CancellationToken cancellationToken = default)
+    {
+        await using var command = source.CreateCommand($"""
+            INSERT INTO {schema}.achievement_trackers (character_id, updated_ms, has_ever_warped) VALUES ($1, $2, true)
+            ON CONFLICT (character_id) DO UPDATE SET updated_ms = EXCLUDED.updated_ms, has_ever_warped = true
+            """);
+        command.Parameters.Add(new NpgsqlParameter { Value = characterId });
+        command.Parameters.Add(new NpgsqlParameter { Value = nowMs });
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     public async Task WriteAsync(long characterId, IReadOnlyList<(int AchievementId, long CompletedFileTime)> completed,
         IReadOnlyList<(string Name, long Count)> eventCounts, long nowMs, CancellationToken cancellationToken = default)
     {

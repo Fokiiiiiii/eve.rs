@@ -194,6 +194,13 @@ def test_the_recorded_walk_replays():
                 recorded_ok = False
             problems += same_way(recorded_ok, outcome, where)
 
+        user_id = walker.session.session_init.get("userid")
+        character_id = walker.session.session_init.get("charid")
+        assert isinstance(user_id, int) and user_id > 0
+        assert isinstance(character_id, int) and character_id > 0
+        assert walker.call("achievementTrackerMgr", "HasEverWarped") is False
+        assert walker.call("userSvc", "GetUserToken") == f"evejs-local-token-{user_id}-{character_id}".encode("utf-8")
+
         # Compare the recorded session and skills packets after checking eve.rs's extra selection notification.
         walker.ping()
         seen = [describe(n.raw) for n in walker.notifications if n.command in (p.SESSIONCHANGENOTIFICATION, p.NOTIFICATION)]

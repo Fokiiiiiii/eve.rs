@@ -5034,3 +5034,11 @@ The writer serializes accept and bid operations by locking the contract row befo
 ## Contract headless walk (2026-10-20)
 
 `tools/headless-client/tests/test_walk_contracts.py` exercises public item-exchange creation and acceptance through the V24 `contractProxy` RPCs using two connected characters. It checks the accepted row, issuer notification, item ownership, and wallet balances against PostgreSQL. The file is selectable in `.github/workflows/live-slow.yml`; its live result remains open until dispatched and completed successfully. The graphical client is a separate check.
+
+### Login startup service verification: `userSvc.GetUserToken`
+
+V24.01 `eve/common/script/util/urlUtil.py` calls `userSvc.GetUserToken` when adding a `token` query parameter to external-link URLs. EveJS v261018.1 returns `evejs-local-token-<accountID>-<characterID>` from the active session, and eve.rs returns that same session-derived value. The post-selection headless login walk checks the account and selected character IDs used in the result. This compatibility value is local; a scoped credential for an external service remains open.
+
+### First-space camera entry for characters without warp history
+
+V24.01 `eve/client/script/ui/camera/enterSpaceCamera.py:39-42` calls `AnimEnterFirstTimeEverInSpace()` when `achievementTrackerMgr.HasEverWarped()` is false. EveJS v261018.1 (`server/src/services/character/achievementTrackerMgrService.js`) defaults a character without a saved warp value to true. eve.rs reads the persisted `has_ever_warped` flag from the character achievement-tracker row, with a legacy game-store projection fallback, and returns false when both sources are absent. Newly created characters therefore follow the client’s first-space entry path. This default intentionally follows the V24 callsite, while EveJS defaults missing history to true. An explicitly saved true value controls the result. After the simulator accepts a warp, eve.rs stores the character flag and sets the session value; refused commands do not change it. The focused RPC and store tests, accepted/refused/retry warp tests, and the slow headless warp walk cover these transitions.

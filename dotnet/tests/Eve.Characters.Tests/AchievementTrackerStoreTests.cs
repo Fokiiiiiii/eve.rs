@@ -17,11 +17,16 @@ public sealed class AchievementTrackerStoreTests
         var characterId = await Insert(s, Pilot("Tracker"));
         var store = new AchievementTrackerStore(s.Source, s.CharactersSchema);
         Assert.Null(await store.ReadAsync(characterId));
+        Assert.False(await store.HasEverWarpedAsync(characterId));
+        await Task.WhenAll(store.RecordWarpAsync(characterId, 500), store.RecordWarpAsync(characterId, 501));
+        Assert.True(await store.HasEverWarpedAsync(characterId));
 
         await store.WriteAsync(characterId, [(9, 134273341290000000L), (10, 134273362100000000L)], [("client_openMap", 3L)], 1_000);
         await store.WriteAsync(characterId, [(16, 134273340850000000L)], [("client_spinCamera", 1L), ("client_openMap", 4L)], 2_000);
 
-        var restarted = await new AchievementTrackerStore(s.Source, s.CharactersSchema).ReadAsync(characterId);
+        var restartedStore = new AchievementTrackerStore(s.Source, s.CharactersSchema);
+        var restarted = await restartedStore.ReadAsync(characterId);
+        Assert.True(await restartedStore.HasEverWarpedAsync(characterId));
         Assert.NotNull(restarted);
         Assert.Equal([(16, 134273340850000000L)], restarted!.Completed);
         Assert.Equal([("client_openMap", 4L), ("client_spinCamera", 1L)], restarted.EventCounts);

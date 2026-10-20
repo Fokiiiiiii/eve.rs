@@ -1960,15 +1960,26 @@ public class SpaceServiceTests
         var oid = await rig.BindBeyonceAsync(session);
         Events.Of(session);
         var before = rig.Sim.Heard.Count;
+        var warpedCharacters = new List<long>();
+        var persistenceAttempts = 0;
+        rig.Space.WarpAcceptedAsync = (characterId, _) =>
+        {
+            warpedCharacters.Add(characterId);
+            if (persistenceAttempts++ == 0)
+                throw new InvalidOperationException("store unavailable");
+            return Task.CompletedTask;
+        };
 
         var answer = await rig.BeyonceCallWithAsync(session, "CmdWarpToStuff", oid, [new PyStr("item"), new PyInt(40491233)], ("minRange", new PyInt(30000)));
         Assert.Equal(PyNone.Instance, answer);
+        Assert.Equal(session.CharacterId.GetValueOrDefault(), warpedCharacters.Single());
         Assert.Equal(
             [Describe(new SimCommand((ulong)session.SessionId, SimCommands.WarpTo, [40491233, 30000]))],
             rig.Sim.Heard.Skip(before).Select(Describe));
         // no range asked for is none
         await rig.BeyonceCallAsync(session, "CmdWarpToStuff", oid, new PyStr("item"), new PyInt(40491233));
         Assert.Equal(Describe(new SimCommand((ulong)session.SessionId, SimCommands.WarpTo, [40491233, 0])), Describe(rig.Sim.Heard.Last()));
+        Assert.Equal([session.CharacterId.GetValueOrDefault(), session.CharacterId.GetValueOrDefault()], warpedCharacters);
 
         // the ship has left its protection: the client is told once, whatever the simulation said before
         var told = Events.Of(session).Where(e => e.Name == "OnInvulnCancelled").ToArray();
@@ -1985,6 +1996,12 @@ public class SpaceServiceTests
         var oid = await rig.BindBeyonceAsync(session);
         Events.Of(session);
         var before = rig.Sim.Heard.Count;
+        var recordedWarps = new List<long>();
+        rig.Space.WarpAcceptedAsync = (characterId, _) =>
+        {
+            recordedWarps.Add(characterId);
+            return Task.CompletedTask;
+        };
 
         foreach (var reason in new[] { "TARGET_NOT_FOUND", "WARP_DISTANCE_TOO_CLOSE" })
         {
@@ -1999,6 +2016,7 @@ public class SpaceServiceTests
         await Assert.ThrowsAsync<MachoWrappedException>(() => rig.BeyonceCallAsync(session, "CmdWarpToStuff", oid, new PyStr("unsupported"), new PyInt(5)));
         await Assert.ThrowsAsync<MachoWrappedException>(() => rig.BeyonceCallAsync(session, "CmdWarpToStuff", oid, new PyStr("item"), new PyStr("planet")));
         Assert.Equal(before + 2, rig.Sim.Heard.Count);
+        Assert.Empty(recordedWarps);
 
         // not from an object of this session
         Assert.Equal(PyNone.Instance, await rig.BeyonceCallAsync(session, "CmdWarpToStuff", null, new PyStr("item"), new PyInt(40491233)));

@@ -22,6 +22,10 @@ is better off, and how it is tested. A behaviour is either:
 
 The V24.01 trade window builds a two-pilot money manifest and a set of offered item rows, then calls the bound `trademgr` methods. EveJS 261018.1 accepts those same list and amount shapes without a count bound. eve.rs preserves the normal client calls while limiting `MultiAdd` and `MakeOffer` item collections to 256 entries, rejecting nonpositive item IDs, and refusing non-finite or out-of-range ISK values with `CustomNotify`. This affects malformed or oversized calls only. `TradeMgrRpcTests` covers the count, identifier, and amount refusals; graphical-client acceptance is open.
 
+## Wallet RPC work budget (2026-10-20)
+
+`account.GetTransactions`, `GiveCash`, and `GiveCashFromCorpAccount` now consume the existing per-session weighted RPC budget. The budget returns the named `SessionRpcBudgetExceeded` response after the configured minute allowance. This is server-side resource accounting and does not alter a call's result while it remains within budget. `DispatchGoldenTests.Expensive_wallet_calls_have_a_named_per_session_budget` covers refusal after the limit.
+
 ## Project status
 
 Summary of this file, as of 2026-10-18. The task list with the same areas is the "Project status" table at the top of `docs/project/TODO.md`. **Status** is the state of the area; **Project rule** is the rule a deviation stands on; **Cut** lists what the owner or the evidence has cut, with the entry that records it. A cut item without an entry here or in its section is a bug in this file.

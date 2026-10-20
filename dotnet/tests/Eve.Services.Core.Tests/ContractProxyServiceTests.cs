@@ -70,6 +70,29 @@ public sealed class ContractProxyServiceTests
         Assert.Equal((900L, 42L, 84L, false, 1000, 2500m), writer.LastBid);
     }
 
+    [Theory]
+    [InlineData(double.NaN)]
+    [InlineData(double.PositiveInfinity)]
+    [InlineData(double.NegativeInfinity)]
+    [InlineData(1e300)]
+    [InlineData(0d)]
+    [InlineData(-1d)]
+    public async Task Place_bid_refuses_nonfinite_overflow_and_nonpositive_amounts(double amount)
+    {
+        var writer = new RecordingWriteModel();
+        var service = new ContractProxyService(new RecordingReadModel(), writer);
+        var session = new ClientSession { CharacterId = 42 };
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(() => service.PlaceBid(new ServiceCall
+        {
+            Method = "PlaceBid",
+            Args = [new PyInt(900), new PyReal(amount), PyBool.False],
+            Session = session,
+        }));
+
+        Assert.Equal(MachoErrors.UserErrorClass, error.Error.ClassName);
+        Assert.Equal((0L, 0L, 0L, false, 0, 0m), writer.LastBid);
+    }
+
     [Fact]
     public async Task Accept_contract_returns_the_settled_row_and_uses_session_identity()
     {

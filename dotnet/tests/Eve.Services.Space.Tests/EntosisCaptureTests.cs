@@ -3,7 +3,6 @@ using Eve.Services.Space.Entosis;
 namespace Eve.Services.Space.Tests;
 
 /// <summary>
-/// ST-9 c, the rules of the capture (pure, no database): an attacker alone scores at the base time times the activity multiplier, a defender with the
 /// attacker pauses the capture, a defender alone regenerates it, and a link stops counting two cycles after its last cycle.
 /// </summary>
 public sealed class EntosisCaptureTests
@@ -92,7 +91,7 @@ public sealed class EntosisCaptureTests
         Assert.Null(EntosisRules.CompletionAt(State(progress: 1), attacker, Start));
     }
 
-    private const long Day = 1_699_920_000_000; // 2023-11-14 00:00 UTC
+    private const long Day = 1_699_920_000_000;
 
     [Fact]
     public void The_owners_window_is_18_hours_divided_by_the_adm_and_centred_on_the_prime_hour()

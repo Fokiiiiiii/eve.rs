@@ -2,7 +2,6 @@ using Eve.Space;
 
 namespace Eve.Services.Space.Tests;
 
-/// <summary>A smartbomb is lit only at the red safety in low, high or safe space (the client's GetRequiredSafetyLevelForEffect; the wiki, Smartbombs).</summary>
 public class SmartbombSafetyHostTests
 {
     private const int SmallEmpSmartbomb = 1563, HighSlot = 27, Raven = 638;

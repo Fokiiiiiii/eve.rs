@@ -5,7 +5,6 @@ using Eve.Space;
 namespace Eve.Services.Space.Tests;
 
 /// <summary>
-/// A running site's gates and room pockets (docs/project/ACCELERATION_GATES.md): placed in the scene at their rooms when the site runs, given back after a restart
 /// from their records, and taken out when the site ends.
 /// </summary>
 public class AccelerationGateContainersTests

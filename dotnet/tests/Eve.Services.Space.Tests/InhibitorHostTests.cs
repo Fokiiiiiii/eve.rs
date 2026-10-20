@@ -6,7 +6,6 @@ using Eve.Space;
 namespace Eve.Services.Space.Tests;
 
 /// <summary>
-/// The Mobile Cynosural Inhibitor (E-03; the wiki's rules): a pilot drops one from the hold 2,500 m ahead of the ship; it is anchored two minutes later; it lives one hour
 /// and leaves with its item at the sweep; a restart puts it back with the state its record gives; a pilot without Anchoring III cannot drop one, nor one within 200 km
 /// of another.
 /// </summary>

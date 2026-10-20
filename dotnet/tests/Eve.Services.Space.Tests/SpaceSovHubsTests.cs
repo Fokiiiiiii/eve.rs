@@ -5,7 +5,6 @@ using Eve.Structures;
 namespace Eve.Services.Space.Tests;
 
 /// <summary>
-/// ST-9 (a): a system's Sovereignty Hub is a structure ball in the simulation, read from the sovereignty records. The records are the real read model's
 /// snapshot shape; the simulation is the fake one.
 /// </summary>
 public sealed class SpaceSovHubsTests
@@ -97,7 +96,6 @@ public sealed class SpaceSovHubsTests
         var hubs = new SpaceSovHubs(rig.Sim, rig.Space, rig.Statics, (systemId, _) => Task.FromResult(SpaceSovHubs.HubOf(current, systemId)));
         await hubs.RestoreAsync(System);
 
-        // the claim changed the records (ST-9 d): the ball is replaced with the capturer as its owner
         current = Snapshot(System, HubId, SovereigntyHub, Corporation, Alliance);
         await hubs.ReplaceAsync(HubId, System);
 

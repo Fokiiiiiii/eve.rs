@@ -28,7 +28,6 @@ public class SpaceContainerTests
         return new Flying(rig, session, character, stack.Id);
     }
 
-
     private static async Task<long> DroneInSpaceAsync(Rig rig, long characterId, int system, int droneTypeId)
     {
         var drone = (await rig.Ships.GrantAsync(characterId, droneTypeId, 1, singleton: true))!.Single().After;
@@ -215,7 +214,7 @@ public class SpaceContainerTests
         await using var rig = await Rig.CreateAsync();
         var (flying, can) = await WithACanAsync(rig, 40);
         var other = await rig.NewCharacterAsync("Other Pilot", 2);
-        // a pilot that is in another corporation takes nothing from the can (a new character is in the corporation of its school: they are the same here, so the owner is changed)
+
         await rig.Ships.GrantAsync(other.CharacterId, Tritanium, 1, singleton: false);
 
         var moved = await rig.Containers.MoveAsync(flying.Session, flying.Stack, can, flying.Character.ShipId, 40, CancellationToken.None);
@@ -313,7 +312,7 @@ public class SpaceContainerTests
         await using var rig = await Rig.CreateAsync();
         var (flying, can) = await WithACanAsync(rig);
         var system = (int)flying.Session.GetInt("solarsystemid")!.Value;
-        // a record of an item that is not there any more, and the can's contents taken out by the owner outside the host
+
         await rig.SpaceItems.SaveAsync(new Eve.Ships.SpaceItem(777_000_001, system, [0, 0, 0], [1, 0, 0], 14, 12, 0, 0, 0, 0, 0, Rig.ClockMs + 1_000_000));
         await using (var connection = await rig.Source.OpenConnectionAsync())
         await using (var transaction = await connection.BeginTransactionAsync())
@@ -349,7 +348,6 @@ public class SpaceContainerTests
         Assert.Null(await rig.SpaceItems.GetAsync(can));
     }
 
-
     [PgFact]
     public async Task Saved_asteroid_items_are_restored_to_the_simulation_once()
     {
@@ -371,7 +369,6 @@ public class SpaceContainerTests
         await rig.Containers.RestoreAsync(system);
         Assert.Single(rig.Sim.Heard.Skip(heard));
     }
-
 
     [PgFact]
     public async Task A_belt_arrival_seeds_each_ore_its_system_security_holds_as_a_persisted_sde_asteroid()
@@ -446,7 +443,6 @@ public class SpaceContainerTests
         var item = (await rig.Items.GetAsync(saved.ItemId))!;
         Assert.Equal("Harvestable Cloud", rig.Statics.GroupName(rig.Statics.Type(item.TypeId)!.GroupId));
     }
-
 
     [PgFact]
     public async Task Mine_cycles_check_drone_ownership_and_range_then_persist_ore_and_notify_the_pilot()

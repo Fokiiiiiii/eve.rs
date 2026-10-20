@@ -21,7 +21,6 @@ public sealed class AbyssalSpaceSessionsTests
         return (rig, character, session);
     }
 
-
     [PgFact]
     public async Task Jettison_room_transition_after_atomic_can_creation_compensates_only_the_empty_can_before_cargo_moves()
     {
@@ -432,7 +431,6 @@ public sealed class AbyssalSpaceSessionsTests
 
     }
 
-
     [PgFact]
     public async Task Already_settled_retry_rejects_a_character_snapshot_not_at_its_clone_station()
     {
@@ -591,7 +589,6 @@ public sealed class AbyssalSpaceSessionsTests
         new SimAbyssalBoundaryProfile([0.0, 0.0, 0.0], 100_000.0, 1_000,
             [new SimAbyssalBoundaryDamagePoint(0.0, 0.0)]),
         134_351_527_136_350_000);
-
 
     private static async Task<(AbyssalParticipantDeathSettlementRequestedEvent Request,
         Eve.Characters.Character Character, Eve.Inventory.Item ActiveShip, Eve.Ships.ShipDeath ShipDeath, SimSceneKey Scene,

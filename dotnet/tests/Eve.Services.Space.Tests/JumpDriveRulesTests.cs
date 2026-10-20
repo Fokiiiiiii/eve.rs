@@ -3,7 +3,6 @@ using Eve.Services.Space;
 namespace Eve.Services.Space.Tests;
 
 /// <summary>
-/// The jump drive's rules as the wiki states them (range, fuel, the activation cooldown and the fatigue, the field kinds). The wiki's carrier example is the check of
 /// the fatigue order.
 /// </summary>
 public class JumpDriveRulesTests
@@ -14,7 +13,7 @@ public class JumpDriveRulesTests
     public void Calibration_adds_twenty_percent_of_the_base_range_a_level_so_level_five_doubles_it()
     {
         Assert.Equal(3.5, JumpDriveRules.Range(3.5, 0, 0.2));
-        // the wiki's Jump Freighters rule: no jump into high-security space, a jump out of it is allowed
+
         Assert.False(JumpDriveRules.MayJumpInto(JumpDriveRules.JumpFreighterGroup, Eve.Universe.SecurityClass.HighSec));
         Assert.True(JumpDriveRules.MayJumpInto(JumpDriveRules.JumpFreighterGroup, Eve.Universe.SecurityClass.LowSec));
         Assert.True(JumpDriveRules.MayJumpInto(JumpDriveRules.BlackOpsGroup, Eve.Universe.SecurityClass.HighSec));
@@ -87,7 +86,6 @@ public class JumpDriveRulesTests
         var second = JumpDriveRules.AfterJump(54 * Minute, 5);
         Assert.Equal((JumpDriveRules.FatigueCapMs, 6 * Minute), second);
 
-        // the third, from four hours fifty-four minutes: a tenth of that fatigue is 29 min 24 s, which the rule gives (the wiki's example says 30 min)
         var third = JumpDriveRules.AfterJump(4 * 60 * Minute + 54 * Minute, 5);
         Assert.Equal((JumpDriveRules.FatigueCapMs, 1_764_000), third);
     }

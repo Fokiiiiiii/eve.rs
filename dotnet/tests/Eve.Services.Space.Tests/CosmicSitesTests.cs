@@ -76,7 +76,6 @@ public sealed class CosmicSiteRulesTests
         Assert.Equal(strength, ProbeScanMath.SignatureStrength(level));
 }
 
-/// <summary>The probe result of a cosmic signature by its level (the wiki: a probe that is weaker than the signature finds it only in part).</summary>
 public sealed class SignatureScanResultTests
 {
     [Theory]

@@ -215,7 +215,6 @@ public sealed class HackingMgrServiceTests
 /// <summary>
 /// The analyzer's virus stats after dogma, as the hacking service reads them (SpaceSessions.AnalyzerValuesOf). The base numbers are the module's own
 /// SDE attributes (1909 coherence, 1910 strength): Alpha Data Analyzer I has 50 coherence and needs Hacking, Relic Analyzer I has 40 and needs Archaeology.
-/// Each skill adds 10 coherence a level to the analyzer it trains (wiki Hacking); the other skill adds nothing to it.
 /// </summary>
 public sealed class AnalyzerSkillTests
 {

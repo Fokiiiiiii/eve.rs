@@ -156,7 +156,6 @@ public sealed class AccelerationGateTests
         Assert.Single(rig.Transits);
     }
 
-
     [Theory]
     [InlineData(6, null, null, true)]
     [InlineData(6, 1, null, true)]

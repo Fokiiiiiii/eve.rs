@@ -7,7 +7,6 @@ using Npgsql;
 namespace Eve.Services.Space.Tests;
 
 /// <summary>
-/// The cynosural field types (<see cref="CynoFieldTypes"/>): the group and the radius come from the static data of each field type, not from the EveJS fallbacks
 /// (group 2020 or 897, radius 250).
 /// </summary>
 public class CynoFieldTypesTests

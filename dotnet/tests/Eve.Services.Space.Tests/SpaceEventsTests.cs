@@ -39,8 +39,6 @@ public class SpaceEventsTests
     private static SimDestroyed ShipDestroyed(ClientSession session, long shipId, long killerShip) =>
         new((ulong)session.SessionId, shipId, 0, Place, Facing, 47, killerShip, FrigateWreck);
 
-    // ── an NPC was destroyed ─────────────────────────────────────────────────
-
     [PgFact]
     public async Task An_npc_destroyed_by_a_pilot_is_raised_with_the_pilots_character_what_it_was_and_where()
     {
@@ -96,8 +94,6 @@ public class SpaceEventsTests
 
         Assert.Equal([1], seen);
     }
-
-    // ── a ship was lost ──────────────────────────────────────────────────────
 
     [PgFact]
     public async Task A_ship_destroyed_by_an_npc_is_raised_as_lost_with_its_type_and_the_cause()
@@ -192,8 +188,6 @@ public class SpaceEventsTests
 
         Assert.Empty(rig.Sim.Heard.Skip(heard));
     }
-
-    // ── the same things on the shared events bus ─────────────────────────────
 
     private static async Task<List<(string Topic, string Json)>> AnnouncedAsync(Rig rig, int count)
     {

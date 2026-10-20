@@ -4,7 +4,6 @@ using Eve.Space;
 namespace Eve.Services.Space.Tests;
 
 /// <summary>
-/// In-space compression by a ship's compressor module (EVE University wiki, Compression; the client's <c>itemcompression</c> package; SDE group 4174): the compressor
 /// runs as an ordinary module cycle, and while it runs its ship is a compression facility for the pilots of its fleet within its range, for the items of its type list.
 /// The host decides, replaces the stack in the same hold in one inventory transaction and tells the pilot. Real stores, the real static data, a simulation played by the test.
 /// </summary>

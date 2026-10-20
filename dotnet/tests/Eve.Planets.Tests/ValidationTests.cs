@@ -153,6 +153,23 @@ public class ValidationTests
         Assert.Null(colony.Pins[3].ProgramType);
     }
 
+
+    [Fact]
+    public void Nonfinite_program_radii_are_refused_without_changing_colony_state()
+    {
+        var colony = Fixtures.Chain();
+        colony.RunTo(colony.CurrentSimTime + PlanetRules.ProgramInstallCooldown);
+        var originalProgram = colony.Pins[3].ProgramType;
+
+        foreach (var radius in new[] { double.NaN, double.PositiveInfinity, double.NegativeInfinity })
+        {
+            Assert.Equal("InvalidProgramRadius",
+                Refusal(() => colony.ApplyCommands(
+                    [new InstallProgramCommand(3, TestCatalog.AqueousLiquids, radius)], Fixtures.Ctx())));
+            Assert.Equal(originalProgram, colony.Pins[3].ProgramType);
+        }
+    }
+
     [Fact]
     public void A_game_master_program_starts_at_once_with_its_lifetime_and_ignores_the_cooldown()
     {

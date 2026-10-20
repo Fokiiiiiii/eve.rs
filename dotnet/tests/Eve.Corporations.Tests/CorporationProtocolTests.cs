@@ -613,6 +613,10 @@ private static PyValue RowField(PyValue value,string key)
 
         var founderSession = Session(founder);
         var applicantSession = Session(applicant);
+        var rejectedApplication = await Assert.ThrowsAsync<CorporationError>(() => Rpc(applicantSession,"InsertApplication",
+            new PyInt(corp.Id),new PyStr(new string('x',1001))).AsTask());
+        Assert.Equal("CORPORATION_APPLICATION_TEXT_TOO_LONG",rejectedApplication.Code);
+        Assert.Empty(await rig.Store.ApplicationsAsync(character:applicant));
         var applicationId = Assert.IsType<PyInt>(await Rpc(applicantSession,"InsertApplication",
             new PyInt(corp.Id),new PyStr("Please consider my application."))).Value;
 
@@ -629,6 +633,15 @@ private static PyValue RowField(PyValue value,string key)
         Assert.Equal(new PyInt(0),application.Values[4]);
         Assert.Equal(PyBool.False,application.Values[6]);
         Assert.Equal(PyNone.Instance,application.Values[7]);
+
+        var oversizedUpdate = await Assert.ThrowsAsync<CorporationError>(() => Rpc(founderSession,"UpdateApplicationOffer",
+            new PyInt(applicationId),new PyInt(applicant),new PyInt(corp.Id),new PyStr(new string('x',1001)),new PyInt(5),new PyStr("")).AsTask());
+        Assert.Equal("CORPORATION_APPLICATION_TEXT_TOO_LONG",oversizedUpdate.Code);
+        var oversizedResponse = await Assert.ThrowsAsync<CorporationError>(() => Rpc(founderSession,"UpdateApplicationOffer",
+            new PyInt(applicationId),new PyInt(applicant),new PyInt(corp.Id),new PyStr(""),new PyInt(5),new PyStr(new string('x',1001))).AsTask());
+        Assert.Equal("CORPORATION_APPLICATION_RESPONSE_TOO_LONG",oversizedResponse.Code);
+        Assert.Equal(new PyWString("Please consider my application."),
+            GroupedRow(await Rpc(applicantSession,"GetMyApplications"),corp.Id,applicationId).Values[3]);
 
         var managedApplications = Assert.IsType<PyDict>(await Rpc(founderSession,"GetApplications"));
         Assert.Equal(applicant,Assert.IsType<PyInt>(managedApplications.Entries.Single().Key).Value);
@@ -949,6 +962,50 @@ private static PyValue RowField(PyValue value,string key)
         var afterHandover = await rig.Store.MemberAsync(member);
         Assert.Equal(member,(await rig.Store.GetAsync(corp.Id))!.CeoId);
         Assert.NotEqual(0,afterHandover!.Masks.Roles & CorporationRoles.Director);
+    }
+
+    [PgFact]
+    public async Task Corporate_contact_bulk_removal_refuses_oversized_input_before_store_work()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var founder = await rig.CharacterAsync("Bulk Contact Founder");
+        var session = new ClientSession { SessionId = 2090 };
+        session.CharacterId = founder;
+        var service = new CorpRegistryService(rig.Store,rig.Characters,() => rig.Now);
+        await ((IService)service).CallAsync(new ServiceCall
+        {
+            Method = "AddCorporation",Session = session,CallId = new PyInt(74),
+            Args = [new PyStr("Bulk Contact Corp"),new PyStr("BCCC"),new PyStr("Bulk contact test"),new PyStr("https://bulk.example"),
+                Py.Number(0.05),new PyInt(419),PyNone.Instance,PyNone.Instance,new PyInt(1),new PyInt(2),new PyInt(3),
+                new PyStr("Verdana"),new PyInt(1),PyBool.True,Py.Number(0.02)]
+        });
+        var requested = new PyList(Enumerable.Range(1,501).Select(id => (PyValue)new PyInt(id)).ToArray());
+
+        var error = await Assert.ThrowsAsync<CorporationError>(async () => await service.RemoveCorporateContacts(new ServiceCall
+        {
+            Method = "RemoveCorporateContacts",Session = session,Args = [requested]
+        }));
+
+        Assert.Equal("CORPORATION_BULK_LIMIT_EXCEEDED",error.Code);
+        var kickError = await Assert.ThrowsAsync<CorporationError>(async () => await service.KickOutMembers(new ServiceCall
+        {
+            Method = "KickOutMembers",Session = session,Args = [requested]
+        }));
+        Assert.Equal("CORPORATION_BULK_LIMIT_EXCEEDED",kickError.Code);
+        var titleError = await Assert.ThrowsAsync<CorporationError>(async () => await service.UpdateTitles(new ServiceCall
+        {
+            Method = "UpdateTitles",Session = session,Args = [requested]
+        }));
+        Assert.Equal("CORPORATION_BULK_LIMIT_EXCEEDED",titleError.Code);
+        var recruiters = new PyList(Enumerable.Range(1,101).Select(id => (PyValue)new PyInt(id)).ToArray());
+        var recruitment = new CorpRecruitmentProxyService(rig.Store,rig.Characters,() => rig.Now);
+        var recruitmentError = await Assert.ThrowsAsync<CorporationError>(async () => await recruitment.CreateRecruitmentAd(new ServiceCall
+        {
+            Method = "CreateRecruitmentAd",Session = session,
+            Args = [new PyInt(1),new PyInt(0),new PyInt(0),new PyWString("Recruitment test"),recruiters,
+                new PyWString("Recruiters"),new PyLong(0),new PyInt(0),new PyLong(0)]
+        }));
+        Assert.Equal("CORPORATION_BULK_LIMIT_EXCEEDED",recruitmentError.Code);
     }
 
     [PgFact]
@@ -2553,6 +2610,15 @@ private static PyValue RowField(PyValue value,string key)
             Assert.IsType<PyNone>(await registry.CallAsync(Call(managerSession,"SetCorpWelcomeMail",new PyWString(welcomeMail))));
             Assert.Equal(welcomeMail,Assert.IsType<PyWString>(await registry.CallAsync(Call(managerSession,"GetCorpWelcomeMail"))).Value);
 
+            var maximumWelcomeMail = new string('x',10_000);
+            Assert.IsType<PyNone>(await registry.CallAsync(Call(managerSession,"SetCorpWelcomeMail",new PyWString(maximumWelcomeMail))));
+            Assert.Equal(maximumWelcomeMail,Assert.IsType<PyWString>(await registry.CallAsync(Call(managerSession,"GetCorpWelcomeMail"))).Value);
+            var oversized = await Assert.ThrowsAsync<CorporationError>(async () =>
+                await registry.CallAsync(Call(managerSession,"SetCorpWelcomeMail",new PyWString(maximumWelcomeMail + "x"))));
+            Assert.Equal("CORPORATION_WELCOME_MAIL_LIMIT_EXCEEDED",oversized.Code);
+            Assert.Equal(maximumWelcomeMail,Assert.IsType<PyWString>(await registry.CallAsync(Call(managerSession,"GetCorpWelcomeMail"))).Value);
+            Assert.IsType<PyNone>(await registry.CallAsync(Call(managerSession,"SetCorpWelcomeMail",new PyWString(welcomeMail))));
+
             var ordinarySession = Session(ordinaryMember);
             Assert.Equal(welcomeMail,Assert.IsType<PyWString>(await registry.CallAsync(Call(ordinarySession,"GetCorpWelcomeMail"))).Value);
             await Assert.ThrowsAnyAsync<Exception>(async () =>
@@ -2617,6 +2683,32 @@ private static PyValue RowField(PyValue value,string key)
         var ticker = Assert.IsType<PyStr>(Field(suggestions.Items.Single(),"tickerName")).Value;
         Assert.Equal(4,ticker.Length);
         Assert.All(ticker,character => Assert.InRange(character,'A','Z'));
+    }
+
+    [PgFact]
+    public async Task Corp_member_pagination_clamps_huge_page_before_offset_arithmetic()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var founder = await rig.CharacterAsync("Paged Founder");
+        var corp = await rig.Store.CreateAsync(founder,new("Paged Works","PAGED","","",0.05m),"paged-members");
+        var session = new ClientSession { CharacterId=founder };
+        session.Set("corpid",new PyInt(corp.Id));
+        var registry = (IService)new CorpRegistryService(rig.Store,rig.Characters,() => rig.Now);
+
+        static PyTuple PageData(PyValue value)
+        {
+            var response = Assert.IsType<PyObjectEx>(value);
+            var envelope = Assert.IsType<PyTuple>(response.Header);
+            return Assert.IsType<PyTuple>(envelope.Items[1]);
+        }
+
+        var firstPage = PageData(await registry.CallAsync(Call(session,"GetMembersPaged",new PyInt(1))));
+        Assert.Single(Assert.IsType<PyList>(firstPage.Items[0]).Items);
+        Assert.Equal(new PyInt(1),firstPage.Items[1]);
+
+        var hugePage = PageData(await registry.CallAsync(Call(session,"GetMembersPaged",new PyInt(long.MaxValue))));
+        Assert.Empty(Assert.IsType<PyList>(hugePage.Items[0]).Items);
+        Assert.Equal(new PyInt(long.MaxValue-1),hugePage.Items[2]);
     }
 
     [PgFact]
@@ -2786,6 +2878,21 @@ private static PyValue RowField(PyValue value,string key)
         var editedDiplomat = Assert.IsType<PyDict>(await Rpc(session,"GetLabels")).Entries.Single(entry => Integer(entry.Key) == labelId.Value).Value;
         Assert.Equal(new PyWString("Diplomacy"),Field(editedDiplomat,"name"));
         Assert.Equal(new PyInt(0x111111),Field(editedDiplomat,"color"));
+        var oversizedLabel = await Assert.ThrowsAsync<CorporationError>(async () =>
+            await ((CorpRegistryService)service).CreateLabel(Call(session,"CreateLabel",new PyWString(new string('x',41)),new PyInt(0))));
+        Assert.Equal("CORPORATION_CONTACT_LABEL_NAME_LIMIT_EXCEEDED",oversizedLabel.Code);
+        var maxLabelName = new string('M',40);
+        var maxLabelId = Assert.IsType<PyInt>(await Rpc(session,"CreateLabel",new PyWString(maxLabelName),new PyInt(0)));
+        Assert.Equal(new PyWString(maxLabelName),Field(Assert.IsType<PyDict>(await Rpc(session,"GetLabels"))
+            .Entries.Single(entry => Integer(entry.Key) == maxLabelId.Value).Value,"name"));
+        var oversizedLabelEdit = await Assert.ThrowsAsync<CorporationError>(async () =>
+            await ((CorpRegistryService)service).EditLabel(Call(session,"EditLabel",labelId,new PyWString(new string('x',41)),PyNone.Instance)));
+        Assert.Equal("CORPORATION_CONTACT_LABEL_NAME_LIMIT_EXCEEDED",oversizedLabelEdit.Code);
+        var diplomatAfterRefusal = Assert.IsType<PyDict>(await Rpc(session,"GetLabels")).Entries
+            .Single(entry => Integer(entry.Key) == labelId.Value).Value;
+        Assert.Equal(new PyWString("Diplomacy"),Field(diplomatAfterRefusal,"name"));
+        Assert.Equal(PyNone.Instance,await Rpc(session,"EditLabel",maxLabelId,new PyWString(maxLabelName),PyNone.Instance));
+        Assert.IsType<PyNone>(await Rpc(session,"DeleteLabel",maxLabelId));
         Assert.Equal(3,Integer(Field(Assert.IsType<PyDict>(await Rpc(session,"GetCorporateContacts"))
             .Entries.Single().Value,"labelMask")));
 
@@ -3022,6 +3129,10 @@ private static PyValue RowField(PyValue value,string key)
         var defender = await rig.CharacterAsync("War Defender");
         var corp = await rig.Store.CreateAsync(founder,new("War Works","WAR","","",0.05m),"corp-war");
         var target = await rig.Store.CreateAsync(defender,new("Defender Works","DEF","","",0.05m),"corp-war-target");
+        var ordinaryMember = await rig.CharacterAsync("War Ordinary Member");
+        var application = await rig.Store.ApplyAsync(ordinaryMember,corp.Id,"");
+        await rig.Store.RespondAsync(founder,application,6,"","");
+        await rig.Store.RespondAsync(ordinaryMember,application,2,"","");
         var sessions = new CharacterSessions();
         var sink = new PacketSink();
         var session = new ClientSession(sink);
@@ -3041,6 +3152,15 @@ private static PyValue RowField(PyValue value,string key)
         {
             Session=session,Method="DeclareWarAgainst",Args=[new PyInt(target.Id),new PyInt(60000001)],CallId=new PyInt(9003)
         };
+        var ordinarySession = new ClientSession { CharacterId=ordinaryMember };
+        ordinarySession.Set("corpid",new PyInt(corp.Id));
+        sessions.Enter(ordinaryMember,ordinarySession);
+        await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(new ServiceCall
+        {
+            Session=ordinarySession,Method="DeclareWarAgainst",Args=[new PyInt(target.Id),new PyInt(60000001)],CallId=new PyInt(9004)
+        }).AsTask());
+        Assert.Null(received);
+
         var declaration = Assert.IsType<PyObject>(await service.CallAsync(DeclareCall()));
         Assert.Empty(sink.Packets);
         session.RunAfterResponse();

@@ -86,6 +86,23 @@ public sealed class StoreTests
     {
         await using var source = Source();
         var catalog = await PlanetCatalogLoader.LoadAsync(source);
+        await using (var connection = await source.OpenConnectionAsync())
+        await using (var command = new NpgsqlCommand(
+            "SELECT doc::text FROM sde.types WHERE key = $1",
+            connection)
+        {
+            Parameters = { new() { Value = TestCatalog.CommandCenter.ToString(System.Globalization.CultureInfo.InvariantCulture) } },
+        })
+        {
+            var storedTypeJson = (string?)await command.ExecuteScalarAsync();
+            Assert.NotNull(storedTypeJson);
+            using var storedType = System.Text.Json.JsonDocument.Parse(storedTypeJson!);
+            var type = catalog.Type(TestCatalog.CommandCenter);
+            Assert.Equal(storedType.RootElement.GetProperty("groupID").GetInt32(), type.GroupId);
+            Assert.Equal(storedType.RootElement.GetProperty("volume").GetDouble(), type.Volume);
+            Assert.Equal((long)storedType.RootElement.GetProperty("basePrice").GetDouble(), type.BasePrice);
+            Assert.Equal(storedType.RootElement.GetProperty("capacity").GetDouble(), type.Capacity);
+        }
         // capacities are on the type record: 500 m3 command center, 12000 m3 storage facility (sde.types.capacity)
         Assert.Equal(500, catalog.Type(TestCatalog.CommandCenter).Capacity);
         Assert.Equal(12000, catalog.Type(TestCatalog.Storage).Capacity);

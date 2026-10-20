@@ -25,7 +25,7 @@ public class ServiceAdvertisementTests
         "objectCaching", "FastCheckoutService", "corpStationMgr", "itemLocking", "structure", "loadService",
         "planetOrbitalRegistryBroker", "tradeMgr", "LSC", "warRegistry", "certificateMgr", "tutorialSvc", "nes_intro",
         "bookmarkMgr", "accessGroupBookmarkMgr", "ownerGroupManager", "standing2", "contractMgr", "blueprintManager",
-        "repairSvc", "reprocessingSvc", "publicGatewaySvc",
+        "repairSvc", "reprocessingSvc", "publicGatewaySvc", "externalQueueMgr",
     ];
 
     private sealed class NoAccounts : IOmegaAccountStore
@@ -85,7 +85,7 @@ public class ServiceAdvertisementTests
         var (registry, config, _) = Host();
         var advertised = new HostMachoNetInfo(registry, config.Current).Services().Select(entry => entry.Key).ToHashSet(StringComparer.Ordinal);
 
-        Assert.Equal(22, NotAdvertised.Length);
+        Assert.Equal(23, NotAdvertised.Length);
         foreach (var name in NotAdvertised)
         {
             Assert.DoesNotContain(name, advertised);

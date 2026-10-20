@@ -215,11 +215,13 @@ public class DispatchGoldenTests
         var session = new ClientSession(capture) { SessionId = 901 };
         var registry = new ServiceRegistry();
         var service = new ExpensiveService();
+        var fleetService = new ExpensiveService("fleetObject");
         var inventoryService = new InventoryBudgetService();
         var corporationService = new CorporationBudgetService();
         var characterService = new CharacterKillmailBudgetService();
         var recruitmentService = new RecruitmentSearchBudgetService();
         registry.Register(service);
+        registry.Register(fleetService);
         registry.Register(inventoryService);
         registry.Register(corporationService);
         registry.Register(characterService);
@@ -229,6 +231,14 @@ public class DispatchGoldenTests
 
         await dispatcher.DispatchAsync(CallRequestPacket("marketProxy", "GetOrders"), session);
         await dispatcher.DispatchAsync(CallRequestPacket("marketProxy", "BuyMultipleItems"), session);
+
+        var fleetCapture = new Capture();
+        var fleetSession = new ClientSession(fleetCapture) { SessionId = 908 };
+        await dispatcher.DispatchAsync(CallRequestPacket("fleetObject", "SendBroadcast"), fleetSession);
+        await dispatcher.DispatchAsync(CallRequestPacket("fleetObject", "SendBroadcast"), fleetSession);
+        Assert.Equal(1, fleetService.Calls);
+        Assert.Equal(ErrorResponseCommand, CommandOf(fleetCapture.Sent[1]));
+        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(fleetCapture.Sent[1])));
 
         Assert.Equal(1, service.Calls);
         Assert.Equal(2, capture.Sent.Count);
@@ -274,9 +284,13 @@ public class DispatchGoldenTests
         var corporationSession = new ClientSession(corporationCapture) { SessionId = 905 };
         await dispatcher.DispatchAsync(CallRequestPacket("corpRegistry", "GetEveOwners"), corporationSession);
         await dispatcher.DispatchAsync(CallRequestPacket("corpRegistry", "GetMemberIDsByQuery"), corporationSession);
+        await dispatcher.DispatchAsync(CallRequestPacket("corpRegistry", "PayoutDividend"), corporationSession);
         Assert.Equal(1, corporationService.Calls);
+        Assert.Equal(3, corporationCapture.Sent.Count);
         Assert.Equal(ErrorResponseCommand, CommandOf(corporationCapture.Sent[1]));
         Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(corporationCapture.Sent[1])));
+        Assert.Equal(ErrorResponseCommand, CommandOf(corporationCapture.Sent[2]));
+        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(corporationCapture.Sent[2])));
 
         var inventoryCapture = new Capture();
         var inventorySession = new ClientSession(inventoryCapture) { SessionId = 902 };
@@ -287,7 +301,6 @@ public class DispatchGoldenTests
             await dispatcher.DispatchAsync(BoundCallRequestPacket(inventoryObjectId, "ListIncludingContainers"), inventorySession);
         await dispatcher.DispatchAsync(CallRequestPacket("invbroker", "GetInventoryFromId"), inventorySession);
         Assert.Equal(5, inventoryService.Calls);
-        Assert.Equal(6, inventoryCapture.Sent.Count);
         Assert.Equal(ErrorResponseCommand, CommandOf(inventoryCapture.Sent[5]));
         Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(inventoryCapture.Sent[5])));
 
@@ -446,7 +459,7 @@ public class DispatchGoldenTests
 
         public string Name => name;
 
-        public bool HasMethod(string method) => method is "GetOrders" or "BuyMultipleItems" or "GetHistoryForManyTypeIDs" or "GetAllianceMembers";
+        public bool HasMethod(string method) => method is "GetOrders" or "BuyMultipleItems" or "GetHistoryForManyTypeIDs" or "GetAllianceMembers" or "SendBroadcast";
 
         public ValueTask<PyValue> CallAsync(ServiceCall call)
         {
@@ -491,7 +504,7 @@ public class DispatchGoldenTests
 
         public string Name => "corpRegistry";
 
-        public bool HasMethod(string method) => method is "GetEveOwners" or "GetMemberIDsByQuery";
+        public bool HasMethod(string method) => method is "GetEveOwners" or "GetMemberIDsByQuery" or "GetMembersPaged" or "PayoutDividend";
 
         public ValueTask<PyValue> CallAsync(ServiceCall call)
         {

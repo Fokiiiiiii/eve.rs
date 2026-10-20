@@ -151,6 +151,17 @@ public class RulesTests
         Assert.Null(FittingRules.Check(three, s3, ShipId, Candidate(three, SkilledModule), Slots.HighFirst));
     }
 
+
+    [Fact]
+    public void Boarding_skill_check_requires_each_hull_skill_at_its_published_level()
+    {
+        var shipAttributes = new Dictionary<int, double> { [182] = Skill, [277] = 3 };
+        var type = Statics(shipAttributes).Type(ShipType)!;
+
+        Assert.False(FittingRules.HasRequiredSkills(type, _ => 2));
+        Assert.True(FittingRules.HasRequiredSkills(type, _ => 3));
+    }
+
     [Fact]
     public void A_module_that_fits_only_some_groups_or_types_of_ship_says_so()
     {

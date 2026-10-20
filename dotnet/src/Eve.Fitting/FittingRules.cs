@@ -72,6 +72,10 @@ public static class FittingRules
         }
     }
 
+    /// <summary>Whether a pilot's trained levels meet every skill requirement on a ship or module type.</summary>
+    public static bool HasRequiredSkills(TypeDef type, Func<int, int> levelOfSkill) =>
+        RequiredSkills(type).All(requirement => levelOfSkill(requirement.Skill) >= requirement.Level);
+
     /// <summary>The client allows rigs to be removed without destruction from Strategic Cruisers (the SDE group 963).</summary>
     public static bool CanUnfitRigWithoutDestruction(TypeDef shipType) => shipType.GroupId == 963;
 

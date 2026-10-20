@@ -369,6 +369,24 @@ public class DispatchGoldenTests
     }
 
     [Fact]
+    public async Task Inventory_bulk_mutations_use_the_named_per_session_budget()
+    {
+        var capture = new Capture();
+        var session = new ClientSession(capture) { SessionId = 916 };
+        var registry = new ServiceRegistry();
+        var service = new InventoryBudgetService();
+        registry.Register(service);
+        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 10 };
+
+        await dispatcher.DispatchAsync(CallRequestPacket("invbroker", "MultiAdd"), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("invbroker", "MultiMerge"), session);
+
+        Assert.Equal(1, service.Calls);
+        Assert.Equal(2, capture.Sent.Count);
+        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[1])));
+    }
+
+    [Fact]
     public async Task Alliance_member_enumeration_uses_the_named_per_session_budget()
     {
         var capture = new Capture();
@@ -615,7 +633,7 @@ public class DispatchGoldenTests
 
         public string Name => "invbroker";
 
-        public bool HasMethod(string method) => method is "GetInventoryFromId" or "ListIncludingContainers";
+        public bool HasMethod(string method) => method is "GetInventoryFromId" or "ListIncludingContainers" or "MultiAdd" or "MultiMerge";
 
         public ValueTask<PyValue> CallAsync(ServiceCall call)
         {

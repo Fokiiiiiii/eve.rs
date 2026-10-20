@@ -57,6 +57,7 @@
 | `dotnet/src/Eve.Crimewatch` (6 C# files; migrations reviewed) | 109 | 98 | 2026-10-20 |
 | `dotnet/src/Eve.FactionWarfare` (9 C# files; migrations reviewed) | 256 | 228 | 2026-10-20 |
 | `dotnet/src/Eve.Marshal` (9 C# files; generated file excluded) | 414 | 407 | 2026-10-20 |
+| `dotnet/src/Eve.ReadSide` (2 C# files) | 42 | 41 | 2026-10-20 |
 | `dotnet/src/Eve.Dungeons` (5 C# files) | 101 | 49 | 2026-10-20 |
 | `dotnet/src/Eve.Fitting` (8 C# files; migrations reviewed) | 97 | 78 | 2026-10-20 |
 | `dotnet/src/Eve.Dogma` (10 C# files) | 285 | 280 | 2026-10-20 |

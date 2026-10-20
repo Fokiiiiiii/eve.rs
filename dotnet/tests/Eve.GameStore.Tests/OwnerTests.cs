@@ -44,7 +44,7 @@ public class OwnerTests
 
         var stale = await Fails(pg.Store.AssertOwnerAsync(old));
         Assert.Equal(PersistenceCodes.OwnerStale, stale.Code);
-        // A stale owner cannot publish anything, not even an empty table.
+
         var enqueue = await Fails(pg.Store.EnqueueAsync("characters", [], [], old));
         Assert.Equal(PersistenceCodes.OwnerStale, enqueue.Code);
         Assert.False(await pg.Store.TableExistsAsync("characters"));
@@ -201,7 +201,6 @@ public class OwnerTests
         await Task.WhenAll(writers.Append(Task.FromResult(true)));
         var next = await takeover;
 
-        // Once the new owner holds the role, the old fence can never write again.
         var after = await Fails(pg.Store.ApplyChangesAsync("characters", [new RowUpsert("late", "1")], [], old));
         Assert.Equal(PersistenceCodes.OwnerStale, after.Code);
         Assert.Equal(2, next.Epoch);

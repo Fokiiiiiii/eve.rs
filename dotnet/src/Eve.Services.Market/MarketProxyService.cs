@@ -105,6 +105,7 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
     }
     private const int PlexTypeId = 44992;
     private const int MaxBuyMultipleItems = 500;
+    private const int MaxHistoryTypeIds = 500;
     /// <summary>Q14: the window in which an identical placement from the same session is refused.</summary>
     private const long DuplicateWindowMs = 5_000;
     private readonly ConcurrentDictionary<long,(MarketRequest Request,long AtMs)> _lastPlacement = new();
@@ -201,7 +202,10 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
     [Method("GetHistoryForManyTypeIDs")]
     public async ValueTask<PyValue> GetHistoryForManyTypeIDs(ServiceCall call)
     {
-        var typeIds=Sequence(call.Arg(0)).Select(value => value switch
+        var requestedTypes = Sequence(call.Arg(0));
+        if (requestedTypes.Count > MaxHistoryTypeIds)
+            throw Error(new MarketError("MARKET_BULK_LIMIT_EXCEEDED"));
+        var typeIds=requestedTypes.Select(value => value switch
         {
             PyInt n when n.Value>0 && n.Value<=int.MaxValue => (int)n.Value,
             PyLong n when n.Value>0 && n.Value<=int.MaxValue => (int)n.Value,

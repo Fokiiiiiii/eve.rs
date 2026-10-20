@@ -1,6 +1,6 @@
 # Security status
 
-Checked 2026-10-19.
+Checked 2026-10-20.
 
 ## Dependency and image review
 
@@ -18,7 +18,7 @@ Checked 2026-10-19.
 ## Attack-surface review
 
 - **Inbound session resource bounds:** Session actors enforce both a pending-packet limit and a configurable pending-byte limit (`EVE_MAX_PENDING_BYTES_PER_SESSION`, default 16 MiB), counting the packet currently being dispatched. Exceeding either disconnects only the overloaded session. A Host regression covers an over-budget inbound frame.
-- **Expensive RPC rate bounds:** `PacketDispatcher` charges weighted per-session work units within a rolling minute for market order/region reads and multi-buy, inventory and asset enumeration, bulk bookmark operations, `GetAllInfo`, and mail header reads. `EVE_MAX_EXPENSIVE_RPC_UNITS_PER_MINUTE` configures the 120-unit default. A named `SessionRpcBudgetExceeded` response refuses calls beyond the budget; dispatcher regressions cover market and recursive inventory refusal plus window reset.
+- **Expensive RPC rate bounds:** `PacketDispatcher` charges weighted per-session work units within a rolling minute for market order/region reads, multi-buy and batched type-history reads, inventory and asset enumeration, bulk bookmark operations, `GetAllInfo`, and mail header reads. `EVE_MAX_EXPENSIVE_RPC_UNITS_PER_MINUTE` configures the 120-unit default. A named `SessionRpcBudgetExceeded` response refuses calls beyond the budget; dispatcher regressions cover market and recursive inventory refusal plus window reset.
 
 Reviewed 2026-10-19 against the Rust, .NET, Python tool, deployment, and workflow sources listed below. This records source review and focused tests; it does not claim graphical-client or production deployment validation.
 
@@ -97,6 +97,8 @@ The reviewed identifier-bearing methods classify as follows:
 | `invbroker.GetInventoryFromId`, bound `Add`, `ImportExportWithPlanet` | `itemID`, `locationID`, office ID | Checked read/mutation | Session-bound inventory context; authoritative item owner and location, corporation-hangar role checks, plus simulation visibility/range for customs offices. |
 | `invbroker.GetItems` | `itemIDs` | Checked read with bounded input | Reads only from the session-owned bound inventory context and rejects more than 500 requested identifiers with `INVENTORY_BULK_LIMIT_EXCEEDED`. |
 | `marketProxy.BuyMultipleItems` | station ID and purchase-entry list | Checked mutation with bounded input and per-session budget | Trading uses the session character or corporation-role authority; batches above 500 are refused with `MARKET_BULK_LIMIT_EXCEEDED`, and each invocation consumes expensive-RPC budget units. |
+| `marketProxy.GetHistoryForManyTypeIDs` | `typeIDs` | Public market history read with bounded input and per-session budget | Rejects batches above 500 type IDs with `MARKET_BULK_LIMIT_EXCEEDED`; every invocation consumes expensive-RPC budget units. |
+| `account.GetTransactions`, `GetCashBalance`, `GiveCash`, `GiveCashFromCorpAccount` | account key, recipient ID | Checked owner/role read and mutation | Personal balances and journal reads use the authenticated character; corporation wallet reads and transfers resolve the persisted character corporation, wallet division, and required role. Personal transfers may name any destination by design, while the debit always comes from the session character. Personal journal history is capped at 100 rows and corporation history at 1,000. `AccountRpcTests` covers character and corporation transfer paths. |
 | `invbroker.GetDamageForCrystals`, `ValidateItemListCanBeOpened`, `MultiMerge`, `RepackageItems` | item ID batches | Bounded read/mutation | Each RPC refuses more than 500 requested entries with `INVENTORY_BULK_LIMIT_EXCEEDED`; item ownership and bound inventory checks still gate any resulting read or mutation. |
 | `contractProxy.GetLoginInfo`, `GetMyContractEscrow` | None; character, corporation, and alliance IDs come from the authenticated session | Checked read | Queries filter persisted contract rows by the session character and current corporation/alliance identities. |
 | `corpRegistry.GetMember`, `GetMembersByIds` | `characterID(s)` | Checked read | Member records are returned only when their persisted corporation matches the caller's session corporation. |

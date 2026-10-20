@@ -170,8 +170,6 @@ public Eve.Wallet.PgWalletStore WalletStore { get; }
         return balance;
     }
 
-
-
     public async Task<long> CreateItemAsync(Eve.Inventory.NewItem item)
     {
         await using var connection = await Source.OpenConnectionAsync();
@@ -415,7 +413,7 @@ public class SkillHandlerTests
         await rig.GrantFreeSkillPointsAsync(character, 29_999_999);
         Assert.Equal(new PyInt(300_000), await Preview(large));
         Assert.Equal(new PyInt(60_000), await Preview(small));
-        // EveJS uses an exclusive 80M upper bound; the current CCP support table puts 80M in the final band.
+
         await rig.GrantFreeSkillPointsAsync(character, 1);
         Assert.Equal(new PyInt(150_000), await Preview(large));
         Assert.Equal(new PyInt(30_000), await Preview(small));
@@ -601,7 +599,7 @@ public class SkillHandlerTests
         var typeId = rig.CatalogForTest.ItemTypeId("Daily Alpha Injector");
         Assert.NotNull(typeId);
         const long day = 86_400_000;
-        const long midnight = 19_675 * day; // 2023-11-14 00:00 UTC
+        const long midnight = 19_675 * day;
         const long downtime = midnight + 11 * 3_600_000;
         Task<bool> Use(long at) => rig.Store.InTransactionAsync(
             (connection, transaction, token) => rig.Store.TryUseDailyAlphaSkillInjectorAsync(connection, transaction, rig.CharacterId, typeId.Value, at, token),
@@ -1110,8 +1108,6 @@ public class SkillHandlerTests
         Assert.Equal(PyBool.False, await Rig.CallAsync(rig.Handler, session, "IsSkill", new PyStr("x")));
     }
 
-    // ── reaching the handler ─────────────────────────────────────────────────
-
     [Fact]
     public async Task The_door_hands_out_a_moniker_for_the_character_and_falls_back_to_the_account()
     {
@@ -1154,8 +1150,6 @@ public class SkillHandlerTests
         var bound = (PyTuple)await Rig.CallAsync(rig.Handler, session, "MachoBindObject", new PyInt(7), new PyTuple([new PyStr("NoSuchMethod"), new PyTuple([]), PyNone.Instance]));
         Assert.Equal(PyNone.Instance, bound.Items[1]);
     }
-
-    // ── the notification after choosing a character ──────────────────────────
 
     [PgFact]
     public async Task Entering_sends_one_unchanged_skill_of_the_character()

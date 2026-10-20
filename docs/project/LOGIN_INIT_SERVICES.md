@@ -58,7 +58,7 @@ The original table above covers connection, authentication, and character entry.
 |---|---|---|---|
 | `config.GetBlackListedPlanets` | Post-selection bootstrap (`ConfigService.cs`; login walk checks shape) | Implemented | Evidence and remaining provider work are linked in the caller path and current feature entries in `docs/project/TODO.md`. |
 | `ProjectDiscovery.is_enabled` | Post-selection bootstrap (`ProjectDiscoveryService.cs`) | Partial | Evidence and remaining provider work are linked in the caller path and current feature entries in `docs/project/TODO.md`. |
-| `charMgr.MachoResolveObject` | Global assets prime for container 10002 (`CharMgrService.cs`) | Partial | Host wrapper regression remains open (TODO global-assets entry). |
+| `charMgr.MachoResolveObject` | Global assets prime for container 10002 (`CharMgrService.cs`) | Implemented | Host registry regression resolves the proxy and performs the nested global-assets call; the headless walk reads the selected character’s active ship through the same moniker. |
 | `jumpCloneSvc.MachoResolveObject` | Jump-clone initialization (`JumpCloneService.cs`) | Implemented | Evidence and remaining provider work are linked in the caller path and current feature entries in `docs/project/TODO.md`. |
 | `ProjectDiscovery.initialize_tutorial_status` | Tutorial startup (`ProjectDiscoveryService.cs`; TODO CH-4) | Implemented | Evidence and remaining provider work are linked in the caller path and current feature entries in `docs/project/TODO.md`. |
 | `account.GetCashBalance` | Wallet display, account service | Implemented | Evidence and remaining provider work are linked in the caller path and current feature entries in `docs/project/TODO.md`. |
@@ -140,7 +140,7 @@ The original table above covers connection, authentication, and character entry.
 | `fleetMgr.RemoveFromWatchlist` | Fleet watchlist changes (`parklife/fleetSvc.py:719`); full session list flow open | Partial | Evidence and remaining provider work are linked in the caller path and current feature entries in `docs/project/TODO.md`. |
 | `fleetMgr.RegisterForDamageUpdates` | Fleet watchlist damage updates (`parklife/fleetSvc.py:795`) | Partial | Evidence and remaining provider work are linked in the caller path and current feature entries in `docs/project/TODO.md`. |
 
-Inventory baseline: 122 tracked rows: 83 implemented, 39 partial, and 0 missing routes. The entry-phase and post-selection subtotals are shown by their section counts above.
+Inventory baseline: 122 tracked rows: 84 implemented, 38 partial, and 0 missing routes. The entry-phase and post-selection subtotals are shown by their section counts above.
 
 ## Verification boundary
 

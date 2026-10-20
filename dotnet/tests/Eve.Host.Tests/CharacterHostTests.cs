@@ -833,6 +833,25 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
     }
 
     [PgFact]
+    public async Task CharMgr_global_assets_moniker_resolves_and_lists_through_the_host_wrapper()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync();
+        var character = await rig.CreateCharacterAsync();
+        var session = new ClientSession { CharacterId = character, UserId = 1 };
+        var charMgr = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("charMgr"));
+
+        var node = await CallAsync(charMgr, "MachoResolveObject", session,
+            new PyTuple([new PyLong(character), new PyInt(10002)]));
+        Assert.Equal(new PyInt(ProxyNode), node);
+
+        var binding = Assert.IsType<PyTuple>(await CallAsync(charMgr, "MachoBindObject", session,
+            new PyTuple([new PyLong(character), new PyInt(10002)]),
+            new PyTuple([new PyStr("ListStations"), new PyTuple([]), PyNone.Instance])));
+        Assert.IsType<PySubStruct>(binding.Items[0]);
+        Assert.IsType<PyObject>(binding.Items[1]);
+    }
+
+    [PgFact]
     public async Task A_multiple_character_training_certificate_is_consumed_for_thirty_days_and_other_items_are_refused()
     {
         await using var rig = await CharacterHostRig.CreateAsync();

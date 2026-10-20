@@ -3,7 +3,6 @@ using Eve.Dungeons;
 
 namespace Eve.Dungeons.Tests;
 
-/// <summary>The wave planner: what the owner data and the rule file say about the order and the triggers of a dungeon's waves, and what it refuses.</summary>
 public sealed class WavePlannerTests
 {
     private static readonly DungeonCatalog Catalog = DungeonCatalog.LoadEmbedded();

@@ -12,7 +12,8 @@ public sealed class PersistenceContractWriteModel(
     PgItemStore items,
     WalletTransactions wallets,
     Func<long> nowUnixMs,
-    string schema = PersistenceContractReadModel.DefaultSchema) : IContractWriteModel
+    string schema = PersistenceContractReadModel.DefaultSchema,
+    ContractExpiryJobs? expiryJobs = null) : IContractWriteModel
 {
     private const long EscrowOwnerId = 1;
     private const long EscrowLocationBase = 9_300_000_000;
@@ -152,6 +153,8 @@ public sealed class PersistenceContractWriteModel(
         await DebitAsync(wallet, request.BrokerFee, request.IsCorporationIssued ? ContractBrokerFeeCorporationRef : ContractBrokerFeeRef, $"{operationPrefix}:broker", contractId, nowMs, transaction, connection, cancellationToken);
         await DebitAsync(wallet, request.SalesTax, ContractSalesTaxRef, $"{operationPrefix}:tax", contractId, nowMs, transaction, connection, cancellationToken);
         await DebitAsync(wallet, request.Deposit, ContractDepositRef, $"{operationPrefix}:deposit", contractId, nowMs, transaction, connection, cancellationToken);
+        if (expiryJobs is not null)
+            await expiryJobs.ScheduleAsync(connection, transaction, contractId, expiry, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return new CreatedContract(contractId, escrowItemIds);
     }
@@ -474,6 +477,104 @@ public sealed class PersistenceContractWriteModel(
             command.Parameters.AddWithValue(contractId); command.Parameters.AddWithValue((short)targetStatus); command.Parameters.AddWithValue(nowFileTime);
             if (await command.ExecuteNonQueryAsync(cancellationToken) != 1) throw new ContractUserErrorException("ConContractNotAvailable");
         }
+        await transaction.CommitAsync(cancellationToken);
+        return true;
+    }
+
+    public async ValueTask<bool> DeleteContractAsync(long contractId, long characterId, long corporationId,
+        bool hasCorpContractManager, CancellationToken cancellationToken)
+    {
+        if (contractId <= 0 || characterId <= 0 || corporationId < 0)
+            throw new ArgumentOutOfRangeException(nameof(contractId));
+        var nowMs = nowUnixMs();
+        var nowFileTime = Eve.Services.Py.FileTimeFromUnixMs(nowMs);
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        short status, contractType;
+        long issuerId, issuerCorporationId, startStationId, wrapItemId;
+        bool corporationIssued;
+        decimal rewardEscrow;
+        int issuerWalletKey, issuerItemFlag;
+        await using (var command = new NpgsqlCommand($"""
+            SELECT status, contract_type, issuer_id, issuer_corporation_id, is_corporation_issued,
+                   start_station_id, plastic_wrap_item_id, reward_escrow, issuer_wallet_account_key, issuer_item_flag
+            FROM {_schema}.contract_records WHERE contract_id = $1 FOR UPDATE
+            """, connection, transaction))
+        {
+            command.Parameters.AddWithValue(contractId);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            if (!await reader.ReadAsync(cancellationToken)) return false;
+            status = reader.GetInt16(0); contractType = reader.GetInt16(1); issuerId = reader.GetInt64(2);
+            issuerCorporationId = reader.GetInt64(3); corporationIssued = reader.GetBoolean(4);
+            startStationId = reader.GetInt64(5); wrapItemId = reader.GetInt64(6); rewardEscrow = reader.GetDecimal(7);
+            issuerWalletKey = reader.GetInt32(8); issuerItemFlag = reader.GetInt32(9);
+        }
+        var issuerOwner = corporationIssued ? issuerCorporationId : issuerId;
+        if (corporationIssued ? corporationId != issuerCorporationId || !hasCorpContractManager : characterId != issuerId)
+            throw new ContractUserErrorException("ConContractNotOutstanding");
+        if (status == 5)
+        {
+            await transaction.CommitAsync(cancellationToken);
+            return true;
+        }
+        if (status is not (0 or 6)) throw new ContractUserErrorException("ConContractNotOutstanding");
+
+        var bids = new List<(long BidId, long BidderId, decimal Amount, bool IsCorporation, int WalletKey)>();
+        if (contractType == 2)
+        {
+            await using var command = new NpgsqlCommand($"""
+                SELECT bid_id, bidder_id, amount, bidder_is_corporation, wallet_account_key
+                FROM {_schema}.contract_bids WHERE contract_id = $1 AND NOT is_refunded ORDER BY bid_id FOR UPDATE
+                """, connection, transaction);
+            command.Parameters.AddWithValue(contractId);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+                bids.Add((reader.GetInt64(0), reader.GetInt64(1), reader.GetDecimal(2), reader.GetBoolean(3), reader.GetInt32(4)));
+        }
+        foreach (var bid in bids)
+        {
+            await wallets.AdjustAsync(connection, transaction,
+                new WalletAccount(bid.BidderId, bid.IsCorporation ? bid.WalletKey : 1000), bid.Amount,
+                issuerOwner, 85, "Contract auction bid returned on deletion", nowMs,
+                $"contract:{contractId}:delete:bid:{bid.BidId}:refund", $"contract:{contractId}", cancellationToken,
+                referenceId: contractId);
+            await using var refunded = new NpgsqlCommand($"UPDATE {_schema}.contract_bids SET is_refunded = true WHERE bid_id = $1", connection, transaction);
+            refunded.Parameters.AddWithValue(bid.BidId);
+            await refunded.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        var offered = new List<long>();
+        await using (var command = new NpgsqlCommand($"SELECT item_id FROM {_schema}.contract_items WHERE contract_id = $1 AND in_crate ORDER BY item_id", connection, transaction))
+        {
+            command.Parameters.AddWithValue(contractId);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken)) offered.Add(reader.GetInt64(0));
+        }
+        foreach (var itemId in offered)
+            await items.MoveToOwnerAsync(connection, transaction, itemId, issuerOwner, startStationId, issuerItemFlag, cancellationToken);
+        if (contractType == 3 && wrapItemId > 0)
+            await items.DeleteAsync(connection, transaction, wrapItemId, cancellationToken);
+        if (rewardEscrow > 0)
+            await wallets.AdjustAsync(connection, transaction, new WalletAccount(issuerOwner, issuerWalletKey), rewardEscrow,
+                0, ContractRewardAddedRef, "Contract reward escrow refunded", nowMs,
+                $"contract:{contractId}:delete:reward-refund", $"contract:{contractId}", cancellationToken, referenceId: contractId);
+        await using (var command = new NpgsqlCommand($"UPDATE {_schema}.contract_items SET in_crate = false WHERE contract_id = $1 AND in_crate", connection, transaction))
+        {
+            command.Parameters.AddWithValue(contractId);
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        await using (var command = new NpgsqlCommand($"""
+            UPDATE {_schema}.contract_records SET status = 5, date_completed_filetime = $2,
+                reward_escrow = 0, collateral_escrow = 0, plastic_wrap_item_id = 0
+            WHERE contract_id = $1 AND status IN (0, 6)
+            """, connection, transaction))
+        {
+            command.Parameters.AddWithValue(contractId); command.Parameters.AddWithValue(nowFileTime);
+            if (await command.ExecuteNonQueryAsync(cancellationToken) != 1)
+                throw new ContractUserErrorException("ConContractNotOutstanding");
+        }
+        if (expiryJobs is not null)
+            await expiryJobs.CancelAsync(connection, transaction, contractId, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return true;
     }

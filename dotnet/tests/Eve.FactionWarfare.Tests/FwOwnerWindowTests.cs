@@ -1,6 +1,5 @@
 namespace Eve.FactionWarfare.Tests;
 
-/// <summary>The per-owner windows behind the top, all, militia and alliance statistics (PostgreSQL: the daily rows of two corporations and a pilot).</summary>
 public sealed class FwOwnerWindowTests
 {
     [Fact]

@@ -27,6 +27,111 @@ public sealed partial class SdeReader
     private readonly NpgsqlDataSource _source;
     private readonly string _schema;
 
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<NpgsqlDataSource, SdeBuildCache> SdeBuildCaches = new();
+    private readonly SdeBuildCache _sdeBuildCache;
+    private long _buildNumber = -1;
+
+    private sealed class SdeBuildCache
+    {
+        private readonly object _gate = new();
+        private readonly Dictionary<(string Schema, long Build, string Table), Lazy<Task<IReadOnlyList<SdeRow>>>> _tables = [];
+        private readonly Dictionary<(string Schema, long Build), Lazy<Task<IReadOnlyList<SdeTypeSummary>>>> _summaries = [];
+
+        public async Task<IReadOnlyList<SdeRow>> ReadAsync(
+            string schema,
+            long build,
+            string table,
+            Func<Task<IReadOnlyList<SdeRow>>> load,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var key = (schema, build, table);
+            Lazy<Task<IReadOnlyList<SdeRow>>> lazy;
+            lock (_gate)
+            {
+                if (!_tables.TryGetValue(key, out lazy!))
+                {
+                    lazy = new Lazy<Task<IReadOnlyList<SdeRow>>>(load, System.Threading.LazyThreadSafetyMode.ExecutionAndPublication);
+                    _tables.Add(key, lazy);
+                }
+            }
+
+            var task = lazy.Value;
+            try
+            {
+                return await task.WaitAsync(cancellationToken);
+            }
+            catch
+            {
+                if (task.IsFaulted || task.IsCanceled)
+                {
+                    lock (_gate)
+                    {
+                        if (_tables.TryGetValue(key, out var current) && ReferenceEquals(current, lazy))
+                        {
+                            _tables.Remove(key);
+                        }
+                    }
+                }
+                throw;
+            }
+        }
+
+        public async Task<IReadOnlyList<SdeTypeSummary>> ReadSummariesAsync(
+            string schema,
+            long build,
+            Func<Task<IReadOnlyList<SdeTypeSummary>>> load,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var key = (schema, build);
+            Lazy<Task<IReadOnlyList<SdeTypeSummary>>> lazy;
+            lock (_gate)
+            {
+                if (!_summaries.TryGetValue(key, out lazy!))
+                {
+                    lazy = new Lazy<Task<IReadOnlyList<SdeTypeSummary>>>(load, System.Threading.LazyThreadSafetyMode.ExecutionAndPublication);
+                    _summaries.Add(key, lazy);
+                }
+            }
+
+            var task = lazy.Value;
+            try
+            {
+                return await task.WaitAsync(cancellationToken);
+            }
+            catch
+            {
+                if (task.IsFaulted || task.IsCanceled)
+                {
+                    lock (_gate)
+                    {
+                        if (_summaries.TryGetValue(key, out var current) && ReferenceEquals(current, lazy))
+                        {
+                            _summaries.Remove(key);
+                        }
+                    }
+                }
+                throw;
+            }
+        }
+
+        public void Invalidate(string schema, long build)
+        {
+            lock (_gate)
+            {
+                foreach (var key in _tables.Keys.Where(key => key.Schema == schema && key.Build != build).ToArray())
+                {
+                    _tables.Remove(key);
+                }
+                foreach (var key in _summaries.Keys.Where(key => key.Schema == schema && key.Build != build).ToArray())
+                {
+                    _summaries.Remove(key);
+                }
+            }
+        }
+    }
+
     public SdeReader(NpgsqlDataSource source, string schema = DefaultSchema)
     {
         if (!SchemaName().IsMatch(schema))
@@ -35,6 +140,7 @@ public sealed partial class SdeReader
         }
         _source = source;
         _schema = schema;
+        _sdeBuildCache = SdeBuildCaches.GetValue(source, static _ => new SdeBuildCache());
     }
 
     /// <summary>The build number of the loaded export, or null when none is loaded.</summary>
@@ -44,6 +150,7 @@ public sealed partial class SdeReader
         await using var exists = new NpgsqlCommand("SELECT to_regclass($1) IS NOT NULL", connection) { Parameters = { new() { Value = $"{_schema}._build" } } };
         if (!(bool)(await exists.ExecuteScalarAsync(cancellationToken))!)
         {
+            Interlocked.Exchange(ref _buildNumber, -1);
             return null;
         }
         await using var read = new NpgsqlCommand($"SELECT build_number FROM {_schema}._build", connection);
@@ -67,6 +174,16 @@ public sealed partial class SdeReader
             await index.ExecuteNonQueryAsync(cancellationToken);
         }
 
+        if (build is long buildNumber)
+        {
+            _sdeBuildCache.Invalidate(_schema, buildNumber);
+            Interlocked.Exchange(ref _buildNumber, buildNumber);
+        }
+        else
+        {
+            Interlocked.Exchange(ref _buildNumber, -1);
+        }
+
         return build;
     }
 
@@ -80,6 +197,27 @@ public sealed partial class SdeReader
         {
             throw new ArgumentException($"not a usable table name: {table}", nameof(table));
         }
+
+        var isHotFullTable = table is "types" or "typeDogma" or "missions" or "mapSolarSystems";
+        if (keys is null && isHotFullTable)
+        {
+            var build = Interlocked.Read(ref _buildNumber);
+            if (build >= 0)
+            {
+                return await _sdeBuildCache.ReadAsync(
+                    _schema,
+                    build,
+                    table,
+                    () => ReadCoreAsync(table, null, CancellationToken.None),
+                    cancellationToken);
+            }
+        }
+
+        return await ReadCoreAsync(table, keys, cancellationToken);
+    }
+
+    private async Task<IReadOnlyList<SdeRow>> ReadCoreAsync(string table, IEnumerable<long>? keys, CancellationToken cancellationToken)
+    {
         var rows = new List<SdeRow>();
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
         await using var command = new NpgsqlCommand(
@@ -99,7 +237,7 @@ public sealed partial class SdeReader
                 rows.Add(new SdeRow(key, reader.GetFieldValue<JsonDocument>(1).RootElement.Clone()));
             }
         }
-        return rows;
+        return keys is null ? rows.AsReadOnly() : rows;
     }
 
     /// <summary>
@@ -159,7 +297,7 @@ public sealed partial class SdeReader
     }
 
     /// <summary>Every type in file order with only what a choice among them needs (the whole documents of the types are large; a type without a published flag is published).</summary>
-    public async Task<IReadOnlyList<SdeTypeSummary>> ReadTypeSummariesAsync(CancellationToken cancellationToken = default)
+    private async Task<IReadOnlyList<SdeTypeSummary>> ReadTypeSummariesCoreAsync(CancellationToken cancellationToken)
     {
         var types = new List<SdeTypeSummary>();
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
@@ -174,7 +312,21 @@ public sealed partial class SdeReader
                 types.Add(new SdeTypeSummary((int)key, group, reader.IsDBNull(2) ? "" : reader.GetString(2), reader.IsDBNull(3) || reader.GetString(3) != "false"));
             }
         }
-        return types;
+        return types.AsReadOnly();
+    }
+
+    public Task<IReadOnlyList<SdeTypeSummary>> ReadTypeSummariesAsync(CancellationToken cancellationToken = default)
+    {
+        var build = Interlocked.Read(ref _buildNumber);
+        if (build < 0)
+        {
+            return ReadTypeSummariesCoreAsync(cancellationToken);
+        }
+        return _sdeBuildCache.ReadSummariesAsync(
+            _schema,
+            build,
+            () => ReadTypeSummariesCoreAsync(CancellationToken.None),
+            cancellationToken);
     }
 
     /// <summary>A text in the export's English, from a <c>{"en": ..., ...}</c> object.</summary>

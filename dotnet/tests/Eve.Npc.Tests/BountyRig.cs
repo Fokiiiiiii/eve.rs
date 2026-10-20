@@ -27,12 +27,12 @@ internal sealed class BountyRig : IAsyncDisposable
 
     public List<string> Log { get; } = [];
 
-    private BountyRig(NpgsqlDataSource source)
+    private BountyRig(NpgsqlDataSource source, Func<long, CancellationToken, Task<BountyTaxTerms?>>? taxTerms)
     {
         Source = source;
         Wallet = new PgWalletStore(source, _walletSchema);
         Transactions = new WalletTransactions(source, _walletSchema);
-        Store = new PgBountyStore(source, Transactions, _npcSchema, Log.Add);
+        Store = new PgBountyStore(source, Transactions, _npcSchema, Log.Add, taxTerms);
     }
 
     public NpgsqlDataSource Source { get; }
@@ -45,10 +45,10 @@ internal sealed class BountyRig : IAsyncDisposable
 
     public PgBountyStore Store { get; }
 
-    public static async Task<BountyRig> CreateAsync()
+    public static async Task<BountyRig> CreateAsync(Func<long, CancellationToken, Task<BountyTaxTerms?>>? taxTerms = null)
     {
         var source = NpgsqlDataSource.Create(PgConnection.ForTest(Url!));
-        var rig = new BountyRig(source);
+        var rig = new BountyRig(source, taxTerms);
         await PgWalletStore.MigrateAsync(source, rig._walletSchema);
         await PgBountyStore.MigrateAsync(source, rig._npcSchema);
         return rig;

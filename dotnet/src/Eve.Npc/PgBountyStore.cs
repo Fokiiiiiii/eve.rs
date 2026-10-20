@@ -20,8 +20,11 @@ public sealed class PgBountyStore
     private readonly WalletTransactions _wallet;
     private readonly string _schema;
     private readonly Action<string>? _log;
+    private readonly Func<long, CancellationToken, Task<BountyTaxTerms?>>? _taxTerms;
 
-    public PgBountyStore(NpgsqlDataSource source, WalletTransactions wallet, string schema = DefaultSchema, Action<string>? log = null)
+    /// <param name="taxTerms">The corporation and tax rate of a character at payout; null (or no corporation) pays the whole bounty.</param>
+    public PgBountyStore(NpgsqlDataSource source, WalletTransactions wallet, string schema = DefaultSchema, Action<string>? log = null,
+        Func<long, CancellationToken, Task<BountyTaxTerms?>>? taxTerms = null)
     {
         if (!System.Text.RegularExpressions.Regex.IsMatch(schema, "^[a-z_][a-z0-9_]{0,62}$"))
         {
@@ -31,6 +34,7 @@ public sealed class PgBountyStore
         _wallet = wallet;
         _schema = schema;
         _log = log;
+        _taxTerms = taxTerms;
     }
 
     public static IReadOnlyList<Migration> MigrationSet() => Migrations.Embedded(typeof(PgBountyStore).Assembly, "Migrations");
@@ -160,9 +164,29 @@ public sealed class PgBountyStore
         {
             return null;
         }
-        var balance = await _wallet.AdjustAsync(
-            connection, transaction, bucket.CharacterId, bucket.Amount, bucket.CharacterId, NpcBounty.RefType(bucket.Kills), NpcBounty.Description(bucket), nowMs,
-            NpcBounty.OperationKey(bucket.Key), cancellationToken);
+        // The corporation's tax is taken from the payout here and credited to the corporation in the same transaction (the reference's
+        // payoutBucket: the member's net, then the corporation's tax). An NPC corporation takes its tax from the member but is not credited.
+        var terms = _taxTerms is null ? null : await _taxTerms(bucket.CharacterId, cancellationToken);
+        var tax = terms is null ? 0m : NpcBounty.CorporationTaxOf(bucket.Amount, terms.TaxRate);
+        decimal balance;
+        if (bucket.Amount - tax > 0)
+        {
+            balance = await _wallet.AdjustAsync(
+                connection, transaction, bucket.CharacterId, bucket.Amount - tax, bucket.CharacterId, NpcBounty.RefType(bucket.Kills),
+                tax > 0 ? NpcBounty.DescriptionWithTax(bucket, terms!.CorporationId, tax) : NpcBounty.Description(bucket), nowMs,
+                NpcBounty.OperationKey(bucket.Key), cancellationToken);
+        }
+        else
+        {
+            balance = (await _wallet.LockBalancesAsync(connection, transaction, [new WalletAccount(bucket.CharacterId)], cancellationToken))[new WalletAccount(bucket.CharacterId)];
+        }
+        if (tax > 0 && terms is { IsNpc: false, CorporationId: > 0 })
+        {
+            await _wallet.AdjustAsync(
+                connection, transaction, new WalletAccount(terms.CorporationId), tax, bucket.CharacterId, NpcBounty.CorporationTaxRefType,
+                "Corporation tax on pirate bounties", nowMs, NpcBounty.OperationKey(bucket.Key) + ":corp-tax",
+                NpcBounty.OperationKey(bucket.Key) + ":corp-tax", cancellationToken);
+        }
         await using (var delete = Command("DELETE FROM {schema}.pending_bounties WHERE key = $1", connection, transaction, bucket.Key))
         {
             await delete.ExecuteNonQueryAsync(cancellationToken);

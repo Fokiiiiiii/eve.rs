@@ -279,7 +279,13 @@ internal sealed partial class CharacterServicesComposition
             spaceSessions.ApplyContrabandPenaltyAsync = customs.ApplyAsync;
             npcWrecks.Warm();
             // the periodic work of the space features is jobs of the shared scheduler, not timers of their own
-            spaceSessions.UseBounties(new PgBountyStore(source, new WalletTransactions(source, walletSchema), npcSchema, message => Console.Error.WriteLine($"eve-host: bounty: {message}")));
+            spaceSessions.UseBounties(new PgBountyStore(source, new WalletTransactions(source, walletSchema), npcSchema, message => Console.Error.WriteLine($"eve-host: bounty: {message}"),
+                async (characterId, token) =>   // the member's corporation and its ISK tax rate, read when the bounty is paid
+                {
+                    var member = await corporations.MemberAsync(characterId, token);
+                    var corporation = member is null ? null : await corporations.GetAsync(member.CorporationId, token);
+                    return corporation is null ? null : new BountyTaxTerms(corporation.Id, corporation.IsNpc, corporation.TaxRate);
+                }));
             spaceSessions.Ess = Ess;   // the Main Bank share of a bounty earned in an ESS system
             await PlaceEssBallsAsync(sim);   // each ESS is a ball in space, so a pilot in its system can link to it
             spaceSessions.Events = foundations.Events;   // what happens in space is announced on the bus as well

@@ -52,6 +52,27 @@ public sealed class ContractProxyServiceTests
         Assert.Equal(new PyInt(3), Value(response, "itemsEscrow"));
     }
 
+
+    [Fact]
+    public async Task Accept_contract_returns_the_settled_row_and_uses_session_identity()
+    {
+        var writer = new RecordingWriteModel();
+        var service = new ContractProxyService(new RecordingReadModel(), writer);
+        var session = new ClientSession { CharacterId = 42 };
+        session.Set("corpid", new PyInt(84));
+        session.Set("allianceid", new PyInt(126));
+        var response = Assert.IsType<PyObject>(await service.AcceptContract(new ServiceCall
+        {
+            Method = "AcceptContract",
+            Args = [new PyInt(999), PyBool.False],
+            Session = session,
+        }));
+
+        Assert.Equal(new PyInt(999), Value(response, "contractID"));
+        Assert.Equal(new PyInt(4), Value(response, "status"));
+        Assert.Equal(new PyInt(42), Value(response, "acceptorID"));
+    }
+
     [Fact]
     public async Task Create_contract_passes_client_terms_fees_and_skill_limits_to_the_writer()
     {
@@ -138,6 +159,10 @@ public sealed class ContractProxyServiceTests
             Requests.Add(request);
             return ValueTask.FromResult(new CreatedContract(777, [5001]));
         }
+
+        public ValueTask<AcceptedContract> AcceptItemExchangeAsync(long contractId, long characterId, long corporationId,
+            long allianceId, bool acceptForCorporation, int acceptorWalletKey, CancellationToken cancellationToken) =>
+            ValueTask.FromResult(new AcceptedContract(contractId, 1, 4, 100, 200, false, characterId, 3001, 0, 123, 0));
     }
 
     private static PyObject Rowset(PyObject keyVal, string name) => Assert.IsType<PyObject>(Value(keyVal, name));

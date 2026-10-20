@@ -11,7 +11,6 @@ using Eve.Services.Space;
 namespace Eve.Services.Space.Tests;
 
 /// <summary>
-/// The wormhole jump of a pilot in a J-space system, through the space service (slice 7, service layer): the mass pre-check, the jump the simulation takes
 /// and the end the destination gets, the polarization of an end, and the collapse of an emptied connection taken out of the simulation.
 /// </summary>
 public sealed class WormholeJumpServiceTests

@@ -17,7 +17,7 @@ public class MissileHostTests
 {
     private const int RocketLauncherI = 10629, ScourgeRocket = 266, Slot = 28, UseMissiles = 101;
     private const int RapidTorpedoLauncherI = 37288, ScourgeTorpedo = 267, Phoenix = 19726;
-    /// <summary>The SCARAB pods fit the deathless Tholos and Cenotaph (wiki), so the breacher test flies a Tholos (SDE 85087).</summary>
+
     private const int SmallBreacherLauncher = 85084, SmallBreacherPod = 85088, Tholos = 85087;
 
     /// <summary>A pilot in space whose slot 28 holds a Rocket Launcher I (online), loaded with Scourge Rockets when <paramref name="loaded"/>.</summary>
@@ -116,7 +116,7 @@ public class MissileHostTests
         var turret = Assert.IsType<SimTurret>(package.Turret);
         var missile = Assert.IsType<SimMissile>(turret.Missile);
         // the SDE's numbers: dotDuration 40 s (5735), 200 a tick at most for the small pod (5736), 0.6 % of the target's hit points a tick (5737), which the
-        // pilot's skills change in dogma: Operation (86260) at level 1 takes 5 % more of the hit points (0.6 becomes 0.63, the wiki's +5 % a level)
+
         var percent = Math.Round(world.Get(charge.Id, 5737), 6, MidpointRounding.AwayFromZero);
         Assert.Equal((40_000.0, 200.0, 0.63), (world.Get(charge.Id, 5735), world.Get(charge.Id, 5736), percent));
         Assert.Equal(new SimDot(40_000.0, 200.0, percent), missile.Dot);

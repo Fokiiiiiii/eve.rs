@@ -148,7 +148,6 @@ public sealed class StructureControlTests
         Assert.Contains(rig.Sim.Heard, message => message is SimRespawn);
     }
 
-
     [PgFact]
     public async Task A_boarded_hull_death_persists_capsule_and_none_eject_retries_without_duplicating_loss()
     {

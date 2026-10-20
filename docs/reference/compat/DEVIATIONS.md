@@ -26,6 +26,10 @@ The V24.01 trade window builds a two-pilot money manifest and a set of offered i
 
 `account.GetTransactions`, `GiveCash`, and `GiveCashFromCorpAccount` now consume the existing per-session weighted RPC budget. The budget returns the named `SessionRpcBudgetExceeded` response after the configured minute allowance. This is server-side resource accounting and does not alter a call's result while it remains within budget. `DispatchGoldenTests.Expensive_wallet_calls_have_a_named_per_session_budget` covers refusal after the limit.
 
+## LP store singleton grant bound (2026-10-20)
+
+EveJS 261018.1 normalizes the requested LP store quantity but has no generated-item count cap. eve.rs refuses purchases whose singleton reward would create more than 256 items; ordinary stack offers retain the existing checked cost and quantity calculations. The focused PostgreSQL test verifies refusal before inventory or purchase history changes. Offer reads and purchase calls also consume the configured per-session RPC budget. Graphical-client acceptance remains open.
+
 ## Project status
 
 Summary of this file, as of 2026-10-18. The task list with the same areas is the "Project status" table at the top of `docs/project/TODO.md`. **Status** is the state of the area; **Project rule** is the rule a deviation stands on; **Cut** lists what the owner or the evidence has cut, with the entry that records it. A cut item without an entry here or in its section is a bug in this file.
@@ -2611,6 +2615,10 @@ Engine: `dotnet/src/Eve.Hacking` (pure rules, no Host). Sources: EVE University 
 ## Calendar mutation notifications
 
 Client calls are in eve-logic `eve/client/script/ui/services/eveCalendarsvc.py`; EveJS behavior is in `server/src/services/calendar/calendarMgrService.js` and `calendarNotifications.js`. The Host publishes notification packets after the PostgreSQL mutation returns successfully and before the RPC reply. Personal event creation notifies online invitees and other viewers, excluding the calling session; corporation and alliance creation notify online members. Edits notify current viewers, deletion notifies the viewer set captured before the soft delete, participant changes notify only actual additions/removals, and an event response notifies other viewers while excluding the responding session. The four packet payload shapes and order are covered by `CalendarMgrServiceTests`; the headless live invite walk confirms a second character receives `OnNewCalendarEvent` after the event can be read back.
+
+## Project Discovery availability
+
+`ProjectDiscovery.is_enabled` returns true in EveJS `projectDiscoveryService.js` and the Host service, matching the V24 startup contract. The service test and live login walk cover the result; player data and tutorial state remain tracked as separate provider routes.
 
 ## Moon extraction (ST-6a)
 

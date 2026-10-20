@@ -53,9 +53,9 @@ public sealed class IncursionDirectorTests
         Assert.Equal(ExpectedSites(rows), sites.Count);
         Assert.All(sites, site => Assert.Equal(DungeonWaveDirector.NoPilotOwner, site.Owner));
         Assert.All(sites, site => Assert.Contains(site.Definition.Replace("dungeon.", ""), AllSiteTemplates().Select(id => id.ToString())));
-        // the on-load wave of every site is handed to the simulation (one batch per site, from the pool of its owner data)
+
         Assert.Equal(sites.Count, rig.Spawner.Batches.Count);
-        // the staging sites draw from the pool the owner data names (sanshas_deadspace_pve)
+
         Assert.Contains(rig.Spawner.Batches, batch => batch.Query == "Sansha PVE Deadspace Hostiles");
     }
 
@@ -474,7 +474,6 @@ public sealed class IncursionDirectorTests
         /// <summary>The loyalty points the live incursions still owe (the director's pending value; it stays zero until the payout has a source).</summary>
         public async Task<long> CountLivePendingLpAsync() => (await Director.PendingLoyaltyPointsAsync([IncursionRules.StagingRewardGroupId])).Values.Sum();
 
-        /// <summary>Completes a dungeon the way its waves would: each active objective gets the progress it still needs, and the due jobs and events run after each step.</summary>
         public async Task CompleteAsync(long instanceId)
         {
             for (var round = 0; round < 20; round++)

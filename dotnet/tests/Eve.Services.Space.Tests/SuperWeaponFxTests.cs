@@ -9,7 +9,6 @@ namespace Eve.Services.Space.Tests;
 
 /// <summary>
 /// The superweapon graphics (<see cref="SuperWeaponFx"/>): the titan doomsday guids are the SDE's effect rows, and each lance, reaper and disruptive lance graphic
-/// is the one its module's race (raceID in the static data) names. The lance names are the client's table (superWeapon.py effectData); the reaper names are EveJS's
 /// catalog (superWeaponCatalog.js).
 /// </summary>
 public class SuperWeaponFxTests
@@ -54,7 +53,7 @@ public class SuperWeaponFxTests
             var row = types.Single(t => t.Key == type);
             Assert.Equal(race, row.Doc.GetProperty("raceID").GetInt32());
         }
-        // the titan lance and the disruptive lance of a race share its graphic (EveJS DISRUPTIVE_LANCE_FX_GUID_BY_RACE_ID; client effectData)
+
         Assert.Equal("effects.SuperWeaponLanceAmarr", SuperWeaponFx.Lance(4));
         Assert.Equal("effects.SuperWeaponLanceCaldari", SuperWeaponFx.Lance(1));
         Assert.Equal("effects.SuperWeaponLanceGallente", SuperWeaponFx.Lance(8));
@@ -63,7 +62,7 @@ public class SuperWeaponFxTests
         {
             Assert.Equal(SuperWeaponFx.Lance(race), SuperWeaponFx.DisruptiveLance(race));
         }
-        // the reapers (EveJS superweaponCatalog.js)
+
         Assert.Equal("effects.SWSlashBeamAmarr", SuperWeaponFx.Reaper(4));
         Assert.Equal("effects.SWSlashBeamCaldari", SuperWeaponFx.Reaper(1));
         Assert.Equal("effects.SWSlashBeamGallente", SuperWeaponFx.Reaper(8));

@@ -2,7 +2,6 @@ using Eve.Services.Station;
 
 namespace Eve.Services.Station.Tests;
 
-/// <summary>The reprocessing rules: the standing tax, the efficiency, the skill multipliers and what a stack yields (the wiki's and the SDE's numbers).</summary>
 public sealed class ReprocessingRulesTests
 {
     [Theory]

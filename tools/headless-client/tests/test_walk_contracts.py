@@ -13,6 +13,7 @@ import uuid
 import pytest
 
 from evecli.describe import describe
+from evecli.marshal import Dict as MarshalDict, Object as MarshalObject
 from evecli.observe import notifications_of
 from tests import dbseed
 from tests import test_login_to_character as base
@@ -65,8 +66,11 @@ def test_two_characters_create_accept_and_settle_a_public_item_exchange():
             "startStationDivision": dbseed.HANGAR,
             "requestItemTypeList": [],
             "forCorp": False,
+            "multiContract": False,
         }
-        created = issuer.call("contractProxy", "CreateContract", creation, True)
+        wire_creation = MarshalObject("contracts.contractStruct.ContractStruct", MarshalDict(creation.items()))
+        kind, created = base.attempt(issuer, "contractProxy", "CreateContract", wire_creation, True)
+        assert kind == "ok", base.brief(created)
         contract_id = number(created[0])
         assert contract_id > 0
         assert dbseed.owner_of(item_id) == 1

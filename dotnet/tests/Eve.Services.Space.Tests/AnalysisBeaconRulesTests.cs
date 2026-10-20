@@ -8,7 +8,6 @@ using Npgsql;
 namespace Eve.Services.Space.Tests;
 
 /// <summary>
-/// The CRAB rules (<see cref="AnalysisBeaconRules"/>): the embedded owner figures load and refuse what the first cut does not build, and the beacon types, their
 /// link lists and their reward types are the pinned SDE's (SDE 3396210, types 60244 and 92183, group 4137).
 /// </summary>
 public class AnalysisBeaconRulesTests

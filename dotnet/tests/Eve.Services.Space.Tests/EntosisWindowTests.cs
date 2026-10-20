@@ -3,7 +3,6 @@ using Eve.Services.Space.Entosis;
 namespace Eve.Services.Space.Tests;
 
 /// <summary>
-/// ST-9 f, the window rules (pure, no database): a custom window replaces the prime hour and the length, a day's length is locked at the midpoint of the window
 /// the day before, a change takes effect after the next window, and a link without an end report scores only to the end of its in-progress cycle.
 /// </summary>
 public sealed class EntosisWindowTests

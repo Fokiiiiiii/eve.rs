@@ -8,7 +8,6 @@ using Xunit;
 namespace Eve.Services.Space.Tests;
 
 /// <summary>
-/// A pilot that destroys a faction's NPC loses standing with that faction (CH-14, EveJS <c>factionKillStandingRuntime</c>): one raw change per kill, debounced
 /// per pilot, faction and system; the standing is stored, so it survives a restart.
 /// </summary>
 public sealed class NpcFactionStandingTests
@@ -34,7 +33,6 @@ public sealed class NpcFactionStandingTests
             long now = 1_000_000;
             var standing = new NpcFactionStanding(relations, () => now);
 
-            // the first kill: standing 0 moves to -0.00006875 * (10 + 0) = -0.0006875 (EveJS's formula, rounded to thousandths by the store)
             var first = await standing.ApplyAsync(Pilot, Faction, System);
             Assert.NotNull(first);
             var stored = await relations.ValueAsync(RelationKinds.Standing.Name, Faction, Pilot, 0);

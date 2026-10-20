@@ -102,8 +102,12 @@ pub fn ensure_lookup_indexes(client: &mut Client, schema: &str) -> Result<(), Lo
     let mut tx = client.transaction()?;
     tx.query_one("SELECT pg_advisory_xact_lock(hashtext($1)::bigint)", &[&schema])?;
 
-    let types_exist: bool =
-        tx.query_one("SELECT to_regclass(format('%I.%I', $1, $2)) IS NOT NULL", &[&schema, &"types"])?.get(0);
+    let types_exist: bool = tx
+        .query_one(
+            "SELECT to_regclass(format('%I.%I', $1::text, $2::text)) IS NOT NULL",
+            &[&schema, &"types"],
+        )?
+        .get(0);
     if types_exist {
         tx.batch_execute(&format!(
             "CREATE INDEX IF NOT EXISTS types_group_id_idx ON {schema}.types (((doc->>'groupID')::bigint)) WHERE jsonb_typeof(doc->'groupID') = 'number'"
@@ -111,7 +115,10 @@ pub fn ensure_lookup_indexes(client: &mut Client, schema: &str) -> Result<(), Lo
     }
 
     let type_dogma_exist: bool = tx
-        .query_one("SELECT to_regclass(format('%I.%I', $1, $2)) IS NOT NULL", &[&schema, &"typeDogma"])?
+        .query_one(
+            "SELECT to_regclass(format('%I.%I', $1::text, $2::text)) IS NOT NULL",
+            &[&schema, &"typeDogma"],
+        )?
         .get(0);
     if type_dogma_exist {
         tx.batch_execute(&format!(

@@ -18,6 +18,7 @@ import pytest
 from evecli import packet
 from evecli.observe import wait_quietly
 from tests.test_fob_insystem_walk import seed_hub_pilot
+from tests.test_mission_walk import until_stopped
 
 from evecli import marshal as m
 
@@ -240,6 +241,9 @@ def test_a_colony_runs_in_time_launches_and_trades_at_customs():
         registry = client.call("planetOrbitalRegistryBroker", "MachoBindObject", system, None)[0]
         rate = record(client.call_bound(registry, "GetTaxRate", office))
         assert abs(rate - 0.17) < 1e-9
+        # Customs office cargo requires the same 2,500 m in-space range check as other space inventories.
+        client.call_bound(ballpark[0], "CmdWarpToStuff", "item", office, minRange=0)
+        until_stopped(client)
         stock = dbseed.new_item(WATER, owner=pilot, location=office, flag=HANGAR, quantity=50)
         customs = client.call("invbroker", "GetInventoryFromId", office)
         before = dbseed.isk_of(pilot)
@@ -260,6 +264,43 @@ def test_a_colony_runs_in_time_launches_and_trades_at_customs():
         with pytest.raises(Exception):
             client.call_bound(customs, "ImportExportWithPlanet", pad, m.Dict([]), m.Dict([(WATER, 1)]), 0.25)
         assert pin_contents(record(client.call_bound(handle, "GetPlanetInfo")), pad)[WATER] == 15
+
+        # The player-owned office credits its owner corporation in the same settlement as the PI transfer.
+        corporation = int(psql(f"SELECT corporation_id FROM {schema('EVE_CHARACTERS_SCHEMA')}.characters WHERE id = {pilot}"))
+        prior_owner = int(psql(f"SELECT owner_id FROM {schema('EVE_INVENTORY_SCHEMA')}.items WHERE id = {office}"))
+        customs_schema = schema("EVE_PLANETS_SCHEMA")
+        prior_policy = psql(f"SELECT owner_corporation_id || '|' || allow_alliance || '|' || allow_standings || '|' || standing_level || '|' || tax_rates::text || '|' || updated_ms "
+                             f"FROM {customs_schema}.customs_offices WHERE office_id = {office}")
+        assert prior_policy
+        policy_parts = prior_policy.split("|", 5)
+        wallet_schema = schema("EVE_WALLET_SCHEMA")
+        wallet_before = float(psql(f"SELECT COALESCE((SELECT isk FROM {wallet_schema}.balances WHERE owner_id = {corporation} AND account_key = 1000), 0)"))
+        journal_before = int(psql(f"SELECT count(*) FROM {wallet_schema}.journal WHERE owner_id = {corporation} AND account_key = 1000 "
+                                  "AND reason = 'planetary customs office tax'"))
+        try:
+            psql(f"UPDATE {schema('EVE_INVENTORY_SCHEMA')}.items SET owner_id = {corporation} WHERE id = {office}")
+            psql(f"UPDATE {customs_schema}.customs_offices SET owner_corporation_id = {corporation}, tax_rates = "
+                 "'{\"corporation\":0.05,\"alliance\":0.05,\"standingHigh\":0.05,\"standingGood\":0.05,\"standingNeutral\":0.05,\"standingBad\":0.05,\"standingHorrible\":0.05}'::jsonb "
+                 f"WHERE office_id = {office}")
+            poco_rate = record(client.call_bound(registry, "GetTaxRate", office))
+            assert abs(poco_rate - 0.05) < 1e-9
+            cash_before = dbseed.isk_of(pilot)
+            client.call_bound(customs, "ImportExportWithPlanet", pad, m.Dict([(stock, 1)]), m.Dict([]), poco_rate)
+            assert abs((cash_before - dbseed.isk_of(pilot)) - 10) < 0.01
+            cash_before = dbseed.isk_of(pilot)
+            client.call_bound(customs, "ImportExportWithPlanet", pad, m.Dict([]), m.Dict([(WATER, 1)]), poco_rate)
+            assert abs((cash_before - dbseed.isk_of(pilot)) - 20) < 0.01
+            wallet_after = float(psql(f"SELECT isk FROM {wallet_schema}.balances WHERE owner_id = {corporation} AND account_key = 1000"))
+            journal_after = int(psql(f"SELECT count(*) FROM {wallet_schema}.journal WHERE owner_id = {corporation} AND account_key = 1000 "
+                                     "AND reason = 'planetary customs office tax'"))
+            assert abs(wallet_after - wallet_before - 30) < 0.01
+            assert journal_after == journal_before + 2
+            assert abs(float(m.plain(client.call("account", "GetCashBalance", 0))) - dbseed.isk_of(pilot)) < 0.01
+        finally:
+            psql(f"UPDATE {schema('EVE_INVENTORY_SCHEMA')}.items SET owner_id = {prior_owner} WHERE id = {office}")
+            psql(f"UPDATE {customs_schema}.customs_offices SET owner_corporation_id = {int(policy_parts[0])}, allow_alliance = {policy_parts[1]}, "
+                 f"allow_standings = {policy_parts[2]}, standing_level = {int(policy_parts[3])}, tax_rates = $restore${policy_parts[4]}$restore$::jsonb, "
+                 f"updated_ms = {int(policy_parts[5])} WHERE office_id = {office}")
 
         # the container Add (the client's importExportUI.MoveFromInventory): a stack from the pilot's ship hold goes into the office; it keeps its
 

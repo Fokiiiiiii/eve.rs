@@ -5191,3 +5191,22 @@ The market parser rejects floating-point prices beyond the market maximum before
 ## Insurance price batch bound (2026-10-20)
 
 `insurance.GetInsurancePrices` accepts at most 500 raw type IDs per request and returns `InsuranceBulkLimitExceeded` before reading price data for a larger batch. The V24 client primes the service with the set of missing ship type IDs; normal client batches retain their existing results. `InsuranceServiceTests.Insurance_price_batch_refuses_more_than_500_type_ids_before_the_read_model` covers the refusal.
+
+
+## Skill service bulk and arithmetic bounds (2026-10-20)
+
+`InjectSkillIntoBrain` and `ExtractSkills` refuse more than 500 raw entries before transactional item or skill changes. The shared skill numeric parser rejects non-finite and out-of-range real IDs; duplicate requested extraction points saturate at Int64 maximum before calculation. These checks preserve the V24.01 successful client flow and reject oversized or overflowing payloads. `SkillServiceTests.Skill_bulk_item_operations_refuse_more_than_500_raw_entries_before_mutation` covers both refusals, while the extraction success regression exercises duplicate point aggregation near the integer limit.
+
+## Insurance ship identifier validation (2026-10-20)
+
+The insurance RPCs accept positive integer ship IDs. Fractional or malformed values are refused before the read model or purchase writer can act on the truncated ID. `InsuranceServiceTests.Fractional_ship_identifiers_are_refused_before_read_or_purchase` covers both reads and purchases.
+
+## Fitting bulk batch bound (2026-10-20)
+
+`SaveManyFittings` and `DeleteManyFittings` refuse raw lists above the owner collection limit before validating each fitting or querying/mutating the store. Character collections cap at 500 entries; corporation and alliance collections cap at 600. Individual fit-data lists retain the existing 500-item cap. `FittingMgrServicesTests.Fitting_bulk_batches_refuse_raw_counts_before_validation_or_deletion` covers oversized save and delete batches.
+
+## Structure docking access batch bound (2026-10-20)
+
+`CheckMyDockingAccessToStructures` refuses more than 500 raw structure IDs before invoking the access-list callback. Both this RPC and `GetMyDockableStructures` consume 10 units from the per-session expensive-RPC budget, returning `SessionRpcBudgetExceeded` when the session budget is exhausted. Regressions cover the batch refusal and repeated-query budget refusal.
+
+`structureDirectory.CheckMyDockingAccessToStructures` accepts up to 500 structure IDs. Larger lists return `StructureBulkLimitExceeded` before access-list snapshots are read. Normal structure-access results retain the existing per-list ACL evaluation and order. `StructureDirectoryServiceTests.Docking_access_refuses_more_than_500_structure_ids_before_the_callback` verifies no callback work on refusal.

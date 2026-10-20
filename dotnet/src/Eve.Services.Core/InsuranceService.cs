@@ -655,11 +655,16 @@ private readonly IInsuranceWriteModel? _writeModel;
                 : PyNone.Instance);
     }
 
-    private static long PositiveId(PyValue? value)
+    private static long PositiveId(PyValue? value) => value switch
     {
-        var id = IntegerValue(value);
-        return id > 0 ? id : 0;
-    }
+        PyInt number when number.Value > 0 => number.Value,
+        PyLong number when number.Value > 0 => number.Value,
+        PyReal number when double.IsFinite(number.Value) &&
+            number.Value > 0 &&
+            Math.Truncate(number.Value) == number.Value &&
+            number.Value < 9.223372036854776E18 => (long)number.Value,
+        _ => 0
+    };
 
     private static long IntegerValue(PyValue? value) => value switch
     {

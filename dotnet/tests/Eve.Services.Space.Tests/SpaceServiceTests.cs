@@ -3323,6 +3323,42 @@ public class SpaceServiceTests
         }
     }
 
+    [PgFact]
+    public async Task Fleet_invites_do_not_disclose_other_fleet_membership_to_non_members()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var actorId = Random.Shared.NextInt64(8_000_000_000_000, 8_999_999_999_000);
+        var firstLeaderId = actorId + 1;
+        var secondLeaderId = actorId + 2;
+        var unrelatedId = actorId + 3;
+        var store = rig.FleetStore;
+        var fleetId = await store.CreateAsync(firstLeaderId);
+        var otherFleetId = await store.CreateAsync(secondLeaderId);
+        var actor = new ClientSession(new Sink());
+        actor.Set("charid", new PyLong(actorId));
+        var fleet = new Eve.Services.Space.FleetObjectService(store, () => Rig.ClockMs);
+
+        try
+        {
+            Assert.Equal(PyBool.False,
+                await FleetObjectCallAsync(fleet, fleetId, actor, "Invite", [new PyLong(secondLeaderId)]));
+            Assert.Equal(PyBool.False,
+                await FleetObjectCallAsync(fleet, fleetId, actor, "Invite", [new PyLong(unrelatedId)]));
+
+            var hiddenMember = Assert.IsType<PyList>(await FleetObjectCallAsync(
+                fleet, fleetId, actor, "MassInvite", [new PyList([new PyLong(secondLeaderId)])]));
+            var unrelated = Assert.IsType<PyList>(await FleetObjectCallAsync(
+                fleet, fleetId, actor, "MassInvite", [new PyList([new PyLong(unrelatedId)])]));
+            Assert.Empty(hiddenMember.Items);
+            Assert.Empty(unrelated.Items);
+        }
+        finally
+        {
+            if (fleetId > 0) await store.DisbandAsync(fleetId, firstLeaderId);
+            if (otherFleetId > 0) await store.DisbandAsync(otherFleetId, secondLeaderId);
+        }
+    }
+
 [PgFact]
     public async Task Fleet_warp_is_scoped_to_the_commander_group_and_honors_opt_outs()
     {

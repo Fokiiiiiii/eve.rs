@@ -59,7 +59,8 @@ public class MissionViewsTests
     public void The_objective_of_a_held_kill_mission_names_its_dungeon_and_the_ISK_reward()
     {
         var view = new HeldMissionView(Kill(), new AgentMissionRecord(1, 2, AgentMissionState.Accepted,
-            new AgentMissionContent(9301, 57289, "Kill Step", "", false), null, null, null, null, null, null), null);
+            new AgentMissionContent(9301, 57289, "Kill Step", "", false), null, null, null, null, null, null), null,
+            LoyaltyPoints: 153);
         var fields = MissionViews.Objective(view).Entries.ToDictionary(entry => ((PyStr)entry.Key).Value, entry => entry.Value);
         var dungeon = Assert.IsType<PyDict>(Assert.IsType<PyList>(fields["dungeons"]).Items[0]);
         Assert.Equal(3509, ((PyInt)dungeon.Entries.Single(entry => ((PyStr)entry.Key).Value == "dungeonID").Value).Value);
@@ -67,6 +68,7 @@ public class MissionViewsTests
         var reward = Assert.IsType<PyTuple>(Assert.Single(Assert.IsType<PyList>(fields["normalRewards"]).Items));
         Assert.Equal(100000, ((PyInt)reward.Items[1]).Value);
         Assert.Equal(2, ((PyInt)fields["missionState"]).Value);
+        Assert.Equal(153, ((PyInt)fields["loyaltyPoints"]).Value);
     }
 
     [Fact]

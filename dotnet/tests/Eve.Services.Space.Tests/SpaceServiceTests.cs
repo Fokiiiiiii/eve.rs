@@ -4334,6 +4334,51 @@ public class SpaceServiceTests
     }
 
     [PgFact]
+    public async Task Fleet_watchlist_updates_keep_only_members_and_clear_removed_damage_targets()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var store = rig.FleetStore;
+        var leader = await rig.NewCharacterAsync("Fleet Watch Leader", 31);
+        var member = await rig.NewCharacterAsync("Fleet Watch Member", 32);
+        var outsider = await rig.NewCharacterAsync("Fleet Watch Outsider", 33);
+        var session = await rig.SessionAsync(leader);
+        var fleetId = await store.CreateAsync(leader.CharacterId);
+        try
+        {
+            var wingId = await store.CreateWingAsync(fleetId, leader.CharacterId);
+            var squadId = await store.CreateSquadAsync(fleetId, leader.CharacterId, wingId);
+            Assert.True(await store.InviteAsync(fleetId, leader.CharacterId, member.CharacterId, wingId, squadId, Eve.Services.Space.FleetStore.Member));
+            Assert.NotNull(await store.JoinAsync(fleetId, member.CharacterId));
+
+            Eve.Services.IService manager = new Eve.Services.Space.FleetManagerService(store);
+            async ValueTask<PyValue> Call(string method, params PyValue[] args) => await manager.CallAsync(new ServiceCall
+            {
+                Method = method,
+                Args = args,
+                Session = session,
+            });
+
+            Assert.IsType<PyNone>(await Call("AddToWatchlist",
+                new PyList([new PyLong(member.CharacterId), new PyLong(outsider.CharacterId)]),
+                new PyList([])));
+            Assert.Equal([member.CharacterId], ((PyList)session.Get("fleetWatchlist")!).Items.Cast<PyLong>().Select(value => value.Value));
+
+            Assert.IsType<PyNone>(await Call("RegisterForDamageUpdates",
+                new PyList([new PyLong(member.CharacterId), new PyLong(outsider.CharacterId)])));
+            Assert.Equal([member.CharacterId], ((PyList)session.Get("fleetDamageWatchlist")!).Items.Cast<PyLong>().Select(value => value.Value));
+
+            Assert.IsType<PyNone>(await Call("RemoveFromWatchlist", new PyLong(member.CharacterId),
+                new PyList([new PyLong(member.CharacterId), new PyLong(outsider.CharacterId)])));
+            Assert.Empty(((PyList)session.Get("fleetWatchlist")!).Items);
+            Assert.Empty(((PyList)session.Get("fleetDamageWatchlist")!).Items);
+        }
+        finally
+        {
+            if (fleetId > 0) await store.DisbandAsync(fleetId, leader.CharacterId);
+        }
+    }
+
+    [PgFact]
     public async Task Fleet_object_init_advert_callback_persists_through_fleet_store()
     {
         await using var rig = await Rig.CreateAsync();

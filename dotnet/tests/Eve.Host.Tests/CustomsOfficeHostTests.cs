@@ -5,6 +5,7 @@ using Eve.Marshal;
 using Eve.Planets;
 using Eve.Services;
 using Eve.Services.Planets;
+using Eve.Wallet;
 using Npgsql;
 
 namespace Eve.Host.Tests;
@@ -97,6 +98,41 @@ public sealed class CustomsOfficeHostTests : IAsyncLifetime
             await host.ShutdownAsync();
         }
     }
+    [PgFact]
+    public async Task A_customs_office_tax_credit_journals_corporation_income_and_survives_host_restart()
+    {
+        var host = await HostComposition.BuildAsync(Settings());
+        try
+        {
+            await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Url));
+            var characters = new PgCharacterStore(source, Schema("EVE_CHARACTERS_SCHEMA"));
+            var pilot = await InsertPilotAsync(source, characters);
+            var wallets = new WalletTransactions(source, Schema("EVE_WALLET_SCHEMA"));
+            await using (var connection = await source.OpenConnectionAsync())
+            await using (var transaction = await connection.BeginTransactionAsync())
+            {
+                await wallets.EnsureAsync(connection, transaction, CorporationId);
+                await wallets.AdjustAsync(connection, transaction, CorporationId, 17.25m, pilot, 97,
+                    "planetary customs office tax", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), $"poco-tax-test:{Guid.NewGuid():N}");
+                await transaction.CommitAsync();
+            }
+
+            await host.ShutdownAsync();
+            host = await HostComposition.BuildAsync(Settings());
+            var reopenedWallets = new WalletTransactions(source, Schema("EVE_WALLET_SCHEMA"));
+            Assert.Equal(17.25m, await ScalarAsync<decimal>(source,
+                $"SELECT isk FROM {Schema("EVE_WALLET_SCHEMA")}.balances WHERE owner_id = {CorporationId} AND account_key = 1000"));
+            var entry = Assert.Single(await reopenedWallets.JournalForAccountAsync(CorporationId, 1000),
+                row => row.Reason == "planetary customs office tax");
+            Assert.Equal(17.25m, entry.Amount);
+            Assert.Equal(97, entry.RefTypeId);
+        }
+        finally
+        {
+            await host.ShutdownAsync();
+        }
+    }
+
     private static async Task<long> InsertPilotAsync(NpgsqlDataSource source, PgCharacterStore characters)
     {
         var pilot = new NewCharacter(AccountId, "Customs Host Pilot", Gender: 1, RaceId: 1, BloodlineId: 1, AncestryId: 10, SchoolId: 35, TypeId: 1373,

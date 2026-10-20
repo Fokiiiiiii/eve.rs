@@ -952,6 +952,41 @@ private static PyValue RowField(PyValue value,string key)
     }
 
     [PgFact]
+    public async Task Corporate_contact_bulk_removal_refuses_oversized_input_before_store_work()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var founder = await rig.CharacterAsync("Bulk Contact Founder");
+        var session = new ClientSession { SessionId = 2090 };
+        session.CharacterId = founder;
+        var service = new CorpRegistryService(rig.Store,rig.Characters,() => rig.Now);
+        await ((IService)service).CallAsync(new ServiceCall
+        {
+            Method = "AddCorporation",Session = session,CallId = new PyInt(74),
+            Args = [new PyStr("Bulk Contact Corp"),new PyStr("BCCC"),new PyStr("Bulk contact test"),new PyStr("https://bulk.example"),
+                Py.Number(0.05),new PyInt(419),PyNone.Instance,PyNone.Instance,new PyInt(1),new PyInt(2),new PyInt(3),
+                new PyStr("Verdana"),new PyInt(1),PyBool.True,Py.Number(0.02)]
+        });
+        var requested = new PyList(Enumerable.Range(1,501).Select(id => (PyValue)new PyInt(id)).ToArray());
+
+        var error = await Assert.ThrowsAsync<CorporationError>(async () => await service.RemoveCorporateContacts(new ServiceCall
+        {
+            Method = "RemoveCorporateContacts",Session = session,Args = [requested]
+        }));
+
+        Assert.Equal("CORPORATION_BULK_LIMIT_EXCEEDED",error.Code);
+        var kickError = await Assert.ThrowsAsync<CorporationError>(async () => await service.KickOutMembers(new ServiceCall
+        {
+            Method = "KickOutMembers",Session = session,Args = [requested]
+        }));
+        Assert.Equal("CORPORATION_BULK_LIMIT_EXCEEDED",kickError.Code);
+        var titleError = await Assert.ThrowsAsync<CorporationError>(async () => await service.UpdateTitles(new ServiceCall
+        {
+            Method = "UpdateTitles",Session = session,Args = [requested]
+        }));
+        Assert.Equal("CORPORATION_BULK_LIMIT_EXCEEDED",titleError.Code);
+    }
+
+    [PgFact]
     public async Task Add_corporation_rpc_uses_the_call_id_as_the_founding_receipt()
     {
         await using var rig = await Rig.CreateAsync();

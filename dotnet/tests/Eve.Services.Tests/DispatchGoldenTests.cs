@@ -405,7 +405,7 @@ public class DispatchGoldenTests
     }
 
     [Fact]
-    public async Task Corporation_asset_searches_use_the_named_per_session_budget()
+    public async Task Corporation_asset_and_audit_reads_use_the_named_per_session_budget()
     {
         var capture = new Capture();
         var session = new ClientSession(capture) { SessionId = 918 };
@@ -417,11 +417,13 @@ public class DispatchGoldenTests
         await dispatcher.DispatchAsync(CallRequestPacket("corpMgr", "GetAssetInventory"), session);
         await dispatcher.DispatchAsync(CallRequestPacket("corpMgr", "GetAssetInventoryForLocation"), session);
         await dispatcher.DispatchAsync(CallRequestPacket("corpMgr", "SearchAssets"), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("corpMgr", "GetAggressionSettingsForCorps"), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("corpMgr", "AuditMember"), session);
 
         Assert.Equal(1, service.Calls);
-        Assert.Equal(3, capture.Sent.Count);
-        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[1])));
-        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[2])));
+        Assert.Equal(5, capture.Sent.Count);
+        for (var index = 1; index < capture.Sent.Count; index++)
+            Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[index])));
     }
 
     [Fact]
@@ -611,7 +613,7 @@ public class DispatchGoldenTests
 
         public string Name => name;
 
-        public bool HasMethod(string method) => method is "GetOrders" or "BuyMultipleItems" or "PlaceMultiSellOrder" or "GetHistoryForManyTypeIDs" or "GetAllianceMembers" or "GetRankedAlliances" or "GetOrganizationInfoForCharacters" or "SendBroadcast" or "ExecuteActions" or "GetNumberOfPotentialCEOs" or "GetFittings" or "GetAssetInventory" or "GetAssetInventoryForLocation" or "SearchAssets";
+        public bool HasMethod(string method) => method is "GetOrders" or "BuyMultipleItems" or "PlaceMultiSellOrder" or "GetHistoryForManyTypeIDs" or "GetAllianceMembers" or "GetRankedAlliances" or "GetOrganizationInfoForCharacters" or "SendBroadcast" or "ExecuteActions" or "GetNumberOfPotentialCEOs" or "GetFittings" or "GetAssetInventory" or "GetAssetInventoryForLocation" or "SearchAssets" or "GetAggressionSettingsForCorps" or "AuditMember";
 
         public ValueTask<PyValue> CallAsync(ServiceCall call)
         {

@@ -1561,6 +1561,16 @@ private static PyValue RowField(PyValue value,string key)
     }
 
     [Fact]
+    public async Task Corp_mgr_aggression_reads_refuse_more_than_500_corporations_before_storage_access()
+    {
+        var service = new CorpMgrService(null!, null!);
+        var ids = new PyList([.. Enumerable.Range(1, 501).Select(id => (PyValue)new PyInt(id))]);
+
+        await Assert.ThrowsAsync<CorporationError>(() => service.GetAggressionSettingsForCorps(
+            Call(new ClientSession(), "GetAggressionSettingsForCorps", ids)).AsTask());
+    }
+
+    [Fact]
     public async Task Mutual_war_invite_mgr_exposes_reference_routes_and_callback_shapes()
     {
         long pendingOwner = 0;

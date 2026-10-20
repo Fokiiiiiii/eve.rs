@@ -26,10 +26,10 @@ public static class StarterKits
 
     private static readonly Dictionary<int, StarterModule[]> ByShipType = new()
     {
-        [588] = Kit(CivilianGatlingAutocannon), // Reaper (Minmatar)
-        [596] = Kit(CivilianGatlingPulseLaser), // Impairor (Amarr)
-        [601] = Kit(CivilianGatlingRailgun),    // Ibis (Caldari)
-        [606] = Kit(CivilianGatlingRailgun),    // Velator (Gallente)
+        [588] = Kit(CivilianGatlingAutocannon),
+        [596] = Kit(CivilianGatlingPulseLaser),
+        [601] = Kit(CivilianGatlingRailgun),
+        [606] = Kit(CivilianGatlingRailgun),
     };
 
     /// <summary>The modules to fit to a new ship of this type, in the order they are made (a ship of a type with no kit starts empty).</summary>

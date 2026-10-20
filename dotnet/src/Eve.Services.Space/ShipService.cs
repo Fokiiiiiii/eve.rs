@@ -177,7 +177,6 @@ public sealed partial class ShipService(
     public async ValueTask<PyValue> ScoopDrone(ServiceCall call) =>
         drones is null || !_binding.Owns(call) ? None : await drones.ScoopAsync(call.Session, SpaceDrones.IdsOf(call.Arg(0)), call.Cancellation);
 
-
     /// <summary><c>Scoop(itemID, password=)</c>: takes an eligible space artifact into the active ship cargo hold.</summary>
     [Method("Scoop")]
     public async ValueTask<PyValue> Scoop(ServiceCall call)
@@ -220,7 +219,6 @@ public sealed partial class ShipService(
         return await space.LeaveShipAsync(call.Session, shipId, call.Cancellation);
     }
 
-
     /// <summary><c>SafeLogoff()</c> starts the space logoff countdown when all server-side conditions allow it.</summary>
     [Method("SafeLogoff")]
     public ValueTask<PyValue> SafeLogoff(ServiceCall call) =>
@@ -230,7 +228,6 @@ public sealed partial class ShipService(
     [Method("AbortSafeLogoff")]
     public PyValue AbortSafeLogoff(ServiceCall call) =>
         _binding.Owns(call) ? space.AbortSafeLogoff(call.Session) : None;
-
 
     /// <summary><c>Eject()</c> leaves the piloted hull in space and continues in a capsule.</summary>
     [Method("Eject")]

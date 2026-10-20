@@ -9,8 +9,7 @@ namespace Eve.Services.Space.Effects;
 // sde.dogmaAttributes. The Pulse Activated Nexus Invulnerability Core (42522, effect 6719) is not here: it has its own handler (IndustrialInvulnerabilityEffect).
 //
 //   Effect (row)                 Types in group 588                                         Effect category
-//   superWeapon{Race} (4489-4492) one titan doomsday per race: 24550, 24552, 24554, 23674     2 (target)
-//   doomsdayBeamDOT (6472)        lances 40631, 41439, 41440, 41441                          1 (activation)
+
 //   doomsdaySlash (6201)          reapers 40632, 41442, 41443, 41444 and Catmageddon 37474   1
 //   debuffLance (11691)           disruptive lances 77398, 77399, 77400, 77401               1
 //   doomsdayConeDOT (6473)        Bosonic Field Generator 40633                              1
@@ -28,8 +27,7 @@ namespace Eve.Services.Space.Effects;
 // families have none in the space host yet. Each handler is registered and REFUSES the activation by name, before any package is built: no simulation
 // action, no fuel taken (ShipEffect.Build is never reached, so BurnsFuel is never set), and no success is reported. The reasons are the ones below.
 //
-// What is still missing, per family (the superweapons spec in docs/project/TODO.md section 12, and the DEVIATIONS it cites):
-//   - the lance beacon (EveJS spawnLanceBeacon, a Deployed object, ADR 0012): the lance strikes without it; the beacon is the client's beam target only (DEVIATIONS 136);
+
 //   - the HOG's tether exclusion (CCP Citadel 1.9: a tethered ship is not transported): tethering has no state in the simulation (DEVIATIONS 141);
 //   - the structure variant (the Standup oscillator, 47068, category 66): refused by name (StructureHogEffect); no structure host exists (O5).
 
@@ -50,8 +48,6 @@ internal abstract class SuperWeaponPendingEffect(string reason, params string[] 
 
     protected override string? Refusal(ModuleEffectContext module) => _reason;
 }
-
-
 
 /// <summary>
 /// The Gravitational Transportation Field Oscillator (40634, <c>doomsdayHOG</c>), a transport field (protocol 29). Its sphere is centred on the aim point and
@@ -151,7 +147,7 @@ internal sealed class StructureHogEffect() : ShipEffect
         }
 
         // The structure's shared HOG body is implemented by HogEffect, but its area participants
-        // need the per-pulse owner-corporation permission reply before the simulation may apply it.
+
         return "STRUCTURE_DAMAGE_PERMISSION_REQUIRED";
     }
 

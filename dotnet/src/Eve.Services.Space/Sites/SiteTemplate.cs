@@ -2,7 +2,6 @@ using System.Text.Json;
 
 namespace Eve.Services.Space.Sites;
 
-/// <summary>One group of NPCs of a site: the pool the NPC selector rolls them from, and how many come (the wiki's table of the site).</summary>
 public sealed record SiteWave(string Query, int Amount);
 
 /// <summary>A rock of a deposit site: its ore type, its quantity, and its offset from the site's origin (metres).</summary>
@@ -30,7 +29,6 @@ public sealed record SiteTemplate(
 
     public bool IsAnomaly => Kind == Anomaly;
 
-    /// <summary>The level of a signature, one to five (the wiki: levels I to III need a probe strength of 42, IV of 72, V of 104).</summary>
     public int Level => Math.Clamp(Difficulty, 1, 5);
 
     /// <summary>The ids of the content definition of the site and of the objectives its NPCs are counted by.</summary>

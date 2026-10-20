@@ -156,11 +156,17 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # one service container per shard, so the shards do not share a database; the two largest projects get a shard each
+        # Every shard has its own PostgreSQL service. Host and Space cases and other projects are assigned as separate shards.
         shard:
-          - { name: "space tests", only: "Eve.Services.Space.Tests" }
-          - { name: "host tests", only: "Eve.Host.Tests" }
-          - { name: "all other tests", only: "" }
+          - { name: "space tests 1/2", artifact: "space-1", only: "Eve.Services.Space.Tests", index: 0, count: 2 }
+          - { name: "space tests 2/2", artifact: "space-2", only: "Eve.Services.Space.Tests", index: 1, count: 2 }
+          - { name: "host tests 1/4", artifact: "host-1", only: "Eve.Host.Tests", index: 0, count: 4 }
+          - { name: "host tests 2/4", artifact: "host-2", only: "Eve.Host.Tests", index: 1, count: 4 }
+          - { name: "host tests 3/4", artifact: "host-3", only: "Eve.Host.Tests", index: 2, count: 4 }
+          - { name: "host tests 4/4", artifact: "host-4", only: "Eve.Host.Tests", index: 3, count: 4 }
+          - { name: "other tests 1/3", artifact: "other-1", only: "", index: 0, count: 3 }
+          - { name: "other tests 2/3", artifact: "other-2", only: "", index: 1, count: 3 }
+          - { name: "other tests 3/3", artifact: "other-3", only: "", index: 2, count: 3 }
     services:
       postgres:
         image: postgres:18
@@ -213,18 +219,53 @@ jobs:
         env:
           EVE_PG_URL: Host=127.0.0.1;Port=5432;Username=postgres;Password=postgres;Database=eve
           ONLY: ${{ matrix.shard.only }}
+          SHARD_INDEX: ${{ matrix.shard.index }}
+          SHARD_COUNT: ${{ matrix.shard.count }}
         run: |
           status=0
-          for proj in tests/*/*.csproj; do
-            name="$(basename "$proj" .csproj)"
-            if [ -n "$ONLY" ]; then
-              [ "$name" = "$ONLY" ] || continue
-            else
-              [ "$name" != "Eve.Services.Space.Tests" ] && [ "$name" != "Eve.Host.Tests" ] || continue
-            fi
-            dotnet test "$proj" -c Release --no-build -nologo --verbosity minimal -nodeReuse:false || status=1
-          done
+          if [ "$ONLY" = "Eve.Host.Tests" ] || [ "$ONLY" = "Eve.Services.Space.Tests" ]; then
+            proj="tests/$ONLY/$ONLY.csproj"
+            dotnet test "$proj" -c Release --no-build -nologo --verbosity minimal -nodeReuse:false --list-tests > /tmp/test-list.txt
+            filter="$(python3 ../tools/dev/shard-dotnet-tests.py /tmp/test-list.txt "$SHARD_INDEX" "$SHARD_COUNT")"
+            dotnet test "$proj" -c Release --no-build -nologo --verbosity minimal -nodeReuse:false --filter "$filter" --results-directory test-results --logger "trx;LogFileName=$ONLY-$SHARD_INDEX.trx" || status=1
+          else
+            projects="$(python3 ../tools/dev/shard-dotnet-projects.py "$SHARD_INDEX" "$SHARD_COUNT" tests/*/*.csproj)"
+            for name in $projects; do
+              [ "$name" = "Eve.Services.Space.Tests" ] && continue
+              [ "$name" = "Eve.Host.Tests" ] && continue
+              proj="tests/$name/$name.csproj"
+              dotnet test "$proj" -c Release --no-build -nologo --verbosity minimal -nodeReuse:false --results-directory test-results --logger "trx;LogFileName=$name.trx" || status=1
+            done
+          fi
           exit $status
+      - name: Verify every test shard executed tests
+        working-directory: dotnet
+        run: |
+          python3 - <<'PYTEST'
+          from pathlib import Path
+          from xml.etree import ElementTree
+
+          namespace = {"trx": "http://microsoft.com/schemas/VisualStudio/TeamTest/2010"}
+          reports = sorted(Path("test-results").glob("*.trx"))
+          if not reports:
+              raise SystemExit("No TRX test reports were produced")
+          empty = []
+          for report in reports:
+              root = ElementTree.parse(report).getroot()
+              counters = root.find("trx:ResultSummary/trx:Counters", namespace)
+              executed = int(counters.attrib["executed"]) if counters is not None else 0
+              if executed == 0:
+                  empty.append(str(report))
+          if empty:
+              raise SystemExit("No tests executed in: " + ", ".join(empty))
+          PYTEST
+      - name: Upload test timing results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dotnet-test-results-${{ matrix.shard.artifact }}
+          path: dotnet/test-results/*.trx
+          if-no-files-found: ignore
       - name: Shut down build servers
         if: always()
         run: dotnet build-server shutdown

@@ -81,7 +81,7 @@ public const int ReloadTime = 1795;
     public const int MicroJumpDriveRange = 2066;
 
     // Superweapons (group 588 and the structure variants). Names and ids are the SDE's, checked by ModuleAttributeIdsTests; the rules that use them are in
-    // Effects/SuperWeaponEffects.cs (docs/project/TODO.md section 12).
+
     /// <summary>Energy neutralisation of a doomsday: the radius, the amount and the signature radius of its area, and the resistance it is measured against.</summary>
     public const int DoomsdayEnergyNeutRadius = 2259;
     public const int DoomsdayEnergyNeutAmount = 2260;
@@ -94,7 +94,7 @@ public const int ReloadTime = 1795;
     public const int DoomsdayDamageCycleTime = 2265;
     /// <summary>1 when the doomsday is aimed at a point (titan doomsdays, lances, cones and the HOG); the client sends a point, not a target id.</summary>
     public const int IsPointTargeted = 2269;
-    /// <summary>The area of a doomsday: its reach, its duration, its signature radius, its shape (1 cylinder, 2 slice, 3 cone, 4 projected sphere) and whether its range is fixed.</summary>
+
     public const int DoomsdayAoeRange = 2279;
     public const int DoomsdayAoeDuration = 2280;
     public const int DoomsdayAoeSignatureRadius = 2281;
@@ -109,13 +109,11 @@ public const int ReloadTime = 1795;
     /// <summary>How long the buff a doomsday applies lasts on its recipients.</summary>
     public const int DoomsdayAppliedDBuffDuration = 5412;
 
-
     /// <summary><c>damageDelayDuration</c>: the time from a titan doomsday's start to its hit (9000 ms for the Judgment).</summary>
     public const int DamageDelayDuration = 1839;
     /// <summary>The Pulse Activated Nexus Invulnerability Core's duration (the effect's durationAttributeID).</summary>
     public const int PanicDuration = 2788;
 
-    // Cynosural fields, jump portals and clone jumps (docs/project/TODO.md section 12; the bodies are not run yet).
     public const int CynosuralFieldSpawnRadius = 2455;
     public const int JumpPortalConsumptionMassFactor = 1001;
     public const int JumpPortalDuration = 1002;
@@ -126,7 +124,6 @@ public const int ReloadTime = 1795;
     public const int IsIndustrialJumpConduitPassenger = 3324;
     public const int IsIndustrialJumpPortalPassenger = 3325;
 
-    // Module rules the static data states as attributes (docs/project/TODO.md section 9; the names are the SDE's, verified by ModuleRuleAttributesTests).
     public const int WarpScrambleStatus = 104;
 
     /// <summary>The radius of a ship or a ball (attribute 162, metres).</summary>

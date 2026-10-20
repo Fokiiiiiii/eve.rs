@@ -73,7 +73,7 @@ internal sealed class CloakingEffect : ShipEffect
         {
             return "CLOAK_DISALLOWED";
         }
-        // a fitted disruptive lance disallows the cloak while it is fitted (disruptionLanceDisallowCloaking, 5425: EveJS entityHasCloakDisallowingFittedModule)
+
         if (module.Snapshot.Fitted.Any(fitted => module.World.Get(fitted.Id, DisruptionLanceDisallowCloaking) != 0))
         {
             return "CLOAK_DISALLOWED";

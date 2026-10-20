@@ -514,7 +514,6 @@ public async Task<PyValue> ReconnectAsync(ClientSession session, CancellationTok
         return Task.FromResult(Dict(refused));
     }
 
-
     /// <summary>Capacity for the active ship's in-space drone-bay inventory (flag 87).</summary>
     public async Task<CharacterShips.Room?> RoomAsync(ClientSession session, long shipId, int flag, CancellationToken cancellationToken)
     {

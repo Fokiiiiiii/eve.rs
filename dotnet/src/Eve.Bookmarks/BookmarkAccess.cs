@@ -17,12 +17,10 @@ public sealed record AccessLists(IReadOnlyDictionary<long, int> RoleByGroup, lon
     /// <summary>The character is a member, manager or admin of the list.</summary>
     public bool Holds(long groupId) => RoleByGroup.ContainsKey(groupId);
 
-    /// <summary>A manager or admin may put the list on a folder, and so may a corporation member put its built-in list (the wiki).</summary>
     public bool MayAssign(long groupId) =>
         groupId > 0 && ((RoleByGroup.TryGetValue(groupId, out var role) && role >= 1) || (CorporationId > 0 && groupId == CorporationId));
 }
 
-/// <summary>The client's access levels (appConst ACCESS_*) and what each one allows (the EVE University wiki's Bookmarks page).</summary>
 public static class FolderAccess
 {
     public const int None = 0;
@@ -33,8 +31,6 @@ public static class FolderAccess
     public const int Admin = 5;
 
     /// <summary>
-    /// The level a character has in a folder: the owner's personal folder, or the highest level whose list the character holds. A shared
-    /// folder is not the owner's personal folder, so its creator gets the level from its lists alone.
     /// </summary>
     public static int LevelOf(BookmarkFolder folder, long characterId, AccessLists lists)
     {
@@ -49,12 +45,9 @@ public static class FolderAccess
 
     public static bool CanView(int level) => level >= Personal;
 
-    /// <summary>Use adds locations and sub-folders, and edits or deletes one's own (the wiki).</summary>
     public static bool CanUse(int level) => level == Personal || level >= Use;
 
-    /// <summary>Manage edits or deletes every location and sub-folder (the wiki). The owner of a personal folder keeps this.</summary>
     public static bool CanManage(int level) => level == Personal || level >= Manage;
 
-    /// <summary>Admin renames or deletes the folder and sets its lists (the wiki). The owner of a personal folder keeps this.</summary>
     public static bool IsAdmin(int level) => level == Personal || level == Admin;
 }

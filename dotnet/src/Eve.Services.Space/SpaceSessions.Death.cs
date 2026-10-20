@@ -463,7 +463,6 @@ public sealed partial class SpaceSessions
         Announce("ship.lost", new { characterId = loss.CharacterId, shipId = loss.ShipId, shipTypeId = loss.ShipTypeId, cause = loss.Cause.ToString(), solarSystemId = loss.SolarSystemId, killerCharacterId = loss.KillerCharacterId }, $"char:{loss.CharacterId}");
     }
 
-    /// <summary>The capsule was destroyed: another pilot's last blow makes it a player kill of its own (EveJS: the pod is a loss apart from the ship).</summary>
     private void RaisePodLost(Pilot pilot, Item capsule, SimDestroyed destroyed)
     {
         var killer = destroyed.KillerShipId == 0 ? null : _pilots.Values.FirstOrDefault(other => other.ShipId == destroyed.KillerShipId);

@@ -7,7 +7,6 @@ namespace Eve.Services.Space;
 /// <summary>An open attempt: its rules, the container it works on and the reach the window keeps (0 when none).</summary>
 public sealed record HackingWindow(HackingGame Game, HackableTarget Target, double MaxRange);
 
-/// <summary>The analyzer's values after dogma and what its type can hack (skills 21718 data, 13278 archaeology).</summary>
 public sealed record AnalyzerValues(
     int ModuleTypeId,
     bool CanHackData,
@@ -19,7 +18,6 @@ public sealed record AnalyzerValues(
     double AccessDifficultyBonus);
 
 /// <summary>
-/// The attempts of the hacking minigame, one per character, in memory: a restart ends them (EveJS keeps its attempts in memory too).
 /// </summary>
 public sealed class HackingAttempts
 {
@@ -52,8 +50,6 @@ public sealed class HackingAttempts
 }
 
 /// <summary>
-/// The client's <c>hackingMgr</c> service. Each call is one step of the attempt the character has open; the events of the step go to the
-/// client as <c>OnHackingTurnComplete</c> (EveJS <c>hackingMgrService.js</c>). The analyzer opens an attempt on its activation, and the
 /// window closes on a warp, out of the analyzer's reach, or when the attempt is lost or won; each end reports to <see cref="IHackingSite"/>.
 /// </summary>
 public sealed class HackingMgrService : IService

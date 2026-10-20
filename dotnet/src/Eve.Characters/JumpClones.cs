@@ -68,7 +68,6 @@ public sealed class PgJumpCloneStore
         return clone;
     }
 
-    /// <summary>Adds a clone at a location (inside the caller's transaction). Its implants are not copied yet (CH-15 gap).</summary>
     public async Task<long> InsertAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId, long locationId, string locationKind, CancellationToken cancellationToken = default)
     {
         await using var command = new NpgsqlCommand(
@@ -107,7 +106,6 @@ public sealed class PgJumpCloneStore
 
     /// <summary>
     /// The clone rows of a jump, inside the caller's transaction. The target clone goes (it becomes the body), and so does the clone at
-    /// the origin, which is replaced by a clone of the body that leaves, with the implants that body wears (the wiki: they stay with the
     /// old body); a target at the origin keeps its id. The last jump time is set to <paramref name="nowFileTime"/>. Returns the target as
     /// it was, or null when the character has no such clone.
     /// </summary>

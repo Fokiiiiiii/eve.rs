@@ -13,20 +13,15 @@ public sealed partial class SpaceSessions
     public Func<long, long, CancellationToken, Task<bool>>? StructureDockingAllowedAsync { get; set; }
 
     /// <summary>
-    /// Puts the structures of a system in the simulation (ST-3 b: an undock from a structure needs its ball in the scene). Set by the host from the
-    /// structure restore of ST-1 d, which places a system's structures once; the restore is idempotent.
     /// </summary>
     public Func<int, CancellationToken, Task>? PlaceStructuresAsync { get; set; }
 
     /// <summary>
-    /// Whether a structure is the sovereignty hub of its system (ST-9 b): the only target of an entosis link. Set by the host from the sovereignty records;
     /// unset, no structure is a hub and an entosis link is refused.
     /// </summary>
     public Func<int, long, CancellationToken, Task<bool>>? IsSovereigntyHubAsync { get; set; }
 
     /// <summary>
-    /// <c>structureDocking.Dock(structureID, shipID)</c> (ST-3 a): the pilot asks to dock at a structure. Another ship, an unknown structure, a character
-    /// without the docking access and a criminal timer are refused (EveJS structureDockingService.Handle_Dock). Out of range the ship goes to the structure
     /// on its own and the client is told the distance (DockingApproach); in range the simulation accepts the docking, and the ship is put in the structure's
     /// hangar when the simulation reports it docked (<see cref="FinishDockingAsync"/>). The answer is nothing, as the reference's.
     /// </summary>
@@ -71,7 +66,6 @@ public sealed partial class SpaceSessions
     private async Task<bool> IsStructureAsync(long id, CancellationToken cancellationToken) =>
         _stations.Get(id) is null && StructureExistsAsync is not null && await StructureExistsAsync(id, cancellationToken);
 
-    /// <summary>What the client is told for a docking the simulation refused (EveJS structureDockingService throwDockingDenied, by the simulation's reason).</summary>
     private static MachoWrappedException StructureDockingRefusal(string? reason) => reason switch
     {
         "NOT_IN_SPACE" or "SCENE_NOT_FOUND" => MachoErrors.ThrowUserError("DeniedShipChanged"),
@@ -87,9 +81,7 @@ public sealed partial class SpaceSessions
         MachoErrors.ThrowUserError("DockingRequestDenied", ("reason", new PyStr(reason)));
 
     /// <summary>
-    /// <c>structureDocking.Undock(structureID, shipID, ignoreContraband=)</c> (ST-3 b): the pilot leaves the structure it is docked in. Another structure or
     /// ship is refused as the reference refuses it (DeniedShipChanged). The ship is put in space near the structure
-    /// (<c>scene/docking.rs</c> undock point, DEVIATIONS "Structure docking and hangars (ST-3)"). Contraband confirmation is checked before the ship moves.
     /// </summary>
     public async Task UndockStructureAsync(ClientSession session, long structureId, long shipId, CancellationToken cancellationToken, bool ignoreContraband = false)
     {

@@ -25,7 +25,6 @@ public sealed partial class FleetStore(System.Data.Common.DbDataSource source, s
     private const int InvitePublicOpen = 16;
     private const int MaxAdvertEntities = 1000;
 
-
     public static readonly Eve.Data.Migration FleetFinderAllowedEntitiesMigration = new(
         "005_fleet_finder_allowed_entities",
         """

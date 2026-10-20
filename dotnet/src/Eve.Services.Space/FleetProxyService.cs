@@ -72,7 +72,6 @@ public sealed partial class FleetProxyService(FleetStore store, Func<string, lon
     }
 }
 
-
 public sealed partial class FleetProxyService
 {
     [Method("GetAvailableFleetAds")]

@@ -609,6 +609,7 @@ public class CoreCatalogTests
             });
         var service = Assert.Single(services, candidate => candidate.Name == "node_graph");
         var session = new Eve.Services.ClientSession();
+        session.Set("accountRole", new Eve.Marshal.PyLong(Eve.Services.GameMasterRoles.Qa));
 
         var response = await service.CallAsync(new Eve.Services.ServiceCall
         {

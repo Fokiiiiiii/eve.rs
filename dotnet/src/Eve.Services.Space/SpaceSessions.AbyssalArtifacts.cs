@@ -105,7 +105,7 @@ public sealed partial class SpaceSessions
             persistedShip.LocationId != source.LocationId)
             return new(false, false, false, "BAD_ABYSSAL_DETACH_SNAPSHOT");
         // Character.StationId retains the last station during ordinary undock; the active ship's persisted
-        // space location/flag and character ship ownership identify the resident being detached.
+
         var candidates = _pilots.Values.Where(pilot => pilot.ShipId == persistedShip.Id).ToArray();
         if (candidates.Length > 1) return new(false, false, false, "ABYSSAL_DETACH_DUPLICATE_RESIDENT");
         var pilot = candidates.SingleOrDefault();

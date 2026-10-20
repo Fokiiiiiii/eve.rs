@@ -11,16 +11,14 @@ public enum CommandNodeOutcome : byte
 }
 
 /// <summary>
-/// The command node stage (ST-17 a; the wiki's "Command nodes", EVE.js sovCampaignState): a node's progress runs from -1 (captured by the defenders) to +1
 /// (captured by the attackers), and the stage's bar starts at 60% and moves 7% for each node captured. Nine attacker captures take the bar to 0 (the attackers
 /// win); six defender captures take it to 100% (the defenders win).
 /// </summary>
 public static class CommandNodeRules
 {
-    /// <summary>A node's capture time at ADM 1: 4 minutes (the wiki's table; EVE.js COMMAND_NODE_CAPTURE_TIME_SECONDS). Only the attackers' time is scaled by the ADM.</summary>
+
     public const double CaptureMs = 240_000;
 
-    /// <summary>A node's regeneration toward uncaptured: 98 minutes (the wiki's maximum from 2015 data; no current figure is published).</summary>
     public const double RegenMs = 98 * 60_000;
 
     public const double InitialScore = 0.6;

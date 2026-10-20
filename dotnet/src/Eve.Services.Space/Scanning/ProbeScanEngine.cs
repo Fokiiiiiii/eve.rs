@@ -5,7 +5,6 @@ namespace Eve.Services.Space.Scanning;
 public sealed record ScanProbe(long ProbeId, double[] Position, double ScanRangeMeters, double StrengthAtStep, double MaxDeviationMeters, bool CombatCapable);
 
 /// <summary>Something a probe scan can find: its id, type and scan group, where it is, the signal strength it needs, and whether it is a cosmic signature (which
-/// any probe can find; a ship, drone, fighter, structure or deployable needs a combat probe). A cosmic site has a <see cref="Code"/> (the client's <c>ABC-123</c>, which is the
 /// id of its result) and the facts of its dungeon.</summary>
 public sealed record ScanTargetSite(
     long TargetId, int TypeId, int GroupId, int ScanGroupId, double[] Position, double RequiredStrength, bool IsSignature, int StrengthAttributeId = 0,
@@ -24,9 +23,7 @@ public sealed record ScanResultRow(
 public sealed record ProbeScanOutcome(IReadOnlyList<ScanResultRow> Results, IReadOnlyList<long> AbsentTargets);
 
 /// <summary>
-/// The result of a probe scan over the targets of a system (EVE.js <c>buildSignatureScanResults</c>, with the wiki's rules for the deviation). For every target,
 /// the probes that reach it give a certainty (<see cref="ProbeScanMath.Certainty"/> times the spread of the probes); a target that no probe reaches is absent when
-/// it is not a cosmic signature. A result below 100% is placed off the target by at most the probes' maximum deviation, less as the certainty grows (the wiki:
 /// "the deviation of your scan will always be less than the distance shown").
 /// </summary>
 public static class ProbeScanEngine

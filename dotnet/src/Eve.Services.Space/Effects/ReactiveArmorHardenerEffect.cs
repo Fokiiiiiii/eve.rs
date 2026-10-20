@@ -6,7 +6,6 @@ namespace Eve.Services.Space.Effects;
 /// <summary>
 /// A reactive armor hardener (<c>adaptiveArmorHardener</c>): while it runs the armor's resonances are the ship's own times the module's (0.85 each for the
 /// reference's 4403), and each cycle they move as the damage the armor took says, by the static data's <c>resistanceShiftAmount</c> (6 points, 0.06). The
-/// simulation owns that profile (<see cref="SimAction.ResistanceShift"/>); the host tells it the seed, the step and the attributes, and the client the
 /// resonances at the start and the end. Nothing is written onto the ship's world, so the ship the simulation is sent is the ship's own resonances, and a
 /// Polarized weapon that pins them is honoured through the same world (<see cref="ModuleEffects.ToldValues"/>).
 /// </summary>

@@ -89,7 +89,6 @@ public sealed class ShipBuffs
     }
 
     /// <summary>
-    /// The ships a grant holds still until a time (the wiki: the protected ships cannot move, so the simulation's stop is kept by the host's movement
     /// commands, <see cref="SpaceSessions.Command"/>). In memory, as the buffs are.
     /// </summary>
     private readonly Dictionary<long, double> _immobileUntil = [];

@@ -21,7 +21,6 @@ public sealed class SpaceProbes : ISpaceProbes
     /// <summary>The ring a launch spreads its probes on, in metres (EVE.js <c>DEFAULT_LAUNCH_RING_RADIUS_METERS</c>).</summary>
     public const double LaunchRingRadiusMeters = 10_000;
 
-    /// <summary>A probe's scan range step when it is launched (the client sets its own from here).</summary>
     private const int LaunchRangeStep = 7;
 
     /// <summary>The state of an idle probe (EVE.js <c>probeStateIdle</c>, the client's <c>probeStateIdle</c>).</summary>

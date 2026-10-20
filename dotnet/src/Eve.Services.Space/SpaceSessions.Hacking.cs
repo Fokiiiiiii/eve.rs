@@ -6,7 +6,7 @@ namespace Eve.Services.Space;
 
 public sealed partial class SpaceSessions
 {
-    /// <summary>The effect name of the data and relic analyzers (EveJS <c>doHacking</c>).</summary>
+
     public const string AnalyzerEffectName = "doHacking";
 
     private const int AccessDifficultyBonus = 902;
@@ -39,7 +39,6 @@ public sealed partial class SpaceSessions
         return Math.Max(0d, centres - Math.Max(0d, radius));
     }
 
-    /// <summary>The analyzer's values after dogma, and the kinds its type can hack by its required skills.</summary>
     private AnalyzerValues AnalyzerValuesOf(ShipSnapshot snapshot, long moduleId, int moduleTypeId)
     {
         var type = _statics.Type(moduleTypeId);

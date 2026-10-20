@@ -16,10 +16,8 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 SRC = ROOT / "oracle/fixtures/gamestore/tables.json"
 OUT = ROOT / "dotnet/src/Eve.GameStore/GameStoreTables.g.cs"
 
-
 def q(text: str) -> str:
     return json.dumps(text)
-
 
 def render() -> str:
     data = json.loads(SRC.read_text())
@@ -50,7 +48,6 @@ def render() -> str:
     lines += ["        };", "}", ""]
     return "\n".join(lines)
 
-
 def main() -> int:
     text = render()
     if "--check" in sys.argv:
@@ -61,6 +58,5 @@ def main() -> int:
     OUT.write_text(text)
     print(f"wrote {OUT.relative_to(ROOT)}")
     return 0
-
 
 sys.exit(main())

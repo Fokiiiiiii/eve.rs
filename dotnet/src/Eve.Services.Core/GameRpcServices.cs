@@ -180,6 +180,59 @@ public sealed partial class ContractProxyService(
             return 3;
         return 1;
     }
+    [Method("AcceptContract")]
+    public async Task<PyValue> AcceptContract(ServiceCall call)
+    {
+        var writer = writeModel ?? throw new InvalidOperationException("contract writer is not wired");
+        var characterId = call.Session.CharacterId
+            ?? throw new InvalidOperationException("contract acceptance requires a character session");
+        var corporationId = call.Session.GetInt("corpid") ?? 0;
+        var allianceId = call.Session.GetInt("allianceid") ?? 0;
+        var contractId = call.Arg(0) switch
+        {
+            PyInt value => value.Value,
+            PyLong value => value.Value,
+            _ => throw MachoErrors.ThrowUserError("ConContractNotFound"),
+        };
+        var acceptForCorporation = call.Arg(1) switch
+        {
+            PyBool value => value.Value,
+            PyInt value => value.Value != 0,
+            PyLong value => value.Value != 0,
+            _ => false,
+        };
+        if (acceptForCorporation && ((call.Session.GetInt("corprole") ?? 0) & CorpRoleContractManager) == 0)
+            throw MachoErrors.ThrowUserError("ConNotContractManager");
+        try
+        {
+            var walletKeyValue = call.Session.GetInt("corpAccountKey")
+                ?? call.Session.GetInt("corpaccountkey")
+                ?? call.Session.GetInt("accountKey")
+                ?? CorporationWalletBase;
+            if (walletKeyValue is < 1000 or > 1006)
+                throw MachoErrors.ThrowUserError("ConNotContractManager");
+            var acceptorWalletKey = (int)walletKeyValue;
+            var accepted = await writer.AcceptItemExchangeAsync(contractId, characterId, corporationId, allianceId,
+                acceptForCorporation, acceptorWalletKey, call.Cancellation);
+            return Eve.Services.Py.KeyVal(
+                ("contractID", new PyInt(accepted.ContractId)),
+                ("type", new PyInt(accepted.Type)),
+                ("status", new PyInt(accepted.Status)),
+                ("issuerID", new PyInt(accepted.IssuerId)),
+                ("issuerCorpID", new PyInt(accepted.IssuerCorporationId)),
+                ("forCorp", accepted.IsCorporationIssued ? PyBool.True : PyBool.False),
+                ("acceptorID", new PyInt(accepted.AcceptorId)),
+                ("dateAccepted", new PyLong(accepted.DateAcceptedFileTime)),
+                ("numDays", new PyInt(accepted.NumDays)),
+                ("startStationID", new PyInt(accepted.StartStationId)),
+                ("endStationID", new PyInt(accepted.EndStationId)));
+        }
+        catch (ContractUserErrorException error)
+        {
+            throw MachoErrors.ThrowUserError(error.Message, error.Values.ToArray());
+        }
+    }
+
     [Method("GetLoginInfo")]
     public async Task<PyValue> GetLoginInfo(ServiceCall call)
     {

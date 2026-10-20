@@ -29,13 +29,11 @@ WORMHOLE_SPACE = range(31_000_000, 32_000_000)
 TOLL_FIELDS = ("pricePerKilo", "exponent", "fixedAddition", "minCost", "alignedDiscountMultiplier", "alignmentRestrictionList")
 BLOCK_FIELDS = ("blockAnchorWarpBubbles", "blockStructures")
 
-
 def rows(path):
     with gzip.open(path, "rt", encoding="utf-8") as handle:
         for line in handle:
             if line.strip():
                 yield json.loads(line)
-
 
 def solarsystemcontent(path):
     out = []
@@ -52,7 +50,6 @@ def solarsystemcontent(path):
             out.append(kept)
     return sorted(out, key=lambda r: r["_key"])
 
-
 def spacecomponentsbytype(path):
     out = []
     for row in rows(path):
@@ -68,7 +65,6 @@ def spacecomponentsbytype(path):
             out.append(kept)
     return sorted(out, key=lambda r: r["_key"])
 
-
 def systems(path):
     out = []
     for row in rows(path):
@@ -81,7 +77,6 @@ def systems(path):
         sys.exit(f"{len(jspace - classed)} J-space systems have no wormholeClassID in {path}")
     return sorted(out, key=lambda r: r["solarSystemID"])
 
-
 def missions(path):
     out = []
     for row in rows(path):
@@ -92,7 +87,6 @@ def missions(path):
             kept["messages"] = row["messages"]
         out.append(kept)
     return sorted(out, key=lambda r: r["_key"])
-
 
 def write(target, build, source, description, fields, lines):
     header = {"_header": {"description": description, "build": build, "source": f"V24.01 client static data, {source}",
@@ -105,7 +99,6 @@ def write(target, build, source, description, fields, lines):
     with open(target, "wb") as handle:
         handle.write(buffer.getvalue())
     print(f"{target}: {len(lines)} rows, {len(buffer.getvalue())} bytes")
-
 
 def main():
     client = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("EVE_CLIENT_SDE_DIR", "")
@@ -137,7 +130,6 @@ def main():
     write(os.path.join(core, "client-missions.jsonl.gz"), build, "native/missions.jsonl.gz",
           "Per mission: contentTemplate (the trade and mining kinds) and messages (the localization IDs of its texts; no text is copied).",
           ["_key", "contentTemplate", "messages"], mission_rows)
-
 
 if __name__ == "__main__":
     main()

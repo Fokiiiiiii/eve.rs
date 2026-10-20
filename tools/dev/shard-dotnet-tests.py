@@ -8,7 +8,6 @@ from collections import Counter
 from pathlib import Path
 import sys
 
-
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("test_list", type=Path)
@@ -53,7 +52,6 @@ def main() -> int:
     print(", ".join(f"{name} ({tests[name]} tests)" for name in sorted(selected)), file=sys.stderr)
     print("|".join(f"FullyQualifiedName~{name}." for name in sorted(selected)))
     return 0
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

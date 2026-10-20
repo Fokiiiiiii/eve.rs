@@ -52,6 +52,74 @@ public sealed class ContractProxyServiceTests
         Assert.Equal(new PyInt(3), Value(response, "itemsEscrow"));
     }
 
+
+    [Fact]
+    public async Task Get_my_bids_returns_persisted_contract_rows_and_requires_the_corporation_role()
+    {
+        var readModel = new RecordingReadModel();
+        var service = new ContractProxyService(readModel);
+        var denied = new ClientSession { CharacterId = 42 };
+        denied.Set("corpid", new PyInt(84));
+        await Assert.ThrowsAsync<MachoWrappedException>(() => service.GetMyBids(new ServiceCall
+        {
+            Method = "GetMyBids", Args = [PyBool.True], Session = denied,
+        }));
+
+        var session = new ClientSession { CharacterId = 42 };
+        session.Set("corpid", new PyInt(84));
+        session.Set("corprole", new PyLong(72057594037927936L));
+        var response = Assert.IsType<PyObject>(await service.GetMyBids(new ServiceCall
+        {
+            Method = "GetMyBids", Args = [PyBool.True], Session = session,
+        }));
+        Assert.Equal(42, readModel.CharacterId);
+        Assert.Equal(84, readModel.CorporationId);
+        Assert.True(readModel.ForCorporation);
+        var contracts = Assert.IsType<PyList>(Value(response, "contracts"));
+        Assert.Single(contracts.Items);
+        var contract = Assert.IsType<PyObject>(contracts.Items[0]);
+        Assert.Equal(new PyInt(1234), Value(contract, "contractID"));
+        Assert.Equal(new PyStr("Auction"), Value(contract, "title"));
+        var itemMap = Assert.IsType<PyDict>(Value(response, "items"));
+        var itemList = Assert.IsType<PyList>(itemMap.Entries.Single().Value);
+        var item = Assert.IsType<PyObject>(itemList.Items[0]);
+        Assert.Equal(new PyInt(34), Value(item, "itemTypeID"));
+        Assert.Equal(new PyInt(2), Value(item, "quantity"));
+    }
+
+
+    [Fact]
+    public async Task Owner_contract_list_checks_scope_role_and_forwards_page_cursor()
+    {
+        var readModel = new RecordingReadModel();
+        var service = new ContractProxyService(readModel);
+        var session = new ClientSession { CharacterId = 42 };
+        session.Set("corpid", new PyInt(84));
+        var response = Assert.IsType<PyObject>(await service.GetContractListForOwner(new ServiceCall
+        {
+            Method = "GetContractListForOwner",
+            Args = [new PyLong(42), new PyInt(0), new PyInt(1), new PyInt(0)],
+            Kwargs = Eve.Services.Py.Dict(("num", new PyInt(25)), ("startContractID", new PyLong(900))),
+            Session = session,
+        }));
+        Assert.Equal(42, readModel.CharacterId);
+        Assert.Equal(42, readModel.OwnerId);
+        Assert.Equal(0, readModel.OwnerStatus);
+        Assert.Equal(25, readModel.OwnerPageSize);
+        Assert.Equal(900, readModel.OwnerStartContractId);
+        Assert.Single(Assert.IsType<PyList>(Value(response, "contracts")).Items);
+
+        await Assert.ThrowsAsync<MachoWrappedException>(() => service.GetContractListForOwner(new ServiceCall
+        {
+            Method = "GetContractListForOwner", Args = [new PyInt(84), new PyInt(0), new PyInt(1), new PyInt(0)], Session = session,
+        }));
+        session.Set("corprole", new PyLong(72057594037927936L));
+        await service.GetContractListForOwner(new ServiceCall
+        {
+            Method = "GetContractListForOwner", Args = [new PyInt(84), new PyInt(0), new PyInt(1), new PyInt(0)], Session = session,
+        });
+    }
+
     [Fact]
     public async Task Place_bid_uses_client_argument_order_and_returns_boolean_success()
     {
@@ -381,6 +449,11 @@ public sealed class ContractProxyServiceTests
         public long CorporationId { get; private set; }
         public long AllianceId { get; private set; }
         public long NowFileTime { get; private set; }
+        public bool ForCorporation { get; private set; }
+        public long OwnerId { get; private set; }
+        public int OwnerStatus { get; private set; }
+        public int OwnerPageSize { get; private set; }
+        public long? OwnerStartContractId { get; private set; }
 
         public ValueTask<ContractLoginInfo> GetLoginInfoAsync(
             long characterId, long corporationId, long allianceId, long nowFileTime, CancellationToken cancellationToken)
@@ -398,5 +471,33 @@ public sealed class ContractProxyServiceTests
         public ValueTask<ContractEscrowSummary> GetMyContractEscrowAsync(
             long characterId, long corporationId, CancellationToken cancellationToken) =>
             ValueTask.FromResult(new ContractEscrowSummary(1250m, 3));
+
+        public ValueTask<ContractReadBundle> GetMyBidsAsync(
+            long characterId, long corporationId, bool forCorporation, long nowFileTime, CancellationToken cancellationToken)
+        {
+            CharacterId = characterId;
+            CorporationId = corporationId;
+            ForCorporation = forCorporation;
+            return ValueTask.FromResult(new ContractReadBundle([Contract()]));
+        }
+
+        public ValueTask<ContractReadBundle> GetContractListForOwnerAsync(
+            long characterId, long corporationId, long ownerId, int status, int contractType, long issuedBy,
+            int pageSize, long? startContractId, long nowFileTime, CancellationToken cancellationToken)
+        {
+            CharacterId = characterId;
+            CorporationId = corporationId;
+            OwnerId = ownerId;
+            OwnerStatus = status;
+            OwnerPageSize = pageSize;
+            OwnerStartContractId = startContractId;
+            return ValueTask.FromResult(new ContractReadBundle([Contract()]));
+        }
+
+        private static ContractReadSnapshot Contract() => new(
+            1234, 2, 0, 0, 100, 200, false, 0, 0, 1000, 2000, 0, 0, 0,
+            3001, 0, 5000m, 0m, 0m, "Auction", "Item exchange",
+            [new ContractReadItemSnapshot(8, 34, 2, true, false)],
+            [new ContractReadBidSnapshot(1, 1000, 5000m, 1500, false)]);
     }
 }

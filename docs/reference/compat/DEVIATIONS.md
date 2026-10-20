@@ -5125,3 +5125,8 @@ The V24.01 client sends selected item collections to `invbroker.MultiAdd`; EveJS
 ## Corporation donation response (2026-10-20)
 
 EveJS `account.GiveCash` returns the donor and recipient corporation wallet balances after a character deposits ISK. The V24.01 `transferMoneyWnd.py` callsite ignores the RPC result, and the character donation panel only checks truthiness for its character-to-character path. eve.rs now returns no corporation balance data, returns a truthy acknowledgement for a successful personal gift, and refuses zero-value donations without settlement. `AccountRpcTests` verifies the response shape, debit and credit, and zero-value no-op. This narrows an information disclosure while retaining the client call flow; graphical-client acceptance is open.
+
+
+## Character manager global asset budget (2026-10-20)
+
+The V24.01 global asset methods route `charMgr.List`, `ListStations`, `ListStationItems`, `ListIncludingContainers`, and `GetAssetWorth` to inventory enumeration. EveJS handles these calls without a per-session work budget. eve.rs now charges each one 10 weighted units under the existing session budget before invoking the service. The focused dispatcher regression verifies that the first call reaches the service and the next call is refused with `SessionRpcBudgetExceeded`. Normal client asset browsing remains within the configured allowance; graphical-client acceptance is open.

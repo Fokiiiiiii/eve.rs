@@ -209,6 +209,25 @@ public class DispatchGoldenTests
     }
 
     [Fact]
+    public async Task Character_global_asset_calls_have_a_named_per_session_budget()
+    {
+        var capture = new Capture();
+        var session = new ClientSession(capture) { SessionId = 910 };
+        var registry = new ServiceRegistry();
+        var service = new CharacterKillmailBudgetService();
+        registry.Register(service);
+        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 10 };
+
+        await dispatcher.DispatchAsync(CallRequestPacket("charMgr", "List"), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("charMgr", "ListStations"), session);
+
+        Assert.Equal(1, service.Calls);
+        Assert.Equal(2, capture.Sent.Count);
+        Assert.Equal(ErrorResponseCommand, CommandOf(capture.Sent[1]));
+        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[1])));
+    }
+
+    [Fact]
     public async Task Expensive_market_calls_have_a_named_per_session_budget()
     {
         var capture = new Capture();
@@ -530,7 +549,7 @@ public class DispatchGoldenTests
 
         public string Name => "charMgr";
 
-        public bool HasMethod(string method) => method == "GetRecentShipKillsAndLosses";
+        public bool HasMethod(string method) => method is "GetRecentShipKillsAndLosses" or "List" or "ListStations" or "ListStationItems" or "ListIncludingContainers" or "GetAssetWorth";
 
         public ValueTask<PyValue> CallAsync(ServiceCall call)
         {

@@ -75,6 +75,8 @@ The T0 Dark transition profile records this packet/event sequence:
 
 The runtime stages commit the source room, move the activating participant, move the other eligible participants, clean the source room, prepare/publish the destination, activate its controllers, and commit the transition. The stored order is a capture-derived profile whose named raw trace file remains unavailable. A final JS three-room Origin capture and an RS reconnect/entry baseline are listed below; full same-scenario EveJS/eve.rs combat parity remains not confirmed.
 
+The simulator grants 60 seconds of protection when a participant enters an Abyssal room, including each room transfer. The focused regression `abyssal_room_transfer_preserves_the_ship_and_rebinds_a_new_session_before_origin_return` asserts the destination protection deadline; protection is applied only when the destination is Abyssal, so returning to known space does not grant it.
+
 ### Final Origin exit
 
 The transition profile records `OnExitingDungeon` then `OnAbyssalLocationExited`, followed by `SessionChange`. Runtime sends the two exit notifications before the return movement/session change. It commits each participant return receipt after that participant is attached in K-space; `OnAbyssalContentFinished` is sent at that receipt/final-arrival stage and is idempotently guarded by a run/content/timer receipt key.

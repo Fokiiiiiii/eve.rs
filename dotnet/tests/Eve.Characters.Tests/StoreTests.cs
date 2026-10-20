@@ -100,7 +100,6 @@ public class StoreTests
         Assert.False(many.ContainsKey(999));
     }
 
-
     [PgFact]
     public async Task Appearance_updates_preserve_omitted_fields_and_clear_a_missing_doll()
     {
@@ -159,7 +158,6 @@ public class StoreTests
         Assert.Throws<ArgumentException>(() => new PgCharacterStore(source, "characters; DROP SCHEMA x"));
         Assert.Throws<ArgumentException>(() => new Eve.Inventory.PgItemStore(source, "Inventory"));
     }
-
 
     [PgFact]
     public async Task Direct_enlistment_faction_and_cooldown_round_trip_through_character_store()

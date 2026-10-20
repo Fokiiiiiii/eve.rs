@@ -231,9 +231,9 @@ internal sealed class FrontConnection : IAsyncDisposable
         {
             return;
         }
-        catch (Exception error)
+        catch (Exception)
         {
-            _options.Log?.Invoke($"authenticating {request.UserName}: {error}");
+            _options.Log?.Invoke("account authentication failed due to a host error");
             outcome = new Rejected(LoginRefused.Unavailable);
         }
         Post(new AuthReply(request.Corr, outcome));

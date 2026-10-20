@@ -135,6 +135,18 @@ public sealed class CompatibilityRpcServicesTests
     }
 
     [Fact]
+    public async Task Localization_server_returns_the_three_configured_change_maps()
+    {
+        var expected = Py.Tuple(
+            new PyDict([new(new PyStr("en"), new PyStr("configured text"))]),
+            new PyDict([new(new PyStr("removed"), PyBool.True)]),
+            new PyDict([]));
+        var service = (IService)new LocalizationServerService(expected);
+        Assert.Equal(expected, await service.CallAsync(Call("GetAllTextChanges", new PyDict([]))));
+        Assert.Throws<ArgumentException>(() => new LocalizationServerService(new PyDict([])));
+    }
+
+    [Fact]
     public async Task Qa_rpcs_refuse_sessions_without_a_staff_account_role_and_change_nothing()
     {
         var handlerCalls = new List<string>();
@@ -151,7 +163,6 @@ public sealed class CompatibilityRpcServicesTests
         Assert.IsType<PyNone>(await ((IService)community).CallAsync(Call("change_qa_mode", PyBool.True, session: ordinary)));
         Assert.IsType<PyNone>(await ((IService)localization).CallAsync(Call("UpdateLocalizationQAWrap", PyBool.True, session: ordinary)));
         Assert.Equal(PyBool.False, await ((IService)localization).CallAsync(Call("ReloadFSDPickle", session: ordinary)));
-        Assert.IsType<PyTuple>(await ((IService)localization).CallAsync(Call("GetAllTextChanges", new PyDict([]), session: ordinary)));
         Assert.Empty(handlerCalls);
         Assert.False(community.QaMode);
         Assert.False(localization.QaWrapActive);

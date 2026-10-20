@@ -1,4 +1,5 @@
 using System.Net;
+using Eve.Marshal;
 
 namespace Eve.Host.Tests;
 
@@ -22,6 +23,19 @@ public class HostConfigurationTests
         Assert.Equal(73, HostConfiguration.ParseActiveSurveyId("73"));
         Assert.Throws<InvalidOperationException>(() => HostConfiguration.ParseActiveSurveyId("0"));
         Assert.Throws<InvalidOperationException>(() => HostConfiguration.ParseActiveSurveyId("survey"));
+    }
+
+    [Fact]
+    public void Localization_changes_require_three_maps_and_preserve_nested_values()
+    {
+        Assert.Null(HostConfiguration.ParseLocalizationTextChanges(""));
+        var changes = Assert.IsType<PyTuple>(HostConfiguration.ParseLocalizationTextChanges("[{\"en\":{\"messageID\":73}}, {}, {\"fr\":null}]"));
+        Assert.Equal(3, changes.Items.Count);
+        Assert.Single(Assert.IsType<PyDict>(changes.Items[0]).Entries);
+        Assert.Empty(Assert.IsType<PyDict>(changes.Items[1]).Entries);
+        Assert.Single(Assert.IsType<PyDict>(changes.Items[2]).Entries);
+        Assert.ThrowsAny<System.Text.Json.JsonException>(() => HostConfiguration.ParseLocalizationTextChanges("{"));
+        Assert.Throws<InvalidOperationException>(() => HostConfiguration.ParseLocalizationTextChanges("[{}, {}]"));
     }
 
     [Fact]

@@ -219,7 +219,8 @@ internal static class HostComposition
             contractWriteModel: contractWriteModel,
             contractSkillLevel: contractSkillLevel,
             calendarSessions: characterSessions,
-            contractBrokerFeeAdjustment: contractBrokerFeeAdjustment))
+              contractBrokerFeeAdjustment: contractBrokerFeeAdjustment,
+              localizationTextChanges: HostConfiguration.ParseLocalizationTextChanges(Env("EVE_LOCALIZATION_TEXT_CHANGES", ""))))
         {
             registry.Register(service);
         }

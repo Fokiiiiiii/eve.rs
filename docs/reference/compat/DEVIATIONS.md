@@ -1482,8 +1482,19 @@ Sources. The wiki: "Pochven" (https://wiki.eveuniversity.org/Pochven, fetched 20
 - **Reward checks on the screen are answered in the client's shape.** `loginCampaignManager.get_client_campaign_state` (None or the
   state), `seasonalLoginCampaignManager.get_active_campaign` (a 4-tuple, with None when no campaign runs) and
   `loginRewardFacilities.get_my_clone_grade` (an int) are what `loginCampaignService.py` and `seasonalLoginCampaignService.py`
-  read. The screen's call at `characterSelection.py:155` has no try, so a wrong shape would abort the screen's open; the answers
-  are covered by `RewardsServiceTests`. Status: verified (slice C).
+  read. Active seasonal campaign data comes from validated `EVE_SEASONAL_LOGIN_CAMPAIGN` JSON configuration; dates and reward catalogs
+  are configuration inputs while claim history and redeem tokens are persisted by account. The screen's call at
+  `characterSelection.py:155` has no try, so a wrong shape would abort the screen's open; Host coverage checks active state,
+  claim history, a successful claim and rejection of its replay. Status: implemented with focused Host coverage.
+- **Localization changes are supplied by deployment configuration.** V24.01 `LocalizationClient.OnCharacterSessionChanged` calls
+  `localizationServer.GetAllTextChanges(hashData)` when localization hashes are available and the client is unpackaged. The Host
+  makes the configured three-map tuple from `EVE_LOCALIZATION_TEXT_CHANGES` available to ordinary sessions; with no configured change catalog it returns the
+  empty three-map tuple used by EveJS 261018.1. Parsing and service response shapes have focused tests.
+- **Security and client alert startup responses follow the observed schemas.** V24.01 `securitySvc.Initialize` iterates
+  `securityMgr.get_modified_systems`; since this server changes no solar-system security values, it returns the matching empty
+  `CIndexedRowset` and descriptor. `alert.BeanCount` returns `(None, None)` so the client requests a trace; the Host assigns a
+  stable per-stack-hash ID and returns detail mode `D`, as EveJS 261018.1 does for its non-live cluster. Focused service tests
+  check the descriptor and repeated-hash behavior.
 
 ## Station entry, account requests and the live suite (slice D, 2026-10-10)
 

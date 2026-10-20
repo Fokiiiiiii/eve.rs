@@ -952,6 +952,50 @@ private static PyValue RowField(PyValue value,string key)
     }
 
     [PgFact]
+    public async Task Corporate_contact_bulk_removal_refuses_oversized_input_before_store_work()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var founder = await rig.CharacterAsync("Bulk Contact Founder");
+        var session = new ClientSession { SessionId = 2090 };
+        session.CharacterId = founder;
+        var service = new CorpRegistryService(rig.Store,rig.Characters,() => rig.Now);
+        await ((IService)service).CallAsync(new ServiceCall
+        {
+            Method = "AddCorporation",Session = session,CallId = new PyInt(74),
+            Args = [new PyStr("Bulk Contact Corp"),new PyStr("BCCC"),new PyStr("Bulk contact test"),new PyStr("https://bulk.example"),
+                Py.Number(0.05),new PyInt(419),PyNone.Instance,PyNone.Instance,new PyInt(1),new PyInt(2),new PyInt(3),
+                new PyStr("Verdana"),new PyInt(1),PyBool.True,Py.Number(0.02)]
+        });
+        var requested = new PyList(Enumerable.Range(1,501).Select(id => (PyValue)new PyInt(id)).ToArray());
+
+        var error = await Assert.ThrowsAsync<CorporationError>(async () => await service.RemoveCorporateContacts(new ServiceCall
+        {
+            Method = "RemoveCorporateContacts",Session = session,Args = [requested]
+        }));
+
+        Assert.Equal("CORPORATION_BULK_LIMIT_EXCEEDED",error.Code);
+        var kickError = await Assert.ThrowsAsync<CorporationError>(async () => await service.KickOutMembers(new ServiceCall
+        {
+            Method = "KickOutMembers",Session = session,Args = [requested]
+        }));
+        Assert.Equal("CORPORATION_BULK_LIMIT_EXCEEDED",kickError.Code);
+        var titleError = await Assert.ThrowsAsync<CorporationError>(async () => await service.UpdateTitles(new ServiceCall
+        {
+            Method = "UpdateTitles",Session = session,Args = [requested]
+        }));
+        Assert.Equal("CORPORATION_BULK_LIMIT_EXCEEDED",titleError.Code);
+        var recruiters = new PyList(Enumerable.Range(1,101).Select(id => (PyValue)new PyInt(id)).ToArray());
+        var recruitment = new CorpRecruitmentProxyService(rig.Store,rig.Characters,() => rig.Now);
+        var recruitmentError = await Assert.ThrowsAsync<CorporationError>(async () => await recruitment.CreateRecruitmentAd(new ServiceCall
+        {
+            Method = "CreateRecruitmentAd",Session = session,
+            Args = [new PyInt(1),new PyInt(0),new PyInt(0),new PyWString("Recruitment test"),recruiters,
+                new PyWString("Recruiters"),new PyLong(0),new PyInt(0),new PyLong(0)]
+        }));
+        Assert.Equal("CORPORATION_BULK_LIMIT_EXCEEDED",recruitmentError.Code);
+    }
+
+    [PgFact]
     public async Task Add_corporation_rpc_uses_the_call_id_as_the_founding_receipt()
     {
         await using var rig = await Rig.CreateAsync();
@@ -2617,6 +2661,32 @@ private static PyValue RowField(PyValue value,string key)
         var ticker = Assert.IsType<PyStr>(Field(suggestions.Items.Single(),"tickerName")).Value;
         Assert.Equal(4,ticker.Length);
         Assert.All(ticker,character => Assert.InRange(character,'A','Z'));
+    }
+
+    [PgFact]
+    public async Task Corp_member_pagination_clamps_huge_page_before_offset_arithmetic()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var founder = await rig.CharacterAsync("Paged Founder");
+        var corp = await rig.Store.CreateAsync(founder,new("Paged Works","PAGED","","",0.05m),"paged-members");
+        var session = new ClientSession { CharacterId=founder };
+        session.Set("corpid",new PyInt(corp.Id));
+        var registry = (IService)new CorpRegistryService(rig.Store,rig.Characters,() => rig.Now);
+
+        static PyTuple PageData(PyValue value)
+        {
+            var response = Assert.IsType<PyObjectEx>(value);
+            var envelope = Assert.IsType<PyTuple>(response.Header);
+            return Assert.IsType<PyTuple>(envelope.Items[1]);
+        }
+
+        var firstPage = PageData(await registry.CallAsync(Call(session,"GetMembersPaged",new PyInt(1))));
+        Assert.Single(Assert.IsType<PyList>(firstPage.Items[0]).Items);
+        Assert.Equal(new PyInt(1),firstPage.Items[1]);
+
+        var hugePage = PageData(await registry.CallAsync(Call(session,"GetMembersPaged",new PyInt(long.MaxValue))));
+        Assert.Empty(Assert.IsType<PyList>(hugePage.Items[0]).Items);
+        Assert.Equal(new PyInt(long.MaxValue-1),hugePage.Items[2]);
     }
 
     [PgFact]

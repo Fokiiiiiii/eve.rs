@@ -8,7 +8,6 @@ namespace Eve.Services.Slash;
 /// <c>/npc [amount] [faction|profile|pool]</c>: NPCs come into space around the pilot, armed as their hulls are. The reference's command (its words and its limits:
 /// five by default, fifty at most); what it names is a profile or a pool of the authored NPCs, and nothing named is the default pool of pirates. The summary it
 /// answers with says what was made; the reference's sentences about fitted modules, preferred targets and cargo loot are left out, because what they say is
-/// not how this server works (<c>docs/reference/compat/DEVIATIONS.md</c>).
 /// </summary>
 public sealed class NpcCommands(ISpaceNpcs space)
 {

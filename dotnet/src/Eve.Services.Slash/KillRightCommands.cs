@@ -3,8 +3,6 @@ using Eve.Characters;
 namespace Eve.Services.Slash;
 
 /// <summary>
-/// <c>/killright &lt;target&gt; [owner]</c>: the owner (the caller when none is named) may take the target's kill in the owner's solar system, as the pilot an
-/// illegal aggression wronged may. The grant is the crimewatch store's, and the owner is told as the aggression tells it (<c>CrimewatchRuntime.GrantKillRightAsync</c>).
 /// The client's Insider sends the words as typed; a pilot is named as <see cref="PilotTokens"/> names one.
 /// </summary>
 public sealed class KillRightCommands(PgCharacterStore characters, Func<long, long, long, long, CancellationToken, Task<long?>> grant, Func<long> nowUnixMs)

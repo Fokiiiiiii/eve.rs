@@ -1,4 +1,3 @@
--- Accounts: who may log in. The client sends the hash of the typed password; only the hash is kept.
 CREATE TABLE accounts (
     id            integer GENERATED ALWAYS AS IDENTITY (START WITH 1) PRIMARY KEY,
     user_name     text    NOT NULL UNIQUE,

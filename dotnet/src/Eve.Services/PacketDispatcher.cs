@@ -273,6 +273,8 @@ public sealed class PacketDispatcher
             return 10;
         if (service == "mailingListsMgr")
             return 10;
+        if (service == "contractProxy")
+            return 10;
         if ((service is "charFittingMgr" or "corpFittingMgr" or "allianceFittingMgr") && (method is "GetFittings" or "SaveFitting" or "UpdateFitting" or "SaveManyFittings" or "DeleteFitting" or "DeleteManyFittings" or "UpdateNameAndDescription" or "GetCommunityFittings"))
             return 10;
         if (service == "invbroker" && method is "MultiMerge" or "MultiAdd" or "StackAll" or "RepackageItems")
@@ -297,7 +299,7 @@ public sealed class PacketDispatcher
             return 10;
         if (service == "structureDirectory" && method is "CheckMyDockingAccessToStructures" or "GetMyDockableStructures")
             return 10;
-        if (service == "skillHandler" && method is "InjectSkillIntoBrain" or "InjectSkillpoints" or "ExtractSkills")
+        if (service == "skillHandler" && method is "InjectSkillIntoBrain" or "InjectSkillpoints" or "ExtractSkills" or "GetDiminishedSpFromInjectors" or "SplitSkillInjector" or "CombineSkillInjector")
             return 10;
         if (service == "accessGroupBookmarkMgr" && method is "GetMyActiveBookmarks" or "SearchFoldersWithAdminAccess" or "DeleteBookmarks" or "MoveBookmarksToFolderAndSubfolder" or "CopyBookmarksToFolderAndSubfolder")
             return 10;

@@ -353,6 +353,7 @@ public sealed partial class SpaceSessions
             throw JumpRefused(reply.Reason);
         }
 
+        await CancelShipSelfDestructAsync(pilot.ShipId, cancellationToken);
         // EVE.js jumpSessionViaStargate: the contraband of the ship is inspected in the system it arrives in
         await ApplyContrabandAsync(session, pilot.CharacterId, pilot.ShipId, destination, cancellationToken);
         _emanationLocks.Left(pilot.CharacterId, pilot.SolarSystemId);
@@ -555,6 +556,8 @@ public sealed partial class SpaceSessions
                         ? null
                         : new ShipCondition(condition.Damage, condition.Charge, condition.ShieldCharge, condition.ArmorDamage, false);
                     var docked = await _ships.DockAsync(pilot.CharacterId, stationId, shipCondition, cancellationToken);
+                    if (docked.Moved is not null)
+                        await CancelShipSelfDestructAsync(pilot.ShipId, cancellationToken);
                     if (docked.Moved is not null && PilotDocked is { } onDocked) await onDocked(pilot.CharacterId, stationId, cancellationToken);
                     return docked;
                 },

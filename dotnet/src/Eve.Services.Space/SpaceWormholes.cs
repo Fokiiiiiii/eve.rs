@@ -169,6 +169,7 @@ public sealed partial class SpaceSessions
             throw JumpRefused(reply.Reason);
         }
 
+        await CancelShipSelfDestructAsync(pilot.ShipId, cancellationToken);
         var changes = new List<WormholeChange>();
         var transit = await world.TransitAsync(connectionId, mass, now, changes.Add, cancellationToken);
         if (transit.Outcome == TransitOutcome.Refused)

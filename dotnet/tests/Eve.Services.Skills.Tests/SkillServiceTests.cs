@@ -411,6 +411,26 @@ public class SkillHandlerTests
         Assert.Null(await rig.ItemStore.GetAsync(injector));
     }
 
+
+    [PgFact]
+    public async Task Injector_diminishing_total_saturates_without_overflowing_authoritative_point_balances()
+    {
+        await using var rig = await Rig.CreateAsync(useCurrentSdeCatalog: true);
+        var characterId = rig.CharacterId;
+        var skill = rig.CatalogForTest.Skills.Single(type => type.TypeId == 3300).TypeId;
+        await rig.GrantAsync(characterId, (skill, 5, 4_950_000));
+        await rig.GrantFreeSkillPointsAsync(characterId, long.MaxValue - 50_000);
+        var injectorType = rig.CatalogForTest.ItemTypeId("Small Skill Injector");
+        Assert.NotNull(injectorType);
+        var injector = await rig.CreateItemAsync(new Eve.Inventory.NewItem(injectorType.Value, characterId, 60_000_001, 4, 2, false));
+        var session = Rig.Session(characterId).Session;
+
+        Assert.Equal(new PyInt(30_000), await Rig.CallAsync(rig.Handler, session, "GetDiminishedSpFromInjectors", new PyInt(injectorType.Value), new PyInt(1), new PyInt(0)));
+        Assert.Equal(new PyInt(30_000), await Rig.CallAsync(rig.Handler, session, "InjectSkillpoints", new PyLong(injector), new PyInt(1)));
+        Assert.Equal(long.MaxValue - 20_000, await rig.Store.FreeSkillPointsAsync(characterId));
+        Assert.Equal(1, (await rig.ItemStore.GetAsync(injector))?.Quantity);
+    }
+
     [PgFact]
     public async Task Injector_preview_uses_per_item_large_and_small_bands_and_non_diminishing_uses()
     {
@@ -727,6 +747,28 @@ public class SkillHandlerTests
         Assert.Equal(PyNone.Instance, await Rig.CallAsync(rig.Handler, session, "CombineSkillInjector", new PyLong(smallStack.Id), new PyInt(3)));
         var combined = Assert.Single(await rig.ItemStore.InLocationAsync(60_000_001, characterId));
         Assert.Equal((large.Value, 1L), (combined.TypeId, combined.Quantity));
+    }
+
+[PgFact]
+    public async Task Splitting_an_oversized_skill_injector_stack_refuses_before_mutation()
+    {
+        await using var rig = await Rig.CreateAsync(useCurrentSdeCatalog: true);
+        var characterId = rig.CharacterId;
+        var large = rig.CatalogForTest.ItemTypeId("Large Skill Injector");
+        var small = rig.CatalogForTest.ItemTypeId("Small Skill Injector");
+        Assert.NotNull(large);
+        Assert.NotNull(small);
+        const long station = 60_000_001;
+        var quantity = long.MaxValue / 3 + 1;
+        var itemId = await rig.CreateItemAsync(new Eve.Inventory.NewItem(large.Value, characterId, station, 4, quantity, false));
+        var session = Rig.Session(characterId).Session;
+        session.Set("stationid", new PyInt(station));
+
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            Rig.CallAsync(rig.Handler, session, "SplitSkillInjector", new PyLong(itemId), new PyLong(quantity)));
+        Assert.Equal("CustomNotify", error.Error.UserErrorMessage);
+        Assert.Equal(quantity, (await rig.ItemStore.GetAsync(itemId))?.Quantity);
+        Assert.DoesNotContain(await rig.ItemStore.InLocationAsync(station, characterId), item => item.TypeId == small.Value);
     }
 
     [PgFact]

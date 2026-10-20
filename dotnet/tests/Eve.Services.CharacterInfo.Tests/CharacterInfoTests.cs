@@ -64,12 +64,14 @@ internal sealed class Rig : IAsyncDisposable
     Func<long, PyValue, CancellationToken, ValueTask>? writeLogSettings = null,
     Func<long, CancellationToken, ValueTask<long?>>? readCorporationMemberStartedMs = null,
     Func<IReadOnlyList<Character>, CancellationToken, ValueTask<IReadOnlyDictionary<long, CharMgrOrganizationInfo>>>? readOrganizationInfo = null,
-    HomeStationResolver? homeStations = null) =>
+    HomeStationResolver? homeStations = null,
+    Func<long, long, CancellationToken, ValueTask<bool>>? canReadPrivateCorporationMemberInfo = null) =>
     new(Characters, homeStations ?? CreateHomeStationResolver(Characters), ReadRecentShipKillmailPageAsync,
         ReadCharacterDescriptionAsync, WriteCharacterDescriptionAsync, ReadSecurityStatusAsync, ReadMedal1GraphicIdAsync,
         readPersonalData, updatePersonalData, writeActivityStatus, writeLogSettings,
         readCorporationMemberStartedMs, readOrganizationInfo,
-        readBalance: async (characterId, token) => (await Wallets.GetAsync(characterId, token))?.Isk);
+        readBalance: async (characterId, token) => (await Wallets.GetAsync(characterId, token))?.Isk,
+        canReadPrivateCorporationMemberInfo: canReadPrivateCorporationMemberInfo);
 
 public static HomeStationResolver CreateHomeStationResolver(
     PgCharacterStore characters,
@@ -579,13 +581,17 @@ public class CharMgrTests
         var characterId = await rig.MakeAsync("Private Member");
         var character = (await rig.Characters.GetAsync(characterId))!;
         var (session, _) = Rig.Session(characterId);
+        var roleIsCurrent = true;
+        var service = rig.CreateCharMgr(canReadPrivateCorporationMemberInfo: (_, _, _) => ValueTask.FromResult(roleIsCurrent));
 
-        Assert.IsType<PyNone>(await Rig.CallAsync(rig.CharMgr, session, "GetPrivateInfo", Id(characterId)));
+        Assert.IsType<PyNone>(await Rig.CallAsync(service, session, "GetPrivateInfo", Id(characterId)));
         session.Set("corpid", Id(character.CorporationId));
         session.Set("rolesAtAll", Id(Eve.Corporations.CorporationRoles.PersonnelManager));
-        Assert.IsType<PyObject>(await Rig.CallAsync(rig.CharMgr, session, "GetPrivateInfo", Id(characterId)));
+        Assert.IsType<PyObject>(await Rig.CallAsync(service, session, "GetPrivateInfo", Id(characterId)));
+        roleIsCurrent = false;
+        Assert.IsType<PyNone>(await Rig.CallAsync(service, session, "GetPrivateInfo", Id(characterId)));
         session.Set("corpid", Id(character.CorporationId + 1));
-        Assert.IsType<PyNone>(await Rig.CallAsync(rig.CharMgr, session, "GetPrivateInfo", Id(characterId)));
+        Assert.IsType<PyNone>(await Rig.CallAsync(service, session, "GetPrivateInfo", Id(characterId)));
     }
 
     [PgFact]

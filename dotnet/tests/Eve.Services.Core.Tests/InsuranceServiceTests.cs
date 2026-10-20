@@ -372,6 +372,46 @@ public sealed class InsuranceServiceTests
     }
 
     [Fact]
+    public async Task Corporate_insurance_refuses_a_stale_accountant_session_role()
+    {
+        var writer = new FakeInsuranceWriteModel();
+        IService service = (IService)(object)new InsuranceService(
+            new FakeInsuranceReadModel(), () => NowUnixMs, writer,
+            (_, _, _) => ValueTask.FromResult(false));
+        var session = Session(
+            ("charid", new PyInt(100)),
+            ("corpid", new PyInt(200)),
+            ("corprole", new PyLong(InsuranceService.CorporationAccountantRole)),
+            ("stationid", new PyInt(300)),
+            ("solarsystemid2", new PyInt(400)));
+
+        await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(Call(
+            session, "InsureShip", new PyInt(500), new PyReal(356_011.65), PyBool.True)).AsTask());
+        Assert.Null(writer.Purchase);
+    }
+
+    [Fact]
+    public async Task Corporate_uninsurance_refuses_a_stale_accountant_session_role()
+    {
+        var writer = new FakeInsuranceWriteModel();
+        var contract = new InsuranceContractSnapshot(1, 500, 34, 200, InsuranceOwnerKind.Corporation,
+            0.5, Py.FileTimeFromUnixMs(NowUnixMs - 1), Py.FileTimeFromUnixMs(NowUnixMs + 1), "active");
+        IService service = (IService)(object)new InsuranceService(
+            new FakeInsuranceReadModel(contracts: [contract]), () => NowUnixMs, writer,
+            (_, _, _) => ValueTask.FromResult(false));
+        var session = Session(
+            ("charid", new PyInt(100)),
+            ("corpid", new PyInt(200)),
+            ("corprole", new PyLong(InsuranceService.CorporationAccountantRole)),
+            ("stationid", new PyInt(300)),
+            ("solarsystemid2", new PyInt(400)));
+
+        await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(Call(
+            session, "UnInsureShip", new PyInt(500))).AsTask());
+        Assert.Null(writer.Cancellation);
+    }
+
+    [Fact]
     public async Task Corporation_insurance_forwards_corporation_owner_and_role_context()
     {
         var writer = new FakeInsuranceWriteModel();

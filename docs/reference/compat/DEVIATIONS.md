@@ -5096,3 +5096,8 @@ The writer serializes accept and bid operations by locking the contract row befo
 ## Inventory bulk operation bounds (2026-10-20)
 
 The V24.01 client sends selected item collections to `invbroker.MultiAdd`; EveJS accepts the client collection without an entry limit. eve.rs now applies the existing 500-entry inventory bulk cap before deduplication or item lookups, matching the limit used by adjacent inventory batch RPCs. Normal client batches retain the same behavior. The focused PostgreSQL regression checks the named refusal at 501 entries; graphical-client acceptance is open.
+
+
+## Market bulk sell bound (2026-10-20)
+
+`marketProxy.PlaceMultiSellOrder` accepts a client list of sell entries. EveJS handles each entry in sequence without an entry cap. eve.rs now refuses more than 500 entries before market calls, matching the cap on adjacent multi-order RPCs. The focused PostgreSQL test checks the named refusal at 501 entries; normal client batches retain their behavior. Graphical-client acceptance is open.

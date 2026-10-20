@@ -139,6 +139,21 @@ public class MarketRpcTests
     }
 
     [PgFact]
+    public async Task Multi_sell_refuses_more_than_500_entries_before_work()
+    {
+        await using var r = await TradeRig.Create();
+        var actor = await r.Actor("Bounded Multi Seller");
+        var seat = await SeatAsync(r, actor);
+        var entries = new PyList(Enumerable.Repeat(Line(Tritanium, 1, 10), 501).ToArray());
+
+        var refusal = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await seat.Proxy.PlaceMultiSellOrder(
+                Call(seat.Session, "PlaceMultiSellOrder", 3, entries, PyBool.False, new PyInt(1), PyNone.Instance)));
+
+        Assert.Equal("MARKET_BULK_LIMIT_EXCEEDED", refusal.Error.UserErrorMessage);
+    }
+
+    [PgFact]
     public async Task Buy_multi_fills_each_line_at_its_limit_and_books_the_unfilled_rest_of_each_line()
     {
         // BuyMultipleItems (EVE.js proxy 6915): immediate buys; a line fills what matches at its limit and books the rest as a buy order; the answer is the

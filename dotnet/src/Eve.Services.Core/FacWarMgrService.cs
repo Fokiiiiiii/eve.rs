@@ -14,7 +14,8 @@ public sealed record FacWarMgrCallbacks(
     Func<long, long, CancellationToken, ValueTask<double>> ReadStandingAsync,
     Func<long>? NowMs = null,
     Func<long, IReadOnlyList<long>, CancellationToken, ValueTask<FwFactionMembers>>? FactionMembersAsync = null,
-    Func<CancellationToken, ValueTask<IReadOnlyList<(long CorporationId, long AllianceId)>>>? AffiliationsAsync = null);
+    Func<CancellationToken, ValueTask<IReadOnlyList<(long CorporationId, long AllianceId)>>>? AffiliationsAsync = null,
+    Func<long, long, CancellationToken, ValueTask<bool>>? CanActAsCorporationDirectorAsync = null);
 
 /// <summary>The members of a war faction: all of them, those of its militia corporation, and the largest enlisted corporation's members.</summary>
 public sealed record FwFactionMembers(long Total, long Militia, long Top);
@@ -93,25 +94,25 @@ public sealed class FacWarMgrService(FwService factionWarfare, FacWarMgrCallback
                     ("startDate", new PyLong(UnixMsToFileTime(status.StartMs))));
             }
             case "JoinFactionAsCorporation":
-                RequireDirector(session);
+                await RequireCorporationDirectorAsync(call, corporationId);
                 return await JoinAsync(CorporationKind, corporationId, Id(call, 0), now, cancellation);
             case "JoinFactionAsAlliance":
                 RequireDirector(session);
                 return await JoinAsync(AllianceKind, session.GetInt("allianceid") ?? 0, Id(call, 0), now, cancellation);
             case "LeaveFactionAsCorporation":
-                RequireDirector(session);
+                await RequireCorporationDirectorAsync(call, corporationId);
                 return Refused(await factionWarfare.LeaveAsync((int)CorporationKind, corporationId, now, cancellation));
             case "LeaveFactionAsAlliance":
                 RequireDirector(session);
                 return Refused(await factionWarfare.LeaveAsync((int)AllianceKind, session.GetInt("allianceid") ?? 0, now, cancellation));
             case "WithdrawJoinFactionAsCorporation":
-                RequireDirector(session);
+                await RequireCorporationDirectorAsync(call, corporationId);
                 return Refused(await factionWarfare.WithdrawJoinAsync((int)CorporationKind, corporationId, now, cancellation));
             case "WithdrawJoinFactionAsAlliance":
                 RequireDirector(session);
                 return Refused(await factionWarfare.WithdrawJoinAsync((int)AllianceKind, session.GetInt("allianceid") ?? 0, now, cancellation));
             case "WithdrawLeaveFactionAsCorporation":
-                RequireDirector(session);
+                await RequireCorporationDirectorAsync(call, corporationId);
                 return Refused(await factionWarfare.WithdrawLeaveAsync((int)CorporationKind, corporationId, now, cancellation));
             case "WithdrawLeaveFactionAsAlliance":
                 RequireDirector(session);
@@ -332,6 +333,15 @@ public sealed class FacWarMgrService(FwService factionWarfare, FacWarMgrCallback
         EnlistOutcome.BelowStanding => throw Notice("UI/FactionWarfare/StandingTooLow"),
         _ => throw Notice("UI/FactionWarfare/NothingToWithdraw"),
     };
+
+    private async ValueTask RequireCorporationDirectorAsync(ServiceCall call, long corporationId)
+    {
+        if (((call.Session.GetInt("corprole") ?? 0) & CorporationRoleDirector) == 0 || corporationId <= 0)
+            throw Notice("UI/FactionWarfare/DirectorRequired");
+        if (callbacks.CanActAsCorporationDirectorAsync is { } canAct &&
+            !await canAct(call.Session.CharacterId ?? 0, corporationId, call.Cancellation))
+            throw Notice("UI/FactionWarfare/DirectorRequired");
+    }
 
     private static void RequireDirector(ClientSession session)
     {

@@ -53,7 +53,8 @@ public sealed partial class CharMgrService(
     Func<IReadOnlyList<Character>, CancellationToken, ValueTask<IReadOnlyDictionary<long, CharMgrOrganizationInfo>>>? readOrganizationInfo = null,
     Func<long, CancellationToken, ValueTask<int?>>? readRecustomizationState = null,
     Func<ServiceCall, ValueTask<PyValue>>? globalAssetsInventoryCall = null,
-    Func<long, CancellationToken, ValueTask<decimal?>>? readBalance = null)
+    Func<long, CancellationToken, ValueTask<decimal?>>? readBalance = null,
+    Func<long, long, CancellationToken, ValueTask<bool>>? canReadPrivateCorporationMemberInfo = null)
 {
     private const int MaxOrganizationInfoCharacterIds = 500;
     private const int MaxBulkContactOwnerIds = 500;
@@ -143,13 +144,17 @@ public sealed partial class CharMgrService(
             ("medal1GraphicID", Nullable(medal1GraphicId)));
     }
 
-    private static bool CanReadPrivateCorporationMemberInfo(ServiceCall call, long targetCorporationId)
+    private async ValueTask<bool> CanReadPrivateCorporationMemberInfoAsync(ServiceCall call, long targetCorporationId)
     {
         var callerCorporationId = call.Session.GetInt("corporationID") ?? call.Session.GetInt("corpid") ?? 0;
         var roles = call.Session.GetInt("rolesAtAll") ?? call.Session.GetInt("corprole") ?? 0;
         var permittedRoles = Eve.Corporations.CorporationRoles.Director | Eve.Corporations.CorporationRoles.PersonnelManager;
-        return targetCorporationId > 0 && callerCorporationId == targetCorporationId &&
-            (roles & permittedRoles) != 0;
+        if (targetCorporationId <= 0 || callerCorporationId != targetCorporationId || (roles & permittedRoles) == 0)
+            return false;
+        if (canReadPrivateCorporationMemberInfo is null)
+            return true;
+        var actorId = call.Session.CharacterId ?? 0;
+        return actorId > 0 && await canReadPrivateCorporationMemberInfo(actorId, targetCorporationId, call.Cancellation);
     }
 
     private async ValueTask<Character?> CharacterAsync(ServiceCall call)
@@ -224,7 +229,7 @@ public sealed partial class CharMgrService(
     public async ValueTask<PyValue> GetPrivateInfo(ServiceCall call)
     {
         if (await CharacterAsync(call) is not { } character ||
-            !CanReadPrivateCorporationMemberInfo(call, character.CorporationId))
+            !await CanReadPrivateCorporationMemberInfoAsync(call, character.CorporationId))
             return None;
         var balance = readBalance is null ? 0m : (await readBalance(character.Id, call.Cancellation)) ?? 0m;
         var security = await readCharacterSecurityStatus(character.Id, call.Cancellation);

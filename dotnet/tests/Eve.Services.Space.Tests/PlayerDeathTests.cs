@@ -275,6 +275,42 @@ public class PlayerDeathTests
     }
 
     [PgFact]
+    public async Task Leaving_the_character_session_cancels_a_bound_ship_self_destruct_countdown()
+    {
+        var (rig, character, session) = await InSpaceAsync();
+        await using var _ = rig;
+        var bound = await rig.BindShipInSpaceAsync(session);
+        await rig.ShipCallAsync(session, "SelfDestruct", bound, new PyLong(character.ShipId));
+        var key = $"self-destruct:{character.ShipId}";
+        Assert.NotNull(await rig.Scheduler.FindAsync(SpaceSessions.ShipSelfDestructJobKind, key));
+
+        await rig.Space.OnCharacterLeavingAsync(session, character.CharacterId, CancellationToken.None);
+        await rig.Space.QuiesceAsync();
+
+        Assert.Null(await rig.Scheduler.FindAsync(SpaceSessions.ShipSelfDestructJobKind, key));
+        Assert.Equal(new SimSetSlimField(character.ShipId, "selfDestructTime", new SimSlimNone()), rig.Sim.Heard.OfType<SimSetSlimField>().Last());
+        Assert.Empty(rig.Sim.Heard.OfType<SimDestroy>());
+    }
+
+    [PgFact]
+    public async Task Disconnecting_cancels_a_bound_ship_self_destruct_countdown()
+    {
+        var (rig, character, session) = await InSpaceAsync();
+        await using var _ = rig;
+        var bound = await rig.BindShipInSpaceAsync(session);
+        await rig.ShipCallAsync(session, "SelfDestruct", bound, new PyLong(character.ShipId));
+        var key = $"self-destruct:{character.ShipId}";
+        Assert.NotNull(await rig.Scheduler.FindAsync(SpaceSessions.ShipSelfDestructJobKind, key));
+
+        session.Close();
+        await rig.Space.QuiesceAsync();
+
+        Assert.Null(await rig.Scheduler.FindAsync(SpaceSessions.ShipSelfDestructJobKind, key));
+        Assert.Equal(new SimSetSlimField(character.ShipId, "selfDestructTime", new SimSlimNone()), rig.Sim.Heard.OfType<SimSetSlimField>().Last());
+        Assert.Empty(rig.Sim.Heard.OfType<SimDestroy>());
+    }
+
+    [PgFact]
     public async Task Bound_ship_self_destruct_runs_the_existing_death_settlement_after_its_persisted_deadline()
     {
         var (rig, character, session) = await InSpaceAsync();

@@ -5198,7 +5198,7 @@ The market parser rejects floating-point prices beyond the market maximum before
 
 ## Ship self-destruct countdown (2026-10-20)
 
-The V24 `ship.SelfDestruct` and `ship.AbortSelfDestruct` bound calls now require the session's exact active ship. The start call schedules a durable 120-second action and publishes `selfDestructTime`; duplicate starts preserve the original deadline. Abort removes the pending action, while safe logoff is refused during the countdown. Expiry invokes the existing ship-death settlement. The countdown is restored to the scene when the bound ship service is re-created, and movement to another space scene cancels it. `PlayerDeathTests.Bound_ship_self_destruct_is_durable_duplicate_safe_and_abortable` and `Bound_ship_self_destruct_runs_the_existing_death_settlement_after_its_persisted_deadline` cover these paths.
+The V24 `ship.SelfDestruct` and `ship.AbortSelfDestruct` bound calls now require the session's exact active ship. The start call schedules a durable 120-second action and publishes `selfDestructTime`; duplicate starts preserve the original deadline. Abort removes the pending action, while safe logoff is refused during the countdown. Expiry invokes the existing ship-death settlement. The countdown is restored to the scene when the bound ship service is re-created, and movement to another space scene cancels it; transition cleanup only publishes a cleared field when a pending countdown was actually canceled. `PlayerDeathTests.Bound_ship_self_destruct_is_durable_duplicate_safe_and_abortable`, `Leaving_the_character_session_cancels_a_bound_ship_self_destruct_countdown`, `Disconnecting_cancels_a_bound_ship_self_destruct_countdown`, and `Bound_ship_self_destruct_runs_the_existing_death_settlement_after_its_persisted_deadline` cover these paths; the full `PlayerDeathTests` suite passed 18/18 on eve_p4 after the transition cleanup correction.
 
 ## Skill service bulk and arithmetic bounds (2026-10-20)
 
@@ -5219,6 +5219,9 @@ The insurance RPCs accept positive integer ship IDs. Fractional or malformed val
 `structureDirectory.CheckMyDockingAccessToStructures` accepts up to 500 structure IDs. Larger lists return `StructureBulkLimitExceeded` before access-list snapshots are read. Normal structure-access results retain the existing per-list ACL evaluation and order. `StructureDirectoryServiceTests.Docking_access_refuses_more_than_500_structure_ids_before_the_callback` verifies no callback work on refusal.
 
 
+## Ansiblex jump RPC audit (2026-10-20)
+
+V24 menu and autopilot call `structureJumpBridgeMgr.CmdJumpThroughStructureStargate`. `StructureTravelRpcService` registers that method but the Host composition currently supplies only `GetJbStructureDestination` and `GetLinkedStructure` callbacks. With no travel callback, the jump call returns the named structure-travel refusal. The existing `SpaceSessions.BridgeJumpAsync` path covers ship-mounted Titan, Black Ops and Rorqual bridges and is not an Ansiblex route. `StructureTravelRpcTests.Travel_rpcs_report_the_missing_runtime_backend` and `Jump_bridge_lookup_rpcs_use_persisted_callbacks_and_reference_shapes` cover the current refusal and lookup behavior; the focused `StructureTravelRpcTests`/`StructureTravelTests` run passed 17/17. Ansiblex traversal, anchoring/setup, and associated scene alignment visuals remain open; the release delta records them separately.
 ## Contract RPC current-role checks (2026-10-20)
 
 Corporate contract creation, bidding, acceptance, completion, deletion, and corporate list reads check the authenticated session role bit and then resolve the actor’s current corporation membership and Contract Manager role through the persisted `CorporationStore`. A role removed while the character remains logged in therefore no longer authorizes a corporate contract call. `ContractProxyServiceTests.Accept_for_corporation_refuses_a_stale_session_role_without_persisted_authority` supplies a stale positive session role with a persisted-role callback returning false and verifies refusal.
@@ -5227,3 +5230,18 @@ Corporate contract creation, bidding, acceptance, completion, deletion, and corp
 ## Corporation audit role revocation (2026-10-20)
 
 `corpMgr.AuditMember` now derives Director/Auditor access from the persisted member masks and titles on every request. Its session role attributes are not sufficient to expose corporation audit events or role history after a role change. `CorporationProtocolTests.Corp_mgr_audit_member_rechecks_persisted_auditor_role_after_login` creates an Auditor session, confirms access, removes the persisted role, then confirms that the same session is denied before audit-event reads.
+
+
+## Private corporation-member info role revocation (2026-10-20)
+
+`charMgr.GetPrivateInfo` still requires the session’s same-corporation Director or Personnel Manager role for the V24 call contract. The Host additionally checks current persisted membership and role before returning the target’s balance and security rating, so demotion during an active session removes access. `CharacterInfoTests.Private_member_info_requires_an_authorized_role_in_the_members_corporation` verifies access and refusal after the persisted-role callback is revoked.
+
+
+## Faction-warfare corporation role revocation (2026-10-20)
+
+The four corporation enlistment, leave, and withdrawal mutations retain the client Director-session-bit check and additionally validate the actor's current persisted corporation membership and Director role. A role removed during an active session therefore cannot approve or withdraw corporation faction-warfare changes. `FacWarMgrRpcTests.Corporation_enlistment_needs_the_director_role_and_is_pending_until_the_downtime` verifies that a stale Director session cannot leave an enlisted corporation. Alliance role authorization is handled separately and remains under review.
+
+
+## Corporate insurance role revocation (2026-10-20)
+
+Corporate insurance reads, purchases, and cancellation preserve the client Accountant or Junior Accountant session-role check and also verify current persisted membership and effective role through the Host corporation store. Demotion during an active session therefore removes access to corporate insurance contracts and blocks new corporate purchases or cancellation. `InsuranceServiceTests.Corporate_insurance_refuses_a_stale_accountant_session_role` and `InsuranceServiceTests.Corporate_uninsurance_refuses_a_stale_accountant_session_role` both passed; each keeps stale session authority while persisted checks deny before the writer. The Host project built with zero warnings or errors.

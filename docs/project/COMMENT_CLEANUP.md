@@ -98,6 +98,8 @@
 | `dotnet/tests/Eve.Services.Skills.Tests` (5 C# files) | 49 | 45 | 2026-10-20 |
 | `dotnet/tests/Eve.Services.Space.Tests` (132 C# files) | 1428 | 1305 | 2026-10-20 |
 | `dotnet/tests/Eve.Services.Tests` (9 C# files) | 39 | 38 | 2026-10-20 |
+| `dotnet/tests/Eve.Services.Station.Tests` (7 C# files) | 23 | 21 | 2026-10-20 |
+| `dotnet/tests/Eve.Services.Wallet.Tests` (3 C# files) | 8 | 8 | 2026-10-20 |
 | `dotnet/src/Eve.Insurgency` (5 C# files; migrations reviewed) | 99 | 87 | 2026-10-20 |
 | `dotnet/src/Eve.Dungeons` (5 C# files) | 101 | 49 | 2026-10-20 |
 | `dotnet/src/Eve.Fitting` (8 C# files; migrations reviewed) | 97 | 78 | 2026-10-20 |
@@ -108,5 +110,9 @@
 | `dotnet/src/Eve.Inventory` (8 C# files; migrations reviewed) | 184 | 178 | 2026-10-20 |
 | `dotnet/src/Eve.Events` (2 C# files; migrations reviewed) | 71 | 66 | 2026-10-20 |
 | `dotnet/src/Eve.Scheduler` (4 C# files; migration reviewed) | 93 | 85 | 2026-10-20 |
+| `dotnet/src/Eve.Services.Corporations` (18 C# files) | 93 | 76 | 2026-10-20 |
+| `dotnet/tests/Eve.Corporations.Tests` (12 C# files) | 28 | 24 | 2026-10-20 |
+| `tools/mitm/mitm.py` | 13 | 13 | 2026-10-20 |
+| `tools/spec-extract` (2 Python files) | 4 | 3 | 2026-10-20 |
 
 The stdlib-only `tools/dev/prune-comments.py` identifies Rust, C#, and Python comments, removes process notes, stale prose, separators, and decorated section dividers, compares code token streams before writing, collapses excess blank lines, keeps remaining Rust doc comments adjacent to their attributes and items, and skips fixture and generated-file paths. `tools/dev/test_prune_comments.py` covers raw and nested strings/comments, attributes, doc spacing, preprocessor directives, and Python string markers.

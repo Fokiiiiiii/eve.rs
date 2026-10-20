@@ -113,7 +113,7 @@ public class CachedResultTests
     [Theory]
     [InlineData("", 1)]
     [InlineData("a", 0x00620062)]
-    [InlineData("Wikipedia", 0x11E60398)] // the example of the Adler-32 definition
+    [InlineData("Wikipedia", 0x11E60398)]
     public void The_checksum_is_adler_32_read_as_a_signed_number(string text, int expected) =>
         Assert.Equal(expected, Checksums.SignedAdler32(System.Text.Encoding.ASCII.GetBytes(text)));
 
@@ -290,7 +290,6 @@ public class StationServiceTests
         Assert.Equal("stationSvc", ((IService)service).Name);
         Assert.True(((IService)service).HasMethod("GetGuests"));
     }
-
 
     [Fact]
     public async Task Get_stations_for_owner_returns_reference_keyvals_and_three_decimal_security()

@@ -40,6 +40,7 @@ public sealed partial class RaffleMgrService(Func<int?, CancellationToken, Value
     [Method("QA_SeedRaffles")]
     public async ValueTask<PyValue> QaSeedRaffles(ServiceCall call)
     {
+        if (!CompatibilityRpc.IsStaff(call)) return new PyInt(0);
         var seeded = seedRafflesAsync is null
             ? 0
             : await seedRafflesAsync(NullableInteger(call.Arg(0)), call.Cancellation).ConfigureAwait(false) ?? 0;
@@ -73,7 +74,8 @@ public sealed partial class RaffleProxyService
 public sealed partial class ContractProxyService(
     Eve.Services.Core.IContractReadModel? readModel = null,
     IContractWriteModel? writeModel = null,
-    Func<long, int, CancellationToken, ValueTask<int>>? readSkillLevel = null)
+    Func<long, int, CancellationToken, ValueTask<int>>? readSkillLevel = null,
+    Func<long, long, CancellationToken, ValueTask<decimal>>? readBrokerFeeAdjustment = null)
 {
     private const long CorpRoleContractManager = 72057594037927936L; // appConst.corpRoleContractManager
     private const int ContractingSkill = 25235;
@@ -114,8 +116,11 @@ public sealed partial class ContractProxyService(
         var limit = availability == 2 ? ContractCreationLimits.MaxNumContracts
             : info.ForCorp ? ContractCreationLimits.Corporation(corporationContracting)
             : ContractCreationLimits.Personal(contracting, advanced);
+        var brokerFeeAdjustment = readBrokerFeeAdjustment is null
+            ? 1m
+            : await readBrokerFeeAdjustment(issuerId, call.Session.GetInt("solarsystemid2") ?? 0, call.Cancellation);
         var fees = ContractFeesCalculator.Calculate((short)info.ContractType, (short)availability, info.Price, info.Reward,
-            info.MinutesExpire, brokerRelations, accounting, brokerFeeAdjustment: 1m);
+            info.MinutesExpire, brokerRelations, accounting, brokerFeeAdjustment);
         var courier = info.ContractType == 3;
         var request = new CreateItemExchangeRequest(
             IssuerCharacterId: issuerId,
@@ -151,8 +156,9 @@ public sealed partial class ContractProxyService(
         {
             throw MachoErrors.ThrowUserError(error.Message, error.Values.ToArray());
         }
-        catch (ArgumentException)
+        catch (ArgumentException error)
         {
+            Console.Error.WriteLine($"eve-host: contract writer rejected arguments ({error.GetType().Name}, parameter {error.ParamName ?? "none"})");
             throw MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr("The contract terms are outside the supported limits.")));
         }
     }
@@ -404,6 +410,7 @@ public sealed partial class ServiceGatewayMgrService(
     [Method("qa_enable_hijack_mode")]
     public PyValue QaEnableHijackMode(ServiceCall call)
     {
+        if (!CompatibilityRpc.IsStaff(call)) return PyNone.Instance;
         _enabled = true;
         setHijackMode?.Invoke(true, call.Arg(0), call.Arg(1));
         return PyNone.Instance;
@@ -412,6 +419,7 @@ public sealed partial class ServiceGatewayMgrService(
     [Method("qa_disable_hijack_mode")]
     public PyValue QaDisableHijackMode(ServiceCall call)
     {
+        if (!CompatibilityRpc.IsStaff(call)) return PyNone.Instance;
         _enabled = false;
         setHijackMode?.Invoke(false, PyNone.Instance, PyNone.Instance);
         return PyNone.Instance;
@@ -419,7 +427,8 @@ public sealed partial class ServiceGatewayMgrService(
 
     [Method("qa_is_hijack_mode_enabled")]
     public PyValue QaIsHijackModeEnabled(ServiceCall call) =>
-        (isHijackModeEnabled?.Invoke() ?? _enabled) ? PyBool.True : PyBool.False;
+        !CompatibilityRpc.IsStaff(call) ? PyBool.False :
+            (isHijackModeEnabled?.Invoke() ?? _enabled) ? PyBool.True : PyBool.False;
 }
 
 [Service("sharedSettingsMgr")]

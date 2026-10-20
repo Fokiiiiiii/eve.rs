@@ -42,6 +42,7 @@ Dispatch one slow test or the full slow matrix:
 
 ```sh
 python3 tools/dev/ci-status.py dispatch live-slow.yml --ref main --test-file test_walk_industry.py
+python3 tools/dev/ci-status.py dispatch live-slow.yml --ref main --test-file test_walk_xmpp_live.py
 python3 tools/dev/ci-status.py dispatch live-slow.yml --ref main --test-file all
 ```
 
@@ -49,7 +50,7 @@ The token can list runs and jobs (`GET /actions/runs` and `GET /actions/runs/{ru
 
 ## Dependency audit
 
-`dependency-audit.yml` runs `cargo audit --file Cargo.lock` (cargo-audit 0.22.2), `dotnet list dotnet/EveRs.slnx package --vulnerable --include-transitive` (failing when NuGet reports a vulnerable package) and `pip-audit` 2.10.1 on both headless-client requirement files. It runs weekly, on manual dispatch, and on pushes to `main` that change a Cargo, NuGet, or Python dependency file. A finding fails the job. The workflow has no `pull_request` trigger, so fork pull requests do not run the audit; dependency-file pushes to `main` and the scheduled run are its automatic triggers.
+`dependency-audit.yml` runs `cargo audit --file Cargo.lock` (cargo-audit 0.22.2), `dotnet list dotnet/EveRs.slnx package --vulnerable --include-transitive` (failing when NuGet reports a vulnerable package) and `pip-audit` 2.10.1 on both headless-client requirement files. It runs weekly, on manual dispatch, and on pushes to `main` that change a Cargo, NuGet, or Python dependency file. A finding fails the job. The workflow has no `pull_request` trigger, so fork pull requests are not audited at submission time; the weekly schedule, manual dispatch, and qualifying dependency-file pushes to `main` trigger the audit.
 
 ## Minutes budget
 
@@ -209,6 +210,8 @@ Windows workflow handoff for cx32: in runs 194 (`d01856d3`) and 195 (`95512e4f`)
 
 Run 269 on `a3a1f373` passed Rust format/clippy, Rust tests, fixtures, Python, the end-to-end walk, .NET build, the Space shard and the Host shard. The all-other .NET shard failed only in `CoreCatalogTests.Core_factory_exposes_node_graph_callback_for_host_wiring`: its QA RPC test session had no `accountRole` staff grant, so the intentional QA authorization check did not forward the callback. The fixture now grants the QA role before invoking `qa_unsubscribe`; the focused test passed locally (1 test). Run 270 on `ec9575b0` repeated that single failure because it ran before the fixture correction was merged. Run 272 on `f1539c1` passed all Linux jobs and the Required CI gate: [run 272](https://github.com/Fokiiiiiii/eve.rs/actions/runs/39338882753). It is the first green required gate after the fixture correction; the separate Windows workflow was still in progress when checked. The prior recorded-walk and Host `InventoryRpc` failures are resolved as recorded above: GM walk expectations match the recorded role behavior, and character-only inventory composition omits the space-only callback when no space session provider exists. The currently configured `ci.yml` branch concurrency keeps one active push run and one replaceable pending run; its Required CI gate does not wait for Windows. Run 271 for `7c780c90` was superseded while pending. Runs 272 (`f1539c1`) and 273 (`e2c4be90`) both reached successful conclusions with their Required CI gates green; run 273 completed all Linux checks, including the newly split Space test shards, in 15.2 minutes. The gate reports success independently of the separate Windows workflow.
 
+
+CI run 422 on `745e786b` found `EVE_XMPP_SCHEMA` missing from `tools/dev/run-eve-live.sh` scratch-schema export and cleanup. The script now assigns `${SCRATCH}_xmpp` and drops it with the other per-run schemas; focused Host isolation and XMPP tests pass locally. CI run 425 on `791f4ec4` reproduced a live inventory `MachoError 2` on the station hangar `GetInventory` call after login. Run 428 on `e1ac217b`, which includes `b907a063`'s inventory RPC budget adjustment, passed the Required CI gate, including the end-to-end job and all .NET shards. The two-character XMPP Local/corporation/private walk passed separately in live-slow run 52.
 
 ## SDE lookup index initialization
 

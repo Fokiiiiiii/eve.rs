@@ -1,6 +1,6 @@
 # Login and Initial World Entry RPC Inventory
 
-Scope: V24.01 build 3396210, from the front handshake through character selection and the first world session. This inventory combines the live client callsites, `oracle/fixtures/scenarios/login_to_character.json`, `docs/reference/spec/services.tsv`, current Host service registration, and the matching EveJS runtime path. `Implemented` means the route has a concrete server implementation; `Partial` means the route exists but a path returns a default or does not cover the full client behavior; `Missing` means no route was found. Headless verification is listed separately from graphical-client verification.
+Scope: V24.01 build 3396210, from the front handshake through character selection and the first world session. This inventory combines the live client callsites, `oracle/fixtures/scenarios/login_to_character.json`, `docs/reference/spec/services.tsv`, current Host service registration, and the matching EveJS runtime path. `Implemented` means the route has a concrete server implementation; `Partial` means the route exists but a path returns a default or does not cover the full client behavior; `Missing` means no route was found; `Not applicable` means the client callsite review shows the service is not part of the login phase. Headless verification is listed separately from graphical-client verification.
 
 ## Client entry sequence
 
@@ -12,7 +12,7 @@ The headless login-to-character walk (`tools/headless-client/tests/test_login_to
 |---|---|---|---|
 | Front Hello / HelloAck / ClusterConfig | TCP front connection before authentication | Implemented | `dotnet/src/Eve.Host/HostServer.cs`, `HostCodec.cs`; protocol state machine is in the Host and Rust front. Headless live walk exercises login. |
 | `connection.Authenticate` / login auth | First client authentication request | Implemented | Host account directory and `FrontConnection.AuthenticateAsync`; wrong-password and account-create paths are in live-client harness. |
-| `loadService` / `externalQueueMgr` service resolution | Connect and queue discovery; no named RPC method appears in the login fixture | Partial | `loadService` is intentionally not advertised in `ServiceAdvertisementTests` and the handshake record in `DEVIATIONS.md`; `externalQueueMgr` is an absent source candidate in `TODO.md` section 37. Neither is exercised by the login-to-character walk. Reconcile any V24 startup callsite with these established boundary decisions before adding a route. |
+| `loadService` / `externalQueueMgr` service resolution | Connect and queue discovery | Not applicable | V24 client search found no login callsite for either name. `loadService` is the server-side load generator (`carbon/common/script/sys/loadService.py`); `externalQueueMgr` publishes cluster and Dogma telemetry events (`carbon/common/script/net/machoNet.py`, `dogma/effects/tracker.py`). Both are omitted from the player service table; `ServiceAdvertisementTests` verifies that neither resolves to a client RPC route. EveJS 261018.1 audit-records external queue calls but supplies no event delivery path. |
 | `cache.GetServerVersionAndBuild` | Startup / bug-report metadata | Implemented | Concrete cache service; build/version comes from Host configuration. |
 | `machoNet.GetTime` | Character selection and startup time sync | Implemented | Host MachoNet service; fixture records its result shape. |
 | `machoNet.GetClusterGameStatisticsForClient` | Map solar-system display (`eve/client/script/ui/shared/maps/mapSvc.py:429`) | Implemented | `MachoNetService` returns the Host system/station counts, which `HostMachoNetInfo` derives from live selected sessions; `HostMachoNetInfoTests` covers the projection. |
@@ -29,9 +29,9 @@ The headless login-to-character walk (`tools/headless-client/tests/test_login_to
 | `charUnboundMgr.ValidateNameEx` | Character creation | Implemented | Name validation and conflict checks; exercised by walk. |
 | `charUnboundMgr.CreateCharacterWithDoll` | Character creation | Implemented | Persists character, ship, starter state and initialization hooks; walk covers slot limit and starter outcomes. |
 | `charUnboundMgr.SelectCharacterID` | Enter world | Implemented | Enforces account ownership and creates selected session; walk checks invalid and valid choices. |
-| `charUnboundMgr` delete preparation/cancel/delete | Character management | Partial | Some deletion routes exist; expiry/purge and retry semantics are not covered by the login walk. |
+| `charUnboundMgr` delete preparation/cancel/delete | Character management | Implemented | Persisted preparation expiry, cancellation, account/offline checks, purge, and retry-safe repeated deletion; covered by `Character_deletion_queues_waits_cancels_and_deletes_and_the_deleted_character_is_refused` in Host tests. |
 | `multiLoginBlocker.Login` | SSO computer/account login gate | Implemented | Host live-session policy is tested in `docs/reference/compat/DEVIATIONS.md` (same-account replacement behavior). |
-| `authentication.AccruedTime` | Account/clone UI initialization | Partial | Current service default returns an empty list when no provider is wired. Wire to persisted subscription/account state and test client consumer. |
+| `authentication.AccruedTime` | Anti-addiction login history | Implemented | Host persists authenticated account session intervals in `accrued_sessions` under `EVE_LOGIN_SCHEMA` (defaulting to the identity schema) and returns `(sessionID, startTicks, endTicks)` rows. `PgAccruedTimeStoreTests` checks persistence/restart; `test_a_new_account_is_omega_until_2100_on_every_answer` checks the live client response. |
 | `authentication.AmUnderage` | Account gate | Partial | Current default is false; Host must use authoritative account age state if the deployment supports age restrictions. |
 | `authentication.SetLanguageID` | Startup localization choice | Implemented | Stores the selected language in session. |
 | `userSvc.GetUserToken` | External-link URL construction (`urlUtil.py:17-23`) | Partial | Host returns EveJS’s session-derived local token; the post-selection headless walk checks account and character IDs. A scoped credential for external services is not configured. |
@@ -140,7 +140,7 @@ The original table above covers connection, authentication, and character entry.
 | `fleetMgr.RemoveFromWatchlist` | Fleet watchlist changes (`parklife/fleetSvc.py:719`); full session list flow open | Partial | Evidence and remaining provider work are linked in the caller path and current feature entries in `docs/project/TODO.md`. |
 | `fleetMgr.RegisterForDamageUpdates` | Fleet watchlist damage updates (`parklife/fleetSvc.py:795`) | Partial | Evidence and remaining provider work are linked in the caller path and current feature entries in `docs/project/TODO.md`. |
 
-Current inventory: 121 tracked rows: 90 implemented, 31 partial, and 0 missing routes. This batch persists accepted-warp history and verifies the character-bound skill handler, skill list, queue, attributes, and implants through focused tests and the headless walk. Other partial entries and unenumerated startup callers remain listed below.
+Current inventory: 121 tracked rows: 92 implemented, 28 partial, 0 missing routes, and 1 not applicable. This batch persists accepted-warp history and verifies the character-bound skill handler, skill list, queue, attributes, and implants through focused tests and the headless walk. Other partial entries and unenumerated startup callers remain listed below.
 
 ## Verification boundary
 

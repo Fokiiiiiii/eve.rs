@@ -165,7 +165,7 @@ Pilots enter a complex's rooms through acceleration gates. The API for the FW co
   hours after a completion. Three points at the centre and 80 km either side of the battlefield's origin; the holder of a point is the side whose pilots are
   within its range alone, its hold timer runs and each full 20 s of holding moves the score one point toward that side; both or neither pause it. A score of
   +/-150 wins the battle: 2,000 victory points move the system's attacker points, the winners' victory points (split evenly) go to `fw_pilot_daily`, and the
-  first 30 winning pilots (by character id) get 5,000 LP each, issued by the winning militia (`IFwRewards`, the loyalty store with the member's corporation tax).
+  first 30 winning pilots (by character id) get 1,666 LP each from the 50,000 LP checkpoint pool, issued by the winning militia; 20 LP remains undistributed (`IFwRewards`, the loyalty store with the member's corporation tax).
 - Site: the battlefield's origin is the complexes' site point of its system moved 300 km along x (`FwBattlefields.SiteOffsetMeters`). The site starts with the
   first pilot in the system (`IFwComplexSites.StartBattlefieldAsync`, as a complex's does), ends when the battlefield is won, and its gate is the room's
   (`AccelerationGateDeployableId`). A pilot's current site is the open complex or battlefield whose capture radius holds it (`FwComplexSites.InstanceOfAsync`).
@@ -183,7 +183,7 @@ Pilots enter a complex's rooms through acceleration gates. The API for the FW co
   file). A pilot enlists in the occupier's enemy, flies to the battlefield's system, warps to its gate and takes it into the room. The capture holds each point's
   faction info and tick countdown and the scoreboard's score updates. The centre point is held by the enemy while the pilot is in its range (the room's
   entry is 15 km from it), its score rises by one per 20 s, and the battlefield is won at +150: the test asserts the system's attacker points (+2,000), the
-  notices (`OnFwScoreboardWon` before `OnVictoryPointStateUpdated`), the winner's victory points on the daily row and in `GetStats_Character`, and the 5,000 LP
+  notices (`OnFwScoreboardWon` before `OnVictoryPointStateUpdated`), the winner's victory points on the daily row and in `GetStats_Character`, and the 1,666 LP
   in the wallet journal. The walk takes about 50 minutes (the win needs 3,000 s with one point held). The walk also checks the two side points and that contesting the centre pauses its score.
 - Not built: the battlefield's NPC blockers (enemy NPCs do not pause a point), the defenders of a point, the frontline choice (every occupied
   system is a candidate), the objectives (archetype 67) and their `OnFwObjectiveCompletedInSolarSystem`, and a non-enrolled capsuleer landing 75 to 125 km from the points. The gate admits T1 hulls (SDE meta group 1 or no meta group) and empire Navy hulls (meta group 4, faction IDs 500001 through 500004); `AccelerationGateTests` covers accepted and refused hulls.

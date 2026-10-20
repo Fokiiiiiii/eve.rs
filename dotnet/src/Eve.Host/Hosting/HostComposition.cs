@@ -76,11 +76,16 @@ internal static class HostComposition
         Eve.Services.Core.IContractReadModel? contractReadModel = null;
         Eve.Services.Core.IContractWriteModel? contractWriteModel = null;
         Func<long, int, CancellationToken, ValueTask<int>>? contractSkillLevel = null;
+        Func<long, long, CancellationToken, ValueTask<decimal>>? contractBrokerFeeAdjustment = null;
         NpgsqlDataSource? dataSource = null; // owned by the runtime: shut down with it, so its pooled connections return to the server
+        Eve.Host.Persistence.PgAccruedTimeStore? accruedTimeStore = null;
+        Eve.Host.Xmpp.XmppMotdStore? xmppMotdStore = null;
         if (Env("EVE_PG_URL", "") is { Length: > 0 } pgUrl)
         {
             var schema = Env("EVE_IDENTITY_SCHEMA", PgAccountDirectory.DefaultSchema);
             var source = dataSource = NpgsqlDataSource.Create(PgConnection.ToConnectionString(pgUrl));
+            accruedTimeStore = new Eve.Host.Persistence.PgAccruedTimeStore(source, Env("EVE_LOGIN_SCHEMA", schema));
+            await accruedTimeStore.MigrateAsync();
             var contractSchema = Env("EVE_CONTRACTS_SCHEMA", Eve.Host.Persistence.PersistenceContractReadModel.DefaultSchema);
             await Eve.Host.Persistence.PersistenceContractReadModel.MigrateAsync(source, contractSchema);
             contractReadModel = new Eve.Host.Persistence.PersistenceContractReadModel(source, contractSchema);
@@ -117,7 +122,7 @@ internal static class HostComposition
             contractWriteModel = new Eve.Host.Persistence.PersistenceContractWriteModel(source, contractItems, contractWallets,
                 clock, contractSchema, contractExpiryJobs, foundations.Events);
             legacy = await LegacyGameStoreComposition.OpenAsync(source);
-            (characterServices, space, simulation, crimewatch, calendarStore, calendarAudience, gameRpcCallbacks, keeperRpcCallbacks, characterSessions) = await CharacterServicesComposition.CharacterServicesAsync(source, directory, online, clock, foundations, legacy.Store, legacy.Owner, legacy.Cache, options.NewCharacterExperienceMode, new AccountOmegaStore(directory), connected);
+            (characterServices, space, simulation, crimewatch, calendarStore, calendarAudience, gameRpcCallbacks, keeperRpcCallbacks, characterSessions, contractBrokerFeeAdjustment) = await CharacterServicesComposition.CharacterServicesAsync(source, directory, online, clock, foundations, legacy.Store, legacy.Owner, legacy.Cache, options.NewCharacterExperienceMode, new AccountOmegaStore(directory), connected);
             if (characterSessions is not null)
                 new Eve.Host.Persistence.ContractNotifications(characterSessions).Subscribe(foundations.Events);
             // the public gateway's skill plans: the tables are the skills module's (migration 0009, applied with its store)
@@ -178,8 +183,15 @@ internal static class HostComposition
                 .ActivateSlashAsync(request.Session, request.ModuleId, request.StartPoint, request.EndPoint, cancellationToken));
         IOmegaAccountStore omegaAccounts = new AccountOmegaStore(accounts as IAccountSubscriptions
             ?? throw new InvalidOperationException("the account directory keeps no subscription end times"));
+        Eve.Services.Core.AuthenticationRpcService? authentication = accruedTimeStore is { } accruedSessions
+            ? new Eve.Services.Core.AuthenticationRpcService(accruedTime: async (call, ct) =>
+                call.Session.UserId is { } accountId
+                    ? await accruedSessions.ReadWireValueAsync(accountId, DateTime.UtcNow.Ticks, ct)
+                    : new Eve.Marshal.PyList([]))
+            : null;
         foreach (var service in CoreServices.Create(
             omegaAccounts, now, calendarStore, calendarAudience,
+            authentication: authentication,
             gameRpcCallbacks: gameRpcCallbacks,
             readJumpTimers: readJumpTimers,
             readNonDiminishingInjections: readNonDiminishingInjections,
@@ -193,7 +205,8 @@ internal static class HostComposition
             contractReadModel: contractReadModel,
             contractWriteModel: contractWriteModel,
             contractSkillLevel: contractSkillLevel,
-            calendarSessions: characterSessions))
+            calendarSessions: characterSessions,
+            contractBrokerFeeAdjustment: contractBrokerFeeAdjustment))
         {
             registry.Register(service);
         }
@@ -223,8 +236,11 @@ internal static class HostComposition
             var charMgr = characterServices.OfType<Eve.Services.CharacterInfo.CharMgrService>().FirstOrDefault();
             Func<long, CancellationToken, ValueTask<IReadOnlyList<long>>>? readBlockedOwners =
                 charMgr is null ? null : charMgr.ReadBlockedOwnersAsync;
+            if (dataSource is { } xmppDataSource)
+                xmppMotdStore = await Eve.Host.Xmpp.XmppMotdStore.OpenAsync(xmppDataSource, Env("EVE_XMPP_SCHEMA", "eve_xmpp"));
             var xmppHub = new Eve.Host.Xmpp.XmppChatHub(connected,
                 new Eve.Host.Xmpp.XmppChatSettings(xmppSettings.Domain, xmppSettings.ConnectHost),
+                xmppMotdStore,
                 readBlockedOwners);
             registry.Register(new Eve.Host.Xmpp.XmppChatMgrService(xmppHub));
             if (xmppSettings.CertificatePath is { } certificatePath)
@@ -264,6 +280,18 @@ internal static class HostComposition
                         connected.Remove(session);
                         online.Leave(session.SessionId);
                     };
+                },
+                SessionOpenedAsync = async (session, ct) =>
+                {
+                    if (accruedTimeStore is not { } history || session.UserId is not { } accountId)
+                        return;
+                    var rowId = await history.OpenAsync(accountId, DateTime.UtcNow.Ticks, ct);
+                    session.Set("accruedSessionId", new Eve.Marshal.PyLong(rowId));
+                },
+                SessionClosedAsync = async session =>
+                {
+                    if (accruedTimeStore is { } history && session.Get("accruedSessionId") is Eve.Marshal.PyLong rowId)
+                        await history.CloseAsync(rowId.Value, DateTime.UtcNow.Ticks);
                 },
             },
             dispatcher,

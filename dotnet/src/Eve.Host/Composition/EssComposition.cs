@@ -32,7 +32,8 @@ internal sealed partial class CharacterServicesComposition
             spaceSessions is { } space ? await space.EssHolderAsync(systemId, characterId, cancellationToken) : null,
         consumeKey: ConsumeEssKeyAsync,
         quadrantOf: systemId => _essQuadrantBySystem.TryGetValue(systemId, out var quadrant) ? quadrant : null,
-        sovereigntyOwnerOf: SovereigntyOwnerOfAsync);
+        sovereigntyOwnerOf: SovereigntyOwnerOfAsync,
+        corporationOf: CharacterCorporationOfAsync);
 
     /// <summary>
     /// The ESS placement that the operator asks for. Each system's ESS is registered at start; a malformed entry stops the host, so that it does not run with
@@ -114,6 +115,21 @@ internal sealed partial class CharacterServicesComposition
                && long.TryParse(row["allianceID"]?.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var alliance)
                && alliance > 0
             ? alliance
+            : null;
+    }
+
+    private async ValueTask<long?> CharacterCorporationOfAsync(long characterId, CancellationToken cancellationToken)
+    {
+        var schema = Env("EVE_CHARACTERS_SCHEMA", "characters");
+        if (!System.Text.RegularExpressions.Regex.IsMatch(schema, "^[a-z_][a-z0-9_]{0,62}$"))
+            throw new InvalidOperationException("EVE_CHARACTERS_SCHEMA is not a usable schema name");
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var command = new NpgsqlCommand($"SELECT corporation_id FROM {schema}.characters WHERE id = $1", connection)
+        {
+            Parameters = { new() { Value = characterId } },
+        };
+        return await command.ExecuteScalarAsync(cancellationToken) is long corporationId && corporationId > 0
+            ? corporationId
             : null;
     }
 

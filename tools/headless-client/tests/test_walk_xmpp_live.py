@@ -59,6 +59,20 @@ def test_two_pilots_exchange_local_and_private_messages_over_xmpp():
             first_chat.send_groupchat(room, "headless Local check")
             second_chat.wait_for_message(room, "headless Local check")
 
+            first_channels = m.plain(first.call("XmppChatMgr", "ResyncSystemChannelAccess"))
+            second_channels = m.plain(second.call("XmppChatMgr", "ResyncSystemChannelAccess"))
+            decode_channel = lambda value: value.decode("utf-8") if isinstance(value, bytes) else str(value)
+            first_corporations = {decode_channel(value) for value in first_channels if decode_channel(value).startswith("corp_")}
+            second_corporations = {decode_channel(value) for value in second_channels if decode_channel(value).startswith("corp_")}
+            shared_corporations = sorted(first_corporations & second_corporations)
+            assert shared_corporations, "the two live pilots must share a corporation room for this walk"
+            corporation_room = shared_corporations[0]
+            first_chat.join(corporation_room, "FirstPilot")
+            second_chat.join(corporation_room, "SecondPilot")
+            time.sleep(0.8)
+            first_chat.send_groupchat(corporation_room, "headless corporation check")
+            second_chat.wait_for_message(corporation_room, "headless corporation check")
+
             private_room = _text(first.call("XmppChatMgr", "CreatePrivateChannel", second_character))
             first_chat.join(private_room, "FirstPilot")
             first_chat.invite(private_room, second_character, "headless private check")

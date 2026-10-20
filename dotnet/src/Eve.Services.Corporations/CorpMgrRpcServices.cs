@@ -532,7 +532,6 @@ public sealed partial class CorpMgrService
     private static long? UnixMs(long filetime) =>
         filetime <= 0 ? null : (filetime - FiletimeUnixEpoch) / 10000;
 
-
     private static long? OptionalFiletime(JsonElement source, string name, long? fallback)
     {
         if (!TryProperty(source, name, out var value))
@@ -605,7 +604,6 @@ public sealed partial class CorpMgrService
 
 public sealed record MutualWarInvite(long FromOwnerId, long ToOwnerId, long SentDateFiletime);
 
-// Persistent invite state and mutual-war notifications are supplied by callbacks when that backend is available.
 [Service("mutualWarInviteMgr")]
 public sealed partial class MutualWarInviteMgrService(
     Func<long, CancellationToken, ValueTask<IReadOnlyList<MutualWarInvite>>>? readPendingInvites = null,

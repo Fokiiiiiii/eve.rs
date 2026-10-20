@@ -14,6 +14,7 @@ Skipped unless EVE_LIVE_HOST is set. tools/dev/run-eve-live.sh runs it.
 from __future__ import annotations
 
 import os
+import re
 import uuid
 
 import pytest
@@ -97,3 +98,44 @@ def test_a_docked_character_reads_its_systems_ess_as_the_client_does():
         after = m.plain(client.call("essMgr", "GetDataForClientSolarSystem"))
         assert after["mainBankLink"] is None
         assert client.call("essMgr", "RequestMainBankUnlink") is None
+
+def test_a_linkable_hull_starts_and_cancels_an_in_space_main_bank_link():
+    placed = _placed_entry()
+    if placed is None:
+        pytest.skip("set EVE_LIVE_ESS_SYSTEM to exercise an in-space ESS")
+
+    run = uuid.uuid4().hex[:10]
+    with base.connect(f"walk-ess-link-{run}") as client:
+        pilot = market._new_character(client, run)
+        station_id = int(client.session.session_init["stationid"])
+        current_ship_id = int(client.session.session_init["shipid"])
+        grant = str(client.call("slash", "SlashCmd", "/ess grant"))
+        match = re.search(r"\((\d+)\), the first published hull", grant)
+        assert match, grant
+        hull_type_id = int(match.group(1))
+
+        hangar = client.call("invbroker", "GetInventory", 10004)
+        ships = client.call_bound(hangar, "List")
+        hull_id = next(int(row.fields()["itemID"]) for row in ships if int(row.fields()["typeID"]) == hull_type_id)
+        ship_service = client.call("ship", "MachoBindObject", (station_id, 15), None)[0]
+        boarded = client.call_bound(ship_service, "Board", hull_id, current_ship_id)
+        assert boarded is not None, "the selected ESS linkable hull was not boarded"
+        wait_quietly(client, 1.0)
+
+        client.call_bound(ship_service, "Undock", hull_id, False, onlineModules=m.List([]))
+        wait_quietly(client, 2.0)
+        solar_system_id, ess_id = placed
+        moved = str(client.call("slash", "SlashCmd", f"/solar {solar_system_id}"))
+        assert "Teleported to" in moved, moved
+        warped = str(client.call("slash", "SlashCmd", f"/warpto {ess_id}"))
+        assert "Warped to item" in warped, warped
+
+        linked = client.call("essMgr", "AttemptLinkToMainBank")
+        assert linked is None
+        data = m.plain(client.call("essMgr", "GetDataForClientSolarSystem"))
+        assert data["mainBankLink"] is not None
+        assert data["essID"] == ess_id
+
+        assert client.call("essMgr", "RequestMainBankUnlink") is None
+        after = m.plain(client.call("essMgr", "GetDataForClientSolarSystem"))
+        assert after["mainBankLink"] is None

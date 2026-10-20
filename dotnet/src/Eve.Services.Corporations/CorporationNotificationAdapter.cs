@@ -56,7 +56,6 @@ public static void ApplicationChanged(CharacterSessions? sessions,ServiceCall ca
         });
     }
 
-    // eve.rs extension: the local EveJS medal service emits no push event on award.
     public static void MedalsReceived(CharacterSessions? sessions,ServiceCall call,long medalId,
         IEnumerable<long> recipients)
     {

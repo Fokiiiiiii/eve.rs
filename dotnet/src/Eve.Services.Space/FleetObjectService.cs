@@ -140,10 +140,13 @@ public sealed partial class FleetObjectService(FleetStore store, Func<long> nowU
         var inviterId = CharacterId(call.Session);
         var inviteeId = Number(call.Arg(0)) ?? 0;
         if (inviteeId <= 0 || inviteeId == inviterId) return PyBool.False;
+        var before = await store.SnapshotAsync(fleetId, call.Cancellation);
+        var inviter = before?.Members.FirstOrDefault(member => member.CharacterId == inviterId);
+        if (inviter is null || inviter.Role != FleetStore.Leader && !FleetStore.HasBossJob(inviter.Job))
+            return PyBool.False;
         if (await store.FleetIdForCharacterAsync(inviteeId, call.Cancellation) is not null)
             throw MachoErrors.ThrowUserError("FleetError");
 
-        var before = await store.SnapshotAsync(fleetId, call.Cancellation);
         var invited = await store.InviteAsync(fleetId, inviterId, inviteeId,
             Number(call.Arg(1)) ?? FleetStore.NoUnit, Number(call.Arg(2)) ?? FleetStore.NoUnit,
             (int)(Number(call.Arg(3)) ?? FleetStore.Member), call.Cancellation);
@@ -164,6 +167,9 @@ public sealed partial class FleetObjectService(FleetStore store, Func<long> nowU
         if (FleetId(call) is not { } fleetId) return None;
         var inviterId = CharacterId(call.Session);
         var before = await store.SnapshotAsync(fleetId, call.Cancellation);
+        var inviter = before?.Members.FirstOrDefault(member => member.CharacterId == inviterId);
+        if (inviter is null || inviter.Role != FleetStore.Leader && !FleetStore.HasBossJob(inviter.Job))
+            return new PyList([]);
         var wingId = Number(call.Arg(1)) ?? FleetStore.NoUnit;
         var squadId = Number(call.Arg(2)) ?? FleetStore.NoUnit;
         var role = (int)(Number(call.Arg(3)) ?? FleetStore.Member);
@@ -713,6 +719,8 @@ private static readonly System.Collections.Generic.HashSet<string> BroadcastName
     {
         if (FleetId(call) is not { } fleetId) return None;
         var motd = Text(call.Arg(0));
+        if (motd.Length > 4096)
+            throw MachoErrors.ThrowUserError("FleetError");
         if (!await store.SetMotdAsync(fleetId, CharacterId(call.Session), motd, call.Cancellation)) return None;
         var snapshot = await store.SnapshotAsync(fleetId, call.Cancellation);
         if (snapshot is not null)

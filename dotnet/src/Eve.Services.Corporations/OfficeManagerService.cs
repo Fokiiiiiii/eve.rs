@@ -131,7 +131,7 @@ public sealed partial class OfficeManagerService(
             await wallets.AdjustAsync(connection, transaction, new Eve.Wallet.WalletAccount(corporationId), -price,
                 station.OwnerId, OfficeRentReferenceType, "Corporation office rental", atStation,
                 $"office-rent:{office.OfficeId}:charge", "office_rental_fee", call.Cancellation);
-            // the rent is the station owner's income (EVE.js creditRentalOwner); the due job runs at the end of the paid cycle
+
             await wallets.EnsureAsync(connection, transaction, station.OwnerId, call.Cancellation);
             await wallets.AdjustAsync(connection, transaction, new Eve.Wallet.WalletAccount(station.OwnerId), price,
                 corporationId, OfficeRentReferenceType, "Corporation office rental", atStation,
@@ -371,7 +371,6 @@ public sealed partial class OfficeManagerService(
 
     /// <summary>
     /// A corporation office at a structure (EVE.js RentOffice, structure branch): the Corporation Offices service and its access, the profile's rent charged to the
-    /// corporation and credited to the owner, and the due job, in one transaction. A structure has no office slots.
     /// </summary>
     private async Task<PyValue> RentStructureOfficeAsync(ServiceCall call, long actor, long corporationId, StructureOfficeSite site)
     {

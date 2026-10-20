@@ -34,7 +34,7 @@ jobs:
   windows:
     name: Windows Rust, .NET, Python and live client
     runs-on: windows-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
     env:
       RUST_TOOLCHAIN: "1.99.0"
       CARGO_TERM_COLOR: always
@@ -68,13 +68,25 @@ jobs:
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: 10.0.x
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~\.nuget\packages
+          key: nuget-windows-${{ hashFiles('dotnet/Directory.Packages.props', 'dotnet/**/*.csproj', 'dotnet/**/*.props', 'dotnet/**/*.targets') }}
+          restore-keys: nuget-windows-
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: windows
+          cache-on-failure: true
+      - id: sde-build
+        shell: bash
+        run: echo "build=$(sed -n 's/^PINNED_BUILD=//p' sde/fetch.sh)" >> "$GITHUB_OUTPUT"
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ~\.cargo\registry\cache
-          key: cargo-windows-${{ hashFiles('Cargo.lock') }}
+          path: .cache/sde
+          key: sde-${{ steps.sde-build.outputs.build }}
       - name: Rust format and lint
         run: |
           cargo fmt --all --check
@@ -114,8 +126,13 @@ jobs:
       - name: Start server and walk the Windows client path
         shell: pwsh
         run: |
-          $start = Join-Path $PWD 'tools/windows/start-server.bat'
-          $server = Start-Process -FilePath 'cmd.exe' -ArgumentList ('/c "' + $start + '"') -PassThru
+          $serverState = Join-Path $PWD '.cache/server'
+          $serverLogs = Join-Path $serverState 'logs'
+          New-Item -ItemType Directory -Force -Path $serverLogs | Out-Null
+          $stdout = Join-Path $serverState 'windows-start.stdout.log'
+          $stderr = Join-Path $serverState 'windows-start.stderr.log'
+          $start = Join-Path $PWD 'tools/windows/start-server.ps1'
+          $server = Start-Process -FilePath 'powershell.exe' -ArgumentList ('-NoProfile -ExecutionPolicy Bypass -File "' + $start + '"') -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru
           try {
             $deadline = (Get-Date).AddMinutes(10)
             $ready = $false
@@ -128,10 +145,26 @@ jobs:
             if (-not $ready) { throw 'The Windows stack did not open port 26000.' }
             & (Join-Path $PWD 'tools/windows/run-headless.ps1') -Live -PytestArgs @('tests/test_live.py', 'tests/test_login_to_character.py')
             if ($LASTEXITCODE -ne 0) { throw 'The end-to-end Windows client walk failed.' }
+          } catch {
+            Write-Host 'Windows server startup output:'
+            if (Test-Path -LiteralPath $stdout) { Get-Content -LiteralPath $stdout -Tail 100 }
+            if (Test-Path -LiteralPath $stderr) { Get-Content -LiteralPath $stderr -Tail 100 }
+            foreach ($log in Get-ChildItem -LiteralPath $serverLogs -File -ErrorAction SilentlyContinue) {
+              Write-Host "Server log: $($log.Name)"
+              Get-Content -LiteralPath $log.FullName -Tail 100
+            }
+            throw
           } finally {
             $stop = Join-Path $PWD 'tools/windows/stop-server.bat'
             $stopProcess = Start-Process -FilePath 'cmd.exe' -ArgumentList ('/c "' + $stop + '"') -Wait -PassThru
             if ($stopProcess.ExitCode -ne 0) { throw "The Windows stop wrapper exited with $($stopProcess.ExitCode)." }
             if (-not $server.HasExited) { Stop-Process -Id $server.Id -Force }
           }
+      - name: Retain Windows server logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-server-logs
+          path: .cache/server
+          if-no-files-found: ignore
 

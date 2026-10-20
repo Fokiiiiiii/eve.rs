@@ -269,17 +269,23 @@ public sealed class PacketDispatcher
             return 10;
         if (service == "marketProxy" && method is "GetOrders" or "GetStationAsks" or "GetSystemAsks" or "GetRegionBest" or "GetMarketOrderHistory" or "BuyMultipleItems" or "GetHistoryForManyTypeIDs")
             return 10;
-        if (method == "GetMailHeaders")
+        if (service == "mailMgr" && method is "SyncMail" or "GetMailHeaders" or "GetBody" or "MarkAsRead" or "SendMail" or "PokePlayerAboutChatMsgGm")
+            return 10;
+        if (service == "mailingListsMgr")
             return 10;
         if (service == "invbroker" && method is "GetInventory" or "GetInventoryFromId" or "GetContainerContents" or "GetItems" or "List" or "ListByFlags" or "ListStations" or "ListStationItems" or "ListIncludingContainers" or "GetAssetWorth")
-            return 10;
+            return 2;
         if (service == "account" && method is "GetTransactions" or "GiveCash" or "GiveCashFromCorpAccount")
             return 10;
         if (service == "LPStoreMgr" && method is "GetAvailableOffersFromCorp" or "TakeOfferForCharacter" or "TakeOfferForCorporation")
             return 10;
-        if (service == "corpRegistry" && method is "GetEveOwners" or "GetMemberIDsByQuery" or "GetMemberIDsWithMoreThanAvgShares" or "GetMembersByIds" or "GetMembersPaged" or "GetMemberTrackingInfo" or "GetMemberTrackingInfoSimple" or "GetRecentKills" or "GetRecentLosses")
+        if (service == "corpRegistry" && method is "GetEveOwners" or "GetMemberIDsByQuery" or "GetMemberIDsWithMoreThanAvgShares" or "GetMembersByIds" or "GetMembersPaged" or "GetMemberTrackingInfo" or "GetMemberTrackingInfoSimple" or "GetShareholders" or "GetSharesByShareholder" or "PayoutDividend" or "UpdateMembers" or "KickOutMembers" or "UpdateTitles" or "RemoveCorporateContacts" or "EditContactsRelationshipID" or "AssignLabels" or "RemoveLabels" or "UpdateBulletinOrder" or "GetRecentKills" or "GetRecentLosses")
+            return 10;
+        if (service == "allianceRegistry" && method is "GetEveOwners" or "GetRankedAlliances" or "GetAllianceMembers" or "GetMembers" or "GetEmploymentRecord" or "GetAllianceMembersOlderThan" or "GetAllianceApplications")
             return 10;
         if (service == "charMgr" && method is "GetRecentShipKillsAndLosses")
+            return 10;
+        if (service == "fleetObject" && method == "SendBroadcast")
             return 10;
         if (service == "corpRecProxy" && method is "SearchCorpAds")
             return 10;

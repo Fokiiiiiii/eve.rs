@@ -46,6 +46,7 @@ public sealed partial class XmppChatHub
 {
     private readonly ConnectedSessions _sessions;
     private readonly Func<long, CancellationToken, ValueTask<IReadOnlyList<long>>>? _readBlockedOwners;
+    private readonly XmppMotdStore? _motdStore;
     private readonly object _gate = new();
     private readonly Dictionary<long, XmppLink> _linkByCharacter = [];
 
@@ -53,10 +54,25 @@ public sealed partial class XmppChatHub
         ConnectedSessions sessions,
         XmppChatSettings settings,
         Func<long, CancellationToken, ValueTask<IReadOnlyList<long>>>? readBlockedOwners = null)
+        : this(sessions, settings, null, readBlockedOwners)
+    {
+    }
+
+    internal XmppChatHub(
+        ConnectedSessions sessions,
+        XmppChatSettings settings,
+        XmppMotdStore? motdStore,
+        Func<long, CancellationToken, ValueTask<IReadOnlyList<long>>>? readBlockedOwners = null)
     {
         _sessions = sessions;
         Settings = settings;
         _readBlockedOwners = readBlockedOwners;
+        _motdStore = motdStore;
+        if (motdStore is not null)
+        {
+            foreach (var (room, motd) in motdStore.RoomMotds)
+                _roomMotd[room] = motd;
+        }
     }
 
     public XmppChatSettings Settings { get; }
@@ -97,7 +113,11 @@ public sealed partial class XmppChatHub
         lock (_gate)
         {
             if (_linkByCharacter.TryGetValue(link.CharacterId, out var current) && ReferenceEquals(current, link))
+            {
                 _linkByCharacter.Remove(link.CharacterId);
+                _lastPrivateInvite.Remove(link.CharacterId);
+                _lastRoomMessage.Remove(link.CharacterId);
+            }
         }
     }
 

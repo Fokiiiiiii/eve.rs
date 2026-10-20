@@ -5,8 +5,6 @@ using Xunit;
 namespace Eve.Corporations.Tests;
 
 /// <summary>
-/// The ST-16 creditor migration: a station's rent bill taken before the creditor was recorded has none, so its due job did nothing. The migration gives it the
-/// station's owner once; a bill that has a creditor is not touched, and a second run changes nothing.
 /// </summary>
 public sealed class StationBillCreditorMigrationTests
 {
@@ -23,7 +21,6 @@ public sealed class StationBillCreditorMigrationTests
             (await RentAtAsync(rig, connection, transaction, Legacy, LegacyCorporation, creditor: null),
              await RentAtAsync(rig, connection, transaction, Charged, ChargedCorporation, creditor: Creditor)));
 
-        // the shape of a bill taken before ST-16: listed for the migration; the bill with a creditor is not
         Assert.Equal([LegacyStation], await rig.OfficeStore.StationsWithoutCreditorAsync());
         Assert.Null((await OpenBillAsync(rig, legacyOffice.OfficeId))!.CreditorId);
 

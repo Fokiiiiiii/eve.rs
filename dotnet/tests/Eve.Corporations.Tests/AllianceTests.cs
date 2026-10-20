@@ -22,10 +22,8 @@ public class AllianceTests
         return (actor,corp);
     }
 
-
     private static Task<AllianceApplication> AcceptAllianceApplicationAsync(CorporationStore store, long actor, long applicationId, string? text = null) =>
         store.RespondToAllianceAsync(actor, applicationId, text, 2, static (_, _, _, _) => Task.CompletedTask);
-
 
     private static async Task<IReadOnlyList<long>> ProcessAllianceDueAsync(CorporationStore store)
     {
@@ -152,7 +150,6 @@ public class AllianceTests
         try
         {
             await CorporationStore.MigrateAsync(rig.Source,schema);
-
 
             var store = new CorporationStore(rig.Source,rig.Characters,rig.Wallets,rig.Transactions,rig.Skills,() => rig.Now,schema);
             var (actor,corp) = await Founder(rig,"Founder One","FIRST",store:store);
@@ -459,7 +456,6 @@ public class AllianceTests
         {
             await CorporationStore.MigrateAsync(rig.Source,corporationSchema);
 
-
             await Eve.Scheduler.DurableScheduler.MigrateAsync(rig.Source,schedulerSchema);
             await Eve.Events.EventBus.MigrateAsync(rig.Source,eventsSchema);
             await Eve.Relations.RelationStore.MigrateAsync(rig.Source,relationsSchema);
@@ -543,7 +539,6 @@ public class AllianceTests
         }
     }
 
-
     [PgFact]
     public async Task Alliance_registry_SetPrimeHour_uses_the_next_vulnerability_window()
     {
@@ -552,7 +547,6 @@ public class AllianceTests
         try
         {
             await CorporationStore.MigrateAsync(rig.Source,schema);
-
 
             var store = new CorporationStore(rig.Source,rig.Characters,rig.Wallets,rig.Transactions,rig.Skills,() => rig.Now,schema);
             var actor = await rig.CharacterAsync("Prime Executor",2_000_000_000m);
@@ -618,7 +612,6 @@ public class AllianceTests
         try
         {
             await CorporationStore.MigrateAsync(rig.Source,schema);
-
 
             var store = new CorporationStore(rig.Source,rig.Characters,rig.Wallets,rig.Transactions,rig.Skills,() => rig.Now,schema);
             var actor = await rig.CharacterAsync("Capital Executor",2_000_000_000m);
@@ -929,7 +922,6 @@ public class AllianceTests
         }
     }
 
-
     [PgFact]
     public async Task Alliance_departure_transfer_still_runs_if_leaver_joins_a_different_alliance_before_job()
     {
@@ -983,7 +975,6 @@ public class AllianceTests
             await cleanup.ExecuteNonQueryAsync();
         }
     }
-
 
     [PgFact]
     public async Task Alliance_departure_transfer_waits_until_the_suspended_alliance_has_an_executor()
@@ -1162,7 +1153,6 @@ public class AllianceTests
         Assert.Equal(["ORBIT","ORBI","ORBX"],suggestions);
     }
 
-
     [Fact]
     public void Alliance_application_war_holds_match_EveJs_and_recheck_after_one_hour()
     {
@@ -1182,7 +1172,6 @@ public class AllianceTests
             [new(foreign, alliance, false)]));
         Assert.Null(Eve.Corporations.AllianceRules.ApplicationWarHoldReason(applicant, alliance, []));
     }
-
 
     [PgFact]
     public async Task Alliance_acceptance_and_durable_schedule_commit_together()
@@ -1347,7 +1336,6 @@ public class AllianceTests
             }
         }
     }
-
 
     [PgFact]
     public async Task Startup_reconciles_npc_and_player_affiliations_and_removes_stale_alliance_edges()
@@ -2304,6 +2292,5 @@ public class AllianceTests
             return null;
         return Eve.Macho.MachoAddress.Decode(args.Items[2]).BroadcastId;
     }
-
 
 }

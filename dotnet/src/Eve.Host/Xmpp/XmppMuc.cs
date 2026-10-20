@@ -16,6 +16,7 @@ public sealed partial class XmppChatHub
 
     private readonly Dictionary<(string Room, long CharacterId), XmppOccupant> _occupants = [];
     private readonly Dictionary<long, DateTimeOffset> _lastRoomMessage = [];
+    private readonly Dictionary<long, DateTimeOffset> _lastPrivateInvite = [];
     private readonly HashSet<(string Room, long CharacterId)> _visibleLocalSpeakers = [];
     private readonly Dictionary<string, string> _roomMotd = new(StringComparer.Ordinal);
 
@@ -168,30 +169,17 @@ public sealed partial class XmppChatHub
         return true;
     }
 
-    internal bool SetRoomMotd(XmppLink link, string room, string motd)
+    internal async ValueTask<bool> SetRoomMotdAsync(XmppLink link, string room, string motd, CancellationToken cancellationToken)
     {
-        if (Encoding.UTF8.GetByteCount(motd) > 1024
-            || motd.Any(character => char.IsControl(character) && character is not '\n' and not '\t'))
-            return false;
         var session = SessionOf(link.CharacterId);
-        if (session is null || !ReferenceEquals(SessionOf(link.CharacterId), session)
-            || session.GetInt("corpid") is not { } corporationId || corporationId <= 0
-            || room != $"corp_{corporationId}"
-            || !StaticAccessChannels(session).Contains(room, StringComparer.Ordinal)
-            || !IsCorporationDirector(session))
+        if (session is null || !ReferenceEquals(SessionOf(link.CharacterId), session))
             return false;
-
-        XmppOccupant[] recipients;
         lock (_gate)
         {
             if (!_occupants.TryGetValue((room, link.CharacterId), out var occupant) || !ReferenceEquals(occupant.Link, link))
                 return false;
-            _roomMotd[room] = motd;
-            recipients = _occupants.Where(pair => pair.Key.Room == room).Select(pair => pair.Value).ToArray();
         }
-        foreach (var recipient in recipients)
-            recipient.Link.Send(RoomSubject(room, link.CharacterId.ToString(System.Globalization.CultureInfo.InvariantCulture), recipient.Link.Jid, motd));
-        return true;
+        return await SetCorporationMotdAsync(session, room, motd, cancellationToken).ConfigureAwait(false);
     }
 
     internal bool SetCorporationMotd(ClientSession session, string room, string motd)
@@ -214,6 +202,22 @@ public sealed partial class XmppChatHub
         foreach (var recipient in recipients)
             recipient.Link.Send(RoomSubject(room, "admin", recipient.Link.Jid, motd));
         return true;
+    }
+
+    internal async ValueTask<bool> SetCorporationMotdAsync(ClientSession session, string room, string motd, CancellationToken cancellationToken)
+    {
+        if (session.GetInt("corpid") is not { } corporationId || corporationId <= 0
+            || room != $"corp_{corporationId}"
+            || !IsCorporationDirector(session)
+            || Encoding.UTF8.GetByteCount(motd) > 1024
+            || motd.Any(character => char.IsControl(character) && character is not '\n' and not '\t')
+            || session.CharacterId is not { } characterId
+            || !ReferenceEquals(SessionOf(characterId), session))
+            return false;
+
+        if (_motdStore is not null)
+            await _motdStore.SetAsync(room, motd, cancellationToken).ConfigureAwait(false);
+        return SetCorporationMotd(session, room, motd);
     }
 
     private static bool IsCorporationDirector(ClientSession session) =>
@@ -332,6 +336,11 @@ internal static string? PrivateChannelName(long callerCharacterId, long targetCh
             if (!_occupants.ContainsKey((room, inviter.CharacterId))
                 || !_linkByCharacter.TryGetValue(targetCharacterId, out target))
                 return false;
+            var now = DateTimeOffset.UtcNow;
+            if (_lastPrivateInvite.TryGetValue(inviter.CharacterId, out var lastInvite)
+                && now - lastInvite < TimeSpan.FromSeconds(1))
+                return false;
+            _lastPrivateInvite[inviter.CharacterId] = now;
         }
 
         if (await IsCharacterBlockedByAsync(targetCharacterId, inviter.CharacterId, cancellationToken))

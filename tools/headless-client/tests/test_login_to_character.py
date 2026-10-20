@@ -268,6 +268,12 @@ def test_a_new_account_is_omega_until_2100_on_every_answer():
         assert m.plain(client.call("charUnboundMgr", "GetCharOmegaDowngradeStatus")) is False
         account_row = m.plain(client.call("charUnboundMgr", "GetCharacterSelectionData"))[0][0][1]
         assert account_row["subscriptionEndTime"] == OMEGA_END_FILETIME
+        accrued = m.plain(client.call("authentication", "AccruedTime"))
+        assert len(accrued) == 2
+        assert [int(row[0]) for row in accrued] == sorted(int(row[0]) for row in accrued)
+        for session_id, started, ended in accrued:
+            assert int(session_id) > 0
+            assert int(started) <= int(ended)
 
 def test_a_character_logs_off_to_the_selection_screen_and_selects_again():
     """The client's "log off character": userSvc.UserLogOffCharacter answers True, the connection stays open, the

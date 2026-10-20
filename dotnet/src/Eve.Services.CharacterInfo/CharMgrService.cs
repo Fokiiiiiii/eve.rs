@@ -55,6 +55,7 @@ public sealed partial class CharMgrService(
     Func<ServiceCall, ValueTask<PyValue>>? globalAssetsInventoryCall = null,
     Func<long, CancellationToken, ValueTask<decimal?>>? readBalance = null)
 {
+    private const int MaxOrganizationInfoCharacterIds = 500;
 
     /// <summary>Blocked owner identifiers used by client chat filtering.</summary>
     public async ValueTask<IReadOnlyList<long>> ReadBlockedOwnersAsync(long characterId, CancellationToken cancellationToken = default)
@@ -745,7 +746,13 @@ public sealed partial class CharMgrService(
     [Method("GetOrganizationInfoForCharacters")]
     public async ValueTask<PyValue> GetOrganizationInfoForCharacters(ServiceCall call)
     {
-        var characterIds = ListItems(call.Arg(0))
+        var requestedIds = ListItems(call.Arg(0));
+        if (requestedIds.Count > MaxOrganizationInfoCharacterIds)
+        {
+            throw MachoErrors.ThrowUserError("CHARMGR_BULK_LIMIT_EXCEEDED");
+        }
+
+        var characterIds = requestedIds
             .Select(value => NormalizeInteger(value))
             .Where(id => id > 0)
             .Distinct()
@@ -1053,7 +1060,8 @@ public sealed partial class CharMgrService(
             return new PyList([]);
         }
 
-        return new PyList(await readRecentShipKillmailPage(characterId, num, startIndex, call.Cancellation));
+        return new PyList(await readRecentShipKillmailPage(
+            characterId, Math.Min(num, 25), startIndex, call.Cancellation));
     }
 }
 

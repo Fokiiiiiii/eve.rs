@@ -73,8 +73,6 @@ public class CharUnboundMgrTests
         Assert.Equal(0, CharUnboundMgrService.FinishedSkillsCount([new(40, SkillEvents.TrainingStarted, 3305, 250, 2)]));
     }
 
-    // ── the screen before any character ─────────────────────────────────────
-
     [PgFact]
     public async Task A_new_account_has_no_characters_and_the_fixed_answers_are_the_references()
     {
@@ -120,8 +118,6 @@ public class CharUnboundMgrTests
         var created = ((PyLong)values["creationDate"]).Value;
         Assert.InRange(created, Py.FileTimeFromUnixMs(DateTimeOffset.UtcNow.AddMinutes(-5).ToUnixTimeMilliseconds()), Py.FileTimeFromUnixMs(DateTimeOffset.UtcNow.AddMinutes(5).ToUnixTimeMilliseconds()));
     }
-
-    // ── names ───────────────────────────────────────────────────────────────
 
     [PgFact]
     public async Task Every_recorded_name_check_gets_the_recorded_answer_but_one()
@@ -179,8 +175,6 @@ public class CharUnboundMgrTests
             }
         }
     }
-
-    // ── creation ────────────────────────────────────────────────────────────
 
     [PgFact]
     public async Task Creating_a_character_answers_its_id_and_the_account_then_lists_it_in_the_recorded_shapes()
@@ -302,12 +296,10 @@ public class CharUnboundMgrTests
         Assert.Equal(2, ((PyList)await h.CallAsync(two, "GetCharactersToSelect")).Items.Count);
     }
 
-    // ── choosing a character ────────────────────────────────────────────────
-
     [PgFact]
     public async Task Selecting_a_character_puts_its_active_ship_in_the_selection_session_change()
     {
-        // the reference's selection notification carries shipid (EveJS capture evejs-nes_intro): the client reads it when it builds the hold tracker
+
         await using var h = await Harness.CreateAsync();
         var (session, sink) = await h.LoginAsync("selection-shipid");
         var character = await CreateAsync(h, session, "Ship Pilot");

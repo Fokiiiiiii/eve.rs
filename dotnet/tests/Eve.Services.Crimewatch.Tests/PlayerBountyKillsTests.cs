@@ -7,7 +7,6 @@ using Xunit;
 namespace Eve.Services.Crimewatch.Tests;
 
 /// <summary>
-/// A pilot's kill claims the bounties on the victim (CH-18): the pools pay a fifth of the loss, pilot first; the claim is recorded once; the credit is paid once,
 /// also across a restart (the store and the service are built again).
 /// </summary>
 public sealed class PlayerBountyKillsTests

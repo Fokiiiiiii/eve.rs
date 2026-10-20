@@ -22,7 +22,6 @@ public sealed class FittingPgFactAttribute : FactAttribute
 
 /// <summary>
 /// The fitting managers end to end on the real saved-fitting store: the client's calls and their KeyVal shapes, the refusals the client shows, the
-/// access rules of the owner scopes, and the notifications each change sends to the owner's sessions.
 /// </summary>
 public sealed class FittingMgrServicesTests : IAsyncLifetime
 {

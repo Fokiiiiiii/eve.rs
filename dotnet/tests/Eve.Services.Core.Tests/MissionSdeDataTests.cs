@@ -6,7 +6,6 @@ using Npgsql;
 namespace Eve.Services.Core.Tests;
 
 /// <summary>
-/// The rule and the mission catalog against the real loaded data: the pinned SDE (<c>sde</c>, build 3396210) for the agent rule,
 /// and the mission build (<c>sde_mission</c>, build 3405148) for the catalog. Both need PostgreSQL and the data loaded
 /// (<c>eve-sde ensure</c>, and <c>eve-sde ensure --missions</c>).
 /// </summary>

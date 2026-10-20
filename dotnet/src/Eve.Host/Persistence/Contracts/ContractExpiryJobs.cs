@@ -1,6 +1,7 @@
 using System.Text.RegularExpressions;
 using Eve.Inventory;
 using Eve.Scheduler;
+using Eve.Events;
 using Eve.Wallet;
 using Npgsql;
 
@@ -12,7 +13,8 @@ public sealed class ContractExpiryJobs(
     PgItemStore items,
     WalletTransactions wallets,
     DurableScheduler scheduler,
-    string schema = PersistenceContractReadModel.DefaultSchema)
+    string schema = PersistenceContractReadModel.DefaultSchema,
+    EventBus? events = null)
 {
     public const string JobKind = "contracts.expire";
     private const long EscrowOwnerId = 1;
@@ -31,7 +33,10 @@ public sealed class ContractExpiryJobs(
         int IssuerWalletKey, int IssuerItemFlag, long WrapItemId);
 
     public void Register() => scheduler.Register(JobKind, async (job, token) =>
-        await SettleAsync(job.Payload<Payload>()!.ContractId, job.Connection, job.Transaction, job.NowMs, job.ScheduleAsync, token));
+    {
+        if (await SettleAsync(job.Payload<Payload>()!.ContractId, job.Connection, job.Transaction, job.NowMs, job.ScheduleAsync, token))
+            events?.Wake();
+    });
 
     public static long ToUnixMs(long fileTime) => checked((fileTime - FileTimeUnixEpoch) / TicksPerMillisecond);
 
@@ -56,6 +61,7 @@ public sealed class ContractExpiryJobs(
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         var settled = await SettleAsync(contractId, connection, transaction, nowMs, null, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+        if (settled) events?.Wake();
         return settled;
     }
 
@@ -125,6 +131,7 @@ public sealed class ContractExpiryJobs(
             completed.Parameters.AddWithValue(bid.BidderId);
             completed.Parameters.AddWithValue(Eve.Services.Py.FileTimeFromUnixMs(nowMs));
             await completed.ExecuteNonQueryAsync(cancellationToken);
+            await PublishNotificationAsync(connection, transaction, contract, "OnContractCompleted", contractId, cancellationToken);
             return true;
         }
 
@@ -152,8 +159,16 @@ public sealed class ContractExpiryJobs(
             expired.Parameters.AddWithValue(Eve.Services.Py.FileTimeFromUnixMs(nowMs));
             await expired.ExecuteNonQueryAsync(cancellationToken);
         }
+        await PublishNotificationAsync(connection, transaction, contract, "OnContractFailed", contractId, cancellationToken);
         return true;
     }
+
+    private Task<long> PublishNotificationAsync(NpgsqlConnection connection, NpgsqlTransaction transaction,
+        ExpiredContract contract, string name, long contractId, CancellationToken cancellationToken) =>
+        events is null ? Task.FromResult(0L) : events.PublishAsync(connection, transaction, ContractNotifications.Topic,
+            new ContractNotifications.Payload(name, contractId, contract.CorporationIssued ? 0 : contract.IssuerId,
+                contract.CorporationIssued ? contract.IssuerCorporationId : 0, 0),
+            $"contract:{contractId}:{name}:expiry", cancellationToken);
 
     private async Task<WinningBid?> ReadWinningBidAsync(NpgsqlConnection connection, NpgsqlTransaction transaction,
         long contractId, CancellationToken cancellationToken)

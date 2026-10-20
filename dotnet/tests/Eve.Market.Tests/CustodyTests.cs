@@ -180,7 +180,6 @@ public class CustodyTests
     }
 }
 
-
 public sealed class MarketSeedV4StoreTests
 {
     [PgFact]

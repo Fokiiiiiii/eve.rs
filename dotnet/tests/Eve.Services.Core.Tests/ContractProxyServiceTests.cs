@@ -52,7 +52,6 @@ public sealed class ContractProxyServiceTests
         Assert.Equal(new PyInt(3), Value(response, "itemsEscrow"));
     }
 
-
     [Fact]
     public async Task Place_bid_uses_client_argument_order_and_returns_boolean_success()
     {
@@ -158,6 +157,25 @@ public sealed class ContractProxyServiceTests
         Assert.Equal(new[] { 9001L }, request.Items.Select(item => item.ItemId));
         Assert.Equal(2L, Assert.Single(request.Items).Quantity);
         Assert.Equal((35, 4L), (Assert.Single(request.RequestedItems!).TypeId, Assert.Single(request.RequestedItems!).Quantity));
+    }
+
+    [Fact]
+    public async Task Accept_for_corporation_refuses_a_session_without_contract_manager_role()
+    {
+        var writer = new RecordingWriteModel();
+        var service = new ContractProxyService(new RecordingReadModel(), writer);
+        var session = new ClientSession { CharacterId = 42 };
+        session.Set("corpid", new PyInt(84));
+        session.Set("corprole", new PyLong(0));
+
+        await Assert.ThrowsAsync<MachoWrappedException>(() => service.AcceptContract(new ServiceCall
+        {
+            Method = "AcceptContract",
+            Args = [new PyInt(999), PyBool.True],
+            Session = session,
+        }));
+
+        Assert.Equal(default, writer.LastAccept);
     }
 
     [Fact]

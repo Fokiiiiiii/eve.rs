@@ -299,7 +299,6 @@ public class CharMgrTests
         Assert.Equal((PyBool.False, PyBool.False), (f["is_fallback"], f["isFallback"]));
     }
 
-
     [PgFact]
     public async Task Home_station_and_character_asset_resolution_use_persisted_character_state()
     {
@@ -494,6 +493,9 @@ public class CharMgrTests
             await Rig.CallAsync(rig.CharMgr, session, "GetRecentShipKillsAndLosses", Id(2), Id(1)));
         Assert.Equal((characterId, 2, 1), rig.LastKillmailPage!.Value);
 
+        _ = await Rig.CallAsync(rig.CharMgr, session, "GetRecentShipKillsAndLosses", Id(1000), Id(0));
+        Assert.Equal((characterId, 25, 0), rig.LastKillmailPage!.Value);
+
         Assert.Equal(new PyList([]),
             await Rig.CallAsync(rig.CharMgr, session, "GetRecentShipKillsAndLosses", Id(2), Id(3)));
         Assert.Equal((characterId, 2, 3), rig.LastKillmailPage!.Value);
@@ -537,7 +539,6 @@ public class CharMgrTests
         Assert.Equal(Py.Number(-2.5), fields["securityStatus"]);
         Assert.Equal(Id(9876), fields["medal1GraphicID"]);
     }
-
 
     [PgFact]
     public async Task Private_info_returns_the_authoritative_member_editor_row()
@@ -658,7 +659,6 @@ public class CharMgrTests
         Assert.Equal(new PyStr(""), await Ask(second, "GetNote", Id(4001)));
     }
 
-
     [PgFact]
     public async Task Personal_contact_labels_can_be_created_edited_assigned_removed_and_deleted()
     {
@@ -696,7 +696,6 @@ public class CharMgrTests
             state.Contacts.OrderBy(contact => contact.ContactId));
     }
 
-
     [PgFact]
     public async Task EditContact_updates_relationship_and_watchlist_through_the_client_method()
     {
@@ -719,7 +718,6 @@ public class CharMgrTests
         Assert.Equal(new CharMgrContact(2001, true, -10, 3), Assert.Single(state.Contacts));
     }
 
-
     [PgFact]
     public async Task Get_private_info_on_corporation_change_returns_the_reference_keyval_shape()
     {
@@ -735,7 +733,6 @@ public class CharMgrTests
                 ("corporationDateTime", new PyLong(Py.FileTimeFromUnixMs(character!.CreatedAt.ToUnixTimeMilliseconds())))),
             await Rig.CallAsync(service, session, "GetPrivateInfoOnCorpChange", Id(characterId)));
     }
-
 
     [PgFact]
     public async Task Private_corporation_change_info_ignores_a_client_supplied_other_character_id()
@@ -864,7 +861,6 @@ public class CharMgrTests
         Assert.Equal(new PyDict([]), await Rig.CallAsync(service, session, "GetCharacterSettings"));
     }
 
-
     [PgFact]
     public async Task Get_organization_info_for_local_chat_returns_keyed_keyvals_from_the_existing_stores()
     {
@@ -910,6 +906,15 @@ public class CharMgrTests
                         ("warFactionID", Id(0)))),
             ]),
             result);
+
+        var oversizedIds = new PyList(Enumerable.Range(1, 501)
+            .Select(id => (PyValue)Id(id)).ToArray());
+        var refusal = await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(() => Rig.CallAsync(
+            service, session, "GetOrganizationInfoForCharacters", oversizedIds));
+        Assert.Equal(MachoErrors.UserErrorClass, refusal.Error.ClassName);
+        var errorHeader = Assert.IsType<PyTuple>(Assert.IsType<PyObjectEx>(refusal.Error.Payload).Header);
+        Assert.Equal(new PyStr("CHARMGR_BULK_LIMIT_EXCEEDED"),
+            Assert.IsType<PyTuple>(errorHeader.Items[1]).Items[0]);
     }
 
     [PgFact]
@@ -1159,7 +1164,6 @@ public class CharMgrTests
         var errors = state.Entries.Single(entry => Assert.IsType<PyStr>(entry.Key).Value == "errors").Value;
         Assert.Equal(new PyList([new PyInt(code)]), errors);
     }
-
 
 }
 

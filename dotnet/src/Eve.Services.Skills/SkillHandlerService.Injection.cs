@@ -146,7 +146,13 @@ private long DiminishedInjectorSp(long totalSp, int typeId, long quantity, long 
                 throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("A Daily Alpha Injector can only be used once per day.")));
             var total = await store.TotalPointsAsync(connection, transaction, character, token);
             var free = await store.FreeSkillPointsAsync(connection, transaction, character, token);
-            var award = DiminishedInjectorSp(total + free, item.TypeId, quantity, 0);
+            if (total < 0 || free < 0)
+                throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("That skill injector cannot be used.")));
+            const long diminishingThreshold = 80_000_000;
+            var diminishingTotal = total >= diminishingThreshold || free >= diminishingThreshold - total
+                ? diminishingThreshold
+                : total + free;
+            var award = DiminishedInjectorSp(diminishingTotal, item.TypeId, quantity, 0);
             if (award <= 0) throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("That skill injector cannot be used.")));
             var newBalance = await store.GrantFreeSkillPointsAsync(connection, transaction, character, award, token);
             if (item.Singleton || quantity == item.Quantity)

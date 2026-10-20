@@ -411,6 +411,25 @@ public class SkillHandlerTests
         Assert.Null(await rig.ItemStore.GetAsync(injector));
     }
 
+
+    [PgFact]
+    public async Task Injector_diminishing_total_saturates_without_overflowing_authoritative_point_balances()
+    {
+        await using var rig = await Rig.CreateAsync(useCurrentSdeCatalog: true);
+        var characterId = rig.CharacterId;
+        var skill = rig.CatalogForTest.Skills.Single(type => type.TypeId == 3300).TypeId;
+        await rig.GrantAsync(characterId, (skill, 5, 4_950_000));
+        await rig.GrantFreeSkillPointsAsync(characterId, long.MaxValue - 50_000);
+        var injectorType = rig.CatalogForTest.ItemTypeId("Small Skill Injector");
+        Assert.NotNull(injectorType);
+        var injector = await rig.CreateItemAsync(new Eve.Inventory.NewItem(injectorType.Value, characterId, 60_000_001, 4, 2, false));
+        var session = Rig.Session(characterId).Session;
+
+        Assert.Equal(new PyInt(30_000), await Rig.CallAsync(rig.Handler, session, "InjectSkillpoints", new PyLong(injector), new PyInt(1)));
+        Assert.Equal(long.MaxValue - 20_000, await rig.Store.FreeSkillPointsAsync(characterId));
+        Assert.Equal(1, (await rig.ItemStore.GetAsync(injector))?.Quantity);
+    }
+
     [PgFact]
     public async Task Injector_preview_uses_per_item_large_and_small_bands_and_non_diminishing_uses()
     {

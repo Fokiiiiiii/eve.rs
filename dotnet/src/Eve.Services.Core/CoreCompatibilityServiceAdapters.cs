@@ -151,11 +151,20 @@ public sealed partial class LocalizationServerService
     public Func<ServiceCall, ValueTask<PyValue?>>? RpcHandler { get; set; }
 
     private int _qaWrapActive;
-    private readonly ConcurrentQueue<LocalizationServerEvent> _events = new();
+    private const int MaxRecordedEvents = 1024;
+    private readonly object _eventsLock = new();
+    private readonly Queue<LocalizationServerEvent> _events = new();
     private long _nextEventId;
 
     public bool QaWrapActive => Volatile.Read(ref _qaWrapActive) != 0;
-    public IReadOnlyList<LocalizationServerEvent> Events => _events.ToArray();
+    public IReadOnlyList<LocalizationServerEvent> Events
+    {
+        get
+        {
+            lock (_eventsLock)
+                return _events.ToArray();
+        }
+    }
 
     [Method("UpdateLocalizationQAWrap")]
     public ValueTask<PyValue> UpdateLocalizationQAWrap(ServiceCall call) =>
@@ -182,10 +191,18 @@ public sealed partial class LocalizationServerService
             return PyBool.False;
         });
 
-    private void Record(ServiceCall call, string eventType) =>
-        _events.Enqueue(new LocalizationServerEvent(
+    private void Record(ServiceCall call, string eventType)
+    {
+        var entry = new LocalizationServerEvent(
             Interlocked.Increment(ref _nextEventId), eventType, call.Session.CharacterId ?? 0,
-            call.Session.UserId ?? 0, DateTimeOffset.UtcNow));
+            call.Session.UserId ?? 0, DateTimeOffset.UtcNow);
+        lock (_eventsLock)
+        {
+            if (_events.Count == MaxRecordedEvents)
+                _events.Dequeue();
+            _events.Enqueue(entry);
+        }
+    }
 
     private static bool Truthy(PyValue value) => value switch
     {

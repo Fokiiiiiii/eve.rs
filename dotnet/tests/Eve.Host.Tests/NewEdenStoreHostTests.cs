@@ -158,6 +158,57 @@ public sealed class NewEdenStoreHostTests : IAsyncLifetime
     }
 
     [PgFact]
+    public async Task Seasonal_login_campaign_state_and_claims_are_persisted_and_claim_once()
+    {
+        var oldCampaign = Environment.GetEnvironmentVariable("EVE_SEASONAL_LOGIN_CAMPAIGN");
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        Environment.SetEnvironmentVariable("EVE_SEASONAL_LOGIN_CAMPAIGN", System.Text.Json.JsonSerializer.Serialize(new
+        {
+            campaignId = 2356,
+            startDate = today.AddDays(-1).ToString("yyyy-MM-dd"),
+            endDate = today.AddDays(1).ToString("yyyy-MM-dd"),
+            turnoverTimeUtc = "00:00:00",
+            retroClaimEnabled = true,
+            alphaRewards = new Dictionary<string, object> { ["0"] = new { typeId = CertificateTypeId, quantity = 1 } },
+            omegaRewards = new Dictionary<string, object> { ["0"] = new { typeId = PlexTypeId, quantity = 1 } },
+        }));
+        try
+        {
+            var host = await BuildHostAsync();
+            await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+            var station = (await StationCatalog.LoadAsync(new SdeReader(source))).All.First();
+            var accountDirectory = new PgAccountDirectory(source, new AccountOptions { AutoCreate = true }, Schema("EVE_IDENTITY_SCHEMA"));
+            var account = Assert.IsType<LoggedIn>(await accountDirectory.LoginAsync(
+                new LoginAttempt("seasonal-campaign", new byte[] { 9, 9, 9 }, "en", "127.0.0.1"), CancellationToken.None));
+            Assert.Equal(1u, account.AccountId);
+            accountDirectory.SetSubscriptionEndsAt(account.AccountId, DateTimeOffset.UtcNow.AddDays(-90));
+            var pilot = await CreatePilotAsync(source, station, "Seasonal Pilot");
+            var session = new ClientSession(new Sink()) { SessionId = 402, UserId = account.AccountId, CharacterId = pilot };
+            var service = host.Registry.Lookup("seasonalLoginCampaignManager")!;
+            var active = Assert.IsType<PyTuple>(await service.CallAsync(Call(session, "get_active_campaign", 1, [])));
+            Assert.Equal(new PyInt(2356), active.Items[0]);
+            Assert.Equal(PyBool.True, await service.CallAsync(Call(session, "claim_reward", 2, [])));
+            Assert.Equal(PyBool.False, await service.CallAsync(Call(session, "claim_reward", 3, [])));
+            accountDirectory.SetSubscriptionEndsAt(account.AccountId, DateTimeOffset.UtcNow.AddDays(90));
+            Assert.Equal(PyBool.True, await service.CallAsync(Call(session, "claim_reward", 4, [])));
+            Assert.Equal(PyBool.False, await service.CallAsync(Call(session, "claim_reward", 5, [])));
+            await host.ShutdownAsync();
+            _hosts.Remove(host);
+            host = await BuildHostAsync();
+            service = host.Registry.Lookup("seasonalLoginCampaignManager")!;
+            var history = Assert.IsType<PyDict>(await service.CallAsync(Call(session, "get_claim_history", 6, [])));
+            Assert.Single(history.Entries);
+            var redeem = host.Registry.Lookup("userSvc")!;
+            var redeemTokens = Assert.IsType<PyObjectEx>(await redeem.CallAsync(Call(session, "GetRedeemTokens", 7, [])));
+            Assert.Equal(2, redeemTokens.List.Count);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("EVE_SEASONAL_LOGIN_CAMPAIGN", oldCampaign);
+        }
+    }
+
+    [PgFact]
     public async Task A_plex_pack_from_the_fast_checkout_is_credited_to_the_vault_and_its_ok_answer_is_the_client_s_confirmation()
     {
         var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;

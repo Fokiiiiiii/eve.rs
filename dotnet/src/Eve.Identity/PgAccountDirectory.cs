@@ -95,6 +95,24 @@ public sealed partial class PgAccountDirectory : IAccountDirectory, IAccountLook
         command.ExecuteNonQuery();
     }
 
+    /// <summary>The account's authoritative age gate state, or false for an unknown account.</summary>
+    public async Task<bool> IsUnderageAsync(uint accountId, CancellationToken cancellationToken)
+    {
+        await using var command = _source.CreateCommand($"SELECT underage FROM {Schema}.accounts WHERE id = $1");
+        command.Parameters.Add(new NpgsqlParameter { Value = checked((int)accountId) });
+        var result = await command.ExecuteScalarAsync(cancellationToken);
+        return result is true;
+    }
+
+    /// <summary>Sets the account age gate state received from the account verification provider.</summary>
+    public async Task<bool> SetUnderageAsync(uint accountId, bool underage, CancellationToken cancellationToken = default)
+    {
+        await using var command = _source.CreateCommand($"UPDATE {Schema}.accounts SET underage = $2 WHERE id = $1");
+        command.Parameters.Add(new NpgsqlParameter { Value = checked((int)accountId) });
+        command.Parameters.Add(new NpgsqlParameter { Value = underage });
+        return await command.ExecuteNonQueryAsync(cancellationToken) == 1;
+    }
+
     /// <summary>The account's stored end time, or null when the account does not exist.</summary>
     public async Task<DateTimeOffset?> SubscriptionEndsAtAsync(uint accountId, CancellationToken cancellationToken)
     {

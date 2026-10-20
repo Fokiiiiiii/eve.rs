@@ -28,7 +28,7 @@ public sealed class AccountRpcTests
             Session = new ClientSession { CharacterId = sender },
         });
 
-        Assert.Equal(PyNone.Instance, result);
+        Assert.Equal(PyBool.True, result);
         Assert.Equal(senderBefore - 125.75m, (await rig.Wallets.GetAsync(sender))!.Isk);
         Assert.Equal(recipientBefore + 125.75m, (await rig.Wallets.GetAsync(recipient))!.Isk);
         Assert.Equal("private gift", Assert.Single(await rig.Transactions.JournalAsync(sender)).Reason);
@@ -37,7 +37,7 @@ public sealed class AccountRpcTests
     }
 
     [PgFact]
-    public async Task GiveCash_to_a_corporation_returns_both_balances_and_corp_transfer_uses_the_selected_division()
+    public async Task GiveCash_to_a_corporation_does_not_return_private_balances_and_corp_transfer_uses_the_selected_division()
     {
         await using var rig = await Rig.CreateAsync();
         var actor = await rig.CharacterAsync("GiveCash Corporation CEO");
@@ -52,7 +52,7 @@ public sealed class AccountRpcTests
         session.Set("corpid", Py.Number(corporation.Id));
 
         var personalBefore = (await rig.Wallets.GetAsync(actor))!.Isk;
-        var deposit = Assert.IsType<PyList>(await service.GiveCash(new ServiceCall
+        var deposit = await service.GiveCash(new ServiceCall
         {
             Method = "GiveCash",
             Args = [Py.Number(corporation.Id), new PyReal(40.25)],
@@ -61,12 +61,19 @@ public sealed class AccountRpcTests
                 new(new PyStr("reason"), new PyStr("corporation deposit")),
             ]),
             Session = session,
-        }));
+        });
 
-        Assert.Equal(2, deposit.Items.Count);
-        Assert.Equal((double)(personalBefore - 40.25m), Assert.IsType<PyReal>(deposit.Items[0]).Value);
-        Assert.Equal(40.25, Assert.IsType<PyReal>(deposit.Items[1]).Value);
+        Assert.Equal(PyNone.Instance, deposit);
         Assert.Equal(personalBefore - 40.25m, (await rig.Wallets.GetAsync(actor))!.Isk);
+        Assert.Equal(40.25m, await rig.Transactions.AccountBalanceAsync(new WalletAccount(corporation.Id, 1001)));
+
+        var zeroDeposit = await service.GiveCash(new ServiceCall
+        {
+            Method = "GiveCash",
+            Args = [Py.Number(corporation.Id), Py.Number(0)],
+            Session = session,
+        });
+        Assert.Equal(PyNone.Instance, zeroDeposit);
         Assert.Equal(40.25m, await rig.Transactions.AccountBalanceAsync(new WalletAccount(corporation.Id, 1001)));
 
         var recipientBefore = (await rig.Wallets.GetAsync(recipient))!.Isk;

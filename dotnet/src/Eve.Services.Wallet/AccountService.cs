@@ -210,9 +210,9 @@ public sealed partial class AccountService(PgWalletStore wallets, Eve.Corporatio
                 from, to, amount, 10, reason, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
                 OperationKey(call, "GiveCash"), "player_donation", call.Cancellation);
             Announce(walletTransactions, settlement);
-            return recipientCorporation is null
-                ? PyNone.Instance
-                : new PyList([new PyReal((double)Balance(settlement, from)), new PyReal((double)Balance(settlement, to))]);
+            // The client reads truthiness to finish a personal gift and ignores the transfer window's result.
+            // Never return the corporation's post-transfer balance to an unrelated donor.
+            return recipientCorporation is null ? PyBool.True : PyNone.Instance;
         }
         catch (MoneyLimitException)
         {

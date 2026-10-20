@@ -34,7 +34,8 @@ public static class CoreServices
         IContractWriteModel? contractWriteModel = null,
         Func<long, int, CancellationToken, ValueTask<int>>? contractSkillLevel = null,
         CharacterSessions? calendarSessions = null,
-        Func<long, long, CancellationToken, ValueTask<decimal>>? contractBrokerFeeAdjustment = null)
+        Func<long, long, CancellationToken, ValueTask<decimal>>? contractBrokerFeeAdjustment = null,
+        PyValue? localizationTextChanges = null)
     {
         gameRpcCallbacks ??= new GameRpcCallbacks();
         var licenses = new OmegaLicenses(accounts, nowUnixMs);
@@ -86,7 +87,7 @@ public static class CoreServices
               new InGameReportService(submitInGameReport),
               new NonDiminishingInjectionMgrService(readNonDiminishingInjections),
             new ProjectDiscoveryService(new ProjectDiscoveryRpcCallbacks(ReadPlayerStateAsync: gameRpcCallbacks.ReadProjectDiscoveryState)),
-            new LocalizationServerService(),
+              new LocalizationServerService(localizationTextChanges),
               new SeasonManagerService(),
             authentication ?? new AuthenticationRpcService(),
             infoGatheringMgr ?? new InfoGatheringMgrService(),

@@ -8,12 +8,20 @@ namespace Eve.Services.Core.Tests;
 public sealed class ClientStartupServicesTests
 {
     [Fact]
-    public void Security_manager_returns_empty_modified_systems_dict()
+    public void Security_manager_returns_the_empty_indexed_rowset()
     {
         var service = new SecurityMgrService();
         var result = service.GetModifiedSystems(null!);
+        var descriptor = Descriptor.FromHeader(new PyObjectEx(ObjectExKind.Ex1,
+            Py.Tuple(new PyToken("blue.DBRowDescriptor"), Py.Tuple(Py.Tuple(
+                Py.Tuple(new PyStr("solarSystemID"), new PyInt(0x03)),
+                Py.Tuple(new PyStr("security"), new PyInt(0x05)),
+                Py.Tuple(new PyStr("modifiedSecurity"), new PyInt(0x05))))), [], []));
+        var expected = new PyObjectEx(ObjectExKind.Ex2,
+            Py.Tuple(Py.Tuple(new PyToken("carbon.common.script.sys.crowset.CIndexedRowset")),
+                Py.Dict(("header", descriptor.Header), ("columnName", new PyStr("solarSystemID")))), [], []);
 
-        Assert.Empty(Assert.IsType<PyDict>(result).Entries);
+        Assert.Equal(expected, result);
     }
 
     [Fact]
@@ -26,18 +34,23 @@ public sealed class ClientStartupServicesTests
     }
 
     [Fact]
-    public void Alert_stacktrace_response_has_a_unique_id_and_detail_mode()
+    public void Alert_stacktrace_response_reuses_ids_by_hash_and_uses_detail_mode()
     {
         var service = new AlertService();
-        var result = Assert.IsType<PyTuple>(service.SendClientStackTraceAlert(new ServiceCall
+        ServiceCall Call(int hash) => new()
         {
             Method = "SendClientStackTraceAlert",
-            Args = [new PyTuple([new PyInt(123), new PyStr("stack-key")]), new PyStr("trace"), new PyStr("Error")],
+            Args = [new PyTuple([new PyInt(hash), new PyStr("stack-key")]), new PyStr("trace"), new PyStr("Error")],
             Session = new ClientSession(),
-        }));
+        };
+        var first = Assert.IsType<PyTuple>(service.SendClientStackTraceAlert(Call(123)));
+        var repeated = Assert.IsType<PyTuple>(service.SendClientStackTraceAlert(Call(123)));
+        var distinct = Assert.IsType<PyTuple>(service.SendClientStackTraceAlert(Call(124)));
 
-        Assert.IsType<PyLong>(result.Items[0]);
-        Assert.Equal(new PyStr("D"), result.Items[1]);
+        Assert.IsType<PyLong>(first.Items[0]);
+        Assert.Equal(first.Items[0], repeated.Items[0]);
+        Assert.NotEqual(first.Items[0], distinct.Items[0]);
+        Assert.Equal(new PyStr("D"), first.Items[1]);
     }
 
     [Fact]

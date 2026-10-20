@@ -105,6 +105,7 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
     }
     private const int PlexTypeId = 44992;
     private const int MaxBuyMultipleItems = 500;
+    private const int MaxMultiSellOrderEntries = 500;
     private const int MaxHistoryTypeIds = 500;
     /// <summary>Q14: the window in which an identical placement from the same session is refused.</summary>
     private const long DuplicateWindowMs = 5_000;
@@ -378,9 +379,12 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
     public async ValueTask<PyValue> PlaceMultiSellOrder(ServiceCall call)
     {
         Actor(call);
+        var entries = Sequence(call.Arg(0));
+        if (entries.Count > MaxMultiSellOrderEntries)
+            throw Error(new MarketError("MARKET_BULK_LIMIT_EXCEEDED"));
         var index = 0;
         var traded = false;
-        foreach (var entry in Sequence(call.Arg(0)))
+        foreach (var entry in entries)
             traded |= await SellEntry(call, entry, JsSemantics.Truthy(call.Arg(1)), (int)Integer(call.Arg(2)), call.Arg(3), Key(call, "sell:" + index++));
         return traded ? PyBool.True : PyBool.False;
     }

@@ -6,8 +6,6 @@ using Eve.Marshal;
 
 namespace Eve.Services.Corporations;
 
-// Wire contracts follow EveJS v0.12.9 allianceRegistryRuntime.js and allianceViewState.js (828823a75f211fdecb945b087a26c225f111491f).
-
 public sealed record AllianceSovSnapshot(
     IReadOnlyDictionary<long,long?> ClaimAllianceIdsBySolarSystemId,
     IReadOnlyDictionary<long,(long? AllianceId,long? HubId)> HubsBySolarSystemId,
@@ -375,7 +373,6 @@ public AllianceRegistryService(CorporationStore store, PgCharacterStore characte
         return PyNone.Instance;
     }
 
-
     [Method("SetPrimeHour")]
     public async ValueTask<PyValue> SetPrimeHour(ServiceCall call)
     {
@@ -550,7 +547,6 @@ public AllianceRegistryService(CorporationStore store, PgCharacterStore characte
         return PyNone.Instance;
     }
 
-
     [Method("DeleteMember")]
     public async ValueTask<PyValue> DeleteMember(ServiceCall call)
     {
@@ -620,7 +616,6 @@ public AllianceRegistryService(CorporationStore store, PgCharacterStore characte
             await relations.EndAsync(pgConnection,pgTransaction,kind,corporationId,current.Object,
                 "alliance membership ended",token);
     }
-
 
     [Method("GetBills")]
     public async ValueTask<PyValue> GetBills(ServiceCall call)
@@ -737,7 +732,6 @@ public AllianceRegistryService(CorporationStore store, PgCharacterStore characte
         ("paidByOwnerID",Py.Number(bill.PaidByOwnerId ?? 0)),
         ("externalID",Py.Number(bill.ExternalId)),
         ("externalID2",Py.Number(bill.ExternalId2)));
-
 
     [Method("GMForceAcceptApplication")]
     public async ValueTask<PyValue> GMForceAcceptApplication(ServiceCall call)
@@ -1162,7 +1156,6 @@ public AllianceRegistryService(CorporationStore store, PgCharacterStore characte
         ]);
 }
 
-
 // Alliance application deadlines, war holds and affiliations use the shared Scheduler, Relations and EventBus.
 public sealed class AllianceApplicationDueWorker(
     CorporationStore store,
@@ -1188,7 +1181,6 @@ public sealed class AllianceApplicationDueWorker(
         foreach (var job in await store.PendingAllianceApplicationJobsAsync(token))
             await scheduler.ScheduleAsync(Spec(job), token);
     }
-
 
     private async Task ReconcileCorporationMemberAffiliationsAsync(CancellationToken token)
     {
@@ -1357,7 +1349,6 @@ public sealed class AllianceApplicationDueWorker(
         };
 }
 
-// CorpRegistry Alliance RPCs follow EveJS v0.12.9 corpRegistryRuntime.js (828823a75f211fdecb945b087a26c225f111491f).
 public sealed partial class CorpRegistryService
 {
     private static readonly Descriptor AllianceApplicationDescriptor = CorporationWire.DescriptorOf(
@@ -1441,7 +1432,6 @@ public sealed partial class CorpRegistryService
     }
 }
 
-
 public sealed class AllianceMaintenanceBillWorker(
     CorporationStore store,
     Eve.Corporations.CorporationOfficeStore officeStore,
@@ -1510,7 +1500,6 @@ public sealed class AllianceMaintenanceBillWorker(
         foreach (var member in await store.MembersAsync(executorCorporationId, token))
             await notify(member.CharacterId, alliance.Id, bill.BillId, token);
     }
-
 
     private async Task CloseAllianceAtDowntimeAsync(
     AllianceMaintenanceBillDue payload, CancellationToken token)
@@ -1685,7 +1674,6 @@ private static Eve.Scheduler.JobSpec EmptyClosureSpec(long allianceId, long empt
     AllianceMember[]? MemberSnapshots = null,
     long CharacterCount = 0);
 }
-
 
 public sealed class AllianceWarInheritanceWorker(
     Npgsql.NpgsqlDataSource source,
@@ -2389,7 +2377,6 @@ public sealed class AllianceWarInheritanceWorker(
     AllianceWarAlly? AllianceAlly, AllianceWarAlly[] Allies, string AttrsJson);
     private sealed record AllianceWarAlly(long AllianceId, long TimeStartedFiletime, long? TimeFinishedFiletime);
 }
-
 
 public sealed class AllianceSovereigntyTransferWorker(
     CorporationStore store,

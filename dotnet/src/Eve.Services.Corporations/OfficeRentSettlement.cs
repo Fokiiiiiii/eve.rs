@@ -4,10 +4,6 @@ using Npgsql;
 
 namespace Eve.Services.Corporations;
 
-/// <summary>
-/// The wallet side of paying a corporation office's rent bill. The payer is debited and the creditor (the structure's or the station's owner corporation, resolved by
-/// the caller) is credited, as EVE.js creditRentalOwner does.
-/// </summary>
 public static class OfficeRentSettlement
 {
     public const int OfficeRentReferenceType = 13;

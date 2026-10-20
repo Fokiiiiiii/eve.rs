@@ -8,7 +8,6 @@ using Eve.Services;
 
 namespace Eve.Services.Corporations;
 
-/// <summary>An NPC station as the corporation door needs it: its id, its owner (the corporation that runs it) and its solar system.</summary>
 public sealed record CorporationStationPlace(long StationId, long OwnerId, int SolarSystemId);
 
 /// <summary>
@@ -62,7 +61,6 @@ public sealed partial class CorpStationMgrService(
 
     /// <summary>
     /// <c>DoStandingCheckForStationService(serviceID[, characterID])</c>: refuses the station service when the character's standing
-    /// toward the station's owner is below the service's minimum in the static data (the SDE's <c>stationStandingsRestrictions</c>).
     /// The standing is the higher of the character's own and its corporation's, as the client shows it.
     /// </summary>
     [Method("DoStandingCheckForStationService")]

@@ -73,13 +73,19 @@ public sealed class XmppOrganizationRoomTests
             });
             Assert.Same(PyBool.True, result);
 
+            var firstOutput = new List<string>();
+            var firstClient = Connect(firstHub, 42, "director-token", firstOutput);
+            firstClient.OnStanza(Parse("<presence to='corp_100@conference.chat.example/Director'><x xmlns='http://jabber.org/protocol/muc'/></presence>"));
+            await firstClient.OnStanzaAsync(Parse("<message to='corp_100@conference.chat.example/Director' type='groupchat'><subject>Subject notice</subject></message>"), default);
+            Assert.Contains(firstOutput, item => item.Contains("<subject>Subject notice</subject>", StringComparison.Ordinal));
+
             var restartedStore = await XmppMotdStore.OpenAsync(source, schema);
             var restartedHub = new XmppChatHub(sessions, new XmppChatSettings("chat.example", "127.0.0.1"), motdStore: restartedStore);
             var output = new List<string>();
             var client = Connect(restartedHub, 42, "director-token", output);
             client.OnStanza(Parse("<presence to='corp_100@conference.chat.example/Director'><x xmlns='http://jabber.org/protocol/muc'/></presence>"));
 
-            Assert.Contains(output, item => item.Contains("<subject>Persisted notice</subject>", StringComparison.Ordinal));
+            Assert.Contains(output, item => item.Contains("<subject>Subject notice</subject>", StringComparison.Ordinal));
         }
         finally
         {

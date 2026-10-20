@@ -33,7 +33,8 @@ public static class CoreServices
         IContractReadModel? contractReadModel = null,
         IContractWriteModel? contractWriteModel = null,
         Func<long, int, CancellationToken, ValueTask<int>>? contractSkillLevel = null,
-        CharacterSessions? calendarSessions = null)
+        CharacterSessions? calendarSessions = null,
+        Func<long, long, CancellationToken, ValueTask<decimal>>? contractBrokerFeeAdjustment = null)
     {
         gameRpcCallbacks ??= new GameRpcCallbacks();
         var licenses = new OmegaLicenses(accounts, nowUnixMs);
@@ -65,7 +66,7 @@ public static class CoreServices
             new TourneyMgrService(tourneyQueryCallback),
             new RaffleMgrService(gameRpcCallbacks.SeedRafflesAsync),
             new RaffleProxyService(),
-            new ContractProxyService(contractReadModel, contractWriteModel, contractSkillLevel),
+            new ContractProxyService(contractReadModel, contractWriteModel, contractSkillLevel, contractBrokerFeeAdjustment),
             new JumpCloneService(gameRpcCallbacks.JumpClones, gameRpcCallbacks.JumpCloneSpace),
             new ServiceGatewayMgrService(gameRpcCallbacks.SetHijackMode, gameRpcCallbacks.IsHijackModeEnabled),
             new SharedSettingsMgrService(gameRpcCallbacks.ReadSharedSettings, gameRpcCallbacks.WriteSharedSettingsAsync, nowUnixMs),

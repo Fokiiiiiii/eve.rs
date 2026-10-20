@@ -290,8 +290,6 @@ internal static class PackedRowCodec
     private static bool BitIsSet(ReadOnlySpan<byte> bitmap, int bit) =>
         (bit >> 3) < bitmap.Length && (bitmap[bit >> 3] & (1 << (bit & 7))) != 0;
 
-    // ─── Decoding ───────────────────────────────────────────────────────────
-
     public static PyValue Decode(MarshalDecoder decoder, Descriptor descriptor, ReadOnlyMemory<byte> rle)
     {
         var columns = descriptor.Columns;
@@ -376,8 +374,6 @@ internal static class PackedRowCodec
                 return PyNone.Instance;
         }
     }
-
-    // ─── Encoding ───────────────────────────────────────────────────────────
 
     public static void Encode(MarshalEncoder encoder, PyPackedRow row)
     {
@@ -569,8 +565,6 @@ internal static class PackedRowCodec
         PyNone => false,
         _ => PackNumber(value) != 0.0,
     };
-
-    // ─── RLE ────────────────────────────────────────────────────────────────
 
     /// <summary>
     /// The row block's RLE: a control byte carries two nibbles; a nibble below 8 announces

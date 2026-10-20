@@ -42,6 +42,7 @@ Dispatch one slow test or the full slow matrix:
 
 ```sh
 python3 tools/dev/ci-status.py dispatch live-slow.yml --ref main --test-file test_walk_industry.py
+python3 tools/dev/ci-status.py dispatch live-slow.yml --ref main --test-file test_walk_xmpp_live.py
 python3 tools/dev/ci-status.py dispatch live-slow.yml --ref main --test-file all
 ```
 
@@ -209,6 +210,8 @@ Windows workflow handoff for cx32: in runs 194 (`d01856d3`) and 195 (`95512e4f`)
 
 Run 269 on `a3a1f373` passed Rust format/clippy, Rust tests, fixtures, Python, the end-to-end walk, .NET build, the Space shard and the Host shard. The all-other .NET shard failed only in `CoreCatalogTests.Core_factory_exposes_node_graph_callback_for_host_wiring`: its QA RPC test session had no `accountRole` staff grant, so the intentional QA authorization check did not forward the callback. The fixture now grants the QA role before invoking `qa_unsubscribe`; the focused test passed locally (1 test). Run 270 on `ec9575b0` repeated that single failure because it ran before the fixture correction was merged. Run 272 on `f1539c1` passed all Linux jobs and the Required CI gate: [run 272](https://github.com/Fokiiiiiii/eve.rs/actions/runs/39338882753). It is the first green required gate after the fixture correction; the separate Windows workflow was still in progress when checked. The prior recorded-walk and Host `InventoryRpc` failures are resolved as recorded above: GM walk expectations match the recorded role behavior, and character-only inventory composition omits the space-only callback when no space session provider exists. The currently configured `ci.yml` branch concurrency keeps one active push run and one replaceable pending run; its Required CI gate does not wait for Windows. Run 271 for `7c780c90` was superseded while pending. Runs 272 (`f1539c1`) and 273 (`e2c4be90`) both reached successful conclusions with their Required CI gates green; run 273 completed all Linux checks, including the newly split Space test shards, in 15.2 minutes. The gate reports success independently of the separate Windows workflow.
 
+
+CI run 422 on `745e786b` found `EVE_XMPP_SCHEMA` missing from `tools/dev/run-eve-live.sh` scratch-schema export and cleanup. The script now assigns `${SCRATCH}_xmpp` and drops it with the other per-run schemas; the focused Host isolation and XMPP tests pass locally. The same run reported a live inventory `MachoError 2` while reading station hangar inventory after login; its recurrence status is unknown.
 
 ## SDE lookup index initialization
 

@@ -42,7 +42,7 @@ public sealed class XmppLink
 /// The chat rooms the client joins. This class owns the character-to-connection registry and the token check; room
 /// membership is added on top of it. Only a character with an authenticated XMPP connection is an occupant.
 /// </summary>
-public sealed class XmppChatHub
+public sealed partial class XmppChatHub
 {
     private readonly ConnectedSessions _sessions;
     private readonly object _gate = new();

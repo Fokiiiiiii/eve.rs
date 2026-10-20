@@ -11,7 +11,6 @@ public sealed partial class FleetManagerService(
     Func<ClientSession, ClientSession, bool>? sameBubble = null)
 {
     private const string WatchlistSessionKey = "fleetWatchlist";
-    private const string DamageWatchlistSessionKey = "fleetDamageWatchlist";
     private static readonly System.Collections.Generic.HashSet<string> BroadcastNames = new(StringComparer.Ordinal)
     {
         "EnemySpotted", "HealArmor", "HealShield", "HealCapacitor", "InPosition", "NeedBackup",
@@ -37,7 +36,7 @@ public sealed partial class FleetManagerService(
     public async ValueTask<PyValue> AddToWatchlist(ServiceCall call)
     {
         var context = await ContextAsync(call);
-        if (context is null) return PyNone.Instance;
+        if (context is null) throw MachoErrors.ThrowUserError("FleetNotInFleet");
         var (fleetId, snapshot, _) = context.Value;
         var members = snapshot.Members.Select(member => member.CharacterId).ToHashSet();
         var added = Ids(call.Arg(0));
@@ -51,15 +50,12 @@ public sealed partial class FleetManagerService(
     public async ValueTask<PyValue> RemoveFromWatchlist(ServiceCall call)
     {
         var context = await ContextAsync(call);
-        if (context is null) return PyNone.Instance;
+        if (context is null) throw MachoErrors.ThrowUserError("FleetNotInFleet");
         var (fleetId, snapshot, _) = context.Value;
         var members = snapshot.Members.Select(member => member.CharacterId).ToHashSet();
         var removed = Number(call.Arg(0));
         var remaining = Ids(call.Arg(1)).Where(id => id != removed && members.Contains(id)).Distinct().Take(100).ToArray();
         SetWatchlist(call.Session, WatchlistSessionKey, remaining);
-        var damageWatchlist = Ids(call.Session.Get(DamageWatchlistSessionKey) ?? PyNone.Instance)
-            .Where(id => id != removed && members.Contains(id)).Distinct().Take(100).ToArray();
-        SetWatchlist(call.Session, DamageWatchlistSessionKey, damageWatchlist);
         return PyNone.Instance;
     }
 
@@ -67,11 +63,11 @@ public sealed partial class FleetManagerService(
     public async ValueTask<PyValue> RegisterForDamageUpdates(ServiceCall call)
     {
         var context = await ContextAsync(call);
-        if (context is null) return PyNone.Instance;
+        if (context is null) throw MachoErrors.ThrowUserError("FleetNotInFleet");
         var (fleetId, snapshot, _) = context.Value;
         var members = snapshot.Members.Select(member => member.CharacterId).ToHashSet();
         var watchlist = Ids(call.Arg(0)).Where(members.Contains).Distinct().Take(100).ToArray();
-        SetWatchlist(call.Session, DamageWatchlistSessionKey, watchlist);
+        SetWatchlist(call.Session, WatchlistSessionKey, watchlist);
         return PyNone.Instance;
     }
 
@@ -217,12 +213,25 @@ public sealed partial class FleetManagerService(
     private static IReadOnlyList<long> Ids(PyValue value) => Sequence(value)
         .Select(Number).Where(id => id is > 0).Select(id => id!.Value).ToArray();
 
-    private static IReadOnlyList<PyValue> Sequence(PyValue value) => value switch
+    private static IReadOnlyList<PyValue> Sequence(PyValue value)
     {
-        PyList list => list.Items,
-        PyTuple tuple => tuple.Items,
-        _ => []
-    };
+        if (value is PyObjectEx { Kind: ObjectExKind.Ex1, Header: PyTuple header } &&
+            header.Items.Count >= 2 &&
+            header.Items[0] is PyToken typeName &&
+            typeName.Value is "__builtin__.set" or "builtins.set" &&
+            header.Items[1] is PyList { Items.Count: > 0 } arguments &&
+            arguments.Items[0] is PyList items)
+        {
+            return items.Items;
+        }
+
+        return value switch
+        {
+            PyList list => list.Items,
+            PyTuple tuple => tuple.Items,
+            _ => []
+        };
+    }
 
     private static void SetWatchlist(ClientSession session, string key, IReadOnlyList<long> ids) =>
         session.Set(key, new PyList(ids.Select(id => (PyValue)new PyLong(id)).ToArray()));

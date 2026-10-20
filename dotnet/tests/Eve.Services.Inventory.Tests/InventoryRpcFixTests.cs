@@ -81,6 +81,20 @@ public class InventoryRpcFixTests
     }
 
     [PgFact]
+    public async Task GetItems_refuses_more_than_500_requested_ids()
+    {
+        await using var rig = await Rig.CreateAsync(activeShip: true);
+        var ship = (await rig.Ships.LoadAsync(Rig.Character))!.Ship.Id;
+        var session = Session(new Sink());
+        var bound = Rig.OidOf(await rig.CallAsync(session, "GetInventoryFromId", null, InventoryWire.Id(ship)));
+
+        var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() => Call(rig, session, "GetItems", bound,
+            [new PyList(Enumerable.Range(1, 501).Select(id => (PyValue)new PyLong(id)).ToArray())]));
+
+        Assert.Equal("INVENTORY_BULK_LIMIT_EXCEEDED", refusal.Error.UserErrorMessage);
+    }
+
+    [PgFact]
     public async Task MultiAdd_honors_both_quantity_names_and_publishes_only_committed_real_split_rows()
     {
         await using var rig = await Rig.CreateAsync(activeShip: true);

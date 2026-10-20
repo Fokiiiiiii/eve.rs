@@ -28,6 +28,14 @@ The candidate engineering SLOs and scenario list from the 2026-10-19 supplied re
 - PostgreSQL `pg_stat_statements` could not provide counters because the running server does not preload it. Statement-duration logging and I/O timing were scoped to `eve_p4`; they are reset after the focused workload.
 - Rust low-optimization benchmark sample (`OPT_LEVEL=0`, 256 codegen units, LTO disabled): `destiny.ball.encode.500-ships` 1,153,325 ops/s; `marshal.encode.small-call` 453,990 ops/s; `marshal.encode.rowset-1000` 428 ops/s (55.8 MB/s). This was a single sample on a shared host and is a baseline, not a before/after gain.
 
+## Host startup and runtime settings (2026-10-20)
+
+- The Release Host was started with no database URL and an isolated Unix socket. Startup time is measured from process launch to the first successful socket connection. This isolates runtime startup and listener readiness; it does not include PostgreSQL migrations, SDE loading, or client login.
+- Three samples per setting: tiered compilation enabled (default) took 960.2, 540.4, and 416.0 ms (median 540.4 ms); tiered compilation disabled took 807.8, 725.0, and 567.7 ms (median 725.0 ms); server GC enabled took 819.3, 427.8, and 376.0 ms (median 427.8 ms). The samples were run as separate sequential batches on a shared host, so their spread and order make the medians directional only. No tiered compilation or GC setting was changed.
+- A second three-sample comparison measured the ordinary IL Release output at 360.0, 470.6, and 246.1 ms (median 360.0 ms), and a `PublishReadyToRun=true` output at 150.7, 348.5, and 279.6 ms (median 279.6 ms). Both used the same host-only readiness check. This small sample does not cover database-backed startup or steady-state behavior; ReadyToRun is not enabled in the project.
+- `HostComposition.BuildAsync` creates `NpgsqlDataSource` from the supplied connection string without setting pool limits. The Npgsql default `Maximum Pool Size` is 100 ([connection string parameters](https://www.npgsql.org/doc/connection-string-parameters)). The captured Host collection and live walk were serial and did not collect concurrent pool occupancy or wait-time counters, so they provide no evidence that the default pool is exhausted or should be resized. No pool setting was changed.
+- Release Host build succeeded with zero warnings and errors. The startup harness used the built executable; these comparisons do not assert gameplay behavior or graphical-client compatibility.
+
 ## dogmaIM.GetAllInfo (docked fitted rookie ship)
 
 - Scenario: one Dogma service call and its deferred notifications per iteration against a newly created Caldari rookie character with its starter fit, using the Dogma test rig and loaded SDE. Ten warmup calls and 100 measured calls. Reports p50/p95 wall time and process-wide allocated bytes per call. In the same run, it measures one extra `BuildBrain` operation, which reconstructs the prior duplicate work.

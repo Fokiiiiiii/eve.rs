@@ -175,8 +175,12 @@ public class SpaceContainerTests
             await transaction.CommitAsync();
         }
 
+        var shipId = flying.Session.GetInt("shipid")!.Value;
         rig.Sim.MeasureAnswer = 2500;
         Assert.Equal(officeId, (await rig.Containers.OpenAsync(flying.Session, officeId, CancellationToken.None))!.Id);
+        Assert.Contains(rig.Sim.Heard.OfType<SimCommand>(), command =>
+            command.Code == SimCommands.Measure &&
+            command.Args.SequenceEqual(new[] { (double)officeId, (double)shipId }));
         rig.Sim.MeasureAnswer = 2501;
         Assert.Equal("TargetTooFar", UserError(await Assert.ThrowsAsync<MachoWrappedException>(async () =>
             await rig.Containers.OpenAsync(flying.Session, officeId, CancellationToken.None))).Name);

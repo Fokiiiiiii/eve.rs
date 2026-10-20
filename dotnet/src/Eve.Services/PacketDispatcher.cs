@@ -297,7 +297,7 @@ public sealed class PacketDispatcher
             return 10;
         if (service == "structureDirectory" && method is "CheckMyDockingAccessToStructures" or "GetMyDockableStructures")
             return 10;
-        if (service == "skillHandler" && method is "InjectSkillIntoBrain" or "InjectSkillpoints" or "ExtractSkills")
+        if (service == "skillHandler" && method is "InjectSkillIntoBrain" or "InjectSkillpoints" or "ExtractSkills" or "GetDiminishedSpFromInjectors" or "SplitSkillInjector" or "CombineSkillInjector")
             return 10;
         if (service == "accessGroupBookmarkMgr" && method is "GetMyActiveBookmarks" or "SearchFoldersWithAdminAccess" or "DeleteBookmarks" or "MoveBookmarksToFolderAndSubfolder" or "CopyBookmarksToFolderAndSubfolder")
             return 10;

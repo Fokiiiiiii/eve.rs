@@ -749,6 +749,28 @@ public class SkillHandlerTests
         Assert.Equal((large.Value, 1L), (combined.TypeId, combined.Quantity));
     }
 
+[PgFact]
+    public async Task Splitting_an_oversized_skill_injector_stack_refuses_before_mutation()
+    {
+        await using var rig = await Rig.CreateAsync(useCurrentSdeCatalog: true);
+        var characterId = rig.CharacterId;
+        var large = rig.CatalogForTest.ItemTypeId("Large Skill Injector");
+        var small = rig.CatalogForTest.ItemTypeId("Small Skill Injector");
+        Assert.NotNull(large);
+        Assert.NotNull(small);
+        const long station = 60_000_001;
+        var quantity = long.MaxValue / 3 + 1;
+        var itemId = await rig.CreateItemAsync(new Eve.Inventory.NewItem(large.Value, characterId, station, 4, quantity, false));
+        var session = Rig.Session(characterId).Session;
+        session.Set("stationid", new PyInt(station));
+
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            Rig.CallAsync(rig.Handler, session, "SplitSkillInjector", new PyLong(itemId), new PyLong(quantity)));
+        Assert.Equal("CustomNotify", error.Error.UserErrorMessage);
+        Assert.Equal(quantity, (await rig.ItemStore.GetAsync(itemId))?.Quantity);
+        Assert.DoesNotContain(await rig.ItemStore.InLocationAsync(station, characterId), item => item.TypeId == small.Value);
+    }
+
     [PgFact]
     public async Task The_skills_of_a_character_come_as_entries_in_type_order_with_their_item_fields()
     {

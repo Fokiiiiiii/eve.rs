@@ -337,6 +337,8 @@ private long DiminishedInjectorSp(long totalSp, int typeId, long quantity, long 
         var toType = splitting ? smallType.Value : largeType.Value;
         if (!splitting && (quantity < 3 || quantity % 3 != 0))
             throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Three small skill injectors are required to combine.")));
+        if (splitting && quantity > long.MaxValue / 3)
+            throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("That skill injector stack cannot be transformed.")));
 
         await store.InTransactionAsync(async (connection, transaction, token) =>
         {
@@ -344,7 +346,7 @@ private long DiminishedInjectorSp(long totalSp, int typeId, long quantity, long 
                 || item.OwnerId != character || item.LocationId != station || item.TypeId != fromType
                 || item.Singleton && quantity != 1 || !item.Singleton && quantity > item.Quantity)
                 throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("That skill injector stack cannot be transformed.")));
-            var outputQuantity = splitting ? checked(quantity * 3) : quantity / 3;
+            var outputQuantity = splitting ? quantity * 3 : quantity / 3;
             if (item.Singleton || quantity == item.Quantity)
                 await items.DeleteAsync(connection, transaction, itemId, token);
             else

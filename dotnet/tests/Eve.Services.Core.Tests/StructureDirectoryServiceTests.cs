@@ -306,6 +306,24 @@ public sealed class StructureDirectoryServiceTests
     }
 
     [Fact]
+    public async Task Docking_access_refuses_more_than_500_structure_ids_before_the_callback()
+    {
+        var callbacks = new TestReadCallbacks();
+        var service = new StructureDirectoryService(callbacks);
+        var session = new ClientSession { CharacterId = 42 };
+        var ids = new PyList([.. Enumerable.Range(1, 501).Select(id => (PyValue)new PyInt(id))]);
+
+        var error = await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(async () =>
+            await service.CallAsync(new ServiceCall
+            {
+                Method = "CheckMyDockingAccessToStructures", Args = [ids], Session = session,
+            }));
+
+        Assert.NotNull(error);
+        Assert.Null(callbacks.DockingRequest);
+    }
+
+    [Fact]
     public async Task Get_structure_info_returns_only_the_persistent_callback_result_for_can_contract_from()
     {
         var info = Py.KeyVal(("structureID", new PyInt(1001)));

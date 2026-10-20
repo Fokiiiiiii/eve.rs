@@ -5191,3 +5191,8 @@ The market parser rejects floating-point prices beyond the market maximum before
 ## Insurance price batch bound (2026-10-20)
 
 `insurance.GetInsurancePrices` accepts at most 500 raw type IDs per request and returns `InsuranceBulkLimitExceeded` before reading price data for a larger batch. The V24 client primes the service with the set of missing ship type IDs; normal client batches retain their existing results. `InsuranceServiceTests.Insurance_price_batch_refuses_more_than_500_type_ids_before_the_read_model` covers the refusal.
+
+
+## Structure docking access batch bound (2026-10-20)
+
+`structureDirectory.CheckMyDockingAccessToStructures` accepts up to 500 structure IDs. Larger lists return `StructureBulkLimitExceeded` before access-list snapshots are read. Normal structure-access results retain the existing per-list ACL evaluation and order. `StructureDirectoryServiceTests.Docking_access_refuses_more_than_500_structure_ids_before_the_callback` verifies no callback work on refusal.

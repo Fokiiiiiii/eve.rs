@@ -318,7 +318,17 @@ internal sealed partial class CharacterServicesComposition
             (missionId, characterId, place, level) => stargateGraph is { } gates
                 ? MissionCourierRules.Destination(missionId, characterId, place.BaseStationId!.Value, (int)place.SolarSystemId, level, gates, stations.All)
                 : null,
-            IsTradeMission, IsMiningMission);
+            IsTradeMission, IsMiningMission,
+            async (characterId, missionKind, token) =>
+            {
+                var skillTypeId = ApproximateMissionRewardRules.DivisionConnectionsSkillTypeId(missionKind);
+                if (skillTypeId == 0) return 0;
+                await using var connection = await source.OpenConnectionAsync(token);
+                await using var transaction = await connection.BeginTransactionAsync(token);
+                var level = await skills.LevelAsync(connection, transaction, characterId, skillTypeId, token);
+                await transaction.CommitAsync(token);
+                return level;
+            }, systemId => solarSystems.Get(systemId) is { } system ? (decimal)system.Security : null);
         var runtime = missionDungeons;
         if (spaceSessions is not null) spaceSessions.PilotDocked = (characterId, stationId, token) => runtime.OnDockedAsync(characterId, stationId, token);
         foundations.Scheduler.Register(MissionDungeonSweepJob, (context, token) => runtime.SweepAsync(token));
@@ -398,8 +408,28 @@ internal sealed partial class CharacterServicesComposition
         if (record is null || record.State is not (Eve.Agents.AgentMissionState.Offered or Eve.Agents.AgentMissionState.Accepted or Eve.Agents.AgentMissionState.Completed)) return null;
         if (agentMissionStatic.Mission(record.Content.MissionId) is not { } mission) return null;
         long? briefing = clientMissionMessages.TryGetValue(mission.MissionId, out var texts) && texts.TryGetValue(ClientMissionMessages.BriefingKey, out var id) ? id : null;
+        var loyaltyAmount = await MissionLoyaltyPointsAsync(characterId, agentId, record.Content, cancellationToken);
         return new Eve.Services.Core.HeldMissionView(mission, record, briefing, await FetchObjectiveAsync(characterId, record, cancellationToken),
-            await CourierObjectiveAsync(characterId, record, cancellationToken));
+            await CourierObjectiveAsync(characterId, record, cancellationToken), loyaltyAmount);
+    }
+
+    private async Task<long> MissionLoyaltyPointsAsync(long characterId, long agentId, Eve.Agents.AgentMissionContent mission, CancellationToken cancellationToken)
+    {
+        if (mission.Important || !agentMissionAgentById.TryGetValue(agentId, out var agent) || agent.SolarSystemId is not { } systemId)
+            return 0;
+        var level = agentMissionStatic.Level(mission.MissionId).Level ?? (agent.Level is >= 1 and <= 5 ? (int)agent.Level : null);
+        var security = solarSystems.Get((int)systemId)?.Security;
+        if (level is null || security is null) return 0;
+        var skillTypeId = ApproximateMissionRewardRules.DivisionConnectionsSkillTypeId(agent.MissionKind);
+        var skillLevel = 0;
+        if (skillTypeId != 0)
+        {
+            await using var connection = await source.OpenConnectionAsync(cancellationToken);
+            await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+            skillLevel = await skills.LevelAsync(connection, transaction, characterId, skillTypeId, cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+        }
+        return ApproximateMissionRewardRules.LoyaltyPoints(agent.MissionKind, level.Value, (decimal)security.Value, skillLevel);
     }
 
     /// <summary>
@@ -487,9 +517,15 @@ internal sealed partial class CharacterServicesComposition
     /// commit. False when the mission was not accepted or the items are short.
     /// </summary>
     private async Task<bool> CompleteMissionAsync(long characterId, long agentId, DateTimeOffset now, string reference,
-        IReadOnlyList<MissionStandingGain> standings, IReadOnlyList<(int TypeId, long Quantity, string? Tag)> consume, CancellationToken cancellationToken) =>
-        await CompleteInTransactionAsync(source, agentMissionStore, foundations.Relations, items, characterId, agentId, now, reference, standings, consume,
-            cancellationToken, storylineCounters, await CountedFactionOfAsync(characterId, agentId, cancellationToken));
+        IReadOnlyList<MissionStandingGain> standings, IReadOnlyList<(int TypeId, long Quantity, string? Tag)> consume,
+        long loyaltyAmount, long issuerCorporationId, CancellationToken cancellationToken)
+    {
+        var member = loyaltyAmount > 0 ? await corporations.MemberAsync(characterId, cancellationToken) : null;
+        var taxCorporation = member is null ? null : await corporations.GetAsync(member.CorporationId, cancellationToken);
+        return await CompleteInTransactionAsync(source, agentMissionStore, foundations.Relations, items, characterId, agentId, now, reference, standings, consume,
+            cancellationToken, storylineCounters, await CountedFactionOfAsync(characterId, agentId, cancellationToken), loyaltyPoints,
+            loyaltyAmount, issuerCorporationId, taxCorporation?.Id ?? 0, taxCorporation?.LoyaltyPointTaxRate ?? 0m);
+    }
 
     /// <summary>
 
@@ -519,7 +555,8 @@ internal sealed partial class CharacterServicesComposition
     internal static async Task<bool> CompleteInTransactionAsync(NpgsqlDataSource source, Eve.Agents.AgentMissionStore agentMissionStore,
         Eve.Relations.RelationStore relations, Eve.Inventory.PgItemStore items, long characterId, long agentId, DateTimeOffset now, string reference,
         IReadOnlyList<MissionStandingGain> standings, IReadOnlyList<(int TypeId, long Quantity, string? Tag)> consume, CancellationToken cancellationToken,
-        Eve.Agents.StorylineCounters? counters = null, (long FactionId, long Level)? counted = null)
+        Eve.Agents.StorylineCounters? counters = null, (long FactionId, long Level)? counted = null,
+        LoyaltyPointStore? loyalty = null, long loyaltyAmount = 0, long issuerCorporationId = 0, long taxCorporationId = 0, decimal loyaltyTaxRate = 0)
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
@@ -550,6 +587,20 @@ internal sealed partial class CharacterServicesComposition
         }
         if (change is null) return false;
 
+        var loyaltyChanges = new List<LoyaltyPointChange>();
+        if (loyalty is not null && loyaltyAmount > 0 && issuerCorporationId > 0)
+        {
+            var tax = LoyaltyTax.TaxOf(loyaltyAmount, loyaltyTaxRate, taxCorporationId);
+            if (loyaltyAmount - tax > 0 && await loyalty.ApplyAsync(connection, transaction,
+                    new LoyaltyHolder(LoyaltyHolderKind.Character, characterId), issuerCorporationId, loyaltyAmount - tax,
+                    "agent_mission", reference + ":lp-member", cancellationToken) is { } memberChange)
+                loyaltyChanges.Add(memberChange);
+            if (tax > 0 && await loyalty.ApplyAsync(connection, transaction,
+                    new LoyaltyHolder(LoyaltyHolderKind.Corporation, taxCorporationId), issuerCorporationId, tax,
+                    "agent_mission", reference + ":lp-corporation", cancellationToken) is { } corporationChange)
+                loyaltyChanges.Add(corporationChange);
+        }
+
         if (counters is not null && counted is { } countedAs)
             await counters.IncrementAsync(connection, transaction, characterId, countedAs.FactionId, countedAs.Level, cancellationToken);
         // the objective items leave with the completion
@@ -567,6 +618,7 @@ internal sealed partial class CharacterServicesComposition
                 "Agent mission standing", cancellationToken: cancellationToken);
         }
         await transaction.CommitAsync(cancellationToken);
+        foreach (var loyaltyChange in loyaltyChanges) loyalty!.AnnounceCommitted(loyaltyChange);
         agentMissionStore.Announce(change);
         return true;
     }
@@ -674,7 +726,7 @@ internal sealed class SpaceMissionDungeonHost(
     Func<long, int, bool> isPilotInSystem,
     Func<long, int, long, CancellationToken, Task<string?>> startDungeon,
     Func<long, long, long, int, string, string, CancellationToken, Task> creditIsk,
-    Func<long, long, DateTimeOffset, string, IReadOnlyList<MissionStandingGain>, IReadOnlyList<(int TypeId, long Quantity, string? Tag)>, CancellationToken, Task<bool>> completeMission,
+    Func<long, long, DateTimeOffset, string, IReadOnlyList<MissionStandingGain>, IReadOnlyList<(int TypeId, long Quantity, string? Tag)>, long, long, CancellationToken, Task<bool>> completeMission,
     Func<long, int, long, long, CancellationToken, Task> grantItem,
     Func<long, int, CancellationToken, Task<long>> heldQuantity,
     Func<long, long, int, long, bool, long, CancellationToken, Task> grantCargo,
@@ -689,8 +741,9 @@ internal sealed class SpaceMissionDungeonHost(
         creditIsk(characterId, amount, counterpartyId, refTypeId, reason, operationKey, cancellationToken);
 
     public Task<bool> CompleteMissionAsync(long characterId, long agentId, DateTimeOffset now, string reference,
-        IReadOnlyList<MissionStandingGain> standings, IReadOnlyList<(int TypeId, long Quantity, string? Tag)> consume, CancellationToken cancellationToken) =>
-        completeMission(characterId, agentId, now, reference, standings, consume, cancellationToken);
+        IReadOnlyList<MissionStandingGain> standings, IReadOnlyList<(int TypeId, long Quantity, string? Tag)> consume,
+        long loyaltyPoints, long issuerCorporationId, CancellationToken cancellationToken) =>
+        completeMission(characterId, agentId, now, reference, standings, consume, loyaltyPoints, issuerCorporationId, cancellationToken);
 
     public Task GrantObjectiveItemAsync(long characterId, int typeId, long quantity, long stationId, CancellationToken cancellationToken) =>
         grantItem(characterId, typeId, quantity, stationId, cancellationToken);

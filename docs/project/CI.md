@@ -42,6 +42,7 @@ Dispatch one slow test or the full slow matrix:
 
 ```sh
 python3 tools/dev/ci-status.py dispatch live-slow.yml --ref main --test-file test_walk_industry.py
+python3 tools/dev/ci-status.py dispatch live-slow.yml --ref main --test-file test_walk_xmpp_live.py
 python3 tools/dev/ci-status.py dispatch live-slow.yml --ref main --test-file all
 ```
 

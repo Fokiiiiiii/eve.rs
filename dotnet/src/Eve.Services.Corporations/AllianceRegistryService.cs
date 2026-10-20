@@ -53,6 +53,7 @@ public AllianceRegistryService(CorporationStore store, PgCharacterStore characte
 
     public Func<CancellationToken, Task<Action?>>? PlanSharedFolderAffiliationChangesAsync { get; set; }
     private readonly ConcurrentDictionary<string,long> _alliancesByObject = new(StringComparer.Ordinal);
+    private const int MaxAllianceContactIds = 500;
 
     private static readonly string[] AllianceHeader =
     [
@@ -976,6 +977,8 @@ public AllianceRegistryService(CorporationStore store, PgCharacterStore characte
             PyTuple tuple => tuple.Items,
             _ => throw AllianceAccessDenied(),
         };
+        if (items.Count > MaxAllianceContactIds)
+            throw new CorporationError("ALLIANCE_BULK_LIMIT_EXCEEDED");
         var ids = items.Select(Number).ToArray();
         if (ids.Any(id => id <= 0)) throw AllianceAccessDenied();
         return ids.Distinct().ToArray();

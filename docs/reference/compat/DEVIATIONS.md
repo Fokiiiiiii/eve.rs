@@ -1,5 +1,9 @@
 # Deviations from the reference server
 
+## Corporation member map locations (2026-10-20)
+
+`map.GetMyExtraMapInfo` returns the current solar-system locations of online members in the caller's corporation. EveJS 261018.1 returns an empty rowset for this method, while the V24.01 `mapFilterCorpMembers.py` and `mapViewColorHandler.py` callsites group `characterID` and `locationID` rows into a corporation-member heatmap. eve.rs uses the authoritative live session registry and corporation session scope; `Map_extra_info_lists_only_current_members_of_the_callers_corporation` covers the rowset and scope.
+
 ## Agent GetAgents wire columns (2026-10-20)
 
 `agentMgr.GetAgents` returns the 15 columns produced by EveJS 261018.1. System, dungeon, spawn and type metadata remain in the server catalog for `GetSolarSystemOfAgent` and are not serialized in this rowset. The client adds its own system and faction fields after loading the table. `AgentMissionServiceTests.Agent_mgr_agents_and_location_match_the_reference_rowset_and_scalar` and `AgentCatalogSdeTests` cover the wire and catalog data.

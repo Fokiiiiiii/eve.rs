@@ -334,8 +334,6 @@ public sealed class CharacterTraining(
     /// <summary>Previews the free points that fit in the saved queue or the selected skill targets.</summary>
     /// <summary>Applies available points to selected targets, or to the saved queue when targets is null.</summary>
     /// <summary>Applies an exact point amount to one owned skill, as requested by the skills service.</summary>
-
-
     /// <summary>The history the character's skills have, newest first.</summary>
     public Task<IReadOnlyList<HistoryEntry>> HistoryAsync(long characterId, CancellationToken cancellationToken = default) => store.HistoryAsync(characterId, cancellationToken);
 

@@ -227,7 +227,8 @@ public sealed class ContractProxyServiceTests
         session.Set("corpid", new PyInt(84));
         var contractStruct = new PyObject(new PyStr("contracts.contractStruct.ContractStruct"), PyTuple.Of(
             new PyInt(1), PyBool.False, new PyInt(0), new PyInt(1440), new PyInt(0), new PyInt(3001),
-            new PyInt(0), new PyInt(100), new PyInt(50), new PyInt(0), new PyStr("Parts"), new PyStr(""),
+            new PyInt(0), new PyInt(100), new PyInt(50), new PyInt(0),
+            new PyBytes(System.Text.Encoding.UTF8.GetBytes("Parts")), new PyBytes(ReadOnlyMemory<byte>.Empty),
             new PyList([PyTuple.Of(new PyInt(9001), new PyInt(2))]), new PyInt(4),
             new PyList([PyTuple.Of(new PyInt(35), new PyInt(4))]), PyBool.False, PyBool.False));
 

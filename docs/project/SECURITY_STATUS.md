@@ -18,7 +18,7 @@ Checked 2026-10-19.
 ## Attack-surface review
 
 - **Inbound session resource bounds:** Session actors enforce both a pending-packet limit and a configurable pending-byte limit (`EVE_MAX_PENDING_BYTES_PER_SESSION`, default 16 MiB), counting the packet currently being dispatched. Exceeding either disconnects only the overloaded session. A Host regression covers an over-budget inbound frame.
-- **Expensive RPC rate bounds:** `PacketDispatcher` charges weighted per-session work units within a rolling minute for market order/region reads, `GetAllInfo`, and mail header reads. `EVE_MAX_EXPENSIVE_RPC_UNITS_PER_MINUTE` configures the 120-unit default. A named `SessionRpcBudgetExceeded` response refuses calls beyond the budget; a dispatcher regression covers refusal and window reset.
+- **Expensive RPC rate bounds:** `PacketDispatcher` charges weighted per-session work units within a rolling minute for market order/region reads, inventory and asset enumeration, bulk bookmark operations, `GetAllInfo`, and mail header reads. `EVE_MAX_EXPENSIVE_RPC_UNITS_PER_MINUTE` configures the 120-unit default. A named `SessionRpcBudgetExceeded` response refuses calls beyond the budget; dispatcher regressions cover market and recursive inventory refusal plus window reset.
 
 Reviewed 2026-10-19 against the Rust, .NET, Python tool, deployment, and workflow sources listed below. This records source review and focused tests; it does not claim graphical-client or production deployment validation.
 

@@ -61,6 +61,14 @@ public sealed partial class SkillHandlerService
         return new PyList([.. injected.Select(typeId => (PyValue)new PyInt(typeId))]);
     }
 
+private static long DiminishingTotal(long trained, long free)
+    {
+        if (trained < 0 || free < 0)
+            throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("That skill injector cannot be used.")));
+        const long threshold = 80_000_000;
+        return trained >= threshold || free >= threshold - trained ? threshold : trained + free;
+    }
+
 private long DiminishedInjectorSp(long totalSp, int typeId, long quantity, long nonDiminishing)
     {
         var dailyAlpha = catalog.ItemTypeId("Daily Alpha Injector");
@@ -94,11 +102,11 @@ private long DiminishedInjectorSp(long totalSp, int typeId, long quantity, long 
     public async ValueTask<PyValue> GetDiminishedSpFromInjectors(ServiceCall call)
     {
         if (CharacterOf(call) is not { } character || IdOf(call.Arg(0)) is not { } typeId
-            || IdOf(call.Arg(1)) is not { } quantity)
+            || typeId <= 0 || typeId > int.MaxValue || IdOf(call.Arg(1)) is not { } quantity)
             return new PyInt(0);
         var allocated = (await store.TotalPointsAsync([character], call.Cancellation)).GetValueOrDefault(character);
         var free = await store.FreeSkillPointsAsync(character, call.Cancellation);
-        return new PyInt(DiminishedInjectorSp(allocated + free, (int)typeId, quantity, IdOf(call.Arg(2)) ?? 0));
+        return new PyInt(DiminishedInjectorSp(DiminishingTotal(allocated, free), (int)typeId, quantity, IdOf(call.Arg(2)) ?? 0));
     }
 
     [Method("CheckInjectionConstraints")]
@@ -146,13 +154,7 @@ private long DiminishedInjectorSp(long totalSp, int typeId, long quantity, long 
                 throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("A Daily Alpha Injector can only be used once per day.")));
             var total = await store.TotalPointsAsync(connection, transaction, character, token);
             var free = await store.FreeSkillPointsAsync(connection, transaction, character, token);
-            if (total < 0 || free < 0)
-                throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("That skill injector cannot be used.")));
-            const long diminishingThreshold = 80_000_000;
-            var diminishingTotal = total >= diminishingThreshold || free >= diminishingThreshold - total
-                ? diminishingThreshold
-                : total + free;
-            var award = DiminishedInjectorSp(diminishingTotal, item.TypeId, quantity, 0);
+            var award = DiminishedInjectorSp(DiminishingTotal(total, free), item.TypeId, quantity, 0);
             if (award <= 0) throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("That skill injector cannot be used.")));
             var newBalance = await store.GrantFreeSkillPointsAsync(connection, transaction, character, award, token);
             if (item.Singleton || quantity == item.Quantity)

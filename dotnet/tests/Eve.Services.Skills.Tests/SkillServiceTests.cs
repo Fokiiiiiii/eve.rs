@@ -425,6 +425,7 @@ public class SkillHandlerTests
         var injector = await rig.CreateItemAsync(new Eve.Inventory.NewItem(injectorType.Value, characterId, 60_000_001, 4, 2, false));
         var session = Rig.Session(characterId).Session;
 
+        Assert.Equal(new PyInt(30_000), await Rig.CallAsync(rig.Handler, session, "GetDiminishedSpFromInjectors", new PyInt(injectorType.Value), new PyInt(1), new PyInt(0)));
         Assert.Equal(new PyInt(30_000), await Rig.CallAsync(rig.Handler, session, "InjectSkillpoints", new PyLong(injector), new PyInt(1)));
         Assert.Equal(long.MaxValue - 20_000, await rig.Store.FreeSkillPointsAsync(characterId));
         Assert.Equal(1, (await rig.ItemStore.GetAsync(injector))?.Quantity);

@@ -40,7 +40,6 @@ public sealed class PlanetStore(NpgsqlDataSource source, string schema = PlanetS
     public static Task<IReadOnlyList<string>> MigrateAsync(NpgsqlDataSource source, string schema = DefaultSchema, CancellationToken cancellationToken = default) =>
         Migrations.ApplyAsync(source, schema, Migrations.Embedded(typeof(PlanetStore).Assembly, "Migrations"), cancellationToken);
 
-    /// <summary>The colony of an owner on a planet, locked for the change; null when there is none.</summary>
     public async Task<ColonyDocument?> LockAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long ownerId, long planetId, CancellationToken cancellationToken = default)
     {
         await using var command = new NpgsqlCommand($"SELECT doc::text FROM {schema}.colonies WHERE owner_id = $1 AND planet_id = $2 FOR UPDATE", connection, transaction)
@@ -73,7 +72,6 @@ public sealed class PlanetStore(NpgsqlDataSource source, string schema = PlanetS
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
-    /// <summary>The colonies of an owner (the planets the planetMgr list shows).</summary>
     public async Task<IReadOnlyList<ColonyDocument>> ColoniesOfAsync(long ownerId, CancellationToken cancellationToken = default)
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
@@ -116,7 +114,6 @@ public sealed class PlanetStore(NpgsqlDataSource source, string schema = PlanetS
         return (long)(await command.ExecuteScalarAsync(cancellationToken))!;
     }
 
-    /// <summary>The launches of an owner that are not deleted and not yet over (their time is <paramref name="nowTicks"/> or later).</summary>
     public async Task<IReadOnlyList<LaunchRecord>> LaunchesOfAsync(long ownerId, long nowTicks, CancellationToken cancellationToken = default)
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
@@ -135,7 +132,6 @@ public sealed class PlanetStore(NpgsqlDataSource source, string schema = PlanetS
         return found;
     }
 
-    /// <summary>Marks the launches whose time is up as deleted (their containers stay where they are; the owner's items are not destroyed).</summary>
     public async Task ExpireLaunchesAsync(long ownerId, long nowTicks, CancellationToken cancellationToken = default)
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
@@ -146,7 +142,6 @@ public sealed class PlanetStore(NpgsqlDataSource source, string schema = PlanetS
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
-    /// <summary>Marks a launch deleted; false when the launch is not the owner's (or not there).</summary>
     public async Task<bool> DeleteLaunchAsync(long ownerId, long launchId, CancellationToken cancellationToken = default)
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);

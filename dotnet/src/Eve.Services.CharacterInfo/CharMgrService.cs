@@ -269,13 +269,14 @@ public sealed partial class CharMgrService(
             _ => [],
         };
         var sessionCharacterId = call.Session.CharacterId.GetValueOrDefault();
-        var characterId = parameters.Count > 0
-            ? IdOf(parameters[0]) ?? sessionCharacterId
-            : sessionCharacterId;
-        var containerId = parameters.Count > 1 ? IdOf(parameters[1]) : null;
-        return characterId > 0 && containerId == globalAssetsContainerId
-            ? new PyInt(Eve.Macho.MachoMessage.ProxyNodeId)
-            : None;
+        if (sessionCharacterId <= 0 || parameters.Count < 2 ||
+            IdOf(parameters[0]) != sessionCharacterId ||
+            IdOf(parameters[1]) != globalAssetsContainerId)
+        {
+            return None;
+        }
+
+        return new PyInt(Eve.Macho.MachoMessage.ProxyNodeId);
     }
 
     private ValueTask<PyValue> CallGlobalAssetsInventory(ServiceCall call)

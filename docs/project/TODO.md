@@ -42,7 +42,7 @@ Built from the sections below, as of 2026-10-19. **Status** is what the area doe
 | Wormhole space (13, "Wormhole space: final status") | Built: J-space classes, statics, connection generator, lifecycle jobs, jumps, Thera connections, signatures and sites; a live jump in and back passed headless through the MITM proxy. Local chat has delayed speaker membership and message delivery; corporation, alliance, fleet, wing, and squad channels are wired through the Host gateway. | Project rules where nothing is published: signature counts 4 to 9, category shares, five combat sites in a Drifter system, ends 50 km out, 1,000-unit clouds (DEVIATIONS). | Cut by the owner: wandering K-space connections; region-adjacency exclusion of statics. Remaining: persisted MOTD across Host restart, staff presence, and the two-character Local walk. XMPP room discovery and join/leave, private conversations and online invitations, corporation MOTD subject updates, and recipient-specific block filtering for groupchat and private invitations are implemented with focused Host coverage. V24.01 has no LSC RPC callsite; see the chat transport inventory in DEVIATIONS. Owner decision Q-23 sets wormhole Local to DELAYED (only speakers are listed). Ice belt of a Shattered system and live check of gas and ore sites also remain open. |
 | Zarzakh and Pochven (12, "Pochven, Triglavian and EDENCOM space") | Partly built: Zarzakh rules and flags from the client's data; Pochven population, capital stargate rule, toll and anchoring; the Turnur to Zarzakh jump passed live (eve.rs only). | Client-only system data comes from the embedded copy of the client export; no invented values. | Cut: gate guns without published numbers, heat and tidal forces and Point of No Return, landmarks and the Black Monolith look-at, gate sentries that shoot, Deathless Shipcaster jump. Owner decision Q-22: no bounty payout for Pochven Triglavian NPCs; loot and drops remain as they are. Open: sovereignty refusal, warp bubbles and probes in Zarzakh, live check of the flags. Emanation notices wait for the public gateway. |
 | Client static data (embedded) | Embedded: the server runs without `EVE_CLIENT_SDE_DIR`. The owner decided to keep the embedded `client-*` exports as they are during the temporary public period and revisit when the repository returns to private (Q-09). | Copies built by `tools/dev/extract-client-sde.py` from build 3396210. | Live check of the Zarzakh flags on the embedded data. |
-| Runtime and database performance (PERFORMANCE.md) | Dogma, Marshal, sim-link and 10,000-order market workloads have repeatable baselines; sim-link and Marshal show measured allocation improvements. | Preserve client and link bytes; optimize measured hot paths. | Market read uses two SQL queries; statement totals for login/play, startup phases, notification fan-out and live GC measurements remain open. |
+| Runtime and database performance (PERFORMANCE.md) | Dogma, Marshal, sim-link and 10,000-order market workloads have repeatable baselines; SDE hot-query ranking, indexes, build-scoped static-data sharing and Rust top-three benchmarks are measured. | Preserve client and link bytes; optimize measured hot paths. | Market read uses two SQL queries; statement totals for login/play, startup phases, notification fan-out, default-release Rust throughput and live GC measurements remain open. |
 | EveJS 261018.1 comparison ([delta assessment](EVEJS_261018_DELTA.md)) | Slices 12–13 record combat/DED pack overlap and AIR provenance; slice 15 confirms the V24 Homefront archetype-70 discovery RPC contract with a focused test. | V24.01 client contract and SDE remain authoritative; the combat/DED pack cites client build 3475087, and the Homefront pack cites build 3503375 with estimated encounters. | Homefront admission, objectives, rewards and notifications remain open; other runtime parity checks and per-record content provenance require follow-up. |
 
 Verification run (2026-10-18), gate on origin/main 86be1658 with 967256f1: Rust 1525 passed (cargo fmt and clippy clean); .NET 6534 passed, 1 skipped, 0 warnings. Headless walks: the gate ran 23 walk files, of which 22 were green; the one red walk, test_walk_shared_bookmarks.py, is fixed (the walk waits for OnSharedBookmarksFoldersAccessLost, which the server sends after the response) and green on a fresh server. Eve.AccessGroups.Tests: 23 passed after the regression test was added. A run of the test_walk_*.py files alone gave 16 of 16 passed.
@@ -861,7 +861,7 @@ Open, each with its blocker:
 - NOT BUILT: a beacon as the target of a bridge or a conduit (the field-only check refuses it).
 - NOT BUILT: fleet notices for a beacon (no field announcement); the mobile inhibitor's effect on a beacon's activation.
 - NOT BUILT: the wormhole and Pochven refusals of the beacon (EveJS lines 287 to 291).
-- NOT TESTED: a host jump to an anchored beacon and the simulation's arrival at it (the code path exists; no test drives it).
+- coverage outstanding: a host jump to an anchored beacon and the simulation's arrival at it (the code path exists; no test drives it).
 - not exercised: the client.
 
 ## 37. Service table against the reference: the names eve.rs lacks and the names it adds (MITM parity, 2026-10-11)
@@ -1745,7 +1745,7 @@ Evidence and decisions: `docs/project/WORMHOLE_DESIGN.md` (sources, SDE numbers,
 | DONE (tests) | Thera's seeded connections (12, documented types and endpoints), respawn after collapse | `TheraConnectionsTests`. Design 15 |
 | SUPERSEDED (see "Wormhole space: final status")| Signature scan strength per type | No per-type value in the wiki pages or EveJS (design 15) |
 | SUPERSEDED (see "Wormhole space: final status")| Sleeper/Drifter sites | Combat site names per class from the wiki; per-system counts and shares not published (design 15) |
-| NOT DONE | Environment effects in the Rust sim | Design 15 |
+| OPEN | Environment effects in the Rust sim | Design 15 |
 | SUPERSEDED (see "Wormhole space: final status")| Service-layer wormhole jump tests; headless live check | Design 15 |
 
 ### Slice 9 and slice 10 (2026-10-12)
@@ -1757,9 +1757,9 @@ Evidence and decisions: `docs/project/WORMHOLE_DESIGN.md` (sources, SDE numbers,
 | DONE (tests) | Plan connected to `CosmicSiteDirector`: a J-system's planned combat, data and relic sites are placed in their slots, with containers and Sleeper waves (48 templates) | `A_wormhole_system_gets_the_sites_of_its_plan...` (PgFact), `WormholeSiteTemplatesTests` |
 | DONE (tests) | Probe scan of a J signature: strength 0.0 (SDE 1908); a probe in range finds it by its geometry | `ProbeScanMathTests` |
 | SUPERSEDED (see "Wormhole space: final status")| Gas and ore signatures placed as sites (no site kind) | Mining site generation |
-| NOT DONE | Rust sim environment effects (the attributes the sim models) | Design 15 |
+| OPEN | Rust sim environment effects (the attributes the sim models) | Design 15 |
 | DONE (tests) | Service-layer `WormholeJumpAsync` tests: mass refusal, jump and destination end, polarization, collapse (own world in the space rig) | `WormholeJumpServiceTests` (PgFact). Polarization expiry and RPC path not covered |
-| NOT DONE | Headless MITM live check on 26110/26210 | Design 15 |
+| OPEN | Headless MITM live check on 26110/26210 | Design 15 |
 
 ### Slice 11 to 12 (2026-10-12)
 
@@ -1793,13 +1793,13 @@ The design is in `docs/project/WORMHOLE_DESIGN.md`; the deviations and project r
 | RULE (project) | Resource stock | a cloud holds 1,000 units; rock quantities from the client | DEVIATIONS "Gas and ore sites of wormhole space" |
 | CUT (owner) | K-space wandering connections | not built | owner decision, slice 5 |
 | CUT (owner) | Region-adjacency exclusion of statics | not applied | owner decision, slice 5 |
-| NOT DONE | Shattered Ice Field (ice belt) | in the data, not planned (no ice category) | DEVIATIONS "Wormhole sites ..." |
+| OPEN | Shattered Ice Field (ice belt) | in the data, not planned (no ice category) | DEVIATIONS "Wormhole sites ..." |
 | PARTIAL | J-space Local membership and delivery | Q-13 decides DELAYED membership; Host gateway roster and message delivery are implemented | owner decision Q-13 (decided 2026-10-19); live two-character walk remains open |
-| NOT DONE | Live check of a gas or ore site | no headless scenario scans or mines one | — |
-| NOT DONE | Capture comparison with a stargate jump | not compared | — |
-| NOT DONE | Client attribute refresh after a system change | the client reads its ship attributes at its next change | DEVIATIONS "Wormhole environment in the simulation" |
-| NOT DONE | Trace logging behind an environment variable | not built (the destiny data sufficed) | — |
-| NOT DONE | Mining of wormhole ore and gas | the belt mining path is not tested on these sites | DEVIATIONS "Gas and ore sites of wormhole space" |
+| OPEN | Live check of a gas or ore site | no headless scenario scans or mines one | — |
+| OPEN | Capture comparison with a stargate jump | not compared | — |
+| OPEN | Client attribute refresh after a system change | the client reads its ship attributes at its next change | DEVIATIONS "Wormhole environment in the simulation" |
+| OPEN | Trace logging behind an environment variable | not built (the destiny data sufficed) | — |
+| OPEN | Mining of wormhole ore and gas | the belt mining path is not tested on these sites | DEVIATIONS "Gas and ore sites of wormhole space" |
 
 
 ## Client static data embedded (2026-10-12)
@@ -2538,7 +2538,7 @@ Handoff: `docs/project/structures-phase/handoff-ST-16.md`. Decisions and sources
 | VERIFIED (PG, Corporations suite 128/128) | (3a) station rent and impound release credit the station owner; a bill payment credits the resolved creditor; the owner balance is opened when missing | DEVIATIONS ST-16 |
 | VERIFIED (PG, Corporations suite) | (3b) an unpaid station office is impounded at due time (items to the Impounded location, folder deleted, office ended); the helper is shared with the Director un-rent | `Unpaid_station_office_is_impounded...`; the due job's Host wiring is not covered by a Host test |
 | OPEN | (3c) station bills rented before this change have no creditor: their due job does nothing (no eviction, no notice) | migration of the creditor is open |
-| BUILT, NOT TESTED | (3d) rent-due and eviction notices (type 10, group Bills) through `PersistenceTransactionMailbox.WriteNotificationsAsync` after the commit | no test reads the notification back; pre-due reminder not built |
+| BUILT; coverage outstanding | (3d) rent-due and eviction notices (type 10, group Bills) through `PersistenceTransactionMailbox.WriteNotificationsAsync` after the commit | no test reads the notification back; pre-due reminder not built |
 | VERIFIED (PG, Space MobileObservatory 9/9) | (1a) Mobile Observatory refused within 100 km of a control tower (SDE group 365 structure records) and placed beyond it | `A_control_tower_within_100_km...`; no control tower deployment exists (gap) |
 | OPEN | (1b) control tower deployment (the minimal deployable kind the brief asks for): needs a sim ball kind, protocol change and deploy RPC | not built |
 | VERIFIED (PG, Space MobileObservatory 12/12 filter) | (1c) deadspace: no observatory anchor within 1e9 m of an ST-11 site (EveJS DEADSPACE_SITE_RADIUS_METERS); mission pockets not positioned in the sim | `An_observatory_is_not_anchored_in_a_deadspace_pocket...`; DEVIATIONS ST-16 |

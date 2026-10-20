@@ -41,12 +41,19 @@ public sealed class PersistenceAgentResearch(
     /// </summary>
     public static async Task<IReadOnlyDictionary<long, IReadOnlyList<AgentResearchField>>> LoadFieldsAsync(SdeReader sde, CancellationToken cancellationToken)
     {
-        var typeRows = await sde.ReadAsync("types", cancellationToken: cancellationToken);
-        var datacores = typeRows.Where(row => GroupId(row.Doc) == AgentResearchFields.DatacoreGroupId && Published(row.Doc)).Select(row => row.Key).ToArray();
+        var typeRows = await sde.ReadTypeSummariesAsync(cancellationToken);
+        var datacores = typeRows
+            .Where(row => row.GroupId == AgentResearchFields.DatacoreGroupId && row.Published)
+            .Select(row => (long)row.TypeId)
+            .ToArray();
         var skillOf = (await sde.ReadAsync("typeDogma", datacores, cancellationToken))
             .ToDictionary(row => row.Key, row => RequiredSkill(row.Doc));
-        var types = typeRows.Select(row => new AgentResearchTypeRow(row.Key, EnglishName(row.Doc), GroupId(row.Doc), Published(row.Doc),
-            skillOf.GetValueOrDefault(row.Key)));
+        var types = typeRows.Select(row => new AgentResearchTypeRow(
+            row.TypeId,
+            row.Name,
+            row.GroupId,
+            row.Published,
+            skillOf.GetValueOrDefault(row.TypeId)));
         var agents = (await sde.ReadAsync("npcCharacters", cancellationToken: cancellationToken)).Select(row => new AgentResearchAgentRow(
             row.Key, AgentTypeId(row.Doc), Skills(row.Doc)));
         return AgentResearchFields.FieldsByAgent(types, agents);
@@ -102,12 +109,6 @@ public sealed class PersistenceAgentResearch(
         return new AgentDatacorePurchase(AgentDatacoreRefusal.None, quantity);
     }
 
-    private static long GroupId(JsonElement doc) =>
-        doc.TryGetProperty("groupID", out var group) && group.ValueKind == JsonValueKind.Number ? group.GetInt64() : 0;
-
-    private static bool Published(JsonElement doc) =>
-        doc.TryGetProperty("published", out var published) && published.ValueKind == JsonValueKind.True;
-
     private static int AgentTypeId(JsonElement doc) =>
         doc.TryGetProperty("agent", out var agent) && agent.TryGetProperty("agentTypeID", out var type) &&
         type.ValueKind == JsonValueKind.Number ? type.GetInt32() : 0;
@@ -120,11 +121,6 @@ public sealed class PersistenceAgentResearch(
                 .Select(skill => skill.GetProperty("typeID").GetInt64())
                 .ToArray()
             : [];
-
-    private static string EnglishName(JsonElement doc) =>
-        doc.TryGetProperty("name", out var names) && names.TryGetProperty("en", out var english) && english.ValueKind == JsonValueKind.String
-            ? english.GetString() ?? ""
-            : "";
 
     private static long? RequiredSkill(JsonElement doc)
     {

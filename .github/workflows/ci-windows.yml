@@ -106,15 +106,8 @@ jobs:
       - name: Shut down .NET build servers after build
         if: always()
         run: dotnet build-server shutdown
-      - name: Run PostgreSQL-backed .NET test projects
-        working-directory: dotnet
-        run: |
-          $env:EVE_PG_URL = 'Host=127.0.0.1;Port=5432;Username=postgres;Password=postgres;Database=eve'
-          dotnet test EveRs.slnx -c Release --no-build -nologo --verbosity minimal -nodeReuse:false
-          if ($LASTEXITCODE -ne 0) { throw '.NET tests failed.' }
-      - name: Shut down .NET build servers after tests
-        if: always()
-        run: dotnet build-server shutdown
+      # The Linux required workflow runs the full PostgreSQL-backed .NET test suite.
+      # This Windows job verifies the .NET build and exercises the Host through the live client walk below.
       - name: Run Python client tests
         working-directory: tools/headless-client
         run: |

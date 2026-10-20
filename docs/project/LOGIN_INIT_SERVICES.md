@@ -39,7 +39,8 @@ The headless login-to-character walk (`tools/headless-client/tests/test_login_to
 | `subscriptionMgr.GetCloneGrade` | Character screen and clone UI | Implemented | Character/account subscription state is read by Host provider. |
 | `subscriptionMgr.GetSubscriptionTime` | Subscription UI after entry | Implemented | `SubscriptionMgrService` derives expiry and remaining days from the persisted account omega expiry. |
 | `survey.GetActiveSurveyID` | Character screen | Partial | Route is present; verify campaign configuration and result against current server data. |
-| `loginCampaignManager` / `seasonalLoginCampaignManager` | Login reward surfaces | Partial | Service names are registered; campaign state and rewards depend on configured data. Verify claim mutation, ownership, and persistence before counting these as complete. |
+| `loginCampaignManager.get_client_campaign_state` / `claim_reward` | Daily rookie login-reward panel | Implemented | The V24.01 `loginrewards/client/loginCampaignService.py` calls these methods. Host reads account progress and atomically creates the redeem token with the claim record; focused service and persistence tests cover the path. |
+| `seasonalLoginCampaignManager.get_active_campaign` / `get_claim_history` / `claim_reward` | Seasonal login-reward panel | Partial | V24.01 `loginrewards/client/seasonalLoginCampaignService.py` calls these methods. Host has the state and claim contract, but `PersistenceNewEdenStoreRuntime.GetSeasonalLoginCampaignAsync` currently supplies no configured campaign state. |
 | `milestoneMgr.ProcessCharacterLogon` / `ClaimRewards` | First logon and reward claims | Implemented | The Host uses `LoginMilestoneStore`; the milestone live test covers the logon timer and claim path. |
 | `rewardMgr.GetDelayedRewardsByGroupIDs` | Login reward UI | Implemented | Host reads pending loyalty points from the live incursion director; groups without pending rewards are omitted. |
 | `config.GetStationSolarSystemsByOwner` | Static/config startup | Implemented | Host reads server configuration/static catalog. |
@@ -49,7 +50,7 @@ The headless login-to-character walk (`tools/headless-client/tests/test_login_to
 | `authentication` / `sessionMgr` notifications | Login and world transition | Implemented | Session initialization and character-change notifications are covered by headless walk. |
 | `userSvc.UserLogOffCharacter` | Return to character selection | Implemented | Session remains connected without a selected character; a subsequent selection is covered in `test_login_to_character.py`. |
 
-Inventory baseline: 38 tracked service/RPC entries. Source review classifies 28 as implemented, 10 as partial, and 0 as missing routes. The partial count includes existing methods whose default/provider behavior still needs completion; route registration alone does not establish completion.
+Inventory baseline: 39 tracked service/RPC entries. Source review classifies 29 as implemented, 10 as partial, and 0 as missing routes. The partial count includes existing methods whose default/provider behavior still needs completion; route registration alone does not establish completion.
 
 ## Verification boundary
 

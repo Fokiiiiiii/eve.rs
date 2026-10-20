@@ -56,6 +56,8 @@ public static class Customs
         double Bad,
         double Terrible)
     {
+        public static OwnerTaxRates Default { get; } = new(0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05);
+
         public double ForPilot(bool sameCorporation, bool sameAlliance, double standing)
         {
             if (sameCorporation) return Corporation;

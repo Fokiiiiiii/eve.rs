@@ -263,6 +263,135 @@ public sealed class PersistenceContractWriteModel(
             startStationId, endStationId, nowFileTime, 0);
     }
 
+    public async ValueTask<bool> PlaceBidAsync(long contractId, long characterId, long corporationId, long allianceId,
+        bool bidForCorporation, int bidderWalletKey, decimal amount, CancellationToken cancellationToken)
+    {
+        if (contractId <= 0 || characterId <= 0 || corporationId <= 0 || allianceId < 0 ||
+            bidderWalletKey is < 1000 or > 1006 || amount <= 0 || decimal.Round(amount, 2) != amount || decimal.Truncate(amount) != amount)
+            throw new ArgumentOutOfRangeException(nameof(amount));
+        var bidderId = bidForCorporation ? corporationId : characterId;
+        var nowMs = nowUnixMs();
+        var nowFileTime = Eve.Services.Py.FileTimeFromUnixMs(nowMs);
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        short type, status, availability;
+        long issuerId, issuerCorporationId, assigneeId, startStationId, expired, currentAcceptor;
+        bool isCorporationIssued;
+        decimal startingPrice, buyoutPrice;
+        int issuerWalletKey;
+        await using (var command = new NpgsqlCommand($"""
+            SELECT contract_type, status, availability, issuer_id, issuer_corporation_id, is_corporation_issued,
+                   assignee_id, start_station_id, date_expired_filetime, price_isk, collateral_isk, acceptor_id,
+                   issuer_wallet_account_key
+            FROM {_schema}.contract_records WHERE contract_id = $1 FOR UPDATE
+            """, connection, transaction))
+        {
+            command.Parameters.AddWithValue(contractId);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            if (!await reader.ReadAsync(cancellationToken)) throw new ContractUserErrorException("ConContractNotFound");
+            type = reader.GetInt16(0); status = reader.GetInt16(1); availability = reader.GetInt16(2);
+            issuerId = reader.GetInt64(3); issuerCorporationId = reader.GetInt64(4); isCorporationIssued = reader.GetBoolean(5);
+            assigneeId = reader.GetInt64(6); startStationId = reader.GetInt64(7); expired = reader.GetInt64(8);
+            startingPrice = reader.GetDecimal(9); buyoutPrice = reader.GetDecimal(10); currentAcceptor = reader.GetInt64(11);
+            issuerWalletKey = reader.GetInt32(12);
+        }
+        if (type != 2) throw new ContractUserErrorException("ConIllegalType");
+        if (status == 4 && currentAcceptor == bidderId) return true;
+        if (status != 0 || expired < nowFileTime) throw new ContractUserErrorException("ConContractNotAvailable");
+        if (availability != 0 && assigneeId != characterId && assigneeId != corporationId && (allianceId == 0 || assigneeId != allianceId))
+            throw new ContractUserErrorException("ConContractNotAvailable");
+        if ((!isCorporationIssued && issuerId == characterId) || (isCorporationIssued && issuerCorporationId == corporationId))
+            throw new ContractUserErrorException("ConCannotAcceptOwnContract");
+
+        long previousBidId = 0, previousBidderId = 0;
+        decimal previousAmount = 0;
+        int previousWalletKey = 1000;
+        bool previousForCorporation = false;
+        await using (var command = new NpgsqlCommand($"""
+            SELECT bid_id, bidder_id, amount, wallet_account_key, bidder_is_corporation
+            FROM {_schema}.contract_bids WHERE contract_id = $1 AND NOT is_refunded
+            ORDER BY amount DESC, created_at_filetime DESC, bid_id DESC LIMIT 1 FOR UPDATE
+            """, connection, transaction))
+        {
+            command.Parameters.AddWithValue(contractId);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            if (await reader.ReadAsync(cancellationToken))
+            {
+                previousBidId = reader.GetInt64(0); previousBidderId = reader.GetInt64(1); previousAmount = reader.GetDecimal(2);
+                previousWalletKey = reader.GetInt32(3); previousForCorporation = reader.GetBoolean(4);
+            }
+        }
+        if (previousBidId > 0 && previousBidderId == bidderId && previousAmount == amount)
+            return await CommitBidReplayAsync(transaction, cancellationToken);
+        var increment = Math.Max(decimal.Truncate(startingPrice * 0.1m), 1000m);
+        var nextBid = previousAmount + increment;
+        if (buyoutPrice > 0) nextBid = Math.Min(nextBid, buyoutPrice);
+        var minimum = Math.Max(startingPrice, nextBid);
+        if (amount < minimum || buyoutPrice > 0 && amount > buyoutPrice)
+            throw new ContractUserErrorException("ConBidTooLow");
+        var isBuyout = buyoutPrice > 0 && amount == buyoutPrice;
+        var issuerOwner = isCorporationIssued ? issuerCorporationId : issuerId;
+        var bidderWallet = new WalletAccount(bidderId, bidForCorporation ? bidderWalletKey : 1000);
+        if (previousBidId > 0)
+        {
+            var previousWalletOwner = previousBidderId;
+            await wallets.AdjustAsync(connection, transaction,
+                new WalletAccount(previousWalletOwner, previousForCorporation ? previousWalletKey : 1000), previousAmount,
+                bidderId, 85, "Contract auction bid refunded", nowMs,
+                $"contract:{contractId}:bid:{previousBidId}:refund", $"contract:{contractId}", cancellationToken,
+                referenceId: contractId);
+            await using var refund = new NpgsqlCommand($"UPDATE {_schema}.contract_bids SET is_refunded = true WHERE bid_id = $1", connection, transaction);
+            refund.Parameters.AddWithValue(previousBidId);
+            await refund.ExecuteNonQueryAsync(cancellationToken);
+        }
+        await wallets.AdjustAsync(connection, transaction, bidderWallet, -amount, issuerOwner, 85, "Contract auction bid escrowed", nowMs,
+            $"contract:{contractId}:bid:{Guid.NewGuid():N}", $"contract:{contractId}", cancellationToken, referenceId: contractId);
+        long bidId;
+        await using (var command = new NpgsqlCommand($"""
+            INSERT INTO {_schema}.contract_bids (contract_id, bidder_id, amount, created_at_filetime, bidder_is_corporation, wallet_account_key)
+            VALUES ($1, $2, $3, $4, $5, $6) RETURNING bid_id
+            """, connection, transaction))
+        {
+            command.Parameters.AddWithValue(contractId); command.Parameters.AddWithValue(bidderId); command.Parameters.AddWithValue(amount);
+            command.Parameters.AddWithValue(nowFileTime); command.Parameters.AddWithValue(bidForCorporation);
+            command.Parameters.AddWithValue(bidForCorporation ? bidderWalletKey : 1000);
+            bidId = (long)(await command.ExecuteScalarAsync(cancellationToken) ?? throw new InvalidOperationException("contract bid insert returned no id"));
+        }
+        if (isBuyout)
+        {
+            await wallets.AdjustAsync(connection, transaction, new WalletAccount(issuerOwner, issuerWalletKey), amount, bidderId, 85,
+                "Contract auction buyout", nowMs, $"contract:{contractId}:bid:{bidId}:buyout", $"contract:{contractId}", cancellationToken,
+                referenceId: contractId);
+            var offered = new List<long>();
+            await using (var command = new NpgsqlCommand($"SELECT item_id FROM {_schema}.contract_items WHERE contract_id = $1 AND in_crate ORDER BY item_id", connection, transaction))
+            {
+                command.Parameters.AddWithValue(contractId);
+                await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+                while (await reader.ReadAsync(cancellationToken)) offered.Add(reader.GetInt64(0));
+            }
+            foreach (var itemId in offered)
+                await items.MoveToOwnerAsync(connection, transaction, itemId, bidderId, startStationId, bidForCorporation ? 62 : 4, cancellationToken);
+            await using (var command = new NpgsqlCommand($"UPDATE {_schema}.contract_items SET in_crate = false WHERE contract_id = $1 AND in_crate", connection, transaction))
+            {
+                command.Parameters.AddWithValue(contractId);
+                await command.ExecuteNonQueryAsync(cancellationToken);
+            }
+            await using (var command = new NpgsqlCommand($"UPDATE {_schema}.contract_records SET status = 4, acceptor_id = $2, date_accepted_filetime = $3, reward_escrow = 0 WHERE contract_id = $1 AND status = 0", connection, transaction))
+            {
+                command.Parameters.AddWithValue(contractId); command.Parameters.AddWithValue(bidderId); command.Parameters.AddWithValue(nowFileTime);
+                if (await command.ExecuteNonQueryAsync(cancellationToken) != 1) throw new ContractUserErrorException("ConContractNotAvailable");
+            }
+        }
+        await transaction.CommitAsync(cancellationToken);
+        return true;
+    }
+
+    private static async ValueTask<bool> CommitBidReplayAsync(NpgsqlTransaction transaction, CancellationToken cancellationToken)
+    {
+        await transaction.CommitAsync(cancellationToken);
+        return true;
+    }
+
     private async Task DebitAsync(WalletAccount wallet, decimal amount, int refType, string operationKey,
         long contractId, long nowMs, NpgsqlTransaction transaction, NpgsqlConnection connection,
         CancellationToken cancellationToken)

@@ -811,6 +811,11 @@ private static PyValue RowField(PyValue value,string key)
         var tooManyMemberUpdates = new PyList(Enumerable.Range(0, 501).Select(_ => (PyValue)new PyList([])).ToArray());
         var updateLimitError = await Assert.ThrowsAsync<CorporationError>(async () => await CorpRpc("UpdateMembers", tooManyMemberUpdates));
         Assert.Equal("CORPORATION_BULK_LIMIT_EXCEEDED", updateLimitError.Code);
+        var duplicateMemberUpdates = new PyList([
+            new PyList([new PyInt(member)]), new PyList([new PyInt(member)])
+        ]);
+        var duplicateUpdateError = await Assert.ThrowsAsync<CorporationError>(async () => await CorpRpc("UpdateMembers", duplicateMemberUpdates));
+        Assert.Equal("CORPORATION_ACCESS_DENIED", duplicateUpdateError.Code);
 
         var emptyKick = Assert.IsType<PyDict>(await CorpRpc("KickOutMembers",new PyList([])));
         Assert.Empty(Assert.IsType<PyList>(emptyKick.Entries.Single(e => e.Key == new PyStr("kicked")).Value).Items);

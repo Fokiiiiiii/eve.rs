@@ -5222,3 +5222,8 @@ The insurance RPCs accept positive integer ship IDs. Fractional or malformed val
 ## Contract RPC current-role checks (2026-10-20)
 
 Corporate contract creation, bidding, acceptance, completion, deletion, and corporate list reads check the authenticated session role bit and then resolve the actor’s current corporation membership and Contract Manager role through the persisted `CorporationStore`. A role removed while the character remains logged in therefore no longer authorizes a corporate contract call. `ContractProxyServiceTests.Accept_for_corporation_refuses_a_stale_session_role_without_persisted_authority` supplies a stale positive session role with a persisted-role callback returning false and verifies refusal.
+
+
+## Corporation audit role revocation (2026-10-20)
+
+`corpMgr.AuditMember` now derives Director/Auditor access from the persisted member masks and titles on every request. Its session role attributes are not sufficient to expose corporation audit events or role history after a role change. `CorporationProtocolTests.Corp_mgr_audit_member_rechecks_persisted_auditor_role_after_login` creates an Auditor session, confirms access, removes the persisted role, then confirms that the same session is denied before audit-event reads.

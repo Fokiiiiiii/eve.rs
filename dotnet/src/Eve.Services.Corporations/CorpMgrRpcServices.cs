@@ -243,12 +243,6 @@ public sealed partial class CorpMgrService
             member.CorporationId != corporationId)
             return false;
 
-        var sessionRoles = call.Session.GetInt("corprole") ?? 0;
-        if (sessionRoles == 0)
-            sessionRoles = call.Session.GetInt("rolesAtAll") ?? call.Session.GetInt("corpRole") ?? 0;
-        if (HasAuditRole(sessionRoles) || HasAuditRole(member.Masks.Roles))
-            return true;
-
         var titles = await store.TitlesAsync(corporationId, cancellationToken);
         return HasAuditRole(CorporationRoles.Session(corporation, member, character.StationId, titles).CorpRole);
     }

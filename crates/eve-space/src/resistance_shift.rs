@@ -4,11 +4,9 @@
 //! The state is the module's resonance multiplier for each kind of damage (`profile`, seeded from the module's own values, 0.85 each for a 4403; the
 //! ship's armor resonance is its base times this), in the order a damage vector is written: em, thermal, kinetic, explosive. The tally is the damage
 //! the armor took in the cycle per kind, weighted by the resonance it had. Each cycle the kinds the armor took least are the donors (at least two): each
-
 //! resistance moves from the kinds the armor was hit by to the kinds it was not. A tie is settled in the order the reference declares the kinds (em,
 //! explosive, kinetic, thermal). When the armor took nothing in any kind there is no change.
 //!
-
 /// The four kinds of damage, in the order a damage vector is written: em, thermal, kinetic, explosive.
 pub type Kinds = [f64; 4];
 

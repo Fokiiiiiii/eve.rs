@@ -11,7 +11,6 @@ namespace Eve.Services.Slash;
 /// The game master's item commands of a docked pilot: <c>/giveitem &lt;item name|typeID&gt; [amount]</c> (items into the station hangar), <c>/fit me &lt;module&gt;</c> (a module,
 /// made if the cargo hold has none, fitted to the first slot that suits) and <c>/unfit me &lt;module name|typeID|itemID|all&gt;</c> (fitted modules back to the hangar).
 /// Their words are the reference's (<c>services/chat/commands/itemSeeding.js</c> and <c>fitModule.js</c>, ADR 0009). The reference also serves a pilot in space; here the
-/// pilot must be docked (<c>docs/reference/compat/DEVIATIONS.md</c>).
 /// </summary>
 public sealed class ItemCommands(ItemTypeNames names, CharacterShips ships, DogmaStatic statics, Func<long> nowUnixMs, ISpaceModules? modules = null)
 {
@@ -41,7 +40,6 @@ public sealed class ItemCommands(ItemTypeNames names, CharacterShips ships, Dogm
         GiveCoreAsync(session, argument, cancellationToken, create: false);
 
     /// <summary>
-    /// <c>/createitem &lt;item name|typeID&gt; [amount]</c> (EveJS <c>handleCreateItemCommand</c>): the items go into the cargo hold of the pilot's ship when it is in space,
     /// and into the station hangar when docked. shortcut: EveJS's per-operation amount limit and its cargo volume check are not applied.
     /// </summary>
     public Task<string> CreateAsync(ClientSession session, string argument, CancellationToken cancellationToken) =>
@@ -136,7 +134,6 @@ public sealed class ItemCommands(ItemTypeNames names, CharacterShips ships, Dogm
         return $"{summary}{(type.Published ? "" : " [unpublished]")} was added to your station hangar.";
     }
 
-    /// <summary><c>/ship &lt;ship name|typeID&gt;</c> (EveJS <c>handleShipSpawn</c>): one ship hull of the pilot's, made in the station hangar. Only ships are made.</summary>
     public async Task<string> ShipAsync(ClientSession session, string argument, CancellationToken cancellationToken, string command = "ship")
     {
         var text = argument.Trim();

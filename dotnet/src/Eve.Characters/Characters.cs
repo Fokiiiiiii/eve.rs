@@ -173,7 +173,6 @@ public sealed partial class PgCharacterStore
         return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
     }
 
-
     public async Task<bool> SetFactionWarfareStateAsync(
         long characterId,
         long? directFactionId,
@@ -496,7 +495,6 @@ public sealed partial class PgCharacterStore
             : (null, null);
     }
 
-
     /// <summary>The paper doll and portrait payloads for a batch of character ids.</summary>
     public async Task<IReadOnlyDictionary<long, (byte[]? Doll, byte[]? Portrait)>> AppearanceManyAsync(
         IEnumerable<long> ids, CancellationToken cancellationToken = default)
@@ -547,7 +545,6 @@ public sealed partial class PgCharacterStore
         command.Parameters.Add(new NpgsqlParameter { Value = (object?)portrait ?? DBNull.Value });
         return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
     }
-
 
     /// <summary>Removes appearance data as part of the character deletion transaction.</summary>
     public async Task ClearAppearanceAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long id, CancellationToken cancellationToken = default)

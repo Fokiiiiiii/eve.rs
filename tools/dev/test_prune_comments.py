@@ -7,7 +7,6 @@ SPEC = importlib.util.spec_from_file_location('prune_comments', MODULE)
 pruner = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(pruner)
 
-
 class PruneCommentsTests(unittest.TestCase):
     def check(self, source, language):
         cleaned, _, removed = pruner.transform(source, language)
@@ -35,6 +34,9 @@ class C { string s = $@"{{ /* intact */ }}"; string r = $$"""// intact {value}""
 # TODO: stale
 ''', 'py')
 
+    def test_python_form_feed_keeps_comment_offsets(self):
+        self.check('x = 1\n\f# TODO: stale\nx = 2\n', 'py')
+
     def test_doc_comment_has_no_empty_line_before_item(self):
         src = '/// Keep docs.\n\n#[inline]\nfn f() {}\n'
         result, _, _ = pruner.transform(src, 'rs')
@@ -45,12 +47,19 @@ class C { string s = $@"{{ /* intact */ }}"; string r = $$"""// intact {value}""
         result, _, _ = pruner.transform(src, 'rs')
         self.assertNotIn('\n\n\n', result)
 
+    def test_section_dividers_are_removed(self):
+        src = "fn f() {\n // ---- writing --------\n // ── reading ──\n call();\n}\n"
+        result, _, removed = pruner.transform(src, 'rs')
+        self.assertGreater(removed, 0)
+        self.assertNotIn('writing', result)
+        self.assertNotIn('reading', result)
+        self.assertEqual(pruner.code_tokens(src, 'rs'), pruner.code_tokens(result, 'rs'))
+
     def test_short_explanatory_comment_survives(self):
         src = 'fn f() { // Keep this because ordering matters.\n call(); }\n'
         result, _, removed = pruner.transform(src, 'rs')
         self.assertEqual(removed, 0)
         self.assertEqual(pruner.code_tokens(src, 'rs'), pruner.code_tokens(result, 'rs'))
-
 
 if __name__ == '__main__':
     unittest.main()

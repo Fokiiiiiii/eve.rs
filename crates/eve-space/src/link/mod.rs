@@ -1,5 +1,4 @@
 //!
-
 //! `u32 length + bytes`, like the front's link (ADR 0002). [`Message::encode`] writes a whole frame and
 //! [`Message::decode`] reads a frame's payload (the kind and the body), so the same functions serve any framing layer.
 //! `oracle/fixtures/simlink/messages.json` pins the layout for both sides.

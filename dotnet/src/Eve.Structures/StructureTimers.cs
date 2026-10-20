@@ -92,7 +92,7 @@ public sealed class StructureTimers
                 throw new InvalidOperationException($"Structure {structureId} produced invalid unanchor drop item IDs.");
             }
         }
-        // ST-16: a destroyed structure's loot container is made in the same transaction (null when it has nothing to drop)
+
         if (transition.Changed && transition.Removal == StructureRemoval.Destroyed && _completeDestruction is { } loot)
         {
             unanchorDrop = await loot(connection, transaction, record, cancellationToken);

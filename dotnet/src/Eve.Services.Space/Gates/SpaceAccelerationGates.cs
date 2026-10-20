@@ -13,7 +13,6 @@ public sealed record ShipClass(int GroupId, int RaceId)
 }
 
 /// <summary>
-/// <c>keeper.ActivateAccelerationGate</c> in space (docs/project/ACCELERATION_GATES.md; EveJS <c>keeperService.js</c> <c>activateAccelerationGateForSession</c>): a
 /// pilot in a dungeon site walks the acceleration gate of one of its rooms and comes out in the room the gate leads to. The checks are the reference's, in its
 /// order: the gate is one of the pilot's running dungeon, the ship may use it (the race list of the gate, else the blacklisted ship groups), and the simulation
 /// checks the reach and the warp.
@@ -26,7 +25,7 @@ public sealed class SpaceAccelerationGates(
     Func<ClientSession, long, double[], CancellationToken, Task<CommandReply>> transit,
     Func<long, string, long, CancellationToken, Task> recordRoom)
 {
-    /// <summary>The ship groups a gate bars when it names no race (EveJS <c>ACCELERATION_GATE_BLACKLISTED_GROUP_IDS</c>: capsules and the capital hulls).</summary>
+
     public static readonly IReadOnlySet<int> BlacklistedGroups = new HashSet<int> { 29, 30, 485, 513, 547, 659, 883, 902, 1538, 4594, 5120 };
 
     /// <summary>Whether an SDE ship type is allowed by a battlefield gate (T1 or empire faction hull only).</summary>

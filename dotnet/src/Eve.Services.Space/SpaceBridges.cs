@@ -10,9 +10,7 @@ using Npgsql;
 namespace Eve.Services.Space;
 
 /// <summary>
-/// A jump bridge (the EVE University wiki, "Jump drives"): a Titan's Jump Portal Generator, or a Black Ops' Covert one, opens a bridge where the ship is to a
 /// cynosural field lit in another system, and the fleet ships within 2 500 metres of it jump through to the field. The numbers are the SDE's (the generator's
-/// attributes 6, 713, 714, 1001, 1002, 1298 and 3318, the hull's 866 to 868 and 1972, the skills' 1775 and the range attributes); the rules are the wiki's.
 /// The bridge lives in the simulation (command 30) and is kept here for its fleet and its isotopes; a restart ends it, as the simulation's does.
 /// </summary>
 public sealed class SpaceBridges(
@@ -91,7 +89,7 @@ public sealed class SpaceBridges(
         var titan = generator.TypeId == JumpDriveRules.TitanGeneratorType;
         var industrial = generator.TypeId == JumpDriveRules.IndustrialGeneratorType;
         var kind = JumpDriveRules.KindOf(field.TypeId);
-        // a Titan bridge goes to a standard field or a beacon (the wiki: "standard Cynosural Fields, or Cynosural Beacons"); a covert beacon then fails the cyno rule below
+
         if (titan && kind != JumpDriveRules.FieldKind.Standard && field.Kind != SpaceContainers.BeaconKind)
         {
             throw Notify("A titan jump bridge goes only to a standard cynosural field or a beacon.");
@@ -109,7 +107,7 @@ public sealed class SpaceBridges(
         {
             throw Notify(entry);
         }
-        // the capitals operate outside high security (the wiki, "Capital ships"): a Titan and a Rorqual are capitals
+
         if ((titan || industrial) && systems.Get(origin) is { } place && Security.IsHighSecOrHigher(Security.ClassFromLevel(place.Security)))
         {
             throw Notify("Jump drives cannot be used in high-security space.");
@@ -118,7 +116,7 @@ public sealed class SpaceBridges(
         {
             throw Notify("Your pilot cannot use a jump portal generator yet (Jump Portal Generation at level one).");
         }
-        // the bridging ship must be within its own jump range of the field (the wiki)
+
         var lightYears = systems.LightYearsBetween(origin, destinationSystem) ?? throw Refusal("DeniedShipChanged");
         var calibration = await LevelAsync(JumpDriveRules.CalibrationSkill, character, cancellationToken);
         if (lightYears > JumpDriveRules.Range(baseRange, calibration, await PerLevelAsync(JumpDriveRules.CalibrationSkill, JumpDriveRules.CalibrationPerLevelAttribute, cancellationToken)))
@@ -135,7 +133,7 @@ public sealed class SpaceBridges(
             throw Notify("The bridge ship does not have enough jump portal activation fuel.");
         }
         var capacitor = generator.Attributes.TryGetValue(JumpDriveRules.ModuleCapacitorAttribute, out var need) ? need : 0;
-        // the Titan holds still for its bridge's minute (the wiki: it immobilises the ship holding it open); a covert bridge does not (the wiki is silent)
+
         var immobile = titan ? (long)lifetime : 0;
         await space.OpenBridgeAsync(session, shipId, fieldId, destinationSystem, (long)lifetime, immobile, JumpDriveRules.BridgeRangeMeters, capacitor, cancellationToken);
         if (activationFuel > 0 && !await ships.DebitFuelAsync(character, shipId, activationType, activationFuel, cancellationToken))
@@ -162,14 +160,13 @@ public sealed class SpaceBridges(
             now + (long)lifetime);
         _bridges[shipId] = record;
         await AnnounceAsync(record, true);
-        // the opener is told the anchor is activated, with no passengers yet (EveJS notifyGroupJumpAnchor after the bridge opens)
+
         session.SendNotification("OnGroupJumpAnchorActivated", "clientID", new PyInt(destinationSystem), new PyInt(0));
     }
 
     /// <summary>
     /// The passenger of the session jumps through the bridge of the ship <paramref name="bridgerShipId"/> to the field <paramref name="beaconId"/> in
     /// <paramref name="solarSystemId"/> (command <c>CmdJumpThroughFleet</c>). The passenger is in the bridge's fleet, in its system, of a kind the portal takes
-    /// (the wiki: a fleetmate), not cooling down; the isotopes come from the bridging ship and the passenger's fatigue is the wiki's, with the bridge's and the
     /// passenger's hull multipliers (1972 and 1971).
     /// </summary>
     public async Task<PyValue> JumpThroughAsync(

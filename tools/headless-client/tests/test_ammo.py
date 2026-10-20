@@ -45,7 +45,6 @@ TOLERANCE = 0.8
 # the ids of items (stacks, charges) of the recording (10**12 and more) and of this run (from the 1.99 billions) are told apart by the order they appear in
 ITEM_IDS = (1_990_000_000, 10**15)
 
-
 def canon(described, table: dict):
     """A description with the ids of items replaced by the order they first appear in (`#1`, `#2`, ...): the ids are per run and what the client reads is which
     event is about which item."""
@@ -60,7 +59,6 @@ def canon(described, table: dict):
     if isinstance(described, float):
         return round(described, 9)  # two servers work a product out in their own order: the last bits are not what the client reads
     return described
-
 
 def hull_free(events: list) -> list:
     """The events without the lines that the hull scales (the gun's range and capacitor need, HULL_SCALED); an event that holds only those is left out."""
@@ -80,11 +78,9 @@ def hull_free(events: list) -> list:
         out.append(event)
     return out
 
-
 def canon_events(events: list, table: dict, mapping: dict | None = None) -> list:
     """The events with the ids of the recording changed to this run's where they are known, and the ids of items by the order they appear in."""
     return [{**e, "args": canon(ids(e["args"], mapping or {}), table)} for e in hull_free(events)]
-
 
 def tolerated(answer: dict, drop: tuple = ()) -> dict:
     """The recorded `GetAllInfo` with what the deviations settle: the drone limits are not on the ship (DEVIATIONS #12), the trade premium of the character is what its
@@ -103,7 +99,6 @@ def tolerated(answer: dict, drop: tuple = ()) -> dict:
                 entry[1] = 0.9
     return answer
 
-
 def without(answer: dict, drop: tuple) -> dict:
     """Our `GetAllInfo` without the attributes of the gun that are not compared."""
     answer = copy.deepcopy(answer)
@@ -113,12 +108,10 @@ def without(answer: dict, drop: tuple) -> dict:
             fields["attributes"]["$dict"] = [e for e in fields["attributes"]["$dict"] if e[0] not in drop]
     return answer
 
-
 def is_hull(entry) -> bool:
     """Whether a `shipInfo` entry is the hull itself (its item row's type is the recording's or the test ship's)."""
     row = dict(entry["args"]["$dict"]).get("invItem") if isinstance(entry, dict) and entry.get("args") else None
     return row is not None and row["$row"]["typeID"] in HULLS
-
 
 def modules_only(answer: dict) -> dict:
     """What a `GetAllInfo` answer says of the fitted modules (rows, attributes, charges): the hull's own entry and its state are not compared (DEVIATIONS: the
@@ -131,13 +124,11 @@ def modules_only(answer: dict) -> dict:
     answer["args"]["$dict"] = fields
     return answer
 
-
 def of_the_slot(item, gun: int, ship: int) -> bool:
     """Whether the item a line of `OnModuleAttributeChanges` is about is the gun or the charge in its slot, which the client knows by `(ship, flag, type)`."""
     if isinstance(item, dict) and "$tuple" in item:
         return number(item["$tuple"][0]) == ship
     return number(item) == gun
-
 
 def of_the_gun(events: list, gun: int, ship: int) -> list:
     """What the gun makes the pilot's client hear in space: the effect going on and off, the special effect that plays it and the numbers of the module and of
@@ -162,7 +153,6 @@ def of_the_gun(events: list, gun: int, ship: int) -> list:
             kept["args"]["$tuple"][1]["$tuple"][1]["$tuple"][0] = played
             out.append(kept)
     return out
-
 
 def test_a_pilot_loads_and_fires_a_gun_as_it_did_in_the_reference():
     race = AMMO["races"][0]
@@ -307,7 +297,6 @@ def test_a_pilot_loads_and_fires_a_gun_as_it_did_in_the_reference():
         space_step("the pilot fires the railgun until the iron is spent", lambda: who.call_bound(dogma[0], "Activate", gun, "projectileFired", rat, 1000), 20.0, until=stopped)
         space_step("the pilot fires the railgun with nothing in it", lambda: who.call_bound(dogma[0], "Activate", gun, "projectileFired", rat, 1000), 2.0)
     assert problems == [], "\n".join(problems)
-
 
 def rows_call(who):
     manager = who.call("invbroker", "MachoBindObject", (STATION, 15), None)[0]

@@ -1,7 +1,6 @@
 //! `SceneWorld` as the dogma engine of the NPCs: their attributes (from the ship's spec and what it has taken), their locks, and the weapons they
 //! fight with, which are effects of the NPC's own ship (`crate::ship::NpcWeapon`): a task activates one at a target and the scene runs it
 //! (`crate::modules`, `crate::weapons`).
-
 use eve_behaviors::consts::{
     ATTRIBUTE_ARMOR_DAMAGE, ATTRIBUTE_ARMOR_HP, ATTRIBUTE_DAMAGE, ATTRIBUTE_EM_DAMAGE,
     ATTRIBUTE_ENTITY_MISSILE_TYPE_ID, ATTRIBUTE_EXPLOSION_DELAY, ATTRIBUTE_EXPLOSIVE_DAMAGE,

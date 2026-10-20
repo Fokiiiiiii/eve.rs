@@ -83,12 +83,12 @@ public static class IndustryRules
 
     /// <summary>
     /// Material quantity of one material row: base x modifiers x material runs, rounded to two decimals,
-    /// rounded up, and never less than one per run (the client's Job._get_materials).
+    /// rounded up, and never less than one per run (the client's Job._get_materials). Python 2 round() breaks ties away from zero.
     /// </summary>
     public static long MaterialQuantity(long baseQuantity, double modifier, long materialRuns, long runs)
     {
         var quantity = baseQuantity * modifier * materialRuns;
-        var rounded = Math.Round(quantity, 2, MidpointRounding.ToEven);
+        var rounded = Math.Round(quantity, 2, MidpointRounding.AwayFromZero);
         return Math.Max((long)Math.Ceiling(rounded), runs);
     }
 
@@ -105,25 +105,26 @@ public static class IndustryRules
     public static double SkillModifier(double attributePerLevelPercent, int level) =>
         1.0 + attributePerLevelPercent * level / 100.0;
 
-    /// <summary>The base job cost in ISK, rounded (the client's <c>int(round(job_cost))</c>).</summary>
-    public static long Round(double value) => (long)Math.Round(value, MidpointRounding.ToEven);
+    /// <summary>A client <c>int(round(x))</c>: Python 2 round() breaks ties away from zero (the client is Python 2).</summary>
+    public static long Round(double value) => (long)Math.Round(value, MidpointRounding.AwayFromZero);
 
     /// <summary>
-    /// Job cost parts, each a rounded share of the base cost: the system cost index, the facility tax, the SCC
-    /// surcharge (halved for research) and the high-security industry tax (the client's Job cost properties).
+    /// Job cost parts (the client's Job cost properties). The cost part multiplies the unrounded job cost by the product of the
+    /// cost modifiers (system cost index, facility bonuses) and rounds once; the facility tax, SCC surcharge (halved for
+    /// research) and high-security industry tax are shares of the job cost rounded first (<c>base_cost</c>).
     /// </summary>
     public static InstallCostParts CostParts(
-        double baseCost, double costIndex, double facilityTax, bool highSecurity, int activityId, double sccModifier = 1.0)
+        double jobCost, double costMultiplier, double facilityTax, bool highSecurity, int activityId, double sccModifier = 1.0)
     {
         var sccRate = Math.Max(0, SccSurchargeRate * sccModifier);
         if (activityId is ResearchTime or ResearchMaterial)
             sccRate *= SccResearchDiscount;
-        var baseRounded = Round(baseCost);
+        var baseCost = Round(jobCost);
         return new InstallCostParts(
-            Cost: Round(baseRounded * Math.Max(0, costIndex)),
-            Tax: Round(baseRounded * Math.Max(0, facilityTax)),
-            Scc: Round(baseRounded * sccRate),
-            SecurityTax: highSecurity ? Round(baseRounded * IndustrySecurityTaxRate) : 0);
+            Cost: Round(jobCost * Math.Max(0, costMultiplier)),
+            Tax: Round(baseCost * Math.Max(0, facilityTax)),
+            Scc: Round(baseCost * sccRate),
+            SecurityTax: highSecurity ? Round(baseCost * IndustrySecurityTaxRate) : 0);
     }
 
     /// <summary>The job's total ISK: the sum of its cost parts.</summary>

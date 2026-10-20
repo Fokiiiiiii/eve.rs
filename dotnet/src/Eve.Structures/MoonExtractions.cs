@@ -206,7 +206,6 @@ public sealed class MoonExtractions
         await _scheduler.ScheduleAsync(connection, transaction, new JobSpec(FractureJobKind, fractureAt) { Key = key, Payload = payload }, cancellationToken);
     }
 
-    /// <summary>The chunk arrives: it is ready to fracture, and the owner and the structure's pilots are told (the bus).</summary>
     private async Task ArrivalAsync(JobContext job, CancellationToken cancellationToken)
     {
         var id = (job.Payload<ExtractionJob>() ?? throw new InvalidOperationException("moon.chunk_arrival job without a payload")).ExtractionId;

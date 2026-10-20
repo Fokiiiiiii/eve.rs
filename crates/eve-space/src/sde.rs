@@ -1,5 +1,4 @@
 //! Reading the static data the world is built from: JSONL tables, streamed, with records kept as JSON.
-
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 

@@ -1,7 +1,6 @@
 namespace Eve.Services.CharacterSelect;
 
 /// <summary>
-/// What a deleted character leaves behind (EveJS <c>characterDeletionRuntime.js</c>, <c>deleteCharacter</c>): its assets are moved
 /// into the corporation's deliveries, or destroyed when its corporation is an NPC corporation, and its private state is cleared.
 /// The host supplies the implementation from PostgreSQL.
 /// </summary>

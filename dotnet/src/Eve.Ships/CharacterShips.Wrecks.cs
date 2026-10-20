@@ -11,7 +11,6 @@ public sealed record MadeWreck(Item Wreck, IReadOnlyList<Item> Contents);
 public sealed partial class CharacterShips
 {
     /// <summary>
-    /// A wreck is made in a solar system with what it holds, in one transaction: the wreck an item of <paramref name="ownerId"/> in space and what it holds items of the same owner in it
     /// (at the hangar flag, as what a destroyed ship leaves is). A ship that was destroyed leaves what the rules of its death decide (<see cref="DestroyShipAsync"/>); this is for the wreck of
     /// something that was never a character's, an NPC, with what its loot table gave.
     /// </summary>

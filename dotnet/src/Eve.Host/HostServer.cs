@@ -11,8 +11,23 @@ namespace Eve.Host;
 
 public sealed record HostOptions
 {
-    /// <summary>A session that has this many packets waiting is cut off (a client, or a service, that cannot keep up).</summary>
+    /// <summary>A session that has this many inbound packets waiting is cut off.</summary>
     public int MaxPendingPacketsPerSession { get; init; } = 10_000;
+
+    /// <summary>Maximum bytes held by one session actor, including the packet being processed.</summary>
+    public long MaxPendingBytesPerSession { get; init; } = 16 * 1024 * 1024;
+
+    /// <summary>Maximum queued packets sent to one session.</summary>
+    public int MaxQueuedOutboundPacketsPerSession { get; init; } = 512;
+
+    /// <summary>Maximum serialized bytes queued to one session.</summary>
+    public long MaxQueuedOutboundBytesPerSession { get; init; } = 8 * 1024 * 1024;
+
+    /// <summary>Maximum queued packets sent through one front connection.</summary>
+    public int MaxQueuedOutboundPacketsPerConnection { get; init; } = 8_192;
+
+    /// <summary>Maximum serialized bytes queued through one front connection.</summary>
+    public long MaxQueuedOutboundBytesPerConnection { get; init; } = 64 * 1024 * 1024;
 
     /// <summary>Called with a problem worth logging.</summary>
     public Action<string>? Log { get; init; }
@@ -101,7 +116,9 @@ internal sealed class FrontConnection : IAsyncDisposable
     private readonly PacketDispatcher _dispatcher;
     private readonly IAccountDirectory _accounts;
     private readonly Func<ReadOnlyMemory<byte>> _clusterConfig;
-    private readonly Channel<byte[]> _outgoing = Channel.CreateUnbounded<byte[]>(new UnboundedChannelOptions { SingleReader = true });
+    private readonly Channel<QueuedFrame> _outgoing;
+    private readonly ConcurrentDictionary<ulong, QueueBudget> _sessionQueueBudgets = new();
+    private readonly QueueBudget _connectionQueueBudget = new();
     private readonly ConcurrentDictionary<ulong, SessionActor> _sessions = new();
     private readonly object _handshakeGate = new();
     private bool _handshaken;
@@ -115,6 +132,13 @@ internal sealed class FrontConnection : IAsyncDisposable
         _dispatcher = dispatcher;
         _accounts = accounts;
         _clusterConfig = clusterConfig;
+        if (options.MaxPendingPacketsPerSession <= 0 || options.MaxPendingBytesPerSession <= 0 || options.MaxQueuedOutboundPacketsPerSession <= 0 || options.MaxQueuedOutboundBytesPerSession <= 0 || options.MaxQueuedOutboundPacketsPerConnection <= 0 || options.MaxQueuedOutboundBytesPerConnection <= 0)
+            throw new ArgumentOutOfRangeException(nameof(options), "Session and outbound queue limits must be positive.");
+        _outgoing = Channel.CreateBounded<QueuedFrame>(new BoundedChannelOptions(options.MaxQueuedOutboundPacketsPerConnection)
+        {
+            SingleReader = true,
+            FullMode = BoundedChannelFullMode.Wait,
+        });
     }
 
     public async Task RunAsync(CancellationToken cancellationToken)
@@ -246,11 +270,74 @@ internal sealed class FrontConnection : IAsyncDisposable
         {
             session.Complete();
         }
+        _sessionQueueBudgets.TryRemove(sessionId, out _);
         Post(new Disconnect(sessionId, reason));
     }
 
     /// <summary>Queues a frame for the front.</summary>
-    public void Post(HostMessage message) => _outgoing.Writer.TryWrite(HostCodec.Encode(message));
+    public void Post(HostMessage message)
+    {
+        var (sessionId, isSessionPacket) = message is Send send ? (send.SessionId, true) : (0UL, false);
+        if (isSessionPacket && !_sessions.ContainsKey(sessionId))
+            return;
+
+        var frame = HostCodec.Encode(message);
+        QueueBudget? sessionBudget = null;
+        if (isSessionPacket)
+        {
+            sessionBudget = _sessionQueueBudgets.GetOrAdd(sessionId, _ => new QueueBudget());
+            if (!sessionBudget.TryReserve(frame.Length, _options.MaxQueuedOutboundPacketsPerSession, _options.MaxQueuedOutboundBytesPerSession))
+            {
+                Disconnect(sessionId, "OutgoingOverloaded");
+                return;
+            }
+        }
+
+        if (!_connectionQueueBudget.TryReserve(frame.Length, _options.MaxQueuedOutboundPacketsPerConnection, _options.MaxQueuedOutboundBytesPerConnection))
+        {
+            sessionBudget?.Release(frame.Length);
+            if (isSessionPacket)
+                Disconnect(sessionId, "OutgoingOverloaded");
+            return;
+        }
+
+        if (!_outgoing.Writer.TryWrite(new QueuedFrame(frame, sessionBudget, _connectionQueueBudget)))
+        {
+            sessionBudget?.Release(frame.Length);
+            _connectionQueueBudget.Release(frame.Length);
+            if (isSessionPacket)
+                Disconnect(sessionId, "OutgoingOverloaded");
+        }
+    }
+
+    private sealed record QueuedFrame(byte[] Bytes, QueueBudget? SessionBudget, QueueBudget ConnectionBudget);
+
+    private sealed class QueueBudget
+    {
+        private int _packets;
+        private long _bytes;
+
+        public bool TryReserve(int bytes, int maxPackets, long maxBytes)
+        {
+            lock (this)
+            {
+                if (_packets >= maxPackets || bytes > maxBytes - _bytes)
+                    return false;
+                _packets++;
+                _bytes += bytes;
+                return true;
+            }
+        }
+
+        public void Release(int bytes)
+        {
+            lock (this)
+            {
+                _packets--;
+                _bytes -= bytes;
+            }
+        }
+    }
 
     /// <summary>Sends the front the cluster configuration as it is now, once the front has its first two messages.</summary>
     public void PublishClusterConfig()
@@ -310,8 +397,11 @@ internal sealed class FrontConnection : IAsyncDisposable
         var reader = _outgoing.Reader;
         while (await reader.WaitToReadAsync(ct))
         {
-            while (reader.TryRead(out var frame))
+            while (reader.TryRead(out var queued))
             {
+                var frame = queued.Bytes;
+                queued.SessionBudget?.Release(frame.Length);
+                queued.ConnectionBudget.Release(frame.Length);
                 if (used > 0 && used + frame.Length > buffer.Length)
                 {
                     await _stream.WriteAsync(buffer.AsMemory(0, used), ct);
@@ -359,6 +449,7 @@ internal sealed class SessionActor
     private readonly CancellationToken _ct;
     private readonly Channel<ReadOnlyMemory<byte>> _inbox = Channel.CreateUnbounded<ReadOnlyMemory<byte>>(new UnboundedChannelOptions { SingleReader = true });
     private int _pending;
+    private long _pendingBytes;
 
     public SessionActor(ClientSession session, PacketDispatcher dispatcher, HostOptions options, Action<string> Disconnect, CancellationToken ct)
     {
@@ -373,13 +464,21 @@ internal sealed class SessionActor
 
     public void Post(ReadOnlyMemory<byte> packet)
     {
-        if (Interlocked.Increment(ref _pending) > _options.MaxPendingPacketsPerSession)
+        var pending = Interlocked.Increment(ref _pending);
+        var pendingBytes = Interlocked.Add(ref _pendingBytes, packet.Length);
+        if (pending > _options.MaxPendingPacketsPerSession || pendingBytes > _options.MaxPendingBytesPerSession)
         {
-            _options.Log?.Invoke($"session {_session.SessionId}: {_pending} packets waiting; cutting it off");
+            Interlocked.Decrement(ref _pending);
+            Interlocked.Add(ref _pendingBytes, -packet.Length);
+            _options.Log?.Invoke($"session {_session.SessionId}: inbound queue exceeded its packet or byte budget; cutting it off");
             _disconnect("Overloaded");
             return;
         }
-        _inbox.Writer.TryWrite(packet);
+        if (!_inbox.Writer.TryWrite(packet))
+        {
+            Interlocked.Decrement(ref _pending);
+            Interlocked.Add(ref _pendingBytes, -packet.Length);
+        }
     }
 
     public void Complete() => _inbox.Writer.TryComplete();
@@ -427,6 +526,7 @@ internal sealed class SessionActor
             finally
             {
                 Interlocked.Decrement(ref _pending);
+                Interlocked.Add(ref _pendingBytes, -payload.Length);
             }
         }
     }

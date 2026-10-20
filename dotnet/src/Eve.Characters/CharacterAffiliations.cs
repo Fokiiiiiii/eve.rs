@@ -49,7 +49,6 @@ public sealed partial class PgCharacterStore
         return characters;
     }
 
-
     public const int CorporationAffiliationPageSize = 256;
 
     public async Task<IReadOnlyList<(long CharacterId, long CorporationId)>> AffiliationsAfterAsync(

@@ -26,13 +26,11 @@ pytestmark = [
     pytest.mark.skipif(os.environ.get("EVE_SYSTEM_POPULATION_CAP") != "1", reason="set EVE_SYSTEM_POPULATION_CAP=1 for the host"),
 ]
 
-
 def create_only(client, run: str) -> int:
     """A new character (the creation of login_to_character.json), not selected."""
     creation = next(step for step in WALK["steps"] if step["call"][1] == "CreateCharacterWithDoll" and "ok" in step)
     service, method, described = creation["call"]
     return m.plain(client.call(service, method, *[revive(value, run) for value in described]))
-
 
 def test_the_last_room_of_the_starter_system_admits_one_pilot():
     run = uuid.uuid4().hex[:10]

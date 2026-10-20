@@ -2,44 +2,32 @@ using System.Globalization;
 
 namespace Eve.Services.Slash;
 
-/// <summary>One of a character's agent missions as the game master sees it: the agent, the state, the mission and its title.</summary>
 public sealed record GmAgentMission(long AgentId, string State, long MissionId, string Title);
 
 /// <summary>
-/// What a change of an agent mission answers: the mission it concerns (null when none), and the words of a refusal (null when it was made). A change that the
 /// state does not allow is refused with the reason the store gives, and nothing is written.
 /// </summary>
 public sealed record GmAgentAnswer(GmAgentMission? Mission, string? Refusal);
 
-/// <summary>What the agent commands need from the host: a character's agent missions, and the changes the game master may make to them.</summary>
 public interface IAgentControl
 {
-    /// <summary>The character's missions that are offered or accepted, one per agent.</summary>
+
     Task<IReadOnlyList<GmAgentMission>> HeldAsync(long characterId, CancellationToken cancellationToken);
 
-    /// <summary>Gives the character the offer of the agent, the agent's next mission (an agent that makes no offer, or an unknown agent, is refused).</summary>
     Task<GmAgentAnswer> OfferAsync(long characterId, long agentId, CancellationToken cancellationToken);
 
-    /// <summary>Accepts the character's offer from the agent.</summary>
     Task<GmAgentAnswer> AcceptAsync(long characterId, long agentId, CancellationToken cancellationToken);
 
-    /// <summary>Quits the character's accepted mission with the agent.</summary>
     Task<GmAgentAnswer> QuitAsync(long characterId, long agentId, CancellationToken cancellationToken);
 
-    /// <summary>Completes the character's accepted mission with the agent, as its objectives were met (the rewards are paid).</summary>
     Task<GmAgentAnswer> CompleteAsync(long characterId, long agentId, CancellationToken cancellationToken);
 
-    /// <summary>Resets the character's mission with the agent to none (no cooldown); the answer names the mission it held, if any.</summary>
     Task<GmAgentAnswer> ResetAsync(long characterId, long agentId, CancellationToken cancellationToken);
 
-    /// <summary>Resets every mission the character holds with an agent; the answer is how many were reset.</summary>
     Task<int> ResetAllAsync(long characterId, CancellationToken cancellationToken);
 }
 
 /// <summary>
-/// The game master's agent commands (<c>/agent</c>): <c>offers</c> lists the character's offered and accepted missions; <c>offer</c>, <c>accept</c>, <c>quit</c>,
-/// <c>complete</c> and <c>reset</c> take one agent (<c>reset all</c> takes every mission the character holds). They act on the caller's own character, through the
-/// same agent missions the client's agent window uses (the store's transitions and the mission runtime's hooks), so the client is told each change as it is told
 /// of a change it made itself. The words of a refusal are the store's (the state the change needs) or a usage check.
 /// </summary>
 public sealed class AgentCommands(IAgentControl agents)

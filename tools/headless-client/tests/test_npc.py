@@ -32,7 +32,6 @@ pytestmark = [
     pytest.mark.skipif(os.environ.get("EVE_LIVE_SERVER", "eve.rs") == "reference", reason="the reference's NPCs are its own"),
 ]
 
-
 def test_a_spawned_rat_locks_the_pilot_and_shoots_it():
     race = plain_race(DEATH["races"][0], "victim")
     run = uuid.uuid4().hex[:10]
@@ -60,7 +59,6 @@ def test_a_spawned_rat_locks_the_pilot_and_shoots_it():
         assert "Orbit" in actions, sorted(actions)
         assert "OnTarget" in names, sorted(set(names))
         assert "OnDamageMessage" in names, sorted(set(names))
-
 
 def test_a_pilot_who_shoots_a_rat_dead_is_told_of_its_bounty():
     """The pilot locks the smallest armed rat there is (15 points of hull in all: `Petty Thief`) and fires its gun until the rat is gone: the rat's ball is
@@ -126,7 +124,6 @@ def test_a_pilot_who_shoots_a_rat_dead_is_told_of_its_bounty():
         if shown_empty is not None:
             assert (shown_empty.group(1).lower() in ("true", "1")) == (not rows), (shown_empty.group(1), rows)
 
-
 def test_a_rat_that_launches_missiles_shows_the_pilot_each_missile_and_the_missiles_hurt_it():
     """A hull with `missileLaunchingForEntity` (the Guristas Invader: Scourge Rockets) launches missiles of its own: the pilot is shown each as a ball with a launch, and
     the damage of one that lands is told at the hit quality of a missile (`oracle/fixtures/npc/hull_weapons.json`: the launcher is what the reference makes of the hull)."""
@@ -160,7 +157,6 @@ def test_a_rat_that_launches_missiles_shows_the_pilot_each_missile_and_the_missi
         assert "AddBalls2" in actions, sorted(set(actions))
         assert hits, "no missile landed"
         assert {h["hitQuality"] for h in hits} == {3}, hits
-
 
 def shots_of_others(events: list) -> list:
     """The combat-log messages of attacks on the pilot (`attackType` `otherPlayerWeapons`), as `{key: value}`."""

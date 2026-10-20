@@ -6,17 +6,13 @@ using Npgsql;
 
 namespace Eve.Services.Space.Entosis;
 
-/// <summary>What the sovereignty records say about a system's Sovereignty Hub at a cycle: its item, its owner's alliance (null for a neutral hub), the activity
-/// multiplier a capture starts with (1 for a neutral hub) and the owner's prime hour (0 for a neutral hub; the centre of the owner's daily window).</summary>
 public sealed record EntosisHubReading(long HubId, int SolarSystemId, long? DefenderAllianceId, double ActivityDefenseMultiplier, int PrimeHour = 0);
 
-/// <summary>The payload of <see cref="EntosisCaptureService.CaptureStartedTopic"/>: the owner is told that a capture of its hub has started.</summary>
 public sealed record EntosisCaptureStarted(long HubId, int SolarSystemId, long DefenderAllianceId, long ModuleId, long AtMs);
 
 /// <summary>The payload of <see cref="EntosisCaptureService.ReinforcedTopic"/>: the owned hub is reinforced until <see cref="ReinforcementExitMs"/>.</summary>
 public sealed record EntosisHubReinforced(long HubId, int SolarSystemId, long DefenderAllianceId, long ReinforcementExitMs, long AtMs);
 
-/// <summary>A captured neutral hub and the alliance and corporation that captured it: what the handover gives the system to (ST-9 d).</summary>
 public sealed record EntosisCapturedHub(long HubId, int SolarSystemId, long CorporationId, long AllianceId);
 
 /// <summary>The answer of a handover: the system is claimed by the capturer, or another alliance claimed it first.</summary>
@@ -27,13 +23,11 @@ public enum EntosisHandover : byte
 }
 
 /// <summary>
-/// The capture of Sovereignty Hubs by entosis links (ST-9 c, d). Each cycle a link settles is a durable fact: the hub's progress is moved to the cycle's time with
 /// the links that were active (<see cref="EntosisRules.Advance"/>), the link is recorded, and the completion is a durable job (<see cref="CaptureDueKind"/>) at the
 /// time the capture would complete. A link's end (its module's end report) moves the progress to that time and removes the link. Every event is one PostgreSQL
 /// transaction, so a restart keeps the progress as of the last event.
 /// A capture of a neutral hub completes into a handover: the sovereignty records give the system to the capturer (the handover callback, through the sovereignty
 /// write path), after the commit. A handover that fails is retried by a job (<see cref="HandoverDueKind"/>). An owned hub's completion is a reinforcement with its
-/// timer (the wiki); the command nodes that follow are not built. A cycle is refused by name outside the owner's vulnerability window (ST-9 e), and the owner's
 /// notices (capture started, reinforced) are events written in the capture's transaction (the subscriber writes them after the commit).
 /// </summary>
 public sealed partial class EntosisCaptureService
@@ -47,10 +41,8 @@ public sealed partial class EntosisCaptureService
     /// <summary>The durable job kind of a handover's retry; its key is the hub.</summary>
     public const string HandoverDueKind = "space.entosis.handover-due";
 
-    /// <summary>The topic of a capture's start (the owner is told; ST-9 e).</summary>
     public const string CaptureStartedTopic = "space.entosis.capture_started";
 
-    /// <summary>The topic of an owned hub's reinforcement (the owner is told; ST-9 e).</summary>
     public const string ReinforcedTopic = "space.entosis.hub_reinforced";
 
     /// <summary>How long a failed handover waits before it is tried again: one minute.</summary>
@@ -71,8 +63,6 @@ public sealed partial class EntosisCaptureService
     private readonly Func<EntosisDestroyedHub, CancellationToken, Task<bool>>? _destroyHub;
 
     /// <param name="readHub">The system's Sovereignty Hub as the records have it at this moment (null when the system has none).</param>
-    /// <param name="handover">The claim of a captured neutral hub by its capturer (ST-9 d). Unset, a capture completes and waits for one.</param>
-    /// <param name="events">Where the owner's notices are published (ST-9 e), in the capture's transaction. Unset, no notice is published.</param>
     public EntosisCaptureService(
         NpgsqlDataSource source, DurableScheduler scheduler, Func<long> now, Func<int, CancellationToken, Task<EntosisHubReading?>> readHub,
         Func<EntosisCapturedHub, CancellationToken, Task<EntosisHandover>>? handover = null, string schema = DefaultSchema, Action<string>? log = null,
@@ -131,7 +121,7 @@ public sealed partial class EntosisCaptureService
         var reading = await _readHub(solarSystemId, cancellationToken);
         if (reading is null || reading.HubId != hubId)
         {
-            // a command node of an active stage is the other target (ST-17 a); anything else is refused by name
+
             return await SettleNodeCycleAsync(moduleId, characterId, corporationId, allianceId, hubId, cancellationToken)
                 ?? new SettleResult(false, "ENTOSIS_TARGET_NOT_SOV_HUB");
         }
@@ -145,7 +135,7 @@ public sealed partial class EntosisCaptureService
             var stored = await LoadStateAsync(connection, transaction, hubId, forUpdate: true, cancellationToken);
             var state = stored ?? new EntosisCaptureState(
                 hubId, solarSystemId, 0, now, reading.ActivityDefenseMultiplier, reading.DefenderAllianceId, EntosisPhase.Idle, reading.PrimeHour);
-            // an idle hub takes the current multiplier, owner and prime hour when a capture starts; a capture in progress keeps the ones it started with
+
             if (state.Phase == EntosisPhase.Idle)
             {
                 state = state with
@@ -184,7 +174,7 @@ public sealed partial class EntosisCaptureService
             }
             await SaveLocksAsync(connection, transaction, hubId, newLocks, now, cancellationToken);
             var links = await LoadLinksAsync(connection, transaction, hubId, cancellationToken);
-            // the first attacker cycle of a hub with no capture running starts it (the warm-up): the owner is told (EVE.js notifySovCaptureStarted)
+
             var defenderAlliance = reading.DefenderAllianceId ?? 0;
             var starts = side == EntosisSide.Attacker && defenderAlliance > 0 && state.Phase == EntosisPhase.Idle
                 && !links.Any(link => link.ModuleId == moduleId)
@@ -226,7 +216,7 @@ public sealed partial class EntosisCaptureService
             var state = hubId is { } hub ? await LoadStateAsync(connection, transaction, hub, forUpdate: true, cancellationToken) : null;
             if (hubId is { } nodeId && state is null)
             {
-                // a command node's link (ST-17 a): its progress is moved to now, and the link is removed
+
                 await NodeLinkEndedAsync(connection, transaction, nodeId, moduleId, _now(), cancellationToken);
                 await transaction.CommitAsync(cancellationToken);
                 return;
@@ -310,7 +300,6 @@ public sealed partial class EntosisCaptureService
 
     /// <summary>
     /// The completion of a capture, in its transaction. A neutral hub becomes captured: it records who captured it, and its handover is pending to the capturer
-    /// (or superseded when there is none). An owned hub becomes reinforced: its timer is set (the wiki: 48 hours, then the next vulnerability window) and the owner
     /// is told; the command nodes that follow are not built. Returns whether it completed.
     /// </summary>
     private async Task<bool> CompleteAsync(
@@ -329,7 +318,7 @@ public sealed partial class EntosisCaptureService
                 "UPDATE {schema}.hubs SET phase = 'reinforced', handover = 'owned', reinforcement_exit_ms = $2 WHERE hub_id = $1",
                 connection, transaction, after.HubId, exitMs);
             await reinforce.ExecuteNonQueryAsync(cancellationToken);
-            // ST-17 a: the command node stage starts when the reinforcement ends (the wiki: nodes spawn once the reinforce timer reaches 0)
+
             await _scheduler.ScheduleAsync(connection, transaction,
                 new JobSpec(CampaignStartKind, exitMs) { Key = after.HubId.ToString(System.Globalization.CultureInfo.InvariantCulture), Payload = new HubDue(after.HubId), OnDuplicate = OnDuplicate.Replace },
                 cancellationToken);
@@ -394,7 +383,7 @@ public sealed partial class EntosisCaptureService
             }, cancellationToken);
             return;
         }
-        // the answer ends this capture: the hub is idle again (under its new owner, if it was claimed) and the links of the capture are removed
+
         await using var writer = await _source.OpenConnectionAsync(cancellationToken);
         await using var writerTransaction = await writer.BeginTransactionAsync(cancellationToken);
         await using var update = Command(
@@ -406,7 +395,7 @@ public sealed partial class EntosisCaptureService
             await clear.ExecuteNonQueryAsync(cancellationToken);
             if (answer == EntosisHandover.Claimed)
             {
-                // ST-9 f: the claimed hub takes its new owner's default window and loses the old one (the wiki: captured structures inherit it)
+
                 await using var forget = Command("DELETE FROM {schema}.hub_windows WHERE hub_id = $1", writer, writerTransaction, hubId);
                 await forget.ExecuteNonQueryAsync(cancellationToken);
                 await using var inherit = Command(
@@ -421,8 +410,6 @@ public sealed partial class EntosisCaptureService
     }
 
     /// <summary>
-    /// The owner's custom window of a hub (ST-9 f). Refused by name for a hub that another or no alliance owns, and for a setting out of range. The change takes
-    /// effect after the next vulnerability window (the wiki); the answer gives that time.
     /// </summary>
     public async Task<WindowAnswer> SetHubWindowAsync(long hubId, int solarSystemId, EntosisWindowSetting setting, CancellationToken cancellationToken)
     {
@@ -456,7 +443,6 @@ public sealed partial class EntosisCaptureService
     }
 
     /// <summary>
-    /// The default window of an alliance (ST-9 f): a hub it captures inherits it (<see cref="RunHandoverAsync"/>). It applies to hubs captured after the change.
     /// </summary>
     public async Task<WindowAnswer> SetAllianceWindowAsync(long allianceId, EntosisWindowSetting setting, CancellationToken cancellationToken)
     {

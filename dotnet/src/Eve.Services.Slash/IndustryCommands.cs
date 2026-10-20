@@ -3,13 +3,11 @@ using Eve.Sde;
 
 namespace Eve.Services.Slash;
 
-/// <summary>A blueprint item a character holds (<see cref="IGmIndustry"/>): its item, its type, its owner and where it is.</summary>
 public sealed record GmBlueprintItem(long ItemId, int TypeId, long OwnerId, long LocationId, long Flag, int? Runs);
 
 /// <summary>An industry job a character owns (<see cref="IGmIndustry"/>).</summary>
 public sealed record GmIndustryJob(long JobId, int Status, int BlueprintTypeId, int ProductTypeId, int Runs, long OwnerId);
 
-/// <summary>What <c>/bp</c> reads from the host: the blueprint items and the industry jobs an owner has.</summary>
 public interface IGmIndustry
 {
     Task<IReadOnlyList<GmBlueprintItem>> BlueprintsOfAsync(long ownerId, CancellationToken cancellationToken);

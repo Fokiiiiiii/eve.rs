@@ -10,7 +10,6 @@ namespace Eve.Relations;
 /// The one store of "A stands in some relation to B": standings, wars, security status and affiliation are all relations of different kinds (<see cref="RelationKinds"/>), with
 /// the same operations: set, adjust, end, read, list, history. A write is made in the caller's transaction, keeps the history, publishes
 /// <c>relation.&lt;kind&gt;.changed</c> or <c>relation.&lt;kind&gt;.ended</c> through the event bus (so others react instead of being called), and a relation that ends by itself is ended by a
-/// scheduler job. A feature that needs a new kind of relation defines the kind; it does not make a table, a timer or an event of its own. See <c>docs/design/FOUNDATIONS.md</c>.
 /// </summary>
 public sealed class RelationStore
 {
@@ -70,8 +69,6 @@ public sealed class RelationStore
         new(r.GetInt64(0), r.GetString(1), r.GetInt64(2), r.GetInt64(3), r.GetDouble(4), r.GetString(5), r.GetInt64(6), r.IsDBNull(7) ? null : r.GetInt64(7), r.GetInt64(8));
 
     private const string Columns = "id, kind, subject, object, value, attrs::text, since_ms, until_ms, updated_ms";
-
-    // ---- writing -----------------------------------------------------------------------------------------------------------------------------------
 
     /// <summary>
     /// Makes the relation hold with this value (clamped to the kind's range), in the caller's transaction. Returns what changed, or <c>null</c> when nothing did. For a one-per-subject
@@ -265,8 +262,6 @@ public sealed class RelationStore
         return JsonElement.DeepEquals(left.RootElement, right.RootElement);
     }
 
-    // ---- reading -----------------------------------------------------------------------------------------------------------------------------------
-
     private async Task<T> WithConnection<T>(NpgsqlConnection? connection, Func<NpgsqlConnection, Task<T>> work, CancellationToken cancellationToken)
     {
         if (connection is not null)
@@ -288,7 +283,6 @@ public sealed class RelationStore
             return await reader.ReadAsync(cancellationToken) ? ReadRelation(reader) : null;
         }, cancellationToken);
 
-
     public Task<Relation?> GetByIdAsync(
         long id,
         NpgsqlConnection? connection = null,
@@ -302,7 +296,6 @@ public sealed class RelationStore
             return await reader.ReadAsync(cancellationToken) ? ReadRelation(reader) : null;
         }, cancellationToken);
 
-
     /// <summary>The value of the relation, or <paramref name="fallback"/> when it does not hold.</summary>
     public async Task<double> ValueAsync(string kind, long subject, long obj, double fallback = 0, NpgsqlConnection? connection = null, NpgsqlTransaction? transaction = null, CancellationToken cancellationToken = default) =>
         (await GetAsync(kind, subject, obj, connection, transaction, cancellationToken))?.Value ?? fallback;
@@ -314,7 +307,6 @@ public sealed class RelationStore
     public Task<IReadOnlyList<Relation>> FromAsync(string kind, long subject, NpgsqlConnection? connection = null, NpgsqlTransaction? transaction = null, CancellationToken cancellationToken = default) =>
         List(Q($"SELECT {Columns} FROM {{schema}}.relations WHERE kind = $1 AND subject = $2 ORDER BY object"), connection, transaction, cancellationToken, kind, subject);
 
-    /// <summary>The relations of a kind that end at the object (the members of a corporation, who has a standing towards an agent).</summary>
     public Task<IReadOnlyList<Relation>> ToAsync(string kind, long obj, NpgsqlConnection? connection = null, NpgsqlTransaction? transaction = null, CancellationToken cancellationToken = default) =>
         List(Q($"SELECT {Columns} FROM {{schema}}.relations WHERE kind = $1 AND object = $2 ORDER BY subject"), connection, transaction, cancellationToken, kind, obj);
 
@@ -326,7 +318,6 @@ public sealed class RelationStore
         return List(Q($"SELECT {Columns} FROM {{schema}}.relations WHERE kind = $1 AND ((subject = ANY($2) AND object = ANY($3)) OR (subject = ANY($3) AND object = ANY($2))) ORDER BY id"),
             null, null, cancellationToken, kind, a, b);
     }
-
 
     public const int ReconciliationBatchSize = 256;
 
@@ -406,8 +397,6 @@ public sealed class RelationStore
         return list;
     }
 
-    // ---- affiliation and effective values -------------------------------------------------------------------------------------------------------------
-
     private async Task<long?> OneObjectAsync(string kind, long subject, NpgsqlConnection? connection, NpgsqlTransaction? transaction, CancellationToken cancellationToken) =>
         (await FromAsync(kind, subject, connection, transaction, cancellationToken)).Select(r => (long?)r.Object).FirstOrDefault();
 
@@ -429,7 +418,6 @@ public sealed class RelationStore
         return [.. new long?[] { character, affiliation.Corporation, affiliation.Alliance, affiliation.Faction }.Where(id => id is not null).Select(id => id!.Value).Distinct()];
     }
 
-    /// <summary>The standing a character has toward an owner, the higher of the personal and corporation values.</summary>
     public async Task<double> StandingTowardAsync(long character, long owner, CancellationToken cancellationToken = default)
     {
         var personal = await ValueAsync(RelationKinds.Standing.Name, owner, character, cancellationToken: cancellationToken);

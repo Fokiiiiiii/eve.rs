@@ -62,7 +62,6 @@ public sealed partial class CharacterShips
         return (await items.GetAsync(id, cancellationToken))!;
     }
 
-
     private static void ValidateRunSpaceScope(
         RunSpaceItemScope scope,
         long characterId,
@@ -98,7 +97,6 @@ public sealed partial class CharacterShips
             await transaction.CommitAsync(cancellationToken);
         return removed;
     }
-
 
     /// <summary>Removes a container and, when requested, its current contents inside the caller's transaction.</summary>
     public async Task<Item?> RemoveContainerAsync(
@@ -177,7 +175,6 @@ public sealed partial class CharacterShips
         return moved;
     }
 
-
     private bool IsCargoContainerType(TypeDef type)
     {
         if (type.TypeId == CargoContainerTypeId) return true;
@@ -201,7 +198,6 @@ public sealed partial class CharacterShips
         return new Room(capacity, await VolumeOfAsync(await items.InContainerAsync(containerId, cancellationToken), cancellationToken));
     }
 
-
     private async Task<bool> IsOwnedDockedInventoryAsync(long itemId, long ownerId, long stationId, CancellationToken cancellationToken)
     {
         var seen = new HashSet<long>();
@@ -223,7 +219,6 @@ public sealed partial class CharacterShips
         return false;
     }
 
-
     public async Task<bool> IsOwnedDockedContainerAsync(long containerId, long ownerId, long stationId, CancellationToken cancellationToken = default)
     {
         if (await items.GetAsync(containerId, cancellationToken) is not { OwnerId: var owner, Singleton: true, Quantity: 1, TypeId: var typeId }
@@ -233,7 +228,6 @@ public sealed partial class CharacterShips
         return statics.Type(typeId) is { } type && IsCargoContainerType(type)
             && await IsOwnedDockedInventoryAsync(containerId, ownerId, stationId, cancellationToken);
     }
-
 
     private async Task<bool> IsNestedUnderAsync(long itemId, long ancestorId, CancellationToken cancellationToken)
     {

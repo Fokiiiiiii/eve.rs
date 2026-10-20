@@ -5,8 +5,6 @@ namespace Eve.Services.Space.Sites;
 
 /// <summary>
 /// The cosmic signatures of a system for the probe scan, read from the sites the director keeps. A signature is a scan target of the cosmic signature group (3) and the group 502, found by
-/// any probe; how strong a probe must be to find it is set by its level (the wiki: a probe strength of 42 up to level III, 72 for level IV, 104 for level V,
-/// <see cref="ProbeScanMath.SignatureStrength"/>). The result carries the code the client lists the site by (<c>ABC-123</c>), and what it needs to name it: the dungeon, its name,
 /// archetype and faction, and the difficulty. The anomalies are not scan targets of the probes: the client has them from the system scanner's overlay (<c>scanMgr.GetFullState</c>).
 /// </summary>
 public sealed class ContentCosmicSites(CosmicSiteDirector director) : ICosmicSiteSource

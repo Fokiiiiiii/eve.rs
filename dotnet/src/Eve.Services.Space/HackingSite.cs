@@ -1,6 +1,5 @@
 namespace Eve.Services.Space;
 
-/// <summary>A container an analyzer can hack: its site's difficulty and whether it is a relic container.</summary>
 public sealed record HackableTarget(long ItemId, long SolarSystemId, int Difficulty, bool Relic);
 
 /// <summary>What the hacking service needs from the space host: the container, the window's reach and the end of an attempt.</summary>

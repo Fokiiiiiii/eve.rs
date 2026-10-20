@@ -52,8 +52,6 @@ private static long NumberOf(PyValue value) => value switch
     public ValueTask<PyValue> CmdEngage(ServiceCall call) =>
         OrderAsync(call, SimDroneCommands.Engage, call.Arg(1) switch { PyInt n => n.Value, PyLong n => n.Value, _ => 0 }, call.Arg(0));
 
-
-
     /// <summary>Wire signatures: <c>CmdAssist(characterID, droneIDs)</c> and <c>CmdGuard(characterID, droneIDs)</c>.</summary>
     [Method("CmdAssist")]
     public ValueTask<PyValue> CmdAssist(ServiceCall call) =>

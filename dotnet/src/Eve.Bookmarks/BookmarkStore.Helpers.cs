@@ -58,7 +58,6 @@ public sealed partial class BookmarkStore
         return allows(level) ? level : throw new BookmarkError("FolderAccessDenied");
     }
 
-    /// <summary>Changing a folder's lists or name is admin's (the wiki): a level below admin is refused as admin access required.</summary>
     private static int RequireAdmin(BookmarkFolder folder, long characterId, AccessLists lists)
     {
         var level = FolderAccess.LevelOf(folder, characterId, lists);
@@ -66,7 +65,6 @@ public sealed partial class BookmarkStore
         return FolderAccess.IsAdmin(level) ? level : throw new BookmarkError("AdminAccessRequired");
     }
 
-    /// <summary>A list put on a folder must be one the character may assign (the wiki: admins and managers assign a list).</summary>
     private static void RequireAssignable(SharedGroups groups, AccessLists lists)
     {
         foreach (var group in new[] { groups.AdminGroupId, groups.ManageGroupId, groups.UseGroupId, groups.ViewGroupId })

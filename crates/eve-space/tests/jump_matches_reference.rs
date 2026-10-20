@@ -1,7 +1,6 @@
 //! A ship warps to a stargate and jumps as the reference's ship did (`oracle/fixtures/scenarios/jump.json`): where the warp ends, what the
 //! client is told when the ship goes into the gate, how long it is before the ship is in the other system, where it appears and what it is sent
 //! when it binds the ballpark there.
-
 mod support;
 
 use std::sync::Arc;

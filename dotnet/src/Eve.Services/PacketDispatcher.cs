@@ -1,5 +1,6 @@
 using Eve.Macho;
 using Eve.Marshal;
+using System.Runtime.CompilerServices;
 
 namespace Eve.Services;
 
@@ -17,6 +18,7 @@ public sealed class PacketDispatcher
 
     private readonly ServiceRegistry _registry;
     private readonly Func<long> _nowUnixMs;
+    private readonly ConditionalWeakTable<ClientSession, ExpensiveRpcBudget> _expensiveBudgets = new();
 
     public PacketDispatcher(ServiceRegistry registry, Func<long>? nowUnixMs = null)
     {
@@ -36,6 +38,9 @@ public sealed class PacketDispatcher
     /// also names the failure in the error text and logs the call's arguments and the stack trace.
     /// </summary>
     public bool StrictRpc { get; init; }
+
+    /// <summary>Weighted work units available to one session during a rolling minute.</summary>
+    public int MaxExpensiveRpcUnitsPerMinute { get; init; } = 120;
 
     /// <summary>
     /// Handles one decoded packet from <paramref name="session"/>. Returns whether it was handled;
@@ -160,6 +165,14 @@ public sealed class PacketDispatcher
             return true;
         }
 
+        var cost = ExpensiveRpcCost(serviceName, call.Method);
+        if (cost > 0 && !_expensiveBudgets.GetValue(session, _ => new ExpensiveRpcBudget())
+                .TryConsume(_nowUnixMs(), cost, MaxExpensiveRpcUnitsPerMinute))
+        {
+            SendError(packet, MachoErrors.UserError("SessionRpcBudgetExceeded"), session, serviceName);
+            return true;
+        }
+
         var previousBoundObjectId = session.CurrentBoundObjectId;
         try
         {
@@ -250,6 +263,45 @@ public sealed class PacketDispatcher
     /// Strict mode: answers the call with a Macho error that names the failure and a correlation id, and logs the
     /// failure with the call's arguments (and the exception's stack trace, when there is one) to stderr.
     /// </summary>
+    private static int ExpensiveRpcCost(string service, string method)
+    {
+        if (method == "GetAllInfo")
+            return 10;
+        if (service == "marketProxy" && method is "GetOrders" or "GetStationAsks" or "GetSystemAsks" or "GetRegionBest" or "GetMarketOrderHistory")
+            return 10;
+        if (method == "GetMailHeaders")
+            return 10;
+        if (service == "invbroker" && method is "GetInventory" or "GetInventoryFromId" or "GetContainerContents" or "GetItems" or "List" or "ListByFlags" or "ListStations" or "ListStationItems" or "ListIncludingContainers" or "GetAssetWorth")
+            return 10;
+        if (service == "accessGroupBookmarkMgr" && method is "GetMyActiveBookmarks" or "SearchFoldersWithAdminAccess" or "DeleteBookmarks" or "MoveBookmarksToFolderAndSubfolder" or "CopyBookmarksToFolderAndSubfolder")
+            return 10;
+        return 0;
+    }
+
+    private sealed class ExpensiveRpcBudget
+    {
+        private const long WindowMilliseconds = 60_000;
+        private readonly object _gate = new();
+        private long _windowStartedAt;
+        private int _used;
+
+        public bool TryConsume(long now, int cost, int limit)
+        {
+            lock (_gate)
+            {
+                if (_windowStartedAt == 0 || now < _windowStartedAt || now - _windowStartedAt >= WindowMilliseconds)
+                {
+                    _windowStartedAt = now;
+                    _used = 0;
+                }
+                if (limit <= 0 || cost > limit - _used)
+                    return false;
+                _used += cost;
+                return true;
+            }
+        }
+    }
+
     private void FailStrictly(MachoPacket packet, ClientSession session, string? serviceName, CallRequest call, string kind, string detail, Exception? error = null)
     {
         var correlation = RpcDiagnostics.CorrelationId();
@@ -263,7 +315,6 @@ public sealed class PacketDispatcher
     private static void SendCallResponse(MachoPacket packet, PyValue result, ClientSession session, string? serviceName) =>
         session.Send(ResponseBuilder.CallResponse(packet, result, session.Get("userid"), serviceName));
 
-    /// <summary>The provisional answer of a deferred call: an empty result with the OnAgentProvisionalResponse named payload, not wrapped (EveJS agentMgrService.js:932-946).</summary>
     private static void SendProvisional(MachoPacket packet, ClientSession session, string? serviceName) =>
         session.Send(ResponseBuilder.CallResponse(packet, new PyTuple([]), session.Get("userid"), serviceName, new CallResponseOptions
         {
@@ -271,7 +322,6 @@ public sealed class PacketDispatcher
             NamedPayloadEntries = [new(new PyStr("provisional"), Py.Tuple(new PyInt(86400), new PyStr("OnAgentProvisionalResponse"), new PyTuple([])))],
         }));
 
-    /// <summary>The client's answer to a server call: the body without its wire layers (EveJS consumeClientCallResponse, clientSession.js:1131-1144); null when cancelled.</summary>
     private static PyValue? ClientAnswer(MachoPacket packet)
     {
         var body = packet.Payload is PyTuple { Items.Count: 1 } tuple ? tuple.Items[0] : packet.Payload;

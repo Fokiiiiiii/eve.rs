@@ -1,6 +1,5 @@
 //! Vector and angle helpers with the arithmetic the reference uses (`server/src/common/geo2.js`): single-precision steps,
 //! a polynomial sine and cosine, a quaternion arc. Only what the world needs (a body's facing) is here.
-
 use std::f64::consts::PI;
 
 use eve_destiny::Vec3;

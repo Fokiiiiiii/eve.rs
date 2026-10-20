@@ -213,6 +213,17 @@ R&D research agents: built, with two gaps (correction: the first text of this sl
   the pinned archive, sha256 checked against `sde/lock.json`). Not done: the EveJS wire comparison through `tools/mitm` for the
   research dialogue.
 
+## Slice 9: client arithmetic audit (2026-10-20)
+
+Audit of job time, cost and materials against `job.py`, `activities/*.py`, `industryCommon.py` and `dogma/const.py` (eve-logic V24.01). Corrected (DEVIATIONS "Industry slice I6"):
+- Rounding: the client is Python 2, so `round()` is ties away from zero. Slice 7's ties-to-even note is wrong; the code now rounds away from zero.
+- The cost part multiplies the unrounded job cost by the modifiers and rounds once; the tax, SCC and security shares use the rounded base.
+- Industry and Advanced Industry multiply (PostPercent), not sum.
+- A copy's materials use runs times licensed runs.
+- The blueprint `jobCostMultiplier` (dogma 1954) applies to the cost.
+Not done: alpha-clone additive tax, faction cost modifier. Corp Deliveries flag 62 and the corporation hangar divisions 115 to 121 were re-checked against `inventorycommon/const.py`.
+Tests: `IndustryRulesTests` 35 of 35; `dotnet test tests/Eve.Host.Tests --filter Industry` 27 of 27 on eve_p2.
+
 ## Slice 8: research wrap-up, closed prompts, MITM walk (2026-10-17)
 
 - **Field tie-break and per-agent fields.** Recorded in DEVIATIONS "Agents slice AG-4, research fields per agent and closed prompts

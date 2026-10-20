@@ -1,5 +1,4 @@
 //! The payloads the sim builds hold to the ones the reference sent for the same ship and system.
-
 mod support;
 
 use eve_space::payload;

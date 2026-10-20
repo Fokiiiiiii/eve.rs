@@ -206,7 +206,6 @@ internal const long FormationSkillTypeId = 57317;
     private static WarpCoordinates Add(WarpCoordinates point, Vector offset) =>
         point with { X = point.X + offset.X, Y = point.Y + offset.Y, Z = point.Z + offset.Z };
 
-
     private static Vector Add(Vector left, Vector right) =>
         new(left.X + right.X, left.Y + right.Y, left.Z + right.Z);
 

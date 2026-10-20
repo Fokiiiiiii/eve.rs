@@ -8,7 +8,7 @@ namespace Eve.Agents;
 /// </summary>
 public sealed class StorylineCounters(NpgsqlDataSource source, string schema = AgentMissionStore.DefaultSchema)
 {
-    /// <summary>EVE University, Storyline missions: one storyline mission for every 16 completed missions of the same level and faction.</summary>
+
     public const long Interval = 16;
 
     /// <summary>The storyline offers that are due: the completions in whole intervals, less the offers already made (never negative).</summary>

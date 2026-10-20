@@ -1,5 +1,4 @@
 //! The bodies of a solar system, built from the static data, hold to what the reference sent the client for it.
-
 mod support;
 
 use eve_space::sde::Sde;

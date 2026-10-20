@@ -11,7 +11,6 @@ import time
 from evecli import packet
 from tests.test_others import watch
 
-
 def rat_of(events: list, ship: int) -> int:
     """The first ball in the events that is not the pilot's ship (the spawned rat), or 0."""
     for event in events:
@@ -19,7 +18,6 @@ def rat_of(events: list, ship: int) -> int:
             if int(item) != ship:
                 return int(item)
     return 0
-
 
 def kill_with_gun(who, ballpark, dogma, gun: int, rat: int, seconds: float = 240.0) -> list:
     """Shoots the rat dead with the gun: the pilot moves (a belt rat waits for a ship that moves near it and then comes to it), locks the rat
@@ -64,7 +62,6 @@ def kill_with_gun(who, ballpark, dogma, gun: int, rat: int, seconds: float = 240
     from tests.test_undock import args_of
     kinds = [{k: str(v)[:60] for k, v in args_of(e)["$tuple"][0]["$dict"]} for e in events if e["name"] == "OnDamageMessage"]
     raise AssertionError(f"the rat was not destroyed: told {sorted({e['name'] for e in events})}; damage messages: {kinds[:3]} ... {kinds[-2:]}"[:1500])
-
 
 def removed(events: list, rat: int) -> bool:
     """The rat's ball is taken out of space (its `RemoveBalls` in the destiny stream): the rat is dead (test_npc reads the same)."""

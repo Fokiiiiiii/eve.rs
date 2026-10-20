@@ -8,7 +8,6 @@ namespace Eve.Services.Crimewatch;
 public sealed record PlayerBountyPayoutDue(string PayoutId);
 
 /// <summary>
-/// A pilot's kill claims the bounties on the victim (EveJS <c>claimBountyPayout</c>, wiki "Bounty Hunting System"): a fifth of the loss, paid from the
 /// pilot's pool, then its corporation's, then its alliance's. The payout is pending in the claim's transaction and is credited to the hunter's wallet by
 /// its job, once (the credit carries the payout's command id as its operation key).
 /// </summary>
@@ -22,7 +21,6 @@ public sealed class PlayerBountyKills(
     /// <summary>The durable job that credits a payout (its key is the payout id).</summary>
     public const string PayoutJobKind = "player-bounty.payout";
 
-    /// <summary>The journal entry type of a bounty prize (EveJS <c>JOURNAL_ENTRY_TYPE.NPC_BOUNTY_PRIZE</c>).</summary>
     private const int BountyPrizeJournalEntry = 17;
 
     /// <summary>The payout a kill of a ship is recorded under.</summary>

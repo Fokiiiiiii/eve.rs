@@ -2,7 +2,6 @@ namespace Eve.Services.Space;
 
 /// <summary>
 /// The jump drive's rules: the range, the fuel per light year, the activation cooldown and the fatigue, and which cynosural field a ship may jump to. The
-/// numbers a hull carries are the SDE's (dogma attributes 866 to 869 and 1971, on the ship type); the skill percentages are the EVE University wiki's
 /// ("Jump drive": calibration 20 % range a level, fuel conservation 10 % a level, jump freighters 10 % a level; "Jump fatigue"). Each rule is a pure
 /// function of its inputs, so the host checks it without a store.
 /// </summary>
@@ -54,16 +53,12 @@ public static class JumpDriveRules
     /// <summary>The covert Mobile Cynosural Beacon (SDE 59630): a covert field for the jump drive's rule.</summary>
     public const int CovertBeaconType = 59630;
 
-    /// <summary>The longest a cooldown can run (the wiki: thirty minutes).</summary>
     public const long CooldownCapMs = 30 * 60_000;
 
-    /// <summary>The longest fatigue can run (the wiki: five hours).</summary>
     public const long FatigueCapMs = 5 * 60 * 60_000;
 
-    /// <summary>The minimum fatigue a jump adds, per (1 + light years): ten minutes (the wiki's rule).</summary>
     public const long MinimumFatiguePerDistanceMs = 10 * 60_000;
 
-    /// <summary>The minimum cooldown a jump starts, per (1 + light years): one minute (the wiki's rule).</summary>
     public const long MinimumCooldownPerDistanceMs = 60_000;
 
     /// <summary>The kind of a cynosural field a jump drive goes to, and so who may use it.</summary>
@@ -83,7 +78,6 @@ public static class JumpDriveRules
     };
 
     /// <summary>
-    /// Whether a ship of a group may jump to a field of a kind. The wiki: a covert field takes only black ops battleships; an industrial field takes jump
     /// freighters, capital industrial ships and black ops battleships; a standard field takes every ship with a drive.
     /// </summary>
     public static bool MayJumpTo(FieldKind kind, int shipGroupId) => kind switch
@@ -93,7 +87,6 @@ public static class JumpDriveRules
         _ => true,
     };
 
-    /// <summary>Pochven (SDE region 10000070): the Triglavian space a jump drive can leave but not enter (the wiki, "Pochven": "Jump drives cannot be used to enter
     /// Triglavian space, only to exit"; "capital ships cannot jump into the Pochven region").</summary>
     public const int PochvenRegionId = 10_000_070;
 
@@ -101,7 +94,6 @@ public static class JumpDriveRules
     public static bool IsWormholeRegion(int regionId) => regionId is >= 11_000_000 and <= 11_999_999;
 
     /// <summary>
-    /// The refusal of a jump drive's jump into a system of this region, or null when it may enter it. The wiki ("Jump drive", "Wormhole space"): "jump drives cannot
     /// jump to systems in wormhole space", and the Pochven rule above. Leaving a region is not refused here. The wording is ours (no reference text for the jump).
     /// </summary>
     public static string? EntryRefusal(int regionId) =>
@@ -110,7 +102,6 @@ public static class JumpDriveRules
         : null;
 
     /// <summary>
-    /// Whether a ship of a group may jump into a system of this security level. The wiki (Jump Freighters): "Jump freighters cannot use their jump drives and cynos to
     /// jump into highsec space, but they can jump out of highsec space." Other ships are not refused here: a capital's jump out of high security is the origin's rule.
     /// </summary>
     public static bool MayJumpInto(int shipGroupId, Eve.Universe.SecurityClass destination) =>
@@ -123,7 +114,6 @@ public static class JumpDriveRules
 
     /// <summary>
     /// The share of the full capacitor a drive activation takes: the hull's share (0.95) times (1 + the Jump Drive Operation percentage a level, as a fraction:
-    /// -0.05). Level five gives 0.7125, the wiki's "71.25 %".
     /// </summary>
     public static double CapacitorNeed(double hullShare, int operationLevel, double perLevel) => hullShare * (1 + perLevel * operationLevel);
 
@@ -137,8 +127,6 @@ public static class JumpDriveRules
         (long)Math.Ceiling(Math.Round(lightYears * fuelPerLightYear * (1 + conservationPerLevel * fuelConservationLevel) * (1 - 0.1 * jumpFreighterLevel) * economizers, 6));
 
     /// <summary>
-    /// The fuel multiplier of the fitted economizers (their bonuses as fractions, -0.04 to -0.10). The wiki: stacking penalized, strongest first; the n-th modifier
-    /// (from 0) counts e^(-(n/2.67)^2), the stacking penalty (the wiki, "Stacking penalty": 100 %, 86.9 %, 57.1 %, 28.3 %).
     /// </summary>
     public static double EconomizerMultiplier(IEnumerable<double> bonuses)
     {
@@ -155,7 +143,6 @@ public static class JumpDriveRules
     /// <summary>The conduit: the isotopes a light year (attribute 3131, 1 000 for a Black Ops), the passengers it takes (3133, 30), the flag that makes a generator a conduit (3126 on the covert generator), and the passenger flag a conduit takes (3322, the Black Ops conduit passenger).</summary>
     public const int ConduitFuelAttribute = 3131, ConduitPassengerCountAttribute = 3133, ConduitEnableAttribute = 3126, ConduitPassengerAttribute = 3322;
 
-    /// <summary>The range a bridge and a conduit reach: 2 500 metres for a bridge (the wiki, "Jump drives"), 10 km for a conduit (EveJS CONDUIT_JUMP_RANGE_METERS).</summary>
     public const double BridgeRangeMeters = 2_500.0, ConduitRangeMeters = 10_000.0;
 
     /// <summary>The Jump Portal Generation skill (24562): its generator fits need level one; its percentage a level on the portal's Strontium is attribute 1775 (-10).</summary>
@@ -188,7 +175,6 @@ public static class JumpDriveRules
 
     /// <summary>
     /// The isotopes a jump through a bridge takes from the bridging ship: light years times the passenger's mass, the portal consumption mass factor and the
-    /// hull's isotopes a light year (its jump drive's 868, less the skills), plus the portal's additional isotopes, rounded up (the wiki: "Fuelusage = Mass x
     /// Portal Consumption Mass Factor x Base cost x Skill mod x Distance in LY"; the base cost is the hull's 868).
     /// </summary>
     public static long BridgeFuelQuantity(double lightYears, double passengerMass, double massFactor, double fuelPerLightYear, double additional) =>
@@ -196,7 +182,6 @@ public static class JumpDriveRules
 
     /// <summary>
     /// Whether an economizer (SDE group 1299) fits a hull: its canFitShipGroup attributes (1298 and 1299, the groups it fits) name the hull's group. The
-    /// wiki: only Jump Freighters and Rorquals, which are the two groups the SDE gives.
     /// </summary>
     public static bool EconomizerFits(int hullGroupId, IReadOnlyDictionary<int, double> economizerAttributes) =>
         (economizerAttributes.TryGetValue(1298, out var first) && (int)first == hullGroupId)
@@ -205,7 +190,6 @@ public static class JumpDriveRules
     /// <summary>
     /// The fatigue and the activation cooldown a jump leaves, in milliseconds, from the fatigue that is left before the jump. The distance is the light years
     /// the hull counts (the jump's light years times its fatigue multiplier). The fatigue is recalculated after the cooldown, which takes a tenth of the fatigue
-    /// as it was before the jump (the wiki's order).
     /// </summary>
     public static (long FatigueMs, long CooldownMs) AfterJump(long fatigueBeforeMs, double distance)
     {

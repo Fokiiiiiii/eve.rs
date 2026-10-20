@@ -1,7 +1,6 @@
 namespace Eve.Skills;
 
 /// <summary>
-/// The requirements of a skill plan as the reference keeps them (EveJS <c>canonicalizeSkillRequirements</c>, skillPlanState.js): each skill
 /// once at its highest level, the published prerequisites it needs absorbed at the level they need (up to level 5), and every level of
 /// every skill listed after the skills it needs. Skills that are not published, or levels that are not 1 to 5, are dropped.
 /// </summary>

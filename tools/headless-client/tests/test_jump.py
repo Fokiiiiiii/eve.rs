@@ -49,7 +49,6 @@ TOLERANCE = 1.6
 # ids the reference adds to a system's ballpark that no static data holds: its ambient ships (98005…) and gate guns and customs offices
 AMBIENT = range(980_050_000_000, 980_060_000_000)
 
-
 def names(event: dict) -> list:
     if event["name"] != "DoDestinyUpdate":
         return []
@@ -59,15 +58,12 @@ def names(event: dict) -> list:
         return []
     return [action[1] for action in actions]
 
-
 def in_order(events: list) -> list:
     return sorted(events, key=lambda e: e.get("at", 0.0))
-
 
 def without_noise(events: list) -> list:
     """The events without the state the polling asks for and the balls the reference takes out of the ballpark or adds to it in warp."""
     return [e for e in events if names(e) not in (["SetState"], ["PackagedAction"]) and "AddBalls2" not in names(e)]
-
 
 def milestones(events: list) -> dict:
     out: dict = {}
@@ -79,18 +75,15 @@ def milestones(events: list) -> dict:
                 out["rest"] = event["at"]
     return out
 
-
 def slim_of(extras: list, ship_id) -> list:
     """The entries of an `AddBalls2` (the slim item and the damage state) that are the ship's own: the reference adds its ambient ships to the
     ball list of the ship that arrives, so the first update of the bind carries eleven of them in place of one."""
     return [e for e in extras if number({k: v for k, v in e["$tuple"][0]["$dict"]}["itemID"]) == ship_id]
 
-
 def ship_actions(event: dict, ship_id) -> list:
     """The actions of an update that are the ship's own (what the reference sends for every ambient ship too is left out)."""
     actions, _ = actions_of(event)
     return [a for a in actions if number(a[2]["$tuple"][0]) == ship_id]
-
 
 def compare_bound_state(recorded: dict, ours: dict, where: str, mapping: dict) -> list[str]:
     """`SetState` of a system: as test_undock.compare_state, leaving out the ambient ships the reference adds to it."""
@@ -101,7 +94,6 @@ def compare_bound_state(recorded: dict, ours: dict, where: str, mapping: dict) -
 
     # (a reference that is replayed against itself has ambient ships of its own, with ids of this run)
     return compare_state(without_ambient(recorded), without_ambient(ours), where, mapping)
-
 
 def test_a_ship_warps_to_a_gate_and_jumps_as_the_reference_did():
     race = JUMP["races"][0]

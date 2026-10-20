@@ -1,7 +1,6 @@
 //! A structure's health: a ship's layers (`Health`) with two limits a ship does not have. A layer takes at most its per-second limit in one second
 //! (SDE 2034-2036): a hit beyond it is cut to what that second has left, and the rest of the hit is lost. A second in which a layer takes its
 //! repair-pause damage (SDE 3354-3356) is reported, so the host can pause that layer's repair.
-
 use super::{Applied, Condition, Damage, DamageState, Health, Layer, Layers, Vitals};
 use crate::scene::TICKS_PER_SECOND;
 

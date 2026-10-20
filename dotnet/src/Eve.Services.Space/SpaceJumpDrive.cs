@@ -28,7 +28,6 @@ public sealed class SpaceJumpDrive(
     Func<long, ClientSession?>? sessionOf = null)
 {
     /// <summary>
-    /// The jump to a field, as the client asks it: <paramref name="fieldId"/> is the field, <paramref name="ownerId"/> the character who lit it when the client names the
     /// beacon by its module (0 when the client names a deployable), and <paramref name="solarSystemId"/> the system of the field the client chose.
     /// </summary>
     /// <summary>
@@ -83,7 +82,7 @@ public sealed class SpaceJumpDrive(
         {
             throw Refusal("DeniedShipChanged");
         }
-        // only the members of the field's fleet may jump to it (the wiki: a field is lit for a fleet)
+
         var fleet = await fleets.FleetIdForCharacterAsync(character, cancellationToken);
         if (fleet is null || fleet != await fleets.FleetIdForCharacterAsync(field.OwnerId, cancellationToken))
         {
@@ -97,7 +96,7 @@ public sealed class SpaceJumpDrive(
         long targetId, int targetTypeId, int targetSolarSystemId, string? boundObjectId,
         CancellationToken cancellationToken)
     {
-        // capitals only operate outside high-security space (the wiki, "Capital ships")
+
         if (systems.Get(origin) is { } place && Security.IsHighSecOrHigher(Security.ClassFromLevel(place.Security)))
         {
             throw Notify("Jump drives cannot be used in high-security space.");
@@ -128,7 +127,7 @@ public sealed class SpaceJumpDrive(
         {
             throw Notify("That cynosural field does not take this ship.");
         }
-        // a jump freighter does not jump into high-security space (the wiki's Jump Freighters page); the wording is ours
+
         if (systems.Get(targetSolarSystemId) is { } destination && !JumpDriveRules.MayJumpInto(hull.GroupId, Eve.Universe.Security.ClassFromLevel(destination.Security)))
         {
             throw Notify("Jump freighters cannot jump into high-security space.");
@@ -199,7 +198,6 @@ public sealed class SpaceJumpDrive(
 
     /// <summary>
     /// Tells every member of the fleet of a field's lighter that the field is lit or gone (<c>OnFleetJumpBeaconModuleChange</c>, which the client's fleet service keeps
-    /// the jump targets in); a mobile beacon is told as a deployable (<c>OnFleetJumpBeaconDeployableChange</c>, EveJS's name for it, with its own id as the beacon).
     /// Nothing is sent to a lighter who is in no fleet.
     /// </summary>
     public async Task AnnounceFieldAsync(DeployedRecord field, bool lit)
@@ -273,7 +271,6 @@ public sealed class SpaceJumpDrive(
 
     /// <summary>
     /// The fuel bonuses (fractions) of the economizers fitted to the ship that fit its hull: an economizer that does not fit the hull is not counted (the
-    /// wiki: only Jump Freighters and Rorquals carry them, and the SDE names the groups each fits, attributes 1298 and 1299).
     /// </summary>
     private async Task<IReadOnlyList<double>> EconomizerBonusesAsync(long characterId, long shipId, int hullGroupId, CancellationToken cancellationToken)
     {

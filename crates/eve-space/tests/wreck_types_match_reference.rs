@@ -1,6 +1,5 @@
 //! The wreck a ship of some type leaves is the one the reference's `resolveShipWreckType` gave for the same type (`oracle/fixtures/wrecks/ship_wrecks.json`,
 //! made by `tools/dev/gen-ship-wrecks-fixture.js` for every ship type of the static data).
-
 use std::path::PathBuf;
 
 use eve_space::sde::Sde;

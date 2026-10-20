@@ -3,7 +3,6 @@ using Eve.Space;
 namespace Eve.Services.Space.Effects;
 
 /// <summary>
-/// What a target's resistance does to a remote effect that lands on it (FP-8): the target's resistance attribute, a multiplier from 0 (fully resisted) to 1, that
 /// weakens the effect's strength. EVE.js's rule (<c>hostileModuleRuntime.js</c> <c>resolveTargetResistanceMultiplier</c>, <c>assistanceModuleRuntime.js</c>
 /// <c>resolveRemoteAssistanceMultiplier</c>): the attribute clamped to 0..1, 1 when the target does not have it. The attributes are the ones EVE.js names (2112 to
 /// 2116, 2045; a remote assistance module names its own in 2138, which defaults to the remote repair impedance 2116). The host resolves the multiplier when the

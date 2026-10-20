@@ -1,6 +1,5 @@
 //! A belt rat in a scene, beside a player: it sees the player come near, locks, shoots, and what the player is told is what the client is told when
 //! an NPC attacks it on the reference's server (`oracle/fixtures/scenarios/health.json` has the shapes).
-
 use std::sync::Arc;
 
 use eve_destiny::Vec3;

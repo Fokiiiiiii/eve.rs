@@ -1,6 +1,5 @@
 //! A cloak that ends on the simulation's account: a ship or a body close by breaks it, and the pilot is told why (`OnCloakModuleForceDeactivated`, client
 //! `cloakingSvc.py`; EVE.js `scene/cloaking.js` `notifyCloakModuleForceDeactivated` and `findCloakProximityTrigger`).
-
 use super::*;
 use crate::deployable::{Deployable, Role};
 use crate::modules::Action;

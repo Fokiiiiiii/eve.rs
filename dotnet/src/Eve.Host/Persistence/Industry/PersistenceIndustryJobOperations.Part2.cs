@@ -242,8 +242,10 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
         var duration = await TimeInSecondsAsync(
             connection, transaction, actor.CharacterId, job, recipe, facility, blueprint, timeBonus, cancellationToken);
         var baseCost = await ReadBaseCostAsync(job, blueprint, products, recipe, cancellationToken);
+        // The blueprint's own job cost multiplier (dogma 1954) applies to every activity (the client's BLUEPRINT_MODIFIERS).
+        var blueprintCostMultiplier = await ReadTypeAttributeAsync(job.BlueprintTypeId, JobCostMultiplierAttribute, cancellationToken) ?? 1d;
         var cost = IR.Total(IR.CostParts(
-            baseCost, (double)costIndex * costBonus, (double)facility.TaxRate, highSecurity, job.ActivityId));
+            baseCost, (double)costIndex * costBonus * blueprintCostMultiplier, (double)facility.TaxRate, highSecurity, job.ActivityId));
 
         var probability = 1d;
         JsonObject? invention = null;

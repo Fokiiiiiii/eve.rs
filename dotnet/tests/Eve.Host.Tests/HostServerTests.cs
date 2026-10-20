@@ -39,7 +39,7 @@ public class HostServerTests : IAsyncLifetime
 
     public Task InitializeAsync() => Task.CompletedTask;
 
-    private void Start(AccountOptions? identity = null, int maxPending = 10_000, Action<ServiceRegistry>? configure = null, IAccountDirectory? accounts = null, bool strictRpc = false, Action<string, Exception?>? onProblem = null, Action<ClientSession>? sessionOpened = null)
+    private void Start(AccountOptions? identity = null, int maxPending = 10_000, Action<ServiceRegistry>? configure = null, IAccountDirectory? accounts = null, bool strictRpc = false, Action<string, Exception?>? onProblem = null, Action<ClientSession>? sessionOpened = null, long maxOutboundBytes = 8 * 1024 * 1024, long maxPendingBytes = 16 * 1024 * 1024)
     {
         var registry = new ServiceRegistry();
         configure?.Invoke(registry);
@@ -55,7 +55,7 @@ public class HostServerTests : IAsyncLifetime
         var dispatcher = new PacketDispatcher(registry, now) { StrictRpc = strictRpc, OnProblem = onProblem };
         var encoded = MarshalCodec.Encode(config);
         _server = new HostServer(
-            new HostOptions { MaxPendingPacketsPerSession = maxPending, Log = message => { lock (_log) { _log.Add(message); } }, SessionOpened = sessionOpened },
+            new HostOptions { MaxPendingPacketsPerSession = maxPending, MaxPendingBytesPerSession = maxPendingBytes, MaxQueuedOutboundBytesPerSession = maxOutboundBytes, Log = message => { lock (_log) { _log.Add(message); } }, SessionOpened = sessionOpened },
             dispatcher,
             accounts ?? new InMemoryAccountDirectory(identity ?? new AccountOptions { AutoCreate = true }),
             () => encoded);
@@ -1770,6 +1770,43 @@ public class HostServerTests : IAsyncLifetime
         }
         Assert.Equal(open.SessionId, disconnect.SessionId);
         Assert.Equal("Overloaded", disconnect.Reason);
+    }
+
+
+    [Fact]
+    public async Task An_inbound_byte_budget_disconnects_only_the_session()
+    {
+        Start(maxPendingBytes: 64);
+        var front = await Handshaken(await ConnectAsync());
+        var open = Open();
+        await front.SendAsync(open);
+        await front.ReceiveAsync();
+
+        var packet = MarshalCodec.Encode(Packets.Call(open, 1, "pingService", "Ping"));
+        Assert.True(packet.Length > 64);
+        await front.SendAsync(new Packet(open.SessionId, packet));
+
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        Disconnect? disconnect = null;
+        while (disconnect is null)
+        {
+            var message = await front.ReceiveAsync(timeout.Token);
+            disconnect = message as Disconnect;
+        }
+        Assert.Equal(open.SessionId, disconnect.SessionId);
+        Assert.Equal("Overloaded", disconnect.Reason);
+    }
+
+    [Fact]
+    public async Task An_outbound_byte_budget_disconnects_only_the_session()
+    {
+        Start(maxOutboundBytes: 1);
+        var front = await Handshaken(await ConnectAsync());
+        var open = Open();
+        await front.SendAsync(open);
+        var disconnect = Assert.IsType<Disconnect>(await front.ReceiveAsync());
+        Assert.Equal(open.SessionId, disconnect.SessionId);
+        Assert.Equal("OutgoingOverloaded", disconnect.Reason);
     }
 
 private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers

@@ -87,6 +87,8 @@ public sealed partial class RedeemService
     public async ValueTask<PyValue> CreateRedeemTokenQA(ServiceCall call)
     {
         call.Cancellation.ThrowIfCancellationRequested();
+        // A QA tool: the server-set staff role gates every grant, so a player cannot mint items for any account.
+        if (!CompatibilityRpc.IsStaff(call)) return PyBool.False;
         var accountId = PositiveInteger(call.Kwarg("userID") ?? PyNone.Instance);
         if (accountId <= 0) accountId = call.Session.UserId ?? 0;
         if (accountId is <= 0 or > int.MaxValue || PositiveInteger(call.Kwarg("typeID") ?? PyNone.Instance) is <= 0 or > int.MaxValue)

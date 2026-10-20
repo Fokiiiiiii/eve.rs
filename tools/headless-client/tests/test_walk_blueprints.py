@@ -26,7 +26,6 @@ pytestmark = [
     pytest.mark.skipif(os.environ.get("EVE_LIVE_SERVER", "eve.rs") == "reference", reason="seeding needs the database: eve.rs only"),
 ]
 
-
 def test_a_pilot_reads_its_original_blueprint_and_is_refused_one_it_does_not_hold():
     race = HEALTH["races"][0]
     run = uuid.uuid4().hex[:10]

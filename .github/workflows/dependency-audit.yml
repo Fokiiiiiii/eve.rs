@@ -1,0 +1,78 @@
+name: Dependency audit
+
+# Scans the locked Rust, .NET and Python dependencies for known vulnerabilities. It runs weekly, on
+# demand, and whenever a dependency manifest or lock file changes on main. A finding fails the job.
+on:
+  schedule:
+    - cron: '0 5 * * 1'
+  push:
+    branches: [main]
+    paths:
+      - 'Cargo.lock'
+      - '**/Cargo.toml'
+      - 'dotnet/**/*.csproj'
+      - 'dotnet/Directory.Packages.props'
+      - 'dotnet/EveRs.slnx'
+      - 'tools/headless-client/requirements*.txt'
+      - '.github/workflows/dependency-audit.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_NOLOGO: "1"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_CLI_USE_MSBUILD_SERVER: "0"
+
+jobs:
+  rust-audit:
+    name: Rust advisories (cargo-audit)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # stable toolchain channel
+        with:
+          toolchain: stable
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --version 0.22.2 --locked
+      - name: Audit Cargo.lock
+        run: cargo audit --file Cargo.lock
+
+  dotnet-audit:
+    name: .NET vulnerable packages
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+      - name: Restore the solution
+        run: dotnet restore dotnet/EveRs.slnx
+      - name: List vulnerable packages (transitive included)
+        run: |
+          set -o pipefail
+          dotnet list dotnet/EveRs.slnx package --vulnerable --include-transitive | tee dotnet-vulnerable.txt
+          # dotnet list exits 0 whether or not it finds packages, so the report decides the result.
+          if grep -q "has the following vulnerable packages" dotnet-vulnerable.txt; then
+            echo "::error::vulnerable NuGet packages reported"
+            exit 1
+          fi
+
+  python-audit:
+    name: Python requirements (pip-audit)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install pip-audit
+        run: python -m pip install --quiet pip-audit==2.10.1
+      - name: Audit the headless client requirements
+        run: |
+          python -m pip_audit --requirement tools/headless-client/requirements.txt
+          python -m pip_audit --requirement tools/headless-client/requirements-dev.txt

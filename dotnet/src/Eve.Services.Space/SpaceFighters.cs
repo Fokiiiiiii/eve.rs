@@ -646,7 +646,6 @@ public sealed class SpaceFighters : ISpaceFighters, IDisposable
         return PyBool.True;
     }
 
-
     /// <summary>
     /// Takes a squadron out of its tube and sends it out into space: the database moves it first, then the simulation launches it; a launch the simulation
     /// refuses is put back in its tube. Null when the squadron went out, else the reason it did not.
@@ -683,7 +682,6 @@ public sealed class SpaceFighters : ISpaceFighters, IDisposable
             return NoShipText;
         }
 
-        // the squadron is the pilot's ship: its owner and corporation are the character's, as a drone's are
         var character = snapshot.Character;
         // the squadron's health is that of all its members together: each member is as tough as one ship of the type (the simulation loses a member as
         // its points run out, and tells the size)

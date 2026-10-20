@@ -18,7 +18,6 @@ from tests.test_login_to_character import connect
 CALDARI_NAVY = 1000035
 BLOOD_RAIDER_FRIGATE = 36939
 
-
 @pytest.mark.skipif(os.environ.get("EVE_LIVE_HOST") is None, reason="needs a running server (EVE_LIVE_HOST)")
 def test_the_insider_calls_answer_and_do_what_they_say():
     run = run_id()

@@ -27,17 +27,14 @@ from evecli import packet as observe_p
 FLUSH_WAIT_SECONDS = 3.0  # the store flushes 2 s after the last write (FLUSH_DELAY_MS); a little margin
 US = "\x1f"  # the row-group separator of the SQLite backend (sqliteStore.js: group<US>entityID)
 
-
 class SeedError(RuntimeError):
     pass
-
 
 def _db_path() -> str:
     root = os.environ.get("EVE_EVEJS_DATA_ROOT")
     if not root:
         raise SeedError("EVE_EVEJS_DATA_ROOT is not set: run the walk through tools/dev/run-evejs-live.sh")
     return os.path.join(root, "gameStore", "gamestore.sqlite")
-
 
 def _rows(table: str) -> list[tuple[str, str]]:
     uri = f"file:{_db_path()}?mode=ro"
@@ -47,41 +44,33 @@ def _rows(table: str) -> list[tuple[str, str]]:
     finally:
         connection.close()
 
-
 def settle() -> None:
     """Wait until the server has flushed its last write to SQLite."""
     time.sleep(FLUSH_WAIT_SECONDS)
-
 
 def command(client, text: str) -> None:
     """A game-master chat command, as the client sends it (the reply is chat text, not checked here)."""
     client.call("slash", "SlashCmd", text)
 
-
 def set_isk(client, isk: int) -> None:
     """The selected character's wallet balance (/setisk, the absolute amount)."""
     command(client, f"/setisk {int(isk)}")
-
 
 def set_standing(client, owner: int, value: float = 10) -> None:
     """The selected character's standing toward an owner id (an agent or a corporation), /setstanding <value> <owner id>."""
     command(client, f"/setstanding {value:g} {int(owner)}")
 
-
 def agent_name(agent_id: int) -> str:
     """The English name of an NPC agent (npcCharacters.jsonl), the owner name /setstanding resolves for an agent."""
     return _sde_record("npcCharacters.jsonl", agent_id)["name"]["en"]
-
 
 def set_agent_standing(client, agent_id: int, value: float = 10) -> None:
     """The selected character's personal standing toward an agent: /setstanding takes the agent by its name (a numeric id does not resolve)."""
     command(client, f'/setstanding {value:g} "{agent_name(agent_id)}"')
 
-
 def give_skills(client, level: int = 5) -> None:
     """Every skill at the given level (/giveskill me all <level>), as the eve.rs walk gives them."""
     command(client, f"/giveskill me all {int(level)}")
-
 
 def advance_clock(milliseconds: int) -> None:
     """Move the server clock forward by milliseconds (the offset file the preload reads)."""
@@ -96,7 +85,6 @@ def advance_clock(milliseconds: int) -> None:
         handle.write(str(current + int(milliseconds)))
     time.sleep(0.5)  # the preload re-reads the file at most every 100 ms
 
-
 def _cash_in(value, character: int):
     """The balance of an OnAccountChange('cash', characterID, balance) found anywhere in a decoded notification."""
     if isinstance(value, dict):
@@ -109,7 +97,6 @@ def _cash_in(value, character: int):
             if found is not None:
                 return found
     return None
-
 
 def cash_balance(client, character: int) -> float:
     """The cash the client last heard for a character: the OnAccountChange balances the server sent it, the client's own wallet view.
@@ -129,7 +116,6 @@ def cash_balance(client, character: int) -> float:
             balance = found
     return balance
 
-
 def isk_of(character: int) -> float:
     """The wallet balance of a character (characters row, json.balance), after the flush."""
     settle()
@@ -137,7 +123,6 @@ def isk_of(character: int) -> float:
         if key == str(int(character)):
             return float(json.loads(document).get("balance") or 0)
     return 0.0
-
 
 def research_project_count(character: int, until: int | None = None) -> int:
     """The R&D projects a character runs (researchRuntimeState: projectsByAgentID of its character entry).
@@ -154,7 +139,6 @@ def research_project_count(character: int, until: int | None = None) -> int:
         count = _project_count_now(character)
     return count
 
-
 def _project_count_now(character: int) -> int:
     count = 0
     for key, document in _rows("researchRuntimeState"):
@@ -169,7 +153,6 @@ def _project_count_now(character: int) -> int:
             count += len(entry.get("projectsByAgentID") or {})
     return count
 
-
 def _sde_record(file_name: str, key: int) -> dict:
     sde = os.environ.get("EVE_SDE_DIR")
     if not sde:
@@ -180,7 +163,6 @@ def _sde_record(file_name: str, key: int) -> dict:
             if int(record.get("_key", 0)) == int(key):
                 return record
     raise SeedError(f"{key} is not in {file_name}")
-
 
 def research_skill_count(agent_id: int) -> int:
     """The distinct skills an R&D agent offers in the SDE (npcCharacters.jsonl: skills of its record)."""

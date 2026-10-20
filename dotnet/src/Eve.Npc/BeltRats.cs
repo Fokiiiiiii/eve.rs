@@ -53,7 +53,7 @@ public sealed record BeltRatPlan(string Faction, string Band, double SecuritySta
 /// <summary>What came of an arrival at a belt.</summary>
 public enum BeltOutcome
 {
-    /// <summary>A group is to be spawned (<see cref="BeltDecision.Plan"/>).</summary>
+
     Spawn,
     Disabled,
     /// <summary>The belt has a group already (as many as the configuration allows).</summary>

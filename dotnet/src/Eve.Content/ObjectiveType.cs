@@ -27,11 +27,9 @@ public abstract class ObjectiveType
     /// <summary>The topic that advances an objective with these parameters, or null for one that no event advances.</summary>
     public virtual string? TopicOf(JsonElement parameters) => null;
 
-    /// <summary>The field of the event that names the owner it concerns (the objective listens to events whose field equals its scope id). Default <c>characterId</c>.</summary>
     public virtual string ScopeFieldOf(JsonElement parameters) =>
         parameters.ValueKind == JsonValueKind.Object && parameters.TryGetProperty("scopeField", out var field) && field.ValueKind == JsonValueKind.String ? field.GetString()! : "characterId";
 
-    /// <summary>What this event does to this objective. Called only for events of the objective's topic that name its owner.</summary>
     public virtual ObjectiveEffect Evaluate(ObjectiveState objective, DomainEvent @event) => ObjectiveEffect.None;
 
     /// <summary>The objective has just become the one to do (at the start of the content, or when the one before it was done). A timer schedules its job here.</summary>
@@ -56,8 +54,6 @@ public sealed class ActivationContext
 }
 
 /// <summary>
-/// Counts events of one topic: <c>{ "topic": "npc.killed", "where": { "typeId": [23245, 23246], "system": "$owner" }, "amountField": "count", "scopeField": "characterId" }</c>.
-/// <c>where</c> maps payload fields to a value or a list of values (any of); <c>"$owner"</c> and <c>"$instance"</c> stand for the content's owner and id. Each matching event adds the
 /// value of <c>amountField</c> (1 when it is not given).
 /// </summary>
 public sealed class CounterObjective : ObjectiveType
@@ -139,7 +135,6 @@ public sealed class ForbidObjective : ObjectiveType
         CounterObjective.Matches(objective, @event) ? ObjectiveEffect.FailContent : ObjectiveEffect.None;
 }
 
-/// <summary>An objective that no event advances: the feature calls <see cref="ContentRuntime.ProgressAsync"/> ("the player talked to the agent").</summary>
 public sealed class ManualObjective : ObjectiveType
 {
     public override string Name => "manual";

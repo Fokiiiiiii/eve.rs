@@ -46,7 +46,7 @@ public enum EssEventKind
     Theft,
     /// <summary>A link ended without a theft (the thief was no longer in the system).</summary>
     LinkEnded,
-    /// <summary>The bank's money or pulses changed on the clock (an owner payout or a reserve pulse).</summary>
+
     Changed,
 }
 
@@ -55,7 +55,6 @@ public sealed record EssEvent(EssEventKind Kind, int SolarSystemId, string LinkI
 
 /// <summary>
 /// The Encounter Surveillance Systems in PostgreSQL. A bounty earned in an ESS system pays <see cref="EssRules.MainBankShare"/> into its Main Bank in the same
-/// transaction that records the bounty; a link is a row that the clock completes (a theft, paid into the thief's wallet) or ends; the owner is paid on the
 /// clock; a Reserve Bank opened by a key pays its pulses on the clock. Every change is one transaction under the row lock of its system.
 /// </summary>
 public sealed class PgEssStore
@@ -81,7 +80,6 @@ public sealed class PgEssStore
     /// false when the character has none.
     /// </param>
     /// <param name="quadrantOf">The quadrant of a system, or null when it is in none.</param>
-    /// <param name="sovereigntyOwnerOf">The alliance that holds the system's sovereignty, or null when none does (the owner is then the configured one).</param>
     /// <param name="reserveMaxPayout">The largest payout of one reserve pulse (<see cref="EssRules.ReserveBankMaxPayout"/> unless a test sets another).</param>
     public PgEssStore(
         NpgsqlDataSource source,
@@ -129,7 +127,6 @@ public sealed class PgEssStore
         return command;
     }
 
-    /// <summary>Makes a solar system's ESS exist (or updates its ids and owner); the operator places them, nothing else does yet.</summary>
     public async Task RegisterAsync(int solarSystemId, long essId, long? ownerId, long nowMs, CancellationToken cancellationToken = default)
     {
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
@@ -327,7 +324,6 @@ public sealed class PgEssStore
     /// <summary>
     /// What the clock does now. A link is checked on every tick: a thief who has left the system, changed ship, or gone beyond the link range breaks it (the
     /// client's reasons 1 and 2); a link that completes while its thief is still linked is a theft (the thief's wallet gets <see cref="EssRules.ThiefPayout"/>,
-    /// the bank is emptied, the rest is destroyed). The owner is paid when its time comes (the sovereignty holder when there is one, else the configured owner),
     /// and each Reserve Bank pulse that is due is paid to the linked characters. Systems are worked one at a time; a system whose wallet cannot take the money is
     /// logged and retried at the next tick.
     /// </summary>

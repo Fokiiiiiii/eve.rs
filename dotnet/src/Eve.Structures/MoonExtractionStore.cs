@@ -11,11 +11,9 @@ public sealed record MoonExtraction(
     long DurationSeconds, double YieldMultiplier, long CalendarEventId, string State, long ReadyNotifiedMs, long FractureStartedMs, long FractureCompleteMs,
     IReadOnlyDictionary<long, double> OreVolumeM3, long CreatedMs, long CompletedMs, string CompletedReason, long FieldDecayedMs, long FieldDecayMs = -1);
 
-/// <summary>The resource profile of a structure that mines a moon: the moon, its owner, its yield and the share of each ore type (EVE.js <c>resourcesByStructureID</c>).</summary>
 public sealed record MoonResourceProfile(long StructureId, long MoonId, long SolarSystemId, long OwnerCorporationId, double YieldMultiplier, IReadOnlyDictionary<long, double> Resources);
 
 /// <summary>
-/// The moon extractions and resource profiles (migration 0003, schema of the structures): the owner of what EVE.js kept in the game store's <c>moonExtractions</c> table.
 /// <see cref="ReadLegacyAsync"/> gives the moon service the shape it reads; <see cref="ImportAsync"/> copies the table in (rows already there are kept, so a second run adds
 /// nothing). Writes take the caller's connection and transaction, so an extraction and its jobs commit together (FOUNDATIONS rule 1).
 /// </summary>

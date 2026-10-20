@@ -35,11 +35,10 @@ pytestmark = [
 ]
 
 GATE, NEXT_GATE, NEXT_SYSTEM = 50017727, 50016629, 30005204  # the Manifest gate to 30005204 (SDE mapStargates)
-AGENT = 3015920  # a level 4 basic security agent of 30005204 (SDE npcCharacters)
-AGENT_CORPORATION = 1000143  # the agent's corporation (SDE npcCharacters): a level 4 agent needs a standing of 5 toward it, with the agent, corporation or faction
+AGENT = 3015920
+AGENT_CORPORATION = 1000143
 STANDING = 6.0
 OFFER, ACCEPT = 376, 377  # the dialogue's request and accept tokens (eve-logic appConst; AgentDialogueToken)
-
 
 def give_standing(character: int) -> None:
     """A fixture, not a server path: the pilot is given the standing a level 4 agent asks for, as if earlier work had made it, in the run's own
@@ -50,12 +49,10 @@ def give_standing(character: int) -> None:
         f"VALUES ('standing', {AGENT_CORPORATION}, {character}, {STANDING}, 0, 0) "
         f"ON CONFLICT (kind, subject, object) DO UPDATE SET value = EXCLUDED.value"], check=True)
 
-
-COCKROACH = 11019  # the owner's standard test ship: the SDE's GM frigate (group 25, unpublished), its shields and armour in the millions
-QA_SMARTBOMB = 18642  # the owner's area weapon for the walk: the SDE's QA Smartbomb (group 353), an empWave field of 250 km
+COCKROACH = 11019
+QA_SMARTBOMB = 18642
 POLARIS = 9955  # the skill the QA Smartbomb requires (its required-skill attribute), at level 5
 POLARIS_LEVEL5_POINTS = 128000  # level 5 is 256,000 x the rank, and the SDE's rank of Polaris (skillTimeConstant, attribute 275) is 0.5
-
 
 def ledger_of(ship_id: int) -> str:
     """The pilot's wallet balance and standings (the run's wallet and relations schemas), for the payout's message."""
@@ -68,15 +65,13 @@ def ledger_of(ship_id: int) -> str:
                                 f"WHERE object = {owner}"], check=True, capture_output=True, text=True).stdout.strip()
     return f"wallet {balance!r}, standings {standings!r}"
 
-
-ARC_ENTRY_AGENT = 3019356  # arc 29's entry agent (SDE npcCharacters): at the Arnon station 60012607
-ARC_TALK_AGENT = 3019369  # arc 29's step 2 agent: in space in Tar (SDE agentsInSpace)
+ARC_ENTRY_AGENT = 3019356
+ARC_TALK_AGENT = 3019369
 ARNON, TAR = 30005001, 30005199
 # the gates of the routes (SDE mapStargates, the shortest path): (gate, the gate it leads to, the system it leads to)
 MANIFEST_TO_ARNON = [(50017727, 50016629, 30005204), (50003290, 50003261, 30005203), (50003260, 50002615, 30005201),
                      (50002614, 50002747, 30005202), (50002749, 50003638, ARNON)]
 ARNON_TO_TAR = [(50003638, 50002749, 30005202), (50002747, 50002614, 30005201), (50002613, 50001390, TAR)]
-
 
 def fly(who, ship_id: int, system: int, hops) -> tuple:
     """Flies the gates of a route in turn: warp to the gate, jump, and bind the next system's ballpark and dogma. Returns the ballpark and the
@@ -93,7 +88,6 @@ def fly(who, ship_id: int, system: int, hops) -> tuple:
         wait_quietly(who, 3.0)
     return ballpark, dogma
 
-
 def journal_of(ship_id: int) -> list[str]:
     """The actions of the pilot's agent journal (the run's agents schema), oldest first: `completed` once the mission is complete."""
     url = os.environ["EVE_PSQL_URL"]
@@ -103,7 +97,6 @@ def journal_of(ship_id: int) -> list[str]:
 
     owner = sql(f"SELECT owner_id FROM {os.environ['EVE_INVENTORY_SCHEMA']}.items WHERE id = {ship_id}").split()[0]
     return sql(f"SELECT action FROM {os.environ['EVE_AGENTS_SCHEMA']}.journal WHERE character_id = {owner} ORDER BY id").split()
-
 
 def seed_cockroach(ship_id: int) -> int:
     """A fixture, not a server path: the character's ship row in the run's inventory schema takes the Cockroach's type, and QA Smartbombs
@@ -126,7 +119,6 @@ def seed_cockroach(ship_id: int) -> int:
     from tests import dbseed  # the SDE high slots of the ship (smartbomb: hiPower), the bombs of the arsenal; the walk activates the first
     return dbseed.seed_qa_arsenal(ship_id)[0]
 
-
 def until_stopped(who, limit: float = 240.0) -> None:
     """Watches the events until the ship has come to rest (the Stop action) or the limit is past."""
     started = time.time()
@@ -136,12 +128,10 @@ def until_stopped(who, limit: float = 240.0) -> None:
             return
     raise AssertionError("the ship did not come to rest")
 
-
 def cash(who) -> float:
     """The character's ISK (`account.GetCashBalance`, corporation 0)."""
     raw = who.call("account", "GetCashBalance", 0)
     return float(getattr(raw, "value", raw))
-
 
 def in_range(who, call, what: str, limit: int = 60):
     """Repeats `call` every five seconds while the target is out of range (the ship is still closing in); any other refusal fails the walk."""
@@ -155,16 +145,13 @@ def in_range(who, call, what: str, limit: int = 60):
             watch({"events": who}, 5.0)
     raise AssertionError(f"{what}: still out of range after {limit * 5} s")
 
-
 def removed(event: dict, ball: int) -> bool:
     """Whether the event takes the ball out of space (RemoveBalls naming it)."""
     return "RemoveBalls" in str(event) and str(ball) in str(event)
 
-
 def reply_text(raw) -> str:
     value = getattr(raw, "value", raw)
     return value.decode() if isinstance(value, bytes) else str(value)
-
 
 def walk_into_dungeon(who, race, run: str):
     """The pilot undocks, goes through the gate, takes the level 4 kill offer in the next system and the mission's dungeon comes into space
@@ -187,7 +174,6 @@ def walk_into_dungeon(who, race, run: str):
     dogma = who.call("dogmaIM", "MachoBindObject", (NEXT_SYSTEM, 5), None)
     wait_quietly(who, 3.0)
 
-    # the agent: greet, request an offer, accept it
     agent = who.call("agentMgr", "MachoBindObject", AGENT, None)
     replies = {}
     for label, action in (("greeting", None), ("request", OFFER), ("accept", ACCEPT)):
@@ -198,7 +184,6 @@ def walk_into_dungeon(who, race, run: str):
     assert "891" in replies["request"] and "(377, 3)" in replies["request"], replies["request"][:400]
     assert "891" in replies["accept"] and "(377, 3)" not in replies["accept"], replies["accept"][:400]
 
-    # the dungeon starts in the agent's system (the sweep every ten seconds): its NPCs come into space around the pilot
     arrived: set[int] = set()
     arrived_types: dict[int, int] = {}
     started = time.time()
@@ -209,18 +194,15 @@ def walk_into_dungeon(who, race, run: str):
                 arrived_types[item] = type_id
     assert arrived, "the mission's dungeon did not bring any NPC into space"
 
-    # the journal shows the accepted mission (its type label is the agent's kind, see MissionComposition)
     journal = reply_text(who.call("agentMgr", "GetMyJournalDetails"))
     assert "891" in journal, journal[:400]
     return ship_id, bomb, next_ballpark, dogma, arrived, arrived_types
-
 
 def test_a_basic_level_4_kill_mission_is_offered_accepted_and_its_dungeon_comes_into_space():
     race = plain_race(DEATH["races"][0], "victim")  # the fitting the NPC kill test uses (a gun in modules[1])
     run = uuid.uuid4().hex[:10]
     with base.connect(f"walk-mission-{run}") as who:
         walk_into_dungeon(who, race, run)
-
 
 def test_the_pilot_clears_the_dungeon_and_is_paid():
     """The owner's standard test ship (the Cockroach, effectively invulnerable) with the QA Smartbomb clears the dungeon: each cycle hits every NPC
@@ -250,7 +232,6 @@ def test_the_pilot_clears_the_dungeon_and_is_paid():
         watch({"events": who}, 10.0)
         assert cash(who) > cash_before, (cash_before, cash(who), actions, ledger_of(ship_id))
 
-
 def test_arc_29_steps_1_and_2_are_completed_in_space():
     """Arc 29 (The Blood-Stained Stars), steps 1 and 2 on the owner's test ship: the entry agent at Arnon offers the arc's first mission (14117,
     a kill in dungeon 3509), the pilot accepts it and clears the dungeon with the QA Smartbomb; then it flies to Tar, where step 2 (14118) is
@@ -265,7 +246,6 @@ def test_arc_29_steps_1_and_2_are_completed_in_space():
         wait_quietly(who, 2.0)
         ballpark, dogma = fly(who, ship_id, SYSTEM, MANIFEST_TO_ARNON)
 
-        # the entry agent: greet, request the arc's offer, accept it; the journal then names mission 14117
         agent = who.call("agentMgr", "MachoBindObject", ARC_ENTRY_AGENT, None)
         for label, action in (("greeting", None), ("request", OFFER), ("accept", ACCEPT)):
             raw, error = outcome(lambda: who.call_bound(agent[0], "DoAction", action))
@@ -286,8 +266,6 @@ def test_arc_29_steps_1_and_2_are_completed_in_space():
                 raise AssertionError(f"the pilot's ship was destroyed; journal {journal_of(ship_id)}")
         assert journal_of(ship_id).count("completed") >= 1, f"step 1 did not complete in {int(time.time() - started)} s: {journal_of(ship_id)}"
 
-        # step 2: to Tar, where the next step's agent is in space; talking to it completes step 2
-        # the arc's next step (14118) is offered by the entry agent again: greet, request, accept (the journal then names mission 14118)
         for label, action in ("greeting", None), ("request", OFFER), ("accept", ACCEPT):
             raw, error = outcome(lambda: who.call_bound(agent[0], "DoAction", action))
             assert error is None, f"arc 29 next step, {label}: {base.brief(error)}"

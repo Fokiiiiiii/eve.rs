@@ -50,7 +50,6 @@ pytestmark = [
     pytest.mark.skipif(not CAPTURE, reason="needs the MITM capture of the run: EVE_FW_CAPTURE=<file of tools/mitm capture>"),
 ]
 
-
 def jump_when_out_of_warp(who, ballpark, ship_id: int, gate: int, dest_gate: int, limit: float = 240.0) -> None:
     """Jumps through a stargate once the ship is out of warp: a jump asked while it still warps is refused (IN_WARP), so it is asked again."""
     started = time.time()
@@ -63,7 +62,6 @@ def jump_when_out_of_warp(who, ballpark, ship_id: int, gate: int, dest_gate: int
                 raise AssertionError(f"the jump through {gate} was refused for {int(limit)} s: {repr(describe(error.payload))[:600]}") from error
             watch({"events": who}, 3.0)
 
-
 def bind_ballpark(who, system: int, limit: float = 60.0):
     """Waits for a system's ballpark after a stargate jump; the session can briefly change systems before the bound object is ready."""
     started = time.monotonic()
@@ -73,7 +71,6 @@ def bind_ballpark(who, system: int, limit: float = 60.0):
             return ballpark
         watch({"events": who}, 2.0)
     raise AssertionError(f"the ballpark for system {system} was not ready in {int(limit)} s")
-
 
 def fly_route(who, ship_id: int, hops) -> tuple:
     """The flight of tests/test_mission_walk.fly with each jump asked again until the ship is out of warp (pilots fly at once, so a stale Stop is no sign)."""
@@ -89,7 +86,6 @@ def fly_route(who, ship_id: int, hops) -> tuple:
         wait_quietly(who, 3.0)
     return ballpark, dogma
 
-
 def setup_pilot(who, race, run: str, enemy: int, hops) -> tuple[int, int, list, list]:
     """One pilot: its character, enlisted in the enemy, undocked and flown to the battlefield's system. Returns (character, ship, ballpark, dogma)."""
     character, ship_id, _, _ = arrive(who, race, run)
@@ -102,7 +98,6 @@ def setup_pilot(who, race, run: str, enemy: int, hops) -> tuple[int, int, list, 
     ballpark, dogma = fly_route(who, ship_id, hops)
     return character, ship_id, ballpark, dogma
 
-
 def enter_by_gate(who, ballpark, gate: int) -> None:
     """Warps to the battlefield's gate, stops, and takes the gate into the room (the room's entry is 15 km from the centre point: inside its range)."""
     warp_to_gate(who, ballpark, gate)
@@ -110,19 +105,16 @@ def enter_by_gate(who, ballpark, gate: int) -> None:
     activate_gate(who, gate)
     wait_quietly(who, 8.0)
 
-
 def capture_frames() -> list[dict]:
     """The frames the MITM capture of the run holds (one JSON record per line, flushed as they are sent)."""
     with open(CAPTURE, encoding="utf-8", errors="replace") as stream:
         return [json.loads(line) for line in stream if line.strip()]
-
 
 def ball_frames(frames: list[dict], ball: int, field: str) -> int:
     """The server-to-client frames that name a ball and a slim field: the ball's id as a number, or as the little-endian bytes its destiny buffers carry."""
     little_endian = struct.pack("<q", ball).hex()
     return sum(1 for frame in frames if frame.get("dir") == "s2c" and field in str(frame.get("args", ""))
                and (str(ball) in str(frame.get("args", "")) or little_endian in str(frame.get("args", ""))))
-
 
 def test_a_pilot_holds_a_battlefield_point_and_the_battlefield_is_won_for_its_faction():
     run = uuid.uuid4().hex[:10]

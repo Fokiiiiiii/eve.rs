@@ -5,7 +5,6 @@ using Npgsql;
 namespace Eve.Services.Slash;
 
 /// <summary>
-/// The game master's wallet commands (EveJS <c>chatCommands.js</c>): <c>/isk</c> and <c>/wallet</c> show the pilot's wallet (the ISK, PLEX, EverMarks and the last ISK change);
 /// <c>/addisk &lt;amount&gt;</c> gives ISK (a negative amount takes it away); <c>/setisk &lt;amount&gt;</c> makes the balance the amount. A change is one wallet journal entry in
 /// its own transaction, with the ESI reference type of a game master's cash transfer (<see cref="GmCashTransferRefType"/>), and the new balance is announced after the commit.
 /// </summary>
@@ -30,7 +29,6 @@ public sealed class IskCommands(WalletTransactions wallets, NpgsqlDataSource sou
         return amount;
     }
 
-    /// <summary>The wallet of the pilot (EveJS <c>getWalletSummary</c>): <c>/isk</c> and <c>/wallet</c>; the arguments of <c>/isk</c> are not read, as EVE.js does not read them.</summary>
     public async Task<string> WalletAsync(ClientSession session, CancellationToken cancellationToken)
     {
         if (session.CharacterId is not { } character) return "Select a character before checking wallet balance.";
@@ -43,7 +41,6 @@ public sealed class IskCommands(WalletTransactions wallets, NpgsqlDataSource sou
     }
 
     /// <summary>
-    /// <c>/setisk &lt;amount&gt;</c> (EveJS): the pilot's ISK becomes the amount, as one journal entry of the difference. A negative amount is refused as the balance
     /// cannot be negative. The balance is read before the write, in the command's own call: a wallet change between the read and the write would be overwritten (a GM tool is run alone).
     /// </summary>
     public async Task<string> SetAsync(ClientSession session, string argument, CancellationToken cancellationToken)
@@ -69,7 +66,6 @@ public sealed class IskCommands(WalletTransactions wallets, NpgsqlDataSource sou
     }
 
     /// <summary>
-    /// <c>/addisk &lt;amount&gt;</c> (EveJS): the amount is added to the pilot's ISK (a negative one takes it away). A balance the change would take below zero is refused
     /// as insufficient funds, and nothing is written.
     /// </summary>
     public async Task<string> GiveAsync(ClientSession session, string argument, CancellationToken cancellationToken)

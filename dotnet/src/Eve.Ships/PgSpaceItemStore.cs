@@ -98,7 +98,6 @@ public sealed class PgSpaceItemStore
         return await reader.ReadAsync(cancellationToken) ? Read(reader) : null;
     }
 
-
     public async Task<SpaceItem?> GetAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long itemId, CancellationToken cancellationToken = default)
     {
         await using var command = new NpgsqlCommand($"SELECT {Columns} FROM {_schema}.space_items WHERE item_id = $1", connection, transaction);
@@ -114,7 +113,6 @@ public sealed class PgSpaceItemStore
         command.Parameters.Add(new NpgsqlParameter { Value = solarSystemId });
         return await ReadAllAsync(command, cancellationToken);
     }
-
 
     public async Task<IReadOnlyList<SpaceItem>> MoonFieldAsync(long extractionId, CancellationToken cancellationToken = default)
     {

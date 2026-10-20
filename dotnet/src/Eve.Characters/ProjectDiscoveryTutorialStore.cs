@@ -7,7 +7,6 @@ public sealed record ProjectDiscoveryTutorial(bool Finished, int Level);
 
 /// <summary>
 /// The Project Discovery tutorial of each character (table <c>project_discovery_tutorials</c>, in the characters schema). A character with no row
-/// has not started: not finished, at level 0 (the EveJS default state).
 /// </summary>
 public sealed class ProjectDiscoveryTutorialStore(NpgsqlDataSource source, string schema)
 {

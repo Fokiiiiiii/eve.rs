@@ -17,16 +17,13 @@ import urllib.parse
 
 SCHEMAS = ["sde", "sde_mission"]
 
-
 def url_for(source, database):
     parts = urllib.parse.urlsplit(source)
     return urllib.parse.urlunsplit(parts._replace(path="/" + database))
 
-
 def psql(url, *args, stdin=None, stdout=None, stderr=None):
     return subprocess.run(["psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", url, *args],
                           stdin=stdin, stdout=stdout, stderr=stderr, text=True)
-
 
 def query(url, sql):
     result = subprocess.run(["psql", "-X", "-At", url, "-c", sql], capture_output=True, text=True)
@@ -34,10 +31,8 @@ def query(url, sql):
         sys.exit("copy-sde-database: " + result.stderr.strip())
     return result.stdout.strip().splitlines()
 
-
 def qualified(schema, table):
     return f'{schema}."{table}"'
-
 
 def main(argv):
     if len(argv) != 3:
@@ -76,7 +71,6 @@ def main(argv):
         print(f"{schema}: {len(tables)} tables copied", file=sys.stderr)
     print(f"copy-sde-database: {database} ready in {round(time.time() - started)} s", file=sys.stderr)
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main(sys.argv))

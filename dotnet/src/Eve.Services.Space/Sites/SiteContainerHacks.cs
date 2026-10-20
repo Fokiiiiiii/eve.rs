@@ -7,7 +7,6 @@ namespace Eve.Services.Space;
 /// <summary>
 /// The site containers an analyzer hacks: the target lookup, and the end of an attempt. A win leaves the loot in the container (<c>looted</c>); the
 /// container clears, and is announced (<c>site.container.cleared</c>, the objective of the site's data or relic content), when its last item is taken. A lost attempt counts toward two failures, which
-/// destroy the container (wiki: Data or Relic Site container, destroyed after two failures). The counts are in PostgreSQL, so a restart keeps them.
 /// </summary>
 public sealed class SiteContainerHacks(NpgsqlDataSource source, SiteContainerStore store, PgItemStore items, EventBus events, Func<long> nowMs, Action<long> removeFromScene)
 {
@@ -24,7 +23,6 @@ public sealed class SiteContainerHacks(NpgsqlDataSource source, SiteContainerSto
 
     /// <summary>
     /// An attempt ended. A win puts the loot in the container's cargo (owned by the character who won it) and the container is <c>looted</c>; the
-    /// container clears when its last item is taken (<see cref="OnItemLeftAsync"/>), which is what the site waits for (EveJS
     /// maybeCompleteMaterializedDataRelicSite: the loot is the container's contents). A win with nothing to roll clears it at once.
     /// </summary>
     public async ValueTask EndedAsync(HackableTarget target, bool won, long characterId, CancellationToken cancellationToken)

@@ -26,7 +26,6 @@ pytestmark = pytest.mark.skipif(not base.LIVE, reason="set EVE_LIVE_HOST=host:po
 TRITANIUM = 34
 ASK_ROW_NAMES = {"typeID", "stationID", "price", "volRemaining"}  # marketsvc.py:297-300; quote.py:97-100 reads .typeID
 
-
 def _new_character(client, run: str) -> int:
     creation = next(step for step in base.WALK["steps"] if step["call"][1] == "CreateCharacterWithDoll" and "ok" in step)
     service, method, described = creation["call"]
@@ -34,9 +33,7 @@ def _new_character(client, run: str) -> int:
     assert client.call("charUnboundMgr", "SelectCharacterID", charID=character_id, secondChoiceID=None, skipTutorial=False) is None
     return character_id
 
-
 CACHED_RESULT = "carbon.common.script.net.objectCaching.CachedMethodCallResult"
-
 
 def _payload(value):
     """A cached answer (objectCaching.CachedMethodCallResult: the cache info, the payload, the version) as its payload."""
@@ -44,18 +41,15 @@ def _payload(value):
         return value[1][1]
     return value
 
-
 def _number(described):
     """A number as the describe form gives it (a long is wrapped)."""
     return described["$long"] if isinstance(described, dict) else described
-
 
 def _label_and_arguments(error: p.MachoError):
     """The client's UserError label and its dict of arguments, from the wrapped exception object (eveexceptions.UserError)."""
     payload = describe(error.payload)["$objectex"]["$tuple"]
     label, arguments = payload[1]["$tuple"][0], payload[1]["$tuple"][1]
     return label, dict(arguments.get("$dict", []))
-
 
 def test_a_docked_character_reads_the_market_as_the_client_does():
     run = uuid.uuid4().hex[:10]
@@ -99,14 +93,12 @@ def test_a_docked_character_reads_the_market_as_the_client_does():
         label, arguments = _label_and_arguments(refused.value)
         assert label == "MktInvalidMinVolumeCannotExceedQuantity" and arguments == {}
 
-        # a price of five significant figures is off the ticks (M2, decision Q12): the client's CustomInfo carries the sentence the
         # server writes, and nothing is escrowed (the check runs before any funds move)
         with pytest.raises(p.MachoError) as refused:
             client.call("marketProxy", "PlaceBuyOrder", station_id, TRITANIUM, 12345.0, 1, -1, 1, 90, False, None)
         label, arguments = _label_and_arguments(refused.value)
         assert label == "CustomInfo"
         assert arguments == {"info": "Order prices have at most four significant figures."}
-
 
 # ---- M9: a trade through the market, as the client makes it ------------------------------------------------------------------------
 #
@@ -117,7 +109,6 @@ def test_a_docked_character_reads_the_market_as_the_client_does():
 # covered by the fake-clock tests (ExpiryTests, MarketCoherenceTests in dotnet/tests/Eve.Market.Tests).
 
 SLOW = os.environ.get("EVE_LIVE_SLOW") == "1"
-
 
 def _plain_rows(value):
     """The rows of a rowset or a list, as dicts keyed by the column names (a cached answer is unwrapped first)."""
@@ -134,7 +125,6 @@ def _plain_rows(value):
             return [dict(zip(names, line)) for line in lines]
     raise AssertionError(f"not a rowset or a list of rows: {type(plain).__name__} {str(plain)[:600]}")
 
-
 def _named(row):
     """A KeyVal (util.KeyVal of the wire, plain: (name, arguments)) as its dict of names."""
     if isinstance(row, dict):
@@ -143,7 +133,6 @@ def _named(row):
         return row[1]
     raise AssertionError(f"not a named row: {type(row).__name__} {str(row)[:400]}")
 
-
 def _field(row, *names):
     """The first of the names a row carries (a row of a rowset is read by its column names)."""
     for name in names:
@@ -151,14 +140,11 @@ def _field(row, *names):
             return row[name]
     raise AssertionError(f"no column {names} in row {row!r}")
 
-
 def _station_hangar_items(client, station_id):
     return _plain_rows(client.call("invbroker", "ListStationItems", station_id))
 
-
 def _own_orders(client):
     return _plain_rows(client.call("marketProxy", "GetCharOrders"))
-
 
 def test_a_seller_and_a_buyer_trade_through_the_market():
     seller_run = uuid.uuid4().hex[:10]
@@ -205,7 +191,7 @@ def test_a_seller_and_a_buyer_trade_through_the_market():
         assert _field(next(row for row in _own_orders(seller) if _field(row, "orderID") == ask_id), "price") == 50.0
 
         if SLOW:
-            time.sleep(300)  # the five-minute delay (market-decisions Q3)
+            time.sleep(300)
             seller.call("marketProxy", "ModifyCharOrder", ask_id, 55.0, 50.0, 25, None, None)
             assert _field(next(row for row in _own_orders(seller) if _field(row, "orderID") == ask_id), "price") == 55.0
 

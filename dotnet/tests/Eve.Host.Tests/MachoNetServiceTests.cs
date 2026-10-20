@@ -213,6 +213,7 @@ public class MachoNetServiceTests
 
         var player = new ClientSession();
         player.Set("accountRole", new PyLong(1L << 61)); // ROLE_PLAYER: an ordinary account, no admin or service bit
+        player.Set("role", new PyLong((1L << 56) | (1L << 60))); // forged ROLE_ADMIN and ROLE_SERVICE
         var refused = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(new ServiceCall
         {
             Method = "SetGlobalConfigValue",
@@ -229,6 +230,16 @@ public class MachoNetServiceTests
             Session = AdminSession(),
         }));
         Assert.Single(updates);
+
+        var serviceAccount = new ClientSession();
+        serviceAccount.Set("accountRole", new PyLong(1L << 60)); // ROLE_SERVICE
+        Assert.Same(PyNone.Instance, await service.CallAsync(new ServiceCall
+        {
+            Method = "SetGlobalConfigValue",
+            Args = [new PyStr("imageserverurl"), new PyStr("http://service/")],
+            Session = serviceAccount,
+        }));
+        Assert.Equal(2, updates.Count);
     }
 
     [Fact]

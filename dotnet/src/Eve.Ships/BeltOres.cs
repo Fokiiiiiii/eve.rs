@@ -2,9 +2,7 @@ namespace Eve.Ships;
 
 /// <summary>
 /// The ore an asteroid belt holds, by the true security of its system. The SDE places each belt and gives its size but no ore, so this is the one
-/// authority for it. Source: the EVE University wiki's asteroid belt rows (wiki.eveuniversity.org/Asteroid, high, low and null security). The rows
 /// are merged by true security: the SDE system record carries the number, not the security class letter. Mercoxit (Deep Core Mining) and the
-/// Drone regions are not seeded (docs/reference/compat/DEVIATIONS.md).
 /// </summary>
 public static class BeltOres
 {

@@ -3,7 +3,6 @@ using Npgsql;
 
 namespace Eve.Agents;
 
-/// <summary>The client's mission states (eve-logic appConst.py:1617-1624). Allocated means no mission is held with the agent.</summary>
 public enum AgentMissionState
 {
     Allocated = 0,
@@ -19,7 +18,6 @@ public enum AgentMissionState
 /// <summary>What a mission is, as the offer names it. The title is the text the client shows when there is no name id.</summary>
 public sealed record AgentMissionContent(long MissionId, long NameId, string Title, string MissionTypeLabel, bool Important);
 
-/// <summary>One character's mission with one agent: its state and the times the state started (null when it did not happen).</summary>
 public sealed record AgentMissionRecord(
     long CharacterId,
     long AgentId,
@@ -50,7 +48,6 @@ public sealed class AgentMissionRefusedException(string reason, string message) 
 }
 
 /// <summary>
-/// Agent offers and mission states in PostgreSQL (migration 0001, the agents schema). Every change is one transaction: the row is
 /// locked, the transition is checked against the state it leaves, the row and one journal row are written, and then the
 /// change is announced through <see cref="Committed"/>. A transition names its reference; a reference that is already in the
 /// journal applies nothing and returns null, so a replayed request changes nothing and announces nothing.
@@ -59,10 +56,6 @@ public sealed class AgentMissionStore
 {
     public const string DefaultSchema = "agents";
 
-    // An offer does not expire. The EVE University wiki gives a seven-day expiry for COSMOS agents only, and no data here
-    // identifies a COSMOS agent (DEVIATIONS, Agents), so the expiry is not applied to any agent.
-
-    /// <summary>After a decline the same agent does not offer again for four hours (EveJS missionRuntimeState.js:26, REPLAY_DELAY_MS).</summary>
     public static readonly TimeSpan DeclineReplayDelay = TimeSpan.FromHours(4);
 
     private readonly NpgsqlDataSource _source;
@@ -89,7 +82,6 @@ public sealed class AgentMissionStore
     public static Task<IReadOnlyList<string>> MigrateAsync(NpgsqlDataSource source, string schema = DefaultSchema, CancellationToken cancellationToken = default) =>
         Migrations.ApplyAsync(source, schema, MigrationSet(), cancellationToken);
 
-    /// <summary>Every mission the character holds (offered, accepted, completed, declined, quit), in agent order.</summary>
     public async Task<IReadOnlyList<AgentMissionRecord>> ReadAsync(long characterId, CancellationToken cancellationToken = default)
     {
         if (characterId <= 0) return [];
@@ -110,7 +102,6 @@ public sealed class AgentMissionStore
 
     /// <summary>
     /// The missions the character has completed, with the time of each completion, from the journal (the transitions into
-    /// <see cref="AgentMissionState.Completed"/>). The store keeps one row per agent, so the history is read here.
     /// </summary>
     public Task<IReadOnlyList<(long MissionId, DateTimeOffset CompletedAt)>> ReadCompletedAsync(long characterId, CancellationToken cancellationToken = default) =>
         ReadJournalAsync(characterId, [(int)AgentMissionState.Completed], cancellationToken);
@@ -137,7 +128,6 @@ public sealed class AgentMissionStore
         return rows;
     }
 
-    /// <summary>The character's mission with one agent, or null when there is none.</summary>
     public async Task<AgentMissionRecord?> ReadAsync(long characterId, long agentId, CancellationToken cancellationToken = default)
     {
         if (characterId <= 0 || agentId <= 0) return null;
@@ -152,8 +142,6 @@ public sealed class AgentMissionStore
     }
 
     /// <summary>
-    /// The agent offers <paramref name="content"/>. Refused while the character holds an offer or an accepted mission with this
-    /// agent, and during the decline replay window.
     /// </summary>
     public Task<AgentMissionChange?> OfferAsync(
         long characterId, long agentId, AgentMissionContent content, DateTimeOffset now, string reference, CancellationToken cancellationToken = default) =>
@@ -180,7 +168,6 @@ public sealed class AgentMissionStore
             return current with { State = AgentMissionState.Accepted, AcceptedAt = now };
         });
 
-    /// <summary>The character declines the offer; the agent does not offer again for <see cref="DeclineReplayDelay"/>.</summary>
     public Task<AgentMissionChange?> DeclineAsync(
         long characterId, long agentId, DateTimeOffset now, string reference, CancellationToken cancellationToken = default) =>
         ChangeAsync(characterId, agentId, reference, "offer_declined", now, cancellationToken, current =>
@@ -199,8 +186,6 @@ public sealed class AgentMissionStore
         });
 
     /// <summary>
-    /// A game master's reset of the character's mission with an agent (<c>/agent reset</c>): whatever it holds (an offer, an accepted or a finished mission, a
-    /// decline or quit timer) returns to none, so the agent offers again with no cooldown. The journal keeps the reset. A character with no mission with the agent
     /// is refused (nothing to reset).
     /// </summary>
     public Task<AgentMissionChange?> ResetAsync(long characterId, long agentId, DateTimeOffset now, string reference, CancellationToken cancellationToken = default) =>
@@ -210,7 +195,6 @@ public sealed class AgentMissionStore
             return current with { State = AgentMissionState.Allocated, OfferedAt = null, ExpiresAt = null, AcceptedAt = null, CompletedAt = null, DeclineUntil = null, QuitAt = null };
         });
 
-    /// <summary>The accepted mission fails (its dungeon failed, was abandoned or expired); the agent offers it again later and no reward is paid.</summary>
     public Task<AgentMissionChange?> FailAsync(
         long characterId, long agentId, DateTimeOffset now, string reference, CancellationToken cancellationToken = default) =>
         ChangeAsync(characterId, agentId, reference, "failed", now, cancellationToken, current =>
@@ -219,7 +203,6 @@ public sealed class AgentMissionStore
             return current with { State = AgentMissionState.Failed };
         });
 
-    /// <summary>Every accepted mission of every character, for the mission runtime's sweep (one row per character and agent).</summary>
     public async Task<IReadOnlyList<AgentMissionRecord>> ReadAcceptedAsync(CancellationToken cancellationToken = default)
     {
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
@@ -281,7 +264,6 @@ public sealed class AgentMissionStore
     private static AgentMissionRefusedException Refused(string reason, string message) => new(reason, message);
 
     /// <summary>
-    /// Locks the character's row with the agent, applies <paramref name="next"/> to the current record (null when there is none) and writes the
     /// row and the journal row. Returns null when the reference is already in the journal.
     /// </summary>
     private async Task<AgentMissionChange?> ChangeAsync(

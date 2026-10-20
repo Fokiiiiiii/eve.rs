@@ -10,11 +10,9 @@ using Npgsql;
 namespace Eve.Services.Space;
 
 /// <summary>
-/// The fuel and the unanchoring of a player control tower (ST-23; EVE.js <c>controlTowerRuntime.js</c> and <c>posMgr.UnanchorStructure</c>). A tower's fuel
 /// period is one hour: the job pays the bay's fuel blocks of its race for the period, and an empty bay takes it offline until the next period finds fuel.
 /// The unanchoring is asked by its corporation while the tower is offline; after the SDE's unanchoring delay the tower leaves space, and its item is not
 /// deleted: it is dropped at its place as an unanchor drop (the structure rule, <see cref="PlaceUnanchorDropAsync"/>), where the corporation can scoop it.
-/// The simulation has no online state: a tower is anchored in space whether or not it is fuelled (DEVIATIONS, ST-23).
 /// </summary>
 public sealed partial class SpaceContainers
 {

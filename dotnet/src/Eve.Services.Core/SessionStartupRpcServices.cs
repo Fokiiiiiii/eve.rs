@@ -1,6 +1,7 @@
 using Eve.Macho;
 using Eve.Marshal;
 using Eve.Services;
+using System.Security.Cryptography;
 
 namespace Eve.Services.Core;
 
@@ -17,13 +18,29 @@ public sealed partial class ChatAuthenticationService(
         var token = tokenByCharacter is { } readToken
             ? await readToken(characterId, call.Cancellation)
             : null;
-        if (string.IsNullOrEmpty(token)) token = Text(call.Session.Get("chatAuthenticationToken"));
-        if (string.IsNullOrEmpty(token)) token = Text(call.Session.Get("xmppAuthenticationToken"));
-        if (string.IsNullOrEmpty(token)) token = MapToken(call.Session.Get("chatAuthenticationTokensByCharacterID"), characterId);
-        if (string.IsNullOrEmpty(token)) token = MapToken(call.Session.Get("xmppAuthenticationTokensByCharacterID"), characterId);
+        if (string.IsNullOrEmpty(token)) token = StoredToken(call.Session, characterId);
         if (string.IsNullOrEmpty(token) && tokenProvider is { } provideToken)
             token = await provideToken(call.Session, characterId, call.Cancellation);
+        if (string.IsNullOrEmpty(token) && characterId > 0)
+        {
+            token = Text(call.Session.Get("chatAuthenticationToken"));
+            if (string.IsNullOrEmpty(token))
+            {
+                token = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
+                call.Session.Set("chatAuthenticationToken", new PyStr(token));
+            }
+        }
         return string.IsNullOrEmpty(token) ? PyNone.Instance : new PyStr(token);
+    }
+
+    /// <summary>The token the session already holds for the character (issued earlier or configured on the session), or null. The XMPP login checks against it.</summary>
+    public static string? StoredToken(ClientSession session, long characterId)
+    {
+        var token = Text(session.Get("chatAuthenticationToken"));
+        if (string.IsNullOrEmpty(token)) token = Text(session.Get("xmppAuthenticationToken"));
+        if (string.IsNullOrEmpty(token)) token = MapToken(session.Get("chatAuthenticationTokensByCharacterID"), characterId);
+        if (string.IsNullOrEmpty(token)) token = MapToken(session.Get("xmppAuthenticationTokensByCharacterID"), characterId);
+        return token;
     }
 
     private static string? Text(PyValue? value) =>

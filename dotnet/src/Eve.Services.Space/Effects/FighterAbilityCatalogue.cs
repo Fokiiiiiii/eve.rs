@@ -33,7 +33,6 @@ public sealed record FighterTypeAbilities(int TypeId, IReadOnlyList<FighterAbili
 /// <summary>
 /// The ability slot table of the fighter types (slot 0, 1 and 2 of each of the 94 published fighter types), with the ability facts it refers to.
 /// The data is the EVE.js table (<c>fighter-abilities.json</c>, an embedded resource); its families and slot 0 agree with the pinned SDE, and the
-/// slot order, cooldowns and charges come from the EVE.js table alone (ADR 0015, decision FIG-D-2 as amended).
 /// </summary>
 public sealed class FighterAbilityCatalogue
 {

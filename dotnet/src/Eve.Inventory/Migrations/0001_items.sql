@@ -1,5 +1,3 @@
--- Items: everything that exists in the world and can be owned, placed and moved. S2 needs only the rows a new
--- character starts with (the ship in the station hangar); the rest of inventory grows on this table.
 CREATE SEQUENCE item_ids AS bigint START WITH 1990000000;
 
 CREATE TABLE items (

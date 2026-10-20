@@ -3,10 +3,8 @@ using Eve.Dogma;
 namespace Eve.Services.Space.Effects;
 
 /// <summary>
-/// The cynosural field types a field generator makes, with the group and radius the static data gives them. EveJS (<c>cynosuralField.js</c>) falls back to group 2020 or
 /// 897 and radius 250 when a value is missing; here the group comes from <c>sde.types.groupID</c> and the radius from the type's <c>radius</c> (dogma attribute 162,
 /// <see cref="DogmaStatic"/>), so a fallback is never used for a type the static data has. Nothing spawns a field yet (the cyno body is not written; see
-/// docs/project/TODO.md section 12), and the spawn radius of the generator (attribute 2455) is read by that body, not here.
 /// </summary>
 internal static class CynoFieldTypes
 {

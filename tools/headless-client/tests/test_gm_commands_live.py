@@ -19,7 +19,6 @@ SERVER = "reference" if os.environ.get("EVE_LIVE_SERVER", "") == "reference" els
 TRANSCRIPT = os.environ.get("EVE_GM_TRANSCRIPT")
 CALDARI_NAVY = 1000035
 
-
 class Transcript:
     """The answers of one walk, written as they come (a crash keeps what was said), and the outcomes that did not come."""
 
@@ -42,7 +41,6 @@ class Transcript:
     def expect(self, label: str, ok: bool) -> None:
         if not ok:
             self.missed.append(label)
-
 
 @pytest.mark.skipif(os.environ.get("EVE_LIVE_HOST") is None, reason="needs a running server (EVE_LIVE_HOST)")
 def test_the_shared_commands_answer_and_do_what_they_say():

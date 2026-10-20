@@ -401,7 +401,6 @@ public sealed class PgSkillStore
         return await command.ExecuteScalarAsync(cancellationToken) is long points ? points : 0L;
     }
 
-
     public async Task<long> FreeSkillPointsAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId, CancellationToken cancellationToken = default)
     {
         await using var command = new NpgsqlCommand(
@@ -443,7 +442,6 @@ public sealed class PgSkillStore
         return (long)(await command.ExecuteScalarAsync(cancellationToken)
             ?? throw new InvalidOperationException("free skill point grant did not return a balance"));
     }
-
 
     /// <summary>
     /// Records a Daily Alpha Injector use unless the character already used one since the last downtime (one use per downtime).

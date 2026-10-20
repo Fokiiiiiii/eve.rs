@@ -2,7 +2,6 @@ namespace Eve.Skills;
 
 /// <summary>
 /// The daily downtime (11:00 UTC) that resets the Daily Alpha Injector: one use per downtime, and the next one is due at the first downtime
-/// after the use (EveJS <c>resolveNextDowntimeFileTime</c>, skillTradingAuthority.js).
 /// </summary>
 public static class SkillInjectorDowntime
 {

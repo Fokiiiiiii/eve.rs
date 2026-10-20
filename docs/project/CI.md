@@ -47,9 +47,137 @@ python3 tools/dev/ci-status.py dispatch live-slow.yml --ref main --test-file all
 
 The token can list runs and jobs (`GET /actions/runs` and `GET /actions/runs/{run_id}/jobs`, HTTP 200), dispatch both workflows (HTTP 204), and download a current failed job log (`GET /actions/jobs/{job_id}/logs`, HTTP 200). A request for an older job log returned HTTP 401. The helper reports log-download errors while retaining run, job, and failed-step information. If dispatch is denied elsewhere, it prints the HTTP status and API response.
 
+## Dependency audit
+
+`dependency-audit.yml` runs `cargo audit --file Cargo.lock` (cargo-audit 0.22.2), `dotnet list dotnet/EveRs.slnx package --vulnerable --include-transitive` (failing when NuGet reports a vulnerable package) and `pip-audit` 2.10.1 on both headless-client requirement files. It runs weekly, on manual dispatch, and on pushes to `main` that change a Cargo, NuGet, or Python dependency file. A finding fails the job. The workflow does not subscribe to pull request events, including pull requests from forks.
+
 ## Minutes budget
 
 Record runner job durations for validation runs below. Matrix jobs count separately even when they run concurrently.
+
+### Duration profile and test layout
+
+Run 272 (`f153f9c1`, 2026-10-19) is the latest green full gate before the Space split. From the first job start at 23:16:08 UTC until the Required CI gate completed at 23:34:08 UTC, the run took 18.0 minutes wall time. The Space job took 15.2 minutes, of which its `dotnet test` step used 12.85 minutes; static-data loading, artifact download and setup used about 2.3 minutes. End-to-end took 8.8 minutes. The detailed project timing profile below comes from the run 276 TRX artifacts; run 269 supplied the initial weights used by `tools/dev/shard-dotnet-projects.py`.
+
+Run 272's successful job durations and .NET test step timing were:
+
+| Job | Duration |
+|---|---:|
+| .NET build | 2.6 min |
+| Host tests 1/4 | 2.3 min |
+| Host tests 2/4 | 2.6 min |
+| Host tests 3/4 | 1.8 min |
+| Host tests 4/4 | 2.1 min |
+| Space tests | 15.2 min (12.85 min test step) |
+| Other tests 1/3 | 4.9 min |
+| Other tests 2/3 | 5.6 min |
+| Other tests 3/3 | 5.5 min |
+| End-to-end | 8.8 min |
+| Rust tests | 2.5 min |
+| Rust format and clippy | 0.5 min |
+| Python client | 0.2 min |
+| Fixture generation | 0.1 min |
+
+The preceding red run 270 (`ec9575b0`) had a 16.2-minute Space job; all other jobs completed in 6.8 minutes or less except the 9.0-minute end-to-end job. `other tests 3/3` failed after 4.0 minutes, while its sibling jobs passed. Its retained job summary does not include per-project VSTest durations; run 269 remains the source of the project duration table.
+
+Run 276 (commit `93ac5061`, 2026-10-20) TRX test-session durations and executed test counts:
+
+| Test project / shard | TRX elapsed | Tests executed |
+|---|---:|---:|
+| Eve.AccessGroups.Tests | 2.1 s | 23 |
+| Eve.Agents.Tests | 1.5 s | 19 |
+| Eve.Bookmarks.Tests | 4.0 s | 33 |
+| Eve.Characters.Tests | 6.3 s | 120 |
+| Eve.Content.Tests | 8.3 s | 41 |
+| Eve.Corporations.Tests | 29.8 s | 135 |
+| Eve.Crimewatch.Tests | 1.3 s | 55 |
+| Eve.Dogma.Tests | 22.4 s | 128 |
+| Eve.Dungeons.Tests | 2.2 s | 60 |
+| Eve.Events.Tests | 2.2 s | 18 |
+| Eve.FactionWarfare.Tests | 21.6 s | 99 |
+| Eve.Fitting.Tests | 5.8 s | 78 |
+| Eve.GameStore.Import.Tests | 4.5 s | 15 |
+| Eve.GameStore.Tests | 3.4 s | 334 |
+| Eve.Hacking.Tests | 0.9 s | 26 |
+| Eve.Host.Tests shard 1/4 | 2 m 25 s | 127 |
+| Eve.Host.Tests shard 2/4 | 1 m 51 s | 127 |
+| Eve.Host.Tests shard 3/4 | 7 m 22 s | 125 |
+| Eve.Host.Tests shard 4/4 | 5 m 33 s | 126 |
+| Eve.Identity.Tests | 1.5 s | 48 |
+| Eve.Insurgency.Tests | 1.8 s | 18 |
+| Eve.Inventory.Tests | 12.2 s | 56 |
+| Eve.Market.Tests | 39.7 s | 116 |
+| Eve.Marshal.Tests | 1.6 s | 1107 |
+| Eve.Npc.Tests | 4.8 s | 167 |
+| Eve.Planets.Tests | 1.5 s | 51 |
+| Eve.ReadSide.Tests | 0.9 s | 6 |
+| Eve.Relations.Tests | 2.0 s | 12 |
+| Eve.Scheduler.Tests | 2.9 s | 20 |
+| Eve.Services.CharacterInfo.Tests | 5.1 s | 72 |
+| Eve.Services.CharacterSelect.Tests | 15.8 s | 61 |
+| Eve.Services.Core.Tests | 7.3 s | 799 |
+| Eve.Services.Crimewatch.Tests | 4.4 s | 44 |
+| Eve.Services.Dogma.Tests | 1 m 28 s | 286 |
+| Eve.Services.Generator.Tests | 3.7 s | 20 |
+| Eve.Services.Inventory.Tests | 39.1 s | 71 |
+| Eve.Services.Skills.Tests | 30.5 s | 70 |
+| Eve.Services.Space.Tests shard 1/2 | 4 m 9 s | 501 |
+| Eve.Services.Space.Tests shard 2/2 | 6 m 5 s | 500 |
+| Eve.Services.Station.Tests | 9.4 s | 60 |
+| Eve.Services.Tests | 0.9 s | 86 |
+| Eve.Services.Wallet.Tests | 1.5 s | 10 |
+| Eve.Ships.Tests | 2 m 37 s | 241 |
+| Eve.Skills.Tests | 5.1 s | 97 |
+| Eve.Space.Tests | 1.4 s | 445 |
+| Eve.Structures.Tests | 5.9 s | 105 |
+| Eve.Trade.Tests | 1.7 s | 9 |
+| Eve.Universe.Tests | 3.7 s | 67 |
+| Eve.Wallet.Tests | 6.2 s | 40 |
+| Eve.Wormholes.Tests | 1.5 s | 26 |
+
+Slowest individual tests in run 276, by TRX duration:
+
+| Test | Duration |
+|---|---:|
+| `Eve.Host.Tests.StructureCompositionTests.The_cyno_jammer_of_a_system_is_answered_through_the_registry_only_with_the_suppression_upgrade_online` | 33.7 s |
+| `Eve.Ships.Tests.ShipTests.Every_restricted_specialized_hold_accepts_a_current_SDE_sample_and_refuses_a_module` | 25.7 s |
+| `Eve.Host.Tests.CharacterHostTests.Installing_a_clone_at_a_structure_pays_its_owner_corporation_and_needs_its_clone_service` | 22.6 s |
+| `Eve.Host.Tests.CharacterHostTests.Jump_clones_are_read_changed_and_kept_through_the_host_registry_and_a_restart` | 22.6 s |
+| `Eve.Host.Tests.StructureCompositionTests.An_imported_structure_with_an_elapsed_deadline_advances_once_after_start_and_a_replay_changes_nothing` | 19.0 s |
+| `Eve.Host.Tests.StructureCompositionTests.A_structure_cyno_beacon_jump_is_refused_by_name_through_the_registry_for_a_jammed_system_and_for_no_access` | 17.2 s |
+| `Eve.Host.Tests.StructureOfficeTests.An_unpaid_office_is_given_up_when_its_rent_falls_due_and_its_items_go_to_asset_safety_after_a_restart` | 16.5 s |
+| `Eve.Services.Dogma.Tests.ReloadServiceTests.A_gun_that_runs_is_given_what_the_simulation_added_and_the_rounds_the_hold_was_short_of_are_given_back` | 16.4 s |
+| `Eve.Host.Tests.CharacterHostTests.Skill_injector_applies_sequential_awards_and_persists_points_and_inventory_through_host` | 16.1 s |
+| `Eve.Host.Tests.StructureCompositionTests.Reinforcement_change_notice_is_durable_formatted_and_scoped_to_the_owner_corporation` | 15.9 s |
+
+The test job uses four Host shards and splits `Eve.Services.Space.Tests` into two shards. `tools/dev/shard-dotnet-tests.py` discovers test cases from each built assembly, removes theory argument text before deriving class names, assigns whole test classes to shards by case count, and supplies a VSTest filter to each shard. Every class is assigned to exactly one shard; each shard has its own PostgreSQL service. Each .NET shard verifies that its TRX reports at least one executed test. `tools/dev/shard-dotnet-projects.py` assigns the remaining test projects to three jobs; each project runs once, and each job has its own PostgreSQL service. New projects are included with a five-second initial weight. All jobs download the same Release build artifact produced once by `.NET build`. CI runs use the job matrix and the Required CI gate waits for every selected matrix job.
+
+Run 275 had a green required-gate conclusion in 8.3 minutes, but its Host and Space shard filters executed zero tests. Theory arguments containing fully qualified types had been parsed as part of the test class name. The shard generator now removes theory arguments before deriving class names, and every .NET test shard fails if its TRX report records zero executed tests.
+
+Run 276 (`93ac5061`, 2026-10-20) is the first complete measured run after that correction ([run 276](https://github.com/Fokiiiiiii/eve.rs/actions/runs/39348892807)). From the first job start at 00:39:05 UTC to the Required CI gate completion at 00:51:30 UTC, wall time was 12.4 minutes. This is 31% shorter than run 272's 18.0-minute baseline and meets the 15-minute goal. The longest .NET job was Host shard 3/4 at 9.7 minutes; end-to-end took 7.2 minutes.
+
+Run 276 job durations:
+
+| Job | Duration |
+|---|---:|
+| End-to-end | 7.2 min |
+| Rust tests | 2.8 min |
+| .NET build | 2.6 min |
+| Host tests 1/4 | 4.9 min |
+| Host tests 2/4 | 4.3 min |
+| Host tests 3/4 | 9.7 min |
+| Host tests 4/4 | 8.0 min |
+| Space tests 1/2 | 5.8 min |
+| Space tests 2/2 | 8.4 min |
+| Other tests 1/3 | 5.8 min |
+| Other tests 2/3 | 5.3 min |
+| Other tests 3/3 | 5.7 min |
+| Rust format and clippy | 0.5 min |
+| Rust latest stable (advisory) | 0.5 min |
+| Python client | 0.2 min |
+| Fixture generation | 0.1 min |
+
+The .NET matrix writes one TRX file per test project or shard and uploads it even when a test job fails. The project table above uses the TRX test-session start-to-finish span and records executed case counts; Host and Space test assemblies appear as separate shard rows.
 
 | Run | Commit | Result | Sum of job durations |
 |---|---|---|---|
@@ -71,8 +199,12 @@ Runs 172–174 (SHAs `dce9440d`, `75f01741`, and `f308d922`) each reached a conc
 
 Run 205 on `af059238` reported `ControlTowerHostTests.A_control_tower_burns_one_period_of_its_race_fuel_and_goes_offline_when_the_bay_cannot_pay` with 0 fuel blocks where the test expected 40 after unanchoring; the Space shard passed on run 209 (`6eaa703e`) in 13.6 minutes. No code change for this case separates those runs, so the failure did not reproduce. Run 219 on `429e17da` reproduced a different live assertion: `OnInvulnCancelled` arrived before `DoDestinyUpdate` during the movement walk, this time at the speed-fraction step. `compare_events` now checks the invulnerability notice and payload independently from the simulation event sequence, while preserving the order and payload checks for both streams. A focused fixture comparison with the two notifications reversed passed locally; a follow-up CI result is pending. Run 219 also failed `.NET (all other tests)` in `Eve.Market.Tests.MarketLockOrderTests` for `PlaceAsync`: the source guard searched the public wrapper for locks after lock acquisition moved into `PlaceWithinTransactionAsync`. The guard now verifies that `PlaceAsync` and `PlaceBuyOrdersAsync` delegate to that helper, then checks the helper's lock order. The focused `MarketLockOrderTests` run passed locally (4 tests); CI for this correction is pending. Run 219 also failed the Host shard in `CrateServicePersistenceTests.Crate_custom_info_and_claim_fitting_round_trip_through_postgres_and_gamestore`: the fitting read was composed with a null `IFittingHost`, and its owner-access check dereferenced it. The test now supplies a host stub that permits only the fixture character to read its character-scoped fittings. The focused PostgreSQL Host test passed locally (1 test); CI for this correction is pending.
 
-Run 236 on `de3ec3a4` passed Rust format/clippy, Rust tests, fixtures, Python, the live walk, .NET build, Host and all-other .NET shards. Its Space shard failed four session-close assertions that still expected a station hangar. `SpaceSessions` now receives the rig’s PostgreSQL `PgSpaceItemStore` and persists the active ship pose on disconnect, leaving the hull in its current system; the expected state is an in-space inventory item plus its saved `SpaceItem`. The affected tests now wait for `SpaceSessions.QuiesceAsync` and check the persisted system after normal disconnect, safe logoff, a gate jump and pending ammunition writes. Focused local execution and the next Required CI gate are pending.
-Run 237 on `26af10bf` failed Rust clippy in 13 `empty_line_after_doc_comments` diagnostics. `tools/dev/prune-comments.py` had removed individual lines inside Rust documentation blocks and left the remaining doc lines separated from their items. The pruner now preserves Rust and C# API documentation comments, and the affected Rust blocks are complete again. The next Required CI gate is pending.
+Run 236 on `de3ec3a4` passed Rust format/clippy, Rust tests, fixtures, Python, the live walk, .NET build, Host and all-other .NET shards. Its Space shard failed four session-close assertions that still expected a station hangar. `SpaceSessions` now receives the rig’s PostgreSQL `PgSpaceItemStore` and persists the active ship pose on disconnect, leaving the hull in its current system; the expected state is an in-space inventory item plus its saved `SpaceItem`. The affected tests now wait for `SpaceSessions.QuiesceAsync` and check the persisted system after normal disconnect, safe logoff, a gate jump and pending ammunition writes. Run 256 on `866916fc` passed these assertions in the Space shard.
+Run 237 on `26af10bf` failed Rust clippy in 13 `empty_line_after_doc_comments` diagnostics after Rust documentation comments were separated from their items. Run 256 on `866916fc` passed Rust format and clippy.
 
-Run 255 on `df7c88cf` reached a conclusion but its Required CI gate failed only because the Space shard had four disconnect assertions expecting ships in station hangars. The runtime persists a disconnected active ship in its current solar system, with an in-space inventory flag and saved `SpaceItem`; those assertions now wait for session work to quiesce and verify that persisted state. The focused Space test run is queued for the next CI gate. The run’s Linux Rust, Python, fixture, live, .NET build, Host and all-other .NET jobs passed. The gate completed in 20.8 minutes. `cancel-queued --branch main --workflow ci.yml --sha df7c88cf` found no queued CI runs to clear. The branch-scoped pending-run policy, Windows path filter, and Linux-only required gate are already active in both workflows.
+Run 255 on `df7c88cf` reached a conclusion but its Required CI gate failed only because the Space shard had four disconnect assertions expecting ships in station hangars. The runtime persists a disconnected active ship in its current solar system, with an in-space inventory flag and saved `SpaceItem`; those assertions now wait for session work to quiesce and verify that persisted state. The focused Space test run passed on run 256. The run’s Linux Rust, Python, fixture, live, .NET build, Host and all-other .NET jobs passed. The gate completed in 20.8 minutes. `cancel-queued --branch main --workflow ci.yml --sha df7c88cf` found no queued CI runs to clear. The branch-scoped pending-run policy, Windows path filter, and Linux-only required gate are already active in both workflows.
+
+Run 256 on `866916fc` passed the Required CI gate: Rust format/clippy, Rust tests, fixtures, Python, the end-to-end walk, .NET build, and all three .NET test shards succeeded. The updated disconnect assertions passed in the Space shard. The required gate completed successfully at [run 256](https://github.com/Fokiiiiiii/eve.rs/actions/runs/39317419198).
 Windows workflow handoff for cx32: in runs 194 (`d01856d3`) and 195 (`95512e4f`), PostgreSQL 18 installation/readiness, Rust tests and the .NET build completed, but `Run PostgreSQL-backed .NET test projects` (whole-solution `dotnet test EveRs.slnx`) continued until the 45-minute job timeout canceled it, about 35 minutes into that step. This is the separate Windows diagnostic workflow; it does not block the Required CI gate. Please investigate why the Windows solution test command does not finish within the remaining job time.
+
+Run 269 on `a3a1f373` passed Rust format/clippy, Rust tests, fixtures, Python, the end-to-end walk, .NET build, the Space shard and the Host shard. The all-other .NET shard failed only in `CoreCatalogTests.Core_factory_exposes_node_graph_callback_for_host_wiring`: its QA RPC test session had no `accountRole` staff grant, so the intentional QA authorization check did not forward the callback. The fixture now grants the QA role before invoking `qa_unsubscribe`; the focused test passed locally (1 test). Run 270 on `ec9575b0` repeated that single failure because it ran before the fixture correction was merged. Run 272 on `f1539c1` passed all Linux jobs and the Required CI gate: [run 272](https://github.com/Fokiiiiiii/eve.rs/actions/runs/39338882753). It is the first green required gate after the fixture correction; the separate Windows workflow was still in progress when checked. The prior recorded-walk and Host `InventoryRpc` failures are resolved as recorded above: GM walk expectations match the recorded role behavior, and character-only inventory composition omits the space-only callback when no space session provider exists. The currently configured `ci.yml` branch concurrency keeps one active push run and one replaceable pending run; its Required CI gate does not wait for Windows. Run 271 for `7c780c90` was superseded while pending. Runs 272 (`f1539c1`) and 273 (`e2c4be90`) both reached successful conclusions with their Required CI gates green; run 273 completed all Linux checks, including the newly split Space test shards, in 15.2 minutes. The gate reports success independently of the separate Windows workflow.

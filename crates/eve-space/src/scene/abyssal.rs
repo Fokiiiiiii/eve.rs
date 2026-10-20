@@ -3,6 +3,8 @@ use super::*;
 use crate::link::{AbyssalBoundaryDamagePoint, AbyssalSceneObject};
 use crate::world::Body;
 
+const ABYSSAL_ROOM_PROTECTION: i64 = 60 * TICKS_PER_SECOND;
+
 impl Scene {
     pub(crate) fn abyssal_scene_is_clear(&self) -> bool {
         self.abyssal_scene_is_clear_except_missiles() && self.missiles.is_empty()
@@ -308,6 +310,9 @@ impl Scene {
         pilot.jump = None;
         pilot.tether = Default::default();
         pilot.jumped_in = true;
+        if destination.abyssal.is_some() {
+            pilot.protected_until = now.saturating_add(ABYSSAL_ROOM_PROTECTION);
+        }
         pilot.sees.clear();
         pilot.sees_wrecks.clear();
         pilot.sees_abyssal_traces.clear();

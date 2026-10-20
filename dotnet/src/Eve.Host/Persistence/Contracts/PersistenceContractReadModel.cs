@@ -76,6 +76,24 @@ public sealed class PersistenceContractReadModel : IContractReadModel
                 ADD COLUMN title text NOT NULL DEFAULT '',
                 ADD COLUMN description text NOT NULL DEFAULT '';
             """),
+        new Eve.Data.Migration("0003_contract_requested_items", """
+            CREATE TABLE contract_requested_items (
+                contract_id bigint NOT NULL REFERENCES contract_records(contract_id) ON DELETE CASCADE,
+                type_id integer NOT NULL CHECK (type_id > 0),
+                quantity bigint NOT NULL CHECK (quantity > 0),
+                PRIMARY KEY (contract_id, type_id)
+            );
+            """),
+        new Eve.Data.Migration("0004_contract_settlement_terms", """
+            ALTER TABLE contract_records
+                ADD COLUMN issuer_wallet_account_key integer NOT NULL DEFAULT 1000 CHECK (issuer_wallet_account_key BETWEEN 1000 AND 1006),
+                ADD COLUMN issuer_item_flag integer NOT NULL DEFAULT 4 CHECK (issuer_item_flag BETWEEN 4 AND 121);
+            """),
+        new Eve.Data.Migration("0005_contract_reward_term", """
+            ALTER TABLE contract_records
+                ADD COLUMN reward_isk numeric(28, 2) NOT NULL DEFAULT 0 CHECK (reward_isk >= 0);
+            UPDATE contract_records SET reward_isk = reward_escrow;
+            """),
     ];
 
     public static Task MigrateAsync(

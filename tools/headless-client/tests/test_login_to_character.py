@@ -20,6 +20,7 @@ import json
 import os
 import re
 import uuid
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -879,6 +880,32 @@ def training_client(name: str, recording: dict, recorded_run: str, run: str, ids
     assert kind == "ok", brief(made)
     assert attempt(client, "charUnboundMgr", "SelectCharacterID", int(made), None, False) == ("ok", None)
     return client, int(made)
+
+def test_personal_calendar_event_notifies_an_online_invitee_after_commit():
+    run = uuid.uuid4().hex[:8]
+    creator_run, invitee_run = f"{run}a", f"{run}b"
+    race = TRAINING["races"][0]
+    creator, creator_id = training_client(f"walk-calendar-owner-{run}", race, RECORDED_TRAINING_RUN, creator_run, {})
+    invitee, invitee_id = training_client(f"walk-calendar-invitee-{run}", race, RECORDED_TRAINING_RUN, invitee_run, {})
+    try:
+        notifications_of(invitee)
+        event_time = int((datetime.now(timezone.utc) + timedelta(days=2)).timestamp() * 10_000_000) + 116_444_736_000_000_000
+        event_id = m.plain(creator.call(
+            "calendarMgr", "CreatePersonalEvent", event_time, 60, "Calendar integration", "Invite notification", 0, [invitee_id]
+        ))
+        assert event_id > 0
+        event = m.plain(creator.call("calendarProxy", "GetEventDetails", event_id, creator_id))
+        assert event["eventText"] == "Invite notification"
+        received = notifications_of(invitee)
+        created = [notice for notice in received if notice["name"] == "OnNewCalendarEvent"]
+        assert len(created) == 1, received
+        event_payload = created[0]["args"]["$tuple"][1]["$tuple"][1]["$tuple"][0]["$tuple"]
+        assert event_payload[0] == {"$long": event_id}
+        assert event_payload[4] == "Calendar integration"
+    finally:
+        creator.close()
+        invitee.close()
+
 
 def id_mapping(recorded_character: int, character: int, skills) -> dict[int, int]:
     """The ids of a recording that belong to the run: the character, and the item id of each of its skills (the character's id and the type)."""

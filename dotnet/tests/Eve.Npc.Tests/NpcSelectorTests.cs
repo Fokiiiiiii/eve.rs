@@ -47,8 +47,6 @@ public sealed class NpcSelectorTests
         return selection;
     }
 
-    // ── what a query names ───────────────────────────────────────────────────
-
     [Theory]
     [InlineData("alpha_frigate")]
     [InlineData("Alpha Frigate")]
@@ -183,8 +181,6 @@ public sealed class NpcSelectorTests
         Assert.Equal("Rat 0 (rat_0)", suggestions[0]);
         Assert.Equal(["a", "b"], NpcSelector.DedupeSuggestions([" a", "a ", "", "b", "a"]));
     }
-
-    // ── what is rolled ───────────────────────────────────────────────────────
 
     [Fact]
     public void A_profile_is_made_as_many_times_as_asked()
@@ -325,8 +321,6 @@ public sealed class NpcSelectorTests
         Assert.Null(authority.Loadout("no_such_loadout"));
     }
 
-    // ── what is derived ──────────────────────────────────────────────────────
-
     [Fact]
     public void A_standard_pool_is_its_base_pool_without_commanders_and_officers()
     {
@@ -342,8 +336,6 @@ public sealed class NpcSelectorTests
         // the pools that have no base here are not made
         Assert.Null(authority.Pool("sanshas_standard"));
     }
-
-    // ── the authored data ────────────────────────────────────────────────────
 
     [Fact]
     public void The_authored_data_is_in_the_assembly_and_whole()

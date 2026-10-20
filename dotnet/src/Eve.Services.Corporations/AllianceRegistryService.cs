@@ -992,7 +992,9 @@ public AllianceRegistryService(CorporationStore store, PgCharacterStore characte
             PyTuple tuple => tuple.Items,
             _ => Array.Empty<PyValue>()
         };
-        return items.Select(Number).Where(id => id > 0).ToArray();
+        if (items.Count > MaxAllianceContactIds)
+            throw new CorporationError("ALLIANCE_BULK_LIMIT_EXCEEDED");
+        return items.Select(Number).Where(id => id > 0).Distinct().ToArray();
     }
 
     private static PyValue EveOwnerRow(long ownerId, string ownerName, int typeId, int gender)

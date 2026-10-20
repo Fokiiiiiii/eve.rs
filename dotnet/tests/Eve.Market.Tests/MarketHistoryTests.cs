@@ -10,7 +10,6 @@ using Npgsql;
 namespace Eve.Market.Tests;
 
 /// <summary>
-/// M5 (market-decisions Q16): the price history is one row per day of the region's fills: the volume-weighted average, the low and high fill
 /// prices, the volume (the sum of the quantities) and the number of fills. "Old" holds the days before today and "new" the day in progress,
 /// which is how the client reads them (marketsvc.py:344-366). Read through the market service, as the client reads them.
 /// </summary>

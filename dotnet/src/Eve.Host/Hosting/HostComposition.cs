@@ -192,7 +192,8 @@ internal static class HostComposition
                 : throw new InvalidOperationException("the control towers are not wired on this server"),
             contractReadModel: contractReadModel,
             contractWriteModel: contractWriteModel,
-            contractSkillLevel: contractSkillLevel))
+            contractSkillLevel: contractSkillLevel,
+            calendarSessions: characterSessions))
         {
             registry.Register(service);
         }

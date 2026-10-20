@@ -32,7 +32,8 @@ public static class CoreServices
         Func<ClientSession, bool>? isShipInSpace = null,
         IContractReadModel? contractReadModel = null,
         IContractWriteModel? contractWriteModel = null,
-        Func<long, int, CancellationToken, ValueTask<int>>? contractSkillLevel = null)
+        Func<long, int, CancellationToken, ValueTask<int>>? contractSkillLevel = null,
+        CharacterSessions? calendarSessions = null)
     {
         gameRpcCallbacks ??= new GameRpcCallbacks();
         var licenses = new OmegaLicenses(accounts, nowUnixMs);
@@ -40,7 +41,7 @@ public static class CoreServices
         var calendarManager = calendarStore is null
             ? new CalendarMgrService()
             : new CalendarMgrService(calendarStore,
-                calendarAudience ?? throw new ArgumentNullException(nameof(calendarAudience)));
+                calendarAudience ?? throw new ArgumentNullException(nameof(calendarAudience)), calendarSessions);
         var calendarProxy = calendarStore is null
             ? new CalendarProxyService()
             : new CalendarProxyService(calendarStore);

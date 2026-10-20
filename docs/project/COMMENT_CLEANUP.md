@@ -80,6 +80,7 @@
 | `dotnet/tests/Eve.GameStore.Import.Tests` (2 C# files; reviewed) | 5 | 5 | 2026-10-20 |
 | `dotnet/tests/Eve.GameStore.Tests` (8 C# files) | 30 | 28 | 2026-10-20 |
 | `dotnet/tests/Eve.Identity.Tests` (7 C# files; reviewed) | 18 | 18 | 2026-10-20 |
+| `dotnet/tests/Eve.Insurgency.Tests` (3 C# files; reviewed) | 10 | 10 | 2026-10-20 |
 | `dotnet/src/Eve.Insurgency` (5 C# files; migrations reviewed) | 99 | 87 | 2026-10-20 |
 | `dotnet/src/Eve.Dungeons` (5 C# files) | 101 | 49 | 2026-10-20 |
 | `dotnet/src/Eve.Fitting` (8 C# files; migrations reviewed) | 97 | 78 | 2026-10-20 |

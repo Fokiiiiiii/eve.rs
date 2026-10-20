@@ -51,11 +51,25 @@ public sealed class ContractWriteModelTests
         ContractCreationRules.ValidateItemExchangeTerms(Request(availability: 1, assigneeId: 300));
     }
 
+    [Fact]
+    public void Contract_creation_accepts_auction_terms_and_requires_courier_endpoints_and_duration()
+    {
+        ContractCreationRules.ValidateItemExchangeTerms(Request(contractType: 2));
+        ContractCreationRules.ValidateItemExchangeTerms(Request(contractType: 3, endStationId: 700, numDays: 7));
+        Assert.Throws<ArgumentException>(() =>
+            ContractCreationRules.ValidateItemExchangeTerms(Request(contractType: 3)));
+        Assert.Throws<ArgumentException>(() =>
+            ContractCreationRules.ValidateItemExchangeTerms(Request(contractType: 2, endStationId: 700)));
+    }
+
     private static CreateItemExchangeRequest Request(
         int expiryMinutes = 1440,
         int availability = 0,
         long assigneeId = 0,
         decimal price = 5,
+        short contractType = 1,
+        long endStationId = 0,
+        int numDays = 0,
         IReadOnlyList<ContractOfferedItem>? items = null,
         string? title = null,
         string? description = null) => new(
@@ -75,5 +89,9 @@ public sealed class ContractWriteModelTests
         WalletAccountKey: 1000,
         Title: title ?? "Exchange",
         Description: description ?? "",
-        Items: items ?? [new ContractOfferedItem(10, 1)]);
+        Items: items ?? [new ContractOfferedItem(10, 1)],
+        ContractType: contractType,
+        EndStationId: endStationId,
+        Collateral: 0,
+        NumDays: numDays);
 }

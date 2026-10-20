@@ -98,4 +98,24 @@ public sealed class XmppChatHub
 
     private ClientSession? SessionOf(long characterId) =>
         _sessions.Snapshot().FirstOrDefault(session => session.CharacterId == characterId);
+
+    internal IReadOnlyList<string> StaticAccessChannels(ClientSession session)
+    {
+        if (session.CharacterId is not { } characterId || characterId <= 0
+            || !ReferenceEquals(SessionOf(characterId), session))
+            return [];
+
+        var channels = new List<string>(4);
+        var systemId = session.GetInt("solarsystemid2") ?? session.GetInt("solarsystemid") ?? 0;
+        if (systemId > 0)
+            channels.Add(Eve.Host.PublicGateway.LocalChatGateway.LocalChannelName(systemId));
+
+        if (session.GetInt("allianceid") is { } allianceId && allianceId > 0)
+            channels.Add($"alliance_{allianceId}");
+        if (session.GetInt("corpid") is { } corporationId && corporationId > 0)
+            channels.Add($"corp_{corporationId}");
+        if (session.GetInt("fleetid") is { } fleetId && fleetId > 0)
+            channels.Add($"fleet_{fleetId}");
+        return channels;
+    }
 }

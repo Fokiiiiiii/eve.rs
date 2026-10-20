@@ -112,12 +112,14 @@ internal static class HostComposition
             Func<long> clock = () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             foundations = await Foundations.CreateAsync(source, clock, Env, message => Console.Error.WriteLine($"eve-host: {message}"));
             var contractExpiryJobs = new Eve.Host.Persistence.ContractExpiryJobs(source, contractItems, contractWallets,
-                foundations.Scheduler, contractSchema);
+                foundations.Scheduler, contractSchema, foundations.Events);
             contractExpiryJobs.Register();
             contractWriteModel = new Eve.Host.Persistence.PersistenceContractWriteModel(source, contractItems, contractWallets,
-                clock, contractSchema, contractExpiryJobs);
+                clock, contractSchema, contractExpiryJobs, foundations.Events);
             legacy = await LegacyGameStoreComposition.OpenAsync(source);
             (characterServices, space, simulation, crimewatch, calendarStore, calendarAudience, gameRpcCallbacks, keeperRpcCallbacks, characterSessions) = await CharacterServicesComposition.CharacterServicesAsync(source, directory, online, clock, foundations, legacy.Store, legacy.Owner, legacy.Cache, options.NewCharacterExperienceMode, new AccountOmegaStore(directory), connected);
+            if (characterSessions is not null)
+                new Eve.Host.Persistence.ContractNotifications(characterSessions).Subscribe(foundations.Events);
             // the public gateway's skill plans: the tables are the skills module's (migration 0009, applied with its store)
             var gateway = new Dictionary<string, PublicGateway.GatewayHandler>(StringComparer.Ordinal);
             var skillCatalog = await Eve.Skills.SkillCatalog.LoadAsync(new Eve.Sde.SdeReader(source, Env("EVE_SDE_SCHEMA", Eve.Sde.SdeReader.DefaultSchema)));

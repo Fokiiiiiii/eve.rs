@@ -62,6 +62,7 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
     private const int ScientificNetworkingSkillId = 24270;
     private const int RemoteReactionsSkillId = 45750;
     private const int LowerInventionSkillTypeListId = 799;
+    private const int JobCostMultiplierAttribute = 1954;
     private const long FactoryManagerRole = 1024;
     private const long DirectorRole = 1;
     // The client's roles for a corporation job (industry/const.py): manufacturing needs the manufacturing role, every other activity the science role.
@@ -393,9 +394,11 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
         var modifier = (job.ActivityId == ManufacturingActivity
             ? IR.MaterialEfficiencyModifier(blueprint.MaterialEfficiency)
             : 1.0) * bonus;
+        // A copy's material runs are its runs times its licensed runs (the client's Copying.job_material_runs); the floor is the runs.
+        var materialRuns = job.ActivityId == CopyingActivity ? (long)job.Runs * job.LicensedRuns : job.Runs;
         foreach (var material in recipe.Materials)
         {
-            var amount = IR.MaterialQuantity(material.Quantity, modifier, job.Runs, job.Runs);
+            var amount = IR.MaterialQuantity(material.Quantity, modifier, materialRuns, job.Runs);
             required[material.TypeId] = checked(required.GetValueOrDefault(material.TypeId) + amount);
         }
         if (job.OptionalTypeId is { } optionalTypeId)
@@ -426,12 +429,13 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
             case ManufacturingActivity:
                 seconds = recipe.TimeSeconds * job.Runs;
                 modifiers.Add(IR.TimeEfficiencyModifier(blueprint.TimeEfficiency));
-                var industry = 0d;
+                // Each industry skill is its own PostPercent modifier of the time attribute, so the bonuses multiply (dogma stacking).
                 foreach (var (skillId, attributeId) in new[] { (IndustrySkillId, 440), (AdvancedIndustrySkillId, 1961) })
-                    industry += (await ReadTypeAttributeAsync(skillId, attributeId, cancellationToken) ?? 0) *
-                        await LevelOf(skillId) / 100d;
-                if (industry != 0)
-                    modifiers.Add(1.0 + industry);
+                {
+                    var perLevel = await ReadTypeAttributeAsync(skillId, attributeId, cancellationToken) ?? 0;
+                    if (perLevel != 0)
+                        modifiers.Add(IR.SkillModifier(perLevel, await LevelOf(skillId)));
+                }
                 foreach (var requirement in recipe.Skills)
                 {
                     var perLevel = await ReadTypeAttributeAsync(requirement.TypeId, 1982, cancellationToken) ?? 0;

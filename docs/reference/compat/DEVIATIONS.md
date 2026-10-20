@@ -3937,8 +3937,16 @@ Full status: `docs/project/INDUSTRY_STATUS.md`. Decisions recorded here:
 
 ## Industry slice I5: client rounding (2026-10-19)
 
-- V24 `industry/job.py` uses Python `round` for material quantities (two decimal places before `ceil`), rounded cost shares and job duration. Python ties-to-even differs from the prior `IndustryRules` midpoint-away-from-zero rule. `IndustryRules.MaterialQuantity` and `Round` now use ties-to-even. Table cases cover the exact half shares and a 201-second base duration at a 0.5 multiplier (100 seconds). No deviation from the client is intended.
+- SUPERSEDED by slice I6: the ties-to-even rule recorded here was wrong. The V24 client is Python 2 (`long(...)`, `iteritems`), where `round()` breaks ties away from zero.
 - Rechecked for EveJS delta item 5: `IndustryRulesTests` passed 29/29 and `IndustryCorporationPersistenceTests` passed 8/8 on eve_p2. Corporation output selection defaults to flag 62 (`Corp Deliveries`); selecting a hangar division persists that chosen destination. These tests support the implementation state recorded in `INDUSTRY_STATUS.md`; graphical-client acceptance remains open.
+
+## Industry slice I6: client arithmetic corrections (2026-10-20)
+
+- **Rounding mode.** The client is Python 2 (`industry/job.py` uses `long(...)`; the client uses `iteritems` throughout), so `round()` breaks ties away from zero. `IndustryRules.Round` and `MaterialQuantity` now use `MidpointRounding.AwayFromZero` (the slice I5 ties-to-even rule is reverted). Evidence: `job.py:127-133, 460-466, 470-483`.
+- **Cost part.** The client multiplies the unrounded job cost by the cost modifiers (system index, facility bonuses, blueprint `jobCostMultiplier` 1954, `BLUEPRINT_MODIFIERS`) and rounds once (`Job._get_cost`). The base cost is rounded first only for the tax, SCC and security shares (`base_cost`). `IndustryRules.CostParts` now takes the unrounded job cost.
+- **Industry skills.** Industry (440) and Advanced Industry (1961) are separate PostPercent modifiers of the time attribute (client attribute 219), so they multiply; they were summed.
+- **Copying materials.** A copy's material runs are runs times licensed runs (`copying.py` `job_material_runs`); the per-run floor stays the runs.
+- Not done: the alpha-clone additive industry tax (`CLONE_STATE_INDUSTRY_TAX`) and the faction cost modifier (`globalModifiers['faction']`) are not modelled. Tests: `IndustryRulesTests` 35 of 35 (Eve.Services.Core.Tests); `dotnet test tests/Eve.Host.Tests --filter Industry` 27 of 27 on eve_p2.
 
 ## Planetary interaction (PI)
 

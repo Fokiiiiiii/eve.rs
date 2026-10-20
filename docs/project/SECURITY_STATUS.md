@@ -54,7 +54,7 @@ On 2026-10-19, the slash command registry was traced in `dotnet/src/Eve.Services
 
 | Entry class | Review result | Coverage |
 | --- | --- | --- |
-| Slash `SlashCmd` | Checked: common server-side staff gate precedes every registered handler. | Added catalog-driven non-staff refusal regression test; focused .NET test awaits package restore. |
+| Slash `SlashCmd` | Checked: common server-side staff gate precedes every registered handler. | `SlashCatalogTests.Every_registered_command_is_refused_to_a_session_without_a_staff_role` passed; it enumerates the active command catalog and checks non-staff refusal. |
 | Slash `ReportSlashCommandUsage` | Read-only telemetry endpoint; does not dispatch commands. | Source reviewed. |
 | Public QA RPCs `MoveMeTo`, `SlashCmd`, `CanGiveItemForMultifit` | Checked: each requires a staff bit in server-set `accountRole` through `GameMasterRoles.Staff`; generic `role` and `rolesAtAll` values do not authorize. | Added one test that invokes all three as staff, then verifies a non-staff session with spoofed generic role fields cannot reach callbacks. |
 | `planetMgr.GMForceInstallProgram`, `GMAddCommodity`, `GMConvertCommandCenter`, `GMGetSynchedServerState` | Checked: GML is required by the common `RequireGameMaster` gate. | Source reviewed; no new role regression in this slice. |

@@ -156,7 +156,7 @@ The following rows distinguish existing code and regression coverage from behavi
 | Abyssal and site content | The current simulator and Host tests cover selected Abyssal protection, weather, death settlement, dungeon waves, and site expiry. | Other Abyssal tiers/fits and the per-record V24 site compositions, loot, completion, and respawn behavior remain open. Pack data built from newer client releases is not a substitute for V24 source data. |
 | Mail, contacts, and GM commands | The corresponding services have independent RPC and persistence tests in their domain test projects. | Reconcile each release-note change against its V24 callsite and end-to-end flow; a service-level regression alone does not establish parity for every listed change. |
 
-The `eve_p4` lane was occupied during this source pass. Its focused PostgreSQL regressions remain queued for execution; a pass is recorded only when an execution log exists.
+Focused regressions ran on eve_p4 on 2026-10-20: `AnalysisBeaconHostTests` 12/12 (including the public-wreck move), `AnalysisBeaconRulesTests` 12/12 (including pinned reward/SDE data and both BPC recipes), `SpaceContainerTests` 19/19, `UndockContrabandTests` 6/6, safe-logoff 3/3, bomb launch 1/1, and breacher launch 1/1. Rust checks passed for CRAB resistance/status-tail 3/3, Defender interception/expiry 2/2, and breacher timing 1/1. The earlier 0-cargo result did not reproduce; the full current Host suite placed the 1,441-item stack in the taking ship’s cargo.
 
 ## Release features with existing runtime and regression evidence
 

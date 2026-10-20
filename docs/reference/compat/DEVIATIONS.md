@@ -1,5 +1,9 @@
 # Deviations from the reference server
 
+## Agent GetAgents wire columns (2026-10-20)
+
+`agentMgr.GetAgents` returns the 15 columns produced by EveJS 261018.1. System, dungeon, spawn and type metadata remain in the server catalog for `GetSolarSystemOfAgent` and are not serialized in this rowset. The client adds its own system and faction fields after loading the table. `AgentMissionServiceTests.Agent_mgr_agents_and_location_match_the_reference_rowset_and_scalar` and `AgentCatalogSdeTests` cover the wire and catalog data.
+
 ## Account session exclusivity (2026-10-19)
 
 Host admission replaces an existing live connection when the same account opens a later client. The server sends the old connection a disconnect reason and updates the shared `ConnectedSessions` owner atomically; a late close from the old session cannot remove the new session. The V24.01 selection call paths and the release `multiLoginBlockerService.js:87-90` only address different accounts on one computer, while CCP's [Alpha clone guidance](https://support.eveonline.com/hc/en-us/articles/213811425-Alpha-Clones-and-Omega-Clone-lapsing-Quick-Facts) states an Alpha client prevents another client login. eve.rs applies one active client per account across its front connections. Host unit coverage exercises replacement, stale close and concurrent account opens. A headless live walk used two independent clients with the same account credentials: the earlier connection received the replacement reason and then closed, while the new session answered pings. The walk used the in-memory account store and did not exercise a graphical client.

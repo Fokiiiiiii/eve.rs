@@ -105,6 +105,13 @@ public sealed class PgDeployedStore
         return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
     }
 
+    public async Task<bool> RemoveAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long deployableId, CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand($"DELETE FROM {_schema}.deployed WHERE deployable_id = $1", connection, transaction);
+        command.Parameters.Add(new NpgsqlParameter { Value = deployableId });
+        return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
+    }
+
     /// <summary>The deployed records of one kind, by id.</summary>
     public async Task<IReadOnlyList<DeployedRecord>> ByKindAsync(string kind, CancellationToken cancellationToken = default)
     {

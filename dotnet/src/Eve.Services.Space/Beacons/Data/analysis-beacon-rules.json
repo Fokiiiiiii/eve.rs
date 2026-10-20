@@ -1,6 +1,6 @@
 {
   "schema": "eve.rs/analysis-beacon-rules/v1",
-  "owner": "Owner decision D-C1 (docs/project/TODO.md, CRAB). CCP publishes no CRAB Rogue Drone roster, wave count, cadence or reward quantity. These figures are EveJS v0.12.9's (crabWaveAuthority.js: batchAmount and pool; crabRewardAuthority.js: the observed standard and Carrier sample). They are eve.rs rule constants, not CCP data. Both waves are in this file: the first at scan progress 0 and EveJS's second at 0.5 (the same pool and amount in EveJS crabWaveAuthority.js; the CCP guide says Rogue Drone waves block the scan until they are cleared).",
+  "owner": "Owner decisions D-C1 and Q-20 (docs/project/TODO.md, CRAB; docs/project/OWNER_QUESTIONS_LOG.md). CCP publishes no CRAB Rogue Drone roster, wave count, cadence or reward quantity. Wave values and existing Infestation Data/sample mutaplasmid quantities follow EveJS v0.12.9 (crabWaveAuthority.js and crabRewardAuthority.js); the four Mutaplasmid families per variant follow report 1 section 9, with quantity one where the report is silent. These are eve.rs rule constants, not CCP data. Both waves are in this file: the first at scan progress 0 and the second at 0.5 (the same pool and amount in EveJS crabWaveAuthority.js; the CCP guide says Rogue Drone waves block the scan until they are cleared). All reward stacks are created in the deployed beacon inventory before the timed wreck transition.",
   "beacons": [
     {
       "typeId": 60244,
@@ -11,6 +11,14 @@
         },
         {
           "typeId": 60466,
+          "quantity": 1
+        },
+        {
+          "typeId": 60463,
+          "quantity": 1
+        },
+        {
+          "typeId": 60465,
           "quantity": 1
         },
         {
@@ -40,6 +48,18 @@
         },
         {
           "typeId": 60473,
+          "quantity": 1
+        },
+        {
+          "typeId": 60472,
+          "quantity": 1
+        },
+        {
+          "typeId": 60474,
+          "quantity": 1
+        },
+        {
+          "typeId": 60475,
           "quantity": 1
         }
       ],

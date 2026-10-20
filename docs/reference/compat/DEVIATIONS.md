@@ -4510,8 +4510,7 @@ donation sections it marks outdated. Design: `docs/project/FW_DESIGN.md`.
     holding moves the score one point toward that side. Both sides present, or neither, pause the timer.
   - Score: the SDE fwScoreboard thresholds (-150 and +150). The battlefield is won at a threshold: with three points held by one side, that is about
     1,000 s. (The wiki gives no hold time; the SDE's values are used.)
-  - Completion: 2,000 victory points to the system (wiki), and LP to the winners: 150,000 split evenly over the first 30 winners by character id
-    (5,000 each, wiki "up to 150,000 LP for up to 30 participants"); the other winners get nothing (the wiki says "reduced"; its value is not given).
+  - Completion: 2,000 victory points to the system (wiki), and LP to the first 30 winners by character id: the V24.01 checkpoint pool is 50,000 LP, so the integer share is 1,666 each (49,980 total); the remaining 20 LP is not assigned. Later battlefield changes are outside the June 16 checkpoint. The other winners get nothing because the checkpoint source gives no reduced amount.
     The winners' victory points (2,000 split evenly, rounded down) go to the daily statistics rows. The site ends with the battlefield.
   - Spawn: occupied systems, up to two open at a time, one per system, three hours after a completion (wiki).
   - Not built: the frontline choice (every occupied system is a candidate), the NPC blockers of a point, the objectives (archetype 67, and

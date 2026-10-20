@@ -8,7 +8,6 @@ namespace Eve.Services.CharacterSelect;
 /// The multi-login check of the SSO login: <c>multiLoginBlocker.Login(computerHash)</c>, which the client calls before it opens
 /// a character (characterSelection.py _CanLogin; only when the login carries a computer hash). A session that asks is recorded
 /// with its account, its computer hash and its clone grade. The answer is False when another account is logged in from the
-/// same computer and either account is Alpha (the reference's rule, EveJS multiLoginBlockerService.js). Two Omega accounts may
 /// share a computer. A session that closes is forgotten.
 /// </summary>
 [Service("multiLoginBlocker")]

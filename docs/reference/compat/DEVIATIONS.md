@@ -3938,6 +3938,7 @@ Full status: `docs/project/INDUSTRY_STATUS.md`. Decisions recorded here:
 ## Industry slice I5: client rounding (2026-10-19)
 
 - V24 `industry/job.py` uses Python `round` for material quantities (two decimal places before `ceil`), rounded cost shares and job duration. Python ties-to-even differs from the prior `IndustryRules` midpoint-away-from-zero rule. `IndustryRules.MaterialQuantity` and `Round` now use ties-to-even. Table cases cover the exact half shares and a 201-second base duration at a 0.5 multiplier (100 seconds). No deviation from the client is intended.
+- Rechecked for EveJS delta item 5: `IndustryRulesTests` passed 29/29 and `IndustryCorporationPersistenceTests` passed 8/8 on eve_p2. Corporation output selection defaults to flag 62 (`Corp Deliveries`); selecting a hangar division persists that chosen destination. These tests support the implementation state recorded in `INDUSTRY_STATUS.md`; graphical-client acceptance remains open.
 
 ## Planetary interaction (PI)
 

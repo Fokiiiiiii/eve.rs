@@ -16,6 +16,15 @@ public sealed partial class CorporationStore
         await using var r = await command.ExecuteReaderAsync(token);
         return await r.ReadAsync(token) ? ReadMember(r) : null;
     }
+    public async Task<bool> HasRoleAsync(long actor, long corporationId, long role, CancellationToken token = default)
+    {
+        if (actor <= 0 || corporationId <= 0 || role <= 0) return false;
+        await using var connection = await _source.OpenConnectionAsync(token);
+        await using var transaction = await connection.BeginTransactionAsync(token);
+        var corporation = await GetAsync(connection, transaction, corporationId, locked: false, token);
+        return corporation is not null && await HasRoleAsync(connection, transaction, corporation, actor, role, token);
+    }
+
     private async Task<bool> HasRoleAsync(NpgsqlConnection connection,NpgsqlTransaction tx,Corporation corp,long actor,long role,CancellationToken token)
     {
         var character = await _characters.LockAndGetAsync(connection,tx,actor,token);

@@ -108,7 +108,10 @@ internal sealed partial class CharacterServicesComposition
                 },
                 async (characterId, token) => await characters.PaperdollStateAsync(characterId, token),
                 globalAssetsInventoryCall: call => ((IService)globalAssetsInventory).CallAsync(call),
-                readBalance: async (characterId, token) => (await wallets.GetAsync(characterId, token))?.Isk),
+                readBalance: async (characterId, token) => (await wallets.GetAsync(characterId, token))?.Isk,
+                canReadPrivateCorporationMemberInfo: async (characterId, corporationId, token) =>
+                    await corporations.HasRoleAsync(characterId, corporationId, Eve.Corporations.CorporationRoles.Director, token)
+                    || await corporations.HasRoleAsync(characterId, corporationId, Eve.Corporations.CorporationRoles.PersonnelManager, token)),
             new Eve.Services.CharacterInfo.HomeStationService(
                 homeStations,
                 characters.TryChangeHomeStationAsync,

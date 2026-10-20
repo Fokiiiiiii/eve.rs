@@ -267,15 +267,18 @@ public sealed partial class InsuranceService
 private readonly IInsuranceWriteModel? _writeModel;
     private readonly IInsuranceReadModel _readModel;
     private readonly Func<long> _nowUnixMs;
+    private readonly Func<long, long, CancellationToken, ValueTask<bool>>? _hasCorporationInsuranceRole;
 
     public InsuranceService(
         IInsuranceReadModel readModel,
         Func<long> nowUnixMs,
-        IInsuranceWriteModel? writeModel = null)
+        IInsuranceWriteModel? writeModel = null,
+        Func<long, long, CancellationToken, ValueTask<bool>>? hasCorporationInsuranceRole = null)
     {
         _readModel = readModel;
         _writeModel = writeModel;
         _nowUnixMs = nowUnixMs;
+        _hasCorporationInsuranceRole = hasCorporationInsuranceRole;
     }
 
     private const int MaximumInsurancePriceTypeIds = 500;
@@ -315,7 +318,7 @@ private readonly IInsuranceWriteModel? _writeModel;
         var isCorporation = IntegerValue(call.Arg(0)) > 0;
         var ownerKind = isCorporation ? InsuranceOwnerKind.Corporation : InsuranceOwnerKind.Character;
         var ownerId = SessionOwnerId(call.Session, ownerKind);
-        if (ownerId == 0 || (isCorporation && !HasCorporationInsuranceRole(call.Session)))
+        if (ownerId == 0 || (isCorporation && !await CanUseCorporationInsuranceAsync(call.Session, call.Cancellation)))
         {
             return new PyList([]);
         }
@@ -351,7 +354,7 @@ private readonly IInsuranceWriteModel? _writeModel;
 
         var ownerId = SessionOwnerId(call.Session, contract.OwnerKind);
         if (ownerId != contract.OwnerId ||
-            (contract.OwnerKind == InsuranceOwnerKind.Corporation && !HasCorporationInsuranceRole(call.Session)))
+            (contract.OwnerKind == InsuranceOwnerKind.Corporation && !await CanUseCorporationInsuranceAsync(call.Session, call.Cancellation)))
         {
             return PyNone.Instance;
         }
@@ -380,7 +383,7 @@ private readonly IInsuranceWriteModel? _writeModel;
 
         var actor = Actor(call.Session);
         if (!actor.IsDocked || actor.CharacterId <= 0 ||
-            (isCorporation && (actor.CorporationId <= 0 || !HasCorporationInsuranceRole(call.Session))))
+            (isCorporation && (actor.CorporationId <= 0 || !await CanUseCorporationInsuranceAsync(call.Session, call.Cancellation))))
         {
             throw Eve.Services.MachoErrors.ThrowUserError("InsureShipFailed");
         }
@@ -407,6 +410,13 @@ private readonly IInsuranceWriteModel? _writeModel;
         var shipId = PositiveId(call.Arg(0));
         var actor = Actor(call.Session);
         if (shipId == 0 || !actor.IsDocked || actor.CharacterId <= 0)
+        {
+            throw Eve.Services.MachoErrors.ThrowUserError("UnInsureShipFailed");
+        }
+        var existing = NormalizeContract(await _readModel.GetContractForShipAsync(shipId, call.Cancellation));
+        if (existing is { OwnerKind: InsuranceOwnerKind.Corporation } &&
+            (existing.OwnerId != actor.CorporationId ||
+                !await CanUseCorporationInsuranceAsync(call.Session, call.Cancellation)))
         {
             throw Eve.Services.MachoErrors.ThrowUserError("UnInsureShipFailed");
         }
@@ -596,14 +606,21 @@ private readonly IInsuranceWriteModel? _writeModel;
         return 0;
     }
 
-    private static bool HasCorporationInsuranceRole(ClientSession session)
+    private async ValueTask<bool> CanUseCorporationInsuranceAsync(ClientSession session, CancellationToken cancellationToken)
     {
         var roleMask = IntegerValue(session.Get("corprole"));
         if (roleMask == 0)
         {
             roleMask = IntegerValue(session.Get("corpRole"));
         }
-        return (roleMask & (CorporationAccountantRole | CorporationJuniorAccountantRole)) != 0;
+        if ((roleMask & (CorporationAccountantRole | CorporationJuniorAccountantRole)) == 0)
+            return false;
+        if (_hasCorporationInsuranceRole is not { } hasRole)
+            return true;
+        return await hasRole(
+            PositiveSessionValue(session, "characterID", "charID", "charid"),
+            PositiveSessionValue(session, "corporationID", "corpid"),
+            cancellationToken);
     }
 
     private static long[] ReadTypeIds(PyValue value)

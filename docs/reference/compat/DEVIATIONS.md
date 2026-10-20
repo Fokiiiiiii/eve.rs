@@ -5189,7 +5189,7 @@ The market parser rejects floating-point prices beyond the market maximum before
 
 ## Contract completion status bounds (2026-10-20)
 
-`contractProxy.CompleteContract` applies the shared checked Int32 parser to both V24 integer wire types. A status outside Int32 range returns `ConContractNotAvailable` before contract state is read or mutated; valid status values retain the existing transition behavior. `ContractProxyServiceTests.Complete_contract_refuses_status_that_overflows_int32` verifies the writer is not invoked.
+`contractProxy.CompleteContract` applies the shared checked Int32 parser to both V24 integer wire types. A status outside Int32 range returns `ConContractNotAvailable` before contract state is read or mutated; valid status values retain the existing transition behavior. `ContractProxyServiceTests.Complete_contract_refuses_status_that_overflows_int32` verifies the writer is not invoked. `PacketDispatcher` charges all `contractProxy` methods 10 per-session work units because every operation reads or mutates persisted contract state; `DispatchGoldenTests.Contract_operations_use_the_named_per_session_budget` verifies list calls are refused at the configured limit.
 
 
 ## Insurance price batch bound (2026-10-20)
@@ -5202,7 +5202,7 @@ The V24 `ship.SelfDestruct` and `ship.AbortSelfDestruct` bound calls now require
 
 ## Skill service bulk and arithmetic bounds (2026-10-20)
 
-`InjectSkillIntoBrain` and `ExtractSkills` refuse more than 500 raw entries before transactional item or skill changes. The shared skill numeric parser rejects non-finite and out-of-range real IDs; duplicate requested extraction points saturate at Int64 maximum before calculation. These checks preserve the V24.01 successful client flow and reject oversized or overflowing payloads. `SkillServiceTests.Skill_bulk_item_operations_refuse_more_than_500_raw_entries_before_mutation` covers both refusals, while the extraction success regression exercises duplicate point aggregation near the integer limit.
+`InjectSkillIntoBrain` and `ExtractSkills` refuse more than 500 raw entries before transactional item or skill changes. The shared skill numeric parser rejects non-finite and out-of-range real IDs; duplicate requested extraction points saturate at Int64 maximum before calculation, and both `GetDiminishedSpFromInjectors` and `InjectSkillpoints` cap the combined trained and free points at 80 million before addition, where marginal awards have reached their final tier. These checks preserve the V24.01 successful client flow and reject oversized or overflowing payloads. `SkillServiceTests.Skill_bulk_item_operations_refuse_more_than_500_raw_entries_before_mutation` covers both refusals, `SkillServiceTests.Injector_diminishing_total_saturates_without_overflowing_authoritative_point_balances` covers near-Int64 cumulative balances, and the extraction success regression exercises duplicate point aggregation near the integer limit. `SplitSkillInjector` refuses a quantity whose three-for-one output would exceed Int64 before inventory mutation; `SkillServiceTests.Splitting_an_oversized_skill_injector_stack_refuses_before_mutation` verifies that the original stack remains unchanged.
 
 ## Insurance ship identifier validation (2026-10-20)
 
@@ -5222,3 +5222,26 @@ The insurance RPCs accept positive integer ship IDs. Fractional or malformed val
 ## Ansiblex jump RPC audit (2026-10-20)
 
 V24 menu and autopilot call `structureJumpBridgeMgr.CmdJumpThroughStructureStargate`. `StructureTravelRpcService` registers that method but the Host composition currently supplies only `GetJbStructureDestination` and `GetLinkedStructure` callbacks. With no travel callback, the jump call returns the named structure-travel refusal. The existing `SpaceSessions.BridgeJumpAsync` path covers ship-mounted Titan, Black Ops and Rorqual bridges and is not an Ansiblex route. `StructureTravelRpcTests.Travel_rpcs_report_the_missing_runtime_backend` and `Jump_bridge_lookup_rpcs_use_persisted_callbacks_and_reference_shapes` cover the current refusal and lookup behavior; the focused `StructureTravelRpcTests`/`StructureTravelTests` run passed 17/17. Ansiblex traversal, anchoring/setup, and associated scene alignment visuals remain open; the release delta records them separately.
+## Contract RPC current-role checks (2026-10-20)
+
+Corporate contract creation, bidding, acceptance, completion, deletion, and corporate list reads check the authenticated session role bit and then resolve the actor’s current corporation membership and Contract Manager role through the persisted `CorporationStore`. A role removed while the character remains logged in therefore no longer authorizes a corporate contract call. `ContractProxyServiceTests.Accept_for_corporation_refuses_a_stale_session_role_without_persisted_authority` supplies a stale positive session role with a persisted-role callback returning false and verifies refusal.
+
+
+## Corporation audit role revocation (2026-10-20)
+
+`corpMgr.AuditMember` now derives Director/Auditor access from the persisted member masks and titles on every request. Its session role attributes are not sufficient to expose corporation audit events or role history after a role change. `CorporationProtocolTests.Corp_mgr_audit_member_rechecks_persisted_auditor_role_after_login` creates an Auditor session, confirms access, removes the persisted role, then confirms that the same session is denied before audit-event reads.
+
+
+## Private corporation-member info role revocation (2026-10-20)
+
+`charMgr.GetPrivateInfo` still requires the session’s same-corporation Director or Personnel Manager role for the V24 call contract. The Host additionally checks current persisted membership and role before returning the target’s balance and security rating, so demotion during an active session removes access. `CharacterInfoTests.Private_member_info_requires_an_authorized_role_in_the_members_corporation` verifies access and refusal after the persisted-role callback is revoked.
+
+
+## Faction-warfare corporation role revocation (2026-10-20)
+
+The four corporation enlistment, leave, and withdrawal mutations retain the client Director-session-bit check and additionally validate the actor's current persisted corporation membership and Director role. A role removed during an active session therefore cannot approve or withdraw corporation faction-warfare changes. `FacWarMgrRpcTests.Corporation_enlistment_needs_the_director_role_and_is_pending_until_the_downtime` verifies that a stale Director session cannot leave an enlisted corporation. Alliance role authorization is handled separately and remains under review.
+
+
+## Corporate insurance role revocation (2026-10-20)
+
+Corporate insurance reads, purchases, and cancellation preserve the client Accountant or Junior Accountant session-role check and also verify current persisted membership and effective role through the Host corporation store. Demotion during an active session therefore removes access to corporate insurance contracts and blocks new corporate purchases or cancellation. `InsuranceServiceTests.Corporate_insurance_refuses_a_stale_accountant_session_role` and `InsuranceServiceTests.Corporate_uninsurance_refuses_a_stale_accountant_session_role` both passed; each keeps stale session authority while persisted checks deny before the writer. The Host project built with zero warnings or errors.

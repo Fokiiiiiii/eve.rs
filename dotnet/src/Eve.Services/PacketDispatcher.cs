@@ -283,7 +283,7 @@ public sealed class PacketDispatcher
             return 10;
         if (service == "allianceRegistry" && method is "GetEveOwners" or "GetRankedAlliances" or "GetAllianceMembers" or "GetMembers" or "GetEmploymentRecord" or "GetAllianceMembersOlderThan" or "GetAllianceApplications")
             return 10;
-        if (service == "charMgr" && method is "GetRecentShipKillsAndLosses")
+        if (service == "charMgr" && method is "GetRecentShipKillsAndLosses" or "GetOrganizationInfoForCharacters")
             return 10;
         if (service == "fleetObject" && method == "SendBroadcast")
             return 10;

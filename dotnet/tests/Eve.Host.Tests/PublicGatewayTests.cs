@@ -20,10 +20,21 @@ public sealed class PublicGatewayTests
     private const string Milestone = "eve_public.character.skill.plan.milestone.";
     private const int Gunnery = 3300;
 
-    // the login JWT of account 1 (the characters the rig creates belong to it) and of account 2, as the client sends them: the subject names the
-    // account; the signature is not checked by the gateway (DEVIATIONS, character phase S9)
-    private const string UserToken = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJVU0VSOkVWRToxIiwidGVuYW50IjoiZXZlLXRlc3QiLCJ0aWVyIjoiZGV2IiwiZXhwIjo0MTAyNDQ0ODAwfQ.dW5zaWduZWQtdGVzdC1zaWduYXR1cmU";
-    private const string OtherUserToken = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJVU0VSOkVWRToyIiwidGVuYW50IjoiZXZlLXRlc3QiLCJ0aWVyIjoiZGV2IiwiZXhwIjo0MTAyNDQ0ODAwfQ.dW5zaWduZWQtdGVzdC1zaWduYXR1cmU";
+    // Short-lived login tokens for the two accounts used by the gateway ownership checks.
+    private static string UserToken => GatewayTokens.Issue(1, null, DateTimeOffset.UtcNow);
+    private static string OtherUserToken => GatewayTokens.Issue(2, null, DateTimeOffset.UtcNow);
+
+    [Fact]
+    public void User_tokens_are_signed_account_scoped_and_expire()
+    {
+        var now = DateTimeOffset.FromUnixTimeSeconds(1_800_000_000);
+        var token = GatewayTokens.Issue(71, 90000001, now);
+        var authority = new GatewayAuthority((_, _) => Task.FromResult<long?>(null), () => now);
+
+        Assert.Equal(71, authority.AccountOf(token));
+        Assert.Null(authority.AccountOf(token[..^1] + (token[^1] == 'A' ? "B" : "A")));
+        Assert.Null(new GatewayAuthority((_, _) => Task.FromResult<long?>(null), () => now.AddMinutes(11)).AccountOf(token));
+    }
 
     [Fact]
     public void A_frame_with_a_declared_length_above_the_host_limit_is_rejected_before_its_body_arrives()
@@ -327,7 +338,10 @@ public sealed class PublicGatewayTests
     }
 
     /// <summary>Sends one request frame on a new HTTP/2 connection and reads its answer frame and the gRPC status trailer.</summary>
-    private static async Task<Answer> SendOneAsync(int port, string requestName, long? character, byte[] payload, string? authorization = UserToken)
+    private static Task<Answer> SendOneAsync(int port, string requestName, long? character, byte[] payload) =>
+        SendOneAsync(port, requestName, character, payload, UserToken);
+
+    private static async Task<Answer> SendOneAsync(int port, string requestName, long? character, byte[] payload, string? authorization)
     {
         using var http = new HttpClient(new SocketsHttpHandler())
         {

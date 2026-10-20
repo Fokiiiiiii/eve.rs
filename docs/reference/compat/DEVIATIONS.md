@@ -62,6 +62,26 @@ The Host rejects repeated private-room invitations from one character within one
 
 `charMgr.AddOwnerNote` and `EditOwnerNote` cap owner-note labels at 82 characters and bodies at the V24.01 notepad counter limit of 3,900 characters; `SetNote` refuses item notes above the client's 5,000-character save slice. Over-limit direct RPC calls receive named refusals before personal data persistence. The focused CharacterInfo regression verifies refusal and unchanged stored note values.
 
+## Planetary industry input safety (2026-10-20)
+
+PI program installs reject non-finite extractor head radii with the existing `InvalidProgramRadius` refusal before colony state changes. V24.01 sends finite map coordinates for head radii; the added validation only affects malformed floating-point payloads. `ValidationTests.Nonfinite_program_radii_are_refused_without_changing_colony_state` covers NaN and positive and negative infinity.
+
+## Corporation welcome mail payload bound (2026-10-20)
+
+`SetCorpWelcomeMail` refuses text longer than 10,000 UTF-16 code units before persistence, matching the V24.01 `mailMaxTaggedBodySize` editor limit in `eve/common/lib/appConst.py`. EveJS accepts arbitrary text from direct RPC calls; the server cap protects requests that bypass the editor while preserving values the client can submit. `CorporationProtocolTests.Corp_registry_welcome_mail_rpc_returns_raw_text_and_requires_personnel_manager_to_set` covers the exact limit, refusal above it, and unchanged persisted text.
+
+## Corporation war declaration role gate (2026-10-20)
+
+`corpRegistry.DeclareWarAgainst` requires the authenticated corporation's persisted CEO or Director authority before creating a bill or war. The V24.01 corporation menu offers war declaration only when the session role includes Director. EveJS accepts the RPC without a server-side role check; the focused corporation protocol regression verifies an ordinary member is refused before the declaration callback.
+
+## Corporation application text bound (2026-10-20)
+
+`corpRegistry.InsertApplication` and `UpdateApplicationOffer`, plus `ApplyToJoinAlliance`, reject application text or response text longer than 1,000 UTF-16 code units before persistence. This matches `crpApplicationMaxSize` and the V24.01 corporation application editor. Corporation and alliance RPC regressions cover over-limit submissions, application updates, response text, and unchanged stored state.
+
+## Contact-label name bound (2026-10-20)
+
+`charMgr`, `corpRegistry`, and `allianceRegistry` reject contact-label names longer than 40 UTF-16 code units on create and rename. This matches the V24.01 address-book `NamePopup` limit from `mailMaxLabelSize`; EveJS accepts longer direct RPC values. The normal UI path stays within its existing limit. Personal, corporation, and alliance regressions cover maximum length, over-limit refusal, and retained state.
+
 ## Project status
 
 Summary of this file, as of 2026-10-18. The task list with the same areas is the "Project status" table at the top of `docs/project/TODO.md`. **Status** is the state of the area; **Project rule** is the rule a deviation stands on; **Cut** lists what the owner or the evidence has cut, with the entry that records it. A cut item without an entry here or in its section is a bug in this file.

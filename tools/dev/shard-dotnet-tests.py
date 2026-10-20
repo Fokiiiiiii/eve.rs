@@ -29,7 +29,10 @@ def main() -> int:
         test_name = line.strip()
         if not test_name:
             continue
-        class_name, separator, _ = test_name.rpartition(".")
+        # xUnit includes theory arguments in listed names. Their values may contain
+        # fully qualified type names, so find the class before the argument list.
+        case_name = test_name.split("(", 1)[0]
+        class_name, separator, _ = case_name.rpartition(".")
         if not separator:
             raise SystemExit(f"Cannot determine test class from: {test_name}")
         tests[class_name] += 1

@@ -238,6 +238,27 @@ jobs:
             done
           fi
           exit $status
+      - name: Verify every test shard executed tests
+        working-directory: dotnet
+        run: |
+          python3 - <<'PYTEST'
+          from pathlib import Path
+          from xml.etree import ElementTree
+
+          namespace = {"trx": "http://microsoft.com/schemas/VisualStudio/TeamTest/2010"}
+          reports = sorted(Path("test-results").glob("*.trx"))
+          if not reports:
+              raise SystemExit("No TRX test reports were produced")
+          empty = []
+          for report in reports:
+              root = ElementTree.parse(report).getroot()
+              counters = root.find("trx:ResultSummary/trx:Counters", namespace)
+              executed = int(counters.attrib["executed"]) if counters is not None else 0
+              if executed == 0:
+                  empty.append(str(report))
+          if empty:
+              raise SystemExit("No tests executed in: " + ", ".join(empty))
+          PYTEST
       - name: Upload test timing results
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

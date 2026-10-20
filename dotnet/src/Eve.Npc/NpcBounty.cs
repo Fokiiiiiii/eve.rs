@@ -16,6 +16,9 @@ public sealed record BountyAdded(int EnemyTypeId, decimal Amount, long PayoutTim
 /// <summary>A bucket that was paid: to whom, how much, how many kills it was and what the balance is now.</summary>
 public sealed record BountyPaid(long CharacterId, decimal Amount, int Kills, decimal Balance, string Key);
 
+/// <summary>The corporation a bounty's character belongs to and its ISK tax rate (a fraction); the corporation is credited unless it is an NPC corporation.</summary>
+public sealed record BountyTaxTerms(long CorporationId, bool IsNpc, decimal TaxRate);
+
 /// <summary>
 /// The rules of an NPC bounty, a port, as they are, of <c>server/src/services/bounty/bountyRuntime.js</c> of EVE.js (ADR 0009): a kill is worth the NPC's bounty to
 /// whoever dealt the last of its hull, it is paid twenty minutes after the character's first unpaid kill in one credit with a description of what was killed
@@ -28,6 +31,12 @@ public static class NpcBounty
 
     /// <summary>How many victims a bucket remembers by ship.</summary>
     public const int MaxSourceReferences = 32;
+
+    /// <summary>The journal entry type of the corporation's cut of a bounty (<c>refCorporationTaxNpcBounties</c>).</summary>
+    public const int CorporationTaxRefType = 92;
+
+    /// <summary>The smallest payout the corporation tax is taken from (<c>appConst.minCorporationTaxAmount</c>); each payout is measured on its own.</summary>
+    public const decimal MinimumCorporationTax = 100_000m;
 
     /// <summary>The journal entry types of a bounty paid for one kill and for several (<c>NPC_BOUNTY_PRIZE</c>, <c>NPC_BOUNTY_PRIZES</c>).</summary>
     public const int PrizeRefType = 17;
@@ -60,6 +69,20 @@ public static class NpcBounty
 
     /// <summary>The journal entry type a bucket is paid under.</summary>
     public static int RefType(int kills) => kills > 1 ? PrizesRefType : PrizeRefType;
+
+    /// <summary>The corporation's ISK tax of a payout: none below <see cref="MinimumCorporationTax"/>, else the rate of the amount to the cent.</summary>
+    public static decimal CorporationTaxOf(decimal amount, decimal taxRate) =>
+        amount >= MinimumCorporationTax && taxRate > 0 ? Money(amount * Math.Min(1m, taxRate)) : 0m;
+
+    /// <summary>
+    /// The description of a paid bucket with the corporation's tax line appended (<c>buildCorporationTaxDescription</c>): a top-level
+    /// <c>92: [corporation, tax]</c> key after the <c>NBL:</c> lines, which the client reads as the tax row of the journal.
+    /// </summary>
+    public static string DescriptionWithTax(BountyBucket bucket, long corporationId, decimal tax)
+    {
+        var amount = tax.ToString("0.########", CultureInfo.InvariantCulture);
+        return Description(bucket) + "\n" + string.Create(CultureInfo.InvariantCulture, $"{CorporationTaxRefType}: [{corporationId}, {amount}]");
+    }
 
     /// <summary><c>buildWalletDescription</c>: <c>NBL:</c>, the types killed with how many of each (by type id), the solar system and the number of kills.</summary>
     public static string Description(BountyBucket bucket)

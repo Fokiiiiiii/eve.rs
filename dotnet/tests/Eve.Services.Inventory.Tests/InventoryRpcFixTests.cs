@@ -105,10 +105,13 @@ public class InventoryRpcFixTests
 
         var mergeRefusal = await Assert.ThrowsAsync<MachoWrappedException>(() => Call(rig, session, "MultiMerge", bound,
             [values, InventoryWire.Id(Rig.Station)]));
+        var multiAddRefusal = await Assert.ThrowsAsync<MachoWrappedException>(() => Call(rig, session, "MultiAdd", bound,
+            [values, InventoryWire.Id(Rig.Station)]));
         var crystalRefusal = await Assert.ThrowsAsync<MachoWrappedException>(() => Call(rig, session, "GetDamageForCrystals", null, [values]));
         var openRefusal = await Assert.ThrowsAsync<MachoWrappedException>(() => Call(rig, session, "ValidateItemListCanBeOpened", null, [values]));
 
         Assert.Equal("INVENTORY_BULK_LIMIT_EXCEEDED", mergeRefusal.Error.UserErrorMessage);
+        Assert.Equal("INVENTORY_BULK_LIMIT_EXCEEDED", multiAddRefusal.Error.UserErrorMessage);
         Assert.Equal("INVENTORY_BULK_LIMIT_EXCEEDED", crystalRefusal.Error.UserErrorMessage);
         Assert.Equal("INVENTORY_BULK_LIMIT_EXCEEDED", openRefusal.Error.UserErrorMessage);
     }

@@ -209,12 +209,20 @@ public class DispatchGoldenTests
         var dispatcher = new PacketDispatcher(registry, () => now) { MaxExpensiveRpcUnitsPerMinute = 10 };
 
         await dispatcher.DispatchAsync(CallRequestPacket("marketProxy", "GetOrders"), session);
-        await dispatcher.DispatchAsync(CallRequestPacket("marketProxy", "GetOrders"), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("marketProxy", "BuyMultipleItems"), session);
 
         Assert.Equal(1, service.Calls);
         Assert.Equal(2, capture.Sent.Count);
         Assert.Equal(ErrorResponseCommand, CommandOf(capture.Sent[1]));
         Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[1])));
+
+        var historyCapture = new Capture();
+        var historySession = new ClientSession(historyCapture) { SessionId = 903 };
+        await dispatcher.DispatchAsync(CallRequestPacket("marketProxy", "GetOrders"), historySession);
+        await dispatcher.DispatchAsync(CallRequestPacket("marketProxy", "GetHistoryForManyTypeIDs"), historySession);
+        Assert.Equal(2, service.Calls);
+        Assert.Equal(ErrorResponseCommand, CommandOf(historyCapture.Sent[1]));
+        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(historyCapture.Sent[1])));
 
         var inventoryCapture = new Capture();
         var inventorySession = new ClientSession(inventoryCapture) { SessionId = 902 };
@@ -226,7 +234,7 @@ public class DispatchGoldenTests
 
         now += 60_000;
         await dispatcher.DispatchAsync(CallRequestPacket("marketProxy", "GetOrders"), session);
-        Assert.Equal(2, service.Calls);
+        Assert.Equal(3, service.Calls);
         Assert.Equal(7, CommandOf(capture.Sent[2]));
     }
 
@@ -236,7 +244,7 @@ public class DispatchGoldenTests
 
         public string Name => "marketProxy";
 
-        public bool HasMethod(string method) => method == "GetOrders";
+        public bool HasMethod(string method) => method is "GetOrders" or "BuyMultipleItems" or "GetHistoryForManyTypeIDs";
 
         public ValueTask<PyValue> CallAsync(ServiceCall call)
         {

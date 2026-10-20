@@ -1,6 +1,5 @@
 namespace Eve.AccessGroups.Tests;
 
-/// <summary>The access group store on PostgreSQL: the wiki's rules applied to the entries, the change codes and audiences, the logs, a restart.</summary>
 public sealed class AccessGroupStoreTests
 {
     private const long Alice = 90000001;

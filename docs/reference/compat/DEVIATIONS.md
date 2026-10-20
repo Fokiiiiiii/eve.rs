@@ -5182,3 +5182,8 @@ The market parser rejects floating-point prices beyond the market maximum before
 ## Contract completion status bounds (2026-10-20)
 
 `contractProxy.CompleteContract` applies the shared checked Int32 parser to both V24 integer wire types. A status outside Int32 range returns `ConContractNotAvailable` before contract state is read or mutated; valid status values retain the existing transition behavior. `ContractProxyServiceTests.Complete_contract_refuses_status_that_overflows_int32` verifies the writer is not invoked.
+
+
+## Insurance price batch bound (2026-10-20)
+
+`insurance.GetInsurancePrices` accepts at most 500 raw type IDs per request and returns `InsuranceBulkLimitExceeded` before reading price data for a larger batch. The V24 client primes the service with the set of missing ship type IDs; normal client batches retain their existing results. `InsuranceServiceTests.Insurance_price_batch_refuses_more_than_500_type_ids_before_the_read_model` covers the refusal.

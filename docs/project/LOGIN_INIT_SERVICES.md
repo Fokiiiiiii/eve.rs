@@ -45,7 +45,7 @@ The headless login-to-character walk (`tools/headless-client/tests/test_login_to
 | `config.GetStationSolarSystemsByOwner` | Static/config startup | Implemented | Host reads server configuration/static catalog. |
 | `localizationServer.GetAllTextChanges` | Localization startup | Partial | Route is present; configured text-change data and locale-specific coverage remain to be established. |
 | `alert` / `securityMgr` initial calls | Startup gates | Partial | Concrete routes are registered; the client trace must identify the exact request and expected gate state for each deployment. |
-| `chatAuthenticationService.GetAuthenticationToken` | First world entry chat initialization | Partial | Route exists; validate token ownership, expiry and client notification/connection follow-up. |
+| `chatAuthenticationService.GetAuthenticationToken` | First world entry chat initialization | Implemented | Issues a cryptographic token scoped to the active session; `XmppChatHub` checks it against that session with constant-time comparison. `SessionStartupRpcServicesTests` and Host XMPP tests cover token use and authenticated chat. |
 | `authentication` / `sessionMgr` notifications | Login and world transition | Implemented | Session initialization and character-change notifications are covered by headless walk. |
 | `userSvc.UserLogOffCharacter` | Return to character selection | Implemented | Session remains connected without a selected character; a subsequent selection is covered in `test_login_to_character.py`. |
 
@@ -138,7 +138,7 @@ The original table above covers connection, authentication, and character entry.
 | `fleetMgr.RemoveFromWatchlist` | Fleet watchlist changes (`parklife/fleetSvc.py:719`); full session list flow open | Partial | Evidence and remaining provider work are linked in the caller path and current feature entries in `docs/project/TODO.md`. |
 | `fleetMgr.RegisterForDamageUpdates` | Fleet watchlist damage updates (`parklife/fleetSvc.py:795`) | Partial | Evidence and remaining provider work are linked in the caller path and current feature entries in `docs/project/TODO.md`. |
 
-Inventory baseline: 120 tracked rows: 68 implemented, 52 partial, and 0 missing routes. This combines 38 connection/character-entry entries (27 implemented and 11 partial) with 82 post-selection/first-screen entries (41 implemented and 41 partial).
+Inventory baseline: 120 tracked rows: 69 implemented, 51 partial, and 0 missing routes. This combines 38 connection/character-entry entries (28 implemented and 10 partial) with 82 post-selection/first-screen entries (41 implemented and 41 partial).
 
 ## Verification boundary
 

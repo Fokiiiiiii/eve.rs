@@ -837,6 +837,23 @@ public class CharMgrTests
                 ("blocked", Py.Rowset(["senderID"], [new PyList([Id(3000)]), new PyList([Id(3002)])]))),
             list);
 
+        var contactLabelName = new string('L',40);
+        var contactLabelId = Assert.IsType<PyInt>(await Rig.CallAsync(service,session,"CreateLabel",new PyWString(contactLabelName),Id(5)));
+        Assert.Equal(contactLabelName,store[characterId].Labels[contactLabelId.Value].Name);
+        var oversizedContactLabel = await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(() =>
+            Rig.CallAsync(service,session,"CreateLabel",new PyWString(contactLabelName + "x"),Id(5)));
+        var oversizedContactLabelHeader = Assert.IsType<PyTuple>(Assert.IsType<PyObjectEx>(oversizedContactLabel.Error.Payload).Header);
+        Assert.Equal(new PyStr("CHARMGR_CONTACT_LABEL_NAME_LIMIT_EXCEEDED"),
+            Assert.IsType<PyTuple>(oversizedContactLabelHeader.Items[1]).Items[0]);
+        Assert.Single(store[characterId].Labels);
+        var oversizedContactLabelEdit = await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(() =>
+            Rig.CallAsync(service,session,"EditLabel",contactLabelId,new PyWString(contactLabelName + "x")));
+        var oversizedContactLabelEditHeader = Assert.IsType<PyTuple>(Assert.IsType<PyObjectEx>(oversizedContactLabelEdit.Error.Payload).Header);
+        Assert.Equal(new PyStr("CHARMGR_CONTACT_LABEL_NAME_LIMIT_EXCEEDED"),
+            Assert.IsType<PyTuple>(oversizedContactLabelEditHeader.Items[1]).Items[0]);
+        Assert.Equal(contactLabelName,store[characterId].Labels[contactLabelId.Value].Name);
+        Assert.Equal(PyNone.Instance,await Rig.CallAsync(service,session,"EditLabel",contactLabelId,new PyWString(contactLabelName),Id(6)));
+
         var ownerNoteRefusal = await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(() =>
             Rig.CallAsync(service, session, "AddOwnerNote", new PyStr("Long"), new PyWString(new string('x', 3901))));
         Assert.Equal(MachoErrors.UserErrorClass, ownerNoteRefusal.Error.ClassName);

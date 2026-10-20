@@ -117,40 +117,39 @@ public sealed partial class SpaceContainers : ISpaceContainers, IDisposable
 
     public async Task<Item?> OpenAsync(ClientSession session, long containerId, CancellationToken cancellationToken)
     {
-        if (!_space.IsInSpace(session) || _space.SolarSystemOf(session) is not { } system || await _items.GetAsync(containerId, cancellationToken) is not { } item || item.LocationId != system)
-        {
+        var inSpace = _space.IsInSpace(session);
+        var system = _space.SolarSystemOf(session);
+        var item = await _items.GetAsync(containerId, cancellationToken);
+        if (!inSpace || system is not { } solarSystem || item is null || item.LocationId != solarSystem)
             return null;
-        }
+
         await _statics.EnsureTypesAsync([item.TypeId], cancellationToken);
         var type = _statics.Type(item.TypeId);
         if (type is null ||
             (type.GroupId != CanGroup && type.GroupId != WreckGroup && type.GroupId != AnalysisBeaconGroup && type.GroupId != Customs.OfficeGroupId &&
              !Eve.Structures.StructureUnanchorDrop.IsFittingsContainer(item.TypeId, item.CustomInfo) &&
              !(await IsLootedSiteContainerAsync(item.Id, item.TypeId, type.GroupId, cancellationToken))))
-        {
             return null;
-        }
         if (type.GroupId == AnalysisBeaconGroup && item.CustomInfo != "analysis_beacon_wreck"
             && !HasAnalysisBeaconLootAccess(item, session.CharacterId)) return null;
+
         CommandReply reply;
         try
         {
-            reply = await _sim.CommandAsync((ulong)session.SessionId, SimCommands.Measure, [containerId], cancellationToken);
+            var args = type.GroupId == Customs.OfficeGroupId
+                ? new[] { (double)containerId, (double)session.GetInt("shipid")!.Value }
+                : [(double)containerId];
+            reply = await _sim.CommandAsync((ulong)session.SessionId, SimCommands.Measure, args, cancellationToken);
         }
-        catch (SimUnavailableException error)
+        catch (SimUnavailableException)
         {
-            _log?.Invoke($"opening {containerId} for session {session.SessionId}: {error.Message}");
             throw Unavailable();
         }
         // not in the scene, or not in view: the reference answers as for an item that is not there
         if (!reply.Accepted || reply.Distance is not { } distance)
-        {
             throw MachoErrors.ThrowUserError("FakeItemNotFound");
-        }
         if (distance > OpenRange)
-        {
             throw MachoErrors.ThrowUserError("TargetTooFar");
-        }
         return item;
     }
 

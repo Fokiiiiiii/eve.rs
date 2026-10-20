@@ -6,7 +6,7 @@ using Npgsql;
 
 namespace Eve.Host.Persistence;
 
-/// <summary>Creates a personal or corporation item exchange and stages its offered items and ISK atomically.</summary>
+/// <summary>Creates a personal or corporation contract and stages its offered items and ISK atomically.</summary>
 public sealed class PersistenceContractWriteModel(
     NpgsqlDataSource source,
     PgItemStore items,
@@ -26,7 +26,11 @@ public sealed class PersistenceContractWriteModel(
         ? schema
         : throw new ArgumentException("not a usable schema name", nameof(schema));
 
-    public async ValueTask<CreatedContract> CreateItemExchangeAsync(
+    public ValueTask<CreatedContract> CreateItemExchangeAsync(
+        CreateItemExchangeRequest request,
+        CancellationToken cancellationToken) => CreateContractAsync(request, cancellationToken);
+
+    public async ValueTask<CreatedContract> CreateContractAsync(
         CreateItemExchangeRequest request,
         CancellationToken cancellationToken)
     {
@@ -46,8 +50,8 @@ public sealed class PersistenceContractWriteModel(
                  date_expired_filetime, num_days, reward_escrow, created_at_filetime,
                  availability, price_isk, collateral_isk, creation_fee_isk, deposit_isk, sales_tax_isk,
                  title, description)
-            VALUES ($1, $2, $3, 0, $4, 1, 0, $5, 0, 0, $6, 0, $7, $8,
-                    $9, $10, 0, $11, $12, $13, $14, $15)
+            VALUES ($1, $2, $3, 0, $4, $16, 0, $5, $17, 0, $6, $18, $7, $8,
+                    $9, $10, $19, $11, $12, $13, $14, $15)
             RETURNING contract_id
             """, connection, transaction))
         {
@@ -66,6 +70,10 @@ public sealed class PersistenceContractWriteModel(
             command.Parameters.AddWithValue(request.SalesTax);
             command.Parameters.AddWithValue(request.Title);
             command.Parameters.AddWithValue(request.Description);
+            command.Parameters.AddWithValue(request.ContractType);
+            command.Parameters.AddWithValue(request.EndStationId);
+            command.Parameters.AddWithValue(request.NumDays);
+            command.Parameters.AddWithValue(request.Collateral);
             contractId = (long)(await command.ExecuteScalarAsync(cancellationToken)
                 ?? throw new InvalidOperationException("contract insert returned no id"));
         }
@@ -86,12 +94,13 @@ public sealed class PersistenceContractWriteModel(
             escrowItemIds.Add(moved.Id);
             await using var itemCommand = new NpgsqlCommand($"""
                 INSERT INTO {_schema}.contract_items (contract_id, item_id, type_id, quantity, in_crate, is_package)
-                VALUES ($1, $2, $3, $4, true, false)
+                VALUES ($1, $2, $3, $4, true, $5)
                 """, connection, transaction);
             itemCommand.Parameters.AddWithValue(contractId);
             itemCommand.Parameters.AddWithValue(moved.Id);
             itemCommand.Parameters.AddWithValue(moved.TypeId);
             itemCommand.Parameters.AddWithValue(moved.Singleton ? 1L : moved.Quantity);
+            itemCommand.Parameters.AddWithValue(request.ContractType == 3);
             await itemCommand.ExecuteNonQueryAsync(cancellationToken);
         }
 

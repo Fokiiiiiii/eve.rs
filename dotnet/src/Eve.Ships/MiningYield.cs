@@ -1,7 +1,6 @@
 namespace Eve.Ships;
 
 /// <summary>
-/// Which miner a cycle is for. A drone rounds down and never gets a critical yield. A module gets the full rule of the EveJS
 /// reference (<c>miningMath.js</c>): randomized rounding and a critical yield.
 /// </summary>
 public enum MiningSource
@@ -75,7 +74,6 @@ public sealed record MiningResult(
 
 /// <summary>
 /// The yield of a mining cycle as a pure function: no clock, no randomness and no I/O, so the same cycle and rolls always give the same
-/// result. It ports <c>computeMiningResult</c> and <c>randomizedRound</c> of the EveJS reference (<c>miningMath.js</c>, v0.12.9, lines
 /// 23-105). The reference's draw order is not kept, because every draw is passed in. Callers apply the rock, the hold and the ledger.
 /// </summary>
 public static class MiningYield

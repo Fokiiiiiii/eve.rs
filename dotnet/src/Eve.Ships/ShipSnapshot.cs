@@ -115,7 +115,6 @@ public sealed class ShipSnapshot
         Character = Character, Ship = Ship, Fitted = Fitted, Charges = Charges, Stance = Stance, Skills = Skills, World = World, Condition = condition, ModuleConditions = ModuleConditions, Neighbours = Neighbours,
     };
 
-
     /// <summary>The same ship after its dogma sources and module states have changed.</summary>
     public ShipSnapshot WithDogma(DogmaWorld world, ShipCondition condition, IReadOnlyList<CharacterSkill> skills) => new()
     {

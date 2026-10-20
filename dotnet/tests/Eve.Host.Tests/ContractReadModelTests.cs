@@ -72,13 +72,17 @@ public sealed class ContractReadModelTests
             Assert.Equal((long)1, escrowItem.OwnerId);
             Assert.Equal(9_300_000_000 + created.ContractId, escrowItem.LocationId);
             Assert.Equal(2, escrowItem.Quantity);
-            await using (var read = source.CreateCommand($"SELECT price_isk, reward_escrow FROM {contractsSchema}.contract_records WHERE contract_id=$1"))
+            await using (var read = source.CreateCommand($"SELECT contract_type, price_isk, reward_escrow, collateral_isk, end_station_id, num_days FROM {contractsSchema}.contract_records WHERE contract_id=$1"))
             {
                 read.Parameters.AddWithValue(created.ContractId);
                 await using var reader = await read.ExecuteReaderAsync();
                 Assert.True(await reader.ReadAsync());
-                Assert.Equal(100m, reader.GetDecimal(0));
-                Assert.Equal(50m, reader.GetDecimal(1));
+                Assert.Equal((short)1, reader.GetInt16(0));
+                Assert.Equal(100m, reader.GetDecimal(1));
+                Assert.Equal(50m, reader.GetDecimal(2));
+                Assert.Equal(0m, reader.GetDecimal(3));
+                Assert.Equal(0L, reader.GetInt64(4));
+                Assert.Equal(0, reader.GetInt32(5));
             }
             Assert.Equal(948m, await wallets.AccountBalanceAsync(new WalletAccount(100), CancellationToken.None));
 

@@ -66,7 +66,6 @@ public sealed partial class CharacterShips
         public DogmaWorld World => snapshot.World;
 
         /// <summary>
-        /// Locks the rows the work is about to change, in the order of their ids, and checks that each is what the decisions were made from. This is the convention of
         /// the market's custody (<c>PgItemStore.LockAndGetAsync</c>, then the expected row against the locked one): a stack that a sale or another load moved or
         /// resized since it was read is <see cref="ItemChanged"/>, and nothing of the work is kept.
         /// </summary>
@@ -613,7 +612,7 @@ public sealed partial class CharacterShips
         if (await items.GetAsync(moduleId, cancellationToken) is { } module && module.OwnerId == characterId)
         {
             var (_, charges) = await ShipSnapshot.SlotsOfAsync(statics, await items.InLocationAsync(module.LocationId, characterId, cancellationToken), cancellationToken);
-            // the row is locked and the decision made on what the lock finds (the rounds only go down, and a stack that was taken away is not made again)
+
             if (charges.FirstOrDefault(c => c.Flag == module.Flag) is { } found
                 && await items.LockAndGetAsync(connection, transaction, found.Id, cancellationToken) is { } charge
                 && (charge.LocationId, charge.Flag) == (found.LocationId, found.Flag) && roundsLeft < charge.Quantity)

@@ -85,7 +85,6 @@ public sealed partial class CharacterShips
 
     private const int DroneCategory = 18;
 
-
     /// <summary>The room that is left in a hold is not worked out finer than this (the volumes are sums of floats).</summary>
     private const double RoomTolerance = 1e-7;
 
@@ -163,7 +162,6 @@ private sealed record ShipHoldRule(
         return true;
     }
 
-
     private async Task<bool> ShipContentsAllowedInBayAsync(Item candidate, int flag, DogmaWorld world, long ownerId, CancellationToken cancellationToken)
     {
         if (flag is not ShipMaintenanceBayFlag and not FrigateEscapeBayFlag) return true;
@@ -179,7 +177,6 @@ private sealed record ShipHoldRule(
         await statics.EnsureTypesAsync(cargo.Select(item => item.TypeId), cancellationToken);
         return cargo.All(item => statics.Type(item.TypeId) is { } type && IsAllowedMaintenanceBayCargo(type));
     }
-
 
     private async Task<Item?> EscapeBayShipAsync(Item battleship, DogmaWorld pilotWorld, long ownerId, CancellationToken cancellationToken)
     {
@@ -211,7 +208,6 @@ private sealed record ShipHoldRule(
         || type.Name.Contains("mobile warp disruptor", StringComparison.OrdinalIgnoreCase);
 
     private int? CapacityAttributeOf(int flag) => ShipHoldRules.TryGetValue(flag, out var rule) ? statics.AttributeId(rule.AttributeName) : null;
-
 
     private double ItemVolumeOf(TypeDef type) =>
         statics.AttributeId("volume") is { } attribute

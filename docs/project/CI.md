@@ -125,9 +125,32 @@ The per-project durations below are VSTest `Duration:` lines from run 269's all-
 | Eve.Wallet.Tests | 4 s |
 | Eve.Wormholes.Tests | 0.8 s |
 
-The test job uses four Host shards and now splits `Eve.Services.Space.Tests` into two shards. `tools/dev/shard-dotnet-tests.py` discovers test cases from each built assembly, assigns whole test classes to shards by case count, and supplies a VSTest filter to each shard. Every class is assigned to exactly one shard; each shard has its own PostgreSQL service. `tools/dev/shard-dotnet-projects.py` assigns the remaining test projects to three jobs using the recent VSTest durations above; each project runs once, and each job has its own PostgreSQL service. New projects are included with a five-second initial weight. All jobs download the same Release build artifact produced once by `.NET build`. CI runs use the job matrix and the Required CI gate waits for every selected matrix job.
+The test job uses four Host shards and splits `Eve.Services.Space.Tests` into two shards. `tools/dev/shard-dotnet-tests.py` discovers test cases from each built assembly, removes theory argument text before deriving class names, assigns whole test classes to shards by case count, and supplies a VSTest filter to each shard. Every class is assigned to exactly one shard; each shard has its own PostgreSQL service. Each .NET shard verifies that its TRX reports at least one executed test. `tools/dev/shard-dotnet-projects.py` assigns the remaining test projects to three jobs using the recent VSTest durations above; each project runs once, and each job has its own PostgreSQL service. New projects are included with a five-second initial weight. All jobs download the same Release build artifact produced once by `.NET build`. CI runs use the job matrix and the Required CI gate waits for every selected matrix job.
 
-The post-change wall time and shard durations will be recorded from the first green run containing the Space split.
+Runs 273–275 produced green required-gate conclusions in 9.2, 9.1, and 8.3 minutes respectively, compared with 18.0 minutes in run 272. TRX results downloaded from run 275 show that the Host and Space shard filters executed zero tests: theory arguments containing fully qualified types were parsed as part of the test class name. Those timings therefore do not measure a complete test run and are excluded from the speedup claim. The shard generator now removes theory arguments before deriving class names, and every .NET test shard fails if its TRX report records zero executed tests. A valid post-fix timing is pending.
+
+Run 274's successful job durations:
+
+| Job | Duration |
+|---|---:|
+| End-to-end | 9.0 min |
+| Rust tests | 3.0 min |
+| .NET build | 1.8 min |
+| Host tests 1/4 | 2.7 min |
+| Host tests 2/4 | 2.3 min |
+| Host tests 3/4 | 2.3 min |
+| Host tests 4/4 | 1.8 min |
+| Space tests 1/2 | 2.2 min |
+| Space tests 2/2 | 2.2 min |
+| Other tests 1/3 | 5.9 min |
+| Other tests 2/3 | 6.4 min |
+| Other tests 3/3 | 4.2 min |
+| Rust format and clippy | 0.5 min |
+| Rust latest stable (advisory) | 0.4 min |
+| Python client | 0.3 min |
+| Fixture generation | 0.1 min |
+
+The per-project durations above remain the available detailed VSTest project profile from run 269. The .NET matrix now writes one TRX file per test project/shard and uploads it even when a test job fails. This keeps individual test durations available for identifying slow cases in future runs without changing test selection or assertions.
 
 | Run | Commit | Result | Sum of job durations |
 |---|---|---|---|

@@ -9,6 +9,8 @@ namespace Eve.Services.Planets;
 /// The client's <c>planetOrbitalRegistryBroker</c> (bound per solar system by <c>eveMoniker.GetPlanetOrbitalRegistry</c>): the tax rate of
 /// a customs office, which the import and export window shows and sends back (importExportUI.py:383, infosvc.py:2066).
 /// </summary>
+
+
 [Service("planetOrbitalRegistryBroker")]
 public sealed partial class PlanetOrbitalRegistryService(PlanetMgrService planets, Func<long> nowMs)
 {
@@ -45,5 +47,25 @@ public sealed partial class PlanetOrbitalRegistryService(PlanetMgrService planet
         var office = call.Arg(0) switch { PyInt i => i.Value, PyLong l => l.Value, _ => 0L };
         if (call.Session.CharacterId is not { } character) return PyNone.Instance;
         return await planets.TaxRateAsync(office, character, call.Cancellation) is { } rate ? new PyReal(rate) : PyNone.Instance;
+    }
+
+
+    /// <summary>UpdateSettings(orbitalID, reinforceHour, taxRateValues, standingValue, allowAllianceValue, allowStandingsValue, aclGroupID).</summary>
+    [Method("UpdateSettings")]
+    public async ValueTask<PyValue> UpdateSettings(ServiceCall call)
+    {
+        if (call.Arg(2) is not PyDict taxValues) throw MachoErrors.ThrowUserError("CustomsOfficeAccessDenied");
+        double Rate(string key) => taxValues.Entries
+            .Where(entry => entry.Key is PyStr name && name.Value == key)
+            .Select(entry => entry.Value switch { PyReal real => real.Value, PyInt integer => (double)integer.Value, PyLong integer => (double)integer.Value, _ => double.NaN })
+            .FirstOrDefault(double.NaN);
+        var rates = new Eve.Planets.Customs.OwnerTaxRates(
+            Rate("corporation"), Rate("alliance"), Rate("standingHigh"), Rate("standingGood"),
+            Rate("standingNeutral"), Rate("standingBad"), Rate("standingHorrible"));
+        long Integer(PyValue value) => value switch { PyInt integer => integer.Value, PyLong integer => integer.Value, _ => 0 };
+        bool Boolean(PyValue value) => value switch { PyBool flag => flag.Value, PyInt integer => integer.Value != 0, _ => false };
+        await planets.UpdateOfficeSettingsAsync(call.Session, Integer(call.Arg(0)), rates, (int)Integer(call.Arg(3)),
+            Boolean(call.Arg(4)), Boolean(call.Arg(5)), call.Cancellation);
+        return PyNone.Instance;
     }
 }

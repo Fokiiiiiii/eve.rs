@@ -3,7 +3,6 @@ using Npgsql;
 
 namespace Eve.Crimewatch;
 
-/// <summary>What a player bounty can name (EveJS <c>playerBountyState</c> OWNER_KIND): a pilot, a corporation or an alliance.</summary>
 public enum BountyOwnerKind : short
 {
     Unknown = 0,
@@ -83,7 +82,6 @@ public sealed class PlayerBountyStore(NpgsqlDataSource source, string schema)
         return pools;
     }
 
-    /// <summary>The largest pools of one owner kind, the biggest first (ties by target id), at most <paramref name="limit"/>.</summary>
     public async Task<IReadOnlyList<BountyPool>> TopPoolsAsync(BountyOwnerKind kind, int limit, CancellationToken cancellationToken = default)
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
@@ -125,7 +123,6 @@ public sealed class PlayerBountyStore(NpgsqlDataSource source, string schema)
         return contributions;
     }
 
-    /// <summary>The hunters of one owner kind with claimed bounties, the largest first, at most <paramref name="limit"/>.</summary>
     public async Task<IReadOnlyList<BountyHunterStat>> TopHuntersAsync(BountyOwnerKind kind, int limit, CancellationToken cancellationToken = default)
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
@@ -189,7 +186,6 @@ public sealed class PlayerBountyStore(NpgsqlDataSource source, string schema)
         if (claim.HunterAllianceId > 0)
             await AddHunterStatAsync(connection, transaction, BountyOwnerKind.Alliance, claim.HunterAllianceId, claim.HunterCorporationId, claim.HunterAllianceId, amount, claim.NowMs, cancellationToken);
 
-        // a fleet shares the bounty (EVE University wiki, Bounty Hunting System): the amount is split equally between the sharers, the hunter
         // first, and the hunter keeps the rounding. Each sharer has its own payout, credited by its own job.
         var sharers = claim.Sharers is { Count: > 0 } listed ? listed.Prepend(claim.HunterId).Distinct().ToArray() : [claim.HunterId];
         var each = Math.Round(amount / sharers.Length, 2, MidpointRounding.ToZero);
@@ -223,7 +219,6 @@ public sealed class PlayerBountyStore(NpgsqlDataSource source, string schema)
         await Sql.ExecuteAsync(connection, transaction, Q(
             "UPDATE {schema}.player_bounty_payouts SET status = 'paid', paid_ms = $2 WHERE payout_id = $1"), cancellationToken, payoutId, nowMs);
 
-    /// <summary>The share of a kill's loss a hunter is paid from the bounties on the victim (EveJS <c>PLAYER_BOUNTY_PAYOUT_LOSS_RATIO</c>).</summary>
     public const decimal PayoutRatio = 0.2m;
 
     private async Task AddHunterStatAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, BountyOwnerKind kind, long hunterId,

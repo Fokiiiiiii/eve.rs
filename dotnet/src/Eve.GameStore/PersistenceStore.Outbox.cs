@@ -4,10 +4,8 @@ using NpgsqlTypes;
 namespace Eve.GameStore;
 
 /// <summary>
-/// The write-ahead journal. A flush first journals its exact batch (one open
-/// batch per table), then applies it. If the process dies in between, the
-/// owner replays the journaled batch on start instead of guessing a new diff,
-/// which could miss a delete.
+/// A flush journals its exact batch before applying it, so recovery preserves
+/// deletes as well as upserts.
 /// </summary>
 public sealed partial class PersistenceStore
 {
@@ -77,8 +75,7 @@ public sealed partial class PersistenceStore
         await using var connection = await _source.OpenConnectionAsync(ct);
         await using var tx = await connection.BeginTransactionAsync(ct);
         var active = await AssertActiveAsync(connection, tx, fence, ct);
-        // Table creation shares the fenced transaction: a stale owner cannot
-        // publish even an empty table.
+        // Publish table creation in the fenced transaction.
         await CreateTableAsync(connection, tx, name, ct);
         try
         {
@@ -122,7 +119,6 @@ public sealed partial class PersistenceStore
         return operation is null ? null : RequireOwnedBy(operation, active);
     }
 
-    /// <summary>This owner's journal, oldest first.</summary>
     public async Task<IReadOnlyList<PersistenceOperation>> ListOperationsAsync(OwnerFence fence, CancellationToken ct = default)
     {
         await using var connection = await _source.OpenConnectionAsync(ct);
@@ -146,7 +142,6 @@ public sealed partial class PersistenceStore
         return operations;
     }
 
-    /// <summary>Every journaled batch of every owner (diagnostics and maintenance).</summary>
     public async Task<IReadOnlyList<PersistenceOperation>> ListAllOperationsAsync(CancellationToken ct = default)
     {
         await using var connection = await _source.OpenConnectionAsync(ct);
@@ -160,10 +155,6 @@ public sealed partial class PersistenceStore
         return operations;
     }
 
-    /// <summary>
-    /// The exclusive maintenance owner may replay its own batches but must never
-    /// edit rows while another owner's exact batch is still journaled.
-    /// </summary>
     public async Task AssertNoForeignOperationsAsync(OwnerFence fence, CancellationToken ct = default)
     {
         await using var connection = await _source.OpenConnectionAsync(ct);
@@ -291,11 +282,6 @@ public sealed partial class PersistenceStore
         return operation with { State = OperationState.Applied, AppliedAt = operation.AppliedAt ?? DateTimeOffset.UtcNow };
     }
 
-    /// <summary>
-    /// Replays this owner's whole journal in order and marks every batch applied.
-    /// Applied batches stay journaled until <see cref="AcknowledgeRecoveredAsync"/>,
-    /// so the owner can rebuild its own baseline before they are dropped.
-    /// </summary>
     public async Task<IReadOnlyList<PersistenceOperation>> RecoverOperationsAsync(OwnerFence fence, CancellationToken ct = default)
     {
         await using var connection = await _source.OpenConnectionAsync(ct);

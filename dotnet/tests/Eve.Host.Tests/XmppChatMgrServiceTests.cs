@@ -17,6 +17,25 @@ public sealed class XmppChatMgrServiceTests
         Assert.Equal(new PyStr("192.0.2.10"), service.GetDeprecatedPrefsFallback(null!));
     }
 
+[Fact]
+    public void Private_channel_uses_a_stable_sorted_pair_and_rejects_self_invites()
+    {
+        var sessions = new ConnectedSessions();
+        var first = new ClientSession { CharacterId = 42 };
+        var second = new ClientSession { CharacterId = 77 };
+        sessions.Add(first);
+        sessions.Add(second);
+        var hub = new XmppChatHub(sessions, new XmppChatSettings("chat.example", "localhost"));
+        var service = new XmppChatMgrService(hub);
+        var firstCall = new ServiceCall { Method = "CreatePrivateChannel", Args = [new PyLong(77)], Session = first };
+        var secondCall = new ServiceCall { Method = "CreatePrivateChannel", Args = [new PyLong(42)], Session = second };
+        var selfCall = new ServiceCall { Method = "CreatePrivateChannel", Args = [new PyLong(42)], Session = first };
+
+        Assert.Equal(new PyStr("private_42_77"), service.CreatePrivateChannel(firstCall));
+        Assert.Equal(new PyStr("private_42_77"), service.CreatePrivateChannel(secondCall));
+        Assert.Equal(PyNone.Instance, service.CreatePrivateChannel(selfCall));
+    }
+
     [Fact]
     public void Resync_returns_only_the_active_character_static_channel_names()
     {

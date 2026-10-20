@@ -3,10 +3,6 @@ using Eve.Skills;
 
 namespace Eve.Services.Skills;
 
-/// <summary>
-/// The Alpha clone's daily injector clock (EveJS <c>alphaInjectorMgr</c>): the filetime of the first downtime after the character's last
-/// Daily Alpha Injector use, or 0 when it never used one. The client shows the time left from it.
-/// </summary>
 [Service("alphaInjectorMgr")]
 public sealed partial class AlphaInjectorMgrService(PgSkillStore store, SkillCatalog catalog)
 {

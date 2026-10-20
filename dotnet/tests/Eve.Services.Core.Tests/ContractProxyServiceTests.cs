@@ -239,6 +239,7 @@ public sealed class ContractProxyServiceTests
         Assert.Equal(new PyInt(777), Assert.Single(response.Items));
         var request = Assert.Single(writer.Requests);
         Assert.Equal((100m, 50m), (request.Price, request.Reward));
+        Assert.Equal("Parts", request.Title);
         Assert.Equal(new[] { 9001L }, request.Items.Select(item => item.ItemId));
         Assert.Equal((35, 4L), (Assert.Single(request.RequestedItems!).TypeId, Assert.Single(request.RequestedItems!).Quantity));
     }

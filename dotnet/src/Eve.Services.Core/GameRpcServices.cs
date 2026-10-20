@@ -158,7 +158,10 @@ public sealed partial class ContractProxyService(
         }
         catch (ArgumentException error)
         {
-            Console.Error.WriteLine($"eve-host: contract writer rejected arguments ({error.GetType().Name}, parameter {error.ParamName ?? "none"})");
+            var detail = error.ParamName == nameof(request.Title)
+                ? $" (title blank={string.IsNullOrWhiteSpace(request.Title)}, length={request.Title.Length})"
+                : string.Empty;
+            Console.Error.WriteLine($"eve-host: contract writer rejected arguments ({error.GetType().Name}, parameter {error.ParamName ?? "none"}){detail}");
             throw MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr("The contract terms are outside the supported limits.")));
         }
     }

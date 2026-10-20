@@ -216,3 +216,5 @@ CI run 422 on `745e786b` found `EVE_XMPP_SCHEMA` missing from `tools/dev/run-eve
 ## SDE lookup index initialization
 
 `SdeReader.BuildAsync` only reads the loaded build number. `eve-sde ensure` installs the SDE lookup indexes under a per-schema PostgreSQL advisory transaction lock. This keeps concurrent test readers from racing to create the same index and preserves the read-only contract checked by `LiveScriptIsolationTests`.
+
+Run 440 on `93502250` passed Rust format/clippy, Rust tests, fixtures, Python, .NET build, the end-to-end walk, and all Host shards except `LiveScriptIsolationTests.Every_schema_the_host_reads_is_scratch_in_the_live_script_and_dropped_at_its_end`. The new Host schema reference `EVE_LOGIN_SCHEMA` was not isolated by `tools/dev/run-eve-live.sh`. The live script now assigns a scratch login schema and drops it during cleanup; a focused rerun and the next required gate are pending.

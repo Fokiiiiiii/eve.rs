@@ -53,6 +53,41 @@ public sealed class ContractProxyServiceTests
     }
 
 
+[Fact]
+    public async Task Current_and_expired_contract_lists_return_rows_and_gate_corporation_reads()
+    {
+        var readModel = new RecordingReadModel();
+        var service = new ContractProxyService(readModel);
+        var personal = new ClientSession { CharacterId = 42 };
+        personal.Set("corpid", new PyInt(84));
+        var current = Assert.IsType<PyObject>(await service.GetMyCurrentContractList(new ServiceCall
+        {
+            Method = "GetMyCurrentContractList", Args = [PyBool.True, PyBool.False], Session = personal,
+        }));
+        Assert.Equal(42, readModel.CharacterId);
+        Assert.Equal(84, readModel.CorporationId);
+        Assert.True(readModel.IsAccepted);
+        Assert.False(readModel.ForCorporation);
+        Assert.Single(Assert.IsType<PyList>(Value(current, "contracts")).Items);
+
+        await Assert.ThrowsAsync<MachoWrappedException>(() => service.GetMyCurrentContractList(new ServiceCall
+        {
+            Method = "GetMyCurrentContractList", Args = [PyBool.False, PyBool.True], Session = personal,
+        }));
+        await Assert.ThrowsAsync<MachoWrappedException>(() => service.GetMyExpiredContractList(new ServiceCall
+        {
+            Method = "GetMyExpiredContractList", Args = [PyBool.True], Session = personal,
+        }));
+
+        personal.Set("corprole", new PyLong(72057594037927936L));
+        var corpExpired = Assert.IsType<PyObject>(await service.GetMyExpiredContractList(new ServiceCall
+        {
+            Method = "GetMyExpiredContractList", Args = [PyBool.True], Session = personal,
+        }));
+        Assert.Single(Assert.IsType<PyList>(Value(corpExpired, "contracts")).Items);
+        Assert.True(readModel.ForCorporation);
+    }
+
     [Fact]
     public async Task Get_my_bids_returns_persisted_contract_rows_and_requires_the_corporation_role()
     {
@@ -490,6 +525,7 @@ public sealed class ContractProxyServiceTests
         public long AllianceId { get; private set; }
         public long NowFileTime { get; private set; }
         public bool ForCorporation { get; private set; }
+        public bool IsAccepted { get; private set; }
         public long OwnerId { get; private set; }
         public int OwnerStatus { get; private set; }
         public int OwnerPageSize { get; private set; }
@@ -531,6 +567,27 @@ public sealed class ContractProxyServiceTests
             OwnerStatus = status;
             OwnerPageSize = pageSize;
             OwnerStartContractId = startContractId;
+            return ValueTask.FromResult(new ContractReadBundle([Contract()]));
+        }
+
+public ValueTask<ContractReadBundle> GetMyCurrentContractListAsync(
+            long characterId, long corporationId, bool isAccepted, bool forCorporation,
+            long nowFileTime, CancellationToken cancellationToken)
+        {
+            CharacterId = characterId;
+            CorporationId = corporationId;
+            IsAccepted = isAccepted;
+            ForCorporation = forCorporation;
+            return ValueTask.FromResult(new ContractReadBundle([Contract()]));
+        }
+
+        public ValueTask<ContractReadBundle> GetMyExpiredContractListAsync(
+            long characterId, long corporationId, bool forCorporation, long nowFileTime,
+            CancellationToken cancellationToken)
+        {
+            CharacterId = characterId;
+            CorporationId = corporationId;
+            ForCorporation = forCorporation;
             return ValueTask.FromResult(new ContractReadBundle([Contract()]));
         }
 

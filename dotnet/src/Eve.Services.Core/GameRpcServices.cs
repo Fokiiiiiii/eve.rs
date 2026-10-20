@@ -461,6 +461,62 @@ public sealed partial class ContractProxyService(
         return BuildContractBundle(bundle);
     }
 
+
+    [Method("GetMyCurrentContractList")]
+    public async Task<PyValue> GetMyCurrentContractList(ServiceCall call)
+    {
+        var store = readModel ?? throw new InvalidOperationException("contract read model is not wired");
+        var characterId = call.Session.CharacterId
+            ?? throw new InvalidOperationException("contract list reads require a character session");
+        var corporationId = call.Session.GetInt("corpid") ?? 0;
+        var isAccepted = call.Arg(0) switch
+        {
+            PyBool value => value.Value,
+            PyInt value => value.Value != 0,
+            PyLong value => value.Value != 0,
+            _ => false,
+        };
+        var forCorporation = call.Arg(1) switch
+        {
+            PyBool value => value.Value,
+            PyInt value => value.Value != 0,
+            PyLong value => value.Value != 0,
+            _ => false,
+        };
+        if (forCorporation &&
+            (corporationId <= 0 || ((call.Session.GetInt("corprole") ?? 0) & CorpRoleContractManager) == 0))
+            throw MachoErrors.ThrowUserError("ConNotContractManager");
+
+        var nowFileTime = Eve.Services.Py.FileTimeFromUnixMs(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        var bundle = await store.GetMyCurrentContractListAsync(
+            characterId, corporationId, isAccepted, forCorporation, nowFileTime, call.Cancellation);
+        return BuildContractBundle(bundle);
+    }
+
+    [Method("GetMyExpiredContractList")]
+    public async Task<PyValue> GetMyExpiredContractList(ServiceCall call)
+    {
+        var store = readModel ?? throw new InvalidOperationException("contract read model is not wired");
+        var characterId = call.Session.CharacterId
+            ?? throw new InvalidOperationException("contract list reads require a character session");
+        var corporationId = call.Session.GetInt("corpid") ?? 0;
+        var forCorporation = call.Arg(0) switch
+        {
+            PyBool value => value.Value,
+            PyInt value => value.Value != 0,
+            PyLong value => value.Value != 0,
+            _ => false,
+        };
+        if (forCorporation &&
+            (corporationId <= 0 || ((call.Session.GetInt("corprole") ?? 0) & CorpRoleContractManager) == 0))
+            throw MachoErrors.ThrowUserError("ConNotContractManager");
+
+        var nowFileTime = Eve.Services.Py.FileTimeFromUnixMs(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        var bundle = await store.GetMyExpiredContractListAsync(
+            characterId, corporationId, forCorporation, nowFileTime, call.Cancellation);
+        return BuildContractBundle(bundle);
+    }
+
     private static long ContractLong(PyValue value) => value switch
     {
         PyInt integer => integer.Value,

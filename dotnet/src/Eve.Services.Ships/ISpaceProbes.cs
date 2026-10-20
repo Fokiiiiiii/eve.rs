@@ -4,7 +4,7 @@ using Eve.Ships;
 namespace Eve.Services.Ships;
 
 /// <summary>
-/// What the scanner probes ask of space (EVE.js <c>dogmaIM.LaunchProbes</c> and <c>scanMgr.DestroyProbe</c>): a launch from a probe launcher of the ship the session
+/// What the scanner probes ask of space: a launch from a probe launcher of the ship the session
 /// flies, and the recall of a probe. Implemented where the ships are in space (<c>SpaceSessions</c>).
 /// </summary>
 public interface ISpaceProbes

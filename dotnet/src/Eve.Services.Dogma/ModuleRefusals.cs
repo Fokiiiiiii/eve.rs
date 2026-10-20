@@ -61,9 +61,9 @@ public static class ModuleRefusals
             "MICROWARPDRIVE_BLOCKED" => Notify("That module cannot be activated while you are warp scrambled."),
             // a running module blocks this one (activationBlocked 1349; the client's own UserError, fittingDogmaLocation: ModuleIsBlocked, moduleName the type)
             "MODULE_BLOCKED" => MachoErrors.ThrowUserError("ModuleIsBlocked", ("moduleName", new PyTuple([new PyInt(TypeReference), new PyInt(refusal.ModuleType)]))),
-            // a compressor needs an industrial core that runs (activationRequiresActiveIndustrialCore 3265): the reference's words (EveJS moduleOperation.js)
+
             "ACTIVE_INDUSTRIAL_CORE_REQUIRED" => Notify("An active industrial core is required to activate that module."),
-            // a module that cannot be deactivated early runs (disallowEarlyDeactivation 906): the reference's words for a cloak refused by it (EveJS moduleOperation.js)
+
             "CLOAK_MODULE_ACTIVE" => Notify("You cannot activate a cloaking device while a module that cannot be deactivated early is still running."),
             // a module that waits after it stopped (its reactivation delay, 669). shortcut: the client's ModuleReactivationDelayed2 wants the time since the stop and the
             // module id, which the refusal does not carry yet; until then the pilot is told in words of ours
@@ -80,13 +80,13 @@ public static class ModuleRefusals
             "CLOAK_DISALLOWED" => MachoErrors.ThrowUserError("CantCloak"),
             "CLOAK_TARGET_LOCKED" => Notify("Your ship is already target locked and cannot activate a cloaking device."),
             "CLOAK_PROXIMITY_BLOCKED" => Notify("You are too close to another object to activate your cloaking device."),
-        // the wiki (EVE University, Cynosural Field Generator): a cynosural field is lit by a fleet member; the client's own wording is not in the tables read
+
         "CYNO_NOT_IN_FLEET" => Notify($"{name} can only be lit by a member of a fleet."),
         "CYNO_JAMMED" => Notify($"{name} cannot be lit: a cynosural jammer is active in this system."),
-        // the text of EveJS's CYNOSURAL_FIELD_JAMMED (moduleOperation.js); eve-logic has no string for it. Pochven's jammer gives it too (the wiki)
+
         "CYNOSURAL_FIELD_JAMMED" => Notify("A cynosural system jammer is preventing cynosural fields from forming in this solar system."),
         "SMARTBOMB_NEAR_STATION" => Notify($"{name} cannot be activated this close to a station or stargate."),
-            // a disruptive lance needs an active siege module on the ship (EveJS ACTIVE_SIEGE_MODULE_REQUIRED, moduleActivationRequiresActiveSiegeModule)
+
             "ACTIVE_SIEGE_MODULE_REQUIRED" => Notify($"{name} requires an active siege module."),
             // an effect with no body yet (PendingModuleEffect) or a module that burns a resource not taken yet (DogmaModifierEffect) is shown as one this module cannot run,
             // the same as an effect with no handler
@@ -97,7 +97,7 @@ public static class ModuleRefusals
             "UNSUPPORTED_EFFECT" or "EFFECT_NOT_IMPLEMENTED" => Notify($"{name} cannot be activated."),
             // a module whose type the static data does not publish (the Standup oscillator 47068) and a structure module of a fit it may not take (REFUSED)
             "MODULE_NOT_PUBLISHED" or "REFUSED" or "UNSUPPORTED_MODULE" => Notify($"{name} cannot be activated."),
-            // the entosis link works on a sovereignty hub only (EVE.js resolveEntosisLinkActivation); the text is ours (no client string is verified)
+            // The entosis link works on a sovereignty hub only.
             "ENTOSIS_TARGET_NOT_SOV_HUB" => Notify($"{name} can only act on a sovereignty hub."),
             "ALLIANCE_MEMBERSHIP_REQUIRED" => Notify($"{name} can only be used by a member of an alliance."),
             // a module of a group of which one runs at a time (the reactive armor hardeners) while another of its group runs

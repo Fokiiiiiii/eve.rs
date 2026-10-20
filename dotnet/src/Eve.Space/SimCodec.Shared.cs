@@ -102,7 +102,6 @@ public const byte UpdateEffect = 61;
         public const byte PlaceWormhole = 82;
         public const byte RemoveWormhole = 83;
 
-
 /// <summary>Protocol 46 (FP-C7): an ECM burst reached ships; the ship that ran it and each ship reached, with whether its roll jammed it (simulation to host).</summary>
         public const byte EcmBurst = 67;
         public const byte StructureDamageCandidatesRequest = 85;

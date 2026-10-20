@@ -19,6 +19,34 @@ public sealed class ApproximateMissionRewardRulesTests
     }
 
     [Theory]
+    [InlineData("encounter", 1, 0.9, 0, 77)]
+    [InlineData("encounter", 4, 0.7, 5, 2_020)]
+    [InlineData("courier", 4, 0.9, 0, 532)]
+    [InlineData("mining", 5, 0.5, 2, 2_370)]
+    public void Mission_lp_uses_configured_kind_level_security_and_division_skill_values(
+        string kind, int level, decimal security, int skillLevel, long expected)
+    {
+        Assert.Equal(expected, ApproximateMissionRewardRules.LoyaltyPoints(kind, level, security, skillLevel));
+    }
+
+    [Fact]
+    public void Mission_lp_base_table_can_be_replaced()
+    {
+        var configuration = new ApproximateMissionRewardConfiguration(
+            BaseLoyaltyPoints: new Dictionary<(string Kind, int Level), decimal> { [("encounter", 1)] = 100 });
+
+        Assert.Equal(113, ApproximateMissionRewardRules.LoyaltyPoints("encounter", 1, 0.5m, 0, configuration));
+        Assert.Equal(0, ApproximateMissionRewardRules.LoyaltyPoints("courier", 1, 0.5m, 0, configuration));
+    }
+
+    [Fact]
+    public void Mission_lp_uses_displayed_security_precision_and_floor()
+    {
+        Assert.Equal(77, ApproximateMissionRewardRules.LoyaltyPoints("encounter", 1, 0.94m, 0));
+        Assert.Equal(11, ApproximateMissionRewardRules.LoyaltyPoints("encounter", 1, 2.0m, 0));
+    }
+
+    [Theory]
     [InlineData(0, 0)]
     [InlineData(1, 4)]
     [InlineData(5, 20)]

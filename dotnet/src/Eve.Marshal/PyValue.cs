@@ -8,7 +8,6 @@ namespace Eve.Marshal;
 /// opcode decodes to a <c>Buffer</c>, every small integer to a <c>number</c>).
 /// This model keeps them apart because the distinction is meaningful on the wire:
 /// <see cref="PyBytes"/> is a Python <c>str</c>, <see cref="PyBuffer"/> a
-/// <c>buffer</c>, <see cref="PyStr"/> a string-table or UTF-8 string produced by
 /// the server, <see cref="PyWString"/> a unicode string.
 ///
 /// Values compare structurally (<c>==</c> on two <see cref="PyTuple"/>s compares
@@ -24,7 +23,6 @@ public abstract record PyValue
 
     public static PyValue Of(double value) => new PyReal(value);
 
-    /// <summary>A server string (string-table item or UTF-8 <c>str</c>).</summary>
     public static PyValue Of(string? value) => value is null ? PyNone.Instance : new PyStr(value);
 
     /// <summary>Deep structural equality (also available as <c>==</c> / <c>Equals</c>).</summary>
@@ -156,7 +154,6 @@ public sealed record PyBigUnsigned(byte[] Bytes) : PyValue
     public override int GetHashCode() => Seq.Hash(Bytes);
 }
 
-/// <summary>A string-table item or a UTF-8 string chosen by the sender.</summary>
 public sealed record PyStr(string Value) : PyValue;
 
 /// <summary>A Python <c>str</c>: PyEmptyString, PyCharString, PyShortString or PyLongString.</summary>
@@ -175,7 +172,6 @@ public sealed record PyBuffer(ReadOnlyMemory<byte> Value) : PyValue
     public override int GetHashCode() => Seq.Hash(Value);
 }
 
-/// <summary>A unicode string: PyWStringUTF8 (or a UCS-2 form when decoding).</summary>
 public sealed record PyWString(string Value) : PyValue;
 
 public sealed record PyToken(string Value) : PyValue;

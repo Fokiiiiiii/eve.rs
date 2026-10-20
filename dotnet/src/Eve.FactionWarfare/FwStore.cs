@@ -9,7 +9,6 @@ public sealed record FwSystem(long SolarSystemId, long WarzoneId, long OccupierI
 /// <summary>A corporation's or alliance's enlistment: the faction it is in (0: none) and the change that takes effect at <see cref="EffectiveMs"/> (0: none pending).</summary>
 public sealed record FwEnlistment(int OwnerKind, long OwnerId, long FactionId, long NextFactionId, long EffectiveMs, long ChangedMs);
 
-/// <summary>The kills and victory points of an owner over the client's windows: yesterday, the seven days before today, and all days.</summary>
 public sealed record FwStatsWindow(long KillsYesterday, long KillsLastWeek, long KillsTotal, long VictoryPointsYesterday, long VictoryPointsLastWeek, long VictoryPointsTotal);
 
 /// <summary>

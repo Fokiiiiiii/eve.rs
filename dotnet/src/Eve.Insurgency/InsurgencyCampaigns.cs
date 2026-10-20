@@ -189,7 +189,6 @@ public sealed class InsurgencyCampaigns
     }
 
     /// <summary>
-    /// The victory payout (the wiki: a win pays every contributor 1,500,000 LP, the winning side's): one credit per contributor, issued by the winning side's militia
     /// (a pirate win: the warzone's pirate militia; an Empire win: <see cref="InsurgencyWarzones.EmpireMilitiaOf"/>), keyed by the campaign and the character, so a
     /// replayed win credits nothing.
     /// </summary>
@@ -201,7 +200,7 @@ public sealed class InsurgencyCampaigns
             : InsurgencyWarzones.EmpireMilitiaOf(warzone, _factionOfSystem?.Invoke(campaign.OriginSolarSystemId) ?? 0);
         foreach (var character in await _store.ContributorsAsync(connection, transaction, campaign.CampaignId, cancellationToken))
         {
-            // the contributor's corporation takes its loyalty point tax of the victory LP (Viridian notes: corporation tax on member LP)
+            // The contributor’s corporation tax is applied to the victory LP.
             var (corporationId, taxRate) = _memberLpTerms is null ? (0L, 0m) : await _memberLpTerms(character, cancellationToken);
             await _loyalty!.CreditMemberAsync(connection, transaction, character, corporationId, taxRate, issuer,
                 InsurgencyRules.VictoryLp, "insurgency_victory", $"insurgency:{campaign.CampaignId}:{character}", cancellationToken);

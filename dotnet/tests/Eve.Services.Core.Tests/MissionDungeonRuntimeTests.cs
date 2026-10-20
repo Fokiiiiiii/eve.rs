@@ -89,7 +89,7 @@ public class MissionDungeonRuntimeTests
         }
 
         public async Task<bool> CompleteMissionAsync(long characterId, long agentId, DateTimeOffset now, string reference,
-            IReadOnlyList<MissionStandingGain> standings, IReadOnlyList<(int TypeId, long Quantity, string? Tag)> consume, CancellationToken cancellationToken)
+            IReadOnlyList<MissionStandingGain> standings, IReadOnlyList<(int TypeId, long Quantity, string? Tag)> consume, long loyaltyPoints, long issuerCorporationId, CancellationToken cancellationToken)
         {
             if (Store is null) return false;
             if (consume.Any(need => Held.GetValueOrDefault(need.TypeId) < need.Quantity)) return false;

@@ -124,8 +124,6 @@ public sealed partial class Colony
 
     private static (long A, long B) Ordered(long a, long b) => a > b ? (b, a) : (a, b);
 
-    // ----- pins -----
-
     /// <summary>
     /// CreatePin (clientPlanet.CreatePin, baseColony.ValidateCreatePin, clientColony.PostValidateCreatePin). Returns the ISK it
     /// costs (the base price; the command center is an item and costs nothing).
@@ -185,8 +183,6 @@ public sealed partial class Colony
 
     private IEnumerable<Link> LinksOf(long pinId) => Links.Values.Where(l => l.End1 == pinId || l.End2 == pinId).OrderBy(l => l.End1).ThenBy(l => l.End2);
 
-    // ----- links -----
-
     /// <summary>CreateLink (baseColony.ValidateCreateLink). The new link's CPU and power must fit the colony.</summary>
     public void CreateLink(long end1, long end2, int typeId, int level)
     {
@@ -228,8 +224,6 @@ public sealed partial class Colony
         }
         link.Level = level;
     }
-
-    // ----- routes -----
 
     /// <summary>CreateRoute (baseColony.ValidateCreateRoute, then PrimeRoute and OnRouteCreated).</summary>
     public void CreateRoute(long routeId, IReadOnlyList<long> path, int typeId, long quantity)
@@ -289,8 +283,6 @@ public sealed partial class Colony
         if (!Routes.Remove(routeId)) throw new PlanetRefusal("RouteDoesNotExist");
     }
 
-    // ----- processors -----
-
     /// <summary>SetSchematic (ProcessPin.InstallSchematic, SetSchematic, StimulateIdlePin, then the obsolete routes go).</summary>
     public void SetSchematic(long pinId, int schematicId)
     {
@@ -317,7 +309,6 @@ public sealed partial class Colony
         }
     }
 
-    /// <summary>UpgradeCommandCenter: the level rises, one step at a time, within the skill. Returns the ISK it costs.</summary>
     public long UpgradeCommandCenter(long pinId, int level, ColonyContext ctx)
     {
         var pin = PinOf(pinId);
@@ -329,8 +320,6 @@ public sealed partial class Colony
         Level = level;
         return cost;
     }
-
-    // ----- extractor heads and programs -----
 
     private double AreaOfInfluence(Pin ecu) => Catalog.Type(ecu.TypeId).Attr(PlanetAttr.EcuAreaOfInfluence);
 
@@ -578,8 +567,6 @@ public sealed partial class Colony
         return quantity;
     }
 
-    // ----- launches and expedited transfers -----
-
     /// <summary>
     /// UserLaunchCommodities: takes the commodities out of the command center and records the launch. Returns the launch time.
     /// </summary>
@@ -660,8 +647,6 @@ public sealed partial class Colony
         if (quantity < 1 || pad.Contents.GetValueOrDefault(typeId) < quantity) throw new PlanetRefusal("RouteFailedValidationExpeditedSourceLacksCommodityQty");
         RemoveCommodity(pad, typeId, quantity);
     }
-
-    // ----- helpers for the host -----
 
     /// <summary>Route removal of a pin's routes, for an abandoned colony's or a removed pin's links (exposed for tests).</summary>
     public IReadOnlyList<Route> RoutesFrom(long pinId) => Routes.Values.Where(r => r.Source == pinId).OrderBy(r => r.Id).ToList();

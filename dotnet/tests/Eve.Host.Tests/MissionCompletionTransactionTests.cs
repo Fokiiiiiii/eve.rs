@@ -6,6 +6,7 @@ using Eve.Inventory;
 using Eve.Relations;
 using Eve.Scheduler;
 using Eve.Services.Core;
+using Eve.Wallet;
 using Npgsql;
 
 namespace Eve.Host.Tests;
@@ -31,6 +32,7 @@ public class MissionCompletionTransactionTests
             Source = source;
             Store = new AgentMissionStore(source, schemas[3]);
             Relations = new RelationStore(source, scheduler, bus, schemas[2]);
+            Loyalty = new LoyaltyPointStore(source, schemas[5]);
             MissingRelations = new RelationStore(source, otherScheduler, otherBus, missingRelationsSchema);
             _schemas = [.. schemas, "mo_" + missingRelationsSchema[4..], missingRelationsSchema];
         }
@@ -49,6 +51,8 @@ public class MissionCompletionTransactionTests
             await transaction.CommitAsync();
         }
         public RelationStore Relations { get; }
+        public LoyaltyPointStore Loyalty { get; }
+        public string LoyaltySchema => _schemas[5];
         /// <summary>A relation store on a schema that does not exist: its first standing read fails inside the completion's transaction.</summary>
         public RelationStore MissingRelations { get; }
 
@@ -56,12 +60,13 @@ public class MissionCompletionTransactionTests
         {
             var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
             var id = Guid.NewGuid().ToString("N")[..12];
-            string[] schemas = ["msch_" + id, "mevt_" + id, "mrel_" + id, "magt_" + id, "mitm_" + id];
+            string[] schemas = ["msch_" + id, "mevt_" + id, "mrel_" + id, "magt_" + id, "mitm_" + id, "mwal_" + id];
             await DurableScheduler.MigrateAsync(source, schemas[0]);
             await EventBus.MigrateAsync(source, schemas[1]);
             await RelationStore.MigrateAsync(source, schemas[2]);
             await AgentMissionStore.MigrateAsync(source, schemas[3]);
             await PgItemStore.MigrateAsync(source, schemas[4]);
+            await PgWalletStore.MigrateAsync(source, schemas[5]);
             var scheduler = new DurableScheduler(source, () => Start.ToUnixTimeMilliseconds(), new SchedulerOptions { Concurrency = 1 }, schemas[0]);
             var bus = new EventBus(source, scheduler, null, schemas[1]);
             // a relation store registers its jobs on its scheduler, so the store on the missing schema has a scheduler and a bus of its own
@@ -96,6 +101,59 @@ public class MissionCompletionTransactionTests
         Assert.Equal(AgentMissionState.Completed, (await fixture.Store.ReadAsync(Pilot, Agent))!.State);
         Assert.Equal(0.28, await fixture.Relations.ValueAsync(RelationKinds.Standing.Name, Agent, Pilot, 0), 10);
         Assert.Equal(0.55, await fixture.Relations.ValueAsync(RelationKinds.Standing.Name, Corporation, Pilot, 0), 10);
+    }
+
+    [PgFact]
+    public async Task Mission_loyalty_reward_and_corporation_tax_commit_with_completion()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+
+        var done = await CharacterServicesComposition.CompleteInTransactionAsync(fixture.Source, fixture.Store, fixture.Relations, fixture.Items,
+            Pilot, Agent, Start + TimeSpan.FromHours(1), "complete:lp", Gains, [], CancellationToken.None,
+            loyalty: fixture.Loyalty, loyaltyAmount: 100, issuerCorporationId: Corporation, taxCorporationId: 90000202, loyaltyTaxRate: 0.2m);
+
+        Assert.True(done);
+        Assert.Equal([new LoyaltyPointBalance(Corporation, 80)], await fixture.Loyalty.ReadAsync(new LoyaltyHolder(LoyaltyHolderKind.Character, Pilot)));
+        Assert.Equal([new LoyaltyPointBalance(Corporation, 20)], await fixture.Loyalty.ReadAsync(new LoyaltyHolder(LoyaltyHolderKind.Corporation, 90000202)));
+        Assert.Equal(AgentMissionState.Completed, (await fixture.Store.ReadAsync(Pilot, Agent))!.State);
+        Assert.False(await CharacterServicesComposition.CompleteInTransactionAsync(fixture.Source, fixture.Store, fixture.Relations, fixture.Items,
+            Pilot, Agent, Start + TimeSpan.FromHours(1), "complete:lp", Gains, [], CancellationToken.None,
+            loyalty: fixture.Loyalty, loyaltyAmount: 100, issuerCorporationId: Corporation, taxCorporationId: 90000202, loyaltyTaxRate: 0.2m));
+        var reopenedLoyalty = new LoyaltyPointStore(fixture.Source, fixture.LoyaltySchema);
+        Assert.Equal([new LoyaltyPointBalance(Corporation, 80)], await reopenedLoyalty.ReadAsync(new LoyaltyHolder(LoyaltyHolderKind.Character, Pilot)));
+    }
+
+    [PgFact]
+    public async Task Concurrent_mission_completions_serialize_credits_to_the_same_lp_balance()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        const long otherAgent = 3008417;
+        await fixture.Store.OfferAsync(Pilot, otherAgent, Kill, Start, "offer:lp-race");
+        await fixture.Store.AcceptAsync(Pilot, otherAgent, Start, "accept:lp-race");
+
+        var completions = await Task.WhenAll(
+            CharacterServicesComposition.CompleteInTransactionAsync(fixture.Source, fixture.Store, fixture.Relations, fixture.Items,
+                Pilot, Agent, Start + TimeSpan.FromHours(1), "complete:lp-race-a", [], [], CancellationToken.None,
+                loyalty: fixture.Loyalty, loyaltyAmount: 125, issuerCorporationId: Corporation),
+            CharacterServicesComposition.CompleteInTransactionAsync(fixture.Source, fixture.Store, fixture.Relations, fixture.Items,
+                Pilot, otherAgent, Start + TimeSpan.FromHours(1), "complete:lp-race-b", [], [], CancellationToken.None,
+                loyalty: fixture.Loyalty, loyaltyAmount: 125, issuerCorporationId: Corporation));
+
+        Assert.All(completions, done => Assert.True(done));
+        Assert.Equal([new LoyaltyPointBalance(Corporation, 250)], await fixture.Loyalty.ReadAsync(new LoyaltyHolder(LoyaltyHolderKind.Character, Pilot)));
+    }
+
+    [PgFact]
+    public async Task Mission_loyalty_reward_rolls_back_when_a_later_completion_write_fails()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+
+        await Assert.ThrowsAnyAsync<Exception>(() => CharacterServicesComposition.CompleteInTransactionAsync(fixture.Source, fixture.Store,
+            fixture.MissingRelations, fixture.Items, Pilot, Agent, Start + TimeSpan.FromHours(1), "complete:lp-rollback", Gains, [], CancellationToken.None,
+            loyalty: fixture.Loyalty, loyaltyAmount: 100, issuerCorporationId: Corporation));
+
+        Assert.Empty(await fixture.Loyalty.ReadAsync(new LoyaltyHolder(LoyaltyHolderKind.Character, Pilot)));
+        Assert.Equal(AgentMissionState.Accepted, (await fixture.Store.ReadAsync(Pilot, Agent))!.State);
     }
 
     [PgFact]

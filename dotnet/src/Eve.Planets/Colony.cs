@@ -59,7 +59,6 @@ public sealed class Route
 
 /// <summary>
 /// A colony: one character's pins, links and routes on one planet, with the simulation of the client's <c>BaseColony</c>.
-/// Every number is the client's rule (see docs/project/PI_DESIGN.md section 4). The state is advanced to a time with
 /// <see cref="RunTo"/>; the result depends only on the stored state and the time.
 /// </summary>
 public sealed partial class Colony(PlanetCatalog catalog, IResourceField field, long planetId, int planetTypeId, double radius, long ownerId)

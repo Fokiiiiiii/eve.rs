@@ -5,7 +5,6 @@ namespace Eve.FactionWarfare;
 /// <summary>
 /// The battlefield rules of factional warfare. The point timer (20 s), the point value (1), the capture range (30 km), the point types and the score
 /// thresholds (150 each way) are the SDE's (`spacecomponentsbytype`: the fwCapturePoint and fwScoreboard components of types 73443 to 73461 and 73447 to
-/// 73450). The victory points, the loyalty points and the spawn rules are the wiki's "Battlefields" (DEVIATIONS "Factional warfare: battlefields").
 /// </summary>
 public static class FwBattlefields
 {
@@ -15,9 +14,9 @@ public static class FwBattlefields
     public const int PointValue = 1;
     /// <summary>The hold time of one point tick (SDE fwCapturePoint numberOfSeconds 20).</summary>
     public const long PointTickMs = 20_000;
-    /// <summary>The capture range of a point (SDE fwCapturePoint range 30000; the wiki's 30 km).</summary>
+
     public const double PointRangeMeters = 30_000;
-    /// <summary>The distance of the two outer points from the central one (wiki: about 80 km either side).</summary>
+
     public const double PointSpacingMeters = 80_000;
     /// <summary>The point's ball radius (SDE radius 231 of the control zone types).</summary>
     public const double PointRadiusMeters = 231;
@@ -25,13 +24,13 @@ public static class FwBattlefields
     public const long PointGroupId = 4494;
     public const long ScoreboardGroupId = 227;
     public const int PointCount = 3;
-    /// <summary>How many battlefields are open at once (wiki: up to two).</summary>
+
     public const int MaxOpen = 2;
-    /// <summary>A new battlefield comes this long after one completes (wiki: three hours).</summary>
+
     public static readonly TimeSpan Cooldown = TimeSpan.FromHours(3);
-    /// <summary>The victory points a battlefield pays the system (wiki: 2,000).</summary>
+
     public const long VictoryPoints = 2_000;
-    /// <summary>The loyalty points a battlefield pays at build 3396210 (before the 2026-07-01 increase), split over the first <see cref="LpParticipants"/> winners.</summary>
+
     public const long LpPool = 50_000;
     public const int LpParticipants = 30;
     public const long LpEach = LpPool / LpParticipants;
@@ -40,7 +39,7 @@ public static class FwBattlefields
     /// one site point, so a battlefield is laid out this far apart; the site point of each complex needs its own offset when several sizes share a system.
     /// </summary>
     public const double SiteOffsetMeters = 300_000;
-    /// <summary>The SDE dungeon archetype of a battlefield site: the gated room the pilots enter by the acceleration gate (the wiki's battlefield entrance).</summary>
+
     public const long SiteArchetypeId = 68;
     /// <summary>How long a battlefield's site lasts when no side wins it (the site ends at the win otherwise).</summary>
     public static readonly TimeSpan SiteLifetime = TimeSpan.FromHours(24);
@@ -92,10 +91,6 @@ public static class FwBattlefields
         500004 => "Gallente",
         _ => throw new ArgumentOutOfRangeException(nameof(factionId), "not a warfare faction"),
     };
-
-    /// <summary>
-    /// The hold timer after one step: the time held adds to it, and each full tick gives one point (the rest is carried to the next step).
-    /// </summary>
     public static (long HoldMs, int Ticks) Hold(long holdMs, long stepMs)
     {
         long total = holdMs + stepMs;

@@ -66,10 +66,7 @@ public static class RowCodec
         }
     }
 
-    /// <summary>
-    /// The stored rows of a table object. Row values are deep copies, so the
-    /// caller keeps ownership of <paramref name="table"/>'s object.
-    /// </summary>
+    /// <summary>The stored rows of a table object, with deep-copied values.</summary>
     public static OrderedDictionary<string, JsonNode?> Explode(string tableName, JsonObject? table)
     {
         var rows = new OrderedDictionary<string, JsonNode?>(StringComparer.Ordinal);
@@ -81,9 +78,8 @@ public static class RowCodec
     }
 
     /// <summary>
-    /// The inverse of <see cref="Explode"/>. Order independent. A group row that
-    /// still holds a whole-group blob (data written before the split) is merged
-    /// in without overriding per-entity rows. Takes ownership of the row nodes.
+    /// The inverse of <see cref="Explode"/>. Order independent; legacy whole-group
+    /// blobs are merged without overriding per-entity rows.
     /// </summary>
     public static JsonObject Assemble(string tableName, IEnumerable<KeyValuePair<string, JsonNode?>> rows)
     {

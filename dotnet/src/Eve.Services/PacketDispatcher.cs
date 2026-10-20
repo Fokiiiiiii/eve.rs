@@ -165,7 +165,7 @@ public sealed class PacketDispatcher
             return true;
         }
 
-        var cost = ExpensiveRpcCost(serviceName, call.Method);
+        var cost = ExpensiveRpcCost(service.Name, call.Method);
         if (cost > 0 && !_expensiveBudgets.GetValue(session, _ => new ExpensiveRpcBudget())
                 .TryConsume(_nowUnixMs(), cost, MaxExpensiveRpcUnitsPerMinute))
         {

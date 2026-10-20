@@ -5193,6 +5193,10 @@ The market parser rejects floating-point prices beyond the market maximum before
 `insurance.GetInsurancePrices` accepts at most 500 raw type IDs per request and returns `InsuranceBulkLimitExceeded` before reading price data for a larger batch. The V24 client primes the service with the set of missing ship type IDs; normal client batches retain their existing results. `InsuranceServiceTests.Insurance_price_batch_refuses_more_than_500_type_ids_before_the_read_model` covers the refusal.
 
 
+## Fitting bulk batch bound (2026-10-20)
+
+`SaveManyFittings` and `DeleteManyFittings` refuse raw lists above the owner collection limit before validating each fitting or querying/mutating the store. Character collections cap at 500 entries; corporation and alliance collections cap at 600. Individual fit-data lists retain the existing 500-item cap. `FittingMgrServicesTests.Fitting_bulk_batches_refuse_raw_counts_before_validation_or_deletion` covers oversized save and delete batches.
+
 ## Structure docking access batch bound (2026-10-20)
 
 `CheckMyDockingAccessToStructures` refuses more than 500 raw structure IDs before invoking the access-list callback. Both this RPC and `GetMyDockableStructures` consume 10 units from the per-session expensive-RPC budget, returning `SessionRpcBudgetExceeded` when the session budget is exhausted. Regressions cover the batch refusal and repeated-query budget refusal.

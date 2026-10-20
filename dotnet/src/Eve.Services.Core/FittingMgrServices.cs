@@ -75,7 +75,20 @@ public sealed class FittingMgrCalls(PgSavedFittingStore store, IFittingHost host
     {
         var owner = OwnerOf(call, scope);
         await MutateAccessAsync(call, owner, scope);
-        var entries = Fields(call.Arg(1)).ToList();
+        var input = call.Arg(1);
+        var limit = LimitOf(scope);
+        var rawCount = input switch
+        {
+            PyObject { Args: PyDict dict } => dict.Entries.Count,
+            PyDict dict => dict.Entries.Count,
+            _ => 0,
+        };
+        if (rawCount > limit)
+        {
+            throw Refusal("FITTING_TOO_MANY_BULK_ENTRIES", limit);
+        }
+
+        var entries = Fields(input).ToList();
         var temps = new List<long>();
         var drafts = new List<FittingDraft>();
         foreach (var (key, value) in entries)
@@ -107,7 +120,20 @@ public sealed class FittingMgrCalls(PgSavedFittingStore store, IFittingHost host
     {
         var owner = OwnerOf(call, scope);
         await MutateAccessAsync(call, owner, scope);
-        var ids = (call.Arg(1) switch { PyTuple t => t.Items, PyList l => l.Items, _ => [] })
+        var input = call.Arg(1);
+        var limit = LimitOf(scope);
+        var rawCount = input switch
+        {
+            PyTuple tuple => tuple.Items.Count,
+            PyList list => list.Items.Count,
+            _ => 0,
+        };
+        if (rawCount > limit)
+        {
+            throw Refusal("FITTING_TOO_MANY_BULK_ENTRIES", limit);
+        }
+
+        var ids = (input switch { PyTuple t => t.Items, PyList l => l.Items, _ => [] })
             .Select(IdOf).OfType<long>().Where(id => id > 0).Distinct().ToList();
         var deleted = await store.DeleteAsync(scope, owner, ids, call.Cancellation);
         Notify(call, scope, owner, "OnManyFittingsDeleted", new PyList([.. deleted.Select(id => (PyValue)new PyLong(id))]));
@@ -308,6 +334,7 @@ public sealed class FittingMgrCalls(PgSavedFittingStore store, IFittingHost host
         "FITTING_INVALID_FLAG" => MachoErrors.ThrowUserError("InvalidFittingDataInvalidFlag", ("type", new PyInt(value))),
         "FITTING_INVALID_QUANTITY" => MachoErrors.ThrowUserError("InvalidFittingDataInvalidQuantity", ("type", new PyInt(value))),
         "FITTING_TOO_MANY_ITEMS" => MachoErrors.ThrowUserError(Community, ("notify", new PyStr("This fitting contains too many items."))),
+        "FITTING_TOO_MANY_BULK_ENTRIES" => MachoErrors.ThrowUserError(Community, ("notify", new PyStr($"This operation can process at most {value} fittings at once."))),
         "FITTING_INTEGER_OUT_OF_RANGE" => MachoErrors.ThrowUserError(Community, ("notify", new PyStr("This fitting contains an out-of-range integer."))),
         "COMMUNITY_FITTINGS_READ_ONLY" => MachoErrors.ThrowUserError(Community, ("notify", new PyStr("Community fittings are read-only."))),
         "OWNER_SCOPE_DENIED" => MachoErrors.ThrowUserError(Community, ("notify", new PyStr("You do not have access to that fitting collection."))),

@@ -489,6 +489,12 @@ public class AllianceTests
             var relationshipRow = Assert.IsType<Eve.Marshal.PyPackedRow>(Assert.Single(relationships.Dict).Value);
             Assert.Equal(new Eve.Marshal.PyInt(outsiderCorp.Id),relationships.Dict.Single().Key);
             Assert.Equal(new Eve.Marshal.PyInt(8),relationshipRow.Values[1]);
+            var malformedStanding = await Assert.ThrowsAsync<Eve.Corporations.CorporationError>(() =>
+                service.CallAsync(Call(executor,"SetRelationship",new Eve.Marshal.PyStr("bad"),new Eve.Marshal.PyInt(outsiderCorp.Id))).AsTask());
+            Assert.Equal("ALLIANCE_RELATIONSHIP_INVALID",malformedStanding.Code);
+            var unchangedStanding = Assert.IsType<Eve.Marshal.PyObjectEx>(
+                await service.CallAsync(Call(executor,"GetRelationships")));
+            Assert.Equal(new Eve.Marshal.PyInt(8),Assert.IsType<Eve.Marshal.PyPackedRow>(Assert.Single(unchangedStanding.Dict).Value).Values[1]);
             await Assert.ThrowsAnyAsync<Exception>(() => service.CallAsync(Call(outsider,"SetRelationship",
                 new Eve.Marshal.PyInt(3),new Eve.Marshal.PyInt(outsiderCorp.Id))).AsTask());
             Assert.IsType<Eve.Marshal.PyNone>(await service.CallAsync(Call(executor,"DeleteRelationship",

@@ -5171,3 +5171,23 @@ The market parser rejects floating-point prices beyond the market maximum before
 ## Corporation member field integer bounds (2026-10-20)
 
 `corpRegistry.UpdateMember` rejects negative division and squadron values as `CORPORATION_INVALID_MEMBER_FIELD` and values outside Int32 range as `CORPORATION_INTEGER_OUT_OF_RANGE` before persistence. This prevents overflowing client integers from wrapping into unrelated values; in-range V24.01 values retain their existing wire and persistence behavior. `Corp_member_update_refuses_negative_and_out_of_range_division_and_squadron_values` covers negative values, positive and negative overflow, and confirms the stored member row is unchanged.
+
+
+## Alliance standing input validation (2026-10-20)
+
+`allianceRegistry.SetRelationship` now accepts only finite numeric standings from -10 through 10; malformed or out-of-range values return `ALLIANCE_RELATIONSHIP_INVALID` before persistence. This prevents a wrong-typed value from being coerced to neutral standing while preserving valid integer and fractional standing values. `Alliance_public_updates_relationships_and_application_decisions_notify_clients` verifies that malformed text leaves the current standing unchanged.
+
+
+## Fleet numeric argument validation (2026-10-20)
+
+`FleetObjectService` accepts integer fleet and member identifiers from integer values and integral finite real values. Fractional, non-finite, and out-of-range real values are refused rather than truncated to another identifier. The focused resolver regression covers a fractional fleet ID.
+
+
+## Contract completion status bounds (2026-10-20)
+
+`contractProxy.CompleteContract` applies the shared checked Int32 parser to both V24 integer wire types. A status outside Int32 range returns `ConContractNotAvailable` before contract state is read or mutated; valid status values retain the existing transition behavior. `ContractProxyServiceTests.Complete_contract_refuses_status_that_overflows_int32` verifies the writer is not invoked.
+
+
+## Insurance price batch bound (2026-10-20)
+
+`insurance.GetInsurancePrices` accepts at most 500 raw type IDs per request and returns `InsuranceBulkLimitExceeded` before reading price data for a larger batch. The V24 client primes the service with the set of missing ship type IDs; normal client batches retain their existing results. `InsuranceServiceTests.Insurance_price_batch_refuses_more_than_500_type_ids_before_the_read_model` covers the refusal.

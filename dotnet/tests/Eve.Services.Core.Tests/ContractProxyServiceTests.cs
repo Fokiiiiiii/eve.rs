@@ -161,6 +161,25 @@ public sealed class ContractProxyServiceTests
     }
 
     [Fact]
+    public async Task Accept_for_corporation_refuses_a_session_without_contract_manager_role()
+    {
+        var writer = new RecordingWriteModel();
+        var service = new ContractProxyService(new RecordingReadModel(), writer);
+        var session = new ClientSession { CharacterId = 42 };
+        session.Set("corpid", new PyInt(84));
+        session.Set("corprole", new PyLong(0));
+
+        await Assert.ThrowsAsync<MachoWrappedException>(() => service.AcceptContract(new ServiceCall
+        {
+            Method = "AcceptContract",
+            Args = [new PyInt(999), PyBool.True],
+            Session = session,
+        }));
+
+        Assert.Equal(default, writer.LastAccept);
+    }
+
+    [Fact]
     public async Task Create_contract_refuses_corporation_issue_without_contract_manager_and_undocked_issue()
     {
         var service = new ContractProxyService(new RecordingReadModel(), new RecordingWriteModel(),

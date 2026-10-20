@@ -1,6 +1,7 @@
 using System.Text.RegularExpressions;
 using Eve.Inventory;
 using Eve.Services.Core;
+using Eve.Events;
 using Eve.Wallet;
 using Npgsql;
 
@@ -13,7 +14,8 @@ public sealed class PersistenceContractWriteModel(
     WalletTransactions wallets,
     Func<long> nowUnixMs,
     string schema = PersistenceContractReadModel.DefaultSchema,
-    ContractExpiryJobs? expiryJobs = null) : IContractWriteModel
+    ContractExpiryJobs? expiryJobs = null,
+    EventBus? events = null) : IContractWriteModel
 {
     private const long EscrowOwnerId = 1;
     private const long EscrowLocationBase = 9_300_000_000;
@@ -155,7 +157,18 @@ public sealed class PersistenceContractWriteModel(
         await DebitAsync(wallet, request.Deposit, ContractDepositRef, $"{operationPrefix}:deposit", contractId, nowMs, transaction, connection, cancellationToken);
         if (expiryJobs is not null)
             await expiryJobs.ScheduleAsync(connection, transaction, contractId, expiry, cancellationToken);
+        await PublishNotificationAsync(connection, transaction,
+            request.IsCorporationIssued ? 0 : request.IssuerCharacterId,
+            request.IsCorporationIssued ? request.IssuerCorporationId : 0, 0,
+            "OnContractCreated", contractId, cancellationToken);
+        if (request.Availability is 1 or 2 or 3 && request.AssigneeId > 0)
+            await PublishNotificationAsync(connection, transaction,
+                request.Availability == 1 ? request.AssigneeId : 0,
+                request.Availability == 2 ? request.AssigneeId : 0,
+                request.Availability == 3 ? request.AssigneeId : 0,
+                "OnContractAssigned", contractId, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+        events?.Wake();
         return new CreatedContract(contractId, escrowItemIds);
     }
 
@@ -272,7 +285,10 @@ public sealed class PersistenceContractWriteModel(
             command.Parameters.AddWithValue(contractId); command.Parameters.AddWithValue(acceptorId); command.Parameters.AddWithValue(nowFileTime);
             if (await command.ExecuteNonQueryAsync(cancellationToken) != 1) throw new ContractUserErrorException("ConContractNotAvailable");
         }
+        await PublishNotificationAsync(connection, transaction, isCorporationIssued ? 0 : issuerId,
+            isCorporationIssued ? issuerCorporationId : 0, 0, "OnContractAccepted", contractId, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+        events?.Wake();
         return new AcceptedContract(contractId, type, 4, issuerId, issuerCorporationId, isCorporationIssued, acceptorId,
             startStationId, endStationId, nowFileTime, 0);
     }
@@ -364,7 +380,10 @@ public sealed class PersistenceContractWriteModel(
             command.Parameters.AddWithValue(acceptForCorporation ? acceptorWalletKey : 1000);
             if (await command.ExecuteNonQueryAsync(cancellationToken) != 1) throw new ContractUserErrorException("ConContractNotAvailable");
         }
+        await PublishNotificationAsync(connection, transaction, isCorporationIssued ? 0 : issuerId,
+            isCorporationIssued ? issuerCorporationId : 0, 0, "OnContractAccepted", contractId, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+        events?.Wake();
         return new AcceptedContract(contractId, type, 1, issuerId, issuerCorporationId, isCorporationIssued,
             acceptorId, startStationId, endStationId, nowFileTime, numDays);
     }
@@ -477,7 +496,12 @@ public sealed class PersistenceContractWriteModel(
             command.Parameters.AddWithValue(contractId); command.Parameters.AddWithValue((short)targetStatus); command.Parameters.AddWithValue(nowFileTime);
             if (await command.ExecuteNonQueryAsync(cancellationToken) != 1) throw new ContractUserErrorException("ConContractNotAvailable");
         }
+        await PublishNotificationAsync(connection, transaction,
+            targetStatus == 4 ? (isCorporationIssued ? 0 : issuerId) : (actorIsAcceptor ? (isCorporationIssued ? 0 : issuerId) : acceptorIsCorporation ? 0 : acceptorId),
+            targetStatus == 4 || !actorIsAcceptor && acceptorIsCorporation ? (targetStatus == 4 ? issuerCorporationId : acceptorId) : 0,
+            0, targetStatus == 4 ? "OnContractCompleted" : "OnContractFailed", contractId, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+        events?.Wake();
         return true;
     }
 
@@ -698,7 +722,14 @@ public sealed class PersistenceContractWriteModel(
                 if (await command.ExecuteNonQueryAsync(cancellationToken) != 1) throw new ContractUserErrorException("ConContractNotAvailable");
             }
         }
+        if (previousBidId > 0)
+            await PublishNotificationAsync(connection, transaction, previousForCorporation ? 0 : previousBidderId,
+                previousForCorporation ? previousBidderId : 0, 0, "OnContractOutbid", contractId, cancellationToken);
+        if (isBuyout)
+            await PublishNotificationAsync(connection, transaction, isCorporationIssued ? 0 : issuerId,
+                isCorporationIssued ? issuerCorporationId : 0, 0, "OnContractBuyout", contractId, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+        events?.Wake();
         return true;
     }
 
@@ -707,6 +738,12 @@ public sealed class PersistenceContractWriteModel(
         await transaction.CommitAsync(cancellationToken);
         return true;
     }
+
+    private Task<long> PublishNotificationAsync(NpgsqlConnection connection, NpgsqlTransaction transaction,
+        long characterId, long corporationId, long allianceId, string name, long contractId, CancellationToken cancellationToken) =>
+        events is null ? Task.FromResult(0L) : events.PublishAsync(connection, transaction, ContractNotifications.Topic,
+            new ContractNotifications.Payload(name, contractId, characterId, corporationId, allianceId),
+            $"contract:{contractId}:{name}:{characterId}:{corporationId}:{allianceId}", cancellationToken);
 
     private async Task DebitAsync(WalletAccount wallet, decimal amount, int refType, string operationKey,
         long contractId, long nowMs, NpgsqlTransaction transaction, NpgsqlConnection connection,

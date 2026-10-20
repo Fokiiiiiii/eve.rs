@@ -5120,3 +5120,8 @@ The V24.01 client sends selected item collections to `invbroker.MultiAdd`; EveJS
 ## Market bulk sell bound (2026-10-20)
 
 `marketProxy.PlaceMultiSellOrder` accepts a client list of sell entries. EveJS handles each entry in sequence without an entry cap. eve.rs now refuses more than 500 entries before market calls, matching the cap on adjacent multi-order RPCs. The focused PostgreSQL test checks the named refusal at 501 entries; dispatcher coverage checks the weighted per-session limit. Normal client batches retain their behavior. Graphical-client acceptance is open.
+
+
+## Corporation donation response (2026-10-20)
+
+EveJS `account.GiveCash` returns the donor and recipient corporation wallet balances after a character deposits ISK. The V24.01 `transferMoneyWnd.py` callsite ignores the RPC result, and the character donation panel only checks truthiness for its character-to-character path. eve.rs now returns no corporation balance data, returns a truthy acknowledgement for a successful personal gift, and refuses zero-value donations without settlement. `AccountRpcTests` verifies the response shape, debit and credit, and zero-value no-op. This narrows an information disclosure while retaining the client call flow; graphical-client acceptance is open.

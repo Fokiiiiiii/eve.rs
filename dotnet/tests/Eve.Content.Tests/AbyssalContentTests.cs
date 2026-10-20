@@ -658,7 +658,6 @@ public sealed class AbyssalContentTests
         Assert.Equal(beforeJobs.Single().Id, afterJobs.Single().Id);
     }
 
-
     [PgFact]
     public async Task Shared_scheduler_expiry_commits_timeout_death_requests_in_the_content_failure_transaction()
     {
@@ -931,8 +930,6 @@ public sealed class AbyssalContentTests
         Assert.Equal(started.State.Data.ContentId, finished.Single().GetProperty("contentId").GetString());
     }
 
-
-
     [PgFact]
     public async Task Blueprint_copy_run_counts_are_validated_persisted_and_reused_in_the_spawn_outbox()
     {
@@ -1009,7 +1006,6 @@ public sealed class AbyssalContentTests
             rig.Commit((connection, transaction) =>
                 abyssal.StartAsync(connection, transaction, StartRequest(7908, nonBlueprintPlan))));
     }
-
 
     [PgFact]
     public async Task An_unentered_deployment_conflicts_for_its_creator_or_fleet_but_same_trace_retries()

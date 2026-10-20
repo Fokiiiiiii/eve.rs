@@ -280,7 +280,13 @@ public class DispatchGoldenTests
 
         var inventoryCapture = new Capture();
         var inventorySession = new ClientSession(inventoryCapture) { SessionId = 902 };
-        const string inventoryObjectId = "N=901:902";\n        registry.RegisterBoundObject(inventoryObjectId, inventoryService);\n        await dispatcher.DispatchAsync(CallRequestPacket("invbroker", "GetInventoryFromId"), inventorySession);\n        for (var index = 0; index < 4; index++)\n            await dispatcher.DispatchAsync(BoundCallRequestPacket(inventoryObjectId, "ListIncludingContainers"), inventorySession);\n        await dispatcher.DispatchAsync(CallRequestPacket("invbroker", "GetInventoryFromId"), inventorySession);\n        Assert.Equal(5, inventoryService.Calls);
+        const string inventoryObjectId = "N=901:902";
+        registry.RegisterBoundObject(inventoryObjectId, inventoryService);
+        await dispatcher.DispatchAsync(CallRequestPacket("invbroker", "GetInventoryFromId"), inventorySession);
+        for (var index = 0; index < 4; index++)
+            await dispatcher.DispatchAsync(BoundCallRequestPacket(inventoryObjectId, "ListIncludingContainers"), inventorySession);
+        await dispatcher.DispatchAsync(CallRequestPacket("invbroker", "GetInventoryFromId"), inventorySession);
+        Assert.Equal(5, inventoryService.Calls);
         Assert.Equal(ErrorResponseCommand, CommandOf(inventoryCapture.Sent[5]));
         Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(inventoryCapture.Sent[5])));
 

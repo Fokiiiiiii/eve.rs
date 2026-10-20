@@ -66,7 +66,8 @@ def test_two_characters_create_accept_and_settle_a_public_item_exchange():
             "requestItemTypeList": [],
             "forCorp": False,
         }
-        created = issuer.call("contractProxy", "CreateContract", creation, True)
+        kind, created = base.attempt(issuer, "contractProxy", "CreateContract", creation, True)
+        assert kind == "ok", base.brief(created)
         contract_id = number(created[0])
         assert contract_id > 0
         assert dbseed.owner_of(item_id) == 1

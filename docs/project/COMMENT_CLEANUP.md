@@ -51,6 +51,7 @@
 | `dotnet/src/Eve.Services.Wallet` (5 C# files) | 52 | 32 | 2026-10-20 |
 | `dotnet/src/Eve.Services.Skills` (16 C# files) | 170 | 146 | 2026-10-20 |
 | `dotnet/src/Eve.Services.Dogma` (13 C# files) | 208 | 200 | 2026-10-20 |
+| `dotnet/src/Eve.Services.Ships` (5 C# files) | 85 | 82 | 2026-10-20 |
 | `dotnet/src/Eve.GameStore.Import` (4 C# files) | 22 | 21 | 2026-10-20 |
 | `dotnet/src/Eve.Sde` (1 C# file) | 21 | 21 | 2026-10-20 |
 | `dotnet/src/Eve.Hacking` (3 C# files) | 32 | 25 | 2026-10-20 |

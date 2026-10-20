@@ -217,8 +217,10 @@ public class DispatchGoldenTests
         var registry = new ServiceRegistry();
         var service = new ExpensiveService();
         var inventoryService = new InventoryBudgetService();
+        var corporationService = new CorporationBudgetService();
         registry.Register(service);
         registry.Register(inventoryService);
+        registry.Register(corporationService);
         var now = FixedNowMs;
         var dispatcher = new PacketDispatcher(registry, () => now) { MaxExpensiveRpcUnitsPerMinute = 10 };
 
@@ -249,6 +251,14 @@ public class DispatchGoldenTests
         Assert.Equal(ErrorResponseCommand, CommandOf(boundCapture.Sent[1]));
         Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(boundCapture.Sent[1])));
 
+        var corporationCapture = new Capture();
+        var corporationSession = new ClientSession(corporationCapture) { SessionId = 905 };
+        await dispatcher.DispatchAsync(CallRequestPacket("corpRegistry", "GetEveOwners"), corporationSession);
+        await dispatcher.DispatchAsync(CallRequestPacket("corpRegistry", "GetMemberIDsByQuery"), corporationSession);
+        Assert.Equal(1, corporationService.Calls);
+        Assert.Equal(ErrorResponseCommand, CommandOf(corporationCapture.Sent[1]));
+        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(corporationCapture.Sent[1])));
+
         var inventoryCapture = new Capture();
         var inventorySession = new ClientSession(inventoryCapture) { SessionId = 902 };
         await dispatcher.DispatchAsync(CallRequestPacket("invbroker", "ListIncludingContainers"), inventorySession);
@@ -270,6 +280,21 @@ public class DispatchGoldenTests
         public string Name => "marketProxy";
 
         public bool HasMethod(string method) => method is "GetOrders" or "BuyMultipleItems" or "GetHistoryForManyTypeIDs";
+
+        public ValueTask<PyValue> CallAsync(ServiceCall call)
+        {
+            Calls++;
+            return ValueTask.FromResult<PyValue>(PyNone.Instance);
+        }
+    }
+
+    private sealed class CorporationBudgetService : IService
+    {
+        public int Calls { get; private set; }
+
+        public string Name => "corpRegistry";
+
+        public bool HasMethod(string method) => method is "GetEveOwners" or "GetMemberIDsByQuery";
 
         public ValueTask<PyValue> CallAsync(ServiceCall call)
         {

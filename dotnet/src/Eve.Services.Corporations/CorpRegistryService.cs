@@ -1859,6 +1859,7 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
 public sealed partial class CorpRecruitmentProxyService(
     CorporationStore store,PgCharacterStore characters,Func<long> now,CharacterSessions? sessions = null)
 {
+    private const int MaxRecruiterIds = 100;
     private const long FileTimeTicksPerDay = 864_000_000_000L;
 
     [Method("MachoResolveObject")]
@@ -2054,7 +2055,10 @@ public sealed partial class CorpRecruitmentProxyService(
 
     private static long[] RecruiterIds(PyValue value)
     {
-        var ids = Items(value).Select(Number).ToArray();
+        var requested = Items(value);
+        if (requested.Count > MaxRecruiterIds)
+            throw new CorporationError("CORPORATION_BULK_LIMIT_EXCEEDED");
+        var ids = requested.Select(Number).ToArray();
         if (ids.Any(id => id <= 0) || ids.Distinct().Count() != ids.Length)
             throw new CorporationError("CORPORATION_INVALID_RECRUITER");
         return ids;

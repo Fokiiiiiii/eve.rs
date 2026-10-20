@@ -984,6 +984,15 @@ private static PyValue RowField(PyValue value,string key)
             Method = "UpdateTitles",Session = session,Args = [requested]
         }));
         Assert.Equal("CORPORATION_BULK_LIMIT_EXCEEDED",titleError.Code);
+        var recruiters = new PyList(Enumerable.Range(1,101).Select(id => (PyValue)new PyInt(id)).ToArray());
+        var recruitment = new CorpRecruitmentProxyService(rig.Store,rig.Characters,() => rig.Now);
+        var recruitmentError = await Assert.ThrowsAsync<CorporationError>(async () => await recruitment.CreateRecruitmentAd(new ServiceCall
+        {
+            Method = "CreateRecruitmentAd",Session = session,
+            Args = [new PyInt(1),new PyInt(0),new PyInt(0),new PyWString("Recruitment test"),recruiters,
+                new PyWString("Recruiters"),new PyLong(0),new PyInt(0),new PyLong(0)]
+        }));
+        Assert.Equal("CORPORATION_BULK_LIMIT_EXCEEDED",recruitmentError.Code);
     }
 
     [PgFact]

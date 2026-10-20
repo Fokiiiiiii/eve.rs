@@ -17,7 +17,6 @@ public sealed record WaveRule(
     [property: JsonPropertyName("trigger")] string Trigger,
     [property: JsonPropertyName("delaySeconds")] int? DelaySeconds);
 
-/// <summary>The rules of one dungeon: the source they were taken from (a URL, never a copy of third-party text) and the waves they replace the owner data's trigger of.</summary>
 public sealed record DungeonWaveRule(
     [property: JsonPropertyName("dungeonID")] long DungeonID,
     [property: JsonPropertyName("name")] string Name,
@@ -30,10 +29,6 @@ public sealed record WaveRuleFile(
     [property: JsonPropertyName("policy")] string Policy,
     [property: JsonPropertyName("dungeons")] IReadOnlyList<DungeonWaveRule> Dungeons);
 
-/// <summary>
-/// The eve.rs-owned trigger rules of the dungeon waves, keyed by the official dungeon id (<c>Data/waves/v1/trigger-rules.json</c>, embedded). A rule replaces the trigger the owner
-/// data gives one wave, and only that; the owner data stays what it is. Every rule names its source. The file is a data file so that other tracks add their own dungeons.
-/// </summary>
 public sealed class WaveRules
 {
     public const string Schema = "eve.dungeon-waves.rules.v1";
@@ -86,7 +81,6 @@ public sealed class WaveRules
     /// <summary>The rules of a dungeon, or null when eve.rs has none for it.</summary>
     public DungeonWaveRule? For(long dungeonID) => _byDungeon.GetValueOrDefault(dungeonID);
 
-    /// <summary>Reads a trigger name of a rule or of the owner data (<c>on_load</c>, <c>wave_cleared</c>, <c>timer</c>); anything else is null.</summary>
     public static WaveTrigger? ParseTrigger(string? name) => name switch
     {
         "on_load" => WaveTrigger.OnLoad,
@@ -121,11 +115,6 @@ public sealed record WavePlanAnswer(WavePlan? Plan, string? Refusal)
     public bool Planned => Plan is not null;
 }
 
-/// <summary>
-/// Turns a dungeon's waves into the sequence the runtime plays. The trigger of each wave is the rule file's, else the owner data's (<c>on_load</c>, <c>wave_cleared</c>, <c>timer</c>
-/// with <c>countdownSeconds</c>), else the default policy of <see cref="WaveRules"/>. A dungeon whose wave needs a trigger the runtime does not implement (gate use, a room, a hack,
-/// an entity kill, an object, a visible countdown), or a timer with no delay, is refused with the reason. NPC compositions are not resolved here (the runtime does that against the authority).
-/// </summary>
 public static class WavePlanner
 {
     public static WavePlanAnswer Plan(Dungeon dungeon, WaveRules rules)

@@ -94,6 +94,12 @@ public sealed class PersistenceContractReadModel : IContractReadModel
                 ADD COLUMN reward_isk numeric(28, 2) NOT NULL DEFAULT 0 CHECK (reward_isk >= 0);
             UPDATE contract_records SET reward_isk = reward_escrow;
             """),
+        new Eve.Data.Migration("0006_contract_bid_escrow", """
+            ALTER TABLE contract_bids
+                ADD COLUMN bidder_is_corporation boolean NOT NULL DEFAULT false,
+                ADD COLUMN wallet_account_key integer NOT NULL DEFAULT 1000 CHECK (wallet_account_key BETWEEN 1000 AND 1006),
+                ADD COLUMN is_refunded boolean NOT NULL DEFAULT false;
+            """),
     ];
 
     public static Task MigrateAsync(

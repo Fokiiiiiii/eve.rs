@@ -180,6 +180,54 @@ public sealed partial class ContractProxyService(
             return 3;
         return 1;
     }
+    [Method("PlaceBid")]
+    public async Task<PyValue> PlaceBid(ServiceCall call)
+    {
+        var writer = writeModel ?? throw new InvalidOperationException("contract writer is not wired");
+        var characterId = call.Session.CharacterId
+            ?? throw new InvalidOperationException("contract bidding requires a character session");
+        var corporationId = call.Session.GetInt("corpid") ?? 0;
+        var allianceId = call.Session.GetInt("allianceid") ?? 0;
+        var contractId = call.Arg(0) switch
+        {
+            PyInt value => value.Value,
+            PyLong value => value.Value,
+            _ => throw MachoErrors.ThrowUserError("ConContractNotFound"),
+        };
+        var amount = call.Arg(1) switch
+        {
+            PyInt value => (decimal)value.Value,
+            PyLong value => (decimal)value.Value,
+            PyReal value => (decimal)value.Value,
+            _ => throw MachoErrors.ThrowUserError("ConBidTooLow"),
+        };
+        var bidForCorporation = call.Arg(2) switch
+        {
+            PyBool value => value.Value,
+            PyInt value => value.Value != 0,
+            PyLong value => value.Value != 0,
+            _ => false,
+        };
+        if (bidForCorporation && ((call.Session.GetInt("corprole") ?? 0) & CorpRoleContractManager) == 0)
+            throw MachoErrors.ThrowUserError("ConNotContractManager");
+        var walletKeyValue = call.Session.GetInt("corpAccountKey")
+            ?? call.Session.GetInt("corpaccountkey")
+            ?? call.Session.GetInt("accountKey")
+            ?? CorporationWalletBase;
+        if (walletKeyValue is < 1000 or > 1006)
+            throw MachoErrors.ThrowUserError("ConNotContractManager");
+        try
+        {
+            var placed = await writer.PlaceBidAsync(contractId, characterId, corporationId, allianceId, bidForCorporation,
+                (int)walletKeyValue, amount, call.Cancellation);
+            return placed ? PyBool.True : PyBool.False;
+        }
+        catch (ContractUserErrorException error)
+        {
+            throw MachoErrors.ThrowUserError(error.Message, error.Values.ToArray());
+        }
+    }
+
     [Method("AcceptContract")]
     public async Task<PyValue> AcceptContract(ServiceCall call)
     {

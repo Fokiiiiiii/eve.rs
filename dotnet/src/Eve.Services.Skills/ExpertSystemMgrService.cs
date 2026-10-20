@@ -10,14 +10,13 @@ namespace Eve.Services.Skills;
 /// <summary>
 /// The expert systems of a pilot (<c>expertSystemMgr</c>): the list the client reads, the use of an expert system item (<c>ConsumeExpertSystem</c>) and
 /// the removal of an installed one (<c>RemoveMyExpertSystem</c>). An installed expert system lapses when its time is up: the expiry job calls
-/// <see cref="ExpireDueAsync"/>. The reference is EveJS <c>services/skills/expertSystems/expertSystemRuntime.js</c> and its notifications.
 /// </summary>
 [Service("expertSystemMgr")]
 public sealed partial class ExpertSystemMgrService(
     ExpertSystems expertSystems, PgSkillStore skills, SkillCatalog skillCatalog, PgItemStore items, NpgsqlDataSource source, CharacterSessions sessions,
     ICharacterDogmaSync? dogma, Eve.Dogma.DogmaStatic statics, Func<long, int, CancellationToken, Task>? writeLapseNotice = null)
 {
-    /// <summary>The junk location an item is taken to when it is used up (EveJS tells the client a removed item in location 6).</summary>
+
     private const long JunkLocation = 6;
 
     private static long? IdOf(PyValue value) => value switch
@@ -163,7 +162,7 @@ public sealed partial class ExpertSystemMgrService(
             }
             if (removed)
             {
-                // the persistent notice is written whether or not the pilot is online (EveJS notifyExpertSystemExpired)
+
                 if (writeLapseNotice is not null)
                     await writeLapseNotice(due.CharacterId, due.TypeId, cancellationToken);
                 await Told(sessions.Of(due.CharacterId), due.CharacterId, null, false, due.TypeId, false, grantsBefore, trainedBefore, cancellationToken, expired: true);

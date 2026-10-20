@@ -5153,3 +5153,8 @@ The market parser rejects floating-point prices beyond the market maximum before
 ## Corporation member-action RPC budget (2026-10-20)
 
 `corpRegistry.ExecuteActions` now consumes 10 units from the configured per-session rolling-minute budget. The service reads the corporation member roster before applying its bounded action list, so repeated calls could otherwise repeat a full roster query. Calls within budget retain their existing result and notification flow. `DispatchGoldenTests.Corporation_member_actions_use_the_named_per_session_budget` verifies the second call is refused when the test allowance is exhausted.
+
+
+## Corporation potential-CEO roster budget (2026-10-20)
+
+`corpRegistry.GetNumberOfPotentialCEOs` now consumes 10 units from the per-session rolling-minute budget because it returns the current corporation roster. `DispatchGoldenTests.Corporation_potential_CEO_member_enumeration_uses_the_named_per_session_budget` verifies refusal once the allowance is consumed.

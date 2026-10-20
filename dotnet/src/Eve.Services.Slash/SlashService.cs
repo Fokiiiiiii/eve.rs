@@ -5,19 +5,19 @@ namespace Eve.Services.Slash;
 
 /// <summary>
 /// The game master's commands the client sends over RPC (<c>slash</c>): <c>SlashCmd("/name arguments")</c> runs one and answers with what it says. Only the
-/// commands the modules that exist can carry out are here: <c>/dmg</c> and <c>/heal</c> (<see cref="ShipHealthCommands"/>) <c>/deathtest</c> (<see cref="DeathTestCommands"/>), <c>/suicide</c> (<see cref="SuicideCommands"/>), <c>/npc</c> (<see cref="NpcCommands"/>) and the item commands <c>/giveitem</c>, <c>/fit</c> and <c>/unfit</c> (<see cref="ItemCommands"/>) and <c>/giveskill</c> (<see cref="SkillCommands"/>); any other is answered as unknown.
+/// commands the modules that exist can carry out are here: <c>/dmg</c> and <c>/heal</c> (<see cref="ShipHealthCommands"/>) <c>/deathtest</c> (<see cref="DeathTestCommands"/>), <c>/suicide</c> (<see cref="SuicideCommands"/>), <c>/npc</c> (<see cref="NpcCommands"/>) and the item commands <c>/giveitem</c>, <c>/fit</c> and <c>/unfit</c> (<see cref="ItemCommands"/>), <c>/ess</c> (<see cref="EssCommands"/>) and <c>/giveskill</c> (<see cref="SkillCommands"/>); any other is answered as unknown.
 /// </summary>
 [Service("slash")]
-public sealed partial class SlashService(ShipHealthCommands health, DeathTestCommands? death = null, SuicideCommands? suicide = null, NpcCommands? npcs = null, ItemCommands? items = null, SkillCommands? skills = null, IskCommands? isk = null, LoyaltyCommands? loyalty = null, StandingCommands? standings = null, TeleportCommands? teleport = null, AgentCommands? agent = null, FwCommands? fw = null, PiCommands? pi = null, IndustryCommands? industry = null, SpawnCommands? spawn = null, SkillBulkCommands? skillBulk = null, DogmaUpdateCommands? dogmaUpdate = null, KillRightCommands? killRight = null, AsteroidCommands? asteroids = null, SkyhookCommands? skyhook = null, EntityCommands? entity = null)
+public sealed partial class SlashService(ShipHealthCommands health, DeathTestCommands? death = null, SuicideCommands? suicide = null, NpcCommands? npcs = null, ItemCommands? items = null, SkillCommands? skills = null, IskCommands? isk = null, LoyaltyCommands? loyalty = null, StandingCommands? standings = null, TeleportCommands? teleport = null, AgentCommands? agent = null, FwCommands? fw = null, PiCommands? pi = null, IndustryCommands? industry = null, SpawnCommands? spawn = null, SkillBulkCommands? skillBulk = null, DogmaUpdateCommands? dogmaUpdate = null, KillRightCommands? killRight = null, AsteroidCommands? asteroids = null, SkyhookCommands? skyhook = null, EntityCommands? entity = null, EssCommands? ess = null)
 {
     private readonly Dictionary<string, Func<ServiceCall, string, Task<string>>> _commands =
-        Commands(health, death, suicide, npcs, items, skills, isk, loyalty, standings, teleport, agent, fw, pi, industry, spawn, skillBulk, dogmaUpdate, killRight, asteroids, skyhook, entity);
+        Commands(health, death, suicide, npcs, items, skills, isk, loyalty, standings, teleport, agent, fw, pi, industry, spawn, skillBulk, dogmaUpdate, killRight, asteroids, skyhook, entity, ess);
 
     // Dispatch and discovery share the same registrations; absent providers expose no command.
     private static Dictionary<string, Func<ServiceCall, string, Task<string>>> Commands(
         ShipHealthCommands health, DeathTestCommands? death, SuicideCommands? suicide,
         NpcCommands? npcs, ItemCommands? items, SkillCommands? skills, IskCommands? isk, LoyaltyCommands? loyalty, StandingCommands? standings,
-        TeleportCommands? teleport, AgentCommands? agent, FwCommands? fw, PiCommands? pi, IndustryCommands? industry, SpawnCommands? spawn, SkillBulkCommands? skillBulk, DogmaUpdateCommands? dogmaUpdate, KillRightCommands? killRight, AsteroidCommands? asteroids, SkyhookCommands? skyhook, EntityCommands? entity)
+        TeleportCommands? teleport, AgentCommands? agent, FwCommands? fw, PiCommands? pi, IndustryCommands? industry, SpawnCommands? spawn, SkillBulkCommands? skillBulk, DogmaUpdateCommands? dogmaUpdate, KillRightCommands? killRight, AsteroidCommands? asteroids, SkyhookCommands? skyhook, EntityCommands? entity, EssCommands? ess)
     {
         var commands = new Dictionary<string, Func<ServiceCall, string, Task<string>>>(StringComparer.Ordinal)
         {
@@ -43,6 +43,7 @@ public sealed partial class SlashService(ShipHealthCommands health, DeathTestCom
         if (skills is not null) commands["/giveskill"] = (call, argument) => skills.GiveAsync(call.Session, argument, call.Cancellation);
         if (skills is not null) commands["/removeskill"] = (call, argument) => skills.RemoveAsync(call.Session, argument, call.Cancellation);
         if (entity is not null) commands["/entity"] = (call, argument) => entity.RunAsync(call.Session, argument, call.Cancellation);
+        if (ess is not null) commands["/ess"] = (call, argument) => ess.RunAsync(call, argument);
         if (skyhook is not null) commands["/skyhook"] = (call, argument) => skyhook.RunAsync(call.Session, argument, call.Cancellation);
         if (asteroids is not null) commands["/asteroid"] = (call, argument) => asteroids.RunAsync(call.Session, argument, call.Cancellation);
         if (killRight is not null) commands["/killright"] = (call, argument) => killRight.RunAsync(call.Session, argument, call.Cancellation);

@@ -5210,3 +5210,8 @@ The insurance RPCs accept positive integer ship IDs. Fractional or malformed val
 `CheckMyDockingAccessToStructures` refuses more than 500 raw structure IDs before invoking the access-list callback. Both this RPC and `GetMyDockableStructures` consume 10 units from the per-session expensive-RPC budget, returning `SessionRpcBudgetExceeded` when the session budget is exhausted. Regressions cover the batch refusal and repeated-query budget refusal.
 
 `structureDirectory.CheckMyDockingAccessToStructures` accepts up to 500 structure IDs. Larger lists return `StructureBulkLimitExceeded` before access-list snapshots are read. Normal structure-access results retain the existing per-list ACL evaluation and order. `StructureDirectoryServiceTests.Docking_access_refuses_more_than_500_structure_ids_before_the_callback` verifies no callback work on refusal.
+
+
+## Contract RPC current-role checks (2026-10-20)
+
+Corporate contract creation, bidding, acceptance, completion, deletion, and corporate list reads check the authenticated session role bit and then resolve the actor’s current corporation membership and Contract Manager role through the persisted `CorporationStore`. A role removed while the character remains logged in therefore no longer authorizes a corporate contract call. `ContractProxyServiceTests.Accept_for_corporation_refuses_a_stale_session_role_without_persisted_authority` supplies a stale positive session role with a persisted-role callback returning false and verifies refusal.

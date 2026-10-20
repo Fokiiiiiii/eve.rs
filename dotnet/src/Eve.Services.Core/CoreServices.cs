@@ -35,6 +35,7 @@ public static class CoreServices
         Func<long, int, CancellationToken, ValueTask<int>>? contractSkillLevel = null,
         CharacterSessions? calendarSessions = null,
         Func<long, long, CancellationToken, ValueTask<decimal>>? contractBrokerFeeAdjustment = null,
+        Func<long, long, CancellationToken, ValueTask<bool>>? hasContractManagerRole = null,
         PyValue? localizationTextChanges = null)
     {
         gameRpcCallbacks ??= new GameRpcCallbacks();
@@ -67,7 +68,7 @@ public static class CoreServices
             new TourneyMgrService(tourneyQueryCallback),
             new RaffleMgrService(gameRpcCallbacks.SeedRafflesAsync),
             new RaffleProxyService(),
-            new ContractProxyService(contractReadModel, contractWriteModel, contractSkillLevel, contractBrokerFeeAdjustment),
+            new ContractProxyService(contractReadModel, contractWriteModel, contractSkillLevel, contractBrokerFeeAdjustment, hasContractManagerRole),
             new JumpCloneService(gameRpcCallbacks.JumpClones, gameRpcCallbacks.JumpCloneSpace),
             new ServiceGatewayMgrService(gameRpcCallbacks.SetHijackMode, gameRpcCallbacks.IsHijackModeEnabled),
             new SharedSettingsMgrService(gameRpcCallbacks.ReadSharedSettings, gameRpcCallbacks.WriteSharedSettingsAsync, nowUnixMs),

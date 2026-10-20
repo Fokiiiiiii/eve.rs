@@ -75,7 +75,8 @@ public sealed partial class ContractProxyService(
     Eve.Services.Core.IContractReadModel? readModel = null,
     IContractWriteModel? writeModel = null,
     Func<long, int, CancellationToken, ValueTask<int>>? readSkillLevel = null,
-    Func<long, long, CancellationToken, ValueTask<decimal>>? readBrokerFeeAdjustment = null)
+    Func<long, long, CancellationToken, ValueTask<decimal>>? readBrokerFeeAdjustment = null,
+    Func<long, long, CancellationToken, ValueTask<bool>>? hasContractManagerRole = null)
 {
     private const long CorpRoleContractManager = 72057594037927936L; // appConst.corpRoleContractManager
     private const int ContractingSkill = 25235;
@@ -100,7 +101,7 @@ public sealed partial class ContractProxyService(
 
         if (info.ContractType is < 1 or > 3)
             throw MachoErrors.ThrowUserError("ConIllegalType");
-        if (info.ForCorp && ((call.Session.GetInt("corprole") ?? 0) & CorpRoleContractManager) == 0)
+        if (info.ForCorp && !await HasContractManagerRoleAsync(call, issuerId, corporationId))
             throw MachoErrors.ThrowUserError("ConNotContractManager");
         if (call.Session.GetInt("stationid") != info.StartStationId)
             throw MachoErrors.ThrowUserError("ConNotInStation");
@@ -239,7 +240,7 @@ public sealed partial class ContractProxyService(
             PyLong value => value.Value != 0,
             _ => false,
         };
-        if (bidForCorporation && ((call.Session.GetInt("corprole") ?? 0) & CorpRoleContractManager) == 0)
+        if (bidForCorporation && !await HasContractManagerRoleAsync(call, characterId, corporationId))
             throw MachoErrors.ThrowUserError("ConNotContractManager");
         var walletKeyValue = call.Session.GetInt("corpAccountKey")
             ?? call.Session.GetInt("corpaccountkey")
@@ -280,7 +281,7 @@ public sealed partial class ContractProxyService(
             PyLong value => value.Value != 0,
             _ => false,
         };
-        if (acceptForCorporation && ((call.Session.GetInt("corprole") ?? 0) & CorpRoleContractManager) == 0)
+        if (acceptForCorporation && !await HasContractManagerRoleAsync(call, characterId, corporationId))
             throw MachoErrors.ThrowUserError("ConNotContractManager");
         try
         {
@@ -334,7 +335,7 @@ public sealed partial class ContractProxyService(
         try
         {
             var currentStationId = call.Session.GetInt("stationid") ?? call.Session.GetInt("stationid2") ?? 0;
-            var isCorpManager = ((call.Session.GetInt("corprole") ?? 0) & CorpRoleContractManager) != 0;
+            var isCorpManager = await HasContractManagerRoleAsync(call, characterId, corporationId);
             return await writer.CompleteContractAsync(contractId, status, characterId, corporationId,
                 currentStationId, isCorpManager, call.Cancellation) ? PyBool.True : PyBool.False;
         }
@@ -359,7 +360,7 @@ public sealed partial class ContractProxyService(
         };
         try
         {
-            var hasCorpContractManager = ((call.Session.GetInt("corprole") ?? 0) & CorpRoleContractManager) != 0;
+            var hasCorpContractManager = await HasContractManagerRoleAsync(call, characterId, corporationId);
             return await writer.DeleteContractAsync(contractId, characterId, corporationId,
                 hasCorpContractManager, call.Cancellation) ? PyBool.True : PyBool.False;
         }
@@ -420,7 +421,7 @@ public sealed partial class ContractProxyService(
             PyLong value => value.Value != 0,
             _ => false,
         };
-        if (forCorporation && (corporationId <= 0 || ((call.Session.GetInt("corprole") ?? 0) & CorpRoleContractManager) == 0))
+        if (forCorporation && !await HasContractManagerRoleAsync(call, characterId, corporationId))
             throw MachoErrors.ThrowUserError("ConNotContractManager");
 
         var nowFileTime = Eve.Services.Py.FileTimeFromUnixMs(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
@@ -439,8 +440,7 @@ public sealed partial class ContractProxyService(
         var ownerId = ContractLong(call.Arg(0));
         if (ownerId != characterId && ownerId != corporationId)
             throw MachoErrors.ThrowUserError("ConContractNotFound");
-        if (ownerId == corporationId &&
-            (corporationId <= 0 || ((call.Session.GetInt("corprole") ?? 0) & CorpRoleContractManager) == 0))
+        if (ownerId == corporationId && !await HasContractManagerRoleAsync(call, characterId, corporationId))
             throw MachoErrors.ThrowUserError("ConNotContractManager");
 
         var status = ContractInt(call.Arg(1));
@@ -482,8 +482,7 @@ public sealed partial class ContractProxyService(
             PyLong value => value.Value != 0,
             _ => false,
         };
-        if (forCorporation &&
-            (corporationId <= 0 || ((call.Session.GetInt("corprole") ?? 0) & CorpRoleContractManager) == 0))
+        if (forCorporation && !await HasContractManagerRoleAsync(call, characterId, corporationId))
             throw MachoErrors.ThrowUserError("ConNotContractManager");
 
         var nowFileTime = Eve.Services.Py.FileTimeFromUnixMs(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
@@ -506,14 +505,21 @@ public sealed partial class ContractProxyService(
             PyLong value => value.Value != 0,
             _ => false,
         };
-        if (forCorporation &&
-            (corporationId <= 0 || ((call.Session.GetInt("corprole") ?? 0) & CorpRoleContractManager) == 0))
+        if (forCorporation && !await HasContractManagerRoleAsync(call, characterId, corporationId))
             throw MachoErrors.ThrowUserError("ConNotContractManager");
 
         var nowFileTime = Eve.Services.Py.FileTimeFromUnixMs(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
         var bundle = await store.GetMyExpiredContractListAsync(
             characterId, corporationId, forCorporation, nowFileTime, call.Cancellation);
         return BuildContractBundle(bundle);
+    }
+
+    private async ValueTask<bool> HasContractManagerRoleAsync(ServiceCall call, long characterId, long corporationId)
+    {
+        if (corporationId <= 0 || ((call.Session.GetInt("corprole") ?? 0) & CorpRoleContractManager) == 0)
+            return false;
+        return hasContractManagerRole is null
+            || await hasContractManagerRole(characterId, corporationId, call.Cancellation);
     }
 
     private static long ContractLong(PyValue value) => value switch

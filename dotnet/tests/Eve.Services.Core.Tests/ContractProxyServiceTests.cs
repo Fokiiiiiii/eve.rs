@@ -402,13 +402,13 @@ public sealed class ContractProxyServiceTests
     }
 
     [Fact]
-    public async Task Accept_for_corporation_refuses_a_session_without_contract_manager_role()
+    public async Task Accept_for_corporation_refuses_a_stale_session_role_without_persisted_authority()
     {
         var writer = new RecordingWriteModel();
-        var service = new ContractProxyService(new RecordingReadModel(), writer);
+        var service = new ContractProxyService(new RecordingReadModel(), writer, hasContractManagerRole: (_, _, _) => ValueTask.FromResult(false));
         var session = new ClientSession { CharacterId = 42 };
         session.Set("corpid", new PyInt(84));
-        session.Set("corprole", new PyLong(0));
+        session.Set("corprole", new PyLong(72057594037927936L));
 
         await Assert.ThrowsAsync<MachoWrappedException>(() => service.AcceptContract(new ServiceCall
         {

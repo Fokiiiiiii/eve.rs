@@ -1861,7 +1861,7 @@ private static int MemberFieldInteger(PyValue value)
       [Method("CharGetAllyBaseCost")]
       public async ValueTask<PyValue> CharGetAllyBaseCost(ServiceCall call)
       {
-          var characterId = call.Session.CharacterId ?? (PositiveId(call.Arg(0)) ?? 0);
+          var characterId = call.Session.CharacterId ?? 0;
           if (characterId <= 0)
               return new PyInt(10_000_000);
           var cost = readCharacterAllyBaseCost is null

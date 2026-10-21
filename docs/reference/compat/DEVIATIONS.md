@@ -5356,3 +5356,8 @@ The dispatcher applies the per-session weighted budget to an expensive method wh
 ## Corporation killmail page bounds (2026-10-21)
 
 `corpRegistry.GetRecentKills` and `GetRecentLosses` derive the corporation from the authenticated character and now refuse negative or over-25 page sizes with `CORPORATION_KILLMAIL_PAGE_LIMIT_EXCEEDED`. The V24.01 corporation kill-report UI requests 25 rows (`NUM_KILL_ENTRIES` in `eve/client/script/ui/shared/neocom/corporation/corp_ui_killreports.py`); the limit prevents one authenticated call from requesting an effectively unbounded killmail result. `Corp_registry_recent_kill_rows_keep_the_fixed_client_columns_and_cursor` verifies the boundary refusal occurs before the provider callback and keeps valid cursors.
+
+
+## Character-bound ally base cost (2026-10-21)
+
+`corpRegistry.CharGetAllyBaseCost` now reads the Diplomatic Relations skill only for the session character. The V24.01 callsite in `eve/client/script/ui/services/corporation/base_corporation.py` invokes the RPC without arguments; eve.rs ignores the legacy EveJS fallback to a client-supplied character ID when no character is selected and returns the existing 10,000,000 ISK fallback instead. This prevents the method from exposing another character’s skill-derived value. `Corp_registry_ally_base_cost_uses_the_reference_fallback` verifies that the Host reader is not called with a client-supplied ID.

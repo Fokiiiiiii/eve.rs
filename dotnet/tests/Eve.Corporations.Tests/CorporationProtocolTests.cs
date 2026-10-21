@@ -3313,6 +3313,10 @@ private static PyValue RowField(PyValue value,string key)
             });
         Assert.Equal(new PyInt(12_345_678),await configured.CallAsync(Call(session,"CharGetAllyBaseCost")));
         Assert.Equal(founder,measuredCharacter);
+
+        var unselected = new ClientSession();
+        Assert.Equal(new PyInt(10_000_000),await configured.CallAsync(Call(unselected,"CharGetAllyBaseCost",new PyLong(founder))));
+        Assert.Equal(founder,measuredCharacter);
     }
 
     [PgFact]

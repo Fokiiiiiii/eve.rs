@@ -13,12 +13,17 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
 {
     private static long Integer(PyValue v,long fallback = 0) => v switch
     {
-        PyInt n => n.Value,PyLong n => n.Value,PyReal n when double.IsFinite(n.Value) && n.Value>=long.MinValue && n.Value<=long.MaxValue => (long)n.Value,_ => fallback,
+        PyInt n => n.Value,
+        PyLong n => n.Value,
+        PyReal n when double.IsFinite(n.Value) && n.Value >= -9_223_372_036_854_775_808d &&
+            n.Value < 9_223_372_036_854_775_808d && Math.Truncate(n.Value) == n.Value => (long)n.Value,
+        _ => fallback,
     };
 
     private static int Int32(PyValue value, long fallback = 0)
     {
-        if (value is PyReal real && (!double.IsFinite(real.Value) || real.Value != Math.Truncate(real.Value)))
+        if (value is PyReal real && (!double.IsFinite(real.Value) || real.Value != Math.Truncate(real.Value) ||
+            real.Value < int.MinValue || real.Value > int.MaxValue))
             throw Error(new MarketError("MARKET_ARGUMENT_OUT_OF_RANGE"));
         var numeric = Integer(value, fallback);
         if (numeric is < int.MinValue or > int.MaxValue)

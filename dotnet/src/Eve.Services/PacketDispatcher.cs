@@ -166,6 +166,9 @@ public sealed class PacketDispatcher
         }
 
         var cost = ExpensiveRpcCost(service.Name, call.Method);
+        if (call.Method == "MachoBindObject" && call.Args.Count > 1 &&
+            NestedBoundMethod(call.Args[1]) is { } nestedMethod)
+            cost = Math.Max(cost, ExpensiveRpcCost(service.Name, nestedMethod));
         if (cost > 0 && !_expensiveBudgets.GetValue(session, _ => new ExpensiveRpcBudget())
                 .TryConsume(_nowUnixMs(), cost, MaxExpensiveRpcUnitsPerMinute))
         {
@@ -313,6 +316,17 @@ public sealed class PacketDispatcher
         if (service == "accessGroupBookmarkMgr" && method is "GetMyActiveBookmarks" or "SearchFoldersWithAdminAccess" or "DeleteBookmarks" or "MoveBookmarksToFolderAndSubfolder" or "CopyBookmarksToFolderAndSubfolder")
             return 10;
         return 0;
+    }
+
+    private static string? NestedBoundMethod(PyValue value)
+    {
+        var items = value switch
+        {
+            PyTuple tuple => tuple.Items,
+            PyList list => list.Items,
+            _ => Array.Empty<PyValue>(),
+        };
+        return items.Count > 0 ? JsSemantics.StringValue(items[0]) : null;
     }
 
     private sealed class ExpensiveRpcBudget

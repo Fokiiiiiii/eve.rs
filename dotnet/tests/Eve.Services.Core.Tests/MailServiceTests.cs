@@ -353,6 +353,17 @@ public sealed class MailServiceTests
         Assert.Equal("GM chat request", sent.Title);
         Assert.Equal("A GM would like to speak with you.<br><br>Requested channel: help-channel", sent.Body);
         Assert.False(sent.SaveSenderCopy);
+
+        var previous = sent;
+        var oversized = new ServiceCall
+        {
+            Method = "PokePlayerAboutChatMsgGm",
+            Args = [new PyInt(90000003), new PyStr(new string('x', 257))],
+            Session = call.Session,
+        };
+        var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(oversized).AsTask());
+        Assert.Equal("MAIL_CHANNEL_LIMIT_EXCEEDED", MailInfo(refusal));
+        Assert.Same(previous, sent);
     }
 
     private static MailService Service(JsonObject data) => new(_ => Task.FromResult(data),

@@ -526,6 +526,32 @@ public sealed class CorporationOfficeTests
     }
 
     [PgFact]
+    public async Task Office_list_reads_stop_after_the_session_member_leaves()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (actor, corporation) = await CreateCorporationAsync(rig);
+        await SetOfficeRoleAsync(rig, actor, CorporationRoles.RentOffice);
+        var service = CreateService(rig);
+        var quote = await QuoteAsync(service, actor, corporation.Id);
+        await service.RentOffice(Call("RentOffice", actor, corporation.Id, new Eve.Marshal.PyReal((double)quote)));
+
+        var beforeLeave = Assert.IsType<Eve.Marshal.PyList>(
+            await service.GetMyCorporationsOffices(Call("GetMyCorporationsOffices", actor, corporation.Id)));
+        Assert.Single(beforeLeave.Items);
+
+        await using (var revoke = rig.Source.CreateCommand(
+            $"DELETE FROM {rig.CorporationSchema}.members WHERE character_id=$1"))
+        {
+            revoke.Parameters.Add(new Npgsql.NpgsqlParameter { Value = actor });
+            Assert.Equal(1, await revoke.ExecuteNonQueryAsync());
+        }
+
+        var afterLeave = Assert.IsType<Eve.Marshal.PyList>(
+            await service.GetMyCorporationsOffices(Call("GetMyCorporationsOffices", actor, corporation.Id)));
+        Assert.Empty(afterLeave.Items);
+    }
+
+    [PgFact]
     public async Task Office_manager_exports_reference_reads_and_empty_results()
     {
         await using var rig = await Rig.CreateAsync();

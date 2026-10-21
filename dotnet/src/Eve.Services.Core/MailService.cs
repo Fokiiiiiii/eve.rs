@@ -177,8 +177,12 @@ private static IReadOnlyList<long>? OptionalRecipientIds(PyValue value) =>
     private static long? OptionalPositiveId(PyValue value) =>
         PositiveId(value) is > 0 and var id ? id : null;
 
-    private static string StringArgument(PyValue value) =>
-        value is PyStr text ? text.Value : "";
+    private static string StringArgument(PyValue value) => value switch
+    {
+        PyStr text => text.Value,
+        PyBytes bytes => Encoding.UTF8.GetString(bytes.Value.Span),
+        _ => string.Empty,
+    };
 
     private static PyValue SyncMail(JsonObject? messages, JsonObject? statuses, PyValue first, PyValue last)
     {

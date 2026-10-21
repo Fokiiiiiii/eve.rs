@@ -632,6 +632,28 @@ public sealed class MailServiceTests
     }
 
 [Fact]
+    public async Task SendMail_decodes_UTF8_client_byte_strings_for_title_and_body()
+    {
+        MailSendRequest? sent = null;
+        var service = new MailService(
+            _ => throw new InvalidOperationException("SendMail must not read the mailbox."),
+            (_, _, _, _) => throw new InvalidOperationException("SendMail must not mark a message read."),
+            (request, _, _) =>
+            {
+                sent = request;
+                return Task.FromResult<long?>(705);
+            });
+        var request = Request("SendMail",
+            new PyList([new PyInt(90000002)]), PyNone.Instance, PyNone.Instance,
+            new PyBytes(Encoding.UTF8.GetBytes("Náme")), new PyBytes(Encoding.UTF8.GetBytes("Body — ✓")),
+            new PyInt(0), new PyInt(0));
+
+        Assert.Equal(new PyLong(705), await service.CallAsync(request));
+        Assert.Equal("Náme", sent?.Title);
+        Assert.Equal("Body — ✓", sent?.Body);
+    }
+
+[Fact]
     public async Task SendMail_forwards_each_client_recipient_route_and_reply_forward_reference()
     {
         var sent = new List<MailSendRequest>();

@@ -74,6 +74,10 @@ EveJS 261018.1 normalizes the requested LP store quantity but has no generated-i
 
 The Host rejects repeated private-room invitations from one character within one second. The client still receives the existing chat refusal stanza for a rapid repeat; normal invitation and room-message flow is unchanged. The invite timestamp is scoped to the active character link and is cleared when that link closes. `XmppPrivateConversationTests.Private_room_invitation_and_messages_are_limited_to_the_character_pair` verifies that a repeated invite does not reach the recipient. Graphical-client acceptance remains open.
 
+## Mail string byte compatibility (2026-10-21)
+
+The V24.01 `mailSvc.SendMail` call forwards its title and body unchanged to `mailMgr.SendMail` (`eve/client/script/ui/services/mail/mailSvc.py:958-991`). EveJS 261018.1 `MailMgrService.Handle_SendMail` likewise forwards positional arguments 3 and 4 unchanged to its durable mail state (`server/src/services/mail/mailMgrService.js:547-573`). eve.rs accepts the wire's UTF-8 byte-string values for these fields while preserving its existing Unicode-string handling. `MailServiceTests.SendMail_decodes_UTF8_client_byte_strings_for_title_and_body` and the eve_p3 two-pilot walk cover the behavior. This resolves the earlier mail-text mismatch; no intentional client-visible difference remains.
+
 ## Mail RPC work budget (2026-10-20)
 
 `mailMgr` mailbox reads, status writes, sends, and the staff mail-poke RPC consume weighted per-session units in the existing rolling-minute budget. The configured `SessionRpcBudgetExceeded` refusal applies when a session exceeds its allowance; calls within the allowance retain their existing response and mailbox state transitions. `DispatchGoldenTests.Mailbox_reads_and_writes_have_a_named_per_session_budget` covers the refusal.

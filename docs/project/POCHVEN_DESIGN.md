@@ -151,6 +151,7 @@ Implemented:
    The Pochven gates carry no ship list in the SDE, so this rule is the only capital check there.
 3. NPC gate defenses, camps, and periodic faction skirmishes (`crates/eve-space/src/pochven_population.rs`). NPC hull dogma and damage values are derived from SDE build 3396210; the sentry locations, camp composition, 15-minute skirmish interval, and pair rotation are project rules because published spawn tables are absent. The scene caps the Pochven population at 40 and delays a skirmish until four slots are available.
 4. Faction hostility is applied by the simulation combat tree: NPCs target ships and entities owned by the other Pochven factions, while excluding their own faction. `brains::pochven_tests` verifies hostile-faction damage and no damage within one faction or outside the zone.
+5. The p2 live headless walk passed on 2026-10-21: the seeded pilot receives both Triglavian gate NPC balls, locks the sentry, and receives its damage notification (`tools/headless-client/tests/test_pochven_live.py`). The walk does not observe the 15-minute skirmish interval or compare the same scenario with EveJS.
 
 Cut (not built), with the reason:
 - Gate-gun retribution beyond the scene combat rules: no published transit trigger, retribution timer, or target priority (section 6). EveJS draws cosmetic sentry props at empire gates (`empireSentryLayout.js`); the Pochven sentries in eve.rs use the project behavior recorded in DEVIATIONS.

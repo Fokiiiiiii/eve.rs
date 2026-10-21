@@ -1341,7 +1341,8 @@ L5 kill mission (A-X1) to call. Not verified with the graphical client.
 - Known gaps: a crash between a wave's simulation spawn and its commit can spawn that wave twice (at-least-once); NPCs alive in the simulation
   across a host restart are not re-attached (the dungeon's lifetime bounds the stall); the timer of a wave starts when the wave before it is
   cleared.
-- Tests: Eve.Dungeons.Tests `WavePlannerTests` (17); Eve.Services.Space.Tests `DungeonWaveTests` (9 scenarios), `DungeonWaveSpaceTests` (1),
+- Open NPC behavior: `SpawnGroupAsync` derives the hull weapon and self-repairs from SDE dogma; SDE-driven entity EWAR is not attached to NPC identities. EveJS 261018.1 has an entity EWAR catalog and activation path; port the verified families and timing with combat regressions before claiming parity.
+- Tests: Eve.Dungeons.Tests `WavePlannerTests` (17); Eve.Services.Space.Tests `DungeonWaveTests` (10 scenarios), `DungeonWaveSpaceTests` (1),
   `WaveCompositionTests` (7).
 ## 46. Structures phase, ST-7: service fuel, compression plant, cyno jammer, cyno beacon (2026-10-11)
 
@@ -1713,8 +1714,9 @@ Evidence and decisions: `docs/project/WORMHOLE_DESIGN.md` (sources, SDE numbers,
 | DONE (tests) | Skirmish spawner: every 900 s, four factions in turn, deterministic, capped at 40 NPCs per scene | `pochven_population.rs` (`populate_pochven`) |
 | DONE (data) | System states: 27 Pochven systems held by the Triglavians; EDENCOM list empty | `data/pochven_states.json` (source and date in the file) |
 | DONE (Host regression) | NPC bounty payout in Pochven | Host payout returns before recording a payout when the victim system is in Pochven; loot and drops remain unchanged. Regression: `NpcBountyHostTests.A_sim_resident_triglavian_in_Pochven_pays_no_bounty`. |
+| OPEN | Pochven NPC loot/drop tables | No source-backed per-type drop table is available for the Pochven factions; preserve existing wreck contents rather than inventing drops. |
 | CUT | Fortress and Heavy GunStar placements in Pochven | No Pochven system is an EDENCOM fortress in the wiki; the path is tested through the data file |
-| PARTIAL (live spawn) | A Cockroach logs into Pochven 30000021 in space; the walk verifies Werpost (54577) and Liminal Damavik (52182) ball arrival. Target-lock and damage assertions now cover the combat path and need a live rerun. | `tools/headless-client/tests/test_pochven_live.py`; the pilot is seeded because Pochven has no station. No EveJS reference walk is recorded. |
+| PARTIAL (live combat) | A Cockroach logs into Pochven 30000021 in space; the live walk verifies Werpost (54577) and Liminal Damavik (52182) ball arrival, target lock, and damage notification. EveJS reference walk, 15-minute skirmish observation, and the other gates' sentries remain open. | `tools/headless-client/tests/test_pochven_live.py`; passed against the p2 live host on 2026-10-21. The pilot is seeded because Pochven has no station. |
 | OPEN | Skirmish spawns and the other gates' sentries in the live walk | Only 25 s observed; the skirmish cadence is 900 s |
 | DONE (tests) | Step 3, filament rules and data (17 SDE types, caps, spool-ups, families, trace numbers) | `crates/eve-space/src/filament.rs`; jumps not built |
 | OPEN | Filament destinations (jump targets) | Not in the client extract (location list 4510 to 4569 absent); no invented destination |

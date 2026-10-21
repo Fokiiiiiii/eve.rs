@@ -2568,6 +2568,11 @@ client's use of mission data: eve-logic `evemissions/client/data.py`, `eve/clien
 - NPCs taken out of space (abandoned or ended dungeons) are destroyed by the simulation, which explodes them and leaves an empty wreck; no
   npc.killed is announced for them, so they are not counted as kills or paid bounties.
 - A wave's spawn that the simulation shortens fails the dungeon with the count; the NPCs made are taken out.
+
+## NPC entity EWAR (2026-10-21)
+
+`SpaceSessions.Npc.SpawnGroupAsync` attaches the SDE hull weapon, aggression range, and local shield/armor repair effects to `SimNpcIdentity`. It does not resolve the SDE entity EWAR attributes or schedule EWAR cycles. EveJS 261018.1 `server/src/space/npc/npcEntityEwarCatalog.js`, `npcSdeCapabilityResolver.js`, and `npcBehaviorLoop.js` resolve entity EWAR families and activation. The Rust simulation already models player-applied ECM and other lasting effects, but NPCs currently have no EWAR loadout or activation path. This remains open until each supported family has SDE-derived values and target, range, cycle, expiry, and notification regressions.
+
 ## Structure services fuel (ST-7, increment a, 2026-10-11)
 
 Sources: SDE build 3396210 (`typeDogma` attributes 2108-2110 of the service modules; [S]); EveJS v0.12.9 `server/src/services/structure/structureServiceModules.js`

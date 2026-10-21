@@ -307,7 +307,7 @@ public sealed class PacketDispatcher
             return 10;
         if (service == "charMgr" && method is "GetRecentShipKillsAndLosses" or "GetOrganizationInfoForCharacters" or "GetContactList" or "GetCharacterSettings" or "SaveCharacterSetting" or "DeleteCharacterSetting" or "GetLabels" or "GetOwnerNoteLabels" or "GetOwnerNote" or "GetNote" or "LogSettings" or "AddOwnerNote" or "EditOwnerNote" or "RemoveOwnerNote" or "SetNote" or "AddContact" or "EditContact" or "DeleteContacts" or "BlockOwners" or "UnblockOwners" or "EditContactsRelationshipID" or "AssignLabels" or "RemoveLabels" or "CreateLabel" or "DeleteLabel" or "EditLabel" or "List" or "ListStations" or "ListStationItems" or "ListIncludingContainers" or "GetAssetWorth")
             return 10;
-        if (service == "fleetObject" && method is "SendBroadcast" or "Invite" or "MassInvite")
+        if (service == "fleetObject" && method is "SendBroadcast" or "Invite" or "MassInvite" or "GetInitState" or "GetFleetComposition" or "GetJoinRequests")
             return 10;
         if (service == "corpRecProxy" && method is "SearchCorpAds")
             return 10;

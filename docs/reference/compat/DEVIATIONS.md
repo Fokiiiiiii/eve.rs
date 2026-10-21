@@ -5412,3 +5412,8 @@ The staff-only `mailMgr.PokePlayerAboutChatMsgGm` RPC caps its requested channel
 ## Character settings and personal note RPC budget (2026-10-21)
 
 `charMgr.GetCharacterSettings`, settings writes/deletes, label reads, and note reads/listing consume 10 units from the per-session expensive-RPC budget. These calls read or rewrite session-owned, user-extendable data, including setting values up to 100 KiB and notes up to 5,000 code units. Calls over the session allowance receive `SessionRpcBudgetExceeded`; accepted settings and notes retain their existing shapes. `DispatchGoldenTests.Character_settings_reads_and_writes_have_a_named_per_session_budget` covers the budget refusal.
+
+
+## Fleet composition read budget (2026-10-21)
+
+`fleetObject.GetInitState`, `GetFleetComposition`, and `GetJoinRequests` consume 10 units from the per-session expensive-RPC budget. Initialization and composition may resolve skill or character details for the fleet's bounded member list; join requests materialize the current request set. Calls above the session allowance receive `SessionRpcBudgetExceeded`; allowed response shapes are unchanged. `DispatchGoldenTests.Fleet_member_composition_reads_have_a_named_per_session_budget` covers initialization and composition.

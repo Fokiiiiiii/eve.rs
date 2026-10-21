@@ -5383,3 +5383,7 @@ The staff-only `mailMgr.PokePlayerAboutChatMsgGm` RPC caps its requested channel
 ## Mailbox synchronization response bound (2026-10-21)
 
 `mailMgr.SyncMail` refuses a mailbox above 5,000 status entries with `MAIL_SYNC_LIMIT_EXCEEDED` before sorting entries or constructing header/status response arrays. `MailServiceTests.Sync_mail_refuses_mailboxes_above_the_response_entry_limit` covers the boundary.
+
+## Wallet transfer reason bound (2026-10-21)
+
+`account.GiveCash` and `GiveCashFromCorpAccount` now enforce the V24.01 transfer window's 40-character reason field before wallet settlement. Oversized input returns `WALLET_REASON_LIMIT_EXCEEDED`; the focused corporation RPC regression confirms the sender balance is unchanged.

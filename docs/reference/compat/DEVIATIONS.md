@@ -5392,7 +5392,7 @@ The staff-only `mailMgr.PokePlayerAboutChatMsgGm` RPC caps its requested channel
 
 ## Alliance bulletin text bounds (2026-10-21)
 
-`allianceRegistry.AddBulletin` and `UpdateBulletin` enforce the V24.01 editor limits of 100 UTF-16 code units for titles and 4,000 for bodies before persistence. Oversized fields receive `ALLIANCE_BULLETIN_LIMIT_EXCEEDED`; accepted bulletin data and response shapes are unchanged. The existing alliance bulletin persistence regression covers oversized title, body, and update-title refusals.
+`allianceRegistry.AddBulletin` and `UpdateBulletin` enforce the V24.01 editor limits of 100 UTF-16 code units for titles and 4,000 for bodies before persistence. Oversized fields receive `ALLIANCE_BULLETIN_LIMIT_EXCEEDED`; accepted bulletin data and response shapes are unchanged. The alliance bulletin persistence regression covers acceptance at both exact limits and refusal above each limit, including update-title refusal.
 
 
 ## Alliance bulletin-list read budget (2026-10-21)

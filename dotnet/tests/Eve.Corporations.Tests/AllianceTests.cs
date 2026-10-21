@@ -1489,6 +1489,10 @@ public class AllianceTests
             await Assert.ThrowsAsync<Eve.Corporations.CorporationError>(() => service.CallAsync(Call(director,
                 "AddBulletin", new Eve.Marshal.PyWString("Title"),
                 new Eve.Marshal.PyWString(new string('B', 4001)))).AsTask());
+            var maximumBulletinId = Assert.IsType<Eve.Marshal.PyInt>(await service.CallAsync(Call(director,
+                "AddBulletin", new Eve.Marshal.PyWString(new string('T', 100)),
+                new Eve.Marshal.PyWString(new string('B', 4000)))));
+            await service.CallAsync(Call(director, "DeleteBulletin", maximumBulletinId));
             var bulletinId = Assert.IsType<Eve.Marshal.PyInt>(await service.CallAsync(Call(director,
                 "AddBulletin", new Eve.Marshal.PyWString("Maintenance"),
                 new Eve.Marshal.PyWString("Docking services will restart.")))).Value;

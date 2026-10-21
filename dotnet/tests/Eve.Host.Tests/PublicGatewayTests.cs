@@ -39,6 +39,76 @@ public sealed class PublicGatewayTests
     }
 
     [Fact]
+    public void Arbitrary_gateway_frame_buffers_never_escape_the_format_error_contract()
+    {
+        var random = new Random(0x51a7);
+        for (var round = 0; round < 20_000; round++)
+        {
+            var buffer = new List<byte>(random.Next(0, 513));
+            for (var index = 0; index < buffer.Capacity; index++)
+                buffer.Add((byte)random.Next(0, 256));
+
+            try
+            {
+                var frames = GatewayEnvelope.TakeFrames(buffer);
+                Assert.All(frames, frame => Assert.InRange(frame.Length, 0, GatewayEnvelope.MaxFrameLength));
+                Assert.True(buffer.Count < 5 || (buffer[0] == 0 &&
+                    BinaryPrimitives.ReadUInt32BigEndian(buffer.Skip(1).Take(4).ToArray()) <= GatewayEnvelope.MaxFrameLength));
+            }
+            catch (FormatException)
+            {
+                // Invalid compression flags and oversized declared lengths are protocol errors.
+            }
+        }
+    }
+
+    [Fact]
+    public async Task Sensitive_request_bytes_are_not_written_to_host_logs()
+    {
+        const string sentinel = "ACCOUNT-SECRET-123";
+        var routes = new PublicGatewayRoutes(
+            new Dictionary<string, GatewayHandler>(),
+            new NoticeHub(),
+            new GatewayAuthority((_, _) => Task.FromResult<long?>(null), () => DateTimeOffset.UtcNow));
+        await using var server = await PublicGatewayServer.StartAsync(IPAddress.Loopback, 0, routes);
+        using var http = new HttpClient(new SocketsHttpHandler())
+        {
+            DefaultRequestVersion = HttpVersion.Version20,
+            DefaultVersionPolicy = HttpVersionPolicy.RequestVersionExact,
+        };
+        using var content = new ByteArrayContent(GatewayEnvelope.Frame(System.Text.Encoding.ASCII.GetBytes(sentinel)));
+        content.Headers.ContentType = new MediaTypeHeaderValue("application/grpc+proto");
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"http://127.0.0.1:{server.Port}/eve_public.gateway.Requests/Send")
+        {
+            Content = content,
+            Version = HttpVersion.Version20,
+            VersionPolicy = HttpVersionPolicy.RequestVersionExact,
+        };
+
+        var previousError = Console.Error;
+        using var log = new StringWriter();
+        try
+        {
+            Console.SetError(log);
+            try
+            {
+                using var response = await http.SendAsync(request);
+            }
+            catch (HttpRequestException)
+            {
+                // The malformed protobuf resets this stream.
+            }
+        }
+        finally
+        {
+            Console.SetError(previousError);
+        }
+
+        Assert.DoesNotContain(sentinel, log.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain(Convert.ToHexString(System.Text.Encoding.ASCII.GetBytes(sentinel)), log.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void A_frame_with_a_declared_length_above_the_host_limit_is_rejected_before_its_body_arrives()
     {
         var frame = new List<byte> { 0, 0x01, 0, 0, 1 };

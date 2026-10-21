@@ -2041,6 +2041,23 @@ private static PyValue RowField(PyValue value,string key)
             var caseId = Assert.IsType<PyInt>(await FounderRpc("InsertVoteCase",
                 new PyWString("General vote"),new PyWString("Choose"),new PyInt(4),
                 new PyList([new PyWString("For"),new PyWString("Against")]),new PyInt(1))).Value;
+
+            async Task AssertVoteInputRefused(string expectedCode, params PyValue[] args)
+            {
+                var error = await Assert.ThrowsAsync<CorporationError>(async () =>
+                    await FounderRpc("InsertVoteCase", args));
+                Assert.Equal(expectedCode, error.Code);
+            }
+            await AssertVoteInputRefused("CORPORATION_INVALID_VOTE_ARGUMENT",
+                new PyWString(new string('T', 501)),new PyWString("Description"),new PyInt(4),
+                new PyList([new PyWString("For"),new PyWString("Against")]),new PyInt(1));
+            await AssertVoteInputRefused("CORPORATION_INVALID_VOTE_ARGUMENT",
+                new PyWString("Title"),new PyWString(new string('D', 1001)),new PyInt(4),
+                new PyList([new PyWString("For"),new PyWString("Against")]),new PyInt(1));
+            await AssertVoteInputRefused("CORPORATION_INVALID_VOTE_OPTIONS",
+                new PyWString("Title"),new PyWString("Description"),new PyInt(4),
+                new PyList([new PyWString(new string('O', 101)),new PyWString("Against")]),new PyInt(1));
+
             Assert.IsType<PyNone>(await SharesRpc(founderSession,"MovePrivateShares",
                 new PyInt(corporation.Id),new PyInt(member),new PyInt(400)));
             var memberShares = Assert.Single(Lines(await SharesRpc(memberSession,"GetSharesByShareholder",new PyInt(0))));

@@ -540,13 +540,13 @@ impl Scene {
         let at = at.into();
         let ship_id = 980_100_000_000 + self.npc_sequence as i64;
         let place = NpcPlace::at_rest(Vec3::new(at.0, at.1, at.2));
-        match self.spawn_npc_with_behavior(
-            npc_spec(ship_id, npc_type),
-            npc_identity(ship_id, npc_type, aggression),
-            place,
-            behavior,
-            now,
-        ) {
+        let mut identity = npc_identity(ship_id, npc_type, aggression);
+        if matches!(behavior, SENTRY_TRIGLAVIAN | CAMP) {
+            // A neutral pilot has 0.00 standing to the Triglavians and is hostile at that inclusive boundary.
+            // The shared behavior task uses a strict comparison, so move its integer threshold just above zero.
+            identity.hostile_response_threshold = 1;
+        }
+        match self.spawn_npc_with_behavior(npc_spec(ship_id, npc_type), identity, place, behavior, now) {
             Ok((_, mut outs)) => {
                 outs.insert(
                     0,

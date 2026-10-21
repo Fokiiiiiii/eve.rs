@@ -287,13 +287,13 @@ public sealed class PacketDispatcher
             return 10;
         if (service == "LPStoreMgr" && method is "GetAvailableOffersFromCorp" or "TakeOfferForCharacter" or "TakeOfferForCorporation")
             return 10;
-        if (service == "corpRegistry" && method is "GetEveOwners" or "GetMemberIDsByQuery" or "GetMemberIDsWithMoreThanAvgShares" or "GetNumberOfPotentialCEOs" or "GetMembersByIds" or "GetMembersPaged" or "GetMemberTrackingInfo" or "GetMemberTrackingInfoSimple" or "GetShareholders" or "GetSharesByShareholder" or "PayoutDividend" or "ExecuteActions" or "UpdateMembers" or "KickOutMembers" or "UpdateTitles" or "RemoveCorporateContacts" or "EditContactsRelationshipID" or "AssignLabels" or "RemoveLabels" or "UpdateBulletinOrder" or "GetRecentKills" or "GetRecentLosses")
+        if (service == "corpRegistry" && method is "GetEveOwners" or "GetMemberIDsByQuery" or "GetMemberIDsWithMoreThanAvgShares" or "GetNumberOfPotentialCEOs" or "GetMembersByIds" or "GetMembersPaged" or "GetMemberTrackingInfo" or "GetMemberTrackingInfoSimple" or "GetShareholders" or "GetSharesByShareholder" or "PayoutDividend" or "ExecuteActions" or "UpdateMembers" or "KickOutMembers" or "UpdateTitles" or "RemoveCorporateContacts" or "EditContactsRelationshipID" or "AssignLabels" or "RemoveLabels" or "UpdateBulletinOrder" or "GetRecentKills" or "GetRecentLosses" or "UpdateApplicationOffer")
             return 10;
         if (service == "allianceRegistry" && method is "GetEveOwners" or "GetRankedAlliances" or "GetAllianceMembers" or "GetMembers" or "GetEmploymentRecord" or "GetAllianceMembersOlderThan" or "GetAllianceApplications")
             return 10;
-        if (service == "charMgr" && method is "GetRecentShipKillsAndLosses" or "GetOrganizationInfoForCharacters" or "List" or "ListStations" or "ListStationItems" or "ListIncludingContainers" or "GetAssetWorth")
+        if (service == "charMgr" && method is "GetRecentShipKillsAndLosses" or "GetOrganizationInfoForCharacters" or "GetContactList" or "AddOwnerNote" or "EditOwnerNote" or "RemoveOwnerNote" or "SetNote" or "AddContact" or "EditContact" or "DeleteContacts" or "BlockOwners" or "UnblockOwners" or "EditContactsRelationshipID" or "AssignLabels" or "RemoveLabels" or "CreateLabel" or "DeleteLabel" or "EditLabel" or "List" or "ListStations" or "ListStationItems" or "ListIncludingContainers" or "GetAssetWorth")
             return 10;
-        if (service == "fleetObject" && method == "SendBroadcast")
+        if (service == "fleetObject" && method is "SendBroadcast" or "Invite" or "MassInvite")
             return 10;
         if (service == "corpRecProxy" && method is "SearchCorpAds")
             return 10;

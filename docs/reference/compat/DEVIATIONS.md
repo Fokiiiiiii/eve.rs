@@ -104,7 +104,11 @@ PI program installs reject non-finite extractor head radii with the existing `In
 
 ## Corporation application text bound (2026-10-20)
 
-`corpRegistry.InsertApplication` and `UpdateApplicationOffer`, plus `ApplyToJoinAlliance`, reject application text or response text longer than 1,000 UTF-16 code units before persistence. This matches `crpApplicationMaxSize` and the V24.01 corporation application editor. Corporation and alliance RPC regressions cover over-limit submissions, application updates, response text, and unchanged stored state.
+`corpRegistry.InsertApplication` and `UpdateApplicationOffer`, plus `ApplyToJoinAlliance`, reject application text or response text longer than 1,000 UTF-16 code units before persistence. This matches `crpApplicationMaxSize` and the V24.01 corporation application editor. Corporation and alliance RPC regressions cover over-limit submissions, application updates, response text, and unchanged stored state. `UpdateApplicationOffer` now checks persisted Personnel Manager authority before same-corporation manager-side application lookup. A single application-ID lookup preserves the existing no-op for a mismatched corporation with no matching application, without enumerating its application collection. Application decision notifications enumerate recipients only after the store accepts the decision; the expensive path consumes 10 weighted per-session units. Applicant-owned updates retain the V24.01 flow and the store validates applicant identity transactionally.
+
+## Personal address-book and note RPC budget (2026-10-21)
+
+`charMgr.GetContactList` returns personal contacts and blocked senders for the authenticated character. It and the record-rewriting owner-note, contact, and label mutations consume 10 weighted per-session work units to bound repeated enumeration and writes over accumulated personal data. Session ownership and response shapes remain unchanged. `DispatchGoldenTests.Expensive_market_calls_have_a_named_per_session_budget` covers contact-list and owner-note refusal after the session allowance is exhausted.
 
 ## Contact-label name bound (2026-10-20)
 
@@ -1901,7 +1905,9 @@ Source: `work/market-design.md` 4.3 M8. Q14 (the duplicate window) was decided a
   15), the seller's modification inside the five-minute delay is refused with the sentence that carries the seconds left, the same
   modification after the delay succeeds (run with `EVE_LIVE_SLOW=1`, which waits 300 s), the seller cancels the rest (`CancelCharOrder`:
   the escrow reads zero and the items return to the hangar), `GetCorporationOrders` of a character in an NPC corporation is empty, and a
-  corporation order is refused.
+  corporation order is refused. The walk also compares both characters' wallet balance deltas with their journal rows: the buyer's
+  transfer debit, the seller's sale credit and tax, and the seller's broker and SCC fees. The added journal assertions await another
+  running-host execution.
 - **Refusal wording.** A corporation-rights refusal reached the client as the raw code `CORPORATION_ACCESS_DENIED` (a `CustomInfo` with the
   code as its text). `MarketProxyService.Error` now sends the sentence "Your character does not hold the market rights of that corporation."
   for that code; the live walk asserts it.
@@ -2564,6 +2570,11 @@ client's use of mission data: eve-logic `evemissions/client/data.py`, `eve/clien
 - NPCs taken out of space (abandoned or ended dungeons) are destroyed by the simulation, which explodes them and leaves an empty wreck; no
   npc.killed is announced for them, so they are not counted as kills or paid bounties.
 - A wave's spawn that the simulation shortens fails the dungeon with the count; the NPCs made are taken out.
+
+## NPC entity EWAR (2026-10-21)
+
+`SpaceSessions.Npc.SpawnGroupAsync` attaches the SDE hull weapon, aggression range, and local shield/armor repair effects to `SimNpcIdentity`. It does not resolve the SDE entity EWAR attributes or schedule EWAR cycles. EveJS 261018.1 `server/src/space/npc/npcEntityEwarCatalog.js`, `npcSdeCapabilityResolver.js`, and `npcBehaviorLoop.js` resolve entity EWAR families and activation. The Rust simulation already models player-applied ECM and other lasting effects, but NPCs currently have no EWAR loadout or activation path. This remains open until each supported family has SDE-derived values and target, range, cycle, expiry, and notification regressions.
+
 ## Structure services fuel (ST-7, increment a, 2026-10-11)
 
 Sources: SDE build 3396210 (`typeDogma` attributes 2108-2110 of the service modules; [S]); EveJS v0.12.9 `server/src/services/structure/structureServiceModules.js`
@@ -3621,7 +3632,7 @@ Sources. `docs/project/POCHVEN_DESIGN.md` section 1: the EVE University wiki "Po
 - Decision, the check runs before the client data's gate rules, and it runs even when the client data is not loaded (`GateRules` null): a region rule does not depend on the client export.
 - Decision, faction pairs. The wiki says "the five main factions attack each other on sight" and does not name them. The four factions with SDE ids that live in Pochven are taken (Triglavian 500026, EDENCOM 500027, Rogue Drones 500025, Drifters 500024). The Sleepers have no id in the sources, so they are not modelled. CONCORD, pirates and empires are outside the rule.
 - Decision, NPC standing rule. Wiki: Triglavian rats hostile at 0.00 and below; EDENCOM rats hostile below 0.00; Rogue Drones, Drifters and Sleepers hostile to all players (the wiki's "Pochven" page). Sleepers are not in the rule (see above).
-- Not done: the hostility is not yet used by the simulation (no NPC-vs-NPC targeting exists there); gate sentries that shoot (no published firing rule: EveJS draws cosmetic sentries only, `server/src/space/empireGatePresence/empireSentryLayout.js`); skirmish spawns; invasion states; filaments (see TODO "Pochven").
+- Superseded by "Pochven population: sentries, camps, skirmishes and the NPC-vs-NPC fight" below: the faction hostility, NPC target selection, gate defenses and skirmish population are implemented with documented project rules. Invasion states and filaments remain open.
 - Tests: `PochvenRulesTests` (4, pure). The gate path in `CheckGateRulesAsync` is not exercised by a Pochven host test: the rig places the pilot in a high-security system (see the A8c note above), and no rig helper puts a pilot in Pochven. Status: not exercised for the host path; the existing `SpaceServiceTests` gate tests cover the unchanged path.
 
 
@@ -3634,7 +3645,7 @@ Published, used as published: the sentries' numbers (Entropic Disintegrator Werp
 Project rules (not published; stated in code):
 - Sentries: one at every stargate of a Pochven system, 20 km from the gate towards the system's centre. A Triglavian system gets Entropic Disintegrator Werposts; a system the EDENCOM hold gets EDENCOM GunStars (none in the data file). A sentry does not move (orbit velocity 0).
 - Camps: two Liminal Damavik at the first two gates of a Triglavian system, 5 km from the gate, attacking pilots and the other factions' NPCs (they stay near the gate: they orbit at 300 m/s, as the belt rat does).
-- Who a sentry attacks: a Triglavian sentry attacks every ship that is not Triglavian, pilots included (a pilot starts at 0.00 standing, which the wiki makes hostile to the Triglavians). An EDENCOM sentry attacks the NPCs of the other three Pochven factions and no pilot (a pilot at 0.00 is not hostile to the EDENCOM; the simulation has no pilot standing to lower).
+- Who a sentry attacks: a Triglavian sentry attacks every ship that is not Triglavian, pilots included (a pilot starts at 0.00 standing, which the wiki makes hostile to the Triglavians). Its NPC identity uses threshold 1 to map the behavior task's strict comparator to the inclusive 0.00 boundary. An EDENCOM sentry attacks the NPCs of the other three Pochven factions and no pilot (a pilot at 0.00 is not hostile to the EDENCOM; the simulation has no pilot standing to lower).
 - Skirmishes: every 900 s per scene (the first 900 s after the system is first looked at); the pair of factions follows the skirmish's number (Triglavian against EDENCOM, Rogue Drones against Drifters, Triglavian against Rogue Drones, EDENCOM against Drifters, in turn); two groups of two hulls, 40 km apart, from the first gate of the system.
 - Shots: once every 4 s per turret (the SDE gives no cycle for these types); the shot is the SDE's raw damage times the hull's damage multiplier; the hull's resonances are the SDE's; the Drifter cruiser's agility and structure resonance are not in the SDE (agility 1, resonance 1).
 - Caps: at most 40 Pochven NPCs per scene; a skirmish waits until it fits (4 NPCs).
@@ -3644,9 +3655,9 @@ Implementation: `Scene::poll` looks at a Pochven scene once (`populate_pochven`)
 
 Found while building it (not a rule): the visibility grid's box edge is the origin (`GRID_BOX` 7,864,320 m). A fight that straddles the origin changes bubble, and the bubble filter drops the target: the test fight is placed at the middle of box 0.
 
-Open (with reasons): the loot and drops of the Pochven NPCs (no drop tables are available for those factions); the EDENCOM fortress and Heavy GunStar placements (no Pochven system is an EDENCOM fortress in the wiki; the GunStar path is built and tested through the data file's `edencom` state only); the Triglavian Entropic sentries' effect on jamming and tracking beyond the stock turret; the filaments and the Home-system standing (step 5, not started); the live walk (the headless client cannot place a pilot in Pochven; see the A8c note).
+Open (with reasons): the loot and drops of the Pochven NPCs (no drop tables are available for those factions); the EDENCOM fortress and Heavy GunStar placements (no Pochven system is an EDENCOM fortress in the wiki; the GunStar path is built and tested through the data file's `edencom` state only); the Triglavian Entropic sentries' effect on jamming and tracking beyond the stock turret; the filaments and the Home-system standing (step 5, not started); an EveJS combat comparison (the eve.rs headless walk seeds its pilot in Pochven because no station or ordinary entry path is available).
 
-Tests: `pochven_population` (16 in the Pochven filter, including the scene-level ones: the sentries and camps on first look, the 20 km placement and no movement, the skirmish schedule with the cap, determinism, a sentry locks a rogue drone and never a fellow triglavian); `brains::pochven_tests` (the NPC-vs-NPC attack, its absence within the faction and outside Pochven); `pochven` (faction and owner rules). The full `eve-space` (762) and `eve-behaviors` (548) suites pass; clippy `-D warnings` is clean for both crates.
+Tests: `pochven_population` (16 in the Pochven filter, including the scene-level ones: the sentries and camps on first look, the 20 km placement and no movement, the skirmish schedule with the cap, determinism, a sentry locks a rogue drone and never a fellow triglavian); `brains::pochven_tests` (the NPC-vs-NPC attack, its absence within the faction and outside Pochven, and a Triglavian sentry locking and damaging a default-standing pilot); `pochven` (faction and owner rules). The full `eve-space` (762) and `eve-behaviors` (548) suites pass; clippy `-D warnings` is clean for both crates.
 
 
 ## Wormhole space: placement, the jump and the ends (slice 7, 2026-10-12)
@@ -4067,7 +4078,7 @@ Full status: `docs/project/INDUSTRY_STATUS.md`. Decisions recorded here:
 - **Cost part.** The client multiplies the unrounded job cost by the cost modifiers (system index, facility bonuses, blueprint `jobCostMultiplier` 1954, `BLUEPRINT_MODIFIERS`) and rounds once (`Job._get_cost`). The base cost is rounded first only for the tax, SCC and security shares (`base_cost`). `IndustryRules.CostParts` now takes the unrounded job cost.
 - **Industry skills.** Industry (440) and Advanced Industry (1961) are separate PostPercent modifiers of the time attribute (client attribute 219), so they multiply; they were summed.
 - **Copying materials.** A copy's material runs are runs times licensed runs (`copying.py` `job_material_runs`); the per-run floor stays the runs.
-- Not done: the alpha-clone additive industry tax (`CLONE_STATE_INDUSTRY_TAX`) and the faction cost modifier (`globalModifiers['faction']`) are not modelled. Tests: `IndustryRulesTests` 35 of 35 (Eve.Services.Core.Tests); `dotnet test tests/Eve.Host.Tests --filter Industry` 27 of 27 on eve_p2.
+- Alpha-clone additive industry cost is implemented in slice I7. The facility faction multiplier remains 1.0, as supplied by EveJS 261018.1 facility data. Tests: `IndustryRulesTests` 35 of 35 (Eve.Services.Core.Tests); `dotnet test tests/Eve.Host.Tests --filter Industry` 27 of 27 on eve_p2.
 
 ## Planetary interaction (PI)
 
@@ -5279,3 +5290,27 @@ Corporate insurance reads, purchases, and cancellation preserve the client Accou
 ## Faction-warfare alliance role revocation (2026-10-20)
 
 Alliance join, leave, and withdrawal mutations preserve the session Director-role check and also verify that the actor remains a Director in the persisted active executor corporation for the session alliance. A demoted Director session cannot change alliance faction-warfare state. `FacWarMgrRpcTests.Alliance_leave_refuses_a_stale_session_director_role` passed on eve_p2 and checks refusal before the alliance status can change; the Host project built with zero warnings or errors.
+
+
+## Industry slice I7: alpha clone cost and facility faction default (2026-10-21)
+
+- **Alpha clone cost.** `OmegaLicenses` resolves the authenticated session account at install time. Alpha jobs add the client's additive `CLONE_STATE_INDUSTRY_TAX` of 1.0025 to unrounded base job cost, alongside the existing cost modifiers, with the final cost rounded once. The client source is `eve/common/script/util/industryCommon.py` (`GetCharacterModifiers`) and `clonegrade/const.py`; EveJS 261018.1 confirms the cost placement in `server/src/services/industry/industryParityHelpers.js` (`resolveIndustryJobCost`). Tests cover formula, persisted job cost and wallet debit.
+- **Faction modifier.** V24.01 applies a facility faction modifier only when its value differs from 1.0 (`industryCommon.py`). EveJS 261018.1 `server/src/services/industry/industryStaticData.js` emits 1.0 for both NPC and structure facility data. eve.rs keeps that default; no alternate value is inferred.
+- **Verification scope.** Core industry tests passed (51), including the install-session clone-grade assertion. The PostgreSQL install regression and live Alpha-account walk are recorded after execution; the existing live industry walks cover the six listed industry activity and delivery paths. Graphical-client acceptance remains open.
+
+## Fleet command skill projection (2026-10-21)
+
+V24.01 `fleetCompositionWnd.py` indexes `skills` and `skillIDs` at positions 0 through 2 to display fleet command skills. EveJS 261018.1 currently emits all learned skills in `skills` and an empty `skillIDs`; `GetInitState` also emits zeroes. Host fleet composition, initialization, and join notifications now return Leadership, Wing Command, and Fleet Command in ascending SDE type-ID order, with levels read from each member's persisted character skill rows and zero for an untrained skill. This intentional response difference follows the client indexing contract and uses authoritative static and character state. The focused Host projection and fleet service regressions cover ordering, trained and untrained levels, and the member response shape; `test_fleet_watchlist_methods_accept_client_python_sets` exercises both fleet RPCs in a two-pilot live walk.
+
+## Structure description role revocation (2026-10-21)
+
+`structureDirectory.SetStructureDescription` now recalculates Station Manager access from persisted corporation membership and titles for each write. The V24.01 request and success wire shape are unchanged; a role removed after login now receives the existing `CrpAccessDenied` refusal. `HostServerTests.Structure_description_rechecks_persisted_station_manager_role_after_login` verifies the refusal and that no write callback runs.
+
+
+## Fleet invitation fanout bounds (2026-10-21)
+
+`fleetObject.Invite` and `MassInvite` each consume 10 units from the shared per-session rolling-minute RPC budget. `MassInvite` now deduplicates positive character IDs within one request before invitation writes and notifications. The V24.01 `fleetSvc.MassInvite` callsite filters the caller but retains other repeated IDs, and EveJS 261018.1 loops over the supplied IDs; this change prevents one RPC from repeating invitation persistence and `OnFleetInvite` delivery for the same target. Unique targets retain the existing invitation response and notification shapes. `SpaceServiceTests.Fleet_mass_invite_move_reconnect_and_finishmove_match_client_events` and `DispatchGoldenTests.Fleet_invites_and_broadcasts_use_a_named_per_session_budget` cover the duplicate and budget behavior.
+
+## Organization mail authorization (2026-10-21)
+
+EveJS 261018.1 checks corporation and alliance mail against the sender's current session organization fields and Chat Manager role. eve.rs now resolves current corporation membership and effective roles from the corporation store on each `mailMgr.SendMail` request; corporate mail is limited to the sender's current non-NPC corporation, and alliance mail also requires the persisted Chat Manager role. The client-visible refusal and success response shapes stay the same. `HostServerTests.Mail_organization_recipient_requires_own_corporation_or_chat_manager` covers recipient scope and role policy.

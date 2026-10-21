@@ -53,6 +53,9 @@ public sealed class OmegaLicenses(IOmegaAccountStore accounts, Func<long> nowUni
         return expiry > NowFileTime ? new OmegaLicense(true, expiry) : new OmegaLicense(false, null);
     }
 
+    /// <summary>The clone grade derived from the same stored licence used by subscription services.</summary>
+    public long CloneGradeOf(PyValue? userId) => Resolve(userId).HasLicense ? 1 : 0;
+
 }
 
 /// <summary>Subscription status queries the client makes while logging in, and the clone-grade notifications.</summary>
@@ -67,7 +70,7 @@ public sealed partial class SubscriptionMgrService(OmegaLicenses licenses)
     public const string AnnouncedCloneGradeKey = "subscriptionCloneGrade";
 
     /// <summary>The clone grade of an account (0 Alpha, 1 Omega), as the clone-grade answers report it.</summary>
-    public long CloneGradeOf(PyValue? userId) => licenses.Resolve(userId).HasLicense ? CloneStateOmega : CloneStateAlpha;
+    public long CloneGradeOf(PyValue? userId) => licenses.CloneGradeOf(userId);
 
     private (long CloneGrade, bool IsSubscribed, long? EndTime, long DaysRemaining) State(ServiceCall call)
     {

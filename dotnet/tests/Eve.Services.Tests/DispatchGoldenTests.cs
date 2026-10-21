@@ -298,21 +298,38 @@ public class DispatchGoldenTests
         var characterSession = new ClientSession(characterCapture) { SessionId = 906 };
         await dispatcher.DispatchAsync(CallRequestPacket("charMgr", "GetRecentShipKillsAndLosses"), characterSession);
         await dispatcher.DispatchAsync(CallRequestPacket("charMgr", "GetRecentShipKillsAndLosses"), characterSession);
+        await dispatcher.DispatchAsync(CallRequestPacket("charMgr", "GetContactList"), characterSession);
         Assert.Equal(1, characterService.Calls);
-        Assert.Equal(ErrorResponseCommand, CommandOf(characterCapture.Sent[1]));
-        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(characterCapture.Sent[1])));
+        Assert.Equal(3, characterCapture.Sent.Count);
+        foreach (var refused in characterCapture.Sent.Skip(1))
+        {
+            Assert.Equal(ErrorResponseCommand, CommandOf(refused));
+            Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(refused)));
+        }
+
+        var personalWriteCapture = new Capture();
+        var personalWriteSession = new ClientSession(personalWriteCapture) { SessionId = 909 };
+        await dispatcher.DispatchAsync(CallRequestPacket("charMgr", "AddOwnerNote"), personalWriteSession);
+        await dispatcher.DispatchAsync(CallRequestPacket("charMgr", "AddOwnerNote"), personalWriteSession);
+        Assert.Equal(2, characterService.Calls);
+        Assert.Equal(2, personalWriteCapture.Sent.Count);
+        Assert.Equal(ErrorResponseCommand, CommandOf(personalWriteCapture.Sent[1]));
+        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(personalWriteCapture.Sent[1])));
 
         var corporationCapture = new Capture();
         var corporationSession = new ClientSession(corporationCapture) { SessionId = 905 };
         await dispatcher.DispatchAsync(CallRequestPacket("corpRegistry", "GetEveOwners"), corporationSession);
         await dispatcher.DispatchAsync(CallRequestPacket("corpRegistry", "GetMemberIDsByQuery"), corporationSession);
         await dispatcher.DispatchAsync(CallRequestPacket("corpRegistry", "PayoutDividend"), corporationSession);
+        await dispatcher.DispatchAsync(CallRequestPacket("corpRegistry", "UpdateApplicationOffer"), corporationSession);
         Assert.Equal(1, corporationService.Calls);
-        Assert.Equal(3, corporationCapture.Sent.Count);
-        Assert.Equal(ErrorResponseCommand, CommandOf(corporationCapture.Sent[1]));
-        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(corporationCapture.Sent[1])));
-        Assert.Equal(ErrorResponseCommand, CommandOf(corporationCapture.Sent[2]));
-        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(corporationCapture.Sent[2])));
+        Assert.Equal(4, corporationCapture.Sent.Count);
+        foreach (var (refused, index) in corporationCapture.Sent.Skip(1).Select((packet, index) => (packet, index + 1)))
+        {
+            Assert.Equal(ErrorResponseCommand, CommandOf(refused));
+            Assert.True(System.Text.Encoding.Latin1.GetString(Convert.FromHexString(refused)).Contains("SessionRpcBudgetExceeded"),
+                $"Budget refusal was missing from corporation RPC response {index}.");
+        }
 
         var inventoryCapture = new Capture();
         var inventorySession = new ClientSession(inventoryCapture) { SessionId = 902 };
@@ -529,6 +546,31 @@ public class DispatchGoldenTests
     }
 
     [Fact]
+    public async Task Fleet_invites_and_broadcasts_use_a_named_per_session_budget()
+    {
+        var registry = new ServiceRegistry();
+        var service = new ExpensiveService("fleetObject");
+        registry.Register(service);
+        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 10 };
+
+        long sessionId = 911;
+        foreach (var method in new[] { "Invite", "MassInvite", "SendBroadcast" })
+        {
+            var capture = new Capture();
+            var session = new ClientSession(capture) { SessionId = sessionId++ };
+            var callsBefore = service.Calls;
+
+            await dispatcher.DispatchAsync(CallRequestPacket("fleetObject", method), session);
+            await dispatcher.DispatchAsync(CallRequestPacket("fleetObject", method), session);
+
+            Assert.Equal(callsBefore + 1, service.Calls);
+            Assert.Equal(2, capture.Sent.Count);
+            Assert.Equal(ErrorResponseCommand, CommandOf(capture.Sent[1]));
+            Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[1])));
+        }
+    }
+
+    [Fact]
     public async Task Character_organization_batch_uses_the_named_per_session_budget()
     {
         var capture = new Capture();
@@ -677,7 +719,7 @@ public class DispatchGoldenTests
 
         public string Name => name;
 
-        public bool HasMethod(string method) => method is "GetOrders" or "BuyMultipleItems" or "PlaceMultiSellOrder" or "GetHistoryForManyTypeIDs" or "GetAllianceMembers" or "GetRankedAlliances" or "GetOrganizationInfoForCharacters" or "SendBroadcast" or "ExecuteActions" or "GetNumberOfPotentialCEOs" or "GetFittings" or "GetAssetInventory" or "GetAssetInventoryForLocation" or "SearchAssets" or "GetAggressionSettingsForCorps" or "AuditMember" or "CheckMyDockingAccessToStructures" or "GetMyDockableStructures" or "InjectSkillIntoBrain" or "InjectSkillpoints" or "ExtractSkills" or "GetDiminishedSpFromInjectors" or "SplitSkillInjector" or "CombineSkillInjector" or "GetContractListForOwner";
+        public bool HasMethod(string method) => method is "GetOrders" or "BuyMultipleItems" or "PlaceMultiSellOrder" or "GetHistoryForManyTypeIDs" or "GetAllianceMembers" or "GetRankedAlliances" or "GetOrganizationInfoForCharacters" or "SendBroadcast" or "Invite" or "MassInvite" or "ExecuteActions" or "GetNumberOfPotentialCEOs" or "GetFittings" or "GetAssetInventory" or "GetAssetInventoryForLocation" or "SearchAssets" or "GetAggressionSettingsForCorps" or "AuditMember" or "CheckMyDockingAccessToStructures" or "GetMyDockableStructures" or "InjectSkillIntoBrain" or "InjectSkillpoints" or "ExtractSkills" or "GetDiminishedSpFromInjectors" or "SplitSkillInjector" or "CombineSkillInjector" or "GetContractListForOwner";
 
         public ValueTask<PyValue> CallAsync(ServiceCall call)
         {
@@ -707,7 +749,7 @@ public class DispatchGoldenTests
 
         public string Name => "charMgr";
 
-        public bool HasMethod(string method) => method is "GetRecentShipKillsAndLosses" or "List" or "ListStations" or "ListStationItems" or "ListIncludingContainers" or "GetAssetWorth";
+        public bool HasMethod(string method) => method is "GetRecentShipKillsAndLosses" or "GetContactList" or "AddOwnerNote" or "EditOwnerNote" or "RemoveOwnerNote" or "SetNote" or "AddContact" or "EditContact" or "DeleteContacts" or "BlockOwners" or "UnblockOwners" or "EditContactsRelationshipID" or "AssignLabels" or "RemoveLabels" or "CreateLabel" or "DeleteLabel" or "EditLabel" or "List" or "ListStations" or "ListStationItems" or "ListIncludingContainers" or "GetAssetWorth";
 
         public ValueTask<PyValue> CallAsync(ServiceCall call)
         {
@@ -722,7 +764,7 @@ public class DispatchGoldenTests
 
         public string Name => "corpRegistry";
 
-        public bool HasMethod(string method) => method is "GetEveOwners" or "GetMemberIDsByQuery" or "GetMembersPaged" or "PayoutDividend";
+        public bool HasMethod(string method) => method is "GetEveOwners" or "GetMemberIDsByQuery" or "GetMembersPaged" or "PayoutDividend" or "UpdateApplicationOffer";
 
         public ValueTask<PyValue> CallAsync(ServiceCall call)
         {

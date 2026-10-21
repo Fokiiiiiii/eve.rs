@@ -1,4 +1,4 @@
-"""A Cockroach logs into a Pochven system directly in space, and the Triglavian NPCs the simulation spawns there are observed.
+"""A Cockroach logs into a Pochven system directly in space and is attacked by its Triglavian gate NPCs.
 
     EVE_LIVE_HOST=host:port EVE_PG_URL=postgres://... pytest tests/test_pochven_live.py
 
@@ -7,7 +7,7 @@ the way a pilot who logged off in Pochven would have it: the character row names
 in-space flag (0), and a space_items pose lies in the system until a year out (SpaceSessions.GetSessionAttributesAsync and
 OnCharacterEnteredAsync). Then the character is selected. Experiment: the walk asserts that the selection is answered and
 that the session is put in space; the notifications it is sent are returned for comparison with the reference (tools/mitm).
-Skipped unless EVE_LIVE_HOST and EVE_PG_URL are set.
+The walk asserts the session placement, Triglavian ball arrival, target lock, and damage notification. Skipped unless EVE_LIVE_HOST and EVE_PG_URL are set.
 """
 
 import collections
@@ -90,3 +90,5 @@ def test_a_cockroach_logs_into_a_pochven_system_in_space():
                     pairs.update(re.findall(r'\["typeID", (\d+)\]', json.dumps(action.get("args"))))
         print("POCHVEN_BALL_TYPES", dict(pairs))
         assert TRIGLAVIAN_TYPES & set(pairs), "no Triglavian ball was added to the pilot's scene in the system"
+        assert notes["OnTarget"] > 0, "the Triglavian gate NPC did not lock the default-standing pilot"
+        assert notes["OnDamageMessage"] > 0, "the Triglavian gate NPC did not damage the pilot"

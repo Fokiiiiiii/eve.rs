@@ -3328,9 +3328,53 @@ private static PyValue RowField(PyValue value,string key)
     }
 
     [PgFact]
+    public async Task Corporation_bill_list_reads_stop_after_the_session_member_leaves()
+    {
+        await using var rig = await Rig.CreateAsync();
+        const long npcCorporationId = 1000125;
+        await rig.SeedNpcCorporationAsync(npcCorporationId);
+        var founder = await rig.CharacterAsync("Bill Read Founder");
+        var member = await rig.CharacterAsync("Bill Read Member");
+        var corporation = await rig.Store.CreateAsync(founder, new("Bill Read Works", "BRW", "", "", 0.05m), "bill-read");
+        var application = await rig.Store.ApplyAsync(member, corporation.Id, "");
+        await rig.Store.RespondAsync(founder, application, 6, "", "");
+        await rig.Store.RespondAsync(member, application, 2, "", "");
+        var debtorReads = 0;
+        var creditorReads = 0;
+        var service = new BillMgrService(rig.Store, rig.OfficeStore, rig.Transactions, _ => null, () => rig.Now,
+            new BillMgrRpcCallbacks(
+                GetCorporationBillsAsync: (ownerId, _) =>
+                {
+                    Assert.Equal(corporation.Id, ownerId);
+                    debtorReads++;
+                    return ValueTask.FromResult<IReadOnlyList<PyValue>>([new PyInt(1)]);
+                },
+                GetCorporationBillsReceivableAsync: (ownerId, _) =>
+                {
+                    Assert.Equal(corporation.Id, ownerId);
+                    creditorReads++;
+                    return ValueTask.FromResult<IReadOnlyList<PyValue>>([new PyInt(2)]);
+                }));
+        var session = new ClientSession { CharacterId = member };
+        session.Set("corpid", new PyInt(corporation.Id));
+
+        Assert.Single(Assert.IsType<PyList>(await service.CallAsync(Call(session, "GetCorporationBills"))).Items);
+        Assert.Single(Assert.IsType<PyList>(await service.CallAsync(Call(session, "GetCorporationBillsReceivable"))).Items);
+        Assert.Equal(1, debtorReads);
+        Assert.Equal(1, creditorReads);
+
+        await rig.Store.LeaveAsync(member, npcCorporationId);
+        Assert.Empty(Assert.IsType<PyList>(await service.CallAsync(Call(session, "GetCorporationBills"))).Items);
+        Assert.Empty(Assert.IsType<PyList>(await service.CallAsync(Call(session, "GetCorporationBillsReceivable"))).Items);
+        Assert.Equal(1, debtorReads);
+        Assert.Equal(1, creditorReads);
+    }
+
+    [PgFact]
     public async Task Corporation_war_bills_are_listed_and_paid_once_through_bill_manager()
     {
         await using var rig = await Rig.CreateAsync();
+        await rig.SeedNpcCorporationAsync(1000125);
         var founder = await rig.CharacterAsync("War Bill Founder",200_000_000m);
         var corp = await rig.Store.CreateAsync(founder,new("War Bill Works","WBILL","","",0.05m),"corp-war-bill");
         var nowFiletime = Assert.IsType<PyLong>(CorporationWire.Time(rig.Now)).Value;

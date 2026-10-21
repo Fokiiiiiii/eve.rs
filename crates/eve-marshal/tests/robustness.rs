@@ -99,7 +99,7 @@ fn truncated_strings_are_lenient_like_the_reference_but_exact_mode_rejects_them(
 fn arbitrary_bytes_never_panic() {
     let mut random = XorShift(0x9e37_79b9_7f4a_7c15);
     for round in 0..20_000 {
-        let length = (random.next() % 64) as usize;
+        let length = (random.next() % 1024) as usize;
         let mut bytes: Vec<u8> = (0..length).map(|_| random.next() as u8).collect();
         // Half the inputs get a valid header so the value decoder is reached.
         if round % 2 == 0 {

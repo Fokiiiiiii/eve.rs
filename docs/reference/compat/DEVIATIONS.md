@@ -5299,3 +5299,7 @@ Alliance join, leave, and withdrawal mutations preserve the session Director-rol
 ## Fleet invitation fanout bounds (2026-10-21)
 
 `fleetObject.Invite` and `MassInvite` each consume 10 units from the shared per-session rolling-minute RPC budget. `MassInvite` now deduplicates positive character IDs within one request before invitation writes and notifications. The V24.01 `fleetSvc.MassInvite` callsite filters the caller but retains other repeated IDs, and EveJS 261018.1 loops over the supplied IDs; this change prevents one RPC from repeating invitation persistence and `OnFleetInvite` delivery for the same target. Unique targets retain the existing invitation response and notification shapes. `SpaceServiceTests.Fleet_mass_invite_move_reconnect_and_finishmove_match_client_events` and `DispatchGoldenTests.Fleet_invites_and_broadcasts_use_a_named_per_session_budget` cover the duplicate and budget behavior.
+
+## Organization mail authorization (2026-10-21)
+
+EveJS 261018.1 checks corporation and alliance mail against the sender's current session organization fields and Chat Manager role. eve.rs now resolves current corporation membership and effective roles from the corporation store on each `mailMgr.SendMail` request; corporate mail is limited to the sender's current non-NPC corporation, and alliance mail also requires the persisted Chat Manager role. The client-visible refusal and success response shapes stay the same. `HostServerTests.Mail_organization_recipient_requires_own_corporation_or_chat_manager` covers recipient scope and role policy.

@@ -3709,6 +3709,40 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
     }
 
     [Fact]
+    public void Mail_organization_recipient_requires_own_corporation_or_chat_manager()
+    {
+        const long senderId = 90000101;
+        const long corporationId = 90000102;
+        const long allianceId = 90000103;
+        using var settingsDocument = System.Text.Json.JsonDocument.Parse("{}");
+        var corporation = new Eve.Corporations.Corporation(
+            corporationId, "Test Corp", "TST", senderId + 1, senderId, allianceId,
+            0, 0, 0m, 0m, "", "", 100, false, false, 0, settingsDocument.RootElement.Clone());
+        var chatManagerRole = Eve.Corporations.CorporationRoles.ChatManager;
+        var titleMember = new Eve.Corporations.Member(
+            senderId, corporationId, 0, "", new Eve.Corporations.RoleMasks(), null, 1, false, 1000);
+        var title = new Eve.Corporations.CorporationTitle(
+            1, "Chat Manager", new Eve.Corporations.RoleMasks(Roles: chatManagerRole));
+        var titleRoles = Eve.Corporations.CorporationRoles.Session(
+            corporation, titleMember, null, [title]).CorpRole;
+
+        Assert.True(MailOrganizationAuthorization.CanSendOrganizationMail(corporationId, corporation, 0));
+        Assert.False(MailOrganizationAuthorization.CanSendOrganizationMail(corporationId + 10, corporation, 0));
+        Assert.False(MailOrganizationAuthorization.CanSendOrganizationMail(allianceId, corporation, 0));
+        Assert.False(MailOrganizationAuthorization.CanSendOrganizationMail(corporationId, corporation, null));
+        Assert.True(MailOrganizationAuthorization.CanSendOrganizationMail(
+            allianceId, corporation, chatManagerRole));
+        Assert.True(MailOrganizationAuthorization.CanSendOrganizationMail(
+            allianceId, corporation, titleRoles));
+        Assert.False(MailOrganizationAuthorization.CanSendOrganizationMail(
+            allianceId, corporation, chatManagerRole & ~chatManagerRole));
+        Assert.False(MailOrganizationAuthorization.CanSendOrganizationMail(
+            allianceId, corporation with { IsNpc = true }, chatManagerRole));
+        Assert.False(MailOrganizationAuthorization.CanSendOrganizationMail(
+            allianceId, corporation with { Deleted = true }, chatManagerRole));
+    }
+
+    [Fact]
     public async Task Mail_host_adapter_commits_mail_and_notification_before_returning_id()
     {
         const long senderId = 90000031;

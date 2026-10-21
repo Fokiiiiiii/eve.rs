@@ -86,6 +86,10 @@ The Host rejects repeated private-room invitations from one character within one
 
 Market order-book, price-history, owner-order, escrow, transaction, and PLEX reads consume 10 units from the configured per-session rolling-minute budget. EveJS 261018.1 does not throttle these routes. The normal result and state behavior remains unchanged within the configured allowance; excessive calls receive `SessionRpcBudgetExceeded`. `DispatchGoldenTests.Market_owner_history_reads_have_a_named_per_session_budget` covers the owner-history and transaction routes, and the existing market budget test covers order-book and multi-type history routes.
 
+## Bill manager RPC budget (2026-10-21)
+
+All `billMgr` reads, automatic-pay settings calls and bill payments consume 10 units from the configured per-session rolling-minute budget. The named `SessionRpcBudgetExceeded` refusal applies after the allowance is exceeded; calls within budget keep their existing replies and billing transitions. `DispatchGoldenTests.Bill_manager_calls_have_a_named_per_session_budget` covers all six bill-manager routes.
+
 ## Fleet broadcast RPC budget (2026-10-20)
 
 `fleetObject.SendBroadcast` fans out to current fleet members and now consumes 10 units from the shared per-session rolling-minute RPC budget. Beyond the configured allowance, the dispatcher returns `SessionRpcBudgetExceeded`; calls within the allowance retain the existing notification shape and delivery rules. `DispatchGoldenTests.Expensive_market_calls_have_a_named_per_session_budget` verifies that an over-budget broadcast is refused.

@@ -349,7 +349,37 @@ public class DispatchGoldenTests
         Assert.Equal(7, CommandOf(capture.Sent[3]));
     }
 
-[Fact]
+    [Fact]
+    public async Task Bill_manager_calls_have_a_named_per_session_budget()
+    {
+        var captureRegistry = new ServiceRegistry();
+        var service = new ExpensiveService("billMgr");
+        captureRegistry.Register(service);
+        var dispatcher = new PacketDispatcher(captureRegistry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 10 };
+        var methods = new[]
+        {
+            "CharPayBill",
+            "GetAutomaticPaySettings",
+            "GetCorporationBills",
+            "GetCorporationBillsReceivable",
+            "PayCorporationBill",
+            "SendAutomaticPaySettings",
+        };
+
+        for (var index = 0; index < methods.Length; index++)
+        {
+            var capture = new Capture();
+            var session = new ClientSession(capture) { SessionId = 940 + index };
+            await dispatcher.DispatchAsync(CallRequestPacket("billMgr", methods[index]), session);
+            await dispatcher.DispatchAsync(CallRequestPacket("billMgr", methods[index]), session);
+
+            Assert.Equal(index + 1, service.Calls);
+            Assert.Equal(ErrorResponseCommand, CommandOf(capture.Sent[1]));
+            Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[1])));
+        }
+    }
+
+    [Fact]
     public async Task Market_owner_history_reads_have_a_named_per_session_budget()
     {
         var captureRegistry = new ServiceRegistry();
@@ -757,7 +787,7 @@ public class DispatchGoldenTests
 
         public string Name => name;
 
-        public bool HasMethod(string method) => method is "GetOrders" or "BuyMultipleItems" or "PlaceMultiSellOrder" or "GetHistoryForManyTypeIDs" or "GetAllianceMembers" or "GetRankedAlliances" or "GetOrganizationInfoForCharacters" or "SendBroadcast" or "Invite" or "MassInvite" or "ExecuteActions" or "GetNumberOfPotentialCEOs" or "GetFittings" or "GetAssetInventory" or "GetAssetInventoryForLocation" or "SearchAssets" or "GetAggressionSettingsForCorps" or "AuditMember" or "CheckMyDockingAccessToStructures" or "GetMyDockableStructures" or "InjectSkillIntoBrain" or "InjectSkillpoints" or "ExtractSkills" or "GetDiminishedSpFromInjectors" or "SplitSkillInjector" or "CombineSkillInjector" or "GetContractListForOwner";
+        public bool HasMethod(string method) => method is "GetOrders" or "BuyMultipleItems" or "PlaceMultiSellOrder" or "GetHistoryForManyTypeIDs" or "GetAllianceMembers" or "GetRankedAlliances" or "GetOrganizationInfoForCharacters" or "SendBroadcast" or "Invite" or "MassInvite" or "ExecuteActions" or "GetNumberOfPotentialCEOs" or "GetFittings" or "GetAssetInventory" or "GetAssetInventoryForLocation" or "SearchAssets" or "GetAggressionSettingsForCorps" or "AuditMember" or "CheckMyDockingAccessToStructures" or "GetMyDockableStructures" or "InjectSkillIntoBrain" or "InjectSkillpoints" or "ExtractSkills" or "GetDiminishedSpFromInjectors" or "SplitSkillInjector" or "CombineSkillInjector" or "GetContractListForOwner" or "CharPayBill" or "GetAutomaticPaySettings" or "GetCorporationBills" or "GetCorporationBillsReceivable" or "PayCorporationBill" or "SendAutomaticPaySettings";
 
         public ValueTask<PyValue> CallAsync(ServiceCall call)
         {

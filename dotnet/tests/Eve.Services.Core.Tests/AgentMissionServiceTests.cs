@@ -9,6 +9,32 @@ namespace Eve.Services.Core.Tests;
 public sealed class AgentMissionServiceTests
 {
     [Fact]
+    public async Task Completed_career_agent_reads_use_the_selected_character_state()
+    {
+        const long firstCharacterId = 90000001;
+        const long secondCharacterId = 90000002;
+        const long firstAgentId = 7001;
+        const long secondAgentId = 7002;
+        var states = new Dictionary<long, JsonObject>
+        {
+            [firstCharacterId] = JsonNode.Parse("""{"completedCareerAgentIDs":{"7001":true}}""")!.AsObject(),
+            [secondCharacterId] = JsonNode.Parse("""{"completedCareerAgentIDs":{"7002":true}}""")!.AsObject(),
+        };
+        var service = CreateAgentRpcService((characterId, _) =>
+            ValueTask.FromResult<JsonObject?>(states[characterId].DeepClone().AsObject()));
+        var agentIds = new PyList([new PyInt(firstAgentId), new PyInt(secondAgentId)]);
+        var firstSession = new ClientSession();
+        firstSession.Set("charid", new PyInt(firstCharacterId));
+        var secondSession = new ClientSession();
+        secondSession.Set("charid", new PyInt(secondCharacterId));
+
+        Assert.Equal(NumericDict((firstAgentId, PyBool.True), (secondAgentId, PyBool.False)),
+            await service.CallAsync(RpcCall("GetCompletedCareerAgentIDs", firstSession, agentIds)));
+        Assert.Equal(NumericDict((firstAgentId, PyBool.False), (secondAgentId, PyBool.True)),
+            await service.CallAsync(RpcCall("GetCompletedCareerAgentIDs", secondSession, agentIds)));
+    }
+
+    [Fact]
     public async Task GetMyJournalDetails_projects_saved_missions_bookmarks_and_research_to_the_wire_shape()
     {
         const long characterId = 90000001;

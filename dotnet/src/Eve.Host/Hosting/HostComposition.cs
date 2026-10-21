@@ -195,16 +195,16 @@ internal static class HostComposition
         IOmegaAccountStore omegaAccounts = new AccountOmegaStore(accounts as IAccountSubscriptions
             ?? throw new InvalidOperationException("the account directory keeps no subscription end times"));
         var identityAccounts = accounts as PgAccountDirectory;
-        Eve.Services.Core.AuthenticationRpcService? authentication = accruedTimeStore is { } accruedSessions
-            ? new Eve.Services.Core.AuthenticationRpcService(
-                accruedTime: async (call, ct) =>
+        Eve.Services.Core.AuthenticationRpcService? authentication = new(
+            accruedTime: accruedTimeStore is { } accruedSessions
+                ? async (call, ct) =>
                     call.Session.UserId is { } accountId
                         ? await accruedSessions.ReadWireValueAsync(accountId, DateTime.UtcNow.Ticks, ct)
-                        : new Eve.Marshal.PyList([]),
-                amUnderage: async (call, ct) =>
-                    identityAccounts is not null && call.Session.UserId is { } accountId
-                        && await identityAccounts.IsUnderageAsync(checked((uint)accountId), ct))
-            : null;
+                        : new Eve.Marshal.PyList([])
+                : null,
+            amUnderage: async (call, ct) =>
+                identityAccounts is not null && call.Session.UserId is { } accountId
+                    && await identityAccounts.IsUnderageAsync(checked((uint)accountId), ct));
         foreach (var service in CoreServices.Create(
             omegaAccounts, now, calendarStore, calendarAudience,
             authentication: authentication,

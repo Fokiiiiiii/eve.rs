@@ -36,7 +36,7 @@ The V24.01 trade window builds a two-pilot money manifest and a set of offered i
 
 ## Persisted anti-addiction session history (2026-10-20)
 
-EveJS 261018.1 returns the configurable `accruedSessions` list, empty by default. V24.01 `antiaddiction.Session.PreLoad` consumes each row as a session ID and start/end clock ticks, then retains the history in client settings. eve.rs persists authenticated account session intervals in PostgreSQL and returns the same row shape; an active session uses the current clock for its end value, and Host close stores its end. `PgAccruedTimeStoreTests` verifies persistence across store restart. The live test asserts the response rows; the latest local live harness reached space initialization but did not open its client socket within 60 seconds.
+EveJS 261018.1 returns the configurable `accruedSessions` list, empty by default. V24.01 `antiaddiction.Session.PreLoad` consumes each row as a session ID and start/end clock ticks, then retains the history in client settings. eve.rs persists authenticated account session intervals in PostgreSQL and returns the same row shape; an active session uses the current clock for its end value, and Host close stores its end. `PgAccruedTimeStoreTests` verifies persistence across store restart. The live test `test_a_new_account_is_omega_until_2100_on_every_answer` asserts the response rows.
 
 ## Configured active survey (2026-10-20)
 
@@ -44,7 +44,19 @@ V24.01 calls `survey.GetActiveSurveyID` from the character-selection banner and 
 
 ## Account age gate (2026-10-20)
 
-V24.01 `antiaddiction.AmIUnderage` passes the login JWT to `authentication.AmUnderage`. EveJS 261018.1 reports its configured underage gate. eve.rs reads the authenticated account's persisted `underage` field; its account verification provider must set that field, and new accounts begin false. `PgAccountTests.Account_age_gate_comes_from_persisted_verification_state` checks state changes and persistence across directory restart.
+V24.01 `antiaddiction.AmIUnderage` passes the login JWT to `authentication.AmUnderage`. EveJS 261018.1 reports its configured underage gate. eve.rs reads the authenticated account's persisted `underage` field; its account verification provider must set that field, and new accounts begin false. `PgAccountTests.Account_age_gate_comes_from_persisted_verification_state` checks state changes and persistence across directory restart; the live `test_authentication_age_gate_uses_verified_account_state` walk checks false and true account values.
+
+## Contract summary entry reads (2026-10-20)
+
+V24.01 `contracts.py:191-205` reads `GetLoginInfo` and `contracts.py:770-782` reads escrow totals for the progression notifier. eve.rs builds the three login rowsets and the personal/corporation escrow totals from persisted contract records scoped to the selected character and its corporation. `ContractProxyServiceTests.Login_info_uses_the_three_client_rowsets_and_session_scope`, `ContractProxyServiceTests.Escrow_read_uses_the_persisted_summary`, and `ContractReadModelTests.Login_and_escrow_reads_use_persisted_contract_rows_and_owner_scopes` cover the service and Host paths. `test_new_account_enters_a_new_character_with_named_arguments` calls both RPCs after character selection and checks empty owner state and zero escrow.
+
+### Login startup service verification: `userSvc.GetUserToken`
+
+V24.01 `eve/common/script/util/urlUtil.py` calls `userSvc.GetUserToken` when adding a `token` query parameter to external-link URLs. Host issues a ten-minute HS256 token scoped to the authenticated account and selected character. The public gateway verifies its signature and expiry. `PublicGatewayTests.User_tokens_are_signed_account_scoped_and_expire` covers valid use, tampering and expiry.
+
+### First-space camera entry for characters without warp history
+
+V24.01 `eve/client/script/ui/camera/enterSpaceCamera.py:39-42` calls `AnimEnterFirstTimeEverInSpace()` when `achievementTrackerMgr.HasEverWarped()` is false. EveJS v261018.1 (`server/src/services/character/achievementTrackerMgrService.js`) defaults a character without a saved warp value to true. eve.rs reads the persisted `has_ever_warped` flag from the character achievement-tracker row, with a legacy game-store projection fallback, and returns false when both sources are absent. Newly created characters therefore follow the client’s first-space entry path. This default intentionally follows the V24 callsite, while EveJS defaults missing history to true. An explicitly saved true value controls the result. After the simulator accepts a warp, eve.rs stores the character flag and sets the session value; refused commands do not change it. The focused RPC and store tests, accepted/refused/retry warp tests, and the slow headless warp walk cover these transitions.
 
 ## Login service discovery boundary (2026-10-20)
 

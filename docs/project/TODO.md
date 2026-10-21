@@ -1598,7 +1598,7 @@ follow a completed step, with forks, the 90-day restart and the held-back sites 
 | OPEN | Atomicity is not tested (no test rolls the transaction back) | next slice |
 | CUT | Fetch and courier objectives (item 2): not built this slice | see DEVIATIONS "Mission execution X4" |
 | HELD | Arc 29 on by default (item 3): not flipped; the live walk through step 2 has not exercised | owner decision |
-| FOUND | `SiteLoot` divides by a candidate count that can be zero: "the sites of system X could not be made: Attempted to divide by zero" on pilots' entry to 30100032 and 30005204 (the sites track, not the mission path) | not fixed here |
+| FIXED (regression) | `SiteLoot` skips each candidate tag absent from the pinned SDE, including tags with no available candidates, so site generation does not divide by zero | `SiteLoot.Roll`; `SiteLootTests.Only_the_candidates_the_static_data_has_are_rolled` asserts both partial and empty candidate sets |
 
 ## 12. Zarzakh rules and client-only system data (2026-10-12)
 
@@ -1634,10 +1634,9 @@ Research and what is cut: `docs/project/POCHVEN_DESIGN.md` (sources, SDE ids, th
 |---|---|---|
 | DONE (unit) | Region, faction and corporation ids of Pochven, capital group ids | `dotnet/src/Eve.Services.Space/Pochven/PochvenRules.cs`; `PochvenRulesTests` (4) |
 | DONE (unit; host path not exercised) | Capital ships refused a stargate in Pochven | `SpaceSessions.Movement.cs` `CheckGateRulesAsync` before the client gate list; the pilot cannot be placed in Pochven by the rig (see DEVIATIONS) |
-| DONE (pure rule, consumer pending) | Faction hostility between the four Pochven NPC factions; NPC standing rule (Triglavian at 0.00 and below, EDENCOM below 0.00, Rogue Drones and Drifters hostile to all pilots) | `PochvenRules.FactionsAreHostile`, `NpcHostileToPilot`. The simulation does not call them yet |
-| OPEN | NPC-vs-NPC targeting in the simulation (the four factions fight each other) | Needs target selection among NPCs in `crates/eve-space` brains; the rule input is above |
-| CUT (no published rule) | Gate sentries that shoot (EDENCOM GunStar 54579, Heavy GunStar 54580, Entropic Disintegrator Werpost 54577) | SDE gives the numbers only; no firing rule, targeting order or retribution timer published. EveJS places cosmetic sentries only |
-| CUT (no published spawn table) | Pochven skirmish spawning and per-site NPC composition | No SDE link from a dungeon to a system; no spawn tables; `npc_authority.json` has no Triglavian, EDENCOM or Drifter profile |
+| DONE (simulation and tests) | Pochven faction hostility and NPC combat: gate sentries/camps, scheduled faction skirmishes, NPC-vs-NPC target selection, and ship damage | `crates/eve-space/src/pochven_population.rs`, `brains/rats.rs`, `brains/world.rs`; `pochven_population` and `brains::pochven_tests` cover spawn layout, caps, faction targeting, own-faction exclusion, behavior outside the zone, and a Triglavian sentry damaging a default-standing pilot. Placement cadence and composition are project rules because the sources publish no spawn tables. |
+| PARTIAL (simulation tests; no Pochven live walk) | Gate sentry combat (EDENCOM GunStar 54579, Heavy GunStar 54580, Entropic Disintegrator Werpost 54577) | SDE hull and weapon values drive the scene NPCs; Triglavian sentries attack non-Triglavian NPCs and default-standing pilots, and faction skirmishes run the shared combat tree. The project shot cycle and target rules are in DEVIATIONS; source-published retribution timers and graphical-client Pochven combat remain open. |
+| PARTIAL (project population rules) | Pochven gate defenses and roaming faction skirmishes | SDE-derived NPC hull attributes and behavior are simulated; gate placement, 15-minute skirmish interval and two-pair compositions are explicit project rules because no spawn tables are published. Per-site dungeon compositions remain open. |
 | CUT (no published state data) | Invasion states (Redoubt, Bulwark, Fortress, Liminality, Minor Victory) and their system lists | Thresholds (75%, 76%, 96%) are on the wiki; per-system state is not. `map.GetEdencomFortressSystems` stays open (see the line above in this file) |
 | OPEN | Filament entry (Pochven filaments 56065 to 56081, 1/5/15 ships), the 6.0 standing for Home systems | Needs the filament item and jump rules; not in the SDE beyond the counts |
 | OPEN | Pochven standings for docking (-0.05), the LP store (-0.01), manufacturing and offices (3.00), local chat in delayed mode | Wiki rules; not built |
@@ -1713,9 +1712,9 @@ Evidence and decisions: `docs/project/WORMHOLE_DESIGN.md` (sources, SDE numbers,
 | DONE (tests) | Camps: two Damavik at the first two gates of a Triglavian system | `pochven_population.rs` |
 | DONE (tests) | Skirmish spawner: every 900 s, four factions in turn, deterministic, capped at 40 NPCs per scene | `pochven_population.rs` (`populate_pochven`) |
 | DONE (data) | System states: 27 Pochven systems held by the Triglavians; EDENCOM list empty | `data/pochven_states.json` (source and date in the file) |
-| DONE (unit rule) | NPC bounty payout in Pochven | Host payout returns before recording a payout when the victim system is in Pochven; the owner rule leaves loot and drops unchanged. Regression: PochvenRulesTests.NPC_bounty_payout_is_disabled_only_in_Pochven. |
+| DONE (Host regression) | NPC bounty payout in Pochven | Host payout returns before recording a payout when the victim system is in Pochven; loot and drops remain unchanged. Regression: `NpcBountyHostTests.A_sim_resident_triglavian_in_Pochven_pays_no_bounty`. |
 | CUT | Fortress and Heavy GunStar placements in Pochven | No Pochven system is an EDENCOM fortress in the wiki; the path is tested through the data file |
-| DONE (live, eve.rs only) | Live walk: a Cockroach logs into Pochven 30000021 in space; the Werpost (54577) and a Liminal Damavik (52182) come into its scene and fight | `tools/headless-client/tests/test_pochven_live.py`; the pilot is seeded (no station); no EVE.js reference run, so no mitm diff |
+| PARTIAL (live spawn) | A Cockroach logs into Pochven 30000021 in space; the walk verifies Werpost (54577) and Liminal Damavik (52182) ball arrival. Target-lock and damage assertions now cover the combat path and need a live rerun. | `tools/headless-client/tests/test_pochven_live.py`; the pilot is seeded because Pochven has no station. No EveJS reference walk is recorded. |
 | OPEN | Skirmish spawns and the other gates' sentries in the live walk | Only 25 s observed; the skirmish cadence is 900 s |
 | DONE (tests) | Step 3, filament rules and data (17 SDE types, caps, spool-ups, families, trace numbers) | `crates/eve-space/src/filament.rs`; jumps not built |
 | OPEN | Filament destinations (jump targets) | Not in the client extract (location list 4510 to 4569 absent); no invented destination |

@@ -201,7 +201,7 @@ public sealed partial class CorpMgrService
                     (minimumQuantity <= 0 || item.Item.Quantity >= minimumQuantity))
                 .Select(item => item.RootLocationId)
                 .ToHashSet();
-            locations = locations.Where(location => matchingLocationIds.Contains(location.LocationId));
+            locations = locations.Where(location => matchingLocationIds.Contains(location.LocationId)).ToArray();
         }
 
         return CachedAssets(BuildCRowset(AssetSearchColumns,

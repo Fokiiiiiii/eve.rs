@@ -2912,7 +2912,7 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
         Assert.NotSame(Eve.Marshal.PyNone.Instance, persisted.Info);
 
         var myStructures = await readModel.GetMyCharacterStructuresAsync(characterId, CancellationToken.None);
-        Assert.Equal(new long[] { structureId, deniedStructureId },
+        Assert.Equal(new long[] { structureId },
             myStructures.Entries.Select(entry => entry.Key switch
             {
                 Eve.Marshal.PyInt number => (long)number.Value,
@@ -2921,7 +2921,7 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
             }).OrderBy(id => id));
         var corporationStructures = await readModel.GetMyCorporationStructuresAsync(
             characterId, corporationId, CancellationToken.None);
-        Assert.Equal(myStructures.Entries.Count, corporationStructures.Entries.Count);
+        Assert.Equal(2, corporationStructures.Entries.Count);
         var otherCorporationStructures = await readModel.GetMyCorporationStructuresAsync(
             characterId, corporationId + 1, CancellationToken.None);
         Assert.Empty(otherCorporationStructures.Entries);

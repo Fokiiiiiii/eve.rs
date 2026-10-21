@@ -5315,6 +5315,11 @@ V24.01 `fleetCompositionWnd.py` indexes `skills` and `skillIDs` at positions 0 t
 `structureDirectory.SetStructureDescription` now recalculates Station Manager access from persisted corporation membership and titles for each write. The V24.01 request and success wire shape are unchanged; a role removed after login now receives the existing `CrpAccessDenied` refusal. `HostServerTests.Structure_description_rechecks_persisted_station_manager_role_after_login` verifies the refusal and that no write callback runs.
 
 
+## Character structure directory docking visibility (2026-10-21)
+
+`structureDirectory.GetMyCharacterStructures` previously returned every deployed structure owned by the character's corporation. It now uses persisted docking access snapshots and includes only structures the current character can dock at, matching EveJS 261018.1 `listDockableStructuresForCharacter`; NPC station rows remain outside this Host structure projection. `HostServerTests.Structure_directory_host_reads_deployed_rows_and_docking_profiles` verifies inclusion for an allowed profile and exclusion for a blocked profile.
+
+
 ## Corporation structure directory role check (2026-10-21)
 
 `structureDirectory.GetMyCorporationStructures` and its `GetCorporationStructures` alias now check current persisted corporation membership and require Station Manager or Brand Manager authority before reading the private corporation structure directory, matching EveJS 261018.1. eve.rs recalculates the role from persisted member and title data for each request; the cached login role does not authorize the read. Unauthorized callers receive the existing `CrpAccessDenied` response. `HostServerTests.Corporation_structure_directory_requires_persisted_manager_access` checks denial before storage access and successful access when persisted authority is present even if the session role is zero.

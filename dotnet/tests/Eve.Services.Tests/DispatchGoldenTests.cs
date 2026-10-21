@@ -307,12 +307,15 @@ public class DispatchGoldenTests
         await dispatcher.DispatchAsync(CallRequestPacket("corpRegistry", "GetEveOwners"), corporationSession);
         await dispatcher.DispatchAsync(CallRequestPacket("corpRegistry", "GetMemberIDsByQuery"), corporationSession);
         await dispatcher.DispatchAsync(CallRequestPacket("corpRegistry", "PayoutDividend"), corporationSession);
+        await dispatcher.DispatchAsync(CallRequestPacket("corpRegistry", "UpdateApplicationOffer"), corporationSession);
         Assert.Equal(1, corporationService.Calls);
-        Assert.Equal(3, corporationCapture.Sent.Count);
-        Assert.Equal(ErrorResponseCommand, CommandOf(corporationCapture.Sent[1]));
-        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(corporationCapture.Sent[1])));
-        Assert.Equal(ErrorResponseCommand, CommandOf(corporationCapture.Sent[2]));
-        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(corporationCapture.Sent[2])));
+        Assert.Equal(4, corporationCapture.Sent.Count);
+        foreach (var (refused, index) in corporationCapture.Sent.Skip(1).Select((packet, index) => (packet, index + 1)))
+        {
+            Assert.Equal(ErrorResponseCommand, CommandOf(refused));
+            Assert.True(System.Text.Encoding.Latin1.GetString(Convert.FromHexString(refused)).Contains("SessionRpcBudgetExceeded"),
+                $"Budget refusal was missing from corporation RPC response {index}.");
+        }
 
         var inventoryCapture = new Capture();
         var inventorySession = new ClientSession(inventoryCapture) { SessionId = 902 };
@@ -722,7 +725,7 @@ public class DispatchGoldenTests
 
         public string Name => "corpRegistry";
 
-        public bool HasMethod(string method) => method is "GetEveOwners" or "GetMemberIDsByQuery" or "GetMembersPaged" or "PayoutDividend";
+        public bool HasMethod(string method) => method is "GetEveOwners" or "GetMemberIDsByQuery" or "GetMembersPaged" or "PayoutDividend" or "UpdateApplicationOffer";
 
         public ValueTask<PyValue> CallAsync(ServiceCall call)
         {

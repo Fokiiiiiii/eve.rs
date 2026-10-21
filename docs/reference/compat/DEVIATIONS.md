@@ -5379,3 +5379,7 @@ The dispatcher applies the per-session weighted budget to an expensive method wh
 ## Mail channel input bound (2026-10-21)
 
 The staff-only `mailMgr.PokePlayerAboutChatMsgGm` RPC caps its requested channel name at 256 Unicode scalar values before composing the durable mail body. Ordinary V24.01 channel names fit this bound; oversized requests receive `MAIL_CHANNEL_LIMIT_EXCEEDED`. `MailServiceTests.Chat_gm_poke_requires_gml_before_forwarding_the_reference_mail_payload` covers the refusal and confirms no mail callback occurs.
+
+## Mailbox synchronization response bound (2026-10-21)
+
+`mailMgr.SyncMail` refuses a mailbox above 5,000 status entries with `MAIL_SYNC_LIMIT_EXCEEDED` before sorting entries or constructing header/status response arrays. `MailServiceTests.Sync_mail_refuses_mailboxes_above_the_response_entry_limit` covers the boundary.

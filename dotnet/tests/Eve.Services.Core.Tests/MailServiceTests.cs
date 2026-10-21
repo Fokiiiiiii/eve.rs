@@ -61,6 +61,39 @@ public sealed class MailServiceTests
     }
 
     [Fact]
+    public async Task Sync_mail_refuses_mailboxes_above_the_response_entry_limit()
+    {
+        var messages = new JsonObject();
+        var statuses = new JsonObject();
+        for (var id = 1; id <= 5_001; id++)
+        {
+            var key = id.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            messages[key] = new JsonObject
+            {
+                ["messageID"] = id,
+                ["senderID"] = 90000002,
+                ["title"] = "Subject",
+                ["sentDate"] = "100",
+                ["body"] = "Body",
+            };
+            statuses[key] = new JsonObject { ["statusMask"] = 0, ["labelMask"] = 0 };
+        }
+        var data = new JsonObject
+        {
+            ["messages"] = messages,
+            ["mailboxes"] = new JsonObject
+            {
+                ["90000001"] = new JsonObject { ["statuses"] = statuses },
+            },
+        };
+
+        var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            Service(data).CallAsync(Request("SyncMail")).AsTask());
+
+        Assert.Equal("MAIL_SYNC_LIMIT_EXCEEDED", MailInfo(refusal));
+    }
+
+    [Fact]
     public async Task Initial_sync_returns_only_mailbox_entries_newest_first_including_trash()
     {
         var data = Mailbox();

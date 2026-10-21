@@ -33,6 +33,7 @@ public sealed class MailService(
 
     private const int MaxCharacterRecipients = 50;
     private const int MaxMailboxMessageIds = 500;
+    private const int MaxMailboxSyncEntries = 5_000;
     private const int MaxSubjectCharacters = 150;
     private const int MaxBodyCharacters = 8000;
     private const int MaxGmChatChannelCharacters = 256;
@@ -183,6 +184,8 @@ private static IReadOnlyList<long>? OptionalRecipientIds(PyValue value) =>
 
     private static PyValue SyncMail(JsonObject? messages, JsonObject? statuses, PyValue first, PyValue last)
     {
+        if (statuses?.Count > MaxMailboxSyncEntries)
+            throw MailLimitRefusal("MAIL_SYNC_LIMIT_EXCEEDED");
         var entries = new List<(JsonObject Message, JsonObject Status)>();
         if (statuses is not null && messages is not null)
             foreach (var (key, status) in statuses)

@@ -5397,3 +5397,8 @@ The staff-only `mailMgr.PokePlayerAboutChatMsgGm` RPC caps its requested channel
 ## Alliance contact-list read budget (2026-10-21)
 
 `allianceRegistry.GetAllianceContacts` and its `GetContactList` alias each consume 10 units from the per-session expensive-RPC budget because they materialize the alliance contact list in one response. Calls over the session allowance receive `SessionRpcBudgetExceeded`; authorized response data and wire shapes are unchanged. `DispatchGoldenTests.Alliance_contact_list_aliases_have_a_named_per_session_budget` covers both route names.
+
+
+## Alliance bulletin text bounds (2026-10-21)
+
+`allianceRegistry.AddBulletin` and `UpdateBulletin` enforce the V24.01 editor limits of 100 UTF-16 code units for titles and 4,000 for bodies before persistence. Oversized fields receive `ALLIANCE_BULLETIN_LIMIT_EXCEEDED`; accepted bulletin data and response shapes are unchanged. The existing alliance bulletin persistence regression covers oversized title, body, and update-title refusals.

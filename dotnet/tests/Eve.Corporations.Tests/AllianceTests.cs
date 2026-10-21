@@ -1483,6 +1483,12 @@ public class AllianceTests
                 return new() { Session = session, Method = method, Args = args };
             }
 
+            await Assert.ThrowsAsync<Eve.Corporations.CorporationError>(() => service.CallAsync(Call(director,
+                "AddBulletin", new Eve.Marshal.PyWString(new string('T', 101)),
+                new Eve.Marshal.PyWString("Body"))).AsTask());
+            await Assert.ThrowsAsync<Eve.Corporations.CorporationError>(() => service.CallAsync(Call(director,
+                "AddBulletin", new Eve.Marshal.PyWString("Title"),
+                new Eve.Marshal.PyWString(new string('B', 4001)))).AsTask());
             var bulletinId = Assert.IsType<Eve.Marshal.PyInt>(await service.CallAsync(Call(director,
                 "AddBulletin", new Eve.Marshal.PyWString("Maintenance"),
                 new Eve.Marshal.PyWString("Docking services will restart.")))).Value;
@@ -1501,6 +1507,10 @@ public class AllianceTests
                 "GetBulletin", new Eve.Marshal.PyInt(bulletinId))));
             Assert.Equal(Eve.Marshal.MarshalCodec.Encode(row), Eve.Marshal.MarshalCodec.Encode(single));
 
+            await Assert.ThrowsAsync<Eve.Corporations.CorporationError>(() => service.CallAsync(Call(director,
+                "UpdateBulletin", new Eve.Marshal.PyInt(bulletinId),
+                new Eve.Marshal.PyWString(new string('T', 101)),
+                new Eve.Marshal.PyWString("Body"))).AsTask());
             rig.Now += 1;
             Assert.Equal(new Eve.Marshal.PyInt(bulletinId), await service.CallAsync(Call(director,
                 "UpdateBulletin", new Eve.Marshal.PyInt(bulletinId),

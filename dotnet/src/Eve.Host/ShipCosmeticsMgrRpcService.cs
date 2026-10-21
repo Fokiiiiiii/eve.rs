@@ -13,6 +13,7 @@ namespace Eve.Host;
 
 public sealed class ShipCosmeticsMgrRpcService : IService
 {
+    private const int MaxSkinLicenseItems = 500;
     private static readonly string[] Methods = ["ActivateSkinLicense", "ApplySkinToShip", "GMExpireSkinLicense", "GetEnabledCosmetics", "GetFirstPartySkinData", "GetLicencedSkins", "GetLicencedSkinsForShipType", "GiveSkin", "RemoveSkin"];
     private readonly GameStoreCache? _store;
     private readonly GameStoreCache? _logoStore;
@@ -196,6 +197,14 @@ public sealed class ShipCosmeticsMgrRpcService : IService
     private async ValueTask<PyValue> ActivateSkinLicenseAsync(ServiceCall call)
     {
         var characterId = call.Session.CharacterId ?? 0;
+        var rawItemCount = call.Arg(0) switch
+        {
+            PyList list => list.Items.Count,
+            PyTuple tuple => tuple.Items.Count,
+            _ => 1,
+        };
+        if (rawItemCount > MaxSkinLicenseItems)
+            throw MachoErrors.ThrowUserError("SHIP_SKIN_LICENSE_BULK_LIMIT_EXCEEDED");
         var itemIds = ItemIds(call.Arg(0));
         if (characterId <= 0) Notify("You need an active character to activate a SKIN license.");
         if (itemIds.Count == 0) return PyNone.Instance;

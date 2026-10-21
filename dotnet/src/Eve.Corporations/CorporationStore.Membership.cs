@@ -16,6 +16,25 @@ public sealed partial class CorporationStore
         await using var r = await command.ExecuteReaderAsync(token);
         return await r.ReadAsync(token) ? ReadMember(r) : null;
     }
+    public async Task<long?> MemberCorpRolesAsync(long corporationId, long actor, CancellationToken token = default)
+    {
+        await using var connection = await _source.OpenConnectionAsync(token);
+        await using var transaction = await connection.BeginTransactionAsync(token);
+        var corporation = await GetAsync(connection, transaction, corporationId, false, token);
+        if (corporation is null || corporation.IsNpc || corporation.Deleted)
+            return null;
+        var character = await _characters.LockAndGetAsync(connection, transaction, actor, token);
+        if (character is null || character.CorporationId != corporation.Id)
+            return null;
+        var member = await MemberAsync(connection, transaction, actor, token);
+        if (member is null || member.CorporationId != corporation.Id)
+            return null;
+        var titles = await TitlesAsync(connection, transaction, corporation.Id, token);
+        var roles = CorporationRoles.Session(corporation, member, character.StationId, titles).CorpRole;
+        await transaction.CommitAsync(token);
+        return roles;
+    }
+
     public async Task<bool> HasRoleAsync(long actor, long corporationId, long role, CancellationToken token = default)
     {
         if (actor <= 0 || corporationId <= 0 || role <= 0) return false;

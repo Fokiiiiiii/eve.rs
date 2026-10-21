@@ -306,7 +306,18 @@ internal sealed partial class CharacterServicesComposition
             if (scheduled > 0)
                 Console.Error.WriteLine($"eve-host: {scheduled} structure deadline(s) scheduled");
         }
-        structureDirectoryReadModel = new PersistenceStructureDirectoryReadModel(ReadGameStoreTableAsync, AffiliationOfAsync, sde, SetStructureDescriptionAsync, CynoJammedAsync);
+        structureDirectoryReadModel = new PersistenceStructureDirectoryReadModel(
+            ReadGameStoreTableAsync, AffiliationOfAsync, sde, SetStructureDescriptionAsync, CynoJammedAsync,
+            async (characterId, corporationId, token) =>
+            {
+                var corporation = await corporations.GetAsync(corporationId, token);
+                var member = await corporations.MemberAsync(characterId, token);
+                if (corporation is null || corporation.IsNpc || member?.CorporationId != corporationId)
+                    return false;
+                var roles = Eve.Corporations.CorporationRoles.Session(
+                    corporation, member, null, await corporations.TitlesAsync(corporationId, token));
+                return (roles.CorpRole & 2048) == 2048;
+            });
         if (spaceSessions is not null)
             spaceSessions.StructureExistsAsync = async (structureId, cancellationToken) =>
                 await structureDirectoryReadModel.GetStructureInfoAsync(structureId, cancellationToken) is { PersistentlyDeployed: true };

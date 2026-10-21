@@ -160,12 +160,36 @@ public sealed class StructureCompositionTests : IAsyncLifetime
         var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
         await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
         await PgCharacterStore.MigrateAsync(source, Schema("EVE_CHARACTERS_SCHEMA"));
+        await Eve.Corporations.CorporationStore.MigrateAsync(source, Schema("EVE_CORPORATIONS_SCHEMA"));
         var station = (await StationCatalog.LoadAsync(new SdeReader(source))).All.First();
         await using var connection = await source.OpenConnectionAsync();
         await using var transaction = await connection.BeginTransactionAsync();
         var characterId = await new PgCharacterStore(source, Schema("EVE_CHARACTERS_SCHEMA")).InsertAsync(connection, transaction,
             new NewCharacter(1, name, 0, 1, 1, 1, 11, 1376, corporationId, null, station.Id, station.SolarSystemId, station.ConstellationId, station.RegionId, null, null));
         await transaction.CommitAsync();
+        await using (var owner = source.CreateCommand($"INSERT INTO {Schema("EVE_CORPORATIONS_SCHEMA")}.owner_names(owner_id,name_key,ticker_key) VALUES ($1,$2,$3) ON CONFLICT(owner_id) DO NOTHING"))
+        {
+            owner.Parameters.AddWithValue(corporationId);
+            owner.Parameters.AddWithValue($"structure-test-{corporationId}");
+            owner.Parameters.AddWithValue($"s{corporationId}");
+            await owner.ExecuteNonQueryAsync();
+        }
+        await using (var corporation = source.CreateCommand($"INSERT INTO {Schema("EVE_CORPORATIONS_SCHEMA")}.corporations(id,name,ticker,ceo_id,creator_id,station_id,solar_system_id,tax_rate,lp_tax_rate,description,url,member_limit,created_ms) VALUES ($1,$2,$3,$4,$4,$5,$6,0,0,'','',1000,0) ON CONFLICT(id) DO NOTHING"))
+        {
+            corporation.Parameters.AddWithValue(corporationId);
+            corporation.Parameters.AddWithValue($"Structure Test {corporationId}");
+            corporation.Parameters.AddWithValue($"S{corporationId}");
+            corporation.Parameters.AddWithValue(characterId + 1);
+            corporation.Parameters.AddWithValue(station.Id);
+            corporation.Parameters.AddWithValue(station.SolarSystemId);
+            await corporation.ExecuteNonQueryAsync();
+        }
+        await using (var member = source.CreateCommand($"INSERT INTO {Schema("EVE_CORPORATIONS_SCHEMA")}.members(character_id,corporation_id,started_ms,roles) VALUES ($1,$2,0,2048) ON CONFLICT(character_id) DO UPDATE SET corporation_id=EXCLUDED.corporation_id, roles=EXCLUDED.roles"))
+        {
+            member.Parameters.AddWithValue(characterId);
+            member.Parameters.AddWithValue(corporationId);
+            await member.ExecuteNonQueryAsync();
+        }
         return characterId;
     }
 

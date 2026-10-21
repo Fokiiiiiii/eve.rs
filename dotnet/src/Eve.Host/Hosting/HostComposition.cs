@@ -78,6 +78,8 @@ internal static class HostComposition
         Func<long, int, CancellationToken, ValueTask<int>>? contractSkillLevel = null;
         Func<long, long, CancellationToken, ValueTask<decimal>>? contractBrokerFeeAdjustment = null;
         Func<long, long, CancellationToken, ValueTask<bool>>? hasContractManagerRole = null;
+        Func<long, long, short, CancellationToken, ValueTask<bool>>? canManageCalendarGroupEvent = null;
+        Func<long, CancellationToken, ValueTask<(long CorporationId, long AllianceId)>>? readCurrentCalendarGroups = null;
         NpgsqlDataSource? dataSource = null; // owned by the runtime: shut down with it, so its pooled connections return to the server
         Eve.Host.Persistence.PgAccruedTimeStore? accruedTimeStore = null;
         Eve.Host.Xmpp.XmppMotdStore? xmppMotdStore = null;
@@ -123,7 +125,7 @@ internal static class HostComposition
             contractWriteModel = new Eve.Host.Persistence.PersistenceContractWriteModel(source, contractItems, contractWallets,
                 clock, contractSchema, contractExpiryJobs, foundations.Events);
             legacy = await LegacyGameStoreComposition.OpenAsync(source);
-            (characterServices, space, simulation, crimewatch, calendarStore, calendarAudience, gameRpcCallbacks, keeperRpcCallbacks, characterSessions, contractBrokerFeeAdjustment, hasContractManagerRole) = await CharacterServicesComposition.CharacterServicesAsync(source, directory, online, clock, foundations, legacy.Store, legacy.Owner, legacy.Cache, options.NewCharacterExperienceMode, new AccountOmegaStore(directory), connected);
+            (characterServices, space, simulation, crimewatch, calendarStore, calendarAudience, gameRpcCallbacks, keeperRpcCallbacks, characterSessions, contractBrokerFeeAdjustment, hasContractManagerRole, canManageCalendarGroupEvent, readCurrentCalendarGroups) = await CharacterServicesComposition.CharacterServicesAsync(source, directory, online, clock, foundations, legacy.Store, legacy.Owner, legacy.Cache, options.NewCharacterExperienceMode, new AccountOmegaStore(directory), connected);
             if (characterSessions is not null)
                 new Eve.Host.Persistence.ContractNotifications(characterSessions).Subscribe(foundations.Events);
             // the public gateway's skill plans: the tables are the skills module's (migration 0009, applied with its store)
@@ -193,16 +195,16 @@ internal static class HostComposition
         IOmegaAccountStore omegaAccounts = new AccountOmegaStore(accounts as IAccountSubscriptions
             ?? throw new InvalidOperationException("the account directory keeps no subscription end times"));
         var identityAccounts = accounts as PgAccountDirectory;
-        Eve.Services.Core.AuthenticationRpcService? authentication = accruedTimeStore is { } accruedSessions
-            ? new Eve.Services.Core.AuthenticationRpcService(
-                accruedTime: async (call, ct) =>
+        Eve.Services.Core.AuthenticationRpcService? authentication = new(
+            accruedTime: accruedTimeStore is { } accruedSessions
+                ? async (call, ct) =>
                     call.Session.UserId is { } accountId
                         ? await accruedSessions.ReadWireValueAsync(accountId, DateTime.UtcNow.Ticks, ct)
-                        : new Eve.Marshal.PyList([]),
-                amUnderage: async (call, ct) =>
-                    identityAccounts is not null && call.Session.UserId is { } accountId
-                        && await identityAccounts.IsUnderageAsync(checked((uint)accountId), ct))
-            : null;
+                        : new Eve.Marshal.PyList([])
+                : null,
+            amUnderage: async (call, ct) =>
+                identityAccounts is not null && call.Session.UserId is { } accountId
+                    && await identityAccounts.IsUnderageAsync(checked((uint)accountId), ct));
         foreach (var service in CoreServices.Create(
             omegaAccounts, now, calendarStore, calendarAudience,
             authentication: authentication,
@@ -220,6 +222,8 @@ internal static class HostComposition
             contractWriteModel: contractWriteModel,
             contractSkillLevel: contractSkillLevel,
             calendarSessions: characterSessions,
+            canManageCalendarGroupEvent: canManageCalendarGroupEvent,
+            readCurrentCalendarGroups: readCurrentCalendarGroups,
               contractBrokerFeeAdjustment: contractBrokerFeeAdjustment,
               hasContractManagerRole: hasContractManagerRole,
               localizationTextChanges: HostConfiguration.ParseLocalizationTextChanges(Env("EVE_LOCALIZATION_TEXT_CHANGES", ""))))

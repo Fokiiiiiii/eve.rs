@@ -292,6 +292,24 @@ public sealed partial class CorporationStore
         return affiliations;
     }
 
+
+    /// <summary>Whether the character currently has Director authority in the active executor corporation of this alliance.</summary>
+    public async Task<bool> CanActAsAllianceExecutorDirectorAsync(long actor, long allianceId, CancellationToken token = default)
+    {
+        try
+        {
+            await using var connection = await _source.OpenConnectionAsync(token);
+            await using var transaction = await connection.BeginTransactionAsync(token);
+            await RequireAllianceExecutorAsync(connection, transaction, actor, allianceId, token);
+            await transaction.CommitAsync(token);
+            return true;
+        }
+        catch (CorporationError)
+        {
+            return false;
+        }
+    }
+
     public async Task<IReadOnlyList<(long CorporationId, long? AllianceId)>> CorporationAllianceAffiliationsAsync(
         CancellationToken token = default)
     {

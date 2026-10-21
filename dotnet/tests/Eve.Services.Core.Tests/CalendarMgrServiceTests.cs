@@ -288,17 +288,49 @@ public class CalendarMgrServiceTests
         Assert.Contains("CREATE TABLE responses", migration.Sql, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task Group_calendar_mutations_refuse_a_revoked_persisted_manager_role()
+    {
+        var date = FutureFileTime();
+        var existing = Event(77, CorporationId, CalendarTags.Corporation, date, "Corp meeting");
+        var (services, store) = CalendarServicesWithSessions(null, false, existing);
+        var manager = services.Lookup("calendarMgr")!;
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(() => manager.CallAsync(Request(
+            "DeleteEvent", Session(role: ChatManagerRole), new PyLong(existing.EventId),
+            new PyLong(existing.OwnerId))).AsTask());
+
+        Assert.Equal("CustomNotify", error.Error.UserErrorMessage);
+        Assert.False(store.Events.Single(row => row.EventId == existing.EventId).IsDeleted);
+        var detailError = await Assert.ThrowsAsync<MachoWrappedException>(() => services.Lookup("calendarProxy")!
+            .CallAsync(Request("GetEventDetails", Session(role: ChatManagerRole), new PyLong(existing.EventId),
+                new PyLong(existing.OwnerId))).AsTask());
+        Assert.Equal("CustomNotify", detailError.Error.UserErrorMessage);
+        var responseError = await Assert.ThrowsAsync<MachoWrappedException>(() => manager.CallAsync(Request(
+            "GetResponsesToEvent", Session(role: ChatManagerRole), new PyLong(existing.EventId),
+            new PyLong(existing.OwnerId))).AsTask());
+        Assert.Equal("CustomNotify", responseError.Error.UserErrorMessage);
+
+        var createError = await Assert.ThrowsAsync<MachoWrappedException>(() => manager.CallAsync(Request(
+            "CreateAllianceEvent", Session(role: ChatManagerRole), new PyLong(date), new PyInt(30),
+            new PyStr("Denied alliance meeting"), new PyStr(""), new PyInt(0))).AsTask());
+        Assert.Equal("CustomNotify", createError.Error.UserErrorMessage);
+        Assert.Single(store.Events);
+    }
+
     private static (ServiceRegistry Services, FakeCalendarStore Store) CalendarServices(params CalendarEvent[] events) =>
-        CalendarServicesWithSessions(null, events);
+        CalendarServicesWithSessions(null, events: events);
 
     private static (ServiceRegistry Services, FakeCalendarStore Store) CalendarServicesWithSessions(
-        CharacterSessions? sessions, params CalendarEvent[] events)
+        CharacterSessions? sessions, bool groupAuthority = true, params CalendarEvent[] events)
     {
         var store = new FakeCalendarStore();
         store.Events.AddRange(events);
         var services = new ServiceRegistry();
-        services.Register((IService)new CalendarMgrService(store, new FakeCalendarAudienceReader(), sessions));
-        services.Register((IService)new CalendarProxyService(store));
+        services.Register((IService)new CalendarMgrService(store, new FakeCalendarAudienceReader(), sessions,
+            (_, _, _, _) => ValueTask.FromResult(groupAuthority),
+            (_, _) => ValueTask.FromResult(groupAuthority ? (CorporationId, AllianceId) : (0L, 0L))));
+        services.Register((IService)new CalendarProxyService(store,
+            (_, _) => ValueTask.FromResult(groupAuthority ? (CorporationId, AllianceId) : (0L, 0L))));
         return (services, store);
     }
 

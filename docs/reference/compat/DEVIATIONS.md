@@ -36,7 +36,7 @@ The V24.01 trade window builds a two-pilot money manifest and a set of offered i
 
 ## Persisted anti-addiction session history (2026-10-20)
 
-EveJS 261018.1 returns the configurable `accruedSessions` list, empty by default. V24.01 `antiaddiction.Session.PreLoad` consumes each row as a session ID and start/end clock ticks, then retains the history in client settings. eve.rs persists authenticated account session intervals in PostgreSQL and returns the same row shape; an active session uses the current clock for its end value, and Host close stores its end. `PgAccruedTimeStoreTests` verifies persistence across store restart. The live test asserts the response rows; the latest local live harness reached space initialization but did not open its client socket within 60 seconds.
+EveJS 261018.1 returns the configurable `accruedSessions` list, empty by default. V24.01 `antiaddiction.Session.PreLoad` consumes each row as a session ID and start/end clock ticks, then retains the history in client settings. eve.rs persists authenticated account session intervals in PostgreSQL and returns the same row shape; an active session uses the current clock for its end value, and Host close stores its end. `PgAccruedTimeStoreTests` verifies persistence across store restart. The live test `test_a_new_account_is_omega_until_2100_on_every_answer` asserts the response rows.
 
 ## Configured active survey (2026-10-20)
 
@@ -44,7 +44,19 @@ V24.01 calls `survey.GetActiveSurveyID` from the character-selection banner and 
 
 ## Account age gate (2026-10-20)
 
-V24.01 `antiaddiction.AmIUnderage` passes the login JWT to `authentication.AmUnderage`. EveJS 261018.1 reports its configured underage gate. eve.rs reads the authenticated account's persisted `underage` field; its account verification provider must set that field, and new accounts begin false. `PgAccountTests.Account_age_gate_comes_from_persisted_verification_state` checks state changes and persistence across directory restart.
+V24.01 `antiaddiction.AmIUnderage` passes the login JWT to `authentication.AmUnderage`. EveJS 261018.1 reports its configured underage gate. eve.rs reads the authenticated account's persisted `underage` field; its account verification provider must set that field, and new accounts begin false. `PgAccountTests.Account_age_gate_comes_from_persisted_verification_state` checks state changes and persistence across directory restart; the live `test_authentication_age_gate_uses_verified_account_state` walk checks false and true account values.
+
+## Contract summary entry reads (2026-10-20)
+
+V24.01 `contracts.py:191-205` reads `GetLoginInfo` and `contracts.py:770-782` reads escrow totals for the progression notifier. eve.rs builds the three login rowsets and the personal/corporation escrow totals from persisted contract records scoped to the selected character and its corporation. `ContractProxyServiceTests.Login_info_uses_the_three_client_rowsets_and_session_scope`, `ContractProxyServiceTests.Escrow_read_uses_the_persisted_summary`, and `ContractReadModelTests.Login_and_escrow_reads_use_persisted_contract_rows_and_owner_scopes` cover the service and Host paths. `test_new_account_enters_a_new_character_with_named_arguments` calls both RPCs after character selection and checks empty owner state and zero escrow.
+
+### Login startup service verification: `userSvc.GetUserToken`
+
+V24.01 `eve/common/script/util/urlUtil.py` calls `userSvc.GetUserToken` when adding a `token` query parameter to external-link URLs. Host issues a ten-minute HS256 token scoped to the authenticated account and selected character. The public gateway verifies its signature and expiry. `PublicGatewayTests.User_tokens_are_signed_account_scoped_and_expire` covers valid use, tampering and expiry.
+
+### First-space camera entry for characters without warp history
+
+V24.01 `eve/client/script/ui/camera/enterSpaceCamera.py:39-42` calls `AnimEnterFirstTimeEverInSpace()` when `achievementTrackerMgr.HasEverWarped()` is false. EveJS v261018.1 (`server/src/services/character/achievementTrackerMgrService.js`) defaults a character without a saved warp value to true. eve.rs reads the persisted `has_ever_warped` flag from the character achievement-tracker row, with a legacy game-store projection fallback, and returns false when both sources are absent. Newly created characters therefore follow the client’s first-space entry path. This default intentionally follows the V24 callsite, while EveJS defaults missing history to true. An explicitly saved true value controls the result. After the simulator accepts a warp, eve.rs stores the character flag and sets the session value; refused commands do not change it. The focused RPC and store tests, accepted/refused/retry warp tests, and the slow headless warp walk cover these transitions.
 
 ## Login service discovery boundary (2026-10-20)
 
@@ -2694,7 +2706,7 @@ Engine: `dotnet/src/Eve.Hacking` (pure rules, no Host). Sources: EVE University 
 
 ## Calendar mutation notifications
 
-Client calls are in eve-logic `eve/client/script/ui/services/eveCalendarsvc.py`; EveJS behavior is in `server/src/services/calendar/calendarMgrService.js` and `calendarNotifications.js`. The Host publishes notification packets after the PostgreSQL mutation returns successfully and before the RPC reply. Personal event creation notifies online invitees and other viewers, excluding the calling session; corporation and alliance creation notify online members. Edits notify current viewers, deletion notifies the viewer set captured before the soft delete, participant changes notify only actual additions/removals, and an event response notifies other viewers while excluding the responding session. The four packet payload shapes and order are covered by `CalendarMgrServiceTests`; the headless live invite walk confirms a second character receives `OnNewCalendarEvent` after the event can be read back.
+Client calls are in eve-logic `eve/client/script/ui/services/eveCalendarsvc.py`; EveJS behavior is in `server/src/services/calendar/calendarMgrService.js` and `calendarNotifications.js`. The Host publishes notification packets after the PostgreSQL mutation returns successfully and before the RPC reply. Personal event creation notifies online invitees and other viewers, excluding the calling session; corporation and alliance creation notify online members. Edits notify current viewers, deletion notifies the viewer set captured before the soft delete, participant changes notify only actual additions/removals, and an event response notifies other viewers while excluding the responding session. The four packet payload shapes and order are covered by `CalendarMgrServiceTests`; the headless live invite walk confirms a second character receives `OnNewCalendarEvent` after the event can be read back. For corporation and alliance reads, the Host resolves current persisted corporation and alliance IDs before listing events, reading details, or fetching responses, so cached group IDs cannot retain access after a pilot leaves. Mutations also recheck the actor’s persisted membership, Chat Manager role, and active alliance affiliation on each call so a role or affiliation change after login cannot authorize a stale session. `CalendarMgrServiceTests.Group_calendar_mutations_refuse_a_revoked_persisted_manager_role` covers the refusal.
 
 ## Project Discovery availability
 
@@ -2721,6 +2733,10 @@ Client calls are in eve-logic `eve/client/script/ui/services/eveCalendarsvc.py`;
 - **Calendar.** `calendarEventID` is stored as given and returned; the client owns the calendar entry (EVE.js does not create one either).
 - **Id width.** Structure, owner and moon ids are sent as `PyLong` when they exceed the 32-bit range (`PyInt` is 32-bit on the wire).
 - **Hacking stat re-check (ST-10).** Re-read on 2026-10-11: the wiki Hacking page gives no numeric firewall, anti-virus, restoration or core values in text; its difficulty table and stat icons are images without numbers, and the board size is not stated. The wiki's numbers used are the virus stats (40/20, T2 60/30), the restoration heal 20, suppressor 15 (floor 10), self repair 5-10, kernel rot 50%, secondary vector 20, shield 2 hits. The defensive subsystem stats (60/10, 20/40, 30/10, 30/10) and the content counts remain eve.rs decisions; the core is EveJS `buildSyntheticBoard` (10 x difficulty). Status: decided, MITM to verify.
+
+## Structure RPC batch bounds
+
+The Host refuses structure cargo, delivery, profile-change, and reinforcement identifier lists above 500 raw entries with `STRUCTURE_BULK_LIMIT_EXCEEDED` before deduplication or callback work. This follows the client batch limits used by related structure-directory operations and prevents a large framed list from expanding into avoidable per-request work.
 
 ## Structure docking (ST-1 c)
 
@@ -5245,3 +5261,8 @@ The four corporation enlistment, leave, and withdrawal mutations retain the clie
 ## Corporate insurance role revocation (2026-10-20)
 
 Corporate insurance reads, purchases, and cancellation preserve the client Accountant or Junior Accountant session-role check and also verify current persisted membership and effective role through the Host corporation store. Demotion during an active session therefore removes access to corporate insurance contracts and blocks new corporate purchases or cancellation. `InsuranceServiceTests.Corporate_insurance_refuses_a_stale_accountant_session_role` and `InsuranceServiceTests.Corporate_uninsurance_refuses_a_stale_accountant_session_role` both passed; each keeps stale session authority while persisted checks deny before the writer. The Host project built with zero warnings or errors.
+
+
+## Faction-warfare alliance role revocation (2026-10-20)
+
+Alliance join, leave, and withdrawal mutations preserve the session Director-role check and also verify that the actor remains a Director in the persisted active executor corporation for the session alliance. A demoted Director session cannot change alliance faction-warfare state. `FacWarMgrRpcTests.Alliance_leave_refuses_a_stale_session_director_role` passed on eve_p2 and checks refusal before the alliance status can change; the Host project built with zero warnings or errors.

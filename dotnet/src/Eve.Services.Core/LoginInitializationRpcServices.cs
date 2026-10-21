@@ -153,10 +153,13 @@ public sealed class AchievementTrackerMgrService(
         if (call.Method == "HasEverWarped")
         {
             var characterId = call.Session.GetInt("charid") ?? 0;
-            return hasEverWarped is null ||
-                   characterId > 0 && await hasEverWarped(characterId, call.Cancellation)
-                ? PyBool.True
-                : PyBool.False;
+            if (call.Session.GetInt("hasEverWarped") == 1)
+                return PyBool.True;
+            var hasEverWarpedForCharacter = characterId > 0 && hasEverWarped is not null
+                && await hasEverWarped(characterId, call.Cancellation);
+            if (hasEverWarpedForCharacter)
+                call.Session.Set("hasEverWarped", new PyInt(1));
+            return hasEverWarpedForCharacter ? PyBool.True : PyBool.False;
         }
 
         // the client sends both maps whole when it stores them (its achievements and counters at logoff, and as they change)

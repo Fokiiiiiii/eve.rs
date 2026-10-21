@@ -90,6 +90,17 @@ def set_ship(character: int, ship: int) -> None:
     """The character's active ship (characters.ship_id)."""
     sql(f"update {schema('CHARACTERS')}.characters set ship_id = {int(ship)} where id = {int(character)}")
 
+def set_underage(user_name: str, underage: bool) -> None:
+    escaped_user_name = user_name.replace("'", "''")
+    value = "true" if underage else "false"
+    rows = sql(
+        f"update {schema('IDENTITY')}.accounts set underage = {value} "
+        f"where user_name = '{escaped_user_name}' returning id"
+    )
+    if not rows:
+        raise SeedError(f"no account found for verification-state update: {user_name}")
+
+
 def set_isk(character: int, isk: int) -> None:
     """The character's ISK balance (wallet.balances)."""
     wallet = schema('WALLET')

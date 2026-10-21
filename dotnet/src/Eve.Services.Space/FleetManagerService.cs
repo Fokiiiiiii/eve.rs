@@ -43,7 +43,7 @@ public sealed partial class FleetManagerService(
         var favorites = Ids(call.Arg(1));
         var watchlist = favorites.Concat(added).Where(members.Contains).Distinct().Take(100).ToArray();
         SetWatchlist(call.Session, WatchlistSessionKey, watchlist);
-        return PyNone.Instance;
+        return PyBool.True;
     }
 
     [Method("RemoveFromWatchlist")]
@@ -56,7 +56,7 @@ public sealed partial class FleetManagerService(
         var removed = Number(call.Arg(0));
         var remaining = Ids(call.Arg(1)).Where(id => id != removed && members.Contains(id)).Distinct().Take(100).ToArray();
         SetWatchlist(call.Session, WatchlistSessionKey, remaining);
-        return PyNone.Instance;
+        return PyBool.True;
     }
 
     [Method("RegisterForDamageUpdates")]
@@ -68,7 +68,7 @@ public sealed partial class FleetManagerService(
         var members = snapshot.Members.Select(member => member.CharacterId).ToHashSet();
         var watchlist = Ids(call.Arg(0)).Where(members.Contains).Distinct().Take(100).ToArray();
         SetWatchlist(call.Session, WatchlistSessionKey, watchlist);
-        return PyNone.Instance;
+        return PyBool.True;
     }
 
     [Method("BroadcastToBubble")]

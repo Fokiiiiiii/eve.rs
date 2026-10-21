@@ -5375,3 +5375,7 @@ The dispatcher applies the per-session weighted budget to an expensive method wh
 ## Alliance member tenure threshold validation (2026-10-21)
 
 `GetAllianceMembersOlderThan` now requires a non-negative integer day threshold and returns `ALLIANCE_MEMBERSHIP_DAYS_INVALID` before loading alliance members for malformed or negative input. Valid V24.01 integer thresholds keep the existing output. The Alliance Registry membership-read regression covers negative input refusal.
+
+## Mail channel input bound (2026-10-21)
+
+The staff-only `mailMgr.PokePlayerAboutChatMsgGm` RPC caps its requested channel name at 256 Unicode scalar values before composing the durable mail body. Ordinary V24.01 channel names fit this bound; oversized requests receive `MAIL_CHANNEL_LIMIT_EXCEEDED`. `MailServiceTests.Chat_gm_poke_requires_gml_before_forwarding_the_reference_mail_payload` covers the refusal and confirms no mail callback occurs.

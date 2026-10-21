@@ -20,13 +20,19 @@ public sealed partial class CalendarMgrService
     private readonly ICalendarStore? _store;
     private readonly ICalendarAudienceReader? _audience;
     private readonly CharacterSessions? _sessions;
+    private readonly Func<long, long, short, CancellationToken, ValueTask<bool>>? _canManageGroupEvent;
 
     public CalendarMgrService() { }
-    public CalendarMgrService(ICalendarStore store, ICalendarAudienceReader? audience = null, CharacterSessions? sessions = null)
+    public CalendarMgrService(
+        ICalendarStore store,
+        ICalendarAudienceReader? audience = null,
+        CharacterSessions? sessions = null,
+        Func<long, long, short, CancellationToken, ValueTask<bool>>? canManageGroupEvent = null)
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
         _audience = audience;
         _sessions = sessions;
+        _canManageGroupEvent = canManageGroupEvent;
     }
     private ICalendarStore Store => _store ?? throw new InvalidOperationException("Host must inject the PostgreSQL calendar store.");
 
@@ -68,6 +74,9 @@ public sealed partial class CalendarMgrService
     {
         var characterId = CalendarWire.CharacterId(call);
         var ownerId = CalendarWire.OwnerIdForCreate(call, tag);
+        if (!personal && (_canManageGroupEvent is null ||
+            !await _canManageGroupEvent(characterId, ownerId, tag, call.Cancellation)))
+            throw EventNotFound();
         var dateTimeIndex = 0;
         var durationIndex = 1;
         var titleIndex = 2;
@@ -99,7 +108,7 @@ public sealed partial class CalendarMgrService
         var eventId = CalendarWire.LongArg(call, 0);
         var oldEventDateTime = CalendarWire.LongArg(call, 1);
         var calendarEvent = await Store.GetEventByIdAsync(eventId, call.Cancellation);
-        if (calendarEvent is null || calendarEvent.Tag != expectedTag || !CalendarWire.CanManage(calendarEvent, call))
+        if (calendarEvent is null || calendarEvent.Tag != expectedTag || !await CanManageAsync(calendarEvent, call))
             throw EventNotFound();
 
         var input = CalendarWire.ReadInput(
@@ -119,7 +128,7 @@ public sealed partial class CalendarMgrService
         var eventId = CalendarWire.LongArg(call, 0);
         var ownerId = CalendarWire.LongArg(call, 1);
         var calendarEvent = await Store.GetEventAsync(eventId, ownerId, call.Cancellation);
-        if (calendarEvent is null || !CalendarWire.CanManage(calendarEvent, call)) throw EventNotFound();
+        if (calendarEvent is null || !await CanManageAsync(calendarEvent, call)) throw EventNotFound();
         var recipients = await ListViewerCharacterIdsAsync(calendarEvent, call.Cancellation);
         var modified = CalendarWire.NowFileTime();
         if (!await Store.DeleteEventAsync(eventId, ownerId, modified, call.Cancellation))
@@ -135,7 +144,7 @@ public sealed partial class CalendarMgrService
         var add = CalendarWire.CharacterIds(call.Arg(1));
         var remove = CalendarWire.CharacterIds(call.Arg(2));
         var calendarEvent = await Store.GetEventByIdAsync(eventId, call.Cancellation);
-        if (calendarEvent is null || !CalendarWire.CanManage(calendarEvent, call)) throw EventNotFound();
+        if (calendarEvent is null || !await CanManageAsync(calendarEvent, call)) throw EventNotFound();
         add = add.Where(id => id != calendarEvent.CreatorId).ToArray();
         remove = remove.Where(id => id != calendarEvent.CreatorId).ToArray();
         if (add.Count > 50 || remove.Count > 50) throw CalendarWire.TooManyInvitees();
@@ -263,6 +272,15 @@ public sealed partial class CalendarMgrService
             if (session is not null && !ReferenceEquals(session, excludedSession))
                 session.SendNotification(notification, "clientID", payload);
         }
+    }
+
+    private async Task<bool> CanManageAsync(CalendarEvent calendarEvent, ServiceCall call)
+    {
+        if (!CalendarWire.CanManage(calendarEvent, call)) return false;
+        if (calendarEvent.Tag == CalendarTags.Personal) return true;
+        var actorId = call.Session.CharacterId ?? 0;
+        return actorId > 0 && _canManageGroupEvent is not null &&
+            await _canManageGroupEvent(actorId, calendarEvent.OwnerId, calendarEvent.Tag, call.Cancellation);
     }
 
     internal static MachoWrappedException EventNotFound() =>

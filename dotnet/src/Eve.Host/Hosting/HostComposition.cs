@@ -78,6 +78,7 @@ internal static class HostComposition
         Func<long, int, CancellationToken, ValueTask<int>>? contractSkillLevel = null;
         Func<long, long, CancellationToken, ValueTask<decimal>>? contractBrokerFeeAdjustment = null;
         Func<long, long, CancellationToken, ValueTask<bool>>? hasContractManagerRole = null;
+        Func<long, long, short, CancellationToken, ValueTask<bool>>? canManageCalendarGroupEvent = null;
         NpgsqlDataSource? dataSource = null; // owned by the runtime: shut down with it, so its pooled connections return to the server
         Eve.Host.Persistence.PgAccruedTimeStore? accruedTimeStore = null;
         Eve.Host.Xmpp.XmppMotdStore? xmppMotdStore = null;
@@ -123,7 +124,7 @@ internal static class HostComposition
             contractWriteModel = new Eve.Host.Persistence.PersistenceContractWriteModel(source, contractItems, contractWallets,
                 clock, contractSchema, contractExpiryJobs, foundations.Events);
             legacy = await LegacyGameStoreComposition.OpenAsync(source);
-            (characterServices, space, simulation, crimewatch, calendarStore, calendarAudience, gameRpcCallbacks, keeperRpcCallbacks, characterSessions, contractBrokerFeeAdjustment, hasContractManagerRole) = await CharacterServicesComposition.CharacterServicesAsync(source, directory, online, clock, foundations, legacy.Store, legacy.Owner, legacy.Cache, options.NewCharacterExperienceMode, new AccountOmegaStore(directory), connected);
+            (characterServices, space, simulation, crimewatch, calendarStore, calendarAudience, gameRpcCallbacks, keeperRpcCallbacks, characterSessions, contractBrokerFeeAdjustment, hasContractManagerRole, canManageCalendarGroupEvent) = await CharacterServicesComposition.CharacterServicesAsync(source, directory, online, clock, foundations, legacy.Store, legacy.Owner, legacy.Cache, options.NewCharacterExperienceMode, new AccountOmegaStore(directory), connected);
             if (characterSessions is not null)
                 new Eve.Host.Persistence.ContractNotifications(characterSessions).Subscribe(foundations.Events);
             // the public gateway's skill plans: the tables are the skills module's (migration 0009, applied with its store)
@@ -220,6 +221,7 @@ internal static class HostComposition
             contractWriteModel: contractWriteModel,
             contractSkillLevel: contractSkillLevel,
             calendarSessions: characterSessions,
+            canManageCalendarGroupEvent: canManageCalendarGroupEvent,
               contractBrokerFeeAdjustment: contractBrokerFeeAdjustment,
               hasContractManagerRole: hasContractManagerRole,
               localizationTextChanges: HostConfiguration.ParseLocalizationTextChanges(Env("EVE_LOCALIZATION_TEXT_CHANGES", ""))))

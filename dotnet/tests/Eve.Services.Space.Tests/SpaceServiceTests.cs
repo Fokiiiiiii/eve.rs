@@ -2446,7 +2446,7 @@ public class SpaceServiceTests
         Assert.Equal(Py.FileTimeFromUnixMs(Rig.ClockMs + 10_000), Id(answer.Items[1]));
         Assert.Equal(
             [Describe(new SimCommand((ulong)session.SessionId, SimCommands.Jump, [Gate, NextGate]))],
-            rig.Sim.Heard.Skip(before).Select(Describe));
+            rig.Sim.Heard.Skip(before).OfType<SimCommand>().Select(Describe));
 
         var told = Events.Of(session);
         var queue = Assert.Single(told, e => e.Name == "OnJumpQueueUpdate");

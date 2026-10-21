@@ -2922,6 +2922,56 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
     }
 
     [Fact]
+    public async Task Structure_description_rechecks_persisted_station_manager_role_after_login()
+    {
+        const long structureId = 88000013;
+        const long characterId = 90000013;
+        const long corporationId = 98000013;
+        var tables = new Dictionary<string, System.Text.Json.Nodes.JsonObject>
+        {
+            ["structures"] = new()
+            {
+                [structureId.ToString(System.Globalization.CultureInfo.InvariantCulture)] = new System.Text.Json.Nodes.JsonObject
+                {
+                    ["structureID"] = structureId,
+                    ["typeID"] = 35841,
+                    ["solarSystemID"] = 30000142,
+                    ["ownerCorpID"] = corporationId,
+                },
+            },
+        };
+        Task<System.Text.Json.Nodes.JsonObject> ReadTable(string name, CancellationToken _) =>
+            Task.FromResult((System.Text.Json.Nodes.JsonObject)tables.GetValueOrDefault(name, new()).DeepClone());
+        Task<Eve.Relations.Affiliation> Affiliation(long id, CancellationToken _) =>
+            Task.FromResult(id == characterId
+                ? new Eve.Relations.Affiliation(corporationId, null, null)
+                : new Eve.Relations.Affiliation(null, null, null));
+        var descriptionWritten = false;
+        Task SetDescription(long structure, string description, CancellationToken token)
+        {
+            descriptionWritten = true;
+            return Task.CompletedTask;
+        }
+        Task<bool> PersistedStationManager(long actorId, long ownerCorporationId, CancellationToken token) => Task.FromResult(false);
+        var readModel = new PersistenceStructureDirectoryReadModel(
+            ReadTable, Affiliation, null!, SetDescription, null, PersistedStationManager);
+        var session = new Eve.Services.ClientSession { CharacterId = characterId };
+        session.Set("corpid", new Eve.Marshal.PyInt(corporationId));
+        session.Set("corprole", new Eve.Marshal.PyInt(2048));
+        var service = new Eve.Services.Core.StructureDirectoryService(readModel);
+
+        var exception = await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(() => service.CallAsync(new Eve.Services.ServiceCall
+        {
+            Method = "SetStructureDescription",
+            Args = [new Eve.Marshal.PyInt(structureId), new Eve.Marshal.PyStr("revoked after login")],
+            Session = session,
+        }).AsTask());
+
+        Assert.Equal("CrpAccessDenied", exception.Error.UserErrorMessage);
+        Assert.False(descriptionWritten);
+    }
+
+    [Fact]
     public async Task Home_station_host_read_routes_dispatch_through_the_persisted_structure_directory()
     {
         const long structureId = 88000021;

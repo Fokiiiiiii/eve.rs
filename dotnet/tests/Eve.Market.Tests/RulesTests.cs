@@ -42,6 +42,16 @@ public class RulesTests
     }
 
     [Fact]
+    public void Station_broker_fee_uses_faction_and_corporation_standings_after_skill_and_warfare_adjustments()
+    {
+        var context = MarketRules.Context(new MarketSkillLevels(Broker: 5), true,
+            factionStanding: 5, corpStanding: 10, factionWarfareUpgradeLevel: 2);
+
+        Assert.Equal(0.0085, context.BrokerCommissionRate, 12);
+        Assert.Equal(850, MarketRules.BrokerFee(context, null, 100_000).Amount);
+    }
+
+    [Fact]
     public void Structure_market_tax_is_a_broker_rate_separate_from_accounting_sales_tax()
     {
         var skills = new MarketSkillLevels(Accounting: 5);

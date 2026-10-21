@@ -4712,6 +4712,7 @@ cannot see the list or its members; every change is logged. EveJS `ownerGroupMan
   Each change runs in one transaction under the group's advisory lock. Changes reach the sessions their audience names, after the
   response, as `OnOwnerGroupsUpdated` (one dict: group id to change codes); member add, type change and removal also send code 8
   (`GROUP_CHANGED_FOR_LISTENER`) so the affected clients refresh their group list.
+- **Input bound.** Bulk group/member ID lists and member-add dictionaries are capped at 500 raw entries before lookup or member-kind callbacks. Oversized requests return the named `ACCESS_GROUP_BULK_LIMIT_EXCEEDED` notification; a PostgreSQL regression covers bulk read and add refusal before callbacks.
 - **Choice: rename, description and delete are admin only.** The wiki says "Admins can edit and delete the list" and does not give
   managers that right. EveJS let a manager rename (`UpdateName` required the manager type); the wiki is the higher source, so the
   manager is refused.

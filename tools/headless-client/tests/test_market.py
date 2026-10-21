@@ -17,6 +17,7 @@ import pytest
 from evecli import marshal as m
 from evecli import packet as p
 from evecli.describe import describe
+from tests import dbseed
 from tests import test_login_to_character as base
 
 pytestmark = pytest.mark.skipif(not base.LIVE, reason="set EVE_LIVE_HOST=host:port to test against a running server")
@@ -142,6 +143,18 @@ def _station_hangar_items(client, station_id):
 def _own_orders(client):
     return _plain_rows(client.call("marketProxy", "GetCharOrders"))
 
+def _journal_checkpoint(owner_id: int) -> int:
+    wallet = dbseed.schema("WALLET")
+    return int(dbseed.sql(f"SELECT COALESCE(MAX(id), 0) FROM {wallet}.journal WHERE owner_id = {owner_id}") or 0)
+
+def _journal_since(owner_id: int, checkpoint: int) -> list[tuple[int, float]]:
+    wallet = dbseed.schema("WALLET")
+    rows = dbseed.sql(
+        f"SELECT ref_type_id || ' ' || amount::text FROM {wallet}.journal "
+        f"WHERE owner_id = {owner_id} AND id > {checkpoint} ORDER BY id"
+    )
+    return [(int(ref_type), float(amount)) for ref_type, amount in (line.split() for line in rows.splitlines())]
+
 def test_a_seller_and_a_buyer_trade_through_the_market():
     seller_run = uuid.uuid4().hex[:10]
     buyer_run = uuid.uuid4().hex[:10]
@@ -150,6 +163,10 @@ def test_a_seller_and_a_buyer_trade_through_the_market():
         _new_character(buyer, buyer_run)
         station_id = seller.session.session_init.get("stationid")
         assert isinstance(station_id, int) and buyer.session.session_init.get("stationid") == station_id
+        seller_isk = dbseed.isk_of(seller.session.session_init.get("charid"))
+        buyer_isk = dbseed.isk_of(buyer.session.session_init.get("charid"))
+        seller_journal_at = _journal_checkpoint(seller.session.session_init.get("charid"))
+        buyer_journal_at = _journal_checkpoint(buyer.session.session_init.get("charid"))
 
         # stock: the game master's command puts the items in the station hangar and says so
         message = seller.call("slash", "SlashCmd", "/giveitem Tritanium 100")
@@ -178,6 +195,17 @@ def test_a_seller_and_a_buyer_trade_through_the_market():
         sold = [row for row in _plain_rows(seller.call("marketProxy", "CharGetTransactions", None)) if _field(row, "typeID") == TRITANIUM]
         assert sold and sum(_field(row, "quantity") for row in sold) == 15, sold
         assert _field(next(row for row in _own_orders(seller) if _field(row, "orderID") == ask_id), "volRemaining") == 25
+
+        # Each account's balance delta is represented by its persisted trade and fee journal entries.
+        seller_journal = _journal_since(seller.session.session_init.get("charid"), seller_journal_at)
+        buyer_journal = _journal_since(buyer.session.session_init.get("charid"), buyer_journal_at)
+        assert any(ref == 2 and amount == 750 for ref, amount in seller_journal), seller_journal
+        assert any(ref == 54 and amount < 0 for ref, amount in seller_journal), seller_journal
+        assert any(ref == 46 and amount == -100 for ref, amount in seller_journal), seller_journal
+        assert not any(ref == 149 for ref, _ in seller_journal), seller_journal
+        assert buyer_journal == [(2, -750.0)], buyer_journal
+        assert dbseed.isk_of(seller.session.session_init.get("charid")) - seller_isk == sum(amount for _, amount in seller_journal)
+        assert dbseed.isk_of(buyer.session.session_init.get("charid")) - buyer_isk == sum(amount for _, amount in buyer_journal)
 
         # modify inside the five-minute delay: refused with the client's sentence, the price unchanged
         with pytest.raises(p.MachoError) as refused:

@@ -396,7 +396,13 @@ public sealed class AnalysisBeaconHostTests
         Assert.Equal(wreck.WreckId, dataStack.LocationId);
         Assert.NotNull(await rig.Containers.MoveAsync(otherPilot, dataStack.Id, wreck.WreckId, otherShip, null, CancellationToken.None));
         // Moving from the public wreck assigns the stack to the taking pilot and places it in the ship's cargo hold.
-        Assert.Equal(1441, (await rig.Items.InContainerAsync(otherShip)).Where(item => item.TypeId == RewardAnalysisData && item.Flag == CharacterShips.CargoFlag).Sum(item => item.Quantity));
+        var cargoAfterLoot = await rig.Items.InContainerAsync(otherShip);
+        var movedData = await rig.Items.GetAsync(dataStack.Id);
+        Assert.Equal(otherPilot.CharacterId, movedData?.OwnerId);
+        Assert.Equal(otherShip, movedData?.LocationId);
+        Assert.Equal(CharacterShips.CargoFlag, movedData?.Flag);
+        Assert.True(cargoAfterLoot.Where(item => item.TypeId == RewardAnalysisData && item.Flag == CharacterShips.CargoFlag).Sum(item => item.Quantity) == 1441,
+            string.Join("; ", cargoAfterLoot.Select(item => $"id={item.Id} type={item.TypeId} owner={item.OwnerId} location={item.LocationId} flag={item.Flag} quantity={item.Quantity}")));
         var remainingData = (await rig.Items.InContainerAsync(wreck.WreckId)).Where(item => item.TypeId == RewardAnalysisData).ToList();
         Assert.True(remainingData.Count == 0, string.Join(", ", remainingData.Select(item => $"id={item.Id} quantity={item.Quantity} owner={item.OwnerId} location={item.LocationId} flag={item.Flag}")));
         await restarted.CreateRewardWreckAsync(beacon);

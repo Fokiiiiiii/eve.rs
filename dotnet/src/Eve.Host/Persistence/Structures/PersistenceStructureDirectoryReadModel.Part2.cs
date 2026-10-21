@@ -62,7 +62,21 @@ public sealed partial class PersistenceStructureDirectoryReadModel
             !Truthy(structure["destroyedAt"]);
     }
 
-    private static PyValue StructureInfoPayload(long structureId, JsonObject structure)
+    private static PyValue BasicStructureInfoPayload(long structureId, PyValue fullInfo)
+{
+    var fields = fullInfo is PyObject { Name: PyStr { Value: "util.KeyVal" }, Args: PyDict keyVal }
+        ? keyVal.Entries
+        : Array.Empty<KeyValuePair<PyValue, PyValue>>();
+    PyValue Read(string name) => fields.FirstOrDefault(entry => entry.Key is PyStr key && key.Value == name).Value
+        ?? PyNone.Instance;
+    return Py.KeyVal(
+        ("structureID", new PyLong(structureId)),
+        ("typeID", Read("typeID")),
+        ("solarSystemID", Read("solarSystemID")),
+        ("ownerID", Read("ownerID")));
+}
+
+private static PyValue StructureInfoPayload(long structureId, JsonObject structure)
     {
         var ownerCorporationId = Positive(Integer(structure["ownerCorpID"] ?? structure["corporationID"]));
         var ownerId = Positive(Integer(structure["ownerID"], ownerCorporationId));

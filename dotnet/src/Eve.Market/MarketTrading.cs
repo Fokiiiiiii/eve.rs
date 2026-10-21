@@ -71,14 +71,19 @@ public sealed class MarketTrading(NpgsqlDataSource source,MarketStore store,PgCh
     }
     /// <summary>Factional warfare upgrade level from the caller's transaction; null means level 0.</summary>
     public Func<NpgsqlConnection,NpgsqlTransaction,long,long,CancellationToken,ValueTask<int>>? FactionWarfareUpgradeLevel { get; init; }
+    public Func<long,long,CancellationToken,Task<double>>? StandingToward { get; init; }
 
     private async Task<MarketContext> Context(NpgsqlConnection c,NpgsqlTransaction tx,long actor,Station station,CancellationToken token)
     {
         var levels = (await skills.ForCharacterAsync(c,tx,actor,token)).ToDictionary(s => s.TypeId,s => s.Level);
         int Level(int id) => levels.GetValueOrDefault(id);
         var upgrade = FactionWarfareUpgradeLevel is null ? 0 : await FactionWarfareUpgradeLevel(c,tx,actor,station.SolarSystemId,token);
+        var factionStanding = StandingToward is null || station.FactionId is not { } faction
+            ? 0 : await StandingToward(actor,faction,token);
+        var corpStanding = StandingToward is null ? 0 : await StandingToward(actor,station.OwnerId,token);
         return MarketRules.Context(new(Level(3443),Level(3444),Level(3446),Level(3447),Level(16595),Level(16596),Level(16597),
-            Level(16598),Level(16594),Level(16622),Level(18580)),true,solarSystem:station.SolarSystemId,factionWarfareUpgradeLevel:upgrade);
+            Level(16598),Level(16594),Level(16622),Level(18580)),true,factionStanding,corpStanding,
+            solarSystem:station.SolarSystemId,factionWarfareUpgradeLevel:upgrade);
     }
     /// <summary>
     /// Reads the book in (price, issue time, id) batches under FOR UPDATE and stops when filled; one final batch may contain unfilled rows.

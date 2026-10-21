@@ -620,11 +620,13 @@ public sealed class CorporationOfficeTests
             Assert.True((bool)(await migrationCheck.ExecuteScalarAsync())!);
         }
         var (actor, corporation) = await CreateCorporationAsync(rig);
+        await rig.SeedNpcCorporationAsync(Station.OwnerId);
         await SetOfficeRoleAsync(rig, actor, CorporationRoles.RentOffice | CorporationRoles.Accountant);
         var officeManager = CreateService(rig);
         var quote = await QuoteAsync(officeManager, actor, corporation.Id);
         await officeManager.RentOffice(Call("RentOffice", actor, corporation.Id, new Eve.Marshal.PyReal((double)quote)));
 
+        await rig.SeedNpcCorporationAsync(Station.OwnerId);
         var billMgr = new Eve.Services.Corporations.BillMgrService(
             rig.Store, rig.OfficeStore, rig.Transactions,
             id => id == Station.Id ? Station.OwnerId : null,
@@ -656,7 +658,7 @@ public sealed class CorporationOfficeTests
         Assert.Equal(new Eve.Marshal.PyList([expectedBill]), listedBills);
 
         var receivableBeforePayment = Assert.IsType<Eve.Marshal.PyList>(
-            await billMgr.CallAsync(Call("GetCorporationBillsReceivable", actor, Station.OwnerId)));
+            await billMgr.CallAsync(Call("GetCorporationBillsReceivable", 0, Station.OwnerId)));
         Assert.Equal(new Eve.Marshal.PyList([expectedBill]), receivableBeforePayment);
 
         var submitted = new Eve.Marshal.PyDict(

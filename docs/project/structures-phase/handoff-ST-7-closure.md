@@ -26,7 +26,7 @@ Predecessor state: `handoff-ST-7.md` (fuel, compression, jammer E-03/E-15 and th
    (restart between them), and the beacon jump through `structureCynoBeaconMgr`: jammed, no access, beacon offline, in that order.
    `StructureFuelOwnerNotificationTests`: the owner notice through a real event bus (OnItemChange with a member online; alert with no member online; no alert when no fuel is left).
 
-## Open (not built; recorded in DEVIATIONS "ST-7 structure services" and TODO section 44)
+## Open at the initial handoff (subsequent completions are recorded below)
 
 - Corporation-office compression path: needs the corporation hangar take-access model (EveJS itemIsInDockableCorpOfficeWithTakeAccess, canTakeFromOwnerLocation, CORP_HANGAR_FLAGS). Not in the repo; EveJS has no compression notification type, so the notice would be OnItemChange only.
 - E-15 for a sov change of the suppression upgrade alone (the jammer state changes, no notice is sent).
@@ -52,5 +52,5 @@ Predecessor state: `handoff-ST-7.md` (fuel, compression, jammer E-03/E-15 and th
 - The corporation members online who may query the division are told each change (OnItemChange), through the sessions of the corporation; no mailbox notice (EveJS has no notification type for a compression result).
 - Corrected ItemFlags.CorpSAG1..7 from 116..122 to 115..121 (the client flagCorpSAG1 = 115). The repo already used 115 in CorporationRoles and IndustryRules.
 - Tests: StructureCompressionTests 9 of 9 (three new: compressed by a member who may take; refused without take access or without an office, changes nothing; members who may query are told and outsiders are not). Eve.Services.Inventory.Tests 63 of 63, Eve.Corporations.Tests 125 of 125.
-- Still open: office rental at a structure (the repo rents offices at NPC stations only). Queued as a separate task.
+- Structure office rental was still open when this update was written; ST-12 later implemented structure rentals, their durable due job, and the compression source (TODO section 57).
 - Also run after the flag correction: full Eve.Host.Tests 348 of 348, Eve.Market.Tests 105 passed with one benchmark test skipped (OrderBookBenchmarkTests, pre-existing), Eve.Ships.Tests 229 of 229.

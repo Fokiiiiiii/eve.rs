@@ -3118,6 +3118,16 @@ public class SpaceServiceTests
     }
 
     [Fact]
+    public void Fleet_role_parser_refuses_values_that_overflow_int32()
+    {
+        Assert.Equal(Eve.Services.Space.FleetStore.SquadCommander,
+            Eve.Services.Space.FleetObjectService.FleetRole(new PyLong(Eve.Services.Space.FleetStore.SquadCommander)));
+        var error = Assert.Throws<Eve.Services.MachoWrappedException>(() =>
+            Eve.Services.Space.FleetObjectService.FleetRole(new PyLong(4_294_967_298L)));
+        Assert.Equal("FLEET_ROLE_OUT_OF_RANGE", error.Error.UserErrorMessage);
+    }
+
+    [Fact]
     public void Fleet_roles_are_limited_to_valid_hierarchy_positions()
     {
         Assert.Equal(25, Eve.Services.Space.FleetStore.MaxWings);

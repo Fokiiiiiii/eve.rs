@@ -5230,6 +5230,10 @@ The market parser rejects floating-point prices beyond the market maximum before
 `allianceRegistry.SetRelationship` now accepts only finite numeric standings from -10 through 10; malformed or out-of-range values return `ALLIANCE_RELATIONSHIP_INVALID` before persistence. This prevents a wrong-typed value from being coerced to neutral standing while preserving valid integer and fractional standing values. `Alliance_public_updates_relationships_and_application_decisions_notify_clients` verifies that malformed text leaves the current standing unchanged.
 
 
+## Fleet role integer range validation (2026-10-21)
+
+Fleet invite and member-movement RPCs reject role values outside the signed 32-bit range before conversion. This prevents a large client integer from wrapping into a valid commander assignment. The unmodified V24.01 client sends the documented small integer role constants; the focused fleet regression covers the oversized input.
+
 ## Fleet numeric argument validation (2026-10-20)
 
 `FleetObjectService` accepts integer fleet and member identifiers from integer values and integral finite real values. Fractional, non-finite, and out-of-range real values are refused rather than truncated to another identifier. The focused resolver regression covers a fractional fleet ID.

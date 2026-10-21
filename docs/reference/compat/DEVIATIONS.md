@@ -5257,3 +5257,8 @@ The four corporation enlistment, leave, and withdrawal mutations retain the clie
 ## Corporate insurance role revocation (2026-10-20)
 
 Corporate insurance reads, purchases, and cancellation preserve the client Accountant or Junior Accountant session-role check and also verify current persisted membership and effective role through the Host corporation store. Demotion during an active session therefore removes access to corporate insurance contracts and blocks new corporate purchases or cancellation. `InsuranceServiceTests.Corporate_insurance_refuses_a_stale_accountant_session_role` and `InsuranceServiceTests.Corporate_uninsurance_refuses_a_stale_accountant_session_role` both passed; each keeps stale session authority while persisted checks deny before the writer. The Host project built with zero warnings or errors.
+
+
+## Faction-warfare alliance role revocation (2026-10-20)
+
+Alliance join, leave, and withdrawal mutations preserve the session Director-role check and also verify that the actor remains a Director in the persisted active executor corporation for the session alliance. A demoted Director session cannot change alliance faction-warfare state. `FacWarMgrRpcTests.Alliance_leave_refuses_a_stale_session_director_role` passed on eve_p2 and checks refusal before the alliance status can change; the Host project built with zero warnings or errors.

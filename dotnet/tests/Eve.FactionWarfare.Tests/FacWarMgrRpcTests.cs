@@ -19,6 +19,7 @@ public sealed class FacWarMgrRpcTests
         public double Standing { get; set; } = 0.5;
         public FwCharacterWarfareState? State { get; set; } = new(null, 0);
         public bool CorporationDirector { get; set; } = true;
+        public bool AllianceExecutorDirector { get; set; } = true;
 
         public static async Task<Fixture> CreateAsync()
         {
@@ -33,7 +34,8 @@ public sealed class FacWarMgrRpcTests
                 },
                 ReadStandingAsync: (_, _, _) => ValueTask.FromResult(fixture.Standing),
                 NowMs: () => fixture.Rig.Now,
-                CanActAsCorporationDirectorAsync: (_, _, _) => ValueTask.FromResult(fixture.CorporationDirector));
+                CanActAsCorporationDirectorAsync: (_, _, _) => ValueTask.FromResult(fixture.CorporationDirector),
+                CanActAsAllianceExecutorDirectorAsync: (_, _, _) => ValueTask.FromResult(fixture.AllianceExecutorDirector));
             fixture.Service = new FacWarMgrService(fixture.Rig.Service, callbacks);
             return fixture;
         }
@@ -60,6 +62,19 @@ public sealed class FacWarMgrRpcTests
     }
 
     private static long FileTimeOf(long unixMs) => unixMs * 10_000 + 116_444_736_000_000_000L;
+
+    [PgFact]
+    public async Task Alliance_leave_refuses_a_stale_session_director_role()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var session = Pilot();
+        session.Set("allianceid", new PyInt(Corporation));
+        fixture.AllianceExecutorDirector = false;
+
+        await Assert.ThrowsAnyAsync<Exception>(() => fixture.Service.CallAsync(
+            Call("LeaveFactionAsAlliance", session)).AsTask());
+        Assert.Null(await fixture.Rig.Service.StatusAsync(FwStore.AllianceKind, Corporation, fixture.Rig.Now));
+    }
 
     [PgFact]
     public async Task Corporation_enlistment_needs_the_director_role_and_is_pending_until_the_downtime()

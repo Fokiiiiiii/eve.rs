@@ -123,6 +123,10 @@ public class HostServerTests : IAsyncLifetime
         public ValueTask<Eve.Services.Core.PersistedStructureInfo?> GetStructureInfoAsync(long structureId, CancellationToken cancellationToken) =>
             ValueTask.FromResult<Eve.Services.Core.PersistedStructureInfo?>(null);
 
+        public ValueTask<Eve.Services.Core.PersistedStructureInfo?> GetStructureInfoForCharacterAsync(
+            long characterId, long structureId, CancellationToken cancellationToken) =>
+            ValueTask.FromResult<Eve.Services.Core.PersistedStructureInfo?>(null);
+
         public ValueTask<IReadOnlyList<Eve.Services.Core.StructureDockingAccessSnapshot>> GetDockingAccessSnapshotsAsync(
             long characterId, long corporationId, long allianceId, IReadOnlyList<long> structureIds, CancellationToken cancellationToken) =>
             ValueTask.FromResult<IReadOnlyList<Eve.Services.Core.StructureDockingAccessSnapshot>>([]);
@@ -2906,10 +2910,17 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
         var readModel = new PersistenceStructureDirectoryReadModel(
             ReadTable, Affiliation, null!, null!, null, null,
             (_, _, _) => Task.FromResult(true));
-        var persisted = await readModel.GetStructureInfoAsync(structureId, CancellationToken.None);
+        var persisted = await readModel.GetStructureInfoForCharacterAsync(characterId, structureId, CancellationToken.None);
         Assert.NotNull(persisted);
         Assert.True(persisted.PersistentlyDeployed);
         Assert.NotSame(Eve.Marshal.PyNone.Instance, persisted.Info);
+        var ownerInfo = Assert.IsType<Eve.Marshal.PyObject>(persisted.Info);
+        var ownerFields = Assert.IsType<Eve.Marshal.PyDict>(ownerInfo.Args).Entries;
+        Assert.Contains(ownerFields, entry => entry.Key.Equals(new Eve.Marshal.PyStr("services")));
+        var foreignInfo = await readModel.GetStructureInfoForCharacterAsync(characterId + 1, structureId, CancellationToken.None);
+        var publicFields = Assert.IsType<Eve.Marshal.PyDict>(Assert.IsType<Eve.Marshal.PyObject>(foreignInfo!.Info).Args).Entries;
+        Assert.DoesNotContain(publicFields, entry => entry.Key.Equals(new Eve.Marshal.PyStr("services")));
+        Assert.DoesNotContain(publicFields, entry => entry.Key.Equals(new Eve.Marshal.PyStr("allianceID")));
 
         var myStructures = await readModel.GetMyCharacterStructuresAsync(characterId, CancellationToken.None);
         Assert.Equal(new long[] { structureId },

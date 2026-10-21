@@ -167,7 +167,27 @@ public async ValueTask<Eve.Services.Core.PersistedStructureInfo?> GetStructureIn
             StructureInfoPayload(structureId, structure));
     }
 
-    public async ValueTask<IReadOnlyList<Eve.Services.Core.StructureDockingAccessSnapshot>> GetDockingAccessSnapshotsAsync(
+    public async ValueTask<Eve.Services.Core.PersistedStructureInfo?> GetStructureInfoForCharacterAsync(
+    long characterId,
+    long structureId,
+    CancellationToken cancellationToken)
+{
+    var persisted = await GetStructureInfoAsync(structureId, cancellationToken);
+    if (persisted is not { PersistentlyDeployed: true } || characterId <= 0)
+        return persisted is null ? null : persisted with { Info = BasicStructureInfoPayload(structureId, persisted.Info) };
+
+    var affiliation = await affiliationOf(characterId, cancellationToken);
+    var state = await readTable("structures", cancellationToken);
+    var key = structureId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+    var ownerCorporationId = state[key] is JsonObject row
+        ? Positive(Integer(row["ownerCorpID"] ?? row["corporationID"]))
+        : 0;
+    return affiliation.Corporation == ownerCorporationId
+        ? persisted
+        : persisted with { Info = BasicStructureInfoPayload(structureId, persisted.Info) };
+}
+
+public async ValueTask<IReadOnlyList<Eve.Services.Core.StructureDockingAccessSnapshot>> GetDockingAccessSnapshotsAsync(
         long characterId,
         long corporationId,
         long allianceId,

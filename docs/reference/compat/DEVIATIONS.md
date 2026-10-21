@@ -5315,6 +5315,11 @@ V24.01 `fleetCompositionWnd.py` indexes `skills` and `skillIDs` at positions 0 t
 `structureDirectory.SetStructureDescription` now recalculates Station Manager access from persisted corporation membership and titles for each write. The V24.01 request and success wire shape are unchanged; a role removed after login now receives the existing `CrpAccessDenied` refusal. `HostServerTests.Structure_description_rechecks_persisted_station_manager_role_after_login` verifies the refusal and that no write callback runs.
 
 
+## Structure info owner projection (2026-10-21)
+
+`structureDirectory.GetStructureInfo` accepts a structure ID and returns a basic public projection to other callers; services and corporation/alliance ownership fields are returned only when the caller's current persisted corporation owns the structure. EveJS 261018.1 likewise selects `buildBasicStructureInfoPayload` for non-owner corporations. eve.rs currently returns the available public type, structure ID, solar system, and owner fields because the persistence projection does not provide the remaining public fields used by EveJS. `HostServerTests.Structure_directory_host_reads_deployed_rows_and_docking_profiles` checks full owner data and the reduced foreign view.
+
+
 ## Character structure directory docking visibility (2026-10-21)
 
 `structureDirectory.GetMyCharacterStructures` previously returned every deployed structure owned by the character's corporation. It now uses persisted docking access snapshots and includes only structures the current character can dock at, matching EveJS 261018.1 `listDockableStructuresForCharacter`; NPC station rows remain outside this Host structure projection. `HostServerTests.Structure_directory_host_reads_deployed_rows_and_docking_profiles` verifies inclusion for an allowed profile and exclusion for a blocked profile.

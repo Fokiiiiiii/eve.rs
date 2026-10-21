@@ -11,6 +11,7 @@ using Eve.Services;
 using Eve.Services.Core;
 using Eve.Services.CharacterSelect;
 using Eve.Services.CharacterInfo;
+using Eve.Skills;
 
 namespace Eve.Host.Tests;
 
@@ -229,6 +230,28 @@ public class HostServerTests : IAsyncLifetime
     }
 
     // ── tests ───────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void Fleet_composition_maps_catalog_command_skills_to_levels_and_zero_for_untrained()
+    {
+        var catalog = new SkillCatalog(
+        [
+            new SkillType(3348, "Leadership", 1, "Leadership", true, 1, 0, 0, [], 0m, true),
+            new SkillType(11572, "Wing Command", 1, "Leadership", true, 1, 0, 0, [], 0m, true),
+            new SkillType(24764, "Fleet Command", 1, "Leadership", true, 1, 0, 0, [], 0m, true),
+            new SkillType(99999, "Unrelated Skill", 1, "Other", true, 1, 0, 0, [], 0m, true)
+        ], new Dictionary<int, IReadOnlyList<StartingSkill>>());
+
+        var projection = CharacterServicesComposition.FleetCommandSkills(catalog,
+        [
+            new CharacterSkill(24764, 2, 45_255),
+            new CharacterSkill(3348, 4, 452_550),
+            new CharacterSkill(99999, 5, 2_000_000)
+        ]);
+
+        Assert.Equal([3348, 11572, 24764], projection.SkillIds);
+        Assert.Equal([4, 0, 2], projection.Levels);
+    }
 
     [Fact]
     public async Task A_front_that_says_hello_gets_an_ack_and_the_cluster_config()

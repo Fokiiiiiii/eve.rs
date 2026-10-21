@@ -115,22 +115,26 @@ public sealed class EntosisCaptureServiceTests
         Assert.Equal(EntosisRules.CycleMs / EntosisRules.BaseCaptureMs, moved!.Progress, 9);
         Assert.Equal(EntosisPhase.Capturing, moved.Phase);
 
-        // restart-safe: a new service over the same tables reads the same progress
-        var restarted = new EntosisCaptureService(harness.Source, harness.Scheduler, () => harness.Clock.Now, (_, _) => Task.FromResult<EntosisHubReading?>(Neutral()), schema: harness.Schema);
+        // Recreate both the service and scheduler over PostgreSQL to model a process restart.
+        await using var restartedScheduler = new DurableScheduler(harness.Source, () => harness.Clock.Now, null, harness.SchedulerSchema);
+        var restarted = new EntosisCaptureService(
+            harness.Source, restartedScheduler, () => harness.Clock.Now,
+            (_, _) => Task.FromResult<EntosisHubReading?>(Neutral()), schema: harness.Schema);
+        restarted.Register();
         Assert.Equal(moved, await restarted.ReadAsync(Hub, CancellationToken.None));
 
-        // the capture completes at Start + 595 s: its completion is a durable job for the hub
-        var job = await harness.Scheduler.FindAsync(EntosisCaptureService.CaptureDueKind, Hub.ToString());
+        // The capture completion job is also recovered by the new scheduler.
+        var job = await restartedScheduler.FindAsync(EntosisCaptureService.CaptureDueKind, Hub.ToString());
         Assert.NotNull(job);
         Assert.InRange(job!.RunAtMs, Start + (long)EntosisRules.BaseCaptureMs - 2, Start + (long)EntosisRules.BaseCaptureMs + 2);
 
         harness.Clock.Now = job.RunAtMs;
-        await harness.Scheduler.RunDueAsync();
-        var captured = await harness.Service.ReadAsync(Hub, CancellationToken.None);
+        await restartedScheduler.RunDueAsync();
+        var captured = await restarted.ReadAsync(Hub, CancellationToken.None);
         Assert.Equal(EntosisPhase.Captured, captured!.Phase);
         Assert.Equal(1, captured.Progress);
 
-        // a captured hub refuses the next cycle by name
+        // A captured hub refuses the next cycle by name.
         var refused = await SettleAsync(harness, 1, 5);
         Assert.False(refused.Accepted);
         Assert.Equal("ENTOSIS_CAPTURE_COMPLETE", refused.Reason);
@@ -265,10 +269,26 @@ public sealed class EntosisCaptureServiceTests
         Assert.True(notice.ReinforcementExitMs >= completedMs + EntosisWindow.ReinforcementMs, "not before 48 hours");
         Assert.True(EntosisWindow.IsOpen(22, 1, notice.ReinforcementExitMs), "inside the owner's window");
 
-        // the reinforced hub refuses the next cycle by name, and a replayed pump delivers nothing twice
+        // The reinforced hub refuses cycles before its exit, and replayed notices stay idempotent.
         Assert.Equal("SOVEREIGNTY_HUB_ALREADY_REINFORCED", (await SettleAsync(harness, 1, 5)).Reason);
         await harness.Bus.PumpAsync();
         Assert.Equal(2, harness.Notices.Count);
+
+        // The reinforcement exit is stored as a durable job and resumes through a new scheduler.
+        var campaignJob = await harness.Scheduler.FindAsync(EntosisCaptureService.CampaignStartKind, Hub.ToString());
+        Assert.NotNull(campaignJob);
+        Assert.Equal(notice.ReinforcementExitMs, campaignJob!.RunAtMs);
+        await using var restartedScheduler = new DurableScheduler(harness.Source, () => harness.Clock.Now, null, harness.SchedulerSchema);
+        var restarted = new EntosisCaptureService(
+            harness.Source, restartedScheduler, () => harness.Clock.Now,
+            (_, _) => Task.FromResult<EntosisHubReading?>(Owned()), schema: harness.Schema);
+        restarted.Register();
+
+        harness.Clock.Now = campaignJob.RunAtMs;
+        Assert.Equal(1, await restartedScheduler.RunDueAsync());
+        Assert.Equal("active", await ScalarTextAsync(harness, "SELECT phase FROM {schema}.campaigns"));
+        Assert.Equal("4", await ScalarTextAsync(harness, "SELECT COUNT(*) FROM {schema}.nodes"));
+        Assert.Equal("reinforced", await ScalarTextAsync(harness, "SELECT phase FROM {schema}.hubs"));
     }
 
     [PgFact]

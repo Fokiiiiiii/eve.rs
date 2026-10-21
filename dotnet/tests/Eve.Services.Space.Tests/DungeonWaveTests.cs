@@ -6,6 +6,7 @@ using Eve.Npc;
 using Eve.Scheduler;
 using Eve.Services.Space.Waves;
 using Npgsql;
+using System.Diagnostics;
 
 namespace Eve.Services.Space.Tests;
 
@@ -98,6 +99,41 @@ public sealed class DungeonWaveTests
         Assert.Equal(new[] { 7, 8, 9, 10 }, rig.Spawner.Batches.Select(batch => batch.Amount).ToArray());
         Assert.Equal(new[] { "content.dungeon.completed" }, rig.Completions.Select(completion => completion.Topic).ToArray());
         Assert.Empty(rig.Spawner.Removed);
+    }
+
+    [PgFact]
+    public async Task Sixteen_four_wave_dungeons_progress_and_complete_with_bounded_database_work()
+    {
+        await using var rig = await WaveRig.CreateAsync();
+        const int dungeonCount = 16;
+        for (var index = 0; index < dungeonCount; index++)
+        {
+            var start = await rig.Director.StartAsync(Pilot + index, SystemId, Origin, 2158);
+            Assert.True(start.Started, start.Refusal);
+        }
+
+        var timer = Stopwatch.StartNew();
+        rig.Advance(TimeSpan.FromSeconds(240));
+        for (var wave = 0; wave < 4; wave++)
+        {
+            await rig.RunDueAndDeliverAsync();
+            var batches = rig.Spawner.Batches.Skip(wave * dungeonCount).Take(dungeonCount).ToArray();
+            Assert.Equal(dungeonCount, batches.Length);
+            foreach (var batch in batches)
+            {
+                foreach (var ship in batch.Ships)
+                {
+                    await rig.Bus.PublishAsync("npc.killed", new { shipId = ship, solarSystemId = SystemId, characterId = Pilot, typeId = 0, profile = "load" });
+                }
+            }
+        }
+        await rig.RunDueAndDeliverAsync();
+        timer.Stop();
+
+        Assert.Equal(16 * 4, rig.Spawner.Batches.Count);
+        Assert.Equal(16 * (7 + 8 + 9 + 10), rig.Spawner.Batches.Sum(batch => batch.Amount));
+        Assert.Equal(dungeonCount, rig.Completions.Count(completion => completion.Topic == "content.dungeon.completed"));
+        Assert.True(timer.Elapsed < TimeSpan.FromSeconds(30), $"16 four-wave dungeons progressed in {timer.Elapsed}");
     }
 
     [PgFact]

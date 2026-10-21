@@ -1914,7 +1914,7 @@ Source: `work/market-design.md` 4.3 M8. Q14 (the duplicate window) was decided a
   modification after the delay succeeds (run with `EVE_LIVE_SLOW=1`, which waits 300 s), the seller cancels the rest (`CancelCharOrder`:
   the escrow reads zero and the items return to the hangar), `GetCorporationOrders` of a character in an NPC corporation is empty, and a
   corporation order is refused. The walk also compares both characters' wallet balance deltas with their journal rows: the buyer's
-  transfer debit, the seller's sale credit and tax, and the seller's broker and SCC fees. The added journal assertions await another
+  transfer debit, the seller's sale credit and tax, and the seller's broker fee. NPC station orders do not pay the SCC surcharge, which CCP applies to Upwell structure broker fees ([Viridian expansion notes](https://www.eveonline.com/news/view/viridian-expansion-notes)). The added journal assertions await another
   running-host execution.
 - **Refusal wording.** A corporation-rights refusal reached the client as the raw code `CORPORATION_ACCESS_DENIED` (a `CustomInfo` with the
   code as its text). `MarketProxyService.Error` now sends the sentence "Your character does not hold the market rights of that corporation."

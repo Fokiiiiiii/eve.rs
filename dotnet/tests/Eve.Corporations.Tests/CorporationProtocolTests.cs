@@ -2923,6 +2923,22 @@ private static PyValue RowField(PyValue value,string key)
             Session=session,Method="CreateRecruitmentAd",Args=createArgs,CallId=new PyInt(776)
         };
 
+        var oversizedDescription = createArgs.ToArray();
+        oversizedDescription[3] = new PyWString(new string('D',1001));
+        var descriptionError = await Assert.ThrowsAsync<CorporationError>(async () =>
+            await service.CallAsync(Call(session,"CreateRecruitmentAd",oversizedDescription)));
+        Assert.Equal("CORPORATION_INVALID_RECRUITMENT_AD",descriptionError.Code);
+        var oversizedTitle = createArgs.ToArray();
+        oversizedTitle[5] = new PyWString(new string('T',41));
+        var titleError = await Assert.ThrowsAsync<CorporationError>(async () =>
+            await service.CallAsync(Call(session,"CreateRecruitmentAd",oversizedTitle)));
+        Assert.Equal("CORPORATION_INVALID_RECRUITMENT_AD",titleError.Code);
+        var excessiveDuration = createArgs.ToArray();
+        excessiveDuration[0] = new PyInt(29);
+        var durationError = await Assert.ThrowsAsync<CorporationError>(async () =>
+            await service.CallAsync(Call(session,"CreateRecruitmentAd",excessiveDuration)));
+        Assert.Equal("CORPORATION_INVALID_RECRUITMENT_DURATION",durationError.Code);
+
         var adId = Assert.IsType<PyInt>(await service.CallAsync(CreateCall())).Value;
         Assert.Empty(sink.Packets);
         var persisted = await rig.ReopenStore().RecruitmentAdsAsync(corp.Id);
@@ -2960,6 +2976,15 @@ private static PyValue RowField(PyValue value,string key)
         Assert.Empty(Assert.IsType<PyList>(await service.CallAsync(Call(session,"SearchCorpAds",searchArgs))).Items);
 
         var beforeExpiry = stored.ExpiryFiletime;
+        var excessiveExtension = await Assert.ThrowsAsync<CorporationError>(async () =>
+            await service.CallAsync(Call(session,"UpdateRecruitmentAd",new PyInt(adId),PyNone.Instance,
+                PyNone.Instance,PyNone.Instance,PyNone.Instance,PyNone.Instance,new PyInt(22))));
+        Assert.Equal("CORPORATION_INVALID_RECRUITMENT_DURATION",excessiveExtension.Code);
+        var oversizedUpdate = await Assert.ThrowsAsync<CorporationError>(async () =>
+            await service.CallAsync(Call(session,"UpdateRecruitmentAd",new PyInt(adId),PyNone.Instance,
+                PyNone.Instance,new PyWString(new string('D',1001)),PyNone.Instance,PyNone.Instance,
+                new PyInt(3))));
+        Assert.Equal("CORPORATION_INVALID_RECRUITMENT_AD",oversizedUpdate.Code);
         Assert.IsType<PyNone>(await service.CallAsync(Call(session,"UpdateRecruitmentAd",
             new PyInt(adId),new PyInt(4),new PyInt(8),new PyWString("Updated details"),
             new PyList([new PyInt(founder)]),new PyWString("Updated title"),new PyInt(3),

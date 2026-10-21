@@ -165,9 +165,12 @@ public class DispatchGoldenTests
     }
 
     internal static PyValue CallRequestPacket(string service, string method)
+        => CallRequestPacket(service, method, []);
+
+    internal static PyValue CallRequestPacket(string service, string method, params PyValue[] args)
     {
         var source = new PyTuple([new PyInt(MachoAddress.TypeClient), new PyLong(7), new PyInt(9), PyNone.Instance]);
-        var body = new PyTuple([new PyInt(1), new PyStr(method), new PyTuple([]), PyNone.Instance]);
+        var body = new PyTuple([new PyInt(1), new PyStr(method), new PyTuple(args), PyNone.Instance]);
         var payload = new PyTuple([new PyTuple([new PyInt(0), new PySubStream(body)])]);
         var head = new PyValue[]
         {
@@ -222,6 +225,26 @@ public class DispatchGoldenTests
         await dispatcher.DispatchAsync(CallRequestPacket("charMgr", "ListStations"), session);
 
         Assert.Equal(1, service.Calls);
+        Assert.Equal(2, capture.Sent.Count);
+        Assert.Equal(ErrorResponseCommand, CommandOf(capture.Sent[1]));
+        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[1])));
+    }
+
+    [Fact]
+    public async Task Bound_bind_invocations_consume_the_nested_expensive_rpc_budget()
+    {
+        var capture = new Capture();
+        var session = new ClientSession(capture) { SessionId = 911 };
+        var registry = new ServiceRegistry();
+        var service = new RecruitmentBindBudgetService();
+        registry.Register(service);
+        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 10 };
+        var nestedSearch = new PyTuple([new PyStr("SearchCorpAds"), new PyTuple([])]);
+
+        await dispatcher.DispatchAsync(CallRequestPacket("corpRecProxy", "MachoBindObject", new PyLong(1001), nestedSearch), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("corpRecProxy", "MachoBindObject", new PyLong(1001), nestedSearch), session);
+
+        Assert.Equal(1, service.NestedSearches);
         Assert.Equal(2, capture.Sent.Count);
         Assert.Equal(ErrorResponseCommand, CommandOf(capture.Sent[1]));
         Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[1])));
@@ -826,6 +849,23 @@ public class DispatchGoldenTests
         public ValueTask<PyValue> CallAsync(ServiceCall call)
         {
             Calls++;
+            return ValueTask.FromResult<PyValue>(PyNone.Instance);
+        }
+    }
+
+    private sealed class RecruitmentBindBudgetService : IService
+    {
+        public int NestedSearches { get; private set; }
+
+        public string Name => "corpRecProxy";
+
+        public bool HasMethod(string method) => method == "MachoBindObject";
+
+        public ValueTask<PyValue> CallAsync(ServiceCall call)
+        {
+            if (call.Args.Count > 1 && call.Args[1] is PyTuple { Items.Count: > 0 } nested &&
+                nested.Items[0] is PyStr { Value: "SearchCorpAds" })
+                NestedSearches++;
             return ValueTask.FromResult<PyValue>(PyNone.Instance);
         }
     }

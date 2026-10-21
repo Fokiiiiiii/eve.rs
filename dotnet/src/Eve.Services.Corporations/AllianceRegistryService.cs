@@ -260,9 +260,13 @@ private static double RelationshipValue(PyValue value)
     [Method("GetRankedAlliances")]
     public async ValueTask<PyValue> GetRankedAlliances(ServiceCall call)
     {
-        var maxLength = call.Arg(0) is PyNone ? 100 : Number(call.Arg(0));
-        if (maxLength < 0)
-            throw new CorporationError("ALLIANCE_RANKED_LIMIT_INVALID");
+        var maxLength = call.Arg(0) switch
+        {
+            PyNone => 100,
+            PyInt { Value: >= 0 } value => value.Value,
+            PyLong { Value: >= 0 } value => value.Value,
+            _ => throw new CorporationError("ALLIANCE_RANKED_LIMIT_INVALID"),
+        };
         var alliances = await store.RankedAlliancesAsync(maxLength == 0 ? null : maxLength,call.Cancellation);
         var counts = await store.AllianceCharacterCountsAsync(alliances.Select(alliance => alliance.Id).ToArray(),call.Cancellation);
         return new PyList([.. alliances.Select(alliance => AllianceRow(alliance,counts.GetValueOrDefault(alliance.Id)))]);

@@ -82,6 +82,14 @@ The Host rejects repeated private-room invitations from one character within one
 
 `mailingListsMgr` operations consume the weighted per-session RPC budget. Member-role changes and entity-access updates refuse raw collections above 1,000 entries with `MAILING_LIST_BULK_LIMIT_EXCEEDED` before forwarding to Host persistence. Collections within the limit retain the existing owner/operator checks and notification flow. `MailingListServiceTests.Mailing_list_bulk_mutations_reject_oversized_raw_collections_before_host_callbacks` and `DispatchGoldenTests.Mailing_list_work_has_a_named_per_session_budget` cover the refusals. Graphical-client acceptance remains open.
 
+## Market read RPC budget (2026-10-21)
+
+Market order-book, price-history, owner-order, escrow, transaction, and PLEX reads consume 10 units from the configured per-session rolling-minute budget. EveJS 261018.1 does not throttle these routes. The normal result and state behavior remains unchanged within the configured allowance; excessive calls receive `SessionRpcBudgetExceeded`. `DispatchGoldenTests.Market_owner_history_reads_have_a_named_per_session_budget` covers the owner-history and transaction routes, and the existing market budget test covers order-book and multi-type history routes.
+
+## Bill manager RPC budget (2026-10-21)
+
+All `billMgr` reads, automatic-pay settings calls and bill payments consume 10 units from the configured per-session rolling-minute budget. The named `SessionRpcBudgetExceeded` refusal applies after the allowance is exceeded; calls within budget keep their existing replies and billing transitions. `DispatchGoldenTests.Bill_manager_calls_have_a_named_per_session_budget` covers all six bill-manager routes.
+
 ## Fleet broadcast RPC budget (2026-10-20)
 
 `fleetObject.SendBroadcast` fans out to current fleet members and now consumes 10 units from the shared per-session rolling-minute RPC budget. Beyond the configured allowance, the dispatcher returns `SessionRpcBudgetExceeded`; calls within the allowance retain the existing notification shape and delivery rules. `DispatchGoldenTests.Expensive_market_calls_have_a_named_per_session_budget` verifies that an over-budget broadcast is refused.
@@ -5309,6 +5317,21 @@ V24.01 `fleetCompositionWnd.py` indexes `skills` and `skillIDs` at positions 0 t
 ## Structure description role revocation (2026-10-21)
 
 `structureDirectory.SetStructureDescription` now recalculates Station Manager access from persisted corporation membership and titles for each write. The V24.01 request and success wire shape are unchanged; a role removed after login now receives the existing `CrpAccessDenied` refusal. `HostServerTests.Structure_description_rechecks_persisted_station_manager_role_after_login` verifies the refusal and that no write callback runs.
+
+
+## Structure info owner projection (2026-10-21)
+
+`structureDirectory.GetStructureInfo` accepts a structure ID and returns a basic public projection to other callers; services and corporation/alliance ownership fields are returned only when the caller's current persisted corporation owns the structure. EveJS 261018.1 likewise selects `buildBasicStructureInfoPayload` for non-owner corporations. eve.rs currently returns the available public type, structure ID, solar system, and owner fields because the persistence projection does not provide the remaining public fields used by EveJS. `HostServerTests.Structure_directory_host_reads_deployed_rows_and_docking_profiles` checks full owner data and the reduced foreign view.
+
+
+## Character structure directory docking visibility (2026-10-21)
+
+`structureDirectory.GetMyCharacterStructures` previously returned every deployed structure owned by the character's corporation. It now uses persisted docking access snapshots and includes only structures the current character can dock at, matching EveJS 261018.1 `listDockableStructuresForCharacter`; NPC station rows remain outside this Host structure projection. `HostServerTests.Structure_directory_host_reads_deployed_rows_and_docking_profiles` verifies inclusion for an allowed profile and exclusion for a blocked profile.
+
+
+## Corporation structure directory role check (2026-10-21)
+
+`structureDirectory.GetMyCorporationStructures` and its `GetCorporationStructures` alias now check current persisted corporation membership and require Station Manager or Brand Manager authority before reading the private corporation structure directory, matching EveJS 261018.1. eve.rs recalculates the role from persisted member and title data for each request; the cached login role does not authorize the read. Unauthorized callers receive the existing `CrpAccessDenied` response. `HostServerTests.Corporation_structure_directory_requires_persisted_manager_access` checks denial before storage access and successful access when persisted authority is present even if the session role is zero.
 
 
 ## Fleet invitation fanout bounds (2026-10-21)

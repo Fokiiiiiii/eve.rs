@@ -123,6 +123,10 @@ public class HostServerTests : IAsyncLifetime
         public ValueTask<Eve.Services.Core.PersistedStructureInfo?> GetStructureInfoAsync(long structureId, CancellationToken cancellationToken) =>
             ValueTask.FromResult<Eve.Services.Core.PersistedStructureInfo?>(null);
 
+        public ValueTask<Eve.Services.Core.PersistedStructureInfo?> GetStructureInfoForCharacterAsync(
+            long characterId, long structureId, CancellationToken cancellationToken) =>
+            ValueTask.FromResult<Eve.Services.Core.PersistedStructureInfo?>(null);
+
         public ValueTask<IReadOnlyList<Eve.Services.Core.StructureDockingAccessSnapshot>> GetDockingAccessSnapshotsAsync(
             long characterId, long corporationId, long allianceId, IReadOnlyList<long> structureIds, CancellationToken cancellationToken) =>
             ValueTask.FromResult<IReadOnlyList<Eve.Services.Core.StructureDockingAccessSnapshot>>([]);
@@ -2903,14 +2907,23 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
             Task.FromResult(id == characterId
                 ? new Eve.Relations.Affiliation(corporationId, allianceId, null)
                 : new Eve.Relations.Affiliation(98000012, null, null));
-        var readModel = new PersistenceStructureDirectoryReadModel(ReadTable, Affiliation, null!, null!);
-        var persisted = await readModel.GetStructureInfoAsync(structureId, CancellationToken.None);
+        var readModel = new PersistenceStructureDirectoryReadModel(
+            ReadTable, Affiliation, null!, null!, null, null,
+            (_, _, _) => Task.FromResult(true));
+        var persisted = await readModel.GetStructureInfoForCharacterAsync(characterId, structureId, CancellationToken.None);
         Assert.NotNull(persisted);
         Assert.True(persisted.PersistentlyDeployed);
         Assert.NotSame(Eve.Marshal.PyNone.Instance, persisted.Info);
+        var ownerInfo = Assert.IsType<Eve.Marshal.PyObject>(persisted.Info);
+        var ownerFields = Assert.IsType<Eve.Marshal.PyDict>(ownerInfo.Args).Entries;
+        Assert.Contains(ownerFields, entry => entry.Key.Equals(new Eve.Marshal.PyStr("services")));
+        var foreignInfo = await readModel.GetStructureInfoForCharacterAsync(characterId + 1, structureId, CancellationToken.None);
+        var publicFields = Assert.IsType<Eve.Marshal.PyDict>(Assert.IsType<Eve.Marshal.PyObject>(foreignInfo!.Info).Args).Entries;
+        Assert.DoesNotContain(publicFields, entry => entry.Key.Equals(new Eve.Marshal.PyStr("services")));
+        Assert.DoesNotContain(publicFields, entry => entry.Key.Equals(new Eve.Marshal.PyStr("allianceID")));
 
         var myStructures = await readModel.GetMyCharacterStructuresAsync(characterId, CancellationToken.None);
-        Assert.Equal(new long[] { structureId, deniedStructureId },
+        Assert.Equal(new long[] { structureId },
             myStructures.Entries.Select(entry => entry.Key switch
             {
                 Eve.Marshal.PyInt number => (long)number.Value,
@@ -2919,7 +2932,7 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
             }).OrderBy(id => id));
         var corporationStructures = await readModel.GetMyCorporationStructuresAsync(
             characterId, corporationId, CancellationToken.None);
-        Assert.Equal(myStructures.Entries.Count, corporationStructures.Entries.Count);
+        Assert.Equal(2, corporationStructures.Entries.Count);
         var otherCorporationStructures = await readModel.GetMyCorporationStructuresAsync(
             characterId, corporationId + 1, CancellationToken.None);
         Assert.Empty(otherCorporationStructures.Entries);
@@ -2942,6 +2955,59 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
                 Eve.Marshal.PyLong number => number.Value,
                 _ => throw new InvalidOperationException("Expected an integer structure ID."),
             }));
+    }
+
+    [Fact]
+    public async Task Corporation_structure_directory_requires_persisted_manager_access()
+    {
+        const long structureId = 88000015;
+        const long characterId = 90000015;
+        const long corporationId = 98000015;
+        var tables = new Dictionary<string, System.Text.Json.Nodes.JsonObject>
+        {
+            ["structures"] = new()
+            {
+                [structureId.ToString(System.Globalization.CultureInfo.InvariantCulture)] = new System.Text.Json.Nodes.JsonObject
+                {
+                    ["structureID"] = structureId,
+                    ["typeID"] = 35841,
+                    ["solarSystemID"] = 30000142,
+                    ["ownerCorpID"] = corporationId,
+                },
+            },
+        };
+        var structureReads = 0;
+        Task<System.Text.Json.Nodes.JsonObject> ReadTable(string name, CancellationToken _)
+        {
+            if (name == "structures") structureReads++;
+            return Task.FromResult((System.Text.Json.Nodes.JsonObject)tables.GetValueOrDefault(name, new()).DeepClone());
+        }
+        Task<Eve.Relations.Affiliation> Affiliation(long id, CancellationToken _) =>
+            Task.FromResult(new Eve.Relations.Affiliation(corporationId, null, null));
+        var directoryAccess = false;
+        Task<bool> PersistedDirectoryAccess(long actorId, long ownerCorporationId, CancellationToken token) =>
+            Task.FromResult(actorId == characterId && ownerCorporationId == corporationId && directoryAccess);
+        var readModel = new PersistenceStructureDirectoryReadModel(
+            ReadTable, Affiliation, null!, null!, null, null, PersistedDirectoryAccess);
+        var session = new Eve.Services.ClientSession { CharacterId = characterId };
+        session.Set("corpid", new Eve.Marshal.PyInt(corporationId));
+        session.Set("corprole", new Eve.Marshal.PyInt(Eve.Corporations.CorporationRoles.StationManager));
+        var service = new Eve.Services.Core.StructureDirectoryService(readModel);
+        var call = new Eve.Services.ServiceCall
+        {
+            Method = "GetMyCorporationStructures",
+            Args = [],
+            Session = session,
+        };
+
+        var denied = await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(() => service.CallAsync(call).AsTask());
+        Assert.Equal("CrpAccessDenied", denied.Error.UserErrorMessage);
+        Assert.Equal(0, structureReads);
+
+        directoryAccess = true;
+        session.Set("corprole", new Eve.Marshal.PyInt(0));
+        var result = Assert.IsType<Eve.Marshal.PyDict>(await service.CallAsync(call));
+        Assert.Single(result.Entries);
     }
 
     [Fact]

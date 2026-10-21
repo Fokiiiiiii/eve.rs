@@ -267,13 +267,22 @@ public sealed class PacketDispatcher
     {
         if (method == "GetAllInfo")
             return 10;
-        if (service == "marketProxy" && method is "GetOrders" or "GetStationAsks" or "GetSystemAsks" or "GetRegionBest" or "GetMarketOrderHistory" or "BuyMultipleItems" or "PlaceMultiSellOrder" or "GetHistoryForManyTypeIDs")
+        if (service == "marketProxy" && method is
+            "GetOrders" or "GetStationAsks" or "GetSystemAsks" or "GetRegionBest" or
+            "GetMarketOrderHistory" or "GetOldPriceHistory" or "GetNewPriceHistory" or
+            "GetCharOrders" or "GetCorporationOrders" or "GetCharEscrow" or
+            "GetPlexOrders" or "GetPlexBest" or "GetPlexHistory" or
+            "GetPlexOldPriceHistory" or "GetPlexNewPriceHistory" or "CharGetTransactions" or
+            "CorpGetTransactions" or "BuyMultipleItems" or "PlaceMultiSellOrder" or
+            "GetHistoryForManyTypeIDs")
             return 10;
         if (service == "mailMgr" && method is "SyncMail" or "GetMailHeaders" or "GetBody" or "MarkAsRead" or "SendMail" or "PokePlayerAboutChatMsgGm")
             return 10;
         if (service == "mailingListsMgr")
             return 10;
         if (service == "contractProxy")
+            return 10;
+        if (service == "billMgr")
             return 10;
         if ((service is "charFittingMgr" or "corpFittingMgr" or "allianceFittingMgr") && (method is "GetFittings" or "SaveFitting" or "UpdateFitting" or "SaveManyFittings" or "DeleteFitting" or "DeleteManyFittings" or "UpdateNameAndDescription" or "GetCommunityFittings"))
             return 10;
@@ -297,7 +306,7 @@ public sealed class PacketDispatcher
             return 10;
         if (service == "corpRecProxy" && method is "SearchCorpAds")
             return 10;
-        if (service == "structureDirectory" && method is "CheckMyDockingAccessToStructures" or "GetMyDockableStructures")
+        if (service == "structureDirectory" && method is "CheckMyDockingAccessToStructures" or "GetMyDockableStructures" or "GetMyCharacterStructures" or "GetMyCorporationStructures")
             return 10;
         if (service == "skillHandler" && method is "InjectSkillIntoBrain" or "InjectSkillpoints" or "ExtractSkills" or "GetDiminishedSpFromInjectors" or "SplitSkillInjector" or "CombineSkillInjector")
             return 10;

@@ -1484,12 +1484,15 @@ private static PyValue RowField(PyValue value,string key)
                     5, CustomName: "corporate stack"));
             deliveryItemId = await rig.Items.CreateAsync(connection, transaction,
                 new Eve.Inventory.NewItem(34, corporation.Id, stationId, 62, 2, CustomName: "delivery"));
+            await rig.Items.CreateAsync(connection, transaction,
+                new Eve.Inventory.NewItem(35, corporation.Id, stationId + 1, Eve.Inventory.ItemFlags.CorpSAG3,
+                    7, CustomName: "second location"));
             await transaction.CommitAsync();
         }
 
         var service = new CorpMgrService(
             rig.Store, rig.Characters, rig.Items, itemTypes, rig.OfficeStore,
-            resolveAssetLocation: id => id == stationId ? (30000142L, (int?)1531) : null,
+            resolveAssetLocation: id => id == stationId || id == stationId + 1 ? (30000142L, (int?)1531) : null,
             readAggressionSettings: (id, _) => ValueTask.FromResult<CorpMgrAggressionSettings?>(
                 id == corporation.Id ? new CorpMgrAggressionSettings(987654321, null) : null));
         var session = new ClientSession { CharacterId = founder };
@@ -1510,7 +1513,10 @@ private static PyValue RowField(PyValue value,string key)
 
         var locations = Assert.IsType<PyObject>(CachedPayload(await service.GetAssetInventory(Call(
             session, "GetAssetInventory", new PyInt(corporation.Id), new PyStr("property")))));
-        var locationValues = RowValues(Assert.Single(Lines(locations)));
+        var locationRows = Lines(locations);
+        Assert.Equal(2, locationRows.Count());
+        Assert.Contains(locationRows, row => RowValues(row)[0] == new PyLong(stationId));
+        var locationValues = RowValues(locationRows.First(row => RowValues(row)[0] == new PyLong(stationId)));
         Assert.Equal(new PyLong(stationId), locationValues[0]);
         Assert.Equal(new PyLong(30000142), locationValues[1]);
         Assert.Equal(new PyInt(1531), locationValues[2]);
@@ -1533,6 +1539,10 @@ private static PyValue RowField(PyValue value,string key)
             session, "SearchAssets", new PyStr("property"), new PyInt(0), new PyInt(0),
             new PyInt(34), new PyInt(3)))));
         Assert.Equal(new PyLong(stationId), RowValues(Assert.Single(Lines(search)))[0]);
+        var secondLocationSearch = Assert.IsType<PyObject>(CachedPayload(await service.SearchAssets(Call(
+            session, "SearchAssets", new PyStr("property"), new PyInt(0), new PyInt(0),
+            new PyInt(35), new PyInt(7)))));
+        Assert.Equal(new PyLong(stationId + 1), RowValues(Assert.Single(Lines(secondLocationSearch)))[0]);
 
         var deliveries = Assert.IsType<PyObject>(CachedPayload(await service.GetAssetInventory(Call(
             session, "GetAssetInventory", new PyInt(corporation.Id), new PyStr("deliveries")))));

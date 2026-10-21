@@ -35,6 +35,24 @@ using static Eve.Host.HostConfiguration;
 
 namespace Eve.Host;
 
+public static class MailOrganizationAuthorization
+{
+    public static bool CanSendOrganizationMail(
+        long recipientId,
+        Eve.Corporations.Corporation senderCorporation,
+        long? currentCorpRoleMask)
+    {
+        if (recipientId <= 0 || senderCorporation.IsNpc || senderCorporation.Deleted ||
+            currentCorpRoleMask is null)
+            return false;
+        if (recipientId == senderCorporation.Id)
+            return true;
+        return senderCorporation.AllianceId == recipientId &&
+            (currentCorpRoleMask.Value & Eve.Corporations.CorporationRoles.ChatManager) ==
+                Eve.Corporations.CorporationRoles.ChatManager;
+    }
+}
+
 internal sealed partial class CharacterServicesComposition
 {
     async Task<PersistenceMailSendRecipients?> ResolveMailSendRecipientsAsync(
@@ -47,6 +65,22 @@ internal sealed partial class CharacterServicesComposition
         var sender = await characters.GetAsync(request.SenderCharacterId, cancellationToken);
         if (sender is null)
             return null;
+
+        if (request.CorporationOrAllianceRecipientIds is { Count: > 0 } requestedOrganizationIds)
+        {
+            var senderMembership = await corporations.MemberAsync(request.SenderCharacterId, cancellationToken);
+            if (senderMembership is null)
+                return null;
+            var senderCorporation = await corporations.GetAsync(senderMembership.CorporationId, cancellationToken);
+            if (senderCorporation is null)
+                return null;
+            var currentCorpRoleMask = await corporations.MemberCorpRolesAsync(
+                senderCorporation.Id, request.SenderCharacterId, cancellationToken);
+            if (currentCorpRoleMask is null ||
+                requestedOrganizationIds.Distinct().Any(recipientId =>
+                    !MailOrganizationAuthorization.CanSendOrganizationMail(recipientId, senderCorporation, currentCorpRoleMask.Value)))
+                return null;
+        }
 
         var recipientIds = new List<long>();
         var recipientLabelMasks = new Dictionary<long, int>();

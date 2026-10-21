@@ -55,6 +55,7 @@ public class OmegaStateTests
 
         Assert.Equal(new PyInt(1), await Call(service, session, "GetCloneGrade"));
         Assert.Equal(Py.FileTimeLong(OmegaLicenses.DefaultOmegaExpiryFileTime), await Call(service, session, "GetSubscriptionTime"));
+        Assert.Equal(1, new OmegaLicenses(store, () => Now).CloneGradeOf(new PyLong(1)));
     }
 
     [Fact]
@@ -68,6 +69,7 @@ public class OmegaStateTests
         Assert.Equal(PyNone.Instance, await Call(service, session, "GetSubscriptionTime"));
         var licenses = new OmegaLicenses(store, () => Now);
         Assert.True(licenses.StoredExpiry(new PyLong(2)) > 0 && licenses.StoredExpiry(new PyLong(2)) <= licenses.NowFileTime);
+        Assert.Equal(0, licenses.CloneGradeOf(new PyLong(2)));
     }
 
     [Fact]

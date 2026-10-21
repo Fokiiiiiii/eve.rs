@@ -57,7 +57,8 @@ internal sealed partial class CharacterServicesComposition
                         FleetAdvertLeaderProfileForAsync, cancellationToken),
                 sessionForCharacter: FleetSessionForCharacter,
                 compositionForMembers: FleetCompositionForMembersAsync,
-                sameBubble: SameFleetBubble),
+                sameBubble: SameFleetBubble,
+                memberSkillsForCharacter: FleetCommandSkillLevelsForCharacterAsync),
             new Eve.Services.Space.FleetManagerService(
                 fleetStore,
                 sessionOf: FleetSessionForCharacter,

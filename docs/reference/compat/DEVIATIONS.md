@@ -1886,19 +1886,20 @@ Source: `work/market-design.md` 4.3 M8. Q14 (the duplicate window) was decided a
 - **Live walk** (`tools/headless-client/tests/test_market.py`, `test_a_seller_and_a_buyer_trade_through_the_market`): a seller takes stock
   from the hangar with `/giveitem` (slash service), offers 40 at 50 (`PlaceMultiSellOrder`), a buyer reads the station asks, buys 15 at
   once (`PlaceBuyOrder` with no duration), both read their transactions (`CharGetTransactions`: the buyer and the seller each show a fill of
-  15), the seller's modification inside the five-minute delay is refused with the sentence that carries the seconds left, the same
-  modification after the delay succeeds (run with `EVE_LIVE_SLOW=1`, which waits 300 s), the seller cancels the rest (`CancelCharOrder`:
-  the escrow reads zero and the items return to the hangar), `GetCorporationOrders` of a character in an NPC corporation is empty, and a
-  corporation order is refused.
+  15), and the seller's modification inside the five-minute delay is refused with the sentence that carries the seconds left. The live
+  walk omits waiting for the full delay; `ModificationRulesTests` covers the deadline with controlled time. The seller cancels the rest
+  (`CancelCharOrder`: the escrow reads zero and the items return to the hangar), `GetCorporationOrders` of a character in an NPC corporation
+  is empty, and a corporation order is refused.
 - **Refusal wording.** A corporation-rights refusal reached the client as the raw code `CORPORATION_ACCESS_DENIED` (a `CustomInfo` with the
   code as its text). `MarketProxyService.Error` now sends the sentence "Your character does not hold the market rights of that corporation."
   for that code; the live walk asserts it.
-- **Not covered live** (the headless client cannot issue them, or the step is slow): expiry (the fake-clock tests cover it: ExpiryTests,
-  MarketCoherenceTests); a second character's view of a price change (the client cache is per run; M4 covers the push); a corporation
-  trade (no player corporation is created in the walk); price priority over several asks (one ask in the walk); the five-second duplicate
-  refusal over the live socket (covered by `MarketHostTests`).
-- Status: done (M9). The live walk ran green with `EVE_LIVE_SLOW=1` (the change after the delay, 5 minutes) before the refusal
-  sentence was asserted, and green without it after (the final file). Evidence: the run logs in the agent's scratchpad.
+- **Not covered live** (the headless client cannot issue them, or the step exceeds the walk time budget): the modification after its
+  five-minute deadline and expiry (controlled-clock coverage: `ModificationRulesTests`, `ExpiryTests`, `MarketCoherenceTests`); a second
+  character's view of a price change (the client cache is per run; M4 covers the push); a corporation trade (no player corporation is created
+  in the walk); price priority over several asks (one ask in the walk); the five-second duplicate refusal over the live socket (covered by
+  `MarketHostTests`).
+- Status: done (M9). The live walk covers placement, matching, both transaction views, the early-modification refusal, cancellation, escrow
+  return and corporation-order refusal. `ModificationRulesTests` covers the deadline with controlled time.
 
 ## Agents slice AG-1: LP wallet (LPSvc), the access rule and the bound agentMgr (2026-10-10)
 
@@ -5227,3 +5228,17 @@ Corporate contract creation, bidding, acceptance, completion, deletion, and corp
 ## Corporation audit role revocation (2026-10-20)
 
 `corpMgr.AuditMember` now derives Director/Auditor access from the persisted member masks and titles on every request. Its session role attributes are not sufficient to expose corporation audit events or role history after a role change. `CorporationProtocolTests.Corp_mgr_audit_member_rechecks_persisted_auditor_role_after_login` creates an Auditor session, confirms access, removes the persisted role, then confirms that the same session is denied before audit-event reads.
+
+
+## XMPP SASL stream restart
+
+After successful SASL authentication, the client opens a fresh XMPP stream on the same connection. `XmppListener` now resets its incremental XML parser at that authentication boundary, then handles the restarted stream header and bind features. This preserves the client-visible SASL, bind, and session sequence. `XmppTransportTests.Parser_restarts_the_stream_after_sasl_without_closing_the_socket` covers parser state; the live two-pilot XMPP walk passed on eve_p3.
+
+## Live space walk event streams
+
+The cargo and loot walks compare `DoDestinyUpdate` simulator actions separately from session and inventory notifications. Live Host delivery interleaves those two sources differently than the reference recording, while each source retains its own action order and payloads. The walk comparisons preserve and validate both source orders without asserting a cross-source total order. Focused cargo (67.12 s) and loot (45.90 s) runs passed on eve_p3.
+
+
+## Skill training timer notification order
+
+The scheduler settles one completed training queue line per online timer callback, then schedules the next due line after that line's notifications finish. Per-character settlement and announcement work is serialized because a focused accelerated live walk exposed interleaved level notifications when a timer and request path settled concurrently. Non-timer reads and mutations retain full overdue settlement, including offline catch-up. `TrainingTests.A_timer_settlement_finishes_only_one_overdue_queue_line` covers the boundary; the accelerated live queue walk is recorded in `docs/project/WALKS.md`.

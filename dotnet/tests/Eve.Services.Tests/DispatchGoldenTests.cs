@@ -576,7 +576,7 @@ public class DispatchGoldenTests
     }
 
     [Fact]
-    public async Task Structure_docking_queries_use_the_named_per_session_budget()
+    public async Task Character_structure_directory_reads_use_the_named_per_session_budget()
     {
         var capture = new Capture();
         var session = new ClientSession(capture) { SessionId = 911 };
@@ -585,8 +585,8 @@ public class DispatchGoldenTests
         registry.Register(service);
         var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 10 };
 
-        await dispatcher.DispatchAsync(CallRequestPacket("structureDirectory", "CheckMyDockingAccessToStructures"), session);
-        await dispatcher.DispatchAsync(CallRequestPacket("structureDirectory", "CheckMyDockingAccessToStructures"), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("structureDirectory", "GetMyCharacterStructures"), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("structureDirectory", "GetMyCharacterStructures"), session);
 
         Assert.Equal(1, service.Calls);
         Assert.Equal(2, capture.Sent.Count);
@@ -787,7 +787,7 @@ public class DispatchGoldenTests
 
         public string Name => name;
 
-        public bool HasMethod(string method) => method is "GetOrders" or "BuyMultipleItems" or "PlaceMultiSellOrder" or "GetHistoryForManyTypeIDs" or "GetAllianceMembers" or "GetRankedAlliances" or "GetOrganizationInfoForCharacters" or "SendBroadcast" or "Invite" or "MassInvite" or "ExecuteActions" or "GetNumberOfPotentialCEOs" or "GetFittings" or "GetAssetInventory" or "GetAssetInventoryForLocation" or "SearchAssets" or "GetAggressionSettingsForCorps" or "AuditMember" or "CheckMyDockingAccessToStructures" or "GetMyDockableStructures" or "InjectSkillIntoBrain" or "InjectSkillpoints" or "ExtractSkills" or "GetDiminishedSpFromInjectors" or "SplitSkillInjector" or "CombineSkillInjector" or "GetContractListForOwner" or "CharPayBill" or "GetAutomaticPaySettings" or "GetCorporationBills" or "GetCorporationBillsReceivable" or "PayCorporationBill" or "SendAutomaticPaySettings";
+        public bool HasMethod(string method) => method is "GetOrders" or "BuyMultipleItems" or "PlaceMultiSellOrder" or "GetHistoryForManyTypeIDs" or "GetAllianceMembers" or "GetRankedAlliances" or "GetOrganizationInfoForCharacters" or "SendBroadcast" or "Invite" or "MassInvite" or "ExecuteActions" or "GetNumberOfPotentialCEOs" or "GetFittings" or "GetAssetInventory" or "GetAssetInventoryForLocation" or "SearchAssets" or "GetAggressionSettingsForCorps" or "AuditMember" or "CheckMyDockingAccessToStructures" or "GetMyDockableStructures" or "GetMyCharacterStructures" or "InjectSkillIntoBrain" or "InjectSkillpoints" or "ExtractSkills" or "GetDiminishedSpFromInjectors" or "SplitSkillInjector" or "CombineSkillInjector" or "GetContractListForOwner" or "CharPayBill" or "GetAutomaticPaySettings" or "GetCorporationBills" or "GetCorporationBillsReceivable" or "PayCorporationBill" or "SendAutomaticPaySettings";
 
         public ValueTask<PyValue> CallAsync(ServiceCall call)
         {

@@ -305,7 +305,7 @@ public sealed class PacketDispatcher
             return 10;
         if (service == "allianceRegistry" && method is "GetEveOwners" or "GetRankedAlliances" or "GetAllianceMembers" or "GetMembers" or "GetEmploymentRecord" or "GetAllianceMembersOlderThan" or "GetAllianceApplications" or "GetAllianceContacts" or "GetContactList" or "GetBulletins" or "GetBulletinEntries")
             return 10;
-        if (service == "charMgr" && method is "GetRecentShipKillsAndLosses" or "GetOrganizationInfoForCharacters" or "GetContactList" or "AddOwnerNote" or "EditOwnerNote" or "RemoveOwnerNote" or "SetNote" or "AddContact" or "EditContact" or "DeleteContacts" or "BlockOwners" or "UnblockOwners" or "EditContactsRelationshipID" or "AssignLabels" or "RemoveLabels" or "CreateLabel" or "DeleteLabel" or "EditLabel" or "List" or "ListStations" or "ListStationItems" or "ListIncludingContainers" or "GetAssetWorth")
+        if (service == "charMgr" && method is "GetRecentShipKillsAndLosses" or "GetOrganizationInfoForCharacters" or "GetContactList" or "GetCharacterSettings" or "SaveCharacterSetting" or "DeleteCharacterSetting" or "GetLabels" or "GetOwnerNoteLabels" or "GetOwnerNote" or "GetNote" or "LogSettings" or "AddOwnerNote" or "EditOwnerNote" or "RemoveOwnerNote" or "SetNote" or "AddContact" or "EditContact" or "DeleteContacts" or "BlockOwners" or "UnblockOwners" or "EditContactsRelationshipID" or "AssignLabels" or "RemoveLabels" or "CreateLabel" or "DeleteLabel" or "EditLabel" or "List" or "ListStations" or "ListStationItems" or "ListIncludingContainers" or "GetAssetWorth")
             return 10;
         if (service == "fleetObject" && method is "SendBroadcast" or "Invite" or "MassInvite")
             return 10;

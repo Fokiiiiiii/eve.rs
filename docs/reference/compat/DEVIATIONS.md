@@ -2722,6 +2722,10 @@ Client calls are in eve-logic `eve/client/script/ui/services/eveCalendarsvc.py`;
 - **Id width.** Structure, owner and moon ids are sent as `PyLong` when they exceed the 32-bit range (`PyInt` is 32-bit on the wire).
 - **Hacking stat re-check (ST-10).** Re-read on 2026-10-11: the wiki Hacking page gives no numeric firewall, anti-virus, restoration or core values in text; its difficulty table and stat icons are images without numbers, and the board size is not stated. The wiki's numbers used are the virus stats (40/20, T2 60/30), the restoration heal 20, suppressor 15 (floor 10), self repair 5-10, kernel rot 50%, secondary vector 20, shield 2 hits. The defensive subsystem stats (60/10, 20/40, 30/10, 30/10) and the content counts remain eve.rs decisions; the core is EveJS `buildSyntheticBoard` (10 x difficulty). Status: decided, MITM to verify.
 
+## Structure RPC batch bounds
+
+The Host refuses structure cargo, delivery, profile-change, and reinforcement identifier lists above 500 raw entries with `STRUCTURE_BULK_LIMIT_EXCEEDED` before deduplication or callback work. This follows the client batch limits used by related structure-directory operations and prevents a large framed list from expanding into avoidable per-request work.
+
 ## Structure docking (ST-1 c)
 
 - **Docks take a structure as a station does, with two refusals the station does not have.** A structure in a state of `STRUCTURE_DISABLED_STATES` (EVE.js `structureConstants.js` 46-55: unknown, unanchored, anchoring, onlining, hull reinforce and vulnerable, anchor and deploy vulnerable) refuses `STRUCTURE_DISABLED`; a hull the structure's docks do not take refuses `SHIP_TOO_LARGE`. The size classes are the undock-point categories of `locators::category_of` (V24.01 client `ballparkCommon/docking.py`).

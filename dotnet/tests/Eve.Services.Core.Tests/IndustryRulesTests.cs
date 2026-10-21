@@ -51,6 +51,17 @@ public sealed class IndustryRulesTests
         Assert.Equal(new InstallCostParts(expectedCost, expectedTax, expectedScc, expectedSecurityTax), parts);
     }
 
+    [Fact]
+    public void Alpha_clone_industry_tax_adds_quarter_percent_of_unrounded_base_cost()
+    {
+        var omega = IndustryRules.CostParts(100_002.5, 0.2, 0.1, false, IndustryRules.Manufacturing);
+        var alpha = IndustryRules.CostParts(100_002.5, 0.2, 0.1, false, IndustryRules.Manufacturing, alphaClone: true);
+        Assert.Equal(20001, omega.Cost);
+        Assert.Equal(20251, alpha.Cost);
+        Assert.Equal(250, alpha.Cost - omega.Cost);
+        Assert.Equal(omega.Tax, alpha.Tax);
+    }
+
     [Theory]
     [InlineData(2.5, 3)]
     [InlineData(100.5, 101)]

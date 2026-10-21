@@ -40,7 +40,8 @@ public sealed partial class PersistenceStructureDirectoryReadModel(
     Func<long, CancellationToken, Task<Eve.Relations.Affiliation>> affiliationOf,
     Eve.Sde.SdeReader sde,
     Func<long, string, CancellationToken, Task>? setDescriptionAsync,
-    Func<long, CancellationToken, ValueTask<bool>>? cynoJammedAsync = null) :
+    Func<long, CancellationToken, ValueTask<bool>>? cynoJammedAsync = null,
+    Func<long, long, CancellationToken, Task<bool>>? stationManagerOfAsync = null) :
     Eve.Services.Core.IStructureDirectoryReadCallbacks,
     Eve.Services.Core.IStructureSettingsReadCallbacks
 {
@@ -519,19 +520,18 @@ public async ValueTask<Eve.Services.Core.PersistedStructureInfo?> GetStructureIn
             return false;
         var characterId = call.Session?.CharacterId ?? 0;
         var corporationId = call.Session?.GetInt("corpid") ?? 0;
-        var corporationRoles = call.Session?.GetInt("corprole") ?? 0;
         var structureId = call.Arg(0) switch
         {
             PyInt id when id.Value > 0 => id.Value,
             PyLong id when id.Value > 0 => id.Value,
             _ => 0,
         };
-        if (characterId <= 0 || corporationId <= 0 || structureId <= 0 ||
-            (corporationRoles & 2048) != 2048)
+        if (characterId <= 0 || corporationId <= 0 || structureId <= 0 || stationManagerOfAsync is null)
             return false;
 
         var affiliation = await affiliationOf(characterId, call.Cancellation);
-        if (affiliation.Corporation != corporationId)
+        if (affiliation.Corporation != corporationId ||
+            !await stationManagerOfAsync(characterId, corporationId, call.Cancellation))
             return false;
 
         var state = await readTable("structures", call.Cancellation);

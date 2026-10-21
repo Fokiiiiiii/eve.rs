@@ -1905,7 +1905,9 @@ Source: `work/market-design.md` 4.3 M8. Q14 (the duplicate window) was decided a
   15), the seller's modification inside the five-minute delay is refused with the sentence that carries the seconds left, the same
   modification after the delay succeeds (run with `EVE_LIVE_SLOW=1`, which waits 300 s), the seller cancels the rest (`CancelCharOrder`:
   the escrow reads zero and the items return to the hangar), `GetCorporationOrders` of a character in an NPC corporation is empty, and a
-  corporation order is refused.
+  corporation order is refused. The walk also compares both characters' wallet balance deltas with their journal rows: the buyer's
+  transfer debit, the seller's sale credit and tax, and the seller's broker and SCC fees. The added journal assertions await another
+  running-host execution.
 - **Refusal wording.** A corporation-rights refusal reached the client as the raw code `CORPORATION_ACCESS_DENIED` (a `CustomInfo` with the
   code as its text). `MarketProxyService.Error` now sends the sentence "Your character does not hold the market rights of that corporation."
   for that code; the live walk asserts it.
@@ -5294,4 +5296,17 @@ Alliance join, leave, and withdrawal mutations preserve the session Director-rol
 
 - **Alpha clone cost.** `OmegaLicenses` resolves the authenticated session account at install time. Alpha jobs add the client's additive `CLONE_STATE_INDUSTRY_TAX` of 1.0025 to unrounded base job cost, alongside the existing cost modifiers, with the final cost rounded once. The client source is `eve/common/script/util/industryCommon.py` (`GetCharacterModifiers`) and `clonegrade/const.py`; EveJS 261018.1 confirms the cost placement in `server/src/services/industry/industryParityHelpers.js` (`resolveIndustryJobCost`). Tests cover formula, persisted job cost and wallet debit.
 - **Faction modifier.** V24.01 applies a facility faction modifier only when its value differs from 1.0 (`industryCommon.py`). EveJS 261018.1 `server/src/services/industry/industryStaticData.js` emits 1.0 for both NPC and structure facility data. eve.rs keeps that default; no alternate value is inferred.
-- **Verification scope.** Core formula tests passed (50). The PostgreSQL install regression and live Alpha-account walk are recorded after execution; the existing live industry walks cover the six listed industry activity and delivery paths. Graphical-client acceptance remains open.
+- **Verification scope.** Core industry tests passed (51), including the install-session clone-grade assertion. The PostgreSQL install regression and live Alpha-account walk are recorded after execution; the existing live industry walks cover the six listed industry activity and delivery paths. Graphical-client acceptance remains open.
+
+## Structure description role revocation (2026-10-21)
+
+`structureDirectory.SetStructureDescription` now recalculates Station Manager access from persisted corporation membership and titles for each write. The V24.01 request and success wire shape are unchanged; a role removed after login now receives the existing `CrpAccessDenied` refusal. `HostServerTests.Structure_description_rechecks_persisted_station_manager_role_after_login` verifies the refusal and that no write callback runs.
+
+
+## Fleet invitation fanout bounds (2026-10-21)
+
+`fleetObject.Invite` and `MassInvite` each consume 10 units from the shared per-session rolling-minute RPC budget. `MassInvite` now deduplicates positive character IDs within one request before invitation writes and notifications. The V24.01 `fleetSvc.MassInvite` callsite filters the caller but retains other repeated IDs, and EveJS 261018.1 loops over the supplied IDs; this change prevents one RPC from repeating invitation persistence and `OnFleetInvite` delivery for the same target. Unique targets retain the existing invitation response and notification shapes. `SpaceServiceTests.Fleet_mass_invite_move_reconnect_and_finishmove_match_client_events` and `DispatchGoldenTests.Fleet_invites_and_broadcasts_use_a_named_per_session_budget` cover the duplicate and budget behavior.
+
+## Organization mail authorization (2026-10-21)
+
+EveJS 261018.1 checks corporation and alliance mail against the sender's current session organization fields and Chat Manager role. eve.rs now resolves current corporation membership and effective roles from the corporation store on each `mailMgr.SendMail` request; corporate mail is limited to the sender's current non-NPC corporation, and alliance mail also requires the persisted Chat Manager role. The client-visible refusal and success response shapes stay the same. `HostServerTests.Mail_organization_recipient_requires_own_corporation_or_chat_manager` covers recipient scope and role policy.

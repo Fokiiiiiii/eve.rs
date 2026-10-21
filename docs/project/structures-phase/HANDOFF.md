@@ -28,6 +28,8 @@ Current source priority: gameplay rules and numbers use CCP official documentati
 ST-5 core control/boarding/deliveries is implemented and verified by PG/Rust regression tests (protocol 65); retained-hull destruction now persists a replacement capsule and supports failed-transaction/release retries. Native graphical acceptance remains open. ST-6a rig rules/owner notifications and ST-6b moon ore fields/ledger/decay are now wired and regression-tested. Next: ST-8a/8b structure modules and doomsdays, ST-9 entosis
 (depends on a Sovereignty Hub ball). Order and dependencies: `plan.md` section 5.
 
+Structure description writes now recalculate the current Station Manager role from persisted corporation membership and titles; a cached session bit cannot authorize after role removal. The Host regression verifies the named refusal and no persistence write.
+
 ## ST-20 live check (2026-10-16)
 
 Live on eve_p4 (port 26103): the default live run with `EVE_LIVE_SLOW=1` (now including `tests/test_structures.py`, which seeds its Astrahus) exits 0 with one skip, the skill-speed test; that test passes alone with the host at `EVE_SKILL_TRAINING_SPEED=60000`. Full `Eve.Host.Tests`: 373 of 373, before and after the change below. New live scenarios: Anchor refusals by name (`DropNeedsPlayerCorp`, `CrpAccessDenied`), `structureControl` (None for an uncontrolled structure, the docked notice, `TargetingAttemptCancelled`), `hackingMgr` with no attempt, `structureDeliveries.Deliver` from space, and `moonExtractions` (`MoonminingEventTooShort`, `StructureDefenseDenied`). The server change: `StructureControlBackend` refuses in the reference's order and labels. Still not live: a successful take, board, eject, delivery, moon start and its answer shape. See `handoff-ST-20.md`.

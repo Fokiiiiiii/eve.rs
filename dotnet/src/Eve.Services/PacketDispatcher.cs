@@ -267,7 +267,14 @@ public sealed class PacketDispatcher
     {
         if (method == "GetAllInfo")
             return 10;
-        if (service == "marketProxy" && method is "GetOrders" or "GetStationAsks" or "GetSystemAsks" or "GetRegionBest" or "GetMarketOrderHistory" or "BuyMultipleItems" or "PlaceMultiSellOrder" or "GetHistoryForManyTypeIDs")
+        if (service == "marketProxy" && method is
+            "GetOrders" or "GetStationAsks" or "GetSystemAsks" or "GetRegionBest" or
+            "GetMarketOrderHistory" or "GetOldPriceHistory" or "GetNewPriceHistory" or
+            "GetCharOrders" or "GetCorporationOrders" or "GetCharEscrow" or
+            "GetPlexOrders" or "GetPlexBest" or "GetPlexHistory" or
+            "GetPlexOldPriceHistory" or "GetPlexNewPriceHistory" or "CharGetTransactions" or
+            "CorpGetTransactions" or "BuyMultipleItems" or "PlaceMultiSellOrder" or
+            "GetHistoryForManyTypeIDs")
             return 10;
         if (service == "mailMgr" && method is "SyncMail" or "GetMailHeaders" or "GetBody" or "MarkAsRead" or "SendMail" or "PokePlayerAboutChatMsgGm")
             return 10;

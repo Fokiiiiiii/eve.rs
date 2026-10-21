@@ -349,6 +349,44 @@ public class DispatchGoldenTests
         Assert.Equal(7, CommandOf(capture.Sent[3]));
     }
 
+[Fact]
+    public async Task Market_owner_history_reads_have_a_named_per_session_budget()
+    {
+        var captureRegistry = new ServiceRegistry();
+        var service = new ExpensiveService();
+        captureRegistry.Register(service);
+        var now = FixedNowMs;
+        var dispatcher = new PacketDispatcher(captureRegistry, () => now) { MaxExpensiveRpcUnitsPerMinute = 10 };
+        var methods = new[]
+        {
+            "GetCharOrders",
+            "GetCorporationOrders",
+            "GetCharEscrow",
+            "GetMarketOrderHistory",
+            "GetOldPriceHistory",
+            "GetNewPriceHistory",
+            "GetPlexOrders",
+            "GetPlexBest",
+            "GetPlexHistory",
+            "GetPlexOldPriceHistory",
+            "GetPlexNewPriceHistory",
+            "CharGetTransactions",
+            "CorpGetTransactions",
+        };
+
+        for (var index = 0; index < methods.Length; index++)
+        {
+            var capture = new Capture();
+            var session = new ClientSession(capture) { SessionId = 920 + index };
+            await dispatcher.DispatchAsync(CallRequestPacket("marketProxy", methods[index]), session);
+            await dispatcher.DispatchAsync(CallRequestPacket("marketProxy", methods[index]), session);
+
+            Assert.Equal(index + 1, service.Calls);
+            Assert.Equal(ErrorResponseCommand, CommandOf(capture.Sent[1]));
+            Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[1])));
+        }
+    }
+
     [Fact]
     public async Task Corporation_potential_CEO_member_enumeration_uses_the_named_per_session_budget()
     {

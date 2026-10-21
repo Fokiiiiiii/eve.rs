@@ -82,6 +82,10 @@ The Host rejects repeated private-room invitations from one character within one
 
 `mailingListsMgr` operations consume the weighted per-session RPC budget. Member-role changes and entity-access updates refuse raw collections above 1,000 entries with `MAILING_LIST_BULK_LIMIT_EXCEEDED` before forwarding to Host persistence. Collections within the limit retain the existing owner/operator checks and notification flow. `MailingListServiceTests.Mailing_list_bulk_mutations_reject_oversized_raw_collections_before_host_callbacks` and `DispatchGoldenTests.Mailing_list_work_has_a_named_per_session_budget` cover the refusals. Graphical-client acceptance remains open.
 
+## Market read RPC budget (2026-10-21)
+
+Market order-book, price-history, owner-order, escrow, transaction, and PLEX reads consume 10 units from the configured per-session rolling-minute budget. EveJS 261018.1 does not throttle these routes. The normal result and state behavior remains unchanged within the configured allowance; excessive calls receive `SessionRpcBudgetExceeded`. `DispatchGoldenTests.Market_owner_history_reads_have_a_named_per_session_budget` covers the owner-history and transaction routes, and the existing market budget test covers order-book and multi-type history routes.
+
 ## Fleet broadcast RPC budget (2026-10-20)
 
 `fleetObject.SendBroadcast` fans out to current fleet members and now consumes 10 units from the shared per-session rolling-minute RPC budget. Beyond the configured allowance, the dispatcher returns `SessionRpcBudgetExceeded`; calls within the allowance retain the existing notification shape and delivery rules. `DispatchGoldenTests.Expensive_market_calls_have_a_named_per_session_budget` verifies that an over-budget broadcast is refused.

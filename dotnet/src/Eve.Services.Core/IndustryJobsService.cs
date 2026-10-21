@@ -40,7 +40,8 @@ public sealed record IndustryJobInstallSubmission(
     int? OptionalTypeId,
     int? OptionalTypeId2,
     IndustryJobWallet Wallet,
-    IReadOnlyList<int>? MaterialTypeIds = null);
+    IReadOnlyList<int>? MaterialTypeIds = null,
+    bool IsAlphaClone = false);
 
 /// <summary>A retry key scoped to the authenticated character, RPC and Macho call id.</summary>
 public sealed record IndustryJobOperationContext(IndustryJobActor Actor, string OperationId);
@@ -106,6 +107,7 @@ public sealed class IndustryJobsService : IService
     private readonly Func<ServiceCall, JsonObject, bool>? canViewStarbaseJob;
     private readonly Func<long, bool>? isStarbaseFacilityOnline;
     private readonly Func<long, long, long, long>? resolveBlueprintLocationFlagID;
+    private readonly Func<PyValue?, bool>? isAlphaClone;
 
 private readonly IIndustryJobOperations operations;
 
@@ -115,7 +117,8 @@ private readonly IIndustryJobOperations operations;
         Func<long>? currentFileTime = null,
         Func<ServiceCall, JsonObject, bool>? canViewStarbaseJob = null,
         Func<long, bool>? isStarbaseFacilityOnline = null,
-        Func<long, long, long, long>? resolveBlueprintLocationFlagID = null)
+        Func<long, long, long, long>? resolveBlueprintLocationFlagID = null,
+        Func<PyValue?, bool>? isAlphaClone = null)
     {
         ArgumentNullException.ThrowIfNull(readJobs);
         ArgumentNullException.ThrowIfNull(operations);
@@ -125,6 +128,7 @@ private readonly IIndustryJobOperations operations;
         this.canViewStarbaseJob = canViewStarbaseJob;
         this.isStarbaseFacilityOnline = isStarbaseFacilityOnline;
         this.resolveBlueprintLocationFlagID = resolveBlueprintLocationFlagID;
+        this.isAlphaClone = isAlphaClone;
     }
 
     public string Name => "industryManager";
@@ -185,7 +189,8 @@ private async ValueTask<PyValue> MutateAsync(ServiceCall call)
                 {
                     if (call.Args.Count != 1) throw InvalidIndustryJob();
                     var jobId = await operations.InstallJobAsync(
-                        new IndustryJobInstallRequest(context, InstallSubmission(call.Arg(0), context.Actor)),
+                        new IndustryJobInstallRequest(context, InstallSubmission(call.Arg(0), context.Actor) with
+                        { IsAlphaClone = isAlphaClone?.Invoke(call.Session.Get("userid")) ?? false }),
                         call.Cancellation);
                     if (jobId <= 0) throw new InvalidOperationException("Industry install returned no committed job ID.");
                     return new PyInt(jobId);

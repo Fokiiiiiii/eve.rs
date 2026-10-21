@@ -286,7 +286,6 @@ def test_the_facility_selector_sees_the_station_its_activities_its_hangar_and_it
         assert STATION in ids, ids
 
 CORPORATION_HANGAR_1 = 115  # flagCorpSAG1 (inventorycommon/const.py); the deliveries are flag 62
-CORPORATION_HANGAR_3 = 117
 FACTORY_MANAGER = 1024  # the client's ROLE_FACTORY_MANAGER
 MANUFACTURING_ROLE = 1 << 50  # the client's ROLE_FACTORY_MANUFACTURING
 WALLET_DIVISION_1_TAKE = 1 << 27  # the Account Take 1 role (CorporationRoles.WalletTakeRole(1000))
@@ -296,7 +295,7 @@ def reenter(who, character: int) -> None:
     who.call("userSvc", "UserLogOffCharacter")
     assert base.attempt(who, "charUnboundMgr", "SelectCharacterID", character, None, False) == ("ok", None)
 
-def test_a_corporation_job_is_paid_from_its_division_announced_to_its_managers_and_delivered_to_the_chosen_hangar():
+def test_a_corporation_job_without_a_selected_output_uses_corp_deliveries():
     race = HEALTH["races"][0]
     run = uuid.uuid4().hex[:8]
     system = station_system()
@@ -315,8 +314,9 @@ def test_a_corporation_job_is_paid_from_its_division_announced_to_its_managers_a
 
         blueprint = dbseed.new_item(BLUEPRINT, owner=corporation, location=STATION, flag=CORPORATION_HANGAR_1, singleton=True, quantity=-1)
         dbseed.new_item(MATERIAL, owner=corporation, location=STATION, flag=CORPORATION_HANGAR_1, quantity=86)
-        dump = job_dump(director, blueprint, MANUFACTURING, system, corporation=corporation, flag=CORPORATION_HANGAR_1,
-                        output_flag=CORPORATION_HANGAR_3)
+        dump = job_dump(director, blueprint, MANUFACTURING, system, corporation=corporation, flag=CORPORATION_HANGAR_1)
+        # With no output choice, the client's MatchLocation default is Corp Deliveries (flag 62).
+        dump.pop("outputLocation")
         job = number(who.call("industryManager", "InstallJob", dump))
 
         assert job_status(job) == 1
@@ -332,5 +332,5 @@ def test_a_corporation_job_is_paid_from_its_division_announced_to_its_managers_a
         ready_now(job)
         who.call("industryManager", "CompleteJob", job, system)
         product_flags = dbseed.sql(f"select flag from {dbseed.schema('INVENTORY')}.items where owner_id = {corporation} and type_id = {PRODUCT}")
-        assert product_flags.split() == [str(CORPORATION_HANGAR_3)], product_flags
+        assert product_flags.split() == ["62"], product_flags
 

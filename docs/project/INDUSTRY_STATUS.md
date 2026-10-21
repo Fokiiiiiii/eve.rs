@@ -221,7 +221,7 @@ Audit of job time, cost and materials against `job.py`, `activities/*.py`, `indu
 - Industry and Advanced Industry multiply (PostPercent), not sum.
 - A copy's materials use runs times licensed runs.
 - The blueprint `jobCostMultiplier` (dogma 1954) applies to the cost.
-Not done: alpha-clone additive tax, faction cost modifier. Corp Deliveries flag 62 and the corporation hangar divisions 115 to 121 were re-checked against `inventorycommon/const.py`.
+Alpha-clone additive cost is implemented in slice 10. The facility faction multiplier remains 1.0 because V24.01/EveJS facility payloads provide no non-default value in this flow. Corp Deliveries flag 62 and the corporation hangar divisions 115 to 121 were re-checked against `inventorycommon/const.py`.
 Tests: `IndustryRulesTests` 35 of 35; `dotnet test tests/Eve.Host.Tests --filter Industry` 27 of 27 on eve_p2.
 
 ## Slice 8: research wrap-up, closed prompts, MITM walk (2026-10-17)
@@ -243,3 +243,10 @@ Tests: `IndustryRulesTests` 35 of 35; `dotnet test tests/Eve.Host.Tests --filter
 - **Remaining after slice 8.** A MITM capture of the research walk on the real graphical client; the locator, LP store and decline dialogues on EVE.js (their walks are eve.rs-only so far); the OnDatacoreBought and OnItemChange map decisions in DEVIATIONS stay open to a real-game capture.
 - **Test counts.** Core: `dotnet test dotnet/tests/Eve.Services.Core.Tests --filter AgentResearch`, 12 passed, 0 failed (eve_p4).
   Host builds (`dotnet build dotnet/src/Eve.Host`, 0 warnings, 0 errors).
+
+
+## Slice 10: alpha-clone industry cost (2026-10-21)
+
+- The authenticated account subscription resolves clone grade through the existing `OmegaLicenses` authority at `industryManager.InstallJob`; no caller payload selects the grade. Alpha jobs add `base_cost * (1.0025 - 1)` to the rounded cost component, matching V24.01 `eve/common/script/util/industryCommon.py` (`GetCharacterModifiers`), `clonegrade/const.py` (`CLONE_STATE_INDUSTRY_TAX`) and EveJS 261018.1 `industryParityHelpers.js` (`resolveIndustryJobCost`). The additive amount uses the unrounded base job cost and does not alter facility tax, SCC surcharge or security tax.
+- The client facility's faction multiplier is applied by `industryCommon.py` only when `globalModifiers['faction'] != 1.0`. EveJS 261018.1 `industryStaticData.js` sets it to 1.0 for NPC and structure facilities. eve.rs therefore retains the sourced default of 1.0; this task provides no authoritative non-default faction value.
+- Regression coverage: `IndustryRulesTests.Alpha_clone_industry_tax_adds_quarter_percent_of_unrounded_base_cost` checks the formula; `IndustryJobPersistenceTests.Alpha_clone_install_applies_the_client_clone_cost_modifier` checks the persisted job cost and wallet debit. The current walk covers manufacturing, research, copying, invention, facility selection and corporation delivery. Its corporation job case omits the selected output and asserts the completed product is in Corp Deliveries (flag 62); the previously recorded live walk selected a hangar division. It does not yet walk an Alpha account through installation.

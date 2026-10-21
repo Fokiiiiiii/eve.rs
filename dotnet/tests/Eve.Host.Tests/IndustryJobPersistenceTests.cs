@@ -56,6 +56,24 @@ public sealed class IndustryJobPersistenceTests
     }
 
     [Fact]
+    public async Task Alpha_clone_install_applies_the_client_clone_cost_modifier()
+    {
+        await using var rig = await IndustryRig.CreateAsync();
+        var owner = await rig.Owner();
+        var blueprint = await rig.Give(owner, Blueprint, 1, blueprint: true);
+        await rig.Give(owner, Material, 86);
+        var before = await rig.Balance(owner);
+
+        var jobId = await rig.Install(owner, blueprint, IndustryRules.Manufacturing, alphaClone: true);
+
+        var high = await rig.HighSecurity();
+        var expected = IndustryRules.Total(IndustryRules.CostParts(86 * 10.0, 0, 0.10, high,
+            IndustryRules.Manufacturing, alphaClone: true));
+        Assert.Equal(expected, (await rig.JobRow(jobId)).Cost);
+        Assert.Equal(before - expected, await rig.Balance(owner));
+    }
+
+    [Fact]
     public async Task Material_research_raises_material_efficiency_and_time_research_adds_two_per_run()
     {
         await using var rig = await IndustryRig.CreateAsync();
@@ -318,13 +336,13 @@ internal sealed class IndustryRig : IAsyncDisposable
     }
 
     public async Task<long> Install(long owner, long blueprintId, int activityId, int blueprintType = BlueprintType, bool copy = false,
-        int runs = 1, int licensedRuns = 1, int? productTypeId = null, int? optionalTypeId = null)
+        int runs = 1, int licensedRuns = 1, int? productTypeId = null, int? optionalTypeId = null, bool alphaClone = false)
     {
         var job = new IndustryJobInstallSubmission(
             activityId, blueprintId, blueprintType, copy, _station.Id, ItemFlags.Hangar,
             _station.Id, owner, _station.SolarSystemId, _station.Id,
             new IndustryJobLocation(_station.Id, ItemFlags.Hangar), new IndustryJobLocation(_station.Id, ItemFlags.Hangar),
-            runs, licensedRuns, productTypeId, optionalTypeId, null, new IndustryJobWallet(owner, 1000));
+            runs, licensedRuns, productTypeId, optionalTypeId, null, new IndustryJobWallet(owner, 1000), IsAlphaClone: alphaClone);
         var request = new IndustryJobInstallRequest(
             new IndustryJobOperationContext(new IndustryJobActor(owner, 0, 0, 1000), "op-" + Guid.NewGuid().ToString("N")), job);
         return await _operations.InstallJobAsync(request, default);

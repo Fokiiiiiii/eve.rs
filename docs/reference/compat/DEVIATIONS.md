@@ -4067,7 +4067,7 @@ Full status: `docs/project/INDUSTRY_STATUS.md`. Decisions recorded here:
 - **Cost part.** The client multiplies the unrounded job cost by the cost modifiers (system index, facility bonuses, blueprint `jobCostMultiplier` 1954, `BLUEPRINT_MODIFIERS`) and rounds once (`Job._get_cost`). The base cost is rounded first only for the tax, SCC and security shares (`base_cost`). `IndustryRules.CostParts` now takes the unrounded job cost.
 - **Industry skills.** Industry (440) and Advanced Industry (1961) are separate PostPercent modifiers of the time attribute (client attribute 219), so they multiply; they were summed.
 - **Copying materials.** A copy's material runs are runs times licensed runs (`copying.py` `job_material_runs`); the per-run floor stays the runs.
-- Not done: the alpha-clone additive industry tax (`CLONE_STATE_INDUSTRY_TAX`) and the faction cost modifier (`globalModifiers['faction']`) are not modelled. Tests: `IndustryRulesTests` 35 of 35 (Eve.Services.Core.Tests); `dotnet test tests/Eve.Host.Tests --filter Industry` 27 of 27 on eve_p2.
+- Alpha-clone additive industry cost is implemented in slice I7. The facility faction multiplier remains 1.0, as supplied by EveJS 261018.1 facility data. Tests: `IndustryRulesTests` 35 of 35 (Eve.Services.Core.Tests); `dotnet test tests/Eve.Host.Tests --filter Industry` 27 of 27 on eve_p2.
 
 ## Planetary interaction (PI)
 
@@ -5279,3 +5279,10 @@ Corporate insurance reads, purchases, and cancellation preserve the client Accou
 ## Faction-warfare alliance role revocation (2026-10-20)
 
 Alliance join, leave, and withdrawal mutations preserve the session Director-role check and also verify that the actor remains a Director in the persisted active executor corporation for the session alliance. A demoted Director session cannot change alliance faction-warfare state. `FacWarMgrRpcTests.Alliance_leave_refuses_a_stale_session_director_role` passed on eve_p2 and checks refusal before the alliance status can change; the Host project built with zero warnings or errors.
+
+
+## Industry slice I7: alpha clone cost and facility faction default (2026-10-21)
+
+- **Alpha clone cost.** `OmegaLicenses` resolves the authenticated session account at install time. Alpha jobs add the client's additive `CLONE_STATE_INDUSTRY_TAX` of 1.0025 to unrounded base job cost, alongside the existing cost modifiers, with the final cost rounded once. The client source is `eve/common/script/util/industryCommon.py` (`GetCharacterModifiers`) and `clonegrade/const.py`; EveJS 261018.1 confirms the cost placement in `server/src/services/industry/industryParityHelpers.js` (`resolveIndustryJobCost`). Tests cover formula, persisted job cost and wallet debit.
+- **Faction modifier.** V24.01 applies a facility faction modifier only when its value differs from 1.0 (`industryCommon.py`). EveJS 261018.1 `server/src/services/industry/industryStaticData.js` emits 1.0 for both NPC and structure facility data. eve.rs keeps that default; no alternate value is inferred.
+- **Verification scope.** Core formula tests passed (50). The PostgreSQL install regression and live Alpha-account walk are recorded after execution; the existing live industry walks cover the six listed industry activity and delivery paths. Graphical-client acceptance remains open.

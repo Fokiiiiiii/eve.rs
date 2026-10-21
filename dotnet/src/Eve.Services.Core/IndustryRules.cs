@@ -47,6 +47,7 @@ public static class IndustryRules
     public const double SccSurchargeRate = 0.04;
     public const double SccResearchDiscount = 0.5;
     public const double IndustrySecurityTaxRate = 0.05;
+    public const double AlphaCloneIndustryCostMultiplier = 1.0025;
     public const int MaxMaterialEfficiency = 10;
     public const int MaxTimeEfficiency = 20;
     public const int StepTimeEfficiency = 2;
@@ -114,14 +115,16 @@ public static class IndustryRules
     /// research) and high-security industry tax are shares of the job cost rounded first (<c>base_cost</c>).
     /// </summary>
     public static InstallCostParts CostParts(
-        double jobCost, double costMultiplier, double facilityTax, bool highSecurity, int activityId, double sccModifier = 1.0)
+        double jobCost, double costMultiplier, double facilityTax, bool highSecurity, int activityId, double sccModifier = 1.0,
+        bool alphaClone = false)
     {
         var sccRate = Math.Max(0, SccSurchargeRate * sccModifier);
         if (activityId is ResearchTime or ResearchMaterial)
             sccRate *= SccResearchDiscount;
         var baseCost = Round(jobCost);
         return new InstallCostParts(
-            Cost: Round(jobCost * Math.Max(0, costMultiplier)),
+            Cost: Round(jobCost * Math.Max(0, costMultiplier) +
+                (alphaClone ? jobCost * (AlphaCloneIndustryCostMultiplier - 1.0) : 0.0)),
             Tax: Round(baseCost * Math.Max(0, facilityTax)),
             Scc: Round(baseCost * sccRate),
             SecurityTax: highSecurity ? Round(baseCost * IndustrySecurityTaxRate) : 0);

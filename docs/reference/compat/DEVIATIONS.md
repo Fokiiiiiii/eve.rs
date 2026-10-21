@@ -5408,3 +5408,8 @@ The staff-only `mailMgr.PokePlayerAboutChatMsgGm` RPC caps its requested channel
 ## Fleet composition read budget (2026-10-21)
 
 `fleetObject.GetInitState`, `GetFleetComposition`, and `GetJoinRequests` consume 10 units from the per-session expensive-RPC budget. Initialization and composition may resolve skill or character details for the fleet's bounded member list; join requests materialize the current request set. Calls above the session allowance receive `SessionRpcBudgetExceeded`; allowed response shapes are unchanged. `DispatchGoldenTests.Fleet_member_composition_reads_have_a_named_per_session_budget` covers initialization and composition.
+
+
+## Corporation medal visibility status scope (2026-10-21)
+
+`corporationSvc.SetMedalStatus` keeps one visibility status per corporation medal definition. V24.01 sends a mapping keyed by `medalID`; the EveJS 261018.1 reference updates `runtime.medals.medals[medalID].status`, and `GetMedalsReceived` uses that definition status for each award and cross-character visibility. The Host requires persisted Director or Personnel Manager authority before the write. This confirms the shared field matches the client contract; there is no per-award status mutation in the V24.01 RPC shape. `CorporationProtocolTests.Corporation_medal_rpcs_enforce_manager_roles_and_member_recipients` covers role denial, private-status reads, and manager writes.

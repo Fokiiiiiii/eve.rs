@@ -5289,7 +5289,7 @@ Alliance join, leave, and withdrawal mutations preserve the session Director-rol
 
 - **Alpha clone cost.** `OmegaLicenses` resolves the authenticated session account at install time. Alpha jobs add the client's additive `CLONE_STATE_INDUSTRY_TAX` of 1.0025 to unrounded base job cost, alongside the existing cost modifiers, with the final cost rounded once. The client source is `eve/common/script/util/industryCommon.py` (`GetCharacterModifiers`) and `clonegrade/const.py`; EveJS 261018.1 confirms the cost placement in `server/src/services/industry/industryParityHelpers.js` (`resolveIndustryJobCost`). Tests cover formula, persisted job cost and wallet debit.
 - **Faction modifier.** V24.01 applies a facility faction modifier only when its value differs from 1.0 (`industryCommon.py`). EveJS 261018.1 `server/src/services/industry/industryStaticData.js` emits 1.0 for both NPC and structure facility data. eve.rs keeps that default; no alternate value is inferred.
-- **Verification scope.** Core formula tests passed (50). The PostgreSQL install regression and live Alpha-account walk remain open; the existing live industry walks cover the six listed industry activity and delivery paths. Graphical-client acceptance remains open.
+- **Verification scope.** Core industry tests passed (51), including the install-session clone-grade assertion. `Eve.Host` builds with zero warnings and errors. The PostgreSQL install regression and live Alpha-account walk remain open; existing live industry walks cover the six listed industry activity and delivery paths. Graphical-client acceptance remains open.
 
 
 ## XMPP SASL stream restart

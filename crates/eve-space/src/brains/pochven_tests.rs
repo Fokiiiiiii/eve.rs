@@ -106,6 +106,64 @@ fn a_triglavian_npc_attacks_a_rogue_drone_npc_in_pochven() {
 }
 
 #[test]
+fn a_triglavian_sentry_attacks_a_non_triglavian_pilot_in_pochven() {
+    use crate::scene::tests::spec;
+
+    let mut system = (*system_in(10_000_070)).clone();
+    system.bodies.push(Body {
+        id: 50_000_000,
+        type_id: 56317,
+        group_id: 10,
+        category_id: 2,
+        owner_id: 0,
+        name: "Pochven gate".to_string(),
+        kind: BodyKind::Stargate,
+        position: Vec3::new(3_920_000.0, 3_900_000.0, 3_900_000.0),
+        radius: 15_000.0,
+        graphic_id: None,
+        detail: Detail::Stargate {
+            destination_system: 30_000_022,
+            destination_gate: 50_100_000,
+            destination_name: "outside".to_string(),
+            destination_security: 0.5,
+            destination_faction: None,
+            hazardous: false,
+            facing: None,
+            heading: None,
+        },
+    });
+    let mut scene = Scene::new(Arc::new(system));
+    let mut pilot = spec();
+    pilot.vitals = Vitals {
+        shield_capacity: 1_000_000.0,
+        armor_hp: 1_000_000.0,
+        structure_hp: 1_000_000.0,
+        ..Vitals::default()
+    };
+    scene.undock(7, pilot, STATION, NOON).unwrap();
+    scene.bind(7, NOON);
+    let start = NOON + 31 * TICKS_PER_SECOND;
+    let before = points(&scene, 7, start);
+    let mut now = start;
+    let mut told = Vec::new();
+    while now <= start + 120 * TICKS_PER_SECOND {
+        told.extend(scene.poll(now).into_iter().filter(|out| out.session() == 7));
+        now += TICKS_PER_SECOND / 4;
+    }
+    let after = points(&scene, 7, now);
+
+    assert!(
+        !super::rat_tests::notified(&told, "OnTarget").is_empty(),
+        "the Triglavian sentry did not lock the non-Triglavian pilot"
+    );
+    assert!(
+        after < before,
+        "the Triglavian sentry did not damage the non-Triglavian pilot: {before} -> {after}"
+    );
+    assert_eq!(scene.brains().expect("brains").faults(crate::npc::NPC_SESSION_BASE + 1), []);
+}
+
+#[test]
 fn an_npc_does_not_attack_an_npc_of_its_own_faction_in_pochven() {
     let (before, after) = fight(10_000_070, TRIGLAVIAN_CORPORATION);
     assert_eq!(before, after);

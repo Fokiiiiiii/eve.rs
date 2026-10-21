@@ -127,13 +127,11 @@ NPC bounty handling (owner decision, 2026-10-19): NPC bounty credit is suppresse
 
 ## 6. Not published (not in the SDE, not on the wiki pages read)
 
-- Spawn tables: which NPC ship, how many, per site, per bounty, per roaming fleet. The SDE has 54 Triglavian, 28 EDENCOM, 68
-  Drifter and 7 Rogue Drone dungeons, but no field links a dungeon to a solar system. The NPC authority (`npc_authority.json`) has no
-  Triglavian, EDENCOM or Drifter profile and no pool for them (its Rogue Drone profiles are the pirate-style set).
+- Published spawn tables: which NPC ship and how many per site, bounty or roaming fleet. The SDE has 54 Triglavian, 28 EDENCOM, 68
+  Drifter and 7 Rogue Drone dungeons, but no field links a dungeon to a solar system. eve.rs uses explicit population rules for gate defenses and skirmishes; those rules do not claim to reproduce unpublished site compositions.
 - Roaming fleet composition per invasion state; the site list per system; the "Stellar Fleet", "World Ark" and "Observatory"
   flashpoint rules beyond the wiki's one-line descriptions.
-- Gate guns: whether a werpost or gunstar fires at a pilot passing a gate, its targeting order, its retribution timer, its
-  damage per shot after the SDE numbers. The wiki and the SDE do not give it. The player forums describe gate camps; that is anecdote.
+- Gate-gun retribution: the sources do not specify a transit trigger, retribution timer, or target priority. eve.rs uses the SDE hull values and the project combat rules recorded in DEVIATIONS for its scene sentries; that behavior is not presented as a published gate-retribution rule.
 - Faction pairs: the wiki says the five main factions "attack each other on sight" without naming them. Sleepers are not
   modelled: no Sleeper faction id is taken from the sources.
 - Rogue Drone and Drifter behaviour toward others in Pochven: only the wiki's "hostile to all players" sentence.
@@ -151,15 +149,12 @@ Implemented:
 2. Capital stargate refusal in Pochven: the gate jump (`SpaceSessions.Movement.cs`, `CheckGateRulesAsync`) refuses a capital
    pilot in a Pochven system with the existing client-message text "Capital ships cannot use this stargate.". Source: wiki Pochven.
    The Pochven gates carry no ship list in the SDE, so this rule is the only capital check there.
-3. Faction hostility and NPC standing rules as pure functions (`FactionsAreHostile`, `NpcHostileToPilot`), with tests. NOT yet
-   called by the simulation: NPCs in the simulation pick targets among players only, and the simulation has no NPC-vs-NPC target
-   selection (see cuts).
+3. NPC gate defenses, camps, and periodic faction skirmishes (`crates/eve-space/src/pochven_population.rs`). NPC hull dogma and damage values are derived from SDE build 3396210; the sentry locations, camp composition, 15-minute skirmish interval, and pair rotation are project rules because published spawn tables are absent. The scene caps the Pochven population at 40 and delays a skirmish until four slots are available.
+4. Faction hostility is applied by the simulation combat tree: NPCs target ships and entities owned by the other Pochven factions, while excluding their own faction. `brains::pochven_tests` verifies hostile-faction damage and no damage within one faction or outside the zone.
 
 Cut (not built), with the reason:
-- Gate sentries that shoot: no published firing rule or damage per shot (section 6). EveJS draws sentry props at empire gates
-  only (`empireSentryLayout.js`); it has no firing sentry. Cut until a source exists.
-- NPC-vs-NPC engagement and skirmish spawning (the four factions fighting each other): needs target selection among NPCs in the
-  simulation (`crates/eve-space` brains, `combattargets.rs`) and spawn tables that are not published. The rule functions above are the input.
+- Gate-gun retribution beyond the scene combat rules: no published transit trigger, retribution timer, or target priority (section 6). EveJS draws cosmetic sentry props at empire gates (`empireSentryLayout.js`); the Pochven sentries in eve.rs use the project behavior recorded in DEVIATIONS.
+- Published NPC compositions for sites and roaming fleets remain open. The scene combat tree and project-rule faction skirmishes are implemented; they do not claim to reproduce compositions absent from the SDE and published sources.
 - Invasion state machine and fortress/minor-victory systems: the thresholds are in the wiki, but the per-system state, the
   roaming fleets and the sites are not. EveJS's system lists (`mapService.js`) have no stated provenance and are not used
   (the existing TODO line on `map.GetEdencomFortressSystems` stays open).

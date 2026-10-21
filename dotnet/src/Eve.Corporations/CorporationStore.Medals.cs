@@ -68,6 +68,16 @@ public sealed partial class CorporationStore
         return medals;
     }
 
+    public async Task<bool> HasMedalAwardAsync(long characterId, long medalId, CancellationToken token = default)
+    {
+        if (characterId <= 0 || medalId <= 0) return false;
+        await using var connection = await _source.OpenConnectionAsync(token);
+        await using var command = Command(connection, null,
+            $"SELECT EXISTS(SELECT 1 FROM {_schema}.medal_awards WHERE character_id=$1 AND medal_id=$2)",
+            characterId, medalId);
+        return (bool)(await command.ExecuteScalarAsync(token) ?? false);
+    }
+
     public async Task<Medal?> MedalAsync(long medalId, CancellationToken token = default)
     {
         await using var connection = await _source.OpenConnectionAsync(token);

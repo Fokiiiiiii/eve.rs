@@ -1106,6 +1106,18 @@ private static PyValue RowField(PyValue value,string key)
             new PyWString("Denied"), new PyWString("Forged role"), graphics));
         var founderMedalId = Assert.IsType<PyInt>(await FounderRpc("CreateMedal",
             new PyWString("Founder"), new PyWString("For service"), graphics)).Value;
+        var privateFounderMedal = new PyDict([new(new PyInt(founderMedalId), new PyInt(2))]);
+        Assert.IsType<PyNone>(await FounderRpc("SetMedalStatus", privateFounderMedal));
+        var outsiderSession = new ClientSession { CharacterId = outsider };
+        ValueTask<PyValue> OutsiderRpc(string method, params PyValue[] args) =>
+            service.CallAsync(Call(outsiderSession, method, args));
+        var outsiderMedals = Assert.IsType<PyTuple>(CachedPayload(await OutsiderRpc(
+            "GetAllCorpMedals", new PyInt(corp.Id))));
+        Assert.Empty(Lines(outsiderMedals.Items[0]));
+        Assert.Empty(Assert.IsType<PyList>(Field(await OutsiderRpc(
+            "GetMedalDetails", new PyInt(founderMedalId)), "info")).Items);
+        Assert.Empty(Lines(await OutsiderRpc("GetRecipientsOfMedal", new PyInt(founderMedalId))));
+
         var forgedStatus = new PyDict([new(new PyInt(founderMedalId), new PyInt(2))]);
         await Assert.ThrowsAsync<CorporationError>(async () => await MemberRpc("SetMedalStatus", forgedStatus));
         await Assert.ThrowsAsync<CorporationError>(async () => await MemberRpc("GiveMedalToCharacters",

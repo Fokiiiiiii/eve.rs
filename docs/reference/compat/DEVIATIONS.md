@@ -106,6 +106,10 @@ PI program installs reject non-finite extractor head radii with the existing `In
 
 `corpRegistry.InsertApplication` and `UpdateApplicationOffer`, plus `ApplyToJoinAlliance`, reject application text or response text longer than 1,000 UTF-16 code units before persistence. This matches `crpApplicationMaxSize` and the V24.01 corporation application editor. Corporation and alliance RPC regressions cover over-limit submissions, application updates, response text, and unchanged stored state. `UpdateApplicationOffer` now checks persisted Personnel Manager authority before same-corporation manager-side application lookup. A single application-ID lookup preserves the existing no-op for a mismatched corporation with no matching application, without enumerating its application collection. Application decision notifications enumerate recipients only after the store accepts the decision; the expensive path consumes 10 weighted per-session units. Applicant-owned updates retain the V24.01 flow and the store validates applicant identity transactionally.
 
+## Personal contact-list read budget (2026-10-21)
+
+`charMgr.GetContactList` returns personal contacts and blocked senders for the authenticated character. The RPC consumes 10 weighted per-session work units because repeated reads enumerate accumulated personal data; it retains the existing response shapes and session ownership. `DispatchGoldenTests.Expensive_market_calls_have_a_named_per_session_budget` covers refusal after the session allowance is exhausted.
+
 ## Contact-label name bound (2026-10-20)
 
 `charMgr`, `corpRegistry`, and `allianceRegistry` reject contact-label names longer than 40 UTF-16 code units on create and rename. This matches the V24.01 address-book `NamePopup` limit from `mailMaxLabelSize`; EveJS accepts longer direct RPC values. The normal UI path stays within its existing limit. Personal, corporation, and alliance regressions cover maximum length, over-limit refusal, and retained state.

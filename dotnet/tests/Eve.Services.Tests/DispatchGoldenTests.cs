@@ -298,9 +298,14 @@ public class DispatchGoldenTests
         var characterSession = new ClientSession(characterCapture) { SessionId = 906 };
         await dispatcher.DispatchAsync(CallRequestPacket("charMgr", "GetRecentShipKillsAndLosses"), characterSession);
         await dispatcher.DispatchAsync(CallRequestPacket("charMgr", "GetRecentShipKillsAndLosses"), characterSession);
+        await dispatcher.DispatchAsync(CallRequestPacket("charMgr", "GetContactList"), characterSession);
         Assert.Equal(1, characterService.Calls);
-        Assert.Equal(ErrorResponseCommand, CommandOf(characterCapture.Sent[1]));
-        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(characterCapture.Sent[1])));
+        Assert.Equal(3, characterCapture.Sent.Count);
+        foreach (var refused in characterCapture.Sent.Skip(1))
+        {
+            Assert.Equal(ErrorResponseCommand, CommandOf(refused));
+            Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(refused)));
+        }
 
         var corporationCapture = new Capture();
         var corporationSession = new ClientSession(corporationCapture) { SessionId = 905 };
@@ -710,7 +715,7 @@ public class DispatchGoldenTests
 
         public string Name => "charMgr";
 
-        public bool HasMethod(string method) => method is "GetRecentShipKillsAndLosses" or "List" or "ListStations" or "ListStationItems" or "ListIncludingContainers" or "GetAssetWorth";
+        public bool HasMethod(string method) => method is "GetRecentShipKillsAndLosses" or "GetContactList" or "List" or "ListStations" or "ListStationItems" or "ListIncludingContainers" or "GetAssetWorth";
 
         public ValueTask<PyValue> CallAsync(ServiceCall call)
         {

@@ -1078,13 +1078,21 @@ public sealed partial class InvBrokerService(
         };
         if (operations.Count > MaxGetItemsIds)
             throw MachoErrors.ThrowUserError("INVENTORY_BULK_LIMIT_EXCEEDED");
-        var mergedAny = false;
+
+        var parsedOperations = new List<(long SourceId, long DestinationId, long Quantity)>(operations.Count);
         foreach (var operation in operations)
         {
             if (operation is not PyTuple { Items.Count: >= 3 } triple
-                || IdOf(triple.Items[0]) is not { } sourceId || IdOf(triple.Items[1]) is not { } destinationId)
-                continue;
-            var quantity = IdOf(triple.Items[2]) ?? 0;
+                || IdOf(triple.Items[0]) is not { } sourceId || sourceId <= 0
+                || IdOf(triple.Items[1]) is not { } destinationId || destinationId <= 0
+                || IdOf(triple.Items[2]) is not { } quantity || quantity < 0)
+                throw MachoErrors.ThrowUserError("INVENTORY_OPERATION_INVALID");
+            parsedOperations.Add((sourceId, destinationId, quantity));
+        }
+
+        var mergedAny = false;
+        foreach (var (sourceId, destinationId, quantity) in parsedOperations)
+        {
             if (await items.GetAsync(sourceId, call.Cancellation) is not { } sourceItem
                 || await items.GetAsync(destinationId, call.Cancellation) is not { } destinationItem)
                 continue;

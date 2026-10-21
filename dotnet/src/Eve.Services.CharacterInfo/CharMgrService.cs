@@ -433,9 +433,14 @@ public sealed partial class CharMgrService(
     [Method("SaveCharacterSetting")]
     public async ValueTask<PyValue> SaveCharacterSetting(ServiceCall call)
     {
-        var key = OptionalText(call.Arg(0))?.Trim();
+        var rawKey = call.Arg(0);
+        if (rawKey is not (PyStr or PyWString or PyToken or PyInt or PyLong or PyBool or PyReal or PyNone))
+            throw MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr("Character setting keys must be scalar values.")));
+        var key = OptionalText(rawKey)?.Trim();
         if (string.IsNullOrEmpty(key))
             return None;
+        if (key.Length > 102400)
+            throw MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr("Character setting keys are limited to 100 KB.")));
 
         var value = call.Arg(1);
         if (!IsBoundedCharacterSettingsValue(value))

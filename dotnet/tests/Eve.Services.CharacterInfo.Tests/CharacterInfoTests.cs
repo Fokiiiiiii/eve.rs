@@ -964,6 +964,8 @@ public class CharMgrTests
         await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(() => Rig.CallAsync(
             service, session, "SaveCharacterSetting", new PyStr("tooDeep"), deep));
         await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(() => Rig.CallAsync(
+            service, session, "SaveCharacterSetting", deep, new PyStr("value")));
+        await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(() => Rig.CallAsync(
             service, session, "LogSettings", deep));
         Assert.Equal(savedSettings, await Rig.CallAsync(service, session, "GetCharacterSettings"));
         Assert.Equal(PyNone.Instance, await Rig.CallAsync(service, session, "DeleteCharacterSetting", new PyStr("window")));

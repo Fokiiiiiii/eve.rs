@@ -738,6 +738,25 @@ public class DispatchGoldenTests
     }
 
     [Fact]
+    public async Task Alliance_bulletin_list_aliases_have_a_named_per_session_budget()
+    {
+        var capture = new Capture();
+        var session = new ClientSession(capture) { SessionId = 911 };
+        var registry = new ServiceRegistry();
+        var service = new AllianceBulletinsBudgetService();
+        registry.Register(service);
+        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 10 };
+
+        await dispatcher.DispatchAsync(CallRequestPacket("allianceRegistry", "GetBulletins"), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("allianceRegistry", "GetBulletinEntries"), session);
+
+        Assert.Equal(1, service.Calls);
+        Assert.Equal(2, capture.Sent.Count);
+        Assert.Equal(ErrorResponseCommand, CommandOf(capture.Sent[1]));
+        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[1])));
+    }
+
+    [Fact]
     public async Task Expensive_wallet_calls_have_a_named_per_session_budget()
     {
         var capture = new Capture();
@@ -868,6 +887,21 @@ public class DispatchGoldenTests
         public string Name => "allianceRegistry";
 
         public bool HasMethod(string method) => method is "GetAllianceContacts" or "GetContactList";
+
+        public ValueTask<PyValue> CallAsync(ServiceCall call)
+        {
+            Calls++;
+            return ValueTask.FromResult<PyValue>(PyNone.Instance);
+        }
+    }
+
+    private sealed class AllianceBulletinsBudgetService : IService
+    {
+        public int Calls { get; private set; }
+
+        public string Name => "allianceRegistry";
+
+        public bool HasMethod(string method) => method is "GetBulletins" or "GetBulletinEntries";
 
         public ValueTask<PyValue> CallAsync(ServiceCall call)
         {

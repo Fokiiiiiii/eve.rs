@@ -18,6 +18,8 @@ public sealed class FacWarMgrRpcTests
         public FacWarMgrService Service { get; private set; } = null!;
         public double Standing { get; set; } = 0.5;
         public FwCharacterWarfareState? State { get; set; } = new(null, 0);
+        public bool CorporationDirector { get; set; } = true;
+        public bool AllianceExecutorDirector { get; set; } = true;
 
         public static async Task<Fixture> CreateAsync()
         {
@@ -31,7 +33,9 @@ public sealed class FacWarMgrRpcTests
                     return ValueTask.FromResult(characterId == Character);
                 },
                 ReadStandingAsync: (_, _, _) => ValueTask.FromResult(fixture.Standing),
-                NowMs: () => fixture.Rig.Now);
+                NowMs: () => fixture.Rig.Now,
+                CanActAsCorporationDirectorAsync: (_, _, _) => ValueTask.FromResult(fixture.CorporationDirector),
+                CanActAsAllianceExecutorDirectorAsync: (_, _, _) => ValueTask.FromResult(fixture.AllianceExecutorDirector));
             fixture.Service = new FacWarMgrService(fixture.Rig.Service, callbacks);
             return fixture;
         }
@@ -60,6 +64,19 @@ public sealed class FacWarMgrRpcTests
     private static long FileTimeOf(long unixMs) => unixMs * 10_000 + 116_444_736_000_000_000L;
 
     [PgFact]
+    public async Task Alliance_leave_refuses_a_stale_session_director_role()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var session = Pilot();
+        session.Set("allianceid", new PyInt(Corporation));
+        fixture.AllianceExecutorDirector = false;
+
+        await Assert.ThrowsAnyAsync<Exception>(() => fixture.Service.CallAsync(
+            Call("LeaveFactionAsAlliance", session)).AsTask());
+        Assert.Null(await fixture.Rig.Service.StatusAsync(FwStore.AllianceKind, Corporation, fixture.Rig.Now));
+    }
+
+    [PgFact]
     public async Task Corporation_enlistment_needs_the_director_role_and_is_pending_until_the_downtime()
     {
         await using var fixture = await Fixture.CreateAsync();
@@ -80,6 +97,12 @@ public sealed class FacWarMgrRpcTests
         rig.Now = FwRules.NextDowntimeMs(rig.Now);
         Assert.Equal(new PyInt(Amarr), await service.CallAsync(Call("GetCorporationWarFactionID", director, new PyInt(Corporation))));
         Assert.Equal(new PyList([new PyInt(Corporation)]), await service.CallAsync(Call("GetFactionCorporations", director, new PyInt(Amarr))));
+        Assert.Equal(
+            Py.KeyVal(("status", new PyInt(FwService.ActiveStatus)), ("factionID", new PyInt(Amarr)), ("startDate", new PyLong(FileTimeOf(rig.Now)))),
+            await service.CallAsync(Call("GetCorpFactionalWarStatus", director)));
+
+        fixture.CorporationDirector = false;
+        await Assert.ThrowsAnyAsync<Exception>(() => service.CallAsync(Call("LeaveFactionAsCorporation", director)).AsTask());
         Assert.Equal(
             Py.KeyVal(("status", new PyInt(FwService.ActiveStatus)), ("factionID", new PyInt(Amarr)), ("startDate", new PyLong(FileTimeOf(rig.Now)))),
             await service.CallAsync(Call("GetCorpFactionalWarStatus", director)));

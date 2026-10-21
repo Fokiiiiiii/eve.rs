@@ -25,22 +25,30 @@ public sealed partial class CorpStationMgrService(
     Func<long> now) : IBoundObjectReleaseHandler
 {
     /// <summary>The station each bound object was made for.</summary>
-    private readonly ConcurrentDictionary<string, long> _bound = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, BoundStation> _bound = new(StringComparer.Ordinal);
 
     /// <summary><c>MachoBindObject(stationID, (method, args, kwargs))</c>: binds the station's corporation door, then makes the nested call.</summary>
     [Method("MachoResolveObject")]
     public PyValue MachoResolveObject(ServiceCall call) => new PyInt(MachoMessage.ProxyNodeId);
 
-    public void OnBoundObjectReleased(string oid, ClientSession? session) => _bound.TryRemove(oid, out _);
+    public void OnBoundObjectReleased(string oid, ClientSession? session)
+    {
+        if (!_bound.TryGetValue(oid, out var bound) ||
+            session is not null && !ReferenceEquals(bound.Owner, session))
+            return;
+        _bound.TryRemove(oid, out _);
+    }
 
     [Method("MachoBindObject")]
     public async ValueTask<PyValue> MachoBindObject(ServiceCall call)
     {
         var parameters = call.Arg(0) switch { PyTuple t when t.Items.Count > 0 => t.Items[0], PyList l when l.Items.Count > 0 => l.Items[0], var other => other };
-        if (Integral(parameters) is not { } stationId || readStation(stationId) is null)
-            throw Notify("Corporation services are available in an NPC station.");
+        var currentStationId = call.Session.GetInt("stationid") ?? 0;
+        if (Integral(parameters) is not { } stationId || stationId <= 0 || stationId != currentStationId ||
+            readStation(stationId) is null)
+            throw Notify("Corporation services are available only in the current NPC station.");
         var oid = $"N={MachoMessage.ProxyNodeId}:{BoundObjectIds.Next()}";
-        _bound[oid] = stationId;
+        _bound[oid] = new BoundStation(stationId, call.Session);
         var bound = new PySubStruct(new PySubStream(Py.Tuple(new PyStr(oid), new PyLong(Py.FileTimeFromUnixMs(now())))));
         PyValue result = PyNone.Instance;
         if (call.Arg(1) is PyTuple { Items.Count: > 0 } nested && Eve.Macho.JsSemantics.StringValue(nested.Items[0]) is { } method)
@@ -123,7 +131,8 @@ public sealed partial class CorpStationMgrService(
 
     private CorporationStationPlace BoundPlace(ServiceCall call)
     {
-        if (call.BoundObjectId is not { } oid || !_bound.TryGetValue(oid, out var stationId) || readStation(stationId) is not { } place)
+        if (call.BoundObjectId is not { } oid || !_bound.TryGetValue(oid, out var bound) ||
+            !ReferenceEquals(bound.Owner, call.Session) || readStation(bound.StationId) is not { } place)
             throw Notify("Corporation services are not available from here.");
         return place;
     }
@@ -135,6 +144,8 @@ public sealed partial class CorpStationMgrService(
         var id = session.GetInt("corporationID") ?? 0;
         return id > 0 ? id : session.GetInt("corpid") ?? 0;
     }
+
+    private sealed record BoundStation(long StationId, ClientSession Owner);
 
     private static long? Integral(PyValue? value) => value switch
     {

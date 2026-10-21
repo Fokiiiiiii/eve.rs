@@ -37,7 +37,7 @@ namespace Eve.Host;
 
 internal sealed partial class CharacterServicesComposition
 {
-    internal static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimClient? Simulation, Eve.Services.Crimewatch.CrimewatchRuntime? Crimewatch, Eve.Calendar.ICalendarStore? CalendarStore, Eve.Calendar.ICalendarAudienceReader? CalendarAudience, Eve.Services.Core.GameRpcCallbacks? GameRpcCallbacks, Eve.Services.Core.KeeperRpcCallbacks? KeeperRpcCallbacks, CharacterSessions? CharacterSessions, Func<long, long, CancellationToken, ValueTask<decimal>>? ContractBrokerFeeAdjustment, Func<long, long, CancellationToken, ValueTask<bool>>? HasContractManagerRole)> CharacterServicesAsync(NpgsqlDataSource source, PgAccountDirectory accounts, OnlineCharacters online, Func<long> now, Foundations foundations, PersistenceStore mailStore, OwnerSession mailStoreOwner, GameStoreCache mailCache, string newCharacterExperienceMode, IOmegaAccountStore omegaAccounts, ConnectedSessions connected)
+    internal static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimClient? Simulation, Eve.Services.Crimewatch.CrimewatchRuntime? Crimewatch, Eve.Calendar.ICalendarStore? CalendarStore, Eve.Calendar.ICalendarAudienceReader? CalendarAudience, Eve.Services.Core.GameRpcCallbacks? GameRpcCallbacks, Eve.Services.Core.KeeperRpcCallbacks? KeeperRpcCallbacks, CharacterSessions? CharacterSessions, Func<long, long, CancellationToken, ValueTask<decimal>>? ContractBrokerFeeAdjustment, Func<long, long, CancellationToken, ValueTask<bool>>? HasContractManagerRole, Func<long, long, short, CancellationToken, ValueTask<bool>>? CanManageCalendarGroupEvent, Func<long, CancellationToken, ValueTask<(long CorporationId, long AllianceId)>>? ReadCurrentCalendarGroups)> CharacterServicesAsync(NpgsqlDataSource source, PgAccountDirectory accounts, OnlineCharacters online, Func<long> now, Foundations foundations, PersistenceStore mailStore, OwnerSession mailStoreOwner, GameStoreCache mailCache, string newCharacterExperienceMode, IOmegaAccountStore omegaAccounts, ConnectedSessions connected)
         => await new CharacterServicesComposition(source, accounts, online, now, foundations, mailStore, mailStoreOwner, mailCache, newCharacterExperienceMode, omegaAccounts, connected).RunAsync();
 
     public CharacterServicesComposition(NpgsqlDataSource source, PgAccountDirectory accounts, OnlineCharacters online, Func<long> now, Foundations foundations, PersistenceStore mailStore, OwnerSession mailStoreOwner, GameStoreCache mailCache, string newCharacterExperienceMode, IOmegaAccountStore omegaAccounts, ConnectedSessions connected)
@@ -55,7 +55,7 @@ internal sealed partial class CharacterServicesComposition
         this.newCharacterExperienceMode = newCharacterExperienceMode;
     }
 
-    private async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimClient? Simulation, Eve.Services.Crimewatch.CrimewatchRuntime? Crimewatch, Eve.Calendar.ICalendarStore? CalendarStore, Eve.Calendar.ICalendarAudienceReader? CalendarAudience, Eve.Services.Core.GameRpcCallbacks? GameRpcCallbacks, Eve.Services.Core.KeeperRpcCallbacks? KeeperRpcCallbacks, CharacterSessions? CharacterSessions, Func<long, long, CancellationToken, ValueTask<decimal>>? ContractBrokerFeeAdjustment, Func<long, long, CancellationToken, ValueTask<bool>>? HasContractManagerRole)> RunAsync()
+    private async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimClient? Simulation, Eve.Services.Crimewatch.CrimewatchRuntime? Crimewatch, Eve.Calendar.ICalendarStore? CalendarStore, Eve.Calendar.ICalendarAudienceReader? CalendarAudience, Eve.Services.Core.GameRpcCallbacks? GameRpcCallbacks, Eve.Services.Core.KeeperRpcCallbacks? KeeperRpcCallbacks, CharacterSessions? CharacterSessions, Func<long, long, CancellationToken, ValueTask<decimal>>? ContractBrokerFeeAdjustment, Func<long, long, CancellationToken, ValueTask<bool>>? HasContractManagerRole, Func<long, long, short, CancellationToken, ValueTask<bool>>? CanManageCalendarGroupEvent, Func<long, CancellationToken, ValueTask<(long CorporationId, long AllianceId)>>? ReadCurrentCalendarGroups)> RunAsync()
     {
         await MigrateCharacterStores();
 
@@ -65,7 +65,7 @@ internal sealed partial class CharacterServicesComposition
         if (buildVersion is null)
         {
             Console.Error.WriteLine("eve-host: the static data is not loaded (run `eve-sde ensure --pg $EVE_PG_URL`): no charUnboundMgr, no skills");
-            return ([], null, null, null, null, null, null, null, null, null, null);
+            return ([], null, null, null, null, null, null, null, null, null, null, null, null);
         }
         build = buildVersion.Value;
         await LoadCatalogsAndStores();
@@ -113,7 +113,29 @@ internal sealed partial class CharacterServicesComposition
                 return 1m - 0.1m * await FactionWarfareUpgradeLevelAsync(connection, transaction, characterId, solarSystemId, cancellationToken);
             },
             async (characterId, corporationId, cancellationToken) => corporations is not null
-                && await corporations.HasRoleAsync(characterId, corporationId, 72057594037927936L, cancellationToken));
+                && await corporations.HasRoleAsync(characterId, corporationId, 72057594037927936L, cancellationToken),
+            async (actorId, ownerId, tag, cancellationToken) =>
+            {
+                if (characters is null || corporations is null) return false;
+                var character = await characters.GetAsync(actorId, cancellationToken);
+                if (character is null || character.CorporationId <= 0) return false;
+                var corporation = await corporations.GetAsync(character.CorporationId, cancellationToken);
+                if (corporation is null || corporation.IsNpc) return false;
+                if (tag == Eve.Calendar.CalendarTags.Corporation && corporation.Id != ownerId) return false;
+                if (tag == Eve.Calendar.CalendarTags.Alliance && corporation.AllianceId != ownerId) return false;
+                return await corporations.HasRoleAsync(actorId, corporation.Id,
+                    Eve.Corporations.CorporationRoles.ChatManager, cancellationToken);
+            },
+            async (actorId, cancellationToken) =>
+            {
+                if (characters is null || corporations is null) return (0, 0);
+                var character = await characters.GetAsync(actorId, cancellationToken);
+                if (character is null || character.CorporationId <= 0) return (0, 0);
+                var corporation = await corporations.GetAsync(character.CorporationId, cancellationToken);
+                return corporation is null || corporation.IsNpc
+                    ? (0, 0)
+                    : (corporation.Id, corporation.AllianceId ?? 0);
+            });
     }
 
     private NpgsqlDataSource source;

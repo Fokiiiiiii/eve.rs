@@ -73,8 +73,9 @@ internal sealed partial class CharacterServicesComposition
                         : LoginInitializationGameStoreProjection.ReadAchievementState(
                             await ReadCharacterGameStoreRowAsync(characterId, ct)),
                 hasEverWarped: async (characterId, ct) =>
-                    LoginInitializationGameStoreProjection.ReadHasEverWarped(
-                        await ReadCharacterGameStoreRowAsync(characterId, ct)) ?? true,
+                    await AchievementTracker.HasEverWarpedAsync(characterId, ct)
+                    || LoginInitializationGameStoreProjection.ReadHasEverWarped(
+                        await ReadCharacterGameStoreRowAsync(characterId, ct)) == true,
                 writeState: (characterId, completed, eventCounts, ct) =>
                 {
                     var (done, counts) = FromClient(completed, eventCounts);

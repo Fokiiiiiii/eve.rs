@@ -203,7 +203,13 @@ internal sealed partial class CharacterServicesComposition
         insuranceWriteModel = new PersistenceInsuranceWriteModel(
             source, items, mailStore, mailStoreOwner.Fence, economyWallets, insuranceReadModel, now);
         items.ShipInsuranceInvalidator = insuranceWriteModel;
-        insuranceService = new Eve.Services.Core.InsuranceService(insuranceReadModel, now, insuranceWriteModel);
+        insuranceService = new Eve.Services.Core.InsuranceService(
+            insuranceReadModel, now, insuranceWriteModel,
+            async (characterId, corporationId, cancellationToken) =>
+                await corporations.HasRoleAsync(characterId, corporationId,
+                    Eve.Corporations.CorporationRoles.Accountant, cancellationToken) ||
+                await corporations.HasRoleAsync(characterId, corporationId,
+                    Eve.Corporations.CorporationRoles.JuniorAccountant, cancellationToken));
         storeRuntime = new PersistenceNewEdenStoreRuntime(
             source, mailStore, mailStoreOwner.Fence, wallets, characters, items, itemTypes,
             characterSessions, now, _ => Task.FromResult(Eve.Services.Core.NewEdenStoreCatalog.Default.Root), accounts);

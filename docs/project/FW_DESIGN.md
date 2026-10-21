@@ -68,6 +68,8 @@ Served (each has a test): `GetCorporationWarFactionID`, `GetAllianceWarFactionID
 `GetSolarSystemLPs`, `GetSolarSystemLPsEx`, `DonateLPsToSolarSystem`, `GetControlBunkerIDInSystem` (None: eve.rs has
 no control bunker structures), `RefreshCorps` (None: the state is always current).
 
+Corporation join, leave, and withdrawal mutations require the session Director bit and recheck current persisted corporation membership and Director authority. Alliance mutations also require current Director authority in the persisted active executor corporation. The faction-warfare regression denies stale corporation and alliance sessions after their persisted role checks refuse them.
+
 Statistics, served from the daily rows and the faction and alliance data (slice 2): `GetStats_Character`, `GetStats_Corp`,
 `GetStats_Alliance` (the sum over the corporations that are members of the caller's alliance now), `GetStats_Militia` (header: the occupier factions;
 per key one value per faction, summed over its enlisted corporations), `GetStats_FactionInfo` (per faction: `totalMembersCount`,

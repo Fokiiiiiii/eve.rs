@@ -45,8 +45,15 @@ public sealed class LoginInitializationRpcTests
         Assert.Equal(["eventDict", "completedDict"], result.Entries.Select(entry => Assert.IsType<PyStr>(entry.Key).Value));
         Assert.IsType<PyDict>(Value(result, "eventDict"));
         Assert.IsType<PyDict>(Value(result, "completedDict"));
-        Assert.Same(PyBool.True, await Call(service, new ClientSession(), "HasEverWarped"));
+        Assert.Same(PyBool.False, await Call(service, new ClientSession(), "HasEverWarped"));
         Assert.Same(PyNone.Instance, await Call(service, new ClientSession(), "UpdateClientAchievmentsAndCounters"));
+
+        var knownWarped = (IService)new AchievementTrackerMgrService(
+            hasEverWarped: (_, _) => ValueTask.FromResult(true));
+        Assert.Same(PyBool.True, await Call(knownWarped, Session(90000001), "HasEverWarped"));
+        var warpedSession = Session(90000002);
+        warpedSession.Set("hasEverWarped", new PyInt(1));
+        Assert.Same(PyBool.True, await Call(service, warpedSession, "HasEverWarped"));
 
         var events = new PyDict([new(new PyStr("event"), new PyInt(7))]);
         var completed = new PyDict([new(new PyInt(9), new PyLong(1234))]);

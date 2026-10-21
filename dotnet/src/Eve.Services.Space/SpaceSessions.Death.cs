@@ -141,7 +141,8 @@ public sealed partial class SpaceSessions
     private async Task CancelShipSelfDestructAsync(long shipId, CancellationToken cancellationToken)
     {
         if (TimedActions is not { } scheduler) return;
-        await scheduler.CancelAsync(ShipSelfDestructJobKind, ShipSelfDestructJobKey(shipId), cancellationToken);
+        var key = ShipSelfDestructJobKey(shipId);
+        if (!await scheduler.CancelAsync(ShipSelfDestructJobKind, key, cancellationToken)) return;
         _sim.SetSlimField(shipId, SelfDestructTimeField, new SimSlimNone());
     }
 

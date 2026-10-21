@@ -1960,15 +1960,26 @@ public class SpaceServiceTests
         var oid = await rig.BindBeyonceAsync(session);
         Events.Of(session);
         var before = rig.Sim.Heard.Count;
+        var warpedCharacters = new List<long>();
+        var persistenceAttempts = 0;
+        rig.Space.WarpAcceptedAsync = (characterId, _) =>
+        {
+            warpedCharacters.Add(characterId);
+            if (persistenceAttempts++ == 0)
+                throw new InvalidOperationException("store unavailable");
+            return Task.CompletedTask;
+        };
 
         var answer = await rig.BeyonceCallWithAsync(session, "CmdWarpToStuff", oid, [new PyStr("item"), new PyInt(40491233)], ("minRange", new PyInt(30000)));
         Assert.Equal(PyNone.Instance, answer);
+        Assert.Equal(session.CharacterId.GetValueOrDefault(), warpedCharacters.Single());
         Assert.Equal(
             [Describe(new SimCommand((ulong)session.SessionId, SimCommands.WarpTo, [40491233, 30000]))],
             rig.Sim.Heard.Skip(before).Select(Describe));
         // no range asked for is none
         await rig.BeyonceCallAsync(session, "CmdWarpToStuff", oid, new PyStr("item"), new PyInt(40491233));
         Assert.Equal(Describe(new SimCommand((ulong)session.SessionId, SimCommands.WarpTo, [40491233, 0])), Describe(rig.Sim.Heard.Last()));
+        Assert.Equal([session.CharacterId.GetValueOrDefault(), session.CharacterId.GetValueOrDefault()], warpedCharacters);
 
         // the ship has left its protection: the client is told once, whatever the simulation said before
         var told = Events.Of(session).Where(e => e.Name == "OnInvulnCancelled").ToArray();
@@ -1985,6 +1996,12 @@ public class SpaceServiceTests
         var oid = await rig.BindBeyonceAsync(session);
         Events.Of(session);
         var before = rig.Sim.Heard.Count;
+        var recordedWarps = new List<long>();
+        rig.Space.WarpAcceptedAsync = (characterId, _) =>
+        {
+            recordedWarps.Add(characterId);
+            return Task.CompletedTask;
+        };
 
         foreach (var reason in new[] { "TARGET_NOT_FOUND", "WARP_DISTANCE_TOO_CLOSE" })
         {
@@ -1999,6 +2016,7 @@ public class SpaceServiceTests
         await Assert.ThrowsAsync<MachoWrappedException>(() => rig.BeyonceCallAsync(session, "CmdWarpToStuff", oid, new PyStr("unsupported"), new PyInt(5)));
         await Assert.ThrowsAsync<MachoWrappedException>(() => rig.BeyonceCallAsync(session, "CmdWarpToStuff", oid, new PyStr("item"), new PyStr("planet")));
         Assert.Equal(before + 2, rig.Sim.Heard.Count);
+        Assert.Empty(recordedWarps);
 
         // not from an object of this session
         Assert.Equal(PyNone.Instance, await rig.BeyonceCallAsync(session, "CmdWarpToStuff", null, new PyStr("item"), new PyInt(40491233)));
@@ -4339,24 +4357,54 @@ public class SpaceServiceTests
                 Args = args,
                 Session = session,
             });
+            static PyObjectEx Set(params PyValue[] values) => new(
+                ObjectExKind.Ex1,
+                new PyTuple([new PyToken("__builtin__.set"), new PyList([new PyList(values)])]),
+                [],
+                []);
 
-            Assert.IsType<PyNone>(await Call("AddToWatchlist",
+            Assert.Equal(PyBool.True, await Call("AddToWatchlist",
                 new PyList([new PyLong(member.CharacterId), new PyLong(outsider.CharacterId)]),
-                new PyList([])));
+                Set(new PyLong(member.CharacterId))));
             Assert.Equal([member.CharacterId], ((PyList)session.Get("fleetWatchlist")!).Items.Cast<PyLong>().Select(value => value.Value));
 
-            Assert.IsType<PyNone>(await Call("RegisterForDamageUpdates",
-                new PyList([new PyLong(member.CharacterId), new PyLong(outsider.CharacterId)])));
-            Assert.Equal([member.CharacterId], ((PyList)session.Get("fleetDamageWatchlist")!).Items.Cast<PyLong>().Select(value => value.Value));
+            Assert.Equal(PyBool.True, await Call("RegisterForDamageUpdates",
+                Set(new PyLong(member.CharacterId), new PyLong(outsider.CharacterId))));
+            Assert.Equal([member.CharacterId], ((PyList)session.Get("fleetWatchlist")!).Items.Cast<PyLong>().Select(value => value.Value));
 
-            Assert.IsType<PyNone>(await Call("RemoveFromWatchlist", new PyLong(member.CharacterId),
-                new PyList([new PyLong(member.CharacterId), new PyLong(outsider.CharacterId)])));
+            Assert.Equal(PyBool.True, await Call("RemoveFromWatchlist", new PyLong(member.CharacterId),
+                Set(new PyLong(member.CharacterId), new PyLong(outsider.CharacterId))));
             Assert.Empty(((PyList)session.Get("fleetWatchlist")!).Items);
-            Assert.Empty(((PyList)session.Get("fleetDamageWatchlist")!).Items);
         }
         finally
         {
             if (fleetId > 0) await store.DisbandAsync(fleetId, leader.CharacterId);
+        }
+    }
+
+    [PgFact]
+    public async Task Fleet_watchlist_mutations_reject_a_caller_without_fleet_membership()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var pilot = await rig.NewCharacterAsync("Fleetless Watchlist Pilot", 34);
+        var session = await rig.SessionAsync(pilot);
+        Eve.Services.IService manager = new Eve.Services.Space.FleetManagerService(rig.FleetStore);
+        async ValueTask<PyValue> Call(string method, params PyValue[] args) => await manager.CallAsync(new ServiceCall
+        {
+            Method = method,
+            Args = args,
+            Session = session,
+        });
+
+        foreach (var (method, args) in new (string Method, PyValue[] Args)[]
+        {
+            ("AddToWatchlist", [new PyList([]), new PyList([])]),
+            ("RemoveFromWatchlist", [new PyLong(pilot.CharacterId), new PyList([])]),
+            ("RegisterForDamageUpdates", [new PyList([])]),
+        })
+        {
+            var error = await Assert.ThrowsAsync<MachoWrappedException>(async () => await Call(method, args));
+            Assert.Equal("FleetNotInFleet", error.Error.UserErrorMessage);
         }
     }
 

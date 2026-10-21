@@ -75,7 +75,7 @@ public sealed partial class OfficeManagerService(
     [Method("GetMyCorporationsOffices")]
     public async ValueTask<PyValue> GetMyCorporationsOffices(ServiceCall call)
     {
-        var corporationId = SessionCorporationId(call.Session);
+        var corporationId = await CurrentCorporationIdAsync(call);
         if (corporationId <= 0) return new PyList([]);
         var offices = await store.ForCorporationAsync(corporationId, call.Cancellation);
         return new PyList([.. offices.Select(OfficeRow)]);
@@ -305,6 +305,20 @@ public sealed partial class OfficeManagerService(
     [Method("PrimeOfficeItem")]
     public ValueTask<PyValue> PrimeOfficeItem(ServiceCall call) =>
         ValueTask.FromResult<PyValue>(PyNone.Instance);
+
+    private async Task<long> CurrentCorporationIdAsync(ServiceCall call)
+    {
+        var corporationId = SessionCorporationId(call.Session);
+        if (corporationId <= 0) return 0;
+        var corporation = await corporations.GetAsync(corporationId, call.Cancellation);
+        if (corporation is null) return 0;
+        if (corporation.IsNpc) return corporationId;
+        var characterId = call.Session.CharacterId.GetValueOrDefault();
+        if (characterId <= 0 || await corporations.MemberAsync(characterId, call.Cancellation) is not { } member ||
+            member.CorporationId != corporationId)
+            return 0;
+        return corporationId;
+    }
 
     private async Task<decimal> QuoteAsync(CorporationOfficeStation station, CancellationToken token) =>
         await store.WriteAsync(async (connection, transaction) =>

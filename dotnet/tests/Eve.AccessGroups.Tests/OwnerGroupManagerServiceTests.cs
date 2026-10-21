@@ -165,6 +165,30 @@ public sealed class OwnerGroupManagerServiceTests
         }
     }
 
+    [PgFact]
+    public async Task Owner_group_bulk_inputs_refuse_over_500_raw_ids_before_callbacks()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var sessions = new CharacterSessions();
+        var callbackCount = 0;
+        var inner = new OwnerGroupManagerService(rig.Store, id =>
+        {
+            callbackCount++;
+            return ValueTask.FromResult<MemberKind?>(Kinds.TryGetValue(id, out var kind) ? kind : null);
+        }, sessions);
+        var service = new OwnerGroupRefusals(inner);
+        var alice = Connect(sessions, Alice, CorpA, new Sink());
+        var manyIds = new PyList(Enumerable.Range(1, 501).Select(id => (PyValue)new PyLong(id)).ToArray());
+        var groupsError = await Assert.ThrowsAsync<MachoWrappedException>(() => Call(service, alice, "GetGroupsMany", manyIds));
+        Assert.Equal("CustomNotify", groupsError.Error.UserErrorMessage);
+        Assert.Equal(0, callbackCount);
+
+        var manyMembers = new PyDict(Enumerable.Range(1, 501).Select(id => new KeyValuePair<PyValue, PyValue>(new PyLong(id), new PyInt(0))).ToArray());
+        var membersError = await Assert.ThrowsAsync<MachoWrappedException>(() => Call(service, alice, "AddMembers", new PyLong(1), manyMembers));
+        Assert.Equal("CustomNotify", membersError.Error.UserErrorMessage);
+        Assert.Equal(0, callbackCount);
+    }
+
     private static IService Service(Rig rig, CharacterSessions sessions) =>
         new OwnerGroupRefusals(new OwnerGroupManagerService(rig.Store,
             id => ValueTask.FromResult<MemberKind?>(Kinds.TryGetValue(id, out var kind) ? kind : null), sessions));

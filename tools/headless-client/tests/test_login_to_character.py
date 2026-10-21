@@ -195,6 +195,23 @@ def test_the_recorded_walk_replays():
                 recorded_ok = False
             problems += same_way(recorded_ok, outcome, where)
 
+        user_id = walker.session.session_init.get("userid")
+        character_id = walker.session.session_init.get("charid")
+        assert isinstance(user_id, int) and user_id > 0
+        assert isinstance(character_id, int) and character_id > 0
+        assert walker.call("achievementTrackerMgr", "HasEverWarped") is False
+        token = walker.call("userSvc", "GetUserToken")
+        if REFERENCE:
+            assert token == f"evejs-local-token-{user_id}-{character_id}".encode("utf-8")
+        else:
+            header, payload, signature = token.decode("ascii").split(".")
+            claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+            assert header == "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"
+            assert claims["sub"] == f"USER:EVE:{user_id}"
+            assert claims["character_id"] == character_id
+            assert int(claims["exp"]) > int(datetime.now(timezone.utc).timestamp())
+            assert signature
+
         # Compare the recorded session and skills packets after checking eve.rs's extra selection notification.
         walker.ping()
         seen = [describe(n.raw) for n in walker.notifications if n.command in (p.SESSIONCHANGENOTIFICATION, p.NOTIFICATION)]
@@ -246,6 +263,14 @@ def test_new_account_enters_a_new_character_with_named_arguments():
 
         assert m.plain(result) is None
         assert client.session.session_init.get("charid") == character_id
+
+        contract_login = dict(m.plain(client.call("contractProxy", "GetLoginInfo"))[1])
+        for name in ("needsAttention", "inProgress", "assignedToMe"):
+            assert m.plain(contract_login[name])[1]["lines"] == []
+        contract_escrow = dict(m.plain(client.call("contractProxy", "GetMyContractEscrow"))[1])
+        assert m.plain(contract_escrow["iskEscrow"]) == 0.0
+        assert m.plain(contract_escrow["itemsEscrow"]) == 0
+
         if not REFERENCE:
             selected = next(event for event in notifications_of(client) if event["name"] == "OnCharacterSelected")
             # Zero positional arguments: GameUI.OnCharacterSelected(self) and StationSvc.OnCharacterSelected(self)
@@ -1051,3 +1076,35 @@ def test_a_queue_that_finishes_while_the_client_watches_is_told_level_by_level()
         problems += view_problems(away["after"], training_view(back), "finished while away: after")
     assert problems == [], "\n".join(problems[:30])
 
+
+def test_authentication_age_gate_uses_verified_account_state():
+    from tests import dbseed
+
+    run = uuid.uuid4().hex[:10]
+    user_name = f"underage-{run}"
+    with connect(user_name) as client:
+        dbseed.set_underage(user_name, False)
+        kind, outcome = attempt(client, "authentication", "AmUnderage", None)
+        assert kind == "ok", brief(outcome)
+        assert outcome is False
+        dbseed.set_underage(user_name, True)
+        kind, outcome = attempt(client, "authentication", "AmUnderage", None)
+        assert kind == "ok", brief(outcome)
+        assert outcome is True
+
+
+def test_active_survey_id_uses_reference_default():
+    run = uuid.uuid4().hex[:10]
+    with connect(f"survey-default-{run}") as client:
+        kind, outcome = attempt(client, "survey", "GetActiveSurveyID")
+        assert kind == "ok", brief(outcome)
+        assert outcome is None, f"expected no active survey, got {outcome!r}"
+
+
+def test_localization_text_changes_keep_the_reference_empty_shape():
+    run = uuid.uuid4().hex[:10]
+    expected = {"$tuple": [{"$dict": []}, {"$dict": []}, {"$dict": []}]}
+    with connect(f"localization-{run}") as client:
+        kind, outcome = attempt(client, "localizationServer", "GetAllTextChanges", m.Dict([]))
+        assert kind == "ok", brief(outcome)
+        assert outcome == expected, f"expected empty localization changes, got {outcome!r}"

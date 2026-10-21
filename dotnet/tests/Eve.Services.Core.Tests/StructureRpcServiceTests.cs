@@ -191,6 +191,27 @@ public sealed class StructureRpcServiceTests
         Assert.Equal(90000001, requested);
     }
 
+[Fact]
+    public async Task Structure_bulk_id_batches_refuse_more_than_500_entries_before_callbacks()
+    {
+        var callbackCalled = false;
+        var service = new StructureRpcService("structureCargoDelivery", new StructureRpcCallbacks
+        {
+            DropOffItemsAsync = (_, _, _, _) =>
+            {
+                callbackCalled = true;
+                return ValueTask.FromResult<IReadOnlyList<long>>([]);
+            },
+        });
+
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(() => Call(service, "DropOffItems",
+            [new PyList(Enumerable.Range(1, 501).Select(id => (PyValue)new PyInt(id)).ToArray()),
+             new PyInt(12), new PyInt(34)]).AsTask());
+
+        Assert.Equal("CustomNotify", error.Error.UserErrorMessage);
+        Assert.False(callbackCalled);
+    }
+
     private static ValueTask<PyValue> Call(
         StructureRpcService service,
         string method,

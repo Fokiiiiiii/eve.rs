@@ -66,6 +66,9 @@ public sealed partial class SpaceSessions
         return None;
     }
 
+    /// <summary>Called after the simulation accepts a character's warp command.</summary>
+    public Func<long, CancellationToken, Task>? WarpAcceptedAsync { get; set; }
+
     /// <summary>
     /// <c>CmdWarpToStuff</c> to a body of the system: the answer is nothing whether the ship goes or not, and a warp that cannot be done is a message
     /// the client shows ("You cannot warp there right now."). A ship that is in warp already is told so and nothing else happens. The first movement
@@ -240,6 +243,20 @@ public sealed partial class SpaceSessions
         {
             _warping[(ulong)session.SessionId] = 0;
             EndInvulnerability(pilot);
+            var warpHistoryNeedsPersistence = pilot.Session.GetInt("hasEverWarpedPersisted") != 1;
+            pilot.Session.Set("hasEverWarped", new PyInt(1));
+            if (warpHistoryNeedsPersistence && WarpAcceptedAsync is { } acceptedWarp)
+            {
+                try
+                {
+                    await acceptedWarp(pilot.CharacterId, CancellationToken.None).ConfigureAwait(false);
+                    pilot.Session.Set("hasEverWarpedPersisted", new PyInt(1));
+                }
+                catch (Exception error)
+                {
+                    _log?.Invoke($"accepted warp history for character {pilot.CharacterId} could not be saved: {error.Message}");
+                }
+            }
             return None;
         }
         _log?.Invoke($"warp of session {session.SessionId} {destination} refused: {reply.Reason}");

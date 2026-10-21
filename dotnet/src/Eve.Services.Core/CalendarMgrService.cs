@@ -20,13 +20,22 @@ public sealed partial class CalendarMgrService
     private readonly ICalendarStore? _store;
     private readonly ICalendarAudienceReader? _audience;
     private readonly CharacterSessions? _sessions;
+    private readonly Func<long, long, short, CancellationToken, ValueTask<bool>>? _canManageGroupEvent;
+    private readonly Func<long, CancellationToken, ValueTask<(long CorporationId, long AllianceId)>>? _readCurrentGroups;
 
     public CalendarMgrService() { }
-    public CalendarMgrService(ICalendarStore store, ICalendarAudienceReader? audience = null, CharacterSessions? sessions = null)
+    public CalendarMgrService(
+        ICalendarStore store,
+        ICalendarAudienceReader? audience = null,
+        CharacterSessions? sessions = null,
+        Func<long, long, short, CancellationToken, ValueTask<bool>>? canManageGroupEvent = null,
+        Func<long, CancellationToken, ValueTask<(long CorporationId, long AllianceId)>>? readCurrentGroups = null)
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
         _audience = audience;
         _sessions = sessions;
+        _canManageGroupEvent = canManageGroupEvent;
+        _readCurrentGroups = readCurrentGroups;
     }
     private ICalendarStore Store => _store ?? throw new InvalidOperationException("Host must inject the PostgreSQL calendar store.");
 
@@ -44,7 +53,7 @@ public sealed partial class CalendarMgrService
         var eventId = CalendarWire.LongArg(call, 0);
         var ownerId = CalendarWire.LongArg(call, 1);
         var calendarEvent = await Store.GetEventAsync(eventId, ownerId, call.Cancellation);
-        if (calendarEvent is null || !await CalendarWire.CanViewAsync(Store, calendarEvent, call)) throw EventNotFound();
+        if (calendarEvent is null || !await CanViewEventAsync(calendarEvent, call)) throw EventNotFound();
         var rows = await Store.GetResponsesToEventAsync(eventId, ownerId, call.Cancellation);
         if (_audience is not null && calendarEvent.Tag is CalendarTags.Corporation or CalendarTags.Alliance)
         {
@@ -68,6 +77,9 @@ public sealed partial class CalendarMgrService
     {
         var characterId = CalendarWire.CharacterId(call);
         var ownerId = CalendarWire.OwnerIdForCreate(call, tag);
+        if (!personal && (_canManageGroupEvent is null ||
+            !await _canManageGroupEvent(characterId, ownerId, tag, call.Cancellation)))
+            throw EventNotFound();
         var dateTimeIndex = 0;
         var durationIndex = 1;
         var titleIndex = 2;
@@ -99,7 +111,7 @@ public sealed partial class CalendarMgrService
         var eventId = CalendarWire.LongArg(call, 0);
         var oldEventDateTime = CalendarWire.LongArg(call, 1);
         var calendarEvent = await Store.GetEventByIdAsync(eventId, call.Cancellation);
-        if (calendarEvent is null || calendarEvent.Tag != expectedTag || !CalendarWire.CanManage(calendarEvent, call))
+        if (calendarEvent is null || calendarEvent.Tag != expectedTag || !await CanManageAsync(calendarEvent, call))
             throw EventNotFound();
 
         var input = CalendarWire.ReadInput(
@@ -119,7 +131,7 @@ public sealed partial class CalendarMgrService
         var eventId = CalendarWire.LongArg(call, 0);
         var ownerId = CalendarWire.LongArg(call, 1);
         var calendarEvent = await Store.GetEventAsync(eventId, ownerId, call.Cancellation);
-        if (calendarEvent is null || !CalendarWire.CanManage(calendarEvent, call)) throw EventNotFound();
+        if (calendarEvent is null || !await CanManageAsync(calendarEvent, call)) throw EventNotFound();
         var recipients = await ListViewerCharacterIdsAsync(calendarEvent, call.Cancellation);
         var modified = CalendarWire.NowFileTime();
         if (!await Store.DeleteEventAsync(eventId, ownerId, modified, call.Cancellation))
@@ -135,7 +147,7 @@ public sealed partial class CalendarMgrService
         var add = CalendarWire.CharacterIds(call.Arg(1));
         var remove = CalendarWire.CharacterIds(call.Arg(2));
         var calendarEvent = await Store.GetEventByIdAsync(eventId, call.Cancellation);
-        if (calendarEvent is null || !CalendarWire.CanManage(calendarEvent, call)) throw EventNotFound();
+        if (calendarEvent is null || !await CanManageAsync(calendarEvent, call)) throw EventNotFound();
         add = add.Where(id => id != calendarEvent.CreatorId).ToArray();
         remove = remove.Where(id => id != calendarEvent.CreatorId).ToArray();
         if (add.Count > 50 || remove.Count > 50) throw CalendarWire.TooManyInvitees();
@@ -265,6 +277,25 @@ public sealed partial class CalendarMgrService
         }
     }
 
+    private async Task<bool> CanViewEventAsync(CalendarEvent calendarEvent, ServiceCall call)
+    {
+        if (calendarEvent.Tag == CalendarTags.Personal)
+            return await CalendarWire.CanViewAsync(Store, calendarEvent, call);
+        var actorId = call.Session.CharacterId ?? 0;
+        if (actorId <= 0 || _readCurrentGroups is null) return false;
+        var groups = await _readCurrentGroups(actorId, call.Cancellation);
+        return CalendarWire.CanViewFromGroups(calendarEvent, groups.CorporationId, groups.AllianceId);
+    }
+
+    private async Task<bool> CanManageAsync(CalendarEvent calendarEvent, ServiceCall call)
+    {
+        if (!CalendarWire.CanManage(calendarEvent, call)) return false;
+        if (calendarEvent.Tag == CalendarTags.Personal) return true;
+        var actorId = call.Session.CharacterId ?? 0;
+        return actorId > 0 && _canManageGroupEvent is not null &&
+            await _canManageGroupEvent(actorId, calendarEvent.OwnerId, calendarEvent.Tag, call.Cancellation);
+    }
+
     internal static MachoWrappedException EventNotFound() =>
         MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Calendar event not found.")));
 }
@@ -274,9 +305,16 @@ public sealed partial class CalendarMgrService
 public sealed partial class CalendarProxyService
 {
     private readonly ICalendarStore? _store;
+    private readonly Func<long, CancellationToken, ValueTask<(long CorporationId, long AllianceId)>>? _readCurrentGroups;
 
     public CalendarProxyService() { }
-    public CalendarProxyService(ICalendarStore store) => _store = store ?? throw new ArgumentNullException(nameof(store));
+    public CalendarProxyService(
+        ICalendarStore store,
+        Func<long, CancellationToken, ValueTask<(long CorporationId, long AllianceId)>>? readCurrentGroups = null)
+    {
+        _store = store ?? throw new ArgumentNullException(nameof(store));
+        _readCurrentGroups = readCurrentGroups;
+    }
     private ICalendarStore Store => _store ?? throw new InvalidOperationException("Host must inject the PostgreSQL calendar store.");
 
     [Method("GetEventList")]
@@ -285,10 +323,10 @@ public sealed partial class CalendarProxyService
         var month = CalendarWire.IntArg(call, 0);
         var year = CalendarWire.IntArg(call, 1);
         var characterId = CalendarWire.CharacterId(call);
+        var groups = await ReadCurrentGroupsAsync(characterId, call.Cancellation);
         var rows = await Store.ListMonthAsync(
-            characterId, CalendarWire.SessionId(call, "corpid", "corporationID"),
-            CalendarWire.SessionId(call, "allianceid", "allianceID"), month, year, call.Cancellation);
-        var visible = rows.Where(row => CalendarWire.CanViewFromSession(row, call)).ToArray();
+            characterId, groups.CorporationId, groups.AllianceId, month, year, call.Cancellation);
+        var visible = rows.Where(row => CalendarWire.CanViewFromGroups(row, groups.CorporationId, groups.AllianceId)).ToArray();
         return new PyTuple(
         [
             new PyList(visible.Where(row => row.Tag is CalendarTags.Personal or CalendarTags.Ccp or CalendarTags.Automated)
@@ -304,10 +342,21 @@ public sealed partial class CalendarProxyService
         var eventId = CalendarWire.LongArg(call, 0);
         var ownerId = CalendarWire.LongArg(call, 1);
         var calendarEvent = await Store.GetEventAsync(eventId, ownerId, call.Cancellation);
-        if (calendarEvent is null || !await CalendarWire.CanViewAsync(Store, calendarEvent, call))
+        var characterId = CalendarWire.CharacterId(call);
+        var groups = await ReadCurrentGroupsAsync(characterId, call.Cancellation);
+        var canView = calendarEvent is not null && (calendarEvent.Tag == CalendarTags.Personal
+            ? await CalendarWire.CanViewAsync(Store, calendarEvent, call)
+            : CalendarWire.CanViewFromGroups(calendarEvent, groups.CorporationId, groups.AllianceId));
+        if (!canView || calendarEvent is null)
             throw CalendarMgrService.EventNotFound();
         return CalendarWire.EventDetails(calendarEvent);
     }
+
+    private async ValueTask<(long CorporationId, long AllianceId)> ReadCurrentGroupsAsync(
+        long characterId, CancellationToken cancellationToken) =>
+        characterId > 0 && _readCurrentGroups is not null
+            ? await _readCurrentGroups(characterId, cancellationToken)
+            : (0, 0);
 }
 
 /// <summary>Converts the native calendar model to the client's KeyVal and row-list wire shapes.</summary>
@@ -437,12 +486,12 @@ internal static class CalendarWire
         };
     }
 
-    public static bool CanViewFromSession(CalendarEvent calendarEvent, ServiceCall call) =>
+    public static bool CanViewFromGroups(CalendarEvent calendarEvent, long corporationId, long allianceId) =>
         calendarEvent.Tag switch
         {
             CalendarTags.Personal => true,
-            CalendarTags.Corporation => calendarEvent.OwnerId == SessionId(call, "corpid", "corporationID"),
-            CalendarTags.Alliance => calendarEvent.OwnerId == SessionId(call, "allianceid", "allianceID"),
+            CalendarTags.Corporation => calendarEvent.OwnerId == corporationId && corporationId > 0,
+            CalendarTags.Alliance => calendarEvent.OwnerId == allianceId && allianceId > 0,
             CalendarTags.Ccp or CalendarTags.Automated => true,
             _ => false,
         };
@@ -450,7 +499,7 @@ internal static class CalendarWire
     public static async Task<bool> CanViewAsync(ICalendarStore store, CalendarEvent calendarEvent, ServiceCall call)
     {
         if (calendarEvent.Tag != CalendarTags.Personal)
-            return CanViewFromSession(calendarEvent, call);
+            return false;
 
         var characterId = call.Session.CharacterId ?? 0;
         if (calendarEvent.OwnerId == characterId && characterId > 0) return true;

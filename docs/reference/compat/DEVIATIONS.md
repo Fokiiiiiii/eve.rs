@@ -2706,7 +2706,7 @@ Engine: `dotnet/src/Eve.Hacking` (pure rules, no Host). Sources: EVE University 
 
 ## Calendar mutation notifications
 
-Client calls are in eve-logic `eve/client/script/ui/services/eveCalendarsvc.py`; EveJS behavior is in `server/src/services/calendar/calendarMgrService.js` and `calendarNotifications.js`. The Host publishes notification packets after the PostgreSQL mutation returns successfully and before the RPC reply. Personal event creation notifies online invitees and other viewers, excluding the calling session; corporation and alliance creation notify online members. Edits notify current viewers, deletion notifies the viewer set captured before the soft delete, participant changes notify only actual additions/removals, and an event response notifies other viewers while excluding the responding session. The four packet payload shapes and order are covered by `CalendarMgrServiceTests`; the headless live invite walk confirms a second character receives `OnNewCalendarEvent` after the event can be read back.
+Client calls are in eve-logic `eve/client/script/ui/services/eveCalendarsvc.py`; EveJS behavior is in `server/src/services/calendar/calendarMgrService.js` and `calendarNotifications.js`. The Host publishes notification packets after the PostgreSQL mutation returns successfully and before the RPC reply. Personal event creation notifies online invitees and other viewers, excluding the calling session; corporation and alliance creation notify online members. Edits notify current viewers, deletion notifies the viewer set captured before the soft delete, participant changes notify only actual additions/removals, and an event response notifies other viewers while excluding the responding session. The four packet payload shapes and order are covered by `CalendarMgrServiceTests`; the headless live invite walk confirms a second character receives `OnNewCalendarEvent` after the event can be read back. For corporation and alliance reads, the Host resolves current persisted corporation and alliance IDs before listing events, reading details, or fetching responses, so cached group IDs cannot retain access after a pilot leaves. Mutations also recheck the actor’s persisted membership, Chat Manager role, and active alliance affiliation on each call so a role or affiliation change after login cannot authorize a stale session. `CalendarMgrServiceTests.Group_calendar_mutations_refuse_a_revoked_persisted_manager_role` covers the refusal.
 
 ## Project Discovery availability
 
@@ -2733,6 +2733,10 @@ Client calls are in eve-logic `eve/client/script/ui/services/eveCalendarsvc.py`;
 - **Calendar.** `calendarEventID` is stored as given and returned; the client owns the calendar entry (EVE.js does not create one either).
 - **Id width.** Structure, owner and moon ids are sent as `PyLong` when they exceed the 32-bit range (`PyInt` is 32-bit on the wire).
 - **Hacking stat re-check (ST-10).** Re-read on 2026-10-11: the wiki Hacking page gives no numeric firewall, anti-virus, restoration or core values in text; its difficulty table and stat icons are images without numbers, and the board size is not stated. The wiki's numbers used are the virus stats (40/20, T2 60/30), the restoration heal 20, suppressor 15 (floor 10), self repair 5-10, kernel rot 50%, secondary vector 20, shield 2 hits. The defensive subsystem stats (60/10, 20/40, 30/10, 30/10) and the content counts remain eve.rs decisions; the core is EveJS `buildSyntheticBoard` (10 x difficulty). Status: decided, MITM to verify.
+
+## Structure RPC batch bounds
+
+The Host refuses structure cargo, delivery, profile-change, and reinforcement identifier lists above 500 raw entries with `STRUCTURE_BULK_LIMIT_EXCEEDED` before deduplication or callback work. This follows the client batch limits used by related structure-directory operations and prevents a large framed list from expanding into avoidable per-request work.
 
 ## Structure docking (ST-1 c)
 

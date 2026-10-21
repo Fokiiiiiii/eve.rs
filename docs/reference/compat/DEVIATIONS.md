@@ -5361,3 +5361,8 @@ The dispatcher applies the per-session weighted budget to an expensive method wh
 ## Character-bound ally base cost (2026-10-21)
 
 `corpRegistry.CharGetAllyBaseCost` now reads the Diplomatic Relations skill only for the session character. The V24.01 callsite in `eve/client/script/ui/services/corporation/base_corporation.py` invokes the RPC without arguments; eve.rs ignores the legacy EveJS fallback to a client-supplied character ID when no character is selected and returns the existing 10,000,000 ISK fallback instead. This prevents the method from exposing another character’s skill-derived value. `Corp_registry_ally_base_cost_uses_the_reference_fallback` verifies that the Host reader is not called with a client-supplied ID.
+
+
+## Ranked alliance negative limit (2026-10-21)
+
+`GetRankedAlliances(0)` retains the V24.01 all-rankings behavior and weighted RPC charge. Negative limits now return `ALLIANCE_RANKED_LIMIT_INVALID`; they are not coerced to zero, which means an unbounded list in the client contract. `Alliance_membership_reads_and_public_info_updates_match_reference_shapes` checks negative input refusal alongside the valid ranking response.

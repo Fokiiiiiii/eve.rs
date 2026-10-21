@@ -761,6 +761,9 @@ public class AllianceTests
         Assert.Contains(new Eve.Marshal.PyInt(memberCorp.Id),older.Items);
 
         var ranked = Assert.IsType<Eve.Marshal.PyList>(await service.CallAsync(Call(executor,"GetRankedAlliances",new Eve.Marshal.PyInt(10))));
+        var invalidRankLimit = await Assert.ThrowsAsync<Eve.Corporations.CorporationError>(() =>
+            service.CallAsync(Call(executor,"GetRankedAlliances",new Eve.Marshal.PyInt(-1))).AsTask());
+        Assert.Equal("ALLIANCE_RANKED_LIMIT_INVALID",invalidRankLimit.Code);
         var row = Assert.IsType<Eve.Marshal.PyObject>(Assert.Single(ranked.Items));
         var rowFields = Assert.IsType<Eve.Marshal.PyDict>(row.Args);
         var header = Assert.IsType<Eve.Marshal.PyTuple>(rowFields.Entries.Single(entry => entry.Key == new Eve.Marshal.PyStr("header")).Value);

@@ -511,6 +511,8 @@ private static double RelationshipValue(PyValue value)
         var (actor, allianceId) = await RequireAllianceExecutorDirector(call);
         var corporationId = Number(call.Arg(0));
         var applicationText = JsSemantics.StringValue(call.Arg(1)) ?? "";
+        if (applicationText.Length > 1000)
+            throw new CorporationError("ALLIANCE_APPLICATION_TEXT_TOO_LONG");
         var state = Number(call.Arg(2));
         if (corporationId <= 0) throw new CorporationError("ALLIANCE_APPLICATION_NOT_FOUND");
         if (state is not (2 or 4)) throw new CorporationError("ALLIANCE_APPLICATION_INVALID_STATE");

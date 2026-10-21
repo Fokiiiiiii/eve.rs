@@ -1163,6 +1163,44 @@ public class AllianceTests
         Assert.Equal(maximum,rejected.Text);
     }
 
+    [PgFact]
+    public async Task Alliance_application_response_text_limit_matches_the_client_utf16_maximum()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (executor, _) = await Founder(rig, "Response Executor", "RSPEX");
+        var (applicant, applicantCorp) = await Founder(rig, "Response Applicant", "RSPAP");
+        var alliance = await rig.Store.CreateAllianceAsync(executor, Request, "response-limit");
+        var applicationId = await rig.Store.ApplyToAllianceAsync(applicant, alliance.Id, "Initial text");
+        var service = (Eve.Services.IService)new Eve.Services.Corporations.AllianceRegistryService(
+            rig.Store, rig.Characters, () => rig.Now);
+        Eve.Services.ClientSession Session(long actor)
+        {
+            var session = new Eve.Services.ClientSession { SessionId = actor };
+            session.Set("charid", new Eve.Marshal.PyInt(actor));
+            return session;
+        }
+        Eve.Services.ServiceCall Call(long actor, string method, params Eve.Marshal.PyValue[] args) =>
+            new() { Session = Session(actor), Method = method, Args = args };
+
+        var maximum = string.Concat(Enumerable.Repeat("😀", 500));
+        var tooLong = string.Concat(Enumerable.Repeat("😀", 501));
+
+        var refused = await Assert.ThrowsAsync<Eve.Corporations.CorporationError>(() => service.CallAsync(
+            Call(executor, "UpdateApplication", new Eve.Marshal.PyInt(applicantCorp.Id),
+                new Eve.Marshal.PyWString(tooLong), new Eve.Marshal.PyInt(4))).AsTask());
+        Assert.Equal("ALLIANCE_APPLICATION_TEXT_TOO_LONG", refused.Code);
+        var unchanged = Assert.Single(await rig.Store.AllianceApplicationsAsync(alliance.Id));
+        Assert.Equal(applicationId, unchanged.Id);
+        Assert.Equal("Initial text", unchanged.Text);
+        Assert.Equal(1, unchanged.Status);
+
+        Assert.IsType<Eve.Marshal.PyNone>(await service.CallAsync(Call(executor, "UpdateApplication",
+            new Eve.Marshal.PyInt(applicantCorp.Id), new Eve.Marshal.PyWString(maximum), new Eve.Marshal.PyInt(4))));
+        var updated = Assert.Single(await rig.Store.AllianceApplicationsAsync(alliance.Id));
+        Assert.Equal(maximum, updated.Text);
+        Assert.Equal(4, updated.Status);
+    }
+
     [Fact]
     public async Task Suggested_alliance_short_names_match_reference_variants()
     {

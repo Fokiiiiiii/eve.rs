@@ -5319,6 +5319,11 @@ V24.01 `fleetCompositionWnd.py` indexes `skills` and `skillIDs` at positions 0 t
 `structureDirectory.SetStructureDescription` now recalculates Station Manager access from persisted corporation membership and titles for each write. The V24.01 request and success wire shape are unchanged; a role removed after login now receives the existing `CrpAccessDenied` refusal. `HostServerTests.Structure_description_rechecks_persisted_station_manager_role_after_login` verifies the refusal and that no write callback runs.
 
 
+## Alliance application response size (2026-10-21)
+
+`allianceRegistry.UpdateApplication` now enforces the V24.01 alliance application editor maximum of 1,000 UTF-16 code units before reading application rows. The client uses `maxLength=1000` in `eve/client/script/ui/shared/neocom/Alliances/all_ui_applications.py`; the server refuses larger response text with `ALLIANCE_APPLICATION_TEXT_TOO_LONG`. `Alliance_application_response_text_limit_matches_the_client_utf16_maximum` covers refusal without a stored change and acceptance at the client boundary.
+
+
 ## Structure info owner projection (2026-10-21)
 
 `structureDirectory.GetStructureInfo` accepts a structure ID and returns a basic public projection to other callers; services and corporation/alliance ownership fields are returned only when the caller's current persisted corporation owns the structure. EveJS 261018.1 likewise selects `buildBasicStructureInfoPayload` for non-owner corporations. eve.rs currently returns the available public type, structure ID, solar system, and owner fields because the persistence projection does not provide the remaining public fields used by EveJS. `HostServerTests.Structure_directory_host_reads_deployed_rows_and_docking_profiles` checks full owner data and the reduced foreign view.

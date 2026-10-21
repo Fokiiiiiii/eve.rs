@@ -2941,6 +2941,23 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
         session.Set("corpid", new Eve.Marshal.PyInt(corporationId));
         session.Set("allianceid", new Eve.Marshal.PyInt(allianceId));
         var service = new Eve.Services.Core.StructureDirectoryService(readModel);
+        var ownerDetails = Assert.IsType<Eve.Marshal.PyObject>(await service.CallAsync(new Eve.Services.ServiceCall
+        {
+            Method = "GetStructureInfo",
+            Args = [new Eve.Marshal.PyLong(structureId)],
+            Session = session,
+        }));
+        Assert.Contains(Assert.IsType<Eve.Marshal.PyDict>(ownerDetails.Args).Entries,
+            entry => entry.Key.Equals(new Eve.Marshal.PyStr("services")));
+        var publicSession = new Eve.Services.ClientSession { CharacterId = characterId + 1 };
+        var publicDetails = Assert.IsType<Eve.Marshal.PyObject>(await service.CallAsync(new Eve.Services.ServiceCall
+        {
+            Method = "GetStructureInfo",
+            Args = [new Eve.Marshal.PyLong(structureId)],
+            Session = publicSession,
+        }));
+        var publicInfoFields = Assert.IsType<Eve.Marshal.PyDict>(publicDetails.Args).Entries;
+        Assert.DoesNotContain(publicInfoFields, entry => entry.Key.Equals(new Eve.Marshal.PyStr("services")));
         var docking = await service.CallAsync(new Eve.Services.ServiceCall
         {
             Method = "CheckMyDockingAccessToStructures",

@@ -45,7 +45,7 @@ internal sealed partial class CharacterServicesComposition
                 industryJobOperations.ReadJobsAsync,
                 industryJobOperations,
                 currentFileTime: () => checked(116444736000000000L + now() * 10_000L),
-                isAlphaClone: userId => !omega.Resolve(userId).HasLicense),
+                isAlphaClone: userId => CloneGradeSource.CloneGradeOf(userId) == 0),
             new Eve.Services.Core.BlueprintManagerService(
                 ReadBlueprintAsync,
                 ReadOwnedBlueprintsAsync,

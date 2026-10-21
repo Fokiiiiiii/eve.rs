@@ -40,6 +40,8 @@ public interface IStructureDirectoryReadCallbacks
 
     /// <summary>Returns info only for an actually deployed structure row in persistent state.</summary>
     ValueTask<PersistedStructureInfo?> GetStructureInfoAsync(long structureId, CancellationToken cancellationToken);
+    ValueTask<PersistedStructureInfo?> GetStructureInfoForCharacterAsync(
+        long characterId, long structureId, CancellationToken cancellationToken);
 
     /// <summary>
     /// Returns exactly the requested deployed structures' profile data for the Docking service.
@@ -166,7 +168,8 @@ public sealed class StructureDirectoryService(IStructureDirectoryReadCallbacks r
                 var structureId = PositiveId(call.Arg(0));
                 if (structureId <= 0)
                     return PyNone.Instance;
-                var structure = await _read.GetStructureInfoAsync(structureId, call.Cancellation);
+                var structure = await _read.GetStructureInfoForCharacterAsync(
+                    call.Session?.CharacterId ?? 0, structureId, call.Cancellation);
                 return structure is { PersistentlyDeployed: true } &&
                     structure.StructureId == structureId && structure.Info is not PyNone
                     ? structure.Info

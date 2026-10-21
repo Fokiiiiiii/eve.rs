@@ -316,7 +316,18 @@ internal sealed partial class CharacterServicesComposition
                     return false;
                 var roles = Eve.Corporations.CorporationRoles.Session(
                     corporation, member, null, await corporations.TitlesAsync(corporationId, token));
-                return (roles.CorpRole & 2048) == 2048;
+                return (roles.CorpRole & Eve.Corporations.CorporationRoles.StationManager) != 0;
+            },
+            async (characterId, corporationId, token) =>
+            {
+                var corporation = await corporations.GetAsync(corporationId, token);
+                var member = await corporations.MemberAsync(characterId, token);
+                if (corporation is null || corporation.IsNpc || member?.CorporationId != corporationId)
+                    return false;
+                var roles = Eve.Corporations.CorporationRoles.Session(
+                    corporation, member, null, await corporations.TitlesAsync(corporationId, token));
+                return (roles.CorpRole & (Eve.Corporations.CorporationRoles.StationManager |
+                    Eve.Corporations.CorporationRoles.BrandManager)) != 0;
             });
         if (spaceSessions is not null)
             spaceSessions.StructureExistsAsync = async (structureId, cancellationToken) =>

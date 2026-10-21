@@ -5,6 +5,7 @@ Headless tests and QA runs need the same game-master actions a human GM uses in 
 
 ## Access
 - A session may use the commands only with a staff role bit (`GameMasterRoles.Staff`: ADMIN, CONTENT, GML, GMH, QA, EXT_GM1 to 4). The bits come from the account row at login; the client cannot grant them to itself.
+- `charUnboundMgr.ToggleValidation` uses the narrower Programmer, QA, GML, or Content account-role set. It reads the Host-provided `accountRole`, and ordinary accounts keep name validation enabled even if the client-visible character `role` contains a staff bit.
 - Grants are made at host start with `EVE_GM_ACCOUNTS=user=ROLE+ROLE,...` (`HostComposition`), which ORs the bits into an existing account row (`PgAccountDirectory.GrantRolesAsync`). An account is created by its first login.
 - A refused session gets `Command requires a game master role.`
 

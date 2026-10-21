@@ -52,6 +52,8 @@ public sealed record AllianceDepartureMutation(AllianceMember? Member, Alliance?
 public static class CorporationRoles
 {
     public const long Director = 1;
+    public const long StationManager = 1L << 11;
+    public const long BrandManager = 1L << 35;
     public const long RentOffice = 1L << 41;
     public const long PersonnelManager = 128;
     public const long FactoryManager = 1024;

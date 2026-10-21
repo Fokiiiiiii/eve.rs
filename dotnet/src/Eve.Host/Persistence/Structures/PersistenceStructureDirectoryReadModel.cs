@@ -41,7 +41,8 @@ public sealed partial class PersistenceStructureDirectoryReadModel(
     Eve.Sde.SdeReader sde,
     Func<long, string, CancellationToken, Task>? setDescriptionAsync,
     Func<long, CancellationToken, ValueTask<bool>>? cynoJammedAsync = null,
-    Func<long, long, CancellationToken, Task<bool>>? stationManagerOfAsync = null) :
+    Func<long, long, CancellationToken, Task<bool>>? stationManagerOfAsync = null,
+    Func<long, long, CancellationToken, Task<bool>>? corporationStructureDirectoryAccessAsync = null) :
     Eve.Services.Core.IStructureDirectoryReadCallbacks,
     Eve.Services.Core.IStructureSettingsReadCallbacks
 {
@@ -231,10 +232,21 @@ public async ValueTask<Eve.Services.Core.PersistedStructureInfo?> GetStructureIn
         if (characterId <= 0 || corporationId <= 0)
             return new PyDict([]);
         var affiliation = await affiliationOf(characterId, cancellationToken);
-        return affiliation.Corporation == corporationId
-            ? await ReadStructuresForCorporationAsync(corporationId, cancellationToken)
-            : new PyDict([]);
+        if (affiliation.Corporation != corporationId)
+            return new PyDict([]);
+        if (corporationStructureDirectoryAccessAsync is null ||
+            !await corporationStructureDirectoryAccessAsync(characterId, corporationId, cancellationToken))
+            throw CorporationStructureDirectoryDenied();
+        return await ReadStructuresForCorporationAsync(corporationId, cancellationToken);
     }
+
+    private static Eve.Services.MachoWrappedException CorporationStructureDirectoryDenied() =>
+        Eve.Services.MachoErrors.ThrowUserError(
+            "CrpAccessDenied",
+            ("reason", new PyList([
+                new PyInt(101),
+                new PyStr("UI/Corporations/AccessRestrictions/InsufficientRoles"),
+            ])));
 
     private async ValueTask<PyDict> ReadStructuresForCorporationAsync(
         long corporationId,

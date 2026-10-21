@@ -17,6 +17,7 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
     private const int MaxBulkCorporationActions = 500;
     private const int MaxCorporationQueryCriteria = 100;
     private const int MaxCorporationQueryTextLength = 256;
+    private const int MaxRecentCorporationKillmailPage = 25;
 
     public AllianceAffiliationMutationCallback? AllianceAffiliationWriter
     {
@@ -1753,7 +1754,9 @@ private static int MemberFieldInteger(PyValue value)
           if (corporation is null)
               return CorporationWire.KillmailCRowset([]);
           var requestedLimit = Number(call.Arg(0));
-          var limit = requestedLimit > int.MaxValue ? int.MaxValue : requestedLimit < int.MinValue ? int.MinValue : (int)requestedLimit;
+           if (requestedLimit < 0 || requestedLimit > MaxRecentCorporationKillmailPage)
+               throw new CorporationError("CORPORATION_KILLMAIL_PAGE_LIMIT_EXCEEDED");
+           var limit = (int)requestedLimit;
           var startKillId = call.Args.Count > 1 ? PositiveId(call.Arg(1)) : null;
           var records = readRecentCorporationKillmails is null
               ? Array.Empty<PyValue>()

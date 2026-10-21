@@ -5351,3 +5351,8 @@ EveJS 261018.1 checks corporation and alliance mail against the sender's current
 ## Bound RPC resource budget (2026-10-21)
 
 The dispatcher applies the per-session weighted budget to an expensive method when a client supplies it as the nested initial call to `MachoBindObject`. This keeps bound and named invocation forms under the same resource limit; the client call shape is unchanged. `Bound_bind_invocations_consume_the_nested_expensive_rpc_budget` verifies that the second costly nested call receives `SessionRpcBudgetExceeded`.
+
+
+## Corporation killmail page bounds (2026-10-21)
+
+`corpRegistry.GetRecentKills` and `GetRecentLosses` derive the corporation from the authenticated character and now refuse negative or over-25 page sizes with `CORPORATION_KILLMAIL_PAGE_LIMIT_EXCEEDED`. The V24.01 corporation kill-report UI requests 25 rows (`NUM_KILL_ENTRIES` in `eve/client/script/ui/shared/neocom/corporation/corp_ui_killreports.py`); the limit prevents one authenticated call from requesting an effectively unbounded killmail result. `Corp_registry_recent_kill_rows_keep_the_fixed_client_columns_and_cursor` verifies the boundary refusal occurs before the provider callback and keeps valid cursors.

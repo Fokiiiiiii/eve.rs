@@ -3237,6 +3237,14 @@ private static PyValue RowField(PyValue value,string key)
         var service = (IService)new CorpRegistryService(rig.Store,rig.Characters,() => rig.Now,
             readRecentCorporationKillmails:Read);
 
+        var tooMany = await Assert.ThrowsAsync<CorporationError>(() => service.CallAsync(
+            Call(session,"GetRecentKills",new PyInt(26))).AsTask());
+        Assert.Equal("CORPORATION_KILLMAIL_PAGE_LIMIT_EXCEEDED",tooMany.Code);
+        var negative = await Assert.ThrowsAsync<CorporationError>(() => service.CallAsync(
+            Call(session,"GetRecentLosses",new PyInt(-1))).AsTask());
+        Assert.Equal("CORPORATION_KILLMAIL_PAGE_LIMIT_EXCEEDED",negative.Code);
+        Assert.Empty(requests);
+
         var kills = Assert.IsType<PyObject>(await service.CallAsync(Call(session,"GetRecentKills",new PyInt(10),new PyInt(8000))));
         var killRows = Assert.IsType<PyList>(Field(kills,"lines"));
         var kill = Assert.IsType<PyPackedRow>(Assert.Single(killRows.Items));

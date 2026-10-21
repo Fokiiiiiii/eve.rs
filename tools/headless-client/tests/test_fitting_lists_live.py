@@ -28,4 +28,10 @@ def test_fitting_browser_reads_owned_character_and_corporation_lists():
         corporation_fittings = m.plain(client.call("corpFittingMgr", "GetFittings", corporation_id))
 
         assert isinstance(character_fittings, dict)
-        assert isinstance(corporation_fittings, dict)
+        assert isinstance(corporation_fittings, tuple)
+        assert len(corporation_fittings) == 2
+        assert corporation_fittings[0] == "carbon.common.script.net.objectCaching.CachedMethodCallResult"
+        cache_metadata, fitting_rows, version = corporation_fittings[1]
+        assert cache_metadata == {"versionCheck": "15 minutes"}
+        assert isinstance(fitting_rows, dict)
+        assert len(version) == 2

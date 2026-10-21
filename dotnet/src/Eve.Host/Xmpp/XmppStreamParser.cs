@@ -59,6 +59,16 @@ public sealed class XmppStreamParser
     private int _stanzaChars;
 
     /// <summary>Appends the next bytes and returns the events they complete.</summary>
+      /// <summary>Begins a fresh XML document on the same socket after SASL stream restart.</summary>
+      public void Restart()
+      {
+          _decoder.Reset();
+          _open.Clear();
+          _buffer = "";
+          _position = 0;
+          _stanzaChars = 0;
+      }
+
     public List<XmppStreamEvent> Feed(ReadOnlySpan<byte> bytes)
     {
         var events = new List<XmppStreamEvent>();

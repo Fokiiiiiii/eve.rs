@@ -251,6 +251,17 @@ public class TrainingQueueTests
     }
 
     [Fact]
+    public void A_timer_settlement_finishes_only_one_overdue_queue_line()
+    {
+        var state = new QueueState([new(3301, 2), new(3301, 3)], true, Start);
+        var firstEnd = Training.Project(state, Rookie(), Catalog, Rate, Start).Entries[0].End;
+        var settlement = Training.Settle(state, Rookie(), Catalog, Rate, Start + 10_000 * Minute, maxFinished: 1);
+        Assert.Equal([new CharacterSkill(3301, 2, 1415)], settlement.Finished);
+        Assert.Equal(new QueueState([new(3301, 3)], true, firstEnd), settlement.State);
+        Assert.Equal([SkillEvents.QueueTrainingCompleted], settlement.History.Select(h => h.EventType));
+    }
+
+    [Fact]
     public void A_queue_that_is_not_running_does_not_progress_but_lines_already_trained_are_dropped()
     {
         var paused = new QueueState([new(3301, 2)], false, null);

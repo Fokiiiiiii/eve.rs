@@ -92,7 +92,17 @@ def test_a_pilot_who_shoots_a_rat_dead_is_told_of_its_bounty():
         who.call_bound(ballpark[0], "CmdOrbit", rat, 2000)
         watch({"events": who}, 8.0)
         who.call_bound(dogma[0], "Activate", gun, "targetAttack", rat, 1000)
-        seen = watch({"events": who}, 120.0, until=lambda s: any(e["name"] == "OnBountyAddedToPayout" for e in s["events"]))["events"]
+        def payout_and_ball_removal(seen: dict[str, list[dict]]) -> bool:
+            events = seen["events"]
+            has_payout = any(event["name"] == "OnBountyAddedToPayout" for event in events)
+            has_removal = any(
+                "RemoveBalls" in _names(event)
+                for event in events
+                if event["name"] == "DoDestinyUpdate"
+            )
+            return has_payout and has_removal
+
+        seen = watch({"events": who}, 120.0, until=payout_and_ball_removal)["events"]
         names = [e["name"] for e in seen]
         counts = {n: names.count(n) for n in set(names)}
         hits = [str(shot.get("damage")) for shot in shots_of(seen)]

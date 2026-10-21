@@ -22,7 +22,7 @@ from tests import test_login_to_character as base
 from tests.test_ammo import canon, canon_events
 from tests.test_others import watch
 from tests.test_target import compare_answer, plain_race
-from tests.test_undock import STATION, SYSTEM, arrive, compare_events, ids, outcome
+from tests.test_undock import STATION, SYSTEM, arrive, compare_events_by_source, ids, outcome
 from tests.test_weapon import slims_in
 
 LOOT = base.load("loot.json")
@@ -75,7 +75,7 @@ def test_a_pilot_loots_a_can_as_in_the_reference():
                 problems.extend(differences(theirs, ours, label))
             got = watch(only, seconds, (lambda seen: until(seen["events"])) if until else None)["events"]
             last["events"] = got
-            problems.extend(compare_events(canon_events(quiet(recorded["events"]), seen_recorded, known), canon_events(quiet(got), seen_ids), label, {}))
+            problems.extend(compare_events_by_source(canon_events(quiet(recorded["events"]), seen_recorded, known), canon_events(quiet(got), seen_ids), label, {}))
             return raw
 
         def stacks(handle, flag=None) -> dict:

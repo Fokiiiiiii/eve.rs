@@ -295,6 +295,8 @@ public sealed class PacketDispatcher
             return 2;
         if (service == "corpMgr" && (method is "GetAssetInventory" or "GetAssetInventoryForLocation" or "SearchAssets" or "GetAggressionSettingsForCorps" or "AuditMember"))
             return 10;
+        if (service == "itemLocking" && (method is "GetItemsByLocation" or "GetLockedItemLocations"))
+            return 10;
         if (service == "account" && method is "GetTransactions" or "GiveCash" or "GiveCashFromCorpAccount")
             return 10;
         if (service == "LPStoreMgr" && method is "GetAvailableOffersFromCorp" or "TakeOfferForCharacter" or "TakeOfferForCorporation")

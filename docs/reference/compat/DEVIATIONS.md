@@ -5387,3 +5387,8 @@ The staff-only `mailMgr.PokePlayerAboutChatMsgGm` RPC caps its requested channel
 ## Wallet transfer reason bound (2026-10-21)
 
 `account.GiveCash` and `GiveCashFromCorpAccount` now enforce the V24.01 transfer window's 40-character reason field before wallet settlement. Oversized input returns `WALLET_REASON_LIMIT_EXCEEDED`; the focused corporation RPC regression confirms the sender balance is unchanged.
+
+
+## Item-locking read budget (2026-10-21)
+
+`itemLocking.GetItemsByLocation` and `GetLockedItemLocations` each consume 10 units from the per-session expensive-RPC budget because they enumerate corporation asset records. Calls above the configured session allowance receive the dispatcher’s `SessionRpcBudgetExceeded` refusal; the valid response shapes are unchanged. `DispatchGoldenTests.Corporation_item_lock_reads_have_a_named_per_session_budget` checks that the first call runs and the second is refused at the configured limit.

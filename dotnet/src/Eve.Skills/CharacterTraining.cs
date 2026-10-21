@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Npgsql;
 
 namespace Eve.Skills;
@@ -65,6 +66,7 @@ public sealed class CharacterTraining(
 {
     private const long UnixEpochInFileTime = 116_444_736_000_000_000;
     private const int SlotsPerAccount = 1;
+    private readonly ConcurrentDictionary<long, SemaphoreSlim> settleGates = new();
 
     public TrainingSettings Settings => settings;
 
@@ -341,13 +343,30 @@ public sealed class CharacterTraining(
     /// Makes what the clock finished real: the levels are in the character's skills, the queue has moved on, and the history says so. Returns
     /// what changed, or null when nothing had. <see cref="Settled"/> is raised for a change.
     /// </summary>
-    public async Task<TrainingUpdate?> SettleAsync(long characterId, long accountId, CancellationToken cancellationToken = default)
+    public Task<TrainingUpdate?> SettleAsync(long characterId, long accountId, CancellationToken cancellationToken = default)
+        => SettleAsync(characterId, accountId, int.MaxValue, cancellationToken);
+
+    public async Task<TrainingUpdate?> SettleAsync(long characterId, long accountId, int maxFinished, CancellationToken cancellationToken = default)
+    {
+        var gate = settleGates.GetOrAdd(characterId, static _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(cancellationToken);
+        try
+        {
+            return await SettleCoreAsync(characterId, accountId, maxFinished, cancellationToken);
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    private async Task<TrainingUpdate?> SettleCoreAsync(long characterId, long accountId, int maxFinished, CancellationToken cancellationToken)
     {
         await skills.NeuralRemapAsync(characterId, cancellationToken);
         await settings.RefreshLearningBonus(characterId, cancellationToken);
         var probeRate = RateOf(characterId, accountId);
         var probe = await store.LoadAsync(characterId, cancellationToken);
-        if (probe.Entries.Count == 0 || !Training.Settle(probe, await SkillsOfAsync(characterId, cancellationToken), catalog, probeRate, Now).QueueChanged)
+        if (probe.Entries.Count == 0 || !Training.Settle(probe, await SkillsOfAsync(characterId, cancellationToken), catalog, probeRate, Now, maxFinished).QueueChanged)
         {
             return null;
         }
@@ -364,7 +383,7 @@ public sealed class CharacterTraining(
             var state = await store.LoadAsync(connection, transaction, characterId, cancellationToken);
             var before = (await skills.ForCharacterAsync(connection, transaction, characterId, cancellationToken))
                 .ToDictionary(skill => skill.TypeId);
-            var settled = Training.Settle(state, before, catalog, rate, now);
+            var settled = Training.Settle(state, before, catalog, rate, now, maxFinished);
             if (!settled.QueueChanged)
             {
                 return null; // another call settled it while this one waited

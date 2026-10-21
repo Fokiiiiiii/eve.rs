@@ -21,6 +21,21 @@ public sealed class XmppTransportTests
             item => Assert.Equal("presence", Assert.IsType<XmppStanza>(item).Element.Name));
     }
 
+
+    [Fact]
+    public void Parser_restarts_the_stream_after_sasl_without_closing_the_socket()
+    {
+        var parser = new XmppStreamParser();
+        parser.Feed(Encoding.UTF8.GetBytes("<stream:stream xmlns='jabber:client' xmlns:stream='http://etherx.jabber.org/streams'><auth/>"));
+
+        parser.Restart();
+        var events = parser.Feed(Encoding.UTF8.GetBytes("<stream:stream xmlns='jabber:client' xmlns:stream='http://etherx.jabber.org/streams'><iq/>"));
+
+        Assert.Collection(events,
+            item => Assert.IsType<XmppStreamOpened>(item),
+            item => Assert.Equal("iq", Assert.IsType<XmppStanza>(item).Element.Name));
+    }
+
     [Theory]
     [InlineData("<!DOCTYPE x [<!ENTITY e 'expanded'>]><x>&e;</x>")]
     [InlineData("<x><y></x>")]

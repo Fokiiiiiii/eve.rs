@@ -24,6 +24,15 @@ internal sealed class XmppClientSession(XmppChatHub hub, Action<string> send, Ac
     /// <summary>True once SASL succeeded: the connection then has no idle deadline.</summary>
     public bool Authenticated => _phase != Phase.AwaitingSasl;
 
+      private bool _streamRestartRequested;
+
+      public bool ConsumeStreamRestartRequest()
+      {
+          var requested = _streamRestartRequested;
+          _streamRestartRequested = false;
+          return requested;
+      }
+
     public void OnStreamOpened()
     {
         send($"<?xml version='1.0'?><stream:stream from='{XmppXml.Escape(hub.Settings.Domain)}' version='1.0' xmlns='jabber:client' xmlns:stream='http://etherx.jabber.org/streams'>");
@@ -175,6 +184,7 @@ internal sealed class XmppClientSession(XmppChatHub hub, Action<string> send, Ac
         }
         _characterId = characterId;
         _phase = Phase.AwaitingBind;
+        _streamRestartRequested = true;
         send($"<success xmlns='{XmppXml.SaslNamespace}'/>");
     }
 

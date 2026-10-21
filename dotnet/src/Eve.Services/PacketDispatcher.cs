@@ -306,7 +306,7 @@ public sealed class PacketDispatcher
             return 10;
         if (service == "corpRecProxy" && method is "SearchCorpAds")
             return 10;
-        if (service == "structureDirectory" && method is "CheckMyDockingAccessToStructures" or "GetMyDockableStructures" or "GetMyCharacterStructures")
+        if (service == "structureDirectory" && method is "CheckMyDockingAccessToStructures" or "GetMyDockableStructures" or "GetMyCharacterStructures" or "GetMyCorporationStructures")
             return 10;
         if (service == "skillHandler" && method is "InjectSkillIntoBrain" or "InjectSkillpoints" or "ExtractSkills" or "GetDiminishedSpFromInjectors" or "SplitSkillInjector" or "CombineSkillInjector")
             return 10;

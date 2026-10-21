@@ -226,7 +226,7 @@ public sealed class IndustryJobsServiceTests
     public async Task Install_job_uses_the_typed_port_and_returns_only_the_committed_job_id()
     {
         var operations = new RecordingIndustryJobOperations { InstallResult = 52001 };
-        var service = Service(null, operations: operations);
+        var service = Service(null, operations: operations, isAlphaClone: userId => userId is PyInt { Value: 7001 });
         var job = Py.KeyVal(
             ("activityID", new PyInt(1)),
             ("blueprintID", new PyInt(50001)),
@@ -252,7 +252,7 @@ public sealed class IndustryJobsServiceTests
             ("timeInSeconds", new PyInt(1)));
 
         var result = await service.CallAsync(Call(
-            "InstallJob", [job], corporationId: 2002, corporationRole: 1024, corporationAccountKey: 1004, callId: 41));
+            "InstallJob", [job], corporationId: 2002, corporationRole: 1024, corporationAccountKey: 1004, callId: 41, accountId: 7001));
 
         Assert.Equal(new PyInt(52001), result);
         var request = Assert.IsType<IndustryJobInstallRequest>(operations.InstallRequest);
@@ -267,6 +267,7 @@ public sealed class IndustryJobsServiceTests
         Assert.Equal(3, request.Job.Runs);
         Assert.Equal(3, request.Job.LicensedRuns);
         Assert.Equal(new IndustryJobWallet(1001, 1000), request.Job.Wallet);
+        Assert.True(request.Job.IsAlphaClone);
     }
 
     [Fact]
@@ -355,8 +356,10 @@ public sealed class IndustryJobsServiceTests
         Func<ServiceCall, JsonObject, bool>? canViewStarbaseJob = null,
         Func<long, bool>? isStarbaseFacilityOnline = null,
         Func<long, long, long, long>? resolveBlueprintLocationFlagID = null,
-        IIndustryJobOperations? operations = null) =>
-        new(_ => ValueTask.FromResult(table), operations ?? new RecordingIndustryJobOperations(), () => now, canViewStarbaseJob, isStarbaseFacilityOnline, resolveBlueprintLocationFlagID);
+        IIndustryJobOperations? operations = null,
+        Func<PyValue?, bool>? isAlphaClone = null) =>
+        new(_ => ValueTask.FromResult(table), operations ?? new RecordingIndustryJobOperations(), () => now, canViewStarbaseJob,
+            isStarbaseFacilityOnline, resolveBlueprintLocationFlagID, isAlphaClone);
 
     private static JsonObject Table(params (long Id, JsonObject Record)[] records)
     {
@@ -420,10 +423,12 @@ public sealed class IndustryJobsServiceTests
         long corporationRole = 0,
         int corporationAccountKey = 1000,
         long callId = 77,
-        CancellationToken cancellation = default)
+        CancellationToken cancellation = default,
+        long accountId = 0)
     {
         var session = new ClientSession();
         session.Set("charid", new PyInt(characterId));
+        if (accountId > 0) session.Set("userid", new PyInt(accountId));
         session.Set("corpid", new PyInt(corporationId));
         session.Set("corprole", new PyLong(corporationRole));
         session.Set("corpAccountKey", new PyInt(corporationAccountKey));

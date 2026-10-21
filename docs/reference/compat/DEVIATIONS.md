@@ -5392,3 +5392,8 @@ The staff-only `mailMgr.PokePlayerAboutChatMsgGm` RPC caps its requested channel
 ## Item-locking read budget (2026-10-21)
 
 `itemLocking.GetItemsByLocation` and `GetLockedItemLocations` each consume 10 units from the per-session expensive-RPC budget because they enumerate corporation asset records. Calls above the configured session allowance receive the dispatcher’s `SessionRpcBudgetExceeded` refusal; the valid response shapes are unchanged. `DispatchGoldenTests.Corporation_item_lock_reads_have_a_named_per_session_budget` checks that the first call runs and the second is refused at the configured limit.
+
+
+## Alliance contact-list read budget (2026-10-21)
+
+`allianceRegistry.GetAllianceContacts` and its `GetContactList` alias each consume 10 units from the per-session expensive-RPC budget because they materialize the alliance contact list in one response. Calls over the session allowance receive `SessionRpcBudgetExceeded`; authorized response data and wire shapes are unchanged. `DispatchGoldenTests.Alliance_contact_list_aliases_have_a_named_per_session_budget` covers both route names.

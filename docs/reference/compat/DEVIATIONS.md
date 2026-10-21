@@ -5366,3 +5366,8 @@ The dispatcher applies the per-session weighted budget to an expensive method wh
 ## Ranked alliance negative limit (2026-10-21)
 
 `GetRankedAlliances(0)` retains the V24.01 all-rankings behavior and weighted RPC charge. Negative and non-integer limits now return `ALLIANCE_RANKED_LIMIT_INVALID`; they are not coerced to zero, which means an unbounded list in the client contract. `Alliance_membership_reads_and_public_info_updates_match_reference_shapes` checks negative input refusal alongside the valid ranking response.
+
+
+## Alliance member tenure threshold validation (2026-10-21)
+
+`GetAllianceMembersOlderThan` now requires a non-negative integer day threshold and returns `ALLIANCE_MEMBERSHIP_DAYS_INVALID` before loading alliance members for malformed or negative input. Valid V24.01 integer thresholds keep the existing output. The Alliance Registry membership-read regression covers negative input refusal.

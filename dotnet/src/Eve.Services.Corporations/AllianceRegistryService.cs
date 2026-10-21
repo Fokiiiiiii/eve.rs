@@ -340,7 +340,12 @@ private static double RelationshipValue(PyValue value)
     public async ValueTask<PyValue> GetAllianceMembersOlderThan(ServiceCall call)
     {
         var alliance = await Id(call);
-        var minimumDays = Math.Max(0,Number(call.Arg(1)));
+        var minimumDays = call.Arg(1) switch
+        {
+            PyInt { Value: >= 0 } value => value.Value,
+            PyLong { Value: >= 0 } value => value.Value,
+            _ => throw new CorporationError("ALLIANCE_MEMBERSHIP_DAYS_INVALID"),
+        };
         var members = await store.AllianceMembersAsync(alliance,call.Cancellation);
         return new PyList([.. members.Where(member => AllianceMembershipDays(member.StartedMs) >= minimumDays)
             .Select(member => (PyValue)new PyInt(member.CorporationId))]);

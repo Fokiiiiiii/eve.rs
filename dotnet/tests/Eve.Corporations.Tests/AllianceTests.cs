@@ -759,6 +759,9 @@ public class AllianceTests
         var older = Assert.IsType<Eve.Marshal.PyList>(await service.CallAsync(Call(executor,"GetAllianceMembersOlderThan",
             new Eve.Marshal.PyInt(alliance.Id),new Eve.Marshal.PyInt(2))));
         Assert.Contains(new Eve.Marshal.PyInt(memberCorp.Id),older.Items);
+        var invalidMinimumDays = await Assert.ThrowsAsync<Eve.Corporations.CorporationError>(() =>
+            service.CallAsync(Call(executor,"GetAllianceMembersOlderThan",new Eve.Marshal.PyInt(alliance.Id),new Eve.Marshal.PyInt(-1))).AsTask());
+        Assert.Equal("ALLIANCE_MEMBERSHIP_DAYS_INVALID",invalidMinimumDays.Code);
 
         var ranked = Assert.IsType<Eve.Marshal.PyList>(await service.CallAsync(Call(executor,"GetRankedAlliances",new Eve.Marshal.PyInt(10))));
         var invalidRankLimit = await Assert.ThrowsAsync<Eve.Corporations.CorporationError>(() =>

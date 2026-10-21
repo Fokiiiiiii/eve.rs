@@ -1033,8 +1033,10 @@ public sealed partial class CharMgrService(
             await characters.GetAsync(characterId, call.Cancellation) is not null)
         {
             var status = NormalizeInteger(call.Kwarg("status") ?? call.Arg(0));
-            var extraInfo = call.Kwarg("extraInfo") ?? call.Arg(1);
-            await writeActivityStatus(characterId, status, OptionalText(extraInfo), call.Cancellation);
+            var extraInfo = OptionalText(call.Kwarg("extraInfo") ?? call.Arg(1));
+            if (extraInfo is { Length: > 32 })
+                throw MachoErrors.ThrowUserError("CHARMGR_ACTIVITY_INFO_LIMIT_EXCEEDED");
+            await writeActivityStatus(characterId, status, extraInfo, call.Cancellation);
         }
         return None;
     }

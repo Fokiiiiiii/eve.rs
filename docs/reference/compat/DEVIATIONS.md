@@ -5413,3 +5413,8 @@ The staff-only `mailMgr.PokePlayerAboutChatMsgGm` RPC caps its requested channel
 ## Corporation medal visibility status scope (2026-10-21)
 
 `corporationSvc.SetMedalStatus` keeps one visibility status per corporation medal definition. V24.01 sends a mapping keyed by `medalID` (`eve/client/script/ui/services/medals.py:52-57`, `eve/client/script/ui/shared/neocom/charsheet/decorationsPanel.py:87-97`); the EveJS 261018.1 reference updates `runtime.medals.medals[medalID].status` and `GetMedalsReceived` uses that definition status for each award and cross-character visibility (`server/src/services/corporation/corpService.js:367-421,546-564`). The Host requires persisted Director or Personnel Manager authority before the write. This confirms the shared field matches the client contract; there is no per-award status mutation in the V24.01 RPC shape. `CorporationProtocolTests.Corporation_medal_rpcs_enforce_manager_roles_and_member_recipients` covers role denial, private-status reads, and manager writes.
+
+
+## Character activity status input bound (2026-10-21)
+
+`charMgr.SetActivityStatus` takes the character from the authenticated session. The V24.01 client sends `extraInfo` as a FILETIME integer during AFK and activity transitions (`eve/client/script/parklife/gameui.py:333-338`); the Host converts the value to text and caps it at 32 UTF-16 code units before the persistence callback. Oversized input returns `CHARMGR_ACTIVITY_INFO_LIMIT_EXCEEDED`. `CharacterInfoTests.Activity_status_extra_info_is_bounded_before_the_persistence_callback` checks a valid timestamp, refusal above the bound, and no second callback.

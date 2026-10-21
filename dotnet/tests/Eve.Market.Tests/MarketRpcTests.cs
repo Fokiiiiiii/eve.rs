@@ -146,6 +146,7 @@ public class MarketRpcTests
         var actor = await r.Actor("Out of range type buyer", 10000m);
         var seat = await SeatAsync(r, actor);
         var invalidType = new PyLong((long)int.MaxValue + 1);
+        var overflowingFloatType = new PyReal((double)(1L << 32) + Tritanium);
 
         async Task AssertRefused(Task<PyValue> call)
         {
@@ -157,6 +158,9 @@ public class MarketRpcTests
 
         await AssertRefused(seat.Proxy.PlaceBuyOrder(Call(
             seat.Session, "PlaceBuyOrder", 2, new PyInt(r.Station.Id), invalidType, new PyReal(5),
+            new PyInt(1), new PyInt(-1), new PyInt(1), new PyInt(90), PyBool.False, PyNone.Instance)).AsTask());
+        await AssertRefused(seat.Proxy.PlaceBuyOrder(Call(
+            seat.Session, "PlaceBuyOrder", 6, new PyInt(r.Station.Id), overflowingFloatType, new PyReal(5),
             new PyInt(1), new PyInt(-1), new PyInt(1), new PyInt(90), PyBool.False, PyNone.Instance)).AsTask());
         await AssertRefused(seat.Proxy.PlaceBuyOrder(Call(
             seat.Session, "PlaceBuyOrder", 4, new PyInt(r.Station.Id), new PyReal(Tritanium + 0.5), new PyReal(5),

@@ -5202,7 +5202,7 @@ The V24.01 global asset methods route `charMgr.List`, `ListStations`, `ListStati
 
 ## Market integer narrowing (2026-10-20)
 
-Market RPC integer values that the Host stores as 32-bit fields now refuse fractional or out-of-range values before conversion, using the existing `CustomInfo` wire label. Previously, unchecked narrowing could wrap a large client-supplied type ID into a different item type. Normal V24.01 IDs and order terms retain their existing behavior. `MarketRpcTests.Market_type_ids_outside_int32_are_refused_before_order_creation` covers both single and bulk order placement.
+Market RPC integer values that the Host stores as 32-bit fields now refuse fractional or out-of-range values before conversion, using the existing `CustomInfo` wire label. Previously, unchecked narrowing could wrap a large client-supplied integer or finite floating-point type ID into a different item type. The 64-bit parser now checks the exact signed range before conversion, and the 32-bit parser refuses finite floating-point values outside its range before narrowing. Normal V24.01 IDs and order terms retain their existing behavior. `MarketRpcTests.Market_type_ids_outside_int32_are_refused_before_order_creation` covers an oversized floating-point type ID in addition to integer and fractional cases.
 
 
 ## Market price conversion bound (2026-10-20)
@@ -5229,6 +5229,10 @@ The market parser rejects floating-point prices beyond the market maximum before
 
 `allianceRegistry.SetRelationship` now accepts only finite numeric standings from -10 through 10; malformed or out-of-range values return `ALLIANCE_RELATIONSHIP_INVALID` before persistence. This prevents a wrong-typed value from being coerced to neutral standing while preserving valid integer and fractional standing values. `Alliance_public_updates_relationships_and_application_decisions_notify_clients` verifies that malformed text leaves the current standing unchanged.
 
+
+## Fleet role integer range validation (2026-10-21)
+
+Fleet invite and member-movement RPCs reject role values outside the signed 32-bit range before conversion. This prevents a large client integer from wrapping into a valid commander assignment. The unmodified V24.01 client sends the documented small integer role constants; the focused fleet regression covers the oversized input.
 
 ## Fleet numeric argument validation (2026-10-20)
 
@@ -5319,6 +5323,11 @@ V24.01 `fleetCompositionWnd.py` indexes `skills` and `skillIDs` at positions 0 t
 `structureDirectory.SetStructureDescription` now recalculates Station Manager access from persisted corporation membership and titles for each write. The V24.01 request and success wire shape are unchanged; a role removed after login now receives the existing `CrpAccessDenied` refusal. `HostServerTests.Structure_description_rechecks_persisted_station_manager_role_after_login` verifies the refusal and that no write callback runs.
 
 
+## Alliance application response size (2026-10-21)
+
+`allianceRegistry.UpdateApplication` now enforces the V24.01 alliance application editor maximum of 1,000 UTF-16 code units before reading application rows. The client uses `maxLength=1000` in `eve/client/script/ui/shared/neocom/Alliances/all_ui_applications.py`; the server refuses larger response text with `ALLIANCE_APPLICATION_TEXT_TOO_LONG`. `Alliance_application_response_text_limit_matches_the_client_utf16_maximum` covers refusal without a stored change and acceptance at the client boundary.
+
+
 ## Structure info owner projection (2026-10-21)
 
 `structureDirectory.GetStructureInfo` accepts a structure ID and returns a basic public projection to other callers; services and corporation/alliance ownership fields are returned only when the caller's current persisted corporation owns the structure. EveJS 261018.1 likewise selects `buildBasicStructureInfoPayload` for non-owner corporations. eve.rs currently returns the available public type, structure ID, solar system, and owner fields because the persistence projection does not provide the remaining public fields used by EveJS. `HostServerTests.Structure_directory_host_reads_deployed_rows_and_docking_profiles` checks full owner data and the reduced foreign view.
@@ -5341,3 +5350,32 @@ V24.01 `fleetCompositionWnd.py` indexes `skills` and `skillIDs` at positions 0 t
 ## Organization mail authorization (2026-10-21)
 
 EveJS 261018.1 checks corporation and alliance mail against the sender's current session organization fields and Chat Manager role. eve.rs resolves current corporation membership and effective roles from the corporation store on each `mailMgr.SendMail` request; corporate mail is limited to the sender's current non-NPC corporation, and alliance mail also requires the persisted Chat Manager role. The client-visible refusal and success response shapes stay the same. `HostServerTests.Mail_organization_recipient_requires_own_corporation_or_chat_manager` covers recipient scope and role policy.
+
+
+## Bound RPC resource budget (2026-10-21)
+
+The dispatcher applies the per-session weighted budget to an expensive method when a client supplies it as the nested initial call to `MachoBindObject`. This keeps bound and named invocation forms under the same resource limit; the client call shape is unchanged. `Bound_bind_invocations_consume_the_nested_expensive_rpc_budget` verifies that the second costly nested call receives `SessionRpcBudgetExceeded`.
+
+
+## Corporation killmail page bounds (2026-10-21)
+
+`corpRegistry.GetRecentKills` and `GetRecentLosses` derive the corporation from the authenticated character and now refuse negative or over-25 page sizes with `CORPORATION_KILLMAIL_PAGE_LIMIT_EXCEEDED`. The V24.01 corporation kill-report UI requests 25 rows (`NUM_KILL_ENTRIES` in `eve/client/script/ui/shared/neocom/corporation/corp_ui_killreports.py`); the limit prevents one authenticated call from requesting an effectively unbounded killmail result. `Corp_registry_recent_kill_rows_keep_the_fixed_client_columns_and_cursor` verifies the boundary refusal occurs before the provider callback and keeps valid cursors.
+
+
+## Character-bound ally base cost (2026-10-21)
+
+`corpRegistry.CharGetAllyBaseCost` now reads the Diplomatic Relations skill only for the session character. The V24.01 callsite in `eve/client/script/ui/services/corporation/base_corporation.py` invokes the RPC without arguments; eve.rs ignores the legacy EveJS fallback to a client-supplied character ID when no character is selected and returns the existing 10,000,000 ISK fallback instead. This prevents the method from exposing another character’s skill-derived value. `Corp_registry_ally_base_cost_uses_the_reference_fallback` verifies that the Host reader is not called with a client-supplied ID.
+
+
+## Ranked alliance negative limit (2026-10-21)
+
+`GetRankedAlliances(0)` retains the V24.01 all-rankings behavior and weighted RPC charge. Negative and non-integer limits now return `ALLIANCE_RANKED_LIMIT_INVALID`; they are not coerced to zero, which means an unbounded list in the client contract. `Alliance_membership_reads_and_public_info_updates_match_reference_shapes` checks negative input refusal alongside the valid ranking response.
+
+
+## Alliance member tenure threshold validation (2026-10-21)
+
+`GetAllianceMembersOlderThan` now requires a non-negative integer day threshold and returns `ALLIANCE_MEMBERSHIP_DAYS_INVALID` before loading alliance members for malformed or negative input. Valid V24.01 integer thresholds keep the existing output. The Alliance Registry membership-read regression covers negative input refusal.
+
+## Mail channel input bound (2026-10-21)
+
+The staff-only `mailMgr.PokePlayerAboutChatMsgGm` RPC caps its requested channel name at 256 Unicode scalar values before composing the durable mail body. Ordinary V24.01 channel names fit this bound; oversized requests receive `MAIL_CHANNEL_LIMIT_EXCEEDED`. `MailServiceTests.Chat_gm_poke_requires_gml_before_forwarding_the_reference_mail_payload` covers the refusal and confirms no mail callback occurs.

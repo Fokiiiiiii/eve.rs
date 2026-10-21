@@ -35,6 +35,7 @@ public sealed class MailService(
     private const int MaxMailboxMessageIds = 500;
     private const int MaxSubjectCharacters = 150;
     private const int MaxBodyCharacters = 8000;
+    private const int MaxGmChatChannelCharacters = 256;
 
     public string Name => "mailMgr";
 
@@ -145,7 +146,7 @@ private async ValueTask<PyValue> SendMailAsync(ServiceCall call)
 
         var channelName = call.Arg(1) is PyNone
             ? "Unknown Channel"
-            : JsSemantics.StringValue(call.Arg(1)) ?? "Unknown Channel";
+            : BoundedText(call.Arg(1), MaxGmChatChannelCharacters, "MAIL_CHANNEL_LIMIT_EXCEEDED");
         var request = new GmChatPokeMailRequest(
             characterId,
             140000004,

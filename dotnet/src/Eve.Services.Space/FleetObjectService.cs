@@ -157,7 +157,7 @@ public sealed partial class FleetObjectService(FleetStore store, Func<long> nowU
 
         var invited = await store.InviteAsync(fleetId, inviterId, inviteeId,
             Number(call.Arg(1)) ?? FleetStore.NoUnit, Number(call.Arg(2)) ?? FleetStore.NoUnit,
-            (int)(Number(call.Arg(3)) ?? FleetStore.Member), call.Cancellation);
+            FleetRole(call.Arg(3)), call.Cancellation);
         if (!invited) return PyBool.False;
 
         SendInviteNotification(sessionForCharacter?.Invoke(inviteeId), fleetId, inviterId, autoAccept: false);
@@ -180,7 +180,7 @@ public sealed partial class FleetObjectService(FleetStore store, Func<long> nowU
             return new PyList([]);
         var wingId = Number(call.Arg(1)) ?? FleetStore.NoUnit;
         var squadId = Number(call.Arg(2)) ?? FleetStore.NoUnit;
-        var role = (int)(Number(call.Arg(3)) ?? FleetStore.Member);
+        var role = FleetRole(call.Arg(3));
         List<PyValue> invited = [];
         foreach (var inviteeId in invitees.Select(Number).Where(id => id is > 0).Select(id => id!.Value).Distinct())
         {
@@ -329,7 +329,7 @@ public sealed partial class FleetObjectService(FleetStore store, Func<long> nowU
         var characterId = Number(call.Arg(0)) ?? 0;
         var wingId = Number(call.Arg(1)) ?? FleetStore.NoUnit;
         var squadId = Number(call.Arg(2)) ?? FleetStore.NoUnit;
-        var role = (int)(Number(call.Arg(3)) ?? FleetStore.Member);
+        var role = FleetRole(call.Arg(3));
         if (!await store.MoveMemberAsync(fleetId, CharacterId(call.Session), characterId, wingId, squadId, role, call.Cancellation))
             return None;
         var after = await store.SnapshotAsync(fleetId, call.Cancellation);
@@ -348,7 +348,7 @@ public sealed partial class FleetObjectService(FleetStore store, Func<long> nowU
         if (before is null) return None;
         var wingId = Number(call.Arg(1)) ?? FleetStore.NoUnit;
         var squadId = Number(call.Arg(2)) ?? FleetStore.NoUnit;
-        var role = (int)(Number(call.Arg(3)) ?? FleetStore.Member);
+        var role = FleetRole(call.Arg(3));
         var ids = memberIds.Select(value => Number(value) ?? 0).ToArray();
         if (!await store.MassMoveMembersAsync(fleetId, CharacterId(call.Session), ids, wingId, squadId, role, call.Cancellation))
             return None;
@@ -525,6 +525,14 @@ public sealed partial class FleetObjectService(FleetStore store, Func<long> nowU
             ("fleetrole", PyNone.Instance),
             ("wingid", PyNone.Instance),
             ("squadid", PyNone.Instance));
+    }
+
+    internal static int FleetRole(PyValue value)
+    {
+        var role = Number(value) ?? FleetStore.Member;
+        if (role < int.MinValue || role > int.MaxValue)
+            throw MachoErrors.ThrowUserError("FLEET_ROLE_OUT_OF_RANGE");
+        return (int)role;
     }
 
     private static long? Number(PyValue value) => value switch

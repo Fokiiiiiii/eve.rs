@@ -204,6 +204,8 @@ private async ValueTask<PyValue> MutateAsync(ServiceCall call)
                 case "CompleteManyJobs":
                 {
                     if (call.Args.Count != 1 || call.Arg(0) is not PyList rows) throw InvalidIndustryJob();
+                    if (rows.Items.Count > 500)
+                        throw MachoErrors.ThrowUserError("INDUSTRY_JOB_BULK_LIMIT_EXCEEDED");
                     var jobs = new List<IndustryJobAction>(rows.Items.Count);
                     var seen = new HashSet<long>();
                     foreach (var row in rows.Items)

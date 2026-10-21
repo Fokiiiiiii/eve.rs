@@ -319,6 +319,22 @@ public sealed class IndustryJobsServiceTests
     }
 
     [Fact]
+    public async Task Complete_many_refuses_more_than_500_rows_before_domain_dispatch()
+    {
+        var operations = new RecordingIndustryJobOperations();
+        var service = Service(null, operations: operations);
+        var rows = new List<PyValue>();
+        for (var index = 0; index < 501; index++)
+            rows.Add(PyTuple.Of(new PyInt(52_001 + index), new PyInt(30_000_142)));
+
+        var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            service.CallAsync(Call("CompleteManyJobs", [new PyList(rows)], callId: 46)).AsTask());
+
+        Assert.Equal("INDUSTRY_JOB_BULK_LIMIT_EXCEEDED", refusal.Error.UserErrorMessage);
+        Assert.Equal(0, operations.CompleteManyCalls);
+    }
+
+    [Fact]
     public async Task Domain_user_errors_keep_the_macho_user_error_envelope_and_failed_writes_do_not_return_success()
     {
         var operations = new RecordingIndustryJobOperations

@@ -1125,8 +1125,36 @@ private static PyValue RowField(PyValue value,string key)
 
         var memberRecord = await rig.Store.MemberAsync(member);
         await rig.Store.UpdateMemberAsync(founder, memberRecord! with { Masks = new RoleMasks(CorporationRoles.PersonnelManager) });
+        var titleError = await Assert.ThrowsAsync<CorporationError>(async () => await MemberRpc("CreateMedal",
+            new PyWString(new string('T', 101)), new PyWString("For service"), graphics));
+        Assert.Equal("MEDAL_TITLE_TOO_LONG", titleError.Code);
+        var descriptionError = await Assert.ThrowsAsync<CorporationError>(async () => await MemberRpc("CreateMedal",
+            new PyWString("Service"), new PyWString(new string('D', 1001)), graphics));
+        Assert.Equal("MEDAL_DESCRIPTION_TOO_LONG", descriptionError.Code);
+        var graphicsError = await Assert.ThrowsAsync<CorporationError>(async () => await MemberRpc("CreateMedal",
+            new PyWString("Service"), new PyWString("For service"),
+            new PyList(Enumerable.Range(0, 33).Select(index => (PyValue)Py.Tuple(
+                new PyInt(index), new PyWString("emblem.42"), new PyInt(7))).ToArray())));
+        Assert.Equal("MEDAL_GRAPHICS_LIMIT_EXCEEDED", graphicsError.Code);
         var medalId = Assert.IsType<PyInt>(await MemberRpc("CreateMedal",
             new PyWString("Service"), new PyWString("For service"), graphics)).Value;
+        var oversizedStatuses = new PyDict(Enumerable.Range(1, 501).Select(id =>
+            new KeyValuePair<PyValue, PyValue>(new PyInt(id), new PyInt(2))).ToArray());
+        var statusLimitError = await Assert.ThrowsAsync<CorporationError>(async () =>
+            await MemberRpc("SetMedalStatus", oversizedStatuses));
+        Assert.Equal("MEDAL_BULK_LIMIT_EXCEEDED", statusLimitError.Code);
+        var oversizedRecipients = new PyList(Enumerable.Repeat((PyValue)new PyInt(founder), 501).ToArray());
+        var recipientLimitError = await Assert.ThrowsAsync<CorporationError>(async () =>
+            await MemberRpc("GiveMedalToCharacters", new PyInt(medalId), oversizedRecipients, new PyWString("Bulk")));
+        Assert.Equal("MEDAL_BULK_LIMIT_EXCEEDED", recipientLimitError.Code);
+        var duplicateRecipientError = await Assert.ThrowsAsync<CorporationError>(async () =>
+            await MemberRpc("GiveMedalToCharacters", new PyInt(medalId),
+                new PyList([new PyInt(founder), new PyInt(founder)]), new PyWString("Duplicate")));
+        Assert.Equal("MEDAL_RECIPIENT_DUPLICATE", duplicateRecipientError.Code);
+        var reasonError = await Assert.ThrowsAsync<CorporationError>(async () =>
+            await MemberRpc("GiveMedalToCharacters", new PyInt(medalId), new PyInt(founder),
+                new PyWString(new string('R', 201))));
+        Assert.Equal("MEDAL_REASON_TOO_LONG", reasonError.Code);
         var all = Assert.IsType<PyTuple>(CachedPayload(await MemberRpc("GetAllCorpMedals", new PyInt(corp.Id))));
         var medalRows = Lines(all.Items[0]).Select(value => Assert.IsType<PyList>(value)).ToArray();
         Assert.Equal(2, medalRows.Length);

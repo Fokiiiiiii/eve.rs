@@ -287,6 +287,8 @@ public sealed class PacketDispatcher
             return 10;
         if (service == "billMgr")
             return 10;
+        if (service == "industryManager" && method is ("GetJobCounts" or "GetJob" or "GetJobsByOwner" or "InstallJob" or "CompleteJob" or "CompleteManyJobs" or "CancelJob"))
+            return 10;
         if ((service is "charFittingMgr" or "corpFittingMgr" or "allianceFittingMgr") && (method is "GetFittings" or "SaveFitting" or "UpdateFitting" or "SaveManyFittings" or "DeleteFitting" or "DeleteManyFittings" or "UpdateNameAndDescription" or "GetCommunityFittings"))
             return 10;
         if (service == "invbroker" && method is "MultiMerge" or "MultiAdd" or "StackAll" or "RepackageItems")
@@ -295,17 +297,19 @@ public sealed class PacketDispatcher
             return 2;
         if (service == "corpMgr" && (method is "GetAssetInventory" or "GetAssetInventoryForLocation" or "SearchAssets" or "GetAggressionSettingsForCorps" or "AuditMember"))
             return 10;
+        if (service == "itemLocking" && (method is "GetItemsByLocation" or "GetLockedItemLocations"))
+            return 10;
         if (service == "account" && method is "GetTransactions" or "GiveCash" or "GiveCashFromCorpAccount")
             return 10;
         if (service == "LPStoreMgr" && method is "GetAvailableOffersFromCorp" or "TakeOfferForCharacter" or "TakeOfferForCorporation")
             return 10;
         if (service == "corpRegistry" && method is "GetEveOwners" or "GetMemberIDsByQuery" or "GetMemberIDsWithMoreThanAvgShares" or "GetNumberOfPotentialCEOs" or "GetMembersByIds" or "GetMembersPaged" or "GetMemberTrackingInfo" or "GetMemberTrackingInfoSimple" or "GetShareholders" or "GetSharesByShareholder" or "PayoutDividend" or "ExecuteActions" or "UpdateMembers" or "KickOutMembers" or "UpdateTitles" or "RemoveCorporateContacts" or "EditContactsRelationshipID" or "AssignLabels" or "RemoveLabels" or "UpdateBulletinOrder" or "GetRecentKills" or "GetRecentLosses" or "UpdateApplicationOffer")
             return 10;
-        if (service == "allianceRegistry" && method is "GetEveOwners" or "GetRankedAlliances" or "GetAllianceMembers" or "GetMembers" or "GetEmploymentRecord" or "GetAllianceMembersOlderThan" or "GetAllianceApplications")
+        if (service == "allianceRegistry" && method is "GetEveOwners" or "GetRankedAlliances" or "GetAllianceMembers" or "GetMembers" or "GetEmploymentRecord" or "GetAllianceMembersOlderThan" or "GetAllianceApplications" or "GetAllianceContacts" or "GetContactList" or "GetBulletins" or "GetBulletinEntries")
             return 10;
-        if (service == "charMgr" && method is "GetRecentShipKillsAndLosses" or "GetOrganizationInfoForCharacters" or "GetContactList" or "AddOwnerNote" or "EditOwnerNote" or "RemoveOwnerNote" or "SetNote" or "AddContact" or "EditContact" or "DeleteContacts" or "BlockOwners" or "UnblockOwners" or "EditContactsRelationshipID" or "AssignLabels" or "RemoveLabels" or "CreateLabel" or "DeleteLabel" or "EditLabel" or "List" or "ListStations" or "ListStationItems" or "ListIncludingContainers" or "GetAssetWorth")
+        if (service == "charMgr" && method is "GetRecentShipKillsAndLosses" or "GetOrganizationInfoForCharacters" or "GetContactList" or "GetCharacterSettings" or "SaveCharacterSetting" or "DeleteCharacterSetting" or "GetLabels" or "GetOwnerNoteLabels" or "GetOwnerNote" or "GetNote" or "LogSettings" or "AddOwnerNote" or "EditOwnerNote" or "RemoveOwnerNote" or "SetNote" or "AddContact" or "EditContact" or "DeleteContacts" or "BlockOwners" or "UnblockOwners" or "EditContactsRelationshipID" or "AssignLabels" or "RemoveLabels" or "CreateLabel" or "DeleteLabel" or "EditLabel" or "List" or "ListStations" or "ListStationItems" or "ListIncludingContainers" or "GetAssetWorth")
             return 10;
-        if (service == "fleetObject" && method is "SendBroadcast" or "Invite" or "MassInvite")
+        if (service == "fleetObject" && method is "SendBroadcast" or "Invite" or "MassInvite" or "GetInitState" or "GetFleetComposition" or "GetJoinRequests")
             return 10;
         if (service == "corpRecProxy" && method is "SearchCorpAds")
             return 10;

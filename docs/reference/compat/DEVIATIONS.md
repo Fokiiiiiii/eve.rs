@@ -5185,6 +5185,8 @@ The writer serializes accept and bid operations by locking the contract row befo
 EveJS v261018.1 `server/src/network/tcp/utils/marshal.js:1255-1309` allocates save-table entries from the declared count and does not maintain an aggregate decode budget. Its `server/src/network/tcp/directGameSocketTransport.js:81-86` closes the affected socket when frame processing fails. eve.rs retains valid marshal behavior covered by its golden fixtures and adds bounded decoding: positive frame lengths up to 16 MiB, payloads up to 16 MiB, depth 256, at most 4,194,304 decoded values, and a 256 MiB estimated heap budget shared by nested streams. These limits change handling only for malformed or resource-excessive inputs. The frame parser preserves zero-length transport frames so the Host can isolate their malformed marshal payloads per session. The property and Host isolation checks are listed in `docs/project/PERFORMANCE.md`.
 ## Inventory bulk operation bounds (2026-10-20)
 
+`invbroker.MultiMerge` validates every operation before applying any merge. Valid V24.01 tuples retain their quantity behavior, including zero as the full source stack. Malformed tuples, nonpositive item IDs, non-integer quantities and negative quantities now return `INVENTORY_OPERATION_INVALID` without changing stacks. The client constructs typed `(sourceID, destinationID, quantity)` tuples in `eve/client/script/ui/shared/item.py` and forwards them through `invControllers.py`; EveJS 261018.1 normalizes the quantity and treats nonpositive values as an omitted quantity, which its merge path expands to the available source quantity. This is a deliberate refusal only for malformed input; `InventoryServiceTests.MultiMerge_refuses_negative_quantity_before_mutating_stacks` covers the no-mutation result.
+
 The V24.01 client sends selected item collections to `invbroker.MultiAdd`; EveJS accepts the client collection without an entry limit. eve.rs now applies the existing 500-entry inventory bulk cap before deduplication or item lookups, matching the limit used by adjacent inventory batch RPCs. Normal client batches retain the same behavior. The focused PostgreSQL regression checks the named refusal at 501 entries; graphical-client acceptance is open.
 
 
@@ -5345,6 +5347,8 @@ EveJS 261018.1 checks corporation and alliance mail against the sender's current
 
 ## Bound RPC resource budget (2026-10-21)
 
+`PacketDispatcher` now charges 10 weighted units per minute for `industryManager` job counts, job reads, installs, completions and cancellations. These calls read the shared job snapshot or perform persisted inventory, wallet and blueprint operations. The default session allowance remains 120 units per rolling minute; excess calls receive `SessionRpcBudgetExceeded` before dispatch. This adds a server resource bound while preserving normal call results. Regression: `DispatchGoldenTests.Industry_job_calls_use_the_named_per_session_budget`.
+
 The dispatcher applies the per-session weighted budget to an expensive method when a client supplies it as the nested initial call to `MachoBindObject`. This keeps bound and named invocation forms under the same resource limit; the client call shape is unchanged. `Bound_bind_invocations_consume_the_nested_expensive_rpc_budget` verifies that the second costly nested call receives `SessionRpcBudgetExceeded`.
 
 
@@ -5370,3 +5374,51 @@ The dispatcher applies the per-session weighted budget to an expensive method wh
 ## Mail channel input bound (2026-10-21)
 
 The staff-only `mailMgr.PokePlayerAboutChatMsgGm` RPC caps its requested channel name at 256 Unicode scalar values before composing the durable mail body. Ordinary V24.01 channel names fit this bound; oversized requests receive `MAIL_CHANNEL_LIMIT_EXCEEDED`. `MailServiceTests.Chat_gm_poke_requires_gml_before_forwarding_the_reference_mail_payload` covers the refusal and confirms no mail callback occurs.
+
+## Mailbox synchronization response bound (2026-10-21)
+
+`mailMgr.SyncMail` refuses a mailbox above 5,000 status entries with `MAIL_SYNC_LIMIT_EXCEEDED` before sorting entries or constructing header/status response arrays. `MailServiceTests.Sync_mail_refuses_mailboxes_above_the_response_entry_limit` covers the boundary.
+
+## Wallet transfer reason bound (2026-10-21)
+
+`account.GiveCash` and `GiveCashFromCorpAccount` now enforce the V24.01 transfer window's 40-character reason field before wallet settlement. Oversized input returns `WALLET_REASON_LIMIT_EXCEEDED`; the focused corporation RPC regression confirms the sender balance is unchanged.
+
+
+## Item-locking read budget (2026-10-21)
+
+`itemLocking.GetItemsByLocation` and `GetLockedItemLocations` each consume 10 units from the per-session expensive-RPC budget because they enumerate corporation asset records. Calls above the configured session allowance receive the dispatcher’s `SessionRpcBudgetExceeded` refusal; the valid response shapes are unchanged. `DispatchGoldenTests.Corporation_item_lock_reads_have_a_named_per_session_budget` checks that the first call runs and the second is refused at the configured limit.
+
+
+## Alliance contact-list read budget (2026-10-21)
+
+`allianceRegistry.GetAllianceContacts` and its `GetContactList` alias each consume 10 units from the per-session expensive-RPC budget because they materialize the alliance contact list in one response. Calls over the session allowance receive `SessionRpcBudgetExceeded`; authorized response data and wire shapes are unchanged. `DispatchGoldenTests.Alliance_contact_list_aliases_have_a_named_per_session_budget` covers both route names.
+
+
+## Alliance bulletin text bounds (2026-10-21)
+
+`allianceRegistry.AddBulletin` and `UpdateBulletin` enforce the V24.01 editor limits of 100 UTF-16 code units for titles and 4,000 for bodies before persistence. Oversized fields receive `ALLIANCE_BULLETIN_LIMIT_EXCEEDED`; accepted bulletin data and response shapes are unchanged. The alliance bulletin persistence regression covers acceptance at both exact limits and refusal above each limit, including update-title refusal.
+
+
+## Alliance bulletin-list read budget (2026-10-21)
+
+`allianceRegistry.GetBulletins` and its `GetBulletinEntries` alias each consume 10 units from the per-session expensive-RPC budget because they materialize the full alliance bulletin list. Calls over the session allowance receive `SessionRpcBudgetExceeded`; authorized response data and wire shapes are unchanged. `DispatchGoldenTests.Alliance_bulletin_list_aliases_have_a_named_per_session_budget` covers both routes.
+
+
+## Character settings and personal note RPC budget (2026-10-21)
+
+`charMgr.GetCharacterSettings`, settings writes/deletes, label reads, and note reads/listing consume 10 units from the per-session expensive-RPC budget. These calls read or rewrite session-owned, user-extendable data, including setting values up to 100 KiB and notes up to 5,000 code units. Calls over the session allowance receive `SessionRpcBudgetExceeded`; accepted settings and notes retain their existing shapes. `DispatchGoldenTests.Character_settings_reads_and_writes_have_a_named_per_session_budget` covers the budget refusal.
+
+
+## Fleet composition read budget (2026-10-21)
+
+`fleetObject.GetInitState`, `GetFleetComposition`, and `GetJoinRequests` consume 10 units from the per-session expensive-RPC budget. Initialization and composition may resolve skill or character details for the fleet's bounded member list; join requests materialize the current request set. Calls above the session allowance receive `SessionRpcBudgetExceeded`; allowed response shapes are unchanged. `DispatchGoldenTests.Fleet_member_composition_reads_have_a_named_per_session_budget` covers initialization and composition.
+
+
+## Corporation medal visibility status scope (2026-10-21)
+
+`corporationSvc.SetMedalStatus` keeps one visibility status per corporation medal definition. V24.01 sends a mapping keyed by `medalID` (`eve/client/script/ui/services/medals.py:52-57`, `eve/client/script/ui/shared/neocom/charsheet/decorationsPanel.py:87-97`); the EveJS 261018.1 reference updates `runtime.medals.medals[medalID].status` and `GetMedalsReceived` uses that definition status for each award and cross-character visibility (`server/src/services/corporation/corpService.js:367-421,546-564`). The Host requires persisted Director or Personnel Manager authority before the write. This confirms the shared field matches the client contract; there is no per-award status mutation in the V24.01 RPC shape. `CorporationProtocolTests.Corporation_medal_rpcs_enforce_manager_roles_and_member_recipients` covers role denial, private-status reads, and manager writes.
+
+
+## Character activity status input bound (2026-10-21)
+
+`charMgr.SetActivityStatus` takes the character from the authenticated session. The V24.01 client sends `extraInfo` as a FILETIME integer during AFK and activity transitions (`eve/client/script/parklife/gameui.py:333-338`); the Host converts the value to text and caps it at 32 UTF-16 code units before the persistence callback. Oversized input returns `CHARMGR_ACTIVITY_INFO_LIMIT_EXCEEDED`. `CharacterInfoTests.Activity_status_extra_info_is_bounded_before_the_persistence_callback` checks a valid timestamp, refusal above the bound, and no second callback.

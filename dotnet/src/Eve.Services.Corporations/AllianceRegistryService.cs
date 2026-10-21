@@ -1083,11 +1083,14 @@ private static double RelationshipValue(PyValue value)
     public async ValueTask<PyValue> AddBulletin(ServiceCall call)
     {
         var (actor, alliance) = await RequireAllianceDirector(call);
+        var title = JsSemantics.StringValue(call.Arg(0)) ?? "";
+        var body = JsSemantics.StringValue(call.Arg(1)) ?? "";
+        if (title.Length > 100 || body.Length > 4000)
+            throw new CorporationError("ALLIANCE_BULLETIN_LIMIT_EXCEEDED");
         var nowFiletime = Number(CorporationWire.Time(now()));
         var editFiletime = Number(call.Arg(3));
         var bulletinId = Number(call.Arg(2));
-        var id = await store.AddAllianceBulletinAsync(alliance, actor,
-            JsSemantics.StringValue(call.Arg(0)) ?? "", JsSemantics.StringValue(call.Arg(1)) ?? "",
+        var id = await store.AddAllianceBulletinAsync(alliance, actor, title, body,
             bulletinId > 0 ? bulletinId : null, nowFiletime,
             editFiletime > 0 ? editFiletime : nowFiletime, call.Cancellation);
         return new PyInt(id);
@@ -1099,10 +1102,13 @@ private static double RelationshipValue(PyValue value)
         var (actor, alliance) = await RequireAllianceDirector(call);
         var bulletinId = Number(call.Arg(0));
         if (bulletinId <= 0) throw new CorporationError("ALLIANCE_BULLETIN_INVALID");
+        var title = JsSemantics.StringValue(call.Arg(1)) ?? "";
+        var body = JsSemantics.StringValue(call.Arg(2)) ?? "";
+        if (title.Length > 100 || body.Length > 4000)
+            throw new CorporationError("ALLIANCE_BULLETIN_LIMIT_EXCEEDED");
         var nowFiletime = Number(CorporationWire.Time(now()));
         var editFiletime = Number(call.Arg(3));
-        return new PyInt(await store.AddAllianceBulletinAsync(alliance, actor,
-            JsSemantics.StringValue(call.Arg(1)) ?? "", JsSemantics.StringValue(call.Arg(2)) ?? "",
+        return new PyInt(await store.AddAllianceBulletinAsync(alliance, actor, title, body,
             bulletinId, nowFiletime, editFiletime > 0 ? editFiletime : nowFiletime, call.Cancellation));
     }
 

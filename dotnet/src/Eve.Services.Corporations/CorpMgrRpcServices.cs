@@ -190,16 +190,22 @@ public sealed partial class CorpMgrService
         var minimumQuantity = CorpMgrLong(call.Arg(4));
         var snapshot = await BuildAssetSnapshotAsync(corporationId, call.Cancellation);
         var hasFilter = categoryId > 0 || groupId > 0 || typeId > 0 || minimumQuantity > 0;
-        var entries = hasFilter
-            ? snapshot.Locations[bucket].Where(location =>
-                snapshot.Items[bucket].Any(item => item.RootLocationId == location.LocationId &&
+        var locations = snapshot.Locations[bucket];
+        if (hasFilter)
+        {
+            var matchingLocationIds = snapshot.Items[bucket]
+                .Where(item =>
                     (categoryId <= 0 || item.CategoryId == categoryId) &&
                     (groupId <= 0 || item.GroupId == groupId) &&
                     (typeId <= 0 || item.Item.TypeId == typeId) &&
-                    (minimumQuantity <= 0 || item.Item.Quantity >= minimumQuantity)))
-            : snapshot.Locations[bucket];
+                    (minimumQuantity <= 0 || item.Item.Quantity >= minimumQuantity))
+                .Select(item => item.RootLocationId)
+                .ToHashSet();
+            locations = locations.Where(location => matchingLocationIds.Contains(location.LocationId));
+        }
+
         return CachedAssets(BuildCRowset(AssetSearchColumns,
-            entries.Select(location => new PyValue[] { new PyLong(location.LocationId) })));
+            locations.Select(location => new PyValue[] { new PyLong(location.LocationId) })));
     }
 
     private async ValueTask<CorpMgrAggressionSettings> ReadAggressionSettingsAsync(

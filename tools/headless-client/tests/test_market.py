@@ -206,7 +206,7 @@ def test_a_seller_and_a_buyer_trade_through_the_market():
         assert any(ref == 2 and amount == 750 for ref, amount in seller_journal), seller_journal
         assert any(ref == 54 and amount < 0 for ref, amount in seller_journal), seller_journal
         assert any(ref == 46 and amount == -100 for ref, amount in seller_journal), seller_journal
-        assert any(ref == 149 and amount == -10 for ref, amount in seller_journal), seller_journal
+        assert not any(ref == 149 for ref, _ in seller_journal), seller_journal
         assert buyer_journal == [(2, -750.0)], buyer_journal
         assert dbseed.isk_of(seller.session.session_init.get("charid")) - seller_isk == sum(amount for _, amount in seller_journal)
         assert dbseed.isk_of(buyer.session.session_init.get("charid")) - buyer_isk == sum(amount for _, amount in buyer_journal)

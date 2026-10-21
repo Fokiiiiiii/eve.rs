@@ -5296,6 +5296,10 @@ Alliance join, leave, and withdrawal mutations preserve the session Director-rol
 
 After successful SASL authentication, the client opens a fresh XMPP stream on the same connection. `XmppListener` now resets its incremental XML parser at that authentication boundary, then handles the restarted stream header and bind features. This preserves the client-visible SASL, bind, and session sequence. `XmppTransportTests.Parser_restarts_the_stream_after_sasl_without_closing_the_socket` covers parser state; the live two-pilot XMPP walk passed on eve_p3.
 
+## Mail delivery between live pilots
+
+The V24 client sends `mailMgr.SendMail(toCharacterIDs, toListID, toCorpOrAllianceID, title, body, isReplyTo, isForwardedFrom)`. The two-pilot live walk sends to the second character and confirms the returned message ID appears in that recipient's `mailMgr.SyncMail` new-mail headers. This checks the persisted send path across two authenticated characters; reply and body-read remain open.
+
 ## Live space walk event streams
 
 The cargo and loot walks compare `DoDestinyUpdate` simulator actions separately from session and inventory notifications. Live Host delivery interleaves those two sources differently than the reference recording, while each source retains its own action order and payloads. The walk comparisons preserve and validate both source orders without asserting a cross-source total order. Focused cargo (67.12 s) and loot (45.90 s) runs passed on eve_p3.

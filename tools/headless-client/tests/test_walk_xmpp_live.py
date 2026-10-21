@@ -1,4 +1,4 @@
-"""Two pilots exchange Local and private-conversation messages through XMPP.
+"""Two pilots exchange Local/private chat and persisted mail through live services.
 
     EVE_LIVE_HOST=host:port EVE_LIVE_XMPP_PORT=5222 pytest tests/test_walk_xmpp_live.py
 
@@ -82,3 +82,11 @@ def test_two_pilots_exchange_local_and_private_messages_over_xmpp():
             time.sleep(0.8)
             first_chat.send_groupchat(private_room, "headless private check")
             second_chat.wait_for_message(private_room, "headless private check")
+
+            subject = f"headless mail {run}"
+            message_id = int(m.plain(first.call(
+                "mailMgr", "SendMail", [second_character], None, None,
+                subject, "Two pilots crossed chat and mail.", None, None)))
+            mailbox = m.plain(second.call("mailMgr", "SyncMail", None, None))
+            assert any(int(header["messageID"]) == message_id and header["title"] == subject
+                       for header in mailbox["newMail"])

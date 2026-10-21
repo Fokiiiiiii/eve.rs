@@ -307,6 +307,15 @@ public class DispatchGoldenTests
             Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(refused)));
         }
 
+        var personalWriteCapture = new Capture();
+        var personalWriteSession = new ClientSession(personalWriteCapture) { SessionId = 909 };
+        await dispatcher.DispatchAsync(CallRequestPacket("charMgr", "AddOwnerNote"), personalWriteSession);
+        await dispatcher.DispatchAsync(CallRequestPacket("charMgr", "AddOwnerNote"), personalWriteSession);
+        Assert.Equal(2, characterService.Calls);
+        Assert.Equal(2, personalWriteCapture.Sent.Count);
+        Assert.Equal(ErrorResponseCommand, CommandOf(personalWriteCapture.Sent[1]));
+        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(personalWriteCapture.Sent[1])));
+
         var corporationCapture = new Capture();
         var corporationSession = new ClientSession(corporationCapture) { SessionId = 905 };
         await dispatcher.DispatchAsync(CallRequestPacket("corpRegistry", "GetEveOwners"), corporationSession);
@@ -715,7 +724,7 @@ public class DispatchGoldenTests
 
         public string Name => "charMgr";
 
-        public bool HasMethod(string method) => method is "GetRecentShipKillsAndLosses" or "GetContactList" or "List" or "ListStations" or "ListStationItems" or "ListIncludingContainers" or "GetAssetWorth";
+        public bool HasMethod(string method) => method is "GetRecentShipKillsAndLosses" or "GetContactList" or "AddOwnerNote" or "EditOwnerNote" or "RemoveOwnerNote" or "SetNote" or "AddContact" or "EditContact" or "DeleteContacts" or "BlockOwners" or "UnblockOwners" or "EditContactsRelationshipID" or "AssignLabels" or "RemoveLabels" or "CreateLabel" or "DeleteLabel" or "EditLabel" or "List" or "ListStations" or "ListStationItems" or "ListIncludingContainers" or "GetAssetWorth";
 
         public ValueTask<PyValue> CallAsync(ServiceCall call)
         {

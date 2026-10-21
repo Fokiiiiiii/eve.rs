@@ -68,6 +68,7 @@ def test_a_ship_works_its_afterburner_as_it_did_in_the_reference():
     run = uuid.uuid4().hex[:10]
     problems: list[str] = []
     steps = {step["label"]: step for step in race["steps"]}
+    destiny_events = {"actor": {"recorded": [], "actual": []}, "watcher": {"recorded": [], "actual": []}}
     with base.connect(f"walk-module-a-{run}") as a, base.connect(f"walk-module-b-{run}") as b:
         _, a_ship, _, a_mapping = arrive(a, plain_race(race, "watcher"), run)
         _, b_ship, b_modules, b_mapping = arrive(b, plain_race(race, "actor"), run)
@@ -85,7 +86,12 @@ def test_a_ship_works_its_afterburner_as_it_did_in_the_reference():
             for who, key in (("the actor", "events"), ("the watcher", "seen")):
                 theirs = [e for e in steps[label][key] if e["name"] != "OnInvulnCancelled"]
                 ours = [e for e in got[key] if e["name"] != "OnInvulnCancelled"]
-                problems.extend(compare_events(without_capacitor(theirs), without_capacitor(ours), f"{label} ({who})", mapping))
+                destiny = destiny_events["actor" if key == "events" else "watcher"]
+                destiny["recorded"].extend(event for event in theirs if event["name"] == "DoDestinyUpdate")
+                destiny["actual"].extend(event for event in ours if event["name"] == "DoDestinyUpdate")
+                ordinary_theirs = [event for event in theirs if event["name"] != "DoDestinyUpdate"]
+                ordinary_ours = [event for event in ours if event["name"] != "DoDestinyUpdate"]
+                problems.extend(compare_events(without_capacitor(ordinary_theirs), without_capacitor(ordinary_ours), f"{label} ({who})", mapping))
                 problems.extend(timing(without_capacitor(theirs), without_capacitor(ours), f"{label} ({who})", TOLERANCE, ("OnGodmaShipEffect", "DoDestinyUpdate")))
             # the charge of the capacitor: it is told, and its values follow the reference's curve
             theirs, ours = capacitor_values(steps[label]["events"]), capacitor_values(got["events"])
@@ -126,4 +132,6 @@ def test_a_ship_works_its_afterburner_as_it_did_in_the_reference():
         step("the actor fires the gun at the watcher without a charge", activate(gun, "targetAttack", a_ship), 3.0)
         step("the actor works the miner on the watcher", activate(miner, "miningLaser", a_ship), 3.0)
         step("the actor works the miner with no target", activate(miner, "miningLaser"), 2.0)
+        for who, events in destiny_events.items():
+            problems.extend(compare_events(events["recorded"], events["actual"], f"the {who}'s destiny updates across the walk", mapping))
     assert problems == [], "\n".join(problems[:40])

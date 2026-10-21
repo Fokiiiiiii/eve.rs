@@ -5347,6 +5347,8 @@ EveJS 261018.1 checks corporation and alliance mail against the sender's current
 
 ## Bound RPC resource budget (2026-10-21)
 
+`PacketDispatcher` now charges 10 weighted units per minute for `industryManager` job counts, job reads, installs, completions and cancellations. These calls read the shared job snapshot or perform persisted inventory, wallet and blueprint operations. The default session allowance remains 120 units per rolling minute; excess calls receive `SessionRpcBudgetExceeded` before dispatch. This adds a server resource bound while preserving normal call results. Regression: `DispatchGoldenTests.Industry_job_calls_use_the_named_per_session_budget`.
+
 The dispatcher applies the per-session weighted budget to an expensive method when a client supplies it as the nested initial call to `MachoBindObject`. This keeps bound and named invocation forms under the same resource limit; the client call shape is unchanged. `Bound_bind_invocations_consume_the_nested_expensive_rpc_budget` verifies that the second costly nested call receives `SessionRpcBudgetExceeded`.
 
 

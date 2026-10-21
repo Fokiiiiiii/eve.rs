@@ -96,6 +96,16 @@ public sealed partial class CorporationStore
         return result;
     }
 
+
+    public async Task<Application?> ApplicationAsync(long id,long corporation,CancellationToken token = default)
+    {
+        await using var command = _source.CreateCommand($"SELECT {ApplicationColumns} FROM {_schema}.applications WHERE id=$1 AND corporation_id=$2 AND archived=false");
+        command.Parameters.Add(new NpgsqlParameter { Value = id });
+        command.Parameters.Add(new NpgsqlParameter { Value = corporation });
+        await using var r = await command.ExecuteReaderAsync(token);
+        return await r.ReadAsync(token) ? ReadApplication(r) : null;
+    }
+
     public Task<Application> RespondAsync(long actor,long applicationId,int status,string text,string response,CancellationToken token = default) =>
         WriteAsync(async (connection,tx) =>
         {

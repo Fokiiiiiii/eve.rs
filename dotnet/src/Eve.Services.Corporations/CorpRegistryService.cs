@@ -964,11 +964,27 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
     {
         if (PositiveId(call.Arg(0)) is not { } applicationId || PositiveId(call.Arg(2)) is not { } corporation)
             return PyNone.Instance;
-        var application = (await store.ApplicationsAsync(corporation:corporation,token:call.Cancellation))
-            .FirstOrDefault(a => a.Id == applicationId);
+        var status = Status(call.Arg(4));
+        if (status is not (1 or 2 or 3 or 4 or 5 or 6 or 7) || call.Session.CharacterId is not { } actor)
+            throw new CorporationError("CORPORATION_ACCESS_DENIED");
+        if (status is 4 or 5 or 6)
+        {
+            var current = await Current(call);
+            if (current?.Id == corporation)
+            {
+                _ = await RecruitmentCorporation(call);
+            }
+            else
+            {
+                if (await store.ApplicationAsync(applicationId,corporation,call.Cancellation) is null)
+                    return PyNone.Instance;
+                throw new CorporationError("CORPORATION_ACCESS_DENIED");
+            }
+        }
+
+        var application = await store.ApplicationAsync(applicationId,corporation,call.Cancellation);
         if (application is null) return PyNone.Instance;
-        if (PositiveId(call.Arg(1)) is { } character && character != application.CharacterId ||
-            call.Session.CharacterId is not { } actor)
+        if (PositiveId(call.Arg(1)) is { } character && character != application.CharacterId)
             throw new CorporationError("CORPORATION_ACCESS_DENIED");
         var applicationText = Text(call.Arg(3));
         var responseText = Text(call.Arg(5));
@@ -976,21 +992,20 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
             throw new CorporationError("CORPORATION_APPLICATION_TEXT_TOO_LONG");
         if (responseText.Length > 1000)
             throw new CorporationError("CORPORATION_APPLICATION_RESPONSE_TOO_LONG");
-        var recipients = new HashSet<long> { application.CharacterId, actor };
+        var before = await store.MemberAsync(application.CharacterId,call.Cancellation);
+        var updated = await store.RespondAsync(actor,applicationId,status,applicationText,responseText,call.Cancellation);
+        var recipients = new HashSet<long> { updated.CharacterId, actor };
         if (await store.GetAsync(corporation,call.Cancellation) is { } corp) recipients.Add(corp.CeoId);
         foreach (var member in await store.MembersAsync(corporation,call.Cancellation))
             if ((member.Masks.Roles & (CorporationRoles.Director | CorporationRoles.PersonnelManager)) != 0)
                 recipients.Add(member.CharacterId);
-        var before = await store.MemberAsync(application.CharacterId,call.Cancellation);
-        var status = Status(call.Arg(4));
-        var updated = await store.RespondAsync(actor,applicationId,status,applicationText,responseText,call.Cancellation);
         CorporationNotificationAdapter.ApplicationChanged(characterSessions,call,corporation,updated.CharacterId,
             updated.Id,ApplicationRow(updated),recipients);
         Member? after = status == 2
-            ? new Member(application.CharacterId,corporation,now(),"",new RoleMasks(),null,0,false,1000)
+            ? new Member(updated.CharacterId,corporation,now(),"",new RoleMasks(),null,0,false,1000)
             : before;
         if (before != after)
-            CorporationNotificationAdapter.MemberChanged(characterSessions,call,corporation,application.CharacterId,before,after);
+            CorporationNotificationAdapter.MemberChanged(characterSessions,call,corporation,updated.CharacterId,before,after);
         if (status == 2)
             await new CorporationLoginHook(store,characters).OnCharacterEnteredAsync(call.Session,actor,call.Cancellation);
         return PyNone.Instance;

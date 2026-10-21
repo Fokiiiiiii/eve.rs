@@ -667,6 +667,9 @@ private static PyValue RowField(PyValue value,string key)
             new PyInt(applicationId),new PyInt(applicant),new PyInt(corp.Id),new PyStr("Offer accepted"),new PyInt(2),new PyStr("")));
         Assert.Equal(corp.Id,(await rig.Characters.GetAsync(applicant))!.CorporationId);
         Assert.Equal(corp.Id,applicantSession.GetInt("corpid"));
+        var unauthorizedApplicationProbe = await Assert.ThrowsAsync<CorporationError>(() => Rpc(applicantSession,"UpdateApplicationOffer",
+            new PyInt(long.MaxValue),new PyInt(applicant),new PyInt(corp.Id),new PyStr("Probe"),new PyInt(5),new PyStr("")).AsTask());
+        Assert.Equal("CORPORATION_ACCESS_DENIED",unauthorizedApplicationProbe.Code);
         var ownHistory = Assert.IsType<PyList>(await Rpc(applicantSession,"GetMyOldApplications"));
         Assert.Equal(new PyInt(2),Assert.IsType<PyPackedRow>(MarshalCodec.Decode(MarshalCodec.Encode(ownHistory.Items.Single()))).Values[4]);
 

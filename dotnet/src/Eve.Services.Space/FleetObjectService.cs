@@ -182,7 +182,7 @@ public sealed partial class FleetObjectService(FleetStore store, Func<long> nowU
         var squadId = Number(call.Arg(2)) ?? FleetStore.NoUnit;
         var role = (int)(Number(call.Arg(3)) ?? FleetStore.Member);
         List<PyValue> invited = [];
-        foreach (var inviteeId in invitees.Select(Number).Where(id => id is > 0).Select(id => id!.Value))
+        foreach (var inviteeId in invitees.Select(Number).Where(id => id is > 0).Select(id => id!.Value).Distinct())
         {
             if (inviteeId == inviterId) continue;
             if (await store.FleetIdForCharacterAsync(inviteeId, call.Cancellation) is not null)

@@ -3844,7 +3844,7 @@ public class SpaceServiceTests
                  new PyInt(Eve.Services.Space.FleetStore.Member)]));
 
             var inviteResult = await FleetObjectCallAsync(fleet, fleetId, leaderSession, "MassInvite",
-                [new PyList([new PyLong(memberId), new PyLong(leaderId)]),
+                [new PyList([new PyLong(memberId), new PyLong(memberId), new PyLong(leaderId), new PyLong(memberId)]),
                  new PyLong(firstWing), new PyLong(firstSquad), new PyInt(Eve.Services.Space.FleetStore.Member)]);
             Assert.Equal(new PyList([new PyLong(memberId)]), inviteResult);
             var inviteEvent = Assert.Single(Events.Of(memberSession));

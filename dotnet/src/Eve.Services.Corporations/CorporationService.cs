@@ -70,6 +70,14 @@ public sealed partial class CorporationService(CorporationStore store,PgCharacte
     public async ValueTask<PyValue> GetMedalDetails(ServiceCall call)
     {
         var medal = await store.MedalAsync(MedalInteger(call.Arg(0)), call.Cancellation);
+        if (medal is { Status: not 3 })
+        {
+            var characterId = SessionCharacterId(call.Session);
+            var currentCorporationId = await CurrentCorporationIdAsync(call);
+            var isRecipient = characterId > 0 && await store.HasMedalAwardAsync(characterId, medal.Id, call.Cancellation);
+            if (currentCorporationId != medal.CorporationId && !isRecipient)
+                medal = null;
+        }
         var graphics = medal is null
             ? MedalGraphicsRowset([])
             : MedalGraphicsRowset(medal.Graphics.Select(g => (medal.Id, g)));
@@ -106,9 +114,11 @@ public sealed partial class CorporationService(CorporationStore store,PgCharacte
     public async ValueTask<PyValue> CreateMedal(ServiceCall call)
     {
         var (corporationId,actor) = await RequireMedalManagerAsync(call);
+        var title = BoundedMedalText(call.Arg(0), 100, "MEDAL_TITLE_TOO_LONG");
+        var description = BoundedMedalText(call.Arg(1), 1000, "MEDAL_DESCRIPTION_TOO_LONG");
         var graphics = ParseMedalGraphics(call.Arg(2));
         var id = await store.CreateMedalAsync(corporationId,actor,
-            MedalText(call.Arg(0)),MedalText(call.Arg(1)),graphics,call.Cancellation);
+            title,description,graphics,call.Cancellation);
         return CorporationWire.Id(id);
     }
 
@@ -116,7 +126,10 @@ public sealed partial class CorporationService(CorporationStore store,PgCharacte
     public async ValueTask<PyValue> SetMedalStatus(ServiceCall call)
     {
         var (corporationId, _) = await RequireMedalManagerAsync(call);
-        await store.SetMedalStatusesAsync(corporationId, MedalStatusEntries(call.Arg(0)), call.Cancellation);
+        var rawStatuses = call.Arg(0);
+        if (MedalStatusEntryCount(rawStatuses) > 500)
+            throw new CorporationError("MEDAL_BULK_LIMIT_EXCEEDED");
+        await store.SetMedalStatusesAsync(corporationId, MedalStatusEntries(rawStatuses), call.Cancellation);
         return PyNone.Instance;
     }
 
@@ -124,13 +137,16 @@ public sealed partial class CorporationService(CorporationStore store,PgCharacte
     public async ValueTask<PyValue> GetAllCorpMedals(ServiceCall call)
     {
         var requested = MedalInteger(call.Arg(0));
+        var currentCorporationId = await CurrentCorporationIdAsync(call);
         var medals = await store.MedalsAsync(requested > 0 ? requested : 0, call.Cancellation);
+        if (requested <= 0 || requested != currentCorporationId)
+            medals = medals.Where(medal => medal.Status == 3).ToArray();
         var medalRows = medals.Select(m => (PyValue)Py.List(
             CorporationWire.Id(m.Id), CorporationWire.Id(m.CorporationId), CorporationWire.Id(m.CreatorId),
             new PyWString(m.Title), new PyWString(m.Description), CorporationWire.Time(m.CreatedMs),
             new PyInt(m.RecipientCount)));
         var payload = Py.Tuple(
-            Py.Rowset(["medalID","ownerID","creatorID","title","description","date","noRecepients"], medalRows),
+            Py.Rowset(["medalID", "ownerID", "creatorID", "title", "description", "date", "noRecepients"], medalRows),
             MedalGraphicsRowset(medals.SelectMany(m => m.Graphics.Select(g => (m.Id, g)))));
         return ObjectCaching.MethodResult(payload, store.ClockMs, "1 hour");
     }
@@ -138,9 +154,12 @@ public sealed partial class CorporationService(CorporationStore store,PgCharacte
     [Method("GetRecipientsOfMedal")]
     public async ValueTask<PyValue> GetRecipientsOfMedal(ServiceCall call)
     {
+        var corporationId = await CurrentCorporationIdAsync(call);
         var medalId = MedalInteger(call.Arg(0));
-        var recipients = await store.MedalRecipientsAsync(SessionCorporationId(call.Session), medalId, call.Cancellation);
-        return Py.Rowset(["medalID","recepientID","issuerID","reason","date"], recipients.Select(a => (PyValue)Py.List(
+        var recipients = corporationId > 0
+            ? await store.MedalRecipientsAsync(corporationId, medalId, call.Cancellation)
+            : Array.Empty<CorporationStore.MedalAward>();
+        return Py.Rowset(["medalID", "recepientID", "issuerID", "reason", "date"], recipients.Select(a => (PyValue)Py.List(
             CorporationWire.Id(a.MedalId), CorporationWire.Id(a.CharacterId), CorporationWire.Id(a.IssuerId),
             new PyWString(a.Reason), CorporationWire.Time(a.CreatedMs))));
     }
@@ -150,9 +169,15 @@ public sealed partial class CorporationService(CorporationStore store,PgCharacte
     {
         var (corporationId,actor) = await RequireMedalManagerAsync(call);
         var rawRecipients = call.Arg(1);
-        var recipients = rawRecipients is PyList or PyTuple
-            ? MedalSequence(rawRecipients).Select(MedalInteger).ToArray()
-            : [MedalInteger(rawRecipients)];
+        IReadOnlyList<PyValue> recipientValues = rawRecipients is PyList or PyTuple
+            ? MedalSequence(rawRecipients)
+            : [rawRecipients];
+        if (recipientValues.Count > 500)
+            throw new CorporationError("MEDAL_BULK_LIMIT_EXCEEDED");
+        var recipients = recipientValues.Select(MedalInteger).ToArray();
+        var reason = BoundedMedalText(call.Arg(2), 200, "MEDAL_REASON_TOO_LONG");
+        if (recipients.Distinct().Count() != recipients.Length)
+            throw new CorporationError("MEDAL_RECIPIENT_DUPLICATE");
         var medalId = MedalInteger(call.Arg(0));
         var medal = await store.MedalAsync(medalId,call.Cancellation);
         if (medalId <= 0 || medal?.CorporationId != corporationId ||
@@ -167,7 +192,7 @@ public sealed partial class CorporationService(CorporationStore store,PgCharacte
         }
 
         await store.AwardMedalAsync(corporationId,medalId,recipients,
-            actor,MedalText(call.Arg(2)),call.Cancellation);
+            actor,reason,call.Cancellation);
         CorporationNotificationAdapter.MedalsReceived(characterSessions,call,medalId,recipients);
         return PyNone.Instance;
     }
@@ -177,10 +202,14 @@ public sealed partial class CorporationService(CorporationStore store,PgCharacte
             CorporationWire.Id(g.MedalId), CorporationWire.Id(g.Graphic.Part),
             new PyWString(g.Graphic.Graphic), CorporationWire.Id(g.Graphic.Color))));
 
-    private static long SessionCorporationId(ClientSession session)
+    private async Task<long> CurrentCorporationIdAsync(ServiceCall call)
     {
-        var corporationId = session.GetInt("corporationID") ?? 0;
-        return corporationId != 0 ? corporationId : session.GetInt("corpid") ?? 0;
+        var characterId = SessionCharacterId(call.Session);
+        if (characterId <= 0 || await characters.GetAsync(characterId, call.Cancellation) is not { } character ||
+            character.CorporationId <= 0 || await store.MemberAsync(characterId, call.Cancellation) is not { } member ||
+            member.CorporationId != character.CorporationId)
+            return 0;
+        return character.CorporationId;
     }
 
     private static long SessionIssuerId(ClientSession session)
@@ -197,8 +226,12 @@ public sealed partial class CorporationService(CorporationStore store,PgCharacte
         return characterId != 0 ? characterId : session.GetInt("characterID") ?? 0;
     }
 
-    private static IReadOnlyList<CorporationStore.MedalGraphic> ParseMedalGraphics(PyValue value) =>
-        MedalSequence(value).Select(item =>
+    private static IReadOnlyList<CorporationStore.MedalGraphic> ParseMedalGraphics(PyValue value)
+    {
+        var items = MedalSequence(value);
+        if (items.Count > 32)
+            throw new CorporationError("MEDAL_GRAPHICS_LIMIT_EXCEEDED");
+        return items.Select(item =>
         {
             if (item is PyList or PyTuple)
             {
@@ -215,6 +248,7 @@ public sealed partial class CorporationService(CorporationStore store,PgCharacte
             return new CorporationStore.MedalGraphic(
                 MedalInteger(MedalField(item, "part")), graphic is PyNone ? "" : JsSemantics.ToJsString(graphic), MedalInteger(color));
         }).ToArray();
+    }
 
     private static IReadOnlyList<(long MedalId, long Status)> MedalStatusEntries(PyValue value)
     {
@@ -252,6 +286,19 @@ public sealed partial class CorporationService(CorporationStore store,PgCharacte
 
     private static string MedalText(PyValue value) =>
         JsSemantics.Truthy(value) ? JsSemantics.ToJsString(value) : "";
+
+    private static string BoundedMedalText(PyValue value, int maximumLength, string errorCode)
+    {
+        var text = MedalText(value);
+        if (text.Length > maximumLength)
+            throw new CorporationError(errorCode);
+        return text;
+    }
+
+    private static int MedalStatusEntryCount(PyValue value) =>
+        MedalText(MedalField(value, "type")) == "dict"
+            ? MedalSequence(MedalField(value, "entries")).Count
+            : MedalDictionary(value)?.Entries.Count ?? 0;
 
     private static long MedalInteger(PyValue value) => value switch
     {

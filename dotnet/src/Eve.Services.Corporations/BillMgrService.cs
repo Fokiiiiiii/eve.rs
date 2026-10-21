@@ -57,7 +57,7 @@ public sealed class BillMgrService(
 
             case "GetCorporationBillsReceivable":
             {
-                var corporationId = SessionCorporationId(call.Session);
+                var corporationId = await CurrentCorporationIdAsync(call);
                 if (corporationId <= 0) return new PyList([]);
                 IReadOnlyList<PyValue> bills = _callbacks.GetCorporationBillsReceivableAsync is { } readReceivable
                     ? await readReceivable(corporationId, call.Cancellation)
@@ -80,15 +80,15 @@ public sealed class BillMgrService(
     }
 
     private async ValueTask<PyValue> GetCorporationBillsAsync(ServiceCall call)
-      {
-          var corporationId = SessionCorporationId(call.Session);
-          if (corporationId <= 0) return new PyList([]);
-          if (_callbacks.GetCorporationBillsAsync is { } readBills)
-              return Py.List((await readBills(corporationId, call.Cancellation)).ToArray());
-          var bills = (await officeStore.BillsForCorporationAsync(corporationId,call.Cancellation)).Select(WireBill)
-              .Concat((await corporations.CorporationBillsAsync(corporationId,call.Cancellation)).Select(WireBill));
-          return Py.List(bills.ToArray());
-      }
+    {
+        var corporationId = await CurrentCorporationIdAsync(call);
+        if (corporationId <= 0) return new PyList([]);
+        if (_callbacks.GetCorporationBillsAsync is { } readBills)
+            return Py.List((await readBills(corporationId, call.Cancellation)).ToArray());
+        var bills = (await officeStore.BillsForCorporationAsync(corporationId, call.Cancellation)).Select(WireBill)
+            .Concat((await corporations.CorporationBillsAsync(corporationId, call.Cancellation)).Select(WireBill));
+        return Py.List(bills.ToArray());
+    }
 
     private async ValueTask<PyValue> GetAutomaticPaySettingsAsync(ServiceCall call)
     {
@@ -147,6 +147,20 @@ public sealed class BillMgrService(
         var alliance = await corporations.AllianceAsync(allianceId, cancellationToken);
         if (alliance?.ActiveExecutorId == authority.Corporation.Id) ownerIds.Add(allianceId);
         return ownerIds;
+    }
+
+    private async ValueTask<long> CurrentCorporationIdAsync(ServiceCall call)
+    {
+        var corporationId = SessionCorporationId(call.Session);
+        if (corporationId <= 0) return 0;
+        var corporation = await corporations.GetAsync(corporationId, call.Cancellation);
+        if (corporation is null) return 0;
+        if (corporation.IsNpc) return corporationId;
+        var characterId = call.Session.CharacterId.GetValueOrDefault();
+        if (characterId <= 0 || await corporations.MemberAsync(characterId, call.Cancellation) is not { } member ||
+            member.CorporationId != corporationId)
+            return 0;
+        return corporationId;
     }
 
     private async ValueTask<CorporationAuthority> RequireAuthorityAsync(ServiceCall call, long requiredRoles)

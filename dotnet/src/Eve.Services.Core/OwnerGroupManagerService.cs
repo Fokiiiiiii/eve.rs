@@ -14,6 +14,8 @@ namespace Eve.Services.Core;
 public sealed partial class OwnerGroupManagerService(AccessGroupStore store, Func<long, ValueTask<MemberKind?>> kindOf, CharacterSessions? sessions,
     SharedFolderNotifier? folders = null)
 {
+    private const int MaxBulkIds = 500;
+
     [Method("GetMyGroups")]
     public async ValueTask<PyValue> GetMyGroups(ServiceCall call)
     {
@@ -91,6 +93,8 @@ public sealed partial class OwnerGroupManagerService(AccessGroupStore store, Fun
     [Method("AddMembers")]
     public async ValueTask<PyValue> AddMembers(ServiceCall call)
     {
+        if (call.Arg(1) is PyDict submitted && submitted.Entries.Count > MaxBulkIds)
+            throw new AccessGroupError("ACCESS_GROUP_BULK_LIMIT_EXCEEDED", "ACCESS_GROUP_BULK_LIMIT_EXCEEDED");
         var who = Who(call);
         var groupId = Integral(call.Arg(0)) ?? 0;
         var entries = new List<NewMember>();
@@ -212,8 +216,12 @@ public sealed partial class OwnerGroupManagerService(AccessGroupStore store, Fun
             : [];
 
     /// <summary>A list, tuple or set of ids (the client sends a Python set for bookmark ids and a list for group ids).</summary>
-    private static IReadOnlyList<long> IdsOf(PyValue value) =>
-        ArgsOf(value).Select(Integral).Where(id => id is > 0).Select(id => id!.Value).Distinct().ToList();
+    private static IReadOnlyList<long> IdsOf(PyValue value)
+    {
+        var raw = ArgsOf(value).Take(MaxBulkIds + 1).ToArray();
+        if (raw.Length > MaxBulkIds) throw new AccessGroupError("ACCESS_GROUP_BULK_LIMIT_EXCEEDED", "ACCESS_GROUP_BULK_LIMIT_EXCEEDED");
+        return raw.Select(Integral).Where(id => id is > 0).Select(id => id!.Value).Distinct().ToList();
+    }
 
     private static IEnumerable<PyValue> ArgsOf(PyValue value) => value switch
     {

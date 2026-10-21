@@ -964,11 +964,27 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
     {
         if (PositiveId(call.Arg(0)) is not { } applicationId || PositiveId(call.Arg(2)) is not { } corporation)
             return PyNone.Instance;
-        var application = (await store.ApplicationsAsync(corporation:corporation,token:call.Cancellation))
-            .FirstOrDefault(a => a.Id == applicationId);
+        var status = Status(call.Arg(4));
+        if (status is not (1 or 2 or 3 or 4 or 5 or 6 or 7) || call.Session.CharacterId is not { } actor)
+            throw new CorporationError("CORPORATION_ACCESS_DENIED");
+        if (status is 4 or 5 or 6)
+        {
+            var current = await Current(call);
+            if (current?.Id == corporation)
+            {
+                _ = await RecruitmentCorporation(call);
+            }
+            else
+            {
+                if (await store.ApplicationAsync(applicationId,corporation,call.Cancellation) is null)
+                    return PyNone.Instance;
+                throw new CorporationError("CORPORATION_ACCESS_DENIED");
+            }
+        }
+
+        var application = await store.ApplicationAsync(applicationId,corporation,call.Cancellation);
         if (application is null) return PyNone.Instance;
-        if (PositiveId(call.Arg(1)) is { } character && character != application.CharacterId ||
-            call.Session.CharacterId is not { } actor)
+        if (PositiveId(call.Arg(1)) is { } character && character != application.CharacterId)
             throw new CorporationError("CORPORATION_ACCESS_DENIED");
         var applicationText = Text(call.Arg(3));
         var responseText = Text(call.Arg(5));
@@ -976,21 +992,20 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
             throw new CorporationError("CORPORATION_APPLICATION_TEXT_TOO_LONG");
         if (responseText.Length > 1000)
             throw new CorporationError("CORPORATION_APPLICATION_RESPONSE_TOO_LONG");
-        var recipients = new HashSet<long> { application.CharacterId, actor };
+        var before = await store.MemberAsync(application.CharacterId,call.Cancellation);
+        var updated = await store.RespondAsync(actor,applicationId,status,applicationText,responseText,call.Cancellation);
+        var recipients = new HashSet<long> { updated.CharacterId, actor };
         if (await store.GetAsync(corporation,call.Cancellation) is { } corp) recipients.Add(corp.CeoId);
         foreach (var member in await store.MembersAsync(corporation,call.Cancellation))
             if ((member.Masks.Roles & (CorporationRoles.Director | CorporationRoles.PersonnelManager)) != 0)
                 recipients.Add(member.CharacterId);
-        var before = await store.MemberAsync(application.CharacterId,call.Cancellation);
-        var status = Status(call.Arg(4));
-        var updated = await store.RespondAsync(actor,applicationId,status,applicationText,responseText,call.Cancellation);
         CorporationNotificationAdapter.ApplicationChanged(characterSessions,call,corporation,updated.CharacterId,
             updated.Id,ApplicationRow(updated),recipients);
         Member? after = status == 2
-            ? new Member(application.CharacterId,corporation,now(),"",new RoleMasks(),null,0,false,1000)
+            ? new Member(updated.CharacterId,corporation,now(),"",new RoleMasks(),null,0,false,1000)
             : before;
         if (before != after)
-            CorporationNotificationAdapter.MemberChanged(characterSessions,call,corporation,application.CharacterId,before,after);
+            CorporationNotificationAdapter.MemberChanged(characterSessions,call,corporation,updated.CharacterId,before,after);
         if (status == 2)
             await new CorporationLoginHook(store,characters).OnCharacterEnteredAsync(call.Session,actor,call.Cancellation);
         return PyNone.Instance;
@@ -1895,6 +1910,9 @@ public sealed partial class CorpRecruitmentProxyService(
     CorporationStore store,PgCharacterStore characters,Func<long> now,CharacterSessions? sessions = null)
 {
     private const int MaxRecruiterIds = 100;
+    private const int MaxTitleLength = 40;
+    private const int MaxDescriptionLength = 1000;
+    private const int MaxAdDurationDays = 28;
     private const long FileTimeTicksPerDay = 864_000_000_000L;
 
     [Method("MachoResolveObject")]
@@ -1908,7 +1926,7 @@ public sealed partial class CorpRecruitmentProxyService(
         if (call.Arg(1) is PyTuple { Items.Count:>0 } nested)
             result = await ((IService)this).CallAsync(new ServiceCall
             {
-                Method=Text(nested.Items[0]),
+                Method=Text(nested.Items[0],100),
                 Args=nested.Items.Count>1 ? Items(nested.Items[1]) : [],
                 Kwargs=nested.Items.Count>2 ? nested.Items[2] : PyNone.Instance,
                 Session=call.Session,
@@ -2016,13 +2034,13 @@ public sealed partial class CorpRecruitmentProxyService(
             throw new CorporationError("CORPORATION_ACCESS_DENIED");
 
         var days = call.Arg(0) is PyNone ? 1 : Number(call.Arg(0));
-        if (days <= 0)
+        if (days is <= 0 or > MaxAdDurationDays)
             throw new CorporationError("CORPORATION_INVALID_RECRUITMENT_DURATION");
         var typeMask = Number(call.Arg(1));
         var langMask = Number(call.Arg(2));
-        var description = Text(call.Arg(3));
+        var description = Text(call.Arg(3),MaxDescriptionLength);
         var recruiters = RecruiterIds(call.Arg(4));
-        var title = Text(call.Arg(5));
+        var title = Text(call.Arg(5),MaxTitleLength);
         var hourMask = Number(call.Arg(6));
         var minSP = Number(call.Arg(7));
         var otherMask = Number(call.Arg(8));
@@ -2056,14 +2074,27 @@ public sealed partial class CorpRecruitmentProxyService(
         if (ad is null)
             return PyNone.Instance;
         var addedDays = Number(call.Arg(6));
+        var nowFiletime = Number(CorporationWire.Time(now()));
         if (addedDays < 0)
             throw new CorporationError("CORPORATION_INVALID_RECRUITMENT_DURATION");
+        long projectedExpiry;
+        try
+        {
+            projectedExpiry = checked(Math.Max(ad.ExpiryFiletime,nowFiletime) +
+                checked(addedDays * FileTimeTicksPerDay));
+            if (projectedExpiry > checked(nowFiletime + MaxAdDurationDays * FileTimeTicksPerDay))
+                throw new CorporationError("CORPORATION_INVALID_RECRUITMENT_DURATION");
+        }
+        catch (OverflowException)
+        {
+            throw new CorporationError("CORPORATION_INVALID_RECRUITMENT_DURATION");
+        }
         var changed = await store.UpdateRecruitmentAdAsync(corporationId,actor,adId,
             OptionalNumber(call.Arg(1),ad.TypeMask),OptionalNumber(call.Arg(2),ad.LangMask),
-            call.Arg(3) is PyNone ? ad.Description : Text(call.Arg(3)),
-            call.Arg(5) is PyNone ? ad.Title : Text(call.Arg(5)),
+            call.Arg(3) is PyNone ? ad.Description : Text(call.Arg(3),MaxDescriptionLength),
+            call.Arg(5) is PyNone ? ad.Title : Text(call.Arg(5),MaxTitleLength),
             OptionalNumber(call.Arg(7),ad.HourMask1),OptionalNumber(call.Arg(8),ad.MinSP),
-            OptionalNumber(call.Arg(9),ad.OtherMask),addedDays,Number(CorporationWire.Time(now())),
+            OptionalNumber(call.Arg(9),ad.OtherMask),addedDays,nowFiletime,
             call.Arg(4) is PyNone ? ad.Recruiters : RecruiterIds(call.Arg(4)),call.Cancellation);
         if (changed)
             CorporationNotificationAdapter.RecruitmentAdChanged(sessions,call);
@@ -2120,7 +2151,13 @@ public sealed partial class CorpRecruitmentProxyService(
         _ => 0
     };
 
-    private static string Text(PyValue value) => JsSemantics.StringValue(value) ?? "";
+    private static string Text(PyValue value,int maxLength)
+    {
+        var text = JsSemantics.StringValue(value) ?? "";
+        if (text.Length > maxLength)
+            throw new CorporationError("CORPORATION_INVALID_RECRUITMENT_AD");
+        return text;
+    }
 
     private static bool Truth(PyValue value) => value switch
     {

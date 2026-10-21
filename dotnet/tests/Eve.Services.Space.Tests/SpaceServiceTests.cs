@@ -4357,24 +4357,54 @@ public class SpaceServiceTests
                 Args = args,
                 Session = session,
             });
+            static PyObjectEx Set(params PyValue[] values) => new(
+                ObjectExKind.Ex1,
+                new PyTuple([new PyToken("__builtin__.set"), new PyList([new PyList(values)])]),
+                [],
+                []);
 
-            Assert.IsType<PyNone>(await Call("AddToWatchlist",
+            Assert.Equal(PyBool.True, await Call("AddToWatchlist",
                 new PyList([new PyLong(member.CharacterId), new PyLong(outsider.CharacterId)]),
-                new PyList([])));
+                Set(new PyLong(member.CharacterId))));
             Assert.Equal([member.CharacterId], ((PyList)session.Get("fleetWatchlist")!).Items.Cast<PyLong>().Select(value => value.Value));
 
-            Assert.IsType<PyNone>(await Call("RegisterForDamageUpdates",
-                new PyList([new PyLong(member.CharacterId), new PyLong(outsider.CharacterId)])));
-            Assert.Equal([member.CharacterId], ((PyList)session.Get("fleetDamageWatchlist")!).Items.Cast<PyLong>().Select(value => value.Value));
+            Assert.Equal(PyBool.True, await Call("RegisterForDamageUpdates",
+                Set(new PyLong(member.CharacterId), new PyLong(outsider.CharacterId))));
+            Assert.Equal([member.CharacterId], ((PyList)session.Get("fleetWatchlist")!).Items.Cast<PyLong>().Select(value => value.Value));
 
-            Assert.IsType<PyNone>(await Call("RemoveFromWatchlist", new PyLong(member.CharacterId),
-                new PyList([new PyLong(member.CharacterId), new PyLong(outsider.CharacterId)])));
+            Assert.Equal(PyBool.True, await Call("RemoveFromWatchlist", new PyLong(member.CharacterId),
+                Set(new PyLong(member.CharacterId), new PyLong(outsider.CharacterId))));
             Assert.Empty(((PyList)session.Get("fleetWatchlist")!).Items);
-            Assert.Empty(((PyList)session.Get("fleetDamageWatchlist")!).Items);
         }
         finally
         {
             if (fleetId > 0) await store.DisbandAsync(fleetId, leader.CharacterId);
+        }
+    }
+
+    [PgFact]
+    public async Task Fleet_watchlist_mutations_reject_a_caller_without_fleet_membership()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var pilot = await rig.NewCharacterAsync("Fleetless Watchlist Pilot", 34);
+        var session = await rig.SessionAsync(pilot);
+        Eve.Services.IService manager = new Eve.Services.Space.FleetManagerService(rig.FleetStore);
+        async ValueTask<PyValue> Call(string method, params PyValue[] args) => await manager.CallAsync(new ServiceCall
+        {
+            Method = method,
+            Args = args,
+            Session = session,
+        });
+
+        foreach (var (method, args) in new (string Method, PyValue[] Args)[]
+        {
+            ("AddToWatchlist", [new PyList([]), new PyList([])]),
+            ("RemoveFromWatchlist", [new PyLong(pilot.CharacterId), new PyList([])]),
+            ("RegisterForDamageUpdates", [new PyList([])]),
+        })
+        {
+            var error = await Assert.ThrowsAsync<MachoWrappedException>(async () => await Call(method, args));
+            Assert.Equal("FleetNotInFleet", error.Error.UserErrorMessage);
         }
     }
 

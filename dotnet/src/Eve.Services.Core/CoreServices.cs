@@ -37,7 +37,8 @@ public static class CoreServices
         Func<long, long, CancellationToken, ValueTask<decimal>>? contractBrokerFeeAdjustment = null,
         Func<long, long, CancellationToken, ValueTask<bool>>? hasContractManagerRole = null,
         PyValue? localizationTextChanges = null,
-        Func<long, long, short, CancellationToken, ValueTask<bool>>? canManageCalendarGroupEvent = null)
+        Func<long, long, short, CancellationToken, ValueTask<bool>>? canManageCalendarGroupEvent = null,
+        Func<long, CancellationToken, ValueTask<(long CorporationId, long AllianceId)>>? readCurrentCalendarGroups = null)
     {
         gameRpcCallbacks ??= new GameRpcCallbacks();
         var licenses = new OmegaLicenses(accounts, nowUnixMs);
@@ -46,10 +47,10 @@ public static class CoreServices
             ? new CalendarMgrService()
             : new CalendarMgrService(calendarStore,
                 calendarAudience ?? throw new ArgumentNullException(nameof(calendarAudience)), calendarSessions,
-                canManageCalendarGroupEvent);
+                canManageCalendarGroupEvent, readCurrentCalendarGroups);
         var calendarProxy = calendarStore is null
             ? new CalendarProxyService()
-            : new CalendarProxyService(calendarStore);
+            : new CalendarProxyService(calendarStore, readCurrentCalendarGroups);
         return
         [
             new PingService(),

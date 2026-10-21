@@ -301,6 +301,14 @@ public class CalendarMgrServiceTests
 
         Assert.Equal("CustomNotify", error.Error.UserErrorMessage);
         Assert.False(store.Events.Single(row => row.EventId == existing.EventId).IsDeleted);
+        var detailError = await Assert.ThrowsAsync<MachoWrappedException>(() => services.Lookup("calendarProxy")!
+            .CallAsync(Request("GetEventDetails", Session(role: ChatManagerRole), new PyLong(existing.EventId),
+                new PyLong(existing.OwnerId))).AsTask());
+        Assert.Equal("CustomNotify", detailError.Error.UserErrorMessage);
+        var responseError = await Assert.ThrowsAsync<MachoWrappedException>(() => manager.CallAsync(Request(
+            "GetResponsesToEvent", Session(role: ChatManagerRole), new PyLong(existing.EventId),
+            new PyLong(existing.OwnerId))).AsTask());
+        Assert.Equal("CustomNotify", responseError.Error.UserErrorMessage);
 
         var createError = await Assert.ThrowsAsync<MachoWrappedException>(() => manager.CallAsync(Request(
             "CreateAllianceEvent", Session(role: ChatManagerRole), new PyLong(date), new PyInt(30),
@@ -319,8 +327,10 @@ public class CalendarMgrServiceTests
         store.Events.AddRange(events);
         var services = new ServiceRegistry();
         services.Register((IService)new CalendarMgrService(store, new FakeCalendarAudienceReader(), sessions,
-            (_, _, _, _) => ValueTask.FromResult(groupAuthority)));
-        services.Register((IService)new CalendarProxyService(store));
+            (_, _, _, _) => ValueTask.FromResult(groupAuthority),
+            (_, _) => ValueTask.FromResult(groupAuthority ? (CorporationId, AllianceId) : (0L, 0L))));
+        services.Register((IService)new CalendarProxyService(store,
+            (_, _) => ValueTask.FromResult(groupAuthority ? (CorporationId, AllianceId) : (0L, 0L))));
         return (services, store);
     }
 

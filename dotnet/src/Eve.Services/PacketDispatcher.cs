@@ -287,6 +287,8 @@ public sealed class PacketDispatcher
             return 10;
         if (service == "insuranceSvc" && method == "GetContracts")
             return 10;
+        if (service == "corpStationMgr" && method == "MachoBindObject")
+            return 10;
         if (service == "billMgr")
             return 10;
         if (service == "industryManager" && method is ("GetJobCounts" or "GetJob" or "GetJobsByOwner" or "InstallJob" or "CompleteJob" or "CompleteManyJobs" or "CancelJob"))

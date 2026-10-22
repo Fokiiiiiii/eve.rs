@@ -5465,3 +5465,8 @@ Organization and mailing-list delivery now stops at 5,000 distinct recipients be
 ## Insurance contract scan budget (2026-10-22)
 
 `insuranceSvc.GetContracts` reads the persisted insurance contract map before applying owner, activity, and ship filters, so it costs 10 weighted per-session RPC units. The result shape and complete owner contract set remain unchanged. `Insurance_contract_scans_use_the_named_per_session_budget` verifies a second call is refused before the provider runs.
+
+
+## Corporation station bind budget (2026-10-22)
+
+The corpStationMgr MachoBindObject RPC allocates a station moniker tracked until the client releases it or the session ends. It costs 10 weighted per-session RPC units to bound repeated allocation while retaining the V24.01 bind response and release behavior. Corporation_station_binds_use_the_named_per_session_budget verifies that later binds are refused before invoking the service.

@@ -328,6 +328,18 @@ public class MarketRpcTests
     }
 
     [PgFact]
+    public async Task Npc_or_missing_corporation_market_orders_return_an_empty_rowset()
+    {
+        await using var r = await TradeRig.Create();
+        var actor = await r.Actor("NPC corporation market viewer");
+        var seat = await SeatAsync(r, actor);
+
+        var rows = Assert.IsType<PyObject>(Received(await seat.Proxy.GetCorporationOrders(
+            Call(seat.Session, "GetCorporationOrders", 11))));
+        Assert.Empty(Assert.IsType<PyList>(Field(Fields(rows), "lines")).Items);
+    }
+
+    [PgFact]
     public async Task Corporation_market_orders_require_the_persisted_accountant_role()
     {
         await using var r = await TradeRig.Create();

@@ -5,7 +5,8 @@ Updated 2026-10-22. This status follows the V24.01 client call sites and the per
 ## Built
 
 - `MarketTrading` and `MarketProxyService` persist player orders and NPC supply at SDE stations, escrow, item custody, fills, cancellations, modifications, expiries, and wallet journal entries.
-- Order placement applies duration, range, minimum-volume, visibility, and order-count rules. Buy Multiple executes its lines in one serializable transaction. Corporate order reads resolve the current persisted corporation and require the persisted Accountant role, matching the V24.01 corporation orders tab gate.
+- Order placement applies duration, range, minimum-volume, visibility, and order-count rules. Market RPC integer parsing refuses fractional, non-finite, and out-of-range Int32 values before narrowing. Buy Multiple executes its lines in one serializable transaction.
+- Corporate order reads resolve the current persisted corporation and require the persisted Accountant role, matching the V24.01 corporation orders tab gate.
 - NPC order seeding imports a captured market snapshot for SDE stations. History reads aggregate persisted market fills by region and split the current day from earlier days in the client response.
 - NPC station broker commission uses Broker skill, factional-warfare upgrades, and persisted faction and corporation standings. Sales tax uses Accounting; player-structure SCC surcharge is represented by the rule calculation.
 - The two-account headless trade walk passed on eve_p3. It checks the trade transfer, seller tax, broker fee, both balance deltas against persisted wallet journal rows, and that the NPC station order does not charge the Upwell structure SCC surcharge.

@@ -152,6 +152,13 @@ public sealed partial class FleetObjectService(FleetStore store, Func<long> nowU
         var inviter = before?.Members.FirstOrDefault(member => member.CharacterId == inviterId);
         if (inviter is null || inviter.Role != FleetStore.Leader && !FleetStore.HasBossJob(inviter.Job))
             return PyBool.False;
+        var inviteeSession = sessionForCharacter?.Invoke(inviteeId);
+        if (inviteeSession is null)
+        {
+            throw MachoErrors.ThrowUserError(
+                "FleetCandidateOffline",
+                ("invitee", Py.Tuple(new PyInt(2), new PyLong(inviteeId))));
+        }
         if (await store.FleetIdForCharacterAsync(inviteeId, call.Cancellation) is not null)
             throw MachoErrors.ThrowUserError("FleetError");
 
@@ -160,7 +167,7 @@ public sealed partial class FleetObjectService(FleetStore store, Func<long> nowU
             FleetRole(call.Arg(3)), call.Cancellation);
         if (!invited) return PyBool.False;
 
-        SendInviteNotification(sessionForCharacter?.Invoke(inviteeId), fleetId, inviterId, autoAccept: false);
+        SendInviteNotification(inviteeSession, fleetId, inviterId, autoAccept: false);
         var after = await store.SnapshotAsync(fleetId, call.Cancellation);
         if (before is not null) PublishJoinRequestChanges(before, after);
         return PyBool.True;

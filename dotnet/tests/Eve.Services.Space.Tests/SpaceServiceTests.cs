@@ -3245,6 +3245,43 @@ public class SpaceServiceTests
     }
 
     [PgFact]
+    public async Task Fleet_invite_refuses_an_offline_target_before_persisting()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var leaderId = Random.Shared.NextInt64(8_000_000_000_000, 8_999_999_999_999);
+        var inviteeId = leaderId + 1;
+        var leaderSession = new ClientSession(new Sink());
+        leaderSession.Set("charid", new PyLong(leaderId));
+        var store = rig.FleetStore;
+        var fleetId = await store.CreateAsync(leaderId);
+        var wingId = await store.CreateWingAsync(fleetId, leaderId);
+        var squadId = await store.CreateSquadAsync(fleetId, leaderId, wingId);
+        var fleet = new Eve.Services.Space.FleetObjectService(
+            store, () => Rig.ClockMs,
+            sessionForCharacter: id => id == leaderId ? leaderSession : null);
+        try
+        {
+            var error = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+                FleetObjectCallAsync(fleet, fleetId, leaderSession, "Invite",
+                    [new PyLong(inviteeId), new PyLong(wingId), new PyLong(squadId),
+                     new PyInt(Eve.Services.Space.FleetStore.Member)]));
+            Assert.Equal("FleetCandidateOffline", error.Error.UserErrorMessage);
+            var header = Assert.IsType<PyTuple>(Assert.IsType<PyObjectEx>(error.Error.Payload).Header);
+            var arguments = Assert.IsType<PyTuple>(header.Items[1]);
+            var values = Assert.IsType<PyDict>(arguments.Items[1]);
+            var invitee = Assert.IsType<PyTuple>(
+                values.Entries.Single(entry => ((PyStr)entry.Key).Value == "invitee").Value);
+            Assert.Equal(new PyInt(2), invitee.Items[0]);
+            Assert.Equal(new PyLong(inviteeId), invitee.Items[1]);
+            Assert.Null(await store.JoinAsync(fleetId, inviteeId, null));
+        }
+        finally
+        {
+            if (fleetId > 0) await store.DisbandAsync(fleetId, leaderId);
+        }
+    }
+
+    [PgFact]
     public async Task Fleet_invite_join_and_leave_are_persisted_with_the_member_hierarchy()
     {
         await using var rig = await Rig.CreateAsync();

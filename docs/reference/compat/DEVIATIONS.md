@@ -5470,3 +5470,8 @@ Organization and mailing-list delivery now stops at 5,000 distinct recipients be
 ## Corporation station bind budget (2026-10-22)
 
 The corpStationMgr MachoBindObject RPC allocates a station moniker tracked until the client releases it or the session ends. It costs 10 weighted per-session RPC units to bound repeated allocation while retaining the V24.01 bind response and release behavior. Corporation_station_binds_use_the_named_per_session_budget verifies that later binds are refused before invoking the service.
+
+
+## Fleet single-invite online target check (2026-10-22)
+
+The V24.01 FleetObjectService Invite path now returns FleetCandidateOffline before writing an invitation when the target has no active character session. EveJS 261018.1 applies this check in fleetObjectHandlerService.Handle_Invite and formats the client invitee argument as the owner tuple. The service preserves that error class and owner tuple and leaves MassInvite behavior as implemented by the reference runtime. Fleet_invite_refuses_an_offline_target_before_persisting verifies the refused target cannot accept a stored invitation.

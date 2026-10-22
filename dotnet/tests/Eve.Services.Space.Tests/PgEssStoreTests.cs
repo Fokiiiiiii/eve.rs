@@ -60,7 +60,7 @@ internal sealed class EssRig : IAsyncDisposable
     public PgEssStore Store(double reserveMaxPayout = EssRules.ReserveBankMaxPayout) => new(
         Source, Transactions, _essSchema, Log.Add,
         holderOf: (_, _, _, _) => ValueTask.FromResult(Holder),
-        consumeKey: async (connection, transaction, _, _, _) =>
+        consumeKey: async (connection, transaction, _, _, _, _) =>
         {
             if (!KeyHeld)
             {
@@ -151,8 +151,13 @@ public sealed class PgEssStoreTests
     private const long EssId = 1_030_000_000_001;
     private const long Now = 1_700_000_000_000;
 
-    private static EssMgrOperationRequest Request(EssMgrOperation operation, int system, long character, long keyTypeId = 0) =>
-        new(operation, system, character, keyTypeId, new ServiceCall { Method = operation.ToString(), Args = [], Session = new ClientSession(null) });
+    private static EssMgrOperationRequest Request(EssMgrOperation operation, int system, long character, long keyTypeId = 0)
+    {
+        var session = new ClientSession(null);
+        session.Set("shipid", new PyLong(98_000_012));
+        return new EssMgrOperationRequest(operation, system, character, keyTypeId,
+            new ServiceCall { Method = operation.ToString(), Args = [], Session = session });
+    }
 
     [PgFact]
     public async Task A_bounty_in_an_ess_system_pays_its_shares_into_the_banks_and_the_rest_to_the_pilot_in_one_transaction()
@@ -385,31 +390,51 @@ public sealed class PgEssStoreTests
     }
 
     [PgFact]
-    public async Task Each_reserve_pulse_credits_the_linked_pilots_corporation_and_runs_the_bank_down()
-    {
-        await using var rig = await EssRig.CreateAsync();
-        var store = rig.Store(reserveMaxPayout: 100);
-        await store.RegisterAsync(Jita, EssId, null, Now);
-        await rig.FundReserveAsync(Jita, 1000m);
-        await rig.OpenCorporationAsync(EssRig.LinkedCorporation);
-        await store.ExecuteAsync(Request(EssMgrOperation.RequestUnlockReserveBank, Jita, Thief, keyTypeId: 57714), Now);
-        await store.ExecuteAsync(Request(EssMgrOperation.AttemptLinkToReserveBank, Jita, Thief), Now);
-        await store.ExecuteAsync(Request(EssMgrOperation.AttemptLinkToReserveBank, Jita, Other), Now);
+public async Task Each_reserve_pulse_credits_the_linked_pilots_corporation_and_expires_after_its_key_duration()
+{
+    await using var rig = await EssRig.CreateAsync();
+    var store = rig.Store(reserveMaxPayout: 100);
+    await store.RegisterAsync(Jita, EssId, null, Now);
+    await rig.FundReserveAsync(Jita, 1000m);
+    await rig.OpenCorporationAsync(EssRig.LinkedCorporation);
+    await store.ExecuteAsync(Request(EssMgrOperation.RequestUnlockReserveBank, Jita, Thief, keyTypeId: 57714), Now);
+    await store.ExecuteAsync(Request(EssMgrOperation.AttemptLinkToReserveBank, Jita, Thief), Now);
+    await store.ExecuteAsync(Request(EssMgrOperation.AttemptLinkToReserveBank, Jita, Other), Now);
 
-        await store.TickAsync(Now + EssRules.PulseIntervalMs);
+    await store.TickAsync(Now + EssRules.PulseIntervalMs);
 
-        // pulse 1 of 15 pays 1.00 ISK; two linked pilots in one corporation share it into that corporation's first wallet division
-        Assert.Equal(1.00m, await rig.CorporationBalanceAsync(EssRig.LinkedCorporation));
-        var journal = await rig.Transactions.JournalForAccountAsync(EssRig.LinkedCorporation, 1001);
-        var entry = Assert.Single(journal);
-        Assert.Equal(1.00m, entry.Amount);
-        Assert.Equal("ESS reserve bank payout", entry.Reason);
-        var state = (await store.ReadAsync(Jita))!;
-        Assert.Equal((999m, 14), (state.ReserveValue, state.PulsesRemaining));
-        Assert.Equal(2, state.ReserveThefts.Count);
+    // Pulse 1 of 15 pays 1.00 ISK; two linked pilots in one corporation share it into that corporation's first wallet division.
+    Assert.Equal(1.00m, await rig.CorporationBalanceAsync(EssRig.LinkedCorporation));
+    var firstJournal = await rig.Transactions.JournalForAccountAsync(EssRig.LinkedCorporation, 1001);
+    var firstEntry = Assert.Single(firstJournal);
+    Assert.Equal(1.00m, firstEntry.Amount);
+    Assert.Equal("ESS reserve bank payout", firstEntry.Reason);
+    var afterFirstPulse = (await store.ReadAsync(Jita))!;
+    Assert.Equal((999m, 14), (afterFirstPulse.ReserveValue, afterFirstPulse.PulsesRemaining));
+    Assert.Equal(2, afterFirstPulse.ReserveThefts.Count);
 
-        await rig.Store(reserveMaxPayout: 100).TickAsync(Now + EssRules.PulseIntervalMs);
-        Assert.Equal(1.00m, await rig.CorporationBalanceAsync(EssRig.LinkedCorporation));
-        Assert.Single(await rig.Transactions.JournalForAccountAsync(EssRig.LinkedCorporation, 1001));
-    }
+    await store.TickAsync(Now + EssRules.PulseIntervalMs);
+    Assert.Equal(1.00m, await rig.CorporationBalanceAsync(EssRig.LinkedCorporation));
+    Assert.Single(await rig.Transactions.JournalForAccountAsync(EssRig.LinkedCorporation, 1001));
+
+    var expectedPayout = Enumerable.Range(1, 15)
+        .Sum(pulse =>
+        {
+            var pulsePayout = EssRules.Money((decimal)EssRules.ReservePulsePayout(pulse, 15, 100));
+            var pilotShare = EssRules.Money(pulsePayout / 2);
+            return pilotShare * 2;
+        });
+    await store.TickAsync(Now + 15 * EssRules.PulseIntervalMs);
+
+    var expired = (await store.ReadAsync(Jita))!;
+    Assert.Equal(0, expired.PulsesRemaining);
+    Assert.Null(expired.NextPulseMs);
+    Assert.Empty(expired.ReserveLinked);
+    Assert.Equal(1000m - expectedPayout, expired.ReserveValue);
+    Assert.Equal(expectedPayout, await rig.CorporationBalanceAsync(EssRig.LinkedCorporation));
+    Assert.Equal(15, (await rig.Transactions.JournalForAccountAsync(EssRig.LinkedCorporation, 1001)).Count);
+
+    var refused = await store.ExecuteAsync(Request(EssMgrOperation.AttemptLinkToReserveBank, Jita, Thief), Now + 15 * EssRules.PulseIntervalMs);
+    Assert.False(refused.Succeeded);
+}
 }

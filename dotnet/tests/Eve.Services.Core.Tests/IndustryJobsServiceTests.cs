@@ -145,6 +145,26 @@ public sealed class IndustryJobsServiceTests
     }
 
     [Fact]
+    public async Task Corporate_job_read_rechecks_persisted_factory_manager_access()
+    {
+        var persistedChecks = 0;
+        var service = Service(
+            Table((42001, Job(42001, ownerId: 2002))),
+            canAccessCorporationJobs: (_, _, _) =>
+            {
+                persistedChecks++;
+                return ValueTask.FromResult(false);
+            });
+
+        var result = await service.CallAsync(Call(
+            "GetJob", [new PyInt(42001)], corporationId: 2002, corporationRole: 1024));
+
+        Assert.Equal(1, persistedChecks);
+        Assert.Equal(new PyInt(0), Field(result, "jobID"));
+        Assert.Equal(new PyInt(0), Field(result, "ownerID"));
+    }
+
+    [Fact]
     public async Task Job_counts_use_only_the_requesting_installer_and_aggregate_science_slots()
     {
         var service = Service(Table(
@@ -319,6 +339,22 @@ public sealed class IndustryJobsServiceTests
     }
 
     [Fact]
+    public async Task Complete_many_refuses_more_than_500_rows_before_domain_dispatch()
+    {
+        var operations = new RecordingIndustryJobOperations();
+        var service = Service(null, operations: operations);
+        var rows = new List<PyValue>();
+        for (var index = 0; index < 501; index++)
+            rows.Add(PyTuple.Of(new PyInt(52_001 + index), new PyInt(30_000_142)));
+
+        var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            service.CallAsync(Call("CompleteManyJobs", [new PyList(rows)], callId: 46)).AsTask());
+
+        Assert.Equal("INDUSTRY_JOB_BULK_LIMIT_EXCEEDED", refusal.Error.UserErrorMessage);
+        Assert.Equal(0, operations.CompleteManyCalls);
+    }
+
+    [Fact]
     public async Task Domain_user_errors_keep_the_macho_user_error_envelope_and_failed_writes_do_not_return_success()
     {
         var operations = new RecordingIndustryJobOperations
@@ -357,9 +393,11 @@ public sealed class IndustryJobsServiceTests
         Func<long, bool>? isStarbaseFacilityOnline = null,
         Func<long, long, long, long>? resolveBlueprintLocationFlagID = null,
         IIndustryJobOperations? operations = null,
-        Func<PyValue?, bool>? isAlphaClone = null) =>
+        Func<PyValue?, bool>? isAlphaClone = null,
+        Func<long, long, CancellationToken, ValueTask<bool>>? canAccessCorporationJobs = null) =>
         new(_ => ValueTask.FromResult(table), operations ?? new RecordingIndustryJobOperations(), () => now, canViewStarbaseJob,
-            isStarbaseFacilityOnline, resolveBlueprintLocationFlagID, isAlphaClone);
+            isStarbaseFacilityOnline, resolveBlueprintLocationFlagID, isAlphaClone,
+            canAccessCorporationJobs ?? ((_, _, _) => ValueTask.FromResult(true)));
 
     private static JsonObject Table(params (long Id, JsonObject Record)[] records)
     {

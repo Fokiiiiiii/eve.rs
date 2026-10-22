@@ -817,6 +817,10 @@ public sealed class StructureDirectoryServiceTests
             return ValueTask.FromResult(StructureInfoResult);
         }
 
+        public ValueTask<PersistedStructureInfo?> GetStructureInfoForCharacterAsync(
+            long characterId, long structureId, CancellationToken cancellationToken) =>
+            GetStructureInfoAsync(structureId, cancellationToken);
+
         public ValueTask<IReadOnlyList<StructureDockingAccessSnapshot>> GetDockingAccessSnapshotsAsync(
             long characterId,
             long corporationId,

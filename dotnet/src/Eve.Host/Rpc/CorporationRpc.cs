@@ -52,7 +52,9 @@ internal sealed partial class CharacterServicesComposition
             new Eve.Services.Corporations.CorpRegistryService(corporations, characters, now, characterSessions, items,
                   readRecentCorporationKillmails: ReadRecentCorporationKillmailPageAsync,
                   readCharacterAllyBaseCost: ReadCharacterAllyBaseCostAsync,
-                  declareWar: CreateWarDeclarationAsync)
+                  declareWar: CreateWarDeclarationAsync,
+                  validateWarHQ: (call, ownerId, structureId, token) =>
+                      structureDirectoryReadModel.IsValidWarHQAsync(call, ownerId, structureId, token))
             {
                 AllianceAffiliationWriter = allianceDue.WriteAffiliationAsync
             },

@@ -1,4 +1,4 @@
-"""Two pilots exchange Local and private-conversation messages through XMPP.
+"""Two pilots exchange Local/private chat and persisted mail through live services.
 
     EVE_LIVE_HOST=host:port EVE_LIVE_XMPP_PORT=5222 pytest tests/test_walk_xmpp_live.py
 
@@ -12,6 +12,7 @@ from __future__ import annotations
 import os
 import time
 import uuid
+import zlib
 
 import pytest
 
@@ -82,3 +83,29 @@ def test_two_pilots_exchange_local_and_private_messages_over_xmpp():
             time.sleep(0.8)
             first_chat.send_groupchat(private_room, "headless private check")
             second_chat.wait_for_message(private_room, "headless private check")
+
+            subject = f"headless mail {run}"
+            message_id = int(m.plain(first.call(
+                "mailMgr", "SendMail", [second_character], None, None,
+                subject, "Two pilots crossed chat and mail.", None, None)))
+            mailbox = m.plain(second.call("mailMgr", "SyncMail", None, None))[1]
+            assert any(int(header[1]["messageID"]) == message_id and header[1]["title"] == subject
+                       for header in mailbox["newMail"]), (message_id, subject, [(header[1]["messageID"], header[1]["title"]) for header in mailbox["newMail"]])
+
+            body = second.call("mailMgr", "GetBody", message_id, True)
+            assert zlib.decompress(body).decode("utf-8") == "Two pilots crossed chat and mail."
+            read_mail = m.plain(second.call("mailMgr", "SyncMail", None, None))[1]
+            read_status = next(status[1] for status in read_mail["mailStatus"]
+                               if int(status[1]["messageID"]) == message_id)
+            assert int(read_status["statusMask"]) & 1
+
+            reply_subject = f"Re: {subject}"
+            reply_body = "I received the message."
+            reply_id = int(m.plain(second.call(
+                "mailMgr", "SendMail", [first_character], None, None,
+                reply_subject, reply_body, message_id, None)))
+            first_mailbox = m.plain(first.call("mailMgr", "SyncMail", None, None))[1]
+            assert any(int(header[1]["messageID"]) == reply_id and header[1]["title"] == reply_subject
+                       for header in first_mailbox["newMail"])
+            first_reply = zlib.decompress(first.call("mailMgr", "GetBody", reply_id, True)).decode("utf-8")
+            assert first_reply == reply_body

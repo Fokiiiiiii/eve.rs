@@ -78,6 +78,20 @@ public sealed class ShipCosmeticsMgrRpcServiceTests
         }
     }
 
+    [Fact]
+    public async Task License_activation_refuses_more_than_500_raw_item_ids_before_store_access()
+    {
+        var service = new ShipCosmeticsMgrRpcService();
+        var session = new ClientSession();
+        session.Set("charid", new PyInt(20));
+        var itemIds = new PyList([.. Enumerable.Range(1, 501).Select(id => (PyValue)new PyInt(id))]);
+
+        var refusal = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await service.CallAsync(Call("ActivateSkinLicense", session, itemIds)));
+
+        Assert.Equal("SHIP_SKIN_LICENSE_BULK_LIMIT_EXCEEDED", refusal.Error.UserErrorMessage);
+    }
+
     [Theory]
     [InlineData("success")]
     [InlineData("false_payload")]

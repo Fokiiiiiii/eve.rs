@@ -44,8 +44,15 @@ public sealed partial class FleetProxyService(FleetStore store, Func<string, lon
         if (advert.Value.JoinNeedsApproval)
         {
             var request = FleetObjectService.JoinRequestFromSession(call.Session);
-            if (!await store.RequestJoinAsync(fleetId, request, call.Cancellation))
-                return PyBool.False;
+            try
+            {
+                if (!await store.RequestJoinAsync(fleetId, request, call.Cancellation))
+                    return PyBool.False;
+            }
+            catch (FleetJoinRequestLimitException)
+            {
+                throw MachoErrors.ThrowUserError("FleetError");
+            }
             sessionForCharacter?.Invoke(bossId.Value)?.SendNotification(
                 "OnFleetJoinRequest", "fleetid",
                 FleetObjectService.JoinRequestValue(request, call.Session));

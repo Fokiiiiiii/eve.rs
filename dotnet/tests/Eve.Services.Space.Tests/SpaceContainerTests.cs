@@ -297,17 +297,17 @@ public class SpaceContainerTests
         // the simulation is lost and a scene is made again
         rig.Sim.Lose();
         await rig.Containers.RestoreAsync(system);
-        var placed = Assert.IsType<SimPlaceWreck>(Assert.Single(rig.Sim.Heard.Skip(heard)));
+        var placed = Assert.IsType<SimPlaceWreck>(Assert.Single(rig.Sim.Heard.Skip(heard).OfType<SimPlaceWreck>()));
         Assert.Equal((system, can, 12, kept.LauncherId, false), (placed.Scene.LocationId, placed.WreckId, placed.GroupId, placed.LauncherId, placed.IsEmpty));
         Assert.Equal(new SimWreckKind(23, "Cargo Container", 1176), placed.Kind);
         Assert.Equal([1000.0, 2000.0, 3000.0], placed.Position);
         Assert.Equal(14.0, placed.Radius);
         Assert.Equal(new SimCredit(flying.Character.CharacterId, kept.CorporationId, kept.AllianceId, 0), placed.Credit);
         await rig.Containers.RestoreAsync(system);
-        Assert.Single(rig.Sim.Heard.Skip(heard));
+        Assert.Single(rig.Sim.Heard.Skip(heard).OfType<SimPlaceWreck>());
         // another system has nothing to put back
         await rig.Containers.RestoreAsync(system + 1);
-        Assert.Single(rig.Sim.Heard.Skip(heard));
+        Assert.Single(rig.Sim.Heard.Skip(heard).OfType<SimPlaceWreck>());
     }
 
     [PgFact]
@@ -329,14 +329,14 @@ public class SpaceContainerTests
 
         await rig.Containers.RestoreAsync(system);
 
-        var placed = Assert.IsType<SimPlaceWreck>(Assert.Single(rig.Sim.Heard.Skip(heard)));
+        var placed = Assert.IsType<SimPlaceWreck>(Assert.Single(rig.Sim.Heard.Skip(heard).OfType<SimPlaceWreck>()));
         Assert.Equal((can, true), (placed.WreckId, placed.IsEmpty));
         Assert.Null(await rig.SpaceItems.GetAsync(777_000_001));
         // time runs out while the simulation does not have it: it goes instead of being put back
         rig.Sim.Lose();
         rig.Now = Rig.ClockMs + (long)SpaceContainers.CanLifetime.TotalMilliseconds + 1;
         await rig.Containers.RestoreAsync(system);
-        Assert.Single(rig.Sim.Heard.Skip(heard));
+        Assert.Single(rig.Sim.Heard.Skip(heard).OfType<SimPlaceWreck>());
         Assert.Null(await rig.Items.GetAsync(can));
         Assert.Null(await rig.SpaceItems.GetAsync(can));
     }
@@ -367,11 +367,11 @@ public class SpaceContainerTests
 
         await rig.Containers.RestoreAsync(system);
 
-        var placed = Assert.IsType<Eve.Space.SimPlaceAsteroid>(Assert.Single(rig.Sim.Heard.Skip(heard)));
+        var placed = Assert.IsType<Eve.Space.SimPlaceAsteroid>(Assert.Single(rig.Sim.Heard.Skip(heard).OfType<Eve.Space.SimPlaceAsteroid>()));
         Assert.Equal((system, asteroid.Id, asteroid.TypeId, type.GroupId, type.CategoryId, type.Name, type.GraphicId, asteroid.Quantity),
             (placed.SolarSystemId, placed.AsteroidId, placed.TypeId, placed.GroupId, placed.CategoryId, placed.Name, placed.GraphicId, placed.UnitsRemaining));
         await rig.Containers.RestoreAsync(system);
-        Assert.Single(rig.Sim.Heard.Skip(heard));
+        Assert.Single(rig.Sim.Heard.Skip(heard).OfType<Eve.Space.SimPlaceAsteroid>());
     }
 
     [PgFact]

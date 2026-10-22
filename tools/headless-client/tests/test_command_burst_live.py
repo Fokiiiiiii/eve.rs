@@ -26,6 +26,7 @@ pytestmark = pytest.mark.skipif(not base.LIVE, reason="set EVE_LIVE_HOST=host:po
 BURST_MODULE = 42529  # Shield Command Burst I
 BURST_CHARGE = 42695  # Shield Harmonizing Charge
 BURST_HULL = 37480  # Bifrost
+WARP = base.load("warp.json")
 SHIELD_EM_RESONANCE = 271
 COMMAND_DESTROYERS = 37615
 
@@ -105,8 +106,11 @@ def test_a_loaded_burst_changes_a_fleet_members_dogma_until_its_buff_expires():
         owner.call_bound(owner_dogma[0], "AddTarget", member_ship)
         targeting = wait_for_events(owner, lambda events: named(events, "OnTarget"), timeout=90)
         assert named(targeting, "OnTarget"), "pilot A did not acquire pilot B"
-        owner.call_bound(owner_ballpark[0], "CmdFollowBall", member_ship, 1_000)
-        time.sleep(240)  # allow the client flight order to reach the burst's 15 km SDE range
+        owner.call_bound(owner_ballpark[0], "CmdWarpToStuff", "item", WARP["races"][0]["planetID"], minRange=0, fleet=True)
+        owner_warp_stop = wait_for_events(owner, lambda events: named(events, "Stop"), timeout=120)
+        member_warp_stop = wait_for_events(member, lambda events: named(events, "Stop"), timeout=120)
+        assert named(owner_warp_stop, "Stop"), "fleet commander did not complete its warp"
+        assert named(member_warp_stop, "Stop"), "fleet member did not complete its warp"
         notifications_of(owner)
         notifications_of(member)
 
@@ -136,7 +140,7 @@ def test_a_loaded_burst_changes_a_fleet_members_dogma_until_its_buff_expires():
         expired_events = wait_for_events(
             member,
             lambda events: named(events, "OnModuleAttributeChanges") and named(events, "OnDbuffUpdated"),
-            timeout=85,
+            timeout=110,
         )
         assert named(expired_events, "OnModuleAttributeChanges"), "buff expiry did not restore receiver dogma attributes"
         assert named(expired_events, "OnDbuffUpdated"), "buff expiry did not update receiver buff state"

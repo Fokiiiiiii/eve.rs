@@ -165,9 +165,12 @@ public class DispatchGoldenTests
     }
 
     internal static PyValue CallRequestPacket(string service, string method)
+        => CallRequestPacket(service, method, []);
+
+    internal static PyValue CallRequestPacket(string service, string method, params PyValue[] args)
     {
         var source = new PyTuple([new PyInt(MachoAddress.TypeClient), new PyLong(7), new PyInt(9), PyNone.Instance]);
-        var body = new PyTuple([new PyInt(1), new PyStr(method), new PyTuple([]), PyNone.Instance]);
+        var body = new PyTuple([new PyInt(1), new PyStr(method), new PyTuple(args), PyNone.Instance]);
         var payload = new PyTuple([new PyTuple([new PyInt(0), new PySubStream(body)])]);
         var head = new PyValue[]
         {
@@ -222,6 +225,26 @@ public class DispatchGoldenTests
         await dispatcher.DispatchAsync(CallRequestPacket("charMgr", "ListStations"), session);
 
         Assert.Equal(1, service.Calls);
+        Assert.Equal(2, capture.Sent.Count);
+        Assert.Equal(ErrorResponseCommand, CommandOf(capture.Sent[1]));
+        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[1])));
+    }
+
+    [Fact]
+    public async Task Bound_bind_invocations_consume_the_nested_expensive_rpc_budget()
+    {
+        var capture = new Capture();
+        var session = new ClientSession(capture) { SessionId = 911 };
+        var registry = new ServiceRegistry();
+        var service = new RecruitmentBindBudgetService();
+        registry.Register(service);
+        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 10 };
+        var nestedSearch = new PyTuple([new PyStr("SearchCorpAds"), new PyTuple([])]);
+
+        await dispatcher.DispatchAsync(CallRequestPacket("corpRecProxy", "MachoBindObject", new PyLong(1001), nestedSearch), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("corpRecProxy", "MachoBindObject", new PyLong(1001), nestedSearch), session);
+
+        Assert.Equal(1, service.NestedSearches);
         Assert.Equal(2, capture.Sent.Count);
         Assert.Equal(ErrorResponseCommand, CommandOf(capture.Sent[1]));
         Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[1])));
@@ -350,6 +373,74 @@ public class DispatchGoldenTests
     }
 
     [Fact]
+    public async Task Bill_manager_calls_have_a_named_per_session_budget()
+    {
+        var captureRegistry = new ServiceRegistry();
+        var service = new ExpensiveService("billMgr");
+        captureRegistry.Register(service);
+        var dispatcher = new PacketDispatcher(captureRegistry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 10 };
+        var methods = new[]
+        {
+            "CharPayBill",
+            "GetAutomaticPaySettings",
+            "GetCorporationBills",
+            "GetCorporationBillsReceivable",
+            "PayCorporationBill",
+            "SendAutomaticPaySettings",
+        };
+
+        for (var index = 0; index < methods.Length; index++)
+        {
+            var capture = new Capture();
+            var session = new ClientSession(capture) { SessionId = 940 + index };
+            await dispatcher.DispatchAsync(CallRequestPacket("billMgr", methods[index]), session);
+            await dispatcher.DispatchAsync(CallRequestPacket("billMgr", methods[index]), session);
+
+            Assert.Equal(index + 1, service.Calls);
+            Assert.Equal(ErrorResponseCommand, CommandOf(capture.Sent[1]));
+            Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[1])));
+        }
+    }
+
+    [Fact]
+    public async Task Market_owner_history_reads_have_a_named_per_session_budget()
+    {
+        var captureRegistry = new ServiceRegistry();
+        var service = new ExpensiveService();
+        captureRegistry.Register(service);
+        var now = FixedNowMs;
+        var dispatcher = new PacketDispatcher(captureRegistry, () => now) { MaxExpensiveRpcUnitsPerMinute = 10 };
+        var methods = new[]
+        {
+            "GetCharOrders",
+            "GetCorporationOrders",
+            "GetCharEscrow",
+            "GetMarketOrderHistory",
+            "GetOldPriceHistory",
+            "GetNewPriceHistory",
+            "GetPlexOrders",
+            "GetPlexBest",
+            "GetPlexHistory",
+            "GetPlexOldPriceHistory",
+            "GetPlexNewPriceHistory",
+            "CharGetTransactions",
+            "CorpGetTransactions",
+        };
+
+        for (var index = 0; index < methods.Length; index++)
+        {
+            var capture = new Capture();
+            var session = new ClientSession(capture) { SessionId = 920 + index };
+            await dispatcher.DispatchAsync(CallRequestPacket("marketProxy", methods[index]), session);
+            await dispatcher.DispatchAsync(CallRequestPacket("marketProxy", methods[index]), session);
+
+            Assert.Equal(index + 1, service.Calls);
+            Assert.Equal(ErrorResponseCommand, CommandOf(capture.Sent[1]));
+            Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[1])));
+        }
+    }
+
+    [Fact]
     public async Task Corporation_potential_CEO_member_enumeration_uses_the_named_per_session_budget()
     {
         var capture = new Capture();
@@ -415,6 +506,42 @@ public class DispatchGoldenTests
 
         await dispatcher.DispatchAsync(CallRequestPacket("charFittingMgr", "GetFittings"), session);
         await dispatcher.DispatchAsync(CallRequestPacket("charFittingMgr", "GetFittings"), session);
+
+        Assert.Equal(1, service.Calls);
+        Assert.Equal(2, capture.Sent.Count);
+        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[1])));
+    }
+
+    [Fact]
+    public async Task Industry_job_calls_use_the_named_per_session_budget()
+    {
+        var capture = new Capture();
+        var session = new ClientSession(capture) { SessionId = 918 };
+        var registry = new ServiceRegistry();
+        var service = new ExpensiveService("industryManager");
+        registry.Register(service);
+        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 10 };
+
+        await dispatcher.DispatchAsync(CallRequestPacket("industryManager", "GetJobsByOwner"), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("industryManager", "GetJobsByOwner"), session);
+
+        Assert.Equal(1, service.Calls);
+        Assert.Equal(2, capture.Sent.Count);
+        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[1])));
+    }
+
+    [Fact]
+    public async Task Ship_cosmetics_license_calls_use_the_named_per_session_budget()
+    {
+        var capture = new Capture();
+        var session = new ClientSession(capture) { SessionId = 919 };
+        var registry = new ServiceRegistry();
+        var service = new ExpensiveService("shipCosmeticsMgr");
+        registry.Register(service);
+        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 10 };
+
+        await dispatcher.DispatchAsync(CallRequestPacket("shipCosmeticsMgr", "ActivateSkinLicense"), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("shipCosmeticsMgr", "ActivateSkinLicense"), session);
 
         Assert.Equal(1, service.Calls);
         Assert.Equal(2, capture.Sent.Count);
@@ -508,7 +635,26 @@ public class DispatchGoldenTests
     }
 
     [Fact]
-    public async Task Structure_docking_queries_use_the_named_per_session_budget()
+    public async Task Corporation_structure_directory_reads_use_the_named_per_session_budget()
+    {
+        var capture = new Capture();
+        var session = new ClientSession(capture) { SessionId = 912 };
+        var registry = new ServiceRegistry();
+        var service = new ExpensiveService("structureDirectory");
+        registry.Register(service);
+        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 10 };
+
+        await dispatcher.DispatchAsync(CallRequestPacket("structureDirectory", "GetMyCorporationStructures"), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("structureDirectory", "GetMyCorporationStructures"), session);
+
+        Assert.Equal(1, service.Calls);
+        Assert.Equal(2, capture.Sent.Count);
+        Assert.Equal(ErrorResponseCommand, CommandOf(capture.Sent[1]));
+        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[1])));
+    }
+
+    [Fact]
+    public async Task Character_structure_directory_reads_use_the_named_per_session_budget()
     {
         var capture = new Capture();
         var session = new ClientSession(capture) { SessionId = 911 };
@@ -517,8 +663,8 @@ public class DispatchGoldenTests
         registry.Register(service);
         var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 10 };
 
-        await dispatcher.DispatchAsync(CallRequestPacket("structureDirectory", "CheckMyDockingAccessToStructures"), session);
-        await dispatcher.DispatchAsync(CallRequestPacket("structureDirectory", "CheckMyDockingAccessToStructures"), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("structureDirectory", "GetMyCharacterStructures"), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("structureDirectory", "GetMyCharacterStructures"), session);
 
         Assert.Equal(1, service.Calls);
         Assert.Equal(2, capture.Sent.Count);
@@ -582,6 +728,101 @@ public class DispatchGoldenTests
 
         await dispatcher.DispatchAsync(CallRequestPacket("charMgr", "GetOrganizationInfoForCharacters"), session);
         await dispatcher.DispatchAsync(CallRequestPacket("charMgr", "GetOrganizationInfoForCharacters"), session);
+
+        Assert.Equal(1, service.Calls);
+        Assert.Equal(2, capture.Sent.Count);
+        Assert.Equal(ErrorResponseCommand, CommandOf(capture.Sent[1]));
+        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[1])));
+    }
+
+    [Fact]
+    public async Task Corporation_item_lock_reads_have_a_named_per_session_budget()
+    {
+        var capture = new Capture();
+        var session = new ClientSession(capture) { SessionId = 909 };
+        var registry = new ServiceRegistry();
+        var service = new ItemLockingBudgetService();
+        registry.Register(service);
+        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 10 };
+
+        await dispatcher.DispatchAsync(CallRequestPacket("itemLocking", "GetItemsByLocation"), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("itemLocking", "GetLockedItemLocations"), session);
+
+        Assert.Equal(1, service.Calls);
+        Assert.Equal(2, capture.Sent.Count);
+        Assert.Equal(ErrorResponseCommand, CommandOf(capture.Sent[1]));
+        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[1])));
+    }
+
+    [Fact]
+    public async Task Alliance_contact_list_aliases_have_a_named_per_session_budget()
+    {
+        var capture = new Capture();
+        var session = new ClientSession(capture) { SessionId = 910 };
+        var registry = new ServiceRegistry();
+        var service = new AllianceContactsBudgetService();
+        registry.Register(service);
+        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 10 };
+
+        await dispatcher.DispatchAsync(CallRequestPacket("allianceRegistry", "GetAllianceContacts"), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("allianceRegistry", "GetContactList"), session);
+
+        Assert.Equal(1, service.Calls);
+        Assert.Equal(2, capture.Sent.Count);
+        Assert.Equal(ErrorResponseCommand, CommandOf(capture.Sent[1]));
+        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[1])));
+    }
+
+    [Fact]
+    public async Task Alliance_bulletin_list_aliases_have_a_named_per_session_budget()
+    {
+        var capture = new Capture();
+        var session = new ClientSession(capture) { SessionId = 911 };
+        var registry = new ServiceRegistry();
+        var service = new AllianceBulletinsBudgetService();
+        registry.Register(service);
+        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 10 };
+
+        await dispatcher.DispatchAsync(CallRequestPacket("allianceRegistry", "GetBulletins"), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("allianceRegistry", "GetBulletinEntries"), session);
+
+        Assert.Equal(1, service.Calls);
+        Assert.Equal(2, capture.Sent.Count);
+        Assert.Equal(ErrorResponseCommand, CommandOf(capture.Sent[1]));
+        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[1])));
+    }
+
+    [Fact]
+    public async Task Character_settings_reads_and_writes_have_a_named_per_session_budget()
+    {
+        var capture = new Capture();
+        var session = new ClientSession(capture) { SessionId = 912 };
+        var registry = new ServiceRegistry();
+        var service = new CharacterSettingsBudgetService();
+        registry.Register(service);
+        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 10 };
+
+        await dispatcher.DispatchAsync(CallRequestPacket("charMgr", "GetCharacterSettings"), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("charMgr", "SaveCharacterSetting"), session);
+
+        Assert.Equal(1, service.Calls);
+        Assert.Equal(2, capture.Sent.Count);
+        Assert.Equal(ErrorResponseCommand, CommandOf(capture.Sent[1]));
+        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[1])));
+    }
+
+    [Fact]
+    public async Task Fleet_member_composition_reads_have_a_named_per_session_budget()
+    {
+        var capture = new Capture();
+        var session = new ClientSession(capture) { SessionId = 913 };
+        var registry = new ServiceRegistry();
+        var service = new FleetCompositionBudgetService();
+        registry.Register(service);
+        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 10 };
+
+        await dispatcher.DispatchAsync(CallRequestPacket("fleetObject", "GetInitState"), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("fleetObject", "GetFleetComposition"), session);
 
         Assert.Equal(1, service.Calls);
         Assert.Equal(2, capture.Sent.Count);
@@ -698,6 +939,81 @@ public class DispatchGoldenTests
         }
     }
 
+    private sealed class ItemLockingBudgetService : IService
+    {
+        public int Calls { get; private set; }
+
+        public string Name => "itemLocking";
+
+        public bool HasMethod(string method) => method is "GetItemsByLocation" or "GetLockedItemLocations";
+
+        public ValueTask<PyValue> CallAsync(ServiceCall call)
+        {
+            Calls++;
+            return ValueTask.FromResult<PyValue>(PyNone.Instance);
+        }
+    }
+
+    private sealed class AllianceContactsBudgetService : IService
+    {
+        public int Calls { get; private set; }
+
+        public string Name => "allianceRegistry";
+
+        public bool HasMethod(string method) => method is "GetAllianceContacts" or "GetContactList";
+
+        public ValueTask<PyValue> CallAsync(ServiceCall call)
+        {
+            Calls++;
+            return ValueTask.FromResult<PyValue>(PyNone.Instance);
+        }
+    }
+
+    private sealed class AllianceBulletinsBudgetService : IService
+    {
+        public int Calls { get; private set; }
+
+        public string Name => "allianceRegistry";
+
+        public bool HasMethod(string method) => method is "GetBulletins" or "GetBulletinEntries";
+
+        public ValueTask<PyValue> CallAsync(ServiceCall call)
+        {
+            Calls++;
+            return ValueTask.FromResult<PyValue>(PyNone.Instance);
+        }
+    }
+
+    private sealed class CharacterSettingsBudgetService : IService
+    {
+        public int Calls { get; private set; }
+
+        public string Name => "charMgr";
+
+        public bool HasMethod(string method) => method is "GetCharacterSettings" or "SaveCharacterSetting";
+
+        public ValueTask<PyValue> CallAsync(ServiceCall call)
+        {
+            Calls++;
+            return ValueTask.FromResult<PyValue>(PyNone.Instance);
+        }
+    }
+
+    private sealed class FleetCompositionBudgetService : IService
+    {
+        public int Calls { get; private set; }
+
+        public string Name => "fleetObject";
+
+        public bool HasMethod(string method) => method is "GetInitState" or "GetFleetComposition";
+
+        public ValueTask<PyValue> CallAsync(ServiceCall call)
+        {
+            Calls++;
+            return ValueTask.FromResult<PyValue>(PyNone.Instance);
+        }
+    }
+
     private sealed class WalletBudgetService : IService
     {
         public int Calls { get; private set; }
@@ -719,7 +1035,7 @@ public class DispatchGoldenTests
 
         public string Name => name;
 
-        public bool HasMethod(string method) => method is "GetOrders" or "BuyMultipleItems" or "PlaceMultiSellOrder" or "GetHistoryForManyTypeIDs" or "GetAllianceMembers" or "GetRankedAlliances" or "GetOrganizationInfoForCharacters" or "SendBroadcast" or "Invite" or "MassInvite" or "ExecuteActions" or "GetNumberOfPotentialCEOs" or "GetFittings" or "GetAssetInventory" or "GetAssetInventoryForLocation" or "SearchAssets" or "GetAggressionSettingsForCorps" or "AuditMember" or "CheckMyDockingAccessToStructures" or "GetMyDockableStructures" or "InjectSkillIntoBrain" or "InjectSkillpoints" or "ExtractSkills" or "GetDiminishedSpFromInjectors" or "SplitSkillInjector" or "CombineSkillInjector" or "GetContractListForOwner";
+        public bool HasMethod(string method) => method is "GetOrders" or "GetCharOrders" or "GetCorporationOrders" or "GetCharEscrow" or "GetMarketOrderHistory" or "GetOldPriceHistory" or "GetNewPriceHistory" or "GetPlexOrders" or "GetPlexBest" or "GetPlexHistory" or "GetPlexOldPriceHistory" or "GetPlexNewPriceHistory" or "CharGetTransactions" or "CorpGetTransactions" or "BuyMultipleItems" or "PlaceMultiSellOrder" or "GetHistoryForManyTypeIDs" or "GetJobCounts" or "GetJob" or "GetJobsByOwner" or "InstallJob" or "CompleteJob" or "CompleteManyJobs" or "CancelJob" or "ActivateSkinLicense" or "ApplySkinToShip" or "GetLicencedSkins" or "GiveSkin" or "RemoveSkin" or "GMExpireSkinLicense" or "GetAllianceMembers" or "GetRankedAlliances" or "GetOrganizationInfoForCharacters" or "SendBroadcast" or "Invite" or "MassInvite" or "ExecuteActions" or "GetNumberOfPotentialCEOs" or "GetFittings" or "GetAssetInventory" or "GetAssetInventoryForLocation" or "SearchAssets" or "GetAggressionSettingsForCorps" or "AuditMember" or "CheckMyDockingAccessToStructures" or "GetMyDockableStructures" or "GetMyCharacterStructures" or "GetMyCorporationStructures" or "InjectSkillIntoBrain" or "InjectSkillpoints" or "ExtractSkills" or "GetDiminishedSpFromInjectors" or "SplitSkillInjector" or "CombineSkillInjector" or "GetContractListForOwner" or "CharPayBill" or "GetAutomaticPaySettings" or "GetCorporationBills" or "GetCorporationBillsReceivable" or "PayCorporationBill" or "SendAutomaticPaySettings";
 
         public ValueTask<PyValue> CallAsync(ServiceCall call)
         {
@@ -739,6 +1055,23 @@ public class DispatchGoldenTests
         public ValueTask<PyValue> CallAsync(ServiceCall call)
         {
             Calls++;
+            return ValueTask.FromResult<PyValue>(PyNone.Instance);
+        }
+    }
+
+    private sealed class RecruitmentBindBudgetService : IService
+    {
+        public int NestedSearches { get; private set; }
+
+        public string Name => "corpRecProxy";
+
+        public bool HasMethod(string method) => method == "MachoBindObject";
+
+        public ValueTask<PyValue> CallAsync(ServiceCall call)
+        {
+            if (call.Args.Count > 1 && call.Args[1] is PyTuple { Items.Count: > 0 } nested &&
+                nested.Items[0] is PyStr { Value: "SearchCorpAds" })
+                NestedSearches++;
             return ValueTask.FromResult<PyValue>(PyNone.Instance);
         }
     }

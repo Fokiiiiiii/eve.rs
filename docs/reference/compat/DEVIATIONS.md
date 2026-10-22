@@ -1,5 +1,9 @@
 # Deviations from the reference server
 
+## War headquarters eligibility (2026-10-22)
+
+The V24.01 war declaration callsites select HQ IDs from `structureDirectory.GetValidWarHQs()`. EveJS 261018.1 does not repeat that ownership and eligibility check when processing the corp or alliance declaration RPC. eve.rs now checks the supplied ID against the same server-derived directory list before creating a bill or war relation, while retaining the client’s `None` value. Corporation and alliance service regressions prove invalid IDs create no bill or relation.
+
 ## Corporation member map locations (2026-10-20)
 
 `map.GetMyExtraMapInfo` returns the current solar-system locations of online members in the caller's corporation. EveJS 261018.1 returns an empty rowset for this method, while the V24.01 `mapFilterCorpMembers.py` and `mapViewColorHandler.py` callsites group `characterID` and `locationID` rows into a corporation-member heatmap. eve.rs uses the authoritative live session registry and corporation session scope; `Map_extra_info_lists_only_current_members_of_the_callers_corporation` covers the rowset and scope.
@@ -74,6 +78,10 @@ EveJS 261018.1 normalizes the requested LP store quantity but has no generated-i
 
 The Host rejects repeated private-room invitations from one character within one second. The client still receives the existing chat refusal stanza for a rapid repeat; normal invitation and room-message flow is unchanged. The invite timestamp is scoped to the active character link and is cleared when that link closes. `XmppPrivateConversationTests.Private_room_invitation_and_messages_are_limited_to_the_character_pair` verifies that a repeated invite does not reach the recipient. Graphical-client acceptance remains open.
 
+## Mail string byte compatibility (2026-10-21)
+
+The V24.01 `mailSvc.SendMail` call forwards its title and body unchanged to `mailMgr.SendMail` (`eve/client/script/ui/services/mail/mailSvc.py:958-991`). EveJS 261018.1 `MailMgrService.Handle_SendMail` likewise forwards positional arguments 3 and 4 unchanged to its durable mail state (`server/src/services/mail/mailMgrService.js:547-573`). eve.rs accepts the wire's UTF-8 byte-string values for these fields while preserving its existing Unicode-string handling. `MailServiceTests.SendMail_decodes_UTF8_client_byte_strings_for_title_and_body` and the eve_p3 two-pilot walk cover the behavior. This resolves the earlier mail-text mismatch; no intentional client-visible difference remains.
+
 ## Mail RPC work budget (2026-10-20)
 
 `mailMgr` mailbox reads, status writes, sends, and the staff mail-poke RPC consume weighted per-session units in the existing rolling-minute budget. The configured `SessionRpcBudgetExceeded` refusal applies when a session exceeds its allowance; calls within the allowance retain their existing response and mailbox state transitions. `DispatchGoldenTests.Mailbox_reads_and_writes_have_a_named_per_session_budget` covers the refusal.
@@ -81,6 +89,14 @@ The Host rejects repeated private-room invitations from one character within one
 ## Mailing-list RPC resource bounds (2026-10-20)
 
 `mailingListsMgr` operations consume the weighted per-session RPC budget. Member-role changes and entity-access updates refuse raw collections above 1,000 entries with `MAILING_LIST_BULK_LIMIT_EXCEEDED` before forwarding to Host persistence. Collections within the limit retain the existing owner/operator checks and notification flow. `MailingListServiceTests.Mailing_list_bulk_mutations_reject_oversized_raw_collections_before_host_callbacks` and `DispatchGoldenTests.Mailing_list_work_has_a_named_per_session_budget` cover the refusals. Graphical-client acceptance remains open.
+
+## Market read RPC budget (2026-10-21)
+
+Market order-book, price-history, owner-order, escrow, transaction, and PLEX reads consume 10 units from the configured per-session rolling-minute budget. EveJS 261018.1 does not throttle these routes. The normal result and state behavior remains unchanged within the configured allowance; excessive calls receive `SessionRpcBudgetExceeded`. `DispatchGoldenTests.Market_owner_history_reads_have_a_named_per_session_budget` covers the owner-history and transaction routes, and the existing market budget test covers order-book and multi-type history routes.
+
+## Bill manager RPC budget (2026-10-21)
+
+All `billMgr` reads, automatic-pay settings calls and bill payments consume 10 units from the configured per-session rolling-minute budget. The named `SessionRpcBudgetExceeded` refusal applies after the allowance is exceeded; calls within budget keep their existing replies and billing transitions. `DispatchGoldenTests.Bill_manager_calls_have_a_named_per_session_budget` covers all six bill-manager routes.
 
 ## Fleet broadcast RPC budget (2026-10-20)
 
@@ -1900,23 +1916,22 @@ Source: `work/market-design.md` 4.3 M8. Q14 (the duplicate window) was decided a
   had no test; `MarketSeedImportTests` runs it on a captured artifact: the SDE station orders are imported, an unknown type and a station
   the SDE does not list are not, the book serves the imported prices, and `HasSeedV4Async` gates a second start.
 - **Live walk** (`tools/headless-client/tests/test_market.py`, `test_a_seller_and_a_buyer_trade_through_the_market`): a seller takes stock
-  from the hangar with `/giveitem` (slash service), offers 40 at 50 (`PlaceMultiSellOrder`), a buyer reads the station asks, buys 15 at
-  once (`PlaceBuyOrder` with no duration), both read their transactions (`CharGetTransactions`: the buyer and the seller each show a fill of
-  15), the seller's modification inside the five-minute delay is refused with the sentence that carries the seconds left, the same
-  modification after the delay succeeds (run with `EVE_LIVE_SLOW=1`, which waits 300 s), the seller cancels the rest (`CancelCharOrder`:
-  the escrow reads zero and the items return to the hangar), `GetCorporationOrders` of a character in an NPC corporation is empty, and a
-  corporation order is refused. The walk also compares both characters' wallet balance deltas with their journal rows: the buyer's
-  transfer debit, the seller's sale credit and tax, and the seller's broker and SCC fees. The added journal assertions await another
-  running-host execution.
+  from the hangar with `/giveitem` (slash service), offers 40 at 50 (`PlaceMultiSellOrder`), a buyer reads station asks and buys 15 at
+  once (`PlaceBuyOrder` with no duration), and both read their transactions (`CharGetTransactions`). The seller’s attempt to modify the
+  remaining order inside the five-minute delay is refused with the client sentence carrying the seconds left; the walk does not wait for
+  the full delay. `ModificationRulesTests` covers that deadline with controlled time. The seller cancels the remainder
+  (`CancelCharOrder`: escrow returns to zero and the items return to the hangar); an NPC-corporation character has no corporation orders,
+  and a corporation order is refused. The walk compares both characters’ balance deltas with persisted journal rows: buyer transfer debit,
+  seller trade credit and tax, and broker fee. It asserts an NPC station trade has no Upwell SCC surcharge.
 - **Refusal wording.** A corporation-rights refusal reached the client as the raw code `CORPORATION_ACCESS_DENIED` (a `CustomInfo` with the
   code as its text). `MarketProxyService.Error` now sends the sentence "Your character does not hold the market rights of that corporation."
   for that code; the live walk asserts it.
-- **Not covered live** (the headless client cannot issue them, or the step is slow): expiry (the fake-clock tests cover it: ExpiryTests,
-  MarketCoherenceTests); a second character's view of a price change (the client cache is per run; M4 covers the push); a corporation
-  trade (no player corporation is created in the walk); price priority over several asks (one ask in the walk); the five-second duplicate
-  refusal over the live socket (covered by `MarketHostTests`).
-- Status: done (M9). The live walk ran green with `EVE_LIVE_SLOW=1` (the change after the delay, 5 minutes) before the refusal
-  sentence was asserted, and green without it after (the final file). Evidence: the run logs in the agent's scratchpad.
+- **Not covered live** (the headless client cannot issue them, or the step exceeds the walk time budget): modification after its five-minute
+  deadline and expiry (controlled-clock coverage: `ModificationRulesTests`, `ExpiryTests`, `MarketCoherenceTests`); a second character's view
+  of a price change (the client cache is per run; M4 covers the push); a corporation trade (no player corporation is created in the walk);
+  price priority over several asks (one ask in the walk); the five-second duplicate refusal over the live socket (covered by `MarketHostTests`).
+- Status: done (M9). The live walk covers placement, matching, both transaction views, the early-modification refusal, cancellation, escrow
+  return and corporation-order refusal. `ModificationRulesTests` covers the deadline with controlled time.
 
 ## Agents slice AG-1: LP wallet (LPSvc), the access rule and the bound agentMgr (2026-10-10)
 
@@ -5174,6 +5189,8 @@ The writer serializes accept and bid operations by locking the contract row befo
 EveJS v261018.1 `server/src/network/tcp/utils/marshal.js:1255-1309` allocates save-table entries from the declared count and does not maintain an aggregate decode budget. Its `server/src/network/tcp/directGameSocketTransport.js:81-86` closes the affected socket when frame processing fails. eve.rs retains valid marshal behavior covered by its golden fixtures and adds bounded decoding: positive frame lengths up to 16 MiB, payloads up to 16 MiB, depth 256, at most 4,194,304 decoded values, and a 256 MiB estimated heap budget shared by nested streams. These limits change handling only for malformed or resource-excessive inputs. The frame parser preserves zero-length transport frames so the Host can isolate their malformed marshal payloads per session. The property and Host isolation checks are listed in `docs/project/PERFORMANCE.md`.
 ## Inventory bulk operation bounds (2026-10-20)
 
+`invbroker.MultiMerge` validates every operation before applying any merge. Valid V24.01 tuples retain their quantity behavior, including zero as the full source stack. Malformed tuples, nonpositive item IDs, non-integer quantities and negative quantities now return `INVENTORY_OPERATION_INVALID` without changing stacks. The client constructs typed `(sourceID, destinationID, quantity)` tuples in `eve/client/script/ui/shared/item.py` and forwards them through `invControllers.py`; EveJS 261018.1 normalizes the quantity and treats nonpositive values as an omitted quantity, which its merge path expands to the available source quantity. This is a deliberate refusal only for malformed input; `InventoryServiceTests.MultiMerge_refuses_negative_quantity_before_mutating_stacks` covers the no-mutation result.
+
 The V24.01 client sends selected item collections to `invbroker.MultiAdd`; EveJS accepts the client collection without an entry limit. eve.rs now applies the existing 500-entry inventory bulk cap before deduplication or item lookups, matching the limit used by adjacent inventory batch RPCs. Normal client batches retain the same behavior. The focused PostgreSQL regression checks the named refusal at 501 entries; graphical-client acceptance is open.
 
 
@@ -5194,7 +5211,7 @@ The V24.01 global asset methods route `charMgr.List`, `ListStations`, `ListStati
 
 ## Market integer narrowing (2026-10-20)
 
-Market RPC integer values that the Host stores as 32-bit fields now refuse fractional or out-of-range values before conversion, using the existing `CustomInfo` wire label. Previously, unchecked narrowing could wrap a large client-supplied type ID into a different item type. Normal V24.01 IDs and order terms retain their existing behavior. `MarketRpcTests.Market_type_ids_outside_int32_are_refused_before_order_creation` covers both single and bulk order placement.
+Market RPC integer values that the Host stores as 32-bit fields now refuse fractional or out-of-range values before conversion, using the existing `CustomInfo` wire label. Previously, unchecked narrowing could wrap a large client-supplied integer or finite floating-point type ID into a different item type. The 64-bit parser now checks the exact signed range before conversion, and the 32-bit parser refuses finite floating-point values outside its range before narrowing. Normal V24.01 IDs and order terms retain their existing behavior. `MarketRpcTests.Market_type_ids_outside_int32_are_refused_before_order_creation` covers an oversized floating-point type ID in addition to integer and fractional cases.
 
 
 ## Market price conversion bound (2026-10-20)
@@ -5221,6 +5238,10 @@ The market parser rejects floating-point prices beyond the market maximum before
 
 `allianceRegistry.SetRelationship` now accepts only finite numeric standings from -10 through 10; malformed or out-of-range values return `ALLIANCE_RELATIONSHIP_INVALID` before persistence. This prevents a wrong-typed value from being coerced to neutral standing while preserving valid integer and fractional standing values. `Alliance_public_updates_relationships_and_application_decisions_notify_clients` verifies that malformed text leaves the current standing unchanged.
 
+
+## Fleet role integer range validation (2026-10-21)
+
+Fleet invite and member-movement RPCs reject role values outside the signed 32-bit range before conversion. This prevents a large client integer from wrapping into a valid commander assignment. The unmodified V24.01 client sends the documented small integer role constants; the focused fleet regression covers the oversized input.
 
 ## Fleet numeric argument validation (2026-10-20)
 
@@ -5296,21 +5317,112 @@ Alliance join, leave, and withdrawal mutations preserve the session Director-rol
 
 - **Alpha clone cost.** `OmegaLicenses` resolves the authenticated session account at install time. Alpha jobs add the client's additive `CLONE_STATE_INDUSTRY_TAX` of 1.0025 to unrounded base job cost, alongside the existing cost modifiers, with the final cost rounded once. The client source is `eve/common/script/util/industryCommon.py` (`GetCharacterModifiers`) and `clonegrade/const.py`; EveJS 261018.1 confirms the cost placement in `server/src/services/industry/industryParityHelpers.js` (`resolveIndustryJobCost`). Tests cover formula, persisted job cost and wallet debit.
 - **Faction modifier.** V24.01 applies a facility faction modifier only when its value differs from 1.0 (`industryCommon.py`). EveJS 261018.1 `server/src/services/industry/industryStaticData.js` emits 1.0 for both NPC and structure facility data. eve.rs keeps that default; no alternate value is inferred.
+
+## XMPP SASL stream restart
+After successful SASL authentication, the client opens a fresh XMPP stream on the same connection. `XmppListener` now resets its incremental XML parser at that authentication boundary, then handles the restarted stream header and bind features. This preserves the client-visible SASL, bind, and session sequence. `XmppTransportTests.Parser_restarts_the_stream_after_sasl_without_closing_the_socket` covers parser state; the live two-pilot XMPP walk passed on eve_p3.
+## Mail delivery between live pilots
+The V24 client sends `mailMgr.SendMail(toCharacterIDs, toListID, toCorpOrAllianceID, title, body, isReplyTo, isForwardedFrom)`. The two-pilot live walk sends to the second character and confirms the returned message ID appears in that recipient's `mailMgr.SyncMail` new-mail headers. This checks the persisted send path across two authenticated characters; recipient body read, read-status persistence, reply delivery, and reply body read are covered by the eve_p3 walk.
+## Live space walk event streams
+The cargo and loot walks compare `DoDestinyUpdate` simulator actions separately from session and inventory notifications. Live Host delivery interleaves those two sources differently than the reference recording, while each source retains its own action order and payloads. The walk comparisons preserve and validate both source orders without asserting a cross-source total order. Focused cargo (67.12 s) and loot (45.90 s) runs passed on eve_p3.
+## Skill training timer notification order
+The scheduler settles one completed training queue line per online timer callback, then schedules the next due line after that line's notifications finish. Per-character settlement and announcement work is serialized because a focused accelerated live walk exposed interleaved level notifications when a timer and request path settled concurrently. Non-timer reads and mutations retain full overdue settlement, including offline catch-up. `TrainingTests.A_timer_settlement_finishes_only_one_overdue_queue_line` covers the boundary; the accelerated live queue walk is recorded in `docs/project/WALKS.md`.
 - **Verification scope.** Core industry tests passed (51), including the install-session clone-grade assertion. The PostgreSQL install regression and live Alpha-account walk are recorded after execution; the existing live industry walks cover the six listed industry activity and delivery paths. Graphical-client acceptance remains open.
-
+## NPC station broker standings (2026-10-21)
+The V24.01 market client supplies faction and corporation standings to the NPC station broker-fee provider, along with the character's Broker skill and system warfare upgrade. eve.rs resolves both standings through the persisted relation store when building the station fee context. Structure market venues remain open because they need service authorization, profile tax settings, location metadata, and structure inventory settlement in the common market transaction path. `RulesTests.Station_broker_fee_uses_faction_and_corporation_standings_after_skill_and_warfare_adjustments` covers fee operation order; the Host callback uses the shared relation store. See `docs/project/MARKET_STATUS.md` for the market coverage and remaining work.
 ## Fleet command skill projection (2026-10-21)
-
 V24.01 `fleetCompositionWnd.py` indexes `skills` and `skillIDs` at positions 0 through 2 to display fleet command skills. EveJS 261018.1 currently emits all learned skills in `skills` and an empty `skillIDs`; `GetInitState` also emits zeroes. Host fleet composition, initialization, and join notifications now return Leadership, Wing Command, and Fleet Command in ascending SDE type-ID order, with levels read from each member's persisted character skill rows and zero for an untrained skill. This intentional response difference follows the client indexing contract and uses authoritative static and character state. The focused Host projection and fleet service regressions cover ordering, trained and untrained levels, and the member response shape; `test_fleet_watchlist_methods_accept_client_python_sets` exercises both fleet RPCs in a two-pilot live walk.
-
 ## Structure description role revocation (2026-10-21)
-
 `structureDirectory.SetStructureDescription` now recalculates Station Manager access from persisted corporation membership and titles for each write. The V24.01 request and success wire shape are unchanged; a role removed after login now receives the existing `CrpAccessDenied` refusal. `HostServerTests.Structure_description_rechecks_persisted_station_manager_role_after_login` verifies the refusal and that no write callback runs.
+## Alliance application response size (2026-10-21)
 
+`allianceRegistry.UpdateApplication` now enforces the V24.01 alliance application editor maximum of 1,000 UTF-16 code units before reading application rows. The client uses `maxLength=1000` in `eve/client/script/ui/shared/neocom/Alliances/all_ui_applications.py`; the server refuses larger response text with `ALLIANCE_APPLICATION_TEXT_TOO_LONG`. `Alliance_application_response_text_limit_matches_the_client_utf16_maximum` covers refusal without a stored change and acceptance at the client boundary.
 
+## Structure info owner projection (2026-10-21)
+`structureDirectory.GetStructureInfo` accepts a structure ID and returns a basic public projection to other callers; services and corporation/alliance ownership fields are returned only when the caller's current persisted corporation owns the structure. EveJS 261018.1 likewise selects `buildBasicStructureInfoPayload` for non-owner corporations. eve.rs currently returns the available public type, structure ID, solar system, and owner fields because the persistence projection does not provide the remaining public fields used by EveJS. `HostServerTests.Structure_directory_host_reads_deployed_rows_and_docking_profiles` checks full owner data and the reduced foreign view.
+## Character structure directory docking visibility (2026-10-21)
+`structureDirectory.GetMyCharacterStructures` previously returned every deployed structure owned by the character's corporation. It now uses persisted docking access snapshots and includes only structures the current character can dock at, matching EveJS 261018.1 `listDockableStructuresForCharacter`; NPC station rows remain outside this Host structure projection. `HostServerTests.Structure_directory_host_reads_deployed_rows_and_docking_profiles` verifies inclusion for an allowed profile and exclusion for a blocked profile.
+## Corporation structure directory role check (2026-10-21)
+`structureDirectory.GetMyCorporationStructures` and its `GetCorporationStructures` alias now check current persisted corporation membership and require Station Manager or Brand Manager authority before reading the private corporation structure directory, matching EveJS 261018.1. eve.rs recalculates the role from persisted member and title data for each request; the cached login role does not authorize the read. Unauthorized callers receive the existing `CrpAccessDenied` response. `HostServerTests.Corporation_structure_directory_requires_persisted_manager_access` checks denial before storage access and successful access when persisted authority is present even if the session role is zero.
 ## Fleet invitation fanout bounds (2026-10-21)
-
 `fleetObject.Invite` and `MassInvite` each consume 10 units from the shared per-session rolling-minute RPC budget. `MassInvite` now deduplicates positive character IDs within one request before invitation writes and notifications. The V24.01 `fleetSvc.MassInvite` callsite filters the caller but retains other repeated IDs, and EveJS 261018.1 loops over the supplied IDs; this change prevents one RPC from repeating invitation persistence and `OnFleetInvite` delivery for the same target. Unique targets retain the existing invitation response and notification shapes. `SpaceServiceTests.Fleet_mass_invite_move_reconnect_and_finishmove_match_client_events` and `DispatchGoldenTests.Fleet_invites_and_broadcasts_use_a_named_per_session_budget` cover the duplicate and budget behavior.
-
 ## Organization mail authorization (2026-10-21)
+EveJS 261018.1 checks corporation and alliance mail against the sender's current session organization fields and Chat Manager role. eve.rs resolves current corporation membership and effective roles from the corporation store on each `mailMgr.SendMail` request; corporate mail is limited to the sender's current non-NPC corporation, and alliance mail also requires the persisted Chat Manager role. The client-visible refusal and success response shapes stay the same. `HostServerTests.Mail_organization_recipient_requires_own_corporation_or_chat_manager` covers recipient scope and role policy.
 
-EveJS 261018.1 checks corporation and alliance mail against the sender's current session organization fields and Chat Manager role. eve.rs now resolves current corporation membership and effective roles from the corporation store on each `mailMgr.SendMail` request; corporate mail is limited to the sender's current non-NPC corporation, and alliance mail also requires the persisted Chat Manager role. The client-visible refusal and success response shapes stay the same. `HostServerTests.Mail_organization_recipient_requires_own_corporation_or_chat_manager` covers recipient scope and role policy.
+
+## Bound RPC resource budget (2026-10-21)
+
+`PacketDispatcher` now charges 10 weighted units per minute for `industryManager` job counts, job reads, installs, completions and cancellations. These calls read the shared job snapshot or perform persisted inventory, wallet and blueprint operations. The default session allowance remains 120 units per rolling minute; excess calls receive `SessionRpcBudgetExceeded` before dispatch. This adds a server resource bound while preserving normal call results. Corporate job reads also recompute Factory Manager access against current persisted membership and title rows, so a cached session role alone cannot expose jobs after the role is revoked. Ship cosmetics license reads and writes also use the weighted budget, and `ActivateSkinLicense` refuses over 500 raw item IDs before item lookup with `SHIP_SKIN_LICENSE_BULK_LIMIT_EXCEEDED`; this bounds the transactional batch before work. Regression: `DispatchGoldenTests.Industry_job_calls_use_the_named_per_session_budget`. `industryManager.CompleteManyJobs` also refuses more than 500 raw rows with `INDUSTRY_JOB_BULK_LIMIT_EXCEEDED` before domain work, matching the other bulk RPC caps; `IndustryJobsServiceTests.Complete_many_refuses_more_than_500_rows_before_domain_dispatch` covers this boundary.
+
+The dispatcher applies the per-session weighted budget to an expensive method when a client supplies it as the nested initial call to `MachoBindObject`. This keeps bound and named invocation forms under the same resource limit; the client call shape is unchanged. `Bound_bind_invocations_consume_the_nested_expensive_rpc_budget` verifies that the second costly nested call receives `SessionRpcBudgetExceeded`.
+
+
+## Corporation killmail page bounds (2026-10-21)
+
+`corpRegistry.GetRecentKills` and `GetRecentLosses` derive the corporation from the authenticated character and now refuse negative or over-25 page sizes with `CORPORATION_KILLMAIL_PAGE_LIMIT_EXCEEDED`. The V24.01 corporation kill-report UI requests 25 rows (`NUM_KILL_ENTRIES` in `eve/client/script/ui/shared/neocom/corporation/corp_ui_killreports.py`); the limit prevents one authenticated call from requesting an effectively unbounded killmail result. `Corp_registry_recent_kill_rows_keep_the_fixed_client_columns_and_cursor` verifies the boundary refusal occurs before the provider callback and keeps valid cursors.
+
+
+## Character-bound ally base cost (2026-10-21)
+
+`corpRegistry.CharGetAllyBaseCost` now reads the Diplomatic Relations skill only for the session character. The V24.01 callsite in `eve/client/script/ui/services/corporation/base_corporation.py` invokes the RPC without arguments; eve.rs ignores the legacy EveJS fallback to a client-supplied character ID when no character is selected and returns the existing 10,000,000 ISK fallback instead. This prevents the method from exposing another character’s skill-derived value. `Corp_registry_ally_base_cost_uses_the_reference_fallback` verifies that the Host reader is not called with a client-supplied ID.
+
+
+## Ranked alliance negative limit (2026-10-21)
+
+`GetRankedAlliances(0)` retains the V24.01 all-rankings behavior and weighted RPC charge. Negative and non-integer limits now return `ALLIANCE_RANKED_LIMIT_INVALID`; they are not coerced to zero, which means an unbounded list in the client contract. `Alliance_membership_reads_and_public_info_updates_match_reference_shapes` checks negative input refusal alongside the valid ranking response.
+
+
+## Alliance member tenure threshold validation (2026-10-21)
+
+`GetAllianceMembersOlderThan` now requires a non-negative integer day threshold and returns `ALLIANCE_MEMBERSHIP_DAYS_INVALID` before loading alliance members for malformed or negative input. Valid V24.01 integer thresholds keep the existing output. The Alliance Registry membership-read regression covers negative input refusal.
+
+## Mail channel input bound (2026-10-21)
+
+The staff-only `mailMgr.PokePlayerAboutChatMsgGm` RPC caps its requested channel name at 256 Unicode scalar values before composing the durable mail body. Ordinary V24.01 channel names fit this bound; oversized requests receive `MAIL_CHANNEL_LIMIT_EXCEEDED`. `MailServiceTests.Chat_gm_poke_requires_gml_before_forwarding_the_reference_mail_payload` covers the refusal and confirms no mail callback occurs.
+
+## Mailbox synchronization response bound (2026-10-21)
+
+`mailMgr.SyncMail` refuses a mailbox above 5,000 status entries with `MAIL_SYNC_LIMIT_EXCEEDED` before sorting entries or constructing header/status response arrays. `MailServiceTests.Sync_mail_refuses_mailboxes_above_the_response_entry_limit` covers the boundary.
+
+## Wallet transfer reason bound (2026-10-21)
+
+`account.GiveCash` and `GiveCashFromCorpAccount` now enforce the V24.01 transfer window's 40-character reason field before wallet settlement. Oversized input returns `WALLET_REASON_LIMIT_EXCEEDED`; the focused corporation RPC regression confirms the sender balance is unchanged.
+
+
+## Item-locking read budget (2026-10-21)
+
+`itemLocking.GetItemsByLocation` and `GetLockedItemLocations` each consume 10 units from the per-session expensive-RPC budget because they enumerate corporation asset records. Calls above the configured session allowance receive the dispatcher’s `SessionRpcBudgetExceeded` refusal; the valid response shapes are unchanged. `DispatchGoldenTests.Corporation_item_lock_reads_have_a_named_per_session_budget` checks that the first call runs and the second is refused at the configured limit.
+
+
+## Alliance contact-list read budget (2026-10-21)
+
+`allianceRegistry.GetAllianceContacts` and its `GetContactList` alias each consume 10 units from the per-session expensive-RPC budget because they materialize the alliance contact list in one response. Calls over the session allowance receive `SessionRpcBudgetExceeded`; authorized response data and wire shapes are unchanged. `DispatchGoldenTests.Alliance_contact_list_aliases_have_a_named_per_session_budget` covers both route names.
+
+
+## Alliance bulletin text bounds (2026-10-21)
+
+`allianceRegistry.AddBulletin` and `UpdateBulletin` enforce the V24.01 editor limits of 100 UTF-16 code units for titles and 4,000 for bodies before persistence. Oversized fields receive `ALLIANCE_BULLETIN_LIMIT_EXCEEDED`; accepted bulletin data and response shapes are unchanged. The alliance bulletin persistence regression covers acceptance at both exact limits and refusal above each limit, including update-title refusal.
+
+
+## Alliance bulletin-list read budget (2026-10-21)
+
+`allianceRegistry.GetBulletins` and its `GetBulletinEntries` alias each consume 10 units from the per-session expensive-RPC budget because they materialize the full alliance bulletin list. Calls over the session allowance receive `SessionRpcBudgetExceeded`; authorized response data and wire shapes are unchanged. `DispatchGoldenTests.Alliance_bulletin_list_aliases_have_a_named_per_session_budget` covers both routes.
+
+
+## Character settings and personal note RPC budget (2026-10-21)
+
+`charMgr.GetCharacterSettings`, settings writes/deletes, label reads, and note reads/listing consume 10 units from the per-session expensive-RPC budget. These calls read or rewrite session-owned, user-extendable data, including setting values up to 100 KiB and notes up to 5,000 code units. Calls over the session allowance receive `SessionRpcBudgetExceeded`; accepted settings and notes retain their existing shapes. `DispatchGoldenTests.Character_settings_reads_and_writes_have_a_named_per_session_budget` covers the budget refusal. `charMgr.SaveCharacterSetting` and `LogSettings` also refuse nested values exceeding 100 KiB, 20,000 values, or 64 levels before persistence; `SaveCharacterSetting` restricts keys to scalar values capped at 100 KiB before conversion. These bounds protect recursive JSON conversion while preserving accepted client shapes.
+
+
+## Fleet composition read budget (2026-10-21)
+
+`fleetObject.GetInitState`, `GetFleetComposition`, and `GetJoinRequests` consume 10 units from the per-session expensive-RPC budget. Initialization and composition may resolve skill or character details for the fleet's bounded member list; join requests materialize the current request set. Calls above the session allowance receive `SessionRpcBudgetExceeded`; allowed response shapes are unchanged. `DispatchGoldenTests.Fleet_member_composition_reads_have_a_named_per_session_budget` covers initialization and composition. Approval requests are capped per fleet by `EVE_MAX_FLEET_JOIN_REQUESTS` (default 4,096; accepted range 1–65,536); capacity exhaustion returns `FleetError`, while the existing join-request wire shape is preserved.
+
+
+## Corporation medal visibility status scope (2026-10-21)
+
+`corporationSvc.SetMedalStatus` keeps one visibility status per corporation medal definition. V24.01 sends a mapping keyed by `medalID` (`eve/client/script/ui/services/medals.py:52-57`, `eve/client/script/ui/shared/neocom/charsheet/decorationsPanel.py:87-97`); the EveJS 261018.1 reference updates `runtime.medals.medals[medalID].status` and `GetMedalsReceived` uses that definition status for each award and cross-character visibility (`server/src/services/corporation/corpService.js:367-421,546-564`). The Host requires persisted Director or Personnel Manager authority before the write. This confirms the shared field matches the client contract; there is no per-award status mutation in the V24.01 RPC shape. `CorporationProtocolTests.Corporation_medal_rpcs_enforce_manager_roles_and_member_recipients` covers role denial, private-status reads, and manager writes.
+
+
+## Character activity status input bound (2026-10-21)
+
+`charMgr.SetActivityStatus` takes the character from the authenticated session. The V24.01 client sends `extraInfo` as a FILETIME integer during AFK and activity transitions (`eve/client/script/parklife/gameui.py:333-338`); the Host converts the value to text and caps it at 32 UTF-16 code units before the persistence callback. Oversized input returns `CHARMGR_ACTIVITY_INFO_LIMIT_EXCEEDED`. `CharacterInfoTests.Activity_status_extra_info_is_bounded_before_the_persistence_callback` checks a valid timestamp, refusal above the bound, and no second callback.

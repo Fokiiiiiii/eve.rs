@@ -805,7 +805,7 @@ public class DispatchGoldenTests
     }
 
     [Fact]
-    public async Task Fleet_invites_and_broadcasts_use_a_named_per_session_budget()
+    public async Task Fleet_object_expensive_methods_use_a_named_per_session_budget()
     {
         var registry = new ServiceRegistry();
         var service = new ExpensiveService("fleetObject");

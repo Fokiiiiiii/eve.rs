@@ -1,9 +1,11 @@
 using Eve.Characters;
 using Eve.Identity;
 using Eve.Data;
+using Eve.Inventory;
 using Eve.Marshal;
 using Eve.Planets;
 using Eve.Services;
+using Eve.Services.Inventory;
 using Eve.Services.Planets;
 using Eve.Wallet;
 using Npgsql;
@@ -108,24 +110,139 @@ public sealed class CustomsOfficeHostTests : IAsyncLifetime
             var characters = new PgCharacterStore(source, Schema("EVE_CHARACTERS_SCHEMA"));
             var pilot = await InsertPilotAsync(source, characters);
             var wallets = new WalletTransactions(source, Schema("EVE_WALLET_SCHEMA"));
+            var items = new PgItemStore(source, Schema("EVE_INVENTORY_SCHEMA"));
+            const long planetId = 40486618;
+            const long shipId = 98_000_012;
+            const int commandCenterType = 2524;
+            const int commandCenterUpgradeType = 2505;
+            const int consolidationType = 2495;
+            const int launchpadType = 2544;
+            const int waterType = 3645;
+            long commandCenterId;
             await using (var connection = await source.OpenConnectionAsync())
             await using (var transaction = await connection.BeginTransactionAsync())
             {
+                await wallets.EnsureAsync(connection, transaction, pilot);
+                await wallets.AdjustAsync(connection, transaction, pilot, 10_000_000m, 0, 0,
+                    "planetary customs test funds", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), $"poco-test-funds:{Guid.NewGuid():N}");
                 await wallets.EnsureAsync(connection, transaction, CorporationId);
-                await wallets.AdjustAsync(connection, transaction, CorporationId, 17.25m, pilot, 97,
-                    "planetary customs office tax", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), $"poco-tax-test:{Guid.NewGuid():N}");
+                commandCenterId = await items.CreateAsync(connection, transaction,
+                    new NewItem(commandCenterType, pilot, shipId, 5, Singleton: true));
+                await using var skills = new NpgsqlCommand($"""
+                    INSERT INTO {Schema("EVE_SKILLS_SCHEMA")}.character_skills (character_id, type_id, level, skill_points)
+                    VALUES ({pilot}, {consolidationType}, 1, 0), ({pilot}, {commandCenterUpgradeType}, 5, 0)
+                    """, connection, transaction);
+                await skills.ExecuteNonQueryAsync();
                 await transaction.CommitAsync();
             }
 
+            var session = Session(pilot);
+            var planetMgr = host.Registry.Lookup("planetMgr")!;
+            async Task UpdateNetwork(params PyValue[] changes)
+            {
+                var nested = PyTuple.Of(new PyStr("UserUpdateNetwork"), PyTuple.Of(PyList.Of(changes)), PyNone.Instance);
+                await planetMgr.CallAsync(new ServiceCall
+                {
+                    Method = "MachoBindObject",
+                    Args = [new PyLong(planetId), nested],
+                    Session = session,
+                });
+            }
+
+            await UpdateNetwork(PyTuple.Of(new PyInt(1),
+                PyTuple.Of(new PyLong(commandCenterId), new PyInt(commandCenterType), new PyReal(0.5), new PyReal(1.0))));
+            await UpdateNetwork(PyTuple.Of(new PyInt(9), PyTuple.Of(new PyLong(commandCenterId), new PyInt(5))));
+            await UpdateNetwork(PyTuple.Of(new PyInt(1),
+                PyTuple.Of(PyTuple.Of(new PyInt(1), new PyInt(3)), new PyInt(launchpadType), new PyReal(0.5), new PyReal(1.02))));
+
+            var officeId = Customs.OfficeId(planetId);
+            await using (var connection = await source.OpenConnectionAsync())
+            await using (var transaction = await connection.BeginTransactionAsync())
+            {
+                await using (var owner = new NpgsqlCommand(
+                    $"UPDATE {Schema("EVE_INVENTORY_SCHEMA")}.items SET owner_id = $1 WHERE id = $2", connection, transaction)
+                {
+                    Parameters = { new() { Value = CorporationId }, new() { Value = officeId } },
+                })
+                {
+                    Assert.Equal(1, await owner.ExecuteNonQueryAsync());
+                }
+                await using (var policy = new NpgsqlCommand(
+                    $"UPDATE {Schema("EVE_PLANETS_SCHEMA")}.customs_offices SET owner_corporation_id = $1, tax_rates = $2::jsonb WHERE office_id = $3",
+                    connection, transaction)
+                {
+                    Parameters =
+                    {
+                        new() { Value = CorporationId },
+                        new() { Value = """{"corporation":0.05,"alliance":0.05,"standingHigh":0.05,"standingGood":0.05,"standingNeutral":0.05,"standingBad":0.05,"standingHorrible":0.05}""" },
+                        new() { Value = officeId },
+                    },
+                })
+                {
+                    Assert.Equal(1, await policy.ExecuteNonQueryAsync());
+                }
+                await transaction.CommitAsync();
+            }
+
+            var padId = await ScalarAsync<long>(source, $"""
+                SELECT (pin->>'Id')::bigint
+                FROM {Schema("EVE_PLANETS_SCHEMA")}.colonies
+                CROSS JOIN LATERAL jsonb_array_elements(doc->'Pins') AS pins(pin)
+                WHERE owner_id = {pilot} AND planet_id = {planetId} AND (pin->>'TypeId')::integer = {launchpadType}
+                """);
+            long stockId;
+            await using (var connection = await source.OpenConnectionAsync())
+            await using (var transaction = await connection.BeginTransactionAsync())
+            {
+                stockId = await items.CreateAsync(connection, transaction, new NewItem(waterType, pilot, officeId, 4, Quantity: 2));
+                await transaction.CommitAsync();
+            }
+            var registry = host.Registry.Lookup("planetOrbitalRegistryBroker")!;
+            var rate = Assert.IsType<PyReal>(await registry.CallAsync(new ServiceCall
+            {
+                Method = "GetTaxRate",
+                Args = [new PyLong(officeId)],
+                Session = session,
+            })).Value;
+            Assert.Equal(0.05, rate, 6);
+
+            var customs = Assert.IsAssignableFrom<ICustomsOffices>(planetMgr);
+            var account = host.Registry.Lookup("account")!;
+            var cashBeforeSettlement = Assert.IsType<PyReal>(await account.CallAsync(new ServiceCall
+            {
+                Method = "GetCashBalance",
+                Args = [new PyInt(0)],
+                Session = session,
+            })).Value;
+            await customs.ImportExportAsync(session, officeId, padId, new Dictionary<long, long> { [stockId] = 1 },
+                new Dictionary<int, long>(), rate, CancellationToken.None);
+            await customs.ImportExportAsync(session, officeId, padId, new Dictionary<long, long>(),
+                new Dictionary<int, long> { [waterType] = 1 }, rate, CancellationToken.None);
+
+            var cash = Assert.IsType<PyReal>(await host.Registry.Lookup("account")!.CallAsync(new ServiceCall
+            {
+                Method = "GetCashBalance",
+                Args = [new PyInt(0)],
+                Session = session,
+            })).Value;
+            Assert.Equal(cashBeforeSettlement - 30, cash, 2);
             await host.ShutdownAsync();
             host = await HostComposition.BuildAsync(Settings());
+
             var reopenedWallets = new WalletTransactions(source, Schema("EVE_WALLET_SCHEMA"));
-            Assert.Equal(17.25m, await ScalarAsync<decimal>(source,
+            Assert.Equal(30m, await ScalarAsync<decimal>(source,
                 $"SELECT isk FROM {Schema("EVE_WALLET_SCHEMA")}.balances WHERE owner_id = {CorporationId} AND account_key = 1000"));
-            var entry = Assert.Single(await reopenedWallets.JournalForAccountAsync(CorporationId, 1000),
-                row => row.Reason == "planetary customs office tax");
-            Assert.Equal(17.25m, entry.Amount);
-            Assert.Equal(97, entry.RefTypeId);
+            var ownerEntries = (await reopenedWallets.JournalForAccountAsync(CorporationId, 1000))
+                .Where(row => row.Reason == "planetary customs office tax").ToArray();
+            Assert.Equal(2, ownerEntries.Length);
+            Assert.Equal(30m, ownerEntries.Sum(row => row.Amount));
+            Assert.All(ownerEntries, row => Assert.Equal(97, row.RefTypeId));
+            Assert.Equal(cashBeforeSettlement - 30, Assert.IsType<PyReal>(await host.Registry.Lookup("account")!.CallAsync(new ServiceCall
+            {
+                Method = "GetCashBalance",
+                Args = [new PyInt(0)],
+                Session = session,
+            })).Value, 2);
         }
         finally
         {

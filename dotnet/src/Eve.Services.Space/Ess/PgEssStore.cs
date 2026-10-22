@@ -66,7 +66,7 @@ public sealed class PgEssStore
     private readonly string _schema;
     private readonly Action<string>? _log;
     private readonly Func<int, long, long, CancellationToken, ValueTask<EssHolder?>>? _holderOf;
-    private readonly Func<NpgsqlConnection, NpgsqlTransaction, long, long, CancellationToken, ValueTask<bool>>? _consumeKey;
+    private readonly Func<NpgsqlConnection, NpgsqlTransaction, long, long, long, CancellationToken, ValueTask<bool>>? _consumeKey;
     private readonly Func<int, string?>? _quadrantOf;
     private readonly Func<int, CancellationToken, ValueTask<long?>>? _sovereigntyOwnerOf;
     private readonly Func<long, CancellationToken, ValueTask<long?>>? _corporationOf;
@@ -88,7 +88,7 @@ public sealed class PgEssStore
         string schema = DefaultSchema,
         Action<string>? log = null,
         Func<int, long, long, CancellationToken, ValueTask<EssHolder?>>? holderOf = null,
-        Func<NpgsqlConnection, NpgsqlTransaction, long, long, CancellationToken, ValueTask<bool>>? consumeKey = null,
+        Func<NpgsqlConnection, NpgsqlTransaction, long, long, long, CancellationToken, ValueTask<bool>>? consumeKey = null,
         Func<int, string?>? quadrantOf = null,
         Func<int, CancellationToken, ValueTask<long?>>? sovereigntyOwnerOf = null,
         double reserveMaxPayout = EssRules.ReserveBankMaxPayout,
@@ -286,7 +286,8 @@ public sealed class PgEssStore
                 // a key opens a bank only in its own quadrant, and only when the character holds one: the key is taken out of the inventory
                 if (EssReserveKeys.Find(request.KeyTypeId) is not { } key || state.PulsesRemaining > 0 ||
                     _quadrantOf?.Invoke(systemId) != key.Quadrant || _consumeKey is null ||
-                    !await _consumeKey(connection, transaction, character, key.KeyTypeId, cancellationToken))
+                    request.Call.Session.GetInt("shipid") is not { } shipId ||
+                    !await _consumeKey(connection, transaction, character, shipId, key.KeyTypeId, cancellationToken))
                 {
                     return new EssMgrOperationResult(false, ToClient(state));
                 }
@@ -315,11 +316,31 @@ public sealed class PgEssStore
     }
 
     /// <summary>The pilot of a character in the system when it may link now (in the system, a linkable ship, within range); null otherwise.</summary>
-    private async ValueTask<EssHolder?> LinkHolderAsync(int systemId, long characterId, long essId, CancellationToken cancellationToken) =>
-        await HolderAsync(systemId, characterId, essId, cancellationToken) is { InSystem: true, LinkableShip: true } holder
-        && holder.DistanceMeters <= EssRules.MaxLinkDistanceMeters
-            ? holder
-            : null;
+    private async ValueTask<EssHolder?> LinkHolderAsync(int systemId, long characterId, long essId, CancellationToken cancellationToken)
+    {
+        var holder = await HolderAsync(systemId, characterId, essId, cancellationToken);
+        if (holder is null)
+        {
+            _log?.Invoke("ESS link refused: no ship position is available for the pilot.");
+            return null;
+        }
+        if (!holder.InSystem)
+        {
+            _log?.Invoke("ESS link refused: pilot is outside the ESS solar system.");
+            return null;
+        }
+        if (!holder.LinkableShip)
+        {
+            _log?.Invoke("ESS link refused: the current ship is not in SDE type list 231.");
+            return null;
+        }
+        if (holder.DistanceMeters > EssRules.MaxLinkDistanceMeters)
+        {
+            _log?.Invoke($"ESS link refused: ship is {holder.DistanceMeters:0} m from the ESS; maximum is {EssRules.MaxLinkDistanceMeters:0} m.");
+            return null;
+        }
+        return holder;
+    }
 
     private async ValueTask<EssHolder?> HolderAsync(int systemId, long characterId, long essId, CancellationToken cancellationToken) =>
         _holderOf is null ? null : await _holderOf(systemId, characterId, essId, cancellationToken);
@@ -463,6 +484,14 @@ public sealed class PgEssStore
                 NextPulseMs = state.PulsesRemaining - 1 > 0 ? due + EssRules.PulseIntervalMs : null,
             };
             pulsed = true;
+        }
+        if (state.PulsesRemaining == 0 && state.ReserveLinked.Count > 0)
+        {
+            await using var expireLinks = Command(
+                "DELETE FROM {schema}.reserve_links WHERE solar_system_id = $1",
+                connection, transaction, systemId);
+            await expireLinks.ExecuteNonQueryAsync(cancellationToken);
+            state = state with { ReserveLinked = new HashSet<long>() };
         }
         if (pulsed)
         {

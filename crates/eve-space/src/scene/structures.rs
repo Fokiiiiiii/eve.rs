@@ -68,7 +68,7 @@ impl Scene {
             ]
             .iter()
             .all(|value| value.is_finite())
-                || body.radius <= 0.0
+                || body.radius < 0.0
                 || ship.spec.radius <= 0.0
             {
                 return Err("INVALID_STRUCTURE_DEPOSIT_STATE");

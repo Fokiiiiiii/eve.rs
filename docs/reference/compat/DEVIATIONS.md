@@ -5480,3 +5480,8 @@ The V24.01 FleetObjectService Invite path now returns FleetCandidateOffline befo
 ## Fleet Init work budget (2026-10-22)
 
 The fleetObject Init RPC costs 10 weighted per-session units because it updates member state and can read a saved character setup or run the transactional advert path. The saved setup lookup remains character-scoped; FleetStore rechecks leadership authority for advert writes and validates the advert payload. Fleet_object_expensive_methods_use_a_named_per_session_budget covers repeated Init calls.
+
+
+## Alliance bill-list work budget (2026-10-22)
+
+`allianceRegistry.GetBills` and `GetBillsReceivable` each return complete bill collections for the authenticated alliance accountant. Both calls cost 10 weighted per-session units to bound repeated full-list reads. The wire results and persisted role checks are unchanged. `DispatchGoldenTests.Alliance_bill_list_reads_use_a_named_per_session_budget` verifies the next bill-list call is refused after the session allowance is consumed.

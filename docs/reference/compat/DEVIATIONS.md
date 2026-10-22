@@ -5440,3 +5440,7 @@ While docked, `invbroker.ValidateItemCanBeOpened` and `ValidateItemListCanBeOpen
 ## Corporation member tracking field visibility (2026-10-22)
 
 The V24.01 client calls `GetMemberTrackingInfoSimple` for members without the Director role and renders location, ship, faction, and logon/logoff columns only for Directors (`eve/client/script/ui/services/corporation/base_corporation.py` and `corp_ui_member_tracking.py`). EveJS 261018.1 builds both method responses from the same detailed rows. eve.rs preserves the member row shape while clearing those Director-only values from the simple response. `CorporationProtocolTests.Corporation_core_and_role_rpcs_preserve_public_fields_and_role_contracts` asserts those fields are absent for a member session.
+
+
+## Mail recipient expansion bound (2026-10-22)
+Organization and mailing-list delivery now stops at 5,000 distinct recipients before persistence and returns `MAIL_RECIPIENT_LIMIT_EXCEEDED` when expansion exceeds that bound. This protects delivery persistence and notification fanout from a single oversized expansion. `Expanded_mail_recipients_are_merged_and_capped_before_delivery` covers duplicate merging and rejection before delivery.

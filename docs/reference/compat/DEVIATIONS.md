@@ -5456,3 +5456,7 @@ Organization and mailing-list delivery now stops at 5,000 distinct recipients be
 
 ## Jump-bridge topology read budget (2026-10-22)
 `structureJumpBridgeMgr.GetJbStructureDestination` and `GetLinkedStructure` validate the requested ID against persisted jump-bridge rows and each query costs 10 weighted per-session units because the provider reads the structure catalog. `Jump_bridge_structure_reads_use_the_named_per_session_budget` covers the dispatcher refusal.
+
+
+## Corporation office impound reads use current membership (2026-10-22)
+`officeManager.HasCorpImpoundedItems` and `GetImpoundReleasePrice` previously trusted the session corporation ID when reading impounded inventory. They now use the current persisted corporation membership check, so a removed member cannot continue querying former-corporation impound status or fee data. Impound status, release-price reads, office rent/unrent, item release, and impound trash cost 10 weighted per-session units because they scan or mutate station inventory. `Impound_status_and_release_price_require_current_corporation_membership` covers role revocation, `Corporation_office_impound_reads_use_the_named_per_session_budget` covers read budgets, and `Corporation_office_item_mutations_use_the_named_per_session_budget` covers mutation budgets.

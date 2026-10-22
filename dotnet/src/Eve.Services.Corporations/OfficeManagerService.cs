@@ -238,7 +238,7 @@ public sealed partial class OfficeManagerService(
     public async ValueTask<PyValue> HasCorpImpoundedItems(ServiceCall call)
     {
         if (await StructureSiteAsync(call) is not null) return PyBool.False; // a structure office is never impounded (EVE.js)
-        var corporationId = SessionCorporationId(call.Session);
+        var corporationId = await CurrentCorporationIdAsync(call);
         if (corporationId <= 0) return PyBool.False;
         var corporation = await corporations.GetAsync(corporationId, call.Cancellation);
         if (corporation is null || corporation.IsNpc) return PyBool.False;
@@ -258,7 +258,7 @@ public sealed partial class OfficeManagerService(
     public async ValueTask<PyValue> GetImpoundReleasePrice(ServiceCall call)
     {
         if (await StructureSiteAsync(call) is not null) return new PyInt(0);
-        var corporationId = SessionCorporationId(call.Session);
+        var corporationId = await CurrentCorporationIdAsync(call);
         if (corporationId <= 0) return new PyInt(0);
         var corporation = await corporations.GetAsync(corporationId, call.Cancellation);
         if (corporation is null || corporation.IsNpc) return new PyInt(0);

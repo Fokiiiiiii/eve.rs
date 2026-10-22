@@ -2260,6 +2260,12 @@ private static PyValue RowField(PyValue value,string key)
         nonManagerSession.Set("corpid",new PyInt(corporation.Id));
         await Assert.ThrowsAnyAsync<Exception>(async () => await registry.CallAsync(
             Call(nonManagerSession,"GetSharesByShareholder",new PyInt(1))));
+        await Assert.ThrowsAnyAsync<Exception>(async () => await registry.CallAsync(
+            Call(nonManagerSession,"MoveCompanyShares",new PyInt(corporation.Id),new PyInt(recipient),new PyInt(1))));
+        await Assert.ThrowsAnyAsync<Exception>(async () => await OtherCorpRpc(
+            "MoveCompanyShares",new PyInt(corporation.Id),new PyInt(otherCeo),new PyInt(1)));
+        await Assert.ThrowsAnyAsync<Exception>(async () => await Rpc(
+            "MovePrivateShares",new PyInt(corporation.Id),new PyInt(recipient),new PyInt(-1)));
 
         var rows = Lines(await Rpc("GetShareholders",new PyInt(corporation.Id)));
         var balances = rows.Select(RowValues).ToDictionary(

@@ -135,6 +135,9 @@ internal static class HostConfiguration
         return id;
     }
 
+    internal static string GmAccountGrantLog(bool granted) =>
+        $"eve-host: EVE_GM_ACCOUNTS grant: {(granted ? "role bits added" : "no such account (it is created by its first login)")}";
+
     internal static string Env(string name, string fallback) => Environment.GetEnvironmentVariable(name) is { Length: > 0 } value ? value : fallback;
 
     internal static bool Flag(string name, bool fallback) => Env(name, fallback ? "1" : "0") is "1" or "true" or "TRUE" or "yes";

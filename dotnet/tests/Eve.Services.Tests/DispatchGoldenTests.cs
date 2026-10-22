@@ -360,7 +360,7 @@ public class DispatchGoldenTests
         registry.RegisterBoundObject(inventoryObjectId, inventoryService);
         await dispatcher.DispatchAsync(CallRequestPacket("invbroker", "GetInventoryFromId"), inventorySession);
         for (var index = 0; index < 4; index++)
-            await dispatcher.DispatchAsync(BoundCallRequestPacket(inventoryObjectId, "ListIncludingContainers"), inventorySession);
+            await dispatcher.DispatchAsync(BoundCallRequestPacket(inventoryObjectId, "GetCapacity"), inventorySession);
         await dispatcher.DispatchAsync(CallRequestPacket("invbroker", "GetInventoryFromId"), inventorySession);
         Assert.Equal(5, inventoryService.Calls);
         Assert.Equal(ErrorResponseCommand, CommandOf(inventoryCapture.Sent[5]));

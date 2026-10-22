@@ -5475,3 +5475,8 @@ The corpStationMgr MachoBindObject RPC allocates a station moniker tracked until
 ## Fleet single-invite online target check (2026-10-22)
 
 The V24.01 FleetObjectService Invite path now returns FleetCandidateOffline before writing an invitation when the target has no active character session. EveJS 261018.1 applies this check in fleetObjectHandlerService.Handle_Invite and formats the client invitee argument as the owner tuple. The service preserves that error class and owner tuple and leaves MassInvite behavior as implemented by the reference runtime. Fleet_invite_refuses_an_offline_target_before_persisting verifies the refused target cannot accept a stored invitation.
+
+
+## Fleet Init work budget (2026-10-22)
+
+The fleetObject Init RPC costs 10 weighted per-session units because it updates member state and can read a saved character setup or run the transactional advert path. The saved setup lookup remains character-scoped; FleetStore rechecks leadership authority for advert writes and validates the advert payload. Fleet_invites_and_broadcasts_use_a_named_per_session_budget covers repeated Init calls.

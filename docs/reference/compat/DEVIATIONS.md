@@ -72,7 +72,7 @@ The player service table does not advertise `loadService` or `externalQueueMgr`.
 
 ## Inventory RPC work budget (2026-10-20)
 
-Inventory open, list, and asset-enumeration RPCs consume 2 units each in the shared 120-unit per-session rolling-minute budget. This preserves inventory navigation across hangars and ships while retaining a refusal for excessive enumeration. The budget is an intentional server-side limit with no response change while within allowance. `DispatchGoldenTests.Expensive_market_calls_have_a_named_per_session_budget` verifies direct opens followed by bound inventory reads and refusal after the test allowance is consumed. `test_a_new_characters_inventories_are_those_of_the_reference` confirms the recorded new-character walk completes for all four races.
+Inventory opens, ordinary inventory reads, and asset-enumeration through a bound inventory object consume 2 units each in the shared 120-unit per-session rolling-minute budget. Direct recursive `invbroker.ListIncludingContainers` calls consume 10 units; the same read through a bound inventory object costs 2. Other recursive or validation inventory RPCs retain the 10-unit bound. This preserves inventory navigation across hangars and ships while retaining a refusal for excessive direct enumeration. `DispatchGoldenTests.Inventory_recursive_and_validation_calls_use_the_expensive_rpc_budget` and `DispatchGoldenTests.Expensive_market_calls_have_a_named_per_session_budget` verify the direct and bound costs and refusal at the test allowance; all 65 dispatch-budget regressions pass.
 
 ## LP store singleton grant bound (2026-10-20)
 

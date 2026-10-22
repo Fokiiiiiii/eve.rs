@@ -165,10 +165,12 @@ public sealed class PacketDispatcher
             return true;
         }
 
-        var cost = ExpensiveRpcCost(service.Name, call.Method);
+        var cost = serviceName.StartsWith(BoundObjects.OidPrefix, StringComparison.Ordinal)
+            ? BoundObjectRpcCost(service.Name, call.Method)
+            : ExpensiveRpcCost(service.Name, call.Method);
         if (call.Method == "MachoBindObject" && call.Args.Count > 1 &&
             NestedBoundMethod(call.Args[1]) is { } nestedMethod)
-            cost = Math.Max(cost, ExpensiveRpcCost(service.Name, nestedMethod));
+            cost = Math.Max(cost, BoundObjectRpcCost(service.Name, nestedMethod));
         if (cost > 0 && !_expensiveBudgets.GetValue(session, _ => new ExpensiveRpcBudget())
                 .TryConsume(_nowUnixMs(), cost, MaxExpensiveRpcUnitsPerMinute))
         {
@@ -266,6 +268,9 @@ public sealed class PacketDispatcher
     /// Strict mode: answers the call with a Macho error that names the failure and a correlation id, and logs the
     /// failure with the call's arguments (and the exception's stack trace, when there is one) to stderr.
     /// </summary>
+    private static int BoundObjectRpcCost(string service, string method) =>
+        service == "invbroker" && method == "ListIncludingContainers" ? 2 : ExpensiveRpcCost(service, method);
+
     private static int ExpensiveRpcCost(string service, string method)
     {
         if (method == "GetAllInfo")

@@ -102,6 +102,30 @@ public sealed class SovHubClaimTests
         Assert.Null(saved()["systems"]![Key]!["allianceID"]);
     }
 
+    [Fact]
+    public async Task A_captured_hub_is_restored_from_the_saved_sovereignty_table()
+    {
+        var (writer, saved) = WriterOver(Table(owner: null));
+        Assert.True(await writer.ClaimCapturedHubAsync(SystemId, HubId, Corporation, Alliance, FileTime));
+
+        Task<JsonObject> Read(string name, CancellationToken _) =>
+            Task.FromResult(name == "sovereignty" ? saved() : new JsonObject());
+        var readModel = new PersistenceSovFwReadModel(
+            Read, (_, _) => Task.FromResult(new Eve.Relations.Affiliation(Corporation, Alliance, null)));
+        var session = new Eve.Services.ClientSession();
+        session.Set("charid", new Eve.Marshal.PyInt(90000001));
+        session.Set("solarsystemid2", new Eve.Marshal.PyInt(SystemId));
+        var snapshot = await readModel.ReadSnapshotAsync(new Eve.Services.ServiceCall
+        {
+            Method = "GetSystemSovereigntyInfo",
+            Args = [],
+            Session = session,
+        });
+
+        Assert.Equal(new global::Eve.Services.Space.SovHubBall(HubId, checked((int)SystemId), Corporation, Alliance),
+            global::Eve.Services.Space.SpaceSovHubs.HubOf(snapshot, checked((int)SystemId)));
+    }
+
     /// <summary>
     /// ST-17 a: a hub destroyed by its command node stage leaves the sovereignty records (EVE.js commitSovereigntyHubCampaignOutcome, attacker result): the system
     /// loses its owner and hub pointer, the hub's row and record leave. A repeat, or a system the destroyed hub no longer holds, is answered as done and changes nothing.

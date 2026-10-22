@@ -297,6 +297,8 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
         if (call.Session.CharacterId is not { } actor) return OwnerOrderRowset([],true);
         try
         {
+            if (!await corporations.CanReadCorporationMarketOrdersAsync(actor,call.Cancellation))
+                throw new Eve.Corporations.CorporationError("CORPORATION_ACCESS_DENIED");
             var orders=await trading.OwnerOrdersAsync(actor,true,false,call.Cancellation);
             return ObjectCaching.MethodResult(OwnerOrderRowset(orders,true),now(),sessionInfo:"corpid");
         }

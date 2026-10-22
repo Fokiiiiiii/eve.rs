@@ -328,6 +328,23 @@ public class MarketRpcTests
     }
 
     [PgFact]
+    public async Task Corporation_market_orders_require_the_persisted_accountant_role()
+    {
+        await using var r = await TradeRig.Create();
+        var ceo = await r.Actor("Market orders CEO", 10000000m);
+        var corp = await r.Corporations.CreateAsync(ceo, new("Order Access", "ORDR", "", "", 0), "corporation");
+        var member = await r.Actor("Market orders member", 10000000m);
+        var invitation = await r.Corporations.CreateInvitationAsync(member, corp.Id, ceo);
+        await r.Corporations.RespondAsync(member, invitation.ApplicationId, 2, "", "");
+        var seat = await SeatAsync(r, member);
+
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await seat.Proxy.GetCorporationOrders(Call(seat.Session, "GetCorporationOrders", 11)));
+
+        Assert.Equal("CustomInfo", UserError(error).Label);
+    }
+
+    [PgFact]
     public async Task A_corporation_order_row_carries_its_wallet_division_as_keyID()
     {
         // GetCorporationOrders rows: keyID is the division (accountKey), not 1000 (G1). quote.py:442-443 names the division from it.

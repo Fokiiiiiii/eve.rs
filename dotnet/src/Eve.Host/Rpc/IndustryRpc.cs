@@ -45,7 +45,18 @@ internal sealed partial class CharacterServicesComposition
                 industryJobOperations.ReadJobsAsync,
                 industryJobOperations,
                 currentFileTime: () => checked(116444736000000000L + now() * 10_000L),
-                isAlphaClone: userId => CloneGradeSource.CloneGradeOf(userId) == 0),
+                isAlphaClone: userId => CloneGradeSource.CloneGradeOf(userId) == 0,
+                canAccessCorporationJobs: async (characterId, corporationId, cancellationToken) =>
+                {
+                    var member = await corporations.MemberAsync(characterId, cancellationToken);
+                    if (member is null || member.CorporationId != corporationId ||
+                        await corporations.GetAsync(corporationId, cancellationToken) is not { } corporation)
+                        return false;
+                    var roles = Eve.Corporations.CorporationRoles.Session(
+                        corporation, member, null, await corporations.TitlesAsync(corporationId, cancellationToken));
+                    return (roles.AtAll & Eve.Corporations.CorporationRoles.FactoryManager) ==
+                        Eve.Corporations.CorporationRoles.FactoryManager;
+                }),
             new Eve.Services.Core.BlueprintManagerService(
                 ReadBlueprintAsync,
                 ReadOwnedBlueprintsAsync,

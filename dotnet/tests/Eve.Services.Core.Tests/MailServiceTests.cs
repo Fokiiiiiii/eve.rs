@@ -61,6 +61,39 @@ public sealed class MailServiceTests
     }
 
     [Fact]
+    public async Task Sync_mail_refuses_mailboxes_above_the_response_entry_limit()
+    {
+        var messages = new JsonObject();
+        var statuses = new JsonObject();
+        for (var id = 1; id <= 5_001; id++)
+        {
+            var key = id.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            messages[key] = new JsonObject
+            {
+                ["messageID"] = id,
+                ["senderID"] = 90000002,
+                ["title"] = "Subject",
+                ["sentDate"] = "100",
+                ["body"] = "Body",
+            };
+            statuses[key] = new JsonObject { ["statusMask"] = 0, ["labelMask"] = 0 };
+        }
+        var data = new JsonObject
+        {
+            ["messages"] = messages,
+            ["mailboxes"] = new JsonObject
+            {
+                ["90000001"] = new JsonObject { ["statuses"] = statuses },
+            },
+        };
+
+        var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            Service(data).CallAsync(Request("SyncMail")).AsTask());
+
+        Assert.Equal("MAIL_SYNC_LIMIT_EXCEEDED", MailInfo(refusal));
+    }
+
+    [Fact]
     public async Task Initial_sync_returns_only_mailbox_entries_newest_first_including_trash()
     {
         var data = Mailbox();
@@ -353,6 +386,17 @@ public sealed class MailServiceTests
         Assert.Equal("GM chat request", sent.Title);
         Assert.Equal("A GM would like to speak with you.<br><br>Requested channel: help-channel", sent.Body);
         Assert.False(sent.SaveSenderCopy);
+
+        var previous = sent;
+        var oversized = new ServiceCall
+        {
+            Method = "PokePlayerAboutChatMsgGm",
+            Args = [new PyInt(90000003), new PyStr(new string('x', 257))],
+            Session = call.Session,
+        };
+        var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(oversized).AsTask());
+        Assert.Equal("MAIL_CHANNEL_LIMIT_EXCEEDED", MailInfo(refusal));
+        Assert.Same(previous, sent);
     }
 
     private static MailService Service(JsonObject data) => new(_ => Task.FromResult(data),
@@ -629,6 +673,28 @@ public sealed class MailServiceTests
 
         Assert.Equal("MAIL_BULK_LIMIT_EXCEEDED", MailInfo(headersRefusal));
         Assert.Equal("MAIL_BULK_LIMIT_EXCEEDED", MailInfo(markRefusal));
+    }
+
+[Fact]
+    public async Task SendMail_decodes_UTF8_client_byte_strings_for_title_and_body()
+    {
+        MailSendRequest? sent = null;
+        var service = new MailService(
+            _ => throw new InvalidOperationException("SendMail must not read the mailbox."),
+            (_, _, _, _) => throw new InvalidOperationException("SendMail must not mark a message read."),
+            (request, _, _) =>
+            {
+                sent = request;
+                return Task.FromResult<long?>(705);
+            });
+        var request = Request("SendMail",
+            new PyList([new PyInt(90000002)]), PyNone.Instance, PyNone.Instance,
+            new PyBytes(Encoding.UTF8.GetBytes("Náme")), new PyBytes(Encoding.UTF8.GetBytes("Body — ✓")),
+            new PyInt(0), new PyInt(0));
+
+        Assert.Equal(new PyLong(705), await service.CallAsync(request));
+        Assert.Equal("Náme", sent?.Title);
+        Assert.Equal("Body — ✓", sent?.Body);
     }
 
 [Fact]

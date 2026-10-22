@@ -329,6 +329,8 @@ public sealed partial class AccountService(PgWalletStore wallets, Eve.Corporatio
             PyNone => string.Empty,
             _ => JsSemantics.PlainText(value),
         };
+        if (text is { Length: > 40 })
+            throw MachoErrors.ThrowUserError("WALLET_REASON_LIMIT_EXCEEDED");
         return string.IsNullOrWhiteSpace(text) ? fallback : text;
     }
 

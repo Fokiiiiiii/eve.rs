@@ -19,10 +19,11 @@ import pytest
 from evecli import marshal as m
 from evecli.describe import describe, differences
 from tests import test_login_to_character as base
+from tests import test_market as market
 from tests.test_ammo import canon, canon_events
 from tests.test_others import watch
 from tests.test_target import compare_answer, plain_race
-from tests.test_undock import STATION, SYSTEM, arrive, compare_events, ids, outcome
+from tests.test_undock import STATION, SYSTEM, arrive, compare_events_by_source, ids, outcome
 from tests.test_weapon import slims_in
 
 LOOT = base.load("loot.json")
@@ -75,7 +76,7 @@ def test_a_pilot_loots_a_can_as_in_the_reference():
                 problems.extend(differences(theirs, ours, label))
             got = watch(only, seconds, (lambda seen: until(seen["events"])) if until else None)["events"]
             last["events"] = got
-            problems.extend(compare_events(canon_events(quiet(recorded["events"]), seen_recorded, known), canon_events(quiet(got), seen_ids), label, {}))
+            problems.extend(compare_events_by_source(canon_events(quiet(recorded["events"]), seen_recorded, known), canon_events(quiet(got), seen_ids), label, {}))
             return raw
 
         def stacks(handle, flag=None) -> dict:
@@ -95,7 +96,7 @@ def test_a_pilot_loots_a_can_as_in_the_reference():
         service = who.call("ship", "MachoBindObject", (STATION, 15), None)
         who.call_bound(service[0], "Undock", ship, False)
         watch(only, 2.5)
-        who.call("beyonce", "MachoBindObject", SYSTEM, None)
+        ballpark = who.call("beyonce", "MachoBindObject", SYSTEM, None)
         watch(only, 3.0)
         dogma = who.call("dogmaIM", "MachoBindObject", (SYSTEM, 5), None)
         who.call_bound(dogma[0], "GetAllInfo", True, True, None)
@@ -118,6 +119,58 @@ def test_a_pilot_loots_a_can_as_in_the_reference():
         step("the pilot asks for its hold after", lambda: who.call_bound(flying, "List", 5))
         step("the pilot asks for the room in its hold after", lambda: who.call_bound(flying, "GetCapacity", 5))
         step("the pilot asks for the can after", lambda: who.call_bound(opened, "List"))
+
+        # Dock with the looted stacks, move one stack into the station hangar, and sell part of it to another pilot.
+        cargo = stacks(flying, 5)
+        sell_item = cargo[TRITANIUM][0]
+        sell_quantity = next(
+            int(row.fields()["quantity"])
+            for row in who.call_bound(flying, "List", 5)
+            if int(row.fields()["itemID"]) == sell_item
+        )
+        who.call_bound(ballpark[0], "CmdDock", STATION)
+        watch(only, 10.0, until=lambda seen: any(event["name"] == "$sessionchange" for event in seen["events"]))
+        station_service = who.call("invbroker", "MachoBindObject", (STATION, 15), None)[0]
+        hangar = who.call_bound(station_service, "GetInventory", 10004)
+        who.call_bound(hangar, "Add", sell_item, ship, qty=sell_quantity, flag=4)
+        hangar_rows = who.call_bound(hangar, "List")
+        offered = next(row.fields() for row in hangar_rows if int(row.fields()["itemID"]) == sell_item)
+        assert int(offered["locationID"]) == STATION and int(offered["quantity"]) == sell_quantity, offered
+
+        buyer_run = uuid.uuid4().hex[:10]
+        with base.connect(f"walk-loot-buyer-{buyer_run}") as buyer:
+            buyer_character = market._new_character(buyer, buyer_run)
+            assert int(buyer.session.session_init.get("stationid")) == STATION
+            entry = m.Dict([
+                ("typeID", TRITANIUM),
+                ("price", 50.0),
+                ("quantity", sell_quantity),
+                ("stationID", STATION),
+                ("itemID", sell_item),
+            ])
+            assert m.plain(who.call("marketProxy", "PlaceMultiSellOrder", [entry], False, 90, None)) is True
+            ask = next(
+                row for row in market._own_orders(who)
+                if market._field(row, "typeID") == TRITANIUM
+                and market._field(row, "stationID") == STATION
+                and market._field(row, "volEntered") == sell_quantity
+            )
+            ask_id = market._field(ask, "orderID")
+            sold_quantity = min(40, sell_quantity)
+            assert buyer.call(
+                "marketProxy", "PlaceBuyOrder", STATION, TRITANIUM, 50.0,
+                sold_quantity, -1, 1, 0, False, None
+            ) is None
+            sold = [
+                row for row in market._plain_rows(buyer.call("marketProxy", "CharGetTransactions", None))
+                if market._field(row, "typeID") == TRITANIUM
+            ]
+            assert sum(market._field(row, "quantity") for row in sold) == sold_quantity, sold
+            remaining = next(row for row in market._own_orders(who) if market._field(row, "orderID") == ask_id)
+            assert market._field(remaining, "volRemaining") == sell_quantity - sold_quantity
+            assert market._field(remaining, "typeID") == TRITANIUM
+            assert market._field(remaining, "stationID") == STATION
+            assert buyer.session.session_init.get("charid") == buyer_character
     assert problems == [], "\n".join(problems[:40])
 
 def _is_the_rats(event: dict) -> bool:

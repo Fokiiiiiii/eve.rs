@@ -52,6 +52,14 @@ public sealed class AccountRpcTests
         session.Set("corpid", Py.Number(corporation.Id));
 
         var personalBefore = (await rig.Wallets.GetAsync(actor))!.Isk;
+        var longReason = await Assert.ThrowsAsync<MachoWrappedException>(() => service.GiveCash(new ServiceCall
+        {
+            Method = "GiveCash",
+            Args = [Py.Number(corporation.Id), new PyReal(1), new PyStr(new string('x', 41))],
+            Session = session,
+        }).AsTask());
+        Assert.Equal("WALLET_REASON_LIMIT_EXCEEDED", longReason.Error.UserErrorMessage);
+        Assert.Equal(personalBefore, (await rig.Wallets.GetAsync(actor))!.Isk);
         var deposit = await service.GiveCash(new ServiceCall
         {
             Method = "GiveCash",

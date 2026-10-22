@@ -2446,7 +2446,7 @@ public class SpaceServiceTests
         Assert.Equal(Py.FileTimeFromUnixMs(Rig.ClockMs + 10_000), Id(answer.Items[1]));
         Assert.Equal(
             [Describe(new SimCommand((ulong)session.SessionId, SimCommands.Jump, [Gate, NextGate]))],
-            rig.Sim.Heard.Skip(before).Select(Describe));
+            rig.Sim.Heard.Skip(before).OfType<SimCommand>().Select(Describe));
 
         var told = Events.Of(session);
         var queue = Assert.Single(told, e => e.Name == "OnJumpQueueUpdate");
@@ -3115,6 +3115,16 @@ public class SpaceServiceTests
             await space.OnCharacterEnteredAsync(previousSession, previous.CharacterId, CancellationToken.None));
         Assert.False(space.IsInSpace(previousSession));
         await space.OnCharacterLeavingAsync(enteringSession, entering.CharacterId, CancellationToken.None);
+    }
+
+    [Fact]
+    public void Fleet_role_parser_refuses_values_that_overflow_int32()
+    {
+        Assert.Equal(Eve.Services.Space.FleetStore.SquadCommander,
+            Eve.Services.Space.FleetObjectService.FleetRole(new PyLong(Eve.Services.Space.FleetStore.SquadCommander)));
+        var error = Assert.Throws<Eve.Services.MachoWrappedException>(() =>
+            Eve.Services.Space.FleetObjectService.FleetRole(new PyLong(4_294_967_298L)));
+        Assert.Equal("FLEET_ROLE_OUT_OF_RANGE", error.Error.UserErrorMessage);
     }
 
     [Fact]

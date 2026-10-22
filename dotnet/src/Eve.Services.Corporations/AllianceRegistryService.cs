@@ -260,7 +260,13 @@ private static double RelationshipValue(PyValue value)
     [Method("GetRankedAlliances")]
     public async ValueTask<PyValue> GetRankedAlliances(ServiceCall call)
     {
-        var maxLength = call.Arg(0) is PyNone ? 100 : Math.Max(0,Number(call.Arg(0)));
+        var maxLength = call.Arg(0) switch
+        {
+            PyNone => 100,
+            PyInt { Value: >= 0 } value => value.Value,
+            PyLong { Value: >= 0 } value => value.Value,
+            _ => throw new CorporationError("ALLIANCE_RANKED_LIMIT_INVALID"),
+        };
         var alliances = await store.RankedAlliancesAsync(maxLength == 0 ? null : maxLength,call.Cancellation);
         var counts = await store.AllianceCharacterCountsAsync(alliances.Select(alliance => alliance.Id).ToArray(),call.Cancellation);
         return new PyList([.. alliances.Select(alliance => AllianceRow(alliance,counts.GetValueOrDefault(alliance.Id)))]);
@@ -334,7 +340,12 @@ private static double RelationshipValue(PyValue value)
     public async ValueTask<PyValue> GetAllianceMembersOlderThan(ServiceCall call)
     {
         var alliance = await Id(call);
-        var minimumDays = Math.Max(0,Number(call.Arg(1)));
+        var minimumDays = call.Arg(1) switch
+        {
+            PyInt { Value: >= 0 } value => value.Value,
+            PyLong { Value: >= 0 } value => value.Value,
+            _ => throw new CorporationError("ALLIANCE_MEMBERSHIP_DAYS_INVALID"),
+        };
         var members = await store.AllianceMembersAsync(alliance,call.Cancellation);
         return new PyList([.. members.Where(member => AllianceMembershipDays(member.StartedMs) >= minimumDays)
             .Select(member => (PyValue)new PyInt(member.CorporationId))]);
@@ -511,6 +522,8 @@ private static double RelationshipValue(PyValue value)
         var (actor, allianceId) = await RequireAllianceExecutorDirector(call);
         var corporationId = Number(call.Arg(0));
         var applicationText = JsSemantics.StringValue(call.Arg(1)) ?? "";
+        if (applicationText.Length > 1000)
+            throw new CorporationError("ALLIANCE_APPLICATION_TEXT_TOO_LONG");
         var state = Number(call.Arg(2));
         if (corporationId <= 0) throw new CorporationError("ALLIANCE_APPLICATION_NOT_FOUND");
         if (state is not (2 or 4)) throw new CorporationError("ALLIANCE_APPLICATION_INVALID_STATE");
@@ -1070,11 +1083,14 @@ private static double RelationshipValue(PyValue value)
     public async ValueTask<PyValue> AddBulletin(ServiceCall call)
     {
         var (actor, alliance) = await RequireAllianceDirector(call);
+        var title = JsSemantics.StringValue(call.Arg(0)) ?? "";
+        var body = JsSemantics.StringValue(call.Arg(1)) ?? "";
+        if (title.Length > 100 || body.Length > 4000)
+            throw new CorporationError("ALLIANCE_BULLETIN_LIMIT_EXCEEDED");
         var nowFiletime = Number(CorporationWire.Time(now()));
         var editFiletime = Number(call.Arg(3));
         var bulletinId = Number(call.Arg(2));
-        var id = await store.AddAllianceBulletinAsync(alliance, actor,
-            JsSemantics.StringValue(call.Arg(0)) ?? "", JsSemantics.StringValue(call.Arg(1)) ?? "",
+        var id = await store.AddAllianceBulletinAsync(alliance, actor, title, body,
             bulletinId > 0 ? bulletinId : null, nowFiletime,
             editFiletime > 0 ? editFiletime : nowFiletime, call.Cancellation);
         return new PyInt(id);
@@ -1086,10 +1102,13 @@ private static double RelationshipValue(PyValue value)
         var (actor, alliance) = await RequireAllianceDirector(call);
         var bulletinId = Number(call.Arg(0));
         if (bulletinId <= 0) throw new CorporationError("ALLIANCE_BULLETIN_INVALID");
+        var title = JsSemantics.StringValue(call.Arg(1)) ?? "";
+        var body = JsSemantics.StringValue(call.Arg(2)) ?? "";
+        if (title.Length > 100 || body.Length > 4000)
+            throw new CorporationError("ALLIANCE_BULLETIN_LIMIT_EXCEEDED");
         var nowFiletime = Number(CorporationWire.Time(now()));
         var editFiletime = Number(call.Arg(3));
-        return new PyInt(await store.AddAllianceBulletinAsync(alliance, actor,
-            JsSemantics.StringValue(call.Arg(1)) ?? "", JsSemantics.StringValue(call.Arg(2)) ?? "",
+        return new PyInt(await store.AddAllianceBulletinAsync(alliance, actor, title, body,
             bulletinId, nowFiletime, editFiletime > 0 ? editFiletime : nowFiletime, call.Cancellation));
     }
 

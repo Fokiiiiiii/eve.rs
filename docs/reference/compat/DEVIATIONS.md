@@ -1,5 +1,9 @@
 # Deviations from the reference server
 
+## War headquarters eligibility (2026-10-22)
+
+The V24.01 war declaration callsites select HQ IDs from `structureDirectory.GetValidWarHQs()`. EveJS 261018.1 does not repeat that ownership and eligibility check when processing the corp or alliance declaration RPC. eve.rs now checks the supplied ID against the same server-derived directory list before creating a bill or war relation, while retaining the client’s `None` value. Corporation and alliance service regressions prove invalid IDs create no bill or relation.
+
 ## Corporation member map locations (2026-10-20)
 
 `map.GetMyExtraMapInfo` returns the current solar-system locations of online members in the caller's corporation. EveJS 261018.1 returns an empty rowset for this method, while the V24.01 `mapFilterCorpMembers.py` and `mapViewColorHandler.py` callsites group `characterID` and `locationID` rows into a corporation-member heatmap. eve.rs uses the authoritative live session registry and corporation session scope; `Map_extra_info_lists_only_current_members_of_the_callers_corporation` covers the rowset and scope.

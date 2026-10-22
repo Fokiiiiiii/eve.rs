@@ -2159,14 +2159,20 @@ public class AllianceTests
             session.Set("allianceid", new Eve.Marshal.PyInt(alliance.Id));
             sessions.Enter(actor, session);
             var service = (Eve.Services.IService)new Eve.Services.Corporations.AllianceRegistryService(
-                rig.Store, rig.Characters, () => rig.Now, relations: relations, characterSessions: sessions);
-            Eve.Services.ServiceCall DeclareCall(long againstId) => new()
+                rig.Store, rig.Characters, () => rig.Now, relations: relations, characterSessions: sessions,
+                validateWarHQ: (_, _, _, _) => ValueTask.FromResult(false));
+            Eve.Services.ServiceCall DeclareCall(long againstId, long? warHqId = null) => new()
             {
                 Session = session,
                 Method = "DeclareWarAgainst",
-                Args = [new Eve.Marshal.PyInt(againstId), Eve.Marshal.PyNone.Instance],
+                Args = [new Eve.Marshal.PyInt(againstId), warHqId is { } id ? new Eve.Marshal.PyInt(id) : Eve.Marshal.PyNone.Instance],
                 CallId = new Eve.Marshal.PyInt(71003)
             };
+
+            await Assert.ThrowsAsync<Eve.Corporations.CorporationError>(() =>
+                service.CallAsync(DeclareCall(targetCorp.Id + 10, 60000001)).AsTask());
+            Assert.Empty(await rig.Store.AllianceBillsAsync(alliance.Id));
+            Assert.Null(await relations.GetAsync("war", alliance.Id, targetCorp.Id + 10));
 
             var declaration = Assert.IsType<Eve.Marshal.PyObject>(await service.CallAsync(DeclareCall(targetCorp.Id)));
             Assert.Empty(sink.Packets);

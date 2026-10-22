@@ -11,7 +11,7 @@ public sealed record CorpWarDeclarationRequest(long CorporationId,long DeclaredB
 public sealed record CorpWarDeclarationResult(long WarId,long BillId);
 
 [Service("corpRegistry")]
-public sealed partial class CorpRegistryService(CorporationStore store,PgCharacterStore characters,Func<long> now,CharacterSessions? characterSessions = null,Eve.Inventory.PgItemStore? items = null,Func<long,bool,int,long?,CancellationToken,ValueTask<IReadOnlyList<PyValue>>>? readRecentCorporationKillmails = null,Func<long,CancellationToken,ValueTask<long>>? readCharacterAllyBaseCost = null,Func<CorpWarDeclarationRequest,CancellationToken,ValueTask<CorpWarDeclarationResult>>? declareWar = null)
+public sealed partial class CorpRegistryService(CorporationStore store,PgCharacterStore characters,Func<long> now,CharacterSessions? characterSessions = null,Eve.Inventory.PgItemStore? items = null,Func<long,bool,int,long?,CancellationToken,ValueTask<IReadOnlyList<PyValue>>>? readRecentCorporationKillmails = null,Func<long,CancellationToken,ValueTask<long>>? readCharacterAllyBaseCost = null,Func<CorpWarDeclarationRequest,CancellationToken,ValueTask<CorpWarDeclarationResult>>? declareWar = null,Func<ServiceCall,long,long,CancellationToken,ValueTask<bool>>? validateWarHQ = null)
 {
     private const int MaxBulkMemberIds = 500;
     private const int MaxBulkCorporationActions = 500;
@@ -1886,7 +1886,15 @@ private static int MemberFieldInteger(PyValue value)
           var declaredAt = Number(CorporationWire.Time(now()));
           var startedAt = checked(declaredAt+864_000_000_000L);
           var dueAt = checked(declaredAt+6_048_000_000_000L);
-          var warHqId = call.Args.Count > 1 ? PositiveId(call.Arg(1)) : null;
+          long? warHqId = null;
+          if (call.Args.Count > 1 && call.Arg(1) is not PyNone)
+          {
+              var requestedWarHqId = PositiveId(call.Arg(1));
+              if (requestedWarHqId is not { } hqId || validateWarHQ is null ||
+                  !await validateWarHQ(call, corporation.Id, hqId, call.Cancellation))
+                  throw new CorporationError("WAR_HEADQUARTERS_INVALID");
+              warHqId = hqId;
+          }
           var callId = Number(call.CallId);
           var operationKey = callId > 0
               ? $"corporation-war:{corporation.Id}:{actor}:{callId}"

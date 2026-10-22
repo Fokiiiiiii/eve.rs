@@ -3351,10 +3351,11 @@ private static PyValue RowField(PyValue value,string key)
             return ValueTask.FromResult(new CorpWarDeclarationResult(7001,8001));
         }
         var service = (IService)new CorpRegistryService(rig.Store,rig.Characters,() => rig.Now,
-            characterSessions:sessions,declareWar:Declare);
-        ServiceCall DeclareCall() => new()
+            characterSessions:sessions,declareWar:Declare,
+            validateWarHQ:(_,ownerId,structureId,_) => ValueTask.FromResult(ownerId == corp.Id && structureId == 60000001));
+        ServiceCall DeclareCall(long warHqId = 60000001) => new()
         {
-            Session=session,Method="DeclareWarAgainst",Args=[new PyInt(target.Id),new PyInt(60000001)],CallId=new PyInt(9003)
+            Session=session,Method="DeclareWarAgainst",Args=[new PyInt(target.Id),new PyInt(warHqId)],CallId=new PyInt(9003)
         };
         var ordinarySession = new ClientSession { CharacterId=ordinaryMember };
         ordinarySession.Set("corpid",new PyInt(corp.Id));
@@ -3363,6 +3364,9 @@ private static PyValue RowField(PyValue value,string key)
         {
             Session=ordinarySession,Method="DeclareWarAgainst",Args=[new PyInt(target.Id),new PyInt(60000001)],CallId=new PyInt(9004)
         }).AsTask());
+        Assert.Null(received);
+        await Assert.ThrowsAsync<CorporationError>(() => service.CallAsync(DeclareCall(60000002)).AsTask());
+        await Assert.ThrowsAsync<CorporationError>(() => service.CallAsync(DeclareCall(-1)).AsTask());
         Assert.Null(received);
 
         var declaration = Assert.IsType<PyObject>(await service.CallAsync(DeclareCall()));

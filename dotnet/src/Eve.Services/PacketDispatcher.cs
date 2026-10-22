@@ -306,7 +306,7 @@ public sealed class PacketDispatcher
             return 10;
         if (service == "invbroker" && method is "GetDamageForCrystals" or "ValidateItemListCanBeOpened" or "ListIncludingContainers" or "ImportExportWithPlanet")
             return 10;
-        if (service == "invbroker" && method is "GetInventory" or "GetInventoryFromId" or "GetContainerContents" or "GetItems" or "List" or "ListByFlags" or "ListStations" or "ListStationItems" or "ListIncludingContainers" or "GetAssetWorth" or "GetCapacity")
+        if (service == "invbroker" && method is "GetInventory" or "GetInventoryFromId" or "GetContainerContents" or "GetItems" or "List" or "ListByFlags" or "ListStations" or "ListStationItems" or "GetAssetWorth" or "GetCapacity")
             return 2;
         if (service == "corpMgr" && (method is "GetAssetInventory" or "GetAssetInventoryForLocation" or "SearchAssets" or "GetAggressionSettingsForCorps" or "AuditMember"))
             return 10;

@@ -1,11 +1,11 @@
 # Security status
 
-Checked 2026-10-21.
+Checked 2026-10-22.
 
 ## Dependency and image review
 
 - Rust: `cargo audit 0.22.2 --file Cargo.lock --no-fetch --stale` loaded 1,348 RustSec advisories and scanned 114 dependencies on 2026-10-21; it exited successfully with no findings. `cargo deny`, Trivy, and Grype were not installed in the environment.
-- .NET: `dotnet list dotnet/EveRs.slnx package --vulnerable --include-transitive --no-restore` completed against `https://api.nuget.org/v3/index.json` on 2026-10-20 and found no vulnerable packages across the solution projects. A repeat on 2026-10-21 remained without output during NuGet package assessment for over 75 seconds and was interrupted; no new .NET result was obtained.
+- .NET: GitHub Actions dependency audit run `39858626529` passed `dotnet list dotnet/EveRs.slnx package --vulnerable --include-transitive` on 2026-10-22; the job fails when NuGet reports a vulnerable package.
 - Python: `pip-audit 2.10.1` scanned `tools/headless-client/requirements.txt` and `tools/headless-client/requirements-dev.txt` on 2026-10-21 and reported no known vulnerabilities.
 - No tracked npm manifests or lockfiles were present. The Dockerfile uses those Rust and .NET version tags with pinned registry manifest digests. Docker Scout, Trivy, Grype, and Snyk were unavailable, so no image vulnerability database scan was completed.
 - Workflow action references are pinned to full commit IDs; no action-advisory scan was available.
@@ -41,7 +41,7 @@ Reviewed through 2026-10-21 against the Rust, .NET, Python tool, deployment, and
 - **SQL and file handling:** The shared SQL command helper parameterizes values; schema, table, and SDE table names are validated at their construction boundaries. The reviewed SDE archive loader writes entry basenames into its controlled staging directory. The MITM recorder writes only to its operator-supplied output path; captured packet data does not select a file path. No injection, archive path escape, or packet-derived file path was found in these paths.
 - **Secrets, containers, and network exposure:** The compose database password fallback is confined to the compose network; only the game network service publishes a host port. The production Dockerfile switches to the `eve` user. All production base images now pin registry manifest digests as well as readable version tags. No credential was printed or added during this review.
 - **GitHub workflows:** Both workflow files set `contents: read` and no `pull_request_target` trigger was found. All action references are now pinned to full commit IDs. A Python regression test checks both conditions. The action commits were resolved from their upstream Git references on 2026-10-19.
-- **Dependency scans (2026-10-21):** `cargo audit` loaded 1,348 advisories and scanned 114 locked crate dependencies with no findings; both headless-client requirements files passed `pip-audit`. The 2026-10-20 .NET scan reported no vulnerable packages across the solution; a repeat remained without output during NuGet package assessment for over 75 seconds and was interrupted, so it produced no new result. Trivy and Grype are unavailable in this environment, so container image scanning remains outstanding. The scheduled dependency workflow repeats Rust, .NET, and Python checks.
+- **Dependency scans (2026-10-22):** GitHub Actions dependency audit run `39858626529` passed all three jobs: `cargo audit`, `dotnet list ... package --vulnerable --include-transitive`, and `pip-audit` for both headless-client requirement files. No dependency findings were reported. Trivy and Grype remain unavailable in this environment, so container image scanning remains outstanding. The workflow also repeats these checks weekly and on dependency-file pushes.
 
 ### Findings fixed
 

@@ -1,5 +1,9 @@
 # Deviations from the reference server
 
+## Front connection admission limit (2026-10-22)
+
+The Host admits at most 1,024 active front connections by default (`EVE_MAX_FRONT_CONNECTIONS`) and closes accepted sockets above that capacity before dispatch. This resource policy does not change packets for admitted clients; overload clients receive a closed connection. `HostServerTests.Front_connections_above_the_server_limit_are_closed_before_dispatch` verifies the refusal and confirms the admitted connection remains active.
+
 ## War headquarters eligibility (2026-10-22)
 
 The V24.01 war declaration callsites select HQ IDs from `structureDirectory.GetValidWarHQs()`. EveJS 261018.1 does not repeat that ownership and eligibility check when processing the corp or alliance declaration RPC. eve.rs now checks the supplied ID against the same server-derived directory list before creating a bill or war relation, while retaining the client’s `None` value. Corporation and alliance service regressions prove invalid IDs create no bill or relation.

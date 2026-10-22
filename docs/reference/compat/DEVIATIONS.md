@@ -5444,3 +5444,7 @@ The V24.01 client calls `GetMemberTrackingInfoSimple` for members without the Di
 
 ## Mail recipient expansion bound (2026-10-22)
 Organization and mailing-list delivery now stops at 5,000 distinct recipients before persistence and returns `MAIL_RECIPIENT_LIMIT_EXCEEDED` when expansion exceeds that bound. This protects delivery persistence and notification fanout from a single oversized expansion. `Expanded_mail_recipients_are_merged_and_capped_before_delivery` covers duplicate merging and rejection before delivery.
+
+
+## Customs import/export input bounds (2026-10-22)
+`invbroker.ImportExportWithPlanet` accepts at most 500 combined raw import and export entries. It refuses duplicate or nonpositive item/type identifiers, nonpositive quantities, type IDs outside Int32, and non-finite or out-of-range tax rates before calling the transactional customs provider. The RPC also consumes 10 weighted per-session units because each accepted entry can lock and mutate persistence rows. `Customs_import_export_refuses_oversized_and_malformed_dictionaries_before_callback` covers the limit and malformed payload boundary.

@@ -29,6 +29,7 @@ public sealed partial class InvBrokerService(
     private const int PlayerCategory = 1;
 
     private const int MaxGetItemsIds = 500;
+    private const int MaxCustomsImportExportEntries = 500;
 
     /// <summary>The volume that holds what a station keeps for one character, when the hangar is asked how much it holds of a flag the reference gives no ship to.</summary>
     private const double HangarCapacity = 1_000_000;
@@ -436,15 +437,33 @@ public sealed partial class InvBrokerService(
             throw MachoErrors.ThrowUserError("CustomsOfficeAccessDenied");
         if (space is null || await space.OpenAsync(call.Session, office.ItemId, call.Cancellation) is null)
             throw MachoErrors.ThrowUserError("CustomsOfficeAccessDenied");
-        var imports = new Dictionary<long, long>();
-        if (call.Arg(1) is PyDict importDict)
-            foreach (var (key, quantity) in importDict.Entries)
-                imports[IdOf(key) ?? 0] = IdOf(quantity) ?? 0;
-        var exports = new Dictionary<int, long>();
-        if (call.Arg(2) is PyDict exportDict)
-            foreach (var (key, quantity) in exportDict.Entries)
-                exports[(int)(IdOf(key) ?? 0)] = IdOf(quantity) ?? 0;
-        var rate = call.Arg(3) switch { PyReal real => real.Value, PyInt number => number.Value, PyLong number => number.Value, _ => 0.0 };
+        if (call.Arg(1) is not PyDict importDict || call.Arg(2) is not PyDict exportDict)
+            throw MachoErrors.ThrowUserError("INVENTORY_OPERATION_INVALID");
+        var importEntries = importDict.Entries;
+        var exportEntries = exportDict.Entries;
+        if (importEntries.Count > MaxCustomsImportExportEntries
+            || exportEntries.Count > MaxCustomsImportExportEntries - importEntries.Count)
+            throw MachoErrors.ThrowUserError("INVENTORY_BULK_LIMIT_EXCEEDED");
+        var imports = new Dictionary<long, long>(importEntries.Count);
+        foreach (var (key, quantity) in importEntries)
+        {
+            var itemId = IdOf(key);
+            var amount = IdOf(quantity);
+            if (itemId is null or <= 0 || amount is null or <= 0 || !imports.TryAdd(itemId.Value, amount.Value))
+                throw MachoErrors.ThrowUserError("INVENTORY_OPERATION_INVALID");
+        }
+        var exports = new Dictionary<int, long>(exportEntries.Count);
+        foreach (var (key, quantity) in exportEntries)
+        {
+            var typeId = IdOf(key);
+            var amount = IdOf(quantity);
+            if (typeId is null or <= 0 or > int.MaxValue || amount is null or <= 0
+                || !exports.TryAdd((int)typeId.Value, amount.Value))
+                throw MachoErrors.ThrowUserError("INVENTORY_OPERATION_INVALID");
+        }
+        var rate = call.Arg(3) switch { PyReal real => real.Value, PyInt number => number.Value, PyLong number => number.Value, _ => double.NaN };
+        if (!double.IsFinite(rate) || rate is < 0 or > 1)
+            throw MachoErrors.ThrowUserError("INVENTORY_OPERATION_INVALID");
         await Customs.ImportExportAsync(call.Session, office.ItemId, IdOf(call.Arg(0)) ?? 0, imports, exports, rate, call.Cancellation);
         return None;
     }

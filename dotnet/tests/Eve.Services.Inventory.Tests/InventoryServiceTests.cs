@@ -665,16 +665,20 @@ public class InvBrokerTests
         var session = Rig.Session();
         var ownContainer = await rig.AddAsync(Rig.Tritanium, Rig.Character, Rig.Station, singleton: true);
         var foreignContainer = await rig.AddAsync(Rig.Tritanium, Rig.Character + 1, Rig.Station, singleton: true);
+        var remoteOwnedContainer = await rig.AddAsync(Rig.Tritanium, Rig.Character, Rig.OtherStation, singleton: true);
+        var remoteForeignContainer = await rig.AddAsync(Rig.Tritanium, Rig.Character + 1, Rig.OtherStation, singleton: true);
         var hangar = await rig.HangarAsync(session);
         var ownRow = Assert.Single(Rows(await rig.CallAsync(session, "List", hangar)));
 
         Assert.Equal(PyBool.True, await rig.CallAsync(session, "ValidateItemCanBeOpened", null, ownRow));
         Assert.Equal(PyBool.False, await rig.CallAsync(session, "ValidateItemCanBeOpened", null, new PyLong(foreignContainer)));
         Assert.Equal(PyBool.False, await rig.CallAsync(session, "ValidateItemCanBeOpened", null, new PyLong(ownContainer + 1000)));
+        Assert.Equal(PyBool.False, await rig.CallAsync(session, "ValidateItemCanBeOpened", null, new PyLong(remoteOwnedContainer)));
+        Assert.Equal(PyBool.False, await rig.CallAsync(session, "ValidateItemCanBeOpened", null, new PyLong(remoteForeignContainer)));
 
         var invalid = Assert.IsType<PyList>(await rig.CallAsync(session, "ValidateItemListCanBeOpened", null,
-            PyList.Of(ownRow, new PyLong(foreignContainer))));
-        Assert.Equal(new PyList([new PyLong(foreignContainer)]), invalid);
+            PyList.Of(ownRow, new PyLong(foreignContainer), new PyLong(remoteOwnedContainer), new PyLong(remoteForeignContainer))));
+        Assert.Equal(new PyList([new PyLong(foreignContainer), new PyLong(remoteOwnedContainer), new PyLong(remoteForeignContainer)]), invalid);
         Assert.Equal(PyBool.True, await rig.CallAsync(session, "ValidateItemCanBeOpened", null, PyNone.Instance));
     }
 
@@ -1138,6 +1142,73 @@ public class InvBrokerTests
 
         Assert.Equal("FakeItemNotFound", error.Error.UserErrorMessage);
         Assert.Equal([officeId], space.Opened);
+    }
+
+    [PgFact]
+    public async Task Customs_import_export_refuses_oversized_and_malformed_dictionaries_before_callback()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var officeId = 1_200_040_491_241L;
+        var space = new FakeSpace
+        {
+            OpenResult = new Item(officeId, 2233, 1_000_125, 30100032, 0, 1, true, null),
+        };
+        var customs = new FakeCustoms(officeId);
+        var service = new InvBrokerService(rig.Items, new ItemTypeCatalog(new SdeReader(rig.Source)), Rig.Stations,
+            Rig.Unused(rig.Source, rig.Items, new DogmaStatic([], [], [])), new DogmaStatic([], [], []), () => 1, space)
+        {
+            Customs = customs,
+        };
+        var session = Rig.Session(station: null);
+        session.Set("shipid", new PyLong(9_988_400_000_001));
+        session.Set("solarsystemid", new PyInt(30100032));
+        var binding = await service.GetInventoryFromId(new ServiceCall
+        {
+            Method = "GetInventoryFromId",
+            Args = [new PyLong(officeId)],
+            Session = session,
+        });
+        var oid = Rig.OidOf(binding);
+        var tooMany = new PyDict([.. Enumerable.Range(1, 501).Select(index =>
+            new KeyValuePair<PyValue, PyValue>(new PyLong(index), new PyLong(1)))]);
+
+        var limit = await Assert.ThrowsAsync<MachoWrappedException>(() => service.ImportExportWithPlanet(new ServiceCall
+        {
+            Method = "ImportExportWithPlanet",
+            Args = [new PyLong(77), tooMany, new PyDict([]), new PyReal(0.1)],
+            Session = session,
+            BoundObjectId = oid,
+        }).AsTask());
+        Assert.Equal("INVENTORY_BULK_LIMIT_EXCEEDED", limit.Error.UserErrorMessage);
+
+        var malformed = new PyDict([new(new PyLong(-1), new PyLong(-2))]);
+        var invalid = await Assert.ThrowsAsync<MachoWrappedException>(() => service.ImportExportWithPlanet(new ServiceCall
+        {
+            Method = "ImportExportWithPlanet",
+            Args = [new PyLong(77), malformed, new PyDict([]), new PyReal(double.NaN)],
+            Session = session,
+            BoundObjectId = oid,
+        }).AsTask());
+        Assert.Equal("INVENTORY_OPERATION_INVALID", invalid.Error.UserErrorMessage);
+
+        var nonFiniteRate = await Assert.ThrowsAsync<MachoWrappedException>(() => service.ImportExportWithPlanet(new ServiceCall
+        {
+            Method = "ImportExportWithPlanet",
+            Args = [new PyLong(77), new PyDict([]), new PyDict([]), new PyReal(double.NaN)],
+            Session = session,
+            BoundObjectId = oid,
+        }).AsTask());
+        Assert.Equal("INVENTORY_OPERATION_INVALID", nonFiniteRate.Error.UserErrorMessage);
+
+        var wrongShape = await Assert.ThrowsAsync<MachoWrappedException>(() => service.ImportExportWithPlanet(new ServiceCall
+        {
+            Method = "ImportExportWithPlanet",
+            Args = [new PyLong(77), new PyStr("imports"), new PyDict([]), new PyReal(0.1)],
+            Session = session,
+            BoundObjectId = oid,
+        }).AsTask());
+        Assert.Equal("INVENTORY_OPERATION_INVALID", wrongShape.Error.UserErrorMessage);
+        Assert.Equal(0, customs.ImportCalls);
     }
 
     [PgFact]

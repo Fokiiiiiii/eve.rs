@@ -3836,6 +3836,19 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
     }
 
     [Fact]
+    public void Expanded_mail_recipients_are_merged_and_capped_before_delivery()
+    {
+        var recipientIds = new List<long>();
+        var labels = new Dictionary<long, int>();
+
+        Assert.True(MailOrganizationAuthorization.TryAddRecipient(recipientIds, labels, 101, 1, maximum: 1));
+        Assert.True(MailOrganizationAuthorization.TryAddRecipient(recipientIds, labels, 101, 8, maximum: 1));
+        Assert.False(MailOrganizationAuthorization.TryAddRecipient(recipientIds, labels, 102, 1, maximum: 1));
+        Assert.Equal(new[] { 101L }, recipientIds);
+        Assert.Equal(9, labels[101]);
+    }
+
+    [Fact]
     public void Mail_organization_recipient_requires_own_corporation_or_chat_manager()
     {
         const long senderId = 90000101;

@@ -769,7 +769,8 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
             return new PyList([]);
         var rows = await MemberTrackingRows(call,corporation);
         return new PyList(rows.Select(row => (PyValue)new PyList([
-            row[0],row[1],row[3],row[4],row[2],row[5],row[6],row[10],row[9],row[11],row[18],row[7],row[8]
+            row[0],row[1],row[3],row[4],row[2],row[5],row[6],PyValue.None,row[9],PyValue.None,
+            PyValue.None,PyValue.None,PyValue.None
         ])).ToArray());
     }
 

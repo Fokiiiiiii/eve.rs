@@ -285,6 +285,10 @@ public sealed class PacketDispatcher
             return 10;
         if (service == "contractProxy")
             return 10;
+        if (service == "insuranceSvc" && method == "GetContracts")
+            return 10;
+        if (service == "corpStationMgr" && method == "MachoBindObject")
+            return 10;
         if (service == "billMgr")
             return 10;
         if (service == "industryManager" && method is ("GetJobCounts" or "GetJob" or "GetJobsByOwner" or "InstallJob" or "CompleteJob" or "CompleteManyJobs" or "CancelJob"))
@@ -294,6 +298,8 @@ public sealed class PacketDispatcher
         if ((service is "charFittingMgr" or "corpFittingMgr" or "allianceFittingMgr") && (method is "GetFittings" or "SaveFitting" or "UpdateFitting" or "SaveManyFittings" or "DeleteFitting" or "DeleteManyFittings" or "UpdateNameAndDescription" or "GetCommunityFittings"))
             return 10;
         if (service == "invbroker" && method is "MultiMerge" or "MultiAdd" or "StackAll" or "RepackageItems")
+            return 10;
+        if (service == "invbroker" && method is "GetDamageForCrystals" or "ValidateItemListCanBeOpened" or "ListIncludingContainers" or "ImportExportWithPlanet")
             return 10;
         if (service == "invbroker" && method is "GetInventory" or "GetInventoryFromId" or "GetContainerContents" or "GetItems" or "List" or "ListByFlags" or "ListStations" or "ListStationItems" or "ListIncludingContainers" or "GetAssetWorth" or "GetCapacity")
             return 2;
@@ -316,6 +322,10 @@ public sealed class PacketDispatcher
         if (service == "corpRecProxy" && method is "SearchCorpAds")
             return 10;
         if (service == "structureDirectory" && method is "CheckMyDockingAccessToStructures" or "GetMyDockableStructures" or "GetMyCharacterStructures" or "GetMyCorporationStructures")
+            return 10;
+        if (service == "structureJumpBridgeMgr" && method is "GetJbStructureDestination" or "GetLinkedStructure")
+            return 10;
+        if (service == "officeManager" && method is "HasCorpImpoundedItems" or "GetImpoundReleasePrice" or "RentOffice" or "UnrentOffice" or "GetItemsFromImpound" or "TrashImpoundedOffice")
             return 10;
         if (service == "skillHandler" && method is "InjectSkillIntoBrain" or "InjectSkillpoints" or "ExtractSkills" or "GetDiminishedSpFromInjectors" or "SplitSkillInjector" or "CombineSkillInjector")
             return 10;

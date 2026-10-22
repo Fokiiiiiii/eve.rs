@@ -477,6 +477,24 @@ public class DispatchGoldenTests
     }
 
     [Fact]
+    public async Task Inventory_recursive_and_validation_calls_use_the_expensive_rpc_budget()
+    {
+        var capture = new Capture();
+        var session = new ClientSession(capture) { SessionId = 917 };
+        var registry = new ServiceRegistry();
+        var service = new InventoryBudgetService();
+        registry.Register(service);
+        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 10 };
+
+        await dispatcher.DispatchAsync(CallRequestPacket("invbroker", "ListIncludingContainers"), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("invbroker", "GetCapacity"), session);
+
+        Assert.Equal(1, service.Calls);
+        Assert.Equal(2, capture.Sent.Count);
+        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[1])));
+    }
+
+    [Fact]
     public async Task Inventory_bulk_mutations_use_the_named_per_session_budget()
     {
         var capture = new Capture();
@@ -650,6 +668,101 @@ public class DispatchGoldenTests
         Assert.Equal(1, service.Calls);
         Assert.Equal(2, capture.Sent.Count);
         Assert.Equal(ErrorResponseCommand, CommandOf(capture.Sent[1]));
+        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[1])));
+    }
+
+    [Fact]
+    public async Task Corporation_office_impound_reads_use_the_named_per_session_budget()
+    {
+        var capture = new Capture();
+        var session = new ClientSession(capture) { SessionId = 919 };
+        var registry = new ServiceRegistry();
+        var service = new OfficeManagerBudgetService();
+        registry.Register(service);
+        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 10 };
+
+        await dispatcher.DispatchAsync(CallRequestPacket("officeManager", "HasCorpImpoundedItems"), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("officeManager", "GetImpoundReleasePrice"), session);
+
+        Assert.Equal(1, service.Calls);
+        Assert.Equal(2, capture.Sent.Count);
+        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[1])));
+    }
+
+    [Fact]
+    public async Task Corporation_office_item_mutations_use_the_named_per_session_budget()
+    {
+        var methods = new[] { "RentOffice", "UnrentOffice", "GetItemsFromImpound", "TrashImpoundedOffice" };
+        for (var index = 0; index < methods.Length; index++)
+        {
+            var method = methods[index];
+            var capture = new Capture();
+            var session = new ClientSession(capture) { SessionId = 920 + index };
+            var registry = new ServiceRegistry();
+            var service = new OfficeManagerBudgetService();
+            registry.Register(service);
+            var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 10 };
+
+            await dispatcher.DispatchAsync(CallRequestPacket("officeManager", method), session);
+            await dispatcher.DispatchAsync(CallRequestPacket("officeManager", "HasCorpImpoundedItems"), session);
+
+            Assert.Equal(1, service.Calls);
+            Assert.Equal(2, capture.Sent.Count);
+            Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[1])));
+        }
+    }
+
+    [Fact]
+    public async Task Corporation_station_binds_use_the_named_per_session_budget()
+    {
+        var capture = new Capture();
+        var session = new ClientSession(capture) { SessionId = 916 };
+        var registry = new ServiceRegistry();
+        var service = new CorpStationBindBudgetService();
+        registry.Register(service);
+        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 10 };
+
+        await dispatcher.DispatchAsync(CallRequestPacket("corpStationMgr", "MachoBindObject"), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("corpStationMgr", "MachoBindObject"), session);
+
+        Assert.Equal(1, service.Calls);
+        Assert.Equal(2, capture.Sent.Count);
+        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[1])));
+    }
+
+    [Fact]
+    public async Task Insurance_contract_scans_use_the_named_per_session_budget()
+    {
+        var capture = new Capture();
+        var session = new ClientSession(capture) { SessionId = 917 };
+        var registry = new ServiceRegistry();
+        var service = new InsuranceBudgetService();
+        registry.Register(service);
+        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 10 };
+
+        await dispatcher.DispatchAsync(CallRequestPacket("insuranceSvc", "GetContracts"), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("insuranceSvc", "GetContracts"), session);
+
+        Assert.Equal(1, service.Calls);
+        Assert.Equal(2, capture.Sent.Count);
+        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[1])));
+    }
+
+    [Fact]
+    public async Task Jump_bridge_structure_reads_use_the_named_per_session_budget()
+    {
+        var capture = new Capture();
+        var session = new ClientSession(capture) { SessionId = 918 };
+        var registry = new ServiceRegistry();
+        var service = new StructureJumpBridgeBudgetService();
+        registry.Register(service);
+        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 10 };
+
+        await dispatcher.DispatchAsync(CallRequestPacket("structureJumpBridgeMgr", "GetJbStructureDestination"), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("structureJumpBridgeMgr", "GetLinkedStructure"), session);
+
+        Assert.Equal(1, service.Calls);
+        Assert.Equal(2, capture.Sent.Count);
         Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[1])));
     }
 
@@ -1106,13 +1219,73 @@ public class DispatchGoldenTests
         }
     }
 
+    private sealed class OfficeManagerBudgetService : IService
+    {
+        public int Calls { get; private set; }
+
+        public string Name => "officeManager";
+
+        public bool HasMethod(string method) => method is "HasCorpImpoundedItems" or "GetImpoundReleasePrice" or "RentOffice" or "UnrentOffice" or "GetItemsFromImpound" or "TrashImpoundedOffice";
+
+        public ValueTask<PyValue> CallAsync(ServiceCall call)
+        {
+            Calls++;
+            return ValueTask.FromResult<PyValue>(PyNone.Instance);
+        }
+    }
+
+    private sealed class CorpStationBindBudgetService : IService
+    {
+        public int Calls { get; private set; }
+
+        public string Name => "corpStationMgr";
+
+        public bool HasMethod(string method) => method == "MachoBindObject";
+
+        public ValueTask<PyValue> CallAsync(ServiceCall call)
+        {
+            Calls++;
+            return ValueTask.FromResult<PyValue>(PyNone.Instance);
+        }
+    }
+
+    private sealed class InsuranceBudgetService : IService
+    {
+        public int Calls { get; private set; }
+
+        public string Name => "insuranceSvc";
+
+        public bool HasMethod(string method) => method == "GetContracts";
+
+        public ValueTask<PyValue> CallAsync(ServiceCall call)
+        {
+            Calls++;
+            return ValueTask.FromResult<PyValue>(PyNone.Instance);
+        }
+    }
+
+    private sealed class StructureJumpBridgeBudgetService : IService
+    {
+        public int Calls { get; private set; }
+
+        public string Name => "structureJumpBridgeMgr";
+
+        public bool HasMethod(string method) => method is "GetJbStructureDestination" or "GetLinkedStructure";
+
+        public ValueTask<PyValue> CallAsync(ServiceCall call)
+        {
+            Calls++;
+            return ValueTask.FromResult<PyValue>(PyNone.Instance);
+        }
+    }
+
     private sealed class InventoryBudgetService : IService
     {
         public int Calls { get; private set; }
 
         public string Name => "invbroker";
 
-        public bool HasMethod(string method) => method is "GetInventoryFromId" or "ListIncludingContainers" or "MultiAdd" or "MultiMerge";
+        public bool HasMethod(string method) => method is "GetInventoryFromId" or "ListIncludingContainers" or "GetCapacity" or "MultiAdd" or "MultiMerge";
 
         public ValueTask<PyValue> CallAsync(ServiceCall call)
         {

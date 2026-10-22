@@ -491,6 +491,44 @@ public sealed class CorporationOfficeTests
     }
 
     [PgFact]
+    public async Task Impound_status_and_release_price_require_current_corporation_membership()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (actor, corporation) = await CreateCorporationAsync(rig);
+        await SetOfficeRoleAsync(rig, actor, CorporationRoles.RentOffice);
+        var service = CreateService(rig);
+        var quote = await QuoteAsync(service, actor, corporation.Id);
+        await service.RentOffice(Call("RentOffice", actor, corporation.Id, new Eve.Marshal.PyReal((double)quote)));
+        var office = Assert.Single(await rig.OfficeStore.ForCorporationAsync(corporation.Id));
+        await CreateItemAsync(rig, corporation.Id, Station.Id, Eve.Inventory.ItemFlags.CorpSAG1);
+
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await Eve.Services.Corporations.StationOfficeImpound.ImpoundAsync(
+                rig.Items, rig.OfficeStore, connection, transaction, office, rig.Now, CancellationToken.None);
+            await transaction.CommitAsync();
+        }
+
+        Assert.Equal(Eve.Marshal.PyBool.True,
+            await service.HasCorpImpoundedItems(Call("HasCorpImpoundedItems", actor, corporation.Id)));
+        Assert.True(((Eve.Marshal.PyReal)await service.GetImpoundReleasePrice(
+            Call("GetImpoundReleasePrice", actor, corporation.Id))).Value > 0);
+
+        await using (var revoke = rig.Source.CreateCommand(
+            $"DELETE FROM {rig.CorporationSchema}.members WHERE character_id=$1"))
+        {
+            revoke.Parameters.Add(new Npgsql.NpgsqlParameter { Value = actor });
+            Assert.Equal(1, await revoke.ExecuteNonQueryAsync());
+        }
+
+        Assert.Equal(Eve.Marshal.PyBool.False,
+            await service.HasCorpImpoundedItems(Call("HasCorpImpoundedItems", actor, corporation.Id)));
+        Assert.Equal(new Eve.Marshal.PyInt(0),
+            await service.GetImpoundReleasePrice(Call("GetImpoundReleasePrice", actor, corporation.Id)));
+    }
+
+    [PgFact]
     public async Task Unpaid_station_office_is_impounded_with_its_hangar_items_and_ends()
     {
         await using var rig = await Rig.CreateAsync();

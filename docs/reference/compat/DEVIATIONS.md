@@ -5429,8 +5429,44 @@ The staff-only `mailMgr.PokePlayerAboutChatMsgGm` RPC caps its requested channel
 
 ## Market corporation-order Accountant gate (2026-10-22)
 
-`marketProxy.GetCorporationOrders` now checks the caller’s persisted corporation membership and Accountant role before returning rows, including wallet division IDs. V24.01 exposes the corporation orders tab only when the session’s `corprole` includes `corpRoleAccountant` (`eve/client/script/ui/shared/market/marketOrdersWnd.py:40-52`). EveJS 261018.1 derives the owner from `session.corpid` but does not repeat this authorization in the RPC handler; eve.rs rechecks persisted authority because the method exposes corporation order details and its wallet division. `MarketRpcTests.Corporation_market_orders_require_the_persisted_accountant_role` verifies an ordinary member is refused; the CEO order-row regression verifies allowed output.
+`marketProxy.GetCorporationOrders` returns an empty rowset for an NPC corporation, matching the client-visible market walk; player-corporation rows, including wallet division IDs, require the caller’s persisted corporation membership and Accountant role. V24.01 exposes the corporation orders tab only when the session’s `corprole` includes `corpRoleAccountant` (`eve/client/script/ui/shared/market/marketOrdersWnd.py:40-52`). EveJS 261018.1 derives the owner from `session.corpid` but does not repeat this authorization in the RPC handler; eve.rs rechecks persisted authority because the method exposes corporation order details and its wallet division. `Npc_or_missing_corporation_market_orders_return_an_empty_rowset` checks NPC-corporation behavior, `Corporation_market_orders_require_the_persisted_accountant_role` verifies an ordinary member is refused, and the CEO order-row regression verifies allowed output.
 
 ## Character activity status input bound (2026-10-21)
 
 `charMgr.SetActivityStatus` takes the character from the authenticated session. The V24.01 client sends `extraInfo` as a FILETIME integer during AFK and activity transitions (`eve/client/script/parklife/gameui.py:333-338`); the Host converts the value to text and caps it at 32 UTF-16 code units before the persistence callback. Oversized input returns `CHARMGR_ACTIVITY_INFO_LIMIT_EXCEEDED`. `CharacterInfoTests.Activity_status_extra_info_is_bounded_before_the_persistence_callback` checks a valid timestamp, refusal above the bound, and no second callback.
+
+
+## Inventory open validation is station scoped (2026-10-22)
+
+While docked, `invbroker.ValidateItemCanBeOpened` and `ValidateItemListCanBeOpened` now return an unavailable result for item IDs outside the current station. The inventory binding only opens station-local items, so this also prevents the validation RPC from exposing remote item existence. Space checks continue to use the simulation visibility and range callback. `InventoryServiceTests.Container_open_validation_accepts_owned_items_and_expires_foreign_location_cache_entries` covers local ownership and both owned and foreign remote items.
+
+
+## Corporation member tracking field visibility (2026-10-22)
+
+The V24.01 client calls `GetMemberTrackingInfoSimple` for members without the Director role and renders location, ship, faction, and logon/logoff columns only for Directors (`eve/client/script/ui/services/corporation/base_corporation.py` and `corp_ui_member_tracking.py`). EveJS 261018.1 builds both method responses from the same detailed rows. eve.rs preserves the member row shape while clearing those Director-only values from the simple response. `CorporationProtocolTests.Corporation_core_and_role_rpcs_preserve_public_fields_and_role_contracts` asserts those fields are absent for a member session.
+
+
+## Mail recipient expansion bound (2026-10-22)
+Organization and mailing-list delivery now stops at 5,000 distinct recipients before persistence and returns `MAIL_RECIPIENT_LIMIT_EXCEEDED` when expansion exceeds that bound. This protects delivery persistence and notification fanout from a single oversized expansion. `Expanded_mail_recipients_are_merged_and_capped_before_delivery` covers duplicate merging and rejection before delivery.
+
+
+## Customs import/export input bounds (2026-10-22)
+`invbroker.ImportExportWithPlanet` accepts at most 500 combined raw import and export entries. It refuses duplicate or nonpositive item/type identifiers, nonpositive quantities, type IDs outside Int32, and non-finite or out-of-range tax rates before calling the transactional customs provider. The RPC also consumes 10 weighted per-session units because each accepted entry can lock and mutate persistence rows. `Customs_import_export_refuses_oversized_and_malformed_dictionaries_before_callback` covers the limit and malformed payload boundary.
+
+
+## Jump-bridge topology read budget (2026-10-22)
+`structureJumpBridgeMgr.GetJbStructureDestination` and `GetLinkedStructure` validate the requested ID against persisted jump-bridge rows and each query costs 10 weighted per-session units because the provider reads the structure catalog. `Jump_bridge_structure_reads_use_the_named_per_session_budget` covers the dispatcher refusal.
+
+
+## Corporation office impound reads use current membership (2026-10-22)
+`officeManager.HasCorpImpoundedItems` and `GetImpoundReleasePrice` previously trusted the session corporation ID when reading impounded inventory. They now use the current persisted corporation membership check, so a removed member cannot continue querying former-corporation impound status or fee data. Impound status, release-price reads, office rent/unrent, item release, and impound trash cost 10 weighted per-session units because they scan or mutate station inventory. `Impound_status_and_release_price_require_current_corporation_membership` covers role revocation, `Corporation_office_impound_reads_use_the_named_per_session_budget` covers read budgets, and `Corporation_office_item_mutations_use_the_named_per_session_budget` covers mutation budgets.
+
+
+## Insurance contract scan budget (2026-10-22)
+
+`insuranceSvc.GetContracts` reads the persisted insurance contract map before applying owner, activity, and ship filters, so it costs 10 weighted per-session RPC units. The result shape and complete owner contract set remain unchanged. `Insurance_contract_scans_use_the_named_per_session_budget` verifies a second call is refused before the provider runs.
+
+
+## Corporation station bind budget (2026-10-22)
+
+The corpStationMgr MachoBindObject RPC allocates a station moniker tracked until the client releases it or the session ends. It costs 10 weighted per-session RPC units to bound repeated allocation while retaining the V24.01 bind response and release behavior. Corporation_station_binds_use_the_named_per_session_budget verifies that later binds are refused before invoking the service.

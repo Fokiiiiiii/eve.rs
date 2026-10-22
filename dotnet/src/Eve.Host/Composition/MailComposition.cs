@@ -37,6 +37,29 @@ namespace Eve.Host;
 
 public static class MailOrganizationAuthorization
 {
+    public const int MaxExpandedMailRecipients = 5_000;
+
+    public static bool TryAddRecipient(
+        List<long> recipientIds,
+        Dictionary<long, int> recipientLabelMasks,
+        long characterId,
+        int labelMask,
+        int maximum = MaxExpandedMailRecipients)
+    {
+        if (characterId <= 0)
+            return true;
+        if (recipientLabelMasks.TryGetValue(characterId, out var prior))
+        {
+            recipientLabelMasks[characterId] = prior | labelMask;
+            return true;
+        }
+        if (maximum <= 0 || recipientIds.Count >= maximum)
+            return false;
+        recipientIds.Add(characterId);
+        recipientLabelMasks.Add(characterId, labelMask);
+        return true;
+    }
+
     public static bool CanSendOrganizationMail(
         long recipientId,
         Eve.Corporations.Corporation senderCorporation,
@@ -86,15 +109,9 @@ internal sealed partial class CharacterServicesComposition
         var recipientLabelMasks = new Dictionary<long, int>();
         void AddRecipient(long characterId, int labelMask)
         {
-            if (characterId <= 0)
-                return;
-            if (recipientLabelMasks.TryGetValue(characterId, out var prior))
-                recipientLabelMasks[characterId] = prior | labelMask;
-            else
-            {
-                recipientIds.Add(characterId);
-                recipientLabelMasks.Add(characterId, labelMask);
-            }
+            if (!MailOrganizationAuthorization.TryAddRecipient(
+                    recipientIds, recipientLabelMasks, characterId, labelMask))
+                throw Eve.Services.MachoErrors.ThrowUserError("MAIL_RECIPIENT_LIMIT_EXCEEDED");
         }
 
         var senderLabelMask = 2;

@@ -40,7 +40,7 @@ public class HostServerTests : IAsyncLifetime
 
     public Task InitializeAsync() => Task.CompletedTask;
 
-    private void Start(AccountOptions? identity = null, int maxPending = 10_000, Action<ServiceRegistry>? configure = null, IAccountDirectory? accounts = null, bool strictRpc = false, Action<string, Exception?>? onProblem = null, Action<ClientSession>? sessionOpened = null, long maxOutboundBytes = 8 * 1024 * 1024, long maxPendingBytes = 16 * 1024 * 1024)
+    private void Start(AccountOptions? identity = null, int maxPending = 10_000, Action<ServiceRegistry>? configure = null, IAccountDirectory? accounts = null, bool strictRpc = false, Action<string, Exception?>? onProblem = null, Action<ClientSession>? sessionOpened = null, long maxOutboundBytes = 8 * 1024 * 1024, long maxPendingBytes = 16 * 1024 * 1024, int maxConnections = 1_024)
     {
         var registry = new ServiceRegistry();
         configure?.Invoke(registry);
@@ -56,7 +56,7 @@ public class HostServerTests : IAsyncLifetime
         var dispatcher = new PacketDispatcher(registry, now) { StrictRpc = strictRpc, OnProblem = onProblem };
         var encoded = MarshalCodec.Encode(config);
         _server = new HostServer(
-            new HostOptions { MaxPendingPacketsPerSession = maxPending, MaxPendingBytesPerSession = maxPendingBytes, MaxQueuedOutboundBytesPerSession = maxOutboundBytes, Log = message => { lock (_log) { _log.Add(message); } }, SessionOpened = sessionOpened },
+            new HostOptions { MaxFrontConnections = maxConnections, MaxPendingPacketsPerSession = maxPending, MaxPendingBytesPerSession = maxPendingBytes, MaxQueuedOutboundBytesPerSession = maxOutboundBytes, Log = message => { lock (_log) { _log.Add(message); } }, SessionOpened = sessionOpened },
             dispatcher,
             accounts ?? new InMemoryAccountDirectory(identity ?? new AccountOptions { AutoCreate = true }),
             () => encoded);
@@ -1899,6 +1899,27 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
         var (ra, rb) = (await a.AuthenticateAsync("a", [1], 1), await b.AuthenticateAsync("b", [2], 1));
         Assert.NotEqual(Assert.IsType<Accepted>(ra.Outcome).UserId, Assert.IsType<Accepted>(rb.Outcome).UserId);
         Assert.Equal(2, _server.ConnectedFronts);
+    }
+
+
+    [Fact]
+    public async Task Front_connections_above_the_server_limit_are_closed_before_dispatch()
+    {
+        Start(maxConnections: 1);
+        var first = await Handshaken(await ConnectAsync());
+        var second = await ConnectAsync();
+
+        Assert.Null(await second.ReceiveOrEndAsync());
+        Assert.Equal(1, _server.ConnectedFronts);
+        await first.AuthenticateAsync("bounded", [1], 1);
+        Assert.Equal(1, _server.ConnectedFronts);
+    }
+
+
+    [Fact]
+    public void Front_connection_limit_must_be_positive()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => Start(maxConnections: 0));
     }
 
     [Fact]

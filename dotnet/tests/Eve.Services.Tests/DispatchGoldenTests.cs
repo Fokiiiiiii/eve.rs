@@ -672,6 +672,24 @@ public class DispatchGoldenTests
     }
 
     [Fact]
+    public async Task Jump_bridge_structure_reads_use_the_named_per_session_budget()
+    {
+        var capture = new Capture();
+        var session = new ClientSession(capture) { SessionId = 918 };
+        var registry = new ServiceRegistry();
+        var service = new StructureJumpBridgeBudgetService();
+        registry.Register(service);
+        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 10 };
+
+        await dispatcher.DispatchAsync(CallRequestPacket("structureJumpBridgeMgr", "GetJbStructureDestination"), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("structureJumpBridgeMgr", "GetLinkedStructure"), session);
+
+        Assert.Equal(1, service.Calls);
+        Assert.Equal(2, capture.Sent.Count);
+        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[1])));
+    }
+
+    [Fact]
     public async Task Character_structure_directory_reads_use_the_named_per_session_budget()
     {
         var capture = new Capture();
@@ -1116,6 +1134,21 @@ public class DispatchGoldenTests
         public string Name => "corpRegistry";
 
         public bool HasMethod(string method) => method is "GetEveOwners" or "GetMemberIDsByQuery" or "GetMembersPaged" or "PayoutDividend" or "UpdateApplicationOffer";
+
+        public ValueTask<PyValue> CallAsync(ServiceCall call)
+        {
+            Calls++;
+            return ValueTask.FromResult<PyValue>(PyNone.Instance);
+        }
+    }
+
+    private sealed class StructureJumpBridgeBudgetService : IService
+    {
+        public int Calls { get; private set; }
+
+        public string Name => "structureJumpBridgeMgr";
+
+        public bool HasMethod(string method) => method is "GetJbStructureDestination" or "GetLinkedStructure";
 
         public ValueTask<PyValue> CallAsync(ServiceCall call)
         {

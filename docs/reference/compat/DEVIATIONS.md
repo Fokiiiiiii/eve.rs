@@ -5448,3 +5448,7 @@ Organization and mailing-list delivery now stops at 5,000 distinct recipients be
 
 ## Customs import/export input bounds (2026-10-22)
 `invbroker.ImportExportWithPlanet` accepts at most 500 combined raw import and export entries. It refuses duplicate or nonpositive item/type identifiers, nonpositive quantities, type IDs outside Int32, and non-finite or out-of-range tax rates before calling the transactional customs provider. The RPC also consumes 10 weighted per-session units because each accepted entry can lock and mutate persistence rows. `Customs_import_export_refuses_oversized_and_malformed_dictionaries_before_callback` covers the limit and malformed payload boundary.
+
+
+## Jump-bridge topology read budget (2026-10-22)
+`structureJumpBridgeMgr.GetJbStructureDestination` and `GetLinkedStructure` validate the requested ID against persisted jump-bridge rows and each query costs 10 weighted per-session units because the provider reads the structure catalog. `Jump_bridge_structure_reads_use_the_named_per_session_budget` covers the dispatcher refusal.

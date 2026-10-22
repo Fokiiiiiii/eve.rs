@@ -2863,6 +2863,24 @@ fn structure_deposit_measure_uses_actual_surfaces_and_preserves_the_one_argument
 }
 
 #[test]
+fn structure_deposit_measure_supports_point_anchors_without_sde_radius() {
+    let (mut simulation, mut placement) = structure_deposit_sim();
+    let structure_id = placement.structure_id;
+    let ship_id = spec().ship_id;
+    let ship = &simulation.scenes[&SceneKey::solar_system(SYSTEM)].pilots[&SESSION].ship;
+    let expected = placement.position[0] - ship.position.x - ship.spec.radius;
+    placement.radius = 0.0;
+    simulation.handle(Message::RemoveStructure { structure_id }, NOON).unwrap();
+    simulation.handle(Message::PlaceStructure(Box::new(placement)), NOON).unwrap();
+
+    let measured = structure_deposit_query(&mut simulation, structure_id, ship_id);
+    assert!(
+        matches!(measured.as_slice(), [Message::Measured { distance: Some(distance), .. }] if (*distance - expected).abs() < 1e-3),
+        "{measured:?}"
+    );
+}
+
+#[test]
 fn structure_deposit_measure_refuses_missing_nonlocal_cloaked_warping_and_observer_ships() {
     let (mut simulation, placement) = structure_deposit_sim();
     let structure_id = placement.structure_id;

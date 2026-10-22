@@ -53,9 +53,6 @@ public static class EssRules
     /// Where an ESS ball is put in its system: the system's origin. The operator places systems, not positions, so the position is fixed by the rule and is not
     /// a per-system value.
     /// </summary>
-    public const double BallX = 0;
-    public const double BallY = 0;
-    public const double BallZ = 0;
 
     public const double ReservePayoutPaddingValue = 0;
 
@@ -202,24 +199,24 @@ public static class EssQuadrants
 {
     private static readonly Lazy<IReadOnlyDictionary<string, IReadOnlyList<string>>> Embedded = new(Load);
 
-    /// <summary>The system names of each quadrant, as the data file has them.</summary>
+    /// <summary>The region names of each quadrant, as the data file has them.</summary>
     public static IReadOnlyDictionary<string, IReadOnlyList<string>> ByName => Embedded.Value;
 
-    /// <summary>The quadrant of each solar system id, given the names of the systems (the SDE's names; a name that is in no quadrant is in none).</summary>
-    public static Dictionary<int, string> BySystemId(IReadOnlyDictionary<int, string> namesById)
+    /// <summary>The quadrant of each solar system ID, given the SDE region name for that system (a region that is in no quadrant is in none).</summary>
+    public static Dictionary<int, string> BySystemId(IReadOnlyDictionary<int, string> regionNamesBySystemId)
     {
-        var quadrantByName = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var (quadrant, names) in ByName)
+        var quadrantByRegionName = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var (quadrant, regionNames) in ByName)
         {
-            foreach (var name in names)
+            foreach (var regionName in regionNames)
             {
-                quadrantByName[name] = quadrant;
+                quadrantByRegionName[regionName] = quadrant;
             }
         }
         var result = new Dictionary<int, string>();
-        foreach (var (systemId, name) in namesById)
+        foreach (var (systemId, regionName) in regionNamesBySystemId)
         {
-            if (quadrantByName.TryGetValue(name, out var quadrant))
+            if (quadrantByRegionName.TryGetValue(regionName, out var quadrant))
             {
                 result[systemId] = quadrant;
             }

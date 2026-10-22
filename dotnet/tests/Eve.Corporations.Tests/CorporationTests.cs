@@ -626,7 +626,6 @@ public sealed class CorporationOfficeTests
         var quote = await QuoteAsync(officeManager, actor, corporation.Id);
         await officeManager.RentOffice(Call("RentOffice", actor, corporation.Id, new Eve.Marshal.PyReal((double)quote)));
 
-        await rig.SeedNpcCorporationAsync(Station.OwnerId);
         var billMgr = new Eve.Services.Corporations.BillMgrService(
             rig.Store, rig.OfficeStore, rig.Transactions,
             id => id == Station.Id ? Station.OwnerId : null,

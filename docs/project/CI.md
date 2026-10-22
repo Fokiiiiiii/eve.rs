@@ -50,13 +50,35 @@ The token can list runs and jobs (`GET /actions/runs` and `GET /actions/runs/{ru
 
 ## Dependency audit
 
-`dependency-audit.yml` runs `cargo audit --file Cargo.lock` (cargo-audit 0.22.2), `dotnet list dotnet/EveRs.slnx package --vulnerable --include-transitive` (failing when NuGet reports a vulnerable package) and `pip-audit` 2.10.1 on both headless-client requirement files. It runs weekly, on manual dispatch, and on pushes to `main` that change a Cargo, NuGet, or Python dependency file. A finding fails the job. The workflow has no `pull_request` trigger, so pull requests from forks and from branches in this repository both skip the audit before merge. It runs after qualifying dependency-file pushes reach `main`, weekly, or by manual dispatch.
+`dependency-audit.yml` runs `cargo audit --file Cargo.lock` (cargo-audit 0.22.2), `dotnet list dotnet/EveRs.slnx package --vulnerable --include-transitive` (failing when NuGet reports a vulnerable package) and `pip-audit` 2.10.1 on both headless-client requirement files. It runs weekly, on manual dispatch, and on pushes to `main` that change a Cargo, NuGet, or Python dependency file. A finding fails the job. The workflow has no `pull_request` trigger, so it does not run on pull requests, including pull requests from forks. It runs after qualifying dependency-file pushes reach `main`, weekly, or by manual dispatch.
 
 ## Minutes budget
 
 Record runner job durations for validation runs below. Matrix jobs count separately even when they run concurrently.
 
 ### Duration profile and test layout
+
+The 30 most recent `ci.yml` runs (#451–480, queried 2026-10-21 through `tools/dev/ci-status.py`) contained 9 successes, 17 failures, 3 cancellations and run #480 in progress. Failures overlapped across jobs. Repeated failure counts were .NET other tests 3/3 (12), end-to-end (9) and Space tests 1/2 (5); two earlier runs also had build failures.
+
+| Job group | Median duration | Slowest observed |
+|---|---:|---:|
+| Host tests 1/4 | 4.3 min | 5.0 min |
+| Host tests 2/4 | 3.4 min | 4.6 min |
+| Host tests 3/4 | 5.8 min | 6.3 min |
+| Host tests 4/4 | 5.8 min | 6.5 min |
+| Space tests 1/2 | 5.2 min | 5.8 min |
+| Space tests 2/2 | 5.0 min | 5.7 min |
+| Other tests 1/3 | 3.7 min | 5.1 min |
+| Other tests 2/3 | 4.3 min | 4.8 min |
+| Other tests 3/3 | 5.0 min | 5.7 min |
+
+The shard spread is small enough to keep the current assignment. The .NET matrix job timeout is now 15 minutes: the slowest observed shard took 6.5 minutes, leaving room for setup and normal variation while ending a stalled run sooner. End-to-end remains at 45 minutes because the observed job maximum is 9.2 minutes and it includes server startup and live client flows.
+
+For completed runs #457, #460, #476 and #478, the interval from the first started job to the required gate was 12:54, 13:26, 13:33 and 11:25 respectively. Each was below the 15-minute gate target. The slowest individual job in the full sample was the Windows client job at 14.2 minutes.
+
+Run #460's Space shard log showed whole-stream assertions in `SpaceContainerTests` and `SpaceServiceTests`: the simulation also emitted a legitimate `SimSetSlimField(selfDestructTime)` notification alongside the expected asteroid, wreck or jump message. The tests now count and inspect only the relevant action type, preserving exact action payload and once-only assertions.
+
+The repeated corporation bill failure in runs #467–477 was caused by the test omitting the station-owner corporation seed used by the bill-manager read. Commit `2c848230` adds that fixture state; run #478 passed. The earlier home-station migration failures in runs #464–465 were corrected in commit `73df766c`. Representative end-to-end logs from runs #475–477 showed the NPC-station sale assertion expected an SCC provider charge; commit `889bd235` corrected the fee expectation and run #478 passed. Run #483 exposed a malformed `GetStructureInfoAsync` test callback in the merged structure-directory tests; the method declaration had been left without a body before the following callback. Restoring the method body repaired the compilation, and the focused structure-directory suite passed 25/25 tests. Run #484’s `Market_owner_history_reads_have_a_named_per_session_budget` failure came from its fake service omitting the owner-history methods listed by the test, so dispatch returned before checking the budget. The fake now recognizes those methods; the focused budget test passed 1/1, then the full `Eve.Services.Tests` project passed 112/112. The same run’s corporation shard found a second deterministic fixture error: the office bill test inserted its station-owner NPC corporation twice into one schema. Removing the redundant seed made that test pass, and the full `Eve.Corporations.Tests` project passed 144/144. Run #485 passed the required gate 12:53 after dispatch, below the 15-minute target. Its slowest .NET job took 9.9 minutes, mainly because static-data artifact download used 6:14 before the test step began. After the following main merge added more service and corporation cases, the merged tree passed `Eve.Services.Tests` 113/113 and `Eve.Corporations.Tests` 145/145 locally.
 
 Run 272 (`f153f9c1`, 2026-10-19) is the latest green full gate before the Space split. From the first job start at 23:16:08 UTC until the Required CI gate completed at 23:34:08 UTC, the run took 18.0 minutes wall time. The Space job took 15.2 minutes, of which its `dotnet test` step used 12.85 minutes; static-data loading, artifact download and setup used about 2.3 minutes. End-to-end took 8.8 minutes. The detailed project timing profile below comes from the run 276 TRX artifacts; run 269 supplied the initial weights used by `tools/dev/shard-dotnet-projects.py`.
 

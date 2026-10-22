@@ -10,8 +10,6 @@ Skipped unless EVE_LIVE_HOST is set. tools/dev/run-eve-live.sh runs it.
 
 from __future__ import annotations
 
-import os
-import time
 import uuid
 
 import pytest
@@ -106,10 +104,8 @@ def test_a_docked_character_reads_the_market_as_the_client_does():
 # A seller takes stock from the station hangar (the game master's /giveitem), offers it (PlaceMultiSellOrder, quote.py), a buyer buys
 # part of it at once (PlaceBuyOrder with no duration), both read their transactions (CharGetTransactions, marketsvc.py:20-26), the seller
 # cancels the rest (CancelCharOrder) and sees its escrow come back. A change inside the five-minute modification delay is refused with
-# the labelled sentence; the change after the delay is checked when EVE_LIVE_SLOW=1 (it waits five minutes). Expiry is not live: it is
-# covered by the fake-clock tests (ExpiryTests, MarketCoherenceTests in dotnet/tests/Eve.Market.Tests).
-
-SLOW = os.environ.get("EVE_LIVE_SLOW") == "1"
+# the client sentence. Expiry and the modification deadline use controlled-clock tests (ExpiryTests, MarketCoherenceTests,
+# ModificationRulesTests in dotnet/tests/Eve.Market.Tests), keeping the live walk below the five-minute timeout.
 
 def _plain_rows(value):
     """The rows of a rowset or a list, as dicts keyed by the column names (a cached answer is unwrapped first)."""
@@ -217,11 +213,6 @@ def test_a_seller_and_a_buyer_trade_through_the_market():
         label, arguments = _label_and_arguments(refused.value)
         assert label == "CustomInfo" and "seconds" in arguments["info"], arguments
         assert _field(next(row for row in _own_orders(seller) if _field(row, "orderID") == ask_id), "price") == 50.0
-
-        if SLOW:
-            time.sleep(300)
-            seller.call("marketProxy", "ModifyCharOrder", ask_id, 55.0, 50.0, 25, None, None)
-            assert _field(next(row for row in _own_orders(seller) if _field(row, "orderID") == ask_id), "price") == 55.0
 
         # cancel: the rest of the ask leaves the book, its item returns to the hangar, and the escrow reads zero
         assert seller.call("marketProxy", "CancelCharOrder", ask_id) is None

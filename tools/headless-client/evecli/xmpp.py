@@ -25,6 +25,10 @@ class Element:
 
 class _StreamReader:
     def __init__(self) -> None:
+        self.restart()
+
+    def restart(self) -> None:
+        """Reset the XML parser when SASL restarts the open XMPP stream."""
         self.parser = expat.ParserCreate()
         self.stack: list[Element] = []
         self.ready: deque[Element] = deque()
@@ -80,6 +84,8 @@ class XmppClient:
         self._send(f"<auth xmlns='urn:ietf:params:xml:ns:xmpp-sasl' mechanism='PLAIN'>{payload}</auth>")
         if self._next(lambda item: item.name in {"success", "failure"}).name != "success":
             raise RuntimeError("XMPP SASL authentication was rejected")
+        self.reader.restart()
+        self.pending.clear()
         self._open_stream()
         self._next(lambda item: item.name == "features")
         self._send(f"<iq type='set' id='bind'><bind xmlns='urn:ietf:params:xml:ns:xmpp-bind'><resource>{_escape(resource)}</resource></bind></iq>")

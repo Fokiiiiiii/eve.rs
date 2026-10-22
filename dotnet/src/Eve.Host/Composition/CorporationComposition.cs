@@ -183,7 +183,9 @@ internal sealed partial class CharacterServicesComposition
             relations: foundations.Relations,
             characterSessions: characterSessions,
             readSovSnapshot: ReadAllianceSovSnapshotAsync,
-            readStaticOwners: ReadAllianceStaticOwnersAsync);
+            readStaticOwners: ReadAllianceStaticOwnersAsync,
+            validateWarHQ: (call, ownerId, structureId, token) =>
+                structureDirectoryReadModel.IsValidWarHQAsync(call, ownerId, structureId, token));
     }
 
     private async Task<Eve.Services.Corporations.AllianceSovSnapshot?> ReadAllianceSovSnapshotAsync(

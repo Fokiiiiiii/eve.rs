@@ -875,6 +875,26 @@ public class InvBrokerTests
     }
 
     [PgFact]
+    public async Task MultiMerge_refuses_negative_quantity_before_mutating_stacks()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var ship = await rig.AddAsync(Rig.Cockroach, Rig.Character, Rig.Station, singleton: true);
+        var source = await rig.AddAsync(Rig.Tritanium, Rig.Character, ship, flag: 5, quantity: 15);
+        var destination = await rig.AddAsync(Rig.Tritanium, Rig.Character, ship, flag: 5, quantity: 20);
+        var session = Rig.Session();
+        var inventory = Rig.OidOf(await rig.CallAsync(session, "GetInventoryFromId", null, new PyLong(ship)));
+        var validOperation = Py.Tuple(new PyLong(source), new PyLong(destination), new PyInt(5));
+        var invalidOperation = Py.Tuple(new PyLong(source), new PyLong(destination), new PyInt(-1));
+
+        var refusal = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await rig.CallAsync(session, "MultiMerge", inventory, new PyList([validOperation, invalidOperation]), new PyLong(ship)));
+
+        Assert.Equal("INVENTORY_OPERATION_INVALID", refusal.Error.UserErrorMessage);
+        Assert.Equal(15, (await rig.Items.GetAsync(source))!.Quantity);
+        Assert.Equal(20, (await rig.Items.GetAsync(destination))!.Quantity);
+    }
+
+    [PgFact]
     public async Task A_bound_inventory_answers_only_the_session_that_opened_it_and_only_until_it_is_released()
     {
         await using var rig = await Rig.CreateAsync();

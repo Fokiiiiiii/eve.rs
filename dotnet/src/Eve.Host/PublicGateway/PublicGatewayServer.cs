@@ -78,7 +78,7 @@ internal sealed class PublicGatewayServer : IAsyncDisposable
         }
         catch (Exception error) when (error is not OperationCanceledException)
         {
-            Console.Error.WriteLine($"eve-host: public gateway {context.Request.Path} failed: {error}");
+            Console.Error.WriteLine($"eve-host: public gateway request failed ({error.GetType().Name})");
             throw;
         }
     }
@@ -198,7 +198,7 @@ internal sealed class PublicGatewayServer : IAsyncDisposable
         }
         catch (FormatException error)
         {
-            Console.Error.WriteLine($"eve-host: public gateway request frame ({frame.Length} bytes) undecodable: {error.Message}: {Convert.ToHexString(frame, 0, Math.Min(frame.Length, 96))}");
+            Console.Error.WriteLine($"eve-host: public gateway request frame ({frame.Length} bytes) undecodable ({error.GetType().Name})");
             throw;
         }
         GatewayAnswer answer;
@@ -218,8 +218,8 @@ internal sealed class PublicGatewayServer : IAsyncDisposable
             }
             catch (Exception error) when (error is not OperationCanceledException)
             {
-                // the envelope still answers (status 500, not the stream reset): the cause goes to the host's log
-                Console.Error.WriteLine($"eve-host: public gateway {request.TypeName} failed: {error}");
+                // The response is generic; keep exception details and request data out of logs.
+                Console.Error.WriteLine("eve-host: public gateway handler failed");
                 answer = new GatewayAnswer(500, "internal error", "", []);
             }
         }

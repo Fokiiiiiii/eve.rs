@@ -11,12 +11,13 @@ public sealed record CorpWarDeclarationRequest(long CorporationId,long DeclaredB
 public sealed record CorpWarDeclarationResult(long WarId,long BillId);
 
 [Service("corpRegistry")]
-public sealed partial class CorpRegistryService(CorporationStore store,PgCharacterStore characters,Func<long> now,CharacterSessions? characterSessions = null,Eve.Inventory.PgItemStore? items = null,Func<long,bool,int,long?,CancellationToken,ValueTask<IReadOnlyList<PyValue>>>? readRecentCorporationKillmails = null,Func<long,CancellationToken,ValueTask<long>>? readCharacterAllyBaseCost = null,Func<CorpWarDeclarationRequest,CancellationToken,ValueTask<CorpWarDeclarationResult>>? declareWar = null)
+public sealed partial class CorpRegistryService(CorporationStore store,PgCharacterStore characters,Func<long> now,CharacterSessions? characterSessions = null,Eve.Inventory.PgItemStore? items = null,Func<long,bool,int,long?,CancellationToken,ValueTask<IReadOnlyList<PyValue>>>? readRecentCorporationKillmails = null,Func<long,CancellationToken,ValueTask<long>>? readCharacterAllyBaseCost = null,Func<CorpWarDeclarationRequest,CancellationToken,ValueTask<CorpWarDeclarationResult>>? declareWar = null,Func<ServiceCall,long,long,CancellationToken,ValueTask<bool>>? validateWarHQ = null)
 {
     private const int MaxBulkMemberIds = 500;
     private const int MaxBulkCorporationActions = 500;
     private const int MaxCorporationQueryCriteria = 100;
     private const int MaxCorporationQueryTextLength = 256;
+    private const int MaxRecentCorporationKillmailPage = 25;
 
     public AllianceAffiliationMutationCallback? AllianceAffiliationWriter
     {
@@ -1753,7 +1754,9 @@ private static int MemberFieldInteger(PyValue value)
           if (corporation is null)
               return CorporationWire.KillmailCRowset([]);
           var requestedLimit = Number(call.Arg(0));
-          var limit = requestedLimit > int.MaxValue ? int.MaxValue : requestedLimit < int.MinValue ? int.MinValue : (int)requestedLimit;
+           if (requestedLimit < 0 || requestedLimit > MaxRecentCorporationKillmailPage)
+               throw new CorporationError("CORPORATION_KILLMAIL_PAGE_LIMIT_EXCEEDED");
+           var limit = (int)requestedLimit;
           var startKillId = call.Args.Count > 1 ? PositiveId(call.Arg(1)) : null;
           var records = readRecentCorporationKillmails is null
               ? Array.Empty<PyValue>()
@@ -1858,7 +1861,7 @@ private static int MemberFieldInteger(PyValue value)
       [Method("CharGetAllyBaseCost")]
       public async ValueTask<PyValue> CharGetAllyBaseCost(ServiceCall call)
       {
-          var characterId = call.Session.CharacterId ?? (PositiveId(call.Arg(0)) ?? 0);
+          var characterId = call.Session.CharacterId ?? 0;
           if (characterId <= 0)
               return new PyInt(10_000_000);
           var cost = readCharacterAllyBaseCost is null
@@ -1883,7 +1886,15 @@ private static int MemberFieldInteger(PyValue value)
           var declaredAt = Number(CorporationWire.Time(now()));
           var startedAt = checked(declaredAt+864_000_000_000L);
           var dueAt = checked(declaredAt+6_048_000_000_000L);
-          var warHqId = call.Args.Count > 1 ? PositiveId(call.Arg(1)) : null;
+          long? warHqId = null;
+          if (call.Args.Count > 1 && call.Arg(1) is not PyNone)
+          {
+              var requestedWarHqId = PositiveId(call.Arg(1));
+              if (requestedWarHqId is not { } hqId || validateWarHQ is null ||
+                  !await validateWarHQ(call, corporation.Id, hqId, call.Cancellation))
+                  throw new CorporationError("WAR_HEADQUARTERS_INVALID");
+              warHqId = hqId;
+          }
           var callId = Number(call.CallId);
           var operationKey = callId > 0
               ? $"corporation-war:{corporation.Id}:{actor}:{callId}"

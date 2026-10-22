@@ -108,6 +108,7 @@ public sealed class IndustryJobsService : IService
     private readonly Func<long, bool>? isStarbaseFacilityOnline;
     private readonly Func<long, long, long, long>? resolveBlueprintLocationFlagID;
     private readonly Func<PyValue?, bool>? isAlphaClone;
+    private readonly Func<long, long, CancellationToken, ValueTask<bool>>? canAccessCorporationJobs;
 
 private readonly IIndustryJobOperations operations;
 
@@ -118,7 +119,8 @@ private readonly IIndustryJobOperations operations;
         Func<ServiceCall, JsonObject, bool>? canViewStarbaseJob = null,
         Func<long, bool>? isStarbaseFacilityOnline = null,
         Func<long, long, long, long>? resolveBlueprintLocationFlagID = null,
-        Func<PyValue?, bool>? isAlphaClone = null)
+        Func<PyValue?, bool>? isAlphaClone = null,
+        Func<long, long, CancellationToken, ValueTask<bool>>? canAccessCorporationJobs = null)
     {
         ArgumentNullException.ThrowIfNull(readJobs);
         ArgumentNullException.ThrowIfNull(operations);
@@ -129,6 +131,7 @@ private readonly IIndustryJobOperations operations;
         this.isStarbaseFacilityOnline = isStarbaseFacilityOnline;
         this.resolveBlueprintLocationFlagID = resolveBlueprintLocationFlagID;
         this.isAlphaClone = isAlphaClone;
+        this.canAccessCorporationJobs = canAccessCorporationJobs;
     }
 
     public string Name => "industryManager";
@@ -157,12 +160,12 @@ private readonly IIndustryJobOperations operations;
             var table = await readJobs(call.Cancellation);
             var job = Jobs(table)?[Key(jobId)] as JsonObject;
             var visible = job is not null && !Pending(job) && CanView(call, job) &&
-                CanAccessOwner(call, Integer(job["ownerID"]));
+                await CanAccessOwnerAsync(call, Integer(job["ownerID"]));
             return visible ? Job(job, Status(job!)) : Job(null);
         }
 
         var ownerId = jobId;
-        if (ownerId == 0 || !CanAccessOwner(call, ownerId)) return new PyList([]);
+        if (ownerId == 0 || !await CanAccessOwnerAsync(call, ownerId)) return new PyList([]);
         var jobs = Jobs(await readJobs(call.Cancellation));
         var includeCompleted = JsSemantics.Truthy(call.Arg(1));
         var rows = new List<(long Id, PyValue Value)>();
@@ -204,6 +207,8 @@ private async ValueTask<PyValue> MutateAsync(ServiceCall call)
                 case "CompleteManyJobs":
                 {
                     if (call.Args.Count != 1 || call.Arg(0) is not PyList rows) throw InvalidIndustryJob();
+                    if (rows.Items.Count > 500)
+                        throw MachoErrors.ThrowUserError("INDUSTRY_JOB_BULK_LIMIT_EXCEEDED");
                     var jobs = new List<IndustryJobAction>(rows.Items.Count);
                     var seen = new HashSet<long>();
                     foreach (var row in rows.Items)
@@ -466,12 +471,16 @@ private async ValueTask<PyValue> MutateAsync(ServiceCall call)
             ? ScienceActivities.Sum(id => counts.GetValueOrDefault(id))
             : counts.GetValueOrDefault(activity);
 
-    private bool CanAccessOwner(ServiceCall call, long ownerId)
+    private async ValueTask<bool> CanAccessOwnerAsync(ServiceCall call, long ownerId)
     {
         if (ownerId <= 0) return false;
         if (SessionId(call, "charid") == ownerId) return true;
-        if (SessionId(call, "corpid") != ownerId) return false;
-        return (RoleValue(call.Session.Get("corprole")) & FactoryManagerRole) == FactoryManagerRole;
+        var characterId = SessionId(call, "charid");
+        if (characterId <= 0 || SessionId(call, "corpid") != ownerId
+            || (RoleValue(call.Session.Get("corprole")) & FactoryManagerRole) != FactoryManagerRole
+            || canAccessCorporationJobs is null)
+            return false;
+        return await canAccessCorporationJobs(characterId, ownerId, call.Cancellation);
     }
 
     private static long RoleValue(PyValue? value) => value switch

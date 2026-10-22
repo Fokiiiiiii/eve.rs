@@ -39,35 +39,41 @@ public sealed class TrainingAnnouncer(CharacterTraining training, SkillCatalog c
     /// <summary>A queue that finished levels: the skills, what the ship gained, the queue that is left.</summary>
     public async Task OnSettledAsync(TrainingUpdate update)
     {
-        Reschedule(update.CharacterId, update.AccountId, update.View);
-        if (sessions.Of(update.CharacterId) is not { } session)
-            return;
-
-        if (update.FreeSkillPoints is { } remaining)
+        try
         {
-            // This is an SP mutation, not a queue level finishing. The client
-            // scatters its own skill events from OnServerSkillsChanged.
-            var changed = update.ChangedSkills ?? [];
-            if (changed.Count == 0) return;
-            SkillNotifications.ServerSkillsChanged(session,
-                SkillWire.EntryDictionary(update.CharacterId, catalog, changed, metadata: false), null, NowFileTime);
-            SkillNotifications.QueueSaved(session, update.View.Queue);
-            session.SendNotification("OnFreeSkillPointsChanged", "charid", new PyInt(remaining));
-            await SyncDogmaAsync(session, update);
-            if (update.WasRunning && !update.View.State.Running)
-                SkillNotifications.QueuePaused(session);
-            return;
-        }
+            if (sessions.Of(update.CharacterId) is not { } session)
+                return;
 
-        if (update.Finished.Count == 0) return;
-        var skills = SkillWire.EntryDictionary(update.CharacterId, catalog, update.Finished);
-        SkillNotifications.ServerSkillsChanged(session, skills, null, NowFileTime);
-        SkillNotifications.LevelsTrained(session, update.Finished);
-        SkillNotifications.SkillsChanged(session, skills);
-        await SyncDogmaAsync(session, update);
-        SkillNotifications.QueueSaved(session, update.View.Queue);
-        if (!update.View.State.Running)
-            SkillNotifications.QueuePaused(session);
+            if (update.FreeSkillPoints is { } remaining)
+            {
+                // This is an SP mutation, not a queue level finishing. The client
+                // scatters its own skill events from OnServerSkillsChanged.
+                var changed = update.ChangedSkills ?? [];
+                if (changed.Count == 0) return;
+                SkillNotifications.ServerSkillsChanged(session,
+                    SkillWire.EntryDictionary(update.CharacterId, catalog, changed, metadata: false), null, NowFileTime);
+                SkillNotifications.QueueSaved(session, update.View.Queue);
+                session.SendNotification("OnFreeSkillPointsChanged", "charid", new PyInt(remaining));
+                await SyncDogmaAsync(session, update);
+                if (update.WasRunning && !update.View.State.Running)
+                    SkillNotifications.QueuePaused(session);
+                return;
+            }
+
+            if (update.Finished.Count == 0) return;
+            var skills = SkillWire.EntryDictionary(update.CharacterId, catalog, update.Finished);
+            SkillNotifications.ServerSkillsChanged(session, skills, null, NowFileTime);
+            SkillNotifications.LevelsTrained(session, update.Finished);
+            SkillNotifications.SkillsChanged(session, skills);
+            await SyncDogmaAsync(session, update);
+            SkillNotifications.QueueSaved(session, update.View.Queue);
+            if (!update.View.State.Running)
+                SkillNotifications.QueuePaused(session);
+        }
+        finally
+        {
+            Reschedule(update.CharacterId, update.AccountId, update.View);
+        }
     }
 
     /// <summary>New skills, after their transaction committed; they did not train any levels.</summary>
@@ -222,7 +228,7 @@ public sealed class TrainingAnnouncer(CharacterTraining training, SkillCatalog c
     {
         try
         {
-            if (await training.SettleAsync(characterId, accountId) is null)
+            if (await training.SettleAsync(characterId, accountId, maxFinished: 1) is null)
             {
                 Reschedule(characterId, accountId, await training.ViewAsync(characterId, accountId)); // not due yet after all
             }

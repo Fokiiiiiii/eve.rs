@@ -7,7 +7,7 @@ namespace Eve.Host.Tests;
 public sealed class PlanetMgrAuthorizationTests
 {
     [Fact]
-    public async Task Planet_GM_RPC_refuses_a_session_without_the_server_set_GML_role()
+    public async Task Planet_GM_Rpcs_refuse_a_session_without_the_server_set_GML_role()
     {
         var service = new PlanetMgrService(
             null!, null!, null!, null!, null!, null!, null!,
@@ -15,14 +15,23 @@ public sealed class PlanetMgrAuthorizationTests
             (_, _) => Task.CompletedTask,
             _ => Task.CompletedTask,
             "inventory");
-        var call = new ServiceCall
+        var methods = new (string Name, Func<ServiceCall, ValueTask<PyValue>> Invoke)[]
         {
-            Method = "GMGetSynchedServerState",
-            Args = [],
-            Session = new ClientSession(),
+            ("GMForceInstallProgram", service.GMForceInstallProgram),
+            ("GMAddCommodity", service.GMAddCommodity),
+            ("GMConvertCommandCenter", service.GMConvertCommandCenter),
+            ("GMGetSynchedServerState", service.GMGetSynchedServerState),
         };
 
-        await Assert.ThrowsAsync<MachoWrappedException>(async () =>
-            await service.GMGetSynchedServerState(call));
+        foreach (var (name, invoke) in methods)
+        {
+            var call = new ServiceCall
+            {
+                Method = name,
+                Args = [],
+                Session = new ClientSession(),
+            };
+            await Assert.ThrowsAsync<MachoWrappedException>(async () => await invoke(call));
+        }
     }
 }

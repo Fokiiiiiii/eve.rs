@@ -4,10 +4,10 @@ Checked 2026-10-22.
 
 ## Dependency and image review
 
-- Rust: `cargo audit 0.22.2 --file Cargo.lock --no-fetch --stale` loaded 1,348 RustSec advisories and scanned 114 dependencies on 2026-10-21; it exited successfully with no findings. `cargo deny`, Trivy, and Grype were not installed in the environment.
+- Rust: `cargo audit 0.22.2 --file Cargo.lock --no-fetch --stale` loaded 1,348 RustSec advisories and scanned 114 dependencies on 2026-10-21; it exited successfully with no findings. `cargo deny` and Grype are not installed in the environment.
 - .NET: GitHub Actions dependency audit run `39858626529` passed `dotnet list dotnet/EveRs.slnx package --vulnerable --include-transitive` on 2026-10-22; the job fails when NuGet reports a vulnerable package.
 - Python: `pip-audit 2.10.1` scanned `tools/headless-client/requirements.txt` and `tools/headless-client/requirements-dev.txt` on 2026-10-21 and reported no known vulnerabilities.
-- No tracked npm manifests or lockfiles were present. The Dockerfile uses those Rust and .NET version tags with pinned registry manifest digests. Docker Scout, Trivy, Grype, and Snyk were unavailable, so no image vulnerability database scan was completed.
+- No tracked npm manifests or lockfiles were present. The Dockerfile uses Rust and .NET image references pinned by registry manifest digest. Trivy 0.75.0 scanned the pinned `mcr.microsoft.com/dotnet/runtime:10.0` base image on 2026-10-22 and reported 26 findings (21 medium, 5 low, no high or critical). The local environment has no container daemon or built application image, so this result covers the pinned base image only. Grype, Docker Scout, and Snyk were unavailable.
 - Workflow action references are pinned to full commit IDs; no action-advisory scan was available.
 - GitHub Dependabot alerts are disabled for this repository. The GitHub secret-scanning MCP function was unavailable, and the REST alert endpoint was blocked by the environment proxy.
 
@@ -58,7 +58,7 @@ Reviewed through 2026-10-21 against the Rust, .NET, Python tool, deployment, and
 - **Reusable login credential hash with `placebo`.** `crates/eve-net/src/handshake.rs` negotiates `placebo` and accepts the V24.01 client password hash in the login dictionary. The Host applies a 30-second handshake timeout, limits failed attempts to 10 per normalized account and 50 per normalized source address within 15 minutes, bounds the hashed-key table to 4,096 entries, clears an account failure history after successful login, and logs authentication failures without account names, hashes, or backend exception details. The hash is not logged. The client submits a fixed reusable digest without a server nonce or timestamp, so nonce-binding the accepted digest or imposing an age on the credential would require a client protocol change. Production deployment requires TLS termination to protect the digest in transit; this does not make an exposed digest non-replayable.
 - Per-account throttling for expensive authenticated RPCs needs a dedicated pass; no complete inventory of costly calls and limits is recorded here.
 - The review sampled marshal and gateway frame parsing. JSON/protobuf payload handling and malformed-input exception isolation across every Host/RPC entry remain to be traced.
-- The container image CVE scan and external action-advisory review remain open. The image base references and workflow actions are now pinned, but this review did not evaluate advisories for the pinned revisions.
+- Trivy scanned the pinned .NET runtime base image and reported 26 medium/low findings; assess package fixes and run a scan on the complete built application image in CI. External action-advisory review remains open; the workflow actions are pinned, but their advisories were not evaluated.
 - The earlier heuristic scan produced credential-oriented candidates. The direct token-shaped matches are classified below; the remaining keyword and entropy matches are heuristic candidates without enough recorded context to establish that they are credentials.
 - No live graphical-client security walk was performed for this review.
 

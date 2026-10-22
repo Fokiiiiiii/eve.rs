@@ -3900,7 +3900,7 @@ public class SpaceServiceTests
     [PgFact]
     public async Task Fleet_finder_joins_create_invites_or_approval_requests_with_client_notifications()
     {
-        await using var rig = await Rig.CreateAsync();
+        await using var rig = await Rig.CreateAsync(maxFleetJoinRequests: 1);
         var leaderId = Random.Shared.NextInt64(8_000_000_000_000, 8_999_999_999_999);
         var leaderSession = new ClientSession(new Sink());
         leaderSession.Set("charid", new PyLong(leaderId));
@@ -3911,14 +3911,17 @@ public class SpaceServiceTests
         leaderSession.Set("solarsystemid2", new PyLong(30000142));
         var approvedApplicantId = leaderId + 1;
         var openApplicantId = leaderId + 2;
+        var requestLimitApplicantId = leaderId + 3;
         var approvedApplicant = new ClientSession(new Sink());
         var openApplicant = new ClientSession(new Sink());
+        var requestLimitApplicant = new ClientSession(new Sink());
         approvedApplicant.Set("charid", new PyLong(approvedApplicantId));
         approvedApplicant.Set("corpid", new PyLong(980000123));
         approvedApplicant.Set("allianceid", new PyLong(990000123));
         approvedApplicant.Set("warfactionid", new PyLong(990000124));
         approvedApplicant.Set("securityStatus", new PyReal(0.75));
         openApplicant.Set("charid", new PyLong(openApplicantId));
+        requestLimitApplicant.Set("charid", new PyLong(requestLimitApplicantId));
         var store = rig.FleetStore;
         var fleetId = await store.CreateAsync(leaderId);
         var wingId = await store.CreateWingAsync(fleetId, leaderId);
@@ -3928,6 +3931,7 @@ public class SpaceServiceTests
             var value when value == leaderId => leaderSession,
             var value when value == approvedApplicantId => approvedApplicant,
             var value when value == openApplicantId => openApplicant,
+            var value when value == requestLimitApplicantId => requestLimitApplicant,
             _ => null
         };
         Eve.Services.IService proxy = new Eve.Services.Space.FleetProxyService(
@@ -3989,6 +3993,8 @@ public class SpaceServiceTests
             Assert.Equal(new PyLong(990000123), Field(requestEvent.Args[0], "allianceID"));
             Assert.Equal(new PyLong(990000124), Field(requestEvent.Args[0], "warFactionID"));
             Assert.Equal(new PyReal(0.75), Field(requestEvent.Args[0], "securityStatus"));
+            await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(() =>
+                Apply(requestLimitApplicant, autoAccept: false));
 
             var requests = Assert.IsType<PyDict>(await FleetObjectCallAsync(
                 fleet, fleetId, leaderSession, "GetJoinRequests", []));

@@ -492,6 +492,24 @@ public async ValueTask<IReadOnlyList<Eve.Services.Core.StructureDockingAccessSna
         return new PyList(systems.Select(id => (PyValue)new PyInt(id)).ToArray());
     }
 
+public async ValueTask<bool> IsValidWarHQAsync(
+        ServiceCall call,
+        long ownerId,
+        long structureId,
+        CancellationToken cancellationToken)
+    {
+        if (ownerId <= 0 || structureId <= 0) return false;
+        var warHqs = await GetValidWarHQsAsync(call, ownerId, cancellationToken);
+        return warHqs is PyList { Items: var items } && items.Any(item =>
+            item is PyObject { Name: PyStr { Value: "util.KeyVal" }, Args: PyDict fields } &&
+            fields.Entries.Any(entry =>
+                entry.Key is PyStr { Value: "structureID" } &&
+                entry.Value is PyInt id &&
+                id.Value == structureId));
+    }
+
+
+
     public async ValueTask<PyValue> GetValidWarHQsAsync(
         ServiceCall call,
         long ownerId,

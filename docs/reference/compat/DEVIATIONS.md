@@ -4,6 +4,10 @@
 
 The Host admits at most 1,024 active front connections by default (`EVE_MAX_FRONT_CONNECTIONS`) and closes accepted sockets above that capacity before dispatch. This resource policy does not change packets for admitted clients; overload clients receive a closed connection. `HostServerTests.Front_connections_above_the_server_limit_are_closed_before_dispatch` verifies the refusal and confirms the admitted connection remains active.
 
+## War headquarters eligibility (2026-10-22)
+
+The V24.01 war declaration callsites select HQ IDs from `structureDirectory.GetValidWarHQs()`. EveJS 261018.1 does not repeat that ownership and eligibility check when processing the corp or alliance declaration RPC. eve.rs now checks the supplied ID against the same server-derived directory list before creating a bill or war relation, while retaining the client’s `None` value. Corporation and alliance service regressions prove invalid IDs create no bill or relation.
+
 ## Corporation member map locations (2026-10-20)
 
 `map.GetMyExtraMapInfo` returns the current solar-system locations of online members in the caller's corporation. EveJS 261018.1 returns an empty rowset for this method, while the V24.01 `mapFilterCorpMembers.py` and `mapViewColorHandler.py` callsites group `characterID` and `locationID` rows into a corporation-member heatmap. eve.rs uses the authoritative live session registry and corporation session scope; `Map_extra_info_lists_only_current_members_of_the_callers_corporation` covers the rowset and scope.
@@ -5415,7 +5419,7 @@ The staff-only `mailMgr.PokePlayerAboutChatMsgGm` RPC caps its requested channel
 
 ## Fleet composition read budget (2026-10-21)
 
-`fleetObject.GetInitState`, `GetFleetComposition`, and `GetJoinRequests` consume 10 units from the per-session expensive-RPC budget. Initialization and composition may resolve skill or character details for the fleet's bounded member list; join requests materialize the current request set. Calls above the session allowance receive `SessionRpcBudgetExceeded`; allowed response shapes are unchanged. `DispatchGoldenTests.Fleet_member_composition_reads_have_a_named_per_session_budget` covers initialization and composition.
+`fleetObject.GetInitState`, `GetFleetComposition`, and `GetJoinRequests` consume 10 units from the per-session expensive-RPC budget. Initialization and composition may resolve skill or character details for the fleet's bounded member list; join requests materialize the current request set. Calls above the session allowance receive `SessionRpcBudgetExceeded`; allowed response shapes are unchanged. `DispatchGoldenTests.Fleet_member_composition_reads_have_a_named_per_session_budget` covers initialization and composition. Approval requests are capped per fleet by `EVE_MAX_FLEET_JOIN_REQUESTS` (default 4,096; accepted range 1–65,536); capacity exhaustion returns `FleetError`, while the existing join-request wire shape is preserved.
 
 
 ## Corporation medal visibility status scope (2026-10-21)

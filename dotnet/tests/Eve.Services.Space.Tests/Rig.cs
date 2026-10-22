@@ -114,11 +114,12 @@ private readonly Dictionary<long, ClientSession> _fleetSessions = new();
     /// <summary>The schema of this rig's fleets (a second store on it reads what the rig's store wrote).</summary>
     public string FleetSchema => $"pl_{_suffix}";
 
-    private Rig(NpgsqlDataSource source, string suffix, DogmaStatic statics, CharacterCreation creation, CreationCatalog catalog, StationCatalog stations, SolarSystemCatalog systems, PgModuleStateStore modules, TimeSpan protection, TimeSpan jumpCloak, bool npcLoot, Eve.Npc.BeltRatConfig? beltRats, Eve.Scheduler.LocalTimers? localTimers, Eve.Npc.NpcAuthority? npcAuthority)
+    private Rig(NpgsqlDataSource source, string suffix, DogmaStatic statics, CharacterCreation creation, CreationCatalog catalog, StationCatalog stations, SolarSystemCatalog systems, PgModuleStateStore modules, TimeSpan protection, TimeSpan jumpCloak, bool npcLoot, Eve.Npc.BeltRatConfig? beltRats, Eve.Scheduler.LocalTimers? localTimers, Eve.Npc.NpcAuthority? npcAuthority, int? maxFleetJoinRequests)
     {
         Source = source;
         // the fleets have a schema of their own: the shared one kept the memberships of earlier tests
-        FleetStore = new Eve.Services.Space.FleetStore(source, $"pl_{suffix}");
+        FleetStore = new Eve.Services.Space.FleetStore(source, $"pl_{suffix}",
+            maxFleetJoinRequests ?? Eve.Services.Space.FleetStore.DefaultMaxJoinRequests);
         _suffix = suffix;
         _schemas = [$"pc_{suffix}", $"pi_{suffix}", $"ps_{suffix}", $"pw_{suffix}", $"pf_{suffix}", $"pn_{suffix}", $"pp_{suffix}", $"pd_{suffix}", $"pe_{suffix}", $"pl_{suffix}", $"pt_{suffix}"];
         Events = new Eve.Events.EventBus(source, new Eve.Scheduler.DurableScheduler(source, () => Now, null, _schemas[7]), null, _schemas[8]);
@@ -261,7 +262,7 @@ private readonly Dictionary<long, ClientSession> _fleetSessions = new();
 
     public static async Task<Rig> CreateAsync(TimeSpan? protection = null, TimeSpan? jumpCloak = null, bool npcLoot = false, Eve.Npc.BeltRatConfig? beltRats = null, Eve.Scheduler.LocalTimers? localTimers = null, Eve.Npc.NpcAuthority? npcAuthority = null,
         IReadOnlyDictionary<int, Eve.Universe.ClientSystemFlags>? clientFlags = null,
-        Func<DogmaStatic, Task<DogmaStatic>>? staticsOverride = null)
+        Func<DogmaStatic, Task<DogmaStatic>>? staticsOverride = null, int? maxFleetJoinRequests = null)
     {
         CharacterNames.EnsureUnicodeSupport();
         var source = NpgsqlDataSource.Create(PgConnection.ForTest(Url!));
@@ -375,7 +376,7 @@ private readonly Dictionary<long, ClientSession> _fleetSessions = new();
         {
             statics = await customizeStatics(statics);
         }
-        return new Rig(source, suffix, statics, creation, catalog, await StationCatalog.LoadAsync(sde), await SolarSystemCatalog.LoadAsync(sde, clientFlags), modules, protection ?? Timeout.InfiniteTimeSpan, jumpCloak ?? Timeout.InfiniteTimeSpan, npcLoot, beltRats, localTimers, npcAuthority);
+        return new Rig(source, suffix, statics, creation, catalog, await StationCatalog.LoadAsync(sde), await SolarSystemCatalog.LoadAsync(sde, clientFlags), modules, protection ?? Timeout.InfiniteTimeSpan, jumpCloak ?? Timeout.InfiniteTimeSpan, npcLoot, beltRats, localTimers, npcAuthority, maxFleetJoinRequests);
     }
 
     public string InventorySchema => _schemas[1];

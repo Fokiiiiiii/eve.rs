@@ -40,7 +40,7 @@ public static class EveOwnerTypeIds
 }
 
 [Service("allianceRegistry")]
-public sealed partial class AllianceRegistryService(CorporationStore store,PgCharacterStore characters,Func<long> now,AllianceApplicationScheduleCallback? scheduleAllianceApplication = null,Action? wakeAllianceApplicationScheduler = null,Eve.Relations.RelationStore? relations = null,Func<long,CancellationToken,Task<AllianceSovSnapshot?>>? readSovSnapshot = null,CharacterSessions? characterSessions = null,Func<IReadOnlyList<long>,CancellationToken,Task<IReadOnlyDictionary<long,AllianceOwnerLookupRecord>>>? readStaticOwners = null) : IBoundObjectReleaseHandler
+public sealed partial class AllianceRegistryService(CorporationStore store,PgCharacterStore characters,Func<long> now,AllianceApplicationScheduleCallback? scheduleAllianceApplication = null,Action? wakeAllianceApplicationScheduler = null,Eve.Relations.RelationStore? relations = null,Func<long,CancellationToken,Task<AllianceSovSnapshot?>>? readSovSnapshot = null,CharacterSessions? characterSessions = null,Func<IReadOnlyList<long>,CancellationToken,Task<IReadOnlyDictionary<long,AllianceOwnerLookupRecord>>>? readStaticOwners = null,Func<ServiceCall,long,long,CancellationToken,ValueTask<bool>>? validateWarHQ = null) : IBoundObjectReleaseHandler
 {
 public AllianceRegistryService(CorporationStore store, PgCharacterStore characters, Func<long> now,
         Func<long, CancellationToken, Task>? legacyAffiliationChanged)
@@ -694,8 +694,20 @@ private static double RelationshipValue(PyValue value)
         var againstId = Number(call.Arg(0));
         if (againstId <= 0 || againstId == allianceId)
             throw new CorporationError("ALLIANCE_WAR_DECLARATION_INVALID");
-        var warHq = Number(call.Arg(1));
-        var warHqId = warHq > 0 ? warHq : (long?)null;
+        long? warHqId = null;
+        if (call.Args.Count > 1 && call.Arg(1) is not PyNone)
+        {
+            var requestedWarHqId = call.Arg(1) switch
+            {
+                PyInt { Value: > 0 } id => id.Value,
+                PyLong { Value: > 0 } id => id.Value,
+                _ => 0
+            };
+            if (requestedWarHqId <= 0 || validateWarHQ is null ||
+                !await validateWarHQ(call, allianceId, requestedWarHqId, call.Cancellation))
+                throw new CorporationError("ALLIANCE_WAR_HEADQUARTERS_INVALID");
+            warHqId = requestedWarHqId;
+        }
         var declaredAt = Number(CorporationWire.Time(now()));
         var startedAt = checked(declaredAt + 864_000_000_000L);
         var dueAt = checked(declaredAt + 6_048_000_000_000L);

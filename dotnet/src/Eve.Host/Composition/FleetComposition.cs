@@ -204,7 +204,13 @@ internal sealed partial class CharacterServicesComposition
             Eve.Services.Space.FleetStore.FleetFinderAdvertPayloadMigration,
             Eve.Services.Space.FleetStore.FleetJoinRequestProfileMigration
         ], CancellationToken.None);
-        fleetStore = new Eve.Services.Space.FleetStore(source, fleetSchema);
+        var maxJoinRequestsText = Env("EVE_MAX_FLEET_JOIN_REQUESTS",
+            Eve.Services.Space.FleetStore.DefaultMaxJoinRequests.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        if (!int.TryParse(maxJoinRequestsText, System.Globalization.NumberStyles.None,
+                System.Globalization.CultureInfo.InvariantCulture, out var maxJoinRequests) ||
+            maxJoinRequests is < 1 or > Eve.Services.Space.FleetStore.MaximumConfiguredJoinRequests)
+            throw new InvalidOperationException("EVE_MAX_FLEET_JOIN_REQUESTS must be between 1 and 65536.");
+        fleetStore = new Eve.Services.Space.FleetStore(source, fleetSchema, maxJoinRequests);
         // the jump drive to a fleet's cynosural field reads the fleets, so it is made after them (the space simulation is set up before the fleets)
         if (spaceSessions is not null)
         {

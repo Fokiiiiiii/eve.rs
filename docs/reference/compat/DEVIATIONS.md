@@ -5194,7 +5194,7 @@ The V24.01 global asset methods route `charMgr.List`, `ListStations`, `ListStati
 
 ## Market integer narrowing (2026-10-20)
 
-Market RPC integer values that the Host stores as 32-bit fields now refuse fractional or out-of-range values before conversion, using the existing `CustomInfo` wire label. Previously, unchecked narrowing could wrap a large client-supplied type ID into a different item type. Normal V24.01 IDs and order terms retain their existing behavior. `MarketRpcTests.Market_type_ids_outside_int32_are_refused_before_order_creation` covers both single and bulk order placement.
+Market RPC integer values that the Host stores as 32-bit fields refuse fractional, non-finite, and out-of-range values before conversion, using the existing `CustomInfo` wire label. Finite float values beyond Int32 now receive the same refusal instead of falling through the generic integer parser's fallback. Previously, unchecked narrowing could wrap a large client-supplied type ID into a different item type. Normal V24.01 IDs and order terms retain their existing behavior. `MarketRpcTests.Market_type_ids_outside_int32_are_refused_before_order_creation` covers integer, fractional, and oversized floating-point values in single and bulk order placement.
 
 
 ## Market price conversion bound (2026-10-20)

@@ -146,6 +146,7 @@ public class MarketRpcTests
         var actor = await r.Actor("Out of range type buyer", 10000m);
         var seat = await SeatAsync(r, actor);
         var invalidType = new PyLong((long)int.MaxValue + 1);
+        var invalidTypeAsReal = new PyReal(double.MaxValue);
 
         async Task AssertRefused(Task<PyValue> call)
         {
@@ -161,10 +162,20 @@ public class MarketRpcTests
         await AssertRefused(seat.Proxy.PlaceBuyOrder(Call(
             seat.Session, "PlaceBuyOrder", 4, new PyInt(r.Station.Id), new PyReal(Tritanium + 0.5), new PyReal(5),
             new PyInt(1), new PyInt(-1), new PyInt(1), new PyInt(90), PyBool.False, PyNone.Instance)).AsTask());
+        await AssertRefused(seat.Proxy.PlaceBuyOrder(Call(
+            seat.Session, "PlaceBuyOrder", 5, new PyInt(r.Station.Id), invalidTypeAsReal, new PyReal(5),
+            new PyInt(1), new PyInt(-1), new PyInt(1), new PyInt(90), PyBool.False, PyNone.Instance)).AsTask());
         await AssertRefused(seat.Proxy.BuyMultipleItems(Call(
             seat.Session, "BuyMultipleItems", 3, new PyInt(r.Station.Id),
             new PyList([new PyDict([
                 new KeyValuePair<PyValue, PyValue>(new PyStr("typeID"), invalidType),
+                new KeyValuePair<PyValue, PyValue>(new PyStr("quantity"), new PyInt(1)),
+                new KeyValuePair<PyValue, PyValue>(new PyStr("price"), new PyReal(5)),
+            ])]), PyBool.False)).AsTask());
+        await AssertRefused(seat.Proxy.BuyMultipleItems(Call(
+            seat.Session, "BuyMultipleItems", 6, new PyInt(r.Station.Id),
+            new PyList([new PyDict([
+                new KeyValuePair<PyValue, PyValue>(new PyStr("typeID"), invalidTypeAsReal),
                 new KeyValuePair<PyValue, PyValue>(new PyStr("quantity"), new PyInt(1)),
                 new KeyValuePair<PyValue, PyValue>(new PyStr("price"), new PyReal(5)),
             ])]), PyBool.False)).AsTask());

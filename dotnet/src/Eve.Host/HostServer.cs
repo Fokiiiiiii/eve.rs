@@ -26,6 +26,9 @@ public sealed record HostOptions
     /// <summary>Maximum queued packets sent through one front connection.</summary>
     public int MaxQueuedOutboundPacketsPerConnection { get; init; } = 8_192;
 
+    /// <summary>Maximum simultaneous accepted front connections.</summary>
+    public int MaxFrontConnections { get; init; } = 1_024;
+
     /// <summary>Maximum serialized bytes queued through one front connection.</summary>
     public long MaxQueuedOutboundBytesPerConnection { get; init; } = 64 * 1024 * 1024;
 
@@ -147,6 +150,9 @@ public sealed class HostServer(
     IAccountDirectory accounts,
     Func<ReadOnlyMemory<byte>> clusterConfig)
 {
+    private readonly int _maxFrontConnections = options.MaxFrontConnections > 0
+        ? options.MaxFrontConnections
+        : throw new ArgumentOutOfRangeException(nameof(options), "MaxFrontConnections must be positive.");
     private int _connections;
     private readonly ConcurrentDictionary<FrontConnection, byte> _fronts = new();
 
@@ -174,11 +180,16 @@ private readonly LoginAttemptLimiter _loginAttemptLimiter = new();
             while (!cancellationToken.IsCancellationRequested)
             {
                 var socket = await listener.AcceptAsync(cancellationToken);
+                if (!TryReserveConnection())
+                {
+                    socket.Dispose();
+                    continue;
+                }
                 if (socket.AddressFamily != AddressFamily.Unix)
                 {
                     socket.NoDelay = true;
                 }
-                _ = Task.Run(() => RunAsync(new NetworkStream(socket, ownsSocket: true), cancellationToken), CancellationToken.None);
+                _ = Task.Run(() => RunReservedAsync(new NetworkStream(socket, ownsSocket: true), cancellationToken), CancellationToken.None);
             }
         }
         catch (OperationCanceledException)
@@ -189,23 +200,59 @@ private readonly LoginAttemptLimiter _loginAttemptLimiter = new();
     /// <summary>Serves one front over <paramref name="stream"/> until it disconnects or the link breaks.</summary>
     public async Task RunAsync(Stream stream, CancellationToken cancellationToken)
     {
-        Interlocked.Increment(ref _connections);
-        await using var connection = new FrontConnection(stream, options, dispatcher, accounts, clusterConfig, _loginAttemptLimiter);
-        _fronts[connection] = 0;
+        if (!TryReserveConnection())
+        {
+            await stream.DisposeAsync();
+            return;
+        }
+        await RunReservedAsync(stream, cancellationToken);
+    }
+
+    private bool TryReserveConnection()
+    {
+        while (true)
+        {
+            var current = Volatile.Read(ref _connections);
+            if (current >= _maxFrontConnections)
+                return false;
+            if (Interlocked.CompareExchange(ref _connections, current + 1, current) == current)
+                return true;
+        }
+    }
+
+    private async Task RunReservedAsync(Stream stream, CancellationToken cancellationToken)
+    {
+        FrontConnection? activeConnection = null;
         try
         {
-            await connection.RunAsync(cancellationToken);
-        }
-        catch (OperationCanceledException)
-        {
-        }
-        catch (Exception error) when (error is HostLinkException or IOException or ObjectDisposedException)
-        {
-            options.Log?.Invoke($"front link ended: {error.Message}");
+            var connection = new FrontConnection(stream, options, dispatcher, accounts, clusterConfig, _loginAttemptLimiter);
+            activeConnection = connection;
+            _fronts[connection] = 0;
+            await using (connection)
+            {
+                try
+                {
+                    await connection.RunAsync(cancellationToken);
+                }
+                catch (OperationCanceledException)
+                {
+                }
+                catch (Exception error) when (error is HostLinkException or IOException or ObjectDisposedException)
+                {
+                    options.Log?.Invoke($"front link ended: {error.Message}");
+                }
+            }
         }
         finally
         {
-            _fronts.TryRemove(connection, out _);
+            if (activeConnection is not null)
+            {
+                _fronts.TryRemove(activeConnection, out _);
+            }
+            else
+            {
+                await stream.DisposeAsync();
+            }
             Interlocked.Decrement(ref _connections);
         }
     }
@@ -238,8 +285,8 @@ private readonly LoginAttemptLimiter _loginAttemptLimiter;
         _accounts = accounts;
         _clusterConfig = clusterConfig;
         _loginAttemptLimiter = loginAttemptLimiter;
-        if (options.MaxPendingPacketsPerSession <= 0 || options.MaxPendingBytesPerSession <= 0 || options.MaxQueuedOutboundPacketsPerSession <= 0 || options.MaxQueuedOutboundBytesPerSession <= 0 || options.MaxQueuedOutboundPacketsPerConnection <= 0 || options.MaxQueuedOutboundBytesPerConnection <= 0)
-            throw new ArgumentOutOfRangeException(nameof(options), "Session and outbound queue limits must be positive.");
+        if (options.MaxFrontConnections <= 0 || options.MaxPendingPacketsPerSession <= 0 || options.MaxPendingBytesPerSession <= 0 || options.MaxQueuedOutboundPacketsPerSession <= 0 || options.MaxQueuedOutboundBytesPerSession <= 0 || options.MaxQueuedOutboundPacketsPerConnection <= 0 || options.MaxQueuedOutboundBytesPerConnection <= 0)
+            throw new ArgumentOutOfRangeException(nameof(options), "Front connection, session and outbound queue limits must be positive.");
         _outgoing = Channel.CreateBounded<QueuedFrame>(new BoundedChannelOptions(options.MaxQueuedOutboundPacketsPerConnection)
         {
             SingleReader = true,

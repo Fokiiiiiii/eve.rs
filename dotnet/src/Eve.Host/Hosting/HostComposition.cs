@@ -111,7 +111,7 @@ internal static class HostComposition
                 foreach (var (user, mask) in Eve.Services.GameMasterRoles.ParseGrants(gmGrants))
                 {
                     var granted = await directory.GrantRolesAsync(user, mask);
-                    Console.Error.WriteLine($"eve-host: EVE_GM_ACCOUNTS {user}: {(granted ? $"role bits 0x{mask:X} added" : "no such account (it is created by its first login)")}");
+                    Console.Error.WriteLine(HostConfiguration.GmAccountGrantLog(granted));
                 }
             }
             var configSchema = Env("EVE_GLOBAL_CONFIG_SCHEMA", PgGlobalConfigPersistence.DefaultSchema);
@@ -285,6 +285,7 @@ internal static class HostComposition
         server = new HostServer(
             new HostOptions
             {
+                MaxFrontConnections = int.Parse(HostConfiguration.Env("EVE_MAX_FRONT_CONNECTIONS", "1024"), System.Globalization.CultureInfo.InvariantCulture),
                 MaxPendingBytesPerSession = long.Parse(HostConfiguration.Env("EVE_MAX_PENDING_BYTES_PER_SESSION", "16777216"), System.Globalization.CultureInfo.InvariantCulture),
                 MaxQueuedOutboundPacketsPerSession = int.Parse(HostConfiguration.Env("EVE_MAX_QUEUED_OUTBOUND_PACKETS_PER_SESSION", "512"), System.Globalization.CultureInfo.InvariantCulture),
                 MaxQueuedOutboundBytesPerSession = long.Parse(HostConfiguration.Env("EVE_MAX_QUEUED_OUTBOUND_BYTES_PER_SESSION", "8388608"), System.Globalization.CultureInfo.InvariantCulture),

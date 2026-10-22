@@ -1,5 +1,9 @@
 # Deviations from the reference server
 
+## Front connection admission limit (2026-10-22)
+
+The Host admits at most 1,024 active front connections by default (`EVE_MAX_FRONT_CONNECTIONS`) and closes accepted sockets above that capacity before dispatch. This resource policy does not change packets for admitted clients; overload clients receive a closed connection. `HostServerTests.Front_connections_above_the_server_limit_are_closed_before_dispatch` verifies the refusal and confirms the admitted connection remains active.
+
 ## Corporation member map locations (2026-10-20)
 
 `map.GetMyExtraMapInfo` returns the current solar-system locations of online members in the caller's corporation. EveJS 261018.1 returns an empty rowset for this method, while the V24.01 `mapFilterCorpMembers.py` and `mapViewColorHandler.py` callsites group `characterID` and `locationID` rows into a corporation-member heatmap. eve.rs uses the authoritative live session registry and corporation session scope; `Map_extra_info_lists_only_current_members_of_the_callers_corporation` covers the rowset and scope.

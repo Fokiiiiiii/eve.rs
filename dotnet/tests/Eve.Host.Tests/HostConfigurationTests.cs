@@ -44,4 +44,12 @@ public class HostConfigurationTests
         Assert.True(IPEndPoint.TryParse("127.0.0.1:26010", out _));
         Assert.True(IPEndPoint.TryParse("127.0.0.1:26011", out _));
     }
+
+
+    [Fact]
+    public void Gm_account_grant_status_logs_do_not_include_configured_account_names()
+    {
+        Assert.Equal("eve-host: EVE_GM_ACCOUNTS grant: role bits added", HostConfiguration.GmAccountGrantLog(true));
+        Assert.Equal("eve-host: EVE_GM_ACCOUNTS grant: no such account (it is created by its first login)", HostConfiguration.GmAccountGrantLog(false));
+    }
 }

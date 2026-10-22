@@ -759,8 +759,17 @@ public class AllianceTests
         var older = Assert.IsType<Eve.Marshal.PyList>(await service.CallAsync(Call(executor,"GetAllianceMembersOlderThan",
             new Eve.Marshal.PyInt(alliance.Id),new Eve.Marshal.PyInt(2))));
         Assert.Contains(new Eve.Marshal.PyInt(memberCorp.Id),older.Items);
+        var invalidMinimumDays = await Assert.ThrowsAsync<Eve.Corporations.CorporationError>(() =>
+            service.CallAsync(Call(executor,"GetAllianceMembersOlderThan",new Eve.Marshal.PyInt(alliance.Id),new Eve.Marshal.PyInt(-1))).AsTask());
+        Assert.Equal("ALLIANCE_MEMBERSHIP_DAYS_INVALID",invalidMinimumDays.Code);
 
         var ranked = Assert.IsType<Eve.Marshal.PyList>(await service.CallAsync(Call(executor,"GetRankedAlliances",new Eve.Marshal.PyInt(10))));
+        var invalidRankLimit = await Assert.ThrowsAsync<Eve.Corporations.CorporationError>(() =>
+            service.CallAsync(Call(executor,"GetRankedAlliances",new Eve.Marshal.PyInt(-1))).AsTask());
+        Assert.Equal("ALLIANCE_RANKED_LIMIT_INVALID",invalidRankLimit.Code);
+        var malformedRankLimit = await Assert.ThrowsAsync<Eve.Corporations.CorporationError>(() =>
+            service.CallAsync(Call(executor,"GetRankedAlliances",new Eve.Marshal.PyStr("all"))).AsTask());
+        Assert.Equal("ALLIANCE_RANKED_LIMIT_INVALID",malformedRankLimit.Code);
         var row = Assert.IsType<Eve.Marshal.PyObject>(Assert.Single(ranked.Items));
         var rowFields = Assert.IsType<Eve.Marshal.PyDict>(row.Args);
         var header = Assert.IsType<Eve.Marshal.PyTuple>(rowFields.Entries.Single(entry => entry.Key == new Eve.Marshal.PyStr("header")).Value);
@@ -1163,6 +1172,44 @@ public class AllianceTests
         Assert.Equal(maximum,rejected.Text);
     }
 
+    [PgFact]
+    public async Task Alliance_application_response_text_limit_matches_the_client_utf16_maximum()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (executor, _) = await Founder(rig, "Response Executor", "RSPEX");
+        var (applicant, applicantCorp) = await Founder(rig, "Response Applicant", "RSPAP");
+        var alliance = await rig.Store.CreateAllianceAsync(executor, Request, "response-limit");
+        var applicationId = await rig.Store.ApplyToAllianceAsync(applicant, alliance.Id, "Initial text");
+        var service = (Eve.Services.IService)new Eve.Services.Corporations.AllianceRegistryService(
+            rig.Store, rig.Characters, () => rig.Now);
+        Eve.Services.ClientSession Session(long actor)
+        {
+            var session = new Eve.Services.ClientSession { SessionId = actor };
+            session.Set("charid", new Eve.Marshal.PyInt(actor));
+            return session;
+        }
+        Eve.Services.ServiceCall Call(long actor, string method, params Eve.Marshal.PyValue[] args) =>
+            new() { Session = Session(actor), Method = method, Args = args };
+
+        var maximum = string.Concat(Enumerable.Repeat("😀", 500));
+        var tooLong = string.Concat(Enumerable.Repeat("😀", 501));
+
+        var refused = await Assert.ThrowsAsync<Eve.Corporations.CorporationError>(() => service.CallAsync(
+            Call(executor, "UpdateApplication", new Eve.Marshal.PyInt(applicantCorp.Id),
+                new Eve.Marshal.PyWString(tooLong), new Eve.Marshal.PyInt(4))).AsTask());
+        Assert.Equal("ALLIANCE_APPLICATION_TEXT_TOO_LONG", refused.Code);
+        var unchanged = Assert.Single(await rig.Store.AllianceApplicationsAsync(alliance.Id));
+        Assert.Equal(applicationId, unchanged.Id);
+        Assert.Equal("Initial text", unchanged.Text);
+        Assert.Equal(1, unchanged.Status);
+
+        Assert.IsType<Eve.Marshal.PyNone>(await service.CallAsync(Call(executor, "UpdateApplication",
+            new Eve.Marshal.PyInt(applicantCorp.Id), new Eve.Marshal.PyWString(maximum), new Eve.Marshal.PyInt(4))));
+        var updated = Assert.Single(await rig.Store.AllianceApplicationsAsync(alliance.Id));
+        Assert.Equal(maximum, updated.Text);
+        Assert.Equal(4, updated.Status);
+    }
+
     [Fact]
     public async Task Suggested_alliance_short_names_match_reference_variants()
     {
@@ -1436,6 +1483,16 @@ public class AllianceTests
                 return new() { Session = session, Method = method, Args = args };
             }
 
+            await Assert.ThrowsAsync<Eve.Corporations.CorporationError>(() => service.CallAsync(Call(director,
+                "AddBulletin", new Eve.Marshal.PyWString(new string('T', 101)),
+                new Eve.Marshal.PyWString("Body"))).AsTask());
+            await Assert.ThrowsAsync<Eve.Corporations.CorporationError>(() => service.CallAsync(Call(director,
+                "AddBulletin", new Eve.Marshal.PyWString("Title"),
+                new Eve.Marshal.PyWString(new string('B', 4001)))).AsTask());
+            var maximumBulletinId = Assert.IsType<Eve.Marshal.PyInt>(await service.CallAsync(Call(director,
+                "AddBulletin", new Eve.Marshal.PyWString(new string('T', 100)),
+                new Eve.Marshal.PyWString(new string('B', 4000)))));
+            await service.CallAsync(Call(director, "DeleteBulletin", maximumBulletinId));
             var bulletinId = Assert.IsType<Eve.Marshal.PyInt>(await service.CallAsync(Call(director,
                 "AddBulletin", new Eve.Marshal.PyWString("Maintenance"),
                 new Eve.Marshal.PyWString("Docking services will restart.")))).Value;
@@ -1454,6 +1511,10 @@ public class AllianceTests
                 "GetBulletin", new Eve.Marshal.PyInt(bulletinId))));
             Assert.Equal(Eve.Marshal.MarshalCodec.Encode(row), Eve.Marshal.MarshalCodec.Encode(single));
 
+            await Assert.ThrowsAsync<Eve.Corporations.CorporationError>(() => service.CallAsync(Call(director,
+                "UpdateBulletin", new Eve.Marshal.PyInt(bulletinId),
+                new Eve.Marshal.PyWString(new string('T', 101)),
+                new Eve.Marshal.PyWString("Body"))).AsTask());
             rig.Now += 1;
             Assert.Equal(new Eve.Marshal.PyInt(bulletinId), await service.CallAsync(Call(director,
                 "UpdateBulletin", new Eve.Marshal.PyInt(bulletinId),
@@ -2098,14 +2159,20 @@ public class AllianceTests
             session.Set("allianceid", new Eve.Marshal.PyInt(alliance.Id));
             sessions.Enter(actor, session);
             var service = (Eve.Services.IService)new Eve.Services.Corporations.AllianceRegistryService(
-                rig.Store, rig.Characters, () => rig.Now, relations: relations, characterSessions: sessions);
-            Eve.Services.ServiceCall DeclareCall(long againstId) => new()
+                rig.Store, rig.Characters, () => rig.Now, relations: relations, characterSessions: sessions,
+                validateWarHQ: (_, _, _, _) => ValueTask.FromResult(false));
+            Eve.Services.ServiceCall DeclareCall(long againstId, long? warHqId = null) => new()
             {
                 Session = session,
                 Method = "DeclareWarAgainst",
-                Args = [new Eve.Marshal.PyInt(againstId), Eve.Marshal.PyNone.Instance],
+                Args = [new Eve.Marshal.PyInt(againstId), warHqId is { } id ? new Eve.Marshal.PyInt(id) : Eve.Marshal.PyNone.Instance],
                 CallId = new Eve.Marshal.PyInt(71003)
             };
+
+            await Assert.ThrowsAsync<Eve.Corporations.CorporationError>(() =>
+                service.CallAsync(DeclareCall(targetCorp.Id + 10, 60000001)).AsTask());
+            Assert.Empty(await rig.Store.AllianceBillsAsync(alliance.Id));
+            Assert.Null(await relations.GetAsync("war", alliance.Id, targetCorp.Id + 10));
 
             var declaration = Assert.IsType<Eve.Marshal.PyObject>(await service.CallAsync(DeclareCall(targetCorp.Id)));
             Assert.Empty(sink.Packets);

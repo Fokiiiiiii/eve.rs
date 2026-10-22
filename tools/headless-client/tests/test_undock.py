@@ -163,6 +163,19 @@ def _session_changes(recorded, ours, where, mapping) -> list[str]:
         out += differences(ids(changed(recorded["args"]), mapping), changed(ours["args"]), f"{where}.changes")
     return out
 
+def compare_events_by_source(recorded: list[dict], ours: list[dict], where: str, mapping: dict) -> list[str]:
+    """Compare ordered streams while allowing simulation and inventory notifications to interleave."""
+    problems: list[str] = []
+    for is_simulation in (True, False):
+        problems.extend(compare_events(
+            [event for event in recorded if (event["name"] == "DoDestinyUpdate") == is_simulation],
+            [event for event in ours if (event["name"] == "DoDestinyUpdate") == is_simulation],
+            f"{where} ({'simulation' if is_simulation else 'session'})",
+            mapping,
+        ))
+    return problems
+
+
 def compare_events(recorded: list[dict], ours: list[dict], where: str, mapping: dict) -> list[str]:
     recorded, ours = collapse(recorded), collapse(ours)
     # The simulation and the invulnerability timer publish independently. Keep checking the timer

@@ -349,17 +349,102 @@ public sealed partial class CharMgrService(
             .Select(entry => new KeyValuePair<PyValue, PyValue>(new PyStr(entry.Key), entry.Value))]);
     }
 
+    private static bool IsBoundedCharacterSettingsValue(PyValue root)
+    {
+        const int maximumDepth = 64;
+        const int maximumNodes = 20000;
+        const int maximumPayloadUnits = 102400;
+        var pending = new Stack<(PyValue Value, int Depth)>();
+        var seen = new HashSet<PyValue>(ReferenceEqualityComparer.Instance);
+        pending.Push((root, 0));
+        var nodes = 0;
+        long payloadUnits = 0;
+
+        while (pending.TryPop(out var entry))
+        {
+            if (++nodes > maximumNodes || entry.Depth > maximumDepth)
+                return false;
+            var value = entry.Value;
+            switch (value)
+            {
+                case PyStr text:
+                    payloadUnits += text.Value.Length;
+                    break;
+                case PyWString text:
+                    payloadUnits += text.Value.Length;
+                    break;
+                case PyToken text:
+                    payloadUnits += text.Value.Length;
+                    break;
+                case PyBytes bytes:
+                    payloadUnits += bytes.Value.Length;
+                    break;
+                case PyBuffer buffer:
+                    payloadUnits += buffer.Value.Length;
+                    break;
+                case PyList list when seen.Add(value):
+                    if ((long)nodes + pending.Count + list.Items.Count > maximumNodes)
+                        return false;
+                    foreach (var child in list.Items)
+                        pending.Push((child, entry.Depth + 1));
+                    break;
+                case PyTuple tuple when seen.Add(value):
+                    if ((long)nodes + pending.Count + tuple.Items.Count > maximumNodes)
+                        return false;
+                    foreach (var child in tuple.Items)
+                        pending.Push((child, entry.Depth + 1));
+                    break;
+                case PyDict dict when seen.Add(value):
+                    if ((long)nodes + pending.Count + 2L * dict.Entries.Count > maximumNodes)
+                        return false;
+                    foreach (var (key, child) in dict.Entries)
+                    {
+                        pending.Push((key, entry.Depth + 1));
+                        pending.Push((child, entry.Depth + 1));
+                    }
+                    break;
+                case PyObject obj when seen.Add(value):
+                    if ((long)nodes + pending.Count + 2 > maximumNodes)
+                        return false;
+                    pending.Push((obj.Name, entry.Depth + 1));
+                    pending.Push((obj.Args, entry.Depth + 1));
+                    break;
+                case PyObjectEx objEx when seen.Add(value):
+                    if ((long)nodes + pending.Count + 1L + objEx.List.Count + 2L * objEx.Dict.Count > maximumNodes)
+                        return false;
+                    pending.Push((objEx.Header, entry.Depth + 1));
+                    foreach (var child in objEx.List)
+                        pending.Push((child, entry.Depth + 1));
+                    foreach (var (key, child) in objEx.Dict)
+                    {
+                        pending.Push((key, entry.Depth + 1));
+                        pending.Push((child, entry.Depth + 1));
+                    }
+                    break;
+            }
+
+            if (payloadUnits > maximumPayloadUnits)
+                return false;
+        }
+
+        return true;
+    }
+
     [Method("SaveCharacterSetting")]
     public async ValueTask<PyValue> SaveCharacterSetting(ServiceCall call)
     {
-        var key = OptionalText(call.Arg(0))?.Trim();
+        var rawKey = call.Arg(0);
+        if (rawKey is not (PyStr or PyWString or PyToken or PyInt or PyLong or PyBool or PyReal or PyNone))
+            throw MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr("Character setting keys must be scalar values.")));
+        var key = OptionalText(rawKey)?.Trim();
         if (string.IsNullOrEmpty(key))
             return None;
+        if (key.Length > 102400)
+            throw MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr("Character setting keys are limited to 100 KB.")));
 
         var value = call.Arg(1);
-        if (value is PyStr text && text.Value.Length > 102400 ||
-            value is PyWString wideText && wideText.Value.Length > 102400)
-            throw MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr("Character settings are limited to 100 KB.")));
+        if (!IsBoundedCharacterSettingsValue(value))
+            throw MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr("Character settings are limited to 100 KB, 20,000 values, and 64 nesting levels.")));
 
         await UpdatePersonalDataAsync(call, data =>
         {
@@ -979,6 +1064,8 @@ public sealed partial class CharMgrService(
             {
                 settings = new PyDict([]);
             }
+            if (!IsBoundedCharacterSettingsValue(settings))
+                throw MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr("Character settings are limited to 100 KB, 20,000 values, and 64 nesting levels.")));
             await writeLogSettings(characterId, settings, call.Cancellation);
         }
         return None;
@@ -1033,8 +1120,10 @@ public sealed partial class CharMgrService(
             await characters.GetAsync(characterId, call.Cancellation) is not null)
         {
             var status = NormalizeInteger(call.Kwarg("status") ?? call.Arg(0));
-            var extraInfo = call.Kwarg("extraInfo") ?? call.Arg(1);
-            await writeActivityStatus(characterId, status, OptionalText(extraInfo), call.Cancellation);
+            var extraInfo = OptionalText(call.Kwarg("extraInfo") ?? call.Arg(1));
+            if (extraInfo is { Length: > 32 })
+                throw MachoErrors.ThrowUserError("CHARMGR_ACTIVITY_INFO_LIMIT_EXCEEDED");
+            await writeActivityStatus(characterId, status, extraInfo, call.Cancellation);
         }
         return None;
     }

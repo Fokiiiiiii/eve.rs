@@ -33,8 +33,10 @@ public sealed class MailService(
 
     private const int MaxCharacterRecipients = 50;
     private const int MaxMailboxMessageIds = 500;
+    private const int MaxMailboxSyncEntries = 5_000;
     private const int MaxSubjectCharacters = 150;
     private const int MaxBodyCharacters = 8000;
+    private const int MaxGmChatChannelCharacters = 256;
 
     public string Name => "mailMgr";
 
@@ -145,7 +147,7 @@ private async ValueTask<PyValue> SendMailAsync(ServiceCall call)
 
         var channelName = call.Arg(1) is PyNone
             ? "Unknown Channel"
-            : JsSemantics.StringValue(call.Arg(1)) ?? "Unknown Channel";
+            : BoundedText(call.Arg(1), MaxGmChatChannelCharacters, "MAIL_CHANNEL_LIMIT_EXCEEDED");
         var request = new GmChatPokeMailRequest(
             characterId,
             140000004,
@@ -177,11 +179,17 @@ private static IReadOnlyList<long>? OptionalRecipientIds(PyValue value) =>
     private static long? OptionalPositiveId(PyValue value) =>
         PositiveId(value) is > 0 and var id ? id : null;
 
-    private static string StringArgument(PyValue value) =>
-        value is PyStr text ? text.Value : "";
+    private static string StringArgument(PyValue value) => value switch
+    {
+        PyStr text => text.Value,
+        PyBytes bytes => Encoding.UTF8.GetString(bytes.Value.Span),
+        _ => string.Empty,
+    };
 
     private static PyValue SyncMail(JsonObject? messages, JsonObject? statuses, PyValue first, PyValue last)
     {
+        if (statuses?.Count > MaxMailboxSyncEntries)
+            throw MailLimitRefusal("MAIL_SYNC_LIMIT_EXCEEDED");
         var entries = new List<(JsonObject Message, JsonObject Status)>();
         if (statuses is not null && messages is not null)
             foreach (var (key, status) in statuses)

@@ -13,7 +13,11 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
 {
     private static long Integer(PyValue v,long fallback = 0) => v switch
     {
-        PyInt n => n.Value,PyLong n => n.Value,PyReal n when double.IsFinite(n.Value) && n.Value>=long.MinValue && n.Value<=long.MaxValue => (long)n.Value,_ => fallback,
+        PyInt n => n.Value,
+        PyLong n => n.Value,
+        PyReal n when double.IsFinite(n.Value) && n.Value >= -9_223_372_036_854_775_808d &&
+            n.Value < 9_223_372_036_854_775_808d && Math.Truncate(n.Value) == n.Value => (long)n.Value,
+        _ => fallback,
     };
 
     private static int Int32(PyValue value, long fallback = 0)

@@ -291,6 +291,38 @@ public class CharMgrTests
     }
 
     [PgFact]
+    public async Task Activity_status_extra_info_is_bounded_before_the_persistence_callback()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var characterId = await rig.MakeAsync("Activity Pilot");
+        long writtenCharacterId = 0;
+        long writtenStatus = 0;
+        string? writtenExtraInfo = null;
+        var service = rig.CreateCharMgr(writeActivityStatus: (id, status, extraInfo, _) =>
+        {
+            writtenCharacterId = id;
+            writtenStatus = status;
+            writtenExtraInfo = extraInfo;
+            return ValueTask.CompletedTask;
+        });
+        var (session, _) = Rig.Session(characterId);
+
+        Assert.Equal(PyNone.Instance, await Rig.CallAsync(service, session, "SetActivityStatus",
+            new PyInt(1), new PyLong(134_000_000_000_000_000L)));
+        Assert.Equal(characterId, writtenCharacterId);
+        Assert.Equal(1, writtenStatus);
+        Assert.Equal("134000000000000000", writtenExtraInfo);
+
+        var refusal = await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(() =>
+            Rig.CallAsync(service, session, "SetActivityStatus", new PyInt(1), new PyWString(new string('x', 33))));
+        Assert.Equal(MachoErrors.UserErrorClass, refusal.Error.ClassName);
+        var errorHeader = Assert.IsType<PyTuple>(Assert.IsType<PyObjectEx>(refusal.Error.Payload).Header);
+        Assert.Equal(new PyStr("CHARMGR_ACTIVITY_INFO_LIMIT_EXCEEDED"),
+            Assert.IsType<PyTuple>(errorHeader.Items[1]).Items[0]);
+        Assert.Equal("134000000000000000", writtenExtraInfo);
+    }
+
+    [PgFact]
     public async Task The_home_station_row_names_the_station_in_every_spelling()
     {
         await using var rig = await Rig.CreateAsync();
@@ -923,6 +955,18 @@ public class CharMgrTests
         Assert.Equal(savedSettings, await Rig.CallAsync(service, session, "GetCharacterSettings"));
         await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(() => Rig.CallAsync(
             service, session, "SaveCharacterSetting", new PyStr("large"), new PyStr(new string('x', 102401))));
+        var nested = (PyValue)new PyList(Enumerable.Repeat<PyValue>(new PyInt(1), 20001).ToArray());
+        await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(() => Rig.CallAsync(
+            service, session, "SaveCharacterSetting", new PyStr("tooMany"), nested));
+        var deep = (PyValue)PyNone.Instance;
+        for (var depth = 0; depth < 65; depth++)
+            deep = new PyList([deep]);
+        await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(() => Rig.CallAsync(
+            service, session, "SaveCharacterSetting", new PyStr("tooDeep"), deep));
+        await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(() => Rig.CallAsync(
+            service, session, "SaveCharacterSetting", deep, new PyStr("value")));
+        await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(() => Rig.CallAsync(
+            service, session, "LogSettings", deep));
         Assert.Equal(savedSettings, await Rig.CallAsync(service, session, "GetCharacterSettings"));
         Assert.Equal(PyNone.Instance, await Rig.CallAsync(service, session, "DeleteCharacterSetting", new PyStr("window")));
         Assert.Equal(

@@ -172,7 +172,7 @@ public static class Training
     /// What has finished by <paramref name="now"/>: lines whose end has passed become trained levels (the next line begins where the one before
     /// ended), lines whose skill is gone or already at the level are dropped.
     /// </summary>
-    public static Settlement Settle(QueueState state, IReadOnlyDictionary<int, CharacterSkill> skills, SkillCatalog catalog, Func<SkillType, double> pointsPerMinute, long now)
+    public static Settlement Settle(QueueState state, IReadOnlyDictionary<int, CharacterSkill> skills, SkillCatalog catalog, Func<SkillType, double> pointsPerMinute, long now, int maxFinished = int.MaxValue)
     {
         var queue = state.Entries.ToList();
         var active = state.Active;
@@ -213,6 +213,10 @@ public static class Training
             active = queue.Count > 0;
             activeStart = active ? end : null;
             changed = true;
+            if (finished.Count >= Math.Max(1, maxFinished))
+            {
+                break;
+            }
         }
 
         return new Settlement(new QueueState(queue, active, activeStart), current, finished, history, changed);

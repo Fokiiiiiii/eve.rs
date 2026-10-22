@@ -631,10 +631,9 @@ public sealed partial class InvBrokerService(
             || await items.GetAsync(itemId, call.Cancellation) is not { } item)
             return false;
 
-        if (StationOf(call.Session) is { } stationId
-            && item.LocationId == stationId
-            && item.Flag == ItemFlags.Hangar
-            && item.OwnerId != characterId)
+        if (StationOf(call.Session) is not { } stationId || item.LocationId != stationId)
+            return false;
+        if (item.Flag == ItemFlags.Hangar && item.OwnerId != characterId)
             return false;
         if (ItemFlags.IsCorporationHangar(item.Flag)
             && !await CanAccessCorporationItemAsync(call.Session, item, CorporationHangarOperation.Query, call.Cancellation))

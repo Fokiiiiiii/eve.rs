@@ -5430,3 +5430,8 @@ The staff-only `mailMgr.PokePlayerAboutChatMsgGm` RPC caps its requested channel
 ## Character activity status input bound (2026-10-21)
 
 `charMgr.SetActivityStatus` takes the character from the authenticated session. The V24.01 client sends `extraInfo` as a FILETIME integer during AFK and activity transitions (`eve/client/script/parklife/gameui.py:333-338`); the Host converts the value to text and caps it at 32 UTF-16 code units before the persistence callback. Oversized input returns `CHARMGR_ACTIVITY_INFO_LIMIT_EXCEEDED`. `CharacterInfoTests.Activity_status_extra_info_is_bounded_before_the_persistence_callback` checks a valid timestamp, refusal above the bound, and no second callback.
+
+
+## Inventory open validation is station scoped (2026-10-22)
+
+While docked, `invbroker.ValidateItemCanBeOpened` and `ValidateItemListCanBeOpened` now return an unavailable result for item IDs outside the current station. The inventory binding only opens station-local items, so this also prevents the validation RPC from exposing remote item existence. Space checks continue to use the simulation visibility and range callback. `InventoryServiceTests.Container_open_validation_accepts_owned_items_and_expires_foreign_location_cache_entries` covers local ownership and both owned and foreign remote items.

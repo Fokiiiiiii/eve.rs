@@ -665,16 +665,20 @@ public class InvBrokerTests
         var session = Rig.Session();
         var ownContainer = await rig.AddAsync(Rig.Tritanium, Rig.Character, Rig.Station, singleton: true);
         var foreignContainer = await rig.AddAsync(Rig.Tritanium, Rig.Character + 1, Rig.Station, singleton: true);
+        var remoteOwnedContainer = await rig.AddAsync(Rig.Tritanium, Rig.Character, Rig.OtherStation, singleton: true);
+        var remoteForeignContainer = await rig.AddAsync(Rig.Tritanium, Rig.Character + 1, Rig.OtherStation, singleton: true);
         var hangar = await rig.HangarAsync(session);
         var ownRow = Assert.Single(Rows(await rig.CallAsync(session, "List", hangar)));
 
         Assert.Equal(PyBool.True, await rig.CallAsync(session, "ValidateItemCanBeOpened", null, ownRow));
         Assert.Equal(PyBool.False, await rig.CallAsync(session, "ValidateItemCanBeOpened", null, new PyLong(foreignContainer)));
         Assert.Equal(PyBool.False, await rig.CallAsync(session, "ValidateItemCanBeOpened", null, new PyLong(ownContainer + 1000)));
+        Assert.Equal(PyBool.False, await rig.CallAsync(session, "ValidateItemCanBeOpened", null, new PyLong(remoteOwnedContainer)));
+        Assert.Equal(PyBool.False, await rig.CallAsync(session, "ValidateItemCanBeOpened", null, new PyLong(remoteForeignContainer)));
 
         var invalid = Assert.IsType<PyList>(await rig.CallAsync(session, "ValidateItemListCanBeOpened", null,
-            PyList.Of(ownRow, new PyLong(foreignContainer))));
-        Assert.Equal(new PyList([new PyLong(foreignContainer)]), invalid);
+            PyList.Of(ownRow, new PyLong(foreignContainer), new PyLong(remoteOwnedContainer), new PyLong(remoteForeignContainer))));
+        Assert.Equal(new PyList([new PyLong(foreignContainer), new PyLong(remoteOwnedContainer), new PyLong(remoteForeignContainer)]), invalid);
         Assert.Equal(PyBool.True, await rig.CallAsync(session, "ValidateItemCanBeOpened", null, PyNone.Instance));
     }
 

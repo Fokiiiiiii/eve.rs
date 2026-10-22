@@ -210,7 +210,7 @@ public sealed partial class SpaceSessions
     /// The pilot of a character in a solar system as the simulation sees it, for an ESS link: its ship, whether the ship is one that may link (the SDE's type
     /// list 231), and where the ship is from the ESS ball. Null when the character is not in the system, or the simulation does not say where its ship is.
     /// </summary>
-    public async Task<EssHolder?> EssHolderAsync(int solarSystemId, long characterId, CancellationToken cancellationToken)
+    public async Task<EssHolder?> EssHolderAsync(int solarSystemId, long characterId, long essId, CancellationToken cancellationToken)
     {
         if (_pilots.Values.FirstOrDefault(pilot => pilot.CharacterId == characterId && pilot.SolarSystemId == solarSystemId) is not { } pilot)
         {
@@ -223,15 +223,29 @@ public sealed partial class SpaceSessions
         {
             return null;
         }
-        if (await PositionOfAsync(session, shipId.Value, cancellationToken) is not { } position)
+
+        CommandReply measured;
+        try
         {
+            measured = await _sim.CommandAsync(
+                (ulong)session.SessionId,
+                SimCommands.Measure,
+                [essId, shipId.Value],
+                cancellationToken);
+        }
+        catch (SimUnavailableException error)
+        {
+            _log?.Invoke($"ESS range query of session {session.SessionId}: {error.Message}");
+            throw Notify("Space is not available right now. Try again in a moment.");
+        }
+        if (!measured.Accepted || measured.Distance is not { } distance)
+        {
+            _log?.Invoke($"ESS range query refused for session {session.SessionId}: {measured.Reason ?? "no distance was returned"}.");
             return null;
         }
+
         var linkable = await _statics.TypeListNamesAsync(EssRules.LinkableShipsTypeList, typeId.Value, cancellationToken);
-        var dx = position.X - EssRules.BallX;
-        var dy = position.Y - EssRules.BallY;
-        var dz = position.Z - EssRules.BallZ;
-        return new EssHolder(true, linkable, Math.Sqrt(dx * dx + dy * dy + dz * dz), shipId.Value);
+        return new EssHolder(true, linkable, distance, shipId.Value);
     }
 
     /// <summary>Pays the bounties that are due (one payout at a time); each is raised as <see cref="BountyPaidOut"/>.</summary>

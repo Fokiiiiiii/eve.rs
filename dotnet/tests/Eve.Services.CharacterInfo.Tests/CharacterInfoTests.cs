@@ -955,6 +955,18 @@ public class CharMgrTests
         Assert.Equal(savedSettings, await Rig.CallAsync(service, session, "GetCharacterSettings"));
         await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(() => Rig.CallAsync(
             service, session, "SaveCharacterSetting", new PyStr("large"), new PyStr(new string('x', 102401))));
+        var nested = (PyValue)new PyList(Enumerable.Repeat<PyValue>(new PyInt(1), 20001).ToArray());
+        await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(() => Rig.CallAsync(
+            service, session, "SaveCharacterSetting", new PyStr("tooMany"), nested));
+        var deep = (PyValue)PyNone.Instance;
+        for (var depth = 0; depth < 65; depth++)
+            deep = new PyList([deep]);
+        await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(() => Rig.CallAsync(
+            service, session, "SaveCharacterSetting", new PyStr("tooDeep"), deep));
+        await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(() => Rig.CallAsync(
+            service, session, "SaveCharacterSetting", deep, new PyStr("value")));
+        await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(() => Rig.CallAsync(
+            service, session, "LogSettings", deep));
         Assert.Equal(savedSettings, await Rig.CallAsync(service, session, "GetCharacterSettings"));
         Assert.Equal(PyNone.Instance, await Rig.CallAsync(service, session, "DeleteCharacterSetting", new PyStr("window")));
         Assert.Equal(

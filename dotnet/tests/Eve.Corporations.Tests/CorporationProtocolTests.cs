@@ -885,6 +885,12 @@ private static PyValue RowField(PyValue value,string key)
         ValueTask<PyValue> ManagerRpc(string method,params PyValue[] args) => manager.CallAsync(Call(founderSession,method,args));
         var memberTracking = Assert.IsType<PyList>(await registry.CallAsync(Call(memberSession,"GetMemberTrackingInfoSimple")));
         Assert.Equal(2,memberTracking.Items.Count);
+        var memberTrackingRows = memberTracking.Items.Select(row => Assert.IsType<PyList>(row)).ToArray();
+        Assert.All(memberTrackingRows,row => Assert.Equal(PyValue.None,row.Items[7]));
+        Assert.All(memberTrackingRows,row => Assert.Equal(PyValue.None,row.Items[9]));
+        Assert.All(memberTrackingRows,row => Assert.Equal(PyValue.None,row.Items[10]));
+        Assert.All(memberTrackingRows,row => Assert.Equal(PyValue.None,row.Items[11]));
+        Assert.All(memberTrackingRows,row => Assert.Equal(PyValue.None,row.Items[12]));
         async Task<PyPackedRow> MemberRow() => Assert.IsType<PyPackedRow>(MarshalCodec.Decode(MarshalCodec.Encode(
             await ((IService)new CorpRegistryService(rig.Store,rig.Characters,() => rig.Now)).CallAsync(Call(memberSession,"GetMember",new PyInt(member))))));
 

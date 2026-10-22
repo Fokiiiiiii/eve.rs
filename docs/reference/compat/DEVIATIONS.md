@@ -5435,3 +5435,8 @@ The staff-only `mailMgr.PokePlayerAboutChatMsgGm` RPC caps its requested channel
 ## Inventory open validation is station scoped (2026-10-22)
 
 While docked, `invbroker.ValidateItemCanBeOpened` and `ValidateItemListCanBeOpened` now return an unavailable result for item IDs outside the current station. The inventory binding only opens station-local items, so this also prevents the validation RPC from exposing remote item existence. Space checks continue to use the simulation visibility and range callback. `InventoryServiceTests.Container_open_validation_accepts_owned_items_and_expires_foreign_location_cache_entries` covers local ownership and both owned and foreign remote items.
+
+
+## Corporation member tracking field visibility (2026-10-22)
+
+The V24.01 client calls `GetMemberTrackingInfoSimple` for members without the Director role and renders location, ship, faction, and logon/logoff columns only for Directors (`eve/client/script/ui/services/corporation/base_corporation.py` and `corp_ui_member_tracking.py`). EveJS 261018.1 builds both method responses from the same detailed rows. eve.rs preserves the member row shape while clearing those Director-only values from the simple response. `CorporationProtocolTests.Corporation_core_and_role_rpcs_preserve_public_fields_and_role_contracts` asserts those fields are absent for a member session.

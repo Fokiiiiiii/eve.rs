@@ -15,13 +15,20 @@ from __future__ import annotations
 
 import os
 import re
+import time
 import uuid
 
 import pytest
 
 from evecli import marshal as m
+from evecli.observe import wait_quietly
 from tests import test_login_to_character as base
 from tests import test_market as market
+from tests.test_death import _names
+from tests.test_others import watch
+from tests.test_agents_live import psql, schema
+from tests import dbseed
+from tests.gm import give_skills
 
 pytestmark = pytest.mark.skipif(not base.LIVE, reason="set EVE_LIVE_HOST=host:port to test against a running server")
 
@@ -113,22 +120,38 @@ def test_a_linkable_hull_starts_and_cancels_an_in_space_main_bank_link():
         match = re.search(r"\((\d+)\), the first published hull", grant)
         assert match, grant
         hull_type_id = int(match.group(1))
+        assert "all published skills" in give_skills(client)
+        print(f"ess-test: {grant}")
 
         hangar = client.call("invbroker", "GetInventory", 10004)
         ships = client.call_bound(hangar, "List")
         hull_id = next(int(row.fields()["itemID"]) for row in ships if int(row.fields()["typeID"]) == hull_type_id)
         ship_service = client.call("ship", "MachoBindObject", (station_id, 15), None)[0]
         boarded = client.call_bound(ship_service, "Board", hull_id, current_ship_id)
-        assert boarded is not None, "the selected ESS linkable hull was not boarded"
+        assert isinstance(boarded, tuple) and len(boarded) == 4, f"the granted ESS hull was not boarded: {boarded!r}"
         wait_quietly(client, 1.0)
 
-        client.call_bound(ship_service, "Undock", hull_id, False, onlineModules=m.List([]))
-        wait_quietly(client, 2.0)
+        undocked = client.call_bound(ship_service, "Undock", hull_id, False, onlineModules=m.List([]))
+        assert isinstance(undocked, tuple) and len(undocked) == 2, f"the granted ESS hull did not undock: {undocked!r}"
+        wait_quietly(client, 5.0)
         solar_system_id, ess_id = placed
-        moved = str(client.call("slash", "SlashCmd", f"/solar {solar_system_id}"))
-        assert "Teleported to" in moved, moved
-        warped = str(client.call("slash", "SlashCmd", f"/warpto {ess_id}"))
-        assert "Warped to item" in warped, warped
+        if client.session.session_init.get("solarsystemid2") != solar_system_id:
+            moved = str(client.call("slash", "SlashCmd", f"/solar {solar_system_id}"))
+            assert "Teleported to" in moved, moved
+        ballpark = client.call("beyonce", "MachoBindObject", solar_system_id, None)[0]
+        watch({"pilot": client}, 3.0)
+        client.call("dogmaIM", "MachoBindObject", (solar_system_id, 5), None)
+        client.call_bound(ballpark, "CmdWarpToStuff", "item", ess_id, minRange=0)
+        events = watch(
+            {"pilot": client},
+            240.0,
+            until=lambda seen: {"WarpTo", "Stop"}.issubset(
+                set().union(*(_names(event) for event in seen["pilot"] if event["name"] == "DoDestinyUpdate"))
+            ),
+        )["pilot"]
+        actions = set().union(*(_names(event) for event in events if event["name"] == "DoDestinyUpdate"))
+        print("ess-test: warp destiny", [m.plain(event) for event in events if event["name"] == "DoDestinyUpdate"])
+        assert {"WarpTo", "Stop"}.issubset(actions), sorted(actions)
 
         linked = client.call("essMgr", "AttemptLinkToMainBank")
         assert linked is None
@@ -136,6 +159,67 @@ def test_a_linkable_hull_starts_and_cancels_an_in_space_main_bank_link():
         assert data["mainBankLink"] is not None
         assert data["essID"] == ess_id
 
-        assert client.call("essMgr", "RequestMainBankUnlink") is None
-        after = m.plain(client.call("essMgr", "GetDataForClientSolarSystem"))
-        assert after["mainBankLink"] is None
+        pilot_cash_before = dbseed.isk_of(pilot)
+        wallet_schema = schema("EVE_WALLET_SCHEMA")
+        main_journal_before = int(psql(f"SELECT count(*) FROM {wallet_schema}.journal WHERE owner_id = {pilot} AND account_key = 1000 "
+                                        "AND reason = 'ESS main bank theft'"))
+        psql(f"UPDATE {schema('EVE_ESS_SCHEMA')}.systems SET main_value = 1000, main_link_completes_ms = 0 "
+             f"WHERE solar_system_id = {solar_system_id} AND ess_id = {ess_id}")
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            time.sleep(1)
+            data = m.plain(client.call("essMgr", "GetDataForClientSolarSystem"))
+            if data["mainBankLink"] is None:
+                break
+        assert data["mainBankLink"] is None, data
+        assert data["mainValue"] == 0, data
+        assert abs((dbseed.isk_of(pilot) - pilot_cash_before) - 800) < 0.01
+        assert int(psql(f"SELECT count(*) FROM {wallet_schema}.journal WHERE owner_id = {pilot} AND account_key = 1000 "
+                        "AND reason = 'ESS main bank theft'")) == main_journal_before + 1
+
+        reserve_keys = m.plain(client.call("dynamicResourceCacheMgr", "GetESSReserveBankKeys", solar_system_id))
+        assert reserve_keys, f"the configured ESS system has no reserve key quadrant: {solar_system_id}"
+        key_type_id = int(reserve_keys[0])
+        client.call("slash", "SlashCmd", f"/createitem {key_type_id}")
+        cargo = client.call("invbroker", "GetInventoryFromId", hull_id)
+        cargo_rows = client.call_bound(cargo, "List")
+        key_rows = [row.fields() for row in cargo_rows if int(row.fields()["typeID"]) == key_type_id]
+        assert len(key_rows) == 1, f"the SDE quadrant key was not placed in ship cargo: {key_rows!r}"
+
+        assert client.call("essMgr", "RequestUnlockReserveBank", key_type_id) is None
+        data = m.plain(client.call("essMgr", "GetDataForClientSolarSystem"))
+        assert data["reserveBankPulsesTotal"] in {15, 45}
+        assert data["reserveBankPulsesRemaining"] == data["reserveBankPulsesTotal"]
+        cargo = client.call("invbroker", "GetInventoryFromId", hull_id)
+        cargo_rows = client.call_bound(cargo, "List")
+        assert not any(int(row.fields()["typeID"]) == key_type_id for row in cargo_rows), "the reserve key was not consumed"
+
+        assert client.call("essMgr", "AttemptLinkToReserveBank") is None
+        data = m.plain(client.call("essMgr", "GetDataForClientSolarSystem"))
+        assert data["reserveBankActiveLinks"] == 1
+
+        corporation = int(client.session.session_init["corpid"])
+        wallet_schema = schema("EVE_WALLET_SCHEMA")
+        wallet_before = float(psql(f"SELECT COALESCE((SELECT isk FROM {wallet_schema}.balances "
+                                   f"WHERE owner_id = {corporation} AND account_key = 1001), 0)"))
+        journal_before = int(psql(f"SELECT count(*) FROM {wallet_schema}.journal "
+                                  f"WHERE owner_id = {corporation} AND account_key = 1001 "
+                                  "AND reason = 'ESS reserve bank payout'"))
+        psql(f"UPDATE {schema('EVE_ESS_SCHEMA')}.systems SET reserve_value = 1000, reserve_pulses_remaining = 1, next_pulse_ms = 0 "
+             f"WHERE solar_system_id = {solar_system_id} AND ess_id = {ess_id}")
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            time.sleep(1)
+            data = m.plain(client.call("essMgr", "GetDataForClientSolarSystem"))
+            if data["reserveBankPulsesRemaining"] == 0:
+                break
+        assert data["reserveBankPulsesRemaining"] == 0, data
+        assert data["reserveBankActiveLinks"] == 0, data
+        assert data["reserveValue"] < 1000, data
+        wallet_after = float(psql(f"SELECT isk FROM {wallet_schema}.balances "
+                                  f"WHERE owner_id = {corporation} AND account_key = 1001"))
+        journal_after = int(psql(f"SELECT count(*) FROM {wallet_schema}.journal "
+                                 f"WHERE owner_id = {corporation} AND account_key = 1001 "
+                                 "AND reason = 'ESS reserve bank payout'"))
+        assert wallet_after > wallet_before
+        assert journal_after == journal_before + 1

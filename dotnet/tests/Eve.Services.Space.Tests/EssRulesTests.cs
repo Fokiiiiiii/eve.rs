@@ -19,12 +19,21 @@ public sealed class EssRulesTests
     }
 
     [Fact]
-    public void A_key_opens_a_bank_only_in_systems_of_its_quadrant_and_the_systems_are_named_by_the_sde()
+    public void A_key_opens_a_bank_only_in_systems_of_its_quadrant_and_the_quadrant_comes_from_the_sde_region()
     {
         Assert.Equal("NW", EssReserveKeys.Find(57714)!.Quadrant);
         Assert.Equal("SE", EssReserveKeys.Find(57718)!.Quadrant);
-        var quadrants = EssQuadrants.BySystemId(new Dictionary<int, string> { [30000001] = "Feythabolis", [30000002] = "Jita", [30000003] = "Cache" });
-        Assert.Equal(new Dictionary<int, string> { [30000001] = "SW", [30000003] = "NE" }, quadrants);
+        var quadrants = EssQuadrants.BySystemId(new Dictionary<int, string>
+        {
+            [30004706] = "Delve",
+            [30000002] = "The Forge",
+            [30000003] = "Cache",
+        });
+        Assert.Equal(new Dictionary<int, string>
+        {
+            [30004706] = "SW",
+            [30000003] = "NE",
+        }, quadrants);
     }
 
     [Fact]

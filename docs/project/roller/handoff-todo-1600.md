@@ -17,8 +17,8 @@ These were stale OPEN entries: later TODO evidence, source code, and named regre
 
 ### Mission execution
 
-- Fetch/courier objectives: the objective payload still has empty lists; the TODO identifies EveJS `buildMissionObjectivePayload` at `agentMissionRuntime.js:5885`, but item-in-cargo/turn-in state is absent.
-- Dungeon enemy owner and location: the current TODO records faction shortcut and zero location placeholders.
+- Fetch/courier objectives: `MissionViews`, `MissionComposition`, and `MissionDungeonRuntime` now provide objective payload and turn-in state, with serializer coverage; the full live courier pickup/turn-in walk remains open.
+- Dungeon enemy owner and location: the kill objective uses the SDE mission faction and runtime system/coordinates, with the issuer's SDE system as fallback when no runtime position exists. Serialization is tested; saved-position and graphical marker/warp checks remain open.
 - Live kill/completion/ISK walk: the recorded live run stops after the first shot with `UnMachoDestination`; completion has unit coverage only.
 - Arc 29 live walk: the documented route was not exercised.
 
@@ -65,6 +65,9 @@ No PostgreSQL command was used. CI agent-test run `39940268962` passed the focus
 
 ## 2026-10-23 CI follow-up: Host restart signal
 
-- Push CI and the focused SKINR agent-test reached the Host restart check, then timed out waiting for its Unix socket to close after SIGTERM. `dotnet/src/Eve.Host/Program.cs` handles `Console.CancelKeyPress` to cancel serving and run `HostRuntime.ShutdownAsync`; the live test now sends SIGINT so it follows that graceful shutdown path.
-- This correction was pushed as `d86a5ef5`. The fresh focused SKINR Actions run is `40024357782`; the mission slow-live run `40023178005` is still running on commit `1f1e23a09501d69b6dcb146474bb5e45097333c7`. Results will be added after those runs complete.
+- Push CI and focused SKINR runs showed the Host did not close its socket after SIGTERM; an attempted SIGINT was also ineffective because the shell-started background process does not deliver it through `Console.CancelKeyPress`. `Program.cs` now registers POSIX SIGTERM directly and cancels the server token so `HostRuntime.ShutdownAsync` runs; the live test again sends SIGTERM.
+- The POSIX SIGTERM handler is pushed as `0649fc34`. The prior focused run `40024357782` passed Host tests (4/4) but its live restart check failed after SIGINT; fresh focused run `40026475792` and push CI `40026460445` are in progress.
+- Mission slow-live run `40024793065` passed the basic mission and kill/reward walks, then reached Arc 29 and hit pytest's default 300-second timeout at its 270-second travel wait. All three mission walks now use a 1200-second timeout; a fresh slow-live run will verify Arc 29.
+- Mission slow-live run `40023178005` on `1f1e23a09501d69b6dcb146474bb5e45097333c7` failed in `test_the_pilot_clears_the_dungeon_and_is_paid` at its 270-second travel wait because pytest's default 300-second timeout covered setup and travel too. The added objective RPC was reached before that point. The test now has a 1200-second timeout, matching its documented travel plus 900-second wave loop; run `40024793065` checks the full kill and reward path.
+- The current `Eve.Host` build succeeded with 0 warnings and 0 errors; Python compile checks and `git diff --check` passed after the test updates.
 

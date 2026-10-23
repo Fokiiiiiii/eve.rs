@@ -23,6 +23,24 @@ public sealed class ConfigServicePgFactAttribute : FactAttribute
 public sealed class ConfigServiceTests
 {
     [Fact]
+    public async Task Config_bulk_lookups_refuse_wrong_shapes_invalid_ids_and_oversized_raw_lists()
+    {
+        var service = new ConfigService(null!, null!, null!, null!);
+        var session = new ClientSession();
+        foreach (var value in new PyValue[]
+        {
+            PyNone.Instance,
+            new PyList([new PyStr("bad")]),
+            new PyList([new PyInt(-1)]),
+            new PyList(Enumerable.Repeat<PyValue>(new PyInt(1), 501).ToArray()),
+        })
+        {
+            var call = new ServiceCall { Method = "GetMultiOwnersEx", Args = [value], Session = session };
+            await Assert.ThrowsAnyAsync<Exception>(async () => await service.GetMultiOwnersEx(call));
+        }
+    }
+
+    [Fact]
     public void Station_solar_systems_by_owner_returns_sorted_owner_keyvals()
     {
         const long ownerId = 1001;

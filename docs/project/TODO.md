@@ -2734,3 +2734,5 @@ The war and move audit found no global in-process inventory or war lock. Direct 
 ## Skill queue timer notification order
 
 A scheduled online timer settles one completed queue line at a time and reschedules the next due line after its notifications finish. Per-character settlement and announcement work is serialized so concurrent timer and request paths cannot interleave level events. Ordinary view and mutation requests and offline catch-up retain full overdue settlement. `TrainingTests.A_timer_settlement_finishes_only_one_overdue_queue_line` covers bounded settlement; the accelerated live walk in `WALKS.md` checks the notification sequence.
+
+Security review follow-up: config multi-ID lookups now validate list/tuple shape and identifiers and cap raw batches at 500 before database or item reads. The complete RPC ownership and resource-bound inventory remains open.

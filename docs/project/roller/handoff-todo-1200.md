@@ -69,3 +69,12 @@ CBM and Serena source/test declarations were inspected; external mechanics claim
 - Arc 29 is already in `MissionStaticCatalog.ArcsOnByDefault` following the whole 52-step live path recorded in DEVIATIONS “Mission execution X8”. TODO now keeps the remaining Damsel-specific composition as a separate open data gap and records the successful live mission transitions. Host `WarpToLocation` and `WarpToAgentInSpace` remain open.
 - Push CI run 715 on `df6fad1e` also found a SKINR notice-drain issue and market fee expectations. Main commits `7e7df9a8` and `93dab77f` contain those root fixes. Run 719 on `42d5ccce` is checking the latest main at this handoff update.
 - Local `python3 -m py_compile tools/headless-client/tests/test_mission_walk.py` and `git diff --check` passed. No PostgreSQL database was used; graphical-client behavior was not tested.
+
+
+
+## 2026-10-23 mission timed ISK bonus
+
+- The reward interval is minutes: the EVE University mission timer page describes minute-scale bonus windows, and EveJS v0.12.9 converts `bonusTimeIntervalMinutes` to ticks. The previous static reward property name implied seconds and was inconsistent with that path; the model now calls it `BonusIntervalMinutes`.
+- On mission completion, SDE-authored ISK bonus rewards are credited only when `AcceptedAt + BonusIntervalMinutes > completion time`. The bonus uses wallet reference type 34 and a separate idempotent operation key; the base reward remains reference type 33. Non-ISK bonus item settlement remains open.
+- `MissionDungeonRuntimeTests.A_mission_time_bonus_is_paid_only_when_completed_before_its_deadline` covers an early completion and the exact deadline (excluded), with both missions completing. Focused Actions verification is pending.
+- `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/tests/Eve.Services.Core.Tests/Eve.Services.Core.Tests.csproj -p:UseSharedCompilation=false --no-restore` passed with 0 warnings and 0 errors. The selected local no-database check passed 1 test; no PostgreSQL database was used.

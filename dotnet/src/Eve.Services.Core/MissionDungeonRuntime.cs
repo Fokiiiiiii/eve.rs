@@ -341,14 +341,6 @@ public sealed class MissionDungeonRuntime(
     // are the behaviour reference's numbers. shortcut: no timed bonus (EveJS pays 1.23x in time) and no Negotiation (wiki: 5% per level); upgrade with a sourced rule.
 
     // shortcut: EveJS's numbers, not a CCP table; EveJS puts the corporation gain above the agent gain, a 2012 forum count the other way round.
-    private sealed record BasicRate(long Isk, double AgentIncrease, double CorporationIncrease);
-
-    private static readonly IReadOnlyDictionary<int, BasicRate> BasicRewards = new Dictionary<int, BasicRate>
-    {
-        [4] = new(675_000, 0.028, 0.055),
-        [5] = new(1_470_000, 0.036, 0.072),
-    };
-
     /// <summary>
 
     /// use the same field; eve.rs offers no mining mission, so it is read here as a fetch.
@@ -368,14 +360,14 @@ public sealed class MissionDungeonRuntime(
         var place = agentPlaceOf(record.AgentId);
         var sdeIsk = mission.Reward?.RewardTypeId == IskTypeId ? mission.Reward.RewardQuantity : 0;
         var level = catalog.Level(record.Content.MissionId).Level;
-        var basic = mission.Reward is null && level is { } tagged && BasicRewards.TryGetValue(tagged, out var rates) ? rates : null;
+        var rewardSettings = missionRewardConfiguration ?? ApproximateMissionRewardConfiguration.Default;
+        var basic = mission.Reward is null && level is { } tagged ? rewardSettings.BasicMissionRewardFor(tagged) : null;
         var isk = sdeIsk > 0 ? sdeIsk : basic?.Isk ?? 0;
         if (isk > 0 && place is not null)
         {
             await host.CreditIskAsync(owner, isk, place.CorporationId, AgentMissionRewardRefType,
                 $"Agent mission reward: {mission.NameEn}", $"agent-mission:{owner}:{record.Content.MissionId}:{rewardKey}", cancellationToken);
         }
-
 
         var gains = mission.ExtraStandings.Select(item => new MissionStandingGain(item.Id, item.Value / 10, false)).ToList();
         if (gains.Count == 0 && basic is not null && place is not null)
@@ -392,7 +384,7 @@ public sealed class MissionDungeonRuntime(
             var security = systemSecurityOf?.Invoke(checked((int)place.SolarSystemId));
             if (missionLevel is { } rewardLevel && security is { } systemSecurity)
                 lp = ApproximateMissionRewardRules.LoyaltyPoints(record.Content.MissionTypeLabel, rewardLevel, systemSecurity,
-                    divisionConnectionsLevelOf is null ? 0 : await divisionConnectionsLevelOf(owner, record.Content.MissionTypeLabel, cancellationToken), missionRewardConfiguration);
+                    divisionConnectionsLevelOf is null ? 0 : await divisionConnectionsLevelOf(owner, record.Content.MissionTypeLabel, cancellationToken), rewardSettings);
         }
         await host.CompleteMissionAsync(owner, record.AgentId, now(), reference, gains, consume ?? [], lp, issuerCorporationId, cancellationToken);
     }

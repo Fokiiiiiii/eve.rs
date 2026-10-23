@@ -66,5 +66,6 @@ No PostgreSQL command was used. CI agent-test run `39940268962` passed the focus
 ## 2026-10-23 CI follow-up: Host restart signal
 
 - Push CI and the focused SKINR agent-test reached the Host restart check, then timed out waiting for its Unix socket to close after SIGTERM. `dotnet/src/Eve.Host/Program.cs` handles `Console.CancelKeyPress` to cancel serving and run `HostRuntime.ShutdownAsync`; the live test now sends SIGINT so it follows that graceful shutdown path.
-- This correction was pushed as `d86a5ef5`. The fresh focused SKINR Actions run is `40024357782`; the mission slow-live run `40023178005` is still running on commit `1f1e23a09501d69b6dcb146474bb5e45097333c7`. Results will be added after those runs complete.
+- The SIGINT correction was pushed as `d86a5ef5`. The fresh focused SKINR Actions run `40024357782` is still running; `ci.yml` run `40024345772` for the same commit is also running.
+- Mission slow-live run `40023178005` on `1f1e23a09501d69b6dcb146474bb5e45097333c7` failed in `test_the_pilot_clears_the_dungeon_and_is_paid` at its 270-second travel wait because pytest's default 300-second timeout covered setup and travel too. The added objective RPC was reached before that point. The test now has a 1200-second timeout, matching its documented travel plus 900-second wave loop; a fresh slow-live run will check the full kill and reward path.
 

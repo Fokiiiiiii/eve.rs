@@ -206,6 +206,7 @@ def test_a_basic_level_4_kill_mission_is_offered_accepted_and_its_dungeon_comes_
     with base.connect(f"walk-mission-{run}") as who:
         walk_into_dungeon(who, race, run)
 
+@pytest.mark.timeout(1200)
 def test_the_pilot_clears_the_dungeon_and_is_paid():
     """The owner's standard test ship (the Cockroach, effectively invulnerable) with the QA Smartbomb clears the dungeon: each cycle hits every NPC
     of the dungeon in its 250 km field, until the last NPC is gone; the mission is then complete and paid."""

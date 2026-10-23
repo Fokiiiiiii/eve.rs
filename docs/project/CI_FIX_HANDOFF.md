@@ -264,3 +264,8 @@ CI run 672 on `1669e6dc` failed the structure market Host test because the fixtu
 ## 2026-10-23 handoff before current push
 
 - Origin/main `bcc231a9` adds documentation updates only and is included in the local merge `3980b75a`. The latest code gate remains run 689 on `1a9e73e9`; .NET build, Rust tests, E2E and Windows are still active. The local branch carries the persisted-contact type assertions and market refusal detail alongside the latest main fixes.
+
+## 2026-10-23 push 5bcb27c5 verification
+
+- Push `5bcb27c5` is on main. CI run 690 (`40016706205`) is checking that exact head; Python, fixtures, Rust formatting/clippy and advisory Rust already passed, while .NET build, Rust tests, E2E and Windows remain active. Agent run 166 (`40016728738`) is also active on the pushed head.
+- Run 689 on parent `1a9e73e9` remains active. Run 688 on `d8f4dab4` has a failed Host test shard; its completed log will be inspected separately from run 690, which includes later market and SKINR fixes.

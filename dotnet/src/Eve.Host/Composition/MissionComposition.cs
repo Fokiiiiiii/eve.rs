@@ -199,7 +199,26 @@ internal sealed partial class CharacterServicesComposition
             ReadEpicArcMessages: _ => ValueTask.FromResult<JsonObject?>(agentMissionStatic.EpicArcMessageMaps),
             ReadSolarSystemOfAgent: (agentId, _) => ValueTask.FromResult<long?>(
                 agentMissionAgentById.TryGetValue(agentId, out var agent) ? agent.SolarSystemId : null),
-            ReadHeldMission: ReadHeldMissionAsync);
+            ReadHeldMission: ReadHeldMissionAsync,
+            ReadStandingGainsForMission: async (characterId, agentId, missionId, ct) =>
+            {
+                var mission = agentMissionStatic.Mission(missionId);
+                if (mission is null) return new Dictionary<long, double>();
+                var gains = new SortedDictionary<long, double>();
+                foreach (var (ownerId, configuredGain) in mission.ExtraStandings)
+                {
+                    if (ownerId <= 0 || !double.IsFinite(configuredGain) || configuredGain == 0) continue;
+                    var current = await foundations.Relations.ValueAsync(
+                        Eve.Relations.RelationKinds.Standing.Name, ownerId, characterId, 0, cancellationToken: ct);
+                    gains[ownerId] = (10 - current) * (configuredGain / 10);
+                }
+                return gains;
+            },
+            RemoveOfferFromJournal: async (characterId, agentId, ct) =>
+            {
+                await agentMissionStore.RemoveOfferAsync(
+                    characterId, agentId, DateTimeOffset.UtcNow, ct);
+            });
 
         var researchPort = new PersistenceAgentResearch(source, agentResearchProjects, economyWallets, items, itemTypes, characterSessions,
             await PersistenceAgentResearch.LoadFieldsAsync(sde, CancellationToken.None), () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());

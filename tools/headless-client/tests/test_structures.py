@@ -670,7 +670,10 @@ def test_a_corporation_unanchors_and_scoops_its_control_tower():
         )
         assert item.startswith(f"{character}|{LEGAL_SYSTEM}|") and "unanchor" in item.lower(), item
 
-        assert client.call_bound(ship[0], "Scoop", tower, None) is None
+        try:
+            assert client.call_bound(ship[0], "Scoop", tower, None) is None
+        except p.MachoError as failure:
+            pytest.fail(f"the control tower scoop was refused: {_refusal(failure)[0]}: {describe(failure.payload)}")
         changes = timed_events(client, 15.0, until=lambda events: _named(events, "OnItemChange") != [])
         assert _named(changes, "OnItemChange"), "scooping the hull sent no item-change notification"
         scooped = dbseed.sql(

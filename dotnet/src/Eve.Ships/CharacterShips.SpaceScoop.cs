@@ -55,8 +55,7 @@ public sealed partial class CharacterShips
             return new ShipRefused(ShipRefusal.NotAllowedInHold, ModuleTypeId: item.TypeId, ShipTypeId: snapshot.Ship.TypeId);
         }
         if (spaceItem.GroupId != type.GroupId || spaceItem.LauncherId <= 0 ||
-            (spaceItem.CorporationId != item.OwnerId &&
-             (spaceItem.CorporationId != corporationId || item.OwnerId != spaceItem.CharacterId)))
+            item.OwnerId != characterId && (item.OwnerId != corporationId || spaceItem.CorporationId != corporationId))
         {
             throw new InvalidOperationException($"Space artifact {itemId} disagrees with its SDE identity or custody record.");
         }

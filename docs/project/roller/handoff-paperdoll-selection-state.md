@@ -19,8 +19,8 @@ Migration 0015 expands the database constraint to admit forced state 4 alongside
 
 ## Regression coverage
 
-CharacterReSculptHostTests.Character_selection_dispatch_projects_paperdoll_state_and_a_saved_avatar_can_enter checks the client wire shape, states 0/2/4, retry, Host restart, save reset, and SelectCharacterID. Host migrations run before test fixture inserts. The live headless test test_paperdoll_selection.py checks state 0, missing-appearance state 2, saved-appearance state 0, then game entry.
+CharacterReSculptHostTests.Character_selection_dispatch_projects_paperdoll_state_and_a_saved_avatar_can_enter checks tuple and row wire shape, states 0/2/4, retry, restart persistence, save reset, and SelectCharacterID. Host migrations run before fixture inserts. The headless test test_paperdoll_selection.py checks state 0, missing-appearance state 2, then state 0 after save and successful game entry.
 
 ## Verification
 
-Migration 0015 resolves the database rejection of state 4. Host run 39964185288 and headless run 39964072899 are in progress for commit 988ef94f8c8787f570ca09c5ded1137ace618150. Earlier Host run 39962217896 reached the test and failed at the old state constraint; that run predates migration 0015. The graphical-client route has not been exercised.
+GitHub Actions Host dispatch run 39964185288 passed after migration 0015; focused headless run 39965636111 passed with 1 passed, 0 failed, and 0 skipped. The headless route observed selection and continued through the game-entry RPC. The graphical-client route has not been exercised. Local .NET build could not complete because package restore remained stalled; no PostgreSQL database was used locally.

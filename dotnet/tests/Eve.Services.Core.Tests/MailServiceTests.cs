@@ -616,6 +616,19 @@ public sealed class MailServiceTests
     }
 
     [Fact]
+    public async Task Mail_message_ids_must_be_positive_integral_wire_values()
+    {
+        var service = Service(State());
+        Assert.Empty(Ids(await service.CallAsync(Request("GetMailHeaders", new PyList([new PyReal(20.5)])))));
+        Assert.IsType<PyNone>(await service.CallAsync(Request("GetBody", new PyReal(20.5), PyBool.True)));
+        var marked = new List<long>();
+        var writer = new MailService(_ => Task.FromResult(new JsonObject()),
+            (characterId, messageId, _, _) => { marked.Add(messageId); return Task.CompletedTask; });
+        await writer.CallAsync(Request("MarkAsRead", new PyList([new PyReal(20.5), new PyInt(0), new PyInt(20)])));
+        Assert.Equal([20L], marked);
+    }
+
+    [Fact]
     public async Task Empty_persisted_mail_and_absent_session_character_produce_empty_read_shapes()
     {
         var empty = new JsonObject();

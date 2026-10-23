@@ -5721,3 +5721,8 @@ Corporation registry batch RPCs `ExecuteActions`, `GetMembersByIds`, `GetMemberI
 ## Character selection RPC scope and work bounds (2026-10-23)
 
 The security inventory now lists each active `charUnboundMgr` RPC by caller scope, target ownership, input constraints, and weighted work cost. Character creation and gender/bloodline changes refuse nonintegral, non-finite, or out-of-range integer inputs; bloodline changes also require a catalog entry before writing. Character enumeration is limited by the three account slots, selection and mutation endpoints charge 10 units, and the public random-name and validation queries charge one unit each. `ValidateNameEx` returns the existing too-long code before Unicode normalization when the raw name exceeds the 37 UTF-16 code-unit maximum. The actual client uses these name calls during the creation flow (`chooseNameSection.py`) and creates characters through `CreateCharacterWithDoll` (`characterCreationContainer.py`); no graphical-client acceptance is claimed by this classification.
+
+
+## Mail message ID input validation (2026-10-23)
+
+`mailMgr.GetMailHeaders`, `GetBody`, and `MarkAsRead` now accept only positive integral message IDs. Fractional IDs no longer truncate to another recipient's message identifier; invalid IDs yield no read result or mutation. `MailServiceTests.Mail_message_ids_must_be_positive_integral_wire_values` covers fractional, zero, and valid integral inputs.

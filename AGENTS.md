@@ -24,4 +24,9 @@ EveJS is a working functional reference, not an architectural or implementation 
 ## Definition of Done
 The end-to-end client-visible flow behaves correctly, including wire shape, state changes, persistence and notification order, with passing regression tests. Document any intentional difference from EveJS with evidence.
 
+## Testing
+- On the local machine, limit verification to compile-checks for touched projects (`dotnet build` for changed .NET projects and `cargo check` for changed Rust projects) plus the single focused test for the change. Do not run full suites or the full live headless suite locally.
+- Run broader selected checks on GitHub Actions with `.github/workflows/agent-test.yml`, or use the push-triggered `.github/workflows/ci.yml` gate. The extended slow-live, benchmark, Windows, skill-training-speed and RPC-fuzz checks run through `.github/workflows/ci-nightly.yml`.
+- A skipped test is not a pass. Report skips separately, and inspect and fix failed Actions runs at their root cause as soon as they appear.
+
 Report in Japanese, separating verified statements from the ones that were not checked.

@@ -9,6 +9,7 @@ import json
 import os
 import re
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -61,6 +62,9 @@ def download_job_logs(job_id: int, token: str) -> tuple[bytes, str]:
         return response.read(), response.headers.get("Content-Type", "")
 
 def failing_step_tail(payload: bytes, content_type: str, job_id: int, step: dict) -> list[str]:
+    return failing_step_text(payload, content_type, job_id, step).splitlines()[-40:]
+
+def failing_step_text(payload: bytes, content_type: str, job_id: int, step: dict) -> str:
     if zipfile.is_zipfile(io.BytesIO(payload)):
         with zipfile.ZipFile(io.BytesIO(payload)) as archive:
             suffix = f"{step['number']}_{step['name']}.txt"
@@ -68,8 +72,8 @@ def failing_step_tail(payload: bytes, content_type: str, job_id: int, step: dict
             if not candidates:
                 candidates = [name for name in archive.namelist() if name.endswith(".txt")]
             if not candidates:
-                return []
-            return archive.read(candidates[0]).decode("utf-8", "replace").splitlines()[-40:]
+                return ""
+            return archive.read(candidates[0]).decode("utf-8", "replace")
 
     lines = payload.decode("utf-8", "replace").splitlines()
     start, end = step.get("started_at"), step.get("completed_at")
@@ -85,8 +89,94 @@ def failing_step_tail(payload: bytes, content_type: str, job_id: int, step: dict
                 if start_time <= timestamp <= end_time:
                     window.append(line)
         if window:
-            return window[-40:]
+            return "\n".join(window)
+    return "\n".join(lines)
+
+def parse_test_failures(text: str) -> list[str]:
+    patterns = (
+        re.compile(r"^\[agent-test failure\]\s+(.+?)\s*$"),
+        re.compile(r"^\s*FAILED\s+(.+?)(?:\s+-\s+.*)?$"),
+        re.compile(r"^\s*Failed\s+(.+?)(?:\s+\[[^\]]+\])?\s*$"),
+        re.compile(r"^\s*test\s+(.+?)\s+\.\.\.\s+FAILED\s*$"),
+        re.compile(r"^----\s+(.+?)\s+stdout ----\s*$"),
+        re.compile(r"^\s*FAIL:\s*(.+?)\s*$"),
+    )
+    names = []
+    for line in text.splitlines():
+        for pattern in patterns:
+            match = pattern.match(line)
+            if match:
+                name = match.group(1).strip()
+                if name and name not in names:
+                    names.append(name)
+                break
+    return names
+
+def failure_log_tail(text: str, test_name: str) -> list[str]:
+    lines = text.splitlines()
+    custom = f"[agent-test failure] {test_name}"
+    start = next((index for index, line in enumerate(lines) if line.strip() == custom), None)
+    if start is not None:
+        end = next((index for index in range(start + 1, len(lines)) if lines[index].startswith("[agent-test failure] ")), len(lines))
+        return lines[start + 1:end][-40:]
+
+    rust = f"---- {test_name} stdout ----"
+    start = next((index for index, line in enumerate(lines) if line.strip() == rust), None)
+    if start is not None:
+        end = next((index for index in range(start + 1, len(lines)) if lines[index].startswith("---- ") or lines[index].startswith("failures:")), len(lines))
+        return lines[start:end][-40:]
+
+    short_name = test_name.rsplit("::", 1)[-1]
+    headings = [index for index, line in enumerate(lines)
+                if re.match(r"^_{3,}.*_{3,}\s*$", line) and short_name in line]
+    if headings:
+        start = headings[0]
+        end = next((index for index in range(start + 1, len(lines))
+                    if re.match(r"^_{3,}.*_{3,}\s*$", lines[index]) or "short test summary" in lines[index]), len(lines))
+        return lines[start:end][-40:]
+
+    starts = [index for index, line in enumerate(lines)
+              if re.match(r"^\s*Failed\s+", line) and test_name in line]
+    if starts:
+        start = starts[0]
+        end = next((index for index in range(start + 1, len(lines))
+                    if re.match(r"^\s*Failed\s+", lines[index]) or "Test Run Failed" in lines[index]), len(lines))
+        return lines[start:end][-40:]
     return lines[-40:]
+
+def print_compact_summary(run: dict, token: str) -> None:
+    print(f"Run {run['run_number']} {run['name']} {run['conclusion'] or run['status']} sha={run['head_sha'][:12]}")
+    print(f"  {run['html_url']}")
+    jobs = api_json(f"/actions/runs/{run['id']}/jobs?per_page=100", token).get("jobs", [])
+    failed_jobs = [job for job in jobs if job.get("conclusion") in {"failure", "cancelled", "timed_out"}]
+    if not failed_jobs:
+        print("No failed tests or jobs.")
+        return
+    for job in failed_jobs:
+        print(f"  failed job: {job['name']}")
+        steps = [step for step in job.get("steps", []) if step.get("conclusion") in {"failure", "cancelled", "timed_out"}]
+        if not steps:
+            print(f"    job conclusion: {job.get('conclusion')}")
+            continue
+        try:
+            payload, content_type = download_job_logs(job["id"], token)
+        except (RuntimeError, urllib.error.URLError, zipfile.BadZipFile) as error:
+            print(f"    log download unavailable: {error}")
+            continue
+        for step in steps:
+            log = failing_step_text(payload, content_type, job["id"], step)
+            names = parse_test_failures(log)
+            print(f"    failing step: {step['name']}")
+            if names:
+                for name in names:
+                    print(f"      failing test: {name}")
+                    tail = failure_log_tail(log, name)
+                    if tail:
+                        print("        " + "\n        ".join(tail))
+            else:
+                tail = log.splitlines()[-40:]
+                if tail:
+                    print("      " + "\n      ".join(tail))
 
 def dispatch(args, token: str) -> None:
     inputs = {}
@@ -101,6 +191,80 @@ def dispatch(args, token: str) -> None:
         body={"ref": args.ref, "inputs": inputs},
     )
     print(f"Dispatched {args.workflow} on {args.ref} (HTTP {status}).")
+
+def dispatch_agent_test(args, token: str) -> None:
+    workflow = api_json("/actions/workflows/agent-test.yml", token)
+    endpoint = f"/actions/workflows/{workflow['id']}/runs?" + urllib.parse.urlencode(
+        {"per_page": 100, "event": "workflow_dispatch", "branch": "main"}
+    )
+    previous = {run["id"] for run in api_json(endpoint, token).get("workflow_runs", [])}
+    started = datetime.now().astimezone()
+    inputs = {
+        "ref": args.ref,
+        "dotnet_projects": args.projects,
+        "dotnet_filter": args.filter,
+        "live_tests": args.live,
+        "rust": args.rust,
+    }
+    status, _, _ = request(
+        "/actions/workflows/agent-test.yml/dispatches",
+        token,
+        method="POST",
+        body={"ref": "main", "inputs": inputs},
+    )
+    print(f"Dispatched agent-test.yml for test ref {args.ref} (HTTP {status}); waiting for the run id.", flush=True)
+    started_text = started.isoformat()
+    delay = 1
+    for _ in range(9):
+        runs = api_json(endpoint, token).get("workflow_runs", [])
+        candidates = []
+        for run in runs:
+            if run["id"] in previous:
+                continue
+            created = datetime.fromisoformat(run["created_at"].replace("Z", "+00:00"))
+            if created.timestamp() < started.timestamp() - 5:
+                continue
+            if run.get("display_title") not in (None, f"Agent test {args.ref}"):
+                continue
+            candidates.append(run)
+        if candidates:
+            selected = max(candidates, key=lambda run: (run.get("created_at", ""), run["id"]))
+            print(f"Run id: {selected['id']} ({selected['html_url']})")
+            return
+        print(f"Run id is not listed yet; checking again in {delay}s (dispatch started {started_text}).", flush=True)
+        time.sleep(delay)
+        delay = min(delay * 2, 15)
+    raise RuntimeError("GitHub accepted the dispatch but did not list its run id within 90 seconds.")
+
+def wait_for_run(run_id: int, token: str) -> int:
+    delay = 5
+    last_status = None
+    while True:
+        run = api_json(f"/actions/runs/{run_id}", token)
+        state = run.get("status", "unknown")
+        if state != last_status:
+            print(f"Run {run_id}: {state}{' (' + str(run.get('conclusion')) + ')' if run.get('conclusion') else ''}", flush=True)
+            last_status = state
+        if state == "completed":
+            print_compact_summary(run, token)
+            return 0 if run.get("conclusion") == "success" else 1
+        print(f"Checking again in {delay}s.", flush=True)
+        time.sleep(delay)
+        delay = min(delay * 2, 60)
+
+def print_ci_failures(sha: str, token: str) -> None:
+    workflow = api_json("/actions/workflows/ci.yml", token)
+    query = urllib.parse.urlencode({"per_page": 100, "head_sha": sha})
+    runs = api_json(f"/actions/workflows/{workflow['id']}/runs?{query}", token).get("workflow_runs", [])
+    runs = [run for run in runs if run.get("head_sha", "").startswith(sha)]
+    if not runs:
+        print(f"No ci.yml run found for {sha}.")
+        return
+    run = max(runs, key=lambda item: (item.get("created_at", ""), item["id"]))
+    if run.get("status") != "completed":
+        print(f"ci.yml run {run['id']} for {sha} is {run['status']}: {run['html_url']}")
+        return
+    print_compact_summary(run, token)
 
 def cancel_queued(args, token: str) -> None:
     query = {"per_page": 100, "status": "queued"}
@@ -167,6 +331,16 @@ def main() -> int:
     send.add_argument("--ref", default="main")
     send.add_argument("--jobs", default="all", help="ci.yml job selection")
     send.add_argument("--test-file", default="all", help="live-slow.yml filename or all")
+    agent = sub.add_parser("dispatch-agent-test", help="dispatch a selected agent test run")
+    agent.add_argument("--ref", required=True, help="source branch or commit SHA to check out")
+    agent.add_argument("--projects", required=True, help="comma-separated test project names, all, or empty to skip")
+    agent.add_argument("--filter", default="", help="dotnet test filter")
+    agent.add_argument("--live", required=True, help="comma-separated headless test files, fast, slow, all, or empty to skip")
+    agent.add_argument("--rust", required=True, choices=["none", "tests", "clippy", "all"])
+    wait = sub.add_parser("wait", help="poll a workflow run and print its failure summary")
+    wait.add_argument("run_id", type=int)
+    failures = sub.add_parser("failures", help="print failing tests from the ci.yml run for a commit")
+    failures.add_argument("sha")
     args = parser.parse_args()
     token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
     if not token:
@@ -174,6 +348,14 @@ def main() -> int:
     try:
         if args.command == "dispatch":
             dispatch(args, token)
+            return 0
+        if args.command == "dispatch-agent-test":
+            dispatch_agent_test(args, token)
+            return 0
+        if args.command == "wait":
+            return wait_for_run(args.run_id, token)
+        if args.command == "failures":
+            print_ci_failures(args.sha, token)
             return 0
         if args.command == "cancel-queued":
             cancel_queued(args, token)

@@ -2,17 +2,20 @@
 
 ## Current state
 
-- Main push runs use a SHA-specific concurrency group with cancellation disabled. The required CI gate and its dependencies are unchanged.
-- The remaining work is to add the selected-test workflow, extend `ci-status.py`, add the nightly coverage workflow, and document the agent test protocol.
-- This handoff is the continuation point for the CI-first testing change; the repository did not contain the requested handoff file before this change.
+- Current `origin/main` is `e1628eae`, following the already-pushed SHA-specific concurrency fix.
+- Required CI run 550 (`39920654219`, SHA `e7c06a86`) failed only in `.NET (host tests 4/4)`: `Paper_doll_Rpcs_round_trip_character_state_and_emit_portrait_dbrows` passed `characterId + 1` to `GetMyPaperDollData`, which correctly requires the session character ID. The pending increment corrects the test input.
+- Recent CI runs also showed canceled nested Windows jobs while parent main runs continued. The reusable Windows workflow's shared ref group could replace a pending call; the pending increment makes its concurrency group unique per caller run.
+- The pending increment contains the selected-test workflow and runner, status commands and parser tests, nightly extended coverage, and local/Actions testing protocol.
 
 ## Verification
 
-- The source changes are ready for the first push. The Actions result for that commit will be recorded after it is available.
+- `python3 tools/dev/test_ci_status.py`: 8 focused tests passed.
+- No database or broad local suite was used.
+- The agent-test workflow still needs an Actions dispatch. The push run and its concurrent-run behavior also need confirmation after the increment is pushed.
 
 ## Next steps
 
-1. Finish `agent-test.yml` with the requested .NET, live-test and Rust selections, PostgreSQL/SDE setup, logs, and failure summary.
-2. Add the nightly coverage for slow live tests, skill training speed, benchmarks, Windows, and extended RPC fuzzing.
-3. Add parser unit tests and the `dispatch-agent-test`, `wait`, and `failures` commands to `ci-status.py`.
-4. Push, dispatch the focused workflow against `main`, inspect its result and the required CI run, and update this handoff with the run IDs and outcomes.
+1. Commit the reviewed increment, fetch and merge the current `origin/main`, then push `HEAD:main`.
+2. Confirm earlier main CI runs remain active/completed and inspect the new required gate.
+3. Dispatch `agent-test.yml` against `main` with the focused paper-doll test, fast live files, and Rust tests; inspect completion and artifacts, then fix any failures at their root.
+4. Update this note before every push with the latest run IDs and outcomes.

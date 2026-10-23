@@ -1,6 +1,6 @@
 name: Windows CI
 
-# Reused by ci.yml's required gate, and run separately on a schedule or by hand.
+# Reused by ci.yml's required gate and ci-nightly.yml, and run separately on a schedule or by hand.
 on:
   workflow_call:
   schedule:
@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ci-windows-${{ github.workflow }}-${{ github.ref }}
+  group: ci-windows-${{ github.run_id }}
   cancel-in-progress: false
 
 permissions:

@@ -1,3 +1,4 @@
+using System.Text;
 using Eve.Host.Tests;
 using Eve.Macho;
 using Eve.Marshal;
@@ -44,8 +45,21 @@ public sealed class ContactEditHostWireTests
         Assert.Equal(new PyStr("Updated relationship"), Field(data, "message"));
     }
 
-    private static PyValue Field(PyValue value, string name) =>
-        ((PyDict)((PyObject)value).Args).Entries.Single(entry => JsSemantics.StringValue(entry.Key) == name).Value;
+    private static PyValue Field(PyValue keyVal, string key)
+    {
+        var entries = keyVal switch
+        {
+            PyObject obj => Assert.IsType<PyDict>(obj.Args).Entries,
+            PyDict dict => dict.Entries,
+            _ => throw new Xunit.Sdk.XunitException($"Expected a dictionary, got {keyVal.GetType().Name}"),
+        };
+        return entries.Single(entry => entry.Key switch
+        {
+            PyStr text => text.Value == key,
+            PyBytes bytes => bytes.Value.Span.SequenceEqual(Encoding.UTF8.GetBytes(key)),
+            _ => false,
+        }).Value;
+    }
 
     private static IEnumerable<string> Strings(PyValue value)
     {

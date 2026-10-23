@@ -5625,3 +5625,5 @@ charMgr.SetCharacterDescription now consumes 10 weighted per-session units becau
 ## Corporation settings RPC budget (2026-10-23)
 
 Corporation profile, logo, division-name, abilities, acceptance, mail-restriction, aggression, and reinforce-hour writes now consume 10 weighted per-session units. The underlying store still rechecks persisted Director authority; reinforce-hour values remain limited to 0–23. The dispatcher regression covers all eight settings write methods.
+
+`invbroker.GetAssetWorth` now costs 10 weighted per-session units because it traverses the character's full owned-item set; ordinary inventory reads remain at 2 units. The dispatcher regression verifies the asset valuation call exhausts the configured budget.

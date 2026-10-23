@@ -67,7 +67,7 @@ No PostgreSQL command was used. CI agent-test run `39940268962` passed the focus
 
 - Push CI and focused SKINR runs showed the Host did not close its socket after SIGTERM; an attempted SIGINT was also ineffective because the shell-started background process does not deliver it through `Console.CancelKeyPress`. `Program.cs` now registers POSIX SIGTERM directly and cancels the server token so `HostRuntime.ShutdownAsync` runs; the live test again sends SIGTERM.
 - The POSIX SIGTERM handler is pushed as `0649fc34`. The prior focused run `40024357782` passed Host tests (4/4) but its live restart check failed after SIGINT; fresh focused run `40026475792` and push CI `40026460445` are in progress.
-- The mission timeout change is in `c52c10f7`; slow-live run `40024793065` is exercising the full kill and reward walk.
+- Mission slow-live run `40024793065` passed the basic mission and kill/reward walks, then reached Arc 29 and hit pytest's default 300-second timeout at its 270-second travel wait. All three mission walks now use a 1200-second timeout; a fresh slow-live run will verify Arc 29.
 - Mission slow-live run `40023178005` on `1f1e23a09501d69b6dcb146474bb5e45097333c7` failed in `test_the_pilot_clears_the_dungeon_and_is_paid` at its 270-second travel wait because pytest's default 300-second timeout covered setup and travel too. The added objective RPC was reached before that point. The test now has a 1200-second timeout, matching its documented travel plus 900-second wave loop; run `40024793065` checks the full kill and reward path.
 - The current `Eve.Host` build succeeded with 0 warnings and 0 errors; Python compile checks and `git diff --check` passed after the test updates.
 

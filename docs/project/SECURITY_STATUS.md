@@ -304,6 +304,16 @@ The reviewed identifier-bearing methods classify as follows:
 | `mutualWarInviteMgr` pending, block-status, invite, withdraw, and response methods | Corporation/alliance owner IDs | Production mutations unavailable and fail closed | Host composition registers the service without persistence callbacks: pending reads return empty, block-status reads return false, and invite, withdraw, response, and block-setting mutations return `CustomNotify`. Owner IDs are derived from the active session, while client-supplied target IDs cannot reach a production mutation callback. `Mutual_war_invite_mgr_exposes_reference_routes_and_callback_shapes` checks the unconfigured refusal path and callback argument flow. |
 | Other Host RPC methods accepting identifiers | Various | Not yet classified | The `[Method]` source scan found 75 service source files and 885 public `ValueTask<PyValue>` methods with the standard `ServiceCall` signature; the matrix above and the reviewed classes listed here do not yet classify every identifier-taking method. The complete per-service inventory remains open. |
 
+### PLEX market RPC detail
+
+| RPC | Caller and target scope | Input bounds | Per-session cost |
+|---|---|---|---|
+| `marketProxy.StartupCheck` | Any authenticated caller; fixed protocol response | No caller-supplied data | None; constant response |
+| `marketProxy.GetPlexOrders` | Any authenticated caller; public PLEX order book is scoped to the selected character's current region | No caller-supplied owner, type, station, or region IDs | 10 units |
+| `marketProxy.GetPlexBest`, `GetPlexHistory`, `GetPlexOldPriceHistory`, `GetPlexNewPriceHistory` | Any authenticated caller; public PLEX market data in the selected character's current region | Type is fixed to PLEX; region is derived from the selected character | 10 units each; covered by `DispatchGoldenTests.Expensive_market_calls_have_a_named_per_session_budget` |
+
+PLEX order and history reads use the same authoritative selected-character market location rules as ordinary market queries; no client-supplied owner selects private order data.
+
 ### Station service RPC detail
 
 | RPC | Caller and target scope | Input bounds | Per-session cost |

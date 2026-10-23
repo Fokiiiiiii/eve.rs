@@ -5541,3 +5541,8 @@ The fleetObject Init RPC costs 10 weighted per-session units because it updates 
 ## Config RPC bounds (2026-10-23)
 
 `config.GetMultiOwnersEx`, `GetMultiCorpTickerNamesEx`, `GetMultiAllianceShortNamesEx`, and `GetMultiLocationsEx` now refuse more than 500 raw IDs before provider or item lookups with `CONFIG_BULK_LIMIT_EXCEEDED`; each consumes 10 weighted per-session units. `GetAverageMarketPrices` also consumes 10 units for its market read. The 120-unit default leaves room for a normal initial lookup sequence. Focused service and dispatcher regressions cover the cap and named budget.
+
+
+## PLEX market RPC classification (2026-10-23)
+
+The security inventory now records each PLEX market route separately: the order book and four best/history reads derive region from the selected character, return public PLEX market data, and consume 10 weighted per-session units. `StartupCheck` returns its fixed response and takes no owner or market input. `DispatchGoldenTests.Expensive_market_calls_have_a_named_per_session_budget` checks market RPC budget refusal.

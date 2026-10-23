@@ -392,8 +392,8 @@ The start scripts are `tools/windows/` (`start-server.bat`, `start-server-dev.ba
 
 | Status | Item | Missing work |
 |---|---|---|
-| DONE | Windows CI result | Run 662 on `94e37e82` passed the Windows job, including the PowerShell 5.1 entry point, production server TCP readiness, and live login-to-character walk. Windows coverage remains selected on sensitive pushes, manual selection and the weekly run while the repository is public. On return to private, Q-10 requires all workflows, including Windows jobs, to be manual only; use `tools/dev/ci-mode.py`. |
-| DONE | Windows Python fixture decoding | Run 662 on `94e37e82` passed the UTF-8 fixture test under Windows PowerShell 5.1. |
+| DONE | Windows CI result | Runs 662 (`94e37e82`) and 675 (`ebf1ec87`) passed the Windows job, including the PowerShell 5.1 entry point, production server TCP readiness, and live login-to-character walk. Windows coverage remains selected on sensitive pushes, manual selection and the weekly run while the repository is public. On return to private, Q-10 requires all workflows, including Windows jobs, to be manual only; use `tools/dev/ci-mode.py`. |
+| DONE | Windows Python fixture decoding | Runs 662 (`94e37e82`) and 675 (`ebf1ec87`) passed the UTF-8 fixture test under Windows PowerShell 5.1. |
 | OPEN | Windows PowerShell and console behavior | PowerShell developer scripts now cover service control, checks, and headless tests. Verify Ctrl+C, the batch prompt, and window-close behavior on the owner's Windows setup. |
 | OPEN | `global.json` SDK path `../.dotnet` | Check SDK selection on the owner's Windows checkout path. |
 | DONE | Windows test entry points | `tools/windows/check-all.ps1`, `pg18.ps1`, and `run-headless.ps1` provide PowerShell 5.1 counterparts for local checks, installed PostgreSQL 18 service control, and headless tests. |

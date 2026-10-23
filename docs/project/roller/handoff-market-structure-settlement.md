@@ -43,3 +43,9 @@
 - Corrected the SKINR live test's ConsumeRequest encoder using the V24.01 generated descriptors: two nested messages lead to the sequential item ID. The prior helper added a third nested message, so the gateway received ID 0 and returned its correct invalid-item response.
 - Push-triggered CI run 683 (`40014207144`) was queued when checked; run 682 on parent `d7f45242` was still running. The full CI E2E job will exercise the corrected consume/retry flow. No PostgreSQL database was accessed locally and no graphical-client result is claimed.
 - The industry budget focused Actions regression passed on run `40010004814`; the structure-market scenario's corrected location fixture is included in the current gate.
+
+## 2026-10-23 run 683 affiliation follow-up
+
+- Run 683 on `8610990c` reported `StructureMarketDenied` in the structure sell regression after the location fix. The production read model resolves affiliation from persisted `CorporationMember` relations. The fixture helper had created a character with a corporation ID but skipped the relation mutation performed by normal character creation.
+- Added the active corporation membership relation to every market test trader in the scratch relation schema; the denied trader remains affiliated with the different corporation. This makes the fixture's stored state match its intended character setup without changing access logic.
+- The updated `Eve.Host.Tests` project builds locally with 0 warnings and 0 errors. No database-backed test was run locally; Actions must verify the fixture after push.

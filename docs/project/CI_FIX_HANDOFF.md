@@ -151,7 +151,7 @@ Use lane `eve_p4` only and run database work through `tools/dev/db-lock.sh`. The
 - CI runs 668 (`4b3cd33b`) and 671 (`287c530d`) still returned HTTP 400 at SKINR `ConsumeRequest` after the SDE unlimited-license sentinel fix. Their assertion did not include the gateway message; the `ebf1ec87` test now prints it to identify the refusing validation branch. The catalog fix is not yet verified end to end.
 - CI run 671 also failed the contact test's persisted-data assertion. Commit `ebf1ec87` changes that check to compare semantic field values through `Field`; its focused Agent test and push CI are checking the updated version.
 - Commit `b5ecf895` contains these assertion changes and the live error diagnostic. Merge-result commit `b2025a73` preserves the latest main contact notification checks. The merged `Eve.Host.Tests` Release build passed with zero warnings and errors; no local PostgreSQL test was run.
-<<- Pushed the merged assertion and live diagnostic as `ebf1ec87` after fetching/merging current main. Focused contact test run `40011081153` and selected live `test_skinr_live.py` run `40011418764` failed as described below; push CI run `40011062817` identified `INVALID_COMPONENT_LICENSE_ITEM`.
+- Pushed the merged assertion and live diagnostic as `ebf1ec87` after fetching/merging current main. Focused contact test run `40011081153` and selected live `test_skinr_live.py` run `40011418764` failed as described below; push CI run `40011062817` identified `INVALID_COMPONENT_LICENSE_ITEM`.
 
 ## 2026-10-23 persisted contact ID wire types
 
@@ -165,25 +165,39 @@ Use lane `eve_p4` only and run database work through `tools/dev/db-lock.sh`. The
 
 ## 2026-10-23 run 675 follow-up
 
-- Push CI run 675 (`40011062817`) on `ebf1ec87` reports the live SKINR request as `INVALID_COMPONENT_LICENSE_ITEM`; the unlimited-license parser unit check passed earlier, but live consume still does not resolve the seeded item type. Agent run 146 (`40011418764`) also failed this live scenario. Component license type resolution remains open.
+- Push CI run 675 (`40011062817`) on `ebf1ec87` reported `INVALID_COMPONENT_LICENSE_ITEM`; the unlimited-license parser unit check passed earlier, but the live request payload had not yet been traced. Agent run 146 (`40011418764`) also failed; the run 154 artifact later identified the extra protobuf wrapper in the test encoder (see below).
 - Run 675's Host tests found the persisted contact `senderID` type mismatch; the local expectation now matches the returned `PyInt`. The project build and focused Actions rerun are pending.
-- Run 675's Windows job remains in progress at this handoff update. Update TODO 14 after checking its completed result; keep the owner-machine console checks open unless they run on that machine.
+- Run 675's Windows job later completed successfully in 14.4 minutes, including the Windows PowerShell 5.1 entry point, production TCP readiness, UTF-8 fixture decode and live login-to-character walk. TODO 14 records this result; the owner's Ctrl+C/console behavior and `global.json` path remain open.
 - The current worktree reports the market sell refusal in the failing test message. The Release build of `Eve.Host.Tests` passed with zero warnings and errors; no local database tests were run.
-
-
-## 2026-10-23 SKINR live fixture catalog eligibility
-
-- Run 675 and Agent run 146 reported `INVALID_COMPONENT_LICENSE_ITEM` for the unlimited license item. The live fixture query previously selected any published compatible component with a license item and binder, while `ShipSkinrCatalog.LoadAsync` only registers a component when its category and rarity have an authoritative point value.
-- The SKINR live fixture now requires a matching `skinrComponentPointValues` entry, including both supported object-map and `_key`/`_value` array shapes, so it selects an item the runtime catalog can resolve. The Python file passed `python3 -m py_compile`; the live Actions check is pending.
 
 ## 2026-10-23 SKINR consume request fixture shape
 
-- V24.01's generated descriptors and client messenger define `ConsumeRequest.item` as field 1 containing `ItemIdentifier.item` at field 1, whose `InventoryItemIdentifier.sequential` is varint field 1. The live test encoder added one extra field-1 message wrapper, so the Host read item ID 0 and correctly returned `INVALID_COMPONENT_LICENSE_ITEM` before license lookup.
-- Corrected `_item_consume_payload` to encode the two nested messages and quantity 1 from the client schema. The SDE `-1` unlimited-license sentinel handling remains in place.
-- The push gate on the parent head is still running; its .NET build passed. No PostgreSQL database or graphical client was used locally.
+- Artifact for Agent run 154 (`40013656378`) on `04a43486` shows its test failed before reaching the Host: my temporary point-value filter compared the text SDE key column with bigint. I removed that unnecessary filter; the query returned to the prior fixture selection.
+- The run 154 artifact also confirms the earlier `INVALID_COMPONENT_LICENSE_ITEM` came from the live test's extra protobuf field-1 wrapper, which made the decoded item ID zero. Main commit `8610990c` fixes `_item_consume_payload` to match V24.01's `ConsumeRequest.item` -> `ItemIdentifier.item` -> `InventoryItemIdentifier.sequential` nesting.
+- Python syntax compilation passed after removing the temporary filter. A corrected live Agent run and the push gate are still in progress.
 
-## 2026-10-23 SKINR wire fixture correction pushed
+## 2026-10-23 SKINR wire fixture correction
 
 - Commit `8610990c` corrects the headless `ConsumeRequest` fixture to the V24.01 two-message nesting. The source is the client's `ConsumeRequest.item` descriptor, `ItemIdentifier.item`, and generic inventory `Identifier.sequential` field. This fixes the test's zero item ID and leaves Host validation aligned with the client.
-- The push-triggered CI run is `40014207144` (run 683), queued at this handoff update. The merged-parent run `40014191246` (run 682) is still running. The full CI gate covers the live flow; no separate database-backed agent test was dispatched because this task requires no PostgreSQL use.
+- Push-triggered CI run 683 (`40014207144`) and merged-parent run 682 (`40014191246`) were still running in the neighboring worktree at its last update. Current CI and Agent checks on the merged head remain pending.
 - No local PostgreSQL or graphical-client verification was performed.
+
+
+## 2026-10-23 SKINR live sequence after the wire fix
+
+- Agent run 158 (`40014734291`) on `253597a9` passed component-item consumption, same-request retry, item deletion, unlimited license persistence and refusal of a hull item. It then received HTTP 400 at `draft.api.SaveRequest`; the test assertion did not include the gateway error string.
+- The live test now captures and prints the SaveRequest gateway message on failure. Python syntax compilation passed. A new focused live run will check the precise validation branch.
+- Agent run 159 (`40014735391`) is checking `Contact_add_persists_and_routes_the_recipient_notification`; run 685 (`40014722525`) is the push-triggered gate for `253597a9` and was pending at this update.
+- The latest completed Windows evidence is run 675 (`ebf1ec87`), whose Windows job passed in 14.4 minutes and covered PowerShell 5.1 startup, TCP readiness, the UTF-8 fixture, and live login-to-character entry. Run 681 on older `04a43486` has unrelated market `StructureMarketDenied` and the pre-wire-fix E2E failure; run 675 also had earlier Host failures recorded above.
+
+## 2026-10-23 structure market affiliation fixture
+
+- Run 683 on `8610990c` moved past the sell-range issue and failed with `StructureMarketDenied`. Structure service access reads the character's `CorporationMember` relation through `RelationStore`; the Host test helper set only the character row's corporation ID and omitted the authoritative relation that `CharacterCreation` writes.
+- The `MarketHostTests.CreateTraderAsync` fixture now inserts that relation in its scratch relations schema in the same transaction as the character and wallet. The denied trader receives its different corporation relation, preserving the denial case.
+- The local `Eve.Host.Tests` project build passed with zero warnings and errors. Run 683 is still active; the new fixture needs its Actions check after push. No PostgreSQL test was run locally.
+
+
+## 2026-10-23 SKINR layout oneof encoding
+
+- The focused run on `253597a9` passed consumption but got HTTP 400 when saving the design. V24.01's `component_instance.build_config_proto_from_component_instance` selects outer `SlotConfiguration.coating` or `.pattern` by category; both inner messages store their identifier in field 1. The headless fixture incorrectly used the category as the inner identifier field, making category-2 component IDs unreadable by `ShipSkinrCatalog.ReadSlot`.
+- `_component_kind` now uses the category only for the outer oneof and always emits the component identifier at inner field 1. The existing SaveRequest assertion prints the gateway error if this remains invalid. Python syntax compilation passed; a focused live Actions check is pending.

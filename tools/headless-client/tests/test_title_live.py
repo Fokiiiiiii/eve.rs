@@ -34,7 +34,7 @@ def test_a_title_is_listed_worn_refused_when_not_owned_and_taken_off_through_the
         titles = f"{dbseed.schema('CHARACTERS')}.character_titles"
         dbseed.sql(f"insert into {titles} (character_id, title_id, granted_ms) values ({character}, '{BATTLECRUISER_SMITH}', 0)")
         with grpc.insecure_channel(GATEWAY) as raw:
-            channel = as_user(raw, client.session.user_id)
+            channel = as_user(raw, client)
             # GetOwnedRequest lists the granted title (the page is empty: the default page)
             status, name, payload = send(channel, [request(TITLE_API + "GetOwnedRequest", character, b"")])[0]
             assert (status, name) == (200, TITLE_API + "GetOwnedResponse")

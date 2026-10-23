@@ -4,11 +4,11 @@ The gRPC prefix is added by grpcio itself, so the messages go in unframed. The h
 descriptors (eve-logic skills/skillplan/grpc/message_bus/*, cosmetic/character/title/api): not from the server's codec.
 """
 
-import base64
-import json
 import uuid
 
 import grpc
+
+from evecli import marshal as m
 
 REQUEST_SEND = "/eve_public.gateway.Requests/Send"
 REQUEST_PING = "/eve_public.gateway.Requests/Ping"
@@ -85,12 +85,6 @@ def answer(response: bytes):
     type_url = any_fields[1][0].decode()
     return status, type_url[type_url.rfind("/") + 1:], any_fields.get(2, [b""])[0]
 
-def bearer(user_id: int) -> str:
-    """The login JWT the client sends with its gateway calls for an account: the subject names the account (USER:EVE:<id>, the subject
-    the client reads). The signature is not checked by the gateway, so this token carries none (DEVIATIONS, character phase S9)."""
-    def part(data: dict) -> str:
-        return base64.urlsafe_b64encode(json.dumps(data, separators=(",", ":")).encode()).rstrip(b"=").decode()
-    return "Bearer " + ".".join([part({"alg": "HS256", "typ": "JWT"}), part({"sub": f"USER:EVE:{user_id}", "tenant": "eve-test", "tier": "dev", "exp": 4102444800}), part({"unsigned": True})])
 
 class Authorized:
     """A gRPC channel whose calls carry the account's bearer token (the client's `authorization` metadata)."""
@@ -105,8 +99,11 @@ class Authorized:
     def stream_stream(self, method):
         return lambda requests, **kwargs: self._channel.stream_stream(method)(requests, metadata=self._metadata, **kwargs)
 
-def as_user(channel, user_id: int) -> Authorized:
-    return Authorized(channel, bearer(user_id))
+def as_user(channel, client) -> Authorized:
+    """Use the signed token issued to the authenticated account and active character."""
+    token = m.plain(client.call("userSvc", "GetUserToken"))
+    assert isinstance(token, str), type(token)
+    return Authorized(channel, token)
 
 def send(channel, requests):
     """Sends the requests on one Requests/Send stream; returns the answers in order and checks the gRPC status."""

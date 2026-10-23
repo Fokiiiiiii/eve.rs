@@ -369,7 +369,7 @@ def test_v24_skinr_design_sequences_and_applies_a_persisted_license():
             location=START_STATION,
         )
         with grpc.insecure_channel(GATEWAY) as raw:
-            channel = as_user(raw, client.session.user_id)
+            channel = as_user(raw, client)
             notices = channel.stream_stream(NOTICES_CONSUME)(
                 iter([request("eve_public.gateway.Notices.Consume", character, b"")]),
                 timeout=45.0,
@@ -721,7 +721,7 @@ def test_v24_skinr_design_sequences_and_applies_a_persisted_license():
                 )
                 restarted_client.notifications.clear()
                 with grpc.insecure_channel(GATEWAY) as restarted_raw:
-                    restarted_channel = as_user(restarted_raw, restarted_client.session.user_id)
+                    restarted_channel = as_user(restarted_raw, restarted_client)
                     status, response_type, persisted_job = _send(
                         restarted_channel,
                         JOB + "GetRequest",

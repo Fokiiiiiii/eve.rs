@@ -1,7 +1,7 @@
 # The client itself is standard library only. pycryptodome is used by the
 # optional encrypted-transport path (AES-256-CBC), which the Placebo handshake
 # does not need.
-pycryptodome>=3.24.1
+pycryptodome>=4.1.0
 # the public gateway live walk (tests/test_skill_plan_live.py) speaks gRPC
-grpcio>=1.66
-protobuf>=5.28
+grpcio>=1.84.0
+protobuf>=7.36.2

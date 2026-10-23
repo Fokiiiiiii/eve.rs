@@ -92,6 +92,32 @@ public sealed class CompatibilityRpcServicesTests
     }
 
     [Fact]
+    public async Task Cache_build_read_refuses_client_arguments_before_the_handler()
+    {
+        var callbackCalls = 0;
+        var service = (IService)new CacheService
+        {
+            RpcHandler = _ =>
+            {
+                callbackCalls++;
+                return ValueTask.FromResult<PyValue?>(PyNone.Instance);
+            },
+        };
+        foreach (var call in new[]
+        {
+            Call("GetServerVersionAndBuild", new PyInt(1)),
+            new ServiceCall { Method = "GetServerVersionAndBuild", Args = [], Kwargs = new PyDict([]), Session = new ClientSession() },
+        })
+        {
+            var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(call).AsTask());
+            Assert.Equal(MachoErrors.UserErrorClass, refusal.Error.ClassName);
+            Assert.Equal("CACHE_ARGUMENTS_INVALID", refusal.Error.UserErrorMessage);
+        }
+
+        Assert.Equal(0, callbackCalls);
+    }
+
+    [Fact]
     public async Task Kiring_initialization_rpcs_keep_the_reference_shapes()
     {
         var rpc = (IService)new KiringMgrService();

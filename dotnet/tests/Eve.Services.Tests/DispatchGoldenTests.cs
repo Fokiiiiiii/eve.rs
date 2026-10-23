@@ -2004,6 +2004,36 @@ public class DispatchGoldenTests
         }
     }
 
+    [Fact]
+    public async Task Cache_build_reads_use_a_named_per_session_budget()
+    {
+        var capture = new Capture();
+        var registry = new ServiceRegistry();
+        var service = new CacheBudgetService();
+        registry.Register(service);
+        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 1 };
+        var session = new ClientSession(capture) { SessionId = 990 };
+
+        await dispatcher.DispatchAsync(CallRequestPacket("cache", "GetServerVersionAndBuild"), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("cache", "GetServerVersionAndBuild"), session);
+
+        Assert.Equal(1, service.Calls);
+        Assert.Equal(ErrorResponseCommand, CommandOf(capture.Sent[1]));
+        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[1])));
+    }
+
+    private sealed class CacheBudgetService : IService
+    {
+        public int Calls { get; private set; }
+        public string Name => "cache";
+        public bool HasMethod(string method) => method == "GetServerVersionAndBuild";
+        public ValueTask<PyValue> CallAsync(ServiceCall call)
+        {
+            Calls++;
+            return ValueTask.FromResult<PyValue>(PyNone.Instance);
+        }
+    }
+
     private sealed class BrowserLockdownBudgetService : IService
     {
         public int Calls { get; private set; }

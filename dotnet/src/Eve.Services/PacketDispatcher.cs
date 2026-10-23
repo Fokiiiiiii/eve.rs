@@ -348,6 +348,8 @@ public sealed class PacketDispatcher
             return 1;
         if (service == "custom_agency_provider" && method == "warp_to_content")
             return 10;
+        if (service == "communityTrackMgr" && method is "get_instance_attributes_public" or "change_qa_mode")
+            return 1;
         if (service == "RWManager" && method is "get_closest_rw_stations" or "solarsystem_contains_rw_instances")
             return 1;
         if (service == "clientStatLogger" && method == "LogString")

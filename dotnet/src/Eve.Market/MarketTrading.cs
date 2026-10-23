@@ -262,7 +262,7 @@ public sealed class MarketTrading(NpgsqlDataSource source,MarketStore store,PgCh
         var current = new MarketLocation(actor.StationId,actor.SolarSystemId,actor.ConstellationId,actor.RegionId);
         var location = station.Location;
 
-        var duration = request.Buying && request.Duration == 0 ? MarketRules.ImmediateBuyBookedDays : request.Duration;
+        var duration = request.Duration;
         if (!request.Buying || duration>0)
         {
             if (topology.OrderDistance(current,location) > (request.Buying ? context.Limits.BuyRange : context.Limits.SellRange))

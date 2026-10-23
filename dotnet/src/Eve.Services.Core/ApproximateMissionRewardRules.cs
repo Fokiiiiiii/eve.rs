@@ -1,15 +1,26 @@
 namespace Eve.Services.Core;
 
-/// <summary>Configurable calibration values for mission LP; the official mission data has no LP base reward.</summary>
+/// <summary>Configurable approximations for missing mission LP bases and basic mission fallback rewards.</summary>
+public sealed record ApproximateMissionBasicReward(long Isk, double AgentIncrease, double CorporationIncrease);
+
 public sealed record ApproximateMissionRewardConfiguration(
     decimal SystemSecurityFactor = 1.6288m,
     decimal SecurityConnectionsBonusPerLevel = 0.10m,
-    IReadOnlyDictionary<(string Kind, int Level), decimal>? BaseLoyaltyPoints = null)
+    IReadOnlyDictionary<(string Kind, int Level), decimal>? BaseLoyaltyPoints = null,
+    IReadOnlyDictionary<int, ApproximateMissionBasicReward>? BasicMissionRewards = null)
 {
+    public static ApproximateMissionRewardConfiguration Default { get; } = new();
+
     public decimal BaseLoyaltyPointsFor(string kind, int level)
     {
         var table = BaseLoyaltyPoints ?? ApproximateMissionRewardRules.DefaultBaseLoyaltyPoints;
         return table.GetValueOrDefault((kind, level));
+    }
+
+    public ApproximateMissionBasicReward? BasicMissionRewardFor(int level)
+    {
+        var table = BasicMissionRewards ?? ApproximateMissionRewardRules.DefaultBasicMissionRewards;
+        return table.GetValueOrDefault(level);
     }
 }
 
@@ -35,6 +46,13 @@ public static class ApproximateMissionRewardRules
             [("distribution", 4)] = 730, [("distribution", 5)] = 1750,
             [("mining", 1)] = 53, [("mining", 2)] = 125, [("mining", 3)] = 310,
             [("mining", 4)] = 730, [("mining", 5)] = 1750,
+        };
+
+    public static IReadOnlyDictionary<int, ApproximateMissionBasicReward> DefaultBasicMissionRewards { get; } =
+        new Dictionary<int, ApproximateMissionBasicReward>
+        {
+            [4] = new(675_000, 0.028, 0.055),
+            [5] = new(1_470_000, 0.036, 0.072),
         };
 
     public static long LoyaltyPoints(string kind, int level, decimal systemSecurity, int divisionConnectionsLevel,

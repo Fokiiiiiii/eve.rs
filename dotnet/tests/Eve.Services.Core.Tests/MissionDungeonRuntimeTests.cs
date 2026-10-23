@@ -183,7 +183,7 @@ public class MissionDungeonRuntimeTests
         """;
 
     [AgentsPgFact]
-    public async Task A_basic_level_4_kill_mission_with_no_reward_in_the_static_data_pays_the_level_4_isk_base_once()
+    public async Task A_basic_level_4_mission_uses_the_configured_isk_and_standing_reward_once()
     {
         var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var schema = "mdr_" + Guid.NewGuid().ToString("N")[..12];
@@ -193,16 +193,20 @@ public class MissionDungeonRuntimeTests
         var host = new FakeHost { Store = store };
         var catalog = MissionStaticCatalog.FromRows(3405148, [new SdeRow(9103, JsonDocument.Parse(BasicKillMission).RootElement.Clone())], [],
             levels: MissionLevelTags.FromJson(BasicLevel4Tag, "test"));
-        var runtime = new MissionDungeonRuntime(store, catalog, host, agent => new MissionAgentPlace(System, Corporation), () => Start);
+        var basicReward = new ApproximateMissionBasicReward(920_000, 0.031, 0.062);
+        var rewardConfiguration = new ApproximateMissionRewardConfiguration(
+            BasicMissionRewards: new Dictionary<int, ApproximateMissionBasicReward> { [4] = basicReward });
+        var runtime = new MissionDungeonRuntime(store, catalog, host, agent => new MissionAgentPlace(System, Corporation), () => Start,
+            missionRewardConfiguration: rewardConfiguration);
         await store.OfferAsync(Pilot, Agent, new AgentMissionContent(9103, 1237, "Basic Kill Step", "", false), Start, "offer:b");
         await store.AcceptAsync(Pilot, Agent, Start, "accept:b");
         Assert.Equal(1, await runtime.SweepAsync());
 
         await runtime.OnDungeonOutcomeAsync("completed", Pilot, "dungeon.3509", 78, default);
         var credit = Assert.Single(host.Credits);
-        Assert.Equal((Pilot, 675_000L, Corporation), (credit.Character, credit.Amount, credit.Counterparty));
+        Assert.Equal((Pilot, 920_000L, Corporation), (credit.Character, credit.Amount, credit.Counterparty));
 
-        Assert.Equal(new[] { (Pilot, Agent, 0.028), (Pilot, Corporation, 0.055) }, host.Standings.Select(s => (s.Character, s.Faction, s.Delta)));
+        Assert.Equal(new[] { (Pilot, Agent, 0.031), (Pilot, Corporation, 0.062) }, host.Standings.Select(s => (s.Character, s.Faction, s.Delta)));
         Assert.Equal(AgentMissionState.Completed, (await store.ReadAsync(Pilot, Agent))!.State);
     }
 

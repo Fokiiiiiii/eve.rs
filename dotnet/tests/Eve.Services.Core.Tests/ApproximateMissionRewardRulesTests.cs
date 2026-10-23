@@ -60,4 +60,18 @@ public sealed class ApproximateMissionRewardRulesTests
     {
         Assert.Equal(15, ApproximateContractLimitRules.AdditionalOutstandingContracts(5, new ApproximateContractLimitConfiguration(3)));
     }
+
+
+    [Fact]
+    public void Basic_mission_isk_and_standing_rewards_can_be_replaced_by_configuration()
+    {
+        var reward = new ApproximateMissionBasicReward(920_000, 0.031, 0.062);
+        var configuration = new ApproximateMissionRewardConfiguration(
+            BasicMissionRewards: new Dictionary<int, ApproximateMissionBasicReward> { [4] = reward });
+
+        Assert.Equal(reward, configuration.BasicMissionRewardFor(4));
+        Assert.Null(configuration.BasicMissionRewardFor(5));
+        Assert.Equal(new ApproximateMissionBasicReward(675_000, 0.028, 0.055),
+            ApproximateMissionRewardConfiguration.Default.BasicMissionRewardFor(4));
+    }
 }

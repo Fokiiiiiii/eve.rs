@@ -141,14 +141,13 @@ Refusals reach the client as `CustomInfo` notices (text keys of the client's loc
 
 - **Pilot-versus-pilot kills**: not counted. The NPC kill producer (`RecordFactionWarfareNpcKill`) is built; a player kill has no
   statistics or victory-point path yet (no event for it was found).
-- **Victory points from complexes**: built (gate, NPC defenders, per-pilot split). The battlefield is not. The ship-kill LP formula (wiki: 3.25 times hull, insurance and fitting value over 10,000,
+- **Victory points from complexes**: built (gate, NPC defenders, per-pilot split). Battlefields use the 50,000 LP pool documented below. The ship-kill LP formula (wiki: 3.25 times hull, insurance and fitting value over 10,000,
   capped at 50,000 LP) is not built.
 - **Capture trigger**: infrastructure hub destruction (25 million HP, wiki); no FW hub combat path exists.
 - **Statistics**: built in slice 2 (above). `GetStats_CorpPilots` is not served (no consumer).
-- **Mission and incursion LP credits**: no credit source in eve.rs, so the corporation LP tax applies to insurgency payouts only.
-- **Live walk**: no headless-client FW walk and no live server run for this work. The live runner needs a Rust build (several GB of
-  target output) and a quiet PostgreSQL cluster; the shared cluster hit its connection limit during the Host suite.
-- **Host suite**: 58 of 406 failed on connection exhaustion (see the testing section above); not a FW logic failure, but not green.
+- **Mission LP credits**: mission turn-in credits the issuing corporation's LP through `LoyaltyPointStore` and applies the member corporation's LP tax in the same completion transaction. Report-derived base tables and formula factors are configurable approximations; SDE `extraStandings` supplies mission standing entries, with configurable fallback values only for basic Level 4/5 missions.
+- **Live verification**: the scout-complex capture walk passed on eve_p3 on 2026-10-20; focused `FwBattlefield` tests passed 9/9 on eve_p4 on 2026-10-23. Graphical-client verification remains open.
+- **Earlier Host suite run**: 58 of 406 failed on connection exhaustion (see the testing section above); not a FW logic failure, but not green.
 ## Acceleration gates (pointer)
 
 Pilots enter a complex's rooms through acceleration gates. The API for the FW complex director is in

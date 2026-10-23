@@ -133,7 +133,7 @@ Slice 3:
 - Remote calls the client makes, checked against the server: `industryManager` (GetJob, GetJobsByOwner, InstallJob,
   CompleteJob, CompleteManyJobs, CancelJob), `blueprintManager` (GetBlueprintData, GetBlueprintDataByOwner, GetLimits),
   `facilityManager` (above, GetMaxActivityModifiers, SetFacilityTaxes). The other `industrySvc` and `facilitySvc` methods
-  are client-side. Not built: corporation jobs, structure facilities beyond the existing structure lookup.
+  are client-side. Corporation job access and structure facilities are covered in the implementation sections below.
 
 Known differences, not closed:
 - Open: no MITM capture against the real client for slice 3 (no client session was available to capture).

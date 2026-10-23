@@ -14,6 +14,8 @@ public sealed partial class ChatAuthenticationService(
     public async ValueTask<PyValue> GetAuthenticationToken(ServiceCall call)
     {
         call.Cancellation.ThrowIfCancellationRequested();
+        if (call.Args.Count != 0 || call.Kwargs is not PyNone)
+            throw MachoErrors.ThrowUserError("CHAT_AUTHENTICATION_ARGUMENTS_INVALID");
         var characterId = call.Session.CharacterId ?? 0;
         var token = tokenByCharacter is { } readToken
             ? await readToken(characterId, call.Cancellation)

@@ -368,6 +368,8 @@ public sealed class PacketDispatcher
             return 1;
         if (service == "pingService" && method == "Ping")
             return 1;
+        if (service == "chatAuthenticationService" && method == "GetAuthenticationToken")
+            return 1;
         if (service == "RWManager" && method is "get_closest_rw_stations" or "solarsystem_contains_rw_instances")
             return 1;
         if (service == "clientStatLogger" && method == "LogString")

@@ -8,6 +8,30 @@ namespace Eve.Services.Core.Tests;
 public sealed class SessionStartupRpcServicesTests
 {
     [Fact]
+    public async Task Chat_authentication_refuses_client_arguments_before_provider_or_token_creation()
+    {
+        var providerCalls = 0;
+        IService service = new ChatAuthenticationService(tokenProvider: (_, _, _) =>
+        {
+            providerCalls++;
+            return ValueTask.FromResult<string?>("token");
+        });
+        var session = new ClientSession { CharacterId = 20 };
+        foreach (var call in new[]
+        {
+            new ServiceCall { Method = "GetAuthenticationToken", Args = [new PyInt(20)], Session = session },
+            new ServiceCall { Method = "GetAuthenticationToken", Args = [], Kwargs = Py.Dict(("characterID", new PyInt(20))), Session = session },
+        })
+        {
+            var error = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(call).AsTask());
+            Assert.Equal("CHAT_AUTHENTICATION_ARGUMENTS_INVALID", error.Error.UserErrorMessage);
+        }
+
+        Assert.Equal(0, providerCalls);
+        Assert.Null(session.Get("chatAuthenticationToken"));
+    }
+
+    [Fact]
     public async Task Chat_authentication_reads_session_tokens_then_uses_the_typed_provider()
     {
         var session = new ClientSession();

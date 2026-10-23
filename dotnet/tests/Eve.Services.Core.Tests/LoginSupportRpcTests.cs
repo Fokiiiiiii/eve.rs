@@ -114,7 +114,7 @@ public sealed class LoginSupportRpcTests
             ("infoTypeAggregates", new PyDict([])),
             ("infoTypeParameters", new PyDict([])));
         Assert.Equal(expectedConfig, await ((IService)defaultService).CallAsync(Call("GetStateAndConfig", session)));
-        Assert.Empty(Assert.IsType<PyDict>(await ((IService)defaultService).CallAsync(Call("LogInfoEventsFromClient", session))).Entries);
+        Assert.Empty(Assert.IsType<PyDict>(await ((IService)defaultService).CallAsync(Call("LogInfoEventsFromClient", session, new PyDict([])))).Entries);
 
         ServiceCall? stateCall = null;
         ServiceCall? logCall = null;
@@ -134,7 +134,7 @@ public sealed class LoginSupportRpcTests
                 return ValueTask.FromResult<PyValue>(statuses);
             });
         var stateRequest = Call("GetStateAndConfig", session);
-        var events = new PyDict([new(new PyStr("entries"), new PyList([new PyStr("event")]))]);
+        var events = EventBatch(1, 1);
         var logRequest = Call("LogInfoEventsFromClient", session, events);
 
         Assert.Same(customConfig, await ((IService)service).CallAsync(stateRequest));
@@ -142,6 +142,48 @@ public sealed class LoginSupportRpcTests
         Assert.Same(statuses, await ((IService)service).CallAsync(logRequest));
         Assert.Same(logRequest, logCall);
         Assert.Same(events, loggedEvents);
+    }
+
+    [Fact]
+    public async Task Info_gathering_refuses_unbounded_or_malformed_events_before_callbacks()
+    {
+        var callbackCalls = 0;
+        var service = new InfoGatheringMgrService(
+            getStateAndConfig: (_, _) =>
+            {
+                callbackCalls++;
+                return ValueTask.FromResult<PyValue>(PyNone.Instance);
+            },
+            logInfoEventsFromClient: (_, _, _) =>
+            {
+                callbackCalls++;
+                return ValueTask.FromResult<PyValue>(PyNone.Instance);
+            });
+        var session = new ClientSession();
+        var tooManyRows = new PyList(Enumerable.Repeat<PyValue>(EventRow(), 1001).ToArray());
+        var oversizedTextValues = Enumerable.Repeat<PyValue>(PyNone.Instance, 12).ToArray();
+        oversizedTextValues[6] = new PyStr(new string('x', 1025));
+        var oversizedTextRow = new PyList(oversizedTextValues);
+        var calls = new[]
+        {
+            Call("GetStateAndConfig", session, new PyInt(1)),
+            Call("LogInfoEventsFromClient", session),
+            Call("LogInfoEventsFromClient", session, new PyList([])),
+            Call("LogInfoEventsFromClient", session, new PyDict([Entry(new PyInt(-1), new PyList([]))])),
+            Call("LogInfoEventsFromClient", session, new PyDict([Entry(new PyInt(1), tooManyRows)])),
+            Call("LogInfoEventsFromClient", session, new PyDict([Entry(new PyInt(1), new PyList([new PyList([PyNone.Instance])]))])),
+            Call("LogInfoEventsFromClient", session, new PyDict([Entry(new PyInt(1), new PyList([oversizedTextRow]))])),
+            new ServiceCall { Method = "GetStateAndConfig", Args = [], Kwargs = new PyDict([]), Session = session },
+        };
+
+        foreach (var call in calls)
+        {
+            var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() => ((IService)service).CallAsync(call).AsTask());
+            Assert.Equal(MachoErrors.UserErrorClass, refusal.Error.ClassName);
+            Assert.StartsWith("INFO_GATHERING_", refusal.Error.UserErrorMessage);
+        }
+
+        Assert.Equal(0, callbackCalls);
     }
 
     [Fact]
@@ -188,6 +230,13 @@ public sealed class LoginSupportRpcTests
         Args = args,
         Session = session,
     };
+
+    private static PyList EventRow() => new(Enumerable.Repeat<PyValue>(PyNone.Instance, 12).ToArray());
+
+    private static PyDict EventBatch(long eventTypeId, int rowCount) => new(
+        [Entry(new PyInt(eventTypeId), new PyList(Enumerable.Repeat<PyValue>(EventRow(), rowCount).ToArray()))]);
+
+    private static KeyValuePair<PyValue, PyValue> Entry(PyValue key, PyValue value) => new(key, value);
 
     private static void AssertSessionLanguage(ClientSession session, string expected)
     {

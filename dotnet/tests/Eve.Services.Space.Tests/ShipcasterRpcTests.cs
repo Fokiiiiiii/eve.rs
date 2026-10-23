@@ -109,14 +109,15 @@ public sealed class ShipcasterRpcTests
     }
 
     [Fact]
-    public async Task Starter_jump_check_uses_the_wired_character_policy_and_defaults_to_false()
+    public async Task Starter_jump_check_uses_the_wired_character_policy_and_reports_a_missing_policy()
     {
         var session = new ClientSession { CharacterId = 42 };
         var service = new ShipcasterRpcService("starterShipcasterTravelMgr", Systems, canCharacterJump: call => call.Session.CharacterId == 42);
         var defaultService = new ShipcasterRpcService("starterShipcasterTravelMgr", Systems);
 
         Assert.Equal(PyBool.True, await service.CallAsync(Call("CanCharacterJump", session: session)));
-        Assert.Equal(PyBool.False, await defaultService.CallAsync(Call("CanCharacterJump", session: session)));
+        await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await defaultService.CallAsync(Call("CanCharacterJump", session: session)));
     }
 
     [Fact]
@@ -128,10 +129,22 @@ public sealed class ShipcasterRpcTests
     }
 
     [Fact]
-    public async Task Missing_read_backends_match_the_empty_reference_state()
+    public async Task Missing_read_backends_are_reported_instead_of_returning_empty_results()
     {
         var landingPads = new ShipcasterRpcService("shipCasterLandingPadMgr", Systems);
         var launchers = new ShipcasterRpcService("shipCasterLauncherMgr", Systems);
+
+        await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await landingPads.CallAsync(Call("GetAllLandingPads")));
+        await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await launchers.CallAsync(Call("GetFactionsWithShipcaster")));
+    }
+
+    [Fact]
+    public async Task Explicitly_empty_state_returns_the_client_collection_shapes()
+    {
+        var landingPads = new ShipcasterRpcService("shipCasterLandingPadMgr", Systems, () => []);
+        var launchers = new ShipcasterRpcService("shipCasterLauncherMgr", Systems, readFactionsWithShipcaster: () => []);
 
         Assert.Empty(Assert.IsType<PyList>(await landingPads.CallAsync(Call("GetAllLandingPads"))).Items);
         Assert.Empty(Assert.IsType<PyList>(await launchers.CallAsync(Call("GetFactionsWithShipcaster"))).Items);

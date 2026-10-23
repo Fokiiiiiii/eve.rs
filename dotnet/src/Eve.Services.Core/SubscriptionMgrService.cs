@@ -120,9 +120,17 @@ public sealed partial class SubscriptionMgrService(OmegaLicenses licenses)
 
     private static PyValue EndTime(long? endTime) => endTime is { } value ? Py.FileTimeLong(value) : PyNone.Instance;
 
+    private static void RequireNoArguments(ServiceCall call)
+    {
+        call.Cancellation.ThrowIfCancellationRequested();
+        if (call.Args.Count != 0 || call.Kwargs is not PyNone)
+            throw MachoErrors.ThrowUserError("SUBSCRIPTION_ARGUMENTS_INVALID");
+    }
+
     [Method("GetSubscriptionStatus")]
     public PyValue GetSubscriptionStatus(ServiceCall call)
     {
+        RequireNoArguments(call);
         var state = State(call);
         return Py.KeyVal(
             ("isSubscribed", PyValue.Of(state.IsSubscribed)),
@@ -133,6 +141,7 @@ public sealed partial class SubscriptionMgrService(OmegaLicenses licenses)
     [Method("GetSubscriptionInfo")]
     public PyValue GetSubscriptionInfo(ServiceCall call)
     {
+        RequireNoArguments(call);
         var state = State(call);
         return Py.KeyVal(
             ("isSubscribed", PyValue.Of(state.IsSubscribed)),
@@ -142,10 +151,18 @@ public sealed partial class SubscriptionMgrService(OmegaLicenses licenses)
     }
 
     [Method("GetSubscriptionTime")]
-    public PyValue GetSubscriptionTime(ServiceCall call) => EndTime(State(call).EndTime);
+    public PyValue GetSubscriptionTime(ServiceCall call)
+    {
+        RequireNoArguments(call);
+        return EndTime(State(call).EndTime);
+    }
 
     [Method("GetCloneGrade")]
-    public PyValue GetCloneGrade(ServiceCall call) => new PyInt(State(call).CloneGrade);
+    public PyValue GetCloneGrade(ServiceCall call)
+    {
+        RequireNoArguments(call);
+        return new PyInt(State(call).CloneGrade);
+    }
 }
 
 

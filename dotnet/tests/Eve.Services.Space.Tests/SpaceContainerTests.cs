@@ -4,6 +4,7 @@ using Eve.Macho;
 using Eve.Marshal;
 using Eve.Planets;
 using Eve.Space;
+using Eve.Ships;
 
 namespace Eve.Services.Space.Tests;
 
@@ -557,4 +558,164 @@ public class SpaceContainerTests
         Assert.Equal(can.Id, (await rig.SpaceItems.GetAsync(can.Id))!.ItemId);
         Assert.Contains(Events.Of(flying.Session), e => e.Name == "OnItemChange");
     }
+    [PgFact]
+    public async Task A_container_launch_is_transactional_idempotent_and_restored_after_restart()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (flying, can) = await WithACanAsync(rig);
+        var system = flying.Session.GetInt("solarsystemid")!.Value;
+        var active = (await rig.Items.GetAsync(flying.Character.ShipId))!;
+        var launched = (await rig.Ships.GrantAsync(flying.Character.CharacterId, active.TypeId, 1, singleton: true))!
+            .Single().After;
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await rig.Items.MoveAsync(connection, transaction, launched.Id, can, 0);
+            await transaction.CommitAsync();
+        }
+        rig.Sim.PositionAnswers[can] = [1000, 2000, 3000];
+
+        await Task.WhenAll(
+            rig.Containers.LaunchShipOrContainerFromWreckOrContainerAsync(flying.Session, can, launched.Id, CancellationToken.None),
+            rig.Containers.LaunchShipOrContainerFromWreckOrContainerAsync(flying.Session, can, launched.Id, CancellationToken.None));
+
+        var stored = (await rig.Items.GetAsync(launched.Id))!;
+        Assert.Equal((system, Eve.Ships.CharacterShips.InSpaceFlag), (stored.LocationId, stored.Flag));
+        var spaceItem = (await rig.SpaceItems.GetAsync(launched.Id))!;
+        Assert.Equal(SpaceItemKind.LaunchedShip, spaceItem.Kind);
+        Assert.Equal(flying.Character.ShipId, spaceItem.LauncherId);
+        Assert.Equal(can, spaceItem.SourceContainerId);
+        Assert.Contains(rig.Sim.Heard.OfType<SimSpawn>(), spawn => spawn.Ship.ShipId == launched.Id);
+        Assert.Single(rig.Sim.Heard.OfType<SimSpawn>(), spawn => spawn.Ship.ShipId == launched.Id);
+        var names = Events.Of(flying.Session).Select(e => e.Name).ToArray();
+        var itemChange = Array.IndexOf(names, "OnItemChange");
+        var sourceChange = Array.IndexOf(names, "OnItemsChanged");
+        Assert.True(itemChange >= 0 && sourceChange > itemChange, string.Join(", ", names));
+
+        var spawnCount = rig.Sim.Heard.OfType<SimSpawn>().Count(spawn => spawn.Ship.ShipId == launched.Id);
+        using var restarted = new SpaceContainers(
+            rig.Sim, rig.Ships, rig.Items, rig.SpaceItems,
+            new Eve.Ships.PgWorkCycleLedger(rig.Source, rig.SpaceSchema),
+            new Eve.Services.Space.EventBusFacts(rig.Events), rig.Statics, rig.Space, () => rig.Now,
+            source: rig.Source);
+        await restarted.RestoreAsync((int)system);
+        Assert.Equal(spawnCount + 1, rig.Sim.Heard.OfType<SimSpawn>().Count(spawn => spawn.Ship.ShipId == launched.Id));
+        Assert.Equal(spaceItem.Position, (await rig.SpaceItems.GetAsync(launched.Id))!.Position);
+    }
+
+    [PgFact]
+    public async Task A_stack_in_a_space_container_is_refused_without_changing_inventory_or_space()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (flying, can) = await WithACanAsync(rig);
+        var stack = (await rig.Items.InContainerAsync(can)).Single();
+        var before = (await rig.Items.GetAsync(stack.Id))!;
+
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await rig.Containers.LaunchShipOrContainerFromWreckOrContainerAsync(
+                flying.Session, can, stack.Id, CancellationToken.None));
+
+        Assert.Equal("CustomNotify", UserError(error).Name);
+        Assert.Equal(before, await rig.Items.GetAsync(stack.Id));
+        Assert.Null(await rig.SpaceItems.GetAsync(stack.Id));
+        Assert.DoesNotContain(rig.Sim.Heard.OfType<SimSpawn>(), spawn => spawn.Ship.ShipId == stack.Id);
+    }
+
+    [PgFact]
+    public async Task A_single_sde_container_is_launched_as_a_space_container()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (flying, can) = await WithACanAsync(rig);
+        var system = flying.Session.GetInt("solarsystemid")!.Value;
+        var cargoContainerType = Assert.Single(
+            await new Eve.Sde.SdeReader(rig.Source).ReadTypeSummariesAsync(),
+            type => type.Published && type.Name == "Cargo Container").TypeId;
+        var nested = (await rig.Ships.GrantAsync(flying.Character.CharacterId, cargoContainerType, 1, singleton: true))!
+            .Single().After;
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await rig.Items.MoveAsync(connection, transaction, nested.Id, can, 0);
+            await transaction.CommitAsync();
+        }
+        rig.Sim.PositionAnswers[can] = [1000, 2000, 3000];
+
+        await rig.Containers.LaunchShipOrContainerFromWreckOrContainerAsync(
+            flying.Session, can, nested.Id, CancellationToken.None);
+
+        var launched = (await rig.Items.GetAsync(nested.Id))!;
+        Assert.Equal((system, Eve.Ships.CharacterShips.InSpaceFlag), (launched.LocationId, launched.Flag));
+        Assert.Equal(SpaceItemKind.ContainerOrWreck, (await rig.SpaceItems.GetAsync(nested.Id))!.Kind);
+        Assert.Contains(rig.Sim.Heard.OfType<SimPlaceWreck>(), wreck => wreck.WreckId == nested.Id);
+    }
+
+    [PgFact]
+    public async Task A_launch_committed_before_a_simulation_failure_retries_and_notifies_the_client()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (flying, can) = await WithACanAsync(rig);
+        var system = flying.Session.GetInt("solarsystemid")!.Value;
+        var active = (await rig.Items.GetAsync(flying.Character.ShipId))!;
+        var launched = (await rig.Ships.GrantAsync(flying.Character.CharacterId, active.TypeId, 1, singleton: true))!
+            .Single().After;
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await rig.Items.MoveAsync(connection, transaction, launched.Id, can, 0);
+            await transaction.CommitAsync();
+        }
+        rig.Sim.PositionAnswers[can] = [1000, 2000, 3000];
+        rig.Sim.SpawnUnavailable = true;
+
+        await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await rig.Containers.LaunchShipOrContainerFromWreckOrContainerAsync(
+                flying.Session, can, launched.Id, CancellationToken.None));
+        Assert.Equal(system, (await rig.Items.GetAsync(launched.Id))!.LocationId);
+        Assert.Equal(can, (await rig.SpaceItems.GetAsync(launched.Id))!.SourceContainerId);
+        Assert.DoesNotContain(Events.Of(flying.Session), e => e.Name == "OnItemChange");
+
+        rig.Sim.SpawnUnavailable = false;
+        await rig.Containers.LaunchShipOrContainerFromWreckOrContainerAsync(
+            flying.Session, can, launched.Id, CancellationToken.None);
+
+        Assert.Single(rig.Sim.Heard.OfType<SimSpawn>(), spawn => spawn.Ship.ShipId == launched.Id);
+        Assert.Contains(Events.Of(flying.Session), e => e.Name == "OnItemChange");
+        Assert.Single(await rig.Items.InContainerAsync(can), item => item.TypeId == Tritanium);
+    }
+
+    [PgFact]
+    public async Task A_launch_refuses_a_distant_missing_or_inaccessible_source_without_moving_its_item()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (flying, can) = await WithACanAsync(rig);
+        var stack = Assert.Single(await rig.Items.InContainerAsync(can));
+
+        rig.Sim.MeasureAnswer = 2501;
+        var distant = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await rig.Containers.LaunchShipOrContainerFromWreckOrContainerAsync(
+                flying.Session, can, stack.Id, CancellationToken.None));
+        Assert.Equal("TargetTooFar", UserError(distant).Name);
+
+        rig.Sim.MeasureAnswer = 100;
+        var absentItem = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await rig.Containers.LaunchShipOrContainerFromWreckOrContainerAsync(
+                flying.Session, can, long.MaxValue, CancellationToken.None));
+        Assert.Equal("FakeItemNotFound", UserError(absentItem).Name);
+
+        var absentSource = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await rig.Containers.LaunchShipOrContainerFromWreckOrContainerAsync(
+                flying.Session, long.MaxValue, stack.Id, CancellationToken.None));
+        Assert.Equal("FakeItemNotFound", UserError(absentSource).Name);
+
+        var other = await rig.NewCharacterAsync("Other Loot Owner", account: 2);
+        var rights = (await rig.SpaceItems.GetAsync(can))!;
+        await rig.SpaceItems.SaveAsync(rights with { CharacterId = other.CharacterId, CorporationId = 0 });
+        var inaccessible = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await rig.Containers.LaunchShipOrContainerFromWreckOrContainerAsync(
+                flying.Session, can, stack.Id, CancellationToken.None));
+        Assert.Equal("SafetyActivated", UserError(inaccessible).Name);
+        Assert.Equal(can, (await rig.Items.GetAsync(stack.Id))!.LocationId);
+        Assert.Null(await rig.SpaceItems.GetAsync(stack.Id));
+    }
+
 }

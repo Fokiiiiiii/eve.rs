@@ -20,6 +20,10 @@ EveJSがclientへ広告する143名のうち、RSのfull profileにない名前�
 
 特に `publicGatewaySvc` はV24ではclient-localのgRPC adapterです。MachoNet広告の名前がないだけで、remoteサービス破損とは断定できません。EveJSの `send_request` fallbackもlegacy枠です。[EJS-0355](../../../docs/project/service-response-audit/evejs-only-responses.md:606)
 
+## 2026-10-23 second-half caller classification
+
+The second half of the ledger, EJS-0337 through EJS-0672, now has a per-row V24 need decision: 241 rows cite a V24 client or request-type reference and are marked required; 95 rows have no demonstrated direct V24 caller or are covered by a verified client-local alias. These are source-level caller classifications, not completed feature implementations or client acceptance. The 241 required rows still need Host wiring, authoritative state, persistence/notifications where applicable, and focused regression tests. The named-RPC caller search used exact endpoint identifiers; public-gateway request checks excluded generated schemas and mock-only references. The grouped provider/session rows retain their source-specific decisions and limits in the detailed ledger.
+
 ## 2. named出口差476行の分類と、利用者への影響
 
 ### named出口未実装448件／client-local対応3件／legacy未確認25件
@@ -119,3 +123,9 @@ The V24 caller for `contractProxy.GetLoginInfo` is confirmed at `eve/client/scri
 ### Follow-up: contract startup reads (2026-10-19)
 
 `contractProxy.GetLoginInfo` now reads issuer/assignee state from PostgreSQL through the Host contract read model and returns the V24 KeyVal with `needsAttention`, `inProgress`, and `assignedToMe` rowsets. `GetMyContractEscrow` reads personal plus corporation-issued ISK and item totals. The Core wire tests (2) and PostgreSQL Host read test (1, `eve_p3`) passed. The Host has no contract writer yet; creation, accepted contract transitions, searches, bids, courier settlement, notifications, and the live two-character flow remain open. See `docs/project/CONTRACTS_DESIGN.md`.
+
+### Follow-up: activityMgr client flow (2026-10-23)
+
+The V24.01 ActivitiesService calls all four activityMgr exports: ActivitySeen on selection, GetActivityBadgeStatuses while loading activity status, and Get/SetActivitiesPopState for the popup preference. EveJS stores seen IDs and popup state by character in process memory; eve.rs now registers the same four RPCs from CoreServices and returns the sorted seen-ID list with OnSystemActivityUpdated. The focused Core regression passed. The activity state is intentionally process-local, matching EveJS; restart retention and graphical-client operation were not exercised.
+
+Rebased from the 2026-10-13 source inventory, the service profile adds one key and four RPC paths (182/1,284). Four named differences move to implemented, leaving 472 (444 unimplemented, 3 client-local covered, 25 legacy); the absent-service rows become 140. These derived counters keep the four ledger rows, so 672 total rows remain.

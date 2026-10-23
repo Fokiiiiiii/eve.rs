@@ -6,7 +6,12 @@ public sealed class PersistenceLookupDirectory(
     Eve.Sde.SdeReader sde,
     Eve.Universe.StationCatalog stations) : Eve.Services.Core.ILookupDirectory
 {
-    private readonly Lazy<Task<StaticData>> _staticData = new(() => LoadStaticDataAsync(sde, stations, CancellationToken.None));
+    private readonly Lazy<Task<IReadOnlyList<Eve.Services.Core.LookupFaction>>> _factions =
+        new(() => LoadFactionsAsync(sde, CancellationToken.None));
+    private readonly Lazy<Task<IReadOnlyDictionary<long, long>>> _npcFactionIds =
+        new(() => LoadNpcFactionIdsAsync(sde, CancellationToken.None));
+    private readonly Lazy<Task<IReadOnlyDictionary<int, IReadOnlyList<Eve.Services.Core.LookupLocation>>>> _locations =
+        new(() => LoadLocationsAsync(sde, stations, CancellationToken.None));
 
     public async ValueTask<IReadOnlyList<Eve.Services.Core.LookupCharacter>> CharactersAsync(CancellationToken cancellationToken)
     {
@@ -21,13 +26,13 @@ public sealed class PersistenceLookupDirectory(
 
     public async ValueTask<IReadOnlyList<Eve.Services.Core.LookupCorporation>> CorporationsAsync(CancellationToken cancellationToken)
     {
-        var data = await _staticData.Value.WaitAsync(cancellationToken);
+        var npcFactionIds = await _npcFactionIds.Value.WaitAsync(cancellationToken);
         var rows = await corporations.AllAsync(cancellationToken);
         return rows.Select(corporation => new Eve.Services.Core.LookupCorporation(
             corporation.Id,
             corporation.Name,
             corporation.Ticker,
-            data.NpcFactionIds.GetValueOrDefault(corporation.Id),
+            npcFactionIds.GetValueOrDefault(corporation.Id),
             corporation.IsNpc,
             WarPermit: corporation.IsNpc ? 0 : null)).ToArray();
     }
@@ -45,32 +50,39 @@ public sealed class PersistenceLookupDirectory(
 
     public async ValueTask<IReadOnlyList<Eve.Services.Core.LookupFaction>> FactionsAsync(CancellationToken cancellationToken)
     {
-        var data = await _staticData.Value.WaitAsync(cancellationToken);
-        return data.Factions;
+        return await _factions.Value.WaitAsync(cancellationToken);
     }
 
     public async ValueTask<IReadOnlyList<Eve.Services.Core.LookupLocation>> LocationsByGroupAsync(
         int groupId,
         CancellationToken cancellationToken)
     {
-        var data = await _staticData.Value.WaitAsync(cancellationToken);
-        return data.Locations.GetValueOrDefault(groupId) ?? Array.Empty<Eve.Services.Core.LookupLocation>();
+        var locations = await _locations.Value.WaitAsync(cancellationToken);
+        return locations.GetValueOrDefault(groupId) ?? Array.Empty<Eve.Services.Core.LookupLocation>();
     }
 
-    private static async Task<StaticData> LoadStaticDataAsync(
+    private static async Task<IReadOnlyList<Eve.Services.Core.LookupFaction>> LoadFactionsAsync(
         Eve.Sde.SdeReader sde,
-        Eve.Universe.StationCatalog stations,
-        CancellationToken cancellationToken)
-    {
-        var factions = (await sde.ReadAsync("factions", cancellationToken: cancellationToken))
+        CancellationToken cancellationToken) =>
+        (await sde.ReadAsync("factions", cancellationToken: cancellationToken))
             .Select(row => new Eve.Services.Core.LookupFaction(
                 row.Key,
                 Eve.Sde.SdeReader.English(row.Doc.GetProperty("name"))))
             .Where(faction => faction.Id > 0 && faction.Name.Length > 0)
             .ToArray();
-        var npcFactionIds = (await sde.ReadAsync("npcCorporations", cancellationToken: cancellationToken))
+
+    private static async Task<IReadOnlyDictionary<long, long>> LoadNpcFactionIdsAsync(
+        Eve.Sde.SdeReader sde,
+        CancellationToken cancellationToken) =>
+        (await sde.ReadAsync("npcCorporations", cancellationToken: cancellationToken))
             .Where(row => row.Doc.TryGetProperty("factionID", out var faction) && faction.ValueKind == System.Text.Json.JsonValueKind.Number)
             .ToDictionary(row => row.Key, row => row.Doc.GetProperty("factionID").GetInt64());
+
+    private static async Task<IReadOnlyDictionary<int, IReadOnlyList<Eve.Services.Core.LookupLocation>>> LoadLocationsAsync(
+        Eve.Sde.SdeReader sde,
+        Eve.Universe.StationCatalog stations,
+        CancellationToken cancellationToken)
+    {
         var typeGroups = (await sde.ReadTypeSummariesAsync(cancellationToken))
             .ToDictionary(type => type.TypeId, type => type.GroupId);
         var systemRows = await sde.ReadAsync("mapSolarSystems", cancellationToken: cancellationToken);
@@ -141,10 +153,7 @@ public sealed class PersistenceLookupDirectory(
             }
         }
 
-        return new StaticData(
-            factions,
-            npcFactionIds,
-            grouped.ToDictionary(pair => pair.Key, pair => (IReadOnlyList<Eve.Services.Core.LookupLocation>)pair.Value.Values.ToArray()));
+        return grouped.ToDictionary(pair => pair.Key, pair => (IReadOnlyList<Eve.Services.Core.LookupLocation>)pair.Value.Values.ToArray());
     }
 
     private static int Integer(System.Text.Json.JsonElement row, string property) =>
@@ -160,8 +169,4 @@ public sealed class PersistenceLookupDirectory(
     private static string Text(System.Text.Json.JsonElement row, string property) =>
         row.TryGetProperty(property, out var value) ? Eve.Sde.SdeReader.English(value) : "";
 
-    private sealed record StaticData(
-        IReadOnlyList<Eve.Services.Core.LookupFaction> Factions,
-        IReadOnlyDictionary<long, long> NpcFactionIds,
-        IReadOnlyDictionary<int, IReadOnlyList<Eve.Services.Core.LookupLocation>> Locations);
 }

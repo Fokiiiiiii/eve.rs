@@ -49,9 +49,11 @@ PLACED = 2_000_000
 SAFETY_NONE = 0  # the client's red safety: the pilots may shoot each other in low-security space
 RAILGUN, ANTIMATTER, MINER = 10678, 222, 3651
 RIFTER = 587
+IMPLANT_TYPE = 13166  # Inherent Implants 'Lancer' Gunnery RF-903; basePrice 200,000 ISK in pinned SDE 3396210.
+IMPLANT_FLAG = 89  # PilotAugmentations.ImplantFlag
 
 
-def arrive_low(who, race: dict, run: str, *, hull_type_id: int | None = None) -> tuple[int, int, list]:
+def arrive_low(who, race: dict, run: str, *, hull_type_id: int | None = None, implant_type_ids: tuple[int, ...] = ()) -> tuple[int, int, list]:
     """test_undock.arrive, but the character is seeded to the low-security station before it is selected: `(character, ship id, fitted modules)`."""
     recorded_run = re.search(r"(\d{6,})$", race["create"]["call"][2][0]).group(1)
     service, method, *args = [race["create"]["call"][0], race["create"]["call"][1],
@@ -65,6 +67,8 @@ def arrive_low(who, race: dict, run: str, *, hull_type_id: int | None = None) ->
     if hull_type_id is not None:
         ship_id = int(dbseed.sql(f"select ship_id from {dbseed.schema('CHARACTERS')}.characters where id = {character}"))
         dbseed.set_hull(ship_id, hull_type_id)
+    for implant_type_id in implant_type_ids:
+        dbseed.new_item(implant_type_id, owner=character, location=character, flag=IMPLANT_FLAG, singleton=True)
     dbseed.set_safety(character, SAFETY_NONE)
     assert base.attempt(who, "charUnboundMgr", "SelectCharacterID", character, None, False) == ("ok", None)
     manager = who.call("invbroker", "MachoBindObject", (LOW_STATION, 15), None)[0]
@@ -187,7 +191,7 @@ def test_a_pilot_that_shoots_a_pilot_dead_in_low_security_has_the_kill_claimed_a
     run = uuid.uuid4().hex[:10]
     with base.connect(f"kill-victim-{run}") as victim_client, base.connect(f"kill-hunter-{run}") as hunter_client:
         # each pilot's name comes from its own run token (the recorded race fixes the name's base)
-        victim, victim_ship, _ = arrive_low(victim_client, race, run_token(), hull_type_id=RIFTER)
+        victim, victim_ship, _ = arrive_low(victim_client, race, run_token(), hull_type_id=RIFTER, implant_type_ids=(IMPLANT_TYPE,))
         hunter, hunter_ship, _ = arrive_low(hunter_client, race, run_token())
         assert victim != hunter
         damaged = m.plain(victim_client.call("slash", "SlashCmd", "/dmg heavy"))
@@ -201,6 +205,13 @@ def test_a_pilot_that_shoots_a_pilot_dead_in_low_security_has_the_kill_claimed_a
             dbseed.set_isk(placer, 5_000_000)
             name, bounty = m.plain(placer_client.call("bountyProxy", "AddToBounty", victim, PLACED))
             assert name == "util.KeyVal" and bounty["bounty"] == PLACED
+        notification_rows = m.plain(victim_client.call("notificationMgr", "GetAllNotifications"))
+        placed_notifications = [row[1] for row in notification_rows if row[1]["typeID"] == 112]
+        assert len(placed_notifications) == 1, placed_notifications
+        placed_notification = placed_notifications[0]
+        assert placed_notification["senderID"] == placer and placed_notification["receiverID"] == victim
+        assert placed_notification["data"]["bountyPlacerID"] == placer
+        assert placed_notification["data"]["bounty"] == PLACED
         pool_before = pool(victim)
         assert pool_before == PLACED, pool_before
         isk_before = wallet(hunter)
@@ -241,3 +252,47 @@ def test_a_pilot_that_shoots_a_pilot_dead_in_low_security_has_the_kill_claimed_a
 
         # the victim's pool is drawn down by exactly the payout (the pilot's pool holds more than a fifth of a rookie ship)
         assert abs((pool_before - pool(victim)) - amount) < 0.01, (pool_before, pool(victim), amount)
+
+        # The capsule loss includes the implanted type's 200,000 ISK SDE base price. The capsule itself has no basePrice in this SDE.
+        implant_id = dbseed.items_of(victim, IMPLANT_TYPE)[0]
+        capsule_id = int(dbseed.sql(f"select ship_id from {dbseed.schema('CHARACTERS')}.characters where id = {victim}"))
+        capsule_type = int(dbseed.sql(f"select type_id from {dbseed.schema('INVENTORY')}.items where id = {capsule_id}"))
+        assert capsule_type == 670, (capsule_id, capsule_type)
+        capsule_pool_before = pool(victim)
+        capsule_wallet_before = wallet(hunter)
+        capsule_events = shoot_pilot_until_dead(hunter_client, hunter_ballpark, hunter_dogma, gun, capsule_id)
+        assert capsule_events, "the victim's capsule was not shot"
+        assert dbseed.sql(f"select count(*) from {dbseed.schema('INVENTORY')}.items where id = {implant_id}") == "0"
+
+        victim_events = watch({"events": victim_client}, 2.0)["events"]
+        assert any(event["name"] == "OnJumpCloneCacheInvalidated" for event in victim_events), (
+            f"the implant loss did not invalidate the victim's clone cache: {sorted({event['name'] for event in victim_events})}"
+        )
+
+        pod_payout_id = f"kill:{capsule_id}"
+        pod_rows = ""
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline:
+            pod_rows = dbseed.sql(f"select payout_id, hunter_id, amount, status from {dbseed.schema('CRIMEWATCH')}.player_bounty_payouts "
+                                  f"where payout_id = '{pod_payout_id}'")
+            if pod_rows.strip():
+                break
+            time.sleep(2)
+        assert pod_rows.strip(), f"no payout for the capsule loss {capsule_id}"
+        saved_id, pod_hunter_id, pod_amount, pod_status = pod_rows.split("|")
+        pod_amount = float(pod_amount)
+        assert saved_id == pod_payout_id and int(pod_hunter_id) == hunter, pod_rows
+        assert abs(pod_amount - 40_000) < 0.01, pod_rows
+        assert abs((capsule_pool_before - pool(victim)) - pod_amount) < 0.01
+
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline and (wallet(hunter) - capsule_wallet_before < pod_amount - 0.01 or pod_status != "paid"):
+            time.sleep(2)
+            pod_status = dbseed.sql(f"select status from {dbseed.schema('CRIMEWATCH')}.player_bounty_payouts where payout_id = '{pod_payout_id}'")
+        assert pod_status == "paid", f"the capsule bounty was not paid: {pod_status}"
+        assert abs((wallet(hunter) - capsule_wallet_before) - pod_amount) < 0.01
+        journal_summary = dbseed.sql(f"select count(*), sum(amount) from {dbseed.schema('WALLET')}.journal "
+                                     f"where owner_id = {hunter} and ref_type_id = 17 and reason = 'Player bounty payout'")
+        journal_count, journal_total = journal_summary.split("|")
+        assert int(journal_count) == 2, journal_summary
+        assert abs(float(journal_total) - (amount + pod_amount)) < 0.01, journal_summary

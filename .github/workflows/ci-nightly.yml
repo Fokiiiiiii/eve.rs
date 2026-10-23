@@ -1,0 +1,240 @@
+name: Nightly extended CI
+run-name: Nightly extended CI (${{ github.event_name }})
+# Trigger mode is set by tools/dev/ci-mode.py; auto mode adds the nightly schedule.
+
+'on':
+  schedule:
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: ci-nightly-${{ github.run_id }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  RUST_TOOLCHAIN: "1.99.0"
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  DOTNET_NOLOGO: "1"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_CLI_USE_MSBUILD_SERVER: "0"
+  MSBUILDDISABLENODEREUSE: "1"
+  EVE_MARKET_SEED: skip
+
+jobs:
+  slow-live:
+    name: Slow live-client matrix
+    uses: ./.github/workflows/live-slow.yml
+    with:
+      test_file: all
+
+  slow-live-additions:
+    name: Additional slow live tests
+    strategy:
+      fail-fast: false
+      matrix:
+        test_file:
+          - test_character_contact_labels_live.py
+          - test_clone_ship_install_live.py
+          - test_fitting_lists_live.py
+          - test_fleet_watchlist_live.py
+          - test_player_kill_live.py
+    uses: ./.github/workflows/live-slow.yml
+    with:
+      test_file: ${{ matrix.test_file }}
+
+  skill-training-speed:
+    name: Live skill training speed with its own Host
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: eve
+          POSTGRES_INITDB_ARGS: "-c max_connections=400 -c shared_buffers=512MB -c fsync=off -c full_page_writes=off -c synchronous_commit=off"
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d eve"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      EVE_PG_URL: postgres://postgres:postgres@127.0.0.1:5432/eve
+      EVE_SKILL_TRAINING_SPEED: "60000"
+      EVE_LIVE_SLOW: "1"
+      EVE_LIVE_LOG_DIR: ${{ github.workspace }}/.nightly-logs/skills/live-stack
+      KEEP_LOGS: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: tools/headless-client/requirements*.txt
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master as of 2026-10-19
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('dotnet/Directory.Packages.props', 'dotnet/**/*.csproj', 'dotnet/**/*.props', 'dotnet/**/*.targets') }}
+          restore-keys: nuget-${{ runner.os }}-
+      - id: sde-build
+        run: echo "build=$(sed -n 's/^PINNED_BUILD=//p' sde/fetch.sh)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache/sde
+          key: sde-${{ steps.sde-build.outputs.build }}
+      - name: Load pinned SDE and mission data
+        run: |
+          cargo run -q -p eve-sde -- ensure --pg "$EVE_PG_URL"
+          cargo run -q -p eve-sde -- ensure --missions --pg "$EVE_PG_URL"
+      - name: Install the headless client and PostgreSQL client
+        run: |
+          python3 -m venv tools/headless-client/.venv
+          tools/headless-client/.venv/bin/pip install -q -r tools/headless-client/requirements-dev.txt
+          command -v psql >/dev/null || sudo apt-get install -y --no-install-recommends postgresql-client
+      - name: Run the fast-training walk against its own Host
+        env:
+          EVE_RUN: >-
+            cd "$GITHUB_WORKSPACE/tools/headless-client" &&
+            EVE_LIVE_SERVER=eve.rs EVE_LIVE_STRICT_PASSWORDS=1
+            .venv/bin/python -m pytest -q -vv --tb=long
+            --junitxml="$GITHUB_WORKSPACE/.nightly-logs/skills/skill-training-speed.xml"
+            tests/test_login_to_character.py::test_a_queue_that_finishes_while_the_client_watches_is_told_level_by_level
+        run: tools/dev/run-eve-live.sh
+      - name: Upload training-speed logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: nightly-training-speed-${{ github.run_id }}
+          path: .nightly-logs/skills/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  benchmarks:
+    name: Opt-in throughput benchmarks
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master as of 2026-10-19
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: Run benchmarks against the recorded baseline
+        run: |
+          set -o pipefail
+          cargo run --release -p eve-bench -- --compare 2>&1 | tee benchmark.log
+      - name: Upload benchmark output
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: nightly-benchmarks-${{ github.run_id }}
+          path: benchmark.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+  windows:
+    name: Full Windows workflow
+    uses: ./.github/workflows/ci-windows.yml
+
+  rpc-fuzz:
+    name: Extended RPC fuzzing
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: eve
+          POSTGRES_INITDB_ARGS: "-c max_connections=400 -c shared_buffers=512MB -c fsync=off -c full_page_writes=off -c synchronous_commit=off"
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d eve"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      EVE_PG_URL: postgres://postgres:postgres@127.0.0.1:5432/eve
+      EVE_RPC_FUZZ_LONG: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master as of 2026-10-19
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('dotnet/Directory.Packages.props', 'dotnet/**/*.csproj', 'dotnet/**/*.props', 'dotnet/**/*.targets') }}
+          restore-keys: nuget-${{ runner.os }}-
+      - id: sde-build
+        run: echo "build=$(sed -n 's/^PINNED_BUILD=//p' sde/fetch.sh)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache/sde
+          key: sde-${{ steps.sde-build.outputs.build }}
+      - name: Load pinned SDE and mission data
+        run: |
+          cargo run -q -p eve-sde -- ensure --pg "$EVE_PG_URL"
+          cargo run -q -p eve-sde -- ensure --missions --pg "$EVE_PG_URL"
+      - name: Run the extended Host RPC fuzz case
+        run: |
+          set -o pipefail
+          mkdir -p .nightly-logs/rpc-fuzz
+          dotnet test dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -c Release -nologo --verbosity normal -nodeReuse:false -p:UseSharedCompilation=false --filter FullyQualifiedName~Registered_rpcs_refuse_seeded_hostile_arguments_through_dispatcher --results-directory .nightly-logs/rpc-fuzz --logger "trx;LogFileName=rpc-fuzz.trx" 2>&1 | tee .nightly-logs/rpc-fuzz/rpc-fuzz.log
+      - name: Upload RPC fuzz logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: nightly-rpc-fuzz-${{ github.run_id }}
+          path: .nightly-logs/rpc-fuzz/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  summary:
+    name: Nightly coverage summary
+    if: always()
+    needs: [slow-live, slow-live-additions, skill-training-speed, benchmarks, windows, rpc-fuzz]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report every extended job
+        env:
+          SLOW: ${{ needs.slow-live.result }}
+          SLOW_ADDITIONS: ${{ needs.slow-live-additions.result }}
+          TRAINING: ${{ needs.skill-training-speed.result }}
+          BENCHMARKS: ${{ needs.benchmarks.result }}
+          WINDOWS: ${{ needs.windows.result }}
+          RPC_FUZZ: ${{ needs.rpc-fuzz.result }}
+        run: |
+          {
+            echo "## Nightly extended CI"
+            echo "- Slow live matrix: $SLOW"
+            echo "- Additional slow live tests: $SLOW_ADDITIONS"
+            echo "- Skill training speed: $TRAINING"
+            echo "- Benchmarks: $BENCHMARKS"
+            echo "- Windows: $WINDOWS"
+            echo "- Extended RPC fuzz: $RPC_FUZZ"
+          } >> "$GITHUB_STEP_SUMMARY"
+          printf 'Slow live matrix: %s\nAdditional slow live tests: %s\nSkill training speed: %s\nBenchmarks: %s\nWindows: %s\nExtended RPC fuzz: %s\n' "$SLOW" "$SLOW_ADDITIONS" "$TRAINING" "$BENCHMARKS" "$WINDOWS" "$RPC_FUZZ"
+          results="$SLOW $SLOW_ADDITIONS $TRAINING $BENCHMARKS $WINDOWS $RPC_FUZZ"
+          if [[ "$results" =~ (failure|cancelled|timed_out) ]]; then
+            echo "One or more nightly checks failed. Open the named job logs and test artifacts for the failing cases."
+            exit 1
+          fi

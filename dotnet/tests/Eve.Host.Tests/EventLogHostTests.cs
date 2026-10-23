@@ -27,26 +27,44 @@ public sealed class EventLogHostTests
                 var arguments = new PyValue[]
                 {
                     new PyLong(42), new PyInt(30_100_041),
-                    new PyList([new PyList([new PyStr("login")])]), PyBool.False,
+                    new PyList([new PyList([new PyStr("login")])]),
+                    new PyList([new PyStr("client-crash")]),
                 };
                 Assert.IsType<PyNone>(await registered.CallAsync(new ServiceCall
                 {
                     Method = "LogClientStats",
                     Args = arguments,
-                    Session = new ClientSession(),
+                    Session = new ClientSession { SessionId = 42 },
                 }));
 
                 var records = new List<string>();
                 var service = new EventLogRpcService(records.Add);
-                var response = await service.CallAsync(new ServiceCall
+                var response = await service.LogClientStats(new ServiceCall
                 {
                     Method = "LogClientStats",
                     Args = arguments,
-                    Session = new ClientSession(),
+                    Session = new ClientSession { SessionId = 42 },
                 });
 
                 Assert.IsType<PyNone>(response);
                 Assert.Equal(["LogClientStats location=30100041 rows=1"], records);
+
+                var refused = new EventLogRpcService(records.Add);
+                var wrongSession = await Assert.ThrowsAsync<MachoWrappedException>(() => refused.LogClientStats(new ServiceCall
+                {
+                    Method = "LogClientStats",
+                    Args = [new PyLong(99), new PyInt(30_100_041), new PyList([])],
+                    Session = new ClientSession { SessionId = 42 },
+                }).AsTask());
+                Assert.Equal("CLIENT_STATS_SESSION_INVALID", wrongSession.Error.UserErrorMessage);
+                var oversized = await Assert.ThrowsAsync<MachoWrappedException>(() => refused.LogClientStats(new ServiceCall
+                {
+                    Method = "LogClientStats",
+                    Args = [new PyLong(42), new PyInt(30_100_041), new PyList(Enumerable.Repeat<PyValue>(PyNone.Instance, 5001).ToArray())],
+                    Session = new ClientSession { SessionId = 42 },
+                }).AsTask());
+                Assert.Equal("CLIENT_STATS_ROW_LIMIT_EXCEEDED", oversized.Error.UserErrorMessage);
+                Assert.Empty(records.Skip(1));
             }
             finally
             {

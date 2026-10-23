@@ -40,6 +40,21 @@ public interface IStructureDirectoryReadCallbacks
 
     /// <summary>Returns info only for an actually deployed structure row in persistent state.</summary>
     ValueTask<PersistedStructureInfo?> GetStructureInfoAsync(long structureId, CancellationToken cancellationToken);
+
+    /// <summary>Returns requested deployed structure rows; the persistence-backed implementation batches the store read.</summary>
+    async ValueTask<IReadOnlyDictionary<long, PersistedStructureInfo>> GetStructureInfosAsync(
+        IReadOnlyList<long> structureIds,
+        CancellationToken cancellationToken)
+    {
+        var structures = new Dictionary<long, PersistedStructureInfo>();
+        foreach (var structureId in structureIds.Where(id => id > 0).Distinct())
+        {
+            if (await GetStructureInfoAsync(structureId, cancellationToken) is { PersistentlyDeployed: true } info)
+                structures[structureId] = info;
+        }
+        return structures;
+    }
+
     ValueTask<PersistedStructureInfo?> GetStructureInfoForCharacterAsync(
         long characterId, long structureId, CancellationToken cancellationToken);
 

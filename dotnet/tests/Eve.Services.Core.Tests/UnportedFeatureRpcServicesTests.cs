@@ -54,12 +54,21 @@ public sealed class UnportedFeatureRpcServicesTests
             foreach (var method in methods[service.Name])
                 Assert.True(service.HasMethod(method), $"{service.Name}.{method}");
 
-        var abyssal = Assert.IsType<PyDict>(await ((IService)new AbyssalContentManagerService()).CallAsync(
-            Call("generate_abyss_npc_spawn_report", args: [new PyInt(2), new PyInt(50), new PyInt(2000)])));
-        Assert.Equal(new PyInt(2), Field(abyssal, "difficulty_tier"));
+        var abyssalService = new AbyssalContentManagerService((request, _) => ValueTask.FromResult<PyValue?>(Py.Dict(
+            ("difficulty_tier", new PyInt(request.DifficultyTier)),
+            ("spawn_table_id", new PyInt(request.SpawnTableId)),
+            ("repetitions", new PyInt(request.Repetitions)))));
+        var staff = new ClientSession();
+        staff.Set("accountRole", new PyLong(GameMasterRoles.Staff));
+        var abyssal = Assert.IsType<PyDict>(await ((IService)abyssalService).CallAsync(new ServiceCall
+        {
+            Method = "generate_abyss_npc_spawn_report",
+            Args = [new PyInt(172), new PyInt(50), new PyInt(35)],
+            Session = staff,
+        }));
+        Assert.Equal(new PyInt(172), Field(abyssal, "difficulty_tier"));
         Assert.Equal(new PyInt(50), Field(abyssal, "spawn_table_id"));
-        Assert.Equal(new PyInt(1000), Field(abyssal, "repetitions"));
-        Assert.Empty(Assert.IsType<PyList>(Field(abyssal, "spawns")).Items);
+        Assert.Equal(new PyInt(35), Field(abyssal, "repetitions"));
 
         var dungeon = Assert.IsType<PyObject>(await ((IService)new DungeonExplorationMgrService(
             nowUnixMs: () => 1_700_000_000_000L)).CallAsync(Call("GetMyEscalatingPathDetails")));
@@ -103,6 +112,105 @@ public sealed class UnportedFeatureRpcServicesTests
         Assert.Empty(Assert.IsType<PyList>(await tourney.CallAsync(Call("GetPotentialMatches", args: [new PyInt(9)]))).Items);
         Assert.Empty(Assert.IsType<PyList>(await tourney.CallAsync(Call("GetAllCurrentSeriesMatchDetails", args: [new PyInt(9)]))).Items);
         Assert.Same(PyNone.Instance, await tourney.CallAsync(Call("QueryTournamentDetails", args: [new PyInt(9)])));
+    }
+
+    [Fact]
+    public async Task Escalation_details_read_refuses_client_arguments_before_the_callback()
+    {
+        var callbackCalls = 0;
+        var service = (IService)new DungeonExplorationMgrService(
+            readDetails: (_, _) =>
+            {
+                callbackCalls++;
+                return ValueTask.FromResult<PyValue?>(PyNone.Instance);
+            });
+        foreach (var call in new[]
+        {
+            Call("GetMyEscalatingPathDetails", args: [new PyInt(1)]),
+            new ServiceCall { Method = "GetMyEscalatingPathDetails", Args = [], Kwargs = new PyDict([]), Session = new ClientSession() },
+        })
+        {
+            var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(call).AsTask());
+            Assert.Equal(MachoErrors.UserErrorClass, refusal.Error.ClassName);
+            Assert.Equal("DUNGEON_EXPLORATION_ARGUMENTS_INVALID", refusal.Error.UserErrorMessage);
+        }
+
+        Assert.Equal(0, callbackCalls);
+    }
+
+    [Fact]
+    public async Task Epic_arc_status_refuses_malformed_agent_ids_before_callback()
+    {
+        var callbackCalls = 0;
+        IService service = new EpicArcStatusService((_, characterId, _) =>
+        {
+            Assert.Equal(42, characterId);
+            callbackCalls++;
+            return ValueTask.FromResult(true);
+        });
+        var session = new ClientSession { CharacterId = 42 };
+        foreach (var call in new[]
+        {
+            new ServiceCall { Method = "AgentHasEpicMissionsForCharacter", Args = [], Session = session },
+            new ServiceCall { Method = "AgentHasEpicMissionsForCharacter", Args = [new PyInt(300), new PyInt(42)], Session = session },
+            new ServiceCall { Method = "AgentHasEpicMissionsForCharacter", Args = [new PyInt(300)], Kwargs = Py.Dict(("characterID", new PyInt(42))), Session = session },
+        })
+        {
+            var error = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(call).AsTask());
+            Assert.Equal("EPIC_ARC_STATUS_ARGUMENTS_INVALID", error.Error.UserErrorMessage);
+        }
+
+        foreach (var invalid in new PyValue[] { new PyInt(0), new PyInt(-1), new PyReal(300), PyNone.Instance })
+        {
+            var error = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(Call(
+                "AgentHasEpicMissionsForCharacter", session, invalid)).AsTask());
+            Assert.Equal("EPIC_ARC_STATUS_AGENT_INVALID", error.Error.UserErrorMessage);
+        }
+
+        Assert.Equal(0, callbackCalls);
+        Assert.Equal(PyBool.True, await service.CallAsync(Call("AgentHasEpicMissionsForCharacter", session, new PyLong(300))));
+        Assert.Equal(1, callbackCalls);
+    }
+
+    [Fact]
+    public async Task Abyssal_spawn_report_requires_staff_bounded_wire_inputs_and_a_provider()
+    {
+        var callbackCalls = 0;
+        var service = (IService)new AbyssalContentManagerService((_, _) =>
+        {
+            callbackCalls++;
+            return ValueTask.FromResult<PyValue?>(PyNone.Instance);
+        });
+        var player = new ClientSession();
+        var staff = new ClientSession();
+        staff.Set("accountRole", new PyLong(GameMasterRoles.Staff));
+        var calls = new[]
+        {
+            new ServiceCall { Method = "generate_abyss_npc_spawn_report", Args = [new PyInt(172), new PyInt(50), new PyInt(35)], Session = player },
+            new ServiceCall { Method = "generate_abyss_npc_spawn_report", Args = [], Session = staff },
+            new ServiceCall { Method = "generate_abyss_npc_spawn_report", Args = [new PyReal(172), new PyInt(50), new PyInt(35)], Session = staff },
+            new ServiceCall { Method = "generate_abyss_npc_spawn_report", Args = [new PyInt(171), new PyInt(50), new PyInt(35)], Session = staff },
+            new ServiceCall { Method = "generate_abyss_npc_spawn_report", Args = [new PyInt(172), new PyInt(0), new PyInt(35)], Session = staff },
+            new ServiceCall { Method = "generate_abyss_npc_spawn_report", Args = [new PyInt(172), new PyInt(50), new PyInt(1001)], Session = staff },
+            new ServiceCall { Method = "generate_abyss_npc_spawn_report", Args = [new PyInt(172), new PyInt(50), new PyInt(35)], Kwargs = new PyDict([]), Session = staff },
+        };
+
+        foreach (var call in calls)
+        {
+            var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(call).AsTask());
+            Assert.Equal(MachoErrors.UserErrorClass, refusal.Error.ClassName);
+            Assert.StartsWith("ABYSSAL_SPAWN_REPORT_", refusal.Error.UserErrorMessage);
+        }
+
+        Assert.Equal(0, callbackCalls);
+        var unwired = (IService)new AbyssalContentManagerService();
+        var missingProvider = await Assert.ThrowsAsync<MachoWrappedException>(() => unwired.CallAsync(new ServiceCall
+        {
+            Method = "generate_abyss_npc_spawn_report",
+            Args = [new PyInt(172), new PyInt(50), new PyInt(35)],
+            Session = staff,
+        }).AsTask());
+        Assert.Equal("ABYSSAL_SPAWN_REPORT_UNAVAILABLE", missingProvider.Error.UserErrorMessage);
     }
 
     [Fact]
@@ -175,10 +283,10 @@ public sealed class UnportedFeatureRpcServicesTests
         Assert.Equal("community fitting", Assert.IsType<PyStr>(Field(Assert.IsType<PyDict>(Assert.IsType<PyObject>(fitting.Value).Args), "name")).Value);
         Assert.Same(session, fittingSession);
 
-        var content = Assert.IsType<PyList>(await byName["custom_agency_provider"].CallAsync(Call("get_content_data", session, new PyInt(7))));
+        var content = Assert.IsType<PyList>(await byName["custom_agency_provider"].CallAsync(Call("get_content_data", session)));
         Assert.Equal(new PyStr("agency content"), Assert.Single(content.Items));
         Assert.Same(session, agencyRequest!.Session);
-        Assert.Equal(new PyInt(7), Assert.Single(agencyRequest.Arguments));
+        Assert.Empty(agencyRequest.Arguments);
         Assert.Same(PyNone.Instance, await byName["custom_agency_provider"].CallAsync(Call("warp_to_content", session, new PyInt(88))));
         Assert.Equal(88, warpedContentId);
         Assert.Same(session, warpSession);
@@ -204,6 +312,41 @@ public sealed class UnportedFeatureRpcServicesTests
         Assert.Equal(TourneyQuery.QueryTournamentDetails, tourneyRequest!.Query);
         Assert.Equal(12, tourneyRequest.TournamentId);
         Assert.Same(session, tourneyRequest.Session);
+    }
+
+    [Fact]
+    public async Task Custom_agency_provider_refuses_client_selected_or_malformed_content_targets()
+    {
+        var callbackCalls = 0;
+        var service = (IService)new CustomAgencyProviderService(new CustomAgencyProviderRpcCallbacks(
+            ReadContentAsync: (_, _) =>
+            {
+                callbackCalls++;
+                return ValueTask.FromResult<IReadOnlyList<PyValue>>([]);
+            },
+            WarpToContentAsync: (_, _, _) =>
+            {
+                callbackCalls++;
+                return ValueTask.CompletedTask;
+            }));
+        var session = new ClientSession();
+        var calls = new[]
+        {
+            Call("get_content_data", session, new PyInt(1)),
+            Call("warp_to_content", session),
+            Call("warp_to_content", session, new PyReal(42.5)),
+            Call("warp_to_content", session, new PyLong(0)),
+            new ServiceCall { Method = "get_content_data", Args = [], Kwargs = new PyDict([]), Session = session },
+        };
+
+        foreach (var call in calls)
+        {
+            var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(call).AsTask());
+            Assert.Equal(MachoErrors.UserErrorClass, refusal.Error.ClassName);
+            Assert.StartsWith("CUSTOM_AGENCY_", refusal.Error.UserErrorMessage);
+        }
+
+        Assert.Equal(0, callbackCalls);
     }
 
     [Fact]

@@ -388,7 +388,8 @@ internal sealed partial class CharacterServicesComposition
                 try
                 {
                     var sharers = FleetSharersAsync(loss.KillerCharacterId).GetAwaiter().GetResult();
-                    playerBountyKills!.ClaimShipLossAsync(loss.CharacterId, loss.CapsuleId, Eve.Ships.CharacterShips.CapsuleTypeId, [], loss.KillerCharacterId, now(),
+                    playerBountyKills!.ClaimShipLossAsync(loss.CharacterId, loss.CapsuleId, Eve.Ships.CharacterShips.CapsuleTypeId,
+                        [.. (loss.Contents ?? []).Select(item => (item.TypeId, item.Quantity))], loss.KillerCharacterId, now(),
                         async (connection, transaction, payoutId) => await foundations.Scheduler.ScheduleAsync(connection, transaction,
                             new Eve.Scheduler.JobSpec(Eve.Services.Crimewatch.PlayerBountyKills.PayoutJobKind, now())
                             {
@@ -492,7 +493,7 @@ internal sealed partial class CharacterServicesComposition
             await foundations.Scheduler.EnsureRecurringAsync("space.bounty.pay", "pay", TimeSpan.FromSeconds(10));
             foundations.Scheduler.Register("space.ess.tick", async (_, token) => await TickEssAsync(token));
             await foundations.Scheduler.EnsureRecurringAsync("space.ess.tick", "tick", TimeSpan.FromSeconds(10));
-            spaceContainers = new SpaceContainers(sim, ships, items, new PgSpaceItemStore(source, spaceSchema), new PgWorkCycleLedger(source, spaceSchema), new Eve.Services.Space.EventBusFacts(foundations.Events), dogma, spaceSessions, now, message => Console.Error.WriteLine($"eve-host: cans: {message}"), deployed: new PgDeployedStore(source, spaceSchema), scheduler: foundations.Scheduler);
+            spaceContainers = new SpaceContainers(sim, ships, items, new PgSpaceItemStore(source, spaceSchema), new PgWorkCycleLedger(source, spaceSchema), new Eve.Services.Space.EventBusFacts(foundations.Events), dogma, spaceSessions, now, message => Console.Error.WriteLine($"eve-host: cans: {message}"), deployed: new PgDeployedStore(source, spaceSchema), scheduler: foundations.Scheduler, source: source);
 
             spaceContainers.SiteContainers = siteContainers;
             // a Mobile Observatory keeps 1 000 km from the stations, stargates and Upwell structures of its system (EVE.js collectPlacementBlockers)

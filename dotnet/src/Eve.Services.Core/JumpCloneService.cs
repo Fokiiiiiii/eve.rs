@@ -368,7 +368,10 @@ public sealed partial class JumpCloneService(IJumpCloneStore? store = null, Jump
         _offers.TryRemove(offer.TargetCharacterId, out _);
         var payload = OfferPayload(offer.OfferingCharacterId, offer.TargetCharacterId, offer.ShipId);
         call.Session.SendNotification("OnShipJumpCloneInstallationCanceled", "clientID", payload);
-        spaceLink?.Space?.SessionOf(offer.TargetCharacterId)?.SendNotification("OnShipJumpCloneInstallationCanceled", "clientID", payload);
+        var otherPilot = caller == offer.OfferingCharacterId ? offer.TargetCharacterId : offer.OfferingCharacterId;
+        var otherSession = spaceLink?.Space?.SessionOf(otherPilot);
+        if (otherSession is not null && !ReferenceEquals(otherSession, call.Session))
+            otherSession.SendNotification("OnShipJumpCloneInstallationCanceled", "clientID", payload);
         return PyNone.Instance;
     }
 

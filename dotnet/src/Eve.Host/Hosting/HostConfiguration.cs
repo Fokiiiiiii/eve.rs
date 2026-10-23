@@ -118,8 +118,10 @@ internal static class HostConfiguration
     //                          with a Macho error (naming a correlation id) and logs its stack trace to stderr; the default
     //                          answers None and logs one line (what the reference does)                  (default 0)
     //   EVE_TRACE_RPC          1 traces unhandled calls to stderr; full also logs every call's arguments and result type tree
-    //   EVE_PUBLIC_GATEWAY     host:port where the public protobuf gateway listens (cleartext HTTP/2, the client's EVE_PUBLIC_GATEWAY_ADDRESS); unset: none
-    //                          (the dispatcher reads it, not this class)                               (default off)
+    //   EVE_PUBLIC_GATEWAY     host:port where the public protobuf gateway listens; unset: none (default off)
+    //   EVE_PUBLIC_GATEWAY_CERT_PATH     optional PKCS#12 certificate for the gateway's TLS listener (default h2c)
+    //   EVE_PUBLIC_GATEWAY_CERT_PASSWORD password for that PKCS#12 file (default empty)
+    //   EVE_PUBLIC_GATEWAY_TOKEN_KEY     optional base64 HMAC key (at least 32 bytes) for gateway user tokens; unset: process-random
     //   EVE_AUTO_RELOAD_ACCOUNTS  the account ids (comma-separated) of bots with no client UI: the host reloads their guns from the hold
     //                          when the rounds run out. Every other account reloads its own guns (default none)
 
@@ -149,6 +151,19 @@ internal static class HostConfiguration
     internal static (System.Net.IPAddress Address, int Port)? PublicGatewayListen() => Env("EVE_PUBLIC_GATEWAY", "") is { Length: > 0 } value
         ? (System.Net.IPAddress.Parse(value[..value.LastIndexOf(':')]), int.Parse(value[(value.LastIndexOf(':') + 1)..], System.Globalization.CultureInfo.InvariantCulture))
         : null;
+
+
+    /// <summary>Loads the optional PKCS#12 certificate used by the public gateway. When absent, the listener serves local h2c.</summary>
+    internal static System.Security.Cryptography.X509Certificates.X509Certificate2? PublicGatewayCertificate()
+    {
+        var path = Env("EVE_PUBLIC_GATEWAY_CERT_PATH", "");
+        return path.Length == 0
+            ? null
+            : System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadPkcs12FromFile(
+                path,
+                Environment.GetEnvironmentVariable("EVE_PUBLIC_GATEWAY_CERT_PASSWORD"),
+                System.Security.Cryptography.X509Certificates.X509KeyStorageFlags.EphemeralKeySet);
+    }
 
     /// <summary>The accounts EVE_AUTO_RELOAD_ACCOUNTS names. An entry that is not an account id stops the host: a typo must not switch a client's reload on or off unnoticed.</summary>
     internal static IReadOnlySet<long> AutoReloadUserIds(string value) =>

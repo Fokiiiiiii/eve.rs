@@ -73,7 +73,7 @@ Verdicts: **Missing** (no working handler), **Stub** (answers a constant or an e
 | 27 | Certificates | Not needed | `eve/client/script/ui/services/certificateSvc.py` computes certificates on the client from `cfg.certificates`. No RPC. EveJS `certificateMgr` is extra. |
 | 28 | Portrait upload, `ConvertAndSavePaperDoll`, `tutorialSvc`, `GetCharCreationInfo`, `GetCharNewExtraCreationInfo`, `GetCareerAgents`, `GetTutorialAgents` | Not needed | No V24.01 callsite (eve-logic search). EveJS-only. |
 | 29 | `GetCharacterLockType` and `GetCohortsForUser` / `GetCohortsForCharacter` | Intentional | Answer None and an empty list, as the reference does (DEVIATIONS). Kept. |
-| 30 | Security status | Present | Stale DEVIATIONS row 249 says "security status is 0". Section 5, item 6. |
+| 30 | Security status | Present | Relation-backed status is projected through `CharMgrService`, `CharUnboundMgrService` and `CrimewatchService`; DEVIATIONS entry 146 records the character-selection value. |
 | 31 | Standings | Present, rules not checked | Rowset reads are real (`StandingMgrService.cs:158-208`). NPC kill standing rule not checked. CH-14. |
 
 ## 4. Work packages
@@ -224,7 +224,7 @@ Wave 1 runs about 14 packages across three lanes. Packages in one wave may run a
 - **Scope:** `InstallCloneInStation` and `InstallCloneInStructure` (the clone is installed at the current location; the structure variant follows the reference's rights rule). `OfferShipCloneInstallation`, `AcceptShipCloneInstallation`, `CancelShipCloneInstallation`. `GetPriceForClone`. Charge the price once from the wallet and record the settlement in PostgreSQL (the GameStore `jumpCloneInstallSettlements` shape).
 - **Files:** as CH-12, plus `dotnet/src/Eve.Wallet/` (charge) and `dotnet/src/Eve.Ships/` (ship clone slot).
 - **Sources:** eve-logic `clonejumpsvc.py` (`OfferShipCloneInstallation`, `DestroyInstalledClone`, `GetPriceForClone`); EveJS `services/station/jumpCloneRuntime.js` (install, offer, accept, cancel), `jumpCloneRules.js`; wiki.
-- **Acceptance:** installing charges once and creates the clone where the character is docked. The offer, accept and cancel follow the reference's notification order. Insufficient ISK is refused. Restart keeps the clone. Live: install, read state, destroy.
+- **Acceptance:** station and structure installs charge once and create the clone where the character is docked; structure fees and access use the persisted cloning-bay setting and service rights. Insufficient ISK is refused. The ship offer reaches the target, acceptance writes the clone and settlement, charges once with the offering pilot as journal counterparty, and sends Done before cache invalidations. Either participant can cancel, and each connected participant hears exactly one Canceled event. The in-memory offer clears on host restart, matching EveJS. Host tests cover station, structure and refusal states; the two-pilot live walk covers ship offer, accept, cancel, notifications, settlement and wallet journal on `eve_p2` / port 26101. Notification recipients for target cancellation intentionally correct the EveJS duplicate described in DEVIATIONS.
 
 #### CH-16 Clone jump, activation fee, clone station on death
 - **Depends on:** CH-11, CH-12, CH-15. **Wave 3, lane eve_p3.** Split into two agents if it exceeds one session: the jump, then the death.
@@ -293,7 +293,7 @@ Each item was checked in source; the test names are those found by search. Items
 3. **Home station.** `charMgr` `get_home_station`, `set_home_station`, `get_next_remote_change_time`, `GetHomeStationRow`; one resolver shared with the alias (DEVIATIONS, "Effective home-station read surfaces"; 55 PostgreSQL CharacterInfo tests per that row).
 4. **Character info and public info.** `GetPublicInfo`, `GetPublicInfo3`, `GetCharacterDescription`, `SetCharacterDescription`, `GetCharacterCreationDate`, `SaveCharacterSetting`, `GetCharacterSettings`, `LogSettings` (`dotnet/src/Eve.Services.CharacterInfo/CharMgrService.cs`). `GetSettingsInfo` is blocked (section 2).
 5. **Contacts, notes, owner notes, labels, blocked owners.** Literal present in `charMgr`, backed by the `characterNotes` read model (`dotnet/src/Eve.Host/Persistence/CharMgr/PersistenceCharMgrReadModel.cs`). Not re-run live.
-6. **Security status.** Read from the relation store (`dotnet/src/Eve.Host/Composition/CharacterComposition.cs:107`) into `charMgr.GetPublicInfo` (`CharMgrService.cs:141`), `charUnboundMgr` (`CharUnboundMgrService.cs:542`) and `crimewatch` (`CrimewatchService.cs:128`). Penalties (`SecurityStatusPenalties.cs`, `SecurityPenalty.cs`; `SecurityPenaltyTests`, 6 facts) and the NPC recovery (`NpcSecurityStatusRecoverySubscriber.cs`; `NpcSecurityStatusRecoveryTests`, 9 facts). DEVIATIONS row 249 ("security status is 0") is stale.
+6. **Security status.** Read from the relation store (`dotnet/src/Eve.Host/Composition/CharacterComposition.cs:107`) into `charMgr.GetPublicInfo` (`CharMgrService.cs:141`), `charUnboundMgr` (`CharUnboundMgrService.cs:542`) and `crimewatch` (`CrimewatchService.cs:128`). Penalties (`SecurityStatusPenalties.cs`, `SecurityPenalty.cs`; `SecurityPenaltyTests`, 6 facts) and NPC recovery (`NpcSecurityStatusRecoverySubscriber.cs`; `NpcSecurityStatusRecoveryTests`, 9 facts). The former DEVIATIONS row reference is obsolete; the current character-selection evidence is entry 146.
 7. **NPC bounties.** `NpcBounty.cs`, `PgBountyStore.cs` with migration `0001_bounties.sql`; paid by the scheduler job `space.bounty.pay` (`SpaceComposition.cs:369`); `NpcBountyTests` (10 facts), `PgBountyStoreTests`, `NpcBountyHostTests`.
 8. **Kill rights.** `GetMyKillRights`, `GetKillRightsOnCharacters`, `SellKillRight`, `CancelSellKillRight` in `BountyProxyKillRightService.cs`, backed by the crimewatch PostgreSQL store (`BountyProxyKillRightServiceTests`, 2 facts). Not re-run live. The bounty side is CH-13.
 9. **Training and queue.** `SaveNewQueue`, `CharStartTrainingSkill`, `CharStartTrainingSkillByTypeID`, `CharStopTrainingSkill`, `AbortTraining`, and the queue and history reads (`SkillHandlerService.Training.cs`). Notifications in `SkillNotifications.cs` and `TrainingAnnouncer.cs`. Test: `Queue_free_skill_points_follow_saved_order_and_apply_with_the_balance` (`dotnet/tests/Eve.Services.Skills.Tests/SkillServiceTests.cs`).
@@ -323,12 +323,11 @@ Each item was checked in source; the test names are those found by search. Items
 
 ## 7. Stale documents, and what was not checked
 
-### 7.1 Stale rows to correct in CH-23
-- **DEVIATIONS row 249** ("security status is 0 and there are no bounties"): security status is real (section 5, item 6). Bounties are CH-13.
-- **DEVIATIONS row 261** (`charUnboundMgr` methods "other than the ones the screen needs"): it lists `GetCharacterInfo`, `GetQAStarterSystemIDs`, `UpdateCharacterGender` and `UpdateCharacterBloodline`, which eve.rs answers (section 5, item 2). Rewrite the row to list only what is missing: `PrepareCharacterForDelete`, `DeleteCharacter`, `GetCharCreationInfo` (no client callsite).
-- **TODO row 2118** (injector): close after CH-2 with its test names.
-- **TODO row 131** (multi-character training): update after CH-6.
-- **TODO row 2117** (skill mutations and corporation flow): stays a verification item; CH-3 checks the skill part.
+### 7.1 Stale rows corrected in CH-23
+- The former DEVIATIONS row 249 (security status and bounties) and row 261 (`charUnboundMgr`) no longer exist at those row positions. Current character-selection security status is in DEVIATIONS entry 146; implemented `charUnboundMgr` routes are documented beside their Host tests, while the no-client-callsite methods are listed separately. CH-13 and CH-18 carry the bounty evidence.
+- The old TODO open entry for `alphaInjectorMgr.GetNextAvailableInjection` at line 1071 contradicted the completed CH-2 evidence. It now points to the persisted daily-use implementation, focused tests and `test_alpha_injector_live.py`.
+- The earlier TODO multi-training gap (row 131 in the previous status sheet) is closed: CH-6 now records startup recreation of missing future expiry jobs and reconciliation after missed expiries in `CharacterHostTests.Host_startup_recreates_expiry_jobs_for_existing_training_slots` and the package summary.
+- The skills mutations and corporation kick/leave verification item remains a trace request, not a missing-RPC claim (`TODO.md`, EJS-0671). CH-3's queue/skill notification coverage is recorded with its focused tests. Corporation kick/leave stays outside this character package.
 
 ### 7.2 Not checked by this analysis
 - No build, no test, no database query, no live client run. Nothing here is a pass.

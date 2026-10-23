@@ -56,6 +56,68 @@ public sealed class CompatibilityRpcServicesTests
     }
 
     [Fact]
+    public async Task Banned_words_rpcs_refuse_malformed_and_unbounded_input_before_callbacks()
+    {
+        var callbackCalls = 0;
+        var service = (IService)new BannedWordsService
+        {
+            RpcHandler = _ =>
+            {
+                callbackCalls++;
+                return ValueTask.FromResult<PyValue?>(PyNone.Instance);
+            },
+        };
+        var oversized = new PyStr(new string('x', 4097));
+        var calls = new[]
+        {
+            Call("fetch_regexes"),
+            Call("fetch_regexes", new PyStr("other")),
+            Call("fetch_regexes", new PyStr("blocked"), new PyDict([])),
+            Call("check_words_allowed"),
+            Call("check_words_allowed", new PyInt(7)),
+            new ServiceCall { Method = "check_words_allowed", Args = Enumerable.Repeat<PyValue>(new PyStr("x"), 33).ToArray(), Session = new ClientSession() },
+            Call("check_search_words_allowed", oversized),
+            Call("check_words_allowed", new PyStr("word"), new PyDict([new(new PyStr("unexpected"), new PyStr("x"))])),
+            Call("check_words_allowed", new PyStr("word"), new PyDict([new(new PyStr("err_message"), oversized)])),
+        };
+
+        foreach (var call in calls)
+        {
+            var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(call).AsTask());
+            Assert.Equal(MachoErrors.UserErrorClass, refusal.Error.ClassName);
+            Assert.StartsWith("BANNED_WORDS_", refusal.Error.UserErrorMessage);
+        }
+
+        Assert.Equal(0, callbackCalls);
+    }
+
+    [Fact]
+    public async Task Cache_build_read_refuses_client_arguments_before_the_handler()
+    {
+        var callbackCalls = 0;
+        var service = (IService)new CacheService
+        {
+            RpcHandler = _ =>
+            {
+                callbackCalls++;
+                return ValueTask.FromResult<PyValue?>(PyNone.Instance);
+            },
+        };
+        foreach (var call in new[]
+        {
+            Call("GetServerVersionAndBuild", new PyInt(1)),
+            new ServiceCall { Method = "GetServerVersionAndBuild", Args = [], Kwargs = new PyDict([]), Session = new ClientSession() },
+        })
+        {
+            var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(call).AsTask());
+            Assert.Equal(MachoErrors.UserErrorClass, refusal.Error.ClassName);
+            Assert.Equal("CACHE_ARGUMENTS_INVALID", refusal.Error.UserErrorMessage);
+        }
+
+        Assert.Equal(0, callbackCalls);
+    }
+
+    [Fact]
     public async Task Kiring_initialization_rpcs_keep_the_reference_shapes()
     {
         var rpc = (IService)new KiringMgrService();
@@ -81,29 +143,68 @@ public sealed class CompatibilityRpcServicesTests
         Assert.Equal(new PyStr("http://127.0.0.1:26002/kiring/billing/"), Value(endpoints, "billing"));
         Assert.Equal(new PyStr("http://127.0.0.1:26002/kiring/redirect/"), Value(endpoints, "redirect_uri"));
 
-        Assert.Equal(new PyInt(1), await rpc.CallAsync(Call("GetSAuthAid")));
         Assert.Equal(new PyInt(201), await rpc.CallAsync(Call("GetAntiAddictionCode")));
         Assert.Same(PyNone.Instance, await rpc.CallAsync(Call("GetEveGuardServerAddress")));
         Assert.Same(PyBool.False, await rpc.CallAsync(Call("IsMonochromeStyleEnabled")));
         Assert.Same(PyBool.False, await rpc.CallAsync(Call("ShouldKickCheater")));
         Assert.Same(PyBool.False, await rpc.CallAsync(Call("ActivateRedeemingCode")));
 
-        var order = Assert.IsType<PyStr>(await rpc.CallAsync(Call("PlaceKiringOrder")));
-        Assert.StartsWith("evejs-kiring-", order.Value);
-        var authentication = Assert.IsType<PyTuple>(await rpc.CallAsync(new ServiceCall
+        foreach (var (method, args, error) in new[]
         {
-            Method = "PerformKiringServerSideAuthenticationFromCode",
-            Args = [new PyStr("code"), new PyStr("device-42"), new PyStr("client-1")],
-            Session = new ClientSession(),
-        }));
-        Assert.Equal(new PyInt(1), authentication.Items[0]);
-        Assert.Equal(new PyStr("evejs-local-user"), authentication.Items[1]);
-        Assert.Equal(new PyStr("evejs-local-token"), authentication.Items[2]);
-        var encoded = Assert.IsType<PyStr>(authentication.Items[3]).Value;
-        var accountJson = System.Text.Encoding.UTF8.GetString(
-            Convert.FromBase64String(encoded[(encoded.IndexOf('-') + 1)..]));
-        Assert.Equal("{\"odi\":\"device-42\",\"s\":\"evejs-local-token\"}", accountJson);
-        Assert.Equal(new PyStr("EVE.JS Local"), authentication.Items[4]);
+            ("PerformKiringServerSideAuthenticationFromCode", Array.Empty<PyValue>(), "KIRING_AUTH_UNAVAILABLE"),
+            ("PerformKiringServerSideAuthenticationFromCode", new PyValue[] { new PyStr("code"), new PyStr("device-42"), new PyStr("client-1") }, "KIRING_AUTH_UNAVAILABLE"),
+            ("GetSAuthAid", new PyValue[] { new PyStr("forged-user"), new PyStr("forged-account"), new PyStr("forged-device") }, "KIRING_AUTH_UNAVAILABLE"),
+            ("PlaceKiringOrder", Array.Empty<PyValue>(), "KIRING_PURCHASE_UNAVAILABLE"),
+        })
+        {
+            var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() => rpc.CallAsync(new ServiceCall
+            {
+                Method = method,
+                Args = args,
+                Session = new ClientSession(),
+            }).AsTask());
+            Assert.Equal(MachoErrors.UserErrorClass, refusal.Error.ClassName);
+            Assert.Equal(error, refusal.Error.UserErrorMessage);
+        }
+    }
+
+    [Fact]
+    public async Task Contextual_offer_tracking_keeps_a_bounded_event_history()
+    {
+        var service = new ContextualOfferMgrService();
+        var rpc = (IService)service;
+
+        for (var id = 1; id <= 1100; id++)
+            await rpc.CallAsync(Call("TrackOfferSeen", new PyLong(id)));
+
+        Assert.Equal(1024, service.Events.Count);
+        Assert.Equal(77, service.Events[0].EventId);
+        Assert.Equal(1100, service.Events[^1].EventId);
+        Assert.Equal(1100, service.Events[^1].OfferId);
+    }
+
+    [Fact]
+    public async Task Contextual_offer_tracking_refuses_invalid_offer_ids_without_recording()
+    {
+        var callbackCalled = false;
+        var service = new ContextualOfferMgrService
+        {
+            RpcHandler = _ =>
+            {
+                callbackCalled = true;
+                return ValueTask.FromResult<PyValue?>(PyNone.Instance);
+            },
+        };
+        var rpc = (IService)service;
+
+        foreach (var value in new PyValue[] { PyNone.Instance, new PyStr("17"), new PyLong(0), new PyLong(-1) })
+        {
+            var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() => rpc.CallAsync(Call("TrackOfferSeen", value)).AsTask());
+            Assert.Equal(MachoErrors.UserErrorClass, refusal.Error.ClassName);
+            Assert.Equal("CONTEXTUAL_OFFER_ID_INVALID", refusal.Error.UserErrorMessage);
+            Assert.Empty(service.Events);
+            Assert.False(callbackCalled);
+        }
     }
 
     [Fact]
@@ -128,7 +229,17 @@ public sealed class CompatibilityRpcServicesTests
 
         foreach (var (service, method) in services)
         {
-            var request = StaffCall(method, new PyInt(42), kwargs: new PyDict([new(new PyStr("source"), new PyStr("test"))]));
+            var request = service is BannedWordsService
+                ? new ServiceCall
+                {
+                    Method = method,
+                    Args = [new PyStr("name")],
+                    Kwargs = new PyDict([new(new PyStr("err_message"), new PyStr("custom error"))]),
+                    Session = new ClientSession { CharacterId = 42 },
+                }
+                : service is CommunityTrackMgrService
+                    ? Call(method, new PyLong(42))
+                : StaffCall(method, new PyInt(42), kwargs: new PyDict([new(new PyStr("source"), new PyStr("test"))]));
             Assert.Same(expected, await service.CallAsync(request));
             Assert.Same(request, received);
         }
@@ -175,6 +286,41 @@ public sealed class CompatibilityRpcServicesTests
         var staffCommunity = new CommunityTrackMgrService();
         Assert.IsType<PyNone>(await ((IService)staffCommunity).CallAsync(StaffCall("change_qa_mode", PyBool.True)));
         Assert.True(staffCommunity.QaMode);
+    }
+
+    [Fact]
+    public async Task Community_track_rpcs_refuse_invalid_ids_and_qa_values_before_callbacks()
+    {
+        var callbackCalls = 0;
+        var service = new CommunityTrackMgrService
+        {
+            RpcHandler = _ =>
+            {
+                callbackCalls++;
+                return ValueTask.FromResult<PyValue?>(PyNone.Instance);
+            },
+        };
+        var ordinary = new ClientSession { CharacterId = 42 };
+        var calls = new[]
+        {
+            Call("get_instance_attributes_public", session: ordinary),
+            Call("get_instance_attributes_public", new PyReal(42.5), session: ordinary),
+            Call("get_instance_attributes_public", new PyLong(0), session: ordinary),
+            Call("get_instance_attributes_public", new PyLong(42), kwargs: new PyDict([]), session: ordinary),
+            StaffCall("change_qa_mode", new PyStr("true")),
+            StaffCall("change_qa_mode", PyBool.True, new PyDict([])),
+        };
+        calls[0] = new ServiceCall { Method = "get_instance_attributes_public", Args = [], Session = ordinary };
+
+        foreach (var call in calls)
+        {
+            var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() => ((IService)service).CallAsync(call).AsTask());
+            Assert.Equal(MachoErrors.UserErrorClass, refusal.Error.ClassName);
+            Assert.StartsWith("COMMUNITY_TRACK_", refusal.Error.UserErrorMessage);
+        }
+
+        Assert.Equal(0, callbackCalls);
+        Assert.False(service.QaMode);
     }
 
     private static ServiceCall StaffCall(string method, PyValue? arg = null, PyValue? kwargs = null)

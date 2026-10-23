@@ -84,6 +84,7 @@ public static class CoreServices
             new WarStatisticMgrService(gameRpcCallbacks.ReadKillmailAsync, nowUnixMs),
             new BannedWordsService(),
             new CacheService(),
+            new ActivityMgrService(),
               new ChatAuthenticationService(),
             new CommunityTrackMgrService(),
             new ContextualOfferMgrService(),

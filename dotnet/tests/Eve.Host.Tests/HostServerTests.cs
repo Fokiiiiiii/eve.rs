@@ -84,6 +84,19 @@ public class HostServerTests : IAsyncLifetime
         await _serving;
     }
 
+    private sealed class MutationService : IService
+    {
+        public string Name => "budgetMutation";
+        public int Mutations { get; private set; }
+        public bool HasMethod(string method) => method == "Mutate";
+
+        public ValueTask<PyValue> CallAsync(ServiceCall call)
+        {
+            Mutations++;
+            return ValueTask.FromResult<PyValue>(new PyStr("accepted"));
+        }
+    }
+
     /// <summary>A service whose first call is slow: it shows whether a session's packets are kept in order.</summary>
     private sealed class SlowService : IService
     {
@@ -522,6 +535,26 @@ public class HostServerTests : IAsyncLifetime
         var reply = Assert.IsType<Send>(await front.ReceiveAsync());
         var time = Assert.IsType<PyLong>(Result(MarshalCodec.Decode(reply.Payload)));
         Assert.Equal(Py.FileTimeFromUnixMs(FixedNowMs), time.Value);
+    }
+
+    [Fact]
+    public async Task A_shipcaster_call_without_state_returns_a_host_error_instead_of_an_empty_success()
+    {
+        Start(configure: registry => registry.Register(new Eve.Services.Space.ShipcasterRpcService(
+            "shipCasterLandingPadMgr",
+            new Eve.Universe.SolarSystemCatalog([]))));
+        var front = await Handshaken(await ConnectAsync());
+        var open = Open();
+        await front.SendAsync(open);
+        await front.ReceiveAsync();
+
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(Packets.Call(
+            open, 1, "shipCasterLandingPadMgr", "GetAllLandingPads"))));
+        var reply = Assert.IsType<Send>(await front.ReceiveAsync());
+        var response = Assert.IsType<PyObject>(MarshalCodec.Decode(reply.Payload));
+        var state = Assert.IsType<PyTuple>(response.Args).Items;
+
+        Assert.Equal((int)MachoMessage.ErrorResponse, Assert.IsType<PyInt>(state[0]).Value);
     }
 
     [Fact]
@@ -1799,6 +1832,37 @@ public class HostServerTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task An_over_budget_request_disconnects_without_dispatch_and_a_valid_retry_works()
+    {
+        var service = new MutationService();
+        Start(configure: registry => registry.Register(service));
+        var front = await Handshaken(await ConnectAsync());
+        var open = Open();
+        await front.SendAsync(open);
+        await front.ReceiveAsync();
+
+        var oversizedArgument = new PyList(Enumerable.Repeat<PyValue>(PyNone.Instance, 520_000).ToArray());
+        var hostile = MarshalCodec.Encode(Packets.Call(open, 1, "budgetMutation", "Mutate", oversizedArgument));
+        await front.SendAsync(new Packet(open.SessionId, hostile));
+
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var refusal = Assert.IsType<Disconnect>(await front.ReceiveAsync(timeout.Token));
+        Assert.Equal(open.SessionId, refusal.SessionId);
+        Assert.Equal("InvalidPacket", refusal.Reason);
+        Assert.Equal(0, service.Mutations);
+
+        var retry = Open(5_000, 7);
+        await front.SendAsync(retry);
+        await front.ReceiveAsync();
+        await front.SendAsync(new Packet(retry.SessionId, MarshalCodec.Encode(Packets.Call(retry, 2, "budgetMutation", "Mutate"))));
+
+        var response = Assert.IsType<Send>(await front.ReceiveAsync(timeout.Token));
+        Assert.Equal(retry.SessionId, response.SessionId);
+        Assert.Equal("accepted", T(Result(MarshalCodec.Decode(response.Payload))));
+        Assert.Equal(1, service.Mutations);
+    }
+
+    [Fact]
     public async Task An_undecodable_packet_is_dropped_and_the_session_carries_on()
     {
         Start();
@@ -2069,6 +2133,20 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
 
         Assert.Equal(Eve.Services.InventoryWire.Id(droneId), added);
         Assert.Equal((droneId, (long)InSpaceInventory.SystemId, shipId, Eve.Ships.CharacterShips.DroneBayFlag, (long?)null), droneBays.AddCall);
+    }
+
+    [Fact]
+    public async Task Empty_personal_asset_safety_read_skips_the_static_catalog()
+    {
+        await using var rig = await AssetSafetyPgRig.CreateAsync();
+        const long characterId = 900009;
+        var allocatedBefore = GC.GetTotalAllocatedBytes(precise: false);
+
+        var result = await rig.Store.GetItemsInSafetyForCharacterAsync(characterId, CancellationToken.None);
+
+        var allocated = GC.GetTotalAllocatedBytes(precise: false) - allocatedBefore;
+        Assert.Empty(result.Items);
+        Assert.InRange(allocated, 0, 64L * 1024 * 1024);
     }
 
     [Fact]
@@ -2915,7 +2993,33 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
         Assert.Empty(Assert.IsType<Eve.Marshal.PyList>(await unknown.GetNearbyJumpBridgesAsync(accessCall)).Items);
     }
 
-[Fact]
+    [Fact]
+    public async Task Structure_directory_batch_read_loads_the_store_once_for_large_id_lists()
+    {
+        var reads = 0;
+        Task<System.Text.Json.Nodes.JsonObject> ReadTable(string tableName, CancellationToken token)
+        {
+            _ = tableName;
+            token.ThrowIfCancellationRequested();
+            reads++;
+            return Task.FromResult(new System.Text.Json.Nodes.JsonObject());
+        }
+        Task<Eve.Relations.Affiliation> Affiliation(long characterId, CancellationToken token)
+        {
+            _ = characterId;
+            token.ThrowIfCancellationRequested();
+            return Task.FromResult(new Eve.Relations.Affiliation(null, null, null));
+        }
+        var model = new PersistenceStructureDirectoryReadModel(ReadTable, Affiliation);
+        var ids = Enumerable.Repeat(9_223_372_036_854_775_000L, 16_384).ToArray();
+
+        var result = await model.GetStructureInfosAsync(ids, CancellationToken.None);
+
+        Assert.Empty(result);
+        Assert.Equal(1, reads);
+    }
+
+    [Fact]
     public async Task Structure_directory_host_reads_deployed_rows_and_docking_profiles()
     {
         const long structureId = 88000011;

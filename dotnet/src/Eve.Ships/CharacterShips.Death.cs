@@ -346,6 +346,31 @@ public sealed partial class CharacterShips
                 RunSpaceProvenance = provenance,
             };
         }
+        var implantsInCharacter = await items.InContainerAsync(connection, transaction, characterId, cancellationToken);
+        var implantCandidates = implantsInCharacter
+            .Where(item => item.OwnerId == characterId && item.LocationId == characterId && item.Flag == PilotAugmentations.ImplantFlag)
+            .ToArray();
+        var destroyedImplants = new List<Item>();
+        if (implantCandidates.Length > 0)
+        {
+            var nonDestructibleAttribute = statics.AttributeId("nonDestructible")
+                ?? throw new InvalidOperationException("SDE attribute nonDestructible is missing");
+            await statics.EnsureTypesAsync(implantCandidates.Select(item => item.TypeId).Distinct(), cancellationToken);
+            foreach (var candidate in implantCandidates)
+            {
+                var implant = await items.LockAndGetAsync(connection, transaction, candidate.Id, cancellationToken);
+                if (implant is null || implant.OwnerId != characterId || implant.LocationId != characterId
+                    || implant.Flag != PilotAugmentations.ImplantFlag)
+                    continue;
+                var implantType = statics.Type(implant.TypeId)
+                    ?? throw new InvalidOperationException($"SDE type {implant.TypeId} is missing");
+                if (!PilotAugmentations.IsImplantType(implantType) || implantType.Attributes.GetValueOrDefault(nonDestructibleAttribute) > 0)
+                    continue;
+                await items.DeleteAsync(connection, transaction, implant.Id, cancellationToken);
+                await modules.SetAsync(connection, transaction, implant.Id, ItemState.Offline, cancellationToken);
+                destroyedImplants.Add(implant);
+            }
+        }
         // a pod holds nothing, and what somehow is in it is destroyed rather than left where it is about to vanish
         var held = new List<Item>();
         foreach (var item in await items.InContainerAsync(capsule.Id, cancellationToken))
@@ -381,7 +406,7 @@ public sealed partial class CharacterShips
         {
             ShipId = shipId, StationId = home.StationId, SolarSystemId = home.SolarSystemId, ConstellationId = home.ConstellationId, RegionId = home.RegionId,
         };
-        return new PodDeath(capsule, corpse, woke, ship, fitted, held);
+        return new PodDeath(capsule, corpse, woke, ship, fitted, held, destroyedImplants);
     }
 }
 
@@ -395,5 +420,6 @@ public sealed record HomePlace(long StationId, int SolarSystemId, int Constellat
 /// <param name="Ship">The rookie ship in the hangar of the home station.</param>
 /// <param name="Modules">The modules fitted to the rookie ship.</param>
 /// <param name="Held">What was in the capsule, which is destroyed with it.</param>
-public sealed record PodDeath(Item Capsule, Item? Corpse, Character Character, Item Ship, IReadOnlyList<Item> Modules, IReadOnlyList<Item> Held);
+/// <param name="Implants">The active implants destroyed with the capsule; implants marked non-destructible survive.</param>
+public sealed record PodDeath(Item Capsule, Item? Corpse, Character Character, Item Ship, IReadOnlyList<Item> Modules, IReadOnlyList<Item> Held, IReadOnlyList<Item> Implants);
 

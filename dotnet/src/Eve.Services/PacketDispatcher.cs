@@ -19,6 +19,7 @@ public sealed class PacketDispatcher
     private readonly ServiceRegistry _registry;
     private readonly Func<long> _nowUnixMs;
     private readonly ConditionalWeakTable<ClientSession, ExpensiveRpcBudget> _expensiveBudgets = new();
+    private readonly ConditionalWeakTable<ClientSession, ExpensiveRpcBudget> _inventoryBudgets = new();
 
     public PacketDispatcher(ServiceRegistry registry, Func<long>? nowUnixMs = null)
     {
@@ -40,7 +41,7 @@ public sealed class PacketDispatcher
     public bool StrictRpc { get; init; }
 
     /// <summary>Weighted work units available to one session during a rolling minute.</summary>
-    public int MaxExpensiveRpcUnitsPerMinute { get; init; } = 160;
+    public int MaxExpensiveRpcUnitsPerMinute { get; init; } = 460;
 
     /// <summary>
     /// Handles one decoded packet from <paramref name="session"/>. Returns whether it was handled;
@@ -169,7 +170,10 @@ public sealed class PacketDispatcher
         if (call.Method == "MachoBindObject" && call.Args.Count > 1 &&
             NestedBoundMethod(call.Args[1]) is { } nestedMethod)
             cost = Math.Max(cost, ExpensiveRpcCost(service.Name, nestedMethod));
-        if (cost > 0 && !_expensiveBudgets.GetValue(session, _ => new ExpensiveRpcBudget())
+        var budget = service.Name == "invbroker"
+            ? _inventoryBudgets
+            : _expensiveBudgets;
+        if (cost > 0 && !budget.GetValue(session, _ => new ExpensiveRpcBudget())
                 .TryConsume(_nowUnixMs(), cost, MaxExpensiveRpcUnitsPerMinute))
         {
             SendError(packet, MachoErrors.UserError("SessionRpcBudgetExceeded"), session, serviceName);
@@ -314,6 +318,85 @@ public sealed class PacketDispatcher
             return 10;
         if (service == "insuranceSvc" && method == "GetContracts")
             return 10;
+        if (service == "kiringMgr" && method is "PerformKiringServerSideAuthenticationFromCode" or "GetSAuthAid" or "PlaceKiringOrder")
+            return 10;
+        if (service == "eventLog" && method == "LogClientStats")
+            return 10;
+        if (service == "alert" && method == "SendClientStackTraceAlert")
+            return 1;
+        if (service == "ProjectDiscovery")
+            return 1;
+        if (service == "bannedwords")
+            return method == "fetch_regexes" ? 1 : 10;
+        if (service == "air_npe" && method is "is_air_npe_enabled" or "get_air_npe_state")
+            return 1;
+        if (service == "air_npe" && method == "skip_air_npe")
+            return 10;
+        if (service == "authentication" && method == "AmUnderage")
+            return 10;
+        if (service == "authentication" && method is "AccruedTime" or "SetLanguageID")
+            return 1;
+        if (service == "infoGatheringMgr" && method == "GetStateAndConfig")
+            return 1;
+        if (service == "infoGatheringMgr" && method == "LogInfoEventsFromClient")
+            return 10;
+        if (service == "browserLockdownSvc")
+            return 1;
+        if (service == "cache" && method == "GetServerVersionAndBuild")
+            return 1;
+        if (service == "custom_agency_provider" && method == "get_content_data")
+            return 1;
+        if (service == "custom_agency_provider" && method == "warp_to_content")
+            return 10;
+        if (service == "communityTrackMgr" && method is "get_instance_attributes_public" or "change_qa_mode")
+            return 1;
+        if (service == "subscriptionMgr" && method is "GetSubscriptionStatus" or "GetSubscriptionInfo" or "GetSubscriptionTime" or "GetCloneGrade")
+            return 1;
+        if (service == "loginRewardFacilities" && method == "get_my_clone_grade")
+            return 1;
+        if (service == "dungeonExplorationMgr" && method == "GetMyEscalatingPathDetails")
+            return 1;
+        if (service == "abyssal_content_manager" && method == "generate_abyss_npc_spawn_report")
+            return 10;
+        if (service == "alphaInjectorMgr" && method == "GetNextAvailableInjection")
+            return 1;
+        if (service == "FastCheckoutService" && method is "IsFastCheckoutEnabledForUser" or "ClearFastCheckoutCacheForUser" or "GetTestingConfiguration" or "GetOffersForUser")
+            return 1;
+        if (service == "shipKillCounter" && method == "GetItemKillCountPlayer")
+            return 1;
+        if (service == "securityMgr" && method == "get_modified_systems")
+            return 1;
+        if (service == "pingService" && method == "Ping")
+            return 1;
+        if (service == "chatAuthenticationService" && method == "GetAuthenticationToken")
+            return 1;
+        if (service == "jumpTimers" && method == "GetTimers")
+            return 1;
+        if (service == "epicArcStatus" && method == "AgentHasEpicMissionsForCharacter")
+            return 1;
+        if (service == "dynamicBountyMgr" && method == "GetOutputForClientSolarSystem")
+            return 1;
+        if (service == "RWManager" && method is "get_closest_rw_stations" or "solarsystem_contains_rw_instances")
+            return 1;
+        if (service == "clientStatLogger" && method == "LogString")
+            return 1;
+        if (service == "characterEnergyMgr" && method == "GetMyEnergyState")
+            return 1;
+        if (service == "achievementTrackerMgr" && method is "HasEverWarped" or "GetCompletedAchievementsAndClientEventCount")
+            return 1;
+        if (service == "achievementTrackerMgr" && method == "UpdateClientAchievmentsAndCounters")
+            return 10;
+        if (service == "abyssalMgr" && method is "ClientIsReady" or "AbyssalEntranceDeployment" or
+            "AbyssalEntranceGateActivation" or "AbyssalGateActivation" or "AbyssalEndGateActivation")
+            return 10;
+        if (service == "paperDollServer" && method == "GetPaperDollDataBatch")
+            return 10;
+        if (service == "paperDollServer" && method is "GetMyPaperDollData" or "GetPaperDollData" or "GetPaperDollPortraitDataFor")
+            return 1;
+        if (service == "XmppChatMgr" && method is "SetMotd" or "CreatePlayerOwnedChannel" or "AddCharacterToChannel" or "GrantChannelOwnership" or "ResyncSystemChannelAccess")
+            return 10;
+        if (service == "contextualOfferMgr" && method is "TrackOfferDelivered" or "TrackOfferSeen" or "TrackOfferBuyPress" or "TrackOfferClosed" or "TrackOfferPurchased" or "TrackOfferPurchasedSeen")
+            return 1;
         if (service == "planetOrbitalRegistryBroker" && method == "GetTaxRate")
             return 2;
         if (service == "planetOrbitalRegistryBroker" && method == "UpdateSettings")

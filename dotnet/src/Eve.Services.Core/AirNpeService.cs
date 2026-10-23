@@ -21,13 +21,20 @@ public sealed class AirNpeService(
         "get_air_npe_state" or
         "skip_air_npe";
 
-    public ValueTask<PyValue> CallAsync(ServiceCall call) => call.Method switch
+    public ValueTask<PyValue> CallAsync(ServiceCall call)
     {
-        "is_air_npe_enabled" => ValueTask.FromResult<PyValue>(IsEnabled ? PyBool.True : PyBool.False),
-        "get_air_npe_state" => GetStateAsync(call),
-        "skip_air_npe" => SkipAsync(call),
-        _ => ValueTask.FromResult<PyValue>(PyNone.Instance),
-    };
+        if (!HasMethod(call.Method)) return ValueTask.FromResult<PyValue>(PyNone.Instance);
+        call.Cancellation.ThrowIfCancellationRequested();
+        if (call.Args.Count != 0 || call.Kwargs is not PyNone)
+            throw MachoErrors.ThrowUserError("AIR_NPE_ARGUMENTS_INVALID");
+        return call.Method switch
+        {
+            "is_air_npe_enabled" => ValueTask.FromResult<PyValue>(IsEnabled ? PyBool.True : PyBool.False),
+            "get_air_npe_state" => GetStateAsync(call),
+            "skip_air_npe" => SkipAsync(call),
+            _ => ValueTask.FromResult<PyValue>(PyNone.Instance),
+        };
+    }
 
     private bool IsEnabled => newCharacterExperienceMode() is "tutorial" or "cinematic";
 
@@ -53,8 +60,8 @@ public sealed class AirNpeService(
 
     private static long CharacterId(ServiceCall call)
     {
-        var direct = Positive(call.Arg(0));
-        return direct > 0 ? direct : Positive(call.Session.Get("charid"));
+        var characterId = call.Session.CharacterId.GetValueOrDefault();
+        return characterId > 0 ? characterId : Positive(call.Session.Get("charid"));
     }
 
     private static long Positive(PyValue? value) => value switch

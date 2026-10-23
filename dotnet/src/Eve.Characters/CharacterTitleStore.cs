@@ -40,14 +40,40 @@ public sealed class CharacterTitleStore(NpgsqlDataSource source, string schema)
     }
 
     /// <summary>Grants an owned title (a reward's effect). Granting a title the character owns changes nothing.</summary>
-    public async Task GrantAsync(long characterId, Guid titleId, long nowMs, CancellationToken cancellationToken = default)
+    public async Task<bool> GrantAsync(long characterId, Guid titleId, long nowMs, CancellationToken cancellationToken = default)
     {
         await using var command = source.CreateCommand(
             $"INSERT INTO {schema}.character_titles (character_id, title_id, granted_ms) VALUES ($1, $2, $3) ON CONFLICT (character_id, title_id) DO NOTHING");
         command.Parameters.Add(new NpgsqlParameter { Value = characterId });
         command.Parameters.Add(new NpgsqlParameter { Value = titleId });
         command.Parameters.Add(new NpgsqlParameter { Value = nowMs });
-        await command.ExecuteNonQueryAsync(cancellationToken);
+        return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
+    }
+
+    /// <summary>Revokes an owned title and removes it from the worn slot in the same transaction.</summary>
+    public async Task<bool> RevokeAsync(long characterId, Guid titleId, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await using var removeOwned = new NpgsqlCommand(
+            $"DELETE FROM {schema}.character_titles WHERE character_id = $1 AND title_id = $2",
+            connection,
+            transaction);
+        removeOwned.Parameters.Add(new NpgsqlParameter { Value = characterId });
+        removeOwned.Parameters.Add(new NpgsqlParameter { Value = titleId });
+        var removed = await removeOwned.ExecuteNonQueryAsync(cancellationToken) > 0;
+        if (removed)
+        {
+            await using var removeEquipped = new NpgsqlCommand(
+                $"DELETE FROM {schema}.character_equipped_titles WHERE character_id = $1 AND title_id = $2",
+                connection,
+                transaction);
+            removeEquipped.Parameters.Add(new NpgsqlParameter { Value = characterId });
+            removeEquipped.Parameters.Add(new NpgsqlParameter { Value = titleId });
+            await removeEquipped.ExecuteNonQueryAsync(cancellationToken);
+        }
+        await transaction.CommitAsync(cancellationToken);
+        return removed;
     }
 
     /// <summary>Wears an owned title. False when the character does not own it (nothing changes then).</summary>

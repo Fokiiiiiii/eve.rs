@@ -91,7 +91,9 @@ cleanup() {
 trap cleanup EXIT
 
 echo "building the host, the front and the simulation"
-(cd "$HERE/dotnet" && dotnet build -c Release src/Eve.Host -nologo -v q -nodeReuse:false >"$LOG/host-build.out" 2>&1 || { tail -n 80 "$LOG/host-build.out"; exit 1; } && dotnet build-server shutdown)
+if [ "${EVE_LIVE_SKIP_DOTNET_BUILD:-0}" != "1" ]; then
+  (cd "$HERE/dotnet" && dotnet build -c Release src/Eve.Host -nologo -v q -nodeReuse:false >"$LOG/host-build.out" 2>&1 || { tail -n 80 "$LOG/host-build.out"; exit 1; } && dotnet build-server shutdown)
+fi
 (cd "$HERE" && cargo build -q --release -p eve-net -p eve-sim)
 
 # the simulation reads the static data itself (EVE_SDE_DIR, or the copy `eve-sde ensure` keeps under .cache/sde)
@@ -141,5 +143,5 @@ if [ -n "${EVE_RUN:-}" ]; then
   cd "$HERE" && bash -c "$EVE_RUN"
 else
   cd "$HERE/tools/headless-client"
-  EVE_LIVE_SERVER=eve.rs EVE_LIVE_STRICT_PASSWORDS=1 .venv/bin/python -m pytest -q tests/test_live.py tests/test_login_to_character.py tests/test_sso_login_live.py tests/test_undock.py tests/test_movement.py tests/test_warp.py tests/test_jump.py tests/test_others.py tests/test_target.py tests/test_module.py tests/test_health.py tests/test_market.py tests/test_structures.py -rs
+  EVE_LIVE_SERVER=eve.rs EVE_LIVE_STRICT_PASSWORDS=1 .venv/bin/python -m pytest -q tests/test_live.py tests/test_login_to_character.py tests/test_paperdoll_selection.py tests/test_sso_login_live.py tests/test_undock.py tests/test_movement.py tests/test_warp.py tests/test_jump.py tests/test_others.py tests/test_target.py tests/test_module.py tests/test_health.py tests/test_market.py tests/test_structures.py -rs
 fi

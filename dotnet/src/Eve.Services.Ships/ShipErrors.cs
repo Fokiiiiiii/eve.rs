@@ -1,3 +1,4 @@
+using System.Globalization;
 using Eve.Dogma;
 using Eve.Fitting;
 using Eve.Marshal;
@@ -39,6 +40,9 @@ public static class ShipErrors
                 return MachoErrors.ThrowUserError("NotEnoughCargoSpace", ("available", Py.Number(refused.Available)), ("volume", Py.Number(refused.Volume)));
             case ShipRefusal.NotEnoughDroneBaySpace:
                 return MachoErrors.ThrowUserError("NotEnoughDroneBaySpace", ("type", new PyInt(refused.ModuleTypeId)), ("free", Py.Number(refused.Available)), ("required", Py.Number(refused.Volume)));
+            case ShipRefusal.CargoWouldOverflow:
+                return Notify(
+                    $"That cannot be removed while the cargo hold is this full. The hold carries {refused.Used.ToString("0.00", CultureInfo.InvariantCulture)} m3 and the ship would be left with room for {refused.CapacityAfter.ToString("0.00", CultureInfo.InvariantCulture)} m3. Move some cargo out first.");
             case ShipRefusal.NotAllowedInHold:
                 return MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("That item cannot be placed in that ship hold.")));
             case ShipRefusal.NotADrone:

@@ -1,7 +1,9 @@
 using System.Globalization;
 using System.Text;
 using System.Text.Json.Nodes;
+using Eve.Macho;
 using Eve.Marshal;
+using Eve.Services;
 
 namespace Eve.Services.Core;
 
@@ -22,7 +24,12 @@ public sealed partial class SecurityMgrService
     }
 
     [Method("get_modified_systems")]
-    public PyValue GetModifiedSystems(ServiceCall call) => EmptyModifiedSystems();
+    public PyValue GetModifiedSystems(ServiceCall call)
+    {
+        if (call.Args.Count != 0 || call.Kwargs is not PyNone)
+            throw MachoErrors.ThrowUserError("SECURITY_MANAGER_ARGUMENTS_INVALID");
+        return EmptyModifiedSystems();
+    }
 }
 
 [Service("alert")]
@@ -35,17 +42,28 @@ public sealed partial class AlertService
     private static readonly Queue<string> StackHashOrder = new();
 
     [Method("BeanCount")]
-    public PyValue BeanCount(ServiceCall call) => new PyTuple([PyNone.Instance, PyNone.Instance]);
+    public PyValue BeanCount(ServiceCall call)
+    {
+        if (call.Args.Count != 1 || call.Kwargs is not PyNone || call.Arg(0) is not (PyInt or PyLong))
+            throw MachoErrors.ThrowUserError("ALERT_ARGUMENTS_INVALID");
+        return new PyTuple([PyNone.Instance, PyNone.Instance]);
+    }
 
     [Method("SendClientStackTraceAlert")]
     public PyValue SendClientStackTraceAlert(ServiceCall call)
     {
+        if (call.Kwargs is not PyNone || call.Args.Count is < 3 or > 4)
+            throw MachoErrors.ThrowUserError("ALERT_ARGUMENTS_INVALID");
         var stackId = call.Arg(0) switch
         {
             PyTuple tuple => tuple.Items,
             PyList list => list.Items,
             _ => [],
         };
+        if (stackId.Count != 2 || !StableKeyAllowed(stackId[0]) || !BoundedText(stackId[1], 256)
+            || !BoundedText(call.Arg(1), 16_384) || !BoundedText(call.Arg(2), 32)
+            || (call.Args.Count == 4 && call.Arg(3) is not PyNone && !StableKeyAllowed(call.Arg(3))))
+            throw MachoErrors.ThrowUserError("ALERT_ARGUMENTS_INVALID");
         var stackHash = stackId.Count > 0 ? StableKey(stackId[0]) : null;
         var stackKey = stackId.Count > 1 ? Limit(Text(stackId[1]), 256) : "";
         var mode = Limit(Text(call.Arg(2)), 32);
@@ -55,6 +73,22 @@ public sealed partial class AlertService
         var errorId = ResolveErrorId(key);
         return new PyTuple([new PyLong(errorId), new PyStr("D")]);
     }
+
+    private static bool StableKeyAllowed(PyValue value) => value switch
+    {
+        PyInt or PyLong or PyStr or PyToken => true,
+        PyBytes bytes => bytes.Value.Length <= 256,
+        _ => false,
+    };
+
+    private static bool BoundedText(PyValue value, int maxBytes) => value switch
+    {
+        PyStr text => Encoding.UTF8.GetByteCount(text.Value) <= maxBytes,
+        PyWString text => Encoding.UTF8.GetByteCount(text.Value) <= maxBytes,
+        PyToken text => Encoding.UTF8.GetByteCount(text.Value) <= maxBytes,
+        PyBytes bytes => bytes.Value.Length <= maxBytes,
+        _ => false,
+    };
 
     private static long ResolveErrorId(string? key)
     {
@@ -188,16 +222,21 @@ public sealed partial class ShipKillCounterService(
     [Method("GetItemKillCountPlayer")]
     public async ValueTask<PyValue> GetItemKillCountPlayer(ServiceCall call)
     {
+        call.Cancellation.ThrowIfCancellationRequested();
+        if (call.Args.Count != 1 || call.Kwargs is not PyNone)
+            throw MachoErrors.ThrowUserError("SHIP_KILL_COUNTER_ARGUMENTS_INVALID");
         var itemId = call.Arg(0) switch
         {
-            PyInt value => value.Value,
-            PyLong value => value.Value,
+            PyInt value when value.Value > 0 => value.Value,
+            PyLong value when value.Value > 0 => value.Value,
             _ => 0,
         };
-        if (itemId <= 0 || readShipKillCounters is null)
-            return new PyInt(0);
+        if (itemId <= 0)
+            throw MachoErrors.ThrowUserError("SHIP_KILL_COUNTER_ITEM_ID_INVALID");
+        if (readShipKillCounters is not { } readCounters)
+            throw MachoErrors.ThrowUserError("SHIP_KILL_COUNTER_UNAVAILABLE");
 
-        var table = await readShipKillCounters(call.Cancellation).ConfigureAwait(false);
+        var table = await readCounters(call.Cancellation).ConfigureAwait(false);
         var record = (table["ships"] as JsonObject)?
             [itemId.ToString(CultureInfo.InvariantCulture)] as JsonObject;
         if (record?["playerKills"] is not { } storedCount ||

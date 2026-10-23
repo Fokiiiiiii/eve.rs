@@ -38,39 +38,45 @@ namespace Eve.Host;
 internal sealed partial class CharacterServicesComposition
 {
     /// <summary>Inventory broker, crates, ship cosmetics, dynamic items, energy, dogma and planets.</summary>
-    private IReadOnlyList<IService> InventoryRpc() =>
-    [
-              WithCustoms(HostInventoryServiceFactory.CreateInvBroker(items, itemTypes, stations, ships, dogma, now, spaceContainers, spaceDrones, corporations, characterEntryHooks,
-                    controlledStructureInventory: structureControlReadModel.InventoryAsync)),
-              new Eve.Services.Core.CrateService(new PersistenceCrateServiceBackend(source, items, itemTypes, skills, skillCatalog, mailCache, savedFittings)),
-              new Eve.Host.ShipCosmeticsMgrRpcService(mailCache, mailCache, items, source, skinCosmeticsCatalog, now,
-                  (characterId, shipId, skinId) =>
-                  {
-                      if (characterSessions.Of(characterId) is not { } session) return;
-                      session.SendNotification("OnShipCosmeticsChanged", "clientID", InventoryWire.Id(shipId), new PyDict([]));
-                      session.SendNotification("OnCurrentShipSkinChange", "clientID", InventoryWire.Id(shipId), new PyInt(skinId ?? 0));
-                  },
-                  (characterId, skinId) =>
-                  {
-                      if (characterSessions.Of(characterId) is { } session)
-                          session.SendNotification("OnSkinLicenseActivated", "clientID",
-                              new PyInt(skinId), new PyInt(characterId));
-                  },
-                  inventoryItemConsumed: async (characterId, before, remainingQuantity, ct) =>
-                  {
-                      if (characterSessions.Of(characterId) is not { } session) return;
-                      var type = await itemTypes.GetAsync(before.TypeId, ct);
-                      var row = new ItemRow(before.Id, before.TypeId, before.OwnerId, before.LocationId, before.Flag, remainingQuantity, type?.GroupId ?? 0, type?.CategoryId ?? 0);
-                      var changes = new PyDict([new KeyValuePair<PyValue, PyValue>(new PyInt(9), InventoryWire.Id(before.Quantity))]);
-                      session.SendNotification("OnItemChange", "clientID", InventoryWire.PackedRow(row), changes, PyNone.Instance);
-                  }),
-              new Eve.Host.DynamicItemRpcService(items, itemMutations, dogma, itemTypes, ships),
-              new Eve.Host.CharacterEnergyMgrRpcService(mailCache, now),
-              new Eve.Host.PaperDollServerRpcService(characters),
-              planetMgr,
-              planetRegistry,
-              new Eve.Host.IndustryMonitorRpcService(mailCache, items, nowUnixMs: now, itemTypes: itemTypes),
-              new DogmaIMService(
+    private IReadOnlyList<IService> InventoryRpc()
+    {
+        var industryMonitor = new IndustryMonitorRpcService(mailCache, items, nowUnixMs: now, itemTypes: itemTypes);
+        var inventoryBroker = WithCustoms(HostInventoryServiceFactory.CreateInvBroker(items, itemTypes, stations, ships, dogma, now, spaceContainers, spaceDrones, corporations, characterEntryHooks,
+            controlledStructureInventory: structureControlReadModel.InventoryAsync));
+
+        return
+        [
+            inventoryBroker,
+            new Eve.Services.Core.CrateService(new PersistenceCrateServiceBackend(source, items, itemTypes, skills, skillCatalog, mailCache, savedFittings)),
+            new Eve.Host.ShipCosmeticsMgrRpcService(mailCache, mailCache, items, source, skinCosmeticsCatalog, now,
+                (characterId, shipId, skinId) =>
+                {
+                    if (characterSessions.Of(characterId) is not { } session) return;
+                    session.SendNotification("OnShipCosmeticsChanged", "clientID", InventoryWire.Id(shipId), new PyDict([]));
+                    session.SendNotification("OnCurrentShipSkinChange", "clientID", InventoryWire.Id(shipId), new PyInt(skinId ?? 0));
+                },
+                (characterId, skinId) =>
+                {
+                    if (characterSessions.Of(characterId) is { } session)
+                        session.SendNotification("OnSkinLicenseActivated", "clientID",
+                            new PyInt(skinId), new PyInt(characterId));
+                },
+                inventoryItemConsumed: async (characterId, before, remainingQuantity, ct) =>
+                {
+                    if (characterSessions.Of(characterId) is not { } session) return;
+                    var type = await itemTypes.GetAsync(before.TypeId, ct);
+                    var row = new ItemRow(before.Id, before.TypeId, before.OwnerId, before.LocationId, before.Flag, remainingQuantity, type?.GroupId ?? 0, type?.CategoryId ?? 0);
+                    var changes = new PyDict([new KeyValuePair<PyValue, PyValue>(new PyInt(9), InventoryWire.Id(before.Quantity))]);
+                    session.SendNotification("OnItemChange", "clientID", InventoryWire.PackedRow(row), changes, PyNone.Instance);
+                    await industryMonitor.InventoryChangedAsync(session, ct);
+                }),
+            new Eve.Host.DynamicItemRpcService(items, itemMutations, dogma, itemTypes, ships),
+            new Eve.Host.CharacterEnergyMgrRpcService(mailCache, now),
+            new Eve.Host.PaperDollServerRpcService(characters),
+            planetMgr,
+            planetRegistry,
+            industryMonitor,
+            new DogmaIMService(
                 dogma, ships, now,
                 skillHandler.TryActivateBoosterAsync,
                 sync: dogmaSync,
@@ -84,5 +90,6 @@ internal sealed partial class CharacterServicesComposition
                 localTimers: foundations.LocalTimers,
                 augmentations: new PilotAugmentationRpc(pilotImplants, skillHandler.UseBoosterAsync, announcer, dogma),
                 prepareSpaceDogma: spaceSessions is null ? null : spaceSessions.PrepareSpaceDogmaAsync).ListeningForDryGuns(),
-    ];
+        ];
+    }
 }

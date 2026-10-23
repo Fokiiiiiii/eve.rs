@@ -147,7 +147,10 @@ internal static class HostComposition
             var gatewayCharacters = new Eve.Characters.PgCharacterStore(source, Env("EVE_CHARACTERS_SCHEMA", Eve.Characters.PgCharacterStore.DefaultSchema));
             var authority = new PublicGateway.GatewayAuthority(
                 async (character, token) => (await gatewayCharacters.GetAsync(character, token))?.AccountId, () => DateTimeOffset.UtcNow);
-            publicGateway = new PublicGateway.PublicGatewayRoutes(gateway, notices, authority);
+            publicGateway = new PublicGateway.PublicGatewayRoutes(gateway, notices, authority)
+            {
+                CharacterTitleRewards = new PublicGateway.CharacterTitleRewardService(titleStore, titles, notices),
+            };
             // every feature has registered its job handlers by now: the scheduler may start running jobs
             await foundations.StartAsync();
         }

@@ -7,19 +7,73 @@ namespace Eve.Services.Core;
 [Service("bannedwords")]
 public sealed partial class BannedWordsService
 {
+    private const int MaximumWordArguments = 32;
+    private const int MaximumWordBytes = 4096;
+    private const int MaximumTotalWordBytes = 16384;
+    private const int MaximumErrorMessageBytes = 128;
+
     public Func<ServiceCall, ValueTask<PyValue?>>? RpcHandler { get; set; }
 
     [Method("fetch_regexes")]
-    public ValueTask<PyValue> FetchRegexes(ServiceCall call) =>
-        CompatibilityRpc.Invoke(call, RpcHandler, static () => new PyList([]));
+    public ValueTask<PyValue> FetchRegexes(ServiceCall call)
+    {
+        ValidateFetchRegexes(call);
+        return CompatibilityRpc.Invoke(call, RpcHandler, static () => new PyList([]));
+    }
 
     [Method("check_words_allowed")]
-    public ValueTask<PyValue> CheckWordsAllowed(ServiceCall call) =>
-        CompatibilityRpc.Invoke(call, RpcHandler, static () => PyNone.Instance);
+    public ValueTask<PyValue> CheckWordsAllowed(ServiceCall call)
+    {
+        ValidateWords(call);
+        return CompatibilityRpc.Invoke(call, RpcHandler, static () => PyNone.Instance);
+    }
 
     [Method("check_search_words_allowed")]
-    public ValueTask<PyValue> CheckSearchWordsAllowed(ServiceCall call) =>
-        CompatibilityRpc.Invoke(call, RpcHandler, static () => PyNone.Instance);
+    public ValueTask<PyValue> CheckSearchWordsAllowed(ServiceCall call)
+    {
+        ValidateWords(call);
+        return CompatibilityRpc.Invoke(call, RpcHandler, static () => PyNone.Instance);
+    }
+
+    private static void ValidateFetchRegexes(ServiceCall call)
+    {
+        if (call.Args.Count != 1 || call.Kwargs is not PyNone)
+            throw MachoErrors.ThrowUserError("BANNED_WORDS_ARGUMENTS_INVALID");
+        if (call.Arg(0) is not PyStr and not PyWString)
+            throw MachoErrors.ThrowUserError("BANNED_WORDS_REGEX_TYPE_INVALID");
+        var type = Text(call.Arg(0));
+        if (type is not ("blocked" or "intercepted"))
+            throw MachoErrors.ThrowUserError("BANNED_WORDS_REGEX_TYPE_INVALID");
+    }
+
+    private static void ValidateWords(ServiceCall call)
+    {
+        if (call.Args.Count is < 1 or > MaximumWordArguments)
+            throw MachoErrors.ThrowUserError("BANNED_WORDS_ARGUMENTS_INVALID");
+        var totalBytes = 0;
+        foreach (var value in call.Args)
+        {
+            if (value is not PyStr and not PyWString)
+                throw MachoErrors.ThrowUserError("BANNED_WORDS_TEXT_INVALID");
+            var length = System.Text.Encoding.UTF8.GetByteCount(Text(value));
+            if (length > MaximumWordBytes || (totalBytes = checked(totalBytes + length)) > MaximumTotalWordBytes)
+                throw MachoErrors.ThrowUserError("BANNED_WORDS_TEXT_TOO_LONG");
+        }
+
+        if (call.Kwargs is PyNone) return;
+        if (call.Kwargs is not PyDict kwargs || kwargs.Entries.Count > 1 ||
+            kwargs.Entries.Any(pair => pair.Key is not PyStr { Value: "err_message" } ||
+                pair.Value is not PyStr and not PyWString ||
+                System.Text.Encoding.UTF8.GetByteCount(Text(pair.Value)) > MaximumErrorMessageBytes))
+            throw MachoErrors.ThrowUserError("BANNED_WORDS_ARGUMENTS_INVALID");
+    }
+
+    private static string Text(PyValue value) => value switch
+    {
+        PyStr text => text.Value,
+        PyWString text => text.Value,
+        _ => string.Empty,
+    };
 }
 
 [Service("cache")]
@@ -28,9 +82,14 @@ public sealed partial class CacheService
     public Func<ServiceCall, ValueTask<PyValue?>>? RpcHandler { get; set; }
 
     [Method("GetServerVersionAndBuild")]
-    public ValueTask<PyValue> GetServerVersionAndBuild(ServiceCall call) =>
-        CompatibilityRpc.Invoke(call, RpcHandler, static () =>
+    public ValueTask<PyValue> GetServerVersionAndBuild(ServiceCall call)
+    {
+        call.Cancellation.ThrowIfCancellationRequested();
+        if (call.Args.Count != 0 || call.Kwargs is not PyNone)
+            throw MachoErrors.ThrowUserError("CACHE_ARGUMENTS_INVALID");
+        return CompatibilityRpc.Invoke(call, RpcHandler, static () =>
             Py.Tuple(new PyReal(ServerBuildInfo.BootVersion), new PyInt(ServerBuildInfo.BootBuild)));
+    }
 }
 
 [Service("communityTrackMgr")]
@@ -51,52 +110,64 @@ public sealed partial class CommunityTrackMgrService
     }
 
     [Method("get_instance_attributes_public")]
-    public ValueTask<PyValue> GetInstanceAttributesPublic(ServiceCall call) =>
-        CompatibilityRpc.Invoke(call, RpcHandler, () =>
-        {
-            var instanceId = Positive(call.Arg(0));
-            return _instances.TryGetValue(instanceId, out var attributes)
+    public ValueTask<PyValue> GetInstanceAttributesPublic(ServiceCall call)
+    {
+        ValidateArguments(call, 1);
+        var instanceId = PositiveIntegral(call.Arg(0));
+        if (instanceId <= 0)
+            throw MachoErrors.ThrowUserError("COMMUNITY_TRACK_INSTANCE_ID_INVALID");
+        return CompatibilityRpc.Invoke(call, RpcHandler, () =>
+            _instances.TryGetValue(instanceId, out var attributes)
                 ? Py.Tuple(new PyLong(attributes.DefinitionId), new PyLong(attributes.Progress))
-                : Py.Tuple(PyNone.Instance, PyNone.Instance);
-        });
+                : Py.Tuple(PyNone.Instance, PyNone.Instance));
+    }
 
     [Method("change_qa_mode")]
-    public ValueTask<PyValue> ChangeQaMode(ServiceCall call) =>
-        !CompatibilityRpc.IsStaff(call) ? ValueTask.FromResult<PyValue>(PyNone.Instance) : CompatibilityRpc.Invoke(call, RpcHandler, () =>
+    public ValueTask<PyValue> ChangeQaMode(ServiceCall call)
+    {
+        if (!CompatibilityRpc.IsStaff(call)) return ValueTask.FromResult<PyValue>(PyNone.Instance);
+        ValidateArguments(call, 1);
+        if (call.Arg(0) is not PyBool value)
+            throw MachoErrors.ThrowUserError("COMMUNITY_TRACK_QA_MODE_INVALID");
+        return CompatibilityRpc.Invoke(call, RpcHandler, () =>
         {
-            Interlocked.Exchange(ref _qaMode, Truthy(call.Arg(0)) ? 1 : 0);
+            Interlocked.Exchange(ref _qaMode, value.Value ? 1 : 0);
             return PyNone.Instance;
         });
+    }
 
-    private static long Positive(PyValue value) => value switch
+    private static void ValidateArguments(ServiceCall call, int count)
     {
-        PyInt number => Math.Max(0, number.Value),
-        PyLong number => Math.Max(0, number.Value),
+        call.Cancellation.ThrowIfCancellationRequested();
+        if (call.Args.Count != count || call.Kwargs is not PyNone)
+            throw MachoErrors.ThrowUserError("COMMUNITY_TRACK_ARGUMENTS_INVALID");
+    }
+
+    private static long PositiveIntegral(PyValue value) => value switch
+    {
+        PyInt number when number.Value > 0 => number.Value,
+        PyLong number when number.Value > 0 => number.Value,
         _ => 0,
-    };
-
-    private static bool Truthy(PyValue value) => value switch
-    {
-        PyNone => false,
-        PyBool boolean => boolean.Value,
-        PyInt number => number.Value != 0,
-        PyLong number => number.Value != 0,
-        PyReal number => number.Value != 0 && !double.IsNaN(number.Value),
-        var text when Eve.Macho.JsSemantics.StringValue(text) is not null => Eve.Macho.JsSemantics.StringValue(text)!.Length > 0,
-        PyBytes text => text.Value.Length > 0,
-        PyWString text => text.Value.Length > 0,
-        _ => true,
     };
 }
 
 [Service("contextualOfferMgr")]
 public sealed partial class ContextualOfferMgrService
 {
+    private const int MaxRetainedEvents = 1024;
     public Func<ServiceCall, ValueTask<PyValue?>>? RpcHandler { get; set; }
 
-    private readonly ConcurrentQueue<ContextualOfferEvent> _events = new();
+    private readonly object _eventsGate = new();
+    private readonly Queue<ContextualOfferEvent> _events = new();
     private long _nextEventId;
-    public IReadOnlyList<ContextualOfferEvent> Events => _events.ToArray();
+    public IReadOnlyList<ContextualOfferEvent> Events
+    {
+        get
+        {
+            lock (_eventsGate)
+                return _events.ToArray();
+        }
+    }
 
     [Method("TrackOfferDelivered")]
     public ValueTask<PyValue> TrackOfferDelivered(ServiceCall call) => Track(call);
@@ -116,19 +187,29 @@ public sealed partial class ContextualOfferMgrService
     [Method("TrackOfferPurchasedSeen")]
     public ValueTask<PyValue> TrackOfferPurchasedSeen(ServiceCall call) => Track(call);
 
-    private ValueTask<PyValue> Track(ServiceCall call) => CompatibilityRpc.Invoke(call, RpcHandler, () =>
+    private ValueTask<PyValue> Track(ServiceCall call)
     {
-        _events.Enqueue(new ContextualOfferEvent(
-            Interlocked.Increment(ref _nextEventId), call.Method, Positive(call.Arg(0)),
-            call.Session.CharacterId ?? 0, call.Session.UserId ?? 0, DateTimeOffset.UtcNow));
-        return PyNone.Instance;
-    });
+        var offerId = RequireOfferId(call.Arg(0));
+        return CompatibilityRpc.Invoke(call, RpcHandler, () =>
+        {
+            var entry = new ContextualOfferEvent(
+                Interlocked.Increment(ref _nextEventId), call.Method, offerId,
+                call.Session.CharacterId ?? 0, call.Session.UserId ?? 0, DateTimeOffset.UtcNow);
+            lock (_eventsGate)
+            {
+                _events.Enqueue(entry);
+                while (_events.Count > MaxRetainedEvents)
+                    _events.Dequeue();
+            }
+            return PyNone.Instance;
+        });
+    }
 
-    private static long Positive(PyValue value) => value switch
+    private static long RequireOfferId(PyValue value) => value switch
     {
-        PyInt number => Math.Max(0, number.Value),
-        PyLong number => Math.Max(0, number.Value),
-        _ => 0,
+        PyInt number when number.Value > 0 => number.Value,
+        PyLong number when number.Value > 0 => number.Value,
+        _ => throw MachoErrors.ThrowUserError("CONTEXTUAL_OFFER_ID_INVALID"),
     };
 }
 
@@ -238,20 +319,13 @@ public sealed partial class KiringMgrService
 
     [Method("PerformKiringServerSideAuthenticationFromCode")]
     public ValueTask<PyValue> PerformKiringServerSideAuthenticationFromCode(ServiceCall call) =>
-        CompatibilityRpc.Invoke(call, RpcHandler, () =>
-        {
-            const int aid = 1;
-            const string token = "evejs-local-token";
-            var deviceId = Truthy(call.Arg(1)) ? Eve.Macho.JsSemantics.StringValue(call.Arg(1)) : "evejs-local-device";
-            var json = System.Text.Json.JsonSerializer.Serialize(new { odi = deviceId, s = token });
-            var account = $"{aid}-{Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(json))}";
-            return Py.Tuple(new PyInt(aid), new PyStr("evejs-local-user"), new PyStr(token),
-                new PyStr(account), new PyStr("EVE.JS Local"));
-        });
+        CompatibilityRpc.Invoke(call, RpcHandler, static () =>
+            throw MachoErrors.ThrowUserError("KIRING_AUTH_UNAVAILABLE"));
 
     [Method("GetSAuthAid")]
     public ValueTask<PyValue> GetSAuthAid(ServiceCall call) =>
-        CompatibilityRpc.Invoke(call, RpcHandler, static () => new PyInt(1));
+        CompatibilityRpc.Invoke(call, RpcHandler, static () =>
+            throw MachoErrors.ThrowUserError("KIRING_AUTH_UNAVAILABLE"));
 
     [Method("GetAntiAddictionCode")]
     public ValueTask<PyValue> GetAntiAddictionCode(ServiceCall call) =>
@@ -273,7 +347,7 @@ public sealed partial class KiringMgrService
     [Method("PlaceKiringOrder")]
     public ValueTask<PyValue> PlaceKiringOrder(ServiceCall call) =>
         CompatibilityRpc.Invoke(call, RpcHandler, static () =>
-            new PyStr($"evejs-kiring-{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}"));
+            throw MachoErrors.ThrowUserError("KIRING_PURCHASE_UNAVAILABLE"));
 
     /// <summary>
     /// No redeeming-code store exists, so no code is accepted: the answer is False (DEVIATIONS, "Account and social requests").
@@ -303,15 +377,4 @@ public sealed partial class KiringMgrService
                 ("app", new PyStr("evejs_local")))));
     }
 
-    private static bool Truthy(PyValue value) => value switch
-    {
-        PyNone => false,
-        PyBool boolean => boolean.Value,
-        PyInt number => number.Value != 0,
-        PyLong number => number.Value != 0,
-        PyReal number => number.Value != 0 && !double.IsNaN(number.Value),
-        var text when Eve.Macho.JsSemantics.StringValue(text) is not null => Eve.Macho.JsSemantics.StringValue(text)!.Length > 0,
-        PyBytes bytes => bytes.Value.Length > 0,
-        _ => true,
-    };
 }

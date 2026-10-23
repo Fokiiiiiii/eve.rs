@@ -777,11 +777,7 @@ public class SpaceServiceTests
             [("stationid", new PyInt(Rig.Station), PyNone.Instance), ("locationid", new PyInt(Rig.Station), new PyInt(system)), ("solarsystemid", PyNone.Instance, new PyInt(system))],
             Sequence.LastChange(session));
         Assert.Null(session.GetInt("stationid"));
-<<<<<<< HEAD
-        Assert.Null(session.GetInt("stationid2")); // EveJS undock clears stationid2 too, silently
-=======
         Assert.Null(session.GetInt("stationid2")); // the reference clears the server value on undock (characterState: session.stationid2 = null)
->>>>>>> origin/main
         Assert.Equal(system, session.GetInt("solarsystemid"));
         // the simulation
         var enter = AssertUndockSimulationMessages(rig);

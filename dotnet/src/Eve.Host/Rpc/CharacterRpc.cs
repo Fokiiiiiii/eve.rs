@@ -111,7 +111,14 @@ internal sealed partial class CharacterServicesComposition
                 readBalance: async (characterId, token) => (await wallets.GetAsync(characterId, token))?.Isk,
                 canReadPrivateCorporationMemberInfo: async (characterId, corporationId, token) =>
                     await corporations.HasRoleAsync(characterId, corporationId, Eve.Corporations.CorporationRoles.Director, token)
-                    || await corporations.HasRoleAsync(characterId, corporationId, Eve.Corporations.CorporationRoles.PersonnelManager, token)),
+                    || await corporations.HasRoleAsync(characterId, corporationId, Eve.Corporations.CorporationRoles.PersonnelManager, token),
+                writeContactNotification: async (senderId, recipientId, typeId, level, message, token) =>
+                {
+                    var mailbox = notificationMailbox ?? throw new InvalidOperationException("The notifications mailbox is wired before character RPCs.");
+                    await mailbox.WriteNotificationsAsync(senderId, typeId, 9, [recipientId],
+                        $"contact:{Guid.NewGuid():N}",
+                        new JsonObject { ["level"] = level, ["message"] = message }, token);
+                }),
             new Eve.Services.CharacterInfo.HomeStationService(
                 homeStations,
                 characters.TryChangeHomeStationAsync,

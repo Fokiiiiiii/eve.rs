@@ -82,6 +82,17 @@ public class FitFittingTests
 
         Assert.Equal("INVENTORY_BULK_LIMIT_EXCEEDED", error.Error.UserErrorMessage);
         Assert.Equal(Rig.Station, (await rig.Items.GetAsync(ship))!.LocationId);
+
+        var malformed = await Assert.ThrowsAsync<MachoWrappedException>(() => ((IService)rig.Service).CallAsync(new ServiceCall
+        {
+            Method = "FitFitting",
+            BoundObjectId = inventory,
+            Session = session,
+            Args = [new PyLong(ship), new PyInt(Ibis), new PyStr("not-a-map"), new PyLong(Rig.Station),
+                Py.KeyVal(("modulesByFlag", Map())), Map(), PyBool.True],
+        }).AsTask());
+        Assert.Equal("INVENTORY_OPERATION_INVALID", malformed.Error.UserErrorMessage);
+        Assert.Equal(Rig.Station, (await rig.Items.GetAsync(ship))!.LocationId);
     }
 
     [PgFact]

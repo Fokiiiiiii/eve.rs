@@ -5751,4 +5751,4 @@ The security inventory now lists each active `charUnboundMgr` RPC by caller scop
 
 `marketProxy.PlaceMultiSellOrder` now refuses duplicate item IDs in the raw batch before placing any order line; the regression confirms the item remains in its original station location and produces no ask order or notification.
 
-`invbroker.FitFitting` accepts the `__builtin__.set` shape emitted by V24.01 for candidate item IDs and caps combined fit dictionaries and item lists at 500 raw entries before mutation. This also bounds the docked ship refit path and its per-session weighted cost.
+`invbroker.FitFitting` accepts the `__builtin__.set` shape emitted by V24.01 for candidate item IDs, refuses malformed outer maps, and caps combined fit dictionaries and item lists at 500 raw entries before mutation. This also bounds the docked ship refit path and its per-session weighted cost.

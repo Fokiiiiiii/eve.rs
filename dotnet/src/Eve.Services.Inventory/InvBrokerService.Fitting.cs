@@ -32,6 +32,8 @@ public sealed partial class InvBrokerService
     public async ValueTask<PyValue> FitFitting(ServiceCall call)
     {
         RequireMutableInventory(call);
+        if (!IsMap(call.Arg(2)) || !IsMap(call.Arg(4)) || !IsMap(call.Arg(5)))
+            throw MachoErrors.ThrowUserError("INVENTORY_OPERATION_INVALID");
         var itemEntries = Entries(call.Arg(2));
         var keyVal = Entries(call.Arg(4));
         var rawItems = 0;
@@ -236,6 +238,8 @@ public sealed partial class InvBrokerService
         PyDict dict => dict.Entries,
         _ => [],
     };
+
+    private static bool IsMap(PyValue value) => value is PyDict or PyObject { Args: PyDict };
 
     private static IReadOnlyList<PyValue> SequenceItems(PyValue value) => value switch
     {

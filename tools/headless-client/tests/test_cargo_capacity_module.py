@@ -37,7 +37,7 @@ def test_a_cargo_module_cannot_be_offlined_or_unfitted_above_the_resulting_capac
     with base.connect(f"walk-cargo-capacity-{run}") as who:
         _, ship, _, _ = arrive(who, plain_race({"pilot": race}, "pilot"), run)
         who.call("slash", "SlashCmd", "/giveskill me Hull Upgrades 1")
-        who.call("slash", "SlashCmd", "/giveitem Expanded Cargohold I 1")
+        who.call("slash", "SlashCmd", f"/giveitem {EXPANDED_CARGOHOLD_I} 1")
 
         manager = who.call("invbroker", "MachoBindObject", (STATION, 15), None)[0]
         hangar = who.call_bound(manager, "GetInventory", 10004)

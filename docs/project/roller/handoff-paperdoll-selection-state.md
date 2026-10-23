@@ -8,6 +8,8 @@ PgCharacterStore.ResolvedPaperdollStateAsync reads paperdoll_state, doll_info, a
 
 Migration 0015 expands the database constraint to admit forced state 4 alongside existing recustomization states 1 and 3. States 0 and 2 are derived from appearance data.
 
+Host composition builds RepackagingService from the raw InvBrokerService, then wraps registered brokers with IndustryInventoryChangePublisher. This preserves the dependency after the publisher wiring moved to the final service-list stage.
+
 ## Evidence
 
 - V24.01 client route: /home/user/eve-logic/eve/client/script/ui/login/charSelection/characterSelection.py:727-740; states 2 and 4 call CreateNewAvatar.
@@ -19,8 +21,8 @@ Migration 0015 expands the database constraint to admit forced state 4 alongside
 
 ## Regression coverage
 
-CharacterReSculptHostTests.Character_selection_dispatch_projects_paperdoll_state_and_a_saved_avatar_can_enter checks tuple and row wire shape, states 0/2/4, retry, restart persistence, save reset, and SelectCharacterID. Host migrations run before fixture inserts. The headless test test_paperdoll_selection.py checks state 0, missing-appearance state 2, then state 0 after save and successful game entry.
+CharacterReSculptHostTests.Character_selection_dispatch_projects_paperdoll_state_and_a_saved_avatar_can_enter checks tuple/row wire shape, states 0/2/4, retry, restart persistence, save reset, and SelectCharacterID. Host migrations run before fixture inserts. Headless test test_paperdoll_selection.py checks state 0, missing-appearance state 2, saved-appearance state 0, then game entry.
 
 ## Verification
 
-GitHub Actions Host dispatch run 39964185288 passed after migration 0015; focused headless run 39965636111 passed with 1 passed, 0 failed, and 0 skipped. The headless route observed selection and continued through the game-entry RPC. The graphical-client route has not been exercised. Local .NET build could not complete because package restore remained stalled; no PostgreSQL database was used locally.
+Host dispatch run 39967232007 passed. Focused headless run 39968263931 passed with 1 passed, 0 failed, and 0 skipped. Both ran against commit 1f08f9cbe939c8c2297265036d11e8adb69b05ef. Push-triggered CI run 39967190561 passed .NET build and other reported jobs but failed the unrelated test_market_browse_and_history_refresh_fit_one_session at marketProxy.GetMarketOrderHistory with Macho error 2. The graphical-client route has not been exercised. Local .NET restore/build remained stalled; no PostgreSQL database was used locally.

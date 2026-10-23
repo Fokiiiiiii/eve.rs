@@ -110,6 +110,7 @@ The reviewed identifier-bearing methods classify as follows:
 
 | Service methods | Client-supplied IDs | Classification | Server-side check |
 | --- | --- | --- | --- |
+| `config.GetMultiOwnersEx`, `GetMultiCorpTickerNamesEx`, `GetMultiAllianceShortNamesEx`, `GetMultiLocationsEx` | owner, corporation, alliance, location IDs | Bounded lookup; public static/owner summary reads | List/tuple shape, 500 raw entry cap, integer/nonnegative ID validation, and deduplication run before provider work; location zero is reserved for the client's none row. `ConfigServiceTests.Config_bulk_lookups_refuse_wrong_shapes_invalid_ids_and_oversized_raw_lists` covers the shared guard across all four methods. |
 | `structureControl.GetStructurePilot` | `structureID` | Checked read | Existing deployed target in caller's current system; missing or remote target returns no pilot. |
 | `structureControl.TakeControl`, `BoardStructure`, `EjectFromStructure`, `ReleaseControl` | `structureID` on take/board; `returnShipID` on eject; none on release | Checked mutation | Current session location, live structure control setting, and persisted session lease; return ship must match the lease. |
 | `structureDeployment.UpdateReinforceTimesFromClient`, `Unanchor`, `CancelUnanchor`, `RenameStructure` | `structureIDs`, `structureID` | Checked mutation | Structure owner corporation must match the session and be nonzero; applicable station manager/director/CEO role is required. |

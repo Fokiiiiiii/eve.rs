@@ -363,3 +363,9 @@ CI run 672 on `1669e6dc` failed the structure market Host test because the fixtu
 - Main CI 713 (40029399172) is active on 1bf92f6f; CI 712 on 1bfd22e4 is also still active. The last completed relevant failure, CI 707 on cce06a2d, showed the stale initial ask quantity and a post-restart front connection refusal. Main now contains the corrections in 3cf0d3e0 and aa8030a4.
 - The unpushed market implementation is commit 8944925f: duration-zero buys do not create remainder bids, direct unmatched immediate buys return the client CustomInfo refusal, and Upwell owner/SCC components share the 100 ISK minimum. Market.Tests and Host.Tests build with 0 warnings and 0 errors; no local PostgreSQL test was run.
 - The current branch includes the latest origin/main merge. Focused Actions and the full push gate for the market correction are pending.
+
+## 2026-10-23 run 719 follow-up
+
+- Push gate run 719 (`40032068845`) completed on `42d5cccefbcdb0dac0a1f33a1f50ecf822aea9a0`. The Windows job passed, and the earlier focused Host-restart live run 198 passed 1/1 with no skips.
+- The full gate failed on independent existing paths: four market/structure live walks returned MACHO error 2, `MarketHostTests.The_host_dispatches_accessible_structure_market_orders_and_recovers_partial_settlement_after_restart` expected 9,730 ISK but got 9,780 ISK, and `TradingTests.Multi_buy_rolls_back_all_lines_on_partial_failure_and_retries_without_double_charge` plus `MarketRpcTests.Buy_multi_fills_available_quantity_without_posting_the_rest` failed. Eight live cases were skipped by the configured slow-play and skill-speed guards.
+- This gate head predates the current `origin/main` merge and does not exercise the successful focused SIGTERM restart check as a failure. The market/structure failures are outside the Windows character-entry and production Host-start changes; check the latest main gate for any follow-up fixes.

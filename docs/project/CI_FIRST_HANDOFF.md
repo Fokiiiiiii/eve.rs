@@ -2,22 +2,22 @@
 
 ## Current state
 
-- Remote `main` is `32d87282`. This includes the fix in `tools/headless-client/tests/test_login_to_character.py`: `AmUnderage` is now called with a non-empty JWT-shaped test value. V24.01 calls it with `connection.GetLoginJWT()`, and the eve.rs RPC rejects an empty token field.
-- Run 569 (`39927500454`, SHA `32d87282`) was queued at the last check.
-- Agent-test run `39927613179` was dispatched against `main` for the focused `test_login_to_character.py` live file; waiting for its result.
-- Required runs 562 (`39925475745`) and 564 (`39925943103`) both failed only in their fast live end-to-end job on the empty-token call above. All Rust, .NET test shards, Windows, Python, and fixture jobs in those runs passed. The gate failed in run 562 and was still queued in run 564 at the last check.
-- Nightly run `39926148439` was manually dispatched against `main`. It runs the slow live matrix, isolated skill-training-speed Host, benchmarks, Windows, and extended RPC fuzz. Seven jobs had failed at the last check; logs were not yet available while the run continued.
-- Earlier agent-test run `39923041081` passed for `main` with a focused paper-doll RPC test, fast live files, and Rust workspace tests. Its full log artifact was uploaded.
-- Main push CI uses a SHA-specific concurrency group with cancellation disabled. Runs 556 and 562 remained active across later pushes; Windows uses a per-caller run ID group.
+- Remote `main` is `46b929af`. The underage live test now sends `m.WString(...)`: the headless codec maps plain Python `str` to `PyBytes`, while the RPC accepts the client token as `PyStr` or `PyWString`.
+- CI run 573 (`39929438401`, SHA `46b929af`) is active. Rust format/clippy, fixtures, and Python passed; .NET build, end-to-end, Rust tests, advisory Rust, and Windows were running at last check.
+- Agent-test run `39929447455` was dispatched against current `main` for `test_login_to_character.py`; it was queued at last check. Earlier run `39927613179` uses SHA `32d87282` and the first, incorrect `PyBytes` test value.
+- CI run 569 (`39927500454`, SHA `32d87282`) failed in the fast live end-to-end job with `AUTHENTICATION_TOKEN_INVALID`; the value was a plain Python `str` encoded as `PyBytes`. Run 564 had the same empty-token failure. All other jobs checked in those runs passed.
+- Nightly run `39926148439` completed on SHA `622509c2` with 22 failed jobs (21 live/skill-training checks plus the summary). Extended RPC fuzz, benchmarks, and Windows passed. Its tests ran before the token-wire fix; inspect failure tails to classify remaining slow-test failures.
+- Earlier agent-test run `39923041081` passed for `main` with a paper-doll RPC test, fast live files, and Rust tests; its log artifact was uploaded.
+- Main push CI uses a SHA-specific concurrency group with cancellation disabled. Runs 556 and 562 stayed active across later pushes; Windows uses a per-caller run ID group.
 
 ## Verification
 
 - `python3 tools/dev/test_ci_status.py`: 8 focused tests passed, including timestamped/ANSI Actions log parsing.
-- The DB-free .NET focused test for the corrected paper-doll input passed: 1 passed, 0 failed, 0 skipped.
-- The authentication test source compiles with `python3 -m py_compile`; its live integration test is being checked through agent-test Actions. No local database or broad local suite was used.
+- The DB-free .NET focused paper-doll test passed: 1 passed, 0 failed, 0 skipped.
+- The underage test file passes `python3 -m py_compile`; live integration verification is running on Actions. No local database or broad local suite was used.
 
 ## Next steps
 
-1. Check agent-test run 39927613179 and push CI run 569.
-2. Once nightly run 39926148439 completes, inspect each failed job's test names and log tails and fix root causes.
+1. Check agent-test run 39929447455 and push CI run 573.
+2. Inspect nightly run 39926148439 failed-job test names and log tails; fix in-scope root causes.
 3. Record final run IDs and outcomes here before final handoff.

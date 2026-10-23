@@ -17,30 +17,29 @@ public sealed partial class AbyssalContentManagerService(AbyssalSpawnReportCallb
     public async ValueTask<PyValue> GenerateAbyssNpcSpawnReport(ServiceCall call)
     {
         call.Cancellation.ThrowIfCancellationRequested();
+        if (!PublicQaToolsServerService.HasStaffAccountRole(call.Session))
+            throw MachoErrors.ThrowUserError("ABYSSAL_SPAWN_REPORT_STAFF_ONLY");
+        if (call.Args.Count != 3 || call.Kwargs is not PyNone)
+            throw MachoErrors.ThrowUserError("ABYSSAL_SPAWN_REPORT_ARGUMENTS_INVALID");
         var difficultyTier = Integer(call.Arg(0));
-        var spawnTableId = Integer(call.Arg(1));
-        var repetitions = Math.Clamp(Integer(call.Arg(2)), 0, 1000);
-        if (report is { } callback &&
-            await callback(new(difficultyTier, spawnTableId, repetitions, call.Session), call.Cancellation).ConfigureAwait(false) is { } payload)
-            return payload;
-        return Py.Dict(
-            ("difficulty_tier", new PyInt(difficultyTier)),
-            ("spawn_table_id", new PyInt(spawnTableId)),
-            ("repetitions", new PyInt(repetitions)),
-            ("average_spawn_points", new PyInt(0)),
-            ("average_spent_points", new PyInt(0)),
-            ("average_remaining_points", new PyInt(0)),
-            ("average_number_of_npcs", new PyInt(0)),
-            ("unsupported_tag_names", new PyList([])),
-            ("unsupported_tags", new PyList([])),
-            ("spawns", new PyList([])));
+        var spawnTableId = PositiveInt32(call.Arg(1));
+        var repetitions = Integer(call.Arg(2));
+        if (difficultyTier is < 172 or > 178 || spawnTableId <= 0 || repetitions is < 0 or > 1000)
+            throw MachoErrors.ThrowUserError("ABYSSAL_SPAWN_REPORT_INPUT_INVALID");
+        if (report is not { } callback)
+            throw MachoErrors.ThrowUserError("ABYSSAL_SPAWN_REPORT_UNAVAILABLE");
+        return await callback(new(difficultyTier, spawnTableId, repetitions, call.Session), call.Cancellation).ConfigureAwait(false)
+            ?? throw MachoErrors.ThrowUserError("ABYSSAL_SPAWN_REPORT_UNAVAILABLE");
     }
 
-    private static int Integer(PyValue value)
+    private static int Integer(PyValue value) => value switch
     {
-        var number = JsSemantics.ToNumber(value);
-        return double.IsFinite(number) ? (int)Math.Clamp(Math.Truncate(number), int.MinValue, int.MaxValue) : 0;
-    }
+        PyInt integer when integer.Value is >= int.MinValue and <= int.MaxValue => (int)integer.Value,
+        PyLong integer when integer.Value is >= int.MinValue and <= int.MaxValue => (int)integer.Value,
+        _ => int.MinValue,
+    };
+
+    private static int PositiveInt32(PyValue value) => Integer(value) is > 0 and var integer ? integer : 0;
 }
 
 public delegate ValueTask<PyValue?> ReadEscalatingPathDetailsCallback(

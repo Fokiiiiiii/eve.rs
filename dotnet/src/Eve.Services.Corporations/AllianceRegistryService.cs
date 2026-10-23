@@ -1027,11 +1027,17 @@ private static double RelationshipValue(PyValue value)
         {
             PyList list => list.Items,
             PyTuple tuple => tuple.Items,
-            _ => Array.Empty<PyValue>()
+            _ => throw new CorporationError("ALLIANCE_OWNER_IDS_INVALID"),
         };
         if (items.Count > MaxAllianceContactIds)
             throw new CorporationError("ALLIANCE_BULK_LIMIT_EXCEEDED");
-        return items.Select(Number).Where(id => id > 0).Distinct().ToArray();
+        var ids = items.Select(value => value switch
+        {
+            PyInt { Value: > 0 } id => id.Value,
+            PyLong { Value: > 0 } id => id.Value,
+            _ => throw new CorporationError("ALLIANCE_OWNER_ID_INVALID"),
+        }).ToArray();
+        return ids.Distinct().ToArray();
     }
 
     private static PyValue EveOwnerRow(long ownerId, string ownerName, int typeId, int gender)

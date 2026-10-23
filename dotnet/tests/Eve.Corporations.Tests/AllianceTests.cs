@@ -915,6 +915,24 @@ public class AllianceTests
                 Args = [oversizedOwners]
             }));
         Assert.Equal("ALLIANCE_BULK_LIMIT_EXCEEDED",bulkRefusal.Code);
+
+        var malformedOwnerList = await Assert.ThrowsAsync<Eve.Corporations.CorporationError>(async () =>
+            await service.CallAsync(new Eve.Services.ServiceCall
+            {
+                Session = session,
+                Method = "GetEveOwners",
+                Args = [new Eve.Marshal.PyStr("not-an-owner-list")]
+            }));
+        Assert.Equal("ALLIANCE_OWNER_IDS_INVALID",malformedOwnerList.Code);
+
+        var invalidOwnerId = await Assert.ThrowsAsync<Eve.Corporations.CorporationError>(async () =>
+            await service.CallAsync(new Eve.Services.ServiceCall
+            {
+                Session = session,
+                Method = "GetEveOwners",
+                Args = [Eve.Services.Py.List(new Eve.Marshal.PyInt(actor),new Eve.Marshal.PyInt(-1))]
+            }));
+        Assert.Equal("ALLIANCE_OWNER_ID_INVALID",invalidOwnerId.Code);
     }
 
     [PgFact]

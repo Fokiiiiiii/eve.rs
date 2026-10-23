@@ -11,6 +11,7 @@ public sealed partial class FleetManagerService(
     Func<ClientSession, ClientSession, bool>? sameBubble = null)
 {
     private const string WatchlistSessionKey = "fleetWatchlist";
+    private const int MaxWatchlistInputIds = 500;
     private static readonly System.Collections.Generic.HashSet<string> BroadcastNames = new(StringComparer.Ordinal)
     {
         "EnemySpotted", "HealArmor", "HealShield", "HealCapacitor", "InPosition", "NeedBackup",
@@ -54,6 +55,7 @@ public sealed partial class FleetManagerService(
         var (fleetId, snapshot, _) = context.Value;
         var members = snapshot.Members.Select(member => member.CharacterId).ToHashSet();
         var removed = Number(call.Arg(0));
+        if (removed is not > 0) throw MachoErrors.ThrowUserError("FleetError");
         var remaining = Ids(call.Arg(1)).Where(id => id != removed && members.Contains(id)).Distinct().Take(100).ToArray();
         SetWatchlist(call.Session, WatchlistSessionKey, remaining);
         return PyBool.True;
@@ -210,8 +212,24 @@ public sealed partial class FleetManagerService(
         return false;
     }
 
-    private static IReadOnlyList<long> Ids(PyValue value) => Sequence(value)
-        .Select(Number).Where(id => id is > 0).Select(id => id!.Value).ToArray();
+    private static IReadOnlyList<long> Ids(PyValue value)
+    {
+        var values = Sequence(value);
+        var pythonSet = value is PyObjectEx
+        {
+            Kind: ObjectExKind.Ex1,
+            Header: PyTuple { Items.Count: >= 2 } header
+        } && header.Items[0] is PyToken { Value: "__builtin__.set" or "builtins.set" } &&
+             header.Items[1] is PyList { Items.Count: > 0 } arguments && arguments.Items[0] is PyList;
+        if (value is not (PyList or PyTuple) && !pythonSet)
+            throw MachoErrors.ThrowUserError("FleetError");
+        if (values.Count > MaxWatchlistInputIds)
+            throw MachoErrors.ThrowUserError("FleetError");
+        var ids = values.Select(Number).ToArray();
+        if (ids.Any(id => id is not > 0))
+            throw MachoErrors.ThrowUserError("FleetError");
+        return ids.Select(id => id!.Value).ToArray();
+    }
 
     private static IReadOnlyList<PyValue> Sequence(PyValue value)
     {

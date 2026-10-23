@@ -80,9 +80,48 @@
 - `Eve.Host.Tests` builds with 0 warnings and 0 errors; `test_skinr_live.py` passes Python syntax compilation. Focused Actions runs `40019674482` and `40019703405` are in progress. Initial `ci-status.py failures 0f0cef8f` check found no push-triggered `ci.yml` run yet; recheck it.
 - No PostgreSQL database or graphical client was used locally.
 
-
 ## 2026-10-23 station/system ask wire correction
 - V24 `MarketBase.PopulateAsksForMyRange` applies `ConvertTuplesToBestByOrders` to station/system ask values, expanding each value as `BestByOrder(price, volRemaining, typeID, stationID)`. EveJS v0.12.9 and 261018.1 return that four-value tuple; region best results keep their named KeyVal shape. The direct-buy helper's `ask.typeID` path did not establish the browse shape.
 - eve.rs now serializes station/system summaries as tuples and retains named KeyVals for region best. `MarketRpcTests`, `ProtocolTests`, the real Host structure dispatch test and the live walk assert the correct tuple order.
 - Local Release builds of `Eve.Market.Tests` and `Eve.Host.Tests` passed with 0 warnings/errors. The focused no-database `MarketStructureWireTests.Station_and_system_ask_summaries_are_tuples_for_the_client_range_converter` passed 1/1 with 0 skips. Python syntax compilation and `git diff --check` passed.
 - The parent gate on `d86a5ef5` exposed the remaining structure settlement fixture assertion: expected total wallet balance 19,980 ISK, actual 19,835 ISK. This reflects one two-unit immediate fill and one losing immediate buy resting at 10 ISK/unit with 20 ISK escrow plus the 100 ISK broker minimum and 25 ISK SCC minimum. The Host regression now checks 19,835 total and the 9,980/9,855 balances. Current focused Actions checks are pending after push. No local PostgreSQL database or graphical client was used.
+
+## 2026-10-23 structure broker minimum
+
+- The CI failure on `1d96ae32` compared seller wallet 9900 with 9875 ISK after placing a 40 ISK structure sell order. Main commit `d589748d` correctly made the injected-failure check compare the wallet balances immediately before and after the failed buy.
+- EVE University specifies a 100 ISK minimum for the Upwell broker fee, defined as owner rate plus the 0.5% SCC surcharge ([Market](https://wiki.eveuniversity.org/Market)). EveJS v0.12.9 floors its two entries separately at 100 and 25 ISK (`server/src/services/market/marketRules.js:208-241,243-276`). eve.rs now applies one 100 ISK minimum to their sum and allocates the raw 0.20 ISK SCC amount first on the 40 ISK test order.
+- The Host scenario retains the rollback baseline assertions and checks the post-placement seller balance is 9900 ISK. `Structure_broker_and_scc_components_share_the_100_isk_minimum` covers the fee split without a database.
+- Worktree checks: Market and Host test project builds passed with 0 warnings and 0 errors; the focused Market rule test passed 1/1 with no skips. No local PostgreSQL test was run. Commit and focused Actions verification remain pending.
+
+
+## 2026-10-23 immediate-buy market regression
+
+- CI run 699 on `1f1e23a0` exposed a Host balance mismatch: one of two concurrent `BuyMultipleItems` requests filled the last ask, while the other was converted from duration zero to a 90-day bid and charged 20 ISK escrow plus fees. EveJS v0.12.9 `executeBuyRequest` only creates an order when duration is positive; V24 `BuyMulti` announces only rows returned by `BuyMultipleItems`. EVE University specifies broker fees only for non-immediate orders ([Market](https://wiki.eveuniversity.org/Market)).
+- `MarketTrading` now preserves duration zero, `PlaceBuyOrder` restores the `CustomInfo` refusal when no seller matches, and comments and regression cases now cover partial/no-match, concurrency, rollback, wallet and returned-order state. Existing tests for duration-positive orders remain unchanged.
+- The merged upstream change `d86a5ef5` adds graceful Host shutdown for the SKINR restart walk; its full CI run and subsequent main gate were still running at this update. The local `Eve.Host.Tests` build on `1f1e23a0` passed; no local PostgreSQL tests were run. The focused Actions checks and push gate for this correction are pending.
+
+## 2026-10-23 CI follow-up on cce06a2d
+
+- CI 703 and Agent 184 confirmed the concurrent structure buy still posted an unwanted remainder bid; the Host assertion expected 19,980 ISK and observed 19,835 ISK. CI 704 on `0649fc34` also showed 9,730 ISK versus 9,980 ISK after a no-fill immediate buy, confirming the conversion to a 90-day bid was still active.
+- The current change uses the requested duration unchanged, refuses a direct duration-zero buy when there is neither a fill nor an order, and tests the returned rowset, wallet deltas, no resting bids and rollback after a later batch-line failure. The structure fee path also now applies EVE University's 100 ISK Upwell floor once across owner and SCC components.
+- Market.Tests and Host.Tests builds passed after merging current main. No local PostgreSQL test or graphical-client verification was run. CI 707 and Agent 187 on `cce06a2d` were active at this note; the focused test and push gate are pending.
+
+## 2026-10-23 ask summary quantity test correction
+- Focused Actions run `40027503647` and parent gate `40027466387` caught the same Host test assertion: the station ask is read before the subsequent partial fill, so `volRemaining = 4`; the test expected 2. Updated the regression to expect 4 at that point; production tuple serialization is unchanged.
+- `Eve.Host.Tests` Release build passed with 0 warnings and 0 errors, and `git diff --check` passed. The earlier focused no-database `MarketStructureWireTests.Station_and_system_ask_summaries_are_tuples_for_the_client_range_converter` passed 1/1 with 0 skips.
+- Parent CI run `40027466387` completed with the old Host assertion failure and an End-to-end failure ending in `ConnectionRefusedError` during a client connection. The connection failure has not been tied to the ask summary change. Eight fast-live tests were skipped (one skill-training-speed gate and seven slow tests). A new focused Actions check will follow this test correction; no local PostgreSQL database or graphical client was used.
+## 2026-10-23 pre-push update on 1bf92f6f
+
+- Main CI 713 (40029399172) is active on 1bf92f6f; CI 712 on 1bfd22e4 is still active. The ask summary mismatch is now fixed in main commit 3cf0d3e0, and the post-restart front reconnection is fixed by aa8030a4.
+- Market correction commit 8944925f is ready on the merged worktree: immediate buys leave no unfilled bid, unmatched direct duration-zero buys refuse, and the Upwell minimum is applied once to owner plus SCC fees. Market.Tests and Host.Tests compile-checks passed with 0 warnings and 0 errors.
+- No local PostgreSQL database or live graphical client was used. Actions verification for the market correction is pending.
+
+
+## 2026-10-23 market Host wallet baseline correction
+- Push gate run `40029399172` on `1bf92f6f` reached the final wallet check after the partial fill, standing-bid placement, relist, cancellation, and Host restart: expected 9,980 ISK, actual 9,730 ISK. The earlier 9,980 ISK assertion immediately after the partial purchase passed.
+- The later order pays a 100 ISK minimum broker fee and 25 ISK minimum SCC fee at creation and again at modification; cancellation refunds the 4 ISK escrow but not these fees. EVE University describes the order and relist fees and cancellation behavior ([Market](https://wiki.eveuniversity.org/Market)); EveJS `computeBrokerFeeInfo`/`computeSccSurchargeInfo` and eve.rs `MarketRules` apply the same minima. Updated the final expected balance to 9,730 ISK with a short explanation; production behavior is unchanged.
+- The corrected `Eve.Host.Tests` Release build passed with 0 warnings and 0 errors. A new focused Actions check is pending after push. Agent run `40029411502` ended after starting `Eve.Market.Tests` without a test summary; push run `40029399172` identifies the Host balance failure. Its E2E job also exposed the adjacent SKINR notification-read issue in `handoff-skinr-sequencing.md`, now corrected in the live-test harness. No local PostgreSQL database or graphical-client test was used.
+
+## 2026-10-23 merged-main wallet correction check
+- Merged `origin/main` at `f5d1a85b`; the Host regression still checks 9,730 ISK after order placement, relisting and cancellation, while the production fee rules remain unchanged.
+- The current `Eve.Host.Tests` Release build passed with 0 warnings and 0 errors. `git diff --check` passed. The focused Host Actions check and push gate are pending. No local PostgreSQL database or graphical client was used.

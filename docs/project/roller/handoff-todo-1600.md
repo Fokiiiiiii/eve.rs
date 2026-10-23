@@ -66,7 +66,20 @@ No PostgreSQL command was used. CI agent-test run `39940268962` passed the focus
 ## 2026-10-23 CI follow-up: Host restart signal
 
 - Push CI and focused SKINR runs showed the Host did not close its socket after SIGTERM; an attempted SIGINT was also ineffective because the shell-started background process does not deliver it through `Console.CancelKeyPress`. `Program.cs` now registers POSIX SIGTERM directly and cancels the server token so `HostRuntime.ShutdownAsync` runs; the live test again sends SIGTERM.
-- The POSIX SIGTERM handler is pushed as `0649fc34`. Focused run `40026475792` passed Host tests (4/4) and confirmed the Host restarted, then failed because `eve-net` intentionally exits when its Host link closes and the test tried to reconnect through port 26100. The live test now keeps the pre-restart bearer token and reads/applies through the restarted public gateway, including the notice assertions.
+- The POSIX SIGTERM handler is pushed as `0649fc34`. Focused run `40026475792` passed Host tests (4/4) and confirmed the Host restarted; `eve-net` then closed with its Host link, so the test could not reconnect through port 26100. Run `40027629354` confirmed a fresh process also rejects the old bearer token (401). The live harness now exports the front binary/listen address and restarts `eve-net` before logging in again, preserving the persisted job/license and notice checks.
 - Mission slow-live run `40024793065` passed the basic mission and kill/reward walks, then reached Arc 29 and hit pytest's default 300-second timeout at its 270-second travel wait. All three mission walks now use a 1200-second timeout; a fresh slow-live run will verify Arc 29.
 - The current `Eve.Host` build succeeded with 0 warnings and 0 errors; Python compile checks and `git diff --check` passed after the test updates.
+
+## 2026-10-23 verified live follow-up
+
+- Mission slow-live run `40026903022` completed successfully on `623e21803171574c04690d703b8fcb5cf31f2fa3`; the basic, kill/reward, and Arc 29 client walks all completed. The timeout now covers the full 270-second Arc travel step.
+- SKINR run `40028889495` on `1bfd22e4e98ee61add508a7e3632c0845bd35e1d` passed `ShipSkinrDispatchTests` (4/4) and applied the persisted license after restart. The assertion failed because it read the headless client's raw packet list without pinging/decoding it.
+- `test_skinr_live.py` now uses `notifications_of`, which pings the client, drains packets, and decodes names. Focused run `40030150836` on `1c15eb702dc4ae4ed3c94a6a44cf0cf87f386c2c` passed `Eve.Host.Tests` 4/4 and the SKINR live walk 1/1, with 0 skips.
+- Push CI run `40028876361` failed on the old SKINR notice assertion and a concurrent market test expectation. Run `40030137837` passed the SKINR and Rust jobs but failed the unanchor live assertion and two multi-buy market tests; its exact failures are recorded below. A subsequent market commit is under CI run `40031652832`.
+- The CI mission artifact confirms the Host build completed with 0 warnings and 0 errors. No PostgreSQL command was run locally; no graphical-client check was performed.
+
+## 2026-10-23 push CI follow-up
+
+- Push run `40030137837` failed `test_a_corporation_unanchors_and_scoops_its_control_tower`: its tower was seeded at `LEGAL_SYSTEM` (`30000903`), but the assertion compared the returned inventory location to the unrelated default `SYSTEM` (`30100032`). `StructureUnanchorDropAuthority` persists the structure record's `SolarSystemId`, matching the actual row and space item. The assertion now checks `LEGAL_SYSTEM`; the focused live check is pending.
+- The same run reported `MarketHostTests.The_host_dispatches_accessible_structure_market_orders_and_recovers_partial_settlement_after_restart` and two `Eve.Market.Tests` multi-buy failures. Market changes are being checked by newer CI run `40031652832`; no market code was changed in this task.
 

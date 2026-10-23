@@ -313,10 +313,52 @@ CI run 672 on `1669e6dc` failed the structure market Host test because the fixtu
 - Agent run 108 on 951a8744 used the unrelated Capacity filter and cargo-capacity live test even though that commit changed only the handoff note. Host startup then failed because the regular SDE lane lacked `sde.skinrComponentPointValues`; the selected test failure did not validate the handoff-only change. The Host now reads that mission table from the mission SDE lane (a00e62c9). For handoff-only commits, do not dispatch an unrelated selected-test run; for code commits, choose the test owning the changed behavior.
 ## 2026-10-23 follow-up: market escrow assertion and SKINR wire shape
 
-
 ## 2026-10-23 Host SIGTERM shutdown path
 
 - CI run 701 (`40024345772`) on `d86a5ef5` passed the Windows job but the SKINR live test could not close the Host Unix socket after 45 seconds, even after switching the test from SIGTERM to SIGINT.
 - .NET 10 removed its default SIGTERM handler; `Program.cs` only translated `Console.CancelKeyPress` (Ctrl+C) to the server cancellation token. The Host now registers POSIX SIGTERM explicitly on Unix and cancels the same server token, allowing the existing `finally` shutdown path to dispose listeners and runtime services. Windows retains its console cancellation path.
+- The live restart test sends SIGTERM again, so it verifies the production shutdown path, persisted license recovery and the next request against the restarted Host. Local Host Release build passed with 0 warnings and 0 errors. Focused live Actions run and push CI are pending. No local PostgreSQL test was run.
+
+- CI run 695 (`c068f252`) failed `MarketHostTests.The_host_dispatches_accessible_structure_market_orders_and_recovers_partial_settlement_after_restart`: the old assertion expected two seller hangar units, although partial sell-order remainder stays at the order's escrow item. The test now joins the active order to `escrow_item_id` and checks the order volume, escrow owner/location/flag/quantity, and single matching row.
+- The same run failed `test_v24_skinr_design_sequences_and_applies_a_persisted_license` because the Host serialized the client `Attributes` fields at the wrong numbers. The V24.01 client defines `name=1`, `line_name=2`, `creator=3`, `layout=4`, `tier=5`, `not_sequenced=6`, and `first_sequenced=7`. `EncodeSkinDesign` now emits those fields and distinguishes saved drafts from completed licenses.
+- Origin/main advanced to `1f1e23a0` and included `c0857c18`'s escrow quantity check and `fa667e96`'s test-only adjustment to the old Host field layout. This follow-up strengthens the escrow assertion and restores the live test to the V24.01 schema while correcting the Host response.
+- The live SKINR test now checks the saved-draft response (`not_sequenced`) and the completed-license response (`first_sequenced`). The Host.Tests Release build passed with 0 warnings and 0 errors, and `python3 -m py_compile tools/headless-client/tests/test_skinr_live.py` passed. No local database or live-client test was run.
+- Focused Actions verification for the market Host test and full CI on the corrected source are pending.
+
+
+## 2026-10-23 Upwell broker minimum review
+
+- EVE University defines the Upwell broker fee as the 0.5% SCC surcharge plus owner rate, with one 100 ISK minimum ([Market](https://wiki.eveuniversity.org/Market)). The eve.rs structure context now applies the floor across both components; the 40 ISK order allocates 99.80 ISK to owner fee and 0.20 ISK to SCC.
+- Commit `d589748d` preserves the failed-buy rollback check by comparing pre- and post-failure balances. Commit `c0857c18` has already fixed the independent partial-sell escrow assertion; this work keeps that main change and adds the 9900 ISK placement assertion plus the fee rule test.
+- Local Host.Tests and Market.Tests builds passed with 0 warnings and 0 errors; the focused fee test passed 1/1 with 0 skips. No local PostgreSQL test was run.
+- On main `1f1e23a0`, full CI run 699 is still active. Focused Agent run 180 failed in its test step but its available log ends at the start of .NET tests, without a test-level failure; the full CI output will be checked before making any further change.
+
+
+
+## 2026-10-23 immediate-buy CI root
+
+- CI run 699 on `1f1e23a0` failed the structure-market Host test at the concurrent-buy balance check: the buyer that lost the last ask had a 90-day bid, escrow and fees debited. EveJS v0.12.9 passes `durationDays:0` from `Handle_BuyMultipleItems` and creates a resting order only when normalized duration is greater than zero. V24 `MarketQuote.BuyMulti` emits `OnClientEvent_OrderPlaced` only for returned rows. EVE University says broker fees are charged only for orders with duration other than immediate ([Market](https://wiki.eveuniversity.org/Market)).
+- `MarketTrading` now uses the request duration unchanged. Single `PlaceBuyOrder` duration zero now returns EveJS's `CustomInfo` refusal when no seller matches. Focused regressions cover no match, partial match, multiple lines, failed later line rollback, and the Host-visible order list and wallets.
+- CI run 699 also failed the SKINR restart check because the existing Host listener remained open after SIGTERM. Main commit `d86a5ef5` adds graceful Host shutdown; its full gate and selected tests are running. Main advanced to `eb2aa917`; CI runs 702 (`c52c10f7`) and 703 (`eb2aa917`) were still in progress. The market correction has not yet been pushed.
+- The local Host.Tests build on `1f1e23a0` passed. No local PostgreSQL test was run. `Eve.Market.Tests` compilation and Actions verification are pending.
+
+## 2026-10-23 market CI watch on cce06a2d
+
+- CI 703 on `eb2aa917` confirmed two roots: the structure-market concurrent-buy case charged 165 ISK beyond the 20 ISK fill because the unfilled duration-zero request became a resting bid; the SKINR restart helper also left the Unix listener open after sending SIGINT. CI 704 on `0649fc34` still showed the market balance at 9,730 ISK instead of 9,980 ISK, confirming the immediate-buy path remained open.
+- Main now registers POSIX SIGTERM to the Host cancellation token and the live restart helper sends SIGTERM (`d9643eb1`). CI 706/707 are checking that shutdown change; run 707 on `cce06a2d` was still in progress at this update. `ci-status.py failures cce06a2d` also reports that run as in progress.
+- The current worktree fixes the separate Upwell shared 100 ISK broker minimum and preserves duration zero for immediate buys. The regressions check the 9,900 ISK seller balance, 19,980 ISK combined concurrent-buyer balance, no resting remainder, no-match refusal, partial fill and atomic multi-line rollback. Market.Tests and Host.Tests compile on the current merged source with 0 warnings and 0 errors; the focused fee rule test passed 1/1 before the latest merge. No local PostgreSQL test was run.
+- Focused Actions and the push-triggered gate for these corrections remain pending.
+
 - The live restart test sends SIGTERM again, so it verifies the production shutdown path, persisted license recovery and the next request against the restarted Host. Local Host Release build passed with 0 warnings and 0 errors.
-- Focused run 186 (`40027152541`) first confirmed the old Host listener closed, then the next client login failed at the front TCP port: `eve-net` exits after its Host link closes. The restart helper now restarts `eve-net` after Host readiness, using the same front port and socket. The focused rerun and push CI are pending. No local PostgreSQL test was run.
+- Focused run 186 (`40027152541`) confirmed the old Host listener closed, then the next client login failed at the front TCP port: `eve-net` exits after its Host link closes. The restart helper now restarts `eve-net` after Host readiness, using the same front port and socket.
+- Focused run 189 (`40028383063`) reached the restarted gateway but the pre-restart bearer token received 401. The live walk now logs in again through the restarted front and reselects the character before checking persistence and applying the license.
+- Focused run 192 (`40029216605`) passed persistence reads and license application, then found no queued front notifications because the headless client drains them while awaiting a client RPC response. A harmless `GetUserToken` call now drains the queue.
+- Focused run 194 (`40030110928`) reached notification inspection and showed `Client.notifications` contains raw `Packet` values. The check now uses the `notifications_of` decoder from `evecli.observe`.
+- Focused run 196 (`40030950151`) passed on `e8538586`: 1 live test passed, 0 failed, 0 skipped. Main then added a MACHO `GetServiceInfo` call to flush the client event queue after application.
+- Focused run 198 (`40031794618`) passed that merged flow on `b43c0240`: 1 live test passed, 0 failed, 0 skipped. The Host Release build passed locally with 0 warnings and 0 errors. No local PostgreSQL test was run. Push gates `40031652832` and `40032068845` are still being checked.
+
+## 2026-10-23 pre-push update on 1bf92f6f
+
+- Main CI 713 (40029399172) is active on 1bf92f6f; CI 712 on 1bfd22e4 is also still active. The last completed relevant failure, CI 707 on cce06a2d, showed the stale initial ask quantity and a post-restart front connection refusal. Main now contains the corrections in 3cf0d3e0 and aa8030a4.
+- The unpushed market implementation is commit 8944925f: duration-zero buys do not create remainder bids, direct unmatched immediate buys return the client CustomInfo refusal, and Upwell owner/SCC components share the 100 ISK minimum. Market.Tests and Host.Tests build with 0 warnings and 0 errors; no local PostgreSQL test was run.
+- The current branch includes the latest origin/main merge. Focused Actions and the full push gate for the market correction are pending.

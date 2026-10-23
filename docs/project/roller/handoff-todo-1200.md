@@ -12,11 +12,11 @@ Scope: the rows that were in `docs/project/TODO.md` lines 1200–1600 at the ori
 - 1450 — Analysis-beacon link lock, bounded to the live-tested lock and movement/warp refusal behavior. Evidence: `test_crab_walk.py` and simulation `LINK_HOLD` test; graphical cloak/tether and UI checks remain open.
 - 1532 — Insurgency campaign start in each warzone, with the documented hourly interval and hub-choice shortcuts. Evidence: `InsurgencyDirectorTests.Each_warzone_with_systems_starts_one_campaign_in_forecasting_covering_its_hub_and_its_nearest_low_systems`; live `test_fob_walk.py` and `test_fob_insystem_walk.py`.
 - 1534 — Existing pirate/empire site starts and once-per-system site scoring plus contributor kill reward. Evidence: `InsurgencyDirectorTests.A_campaign_starts_its_sites_when_it_becomes_active_and_a_completed_site_scores_its_system_once`, `InsurgencyDirectorTests.A_pirate_win_pays_each_contributor_the_victory_points_and_ends_the_other_sites`.
-- 1552 — Basic level-4 mission dungeon start has a live headless walk. Evidence: `tools/headless-client/tests/test_mission_walk.py` (section 55); arc 29 mission 14117 remains open.
-- 1554 — Talk-step completion and one-time reward. Evidence: `MissionDungeonRuntime.OnConversationAsync`, `AgentDialogueSources.OnConversation`, `Arc29StepsTests`.
+- 1552, 1554, 1559 — Mission dungeon start, arc talk-step completion, and in-space agent placement are covered by the live walks. Evidence: `test_mission_walk.py` slow-live run 74; full `test_arc29_walk.py` 52-step live path (DEVIATIONS “Mission execution X8”).
+
 - 1556 — Basic kill re-offer after the four-hour reference delay. Evidence: `BasicKillOffers.cs`, `BasicKillOffersTests` (5). Bonus/LP remains open.
 - 1558, 1569 — Held-mission briefing and objective view. Evidence: `MissionViewsTests`, Host `ReadHeldMissionAsync`.
-- 1559 — In-space agent placement and conversation. Evidence: `InSpaceAgentPlacementTests`, `Arc29StepsTests`; warp/approach remains open.
+
 - 1592 — EveJS bonus interval unit is minutes, converted to EVE FILETIME ticks. Evidence: v0.12.9 `agentMissionRuntime.js` (`resolveMissionBonusTimeRemainingTicks`, `isMissionBonusRewardAvailable`) and 261018.1 `missionRuntimeState.js` (`normalizeMissionRewards`). Eligibility and payout remain open.
 
 ## Still open with evidence and reason
@@ -39,9 +39,9 @@ Scope: the rows that were in `docs/project/TODO.md` lines 1200–1600 at the ori
 - 1531 — Insurgency notice publication exists in Host composition, but no V24.01 live walk verifies client text, handling, recipients or order.
 - 1534 — Corruption spread at level 3, per-stage contribution percentages, Ice Refinery Heist and Counter-Insurgency Outposts remain open because source-backed rules and producer regressions are absent.
 - 1535 (BLOCKED) — Owner deferred C-G1 until the client gateway call path and truthful progress/threshold authority exist. Transport exists; insurgency handlers, cumulative progress owner and source-backed stage thresholds/effects do not.
-- 1556 — Arc 29 mission 14117 remains held because template 3509 lacks Damsel content; the basic live walk does not cover it.
+- 1556 — Damsel-specific composition for 14117 remains open; the generic family-derived 3509 path passed the full Arc 29 live walk, and `MissionStaticCatalog.ArcsOnByDefault` now includes arc 29. Keep the missing site-specific content separate from the verified offer/completion path.
 - 1557, 1561 — Timed bonus eligibility/settlement and LP need source-backed dynamic rewards and deadline/replay tests.
-- 1564, 1566, 1575 — `GetReplayTimestamp`, `WarpToLocation` and `WarpToAgentInSpace` remain named refusals; no live agent approach walk exists.
+- 1564, 1566, 1575 — `GetReplayTimestamp`, `WarpToLocation` and `WarpToAgentInSpace` remain named refusals. The live Arc 29 walk reaches the in-space agent through client ballpark commands; Host warp-call transitions remain open.
 - 1593 — Fetch/courier objectives lack authoritative item/destination mapping and the cargo-to-agent completion transition.
 - 1594 — Mission dungeon payload still uses placeholder owner and zero location; resolve faction owner and active-instance placement from authoritative mission state.
 
@@ -55,3 +55,17 @@ CBM and Serena source/test declarations were inspected; external mechanics claim
 - Slow-live run 70 on `c52c10f7` timed out in `test_arc_29_steps_1_and_2_are_completed_in_space` while the test waited 270 seconds for the ship to travel 260 km. The file-level pytest timeout is 300 seconds; the complete route also includes five gate hops, a combat loop bounded at 900 seconds, and the second mission's travel and dialogue.
 - Commit `aaa9a4ec` adds an 1800-second timeout only to the two full dungeon-clear scenarios (`test_the_pilot_clears_the_dungeon_and_is_paid` and the Arc 29 walk). The short basic mission/dungeon-arrival check keeps the normal limit. This changes test allowance only; game timing and server behavior are untouched.
 - Python syntax compilation and `git diff --check` passed locally. No PostgreSQL database was used. Slow-live run 72 (`40027652151`) was dispatched on the pushed main merge `5b44bf50` and is pending; its result must verify the Arc 29 offer, dungeon completion/payout, in-space talk-step completion, and next offer before updating TODO evidence.
+
+
+## Follow-up after slow-live run 72
+
+- Run 72 (commit `5b44bf50`) passed the 300-second boundary and reached the Arc 29 combat loop, then failed because a second `Activate` returned `EffectAlreadyActive2` while the smartbomb cycle was still active. This is a normal cycle state already handled by the live `test_arc29_walk.py` helper; the mission walk's `in_range` helper now waits through it while continuing to fail other activation errors.
+- The mission walk file passes Python syntax compilation and `git diff --check`. A new slow-live run is required to check step 1 payout and the step 2 talk transition with this retry behavior.
+
+
+## Resolution after slow-live run 74
+
+- Run 74 on `df6fad1e` passed `test_mission_walk.py` (job duration 19.5 minutes, no failed tests or jobs). It verifies Arc 29 offer 14117, dungeon completion in Arnon, talk step 14118 with Tevis Jak in Tar, step completion, and offer 14119. The run exercised the default Arc 29 policy. The earlier run 72 failed first at the 300-second timeout, then at a second smartbomb `Activate` during its active cycle; the per-test 1800-second limits and `EffectAlreadyActive2` handling resolve both test failures.
+- Arc 29 is already in `MissionStaticCatalog.ArcsOnByDefault` following the whole 52-step live path recorded in DEVIATIONS “Mission execution X8”. TODO now keeps the remaining Damsel-specific composition as a separate open data gap and records the successful live mission transitions. Host `WarpToLocation` and `WarpToAgentInSpace` remain open.
+- Push CI run 715 on `df6fad1e` also found a SKINR notice-drain issue and market fee expectations. Main commits `7e7df9a8` and `93dab77f` contain those root fixes. Run 719 on `42d5ccce` is checking the latest main at this handoff update.
+- Local `python3 -m py_compile tools/headless-client/tests/test_mission_walk.py` and `git diff --check` passed. No PostgreSQL database was used; graphical-client behavior was not tested.

@@ -69,6 +69,21 @@ public class RulesTests
         Assert.Equal(0.115, MarketRules.StructureContext(skills, 20).BrokerCommissionRate);
     }
 
+    [Fact]
+    public void Structure_broker_and_scc_components_share_the_100_isk_minimum()
+    {
+        var context = MarketRules.StructureContext(new MarketSkillLevels(), 1.0);
+
+        var broker = MarketRules.BrokerFee(context, null, 40);
+        var scc = MarketRules.SccSurcharge(context, null, 40);
+
+        Assert.Equal(99.8, broker.Amount);
+        Assert.Equal(0.2, scc.Amount);
+        Assert.Equal(100, broker.Amount + scc.Amount);
+        Assert.True(broker.UsingMinimumValue);
+        Assert.False(scc.UsingMinimumValue);
+    }
+
     private static void Check(JsonElement expected, FeeInfo actual)
     {
         Assert.Equal(expected.GetProperty("amount").GetDouble(), actual.Amount);

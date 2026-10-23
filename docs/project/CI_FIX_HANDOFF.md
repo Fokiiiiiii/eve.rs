@@ -106,3 +106,10 @@ Use lane `eve_p4` only and run database work through `tools/dev/db-lock.sh`. The
 - Run 650 also logged a Python `SyntaxError` in the embedded `run-eve-live.sh` URL converter: shell quoting removed the nested Python key strings. The runner now uses single-quoted keys and formatting placeholders and exits if conversion returns an empty URL; `bash -n` passes, and the live Action check is pending.
 - Agent run 106 selected an unrelated .NET notice test for a commit that changed the live client harness; its project build still caught an `Action<long>` delegate mismatch, already corrected by `ed01d2d8`. Agent run 108 targeted capacity tests for a documentation-only handoff commit, so its failure does not describe that commit. Future dispatches should select tests from the changed source paths; docs-only handoffs need no test dispatch.
 - Recovery fixes through the SSO row assertion are pushed separately. The nine pre-existing Rust source deletions in this worktree are being preserved; they prevent the local workspace-wide fmt and Clippy commands from resolving `eve-space::targeting`. The touched `eve-sde` package check, package fmt, focused test and Clippy passed. Push-triggered Actions run the complete checks against a clean checkout.
+
+
+### Public Gateway test tokens
+
+- CI run 653's live SKINR walk received status 401 because the shared headless helper still minted an unsigned bearer token, while `GatewayTokens.TryReadIdentity` now requires a valid Host-signed token with its current key and claims.
+- The gateway helper now obtains the token through the logged-in client's `userSvc.GetUserToken` RPC. SKINR, skill-plan, and title live walks use that helper, including the fresh login after Host restart. A small helper regression test verifies the RPC and authorization metadata.
+- The local focused helper test passed after installing the headless-client requirements into a temporary environment. The focused live SKINR Action check will run on the pushed commit.

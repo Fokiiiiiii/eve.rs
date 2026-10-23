@@ -515,8 +515,10 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
             var rawMinimumVolume = Field(entry, "minVolume");
             var minimumVolume = rawMinimumVolume is PyNone ? 1 : Integer(rawMinimumVolume, long.MinValue);
             var price = Money(Field(entry, "price"));
-            if (typeId <= 0 || quantity <= 0 || minimumVolume <= 0 || minimumVolume > quantity || price <= 0)
+            if (typeId <= 0 || quantity < 0 || minimumVolume <= 0 || price <= 0 || quantity > 0 && minimumVolume > quantity)
                 throw Error(new MarketError("MARKET_BULK_ARGUMENT_INVALID"));
+            if (quantity == 0)
+                continue;
             var request = new MarketRequest(actor, typeId, true, price, quantity, stationId, 0,
                 MarketRules.RangeStation, minimumVolume, UseCorporation: useCorporation);
             RefuseRepeatedPlacement(call, request);

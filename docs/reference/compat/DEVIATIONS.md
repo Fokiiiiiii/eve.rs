@@ -5550,7 +5550,7 @@ The fleetObject Init RPC costs 10 weighted per-session units because it updates 
 
 ## Market multi-buy batch validation (2026-10-23)
 
-`marketProxy.BuyMultipleItems` now requires a list or tuple and validates every line's type ID, quantity, minimum volume, and price before passing any line to the writer. Malformed outer shapes and bad lines return `MARKET_BULK_ARGUMENT_INVALID`; the client’s `marketsvc.BuyMulti` supplies a list of complete order rows. `MarketRpcTests.Buy_multi_refuses_malformed_batches_before_any_order_is_written` verifies malformed mixed batches do not create orders.
+`marketProxy.BuyMultipleItems` now requires a list or tuple and validates every line's type ID, nonnegative quantity, minimum volume, and price before passing any nonzero line to the writer. A zero-quantity line is ignored, as exercised by `Buy_multi_fills_each_line_at_its_limit_and_books_the_unfilled_rest_of_each_line`; negative quantities and bad lines return `MARKET_BULK_ARGUMENT_INVALID`. The client’s `marketsvc.BuyMulti` supplies a list of complete order rows, and `MarketRpcTests.Buy_multi_refuses_malformed_batches_before_any_order_is_written` verifies malformed mixed batches do not create orders.
 
 `config.GetMultiOwnersEx`, `GetMultiCorpTickerNamesEx`, `GetMultiAllianceShortNamesEx`, and `GetMultiLocationsEx` now reject malformed IDs and more than 500 raw list entries before data access. V24.01 cache priming supplies lists; location 0 remains supported for the none row. This bounds repeated owner and item reads while preserving valid client request shapes.
 

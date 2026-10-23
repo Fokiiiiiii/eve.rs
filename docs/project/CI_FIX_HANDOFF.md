@@ -125,5 +125,10 @@ Use lane `eve_p4` only and run database work through `tools/dev/db-lock.sh`. The
 
 - The .NET shard failure reproduced on runs 653, 657, and 658 in `ReloadServiceTests.A_gun_that_runs_dry_is_loaded_from_the_hold_when_the_reload_time_has_run_and_the_simulation_is_answered_with_the_rounds`. The test used `FakeRounds.Asked` as its completion signal, but that list is updated before the awaited store callback finishes; fixture cleanup could drop the schema during the callback's item transaction and PostgreSQL returned deadlock 40P01.
 - `FakeRounds` now exposes completion after its callback returns. The live dry-gun test awaits that signal before teardown and checks the persisted 80-round module / 120-round hold result. The matching no-fit test also waits for callback completion.
-- The local `Eve.Services.Dogma.Tests` project build passed with zero warnings and errors. The focused database-backed regression is dispatched to Agent Actions after this commit.
+- The local `Eve.Services.Dogma.Tests` project build passed with zero warnings and errors. Agent run 127 (`40005187593`) is checking the focused database-backed regression on pushed commit `fbc39d63`.
 - Agent run 123 on `e0cb832e` passed the two `Eve.Host.Tests` matches, then failed because the same `FullyQualifiedName~SignalTracker` filter selected zero tests in `Eve.Services.Core.Tests`. This was a test-selection mismatch; dispatch that filter to the Host project only.
+
+### Market RPC budget regression test setup
+
+- CI run 660 (`4f38c72f`) failed both market budget regression tests because each configured only `MaxExpensiveRpcUnitsPerMinute = 10`, while `PacketDispatcher` now routes `marketProxy` through `MaxMarketRpcUnitsPerMinute`. The service therefore received the second call and the tests observed two calls instead of one.
+- The tests now set both limits to 10, so their rejection assertion exercises the market-specific session budget. The focused local `Eve.Services.Tests` check passed (1 passed, 0 skipped); focused Agent Actions verification will run after this commit.

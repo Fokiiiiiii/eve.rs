@@ -1,8 +1,9 @@
 //! Front-to-host frames use `u32 length | u8 kind | body`.
 
 use bytes::{BufMut, Bytes, BytesMut};
+use std::fmt;
 
-pub const PROTOCOL_VERSION: u16 = 1;
+pub const PROTOCOL_VERSION: u16 = 2;
 
 pub mod kind {
     pub const HELLO: u8 = 1;
@@ -23,6 +24,33 @@ pub enum AuthOutcome {
     Rejected { reason: String },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum AuthCredentialKind {
+    Password = 0,
+    Sso = 1,
+}
+
+/// A CCP SSO token. Debug output is always redacted.
+#[derive(Clone, PartialEq, Eq)]
+pub struct SsoToken(String);
+
+impl SsoToken {
+    pub fn new(token: String) -> Self {
+        Self(token)
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Debug for SsoToken {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("<redacted>")
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionOpen {
     pub session_id: u64,
@@ -36,16 +64,45 @@ pub struct SessionOpen {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Message {
-    Hello { version: u16, node_id: u32 },
-    HelloAck { version: u16 },
-    AuthRequest { corr: u32, user_name: String, password_hash: Bytes, language: String, address: String },
-    AuthReply { corr: u32, outcome: AuthOutcome },
+    Hello {
+        version: u16,
+        node_id: u32,
+    },
+    HelloAck {
+        version: u16,
+    },
+    AuthRequest {
+        corr: u32,
+        credential_kind: AuthCredentialKind,
+        user_name: String,
+        password_hash: Bytes,
+        sso_token: Option<SsoToken>,
+        language: String,
+        address: String,
+    },
+    AuthReply {
+        corr: u32,
+        outcome: AuthOutcome,
+    },
     SessionOpen(SessionOpen),
-    SessionClose { session_id: u64 },
-    Packet { session_id: u64, payload: Bytes },
-    Send { session_id: u64, payload: Bytes },
-    Disconnect { session_id: u64, reason: String },
-    ClusterConfig { payload: Bytes },
+    SessionClose {
+        session_id: u64,
+    },
+    Packet {
+        session_id: u64,
+        payload: Bytes,
+    },
+    Send {
+        session_id: u64,
+        payload: Bytes,
+    },
+    Disconnect {
+        session_id: u64,
+        reason: String,
+    },
+    ClusterConfig {
+        payload: Bytes,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,6 +113,7 @@ pub enum DecodeError {
     Trailing,
     Utf8,
     BadStatus(u8),
+    BadCredentialKind(u8),
 }
 
 impl std::fmt::Display for DecodeError {
@@ -67,6 +125,7 @@ impl std::fmt::Display for DecodeError {
             Self::Trailing => write!(f, "bytes follow the end of the message"),
             Self::Utf8 => write!(f, "text is not UTF-8"),
             Self::BadStatus(status) => write!(f, "unknown status {status}"),
+            Self::BadCredentialKind(_) => write!(f, "unknown or inconsistent authentication credential kind"),
         }
     }
 }
@@ -147,13 +206,30 @@ impl Message {
         let message = match kind {
             kind::HELLO => Self::Hello { version: reader.u16()?, node_id: reader.u32()? },
             kind::HELLO_ACK => Self::HelloAck { version: reader.u16()? },
-            kind::AUTH_REQUEST => Self::AuthRequest {
-                corr: reader.u32()?,
-                user_name: reader.text()?,
-                password_hash: reader.bytes()?,
-                language: reader.text()?,
-                address: reader.text()?,
-            },
+            kind::AUTH_REQUEST => {
+                let corr = reader.u32()?;
+                let credential_kind = match reader.u8()? {
+                    0 => AuthCredentialKind::Password,
+                    1 => AuthCredentialKind::Sso,
+                    other => return Err(DecodeError::BadCredentialKind(other)),
+                };
+                let user_name = reader.text()?;
+                let password_hash = reader.bytes()?;
+                let token = reader.text()?;
+                if credential_kind == AuthCredentialKind::Password && !token.is_empty() {
+                    return Err(DecodeError::BadCredentialKind(credential_kind as u8));
+                }
+                let sso_token = (!token.is_empty()).then(|| SsoToken::new(token));
+                Self::AuthRequest {
+                    corr,
+                    credential_kind,
+                    user_name,
+                    password_hash,
+                    sso_token,
+                    language: reader.text()?,
+                    address: reader.text()?,
+                }
+            }
             kind::AUTH_REPLY => {
                 let corr = reader.u32()?;
                 let outcome = match reader.u8()? {
@@ -201,12 +277,22 @@ impl Message {
                 out.put_u8(kind::HELLO_ACK);
                 out.put_u16_le(*version);
             }
-            Self::AuthRequest { corr, user_name, password_hash, language, address } => {
+            Self::AuthRequest {
+                corr,
+                credential_kind,
+                user_name,
+                password_hash,
+                sso_token,
+                language,
+                address,
+            } => {
                 out.put_u8(kind::AUTH_REQUEST);
                 out.put_u32_le(*corr);
+                out.put_u8(*credential_kind as u8);
                 put_text(out, user_name);
                 out.put_u32_le(password_hash.len() as u32);
                 out.put_slice(password_hash);
+                put_text(out, sso_token.as_ref().map_or("", SsoToken::as_str));
                 put_text(out, language);
                 put_text(out, address);
             }

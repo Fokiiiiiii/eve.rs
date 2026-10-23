@@ -21,9 +21,14 @@ impl Scene {
 
     /// A wreck comes into the scene: whoever has bound the ballpark and can see the place is sent it.
     pub fn place_wreck(&mut self, wreck: Wreck, now: i64) -> Vec<Out> {
+        self.place_wreck_at(wreck, now, now)
+    }
+
+    /// Present a wreck on a client timeline later than the scene state time.
+    pub(crate) fn place_wreck_at(&mut self, wreck: Wreck, now: i64, stamp_now: i64) -> Vec<Out> {
         let id = wreck.id;
         self.wrecks.insert(id, wreck);
-        let stamp = self.next_stamp(now);
+        let stamp = self.next_stamp(stamp_now);
         let Some(wreck) = self.wrecks.get(&id) else { return Vec::new() };
         let Ok(added) = payload::add_wreck(stamp, wreck, now) else { return Vec::new() };
         self.watchers_of(wreck)

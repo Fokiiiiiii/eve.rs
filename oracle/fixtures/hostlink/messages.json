@@ -4,35 +4,51 @@
   {
    "name": "hello",
    "kind": "Hello",
-   "version": 1,
+   "version": 2,
    "nodeId": 65450,
-   "hex": "07000000010100aaff0000"
+   "hex": "07000000010200aaff0000"
   },
   {
    "name": "hello ack",
    "kind": "HelloAck",
-   "version": 1,
-   "hex": "03000000020100"
+   "version": 2,
+   "hex": "03000000020200"
   },
   {
    "name": "auth request",
    "kind": "AuthRequest",
    "corr": 7,
+   "credentialKind": "Password",
    "userName": "pilot",
    "passwordHash": "00112233445566778899aabbccddeeff00112233",
+   "ssoToken": "",
    "language": "EN",
    "address": "127.0.0.1",
-   "hex": "330000000307000000050070696c6f741400000000112233445566778899aabbccddeeff001122330200454e09003132372e302e302e31"
+   "hex": "36000000030700000000050070696c6f741400000000112233445566778899aabbccddeeff0011223300000200454e09003132372e302e302e31"
+  },
+  {
+   "name": "auth request, SSO",
+   "kind": "AuthRequest",
+   "corr": 8,
+   "credentialKind": "Sso",
+   "userName": "EVE-SSO-CONNECTION",
+   "passwordHash": "00112233445566778899aabbccddeeff00112233",
+   "ssoToken": "test-only-token-placeholder",
+   "language": "EN",
+   "address": "127.0.0.1",
+   "hex": "5e00000003080000000112004556452d53534f2d434f4e4e454354494f4e1400000000112233445566778899aabbccddeeff001122331b00746573742d6f6e6c792d746f6b656e2d706c616365686f6c6465720200454e09003132372e302e302e31"
   },
   {
    "name": "auth request, non-ASCII name, empty hash",
    "kind": "AuthRequest",
    "corr": 4294967295,
+   "credentialKind": "Password",
    "userName": "パイロット",
    "passwordHash": "",
+   "ssoToken": "",
    "language": "JA",
    "address": "::1",
-   "hex": "2300000003ffffffff0f00e38391e382a4e383ade38383e383880000000002004a4103003a3a31"
+   "hex": "2600000003ffffffff000f00e38391e382a4e383ade38383e3838800000000000002004a4103003a3a31"
   },
   {
    "name": "auth accepted",
@@ -139,7 +155,12 @@
   {
    "name": "invalid UTF-8",
    "reason": "utf8",
-   "hex": "1100000003010000000200fffe0000000000000000"
+   "hex": "140000000301000000000200fffe00000000000000000000"
+  },
+  {
+   "name": "auth request with an unknown credential kind",
+   "reason": "bad-credential-kind",
+   "hex": "12000000030700000009000000000000000000000000"
   },
   {
    "name": "auth reply with an unknown status",

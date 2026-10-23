@@ -636,7 +636,7 @@ public sealed partial class CharacterShips(
         var shipBefore = world.Attributes(shipId);
         var moduleBefore = world.Get(moduleId, IsOnline);
         world.SetState(moduleId, online ? ItemState.Online : ItemState.Offline);
-        if (!online && wasOnline && cargoCapacityAttribute is { } capacityAttributeAfter
+        if (!online && cargoCapacityAttribute is { } capacityAttributeAfter
             && await RefuseCargoCapacityLossAsync(
                 snapshot,
                 cargoCapacityBefore,

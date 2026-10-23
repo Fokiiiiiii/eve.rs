@@ -149,7 +149,7 @@ private readonly Dictionary<long, ClientSession> _fleetSessions = new();
                 ?? throw new InvalidDataException("A ship self-destruct deadline has no payload.");
             await Space.CompleteShipSelfDestructAsync(countdown, token);
         });
-        Containers = new SpaceContainers(Sim, Ships, Items, SpaceItems, new Eve.Ships.PgWorkCycleLedger(source, _schemas[6]), new EventBusFacts(Events), statics, Space, () => Now, Log.Add, deployed: Deployed, scheduler: Scheduler);
+        Containers = new SpaceContainers(Sim, Ships, Items, SpaceItems, new Eve.Ships.PgWorkCycleLedger(source, _schemas[6]), new EventBusFacts(Events), statics, Space, () => Now, Log.Add, deployed: Deployed, scheduler: Scheduler, source: source);
         Scheduler.Register(SpaceContainers.AnchorJob, async (context, token) => await Containers.AnchorAsync(context.Payload<SpaceContainers.DisruptorAnchorDue>()!.DeployableId, token));
         Scheduler.Register(SpaceContainers.ObservatoryPingJob, async (context, token) => await Containers.PingObservatoryAsync(context.Payload<SpaceContainers.ObservatoryPingDue>()!.DeployableId, token));
         Scheduler.Register(SpaceContainers.ControlTowerFuelJob, async (context, token) => await Containers.ControlTowerFuelAsync(context.Connection, context.Transaction, context.Payload<SpaceContainers.ControlTowerFuelDue>()!.DeployableId, context.ScheduledForMs, token));

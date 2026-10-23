@@ -27,17 +27,30 @@ public sealed class ConfigServiceTests
     {
         var service = new ConfigService(null!, null!, null!, null!);
         var session = new ClientSession();
-        foreach (var value in new PyValue[]
+        foreach (var method in new Func<PyValue, ValueTask<PyValue>>[]
         {
-            PyNone.Instance,
-            new PyList([new PyStr("bad")]),
-            new PyList([new PyInt(-1)]),
-            new PyList(Enumerable.Repeat<PyValue>(new PyInt(1), 501).ToArray()),
+            value => service.GetMultiOwnersEx(new ServiceCall { Method = "GetMultiOwnersEx", Args = [value], Session = session }),
+            value => service.GetMultiCorpTickerNamesEx(new ServiceCall { Method = "GetMultiCorpTickerNamesEx", Args = [value], Session = session }),
+            value => service.GetMultiAllianceShortNamesEx(new ServiceCall { Method = "GetMultiAllianceShortNamesEx", Args = [value], Session = session }),
+            value => service.GetMultiLocationsEx(new ServiceCall { Method = "GetMultiLocationsEx", Args = [value], Session = session }),
         })
         {
-            var call = new ServiceCall { Method = "GetMultiOwnersEx", Args = [value], Session = session };
-            await Assert.ThrowsAnyAsync<Exception>(async () => await service.GetMultiOwnersEx(call));
+            await Assert.ThrowsAsync<MachoWrappedException>(async () => await method(PyNone.Instance));
         }
+        await Assert.ThrowsAsync<MachoWrappedException>(async () => await service.GetMultiOwnersEx(new ServiceCall
+        {
+            Method = "GetMultiOwnersEx", Args = [new PyList([new PyStr("bad")])], Session = session,
+        }));
+        await Assert.ThrowsAsync<MachoWrappedException>(async () => await service.GetMultiOwnersEx(new ServiceCall
+        {
+            Method = "GetMultiOwnersEx", Args = [new PyList([new PyInt(-1)])], Session = session,
+        }));
+        await Assert.ThrowsAsync<MachoWrappedException>(async () => await service.GetMultiCorpTickerNamesEx(new ServiceCall
+        {
+            Method = "GetMultiCorpTickerNamesEx",
+            Args = [new PyList(Enumerable.Repeat<PyValue>(new PyInt(1), 501).ToArray())],
+            Session = session,
+        }));
     }
 
     [Fact]

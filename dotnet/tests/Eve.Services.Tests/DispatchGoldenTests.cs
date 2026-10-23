@@ -251,6 +251,35 @@ public class DispatchGoldenTests
     }
 
     [Fact]
+    public async Task Inventory_calls_keep_a_bounded_budget_separate_from_other_expensive_services()
+    {
+        var capture = new Capture();
+        var session = new ClientSession(capture) { SessionId = 912 };
+        var registry = new ServiceRegistry();
+        var market = new ExpensiveService();
+        var inventory = new InventoryBudgetService();
+        registry.Register(market);
+        registry.Register(inventory);
+        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 10 };
+        var getInventory = new PyTuple([
+            new PyStr("GetInventory"),
+            new PyTuple([new PyInt(10004), PyNone.Instance]),
+            Py.Dict(),
+        ]);
+
+        await dispatcher.DispatchAsync(CallRequestPacket("marketProxy", "GetOrders"), session);
+        for (var index = 0; index < 6; index++)
+            await dispatcher.DispatchAsync(CallRequestPacket("invbroker", "MachoBindObject", new PyTuple([new PyLong(60015249), new PyInt(15)]), getInventory), session);
+
+        Assert.Equal(1, market.Calls);
+        Assert.Equal(5, inventory.Calls);
+        Assert.Equal(7, capture.Sent.Count);
+        Assert.All(capture.Sent.Take(6), packet => Assert.Equal(7, CommandOf(packet)));
+        Assert.Equal(ErrorResponseCommand, CommandOf(capture.Sent[6]));
+        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[6])));
+    }
+
+    [Fact]
     public async Task Expensive_market_calls_have_a_named_per_session_budget()
     {
         var capture = new Capture();
@@ -2117,7 +2146,7 @@ public class DispatchGoldenTests
 
         public string Name => "invbroker";
 
-        public bool HasMethod(string method) => method is "GetInventoryFromId" or "ListIncludingContainers" or "GetAssetWorth" or "ListStations" or "ListStationItems" or "GetCapacity" or "MultiAdd" or "MultiMerge" or "FitFitting";
+        public bool HasMethod(string method) => method is "MachoBindObject" or "GetInventory" or "GetInventoryFromId" or "ListIncludingContainers" or "GetAssetWorth" or "ListStations" or "ListStationItems" or "GetCapacity" or "MultiAdd" or "MultiMerge" or "FitFitting";
 
         public ValueTask<PyValue> CallAsync(ServiceCall call)
         {

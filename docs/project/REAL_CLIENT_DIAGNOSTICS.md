@@ -40,17 +40,19 @@ The owner’s captures and process logs were read through `tools/mitm show` and 
 
 ## (e) goals/campaign GetUpdateRequest timeout
 
-- Symptom: the client log says `ServiceUnavailableError: ERROR: TimeoutException, Failed to receive response from GetUpdateRequest`; the call originates in the map-tag flatbuffer repository update task.
-- Root cause: open; this capture identifies the map-tags public gateway request, separate from the goals/campaign requests reported by the owner.
-- Fix commit: pending.
-- Regression test: pending.
+- Symptom: client errors include `Failed to receive response from GetUpdateRequest`, `GetAllWithRewardsRequest returning with status code 408`, and `Campaigns: GetAllRequest: ERROR: TimeoutException`; the career-goal definitions request also times out. The first call is the map-tag flatbuffer repository's public-gateway request.
+- Root cause: the graphical run's Host log contains only the MachoNet listener startup line and no public-gateway startup line. In this build `EVE_PUBLIC_GATEWAY` is unset by default, so `Program` does not start the local gateway. V24.01's `publicGateway.grpc.connectionConfig` uses `EVE_PUBLIC_GATEWAY_ADDRESS` when provided, otherwise it discovers CCP's `*-public-gateway.evetech.net` endpoint. EveJS has handlers for the map-tag, campaign, career-goal and daily-goal requests; the graphical run did not route those requests to an eve.rs listener. This is a run-configuration gap, not an unhandled MachoNet RPC. The local Host still lacks those gateway handlers; if the owner intends to route these APIs locally, their provider data and behavior must be implemented before changing the client endpoint.
+- Owner action: launch Host with `EVE_PUBLIC_GATEWAY=<reachable-host>:<port>` and launch the client with `EVE_PUBLIC_GATEWAY_ADDRESS=<same-host>:<port>` for a local run, then capture the gateway requests. No server-side success payload is substituted for unavailable goal or campaign state.
+- Fix commit: none; the evidence points to the external launch configuration, and implementing empty/stub goal or campaign responses would fabricate state.
+- Regression test: none; no code fix was made. The current run has no gateway startup entry, and V24.01's public-gateway connection discovery contract was checked in the client's `publicGateway.grpc.connectionConfig` module.
 
 ## (f) TypeListNotFound / None errors
 
 - Symptom: the client log reports `TypeListNotFoundException: 'NoneType' object is not subscriptable`; its stack resolves `GetTypeList(140)` while fitting the ship HUD charge icon.
-- Root cause: open; determine the client type-list source and the missing list’s actual contents.
-- Fix commit: pending.
-- Regression test: pending.
+- Root cause: the exception is raised in the client's `evetypes.GetTypeList`, which indexes the local `TypeListLoader.GetData()` loaded from `res:/staticdata/typeList.fsdbinary`. The receiver-side MachoNet capture has no type-list request or response, and eve.rs has no provider for this client-local static resource. The `NoneType` text indicates the local loader returned `None` before indexing list 140; it does not demonstrate a missing eve.rs RPC payload.
+- Owner action: verify the installed V24.01 client's local `typeList.fsdbinary` resource loads. The server cannot repair a missing client-local static-data loader.
+- Fix commit: none; no server defect is established by this evidence.
+- Regression test: none; the failing operation is client-local and no server change was made.
 
 ## (g) chat objects are None after an XMPP failure
 

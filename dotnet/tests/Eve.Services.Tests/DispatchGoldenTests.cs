@@ -2022,6 +2022,39 @@ public class DispatchGoldenTests
         Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[1])));
     }
 
+    [Fact]
+    public async Task Custom_agency_routes_use_named_per_session_budgets()
+    {
+        var capture = new Capture();
+        var registry = new ServiceRegistry();
+        var service = new CustomAgencyBudgetService();
+        registry.Register(service);
+        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 10 };
+
+        foreach (var (method, index, allowedCalls) in new[] { ("get_content_data", 0, 10), ("warp_to_content", 1, 1) })
+        {
+            var session = new ClientSession(capture) { SessionId = 991 + index };
+            var previousCalls = service.Calls;
+            for (var callIndex = 0; callIndex <= allowedCalls; callIndex++)
+                await dispatcher.DispatchAsync(CallRequestPacket("custom_agency_provider", method), session);
+            Assert.Equal(previousCalls + allowedCalls, service.Calls);
+            Assert.Equal(ErrorResponseCommand, CommandOf(capture.Sent[^1]));
+            Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[^1])));
+        }
+    }
+
+    private sealed class CustomAgencyBudgetService : IService
+    {
+        public int Calls { get; private set; }
+        public string Name => "custom_agency_provider";
+        public bool HasMethod(string method) => method is "get_content_data" or "warp_to_content";
+        public ValueTask<PyValue> CallAsync(ServiceCall call)
+        {
+            Calls++;
+            return ValueTask.FromResult<PyValue>(PyNone.Instance);
+        }
+    }
+
     private sealed class CacheBudgetService : IService
     {
         public int Calls { get; private set; }

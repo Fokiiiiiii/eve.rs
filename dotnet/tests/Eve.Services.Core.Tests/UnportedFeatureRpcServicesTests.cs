@@ -175,10 +175,10 @@ public sealed class UnportedFeatureRpcServicesTests
         Assert.Equal("community fitting", Assert.IsType<PyStr>(Field(Assert.IsType<PyDict>(Assert.IsType<PyObject>(fitting.Value).Args), "name")).Value);
         Assert.Same(session, fittingSession);
 
-        var content = Assert.IsType<PyList>(await byName["custom_agency_provider"].CallAsync(Call("get_content_data", session, new PyInt(7))));
+        var content = Assert.IsType<PyList>(await byName["custom_agency_provider"].CallAsync(Call("get_content_data", session)));
         Assert.Equal(new PyStr("agency content"), Assert.Single(content.Items));
         Assert.Same(session, agencyRequest!.Session);
-        Assert.Equal(new PyInt(7), Assert.Single(agencyRequest.Arguments));
+        Assert.Empty(agencyRequest.Arguments);
         Assert.Same(PyNone.Instance, await byName["custom_agency_provider"].CallAsync(Call("warp_to_content", session, new PyInt(88))));
         Assert.Equal(88, warpedContentId);
         Assert.Same(session, warpSession);
@@ -204,6 +204,41 @@ public sealed class UnportedFeatureRpcServicesTests
         Assert.Equal(TourneyQuery.QueryTournamentDetails, tourneyRequest!.Query);
         Assert.Equal(12, tourneyRequest.TournamentId);
         Assert.Same(session, tourneyRequest.Session);
+    }
+
+    [Fact]
+    public async Task Custom_agency_provider_refuses_client_selected_or_malformed_content_targets()
+    {
+        var callbackCalls = 0;
+        var service = (IService)new CustomAgencyProviderService(new CustomAgencyProviderRpcCallbacks(
+            ReadContentAsync: (_, _) =>
+            {
+                callbackCalls++;
+                return ValueTask.FromResult<IReadOnlyList<PyValue>>([]);
+            },
+            WarpToContentAsync: (_, _, _) =>
+            {
+                callbackCalls++;
+                return ValueTask.CompletedTask;
+            }));
+        var session = new ClientSession();
+        var calls = new[]
+        {
+            Call("get_content_data", session, new PyInt(1)),
+            Call("warp_to_content", session),
+            Call("warp_to_content", session, new PyReal(42.5)),
+            Call("warp_to_content", session, new PyLong(0)),
+            new ServiceCall { Method = "get_content_data", Args = [], Kwargs = new PyDict([]), Session = session },
+        };
+
+        foreach (var call in calls)
+        {
+            var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(call).AsTask());
+            Assert.Equal(MachoErrors.UserErrorClass, refusal.Error.ClassName);
+            Assert.StartsWith("CUSTOM_AGENCY_", refusal.Error.UserErrorMessage);
+        }
+
+        Assert.Equal(0, callbackCalls);
     }
 
     [Fact]

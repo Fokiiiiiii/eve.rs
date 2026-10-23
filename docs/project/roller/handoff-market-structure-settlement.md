@@ -31,3 +31,15 @@
 ## 2026-10-23 industry diagnostic follow-up
 - The retry capture's two `industryManager.GetJobCounts` budget refusals were traced through the V24 slot-refresh caller, EveJS handler and registered eve.rs `IndustryJobsService`. The dispatcher had shared the general 160-unit budget; industry now has an independent 160-unit session bucket and a regression for cross-service starvation.
 - `Eve.Services.Tests` builds with 0 warnings and 0 errors. The focused regression is scheduled for Actions after push. No local focused test beyond the market wire test was run; no PostgreSQL or graphical client was used.
+
+## 2026-10-23 diagnostics and CI follow-up
+
+- The structure market Host regression used sessions at an Upwell structure while persisting their characters at an SDE NPC station. With no Marketing skill, that placed the seller outside the one-jump sell range. Main now starts those fixture characters at the structure; the current push gate is checking the scenario.
+- The live SKINR failure was in the headless test encoder. V24.01 wire descriptors show two nested messages before the sequential item ID; the test emitted three. The helper now matches the client shape, and the push gate will verify the live consume/retry flow.
+- The separate real-client `industryManager.GetJobCounts` budget fix is on main with its dispatcher regression. Its focused Services Actions check passed. No local PostgreSQL or graphical-client verification was performed.
+
+## 2026-10-23 push 8610990c
+
+- Corrected the SKINR live test's ConsumeRequest encoder using the V24.01 generated descriptors: two nested messages lead to the sequential item ID. The prior helper added a third nested message, so the gateway received ID 0 and returned its correct invalid-item response.
+- Push-triggered CI run 683 (`40014207144`) was queued when checked; run 682 on parent `d7f45242` was still running. The full CI E2E job will exercise the corrected consume/retry flow. No PostgreSQL database was accessed locally and no graphical-client result is claimed.
+- The industry budget focused Actions regression passed on run `40010004814`; the structure-market scenario's corrected location fixture is included in the current gate.

@@ -28,3 +28,19 @@ V24.01 personal `AddContact` and `EditContact` calls can request a notice to the
 - Wire contract source: V24.01 `addressbookService.py` and notification constants; matching producer in EveJS 261018.1 `charMgrService.js`.
 - Regression coverage: `Contact_add_and_edit_forward_the_recipient_notice_only_when_requested` checks Add/Edit types, level/message, and opt-out; `Contact_add_persists_and_routes_the_recipient_notification` checks the Host mailbox, live packet and restart readback.
 - Local database tests and graphical-client behavior await the Actions run; the local machine must not run PostgreSQL tests.
+
+
+## Personal notification verification update (2026-10-23)
+
+The Host test distinguishes the event payload type from the persisted row type: live senderID is PyLong; the stored senderID and receiverID are PyInt. The initial Actions runs exposed these type expectations in sequence. The latest focused run is run 40013613450 for commit 48163285 and is pending. The corrected live senderID assertion is in commit d82fe4b0 (merged and pushed as 48163285).
+
+- Local Host.Tests compile-check passed with 0 warnings and 0 errors. No local PostgreSQL tests were run.
+- Push-triggered CI for 737ba657 was still running at this update. Its focused contact run failed only on the live senderID assertion and service test passed 1/1; the corrected assertion is under the latest focused run.
+- Graphical-client behavior has not been checked.
+
+
+## Focused Actions result (2026-10-23)
+
+The corrected focused run 40013613450 for commit 48163285 passed: Eve.Services.CharacterInfo.Tests 1/1 and Eve.Host.Tests 1/1, with no skips. The local Host.Tests build also passed with 0 warnings and 0 errors. Push-triggered CI for 48163285 and the latest documentation push d7f45242 were still in progress at this update.
+
+The earlier push CI for 737ba657 failed in two unrelated checks: the live SkinR consume test returned INVALID_COMPONENT_LICENSE_ITEM, and MarketHostTests.The_host_dispatches_accessible_structure_market_orders_and_recovers_partial_settlement_after_restart threw a wrapped exception. These failures need triage in their owning areas. No graphical-client verification has been done.

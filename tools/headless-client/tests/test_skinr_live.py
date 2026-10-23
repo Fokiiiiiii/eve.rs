@@ -157,20 +157,6 @@ WHERE component.doc->>'published' = 'true'
         NULLIF(associated.value->>'license_uses_granted', '')::int,
         0
       ) = -1
-  AND EXISTS (
-        SELECT 1
-        FROM sde_mission."skinrComponentPointValues" AS point_values
-        WHERE point_values.key::bigint = (component.doc->>'category')::bigint
-          AND (
-              COALESCE(point_values.doc->'values', point_values.doc->'_value', '{}'::jsonb)
-                  ? (component.doc->>'rarity')
-              OR jsonb_path_exists(
-                  COALESCE(point_values.doc->'values', point_values.doc->'_value', '[]'::jsonb),
-                  '$[*] ? (@._key == $rarity)',
-                  jsonb_build_object('rarity', (component.doc->>'rarity')::int)
-              )
-          )
-      )
   AND COALESCE(
         NULLIF(binder.item_type->>'itemTypeID', '')::int,
         NULLIF(binder.item_type->>'itemTypeId', '')::int,
@@ -208,8 +194,7 @@ def _skin_identifier(character: int, skin_hex: str) -> bytes:
 
 
 def _item_consume_payload(item_id: int) -> bytes:
-    item_identifier = field(1, field(1, number_field(1, item_id)))
-    return field(1, item_identifier) + number_field(2, 1)
+    return field(1, field(1, number_field(1, item_id))) + number_field(2, 1)
 
 
 def _skin_hex_from_draft(draft: bytes) -> str:

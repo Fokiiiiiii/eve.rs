@@ -151,7 +151,7 @@ Use lane `eve_p4` only and run database work through `tools/dev/db-lock.sh`. The
 - CI runs 668 (`4b3cd33b`) and 671 (`287c530d`) still returned HTTP 400 at SKINR `ConsumeRequest` after the SDE unlimited-license sentinel fix. Their assertion did not include the gateway message; the `ebf1ec87` test now prints it to identify the refusing validation branch. The catalog fix is not yet verified end to end.
 - CI run 671 also failed the contact test's persisted-data assertion. Commit `ebf1ec87` changes that check to compare semantic field values through `Field`; its focused Agent test and push CI are checking the updated version.
 - Commit `b5ecf895` contains these assertion changes and the live error diagnostic. Merge-result commit `b2025a73` preserves the latest main contact notification checks. The merged `Eve.Host.Tests` Release build passed with zero warnings and errors; no local PostgreSQL test was run.
-<<- Pushed the merged assertion and live diagnostic as `ebf1ec87` after fetching/merging current main. Focused contact test run `40011081153` and selected live `test_skinr_live.py` run `40011418764` failed as described below; push CI run `40011062817` identified `INVALID_COMPONENT_LICENSE_ITEM`.
+- Pushed the merged assertion and live diagnostic as `ebf1ec87` after fetching/merging current main. Focused contact test run `40011081153` and selected live `test_skinr_live.py` run `40011418764` failed as described below; push CI run `40011062817` identified `INVALID_COMPONENT_LICENSE_ITEM`.
 
 ## 2026-10-23 persisted contact ID wire types
 
@@ -165,13 +165,19 @@ Use lane `eve_p4` only and run database work through `tools/dev/db-lock.sh`. The
 
 ## 2026-10-23 run 675 follow-up
 
-- Push CI run 675 (`40011062817`) on `ebf1ec87` reports the live SKINR request as `INVALID_COMPONENT_LICENSE_ITEM`; the unlimited-license parser unit check passed earlier, but live consume still does not resolve the seeded item type. Agent run 146 (`40011418764`) also failed this live scenario. Component license type resolution remains open.
+- Push CI run 675 (`40011062817`) on `ebf1ec87` reported `INVALID_COMPONENT_LICENSE_ITEM`; the unlimited-license parser unit check passed earlier, but the live request payload had not yet been traced. Agent run 146 (`40011418764`) also failed; the run 154 artifact later identified the extra protobuf wrapper in the test encoder (see below).
 - Run 675's Host tests found the persisted contact `senderID` type mismatch; the local expectation now matches the returned `PyInt`. The project build and focused Actions rerun are pending.
 - Run 675's Windows job remains in progress at this handoff update. Update TODO 14 after checking its completed result; keep the owner-machine console checks open unless they run on that machine.
 - The current worktree reports the market sell refusal in the failing test message. The Release build of `Eve.Host.Tests` passed with zero warnings and errors; no local database tests were run.
 
+## 2026-10-23 SKINR consume request fixture shape
 
-## 2026-10-23 SKINR live fixture catalog eligibility
+- Artifact for Agent run 154 (`40013656378`) on `04a43486` shows its test failed before reaching the Host: my temporary point-value filter compared the text SDE key column with bigint. I removed that unnecessary filter; the query returned to the prior fixture selection.
+- The run 154 artifact also confirms the earlier `INVALID_COMPONENT_LICENSE_ITEM` came from the live test's extra protobuf field-1 wrapper, which made the decoded item ID zero. Main commit `8610990c` fixes `_item_consume_payload` to match V24.01's `ConsumeRequest.item` -> `ItemIdentifier.item` -> `InventoryItemIdentifier.sequential` nesting.
+- Python syntax compilation passed after removing the temporary filter. A corrected live Agent run and the push gate are still in progress.
 
-- Run 675 and Agent run 146 reported `INVALID_COMPONENT_LICENSE_ITEM` for the unlimited license item. The live fixture query previously selected any published compatible component with a license item and binder, while `ShipSkinrCatalog.LoadAsync` only registers a component when its category and rarity have an authoritative point value.
-- The SKINR live fixture now requires a matching `skinrComponentPointValues` entry, including both supported object-map and `_key`/`_value` array shapes, so it selects an item the runtime catalog can resolve. The first Action rerun exposed that the SDE table `key` is text; the comparison now casts both sides to bigint. Python syntax compilation passed; a corrected live Action run is pending.
+## 2026-10-23 SKINR wire fixture correction
+
+- Commit `8610990c` corrects the headless `ConsumeRequest` fixture to the V24.01 two-message nesting. The source is the client's `ConsumeRequest.item` descriptor, `ItemIdentifier.item`, and generic inventory `Identifier.sequential` field. This fixes the test's zero item ID and leaves Host validation aligned with the client.
+- Push-triggered CI run 683 (`40014207144`) and merged-parent run 682 (`40014191246`) were still running in the neighboring worktree at its last update. Current CI and Agent checks on the merged head remain pending.
+- No local PostgreSQL or graphical-client verification was performed.

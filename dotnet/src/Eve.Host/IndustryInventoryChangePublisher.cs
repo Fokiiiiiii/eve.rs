@@ -14,6 +14,8 @@ public sealed class IndustryInventoryChangePublisher(IService inner, IndustryMon
         "RepackageItems",
     };
 
+    internal IService InnerService => inner;
+
     public string Name => inner.Name;
     public bool HasMethod(string method) => inner.HasMethod(method);
 

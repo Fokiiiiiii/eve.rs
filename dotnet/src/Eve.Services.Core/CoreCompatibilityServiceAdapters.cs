@@ -110,41 +110,44 @@ public sealed partial class CommunityTrackMgrService
     }
 
     [Method("get_instance_attributes_public")]
-    public ValueTask<PyValue> GetInstanceAttributesPublic(ServiceCall call) =>
-        CompatibilityRpc.Invoke(call, RpcHandler, () =>
-        {
-            var instanceId = Positive(call.Arg(0));
-            return _instances.TryGetValue(instanceId, out var attributes)
+    public ValueTask<PyValue> GetInstanceAttributesPublic(ServiceCall call)
+    {
+        ValidateArguments(call, 1);
+        var instanceId = PositiveIntegral(call.Arg(0));
+        if (instanceId <= 0)
+            throw MachoErrors.ThrowUserError("COMMUNITY_TRACK_INSTANCE_ID_INVALID");
+        return CompatibilityRpc.Invoke(call, RpcHandler, () =>
+            _instances.TryGetValue(instanceId, out var attributes)
                 ? Py.Tuple(new PyLong(attributes.DefinitionId), new PyLong(attributes.Progress))
-                : Py.Tuple(PyNone.Instance, PyNone.Instance);
-        });
+                : Py.Tuple(PyNone.Instance, PyNone.Instance));
+    }
 
     [Method("change_qa_mode")]
-    public ValueTask<PyValue> ChangeQaMode(ServiceCall call) =>
-        !CompatibilityRpc.IsStaff(call) ? ValueTask.FromResult<PyValue>(PyNone.Instance) : CompatibilityRpc.Invoke(call, RpcHandler, () =>
+    public ValueTask<PyValue> ChangeQaMode(ServiceCall call)
+    {
+        if (!CompatibilityRpc.IsStaff(call)) return ValueTask.FromResult<PyValue>(PyNone.Instance);
+        ValidateArguments(call, 1);
+        if (call.Arg(0) is not PyBool value)
+            throw MachoErrors.ThrowUserError("COMMUNITY_TRACK_QA_MODE_INVALID");
+        return CompatibilityRpc.Invoke(call, RpcHandler, () =>
         {
-            Interlocked.Exchange(ref _qaMode, Truthy(call.Arg(0)) ? 1 : 0);
+            Interlocked.Exchange(ref _qaMode, value.Value ? 1 : 0);
             return PyNone.Instance;
         });
+    }
 
-    private static long Positive(PyValue value) => value switch
+    private static void ValidateArguments(ServiceCall call, int count)
     {
-        PyInt number => Math.Max(0, number.Value),
-        PyLong number => Math.Max(0, number.Value),
+        call.Cancellation.ThrowIfCancellationRequested();
+        if (call.Args.Count != count || call.Kwargs is not PyNone)
+            throw MachoErrors.ThrowUserError("COMMUNITY_TRACK_ARGUMENTS_INVALID");
+    }
+
+    private static long PositiveIntegral(PyValue value) => value switch
+    {
+        PyInt number when number.Value > 0 => number.Value,
+        PyLong number when number.Value > 0 => number.Value,
         _ => 0,
-    };
-
-    private static bool Truthy(PyValue value) => value switch
-    {
-        PyNone => false,
-        PyBool boolean => boolean.Value,
-        PyInt number => number.Value != 0,
-        PyLong number => number.Value != 0,
-        PyReal number => number.Value != 0 && !double.IsNaN(number.Value),
-        var text when Eve.Macho.JsSemantics.StringValue(text) is not null => Eve.Macho.JsSemantics.StringValue(text)!.Length > 0,
-        PyBytes text => text.Value.Length > 0,
-        PyWString text => text.Value.Length > 0,
-        _ => true,
     };
 }
 

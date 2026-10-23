@@ -237,6 +237,8 @@ public sealed class CompatibilityRpcServicesTests
                     Kwargs = new PyDict([new(new PyStr("err_message"), new PyStr("custom error"))]),
                     Session = new ClientSession { CharacterId = 42 },
                 }
+                : service is CommunityTrackMgrService
+                    ? Call(method, new PyLong(42))
                 : StaffCall(method, new PyInt(42), kwargs: new PyDict([new(new PyStr("source"), new PyStr("test"))]));
             Assert.Same(expected, await service.CallAsync(request));
             Assert.Same(request, received);
@@ -284,6 +286,41 @@ public sealed class CompatibilityRpcServicesTests
         var staffCommunity = new CommunityTrackMgrService();
         Assert.IsType<PyNone>(await ((IService)staffCommunity).CallAsync(StaffCall("change_qa_mode", PyBool.True)));
         Assert.True(staffCommunity.QaMode);
+    }
+
+    [Fact]
+    public async Task Community_track_rpcs_refuse_invalid_ids_and_qa_values_before_callbacks()
+    {
+        var callbackCalls = 0;
+        var service = new CommunityTrackMgrService
+        {
+            RpcHandler = _ =>
+            {
+                callbackCalls++;
+                return ValueTask.FromResult<PyValue?>(PyNone.Instance);
+            },
+        };
+        var ordinary = new ClientSession { CharacterId = 42 };
+        var calls = new[]
+        {
+            Call("get_instance_attributes_public", session: ordinary),
+            Call("get_instance_attributes_public", new PyReal(42.5), session: ordinary),
+            Call("get_instance_attributes_public", new PyLong(0), session: ordinary),
+            Call("get_instance_attributes_public", new PyLong(42), kwargs: new PyDict([]), session: ordinary),
+            StaffCall("change_qa_mode", new PyStr("true")),
+            StaffCall("change_qa_mode", PyBool.True, new PyDict([])),
+        };
+        calls[0] = new ServiceCall { Method = "get_instance_attributes_public", Args = [], Session = ordinary };
+
+        foreach (var call in calls)
+        {
+            var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() => ((IService)service).CallAsync(call).AsTask());
+            Assert.Equal(MachoErrors.UserErrorClass, refusal.Error.ClassName);
+            Assert.StartsWith("COMMUNITY_TRACK_", refusal.Error.UserErrorMessage);
+        }
+
+        Assert.Equal(0, callbackCalls);
+        Assert.False(service.QaMode);
     }
 
     private static ServiceCall StaffCall(string method, PyValue? arg = null, PyValue? kwargs = null)

@@ -2043,6 +2043,114 @@ public class DispatchGoldenTests
         }
     }
 
+    [Fact]
+    public async Task Community_track_routes_use_named_per_session_budgets()
+    {
+        var capture = new Capture();
+        var registry = new ServiceRegistry();
+        var service = new CommunityTrackBudgetService();
+        registry.Register(service);
+        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 1 };
+        string[] methods = ["get_instance_attributes_public", "change_qa_mode"];
+
+        foreach (var (method, index) in methods.Select((method, index) => (method, index)))
+        {
+            var session = new ClientSession(capture) { SessionId = 993 + index };
+            var previousCalls = service.Calls;
+            await dispatcher.DispatchAsync(CallRequestPacket("communityTrackMgr", method), session);
+            await dispatcher.DispatchAsync(CallRequestPacket("communityTrackMgr", method), session);
+            Assert.Equal(previousCalls + 1, service.Calls);
+            Assert.Equal(ErrorResponseCommand, CommandOf(capture.Sent[^1]));
+            Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[^1])));
+        }
+    }
+
+    [Fact]
+    public async Task Subscription_routes_use_named_per_session_budgets()
+    {
+        var capture = new Capture();
+        var registry = new ServiceRegistry();
+        var subscriptions = new SubscriptionBudgetService("subscriptionMgr", ["GetSubscriptionStatus", "GetSubscriptionInfo", "GetSubscriptionTime", "GetCloneGrade"]);
+        var rewards = new SubscriptionBudgetService("loginRewardFacilities", ["get_my_clone_grade"]);
+        registry.Register(subscriptions);
+        registry.Register(rewards);
+        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 1 };
+        var routes = new[]
+        {
+            ("subscriptionMgr", "GetSubscriptionStatus"),
+            ("subscriptionMgr", "GetSubscriptionInfo"),
+            ("subscriptionMgr", "GetSubscriptionTime"),
+            ("subscriptionMgr", "GetCloneGrade"),
+            ("loginRewardFacilities", "get_my_clone_grade"),
+        };
+
+        foreach (var ((serviceName, method), index) in routes.Select((route, index) => (route, index)))
+        {
+            var session = new ClientSession(capture) { SessionId = 995 + index };
+            var service = serviceName == "subscriptionMgr" ? subscriptions : rewards;
+            var previousCalls = service.Calls;
+            await dispatcher.DispatchAsync(CallRequestPacket(serviceName, method), session);
+            await dispatcher.DispatchAsync(CallRequestPacket(serviceName, method), session);
+            Assert.Equal(previousCalls + 1, service.Calls);
+            Assert.Equal(ErrorResponseCommand, CommandOf(capture.Sent[^1]));
+            Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[^1])));
+        }
+    }
+
+    [Fact]
+    public async Task Escalation_details_reads_use_a_named_per_session_budget()
+    {
+        var capture = new Capture();
+        var registry = new ServiceRegistry();
+        var service = new EscalationDetailsBudgetService();
+        registry.Register(service);
+        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 1 };
+        var session = new ClientSession(capture) { SessionId = 997 };
+
+        await dispatcher.DispatchAsync(CallRequestPacket("dungeonExplorationMgr", "GetMyEscalatingPathDetails"), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("dungeonExplorationMgr", "GetMyEscalatingPathDetails"), session);
+
+        Assert.Equal(1, service.Calls);
+        Assert.Equal(ErrorResponseCommand, CommandOf(capture.Sent[1]));
+        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[1])));
+    }
+
+    private sealed class EscalationDetailsBudgetService : IService
+    {
+        public int Calls { get; private set; }
+        public string Name => "dungeonExplorationMgr";
+        public bool HasMethod(string method) => method == "GetMyEscalatingPathDetails";
+        public ValueTask<PyValue> CallAsync(ServiceCall call)
+        {
+            Calls++;
+            return ValueTask.FromResult<PyValue>(PyNone.Instance);
+        }
+    }
+
+    private sealed class SubscriptionBudgetService(string name, string[] methods) : IService
+    {
+        public int Calls { get; private set; }
+        public string Name => name;
+        public bool HasMethod(string method) => methods.Contains(method, StringComparer.Ordinal);
+        public ValueTask<PyValue> CallAsync(ServiceCall call)
+        {
+            Calls++;
+            return ValueTask.FromResult<PyValue>(PyNone.Instance);
+        }
+    }
+
+    private sealed class CommunityTrackBudgetService : IService
+    {
+        public int Calls { get; private set; }
+        public string Name => "communityTrackMgr";
+        public bool HasMethod(string method) => method is "get_instance_attributes_public" or "change_qa_mode";
+        public ValueTask<PyValue> CallAsync(ServiceCall call)
+        {
+            Calls++;
+            return ValueTask.FromResult<PyValue>(PyNone.Instance);
+        }
+    }
+
     private sealed class CustomAgencyBudgetService : IService
     {
         public int Calls { get; private set; }

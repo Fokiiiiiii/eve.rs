@@ -49,3 +49,11 @@ Red on origin/main CI (run 523, ea7e4813), open:
 
 Open S9 items: live death walk on the merged tree (hull walk still open, suicide walk passed earlier); gateway leftovers: reward grants and GrantedNotice/RevokedNotice not implemented; JWT signature not verified (claims read with verify=False); TLS not served (documented in DEVIATIONS).
 
+## CX6 continuation (2026-10-23)
+
+- Traced V24.01 entry and station calls through `GetStation`, `GetStationItemBits`, ship bound-object creation, and `Undock`. EveJS v0.12.9 and Host both use the station record cache shape and transition path; no server-side wire mismatch was found in this comparison.
+- Added `tools/headless-client/tests/test_character_station_undock.py`, which connects, creates and selects a character, compares its station cache result to the recorded station row, checks the session's station-item tuple, then compares the bound `Undock` reply and notifications to the recorded scenario.
+- Local checks: Python syntax compilation passed; `Eve.Services.Station.Tests` `Station_item_bits_are_a_tuple_in_reference_order` passed (1/1). The database-backed station record test was skipped because its `PgFact` requires `EVE_PG_URL`; this job did not use PostgreSQL.
+- The new live end-to-end walk and graphical-client acceptance remain open. The new walk needs a running Host, so no live run is recorded here.
+
+- GitHub Actions agent-test run 40020647231 completed successfully for the focused `Station_item_bits_are_a_tuple_in_reference_order` test; the selected run reported no failed tests or jobs. The push-triggered `ci.yml` run was queued at the last status check.

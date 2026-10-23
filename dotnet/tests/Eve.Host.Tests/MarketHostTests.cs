@@ -47,6 +47,7 @@ public sealed class MarketHostTests : IAsyncLifetime
     private readonly string _prefix = "mh" + Guid.NewGuid().ToString("N")[..10];
     private readonly Dictionary<string, string?> _saved = [];
     private readonly List<string> _schemas = [];
+    private Func<Task>? _shutdownHost;
 
     private string Schema(string variable) => variable["EVE_".Length..^"_SCHEMA".Length].ToLowerInvariant() is var name ? $"{_prefix}_{name}" : "";
 
@@ -69,6 +70,11 @@ public sealed class MarketHostTests : IAsyncLifetime
 
     public async Task DisposeAsync()
     {
+        if (_shutdownHost is { } shutdownHost)
+        {
+            await shutdownHost();
+            _shutdownHost = null;
+        }
         var url = Environment.GetEnvironmentVariable("EVE_PG_URL");
         if (url is not null)
         {
@@ -274,6 +280,7 @@ public sealed class MarketHostTests : IAsyncLifetime
         var url=Environment.GetEnvironmentVariable("EVE_PG_URL")!;
         await using var source=NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(url));
         var host=await HostComposition.BuildAsync(Settings());
+        _shutdownHost=()=>host.ShutdownAsync();
         var market=host.Registry.Lookup("marketProxy") ?? throw new InvalidOperationException("marketProxy is not registered");
         var sde=new SdeReader(source);
         var station=(await StationCatalog.LoadAsync(sde)).All.First();
@@ -395,13 +402,16 @@ public sealed class MarketHostTests : IAsyncLifetime
         Assert.Equal(new PyInt(4),initialLine.Items[1]);
 
         var itemBeforeFailure=await ItemState(source,Schema("EVE_INVENTORY_SCHEMA"),itemId);
+        var wallet=new PgWalletStore(source,Schema("EVE_WALLET_SCHEMA"));
+        var buyerBalanceBeforeFailure=(await wallet.GetAsync(buyer))!.Isk;
+        var sellerBalanceBeforeFailure=(await wallet.GetAsync(seller))!.Isk;
         await using (var reject=source.CreateCommand(
             $"ALTER TABLE {Schema("EVE_MARKET_SCHEMA")}.fills ADD CONSTRAINT reject_structure_fill CHECK(quantity=0)"))
             await reject.ExecuteNonQueryAsync();
         await Assert.ThrowsAsync<PostgresException>(() => market.CallAsync(Call(buyerSession,"BuyMultipleItems",6,new PyLong(structureId),
             new PyList([Line(Tritanium,2,10)]),PyBool.False)).AsTask());
-        Assert.Equal(10000m,(await new PgWalletStore(source,Schema("EVE_WALLET_SCHEMA")).GetAsync(buyer))!.Isk);
-        Assert.Equal(9900m,(await new PgWalletStore(source,Schema("EVE_WALLET_SCHEMA")).GetAsync(seller))!.Isk);
+        Assert.Equal(buyerBalanceBeforeFailure,(await wallet.GetAsync(buyer))!.Isk);
+        Assert.Equal(sellerBalanceBeforeFailure,(await wallet.GetAsync(seller))!.Isk);
         Assert.Equal(itemBeforeFailure,await ItemState(source,Schema("EVE_INVENTORY_SCHEMA"),itemId));
         Assert.Empty(Assert.IsType<PyList>(await market.CallAsync(Call(buyerSession,"CharGetTransactions",17,PyNone.Instance))).Items);
         await using (var allow=source.CreateCommand(
@@ -497,7 +507,9 @@ public sealed class MarketHostTests : IAsyncLifetime
         Assert.Empty(Lines(cancelledBids));
 
         await host.ShutdownAsync();
+        _shutdownHost=null;
         var restarted=await HostComposition.BuildAsync(Settings());
+        _shutdownHost=()=>restarted.ShutdownAsync();
         var recovered=restarted.Registry.Lookup("marketProxy") ?? throw new InvalidOperationException("marketProxy is not registered after restart");
         book=Assert.IsType<PyTuple>(Received(await recovered.CallAsync(Call(buyerSession,"GetOrders",16,new PyInt(Tritanium)))));
         Assert.DoesNotContain(Lines(book.Items[0]),row=>
@@ -505,5 +517,6 @@ public sealed class MarketHostTests : IAsyncLifetime
         Assert.Equal(9980m,(await new PgWalletStore(source,Schema("EVE_WALLET_SCHEMA")).GetAsync(buyer))!.Isk);
         Assert.Single(Assert.IsType<PyList>(await recovered.CallAsync(Call(buyerSession,"CharGetTransactions",10,PyNone.Instance))).Items);
         await restarted.ShutdownAsync();
+        _shutdownHost=null;
     }
 }

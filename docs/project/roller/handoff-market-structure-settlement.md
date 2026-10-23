@@ -73,4 +73,9 @@
 
 ## 2026-10-23 SKINR nested UUID follow-up
 - The push gate exposed a Python `uuid.UUID` length error in the SKINR live walk. V24 descriptors define `GetAllActiveResponse.Job.id` and `CompletedNotice.id` as an `Identifier` message whose `uuid` field contains the 16-byte value; the test read that message as the UUID bytes directly. Added the missing nested field read in both assertions; production response encoding is unchanged.
-- Focused live run `40018639989` on the earlier SHA is still pending. The corrected headless test needs a new Actions run after push. No local PostgreSQL or graphical client was used.
+- Focused live run `40018639989` on the earlier SHA remains in progress. The fix is pushed as `0f0cef8f`; current focused runs `40019674482` (`MarketHostTests`) and `40019703405` (`test_skinr_live.py`) are in progress. No local PostgreSQL or graphical client was used.
+
+## 2026-10-23 push 0f0cef8f
+- Pushed the SKINR nested UUID test parser fix and the market cached-result test expectation correction after merging latest `origin/main`.
+- `Eve.Host.Tests` builds with 0 warnings and 0 errors; `test_skinr_live.py` passes Python syntax compilation. Focused Actions runs `40019674482` and `40019703405` are in progress. Initial `ci-status.py failures 0f0cef8f` check found no push-triggered `ci.yml` run yet; recheck it.
+- No PostgreSQL database or graphical client was used locally.

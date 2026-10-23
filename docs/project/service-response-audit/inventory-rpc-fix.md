@@ -89,8 +89,7 @@ Row type差は今回の破損に混ぜていない。
 `../../../dotnet/src/Eve.Services.Space/SpaceSessions.Modules.cs:683`、643 →
 `../../../crates/eve-space/src/scene/session.rs:433`。
 
-**残る具体的修正候補:** `Scene.respec` はShipSpecを更新するがslim broadcast条件はsecurity_changedまたはstance_changedだけ（同file:458、478）。nameだけの変更は周囲へOnSlimItemChangeを送らない。
-親への回帰シナリオ: pilotと同bubbleのobserverを接続しrename。DB/cfg/session更新後、両clientのslim nameとreentry後のnameが同じになること。name-only changeを既存respecのslim変更条件へ加える候補。Rust source/testは今回のwrite scope外のため未変更。
+**修正済み:** `Scene::respec` now includes name changes in the existing slim notification condition. The V24 bracket handler replaces its slim item and clears the cached display name; EveJS updates the caller's presentation without broadcasting this notification. The compatibility extension is recorded in `docs/reference/compat/DEVIATIONS.md`. The focused Rust regression passed; a graphical-client observer walk remains outstanding.
 
 ## 4. caller / Host確認
 
@@ -171,7 +170,7 @@ ID値はfresh split IDを元itemと別であること/real rowであることと
 | 未実装branch候補 | repairSvc.MachoBindObject、repairSvc.RepairItemsInStructure、invbroker.GetInventory | structure/deliveryの真正stateとowner/service権限。station成功をstructure完成として数えない。 |
 | consumer未確認 | stationSvc.GetAllianceSystems、stationSvc.GetSystemsForAlliance | global/alliance filterとrow形をV24 callsite/traceで確認。Alliance creation修正とは別メソッド。 |
 | legacy export候補・V24必要性未確認 | repairSvc.MachoResolveObject、reprocessingSvc.MachoResolveObject | Moniker lifecycle traceで必要性を確定。古いroute名だけで未実装を断定しない。 |
-| 今回確認したlower-level残件 | invbroker.SetLabel → Scene.respec | name-only slim broadcast。pilot+observerのrename即時表示。 |
+| FIXED (Rust unit) | invbroker.SetLabel → Scene.respec | `name_changed` now joins the existing slim refresh condition; `scene::tests::a_renamed_ship_is_shown_again_in_the_slim_item` passes. Graphical-client presentation remains unchecked. |
 
 Trade/Reprocess/Skillbook/Newbie/Map/Structure、Host/Rust source、および他担当artifactを変更していない。
 
@@ -273,3 +272,9 @@ After the analyzer/string-wire fixture repairs, the parent observed the full Inv
 ## Follow-up: contracts read owner (2026-10-19)
 
 `GetLoginInfo` and `GetMyContractEscrow` now use `PersistenceContractReadModel` and the PostgreSQL contracts schema. Core rowset tests (2) and the `eve_p3` Host read test (1) passed. Contract creation and lifecycle writes remain open; see `docs/project/CONTRACTS_DESIGN.md` and the contract row in `docs/project/TODO.md`.
+
+## 10. Ship rename slim notification (2026-10-23)
+
+The existing `invbroker.SetLabel` flow persists the custom name, then refreshes the active ship's `ShipSpec` through `SpaceSessions.RefreshShipAsync`. `Scene::respec` already emits `OnSlimItemChange` for security and stance changes, but omitted name-only changes. The existing payload serializes the ship's slim item, including its name; V24.01 `BracketMgr.OnSlimItemChange` replaces the displayed slim item and clears its cached display name. EveJS SetLabel also updates the client-facing presentation after saving the item name. No notification shape changed.
+
+Added `name_changed` to the existing slim refresh condition. `scene::tests::a_renamed_ship_is_shown_again_in_the_slim_item` checks the notice, updated sim state and same-name no-op; it passed locally (1/1). `cargo +1.94.1 fmt --all -- --check`, `cargo +1.94.1 check -p eve-space --lib`, and `cargo +1.94.1 clippy --workspace --all-targets -- -D warnings` passed. `dotnet build dotnet/tests/Eve.Inventory.Tests/Eve.Inventory.Tests.csproj -p:UseSharedCompilation=false --no-restore` passed with 0 warnings and 0 errors after syncing with `origin/main`. The mixed item move/merge regression is in progress. The graphical client has not been exercised; the Actions checks have not yet run.

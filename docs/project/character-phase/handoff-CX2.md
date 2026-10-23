@@ -47,3 +47,13 @@ CH-23 reconciled the season source findings and public-gateway boundaries in TOD
 3. Record the Actions results and final package outcomes in the plan, then push the final acceptance update.
 
 The worktree retains the capsule-implant destruction, loss-value wiring and live two-pilot bounty extension described above.
+
+## CX9 skill queue contract checks (2026-10-23)
+
+- Reconciled the plan's stale `CheckAndSendNotifications` verdict against the existing Host registry test recorded in `docs/project/TODO.md`: V24.01's only caller is `notifications/client/development/skillHistoryProvider.py`, and EveJS v0.12.9 `server/src/services/skills/skillMgrService.js:594-597` returns the empty list eve.rs returns.
+- Added a database-free `TrainingAnnouncer` notification-order regression for queue save/pause, abort, and level completion.
+- Verified locally: `dotnet build dotnet/tests/Eve.Services.Skills.Tests/Eve.Services.Skills.Tests.csproj -p:UseSharedCompilation=false` passed; `Save_abort_and_level_completion_keep_the_reference_notification_order` passed (1/1). No PostgreSQL database was used.
+- The Host-level notification-order walk and graphical-client behavior were not exercised. CH-3 remains partial: `GetSkillBundleInfo` lacks an authoritative bundle name/icon source, and the live queue flow remains a separate acceptance check.
+- GitHub Actions `agent-test` run 40035848849 passed the focused queue-order test (1/1; no failed tests or jobs). Push CI run 40035839458 failed outside this change: fast live tests report `MachoError 2` without a test name in the log tail; `SpaceContainersUnanchorDropsTests.Bound_ship_scoop_moves_the_fittings_artifact_and_children_then_checks_hull_hold_room`, `MarketRpcTests.Buy_multi_fills_available_quantity_without_posting_the_rest`, and `MarketHostTests.The_host_dispatches_accessible_structure_market_orders_and_recovers_partial_settlement_after_restart` failed in the merged upstream changes. CI also skipped the recorded-speed training test and seven slow-live tests.
+- Follow-up handoff push `43b589f2` merged three newer `origin/main` commits, including adjustments to the two Market test assertions. `ci-status.py failures 43b589f2` reported no push-triggered `ci.yml` run at the time of the check.
+- Reconciled the stale plan claims for CH-11 implants and CH-18 capsule-implant bounty loss against the current implementation and verification records; the graphical-client gap remains explicit.

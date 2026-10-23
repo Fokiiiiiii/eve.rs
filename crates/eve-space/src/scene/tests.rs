@@ -1312,6 +1312,17 @@ fn a_change_of_the_ships_numbers_tells_the_client_what_differs() {
 }
 
 #[test]
+fn a_renamed_ship_is_shown_again_in_the_slim_item() {
+    let mut scene = scene();
+    let mut renamed = spec();
+    renamed.name = "Renamed ship".into();
+    let out = scene.respec(SESSION, renamed.clone(), NOON);
+    assert_eq!(action_names(&out[0]), ["OnSlimItemChange"]);
+    assert_eq!(scene.ship(SESSION, NOON).unwrap().spec, renamed);
+    assert!(scene.respec(SESSION, renamed, NOON).is_empty(), "same name is not announced twice");
+}
+
+#[test]
 fn a_switched_stance_is_shown_in_the_slim_item_with_the_stance_the_ship_moved_from() {
     let mut scene = scene();
     let mut before = spec();

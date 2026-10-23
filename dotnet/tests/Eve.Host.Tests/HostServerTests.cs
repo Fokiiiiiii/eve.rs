@@ -84,6 +84,19 @@ public class HostServerTests : IAsyncLifetime
         await _serving;
     }
 
+    private sealed class MutationService : IService
+    {
+        public string Name => "budgetMutation";
+        public int Mutations { get; private set; }
+        public bool HasMethod(string method) => method == "Mutate";
+
+        public ValueTask<PyValue> CallAsync(ServiceCall call)
+        {
+            Mutations++;
+            return ValueTask.FromResult<PyValue>(new PyStr("accepted"));
+        }
+    }
+
     /// <summary>A service whose first call is slow: it shows whether a session's packets are kept in order.</summary>
     private sealed class SlowService : IService
     {
@@ -1740,6 +1753,37 @@ public class HostServerTests : IAsyncLifetime
             order.Add((reply.SessionId, T(Result(MarshalCodec.Decode(reply.Payload)))!));
         }
         Assert.Equal([(other.SessionId, "Second"), (slow.SessionId, "First"), (slow.SessionId, "Second")], order);
+    }
+
+    [Fact]
+    public async Task An_over_budget_request_disconnects_without_dispatch_and_a_valid_retry_works()
+    {
+        var service = new MutationService();
+        Start(configure: registry => registry.Register(service));
+        var front = await Handshaken(await ConnectAsync());
+        var open = Open();
+        await front.SendAsync(open);
+        await front.ReceiveAsync();
+
+        var oversizedArgument = new PyList(Enumerable.Repeat<PyValue>(PyNone.Instance, 520_000).ToArray());
+        var hostile = MarshalCodec.Encode(Packets.Call(open, 1, "budgetMutation", "Mutate", oversizedArgument));
+        await front.SendAsync(new Packet(open.SessionId, hostile));
+
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var refusal = Assert.IsType<Disconnect>(await front.ReceiveAsync(timeout.Token));
+        Assert.Equal(open.SessionId, refusal.SessionId);
+        Assert.Equal("InvalidPacket", refusal.Reason);
+        Assert.Equal(0, service.Mutations);
+
+        var retry = Open(5_000, 7);
+        await front.SendAsync(retry);
+        await front.ReceiveAsync();
+        await front.SendAsync(new Packet(retry.SessionId, MarshalCodec.Encode(Packets.Call(retry, 2, "budgetMutation", "Mutate"))));
+
+        var response = Assert.IsType<Send>(await front.ReceiveAsync(timeout.Token));
+        Assert.Equal(retry.SessionId, response.SessionId);
+        Assert.Equal("accepted", T(Result(MarshalCodec.Decode(response.Payload))));
+        Assert.Equal(1, service.Mutations);
     }
 
     [Fact]

@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.IO.Compression;
 using System.Text.Json.Nodes;
 
@@ -11,6 +12,28 @@ public class CodecTests
     private static byte[] Stream(params byte[] body) => [.. Header, .. body];
 
     private static PyValue Decode(params byte[] body) => MarshalCodec.Decode(Stream(body));
+
+    private static byte[] Size(uint count)
+    {
+        if (count < 255)
+        {
+            return [(byte)count];
+        }
+        var encoded = new byte[5];
+        encoded[0] = 0xff;
+        BinaryPrimitives.WriteUInt32LittleEndian(encoded.AsSpan(1), count);
+        return encoded;
+    }
+
+    private static byte[] CollectionBody(byte opcode, uint count, byte[] items) =>
+        [opcode, .. Size(count), .. items];
+
+    private static byte[] FlatCollection(byte opcode, int count)
+    {
+        var itemBytes = new byte[checked(count * (opcode == 0x16 ? 2 : 1))];
+        Array.Fill(itemBytes, (byte)0x01);
+        return Stream(CollectionBody(opcode, (uint)count, itemBytes));
+    }
 
     [Fact]
     public void An_inbound_zlib_payload_is_inflated_before_marshal_decode()
@@ -268,6 +291,112 @@ public class CodecTests
             var compressed = MarshalCodec.CompressRle(block);
             Assert.Equal(block, MarshalCodec.DecompressRle(compressed, length));
         }
+    }
+
+    [Theory]
+    [InlineData(0x14)]
+    [InlineData(0x15)]
+    [InlineData(0x16)]
+    public void Large_input_valid_flat_collections_fail_before_allocating_the_declared_capacity(byte opcode)
+    {
+        var hostile = FlatCollection(opcode, MarshalCodec.MaxDecodedAllocationUnits + 1);
+        var allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
+
+        var error = Assert.Throws<MarshalException>(() => MarshalCodec.Decode(hostile));
+
+        var allocated = GC.GetAllocatedBytesForCurrentThread() - allocatedBefore;
+        Assert.Equal(MarshalErrorKind.AllocationBudgetExceeded, error.Kind);
+        Assert.True(allocated < 1_048_576, $"decoder allocated {allocated} bytes before refusing the count");
+    }
+
+    [Fact]
+    public void Nested_collections_share_the_total_allocation_budget()
+    {
+        var innerItems = new byte[400_000];
+        Array.Fill(innerItems, (byte)0x01);
+        var innerStream = Stream(CollectionBody(0x15, 400_000, innerItems));
+        var substream = new byte[1 + Size((uint)innerStream.Length).Length + innerStream.Length];
+        substream[0] = 0x2b;
+        var size = Size((uint)innerStream.Length);
+        size.CopyTo(substream, 1);
+        innerStream.CopyTo(substream, 1 + size.Length);
+        var outerItems = new byte[substream.Length + 100_000];
+        substream.CopyTo(outerItems, 0);
+        Array.Fill(outerItems, (byte)0x01, substream.Length, 100_000);
+        var hostile = Stream(CollectionBody(0x15, 100_001, outerItems));
+
+        Assert.Equal(
+            MarshalErrorKind.AllocationBudgetExceeded,
+            Assert.Throws<MarshalException>(() => MarshalCodec.Decode(hostile)).Kind);
+    }
+
+    [Fact]
+    public void Save_tables_are_charged_before_the_saved_value_array_is_allocated()
+    {
+        var count = MarshalCodec.MaxDecodedAllocationUnits + 1;
+        var hostile = new byte[5 + 1 + checked(count * 4)];
+        hostile[0] = 0x7e;
+        BinaryPrimitives.WriteUInt32LittleEndian(hostile.AsSpan(1, 4), (uint)count);
+        hostile[5] = 0x01;
+        var allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
+
+        var error = Assert.Throws<MarshalException>(() => MarshalCodec.Decode(hostile));
+
+        var allocated = GC.GetAllocatedBytesForCurrentThread() - allocatedBefore;
+        Assert.Equal(MarshalErrorKind.AllocationBudgetExceeded, error.Kind);
+        Assert.True(allocated < 1_048_576, $"decoder allocated {allocated} bytes before refusing the save table");
+    }
+
+    [Fact]
+    public void Saved_values_and_references_decode_within_the_budget()
+    {
+        var encoded = new byte[]
+        {
+            0x7e, 1, 0, 0, 0,
+            0x15, 2, 0x41, 0x1b, 1,
+            1, 0, 0, 0,
+        };
+
+        var value = Assert.IsType<PyList>(MarshalCodec.DecodeExact(encoded));
+
+        Assert.Equal(2, value.Items.Count);
+        Assert.All(value.Items, item => Assert.Same(PyNone.Instance, item));
+    }
+
+    [Fact]
+    public void Compressed_over_budget_collections_are_rejected_after_inflation()
+    {
+        var payload = FlatCollection(0x15, MarshalCodec.MaxDecodedAllocationUnits + 1);
+        using var compressed = new MemoryStream();
+        using (var zlib = new ZLibStream(compressed, CompressionLevel.Optimal, leaveOpen: true))
+        {
+            zlib.Write(payload);
+        }
+
+        Assert.Equal(
+            MarshalErrorKind.AllocationBudgetExceeded,
+            Assert.Throws<MarshalException>(() => MarshalCodec.DecodeInbound(compressed.ToArray())).Kind);
+    }
+
+    [Theory]
+    [InlineData(0x14, 499_999)]
+    [InlineData(0x15, 499_999)]
+    [InlineData(0x16, 333_333)]
+    public void Collections_at_the_allocation_budget_boundary_keep_their_wire_value(byte opcode, int count)
+    {
+        var encoded = FlatCollection(opcode, count);
+
+        var decoded = MarshalCodec.DecodeExact(encoded);
+        var decodedCount = decoded switch
+        {
+            PyTuple tuple => tuple.Items.Count,
+            PyList list => list.Items.Count,
+            PyDict dict => dict.Entries.Count,
+            _ => throw new InvalidOperationException($"unexpected decoded type {decoded.GetType().Name}"),
+        };
+
+        Assert.Equal(count, decodedCount);
+        Assert.Equal(encoded, MarshalCodec.Encode(decoded));
     }
 
     [Fact]

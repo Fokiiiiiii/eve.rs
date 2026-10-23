@@ -15,6 +15,9 @@ public static class MarshalCodec
     /// </summary>
     public const int MaxDepth = 256;
 
+    /// <summary>Maximum decoded values and collection slots charged to one inbound marshal stream.</summary>
+    public const int MaxDecodedAllocationUnits = 1_000_000;
+
     private const int MaxInflatedInboundBytes = 64 << 20;
 
     /// <summary>

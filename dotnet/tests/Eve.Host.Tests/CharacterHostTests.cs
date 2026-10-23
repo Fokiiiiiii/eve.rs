@@ -746,10 +746,9 @@ public sealed class CharacterHostTests
         notifications = Assert.IsType<PyList>(await CallAsync(notificationMgr, "GetAllNotifications", recipientSession));
         row = Assert.Single(notifications.Items);
         Assert.Equal(new PyInt(89), Field(row, "typeID"));
-        Assert.Equal(new PyDict([
-            new(new PyStr("level"), new PyLong(-10)),
-            new(new PyStr("message"), new PyStr("Hello")),
-        ]), Field(row, "data"));
+        var persistedData = Assert.IsType<PyDict>(Field(row, "data"));
+        Assert.Equal(new PyLong(-10), Field(persistedData, "level"));
+        Assert.Equal(new PyStr("Hello"), Field(persistedData, "message"));
     }
 
     [PgFact]

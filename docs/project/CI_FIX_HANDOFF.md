@@ -150,4 +150,7 @@ Use lane `eve_p4` only and run database work through `tools/dev/db-lock.sh`. The
 ## 2026-10-23 Character notification test helper
 
 - CI run 668 on `4b3cd33b` reported `CharacterHostTests.Contact_add_persists_and_routes_the_recipient_notification` failing in the test-only `Field` helper: it cast a wire-decoded dictionary key to `PyStr`, while the actual decoded Python string key is `PyBytes`.
-- The helper now matches either `PyStr` or UTF-8 `PyBytes` keys; no Host RPC or client wire behavior changed. `Eve.Host.Tests` Release build passed with zero warnings and errors. The regression uses PostgreSQL and will be run through Agent Actions after push.
+- The helper now matches either `PyStr` or UTF-8 `PyBytes` keys; no Host RPC or client wire behavior changed. `Eve.Host.Tests` Release build passed with zero warnings and errors.
+- Agent run 138 (`40008851484`) on `287c530d` completed with failure; the Action log exposed the invocation but not the test summary. The persisted `data` assertion now verifies `level` and `message` through `Field` instead of comparing a whole dictionary's concrete key encoding. The updated `Eve.Host.Tests` Release build passed with zero warnings and errors; the focused database-backed run will be repeated after push.
+- CI run 668 (`40007726336`) also reproduced HTTP 400 at SKINR `ConsumeRequest` even with the unlimited catalog mapping. The live test now includes the gateway error message in the failing assertion so the next Actions run identifies the specific refusal; the catalog fix is not considered verified end to end yet.
+- Pushed the first test-helper change as `287c530d`; its focused Agent run and push CI are in progress/complete as recorded above.

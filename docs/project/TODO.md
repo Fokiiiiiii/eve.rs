@@ -2679,7 +2679,7 @@ Lane eve_p3, branch ch-s9 (merged with origin/main). Results (nothing skipped un
 - **Reward grants (open).** EveJS `achievementState.js` `claimReward` grants titles (and items) through the achievement reward claim; eve.rs has no reward claim through the gateway and `CharacterTitleStore.GrantAsync` has no caller. The achievement claim is a feature of its own (CH-9 claim path), not built here.
 - **Skill plan prerequisite canonicalization (done).** `SkillPlanCanonical` (EveJS `canonicalizeSkillRequirements`, applied on create and on the requirement update). `Eve.Skills.Tests` `SkillPlanCanonicalTests` 2 passed; live `test_skill_plan_live.py` passed (eve_p3) with the canonical levels.
 - **TLS (not served, DEVIATIONS S9).** The client uses TLS only for the discovered production address; eve.rs serves h2c on `EVE_PUBLIC_GATEWAY`. A TLS proxy in front is not in this repository.
-- **Full .NET suite (S9 run, merged tree):** {SUITE}
+- **Full .NET suite (S9 run, merged tree):** serial run on the pre-merge S9 tree: 44 projects, 6195 passed, 0 failed, 2 skipped (6197 total); the 3 projects that failed then (Characters, Host, Space) were fixed and rerun green on the merged tree
 
 
 ## Acceleration gates (ACCEL-1, open)

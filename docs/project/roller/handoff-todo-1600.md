@@ -70,3 +70,10 @@ No PostgreSQL command was used. CI agent-test run `39940268962` passed the focus
 - Mission slow-live run `40024793065` passed the basic mission and kill/reward walks, then reached Arc 29 and hit pytest's default 300-second timeout at its 270-second travel wait. All three mission walks now use a 1200-second timeout; a fresh slow-live run will verify Arc 29.
 - The current `Eve.Host` build succeeded with 0 warnings and 0 errors; Python compile checks and `git diff --check` passed after the test updates.
 
+## 2026-10-23 verified live follow-up
+
+- Mission slow-live run `40026903022` completed successfully on `623e21803171574c04690d703b8fcb5cf31f2fa3`; the basic, kill/reward, and Arc 29 client walks all completed. The timeout now covers the full 270-second Arc travel step.
+- SKINR run `40028889495` on `1bfd22e4e98ee61add508a7e3632c0845bd35e1d` passed `ShipSkinrDispatchTests` (4/4) and applied the persisted license after restart. Its live test failed only while reading notices: it inspected the headless client's raw packet list without pinging/decoding it. The check now uses `notifications_of`, which drains and decodes named notifications; a fresh Actions run is required.
+- Push CI run `40028876361` was still in progress when this handoff was updated.
+- The CI mission artifact confirms the Host build completed with 0 warnings and 0 errors. No PostgreSQL command was run locally; no graphical-client check was performed.
+

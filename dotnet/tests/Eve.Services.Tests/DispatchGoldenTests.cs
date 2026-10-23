@@ -2115,6 +2115,36 @@ public class DispatchGoldenTests
         Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[1])));
     }
 
+    [Fact]
+    public async Task Abyssal_spawn_reports_use_a_named_per_session_budget()
+    {
+        var capture = new Capture();
+        var registry = new ServiceRegistry();
+        var service = new AbyssalSpawnReportBudgetService();
+        registry.Register(service);
+        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 10 };
+        var session = new ClientSession(capture) { SessionId = 998 };
+
+        await dispatcher.DispatchAsync(CallRequestPacket("abyssal_content_manager", "generate_abyss_npc_spawn_report"), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("abyssal_content_manager", "generate_abyss_npc_spawn_report"), session);
+
+        Assert.Equal(1, service.Calls);
+        Assert.Equal(ErrorResponseCommand, CommandOf(capture.Sent[1]));
+        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[1])));
+    }
+
+    private sealed class AbyssalSpawnReportBudgetService : IService
+    {
+        public int Calls { get; private set; }
+        public string Name => "abyssal_content_manager";
+        public bool HasMethod(string method) => method == "generate_abyss_npc_spawn_report";
+        public ValueTask<PyValue> CallAsync(ServiceCall call)
+        {
+            Calls++;
+            return ValueTask.FromResult<PyValue>(PyNone.Instance);
+        }
+    }
+
     private sealed class EscalationDetailsBudgetService : IService
     {
         public int Calls { get; private set; }

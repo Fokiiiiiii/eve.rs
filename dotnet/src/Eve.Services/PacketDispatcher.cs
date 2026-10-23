@@ -356,6 +356,8 @@ public sealed class PacketDispatcher
             return 1;
         if (service == "dungeonExplorationMgr" && method == "GetMyEscalatingPathDetails")
             return 1;
+        if (service == "abyssal_content_manager" && method == "generate_abyss_npc_spawn_report")
+            return 10;
         if (service == "RWManager" && method is "get_closest_rw_stations" or "solarsystem_contains_rw_instances")
             return 1;
         if (service == "clientStatLogger" && method == "LogString")

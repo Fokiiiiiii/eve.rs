@@ -54,12 +54,21 @@ public sealed class UnportedFeatureRpcServicesTests
             foreach (var method in methods[service.Name])
                 Assert.True(service.HasMethod(method), $"{service.Name}.{method}");
 
-        var abyssal = Assert.IsType<PyDict>(await ((IService)new AbyssalContentManagerService()).CallAsync(
-            Call("generate_abyss_npc_spawn_report", args: [new PyInt(2), new PyInt(50), new PyInt(2000)])));
-        Assert.Equal(new PyInt(2), Field(abyssal, "difficulty_tier"));
+        var abyssalService = new AbyssalContentManagerService((request, _) => ValueTask.FromResult<PyValue?>(Py.Dict(
+            ("difficulty_tier", new PyInt(request.DifficultyTier)),
+            ("spawn_table_id", new PyInt(request.SpawnTableId)),
+            ("repetitions", new PyInt(request.Repetitions)))));
+        var staff = new ClientSession();
+        staff.Set("accountRole", new PyLong(GameMasterRoles.Staff));
+        var abyssal = Assert.IsType<PyDict>(await ((IService)abyssalService).CallAsync(new ServiceCall
+        {
+            Method = "generate_abyss_npc_spawn_report",
+            Args = [new PyInt(172), new PyInt(50), new PyInt(35)],
+            Session = staff,
+        }));
+        Assert.Equal(new PyInt(172), Field(abyssal, "difficulty_tier"));
         Assert.Equal(new PyInt(50), Field(abyssal, "spawn_table_id"));
-        Assert.Equal(new PyInt(1000), Field(abyssal, "repetitions"));
-        Assert.Empty(Assert.IsType<PyList>(Field(abyssal, "spawns")).Items);
+        Assert.Equal(new PyInt(35), Field(abyssal, "repetitions"));
 
         var dungeon = Assert.IsType<PyObject>(await ((IService)new DungeonExplorationMgrService(
             nowUnixMs: () => 1_700_000_000_000L)).CallAsync(Call("GetMyEscalatingPathDetails")));
@@ -127,6 +136,47 @@ public sealed class UnportedFeatureRpcServicesTests
         }
 
         Assert.Equal(0, callbackCalls);
+    }
+
+    [Fact]
+    public async Task Abyssal_spawn_report_requires_staff_bounded_wire_inputs_and_a_provider()
+    {
+        var callbackCalls = 0;
+        var service = (IService)new AbyssalContentManagerService((_, _) =>
+        {
+            callbackCalls++;
+            return ValueTask.FromResult<PyValue?>(PyNone.Instance);
+        });
+        var player = new ClientSession();
+        var staff = new ClientSession();
+        staff.Set("accountRole", new PyLong(GameMasterRoles.Staff));
+        var calls = new[]
+        {
+            new ServiceCall { Method = "generate_abyss_npc_spawn_report", Args = [new PyInt(172), new PyInt(50), new PyInt(35)], Session = player },
+            new ServiceCall { Method = "generate_abyss_npc_spawn_report", Args = [], Session = staff },
+            new ServiceCall { Method = "generate_abyss_npc_spawn_report", Args = [new PyReal(172), new PyInt(50), new PyInt(35)], Session = staff },
+            new ServiceCall { Method = "generate_abyss_npc_spawn_report", Args = [new PyInt(171), new PyInt(50), new PyInt(35)], Session = staff },
+            new ServiceCall { Method = "generate_abyss_npc_spawn_report", Args = [new PyInt(172), new PyInt(0), new PyInt(35)], Session = staff },
+            new ServiceCall { Method = "generate_abyss_npc_spawn_report", Args = [new PyInt(172), new PyInt(50), new PyInt(1001)], Session = staff },
+            new ServiceCall { Method = "generate_abyss_npc_spawn_report", Args = [new PyInt(172), new PyInt(50), new PyInt(35)], Kwargs = new PyDict([]), Session = staff },
+        };
+
+        foreach (var call in calls)
+        {
+            var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(call).AsTask());
+            Assert.Equal(MachoErrors.UserErrorClass, refusal.Error.ClassName);
+            Assert.StartsWith("ABYSSAL_SPAWN_REPORT_", refusal.Error.UserErrorMessage);
+        }
+
+        Assert.Equal(0, callbackCalls);
+        var unwired = (IService)new AbyssalContentManagerService();
+        var missingProvider = await Assert.ThrowsAsync<MachoWrappedException>(() => unwired.CallAsync(new ServiceCall
+        {
+            Method = "generate_abyss_npc_spawn_report",
+            Args = [new PyInt(172), new PyInt(50), new PyInt(35)],
+            Session = staff,
+        }).AsTask());
+        Assert.Equal("ABYSSAL_SPAWN_REPORT_UNAVAILABLE", missingProvider.Error.UserErrorMessage);
     }
 
     [Fact]

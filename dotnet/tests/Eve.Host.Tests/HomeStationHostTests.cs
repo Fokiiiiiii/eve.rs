@@ -19,7 +19,6 @@ public sealed class HomeStationHostTests
         await rig.SeedOfficeCandidatesAsync();
         var character = await rig.CreateCharacterAsync();
         var session = new ClientSession { CharacterId = character.Id, Sink = new RecordingPacketSink() };
-        session.Set("accountRole", new PyLong(Eve.Services.GameMasterRoles.Qa));
         session.Set("stationid", new PyInt(rig.LocalOfficeStation.Id));
         session.Set("homeStationID", new PyInt(rig.InitialHomeStation.Id));
         session.Set("cloneStationID", new PyInt(rig.InitialHomeStation.Id));
@@ -74,6 +73,7 @@ public sealed class HomeStationHostTests
         Assert.Equal(new PyInt(rig.RemoteOfficeStation.Id), session.Get("homeStationID"));
         Assert.Equal(new PyInt(rig.RemoteOfficeStation.Id), session.Get("cloneStationID"));
         Assert.Equal(2, Notifications(sink).Count);
+        session.Set("accountRole", new PyLong(Eve.Services.GameMasterRoles.Qa));
         Assert.IsType<PyNone>(await CallAsync(service, "reset_remote_change_time", session));
         Assert.Equal(0, (await rig.Characters.GetAsync(character.Id))!.NextRemoteHomeStationChangeFileTime);
         Assert.IsType<PyNone>(await CallAsync(service, "get_next_remote_change_time", session));

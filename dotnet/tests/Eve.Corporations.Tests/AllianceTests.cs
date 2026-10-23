@@ -502,6 +502,16 @@ public class AllianceTests
             Assert.Null(await relations.GetAsync(Eve.Relations.RelationKinds.Standing.Name,alliance.Id,outsiderCorp.Id));
 
             await service.CallAsync(Call(executor,"AddAllianceContact",new Eve.Marshal.PyInt(outsiderCorp.Id),new Eve.Marshal.PyInt(5)));
+            var malformedAllianceContactId = await Assert.ThrowsAnyAsync<Exception>(() =>
+                service.CallAsync(Call(executor,"AddAllianceContact",
+                    new Eve.Marshal.PyReal(outsiderCorp.Id + 0.5),new Eve.Marshal.PyInt(5))).AsTask());
+            Assert.NotNull(malformedAllianceContactId);
+            Assert.Single(await store.AllianceContactsAsync(alliance.Id));
+            var malformedAllianceContactIds = await Assert.ThrowsAnyAsync<Exception>(() =>
+                service.CallAsync(Call(executor,"RemoveAllianceContacts",
+                    new Eve.Marshal.PyList([new Eve.Marshal.PyReal(outsiderCorp.Id + 0.5)]))).AsTask());
+            Assert.NotNull(malformedAllianceContactIds);
+            Assert.Single(await store.AllianceContactsAsync(alliance.Id));
             await service.CallAsync(Call(executor,"EditAllianceContact",new Eve.Marshal.PyInt(outsiderCorp.Id),new Eve.Marshal.PyInt(6)));
             await service.CallAsync(Call(executor,"EditContactsRelationshipID",
                 new Eve.Marshal.PyList([new Eve.Marshal.PyInt(outsiderCorp.Id)]),new Eve.Marshal.PyInt(7)));
@@ -1528,6 +1538,16 @@ public class AllianceTests
             var single = Assert.IsType<Eve.Marshal.PyPackedRow>(await service.CallAsync(Call(director,
                 "GetBulletin", new Eve.Marshal.PyInt(bulletinId))));
             Assert.Equal(Eve.Marshal.MarshalCodec.Encode(row), Eve.Marshal.MarshalCodec.Encode(single));
+            await Assert.ThrowsAnyAsync<Exception>(() => service.CallAsync(Call(director,
+                "GetBulletin", new Eve.Marshal.PyReal(bulletinId + 0.5))).AsTask());
+            await Assert.ThrowsAnyAsync<Exception>(() => service.CallAsync(Call(director,
+                "UpdateBulletin", new Eve.Marshal.PyReal(bulletinId + 0.5),
+                new Eve.Marshal.PyWString("Tampered"), new Eve.Marshal.PyWString("Body"))).AsTask());
+            await Assert.ThrowsAnyAsync<Exception>(() => service.CallAsync(Call(director,
+                "DeleteBulletin", new Eve.Marshal.PyReal(bulletinId + 0.5))).AsTask());
+            var afterMalformedIds = Assert.IsType<Eve.Marshal.PyPackedRow>(await service.CallAsync(Call(director,
+                "GetBulletin", new Eve.Marshal.PyInt(bulletinId))));
+            Assert.Equal(new Eve.Marshal.PyWString("Maintenance"), afterMalformedIds.Values[5]);
 
             await Assert.ThrowsAsync<Eve.Corporations.CorporationError>(() => service.CallAsync(Call(director,
                 "UpdateBulletin", new Eve.Marshal.PyInt(bulletinId),
@@ -2244,6 +2264,12 @@ public class AllianceTests
 
             await Assert.ThrowsAsync<Eve.Corporations.CorporationError>(() =>
                 service.CallAsync(DeclareCall(targetCorp.Id + 10, 60000001)).AsTask());
+            await Assert.ThrowsAnyAsync<Exception>(() => service.CallAsync(new Eve.Services.ServiceCall
+            {
+                Session = session, Method = "DeclareWarAgainst",
+                Args = [new Eve.Marshal.PyReal(targetCorp.Id + 0.5), Eve.Marshal.PyNone.Instance],
+                CallId = new Eve.Marshal.PyInt(71004)
+            }).AsTask());
             Assert.Empty(await rig.Store.AllianceBillsAsync(alliance.Id));
             Assert.Null(await relations.GetAsync("war", alliance.Id, targetCorp.Id + 10));
 
@@ -2283,6 +2309,11 @@ public class AllianceTests
             var beforeBalance = await rig.Transactions.AccountBalanceAsync(new Eve.Wallet.WalletAccount(executorCorp.Id,1000));
             Assert.True(beforeBalance is > 100_000_000m);
             Assert.Equal(new Eve.Marshal.PyInt((long)beforeBalance!.Value),balance);
+            await Assert.ThrowsAnyAsync<Exception>(() => service.CallAsync(new Eve.Services.ServiceCall
+            {
+                Session = session, Method = "PayBill", Args = [new Eve.Marshal.PyReal(billId + 0.5)]
+            }).AsTask());
+            Assert.Single(await rig.Store.AllianceBillsAsync(alliance.Id));
             Assert.IsType<Eve.Marshal.PyNone>(await service.CallAsync(new Eve.Services.ServiceCall
             {
                 Session = session, Method = "PayBill", Args = [new Eve.Marshal.PyInt(billId)]
@@ -2412,7 +2443,10 @@ public class AllianceTests
         };
         var service = (Eve.Services.IService)new Eve.Services.Corporations.AllianceRegistryService(
             rig.Store, rig.Characters, () => rig.Now, scheduleAllianceApplication: schedule);
-        Eve.Services.ServiceCall Call(long accountRole, long sessionRole = 0)
+        Eve.Services.ServiceCall Call(
+            long accountRole,
+            long sessionRole = 0,
+            Eve.Marshal.PyValue? target = null)
         {
             var session = new Eve.Services.ClientSession { SessionId = applicant, CharacterId = applicant };
             session.Set("allianceid", new Eve.Marshal.PyInt(alliance.Id));
@@ -2422,12 +2456,15 @@ public class AllianceTests
             {
                 Session = session,
                 Method = "GMForceAcceptApplication",
-                Args = [new Eve.Marshal.PyInt(applicantCorp.Id)]
+                Args = [target ?? new Eve.Marshal.PyInt(applicantCorp.Id)]
             };
         }
 
         await Assert.ThrowsAnyAsync<Exception>(() =>
             service.CallAsync(Call(0, Eve.Services.GameMasterRoles.Gml)).AsTask());
+        await Assert.ThrowsAnyAsync<Exception>(() => service.CallAsync(Call(
+            Eve.Services.GameMasterRoles.Gml,
+            target: new Eve.Marshal.PyReal(applicantCorp.Id + 0.5))).AsTask());
         Assert.Empty(scheduled);
         Assert.Equal(1, (await rig.Store.AllianceApplicationsAsync(alliance.Id)).Single().Status);
         Assert.IsType<Eve.Marshal.PyNone>(await service.CallAsync(

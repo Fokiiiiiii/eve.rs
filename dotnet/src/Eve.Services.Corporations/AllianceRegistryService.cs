@@ -677,7 +677,7 @@ private static double RelationshipValue(PyValue value)
     public async ValueTask<PyValue> PayBill(ServiceCall call)
     {
         var authority = await RequireAllianceRole(call,CorporationRoles.Accountant,true);
-        var billId = Number(call.Arg(0));
+        var billId = PositiveIntegerId(call.Arg(0));
         var accountKey = Number(call.Kwarg("fromAccountKey") ?? call.Arg(1));
         if (accountKey is < 1000 or > 1006) accountKey = 1000;
         var paid = await store.PayAllianceBillAsync(billId,authority.Alliance,authority.Corporation,
@@ -691,8 +691,8 @@ private static double RelationshipValue(PyValue value)
     {
         var (actor,allianceId) = await RequireAllianceExecutorDirector(call);
         if (relations is null) throw new CorporationError("WAR_DECLARATION_UNAVAILABLE");
-        var againstId = Number(call.Arg(0));
-        if (againstId <= 0 || againstId == allianceId)
+        var againstId = PositiveIntegerId(call.Arg(0));
+        if (againstId == allianceId)
             throw new CorporationError("ALLIANCE_WAR_DECLARATION_INVALID");
         long? warHqId = null;
         if (call.Args.Count > 1 && call.Arg(1) is not PyNone)
@@ -786,7 +786,7 @@ private static double RelationshipValue(PyValue value)
         RequireBoundAlliance(call,allianceId);
         if (scheduleAllianceApplication is null)
             throw new CorporationError("ALLIANCE_DUE_SCHEDULER_UNAVAILABLE");
-        var corporationId = Number(call.Arg(0));
+        var corporationId = PositiveIntegerId(call.Arg(0));
         var application = (await store.AllianceApplicationsAsync(allianceId,call.Cancellation))
             .LastOrDefault(item => item.CorporationId == corporationId);
         if (application is null) throw new CorporationError("ALLIANCE_APPLICATION_NOT_FOUND");
@@ -882,7 +882,7 @@ private static double RelationshipValue(PyValue value)
     {
         var (actor,alliance) = await RequireAllianceExecutorDirector(call);
         RequireBoundAlliance(call,alliance);
-        await store.AddAllianceContactAsync(actor,alliance,Number(call.Arg(0)),Number(call.Arg(1)),call.Cancellation);
+        await store.AddAllianceContactAsync(actor,alliance,PositiveIntegerId(call.Arg(0)),IntegerValue(call.Arg(1)),call.Cancellation);
         return PyNone.Instance;
     }
 
@@ -891,7 +891,7 @@ private static double RelationshipValue(PyValue value)
     {
         var (actor,alliance) = await RequireAllianceExecutorDirector(call);
         RequireBoundAlliance(call,alliance);
-        await store.EditAllianceContactAsync(actor,alliance,Number(call.Arg(0)),Number(call.Arg(1)),call.Cancellation);
+        await store.EditAllianceContactAsync(actor,alliance,PositiveIntegerId(call.Arg(0)),IntegerValue(call.Arg(1)),call.Cancellation);
         return PyNone.Instance;
     }
 
@@ -909,7 +909,7 @@ private static double RelationshipValue(PyValue value)
     {
         var (actor,alliance) = await RequireAllianceExecutorDirector(call);
         RequireBoundAlliance(call,alliance);
-        await store.EditAllianceContactsRelationshipAsync(actor,alliance,ContactIds(call.Arg(0)),Number(call.Arg(1)),call.Cancellation);
+        await store.EditAllianceContactsRelationshipAsync(actor,alliance,ContactIds(call.Arg(0)),IntegerValue(call.Arg(1)),call.Cancellation);
         return PyNone.Instance;
     }
 
@@ -1006,6 +1006,20 @@ private static double RelationshipValue(PyValue value)
             throw AllianceAccessDenied();
     }
 
+    private static long PositiveIntegerId(PyValue value) => value switch
+    {
+        PyInt { Value: > 0 } id => id.Value,
+        PyLong { Value: > 0 } id => id.Value,
+        _ => throw AllianceAccessDenied(),
+    };
+
+    private static long IntegerValue(PyValue value) => value switch
+    {
+        PyInt id => id.Value,
+        PyLong id => id.Value,
+        _ => throw AllianceAccessDenied(),
+    };
+
     private static long[] ContactIds(PyValue value)
     {
         var items = value switch
@@ -1016,8 +1030,12 @@ private static double RelationshipValue(PyValue value)
         };
         if (items.Count > MaxAllianceContactIds)
             throw new CorporationError("ALLIANCE_BULK_LIMIT_EXCEEDED");
-        var ids = items.Select(Number).ToArray();
-        if (ids.Any(id => id <= 0)) throw AllianceAccessDenied();
+        var ids = items.Select(item => item switch
+        {
+            PyInt { Value: > 0 } id => id.Value,
+            PyLong { Value: > 0 } id => id.Value,
+            _ => throw AllianceAccessDenied(),
+        }).ToArray();
         return ids.Distinct().ToArray();
     }
 
@@ -1093,7 +1111,7 @@ private static double RelationshipValue(PyValue value)
     public async ValueTask<PyValue> GetBulletin(ServiceCall call)
     {
         var authority = await RequireAllianceMember(call);
-        var bulletin = await store.AllianceBulletinAsync(authority.Alliance, Number(call.Arg(0)), call.Cancellation);
+        var bulletin = await store.AllianceBulletinAsync(authority.Alliance, PositiveIntegerId(call.Arg(0)), call.Cancellation);
         return bulletin is null ? PyNone.Instance : AllianceBulletinRow(AllianceBulletinDescriptor, bulletin);
     }
 
@@ -1107,7 +1125,7 @@ private static double RelationshipValue(PyValue value)
             throw new CorporationError("ALLIANCE_BULLETIN_LIMIT_EXCEEDED");
         var nowFiletime = Number(CorporationWire.Time(now()));
         var editFiletime = Number(call.Arg(3));
-        var bulletinId = Number(call.Arg(2));
+        var bulletinId = call.Arg(2) is PyNone ? 0 : PositiveIntegerId(call.Arg(2));
         var id = await store.AddAllianceBulletinAsync(alliance, actor, title, body,
             bulletinId > 0 ? bulletinId : null, nowFiletime,
             editFiletime > 0 ? editFiletime : nowFiletime, call.Cancellation);
@@ -1118,8 +1136,7 @@ private static double RelationshipValue(PyValue value)
     public async ValueTask<PyValue> UpdateBulletin(ServiceCall call)
     {
         var (actor, alliance) = await RequireAllianceDirector(call);
-        var bulletinId = Number(call.Arg(0));
-        if (bulletinId <= 0) throw new CorporationError("ALLIANCE_BULLETIN_INVALID");
+        var bulletinId = PositiveIntegerId(call.Arg(0));
         var title = JsSemantics.StringValue(call.Arg(1)) ?? "";
         var body = JsSemantics.StringValue(call.Arg(2)) ?? "";
         if (title.Length > 100 || body.Length > 4000)
@@ -1134,9 +1151,8 @@ private static double RelationshipValue(PyValue value)
     public async ValueTask<PyValue> DeleteBulletin(ServiceCall call)
     {
         var (actor, alliance) = await RequireAllianceDirector(call);
-        var bulletinId = Number(call.Arg(0));
-        if (bulletinId > 0)
-            await store.DeleteAllianceBulletinAsync(alliance, actor, bulletinId, call.Cancellation);
+        if (call.Arg(0) is not PyNone)
+            await store.DeleteAllianceBulletinAsync(alliance, actor, PositiveIntegerId(call.Arg(0)), call.Cancellation);
         return PyNone.Instance;
     }
 

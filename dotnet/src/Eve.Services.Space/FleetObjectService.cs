@@ -146,7 +146,7 @@ public sealed partial class FleetObjectService(FleetStore store, Func<long> nowU
     {
         if (FleetId(call) is not { } fleetId) return PyBool.False;
         var inviterId = CharacterId(call.Session);
-        var inviteeId = Number(call.Arg(0)) ?? 0;
+        var inviteeId = PositiveIntegerId(call.Arg(0)) ?? 0;
         if (inviteeId <= 0 || inviteeId == inviterId) return PyBool.False;
         var before = await store.SnapshotAsync(fleetId, call.Cancellation);
         var inviter = before?.Members.FirstOrDefault(member => member.CharacterId == inviterId);
@@ -181,7 +181,7 @@ public sealed partial class FleetObjectService(FleetStore store, Func<long> nowU
         var invitees = Sequence(call.Arg(0));
         if (invitees.Count > FleetStore.MaxMembers)
             throw MachoErrors.ThrowUserError("FleetError");
-        var inviteeIds = invitees.Select(Number).ToArray();
+        var inviteeIds = invitees.Select(PositiveIntegerId).ToArray();
         if (inviteeIds.Any(id => id is not > 0))
             throw MachoErrors.ThrowUserError("FleetError");
         if (FleetId(call) is not { } fleetId) return None;
@@ -551,6 +551,13 @@ public sealed partial class FleetObjectService(FleetStore store, Func<long> nowU
             throw MachoErrors.ThrowUserError("FLEET_ROLE_OUT_OF_RANGE");
         return (int)role;
     }
+
+    private static long? PositiveIntegerId(PyValue value) => value switch
+    {
+        PyInt { Value: > 0 } number => number.Value,
+        PyLong { Value: > 0 } number => number.Value,
+        _ => null
+    };
 
     private static long? Number(PyValue value) => value switch
     {

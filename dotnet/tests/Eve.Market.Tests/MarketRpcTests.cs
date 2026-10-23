@@ -286,6 +286,27 @@ public class MarketRpcTests
     }
 
     [PgFact]
+    public async Task Multi_sell_refuses_duplicate_item_ids_before_any_order_is_written()
+    {
+        await using var r = await TradeRig.Create();
+        var actor = await r.Actor("Duplicate Multi Seller");
+        var seat = await SeatAsync(r, actor);
+        var itemId = await r.Stock(actor, 2);
+        var line = Py.KeyVal(
+            ("stationID", new PyInt(r.Station.Id)), ("typeID", new PyInt(Tritanium)),
+            ("itemID", new PyLong(itemId)), ("quantity", new PyInt(2)), ("price", new PyReal(10)));
+
+        var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() => seat.Proxy.PlaceMultiSellOrder(
+            Call(seat.Session, "PlaceMultiSellOrder", 5, new PyList([line, line]), PyBool.False,
+                new PyInt(1), PyNone.Instance)).AsTask());
+
+        Assert.Equal("MARKET_BULK_ARGUMENT_INVALID", refusal.Error.UserErrorMessage);
+        Assert.Equal(r.Station.Id, (await r.Items.GetAsync(itemId))!.LocationId);
+        Assert.Empty((await r.Book.BookAsync(r.Station.RegionId, Tritanium, r.Now)).Asks);
+        Assert.Empty(seat.Sink.Packets);
+    }
+
+    [PgFact]
     public async Task Buy_multi_fills_each_line_at_its_limit_and_books_the_unfilled_rest_of_each_line()
     {
         // BuyMultipleItems (EVE.js proxy 6915): immediate buys; a line fills what matches at its limit and books the rest as a buy order; the answer is the

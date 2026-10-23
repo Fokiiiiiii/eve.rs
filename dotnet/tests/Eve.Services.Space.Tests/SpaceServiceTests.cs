@@ -3895,6 +3895,16 @@ public class SpaceServiceTests
                  new PyLong(firstSquad), new PyInt(Eve.Services.Space.FleetStore.Member)]));
             await Assert.ThrowsAsync<MachoWrappedException>(() => FleetObjectCallAsync(
                 fleet, fleetId, leaderSession, "MassInvite",
+                [new PyList([new PyReal(memberId + 0.5)]), new PyLong(firstWing),
+                 new PyLong(firstSquad), new PyInt(Eve.Services.Space.FleetStore.Member)]));
+            await Assert.ThrowsAsync<MachoWrappedException>(() => FleetObjectCallAsync(
+                fleet, fleetId, leaderSession, "MassInvite",
+                [new PyList([new PyStr(memberId.ToString(System.Globalization.CultureInfo.InvariantCulture))]),
+                 new PyLong(firstWing), new PyLong(firstSquad), new PyInt(Eve.Services.Space.FleetStore.Member)]));
+            Assert.Equal(PyBool.False, await FleetObjectCallAsync(
+                fleet, fleetId, leaderSession, "Invite", [new PyReal(memberId + 0.5)]));
+            await Assert.ThrowsAsync<MachoWrappedException>(() => FleetObjectCallAsync(
+                fleet, fleetId, leaderSession, "MassInvite",
                 [new PyStr("not-a-list"), new PyLong(firstWing), new PyLong(firstSquad),
                  new PyInt(Eve.Services.Space.FleetStore.Member)]));
             Assert.Empty(Events.Of(memberSession));
@@ -4470,7 +4480,9 @@ public class SpaceServiceTests
             await AssertRefused("AddToWatchlist",new PyStr("not-a-list"),new PyList([]));
             await AssertRefused("RegisterForDamageUpdates",new PyList(
                 Enumerable.Range(1,501).Select(id => (PyValue)new PyLong(id)).ToArray()));
+            await AssertRefused("RegisterForDamageUpdates",new PyList([new PyReal(1.5)]));
             await AssertRefused("RemoveFromWatchlist",new PyLong(-1),new PyList([]));
+            await AssertRefused("RemoveFromWatchlist",new PyStr("123"),new PyList([]));
         }
         finally
         {

@@ -1,5 +1,9 @@
 # Deviations from the reference server
 
+## Host SKINR catalog data source (2026-10-23)
+
+The V24.01 pinned SDE build 3396210 has no `skinr*` authority tables, while the official CCP `missionPinned` build 3405148 contains `skinrComponentPointValues`, `skinrComponents`, `skinrSlotConfigurations`, `skinrSlots` and `skinrTierThresholds` (`sde/lock.json`). Host startup reads those tables for `ShipSkinrCatalog`, so the catalog now reads them, with that build’s `groups` and `types`, from `sde_mission`. Other Host data reads remain on the client-pinned `sde` schema. This keeps the SSO Host startup path available without changing the pinned source used for general game data.
+
 ## SKINR batch sequencing duration (2026-10-23)
 
 Ship SKINR charges PLEX per license, while the sequencing duration is the tier base time once for a multi-license batch. EVE University’s [Ship SKINR mechanics](https://wiki.eveuniversity.org/Ship_SKINR) explicitly says multiple skins multiply PLEX cost but not sequencing time. EveJS 261018.1 `shipSkinSequencingRuntime.initiate` multiplies the tier duration by quantity, which conflicts with that mechanics reference; eve.rs follows the documented mechanic. `ShipSkinrDispatchTests.V24_skinr_routes_expose_the_called_methods_and_tier_rows` checks the published tier time table, and `ShipSkinrDispatchTests.Batch_quantity_multiplies_plex_cost_but_keeps_tier_time` covers quantity-independent duration.

@@ -28,6 +28,7 @@ public sealed partial class RepairService(NpgsqlDataSource source, PgItemStore i
     private const int CategoryModule = 7;
     private const int FlagHangar = ItemFlags.Hangar;
     private const int FlagDroneBay = 87;
+    private const int MaxRepairItemIds = 500;
 
     private static readonly HashSet<int> RepairableGroups = [12, 332, 340, 448, 649];
     private static readonly HashSet<int> RepairableCategories = [6, 7, 18, 22, 23, 66];
@@ -296,7 +297,29 @@ public sealed partial class RepairService(NpgsqlDataSource source, PgItemStore i
         _ => null,
     };
 
-    private static IReadOnlyList<long> ItemIdsOf(PyValue value) => ArgsOf(value).Select(IdOf).Where(id => id is > 0).Select(id => id!.Value).Distinct().ToList();
+    private static IReadOnlyList<long> ItemIdsOf(PyValue value)
+    {
+        var isSet = value is PyObjectEx ex
+            && ex.Header is PyTuple { Items.Count: 2 } header
+            && header.Items[0] is PyToken { Value: "__builtin__.set" }
+            && header.Items[1] is PyTuple { Items.Count: 1 } payload
+            && payload.Items[0] is PyList;
+        if (value is not (PyList or PyTuple) && !isSet)
+            throw MachoErrors.ThrowUserError("REPAIR_ITEM_LIST_INVALID");
+
+        var raw = ArgsOf(value).Take(MaxRepairItemIds + 1).ToArray();
+        if (raw.Length > MaxRepairItemIds)
+            throw MachoErrors.ThrowUserError("REPAIR_BULK_LIMIT_EXCEEDED");
+
+        var ids = new List<long>(raw.Length);
+        foreach (var item in raw)
+        {
+            if (IdOf(item) is not { } id || id <= 0)
+                throw MachoErrors.ThrowUserError("REPAIR_ITEM_ID_INVALID");
+            ids.Add(id);
+        }
+        return ids.Distinct().ToArray();
+    }
 
     private static IEnumerable<PyValue> ArgsOf(PyValue value) => value switch
     {

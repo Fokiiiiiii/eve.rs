@@ -26,6 +26,8 @@ public class FitFittingTests
     }
 
     private static PyDict Map(params (PyValue Key, PyValue Value)[] entries) => new([.. entries.Select(e => new KeyValuePair<PyValue, PyValue>(e.Key, e.Value))]);
+    private static PyObjectEx Set(params PyValue[] items) => new(ObjectExKind.Ex1,
+        Py.Tuple(new PyToken("__builtin__.set"), Py.Tuple(new PyList(items))), [], []);
 
     [PgFact]
     public async Task Each_module_goes_into_its_slot_and_the_one_without_a_hangar_item_is_reported()
@@ -47,7 +49,7 @@ public class FitFittingTests
             [
                 new PyLong(ship),
                 new PyInt(Ibis),
-                Map((new PyInt(Afterburner), new PyList([new PyLong(afterburner)])), (new PyInt(CivilianMiner), new PyList([new PyLong(miner)]))),
+                Map((new PyInt(Afterburner), Set(new PyLong(afterburner))), (new PyInt(CivilianMiner), Set(new PyLong(miner)))),
                 new PyLong(Rig.Station),
                 Py.KeyVal(("modulesByFlag", Map(
                     (new PyInt(MediumSlot), new PyInt(Afterburner)),
@@ -64,6 +66,33 @@ public class FitFittingTests
         Assert.Equal((ship, MediumSlot), (fittedAfterburner.LocationId, fittedAfterburner.Flag));
         var fittedMiner = (await rig.Items.GetAsync(miner))!;
         Assert.Equal((ship, HighSlot), (fittedMiner.LocationId, fittedMiner.Flag));
+    }
+
+    [PgFact]
+    public async Task Oversized_fit_inputs_are_refused_before_any_item_moves()
+    {
+        await using var rig = await Rig.CreateAsync(activeShip: true);
+        var ship = await rig.AddAsync(Ibis, Rig.Character, Rig.Station, singleton: true);
+        var itemIds = Set([.. Enumerable.Range(1, 501).Select(value => (PyValue)new PyLong(value))]);
+        var session = Rig.Session();
+        var inventory = Rig.OidOf(await rig.CallAsync(session, "GetInventoryFromId", null, new PyLong(ship)));
+
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(() => FitAsync(
+            rig, session, ship, inventory, Map((new PyInt(Afterburner), itemIds)), Map(), Map(), Map(), true));
+
+        Assert.Equal("INVENTORY_BULK_LIMIT_EXCEEDED", error.Error.UserErrorMessage);
+        Assert.Equal(Rig.Station, (await rig.Items.GetAsync(ship))!.LocationId);
+
+        var malformed = await Assert.ThrowsAsync<MachoWrappedException>(() => ((IService)rig.Service).CallAsync(new ServiceCall
+        {
+            Method = "FitFitting",
+            BoundObjectId = inventory,
+            Session = session,
+            Args = [new PyLong(ship), new PyInt(Ibis), new PyStr("not-a-map"), new PyLong(Rig.Station),
+                Py.KeyVal(("modulesByFlag", Map())), Map(), PyBool.True],
+        }).AsTask());
+        Assert.Equal("INVENTORY_OPERATION_INVALID", malformed.Error.UserErrorMessage);
+        Assert.Equal(Rig.Station, (await rig.Items.GetAsync(ship))!.LocationId);
     }
 
     [PgFact]

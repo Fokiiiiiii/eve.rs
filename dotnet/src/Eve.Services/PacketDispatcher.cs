@@ -302,6 +302,8 @@ public sealed class PacketDispatcher
             return 1;
         if (service == "storeManager" && method == "buy_offer" || service == "FastCheckoutService" && method == "BuyOffer")
             return 10;
+        if (service == "repairSvc" && method is "GetRepairQuotes" or "RepairItemsInStation")
+            return 10;
         if (service == "ownerGroupManager")
             return 10;
         if (service == "mailMgr" && method is "SyncMail" or "GetMailHeaders" or "GetBody" or "MarkAsRead" or "SendMail" or "PokePlayerAboutChatMsgGm")
@@ -326,7 +328,7 @@ public sealed class PacketDispatcher
             return 10;
         if ((service is "charFittingMgr" or "corpFittingMgr" or "allianceFittingMgr") && (method is "GetFittings" or "SaveFitting" or "UpdateFitting" or "SaveManyFittings" or "DeleteFitting" or "DeleteManyFittings" or "UpdateNameAndDescription" or "GetCommunityFittings"))
             return 10;
-        if (service == "invbroker" && method is "MultiMerge" or "MultiAdd" or "StackAll")
+        if (service == "invbroker" && method is "MultiMerge" or "MultiAdd" or "StackAll" or "FitFitting")
             return 10;
         if (service == "repackagingSvc" && method == "RepackageItems")
             return 10;
@@ -367,7 +369,7 @@ public sealed class PacketDispatcher
             return 10;
         if (service == "structureJumpBridgeMgr" && method is "GetJbStructureDestination" or "GetLinkedStructure")
             return 10;
-        if (service == "officeManager" && method is "HasCorpImpoundedItems" or "GetImpoundReleasePrice" or "RentOffice" or "UnrentOffice" or "GetItemsFromImpound" or "TrashImpoundedOffice")
+        if (service == "officeManager" && method is "GetMyCorporationsOffices" or "HasCorpImpoundedItems" or "GetImpoundReleasePrice" or "RentOffice" or "UnrentOffice" or "GetItemsFromImpound" or "TrashImpoundedOffice")
             return 10;
         if (service == "stationSvc" && method is ("GetCorporationsWithOffices" or "GetEmptyOfficeCount" or "HasCorpImpoundedItems" or "GetImpoundReleasePrice" or "TrashImpoundedOffice" or "PrimeOfficeItem" or "UnrentOffice"))
             return 10;

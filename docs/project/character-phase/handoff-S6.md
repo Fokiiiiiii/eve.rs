@@ -65,3 +65,22 @@ Tests run on eve_p2 (port 26101 for live): CharacterHostTests 11 passed; PlayerB
 - CH-18 live walk (pilot kills pilot, claim, payout): NOT done. Reason: the test system 30100032 is high-security (security 1.0); pilot-on-pilot weapons are refused there by the safety, and the same pursuit problem above applies.
 - CH-15 live two-pilot ship offer: NOT done. Reason: a Clone Vat Bay must be fitted, both pilots must be in one system within the hull's operational range (the same movement problem), and the Host rig has no space simulation (`EVE_SIM` off), so positions cannot be read in a Host test. The offer, accept and cancel flow is covered by `JumpCloneShipInstallTests` (Services.Core, two client sessions with sinks, real notification order).
 
+## Final state (wind-down, 2026-10-23)
+
+Pushed to origin main (all green, tested on eve_p2): CH-18 pod kill event and claim (c7a02423, a28ac8f8); CH-14 live faction standing walk GREEN (3353be02, 17ae0c88); merged origin/main (ea7e4813). After the merge the Host (4 PlayerBounty tests) and Space (31 PlayerDeath/SpaceEvents tests) suites passed.
+
+NOT pushed: the live CH-18 walk (pilot kills pilot in low security) is WIP on the local branch `wip-ch18-live` (commit 09c3565e, file tools/headless-client/tests/test_player_kill_live.py). Its setup works live (both pilots arrive and undock in Futzchag 30000017, placer bounty of 2,000,000 ISK, lock and activation accepted, PvP safety none). The shots still hit for 0 (hitQuality 0).
+
+What the live evidence shows about the hit chance:
+- Activation accepted at about 6 s after the hunter closes to 1000 m (the diagnostic `test_diag_pvp_live.py`: refusals were only "That target is not locked" before the lock and EffectAlreadyActive after the first accept). So the distance is inside the gun's range; distance alone does not explain the misses.
+- The gun is a Civilian Gatling Railgun (SDE type 3638): optimal 4800 m, falloff 2000 m, tracking 500, signature resolution 40000 (optimalSigRadius), damage 3 kinetic and 2 thermal times 1.25.
+- For the NPC case (CH-14) the fix was full speed and re-issuing the follow while shooting.
+- DIAGSHOT (the sim-side eprintln of chance, distance, angular velocity) was NOT obtained: the diagnostic failed at collection because it imports the WIP test, which is not on main. Root cause: NOT YET DIAGNOSED. Next step: rebuild the sim with the chance/distance eprintln on a branch that includes wip-ch18-live, run the walk with KEEP_LOGS=1, and read sim.out. Suspects to check: the signature_resolution value used for tracking (the SDE value 40000 may need unit handling in `chance_to_hit`), the victim pilot's signature radius, and the hunter's kinematics at the shot.
+- The SDE max velocities are real (Blood Visionary 1600 m/s, Guristas Invader 1760 m/s, Pithi Fugitive 250 m/s): the earlier "pursuit" problem is a setup issue, not a sim bug.
+
+Open items:
+- CH-14: GREEN (live, OnStandingSet asserted with faction 500010 and standing below zero).
+- CH-18 kill, claim, payout live walk: WIP, not green (zero hits, see above). The claim code itself is covered by PlayerBountyKillsTests and PlayerBountyHostTests.
+- CH-18 pod kill: Host and Space tests green; live walk not done (needs a pod shot in low security).
+- CH-15 two-pilot ship offer live: NOT started.
+- DEVIATIONS: the implant value of a pod claim is not tracked (the pod claim uses the capsule's base price only).

@@ -5543,6 +5543,11 @@ The fleetObject Init RPC costs 10 weighted per-session units because it updates 
 `mailMgr.SendMail` now refuses a nonpositive or non-integer character recipient ID with `MAIL_RECIPIENT_INVALID` before invoking persistence, rather than dropping malformed IDs from a mixed recipient list. Valid integer IDs and duplicate suppression keep their existing behavior. `MailServiceTests.SendMail_refuses_malformed_recipient_ids_before_sending` covers negative, textual, and non-finite recipients without a send callback.
 
 
+## PI and industry walk time controls (2026-10-23)
+
+The PI and industry test harnesses advance colony and job timestamps to fit production and delivery into live test time. `tools/headless-client/tests/test_planet_walk.py` and `test_walk_industry.py` exercise the client RPCs, state changes, persistence and delivery paths. EveJS 261018.1 routes extractor output and settles customs transfers in `server/src/services/planet/planetRuntimeStore.js` and `server/src/services/inventory/invBroker/planetaryImportExport.js`; its `industryManagerService.js` sends `CompleteJob` through `deliverIndustryJob`. This records test-time control only; it does not change runtime timing or client-visible rules.
+
+
 ## Config RPC bounds (2026-10-23)
 
 `config.GetMultiOwnersEx`, `GetMultiCorpTickerNamesEx`, `GetMultiAllianceShortNamesEx`, and `GetMultiLocationsEx` now refuse more than 500 raw IDs before provider or item lookups with `CONFIG_BULK_LIMIT_EXCEEDED`; each consumes 10 weighted per-session units. `GetAverageMarketPrices` also consumes 10 units for its market read. The 120-unit default leaves room for a normal initial lookup sequence. Focused service and dispatcher regressions cover the cap and named budget.
@@ -5599,7 +5604,11 @@ The overview now points to the config, crimewatch, station, and map method-level
 
 ## Market multi-buy batch validation (2026-10-23)
 
-`marketProxy.BuyMultipleItems` now requires a list or tuple and validates every line's type ID, quantity, minimum volume, and price before passing any line to the writer. Malformed outer shapes and bad lines return `MARKET_BULK_ARGUMENT_INVALID`; the client’s `marketsvc.BuyMulti` supplies a list of complete order rows. `MarketRpcTests.Buy_multi_refuses_malformed_batches_before_any_order_is_written` verifies malformed mixed batches do not create orders.
+`marketProxy.BuyMultipleItems` now requires a list or tuple and validates every line's type ID, nonnegative quantity, minimum volume, and price before passing any nonzero line to the writer. A zero-quantity line is ignored, as exercised by `Buy_multi_fills_each_line_at_its_limit_and_books_the_unfilled_rest_of_each_line`; negative quantities and bad lines return `MARKET_BULK_ARGUMENT_INVALID`. The client’s `marketsvc.BuyMulti` supplies a list of complete order rows, and `MarketRpcTests.Buy_multi_refuses_malformed_batches_before_any_order_is_written` verifies malformed mixed batches do not create orders.
+
+`config.GetMultiOwnersEx`, `GetMultiCorpTickerNamesEx`, `GetMultiAllianceShortNamesEx`, and `GetMultiLocationsEx` now reject malformed IDs and more than 500 raw list entries before data access. V24.01 cache priming supplies lists; location 0 remains supported for the none row. This bounds repeated owner and item reads while preserving valid client request shapes.
+
+The four `config` multi-ID lookup RPCs consume 10 weighted per-session work units because each may perform up to 500 provider reads. Valid V24.01 list-based requests retain their response shape; repeated scans receive the dispatcher's named budget refusal.
 
 
 ## Mail label read scope (2026-10-23)

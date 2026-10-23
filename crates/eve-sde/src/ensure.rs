@@ -16,7 +16,18 @@ use crate::manifest::{self, SdeManifest};
 pub const MISSION_SCHEMA: &str = "sde_mission";
 
 /// The tables the server reads from the mission build. The rest of that build is not loaded.
-pub const MISSION_TABLES: &[&str] = &["missions", "epicArcs"];
+pub const MISSION_TABLES: &[&str] = &[
+    "missions",
+    "epicArcs",
+    "categories",
+    "groups",
+    "types",
+    "skinrComponentPointValues",
+    "skinrComponents",
+    "skinrSlotConfigurations",
+    "skinrSlots",
+    "skinrTierThresholds",
+];
 
 #[derive(Debug)]
 pub enum EnsureError {

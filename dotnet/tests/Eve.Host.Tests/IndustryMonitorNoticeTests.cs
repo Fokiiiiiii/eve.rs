@@ -149,6 +149,18 @@ public sealed class IndustryMonitorNoticeTests
     }
 
     [Fact]
+    public void Composition_resolves_the_inner_inventory_broker_through_the_monitor_publisher()
+    {
+        var inventory = new InventoryMutationService(_ => { });
+        var monitors = new IndustryMonitorRpcService(availableMaterials: (_, _) =>
+            ValueTask.FromResult<IReadOnlyDictionary<int, long>>(new Dictionary<int, long>()));
+        var publishedInventory = new IndustryInventoryChangePublisher(inventory, monitors);
+
+        Assert.Same(inventory,
+            CharacterServicesComposition.SingleRegisteredService<InventoryMutationService>([publishedInventory]));
+    }
+
+    [Fact]
     public async Task Disconnect_and_reconnect_replace_the_session_monitor_through_host_dispatch()
     {
         var quantity = 5L;
@@ -171,8 +183,8 @@ public sealed class IndustryMonitorNoticeTests
 
         await dispatcher.DispatchAsync(Request(4, "invbroker", "Add", new PyInt(9)), session);
 
-        var notice = Notification(Assert.Single(capture.Packets, IsNotification));
-        Assert.Equal("OnIndustryMaterials", notice.Name);
+        var notice = Notification(Assert.Single(capture.Packets,
+            packet => IsNotification(packet) && Notification(packet).Name == "OnIndustryMaterials"));
         Assert.Equal(second.Items[0], notice.Args[0]);
         Assert.NotEqual(first.Items[0], notice.Args[0]);
         Assert.Equal(new PyInt(9), Assert.IsType<PyDict>(notice.Args[1]).Entries.Single().Value);

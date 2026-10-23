@@ -1,37 +1,26 @@
 # SSO handshake and account-link handoff
 
-## Objective
+## Objective and implementation
 
-Authenticate the V24.01 `ConnectionService.LoginSso` path from the inbound `user_sso_token`, resolve it only through a persisted CCP issuer/subject account link, and keep the client acknowledgement's local gateway `access_token` separate.
+Authenticate V24.01 `ConnectionService.LoginSso` using inbound `user_sso_token`, then resolve a stable eve.rs account only through a persisted issuer/subject link.
 
-## Source findings
+- Rust classifies the V24 SSO handshake and forwards the token as the HostLink SSO credential. Debug formatting redacts the token.
+- Host verifies the JWT signature with issuer JWKS, RS256, issuer, configured audiences, expiration/not-before, and the character subject before resolving the link. Invalid credentials, missing verifier, unknown subject, or missing link refuse with `LoginAuthFailed`; refused logins do not open a session or send initial state.
+- `identity.external_identity_links` persists unique issuer/subject-to-account links. Link lookup is explicit; the `EVE-SSO-CONNECTION` sentinel is not used as an account identity.
+- The CCP token is not forwarded as a local gateway token. The game-session acknowledgement retains `access_token` and `computer_hash` fields with their existing separate-provider semantics.
+- Account setup requires `EVE_SSO_AUDIENCES` to contain `EVE Online` and the actual application client ID. The inspected V24 callsites do not expose that ID, so deployment configuration must provide it.
 
-- V24.01 sends `user_name=EVE-SSO-CONNECTION`, `user_password=fakePW`, and `user_sso_token`; the Rust handshake classifies that path as SSO and forwards the token in HostLink v2.
-- CCP SSO documentation requires RS256/JWKS signature validation, issuer validation, both `EVE Online` and the application's client ID in `aud`, and a live `exp`; CCP `sub` identifies the chosen character.
-- The inspected V24 callsites do not expose the application client ID. Production SSO requires `EVE_SSO_AUDIENCES` with the actual client ID and `EVE Online`; the implementation does not guess it.
-- Account binding is explicit: `identity.external_identity_links` stores the issuer, character subject, and stable account id. EveJS v0.12.9 only records the SSO token and does not define an account mapping.
-- The CCP token is used only as the inbound SSO credential. `access_token=None` and `computer_hash=None` remain in the game-session acknowledgement; the separate multi-login computer-hash gate is outside this change.
+## Verified
 
-## Implementation and coverage
+- Host dispatch contract coverage checks the SSO credential, linked account, session userid/role/language, and refusal before session-open.
+- Identity coverage checks signature, issuer, audience, expiry, subject, repeated login, cross-account isolation, and persistent link resolution.
+- Deterministic-issuer headless scenario logs in, requests character selection, creates a character, selects it, and checks the linked account session id.
+- Actions run [40004676875](https://github.com/Fokiiiiiii/eve.rs/actions/runs/40004676875) on commit 607cf277: Host SSO 5 passed/0 failed/0 skipped; Identity SSO 8 passed/0 failed/0 skipped; live SSO 1 passed/0 failed/0 skipped. The first live run, 40001119508, exposed a KeyVal parsing issue after successful login; main commit e0cb832e fixed the parser and the rerun passed.
+- Earlier Host contract run 40000836917 and Identity run 40002097933 also passed.
+- Local Rust package check, formatting and targeted Clippy passed. Host.Tests Release build passed with zero warnings/errors. No PostgreSQL instance was used locally; Actions exercised its isolated test database.
+- The graphical V24 client was not exercised.
 
-- Rust parses and forwards the V24 token with redacted debug output; HostLink protocol version 2 carries credential kind and token.
-- The Host verifies CCP JWT signature, issuer, configured audiences, expiration/not-before, and character subject before resolving the explicit link.
-- Missing verifier, invalid token, unknown subject, or absent link refuses with `LoginAuthFailed`. Session opening remains after accepted authentication.
-- PostgreSQL migration `0005_sso_identity_links.sql` persists a unique issuer/subject link. Identity coverage includes signature, issuer, audience, expiry, subject, repeated login, and cross-account isolation. PostgreSQL coverage checks resolution through a newly created directory.
-- Host socket coverage checks the SSO credential/token, verified account id, role, country, and resulting `userid`/role/language initial state; it also checks an unlinked refusal before session-open.
-- `tools/headless-client/tests/test_sso_login_live.py` uses a local RSA test issuer, provisions a persisted link in the live-run scratch schema, and reaches character selection and `SelectCharacterID`. The runner configures the matching local issuer and audience and retains the merged paperdoll live test.
+## Remaining scope notes
 
-## Checkpoint
-
-- Rust `cargo +1.94.1 check -p eve-net`, package fmt, and targeted all-target Clippy: passed.
-- Python compile checks and HostLink fixture generation (14 valid, 10 invalid cases): passed.
-- Host Release, Host.Tests Release, and Identity.Tests Release builds: passed before the main merge. No-database identity verifier theory: 5 passed, 0 failed, 0 skipped.
-- Agent test for feature merge `fafa7948`: Identity.Tests SSO cases passed (8/8); Host.Tests found one fixture setup error because the linked account used default `AutoCreate=false`. The fixture now enables account creation; a follow-up validation is pending.
-- Workspace Rust fmt and Clippy cannot complete in this worktree because it already lacks `crates/eve-space/src/targeting/*`; those pre-existing deletions remain untouched. Targeted eve-net checks pass.
-- No PostgreSQL database was used locally. Push-triggered `ci.yml` and the follow-up Actions run are pending. The graphical V24 client exercise remains outstanding.
-
-## Next steps
-
-1. Commit the Host fixture correction and this checkpoint, fetch and merge `origin/main`, then push `HEAD:main`.
-2. Dispatch Host/Identity SSO tests for the new feature SHA and inspect the push-triggered CI run, including the live headless scenario; update this note with results.
-3. Keep the TODO row open until Actions verification is recorded.
+- Production SSO needs the deployment's real application client ID in `EVE_SSO_AUDIENCES`.
+- Older main CI run 40002451993 failed in the SKINR live test because its helper sent an unsigned fake gateway bearer (401), and in two unrelated market dispatch golden tests. Gateway token verification is owned by the separate 07-gateway-security task; those failures were outside this SSO change.

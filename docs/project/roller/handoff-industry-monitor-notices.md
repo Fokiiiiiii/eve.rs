@@ -17,14 +17,30 @@
 ## Checks
 
 - PASS: Host project build (0 warnings, 0 errors) before the latest upstream Host changes.
-- PASS: previous direct-service focused test (1 passed, 0 skipped); it was replaced because it did not exercise the packet dispatcher.
-- PASS on Actions for prior source at run `39975595679`, ref `d573f9e9`; this was before the packet-dispatch test correction.
-- Latest RPC packet dispatch test uses `PacketDispatcher.DispatchAsync` with Macho CallReqs for ConnectJob, DisconnectJob and inventory mutation. It checks notification order, changed and unchanged material quantities, target, monitor ID, payload, and session isolation.
-- The latest local test build attempt exited with code 137. A reduced-reference build then exposed stale Host test dependency outputs and test analyzer findings; the analyzer findings in the new test were corrected. A fresh successful focused run for the corrected test is pending.
-- `ci-status.py failures` found no push-triggered `ci.yml` run for the previous main SHA.
-- No existing headless end-to-end industry job walk was found. No live industry walk or graphical-client session has been performed.
+- PASS: focused Host dispatch tests on Actions, run `39987623229`, ref `be113558`.
+- PASS: Host CI shards 1–4 passed on the prior push after correcting the reconnect assertion.
+- PUSHED: live headless industry monitor walk in commit `8b3c8e04`; it seeds materials at two locations and checks monitor payload 8 plus OnItemChange-before-OnIndustryMaterials ordering.
+- FAIL: push CI run `39990672521` on `8b3c8e04`; Host startup reads missing `sde.skinrComponentPointValues` in `ShipSkinrCatalog.LoadAsync`, preventing live walks from reaching their calls. The market walk also exceeds the current session RPC budget.
+- FAIL: focused agent-test runs `39990690564` and `39991587566` both failed during the one-time .NET solution build before test output. The second run was dispatched after the first failure; neither returned a test result.
+- No graphical-client session has been performed.
+- Monitor metadata persistence across process restart has not been exercised; no PostgreSQL database was used locally.
 - Nine unrelated Rust deletions were present at initial inspection and remain unstaged.
 
 ## Remaining
 
-Commit and push the packet-dispatch test correction, confirm it on Actions, and report headless and graphical-client verification separately.
+Resolve the CI failures, confirm the Host dispatch and live industry walk on Actions, and exercise saved monitor metadata across restart if a no-database test path is available. Report headless and graphical-client verification separately.
+
+
+## Facility manager read-path update (2026-10-23)
+
+Added Host reads for `facilityManager.GetMaxActivityModifiers` from the shared cost-index source and `GetFacilityTaxes` from the pinned NPC corporation SDE data or deployed structure state. `FacilityManagerService` now returns a client notification error for `SetFacilityTaxes` when no authoritative writer is available, instead of returning a false success. The TODO still records the broader provider row as partial: structure locations/discovery and tax mutation with role checks, persistence and notifications remain open.
+
+- `dotnet build dotnet/src/Eve.Services.Core/Eve.Services.Core.csproj -p:UseSharedCompilation=false --no-restore`: passed, 0 warnings/errors.
+- `dotnet build dotnet/src/Eve.Host/Eve.Host.csproj -p:UseSharedCompilation=false --no-restore`: passed, 0 warnings/errors.
+- Focused Host test `IndustryFacilityManagerTests.Max_activity_modifiers_include_each_client_activity_with_its_cost_index`: passed, 1/1, 0 skipped.
+- No PostgreSQL or graphical-client checks were performed. GitHub Actions focused tests completed after the push: Host run `40001886886` and Core run `40002916849` passed with no failed tests or jobs. Push CI run `40001866034` failed; details follow.
+
+
+## CI follow-up for `da6d90a8`
+
+Focused Host and Core checks passed on Actions. Push CI's .NET build, all .NET test shards, and Rust format/clippy passed. The overall run failed in three jobs: Windows SDE/Rust workspace, Linux Rust workspace, and the fast live client at `tests/test_skinr_live.py:389` (`ConsumeRequest` returned HTTP 401 instead of 200). The run also reported eight skipped headless tests (skill training speed and slow movement/warp/jump/others/target/module/health cases); these are not passes. The failures concern Rust and SKINR paths untouched by this industry change; run `40001866034` remains red.

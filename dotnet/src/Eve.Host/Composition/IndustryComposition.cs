@@ -401,12 +401,25 @@ internal sealed partial class CharacterServicesComposition
         return new PyList(facilities);
     }
 
-    /// <summary>GetFacilityTaxes: the corporation tax of an NPC station (a fraction, as the facility payload gives it).</summary>
-    async ValueTask<PyValue?> FacilityTaxesAsync(long facilityId)
+    /// <summary>GetFacilityTaxes: the SDE NPC-corporation rate or the deployed structure's saved industry rate.</summary>
+    async ValueTask<PyValue?> FacilityTaxesAsync(long facilityId, CancellationToken token)
     {
-        var station = stations.Get(facilityId);
-        var rate = station is null ? (decimal?)null
-            : (await NpcCorporationTaxesAsync()).TryGetValue(station.OwnerId, out var value) ? value : 0m;
+        decimal? rate = null;
+        if (stations.Get(facilityId) is { } station)
+        {
+            var taxes = await NpcCorporationTaxesAsync();
+            rate = taxes.TryGetValue(station.OwnerId, out var value) ? value : 0m;
+        }
+        else if (facilityId > 0 && await structureDirectoryReadModel.GetStructureInfoAsync(facilityId, token) is { PersistentlyDeployed: true })
+        {
+            var structures = await ReadGameStoreTableAsync("structures", token);
+            if (structures[facilityId.ToString(System.Globalization.CultureInfo.InvariantCulture)] is JsonObject structure)
+            {
+                var value = IndustryDecimal(structure["industryTaxRate"] ?? structure["taxRate"]);
+                if (value > 1) value /= 100m;
+                rate = Math.Clamp(value, 0m, 1m);
+            }
+        }
         return Py.KeyVal(
             ("taxCorporation", rate is { } tax ? Py.Number((double)tax) : PyNone.Instance),
             ("taxAlliance", PyNone.Instance),
@@ -444,6 +457,21 @@ internal sealed partial class CharacterServicesComposition
                 new(new PyStr("canView"), PyValue.Of(true)),
                 new(new PyStr("canTake"), PyValue.Of(true)),
             ])).ToList());
+    }
+
+    internal static PyValue ActivityModifiersPayload(IReadOnlyDictionary<int, decimal> indexes)
+    {
+        var activityIds = new[]
+        {
+            Eve.Services.Core.IndustryRules.Manufacturing,
+            Eve.Services.Core.IndustryRules.ResearchTime,
+            Eve.Services.Core.IndustryRules.ResearchMaterial,
+            Eve.Services.Core.IndustryRules.Copying,
+            Eve.Services.Core.IndustryRules.Invention,
+            Eve.Services.Core.IndustryRules.Reaction,
+        };
+        return new PyDict(activityIds.Select(activityId => new KeyValuePair<PyValue, PyValue>(
+            new PyInt(activityId), Py.Number((double)indexes[activityId]))).ToList());
     }
 
     async ValueTask<PyValue?> FacilityManagerRpcAsync(ServiceCall call, CancellationToken token)
@@ -489,8 +517,23 @@ internal sealed partial class CharacterServicesComposition
 
         if (call.Method == "GetFacilities")
             return await NpcFacilitiesAsync(call, token);
+        if (call.Method == "GetMaxActivityModifiers")
+        {
+            var indexes = new Dictionary<int, decimal>();
+            foreach (var activityId in new[]
+            {
+                Eve.Services.Core.IndustryRules.Manufacturing,
+                Eve.Services.Core.IndustryRules.ResearchTime,
+                Eve.Services.Core.IndustryRules.ResearchMaterial,
+                Eve.Services.Core.IndustryRules.Copying,
+                Eve.Services.Core.IndustryRules.Invention,
+                Eve.Services.Core.IndustryRules.Reaction,
+            })
+                indexes[activityId] = await industryCostIndexes.GetAsync(0, activityId, token);
+            return ActivityModifiersPayload(indexes);
+        }
         if (call.Method == "GetFacilityTaxes")
-            return await FacilityTaxesAsync(FacilityNumber(call.Arg(0)));
+            return await FacilityTaxesAsync(FacilityNumber(call.Arg(0)), token);
         if (call.Method == "GetFacilityLocations")
         {
             var ownerId = FacilityNumber(call.Arg(1));

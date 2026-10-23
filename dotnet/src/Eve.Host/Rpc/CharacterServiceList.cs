@@ -38,6 +38,13 @@ namespace Eve.Host;
 internal sealed partial class CharacterServicesComposition
 {
     /// <summary>The character services in registry order. Each domain list is a contiguous run of the original list, so the order is unchanged.</summary>
+    internal static T SingleRegisteredService<T>(IEnumerable<IService> registeredServices)
+        where T : class, IService =>
+        registeredServices
+            .Select(service => service is IndustryInventoryChangePublisher publisher ? publisher.InnerService : service)
+            .OfType<T>()
+            .Single();
+
     private Task CharacterServiceList()
     {
         services = [
@@ -60,8 +67,7 @@ internal sealed partial class CharacterServicesComposition
             .. AgentRpc(),
         ];
         services = [.. services, .. SpaceRpc()];
-        services = [.. services, new RepackagingService(
-            (InvBrokerService)services.OfType<IndustryInventoryChangePublisher>().Single().InnerService)];
+        services = [.. services, new RepackagingService(SingleRegisteredService<InvBrokerService>(services))];
         services = [.. services, new Eve.Services.Corporations.BillMgrService(
             corporations,
             corporationOfficeStore,

@@ -1471,7 +1471,10 @@ public sealed partial class CorpRegistryService
     [Method("GetSuggestedAllianceShortNames")]
     public ValueTask<PyValue> GetSuggestedAllianceShortNames(ServiceCall call)
     {
-        var normalized = new string((JsSemantics.StringValue(call.Arg(0)) ?? "")
+        var allianceName = JsSemantics.StringValue(call.Arg(0)) ?? "";
+        if (allianceName.Length > 50)
+            throw new CorporationError("ALLIANCE_NAME_LIMIT_EXCEEDED");
+        var normalized = new string(allianceName
             .Where(char.IsAsciiLetterOrDigit).Select(char.ToUpperInvariant).Take(5).ToArray());
         var basis = normalized.Length == 0 ? "ALLY" : normalized;
         var suggestions = new[] { basis,basis[..Math.Min(4,basis.Length)],basis[..Math.Min(3,basis.Length)] + "X" }

@@ -1180,7 +1180,7 @@ public class AllianceTests
         var (applicant, applicantCorp) = await Founder(rig, "Response Applicant", "RSPAP");
         var alliance = await rig.Store.CreateAllianceAsync(executor, Request, "response-limit");
         var applicationId = await rig.Store.ApplyToAllianceAsync(applicant, alliance.Id, "Initial text");
-        var service = (Eve.Services.IService)new Eve.Services.Corporations.AllianceRegistryService(
+        var service = (Eve.Services.IService)new Eve.Services.Corporations.CorpRegistryService(
             rig.Store, rig.Characters, () => rig.Now);
         Eve.Services.ClientSession Session(long actor)
         {
@@ -1546,6 +1546,24 @@ public class AllianceTests
             await using var cleanup = rig.Source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
             await cleanup.ExecuteNonQueryAsync();
         }
+    }
+
+    [PgFact]
+    public async Task Suggested_alliance_short_names_bound_the_client_alliance_name()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var service = new Eve.Services.Corporations.CorpRegistryService(
+            rig.Store, rig.Characters, () => rig.Now);
+        var session = new Eve.Services.ClientSession();
+        Eve.Services.ServiceCall Call(Eve.Marshal.PyValue name) => new()
+        {
+            Session = session, Method = "GetSuggestedAllianceShortNames", Args = [name]
+        };
+        var valid = Assert.IsType<Eve.Marshal.PyList>(await service.GetSuggestedAllianceShortNames(Call(
+            new Eve.Marshal.PyWString(new string('A', 50)))));
+        Assert.NotEmpty(valid.Items);
+        await Assert.ThrowsAsync<Eve.Corporations.CorporationError>(() => service.GetSuggestedAllianceShortNames(
+            Call(new Eve.Marshal.PyWString(new string('A', 51)))).AsTask());
     }
 
     [PgFact]

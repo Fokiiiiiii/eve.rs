@@ -5641,3 +5641,13 @@ Corporation creation, application submission, invitations, CEO succession, membe
 ## Corporation reinforce-hour numeric validation (2026-10-23)
 
 SetStructureReinforceDefault now accepts only integral wire values from 0 through 23. Fractional or other numeric payloads are refused instead of being converted to hour zero. The PostgreSQL corporation settings regression verifies refusal and confirms the persisted hour remains unchanged.
+
+
+## Alliance creation RPC budget (2026-10-23)
+
+corpRegistry.CreateAlliance now consumes 10 weighted per-session units. Its persisted corporation-CEO check, transaction validation, maintenance billing and affiliation notifications are unchanged. The alliance-admin dispatcher regression includes repeated alliance creation calls.
+
+
+## Alliance short-name suggestion input bound (2026-10-23)
+
+corpRegistry.GetSuggestedAllianceShortNames now refuses alliance names above the V24.01 Tranquility field maximum of 50 UTF-16 code units before normalization and consumes 10 weighted per-session units. A PostgreSQL-backed service regression accepts 50 and refuses 51.

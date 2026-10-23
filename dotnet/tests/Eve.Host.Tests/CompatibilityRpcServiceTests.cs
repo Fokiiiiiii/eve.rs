@@ -513,7 +513,7 @@ public sealed class CompatibilityRpcServiceTests
 
             var data = await service.CallAsync(Call("GetPaperDollData", session, new PyInt(characterId)));
             Assert.Equal("keep-me", Encoding.UTF8.GetString(Assert.IsType<PyBytes>(Field(data, "dna")).Value.Span));
-            var ownData = await service.CallAsync(Call("GetMyPaperDollData", session, new PyInt(characterId + 1)));
+            var ownData = await service.CallAsync(Call("GetMyPaperDollData", session, new PyInt(characterId)));
             Assert.Equal("keep-me", Encoding.UTF8.GetString(Assert.IsType<PyBytes>(Field(ownData, "dna")).Value.Span));
             var batch = Assert.IsType<PyDict>(await service.CallAsync(Call("GetPaperDollDataBatch", session,
                 new PyList([new PyInt(characterId)]))));

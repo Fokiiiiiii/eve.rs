@@ -14,12 +14,24 @@ WORKFLOWS = ROOT / ".github" / "workflows"
 AUTOMATIC_SCHEDULES = {
     "ci.yml": "  schedule:\n    - cron: '0 6 * * 1'\n",
     "ci-windows.yml": "  schedule:\n    - cron: '0 */6 * * *'\n",
+    "ci-nightly.yml": "  schedule:\n    - cron: '0 4 * * *'\n",
 }
 AUTOMATIC_PUSH_WORKFLOWS = {"ci.yml"}
 PUSH_TRIGGERS = {
     "ci.yml": "  push:\n    branches: [main]\n    paths-ignore:\n      - 'docs/**'\n      - '**/*.md'\n      - '.github/dependabot.yml'\n",
 }
-REUSABLE_EVENTS = {"ci-windows.yml": "  workflow_call:\n"}
+REUSABLE_EVENTS = {
+    "ci-windows.yml": "  workflow_call:\n",
+    "live-slow.yml": (
+        "  workflow_call:\n"
+        "    inputs:\n"
+        "      test_file:\n"
+        "        description: One test filename, or all\n"
+        "        required: false\n"
+        "        default: all\n"
+        "        type: string\n"
+    ),
+}
 
 def split_workflow(text: str) -> tuple[str, str, str, str]:
     """Return prefix, trigger header, dispatch event and suffix for a workflow."""

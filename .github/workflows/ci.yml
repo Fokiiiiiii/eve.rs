@@ -286,6 +286,8 @@ jobs:
           cache: pip
           cache-dependency-path: tools/headless-client/requirements*.txt
       - run: pip install -r requirements-dev.txt
+      - name: Test CI status output parsing
+        run: python3 ../dev/test_ci_status.py
       # the live tests skip without a server; what is left runs on its own (the marshal golden frames, the mock server)
       - run: python -m pytest -q -rs
 

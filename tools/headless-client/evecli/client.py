@@ -44,6 +44,19 @@ class Client:
             raise
         return self.session
 
+    def login_sso(self, token: str, *, language: str = "EN") -> handshake.SessionInfo:
+        """Log in using the V24 inbound CCP SSO token and resolve the linked eve.rs account."""
+        self.close()
+        self._call_id = 0
+        self.conn = handshake.connect(self.host, self.port, self.timeout)
+        try:
+            self.session = handshake.login_sso(self.conn, token, language=language)
+            self.call("machoNet", "GetServiceInfo")
+        except Exception:
+            self.close()
+            raise
+        return self.session
+
     def close(self) -> None:
         if self.conn is not None:
             self.conn.close()

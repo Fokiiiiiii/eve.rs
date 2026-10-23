@@ -40,7 +40,7 @@ public class HostServerTests : IAsyncLifetime
 
     public Task InitializeAsync() => Task.CompletedTask;
 
-    private void Start(AccountOptions? identity = null, int maxPending = 10_000, Action<ServiceRegistry>? configure = null, IAccountDirectory? accounts = null, bool strictRpc = false, Action<string, Exception?>? onProblem = null, Action<ClientSession>? sessionOpened = null, long maxOutboundBytes = 8 * 1024 * 1024, long maxPendingBytes = 16 * 1024 * 1024, int maxConnections = 1_024)
+    private void Start(AccountOptions? identity = null, int maxPending = 10_000, Action<ServiceRegistry>? configure = null, IAccountDirectory? accounts = null, bool strictRpc = false, Action<string, Exception?>? onProblem = null, Action<ClientSession>? sessionOpened = null, long maxOutboundBytes = 8 * 1024 * 1024, long maxPendingBytes = 16 * 1024 * 1024, int maxConnections = 1_024, ISsoTokenVerifier? ssoTokenVerifier = null)
     {
         var registry = new ServiceRegistry();
         configure?.Invoke(registry);
@@ -56,7 +56,7 @@ public class HostServerTests : IAsyncLifetime
         var dispatcher = new PacketDispatcher(registry, now) { StrictRpc = strictRpc, OnProblem = onProblem };
         var encoded = MarshalCodec.Encode(config);
         _server = new HostServer(
-            new HostOptions { MaxFrontConnections = maxConnections, MaxPendingPacketsPerSession = maxPending, MaxPendingBytesPerSession = maxPendingBytes, MaxQueuedOutboundBytesPerSession = maxOutboundBytes, Log = message => { lock (_log) { _log.Add(message); } }, SessionOpened = sessionOpened },
+            new HostOptions { MaxFrontConnections = maxConnections, MaxPendingPacketsPerSession = maxPending, MaxPendingBytesPerSession = maxPendingBytes, MaxQueuedOutboundBytesPerSession = maxOutboundBytes, SsoTokenVerifier = ssoTokenVerifier, Log = message => { lock (_log) { _log.Add(message); } }, SessionOpened = sessionOpened },
             dispatcher,
             accounts ?? new InMemoryAccountDirectory(identity ?? new AccountOptions { AutoCreate = true }),
             () => encoded);
@@ -82,6 +82,19 @@ public class HostServerTests : IAsyncLifetime
         await _cancel.CancelAsync();
         _listener?.Dispose();
         await _serving;
+    }
+
+    private sealed class MutationService : IService
+    {
+        public string Name => "budgetMutation";
+        public int Mutations { get; private set; }
+        public bool HasMethod(string method) => method == "Mutate";
+
+        public ValueTask<PyValue> CallAsync(ServiceCall call)
+        {
+            Mutations++;
+            return ValueTask.FromResult<PyValue>(new PyStr("accepted"));
+        }
     }
 
     /// <summary>A service whose first call is slow: it shows whether a session's packets are kept in order.</summary>
@@ -303,6 +316,82 @@ public class HostServerTests : IAsyncLifetime
         await front.SendAsync(new Hello((ushort)(HostCodec.ProtocolVersion + 1), 1));
         Assert.Null(await front.ReceiveOrEndAsync());
         Assert.Contains(_log, line => line.Contains("speaks version", StringComparison.Ordinal));
+    }
+
+    private sealed class FixedSsoTokenVerifier(string expectedToken, VerifiedSsoIdentity identity) : ISsoTokenVerifier
+    {
+        public bool ReceivedExpectedToken { get; private set; }
+
+        public ValueTask<VerifiedSsoIdentity?> VerifyAsync(string token, CancellationToken cancellationToken)
+        {
+            ReceivedExpectedToken = string.Equals(token, expectedToken, StringComparison.Ordinal);
+            return ValueTask.FromResult<VerifiedSsoIdentity?>(ReceivedExpectedToken ? identity : null);
+        }
+    }
+
+    [Fact]
+    public async Task Sso_host_dispatch_resolves_the_verified_account_and_sends_its_session_state()
+    {
+        const string issuer = "https://sso.test.invalid/";
+        const string subject = "CHARACTER:EVE:90000001";
+        const string token = "opaque-test-token";
+        const ulong role = 0x0100_0000_0000_0001;
+        var accounts = new InMemoryAccountDirectory(new AccountOptions { CountryCode = "JP", NewAccountRole = role });
+        var created = Assert.IsType<LoggedIn>(await accounts.LoginAsync(
+            new LoginAttempt("linked-account", new byte[] { 1 }, "EN", "127.0.0.1"), CancellationToken.None));
+        Assert.True(await accounts.LinkSsoIdentityAsync(
+            created.AccountId, new VerifiedSsoIdentity(issuer, subject), CancellationToken.None));
+        var verifier = new FixedSsoTokenVerifier(token, new VerifiedSsoIdentity(issuer, subject));
+
+        Start(accounts: accounts, ssoTokenVerifier: verifier);
+        var front = await Handshaken(await ConnectAsync());
+        await front.SendAsync(new AuthRequest(
+            1, AuthCredentialKind.Sso, "EVE-SSO-CONNECTION", new byte[] { 2 }, token, "FR", "127.0.0.1"));
+        var accepted = Assert.IsType<Accepted>(Assert.IsType<AuthReply>(await front.ReceiveAsync()).Outcome);
+
+        Assert.True(verifier.ReceivedExpectedToken);
+        Assert.Equal(created.AccountId, accepted.UserId);
+        Assert.Equal(role, accepted.Role);
+        Assert.Equal("JP", accepted.CountryCode);
+        Assert.DoesNotContain(_log, line => line.Contains(token, StringComparison.Ordinal));
+
+        await front.SendAsync(Open(1234, accepted.UserId) with
+        {
+            Role = accepted.Role,
+            Language = "FR",
+            CountryCode = accepted.CountryCode,
+        });
+        var initialState = Assert.IsType<Send>(await front.ReceiveAsync());
+        var packet = Assert.IsType<PyObject>(MarshalCodec.Decode(initialState.Payload));
+        var state = ((PyTuple)packet.Args).Items;
+        var session = ((PyTuple)state[4]).Items;
+        var values = ((PyDict)session[2]).Entries.ToDictionary(entry => T(entry.Key)!, entry => entry.Value);
+        Assert.Equal(new PyInt(created.AccountId), values["userid"]);
+        Assert.Equal(new PyLong(unchecked((long)(role | CharUnboundMgrService.SessionBaseRole))), values["role"]);
+        Assert.Equal("FR", T(values["languageID"]));
+    }
+
+    [Fact]
+    public async Task An_unlinked_sso_identity_is_refused_without_opening_a_session()
+    {
+        const string token = "opaque-unlinked-test-token";
+        const string issuer = "https://sso.test.invalid/";
+        const string subject = "CHARACTER:EVE:90000002";
+        var accounts = new InMemoryAccountDirectory(new AccountOptions { AutoCreate = true });
+        _ = await accounts.LoginAsync(
+            new LoginAttempt("unlinked-account", new byte[] { 1 }, "EN", "127.0.0.1"), CancellationToken.None);
+        var verifier = new FixedSsoTokenVerifier(token, new VerifiedSsoIdentity(issuer, subject));
+        var opened = 0;
+
+        Start(accounts: accounts, ssoTokenVerifier: verifier, sessionOpened: _ => Interlocked.Increment(ref opened));
+        var front = await Handshaken(await ConnectAsync());
+        await front.SendAsync(new AuthRequest(
+            1, AuthCredentialKind.Sso, "EVE-SSO-CONNECTION", new byte[] { 2 }, token, "EN", "127.0.0.1"));
+
+        var rejected = Assert.IsType<Rejected>(Assert.IsType<AuthReply>(await front.ReceiveAsync()).Outcome);
+        Assert.Equal(LoginRefused.BadCredentials, rejected.Reason);
+        Assert.Equal(0, Volatile.Read(ref opened));
+        Assert.DoesNotContain(_log, line => line.Contains(token, StringComparison.Ordinal));
     }
 
     [Fact]
@@ -1825,6 +1914,37 @@ public class HostServerTests : IAsyncLifetime
             order.Add((reply.SessionId, T(Result(MarshalCodec.Decode(reply.Payload)))!));
         }
         Assert.Equal([(other.SessionId, "Second"), (slow.SessionId, "First"), (slow.SessionId, "Second")], order);
+    }
+
+    [Fact]
+    public async Task An_over_budget_request_disconnects_without_dispatch_and_a_valid_retry_works()
+    {
+        var service = new MutationService();
+        Start(configure: registry => registry.Register(service));
+        var front = await Handshaken(await ConnectAsync());
+        var open = Open();
+        await front.SendAsync(open);
+        await front.ReceiveAsync();
+
+        var oversizedArgument = new PyList(Enumerable.Repeat<PyValue>(PyNone.Instance, 520_000).ToArray());
+        var hostile = MarshalCodec.Encode(Packets.Call(open, 1, "budgetMutation", "Mutate", oversizedArgument));
+        await front.SendAsync(new Packet(open.SessionId, hostile));
+
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var refusal = Assert.IsType<Disconnect>(await front.ReceiveAsync(timeout.Token));
+        Assert.Equal(open.SessionId, refusal.SessionId);
+        Assert.Equal("InvalidPacket", refusal.Reason);
+        Assert.Equal(0, service.Mutations);
+
+        var retry = Open(5_000, 7);
+        await front.SendAsync(retry);
+        await front.ReceiveAsync();
+        await front.SendAsync(new Packet(retry.SessionId, MarshalCodec.Encode(Packets.Call(retry, 2, "budgetMutation", "Mutate"))));
+
+        var response = Assert.IsType<Send>(await front.ReceiveAsync(timeout.Token));
+        Assert.Equal(retry.SessionId, response.SessionId);
+        Assert.Equal("accepted", T(Result(MarshalCodec.Decode(response.Payload))));
+        Assert.Equal(1, service.Mutations);
     }
 
     [Fact]

@@ -327,8 +327,7 @@ public sealed partial class CharMgrService(
             return new PyInt(NoExistingCustomization);
         if (readRecustomizationState is not null && await readRecustomizationState(characterId, call.Cancellation) is { } recustomizing)
             return new PyInt(recustomizing);
-        var (doll, portrait) = await characters.AppearanceAsync(characterId, call.Cancellation);
-        return new PyInt(doll is not null || portrait is not null ? NoRecustomization : NoExistingCustomization);
+        return new PyInt(await characters.ResolvedPaperdollStateAsync(characterId, call.Cancellation));
     }
 
     private const int NoRecustomization = 0;

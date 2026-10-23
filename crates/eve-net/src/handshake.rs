@@ -14,6 +14,7 @@
 //!
 //! Rejected logins receive a pickled `GPSTransportClosed` before close.
 
+use std::fmt;
 use std::future::Future;
 use std::io;
 use std::sync::Arc;
@@ -24,19 +25,36 @@ use eve_marshal::{MarshalError, Value, decode_bytes, encode_packet};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 
 use crate::frame::FrameReader;
-use crate::hostlink::AuthOutcome;
+use crate::hostlink::{AuthCredentialKind, AuthOutcome, SsoToken};
 use crate::profile;
 
 /// Login sessions add ROLE_LOGIN, ROLE_PLAYER, and ROLE_IGB to the account role.
 pub const SESSION_BASE_ROLE: u64 = 0x6000_0000_8000_0000;
+pub const SSO_CONNECTION_USER: &str = "EVE-SSO-CONNECTION";
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct AuthRequest {
+    pub credential_kind: AuthCredentialKind,
     pub user_name: String,
     /// The client's password hash, as sent (the raw digest).
     pub password_hash: Bytes,
+    pub sso_token: Option<SsoToken>,
     pub language: String,
     pub address: String,
+}
+
+impl fmt::Debug for AuthRequest {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AuthRequest")
+            .field("credential_kind", &self.credential_kind)
+            .field("user_name", &self.user_name)
+            .field("password_hash", &"<redacted>")
+            .field("sso_token", &self.sso_token.as_ref().map(|_| "<redacted>"))
+            .field("language", &self.language)
+            .field("address", &self.address)
+            .finish()
+    }
 }
 
 /// The authentication host is unavailable.
@@ -294,12 +312,26 @@ where
     let user_name = dict_get(login, "user_name").and_then(text_of).unwrap_or_default();
     let password_hash = dict_get(login, "user_password_hash").and_then(bytes_of).unwrap_or_default();
     let language = dict_get(login, "user_languageid").and_then(text_of).unwrap_or_else(|| "EN".to_owned());
+    let sso_value = dict_get(login, "user_sso_token");
+    let sso_was_sent = sso_value.is_some_and(|value| !matches!(value, Value::None));
+    let credential_kind = if user_name == SSO_CONNECTION_USER || sso_was_sent {
+        AuthCredentialKind::Sso
+    } else {
+        AuthCredentialKind::Password
+    };
+    let sso_token = if credential_kind == AuthCredentialKind::Sso {
+        sso_value.filter(|value| !matches!(value, Value::None)).and_then(text_of).map(SsoToken::new)
+    } else {
+        None
+    };
 
     send(writer, &Value::Int(2)).await?;
     let outcome = auth
         .authenticate(AuthRequest {
+            credential_kind,
             user_name: user_name.clone(),
             password_hash,
+            sso_token,
             language: language.clone(),
             address: address.to_owned(),
         })

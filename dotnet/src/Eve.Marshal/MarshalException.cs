@@ -34,6 +34,9 @@ public enum MarshalErrorKind
 
     /// <summary>Nesting deeper than <see cref="MarshalCodec.MaxDepth"/>.</summary>
     TooDeep,
+
+    /// <summary>The decoded values and collection slots exceed the per-stream allocation budget.</summary>
+    AllocationBudgetExceeded,
 }
 
 /// <summary>
@@ -79,4 +82,6 @@ public sealed class MarshalException(MarshalErrorKind kind, string message) : Ex
     internal static MarshalException Unencodable(string what) => new(MarshalErrorKind.Unencodable, $"cannot marshal value: {what}");
 
     internal static MarshalException TooDeep() => new(MarshalErrorKind.TooDeep, "marshal value nested too deeply");
+
+    internal static MarshalException AllocationBudgetExceeded() => new(MarshalErrorKind.AllocationBudgetExceeded, "marshal stream exceeds the decoded allocation budget");
 }

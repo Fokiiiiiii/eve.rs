@@ -37,3 +37,10 @@ The Host test distinguishes the event payload type from the persisted row type: 
 - Local Host.Tests compile-check passed with 0 warnings and 0 errors. No local PostgreSQL tests were run.
 - Push-triggered CI for 737ba657 was still running at this update. Its focused contact run failed only on the live senderID assertion and service test passed 1/1; the corrected assertion is under the latest focused run.
 - Graphical-client behavior has not been checked.
+
+
+## Focused Actions result (2026-10-23)
+
+The corrected focused run 40013613450 for commit 48163285 passed: Eve.Services.CharacterInfo.Tests 1/1 and Eve.Host.Tests 1/1, with no skips. The local Host.Tests build also passed with 0 warnings and 0 errors. Push-triggered CI for 48163285 and the latest documentation push d7f45242 were still in progress at this update.
+
+The earlier push CI for 737ba657 failed in two unrelated checks: the live SkinR consume test returned INVALID_COMPONENT_LICENSE_ITEM, and MarketHostTests.The_host_dispatches_accessible_structure_market_orders_and_recovers_partial_settlement_after_restart threw a wrapped exception. These failures need triage in their owning areas. No graphical-client verification has been done.

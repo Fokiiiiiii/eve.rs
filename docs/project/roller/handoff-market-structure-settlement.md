@@ -49,3 +49,8 @@
 
 - Run 678 (`737ba657`) failed the first structure sell even after the test persisted seller, buyer and structure owner at the same structure as their sessions. That disproves the location-only cause recorded above.
 - The Host test now includes the returned Macho label or CustomInfo text when the first sell fails. The exact refusal and its root fix are still pending the next focused Actions check; the corrected location fixture alone is not a verified fix.
+## 2026-10-23 run 683 affiliation follow-up
+
+- Run 683 on `8610990c` reported `StructureMarketDenied` in the structure sell regression after the location fix. The production read model resolves affiliation from persisted `CorporationMember` relations. The fixture helper had created a character with a corporation ID but skipped the relation mutation performed by normal character creation.
+- Added the active corporation membership relation to every market test trader in the scratch relation schema; the denied trader remains affiliated with the different corporation. This makes the fixture's stored state match its intended character setup without changing access logic.
+- The updated `Eve.Host.Tests` project builds locally with 0 warnings and 0 errors. No database-backed test was run locally; Actions must verify the fixture after push.

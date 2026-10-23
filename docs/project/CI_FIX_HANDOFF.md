@@ -120,3 +120,9 @@ Use lane `eve_p4` only and run database work through `tools/dev/db-lock.sh`. The
 - The gateway helper now obtains the token through the logged-in client's `userSvc.GetUserToken` RPC. SKINR, skill-plan, and title live walks use that helper, including the fresh login after Host restart. A small helper regression test verifies the RPC and authorization metadata.
 - The local focused helper test passed after installing the headless-client requirements into a temporary environment. The focused live SKINR Action check will run on the pushed commit.
 
+## 2026-10-23 market budget test configuration
+
+- CI run 660 on `4f38c72f` exposed two dispatcher assertions that expected the market-specific budget to reject a second read, but their test dispatchers only lowered the general RPC budget.
+- The market service has a separate `MaxMarketRpcUnitsPerMinute` limit. The two tests now set that value to 10, matching the intended per-session refusal scenario.
+- `Eve.Services.Tests` builds locally, and the focused market-owner and PLEX-history tests passed 2/2 without a database. The next push gate will verify the fix.
+

@@ -739,7 +739,7 @@ public sealed class CharacterHostTests
         var row = Assert.Single(notifications.Items);
         Assert.Equal(new PyInt(89), Field(row, "typeID"));
         Assert.Equal(new PyLong(senderId), Field(row, "senderID"));
-        Assert.Equal(new PyLong(recipientId), Field(row, "receiverID"));
+        Assert.Equal(new PyInt(recipientId), Field(row, "receiverID"));
 
         await rig.RestartAsync();
         notificationMgr = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("notificationMgr"));
@@ -1255,7 +1255,7 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
         return entries.Single(entry => entry.Key switch
         {
             PyStr text => text.Value == key,
-            PyBytes bytes => System.Text.Encoding.UTF8.GetString(bytes.Value.Span) == key,
+            PyBytes bytes => bytes.Value.Span.SequenceEqual(System.Text.Encoding.UTF8.GetBytes(key)),
             _ => false,
         }).Value;
     }

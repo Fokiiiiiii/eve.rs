@@ -140,17 +140,15 @@ Use lane `eve_p4` only and run database work through `tools/dev/db-lock.sh`. The
 
 ### SKINR unlimited component license sentinel
 
-- CI run 660 returned HTTP 400 during the live persisted-license walk. Its fixture selects a published compatible component from the official mission SDE with `associatedTypeIDs.licenseUsesGranted = -1` (unlimited), but the Host catalog discarded negative counts. The item type then could not resolve to a component license, so the valid design request was refused.
-- The catalog now maps SDE `-1` to the runtime's `0` unlimited sentinel, excludes values below `-1`, and preserves positive finite uses. The existing gateway transaction consumes the item and persists the unlimited grant; the live scenario also covers retry, sequencing and application.
-- Added `Unlimited_license_types_use_the_runtime_unlimited_sentinel` for unlimited, invalid and finite values. `Eve.Host.Tests` Release build passed with zero warnings and errors, and the focused test passed 1/1 with no skips. No database was used.
-- CI run 662 (`40005488739`) completed on `94e37e82`; Windows and all other selected jobs passed, while the E2E job reproduced the pre-fix HTTP 400 at `ConsumeRequest`. Its regression is the reason for this catalog fix.
-- After merging current main, `Eve.Host.Tests` Release build passed with zero warnings and errors and the focused regression passed 1/1 with no skips. No database was used.
-- Pushed the catalog fix as `4b3cd33b`. Agent run 135 (`40007743442`) passed the focused SKINR regression 1/1 with no skips. Push CI run 668 (`40007726336`) is still in progress; its Host shard exposed a separate Character notification test-helper key cast, fixed in the next commit. Windows TODO rows are closed based on the successful Windows job in run 662.
+- Runs 661 and 666 reached the live consume request and returned HTTP 400 for a published compatible mission-SDE component whose `associatedTypeIDs.licenseUsesGranted` is `-1`. On `40110cc0`, allowing the negative value through the catalog did not resolve the failure.
+- Commit `4b3cd33b` maps the SDE `-1` unlimited marker to the gateway's runtime `0` sentinel, rejects values below -1 and keeps positive finite grants. `ShipSkinrCatalogDataTests.Unlimited_license_types_use_the_runtime_unlimited_sentinel` covers those cases. Agent run 135 (`40007743442`) passed the focused live SKINR walk 1/1 with no skips.
+- CI run 666 predates that parser fix and still returned 400. Agent run 138 and CI run 671 are checking current main `287c530d`; CI 668 is checking the preceding head `4b3cd33b`.
 
-## 2026-10-23 Character notification test helper
+### Contact notification dictionary keys
 
-- CI run 668 on `4b3cd33b` reported `CharacterHostTests.Contact_add_persists_and_routes_the_recipient_notification` failing in the test-only `Field` helper: it cast a wire-decoded dictionary key to `PyStr`, while the actual decoded Python string key is `PyBytes`.
-- The helper now matches either `PyStr` or UTF-8 `PyBytes` keys; no Host RPC or client wire behavior changed. `Eve.Host.Tests` Release build passed with zero warnings and errors.
-- Agent run 138 (`40008851484`) on `287c530d` completed with failure; the Action log exposed the invocation but not the test summary. The persisted `data` assertion now verifies `level` and `message` through `Field` instead of comparing a whole dictionary's concrete key encoding. The updated `Eve.Host.Tests` Release build passed with zero warnings and errors; the focused database-backed run will be repeated after push.
-- CI run 668 (`40007726336`) also reproduced HTTP 400 at SKINR `ConsumeRequest` even with the unlimited catalog mapping. The live test now includes the gateway error message in the failing assertion so the next Actions run identifies the specific refusal; the catalog fix is not considered verified end to end yet.
-- Pushed the first test-helper change as `287c530d`; its focused Agent run and push CI are in progress/complete as recorded above.
+<<### Contact notification dictionary keys and persisted values
+
+- CI runs 664 (`774b7a18`), 666 (`40110cc0`) and 668 (`4b3cd33b`) exposed the contact notification test's assumption that wire-decoded Python string keys are always `PyStr`; the actual keys are `PyBytes`. Main's `d2b2821d` adds key-aware notification assertions. The test helper now handles both marshal string forms.
+- Agent run 138 (`40008851484`) on `287c530d` failed, but its downloaded log tail included only the test invocation, not the test result details. The persisted notification assertion now checks `level` and `message` through the same field reader rather than comparing the full dictionary's concrete key encoding. The updated Host.Tests Release build passed with zero warnings and errors; the focused database-backed check will be repeated.
+- CI run 668 also still returned HTTP 400 at SKINR `ConsumeRequest` after the SDE unlimited-license sentinel fix. `test_skinr_live.py` now includes the gateway error string in its assertion so the next E2E run identifies the refusing validation branch. The catalog fix is not yet verified end to end.
+- Commit `b5ecf895` contains these assertion changes and the live error diagnostic. Merge current main and push, then rerun the focused contact test and inspect the live SKINR response.

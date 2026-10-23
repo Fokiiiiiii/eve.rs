@@ -20,8 +20,8 @@ EveJS 261018.1 checks this before changing state and returns a CustomNotify carr
 
 No database was used locally. The focused no-database capacity predicate test passed. Ship and Inventory test projects both built successfully with zero warnings and errors.
 
-The first Actions dispatch supplied an empty live-test input, but GitHub selected the workflow default fast set and started 12 live test files. A later focused dispatch ran the selected .NET projects and one live file, but failed during the live-test step; its returned step log ended before the summary. A second empty-live dispatch again received the fast default. The workflow default is now empty, but GitHub requires a non-empty workflow input when required is true; change it to optional, then dispatch the DB regressions with the documented empty live selection. The focused headless walk still needs its own run. No graphical-client check was made.
+GitHub Actions has not yet completed the cargo tests or the focused live headless walk successfully. On commit 63035d0611241b2e4dd5c30b5ff03880d0246a19, targeted Actions failed before test execution because the concurrent AgentMissionDispatchTests change references a missing DialogueReply helper. The push-triggered CI run also reports an unrelated Python market row-shape failure. The workflow now accepts an empty live-test input; a fresh dispatch was requested but its run id was not listed yet. No graphical-client check was made.
 
 Keep the worktree's pre-existing deletions under crates/eve-net, crates/eve-sde, crates/eve-sim, and crates/eve-space out of the commit.
 
-Implementation pushes: 80d07d8c and 55f2dd87. Latest main: 32f453f4. Workflow dispatch fix and Actions results: pending.
+Implementation pushes: 80d07d8c and 55f2dd87. Latest main: 63035d06. Actions follow-up required for the focused cargo tests and headless walk.

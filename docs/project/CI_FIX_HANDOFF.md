@@ -186,3 +186,10 @@ CI run 672 on `1669e6dc` failed the structure market Host test because the fixtu
 
 - Run 678 on `737ba657` still failed the first structure sell after the persisted character location was changed to the same structure as the session. That disproved the location-only diagnosis.
 - `MarketHostTests` now includes the returned Macho label or CustomInfo text in the failed sell assertion. The next focused Actions run will expose the exact remaining refusal for a root fix.
+
+
+## 2026-10-23 merged-head verification update
+
+- Merged origin/main `d7f45242` after fetching; that update only added contact-notification handoff notes. The merged `Eve.Host.Tests` project build completed successfully with 0 warnings and 0 errors. No local PostgreSQL test was run.
+- CI run 681 on `04a43486` is still running. Rust format/clippy, Rust tests, Python tests, fixture validation and .NET build have passed; the end-to-end, Windows and .NET test jobs are still in progress. Check its completed result before treating the SKINR live fixture change as resolved.
+- The persisted contact assertions now expect `PyInt` for stored sender/receiver IDs and restart-read relationship level. The market test only adds the returned Macho refusal text to the failing assertion; the actual sell refusal is not yet identified. Both focused Actions checks must run on the next pushed head.

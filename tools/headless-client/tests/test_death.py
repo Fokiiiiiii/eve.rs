@@ -23,20 +23,17 @@ from evecli.describe import shape
 from tests import test_login_to_character as base
 from tests.test_others import names, watch
 from tests.test_target import plain_race, timing
-from tests.test_undock import STATION, SYSTEM, arrive, collapse, compare_events, outcome
+from tests.test_undock import STATION, SYSTEM, actions_of, arrive, collapse, compare_events, outcome
 
 DEATH = base.load("death.json")
-# the moment of a detonation: the recording's came 1.35 s after its 2.0 s of simulation time, this side 0.27 s (DEVIATIONS #63)
-DETONATION_TOLERANCE = 1.5
+# The command response and client event capture have different latency on the two runs; compare the detonation from the hull's AddBalls2 spawn.
+DETONATION_TOLERANCE = 0.5
 
 pytestmark = [
     pytest.mark.skipif(not base.LIVE, reason="set EVE_LIVE_HOST=host:port to test against a running server"),
     pytest.mark.skipif(os.environ.get("EVE_LIVE_SLOW") != "1", reason="a minute: set EVE_LIVE_SLOW=1"),
 ]
 
-# the moment a ball goes may differ from the recording's by this much: the reference blows a hull up about 3.7 s after it comes (its own two seconds of
-
-TOLERANCE = 1.6
 
 def without_protection(events: list) -> list:
     return [e for e in events if e["name"] != "OnInvulnCancelled"]
@@ -107,11 +104,32 @@ def test_a_hull_that_blows_up_beside_two_pilots_is_seen_as_it_was_in_the_referen
         for who, key in (("the victim", "events"), ("the watcher", "seen")):
             theirs, ours = canonical(without_protection(steps[label][key])), canonical(without_protection(without_bumps(got[key])))
             problems.extend(compare_events(theirs, ours, f"{label} ({who})", mapping))
-            # the detonation is 2.0 s of simulation time after the spawn: the recording's took 3.4 s after it (1.35 s of its own latency), this side 2.3 s
-            # the moments of the hull's arrival and of its detonation (the ball's own settings are told at a different moment and are not timed)
-            def moments(events):
-                return [e for e in events if e["name"] != "DoDestinyUpdate" or _names(e) & {"AddBalls2", "RemoveBalls"}]
-            problems.extend(timing(moments(theirs), moments(ours), f"{label} ({who})", DETONATION_TOLERANCE, ("DoDestinyUpdate",)))
+            # Read simulation stamps from the raw DoDestinyUpdate wire shape; event["at"] is client receive wall time.
+            def moments(events, side):
+                selected = []
+                spawns = []
+                for event in events:
+                    if event["name"] != "DoDestinyUpdate":
+                        continue
+                    try:
+                        actions, _ = actions_of(event)
+                    except (KeyError, TypeError, ValueError):
+                        continue
+                    for stamp, name, _ in actions:
+                        if name not in {"AddBalls2", "RemoveBalls"}:
+                            continue
+                        if isinstance(stamp, bool) or not isinstance(stamp, int):
+                            problems.append(f"{label} ({who}, {side}): {name} has no integer simulation stamp")
+                            continue
+                        if name == "AddBalls2":
+                            spawns.append(stamp)
+                        selected.append({"name": "DoDestinyUpdate", "at": stamp})
+                if not spawns:
+                    problems.append(f"{label} ({who}, {side}): no AddBalls2 spawn stamp was recorded")
+                    return selected
+                spawn_stamp = min(spawns)
+                return [{**event, "at": event["at"] - spawn_stamp} for event in selected]
+            problems.extend(timing(moments(theirs, "reference"), moments(ours, "eve.rs"), f"{label} ({who})", DETONATION_TOLERANCE, ("DoDestinyUpdate",)))
     assert problems == [], "\n".join(problems[:40])
 
 def m_text(raw):

@@ -16,7 +16,7 @@ Verified: `JumpCloneShipInstallTests` 4 passed; all `Eve.Services.Core.Tests` 86
 
 ## CH-19 completed for the inactive-season client surface
 
-The live no-season walk passed on `eve_p2` / port 26101. It checks `get_season_data_for_character`, `select_season`, the current FILETIME season end, all client challenge reads and claims, and the exact empty `util.KeyVal` progress record. The source audit found no season/challenge definitions in the pinned SDE, EveJS data directories or checked-out V24.01 resource payloads/indexes. The client source names `seasonSelection.fsdbinary`, but that binary is absent. EveJS's only challenge ID is a placeholder with a fabricated notification, which eve.rs does not send. Active-season progress and rewards remain unsupported because the checked sources provide no definition or reward data.
+The live no-season walk passed on `eve_p2` / port 26101. It checks `get_season_data_for_character`, `select_season`, the current FILETIME season end, all client challenge reads and claims, and the exact empty `util.KeyVal` progress record. The 2026-10-23 re-audit found Gallente Election assets in the pinned SDE: Campaign Trail waypoint types 57640, 57643 and 64725, and campaign buses 92282-92284. Those SDE items do not include a season-selection payload, challenge identifiers or the progress and reward track table. CCP's [event announcement](https://www.eveonline.com/news/view/the-gallente-election-is-underway) and [reward update](https://www.eveonline.com/news/view/gallente-election-more-action-and-rewards) establish that the 2026 event ran March 19-April 16 and give broad challenge and reward categories, not the internal records read by V24.01. The eve-logic source names res:/staticdata/seasonSelection.fsdbinary, but the checkout has only its loader path and no compiled payload or resource index. Pinned EveJS v0.12.9 has inactive defaults and placeholder challenge ID 192491367. Separately indexed EveJS 261018.1 contains emulator-authored Campaign Trail placements, including non-retail coordinates, so it does not provide matching V24.01 data. The event is closed and exact protocol challenge and reward definitions are absent from authoritative sources; progress, claims and grants remain unsupported without fabricating state. The no-season surface remains live-verified.
 
 Verified: live `test_project_discovery_live.py` passed with no skipped test. The graphical client was not used.
 
@@ -26,10 +26,16 @@ Verified: live `test_project_discovery_live.py` passed with no skipped test. The
 
 Verified: both live tests passed on `eve_p2` / port 26101 on 2026-10-23, with no skipped test. The graphical client was not used.
 
+## S9 hull-death timing
+
+The hull-death mismatch came from two timestamp domains. Destiny stamps use FILETIME seconds and the scene limits the latest stamp to two seconds ahead of its clock. If RemoveBalls has already reached that limit, adding the wreck at the same scene time reuses the removal stamp. The death path now advances only the presentation clock by one second for the following AddBalls2, while the wreck state continues to start at the original scene time. The Rust regression fills the stamp lead, destroys a hull and asserts AddBalls2 is exactly one stamp after RemoveBalls.
+
+Verified locally: the focused Rust regression passed (1/1), cargo check -p eve-space passed, cargo fmt --all -- --check passed, and workspace clippy passed. The two-pilot CH-18 Actions run is in progress. The live hull-death walk will be dispatched after this commit.
+
 ## Next work
 
-1. Resolve the hull-death live mismatch from S8/S9. The current test compares command-to-arrival timing, while EveJS schedules the developer death field relative to its spawn in simulation time; preserve that distinction and keep the state/event checks exact.
-2. Close or document the remaining CH-22 public gateway gaps: group target scopes, title grant/revoke notices and reward claims, TLS, and token signature validation. Inspect current branch code before using older handoff conclusions.
-3. Finish the source audit for CH-19 no-season behavior, then CH-23: reconcile plan section 4.1, TODO/DEVIATIONS and project status docs, run the relevant character test projects and live walks on `eve_p2`, and record package status.
+1. Re-run the CH-18 payout and CH-15 clone-install walks on the current tree, then verify the hull-death walk on eve_p2.
+2. Reconcile CH-19 status with the newly identified Gallente Election SDE assets and absent exact challenge protocol data; finish the current public-gateway gap audit.
+3. Complete CH-23 documentation and the selected character test and live-walk checks.
 
-The worktree contains capsule implant destruction, loss-value wiring and focused regression coverage, plus a live two-pilot capsule bounty extension. Those checks passed; the broader phase sweep and CH-23 acceptance update remain open.
+The worktree retains the capsule-implant destruction, loss-value wiring and live two-pilot bounty extension described above.

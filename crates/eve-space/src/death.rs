@@ -8,7 +8,7 @@ use eve_marshal::Value;
 use crate::modules::Modules;
 use crate::npc::is_npc_session;
 use crate::payload;
-use crate::scene::{Out, Pilot, Scene, SceneError, SessionId, Widow};
+use crate::scene::{Out, Pilot, Scene, SceneError, SessionId, TICKS_PER_SECOND, Widow};
 use crate::ship::{Course, Ship, ShipSpec};
 use crate::wire::{id, int};
 use crate::wreck::{LootRights, WRECK_LIFETIME, Wreck};
@@ -162,7 +162,9 @@ impl Scene {
         });
         let wreck_id = wreck.as_ref().map(|wreck| wreck.id);
         if let Some(wreck) = wreck {
-            out.extend(self.place_wreck(wreck, now));
+            // EveJS sends a replacement wreck as a non-fresh follow-on, one Destiny stamp after RemoveBalls.
+            // Advance only the presentation clock; the wreck's scene state still starts at now.
+            out.extend(self.place_wreck_at(wreck, now, now.saturating_add(TICKS_PER_SECOND)));
         }
         out.push(Out::Destroyed {
             session,

@@ -441,9 +441,13 @@ public sealed partial class EpicArcStatusService(
     public async ValueTask<PyValue> AgentHasEpicMissionsForCharacter(ServiceCall call)
     {
         call.Cancellation.ThrowIfCancellationRequested();
+        if (call.Args.Count != 1 || call.Kwargs is not PyNone)
+            throw MachoErrors.ThrowUserError("EPIC_ARC_STATUS_ARGUMENTS_INVALID");
         var agentId = Positive(call.Arg(0));
+        if (agentId <= 0)
+            throw MachoErrors.ThrowUserError("EPIC_ARC_STATUS_AGENT_INVALID");
         var characterId = call.Session.CharacterId ?? 0;
-        var hasMissions = agentId > 0 && characterId > 0 && agentHasMissions is { } read &&
+        var hasMissions = characterId > 0 && agentHasMissions is { } read &&
             await read(agentId, characterId, call.Cancellation).ConfigureAwait(false);
         return PyValue.Of(hasMissions);
     }

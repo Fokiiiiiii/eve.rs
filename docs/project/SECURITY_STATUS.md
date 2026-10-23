@@ -682,6 +682,12 @@ Security finding `c6a4c688` was pushed to `main` on 2026-10-23; the 20 non-skipp
 |---|---|---|---|
 | `jumpTimers.GetTimers` | Active session character only | Exactly one positive integral character ID equal to the session character; no keywords | One unit. Invalid shapes or foreign IDs refuse before the read callback. V24.01 `crimewatchSvc.py:607` calls it with `session.charid`. `SessionStartupRpcServicesTests.Jump_timers_refuse_malformed_or_foreign_character_ids_before_reading` checks shape, type, and ownership; `DispatchGoldenTests.Jump_timer_reads_use_a_named_per_session_budget` checks cost. On `eve_p3`, the focused refusal test passed (1), `Eve.Services.Core.Tests` passed (892), and `Eve.Services.Tests` passed (254), with no skips. |
 
+### Epic arc agent-status read
+
+| RPC | Caller and target scope | Input bounds | Per-session cost |
+|---|---|---|---|
+| `epicArcStatus.AgentHasEpicMissionsForCharacter` | Current session character and one agent ID | Exactly one positive integral agent ID; no keywords | One unit. Invalid shapes and IDs refuse before the provider callback; character identity comes only from the session. V24.01 passes `agent.agentID` (`eve/client/script/ui/station/agents/agentUtil.py:40,65`). `UnportedFeatureRpcServicesTests.Epic_arc_status_refuses_malformed_agent_ids_before_callback` checks boundaries and session scope; `DispatchGoldenTests.Epic_arc_status_reads_use_a_named_per_session_budget` checks cost. On `eve_p3`, the focused refusal test passed (1), `Eve.Services.Core.Tests` passed (893), and `Eve.Services.Tests` passed (255), with no skips. |
+
 V24.01 calls this read with no arguments (`security/client/securitySvc.py:41`). `ClientStartupServicesTests.Security_manager_refuses_client_arguments` checks malformed positional and keyword inputs; `DispatchGoldenTests.Security_manager_read_uses_a_named_per_session_budget` checks cost.
 
 
@@ -724,3 +730,5 @@ Post-push handoff: chat token boundary finding `cb2ae20d` is on `main`, merged a
 Security finding for `jumpTimers.GetTimers` target validation and budgeting was pushed to `main` on 2026-10-23. On `eve_p3`, the focused refusal test passed (1), `Eve.Services.Core.Tests` passed (892), and `Eve.Services.Tests` passed (254), with no skips. The full 1,374-pair RPC inventory remains incomplete.
 
 Post-push handoff: jump timer finding `8baa4ba6` is on `main`; method-by-method classification remains open for the 1,374 registered pairs.
+
+Security finding for `epicArcStatus.AgentHasEpicMissionsForCharacter` input validation and budgeting was pushed to `main` on 2026-10-23. On `eve_p3`, the focused refusal test passed (1), `Eve.Services.Core.Tests` passed (893), and `Eve.Services.Tests` passed (255), with no skips. The 1,374-method registry inventory remains in progress.

@@ -388,7 +388,8 @@ internal sealed partial class CharacterServicesComposition
                 try
                 {
                     var sharers = FleetSharersAsync(loss.KillerCharacterId).GetAwaiter().GetResult();
-                    playerBountyKills!.ClaimShipLossAsync(loss.CharacterId, loss.CapsuleId, Eve.Ships.CharacterShips.CapsuleTypeId, [], loss.KillerCharacterId, now(),
+                    playerBountyKills!.ClaimShipLossAsync(loss.CharacterId, loss.CapsuleId, Eve.Ships.CharacterShips.CapsuleTypeId,
+                        [.. (loss.Contents ?? []).Select(item => (item.TypeId, item.Quantity))], loss.KillerCharacterId, now(),
                         async (connection, transaction, payoutId) => await foundations.Scheduler.ScheduleAsync(connection, transaction,
                             new Eve.Scheduler.JobSpec(Eve.Services.Crimewatch.PlayerBountyKills.PayoutJobKind, now())
                             {

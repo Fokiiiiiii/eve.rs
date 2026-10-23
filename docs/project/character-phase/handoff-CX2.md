@@ -2,9 +2,9 @@
 
 ## CH-18 completed
 
-The pilot-vs-pilot bounty walk passes on `eve_p2` / live port 26101. It creates two pilots and a placer, puts them in low-security Futzchag, lands real 125mm Railgun hits, destroys the bountied Rifter, and checks the paid `kill:<ship>` row, one type-17 wallet journal entry, the hunter wallet increase, and the exact victim-pool reduction. Rookie Ibis type 601 has no SDE base price, so the victim uses Rifter type 587 (base price 400,000 ISK). The sim chance formula matches EveJS. Equal-speed ships about 10,305 m apart have a 1.89% chance from falloff. The earlier WIP walk fired without stopping either undocked ship; with SDE type 10678 (125mm Railgun I: tracking 89.25, 40,000 optimal signature resolution, 9,000 m optimal, 5,000 m falloff) against type 587 (Rifter: 35 m signature radius, 365 m/s maximum velocity), full-speed transversal at 1,000 m gives about 0.000062 hit chance even with Motion Prediction V, while the stopped target at the same distance gives 1.0. `crates/eve-space/src/weapons/tests.rs` now pins both calculations. The live walk follows during undock protection and stops both ships before firing; no production sim change was needed.
+The two-client live walk passes on `eve_p2` / port 26101. It creates two pilots and a placer in low-security Futzchag, kills the Rifter with real 125mm Railgun hits, then kills the victim's capsule with a real 200,000 ISK SDE implant. The walk checks both `kill:<item>` payout rows, hunter wallet changes and type-17 journal entries, exact bounty-pool reductions, implant removal and `OnJumpCloneCacheInvalidated`. The Rifter is type 587 (base price 400,000 ISK); the capsule type 670 has no SDE base price, so the implant alone yields the asserted 40,000 ISK claim. The sim chance formula matches EveJS; equal-speed ships about 10,305 m apart have a 1.89% chance from falloff. The CH-18 Rust test pins that case and the stopped-in-range case, so the live walk stops both ships before firing.
 
-Verified this turn: focused `eve-space` test passed; pinned Rust fmt and workspace clippy passed. Earlier main-branch evidence: all 888 `eve-space` library tests passed; `PlayerBountyKillsTests` passed (2) and `PlayerBountyHostTests` passed (4) on `eve_p2`; the live walk passed on `eve_p2`.
+Pod-loss implementation now reads installed items in flag 89, filters them using SDE category/slot and the SDE `nonDestructible` attribute, deletes destructible implants, carries their type and quantity through `PodLoss`, and feeds the existing Host bounty claim. Verified this turn: `Eve.Ships.Tests` focused test 1/1, `Eve.Services.Space.Tests` focused test 1/1, `Eve.Services.Crimewatch.Tests` focused payout test 1/1, and the live two-client walk 1/1. The live walk verifies claim, settlement, journal, wallet and cache invalidation. The graphical client was not used.
 
 ## CH-15 completed
 
@@ -28,7 +28,8 @@ Verified: both live tests passed on `eve_p2` / port 26101 on 2026-10-23, with no
 
 ## Next work
 
-1. Audit the remaining S3-S9 gaps, especially the capsule implant value, hull-death live comparison, gateway target scopes, and title reward path; close each or document the concrete missing source/input and package status.
-2. CH-23: update section 4.1 and stale status rows, run character test projects and the lane's character live walks, and record remaining limitations.
+1. Resolve the hull-death live mismatch from S8/S9. The current test compares command-to-arrival timing, while EveJS schedules the developer death field relative to its spawn in simulation time; preserve that distinction and keep the state/event checks exact.
+2. Close or document the remaining CH-22 public gateway gaps: group target scopes, title grant/revoke notices and reward claims, TLS, and token signature validation. Inspect current branch code before using older handoff conclusions.
+3. Finish the source audit for CH-19 no-season behavior, then CH-23: reconcile plan section 4.1, TODO/DEVIATIONS and project status docs, run the relevant character test projects and live walks on `eve_p2`, and record package status.
 
-The worktree currently has CH-13/CH-14 live assertion changes and acceptance-document edits; those two live walks now pass, while the final phase sweep remains open.
+The worktree contains capsule implant destruction, loss-value wiring and focused regression coverage, plus a live two-pilot capsule bounty extension. Those checks passed; the broader phase sweep and CH-23 acceptance update remain open.

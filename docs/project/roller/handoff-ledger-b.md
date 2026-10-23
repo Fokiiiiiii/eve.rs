@@ -2,7 +2,7 @@
 
 ## Snapshot
 
-The worktree was fast-forwarded to `origin/main` at `a64d8a80` before the audit. The assigned note did not exist at that revision, so this file records the continuation state.
+The worktree was fast-forwarded to `origin/main` at `a64d8a80` before the audit. The assigned note did not exist at that revision, so this file records the continuation state. Classification commit `069a7025` was merged with newer `origin/main` and pushed as `b0fc0f5d`.
 
 ## Ledger status
 

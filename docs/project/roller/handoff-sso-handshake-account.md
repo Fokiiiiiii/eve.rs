@@ -53,3 +53,5 @@ Authenticate the V24.01 `ConnectionService.LoginSso` path from the inbound `user
 - Focused no-database Host SKINR data tests passed in Actions run 39999709247.
 - At 18:07 UTC, push CI runs 39999180175 (bb6029d1) and 39999682477 (5ecf9205) were still in progress. The latter includes `test_v24_sso_handshake_reaches_and_selects_a_character`, which logs in with the deterministic issuer, requests selection data, creates/selects a character, and checks the linked account session id. Await its Actions result before claiming the live SSO flow passed.
 - The graphical V24 client was not exercised; no local PostgreSQL database was used.
+
+- Post-push update: commit 7aee51f5 was pushed to main with the tier-threshold fixture constraint. Push CI run 40000814361 and focused Host SSO dispatch run 40000836917 are in progress; the earlier focused Host SKINR run 39999709247 passed.

@@ -254,7 +254,10 @@ def wait_for_run(run_id: int, token: str) -> int:
 
 def print_ci_failures(sha: str, token: str) -> None:
     workflow = api_json("/actions/workflows/ci.yml", token)
-    query = urllib.parse.urlencode({"per_page": 100, "head_sha": sha})
+    query_args = {"per_page": 100}
+    if len(sha) == 40:
+        query_args["head_sha"] = sha
+    query = urllib.parse.urlencode(query_args)
     runs = api_json(f"/actions/workflows/{workflow['id']}/runs?{query}", token).get("workflow_runs", [])
     runs = [run for run in runs if run.get("head_sha", "").startswith(sha)]
     if not runs:

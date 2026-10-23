@@ -698,6 +698,28 @@ public sealed class MailServiceTests
     }
 
 [Fact]
+    public async Task SendMail_refuses_malformed_recipient_ids_before_sending()
+    {
+        var sendCount = 0;
+        var service = new MailService(
+            _ => throw new InvalidOperationException("SendMail must not read the mailbox."),
+            (_, _, _, _) => throw new InvalidOperationException("SendMail must not mark a message read."),
+            (_, _, _) =>
+            {
+                sendCount++;
+                return Task.FromResult<long?>(701);
+            });
+        foreach (var recipient in new PyValue[] { new PyInt(-1), new PyWString("not-an-id"), new PyReal(double.NaN) })
+        {
+            var recipients = new PyList([new PyInt(90000001), recipient]);
+            var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+                service.CallAsync(Request("SendMail", recipients, PyNone.Instance, PyNone.Instance, new PyStr("Title"), new PyStr("Body"))).AsTask());
+            Assert.Equal("MAIL_RECIPIENT_INVALID", MailInfo(refusal));
+        }
+        Assert.Equal(0, sendCount);
+    }
+
+[Fact]
     public async Task SendMail_forwards_each_client_recipient_route_and_reply_forward_reference()
     {
         var sent = new List<MailSendRequest>();

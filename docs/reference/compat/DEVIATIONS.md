@@ -5484,7 +5484,7 @@ The fleetObject Init RPC costs 10 weighted per-session units because it updates 
 
 ## Alliance bill-list work budget (2026-10-22)
 
-`allianceRegistry.GetBills` and `GetBillsReceivable` return complete bill collections for the authenticated alliance accountant, and `GetApplications` returns the full application collection to the executor director. Each call costs 10 weighted per-session units to bound repeated full-list reads. The wire results and persisted role checks are unchanged. `DispatchGoldenTests.Alliance_full_list_reads_use_a_named_per_session_budget` verifies the next full-list call is refused after the session allowance is consumed.
+`allianceRegistry.GetBills` and `GetBillsReceivable` return complete bill collections for the authenticated alliance accountant, and `GetApplications` returns the full application collection to the executor director. Each call costs 10 weighted per-session units to bound repeated full-list reads. The wire results and persisted role checks are unchanged. `DispatchGoldenTests.Alliance_expensive_methods_use_a_named_per_session_budget` verifies the next full-list call is refused after the session allowance is consumed.
 
 
 ## Corporation application-list work budget (2026-10-23)
@@ -5494,13 +5494,39 @@ The fleetObject Init RPC costs 10 weighted per-session units because it updates 
 
 ## Corporation contact and bulletin-list work budget (2026-10-23)
 
-`corpRegistry.GetCorporateContacts` and its `GetContactList` alias return the current corporation’s complete contact list; `GetBulletins` and `GetBulletinEntries` return the complete bulletin list. Each call costs 10 weighted per-session units to bound repeated full-list reads. The corporation scope and response shapes stay unchanged. `DispatchGoldenTests.Corporation_contact_and_bulletin_lists_use_a_named_per_session_budget` covers all four RPC names.
+`corpRegistry.GetCorporateContacts` and its `GetContactList` alias return the current corporation’s complete contact list; `GetBulletins` and `GetBulletinEntries` return the complete bulletin list. Each call costs 10 weighted per-session units to bound repeated full-list reads. The corporation scope and response shapes stay unchanged. `DispatchGoldenTests.Corporation_registry_reads_use_a_named_per_session_budget` covers all four RPC names.
 
 
 ## Corporation bulletin text bounds (2026-10-23)
 
 `corpRegistry.AddBulletin` and `UpdateBulletin` enforce the V24.01 editor limits of 100 UTF-16 code units for titles and 4,000 for bodies before persistence. Larger text returns `CORPORATION_BULLETIN_LIMIT_EXCEEDED`; accepted response shapes and role checks are unchanged. `CorporationProtocolTests.Corp_registry_contacts_labels_and_bulletins_persist_and_enforce_roles` checks refusals before storage, both exact boundaries, and persisted values.
 
-`allianceRegistry.GetDaysInAlliance` also consumes 10 weighted per-session units because it reads the full alliance member collection to resolve one corporation. The response and public lookup behavior are unchanged. `DispatchGoldenTests.Alliance_full_list_reads_use_a_named_per_session_budget` covers the call budget.
+`allianceRegistry.GetDaysInAlliance` also consumes 10 weighted per-session units because it reads the full alliance member collection to resolve one corporation. The response and public lookup behavior are unchanged. `DispatchGoldenTests.Alliance_expensive_methods_use_a_named_per_session_budget` covers the call budget.
 
-`corpRegistry.GetRecruitmentAd` consumes 10 weighted per-session units because its public response includes the selected corporation member count, and both `GetRecruitmentAdsByCorpID` and `GetRecruitmentAdsForCorporation` consume 10 units because they return complete corporation ad lists. Both responses remain unchanged. `DispatchGoldenTests.Corporation_contact_and_bulletin_lists_use_a_named_per_session_budget` verifies the named refusal for both calls.
+`corpRegistry.GetRecruitmentAd` consumes 10 weighted per-session units because its public response includes the selected corporation member count, and both `GetRecruitmentAdsByCorpID` and `GetRecruitmentAdsForCorporation` consume 10 units because they return complete corporation ad lists. Both responses remain unchanged. `DispatchGoldenTests.Corporation_registry_reads_use_a_named_per_session_budget` verifies the named refusal for both calls.
+
+`ownerGroupManager` reads and mutations consume 10 weighted per-session units to bound repeated access-group enumeration and notification fanout. `DispatchGoldenTests.Owner_group_reads_and_mutations_use_a_named_per_session_budget` checks every registered service method. Responses and authorization remain unchanged.
+
+`corpRegistry.GetCorporation` consumes 10 weighted per-session units because its profile response includes a full corporation member count. The client response is unchanged. `DispatchGoldenTests.Corporation_registry_reads_use_a_named_per_session_budget` verifies the named refusal.
+
+`allianceRegistry.GetAlliance` and its `GetAlliancePublicInfo` alias consume 10 weighted per-session units because they read member counts and combine sovereignty, prime-time, and capital-system state. `DispatchGoldenTests.Alliance_expensive_methods_use_a_named_per_session_budget` covers both public aliases and all other weighted alliance RPC routes. Responses remain unchanged.
+
+`allianceRegistry.GetAllianceSovereigntyStructuresInfo` consumes 10 weighted per-session units because it projects rows from the alliance sovereignty snapshot. The alliance-scoped response is unchanged. `DispatchGoldenTests.Alliance_expensive_methods_use_a_named_per_session_budget` covers the cost.
+
+`allianceRegistry.GetRelationships` and `SetRelationship` consume 10 weighted per-session units because the former returns the alliance standing collection and the latter fans updates out to alliance corporations. Their authorization, response, and notification behavior remain unchanged. `DispatchGoldenTests.Alliance_expensive_methods_use_a_named_per_session_budget` covers both methods.
+
+`allianceRegistry.GetCapitalSystemInfo` and `SetCapitalSystem` consume 10 weighted per-session units because they scan the alliance sovereignty snapshot. The capital-system values and role checks are unchanged. `DispatchGoldenTests.Alliance_expensive_methods_use_a_named_per_session_budget` covers both calls.
+
+`allianceRegistry.UpdateAlliance`, `SetPrimeHour`, and `CancelCapitalSystemTransition` consume 10 weighted per-session units because each computes alliance-wide notification state; prime-time and capital-transition operations also read sovereignty snapshots. Authorization and notifications remain unchanged. `DispatchGoldenTests.Alliance_expensive_methods_use_a_named_per_session_budget` covers these methods.
+
+`allianceRegistry.DeclareWarAgainst` and `PayBill` consume 10 weighted per-session units because each performs a bill-backed durable transaction and war declaration also emits alliance notifications. Existing role checks and transaction results remain unchanged. `DispatchGoldenTests.Alliance_expensive_methods_use_a_named_per_session_budget` covers both routes.
+
+`allianceRegistry.GetBillBalance` consumes 10 weighted per-session units because it reads the active corporation wallet division for an alliance accountant. Existing role checks and balance response remain unchanged. `DispatchGoldenTests.Alliance_expensive_methods_use_a_named_per_session_budget` covers the call.
+
+`corporationSvc` employment-history and medal-list reads, medal-status batches, and medal-award batches consume 10 weighted per-session units. Existing privacy filtering, persisted role checks, and response shapes remain unchanged. `DispatchGoldenTests.Corporation_service_list_and_bulk_methods_use_a_named_per_session_budget` covers each bounded route.
+
+`charMgr.GetPublicInfo`, `GetPublicInfo3`, `GetCharacterDescription`, and `GetCharacterCreationDate` each consume 10 weighted per-session units to bound repeated public-character profile reads. Client-visible fields and shapes remain unchanged. `DispatchGoldenTests.Character_profile_reads_use_a_named_per_session_budget` verifies all four methods.
+
+`charMgr.GetPrivateInfo` consumes 10 weighted per-session units because it joins character, corporation-role, wallet, and security-status data for the corporation member editor. Its persisted role gate and response are unchanged; the character profile budget regression verifies the named refusal.
+
+`mailMgr.SendMail` now refuses a nonpositive or non-integer character recipient ID with `MAIL_RECIPIENT_INVALID` before invoking persistence, rather than dropping malformed IDs from a mixed recipient list. Valid integer IDs and duplicate suppression keep their existing behavior. `MailServiceTests.SendMail_refuses_malformed_recipient_ids_before_sending` covers negative, textual, and non-finite recipients without a send callback.

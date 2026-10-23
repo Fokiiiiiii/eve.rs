@@ -170,7 +170,20 @@ private async ValueTask<PyValue> SendMailAsync(ServiceCall call)
         };
         if (values.Count > MaxCharacterRecipients)
             throw MailLimitRefusal("MAIL_RECIPIENT_LIMIT_EXCEEDED");
-        return [.. values.Select(PositiveId).Where(id => id > 0).Distinct()];
+        var ids = new List<long>(values.Count);
+        foreach (var recipientValue in values)
+        {
+            var id = recipientValue switch
+            {
+                PyInt integer when integer.Value > 0 => integer.Value,
+                PyLong integer when integer.Value > 0 => integer.Value,
+                _ => 0
+            };
+            if (id <= 0)
+                throw MailLimitRefusal("MAIL_RECIPIENT_INVALID");
+            ids.Add(id);
+        }
+        return ids.Distinct().ToArray();
     }
 
 private static IReadOnlyList<long>? OptionalRecipientIds(PyValue value) =>

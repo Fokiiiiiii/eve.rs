@@ -46,7 +46,9 @@ def test_a_cargo_module_cannot_be_offlined_or_unfitted_above_the_resulting_capac
         dogma = who.call("dogmaIM", "MachoBindObject", (STATION, 5), None)[0]
 
         _, fit_error = outcome(lambda: who.call_bound(docked, "Add", module, STATION, flag=LOW_SLOT_FIRST))
-        assert fit_error is None, fit_error
+        if fit_error is not None:
+            fit_detail = fit_error["$objectex"]["$tuple"][1]["$tuple"][1]
+            assert fit_error is None, fit_detail
         who.call_bound(dogma, "SetModuleOnline", ship, module)
 
         who.call("slash", "SlashCmd", "/giveitem Tritanium 100000")

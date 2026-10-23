@@ -16,10 +16,11 @@ The subjects `operationDungeon`, `epinstance`, `externalDungeon`, and `moonMinin
 - The pure launch target test covers owner, expiry, system, ID, missing record, and finite-coordinate validation without a database.
 - Local builds passed for `Eve.Services.Space`, `Eve.Services.Planets`, `Eve.Host`, `Eve.Host.Tests`, and `Eve.Services.Space.Tests`. They used a single MSBuild node, disabled build servers, and disabled built-in .NET analyzers to fit the shared machine; required source generation remained enabled. The Host bound-call test passed 1/1. The database-backed service regression was compiled and not executed under the task's PostgreSQL restriction.
 - The first parallel full build and first full dependency build ended with compiler exit 137. Reduced single-node project builds succeeded afterward. No graphical V24.01 client walk or live headless walk has been checked; the task forbids PostgreSQL use.
+- Code and current `origin/main` were pushed as `c884523b`. Selected GitHub Actions checks for the Host contract and pure launch target tests are pending.
 
 ## Next work
 
-1. Run the pure launch target test and Host contract test through the selected GitHub Actions checks; fix any failures.
+1. Dispatch and inspect selected Host and pure launch target Actions checks; fix any failures.
 2. Implement or wire an authoritative operation-site destination owner and verify operation spawnpoint/system data.
 3. Add an authorized live instance lookup for `epinstance` and `externalDungeon`, including visibility/materialization and current-system checks.
 4. Locate a maintained moon-mining point owner that supplies the beacon's real coordinates and system; do not derive it from an unsupported approximation.

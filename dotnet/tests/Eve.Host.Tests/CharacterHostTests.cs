@@ -739,7 +739,7 @@ public sealed class CharacterHostTests
         var row = Assert.Single(notifications.Items);
         Assert.Equal(new PyInt(89), Field(row, "typeID"));
         Assert.Equal(new PyLong(senderId), Field(row, "senderID"));
-        Assert.Equal(new PyLong(recipientId), Field(row, "receiverID"));
+        Assert.Equal(new PyInt(recipientId), Field(row, "receiverID"));
 
         await rig.RestartAsync();
         notificationMgr = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("notificationMgr"));
@@ -747,7 +747,7 @@ public sealed class CharacterHostTests
         row = Assert.Single(notifications.Items);
         Assert.Equal(new PyInt(89), Field(row, "typeID"));
         Assert.Equal(new PyDict([
-            new(new PyStr("level"), new PyLong(-10)),
+            new(new PyStr("level"), new PyInt(-10)),
             new(new PyStr("message"), new PyStr("Hello")),
         ]), Field(row, "data"));
     }

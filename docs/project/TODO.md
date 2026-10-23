@@ -2773,3 +2773,5 @@ Security review follow-up: `marketProxy.PlaceMultiSellOrder` now rejects repeate
 Security review follow-up: `invbroker.FitFitting` accepts the client's Python set shape for candidate item IDs, refuses more than 500 combined raw fit entries before moving items, and consumes 10 weighted per-session units.
 
 Security review follow-up: `repairSvc.GetRepairQuotes` and `RepairItemsInStation` now accept only list, tuple, or V24 Python-set item IDs, require positive integers, refuse raw batches above 500 before database work, and cost 10 per-session weighted units. Focused service tests cover oversized lists and malformed IDs; dispatcher regressions cover the weighted budget. The complete RPC ownership inventory remains open.
+
+Security review follow-up: `officeManager.GetMyCorporationsOffices` now consumes 10 weighted per-session units because it enumerates every office for the current corporation; the existing office budget dispatcher test covers it.

@@ -5757,3 +5757,6 @@ The security inventory now lists each active `charUnboundMgr` RPC by caller scop
 ## Repair RPC work bounds (2026-10-23)
 
 `repairSvc.GetRepairQuotes` and `RepairItemsInStation` validate list, tuple, or V24 Python-set item IDs as positive integers, cap raw entries at 500 before database reads or writes, and use 10 weighted per-session work units. `RepairServiceTests.Oversized_repair_item_lists_are_refused_before_wallet_or_damage_changes` and `Repair_item_ids_must_be_positive_integer_wire_values` cover input bounds and validation; `DispatchGoldenTests.Repair_calls_use_the_named_per_session_budget` covers weighted work. The repair shop continues to require a bound NPC station where the caller is docked and items accessible to that character.
+
+
+`officeManager.GetMyCorporationsOffices` now consumes 10 weighted per-session units to bound repeated enumeration of a corporation’s office list. `DispatchGoldenTests.Corporation_office_impound_reads_use_the_named_per_session_budget` verifies the second costly office call is refused at the configured limit.

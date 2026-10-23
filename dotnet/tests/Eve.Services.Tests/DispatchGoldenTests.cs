@@ -1086,7 +1086,7 @@ public class DispatchGoldenTests
         registry.Register(service);
         var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 10 };
 
-        await dispatcher.DispatchAsync(CallRequestPacket("officeManager", "HasCorpImpoundedItems"), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("officeManager", "GetMyCorporationsOffices"), session);
         await dispatcher.DispatchAsync(CallRequestPacket("officeManager", "GetImpoundReleasePrice"), session);
 
         Assert.Equal(1, service.Calls);
@@ -1938,7 +1938,7 @@ public class DispatchGoldenTests
 
         public string Name => "officeManager";
 
-        public bool HasMethod(string method) => method is "HasCorpImpoundedItems" or "GetImpoundReleasePrice" or "RentOffice" or "UnrentOffice" or "GetItemsFromImpound" or "TrashImpoundedOffice";
+        public bool HasMethod(string method) => method is "GetMyCorporationsOffices" or "HasCorpImpoundedItems" or "GetImpoundReleasePrice" or "RentOffice" or "UnrentOffice" or "GetItemsFromImpound" or "TrashImpoundedOffice";
 
         public ValueTask<PyValue> CallAsync(ServiceCall call)
         {

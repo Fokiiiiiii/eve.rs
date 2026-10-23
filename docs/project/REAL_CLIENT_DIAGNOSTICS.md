@@ -35,7 +35,8 @@ The owner’s captures and process logs were read through `tools/mitm show` and 
 - Root cause: `PacketDispatcher` charged all expensive RPCs against one per-session bucket. Before the first failed hangar bind, the graphical capture had only four `invbroker` calls; unrelated setup RPCs consumed the shared bucket.
 - Fix: expensive `invbroker` calls now use their own bounded per-session bucket. Inventory reads and writes still share that limit.
 - Fix commit: `Give inventory RPCs a dedicated per-session budget`.
-- Regression: `DispatchGoldenTests.Inventory_calls_keep_a_bounded_budget_separate_from_other_expensive_services` (1/1) and the full `DispatchGoldenTests` class on the merged tree (157/157), zero skips.
+- Related station-hangar trace: `GetInventory(10004, None)` received the same shared-budget refusal in a capture written at 05:29 UTC, before commit `e1ed09a4` (06:35 UTC) separated the `invbroker` bucket. It does not establish a post-fix failure.
+- Regression: `DispatchGoldenTests.Inventory_calls_keep_a_bounded_budget_separate_from_other_expensive_services` (local 1/1, 0 skipped) and the full `DispatchGoldenTests` class on the merged tree (157/157), zero skips.
 - Reference: EveJS returns the requested bound substruct for the matching station-hangar call; V24.01 client callsite is `neocomInventoryBadging.py:GetItemsInCurrentStationShipHangar`.
 
 ## (e) goals/campaign GetUpdateRequest timeout
@@ -91,4 +92,4 @@ The owner’s captures and process logs were read through `tools/mitm show` and 
 - Trace: V24.01 `industrySvc._UpdateSlots_thread` calls `GetJobCounts(session.charid)` to refresh industry slots. EveJS v0.12.9 checks that the requested installer is the session character, then returns counts from active jobs. eve.rs applies a 10-unit cost before dispatch and reads the authoritative job snapshot in `IndustryJobsService`; the error therefore means the dispatcher rejected the call before the Host service ran.
 - Root cause and fix: industry calls shared the 160-unit general expensive-RPC bucket, so unrelated services could exhaust it. `industryManager` now has a separate per-session 160-unit rolling-minute bucket; the industry cap still returns `SessionRpcBudgetExceeded` before dispatch when depleted.
 - Regression: `DispatchGoldenTests.Industry_jobs_use_a_separate_per_session_budget` verifies that unrelated expensive calls cannot block the industry handler and that the industry bucket still enforces its own limit.
-- Check status: `Eve.Services.Tests` builds with 0 warnings and 0 errors. The focused Actions check is pending. No graphical-client retest has been made.
+- Check status: the focused `Eve.Services.Tests` Actions run `40010004814` completed successfully. No current graphical-client retest has been made.

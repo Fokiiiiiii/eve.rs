@@ -19,7 +19,7 @@ Each listed method costs 10 units. Counts include attempted requests, including 
 
 ## Changes
 
-- `PacketDispatcher.MaxExpensiveRpcUnitsPerMinute` now defaults to 460.
+- `PacketDispatcher.MaxMarketRpcUnitsPerMinute` is 460; the general/inventory limit remains 160 and industry uses its own 160-unit limit.
 - `DispatchGoldenTests.Market_region_and_plex_browse_calls_keep_native_rows_through_a_mixed_session` dispatches 40 client-shaped market and PLEX calls through one session and checks the `GetRegionBest` native dictionary and best-order fields on every response.
 - `DispatchGoldenTests.Excess_market_traffic_is_refused_before_any_trade_side_effects` accepts 46 cost-10 reads, refuses a following `PlaceMultiSellOrder` request with `SessionRpcBudgetExceeded`, and checks that the refused call did not invoke wallet, inventory, order, or success-notification operations.
 - `tools/headless-client/tests/test_market.py::test_market_browse_and_history_refresh_fit_one_session` opens the market group data, reads region best and selected-type orders/history, then refreshes PLEX orders, best prices, and history three times in one client session. Its rowset decoder uses the wire `columns` field because the descriptor header decodes as `ObjectEx`. The path makes 36 cost-10 market requests (360 units), before any other expensive calls incurred during session setup.
@@ -31,3 +31,10 @@ Each listed method costs 10 units. Counts include attempted requests, including 
 - Rerun the focused Actions job on the follow-up commit. Local Host build could not complete: `project.assets.json` was missing, and restore stalled until cancelled. No PostgreSQL database was used locally. The graphical EVE client has not been used for this change.
 
 The working tree also began with nine unrelated deleted Rust source files. They are untouched and must remain excluded from this task's commit.
+
+
+## 2026-10-23 station inventory trace follow-up
+
+- The station inventory report’s `GetInventory(10004, None)` budget refusal comes from the 05:29 UTC graphical capture, before `e1ed09a4` (06:35 UTC) separated inventory calls from unrelated expensive RPCs. It is the same shared-bucket starvation documented in `REAL_CLIENT_DIAGNOSTICS.md` (d), not a new failure against the current dispatcher.
+- The current dispatcher keeps inventory bounded at 160 units per session and applies nested `MachoBindObject` costs to that bucket. `DispatchGoldenTests.Inventory_calls_keep_a_bounded_budget_separate_from_other_expensive_services` passed locally (1 passed, 0 failed, 0 skipped); it proves unrelated expensive calls do not consume the inventory allowance and that the inventory cap still refuses excess work.
+- The later inventory UI scout did not inspect captures or assert a row/capacity wire mismatch. No code change or graphical-client retest was needed for this follow-up.

@@ -134,14 +134,22 @@ Use lane `eve_p4` only and run database work through `tools/dev/db-lock.sh`. The
 - The local `Eve.Services.Dogma.Tests` project build passed with zero warnings and errors. Agent run 127 (`40005187593`) passed the focused database-backed regression on pushed commit `fbc39d63`.
 - Agent run 123 on `e0cb832e` passed the two `Eve.Host.Tests` matches, then failed because the same `FullyQualifiedName~SignalTracker` filter selected zero tests in `Eve.Services.Core.Tests`. This was a test-selection mismatch; dispatch that filter to the Host project only.
 
-<<### Market RPC budget regression test setup
+### Market RPC budget regression test setup
 
 - CI run 660 (`4f38c72f`) failed both market budget regression tests because each configured only `MaxExpensiveRpcUnitsPerMinute = 10`, while `PacketDispatcher` routes `marketProxy` through `MaxMarketRpcUnitsPerMinute`. The tests now set both limits to 10. Agent run 128 (`40005500782`) passed both focused regressions on `94e37e82`.
 
 ### SKINR unlimited component license sentinel
 
-- CI run 660 returned HTTP 400 during the live persisted-license walk. Its fixture selects a published compatible component from the official mission SDE with `associatedTypeIDs.licenseUsesGranted = -1` (unlimited), but the Host catalog discarded negative counts. The item type then could not resolve to a component license, so the valid design request was refused.
-- The catalog now maps SDE `-1` to the runtime's `0` unlimited sentinel, excludes values below `-1`, and preserves positive finite uses. The existing gateway transaction consumes the item and persists the unlimited grant; the live scenario also covers retry, sequencing and application.
-- Added `Unlimited_license_types_use_the_runtime_unlimited_sentinel` for unlimited, invalid and finite values. `Eve.Host.Tests` Release build passed with zero warnings and errors, and the focused test passed 1/1 with no skips. No database was used.
-- CI run 662 (`40005488739`) completed on `94e37e82`; Windows and all other selected jobs passed, while the E2E job reproduced the pre-fix HTTP 400 at `ConsumeRequest`. Its regression is the reason for this catalog fix.
-- After merging current main, `Eve.Host.Tests` Release build passed with zero warnings and errors and the focused regression passed 1/1 with no skips. No database was used. The push-triggered gate for the catalog fix will recheck both the Windows entry flow and the persisted SKINR walk.
+- Runs 661 and 666 reached the live consume request and returned HTTP 400 for a published compatible mission-SDE component whose `associatedTypeIDs.licenseUsesGranted` is `-1`. On `40110cc0`, allowing the negative value through the catalog did not resolve the failure.
+- Commit `4b3cd33b` maps the SDE `-1` unlimited marker to the gateway's runtime `0` sentinel, rejects values below -1 and keeps positive finite grants. `ShipSkinrCatalogDataTests.Unlimited_license_types_use_the_runtime_unlimited_sentinel` covers those cases. Agent run 135 (`40007743442`) passed the focused live SKINR walk 1/1 with no skips.
+- CI run 666 predates that parser fix and still returned 400. Agent run 138 and CI run 671 are checking current main `287c530d`; CI 668 is checking the preceding head `4b3cd33b`.
+
+### Contact notification dictionary keys
+
+- CI runs 664 (`774b7a18`) and 666 (`40110cc0`) failed `CharacterHostTests.Contact_add_persists_and_routes_the_recipient_notification`: the test treated a Python `str` dictionary key as `PyStr`, while the decoded packet exposes it as `PyBytes`.
+- Main commit `d2b2821d` reads notification keys through `JsSemantics.StringValue`; this worktree's `dfe630d1` also makes the shared `Field` helper compare both Marshal string forms. The `Eve.Host.Tests` project compiled locally with zero warnings and errors before merging current main. CI 671 will cover the Host shard; dispatch a focused Actions check if that shard does not finish the contact regression.
+## 2026-10-23 merged recovery state
+
+- Worktree merge commit `93859c6a` combines the contact-key test helper update with `origin/main` `287c530d`. The nine pre-existing Rust source deletions remain outside the merge.
+- Agent run 138 (`40008851484`) is checking the selected live regression on `287c530d`; CI run 671 (`40008838460`) is queued for that same head. CI runs on the next pushed head will verify this merged worktree.
+- After pushing, dispatch `Eve.Host.Tests` with filter `FullyQualifiedName~Contact_add` and record that result plus the push-triggered gate below.

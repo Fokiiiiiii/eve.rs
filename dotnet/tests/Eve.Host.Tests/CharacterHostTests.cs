@@ -1253,7 +1253,12 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
             PyDict dict => dict.Entries,
             _ => throw new Xunit.Sdk.XunitException($"Expected a dictionary, got {keyVal.GetType().Name}"),
         };
-        return entries.Single(entry => ((PyStr)entry.Key).Value == key).Value;
+        return entries.Single(entry => entry.Key switch
+        {
+            PyStr text => text.Value == key,
+            PyBytes bytes => bytes.Value.Span.SequenceEqual(System.Text.Encoding.UTF8.GetBytes(key)),
+            _ => false,
+        }).Value;
     }
 
     private static PyValue NotificationValue(PyDict data, string name) =>

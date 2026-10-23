@@ -8,6 +8,7 @@ using Eve.Market;
 using Eve.Services.Market;
 using Eve.Services;
 using Eve.Sde;
+using Eve.Structures;
 using Eve.Universe;
 using Eve.Wallet;
 using Npgsql;
@@ -98,13 +99,13 @@ public sealed class MarketHostTests : IAsyncLifetime
         ("typeID", new PyInt(typeId)), ("quantity", new PyInt(quantity)), ("price", new PyReal(price)), ("minVolume", new PyInt(1)));
 
     /// <summary>A character with 10000 ISK docked at the station, in the scratch schemas.</summary>
-    private async Task<long> CreateTraderAsync(NpgsqlDataSource source, Station station, string name)
+    private async Task<long> CreateTraderAsync(NpgsqlDataSource source, Station station, string name, long corporationId = 1000044)
     {
         long actor;
         await using var c = await source.OpenConnectionAsync();
         await using var tx = await c.BeginTransactionAsync();
         actor = await new PgCharacterStore(source, Schema("EVE_CHARACTERS_SCHEMA")).InsertAsync(c, tx,
-            new NewCharacter(1, name, 0, 1, 1, 1, 11, 1376, 1000044, null,
+            new NewCharacter(1, name, 0, 1, 1, 1, 11, 1376, corporationId, null,
                 station.Id, station.SolarSystemId, station.ConstellationId, station.RegionId, null, null));
         await new PgWalletStore(source, Schema("EVE_WALLET_SCHEMA")).OpenAsync(c, tx, actor, 10000m, 0);
         await tx.CommitAsync();
@@ -251,6 +252,236 @@ public sealed class MarketHostTests : IAsyncLifetime
         var resumed = await again.FindAsync(MarketExpiryWorker.OrderKind, MarketExpiryWorker.OrderKey(order.Id));
         Assert.NotNull(resumed);
         Assert.Equal(job.RunAtMs, resumed!.RunAtMs);
+        await restarted.ShutdownAsync();
+    }
+
+    [PgFact]
+    public async Task The_host_dispatches_accessible_structure_market_orders_and_recovers_partial_settlement_after_restart()
+    {
+        var url=Environment.GetEnvironmentVariable("EVE_PG_URL")!;
+        await using var source=NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(url));
+        var host=await HostComposition.BuildAsync(Settings());
+        var market=host.Registry.Lookup("marketProxy") ?? throw new InvalidOperationException("marketProxy is not registered");
+        var sde=new SdeReader(source);
+        var station=(await StationCatalog.LoadAsync(sde)).All.First();
+        var fortizar=checked((int)(await sde.ReadAsync("types")).Single(row =>
+            row.Doc.TryGetProperty("name",out var name) && SdeReader.English(name)=="Fortizar").Key);
+        const long structureId=9_000_000_001_001;
+        const long ownerCorporationId=1000044;
+        var seller=await CreateTraderAsync(source,station,"Structure Seller",ownerCorporationId);
+        var buyer=await CreateTraderAsync(source,station,"Structure Buyer",ownerCorporationId);
+        var contenderA=await CreateTraderAsync(source,station,"Structure Contender A",ownerCorporationId);
+        var contenderB=await CreateTraderAsync(source,station,"Structure Contender B",ownerCorporationId);
+        var denied=await CreateTraderAsync(source,station,"Structure Denied",1000015);
+
+        var structures=new StructureStore(source,Schema("EVE_STRUCTURES_SCHEMA"));
+        await using (var connection=await source.OpenConnectionAsync())
+        await using (var transaction=await connection.BeginTransactionAsync())
+        {
+            Assert.True(await structures.CreateAsync(connection,transaction,
+                new NewStructure(structureId,fortizar,station.SolarSystemId,0,0,0,0,ownerCorporationId,0,"Market Test Fortizar","")));
+            await structures.SaveAsync(connection,transaction,
+                new StructureSnapshot { StructureId=structureId,State=StructureState.ShieldVulnerable,CoreInstalled=true,Upkeep=UpkeepState.FullPower });
+            await structures.SetServiceAsync(connection,transaction,structureId,StructureServiceIds.Market,ServiceState.Online,DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+            await transaction.CommitAsync();
+        }
+
+        var sellerSession=new ClientSession(new Sink()) { SessionId=302 };
+        sellerSession.Set("charid",new PyInt(seller));
+        sellerSession.Set("structureid",new PyLong(structureId));
+        var buyerSession=new ClientSession(new Sink()) { SessionId=303 };
+        buyerSession.Set("charid",new PyInt(buyer));
+        buyerSession.Set("structureid",new PyLong(structureId));
+        var deniedSession=new ClientSession(new Sink()) { SessionId=304 };
+        deniedSession.Set("charid",new PyInt(denied));
+        deniedSession.Set("structureid",new PyLong(structureId));
+        var contenderASession=new ClientSession(new Sink()) { SessionId=305 };
+        contenderASession.Set("charid",new PyInt(contenderA));
+        contenderASession.Set("structureid",new PyLong(structureId));
+        var contenderBSession=new ClientSession(new Sink()) { SessionId=306 };
+        contenderBSession.Set("charid",new PyInt(contenderB));
+        contenderBSession.Set("structureid",new PyLong(structureId));
+
+        static PyValue Received(PyValue value)
+        {
+            var decoded=MarshalCodec.Decode(MarshalCodec.Encode(value));
+            if (decoded is not PyObject { Name:var name } cached || JsSemantics.PlainText(name)!=ObjectCaching.ResultClass)
+                return decoded;
+            var stream=Assert.IsType<PySubStream>(Assert.IsType<PyTuple>(cached.Args).Items[1]);
+            return stream.Decoded ?? MarshalCodec.Decode(stream.Raw);
+        }
+        static PyValue Field(PyDict fields,string name)=>
+            fields.Entries.Single(entry=>JsSemantics.PlainText(entry.Key)==name).Value;
+
+        var readDenied=await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            market.CallAsync(Call(deniedSession,"GetStationAsks",1)).AsTask());
+        Assert.Equal("StructureMarketDenied",readDenied.Error.UserErrorMessage);
+        var placeDenied=await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            market.CallAsync(Call(deniedSession,"PlaceBuyOrder",2,new PyLong(structureId),new PyInt(Tritanium),
+                new PyReal(10),new PyInt(1),new PyInt(-1),new PyInt(1),new PyInt(30),PyBool.False,new PyReal(0.01))).AsTask());
+        Assert.Equal("StructureMarketDenied",placeDenied.Error.UserErrorMessage);
+
+        long itemId;
+        await using (var connection=await source.OpenConnectionAsync())
+        await using (var transaction=await connection.BeginTransactionAsync())
+        {
+            itemId=await new PgItemStore(source,Schema("EVE_INVENTORY_SCHEMA")).CreateAsync(connection,transaction,
+                new NewItem(Tritanium,seller,structureId,ItemFlags.Hangar,4));
+            await transaction.CommitAsync();
+        }
+        await market.CallAsync(Call(sellerSession,"PlaceMultiSellOrder",3,
+            new PyList([Py.KeyVal(("typeID",new PyInt(Tritanium)),("itemID",new PyLong(itemId)),
+                ("price",new PyReal(10)),("quantity",new PyInt(4)),("stationID",new PyLong(structureId)))]),
+            PyBool.False,new PyInt(90),new PyReal(0.01)));
+
+        await new MarketStore(source,Schema("EVE_MARKET_SCHEMA")).SeedNpcAsync(
+            [new MarketNpcSeed("public-tritanium",Tritanium,false,12,10,MarketRules.RangeRegion,
+                MarketLocation.From(station),DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())]);
+        var regional=Assert.IsType<PyDict>(Received(await market.CallAsync(Call(deniedSession,"GetRegionBest",4))));
+        var publicAsk=Assert.IsType<PyObject>(regional.Entries.Single(entry=>entry.Key==new PyInt(Tritanium)).Value);
+        Assert.Equal(new PyLong(station.Id),Field(Assert.IsType<PyDict>(publicAsk.Args),"stationID"));
+        var systemAsks=Assert.IsType<PyDict>(Received(await market.CallAsync(Call(deniedSession,"GetSystemAsks",5))));
+        Assert.Contains(systemAsks.Entries,entry=>entry.Key==new PyInt(Tritanium));
+
+        var askResult=await market.CallAsync(Call(buyerSession,"GetStationAsks",4));
+        var askDetails=Assert.IsType<PyDict>(Assert.IsType<PyTuple>(Assert.IsType<PyObject>(askResult).Args).Items[0]);
+        Assert.Equal(new PyStr("stationid"),Field(askDetails,"sessionInfo"));
+        var asks=Assert.IsType<PyDict>(Received(askResult));
+        Assert.Contains(asks.Entries,entry=>entry.Key==new PyInt(Tritanium));
+        var askSummary=Assert.IsType<PyObject>(asks.Entries.Single(entry=>entry.Key==new PyInt(Tritanium)).Value);
+        var askFields=Assert.IsType<PyDict>(askSummary.Args);
+        Assert.Equal(new PyInt(Tritanium),Field(askFields,"typeID"));
+        Assert.Equal(new PyLong(structureId),Field(askFields,"stationID"));
+        static IReadOnlyList<PyValue> Lines(PyValue value)
+        {
+            var fields=Assert.IsType<PyDict>(Assert.IsType<PyObject>(value).Args);
+            return Assert.IsType<PyList>(fields.Entries.Single(entry=>JsSemantics.PlainText(entry.Key)=="lines").Value).Items;
+        }
+        static async Task<(long Owner,long Location,int Flag,long Quantity)> ItemState(
+            NpgsqlDataSource database,string inventorySchema,long id)
+        {
+            await using var command=database.CreateCommand(
+                $"SELECT owner_id,location_id,flag,quantity FROM {inventorySchema}.items WHERE id=$1");
+            command.Parameters.AddWithValue(id);
+            await using var reader=await command.ExecuteReaderAsync();
+            Assert.True(await reader.ReadAsync());
+            return (reader.GetInt64(0),reader.GetInt64(1),reader.GetInt32(2),reader.GetInt64(3));
+        }
+        var book=Assert.IsType<PyTuple>(Received(await market.CallAsync(Call(buyerSession,"GetOrders",5,new PyInt(Tritanium)))));
+        var initialLine=Assert.IsType<PyTuple>(Assert.Single(Lines(book.Items[0]),
+            row=>Assert.IsType<PyTuple>(row).Items[10]==new PyLong(structureId)));
+        Assert.Equal(new PyInt(4),initialLine.Items[1]);
+
+        var itemBeforeFailure=await ItemState(source,Schema("EVE_INVENTORY_SCHEMA"),itemId);
+        await using (var reject=source.CreateCommand(
+            $"ALTER TABLE {Schema("EVE_MARKET_SCHEMA")}.fills ADD CONSTRAINT reject_structure_fill CHECK(quantity=0)"))
+            await reject.ExecuteNonQueryAsync();
+        await Assert.ThrowsAsync<PostgresException>(() => market.CallAsync(Call(buyerSession,"BuyMultipleItems",6,new PyLong(structureId),
+            new PyList([Line(Tritanium,2,10)]),PyBool.False)).AsTask());
+        Assert.Equal(10000m,(await new PgWalletStore(source,Schema("EVE_WALLET_SCHEMA")).GetAsync(buyer))!.Isk);
+        Assert.Equal(9900m,(await new PgWalletStore(source,Schema("EVE_WALLET_SCHEMA")).GetAsync(seller))!.Isk);
+        Assert.Equal(itemBeforeFailure,await ItemState(source,Schema("EVE_INVENTORY_SCHEMA"),itemId));
+        Assert.Empty(Assert.IsType<PyList>(await market.CallAsync(Call(buyerSession,"CharGetTransactions",17,PyNone.Instance))).Items);
+        await using (var allow=source.CreateCommand(
+            $"ALTER TABLE {Schema("EVE_MARKET_SCHEMA")}.fills DROP CONSTRAINT reject_structure_fill"))
+            await allow.ExecuteNonQueryAsync();
+
+        // The failed operation left no receipt; repeating its call ID commits exactly one partial fill.
+        await market.CallAsync(Call(buyerSession,"BuyMultipleItems",6,new PyLong(structureId),
+            new PyList([Line(Tritanium,2,10)]),PyBool.False));
+        Assert.Equal(9980m,(await new PgWalletStore(source,Schema("EVE_WALLET_SCHEMA")).GetAsync(buyer))!.Isk);
+        var transactions=Assert.IsType<PyList>(await market.CallAsync(Call(buyerSession,"CharGetTransactions",7,PyNone.Instance)));
+        var fill=Assert.IsType<PyObject>(Assert.Single(transactions.Items));
+        var location=Assert.IsType<PyDict>(fill.Args).Entries.Single(entry=>JsSemantics.PlainText(entry.Key)=="locationID").Value;
+        Assert.Equal(new PyLong(structureId),location);
+
+        await using (var command=source.CreateCommand($"SELECT COALESCE(sum(quantity),0)::bigint FROM {Schema("EVE_INVENTORY_SCHEMA")}.items WHERE owner_id=$1 AND location_id=$2 AND flag=$3 AND type_id=$4"))
+        {
+            command.Parameters.AddWithValue(seller);
+            command.Parameters.AddWithValue(structureId);
+            command.Parameters.AddWithValue(ItemFlags.Hangar);
+            command.Parameters.AddWithValue(Tritanium);
+            Assert.Equal(2L,(long)(await command.ExecuteScalarAsync())!);
+        }
+        book=Assert.IsType<PyTuple>(Received(await market.CallAsync(Call(buyerSession,"GetOrders",8,new PyInt(Tritanium)))));
+        var partialLine=Assert.IsType<PyTuple>(Assert.Single(Lines(book.Items[0]),
+            row=>Assert.IsType<PyTuple>(row).Items[10]==new PyLong(structureId)));
+        Assert.Equal(new PyInt(2),partialLine.Items[1]);
+        var ownOrders=Assert.IsType<PyObject>(Received(await market.CallAsync(Call(sellerSession,"GetCharOrders",18))));
+        var ownAsk=Assert.IsType<PyTuple>(Assert.Single(Lines(ownOrders)));
+        Assert.Equal(new PyLong(structureId),ownAsk.Items[4]);
+
+        await Task.WhenAll(
+            market.CallAsync(Call(contenderASession,"BuyMultipleItems",11,new PyLong(structureId),
+                new PyList([Line(Tritanium,2,10)]),PyBool.False)).AsTask(),
+            market.CallAsync(Call(contenderBSession,"BuyMultipleItems",12,new PyLong(structureId),
+                new PyList([Line(Tritanium,2,10)]),PyBool.False)).AsTask());
+        var contenderATransactions=Assert.IsType<PyList>(await market.CallAsync(Call(contenderASession,"CharGetTransactions",13,PyNone.Instance)));
+        var contenderBTransactions=Assert.IsType<PyList>(await market.CallAsync(Call(contenderBSession,"CharGetTransactions",14,PyNone.Instance)));
+        Assert.Equal(1,contenderATransactions.Items.Count+contenderBTransactions.Items.Count);
+        var contenderABalance=(await new PgWalletStore(source,Schema("EVE_WALLET_SCHEMA")).GetAsync(contenderA))!.Isk;
+        var contenderBBalance=(await new PgWalletStore(source,Schema("EVE_WALLET_SCHEMA")).GetAsync(contenderB))!.Isk;
+        Assert.Equal(19_980m,contenderABalance+contenderBBalance);
+        Assert.Contains(new[]{contenderABalance,contenderBBalance},balance=>balance==9_980m);
+        await using (var command=source.CreateCommand($"SELECT COALESCE(sum(quantity),0)::bigint FROM {Schema("EVE_INVENTORY_SCHEMA")}.items WHERE owner_id=ANY($1) AND location_id=$2 AND flag=$3 AND type_id=$4"))
+        {
+            command.Parameters.AddWithValue(new[]{buyer,contenderA,contenderB});
+            command.Parameters.AddWithValue(structureId);
+            command.Parameters.AddWithValue(ItemFlags.Hangar);
+            command.Parameters.AddWithValue(Tritanium);
+            Assert.Equal(4L,(long)(await command.ExecuteScalarAsync())!);
+        }
+        book=Assert.IsType<PyTuple>(Received(await market.CallAsync(Call(buyerSession,"GetOrders",15,new PyInt(Tritanium)))));
+        Assert.DoesNotContain(Lines(book.Items[0]),row=>
+            Assert.IsType<PyTuple>(row).Items[10]==new PyLong(structureId));
+
+        await market.CallAsync(Call(buyerSession,"PlaceBuyOrder",19,new PyLong(structureId),new PyInt(Tritanium),
+            new PyReal(5),new PyInt(1),new PyInt(-1),new PyInt(1),new PyInt(90),PyBool.False,PyNone.Instance));
+        var placedBidRows=Assert.IsType<PyObject>(Received(await market.CallAsync(Call(buyerSession,"GetCharOrders",20))));
+        var placedBid=Assert.IsType<PyTuple>(Assert.Single(Lines(placedBidRows)));
+        var structureBidId=Assert.IsType<PyLong>(placedBid.Items[0]).Value;
+        Assert.Equal(new PyLong(structureId),placedBid.Items[4]);
+        await using (var backdate=source.CreateCommand(
+            $"UPDATE {Schema("EVE_MARKET_SCHEMA")}.orders SET issued_ms=$2 WHERE id=$1"))
+        {
+            backdate.Parameters.AddWithValue(structureBidId);
+            backdate.Parameters.AddWithValue(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()-MarketRules.ModificationDelayMs-1000);
+            Assert.Equal(1,await backdate.ExecuteNonQueryAsync());
+        }
+        await market.CallAsync(Call(buyerSession,"ModifyCharOrder",21,new PyLong(structureBidId),new PyReal(4),PyBool.True,
+            new PyLong(structureId),new PyInt(station.SolarSystemId),new PyReal(5),new PyInt(-1),new PyInt(1),PyNone.Instance));
+        var modifiedBidRows=Assert.IsType<PyObject>(Received(await market.CallAsync(Call(buyerSession,"GetCharOrders",22))));
+        var modifiedBid=Assert.IsType<PyTuple>(Assert.Single(Lines(modifiedBidRows)));
+        Assert.Equal(new PyLong(structureId),modifiedBid.Items[4]);
+        async Task SetMarketServiceAsync(int state)
+        {
+            await using var connection=await source.OpenConnectionAsync();
+            await using var transaction=await connection.BeginTransactionAsync();
+            await structures.SetServiceAsync(connection,transaction,structureId,StructureServiceIds.Market,state,
+                DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+            await transaction.CommitAsync();
+        }
+        var balanceBeforeDeniedCancel=(await new PgWalletStore(source,Schema("EVE_WALLET_SCHEMA")).GetAsync(buyer))!.Isk;
+        await SetMarketServiceAsync(ServiceState.Offline);
+        var deniedCancel=await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            market.CallAsync(Call(buyerSession,"CancelCharOrder",23,new PyLong(structureBidId))).AsTask());
+        Assert.Equal("StructureMarketDenied",deniedCancel.Error.UserErrorMessage);
+        var stillOpenBidRows=Assert.IsType<PyObject>(Received(await market.CallAsync(Call(buyerSession,"GetCharOrders",24))));
+        Assert.Equal(structureBidId,Assert.IsType<PyLong>(Assert.IsType<PyTuple>(Assert.Single(Lines(stillOpenBidRows))).Items[0]).Value);
+        Assert.Equal(balanceBeforeDeniedCancel,(await new PgWalletStore(source,Schema("EVE_WALLET_SCHEMA")).GetAsync(buyer))!.Isk);
+        await SetMarketServiceAsync(ServiceState.Online);
+        await market.CallAsync(Call(buyerSession,"CancelCharOrder",23,new PyLong(structureBidId)));
+        var cancelledBids=Assert.IsType<PyObject>(Received(await market.CallAsync(Call(buyerSession,"GetCharOrders",25))));
+        Assert.Empty(Lines(cancelledBids));
+
+        await host.ShutdownAsync();
+        var restarted=await HostComposition.BuildAsync(Settings());
+        var recovered=restarted.Registry.Lookup("marketProxy") ?? throw new InvalidOperationException("marketProxy is not registered after restart");
+        book=Assert.IsType<PyTuple>(Received(await recovered.CallAsync(Call(buyerSession,"GetOrders",16,new PyInt(Tritanium)))));
+        Assert.DoesNotContain(Lines(book.Items[0]),row=>
+            Assert.IsType<PyTuple>(row).Items[10]==new PyLong(structureId));
+        Assert.Equal(9980m,(await new PgWalletStore(source,Schema("EVE_WALLET_SCHEMA")).GetAsync(buyer))!.Isk);
+        Assert.Single(Assert.IsType<PyList>(await recovered.CallAsync(Call(buyerSession,"CharGetTransactions",10,PyNone.Instance))).Items);
         await restarted.ShutdownAsync();
     }
 }

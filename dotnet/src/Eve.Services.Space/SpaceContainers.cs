@@ -6,6 +6,7 @@ using Eve.Planets;
 using Eve.Scheduler;
 using Eve.Services.Ships;
 using Eve.Ships;
+using Npgsql;
 using Eve.Space;
 
 namespace Eve.Services.Space;
@@ -46,6 +47,7 @@ public sealed partial class SpaceContainers : ISpaceContainers, IDisposable
     /// <summary>The module's maxRange (attribute 54): how far a module's work reaches.</summary>
     private const int ModuleMaxRangeAttribute = 54;
 
+    private readonly NpgsqlDataSource? _source;
     private readonly ISimulation _sim;
     private readonly CharacterShips _ships;
     private readonly PgItemStore _items;
@@ -74,10 +76,10 @@ public sealed partial class SpaceContainers : ISpaceContainers, IDisposable
     public SpaceContainers(
         ISimulation sim, CharacterShips ships, PgItemStore items, PgSpaceItemStore spaceItems, PgWorkCycleLedger cycles, IFactBus events, DogmaStatic statics,
         SpaceSessions space, Func<long> nowUnixMs, Action<string>? log = null, TimeSpan? sweepEvery = null, PgDeployedStore? deployed = null,
-        DurableScheduler? scheduler = null)
+        DurableScheduler? scheduler = null, NpgsqlDataSource? source = null)
     {
         (_sim, _ships, _items, _spaceItems, _cycles, _events, _statics, _space, _nowUnixMs, _log) = (sim, ships, items, spaceItems, cycles, events, statics, space, nowUnixMs, log);
-        (_deployed, _scheduler) = (deployed, scheduler);
+        (_deployed, _scheduler, _source) = (deployed, scheduler, source);
         _deployedExpiry = new() { [CynoFieldKind] = ExpireCynoFieldAsync, [DisruptorKind] = ExpireDisruptorAsync, [InhibitorKind] = ExpireDisruptorAsync, [BeaconKind] = ExpireBeaconAsync, [ObservatoryKind] = ExpireDisruptorAsync };
         // what the simulation held is gone with it; a scene that is made gets what lies in its system, and a wreck the host puts in space is kept
         _sim.Received += OnReceived;
@@ -660,11 +662,21 @@ private void OnReceived(SimMessage message)
                             item.Position, item.Direction, item.Radius, stored.Quantity));
                         continue;
                     }
-                    // Active ships persist here for login-in-space; the simulator owns their ball, not the container service.
-                    if (type is not null && _statics.CategoryName(type.CategoryId) == "Ship" && item.GroupId != WreckGroup)
+                    if (type is not null && _statics.CategoryName(type.CategoryId) == "Ship")
                     {
-                        _placed.TryRemove(item.ItemId, out _);
-                        continue;
+                        if (item.Kind == SpaceItemKind.LaunchedShip)
+                        {
+                            if (!await _space.PlaceLaunchedShipAsync(
+                                    stored.Id, stored.OwnerId, system, type, item.Position, item.Direction, CancellationToken.None))
+                                _placed.TryRemove(item.ItemId, out _);
+                            continue;
+                        }
+                        // An active ship is restored by its character session, and a ship wreck remains a wreck.
+                        if (item.GroupId != WreckGroup)
+                        {
+                            _placed.TryRemove(item.ItemId, out _);
+                            continue;
+                        }
                     }
                     var empty = (await _items.InContainerAsync(item.ItemId)).Count == 0;
                     _sim.PlaceWreck(new SimPlaceWreck(

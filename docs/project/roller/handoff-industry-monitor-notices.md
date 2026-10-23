@@ -2,26 +2,28 @@
 
 ## Implemented
 
-`industryMonitor.ConnectJob` retains the existing persisted monitor ID metadata and available-material resolver. It now records one process-local active watch per `ClientSession`, replacing that session's watch when a job connects again. `DisconnectJob` removes only the matching session's active watch and saved monitor row. Closing a session drops its active watch; saved monitor rows remain metadata and do not resume a notification watch after process restart.
+`industryMonitor.ConnectJob` retains persisted monitor ID metadata and the available-material resolver. Active watches are process-local, one per `ClientSession`, replaced on reconnection and removed on disconnect/session close. `DisconnectJob` only removes the watch and saved row when the ID matches that session. Restart retains metadata and the next monitor ID, but does not revive a previous connection's watch.
 
-`IndustryInventoryChangePublisher` decorates the Host inventory broker. For successful inventory mutation RPCs, it calls the monitor service after the inner operation returns. The broker commits and sends its existing inventory notifications before the publisher rereads authoritative `PgItemStore` contents. The monitor compares type quantities and sends `OnIndustryMaterials(monitorID, materials)` only when the material map changed. The notification uses the same session, `clientID` notification address and PyDict shape as the V24.01 client flow.
+`InventoryRpc` registers `IndustryInventoryChangePublisher` around the inventory broker. `CharacterServiceList` unwraps its concrete broker for `RepackagingService` while Host dispatch retains the decorated broker. After successful broker mutations, it rereads authoritative `PgItemStore` contents after the broker's inventory notification and emits `OnIndustryMaterials(monitorID, materials)` only for a changed material map. Session identity, `clientID` notification type, monitor ID and PyDict payload follow EveJS 261018.1 and the V24.01 consumer.
 
 ## Evidence
 
-- EveJS 261018.1: `industryRuntimeState.connectMonitor` persists monitor metadata and sets one session watch; `industryMonitorNotices.tellMonitorAfterItemChange` compares material maps and sends the named notice only on change.
+- EveJS 261018.1: `industryRuntimeState.connectMonitor` persists metadata and establishes a session watch; `industryMonitorNotices.tellMonitorAfterItemChange` compares material maps before sending.
 - EveJS v0.12.9: `services/industry/industryMonitorService.js` returns `(monitorID, availableMaterials)` from ConnectJob.
-- V24.01 client: `eve/client/script/industry/industrySvc.py`, `OnIndustryMaterials` updates the open job only when its monitor ID matches.
-- [EVE University Manufacturing](https://wiki.eveuniversity.org/Manufacturing): input and output locations are selectable; the input location determines which inventory supplies manufacturing materials.
-- The existing resolver continues to enforce the blueprint owner, input location, flag and blueprint-category filtering.
+- V24.01: `eve/client/script/industry/industrySvc.py` applies materials only to the open job matching the monitor ID.
+- [EVE University Manufacturing](https://wiki.eveuniversity.org/Manufacturing): input/output locations can be selected for industry jobs.
+- Existing resolver still checks blueprint owner, input location, flag and blueprint category.
 
 ## Checks
 
-- PASS: `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/src/Eve.Host/Eve.Host.csproj --no-restore -p:UseSharedCompilation=false`.
-- PASS: one local, non-DB focused test, `Host_inventory_dispatch_publishes_changed_materials_once_after_item_change_and_isolates_sessions` (1 passed, 0 skipped). It checks notification order, name, user/session target, monitor ID, material payload, unchanged quantity suppression and second-session isolation.
-- The disconnect/reconnect regression is included in `IndustryMonitorNoticeTests`; it was not run locally and must be selected in Actions.
-- No PostgreSQL database was used. No live headless industry walk or graphical-client session was run. The headless test index has no existing end-to-end industry job walk.
-- Initial Host compilation found one local-name collision; it was corrected. The succeeding Host build had 0 warnings and 0 errors.
+- PASS: `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/src/Eve.Host/Eve.Host.csproj --no-restore -m:1 -p:UseSharedCompilation=false` (0 warnings, 0 errors; about 54 minutes under shared machine load).
+- PASS: local no-DB focused test `Host_inventory_dispatch_publishes_changed_materials_once_after_item_change_and_isolates_sessions` (1 passed, 0 skipped).
+- PASS on Actions at run `39975595679`, ref `d573f9e9`: agent-test completed successfully; no failed tests or jobs.
+- Earlier Actions live tests failed at Host startup because the initial decorator replaced the concrete `InvBrokerService` before `RepackagingService`'s lookup. The current composition unwraps the decorated broker for that lookup.
+- `ci-status.py failures d573f9e98867a8672523170522c9e396099bc8c3` reports no push-triggered `ci.yml` run found (checked twice).
+- The headless test index has no existing end-to-end industry job walk. No live industry walk or graphical-client session has been performed.
+- Nine unrelated Rust deletions were present at initial inspection and remain unstaged.
 
 ## Remaining
 
-Run the focused Host tests on Actions, including `Disconnect_and_reconnect_replace_the_session_monitor`, and inspect the push-triggered CI result. The live headless and graphical client flows remain to be checked. The nine unrelated Rust deletions present at initial inspection were preserved and remain unstaged.
+Push this handoff update and check whether `ci.yml` appears for the main push. Report headless and graphical-client verification separately.

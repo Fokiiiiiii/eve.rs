@@ -33,7 +33,9 @@ def build(m):
     if k == "HelloAck":
         return frame(k, struct.pack("<H", m["version"]))
     if k == "AuthRequest":
-        return frame(k, struct.pack("<I", m["corr"]) + s(m["userName"]) + b(bytes.fromhex(m["passwordHash"]))
+        credential = {"Password": 0, "Sso": 1}[m["credentialKind"]]
+        return frame(k, struct.pack("<IB", m["corr"], credential) + s(m["userName"])
+                     + b(bytes.fromhex(m["passwordHash"])) + s(m["ssoToken"])
                      + s(m["language"]) + s(m["address"]))
     if k == "AuthReply":
         if m["ok"]:
@@ -54,12 +56,15 @@ def build(m):
     raise ValueError(k)
 
 valid = [
-    {"name": "hello", "kind": "Hello", "version": 1, "nodeId": 65450},
-    {"name": "hello ack", "kind": "HelloAck", "version": 1},
-    {"name": "auth request", "kind": "AuthRequest", "corr": 7, "userName": "pilot",
-     "passwordHash": "00112233445566778899aabbccddeeff00112233", "language": "EN", "address": "127.0.0.1"},
+    {"name": "hello", "kind": "Hello", "version": 2, "nodeId": 65450},
+    {"name": "hello ack", "kind": "HelloAck", "version": 2},
+    {"name": "auth request", "kind": "AuthRequest", "corr": 7, "credentialKind": "Password", "userName": "pilot",
+     "passwordHash": "00112233445566778899aabbccddeeff00112233", "ssoToken": "", "language": "EN", "address": "127.0.0.1"},
+    {"name": "auth request, SSO", "kind": "AuthRequest", "corr": 8, "credentialKind": "Sso",
+     "userName": "EVE-SSO-CONNECTION", "passwordHash": "00112233445566778899aabbccddeeff00112233",
+     "ssoToken": "test-only-token-placeholder", "language": "EN", "address": "127.0.0.1"},
     {"name": "auth request, non-ASCII name, empty hash", "kind": "AuthRequest", "corr": 4294967295,
-     "userName": "パイロット", "passwordHash": "", "language": "JA", "address": "::1"},
+     "credentialKind": "Password", "userName": "パイロット", "passwordHash": "", "ssoToken": "", "language": "JA", "address": "::1"},
     {"name": "auth accepted", "kind": "AuthReply", "corr": 7, "ok": True, "userId": 42,
      "role": "18446744073709551615", "countryCode": "GB"},
     {"name": "auth rejected", "kind": "AuthReply", "corr": 7, "ok": False, "reason": "LoginAuthFailed"},
@@ -83,10 +88,14 @@ invalid = [
     {"name": "hello truncated", "reason": "truncated", "hex": (le32(3) + bytes([1, 1, 0])).hex()},
     {"name": "hello trailing bytes", "reason": "trailing", "hex": (le32(8) + bytes([1, 1, 0]) + le32(1) + bytes([0])).hex()},
     {"name": "string longer than the frame", "reason": "truncated",
-     "hex": (le32(1 + 4 + 2) + bytes([3]) + le32(0) + struct.pack("<H", 500)).hex()},
+     "hex": (le32(1 + 4 + 1 + 2) + bytes([3]) + le32(0) + bytes([0]) + struct.pack("<H", 500)).hex()},
     {"name": "invalid UTF-8", "reason": "utf8",
-     "hex": (le32(1 + 4 + 2 + 2 + 4 + 2 + 2) + bytes([3]) + le32(1) + struct.pack("<H", 2) + b"\xff\xfe"
-             + le32(0) + struct.pack("<H", 0) + struct.pack("<H", 0)).hex()},
+     "hex": (le32(1 + 4 + 1 + 2 + 2 + 4 + 2 + 2 + 2) + bytes([3]) + le32(1) + bytes([0])
+             + struct.pack("<H", 2) + b"\xff\xfe" + le32(0) + struct.pack("<H", 0)
+             + struct.pack("<H", 0) + struct.pack("<H", 0)).hex()},
+    {"name": "auth request with an unknown credential kind", "reason": "bad-credential-kind",
+     "hex": (le32(1 + 4 + 1 + 2 + 4 + 2 + 2 + 2) + bytes([3]) + le32(7) + bytes([9])
+             + s("") + b(b"") + s("") + s("") + s("")).hex()},
     {"name": "auth reply with an unknown status", "reason": "bad-status",
      "hex": (le32(1 + 4 + 1) + bytes([4]) + le32(1) + bytes([9])).hex()},
     {"name": "packet without a session id", "reason": "truncated", "hex": (le32(5) + bytes([7]) + le32(0)).hex()},

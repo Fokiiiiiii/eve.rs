@@ -10,7 +10,29 @@ public sealed record Hello(ushort Version, uint NodeId) : HostMessage;
 
 public sealed record HelloAck(ushort Version) : HostMessage;
 
-public sealed record AuthRequest(uint Corr, string UserName, ReadOnlyMemory<byte> PasswordHash, string Language, string Address) : HostMessage;
+public enum AuthCredentialKind : byte
+{
+    Password = 0,
+    Sso = 1,
+}
+
+public sealed record AuthRequest(
+    uint Corr,
+    AuthCredentialKind CredentialKind,
+    string UserName,
+    ReadOnlyMemory<byte> PasswordHash,
+    string? SsoToken,
+    string Language,
+    string Address) : HostMessage
+{
+    public AuthRequest(uint corr, string userName, ReadOnlyMemory<byte> passwordHash, string language, string address)
+        : this(corr, AuthCredentialKind.Password, userName, passwordHash, null, language, address)
+    {
+    }
+
+    public override string ToString() =>
+        $"AuthRequest {{ Corr = {Corr}, CredentialKind = {CredentialKind}, UserName = {UserName}, PasswordHash = <redacted>, SsoToken = {(SsoToken is null ? "<none>" : "<redacted>")}, Language = {Language}, Address = {Address} }}";
+}
 
 public abstract record AuthOutcome;
 
@@ -43,6 +65,7 @@ public enum HostLinkError
     Trailing,
     Utf8,
     BadStatus,
+    BadCredentialKind,
     FrameTooLarge,
 }
 
@@ -59,7 +82,7 @@ public sealed class HostLinkException(HostLinkError error, string message) : Exc
 /// </summary>
 public static class HostCodec
 {
-    public const ushort ProtocolVersion = 1;
+    public const ushort ProtocolVersion = 2;
 
     /// <summary>The largest frame either side accepts (16 MiB).</summary>
     public const int MaxFrame = 16 << 20;
@@ -155,8 +178,23 @@ public static class HostCodec
                 message = new HelloAck(reader.U16());
                 break;
             case Kind.AuthRequest:
-                message = new AuthRequest(reader.U32(), reader.Text(), reader.Bytes(), reader.Text(), reader.Text());
-                break;
+                {
+                    var corr = reader.U32();
+                    var credentialKind = reader.U8() switch
+                    {
+                        (byte)AuthCredentialKind.Password => AuthCredentialKind.Password,
+                        (byte)AuthCredentialKind.Sso => AuthCredentialKind.Sso,
+                        _ => throw new HostLinkException(HostLinkError.BadCredentialKind, "unknown authentication credential kind"),
+                    };
+                    var userName = reader.Text();
+                    var passwordHash = reader.Bytes();
+                    var ssoToken = reader.Text();
+                    if (credentialKind == AuthCredentialKind.Password && ssoToken.Length != 0)
+                        throw new HostLinkException(HostLinkError.BadCredentialKind, "password authentication cannot carry an SSO token");
+                    message = new AuthRequest(corr, credentialKind, userName, passwordHash,
+                        ssoToken.Length == 0 ? null : ssoToken, reader.Text(), reader.Text());
+                    break;
+                }
             case Kind.AuthReply:
                 {
                     var corr = reader.U32();
@@ -208,7 +246,7 @@ public static class HostCodec
     {
         Hello => 2 + 4,
         HelloAck => 2,
-        AuthRequest m => 4 + TextSize(m.UserName) + 4 + m.PasswordHash.Length + TextSize(m.Language) + TextSize(m.Address),
+        AuthRequest m => 4 + 1 + TextSize(m.UserName) + 4 + m.PasswordHash.Length + TextSize(m.SsoToken ?? string.Empty) + TextSize(m.Language) + TextSize(m.Address),
         AuthReply { Outcome: Accepted a } => 4 + 1 + 4 + 8 + TextSize(a.CountryCode),
         AuthReply { Outcome: Rejected r } => 4 + 1 + TextSize(r.Reason),
         SessionOpen m => 8 + 8 + 4 + 8 + TextSize(m.Address) + TextSize(m.Language) + TextSize(m.CountryCode),
@@ -290,8 +328,10 @@ public static class HostCodec
             case AuthRequest m:
                 w.U8(Kind.AuthRequest);
                 w.U32(m.Corr);
+                w.U8((byte)m.CredentialKind);
                 w.Text(m.UserName);
                 w.Bytes(m.PasswordHash.Span);
+                w.Text(m.SsoToken ?? string.Empty);
                 w.Text(m.Language);
                 w.Text(m.Address);
                 break;

@@ -69,6 +69,22 @@ fn a_destroyed_ship_is_taken_from_the_scene_and_those_who_saw_it_are_told_to_pla
 }
 
 #[test]
+fn a_wreck_uses_the_next_stamp_when_destruction_reaches_the_future_limit() {
+    let (mut scene, rat) = scene_with_a_mortal_rat();
+    let now = LATER + SECOND;
+    for _ in 0..4 {
+        scene.next_stamp(now);
+    }
+    let expected_removal_stamp = scene.next_stamp(now);
+    let told = for_player(scene.destroy(rat, None, now));
+    let actions = told_actions(&told);
+    let removal_stamp = actions.iter().find(|(_, name)| name == "RemoveBalls").unwrap().0;
+    let wreck_stamp = actions.iter().find(|(_, name)| name == "AddBalls2").unwrap().0;
+    assert_eq!(removal_stamp, i64::from(expected_removal_stamp));
+    assert_eq!(wreck_stamp, removal_stamp + 1);
+}
+
+#[test]
 fn the_wreck_is_sent_after_the_explosion_with_the_slim_item_the_reference_gives_it_where_the_ship_was() {
     let (mut scene, rat) = scene_with_a_mortal_rat();
     let was_at = scene.ship(rat, LATER + SECOND).unwrap().position;

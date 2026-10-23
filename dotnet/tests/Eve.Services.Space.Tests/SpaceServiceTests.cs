@@ -1,6 +1,7 @@
 using Eve.Fitting;
 using Eve.Inventory;
 using Eve.Macho;
+using Eve.Planets;
 using Eve.Marshal;
 using Eve.Space;
 
@@ -2013,7 +2014,12 @@ public class SpaceServiceTests
         }
         Assert.DoesNotContain(Events.Of(session), e => e.Name == "OnInvulnCancelled"); // a warp that was refused costs the pilot nothing
 
-        await Assert.ThrowsAsync<MachoWrappedException>(() => rig.BeyonceCallAsync(session, "CmdWarpToStuff", oid, new PyStr("unsupported"), new PyInt(5)));
+        foreach (var unsupportedSubject in new[] { "operationDungeon", "epinstance", "externalDungeon", "moonMiningPoint" })
+        {
+            var refused = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+                rig.BeyonceCallAsync(session, "CmdWarpToStuff", oid, new PyStr(unsupportedSubject), new PyLong(5)));
+            Assert.Equal("CustomNotify", refused.Error.UserErrorMessage);
+        }
         await Assert.ThrowsAsync<MachoWrappedException>(() => rig.BeyonceCallAsync(session, "CmdWarpToStuff", oid, new PyStr("item"), new PyStr("planet")));
         Assert.Equal(before + 2, rig.Sim.Heard.Count);
         Assert.Empty(recordedWarps);
@@ -2023,7 +2029,63 @@ public class SpaceServiceTests
         Assert.Equal(before + 2, rig.Sim.Heard.Count);
     }
 
+[Fact]
+    public void Launch_warp_target_requires_an_owned_unexpired_finite_record_in_the_current_system()
+    {
+        var launch = new LaunchRecord(7123, 42, 40000011, 30000001, 90001, true, 100, 1000, 1, 2, 3, "{}");
+
+        Assert.Equal(
+            new PlanetLaunchWarpTarget(30000001, 1, 2, 3),
+            PlanetLaunchWarpTarget.Resolve(launch, 42, 7123, 30000001, 999));
+        Assert.Null(PlanetLaunchWarpTarget.Resolve(launch, 43, 7123, 30000001, 999));
+        Assert.Null(PlanetLaunchWarpTarget.Resolve(launch, 42, 7123, 30000001, 1000));
+        Assert.Null(PlanetLaunchWarpTarget.Resolve(launch, 42, 7123, 30000002, 999));
+        Assert.Null(PlanetLaunchWarpTarget.Resolve(launch, 42, 7124, 30000001, 999));
+        Assert.Null(PlanetLaunchWarpTarget.Resolve(launch with { X = double.NaN }, 42, 7123, 30000001, 999));
+        Assert.Null(PlanetLaunchWarpTarget.Resolve(null, 42, 7123, 30000001, 999));
+    }
+
 [PgFact]
+    public async Task Launch_warp_resolves_the_owned_current_system_point_and_refuses_stale_targets_without_moving()
+    {
+        var (rig, _, session) = await DockedAsync();
+        await using var _ = rig;
+        await InSpaceAsync(rig, session);
+        var oid = await rig.BindBeyonceAsync(session);
+        var systemId = (int)session.GetInt("solarsystemid")!.Value;
+        var characterId = session.CharacterId!.Value;
+        rig.Beyonce.LaunchTargetForCharacter = (owner, launchId, _, _) =>
+            Task.FromResult<Eve.Services.Space.WarpCoordinates?>(owner != characterId ? null : launchId switch
+            {
+                7123 => new Eve.Services.Space.WarpCoordinates(systemId, 101, 202, 303),
+                7124 => new Eve.Services.Space.WarpCoordinates(systemId + 1, 404, 505, 606),
+                _ => null,
+            });
+        Events.Of(session);
+        var before = rig.Sim.Heard.Count;
+
+        var missing = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            rig.BeyonceCallAsync(session, "CmdWarpToStuff", oid, new PyStr("launch"), new PyLong(7999)));
+        Assert.Equal("CustomNotify", missing.Error.UserErrorMessage);
+        Assert.Equal(before, rig.Sim.Heard.Count);
+        Assert.DoesNotContain(Events.Of(session), e => e.Name == "OnInvulnCancelled");
+
+        var crossSystem = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            rig.BeyonceCallAsync(session, "CmdWarpToStuff", oid, new PyStr("launch"), new PyLong(7124)));
+        Assert.Equal("CustomNotify", crossSystem.Error.UserErrorMessage);
+        Assert.Equal(before, rig.Sim.Heard.Count);
+
+        var accepted = await rig.BeyonceCallWithAsync(
+            session, "CmdWarpToStuff", oid, [new PyStr("launch"), new PyLong(7123)],
+            ("minRange", new PyInt(35_000)));
+        Assert.Equal(PyNone.Instance, accepted);
+        Assert.Equal(
+            Describe(new SimCommand((ulong)session.SessionId, SimCommands.WarpToPoint, [101, 202, 303, 35_000])),
+            Describe(rig.Sim.Heard.Last()));
+        Assert.Single(Events.Of(session), e => e.Name == "OnInvulnCancelled");
+    }
+
+    [Fact]
     public async Task Fleet_warp_scopes_to_commander_role_skips_opt_outs_and_keeps_solo_warp_single()
     {
         await using var rig = await Rig.CreateAsync();

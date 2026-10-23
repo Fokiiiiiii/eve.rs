@@ -44,14 +44,25 @@ PORT="${EVE_LIVE_PORT:-26100}"
 GATEWAY_ADDR="${EVE_PUBLIC_GATEWAY:-127.0.0.1:${EVE_PUBLIC_GATEWAY_PORT:-26101}}"
 GATEWAY_PORT="${GATEWAY_ADDR##*:}"
 export EVE_PUBLIC_GATEWAY="$GATEWAY_ADDR"
+SSO_TEST_PORT="${EVE_SSO_TEST_PORT:-26261}"
+export EVE_SSO_TEST_PORT="$SSO_TEST_PORT"
+export EVE_SSO_ISSUER="http://127.0.0.1:$SSO_TEST_PORT/"
+export EVE_SSO_METADATA_URL="http://127.0.0.1:$SSO_TEST_PORT/.well-known/oauth-authorization-server"
+export EVE_SSO_AUDIENCES="EVE Online,eve.rs-headless-client"
 if [ "$GATEWAY_PORT" = "$PORT" ]; then
   echo "eve-live: the front and public gateway need different ports; set EVE_LIVE_PORT or EVE_PUBLIC_GATEWAY_PORT" >&2
+  exit 1
+fi
+if [ "$GATEWAY_PORT" = "$SSO_TEST_PORT" ] || [ "$PORT" = "$SSO_TEST_PORT" ]; then
+  echo "eve-live: the front, public gateway, and SSO test issuer need different ports" >&2
   exit 1
 fi
 if (exec 3<>"/dev/tcp/127.0.0.1/$GATEWAY_PORT") 2>/dev/null; then
   echo "eve-live: 127.0.0.1:$GATEWAY_PORT already accepts connections (another live run?); set EVE_PUBLIC_GATEWAY_PORT to a free port" >&2
   exit 1
 fi
+if (exec 3<>"/dev/tcp/127.0.0.1/$SSO_TEST_PORT") 2>/dev/null; then
+  echo "eve-live: 127.0.0.1:$SSO_TEST_PORT is reserved for the deterministic SSO test issuer" >&2
 if (exec 3<>"/dev/tcp/127.0.0.1/$PORT") 2>/dev/null; then
   echo "eve-live: 127.0.0.1:$PORT already accepts connections (another live run?); set EVE_LIVE_PORT to a free port" >&2
   exit 1
@@ -148,5 +159,5 @@ if [ -n "${EVE_RUN:-}" ]; then
   cd "$HERE" && bash -c "$EVE_RUN"
 else
   cd "$HERE/tools/headless-client"
-  EVE_LIVE_SERVER=eve.rs EVE_LIVE_STRICT_PASSWORDS=1 .venv/bin/python -m pytest -q tests/test_live.py tests/test_login_to_character.py tests/test_undock.py tests/test_movement.py tests/test_warp.py tests/test_jump.py tests/test_others.py tests/test_target.py tests/test_module.py tests/test_health.py tests/test_market.py tests/test_structures.py tests/test_skinr_live.py -rs
+  EVE_LIVE_SERVER=eve.rs EVE_LIVE_STRICT_PASSWORDS=1 .venv/bin/python -m pytest -q tests/test_live.py tests/test_login_to_character.py tests/test_paperdoll_selection.py tests/test_sso_login_live.py tests/test_undock.py tests/test_movement.py tests/test_warp.py tests/test_jump.py tests/test_others.py tests/test_target.py tests/test_module.py tests/test_health.py tests/test_market.py tests/test_structures.py tests/test_skinr_live.py -rs
 fi

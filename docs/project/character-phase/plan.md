@@ -1,7 +1,7 @@
 # Character phase: work plan
 
-**Verified source:** main at `235ee85a` (2026-10-16), clean working tree.
-**Method:** analysis only. No build, no test, no database query, no live client run. Every finding cites a file in eve.rs, the EveJS reference, or the V24.01 eve-logic callsite.
+**Baseline:** analysis used main at `235ee85a` (2026-10-16), before package implementation.
+**Acceptance update (2026-10-23):** this worktree is based on `origin/main` `9e4f50a6`; current outcomes and checks are recorded in sections 4.1 and 7.2.
 **Layout:** mirrors `docs/project/structures-phase/plan.md` (sections 0 to 7, packages `CH-n`, one haiku agent per package). Rules for every implementer: [agent-rules.md](agent-rules.md), read before starting a package.
 
 ## 0. Scope, sources and reading rules
@@ -82,32 +82,32 @@ Verdicts: **Missing** (no working handler), **Stub** (answers a constant or an e
 
 Lanes are the PostgreSQL databases from `docs/project/DATABASES.md`: `eve_p2` (live port 26101), `eve_p3` (26102), `eve_p4` (26103). The default `eve` lane is for the main session. Each lane runs its PostgreSQL tests and live run under its own lock.
 
-| ID | Package | Depends on | Wave | Lane | Parallel with |
-|---|---|---|---|---|---|
-| CH-1 | Character deletion: prepare, cancel, delete, and purge character-owned skill plans with the deletion transaction | none | 1 | eve_p2 | CH-3, CH-6, CH-10, CH-12 |
-| CH-2 | Alpha injections, and acceptance of the injector correction | none | 1 | eve_p3 | CH-5, CH-7, CH-9 |
-| CH-3 | Skill handler: CheckAndSendNotifications, GetSkillBundleInfo, skill notification order | none | 1 | eve_p2 | CH-1, CH-6, CH-10, CH-12 |
-| CH-4 | Tutorial and season read surfaces | none | 1 | eve_p4 | CH-8, CH-11, CH-13, CH-14 |
-| CH-5 | Login milestones (milestoneMgr) | none | 1 | eve_p3 | CH-2, CH-7, CH-9 |
-| CH-6 | Multi-character training: item activation, slot expiry | none | 1 | eve_p2 | CH-1, CH-3, CH-10, CH-12 |
-| CH-7 | Atomic population check on SelectCharacterID | none | 1 | eve_p3 | CH-2, CH-5, CH-9 |
-| CH-8 | Re-sculpt and paperdoll states 1 and 3 | GATE-B | 1 (gated) | eve_p4 | CH-4, CH-11, CH-13, CH-14 |
-| CH-9 | Achievement writes, no fixture | none | 1 | eve_p3 | CH-2, CH-5, CH-7 |
-| CH-10 | userSvc constant answers (playtime, votes, reports) | GATE-C | 1 (gated) | eve_p2 | CH-1, CH-3, CH-6, CH-12 |
-| CH-11 | Implant and booster modifiers in pilot dogma and training | none | 1 | eve_p3 | CH-4, CH-8, CH-13, CH-14 |
-| CH-12 | Jump-clone store, clone state reads, names, destroy, clone-station field | none | 1 | eve_p2 | CH-1, CH-3, CH-6, CH-10 |
-| CH-13 | Player bounties: place, read, top lists | none | 1 | eve_p4 | CH-4, CH-8, CH-11, CH-14 |
-| CH-14 | Standings verification (NPC kill standing) | none | 1 | eve_p4 | CH-4, CH-8, CH-11, CH-13 |
-| CH-15 | Clone installation: station, structure, ship | CH-12 | 2 | eve_p2 | CH-16, CH-17, CH-18 |
-| CH-16 | Clone jump, activation fee, clone station on death | CH-11, CH-12, CH-15 | 3 | eve_p3 | CH-19, CH-21 |
-| CH-17 | Expert systems | CH-11 | 2 | eve_p3 | CH-15, CH-18, CH-19 |
-| CH-18 | Player bounty claims and payout | CH-13, GATE-D | 2 (gated) | eve_p4 | CH-15, CH-17, CH-19 |
-| CH-19 | Challenges and season rewards | CH-4 | 2 | eve_p2 | CH-16, CH-17, CH-18 |
-| CH-20 | Public gateway: minimal transport and one namespace | GATE-A | 1 (gated) | eve_p4 | any Wave 1 package |
-| CH-21 | Skill plans (character) | CH-20 | 3 | eve_p4 | CH-16, CH-22 |
-| CH-22 | Character titles and achievement showcase | CH-20, CH-9 | 3 | eve_p4 | CH-16, CH-21 |
-| CH-23 | Phase acceptance and documentation sweep | all landed packages | 4 | eve_p2 (combined run) | none |
-| CH-R1 | Character rank (faction warfare) | GATE-E | blocked | (none) | out of this phase unless approved |
+| ID | Package | Outcome | Depends on | Wave | Lane | Parallel with |
+|---|---|---|---|---|---|---|
+|CH-1|Character deletion: prepare, cancel, delete, and purge character-owned skill plans with the deletion transaction|Partial|none|1|eve_p2|CH-3, CH-6, CH-10, CH-12|
+|CH-2|Alpha injections, and acceptance of the injector correction|Done|none|1|eve_p3|CH-5, CH-7, CH-9|
+|CH-3|Skill handler: CheckAndSendNotifications, GetSkillBundleInfo, skill notification order|Partial|none|1|eve_p2|CH-1, CH-6, CH-10, CH-12|
+|CH-4|Tutorial and season read surfaces|Done|none|1|eve_p4|CH-8, CH-11, CH-13, CH-14|
+|CH-5|Login milestones (milestoneMgr)|Done|none|1|eve_p3|CH-2, CH-7, CH-9|
+|CH-6|Multi-character training: item activation, slot expiry|Done|none|1|eve_p2|CH-1, CH-3, CH-10, CH-12|
+|CH-7|Atomic population check on SelectCharacterID|Done|none|1|eve_p3|CH-2, CH-5, CH-9|
+|CH-8|Re-sculpt and paperdoll states 1 and 3|Partial|GATE-B|1 (gated)|eve_p4|CH-4, CH-11, CH-13, CH-14|
+|CH-9|Achievement writes, no fixture|Done|none|1|eve_p3|CH-2, CH-5, CH-7|
+|CH-10|userSvc constant answers (playtime, votes, reports)|Done|GATE-C|1 (gated)|eve_p2|CH-1, CH-3, CH-6, CH-12|
+|CH-11|Implant and booster modifiers in pilot dogma and training|Done|none|1|eve_p3|CH-4, CH-8, CH-13, CH-14|
+|CH-12|Jump-clone store, clone state reads, names, destroy, clone-station field|Done|none|1|eve_p2|CH-1, CH-3, CH-6, CH-10|
+|CH-13|Player bounties: place, read, top lists|Done|none|1|eve_p4|CH-4, CH-8, CH-11, CH-14|
+|CH-14|Standings verification (NPC kill standing)|Done|none|1|eve_p4|CH-4, CH-8, CH-11, CH-13|
+|CH-15|Clone installation: station, structure, ship|Done|CH-12|2|eve_p2|CH-16, CH-17, CH-18|
+|CH-16|Clone jump, activation fee, clone station on death|Done|CH-11, CH-12, CH-15|3|eve_p3|CH-19, CH-21|
+|CH-17|Expert systems|Done|CH-11|2|eve_p3|CH-15, CH-18, CH-19|
+|CH-18|Player bounty claims and payout|Done|CH-13, GATE-D|2 (gated)|eve_p4|CH-15, CH-17, CH-19|
+|CH-19|Challenges and season rewards|Partial|CH-4|2|eve_p2|CH-16, CH-17, CH-18|
+|CH-20|Public gateway: minimal transport and one namespace|Partial|GATE-A|1 (gated)|eve_p4|any Wave 1 package|
+|CH-21|Skill plans (character)|Done|CH-20|3|eve_p4|CH-16, CH-22|
+|CH-22|Character titles and achievement showcase|Partial|CH-20, CH-9|3|eve_p4|CH-16, CH-21|
+|CH-23|Phase acceptance and documentation sweep|In progress|all landed packages|4|eve_p2 (combined run)|none|
+|CH-R1|Character rank (faction warfare)|Out of scope|GATE-E|blocked|(none)|out of this phase unless approved|
 
 Wave 1 runs about 14 packages across three lanes. Packages in one wave may run at once on their own lanes; packages in a later wave start when their dependencies have landed on `origin/main`.
 
@@ -323,19 +323,21 @@ Each item was checked in source; the test names are those found by search. Items
 
 ## 7. Stale documents, and what was not checked
 
-### 7.1 Stale rows corrected in CH-23
-- The former DEVIATIONS row 249 (security status and bounties) and row 261 (`charUnboundMgr`) no longer exist at those row positions. Current character-selection security status is in DEVIATIONS entry 146; implemented `charUnboundMgr` routes are documented beside their Host tests, while the no-client-callsite methods are listed separately. CH-13 and CH-18 carry the bounty evidence.
-- The old TODO open entry for `alphaInjectorMgr.GetNextAvailableInjection` at line 1071 contradicted the completed CH-2 evidence. It now points to the persisted daily-use implementation, focused tests and `test_alpha_injector_live.py`.
-- The earlier TODO multi-training gap (row 131 in the previous status sheet) is closed: CH-6 now records startup recreation of missing future expiry jobs and reconciliation after missed expiries in `CharacterHostTests.Host_startup_recreates_expiry_jobs_for_existing_training_slots` and the package summary.
-- The skills mutations and corporation kick/leave verification item remains a trace request, not a missing-RPC claim (`TODO.md`, EJS-0671). CH-3's queue/skill notification coverage is recorded with its focused tests. Corporation kick/leave stays outside this character package.
+### 7.1 CH-23 reconciliation
 
-### 7.2 Not checked by this analysis
-- No build, no test, no database query, no live client run. Nothing here is a pass.
-- The SDE was not queried. Item types for re-sculpt, Daily Alpha Injector, expert systems and implants are for the package agents to confirm.
-- The EVE University wiki was not fetched. Every mechanic in CH-1 to CH-22 is to be read from the wiki by the package agent before coding; where the wiki is silent, EveJS is the second source and the choice goes in DEVIATIONS.
-- EveJS was read by grep and by the listed bodies only. Its handlers were not executed.
-- The V24.01 client call sites come from grep. A call built from a computed name would not be found. The eve-logic repository was searched as text.
-- DEVIATIONS was read in lines 151-161, 239-264, 877-901 and 1318-1392, and searched by keyword elsewhere. The file has 4,151 lines; rows in other sections may hold character items this plan does not list.
-- TODO.md (2,559 lines) was searched by keyword, not read in full. `service-response-audit/evejs-only-responses.md` was consulted only through the TODO references.
-- Not checked in code: the `SelectCharacterID` atomicity (item 19 of section 3), the body of `GetRecentShipKillsAndLosses`, the source of `GetSessionPlaytimeMinutes`, the NPC kill standing rule, the source of the challenge data, and the existing live kill helper for CH-18.
-- Test counts above are the number of test attributes found by search, not results of runs.
+- The former DEVIATIONS entries 249 and 261 do not identify the current security-status and `charUnboundMgr` records. Character-selection security status is recorded in DEVIATIONS entry 146; live bounty and `charUnboundMgr` evidence is in the package handoffs.
+- The old alpha-injector TODO and multi-training expiry gap are closed. The daily injector implementation and `test_alpha_injector_live.py` are recorded in TODO; startup recreation and reconciliation are covered by `CharacterHostTests.Host_startup_recreates_expiry_jobs_for_existing_training_slots`.
+- `GetSkillBundleInfo` remains partial: the endpoint returns the V24.01 empty name/icon shape because the pinned SDE, EveJS and client source provide no bundle-name or icon table. Its Host and live tests are recorded in TODO and DEVIATIONS.
+- The CH-1 live deletion walk now covers a successful `DeleteCharacter` dispatch after seeding an expired persisted deadline; the server still enforces the deadline, marks the row deleted and runs its purge. The 600-minute waiting duration is preserved. Current Actions result is recorded below.
+- CH-8 paperdoll state tests cover activation, restart and selection; the live character-creation walk sends the recorded `CreateCharacterWithDoll` payload. The graphical character editor was not exercised.
+- CH-18 turret misses came from range falloff: the 125mm Railgun's optimal plus falloff was much shorter than the ships' arrival separation, even though the target was inside the module's nominal range. The sim formula matches the EVE University turret equation; the focused Rust test covers the falloff-only and stopped-in-range cases. The live fixture stops both ships before firing.
+- The formerly open S9 gateway JWT signature, title grant/revoke notices and TLS listener are implemented and covered by Host tests. CH-20 remains partial because the Host does not publish the client’s solar-system, corporation, alliance, application-instance or bubble target groups; current feature publishers use character/account targets, and local chat fans out to individual characters.
+- CH-22 remains partial because the Host title API has read/equip/unequip calls and the grant service publishes notices, but it has no handler for the separate V24.01 achievement reward claim namespace or authoritative reward definitions that would call that service.
+- CH-19’s source claim is narrowed in TODO and DEVIATIONS: the SDE has related Gallente Election campaign items, while the season-selection payload and challenge identifiers/progress/reward definitions are absent from the matching V24.01 sources.
+- The skill mutation and corporation kick/leave verification note remains a trace request, not a missing character RPC claim (`TODO.md`, EJS-0671).
+
+### 7.2 Verification record
+
+- Local Rust checks for the Destiny wreck-stamp fix passed: the focused `eve-space` regression (1/1), `cargo check -p eve-space`, `cargo +1.94.1 fmt --all -- --check`, and workspace clippy.
+- The graphical V24.01 client was not used. Active-season challenge progress and reward behavior, non-character target-group delivery, and achievement reward claims remain partial for the sources and Host-wiring reasons listed above.
+- CH-23 selected Actions results and final package outcomes are added here after the current-tree runs finish.

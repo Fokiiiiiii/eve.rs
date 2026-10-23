@@ -106,6 +106,22 @@ public class PgAccountTests
         await Assert.ThrowsAsync<PostgresException>(() => schema.ExecuteAsync($"INSERT INTO {schema.Name}.accounts (user_name, password_hash, country_code) VALUES ('b', '\\x02', 'gb')"));
     }
 
+    [PgFact]
+    public async Task Sso_identity_links_survive_a_new_directory_over_the_same_database()
+    {
+        await using var schema = await PgSchema.CreateAsync();
+        var firstDirectory = new PgAccountDirectory(schema.Source, new AccountOptions { AutoCreate = true }, schema.Name);
+        var account = Assert.IsType<LoggedIn>(await firstDirectory.LoginAsync(
+            new LoginAttempt("sso-linked", new byte[] { 1, 2, 3 }, "EN", "127.0.0.1"), CancellationToken.None));
+        var identity = new VerifiedSsoIdentity("https://login.eveonline.com/", "CHARACTER:EVE:9000123");
+
+        Assert.True(await firstDirectory.LinkSsoIdentityAsync(account.AccountId, identity, CancellationToken.None));
+        var restartedDirectory = new PgAccountDirectory(schema.Source, new AccountOptions(), schema.Name);
+
+        Assert.Equal(account, await restartedDirectory.LoginSsoAsync(identity, CancellationToken.None));
+        Assert.False(await restartedDirectory.LinkSsoIdentityAsync(account.AccountId + 1, identity, CancellationToken.None));
+    }
+
     [Fact]
     public void A_schema_name_that_could_carry_sql_is_refused()
     {

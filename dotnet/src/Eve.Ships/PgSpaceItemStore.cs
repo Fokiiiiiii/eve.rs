@@ -3,18 +3,26 @@ using Npgsql;
 
 namespace Eve.Ships;
 
-/// <summary>A can or a wreck that lies in space: where, how, whose and until when. The item itself, and what is in it, are the inventory's.</summary>
+public enum SpaceItemKind
+{
+    ContainerOrWreck = 0,
+    LaunchedShip = 1,
+    ActiveShip = 2,
+}
+
+/// <summary>A durable space item: its pose and ownership live here, while its inventory item and contents stay in the inventory store.</summary>
 public sealed record SpaceItem(
     long ItemId, int SolarSystemId, IReadOnlyList<double> Position, IReadOnlyList<double> Direction, double Radius, int GroupId, long LauncherId,
     long CharacterId, long CorporationId, long AllianceId, long WarFactionId, long ExpiresAtMs,
-    long MoonExtractionId = 0, long MoonId = 0, long MoonStructureId = 0, long MoonOwnerCorporationId = 0, int MoonRockOrdinal = 0, int MoonGraphicId = 0);
+    long MoonExtractionId = 0, long MoonId = 0, long MoonStructureId = 0, long MoonOwnerCorporationId = 0, int MoonRockOrdinal = 0, int MoonGraphicId = 0,
+    SpaceItemKind Kind = SpaceItemKind.ContainerOrWreck, long SourceContainerId = 0);
 
 /// <summary>What lies in space as items, in PostgreSQL, in the module's own schema (<c>space</c> unless told otherwise).</summary>
 public sealed class PgSpaceItemStore
 {
     public const string DefaultSchema = "space";
 
-    private const string Columns = "item_id, solar_system_id, x, y, z, dx, dy, dz, radius, group_id, launcher_id, character_id, corporation_id, alliance_id, war_faction_id, expires_at_ms, moon_extraction_id, moon_id, moon_structure_id, moon_owner_corporation_id, moon_rock_ordinal, moon_graphic_id";
+    private const string Columns = "item_id, solar_system_id, x, y, z, dx, dy, dz, radius, group_id, launcher_id, character_id, corporation_id, alliance_id, war_faction_id, expires_at_ms, moon_extraction_id, moon_id, moon_structure_id, moon_owner_corporation_id, moon_rock_ordinal, moon_graphic_id, kind, source_container_id";
 
     private readonly NpgsqlDataSource _source;
     private readonly string _schema;
@@ -37,7 +45,7 @@ public sealed class PgSpaceItemStore
     private static SpaceItem Read(NpgsqlDataReader r) => new(
         r.GetInt64(0), r.GetInt32(1), [r.GetDouble(2), r.GetDouble(3), r.GetDouble(4)], [r.GetDouble(5), r.GetDouble(6), r.GetDouble(7)], r.GetDouble(8), r.GetInt32(9), r.GetInt64(10),
         r.GetInt64(11), r.GetInt64(12), r.GetInt64(13), r.GetInt64(14), r.GetInt64(15), r.GetInt64(16), r.GetInt64(17), r.GetInt64(18), r.GetInt64(19),
-        r.GetInt32(20), r.GetInt32(21));
+        r.GetInt32(20), r.GetInt32(21), (SpaceItemKind)r.GetInt32(22), r.GetInt64(23));
 
     /// <summary>Records where an item lies (a second record of the same item replaces the first).</summary>
     public async Task SaveAsync(SpaceItem item, CancellationToken cancellationToken = default)
@@ -52,20 +60,20 @@ public sealed class PgSpaceItemStore
     {
         await using var command = new NpgsqlCommand(
             $"""
-            INSERT INTO {_schema}.space_items ({Columns}) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
+            INSERT INTO {_schema}.space_items ({Columns}) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
             ON CONFLICT (item_id) DO UPDATE SET
                 solar_system_id = EXCLUDED.solar_system_id, x = EXCLUDED.x, y = EXCLUDED.y, z = EXCLUDED.z, dx = EXCLUDED.dx, dy = EXCLUDED.dy, dz = EXCLUDED.dz,
                 radius = EXCLUDED.radius, group_id = EXCLUDED.group_id, launcher_id = EXCLUDED.launcher_id, character_id = EXCLUDED.character_id,
                 corporation_id = EXCLUDED.corporation_id, alliance_id = EXCLUDED.alliance_id, war_faction_id = EXCLUDED.war_faction_id, expires_at_ms = EXCLUDED.expires_at_ms,
                 moon_extraction_id = EXCLUDED.moon_extraction_id, moon_id = EXCLUDED.moon_id, moon_structure_id = EXCLUDED.moon_structure_id,
-                moon_owner_corporation_id = EXCLUDED.moon_owner_corporation_id, moon_rock_ordinal = EXCLUDED.moon_rock_ordinal, moon_graphic_id = EXCLUDED.moon_graphic_id
+                moon_owner_corporation_id = EXCLUDED.moon_owner_corporation_id, moon_rock_ordinal = EXCLUDED.moon_rock_ordinal, moon_graphic_id = EXCLUDED.moon_graphic_id, kind = EXCLUDED.kind, source_container_id = EXCLUDED.source_container_id
             """,
             connection, transaction);
         foreach (var value in new object[]
         {
             item.ItemId, item.SolarSystemId, item.Position[0], item.Position[1], item.Position[2], item.Direction[0], item.Direction[1], item.Direction[2], item.Radius, item.GroupId,
             item.LauncherId, item.CharacterId, item.CorporationId, item.AllianceId, item.WarFactionId, item.ExpiresAtMs,
-            item.MoonExtractionId, item.MoonId, item.MoonStructureId, item.MoonOwnerCorporationId, item.MoonRockOrdinal, item.MoonGraphicId,
+            item.MoonExtractionId, item.MoonId, item.MoonStructureId, item.MoonOwnerCorporationId, item.MoonRockOrdinal, item.MoonGraphicId, (int)item.Kind, item.SourceContainerId,
         })
         {
             command.Parameters.Add(new NpgsqlParameter { Value = value });

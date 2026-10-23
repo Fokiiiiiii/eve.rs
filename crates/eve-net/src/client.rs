@@ -83,6 +83,43 @@ where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
 {
+    login_with_sso(reader, writer, user, password_hash, language, None).await
+}
+
+/// Logs in using the same sentinel credentials and inbound token as the V24 client.
+pub async fn login_sso<R, W>(
+    reader: &mut FrameReader<R>,
+    writer: &mut W,
+    token: &str,
+    language: &str,
+) -> Result<ClientSession, HandshakeError>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    login_with_sso(
+        reader,
+        writer,
+        crate::handshake::SSO_CONNECTION_USER,
+        b"fake-password-hash",
+        language,
+        Some(token),
+    )
+    .await
+}
+
+async fn login_with_sso<R, W>(
+    reader: &mut FrameReader<R>,
+    writer: &mut W,
+    user: &str,
+    password_hash: &[u8],
+    language: &str,
+    sso_token: Option<&str>,
+) -> Result<ClientSession, HandshakeError>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
     let Value::Tuple(server_version) = receive(reader).await? else {
         return Err(HandshakeError::Protocol("expected the server's version tuple".into()));
     };
@@ -121,7 +158,7 @@ where
         ("user_password_hash", Value::Buffer(Bytes::copy_from_slice(password_hash))),
         ("user_languageid", Value::string(language.to_owned())),
         ("user_affiliateid", Value::str("")),
-        ("user_sso_token", Value::None),
+        ("user_sso_token", sso_token.map(|token| Value::string(token.to_owned())).unwrap_or(Value::None)),
     ]);
     send(writer, &Value::Tuple(vec![Value::Buffer(Bytes::from_static(&[7u8; 64])), login])).await?;
 

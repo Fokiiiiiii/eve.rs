@@ -4,7 +4,7 @@ Checked 2026-10-23.
 
 ## Dependency and image review
 
-- Rust: `cargo audit --file Cargo.lock` loaded 1,349 RustSec advisories and scanned 114 dependencies on 2026-10-23; it exited successfully with no findings. `cargo deny`, Trivy, and Grype are not installed in the environment.
+- Rust: The initial `cargo audit --file Cargo.lock` scan loaded 1,349 RustSec advisories and found none on 2026-10-23. A later audit detected [RUSTSEC-2026-0385](https://rustsec.org/advisories/RUSTSEC-2026-0385.html) in `ctutils 0.4.2`; `Cargo.lock` now selects fixed release `0.4.4`. The lockfile fix is awaiting the push-triggered audit result. `cargo deny`, Trivy, and Grype are not installed in the environment.
 - .NET: GitHub Actions dependency audit run `39858626529` passed `dotnet list dotnet/EveRs.slnx package --vulnerable --include-transitive` on 2026-10-22; the local solution package audit also completed that day and found no vulnerable packages.
 - Python: `pip-audit` scanned `tools/headless-client/requirements.txt` and `tools/headless-client/requirements-dev.txt` on 2026-10-23 and reported no known vulnerabilities.
 - No tracked npm manifests or lockfiles were present. The Dockerfile uses Rust and .NET image references pinned by registry manifest digest. Trivy 0.75.0 scanned `mcr.microsoft.com/dotnet/runtime:10.0@sha256:0cf09aaccf6a9f68900aed4c73fb28fe25bb59ec85de4dea08ba02240a8635f3` on 2026-10-22 and reported 26 package findings across 22 advisory IDs (21 medium, 5 low, no high or critical); no fixed versions were listed. The local environment has no container daemon or built application image, so this result covers the pinned base image only. Grype, Docker Scout, and Snyk were unavailable.

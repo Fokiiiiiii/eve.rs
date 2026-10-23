@@ -32,6 +32,9 @@ public sealed record HostOptions
     /// <summary>Maximum serialized bytes queued through one front connection.</summary>
     public long MaxQueuedOutboundBytesPerConnection { get; init; } = 64 * 1024 * 1024;
 
+    /// <summary>Verifies the inbound CCP SSO token when an SSO credential is presented.</summary>
+    public ISsoTokenVerifier? SsoTokenVerifier { get; init; }
+
     /// <summary>Called with a problem worth logging.</summary>
     public Action<string>? Log { get; init; }
 
@@ -370,7 +373,8 @@ private readonly LoginAttemptLimiter _loginAttemptLimiter;
 
     private async Task AuthenticateAsync(AuthRequest request, CancellationToken ct)
     {
-        if (!_loginAttemptLimiter.IsAllowed(request.UserName, request.Address))
+        var accountName = request.CredentialKind == AuthCredentialKind.Password ? request.UserName : string.Empty;
+        if (!_loginAttemptLimiter.IsAllowed(accountName, request.Address))
         {
             Post(new AuthReply(request.Corr, new Rejected(LoginRefused.BadCredentials)));
             return;
@@ -379,11 +383,30 @@ private readonly LoginAttemptLimiter _loginAttemptLimiter;
         AuthOutcome outcome;
         try
         {
-            var result = await _accounts.LoginAsync(new LoginAttempt(request.UserName, request.PasswordHash, request.Language, request.Address), ct);
-            if (result is LoggedIn)
-                _loginAttemptLimiter.ClearAccountFailures(request.UserName);
+            LoginResult result;
+            if (request.CredentialKind == AuthCredentialKind.Password)
+            {
+                result = await _accounts.LoginAsync(
+                    new LoginAttempt(request.UserName, request.PasswordHash, request.Language, request.Address), ct);
+            }
+            else if (request.SsoToken is null ||
+                     _options.SsoTokenVerifier is not { } verifier ||
+                     _accounts is not ISsoAccountDirectory ssoAccounts)
+            {
+                result = new LoginRefused(LoginRefused.BadCredentials);
+            }
+            else
+            {
+                var identity = await verifier.VerifyAsync(request.SsoToken, ct);
+                result = identity is null
+                    ? new LoginRefused(LoginRefused.BadCredentials)
+                    : await ssoAccounts.LoginSsoAsync(identity, ct);
+            }
+
+            if (result is LoggedIn && request.CredentialKind == AuthCredentialKind.Password)
+                _loginAttemptLimiter.ClearAccountFailures(accountName);
             else if (result is LoginRefused { Reason: LoginRefused.BadCredentials })
-                _loginAttemptLimiter.RecordFailure(request.UserName, request.Address);
+                _loginAttemptLimiter.RecordFailure(accountName, request.Address);
             outcome = result switch
             {
                 LoggedIn login => new Accepted(login.AccountId, login.Role, login.CountryCode),
@@ -699,6 +722,12 @@ internal sealed class SessionActor
                 }
                 var value = MarshalCodec.DecodeInbound(payload);
                 await _dispatcher.DispatchAsync(value, _session, _ct);
+            }
+            catch (MarshalException error) when (error.Kind == MarshalErrorKind.AllocationBudgetExceeded)
+            {
+                _options.Log?.Invoke($"session {_session.SessionId}: refused an over-budget marshal packet");
+                _disconnect("InvalidPacket");
+                return;
             }
             catch (MarshalException error)
             {

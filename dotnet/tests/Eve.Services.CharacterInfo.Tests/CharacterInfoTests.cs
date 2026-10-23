@@ -751,6 +751,19 @@ public class CharMgrTests
         Assert.Equal(new PyStr("CHARMGR_BULK_LIMIT_EXCEEDED"),
             Assert.IsType<PyTuple>(errorHeader.Items[1]).Items[0]);
         Assert.Same(beforeOversizedInput, state);
+
+        async Task AssertInvalidBatch(PyValue argument, string expectedCode)
+        {
+            var malformed = await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(() =>
+                Call("BlockOwners", argument));
+            var header = Assert.IsType<PyTuple>(Assert.IsType<PyObjectEx>(malformed.Error.Payload).Header);
+            Assert.Equal(new PyStr(expectedCode), Assert.IsType<PyTuple>(header.Items[1]).Items[0]);
+            Assert.Same(beforeOversizedInput, state);
+        }
+
+        await AssertInvalidBatch(new PyStr("not-a-list"), "CHARMGR_CONTACT_IDS_INVALID");
+        await AssertInvalidBatch(new PyList([Id(3001), Id(-1)]), "CHARMGR_CONTACT_ID_INVALID");
+        await AssertInvalidBatch(new PyList([Id(3001), new PyReal(3.0)]), "CHARMGR_CONTACT_ID_INVALID");
     }
 
     [PgFact]

@@ -537,7 +537,10 @@ public sealed partial class InvBrokerService(
         }
         var flags = call.Arg(0);
         if (flags is PyNone) flags = call.Kwarg("flags") ?? PyNone.Instance;
-        var wanted = (flags switch { PyTuple t => t.Items, PyList l => l.Items, _ => [] }).Select(IdOf).Where(v => v is not null).Select(v => (int)v!.Value).ToHashSet();
+        var requestedFlags = flags switch { PyTuple t => t.Items, PyList l => l.Items, _ => [] };
+        if (requestedFlags.Count > MaxGetItemsIds)
+            throw MachoErrors.ThrowUserError("INVENTORY_BULK_LIMIT_EXCEEDED");
+        var wanted = requestedFlags.Select(IdOf).Where(v => v is not null).Select(v => (int)v!.Value).ToHashSet();
         var contents = await ContentsAsync(context, call.Session, call.Cancellation);
         return new PyList([.. contents.Where(r => wanted.Contains(r.Flag)).Select(r => InventoryWire.PackedRow(r))]);
     }
@@ -581,15 +584,28 @@ public sealed partial class InvBrokerService(
         {
             PyTuple tuple => tuple.Items,
             PyList list => list.Items,
-            PyObjectEx { Header: PyTuple { Items.Count: 2 } header }
+            PyObjectEx
+            {
+                Kind: ObjectExKind.Ex1,
+                Header: PyTuple { Items.Count: 2 } header,
+                List.Count: 0,
+                Dict.Count: 0,
+            }
                 when header.Items[0] is PyToken { Value: "__builtin__.set" }
                      && header.Items[1] is PyTuple { Items.Count: 1 } setArguments
                      && setArguments.Items[0] is PyList values => values.Items,
-            _ => []
+            _ => throw MachoErrors.ThrowUserError("INVENTORY_BULK_ARGUMENT_INVALID"),
         };
         if (requestedIds.Count > MaxGetItemsIds)
             throw MachoErrors.ThrowUserError("INVENTORY_BULK_LIMIT_EXCEEDED");
-        var itemIds = requestedIds.Select(IdOf).Where(id => id is not null).Select(id => id!.Value).ToHashSet();
+        var itemIds = new HashSet<long>();
+        foreach (var requestedId in requestedIds)
+        {
+            var itemId = IdOf(requestedId);
+            if (itemId is not > 0)
+                throw MachoErrors.ThrowUserError("INVENTORY_ITEM_ID_INVALID");
+            itemIds.Add(itemId.Value);
+        }
         if (itemIds.Count == 0 || call.Session.CharacterId is not { } characterId
             || statics.AttributeId("crystalsGetDamaged") is not { } damageAttributeId)
             return new PyDict([]);
@@ -775,10 +791,13 @@ public sealed partial class InvBrokerService(
 
         var owned = await items.OwnedByAsync(characterId, call.Cancellation);
         var roots = await GlobalAssetRootsAsync(owned, call.Cancellation);
+        var itemCounts = owned.Where(item => item.Quantity != 0)
+            .GroupBy(item => item.LocationId)
+            .ToDictionary(group => group.Key, group => group.Count());
         var rows = new List<(long SolarSystemId, long LocationId, PyValue Row)>();
         foreach (var locationId in roots.LocationIds)
         {
-            var itemCount = owned.Count(item => item.Quantity != 0 && item.LocationId == locationId);
+            var itemCount = itemCounts.GetValueOrDefault(locationId);
             if (stations.Get(locationId) is { } station)
             {
                 rows.Add((station.SolarSystemId, station.Id, Py.Tuple([

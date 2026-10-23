@@ -77,23 +77,28 @@ public sealed class FittingMgrCalls(PgSavedFittingStore store, IFittingHost host
         await MutateAccessAsync(call, owner, scope);
         var input = call.Arg(1);
         var limit = LimitOf(scope);
-        var rawCount = input switch
+        var entries = input switch
         {
-            PyObject { Args: PyDict dict } => dict.Entries.Count,
-            PyDict dict => dict.Entries.Count,
-            _ => 0,
+            PyObject { Args: PyDict dict } => dict.Entries,
+            PyDict dict => dict.Entries,
+            _ => throw Refusal("FITTING_BULK_ARGUMENT_INVALID"),
         };
-        if (rawCount > limit)
+        if (entries.Count > limit)
         {
             throw Refusal("FITTING_TOO_MANY_BULK_ENTRIES", limit);
         }
 
-        var entries = Fields(input).ToList();
-        var temps = new List<long>();
-        var drafts = new List<FittingDraft>();
-        foreach (var (key, value) in entries)
+        var temps = new List<long>(entries.Count);
+        foreach (var (key, _) in entries)
         {
-            temps.Add(IdOf(key) ?? 0);
+            var tempId = IdOf(key);
+            if (tempId is null or 0)
+                throw Refusal("FITTING_BULK_ARGUMENT_INVALID");
+            temps.Add(tempId.Value);
+        }
+        var drafts = new List<FittingDraft>();
+        foreach (var (_, value) in entries)
+        {
             drafts.Add(await CheckedDraftAsync(call, value));
         }
         var ids = await SaveDraftsAsync(scope, owner, drafts);
@@ -111,7 +116,12 @@ public sealed class FittingMgrCalls(PgSavedFittingStore store, IFittingHost host
         var owner = OwnerOf(call, scope);
         await MutateAccessAsync(call, owner, scope);
         var fittingId = IdOf(call.Arg(1)) ?? 0;
-        await store.DeleteAsync(scope, owner, [fittingId], call.Cancellation);
+        if (fittingId <= 0)
+            throw Refusal("FITTING_NOT_FOUND");
+        await RequireOwnedAsync(scope, owner, fittingId);
+        var deleted = await store.DeleteAsync(scope, owner, [fittingId], call.Cancellation);
+        if (!deleted.Contains(fittingId))
+            throw Refusal("FITTING_NOT_FOUND");
         Notify(call, scope, owner, "OnFittingDeleted", new PyLong(fittingId));
         return PyNone.Instance;
     }
@@ -122,19 +132,26 @@ public sealed class FittingMgrCalls(PgSavedFittingStore store, IFittingHost host
         await MutateAccessAsync(call, owner, scope);
         var input = call.Arg(1);
         var limit = LimitOf(scope);
-        var rawCount = input switch
+        var requestedIds = input switch
         {
-            PyTuple tuple => tuple.Items.Count,
-            PyList list => list.Items.Count,
-            _ => 0,
+            PyTuple tuple => tuple.Items,
+            PyList list => list.Items,
+            _ => throw Refusal("FITTING_BULK_ARGUMENT_INVALID"),
         };
-        if (rawCount > limit)
+        if (requestedIds.Count > limit)
         {
             throw Refusal("FITTING_TOO_MANY_BULK_ENTRIES", limit);
         }
 
-        var ids = (input switch { PyTuple t => t.Items, PyList l => l.Items, _ => [] })
-            .Select(IdOf).OfType<long>().Where(id => id > 0).Distinct().ToList();
+        var ids = new List<long>(requestedIds.Count);
+        foreach (var requestedId in requestedIds)
+        {
+            var id = IdOf(requestedId);
+            if (id is not > 0)
+                throw Refusal("FITTING_BULK_ARGUMENT_INVALID");
+            if (!ids.Contains(id.Value))
+                ids.Add(id.Value);
+        }
         var deleted = await store.DeleteAsync(scope, owner, ids, call.Cancellation);
         Notify(call, scope, owner, "OnManyFittingsDeleted", new PyList([.. deleted.Select(id => (PyValue)new PyLong(id))]));
         return new PyList([.. deleted.Select(id => (PyValue)new PyLong(id))]);
@@ -335,6 +352,7 @@ public sealed class FittingMgrCalls(PgSavedFittingStore store, IFittingHost host
         "FITTING_INVALID_QUANTITY" => MachoErrors.ThrowUserError("InvalidFittingDataInvalidQuantity", ("type", new PyInt(value))),
         "FITTING_TOO_MANY_ITEMS" => MachoErrors.ThrowUserError(Community, ("notify", new PyStr("This fitting contains too many items."))),
         "FITTING_TOO_MANY_BULK_ENTRIES" => MachoErrors.ThrowUserError(Community, ("notify", new PyStr($"This operation can process at most {value} fittings at once."))),
+        "FITTING_BULK_ARGUMENT_INVALID" => MachoErrors.ThrowUserError(Community, ("notify", new PyStr("This fitting batch has an invalid shape."))),
         "FITTING_INTEGER_OUT_OF_RANGE" => MachoErrors.ThrowUserError(Community, ("notify", new PyStr("This fitting contains an out-of-range integer."))),
         "COMMUNITY_FITTINGS_READ_ONLY" => MachoErrors.ThrowUserError(Community, ("notify", new PyStr("Community fittings are read-only."))),
         "OWNER_SCOPE_DENIED" => MachoErrors.ThrowUserError(Community, ("notify", new PyStr("You do not have access to that fitting collection."))),

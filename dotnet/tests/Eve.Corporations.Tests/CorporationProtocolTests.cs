@@ -897,6 +897,12 @@ private static PyValue RowField(PyValue value,string key)
         var tooManyMemberIds = new PyList(Enumerable.Range(1, 501).Select(id => (PyValue)new PyInt(id)).ToArray());
         var limitError = await Assert.ThrowsAsync<CorporationError>(async () => await CorpRpc("GetMembersByIds", tooManyMemberIds));
         Assert.Equal("CORPORATION_BULK_LIMIT_EXCEEDED", limitError.Code);
+        var malformedMemberIds = await Assert.ThrowsAsync<CorporationError>(async () =>
+            await CorpRpc("GetMembersByIds",new PyStr("not-a-list")));
+        Assert.Equal("CORPORATION_BULK_ARGUMENT_INVALID",malformedMemberIds.Code);
+        var malformedActions = await Assert.ThrowsAsync<CorporationError>(async () =>
+            await CorpRpc("ExecuteActions",new PyList([new PyInt(member)]),new PyStr("not-a-list")));
+        Assert.Equal("CORPORATION_BULK_ARGUMENT_INVALID",malformedActions.Code);
         var tooManyMemberUpdates = new PyList(Enumerable.Range(0, 501).Select(_ => (PyValue)new PyList([])).ToArray());
         var updateLimitError = await Assert.ThrowsAsync<CorporationError>(async () => await CorpRpc("UpdateMembers", tooManyMemberUpdates));
         Assert.Equal("CORPORATION_BULK_LIMIT_EXCEEDED", updateLimitError.Code);
@@ -1706,6 +1712,15 @@ private static PyValue RowField(PyValue value,string key)
 
         await Assert.ThrowsAsync<CorporationError>(() => service.GetAggressionSettingsForCorps(
             Call(new ClientSession(), "GetAggressionSettingsForCorps", ids)).AsTask());
+        var malformedShape = await Assert.ThrowsAsync<CorporationError>(() => service.GetAggressionSettingsForCorps(
+            Call(new ClientSession(),"GetAggressionSettingsForCorps",new PyStr("not-a-list"))).AsTask());
+        Assert.Equal("CORPMGR_BULK_ARGUMENT_INVALID",malformedShape.Code);
+        var malformedId = await Assert.ThrowsAsync<CorporationError>(() => service.GetAggressionSettingsForCorps(
+            Call(new ClientSession(),"GetAggressionSettingsForCorps",new PyList([new PyInt(1),new PyReal(2.0)]))).AsTask());
+        Assert.Equal("CORPMGR_CORPORATION_ID_INVALID",malformedId.Code);
+        var negativeId = await Assert.ThrowsAsync<CorporationError>(() => service.GetAggressionSettingsForCorps(
+            Call(new ClientSession(),"GetAggressionSettingsForCorps",new PyList([new PyInt(-1)]))).AsTask());
+        Assert.Equal("CORPMGR_CORPORATION_ID_INVALID",negativeId.Code);
     }
 
     [Fact]
@@ -3026,6 +3041,33 @@ private static PyValue RowField(PyValue value,string key)
         Assert.IsType<PyNone>(await service.CallAsync(Call(session,"DeleteRecruitmentAd",new PyInt(adId))));
         Assert.Empty(await rig.ReopenStore().RecruitmentAdsAsync(corp.Id));
         Assert.IsType<PyNone>(await service.CallAsync(Call(session,"GetRecruitmentAd",new PyInt(corp.Id),new PyInt(adId))));
+    }
+
+    [PgFact]
+    public async Task Corporation_recruitment_ad_enumeration_refuses_more_than_5000_rows()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var founder = await rig.CharacterAsync("Recruit Limit Founder");
+        var corp = await rig.Store.CreateAsync(founder,new("Recruit Limit Works","RLW","","",0.05m),"recruit-limit-corp");
+        await using (var command = rig.Source.CreateCommand($"""
+            INSERT INTO {rig.CorporationSchema}.corporation_recruitment_ads
+                (corporation_id,create_filetime,expiry_filetime)
+            SELECT $1,1,2 FROM generate_series(1,5001)
+            """))
+        {
+            command.Parameters.AddWithValue(corp.Id);
+            await command.ExecuteNonQueryAsync();
+        }
+
+        var error = await Assert.ThrowsAsync<CorporationError>(async () =>
+            await rig.Store.RecruitmentAdsAsync(token:CancellationToken.None));
+        Assert.Equal("CORPORATION_RECRUITMENT_AD_LIMIT_EXCEEDED",error.Code);
+
+        var service = (IService)new CorpRecruitmentProxyService(rig.Store,rig.Characters,() => rig.Now);
+        var session = new ClientSession { CharacterId = founder };
+        var searchError = await Assert.ThrowsAsync<CorporationError>(async () =>
+            await service.CallAsync(Call(session,"SearchCorpAds")));
+        Assert.Equal("CORPORATION_RECRUITMENT_AD_LIMIT_EXCEEDED",searchError.Code);
     }
 
     [PgFact]

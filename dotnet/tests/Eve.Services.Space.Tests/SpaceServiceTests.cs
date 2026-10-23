@@ -4460,6 +4460,17 @@ public class SpaceServiceTests
             Assert.Equal(PyBool.True, await Call("RemoveFromWatchlist", new PyLong(member.CharacterId),
                 Set(new PyLong(member.CharacterId), new PyLong(outsider.CharacterId))));
             Assert.Empty(((PyList)session.Get("fleetWatchlist")!).Items);
+
+            async Task AssertRefused(string method, params PyValue[] args)
+            {
+                var error = await Assert.ThrowsAsync<MachoWrappedException>(async () => await Call(method,args));
+                Assert.Equal("FleetError",error.Error.UserErrorMessage);
+                Assert.Empty(((PyList)session.Get("fleetWatchlist")!).Items);
+            }
+            await AssertRefused("AddToWatchlist",new PyStr("not-a-list"),new PyList([]));
+            await AssertRefused("RegisterForDamageUpdates",new PyList(
+                Enumerable.Range(1,501).Select(id => (PyValue)new PyLong(id)).ToArray()));
+            await AssertRefused("RemoveFromWatchlist",new PyLong(-1),new PyList([]));
         }
         finally
         {

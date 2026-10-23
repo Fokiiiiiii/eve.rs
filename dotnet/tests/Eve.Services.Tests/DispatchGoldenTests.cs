@@ -762,6 +762,7 @@ public class DispatchGoldenTests
     }
 
     [Theory]
+    [InlineData("FitFitting")]
     [InlineData("ListStations")]
     [InlineData("ListStationItems")]
     public async Task Inventory_asset_locations_use_the_expensive_rpc_budget(string method)
@@ -1977,7 +1978,7 @@ public class DispatchGoldenTests
 
         public string Name => "invbroker";
 
-        public bool HasMethod(string method) => method is "GetInventoryFromId" or "ListIncludingContainers" or "GetAssetWorth" or "ListStations" or "ListStationItems" or "GetCapacity" or "MultiAdd" or "MultiMerge";
+        public bool HasMethod(string method) => method is "GetInventoryFromId" or "ListIncludingContainers" or "GetAssetWorth" or "ListStations" or "ListStationItems" or "GetCapacity" or "MultiAdd" or "MultiMerge" or "FitFitting";
 
         public ValueTask<PyValue> CallAsync(ServiceCall call)
         {

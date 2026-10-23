@@ -37,11 +37,21 @@ public sealed class WarRegistryTests
         Assert.IsType<PyList>(await service.CallAsync(new ServiceCall { Method = "GetNegotiations", Args = [], Session = Session(Declarer) }));
         Assert.Equal(PyNone.Instance, await service.CallAsync(new ServiceCall { Method = "GetWarNegotiation", Args = [new PyInt(1)], Session = Session(Declarer) }));
 
-        var refused = await Assert.ThrowsAsync<MachoWrappedException>(async () => await ((IService)service).CallAsync(new ServiceCall
+        foreach (var method in new[]
+                 {
+                     "CreateWarAllyOffer", "RetractWarAllyOffer", "CreateSurrenderNegotiation",
+                     "AcceptAllyNegotiation", "DeclineAllyOffer", "AcceptSurrender", "DeclineSurrender"
+                 })
         {
-            Method = "CreateWarAllyOffer", Args = [new PyInt(war), new PyInt(0), new PyInt(Defender), new PyStr("")], Session = Session(Bystander),
-        }));
-        Assert.Equal("CustomNotify", refused.Error.UserErrorMessage);
+            var refused = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+                await ((IService)service).CallAsync(new ServiceCall
+                {
+                    Method = method,
+                    Args = [new PyInt(war), new PyInt(0), new PyInt(Defender), new PyStr("")],
+                    Session = Session(Bystander),
+                }));
+            Assert.Equal("CustomNotify", refused.Error.UserErrorMessage);
+        }
     }
 
     [PgFact]

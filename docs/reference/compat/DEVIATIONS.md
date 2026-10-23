@@ -5750,3 +5750,5 @@ The security inventory now lists each active `charUnboundMgr` RPC by caller scop
 `allianceRegistry.GMForceAcceptApplication` retains its GML-only authorization and refuses non-integer corporation targets before reading or scheduling the application; the regression covers fractional input and the authorized path.
 
 `marketProxy.PlaceMultiSellOrder` now refuses duplicate item IDs in the raw batch before placing any order line; the regression confirms the item remains in its original station location and produces no ask order or notification.
+
+`invbroker.FitFitting` accepts the `__builtin__.set` shape emitted by V24.01 for candidate item IDs and caps combined fit dictionaries and item lists at 500 raw entries before mutation. This also bounds the docked ship refit path and its per-session weighted cost.

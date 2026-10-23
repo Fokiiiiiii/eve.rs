@@ -189,10 +189,10 @@ def test_a_colony_runs_in_time_launches_and_trades_at_customs():
             (1, ((1, 1), STORAGE, 0.5, 1.01)),
             (1, ((1, 2), ECU, 0.52, 1.0)),
             (1, ((1, 3), LAUNCHPAD, 0.5, 1.02)),
-            (3, ((1, 2), (1, 1), 0)),
+            (3, ((1, 2), (1, 3), 0)),
             (10, ((1, 2), 0, 0.52, 1.0)),
             (13, ((1, 2), AQUEOUS, 0.01)),
-            (6, ((2, 1), [(1, 2), (1, 1)], AQUEOUS, 1)),
+            (6, ((2, 1), [(1, 2), (1, 3)], AQUEOUS, 1)),
         ]))
         storage, ecu, pad = pin_of_type(colony, STORAGE), pin_of_type(colony, ECU), pin_of_type(colony, LAUNCHPAD)
         # the survey the resource list shows: four resources, each with a quality on the client's display scale (a maximum is 1.21 x 127.5)
@@ -209,7 +209,9 @@ def test_a_colony_runs_in_time_launches_and_trades_at_customs():
         # the colony runs in time: the program's cycles since the install are simulated when it is read
         move_colony_back(pilot, PLANET, 3)
         colony = record(client.call_bound(handle, "GetPlanetInfo"))
-        assert pin_contents(colony, storage).get(AQUEOUS, 0) > 0, "the extractor's output reached the storage"
+        extracted = pin_contents(colony, pad).get(AQUEOUS, 0)
+        assert extracted > 0, "the extractor's output followed its route to the launchpad"
+        assert pin_contents(colony, storage).get(AQUEOUS, 0) == 0, "the route sends extractor output to the launchpad"
 
         # the pilot is in the planet's system: the customs office is a ball there (an orbital of the planet, the launchpad window reaches it through it)
         office = 1_200_000_000_000 + PLANET
@@ -259,6 +261,17 @@ def test_a_colony_runs_in_time_launches_and_trades_at_customs():
         assert int(psql(f"SELECT quantity FROM {schema('EVE_INVENTORY_SCHEMA')}.items WHERE id = {stock}")) == 35
         # export fee: 5 x 1.0 x 400 x 0.17
         assert abs((before - dbseed.isk_of(pilot)) - 340) < 0.01
+
+        # extractor output follows the route into the launchpad and can be exported through the customs office
+        extracted = pin_contents(record(client.call_bound(handle, "GetPlanetInfo")), pad)[AQUEOUS]
+        before = dbseed.isk_of(pilot)
+        client.call_bound(customs, "ImportExportWithPlanet", pad, m.Dict([]), m.Dict([(AQUEOUS, 1)]), rate)
+        assert pin_contents(record(client.call_bound(handle, "GetPlanetInfo")), pad)[AQUEOUS] == extracted - 1
+        office_stock = psql(f"SELECT coalesce(sum(quantity), 0) FROM {schema('EVE_INVENTORY_SCHEMA')}.items "
+                            f"WHERE owner_id = {pilot} AND location_id = {office} AND type_id = {AQUEOUS}")
+        assert office_stock == "1", office_stock
+        # Aqueous Liquids base value 5, export multiplier 1.0, in this system's 17% tax band.
+        assert abs((before - dbseed.isk_of(pilot)) - 0.85) < 0.01
 
         # a rate that moved since the window was opened is refused, and nothing moves
         with pytest.raises(Exception):

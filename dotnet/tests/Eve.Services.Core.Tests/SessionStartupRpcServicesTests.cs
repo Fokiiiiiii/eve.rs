@@ -153,6 +153,30 @@ public sealed class SessionStartupRpcServicesTests
     }
 
     [Fact]
+    public async Task Dynamic_bounty_read_refuses_client_arguments_before_callback()
+    {
+        var callbackCalls = 0;
+        IService service = new DynamicBountyMgrService((_, _) =>
+        {
+            callbackCalls++;
+            return ValueTask.FromResult<DynamicBountyState?>(new(1, 1));
+        });
+        var session = new ClientSession();
+        session.Set("solarsystemid", new PyInt(30000142));
+        foreach (var call in new[]
+        {
+            new ServiceCall { Method = "GetOutputForClientSolarSystem", Args = [new PyInt(30000142)], Session = session },
+            new ServiceCall { Method = "GetOutputForClientSolarSystem", Args = [], Kwargs = Py.Dict(("solarSystemID", new PyInt(30000142))), Session = session },
+        })
+        {
+            var error = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(call).AsTask());
+            Assert.Equal("DYNAMIC_BOUNTY_ARGUMENTS_INVALID", error.Error.UserErrorMessage);
+        }
+
+        Assert.Equal(0, callbackCalls);
+    }
+
+    [Fact]
     public async Task Season_client_events_are_forwarded_and_return_none()
     {
         var session = new ClientSession();

@@ -37,3 +37,10 @@ Worktree `wt-st23` (removed at the end of the session). Database `eve_p4` (live 
 - `EVE_LIVE_LOG_DIR` with `KEEP_LOGS=1` keeps the three processes' logs (`host.out`, `sim.out`, `net.out`); without it the logs are deleted.
 - The durable event bus delivers the owners' notices and the ore field a few seconds after the fire or the completion: live checks poll.
 - Disk: the release builds and the wide runs need about 6 GB free.
+
+
+## 6. Control tower return live walk (2026-10-23)
+
+Added `ShipService.Drop` for the V24 client call, connected to the existing deployable provider with the item-keyed result list and CustomNotify error row the client helper consumes. A deterministic scenario in `tools/headless-client/tests/test_structures.py` uses a player corporation in the legal low-security system, places an Amarr Control Tower through `ship.Drop`, checks that an online tower is refused by `posMgr.UnanchorStructure`, changes the seeded tower to offline, then follows the unanchoring job through hull drop and `ship.Scoop`. The assertion checks ownership, location, cargo flag, the item-change notice, and removal of the space row. It moves only this scratch-schema job's due time forward so the Action does not wait for the SDE unanchoring delay.
+
+The existing `live-slow.yml` selection already includes `test_structures.py`. The focused Action result will be recorded here after the push.

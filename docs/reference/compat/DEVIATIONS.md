@@ -5679,3 +5679,6 @@ Alliance contact mutations now reject non-integer scalar and batch ID elements a
 
 
 Alliance bulletin reads and mutations now reject fractional or non-integer bulletin IDs before storage access; bulletin creation retains the client’s optional ID form. `Alliance_bulletins_use_persistent_alliance_rows_and_require_member_directors` checks fractional ID refusal leaves bulletin contents unchanged.
+
+
+`allianceRegistry.PayBill` and `DeclareWarAgainst` now require positive integer bill and target IDs, refusing fractional values before wallet settlement or war relation writes. `Alliance_war_declaration_bills_are_replay_safe_and_pay_from_the_executor_wallet` verifies both malformed-ID refusals preserve bills, wallet balances, and war relations.

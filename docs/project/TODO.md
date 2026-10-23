@@ -2766,3 +2766,5 @@ Security review follow-up: alliance contact mutations accept only positive integ
 Security review follow-up: fleet invitation RPCs accept positive integer character IDs only; fractional or numeric-string targets cannot be coerced into invitations.
 
 Security review follow-up: alliance bulletin RPCs now validate scalar bulletin IDs as positive integers, while creation retains its optional absent ID form.
+
+Security review follow-up: alliance bill payment and war declaration now require positive integer bill and target IDs; malformed fractional targets refuse before financial or relation writes.

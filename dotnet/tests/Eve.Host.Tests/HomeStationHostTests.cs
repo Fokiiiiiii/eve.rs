@@ -19,6 +19,7 @@ public sealed class HomeStationHostTests
         await rig.SeedOfficeCandidatesAsync();
         var character = await rig.CreateCharacterAsync();
         var session = new ClientSession { CharacterId = character.Id, Sink = new RecordingPacketSink() };
+        session.Set("accountRole", new PyLong(Eve.Services.GameMasterRoles.Qa));
         session.Set("stationid", new PyInt(rig.LocalOfficeStation.Id));
         session.Set("homeStationID", new PyInt(rig.InitialHomeStation.Id));
         session.Set("cloneStationID", new PyInt(rig.InitialHomeStation.Id));

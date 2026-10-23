@@ -897,6 +897,12 @@ private static PyValue RowField(PyValue value,string key)
         var tooManyMemberIds = new PyList(Enumerable.Range(1, 501).Select(id => (PyValue)new PyInt(id)).ToArray());
         var limitError = await Assert.ThrowsAsync<CorporationError>(async () => await CorpRpc("GetMembersByIds", tooManyMemberIds));
         Assert.Equal("CORPORATION_BULK_LIMIT_EXCEEDED", limitError.Code);
+        var malformedMemberIds = await Assert.ThrowsAsync<CorporationError>(async () =>
+            await CorpRpc("GetMembersByIds",new PyStr("not-a-list")));
+        Assert.Equal("CORPORATION_BULK_ARGUMENT_INVALID",malformedMemberIds.Code);
+        var malformedActions = await Assert.ThrowsAsync<CorporationError>(async () =>
+            await CorpRpc("ExecuteActions",new PyList([new PyInt(member)]),new PyStr("not-a-list")));
+        Assert.Equal("CORPORATION_BULK_ARGUMENT_INVALID",malformedActions.Code);
         var tooManyMemberUpdates = new PyList(Enumerable.Range(0, 501).Select(_ => (PyValue)new PyList([])).ToArray());
         var updateLimitError = await Assert.ThrowsAsync<CorporationError>(async () => await CorpRpc("UpdateMembers", tooManyMemberUpdates));
         Assert.Equal("CORPORATION_BULK_LIMIT_EXCEEDED", updateLimitError.Code);

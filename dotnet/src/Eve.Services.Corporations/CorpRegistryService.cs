@@ -222,7 +222,7 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
         if (call.Session.CharacterId is not { } actor || await Current(call) is not { } corp)
             throw new CorporationError("CORPORATION_ACCESS_DENIED");
 
-        var targetValues = Items(call.Arg(0));
+        var targetValues = RequiredBatchItems(call.Arg(0));
         if (targetValues.Count > MaxBulkMemberIds)
             throw new CorporationError("CORPORATION_BULK_LIMIT_EXCEEDED");
         var targetIDs = new long[targetValues.Count];
@@ -235,7 +235,7 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
             targetIDs[index] = target;
         }
 
-        var actionValues = Items(call.Arg(1));
+        var actionValues = RequiredBatchItems(call.Arg(1));
         if (actionValues.Count > MaxBulkCorporationActions)
             throw new CorporationError("CORPORATION_BULK_LIMIT_EXCEEDED");
         var actions = new List<(long Verb,PyValue Property,PyValue Value)>();
@@ -377,7 +377,7 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
     [Method("GetMembersByIds")]
     public async ValueTask<PyValue> GetMembersByIds(ServiceCall call)
     {
-        var memberIds = Items(call.Arg(0));
+        var memberIds = RequiredBatchItems(call.Arg(0));
         if (memberIds.Count > MaxBulkMemberIds)
             throw new CorporationError("CORPORATION_BULK_LIMIT_EXCEEDED");
 
@@ -413,7 +413,7 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
         if (await Current(call) is not { } corporation)
             return new PyList([]);
 
-        var rawCriteria = Items(call.Arg(0));
+        var rawCriteria = RequiredBatchItems(call.Arg(0));
         if (rawCriteria.Count > MaxCorporationQueryCriteria)
             throw new CorporationError("CORPORATION_QUERY_LIMIT_EXCEEDED");
         var criteria = new List<(long? Join,string Property,long Operator,PyValue Value)>();
@@ -1013,6 +1013,12 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
         return PyNone.Instance;
     }
     private static IReadOnlyList<PyValue> Items(PyValue v) => v switch { PyTuple t => t.Items,PyList l => l.Items,_ => [] };
+    private static IReadOnlyList<PyValue> RequiredBatchItems(PyValue value) => value switch
+    {
+        PyTuple tuple => tuple.Items,
+        PyList list => list.Items,
+        _ => throw new CorporationError("CORPORATION_BULK_ARGUMENT_INVALID"),
+    };
 
     private static long[] CorporationBulkIds(PyValue value)
     {
@@ -1178,7 +1184,7 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
     {
         if (call.Session.CharacterId is not { } actor || !await CanAdminister(call))
             throw new CorporationError("CORPORATION_ACCESS_DENIED");
-        var requested = Items(call.Arg(0));
+        var requested = RequiredBatchItems(call.Arg(0));
         if (requested.Count > MaxBulkMemberIds)
             throw new CorporationError("CORPORATION_BULK_LIMIT_EXCEEDED");
         var kicked = new List<PyValue>();
@@ -1263,7 +1269,7 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
     {
         if (call.Session.CharacterId is not { } actor || await Current(call) is not { } corp)
             throw new CorporationError("CORPORATION_ACCESS_DENIED");
-        var requested = Items(call.Arg(0));
+        var requested = RequiredBatchItems(call.Arg(0));
         if (requested.Count > MaxBulkMemberIds)
             throw new CorporationError("CORPORATION_BULK_LIMIT_EXCEEDED");
         List<IReadOnlyList<PyValue>> memberRows = [];
@@ -1310,7 +1316,7 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
     {
         if (call.Session.CharacterId is not { } actor || await Current(call) is not { } corp)
             throw new CorporationError("CORPORATION_ACCESS_DENIED");
-        var requested = Items(call.Arg(0));
+        var requested = RequiredBatchItems(call.Arg(0));
         if (requested.Count > MaxBulkCorporationActions)
             throw new CorporationError("CORPORATION_BULK_LIMIT_EXCEEDED");
         var titles = requested.Select(row => Title(Items(row)))

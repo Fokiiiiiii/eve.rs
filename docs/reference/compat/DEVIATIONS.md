@@ -5640,3 +5640,6 @@ Corporation profile, logo, division-name, abilities, acceptance, mail-restrictio
 
 
 `charMgr.BlockOwners`, `UnblockOwners`, `DeleteContacts`, and `EditContactsRelationshipID` now require a list/tuple of positive integer owner IDs. Malformed outer values and invalid entries receive named refusals before changing the authenticated character's personal data, instead of being treated as an empty or partially filtered batch. Duplicate IDs remain collapsed; valid response shapes are unchanged. `CharacterInfoTests.Personal_contact_labels_can_be_created_edited_assigned_removed_and_deleted` covers the refusal cases and retained state.
+
+
+Corporation registry batch RPCs `ExecuteActions`, `GetMembersByIds`, `GetMemberIDsByQuery`, `KickOutMembers`, `UpdateMembers`, and `UpdateTitles` now require list/tuple outer values. Malformed batch shapes return `CORPORATION_BULK_ARGUMENT_INVALID` before member reads or mutations instead of being treated as empty batches. Valid list/tuple requests keep the existing response behavior. `CorporationProtocolTests.Corporation_core_and_role_rpcs_preserve_public_fields_and_role_contracts` covers malformed member lookup and action batches.

@@ -108,6 +108,19 @@ public class InventoryRpcFixTests
     }
 
     [PgFact]
+    public async Task GetDamageForCrystals_refuses_malformed_shapes_and_nonpositive_item_ids()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var session = Session(new Sink());
+
+        var shape = await Assert.ThrowsAsync<MachoWrappedException>(() => Call(rig, session, "GetDamageForCrystals", null, [PyNone.Instance]));
+        var identifier = await Assert.ThrowsAsync<MachoWrappedException>(() => Call(rig, session, "GetDamageForCrystals", null, [new PyList([new PyInt(-1)])]));
+
+        Assert.Equal("INVENTORY_BULK_ARGUMENT_INVALID", shape.Error.UserErrorMessage);
+        Assert.Equal("INVENTORY_ITEM_ID_INVALID", identifier.Error.UserErrorMessage);
+    }
+
+    [PgFact]
     public async Task Inventory_bulk_rpcs_refuse_more_than_500_ids_before_work()
     {
         await using var rig = await Rig.CreateAsync(activeShip: true);

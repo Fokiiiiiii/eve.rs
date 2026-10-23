@@ -2742,3 +2742,4 @@ Config multi-ID owner, corporation ticker, alliance short-name, and location RPC
 The market multi-buy validator preserves the client's zero-quantity no-op rows while refusing negative quantity and invalid minimum-volume values before any order write.
 Security review follow-up: inventory `GetAssetWorth` now costs 10 weighted per-session units because it scans all owned items; the bounded ordinary inventory read paths remain at 2 units.
 Security review follow-up: `invbroker.ListByFlags` now rejects more than 500 raw flag entries with `INVENTORY_BULK_LIMIT_EXCEEDED` before inventory reads.
+Security review follow-up: `invbroker.GetDamageForCrystals` now refuses unrecognized request shapes and nonpositive/noninteger item IDs before reading inventory state; its raw batch cap remains 500.

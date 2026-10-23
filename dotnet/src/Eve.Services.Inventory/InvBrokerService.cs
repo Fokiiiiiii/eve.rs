@@ -584,15 +584,28 @@ public sealed partial class InvBrokerService(
         {
             PyTuple tuple => tuple.Items,
             PyList list => list.Items,
-            PyObjectEx { Header: PyTuple { Items.Count: 2 } header }
+            PyObjectEx
+            {
+                Kind: ObjectExKind.Ex1,
+                Header: PyTuple { Items.Count: 2 } header,
+                List.Count: 0,
+                Dict.Count: 0,
+            }
                 when header.Items[0] is PyToken { Value: "__builtin__.set" }
                      && header.Items[1] is PyTuple { Items.Count: 1 } setArguments
                      && setArguments.Items[0] is PyList values => values.Items,
-            _ => []
+            _ => throw MachoErrors.ThrowUserError("INVENTORY_BULK_ARGUMENT_INVALID"),
         };
         if (requestedIds.Count > MaxGetItemsIds)
             throw MachoErrors.ThrowUserError("INVENTORY_BULK_LIMIT_EXCEEDED");
-        var itemIds = requestedIds.Select(IdOf).Where(id => id is not null).Select(id => id!.Value).ToHashSet();
+        var itemIds = new HashSet<long>();
+        foreach (var requestedId in requestedIds)
+        {
+            var itemId = IdOf(requestedId);
+            if (itemId is not > 0)
+                throw MachoErrors.ThrowUserError("INVENTORY_ITEM_ID_INVALID");
+            itemIds.Add(itemId.Value);
+        }
         if (itemIds.Count == 0 || call.Session.CharacterId is not { } characterId
             || statics.AttributeId("crystalsGetDamaged") is not { } damageAttributeId)
             return new PyDict([]);

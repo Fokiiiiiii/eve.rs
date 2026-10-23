@@ -5629,3 +5629,5 @@ Corporation profile, logo, division-name, abilities, acceptance, mail-restrictio
 `invbroker.GetAssetWorth` now costs 10 weighted per-session units because it traverses the character's full owned-item set; ordinary inventory reads remain at 2 units. The dispatcher regression verifies the asset valuation call exhausts the configured budget.
 
 `invbroker.ListByFlags` now refuses more than 500 raw flags with `INVENTORY_BULK_LIMIT_EXCEEDED` before reading inventory contents; the client supplies a small sequence of inventory flags. `InventoryRpcFixTests.ListByFlags_refuses_more_than_500_requested_flags` covers the refusal.
+
+`invbroker.GetDamageForCrystals` now requires the client's set/list/tuple shape and positive integer item IDs, refusing malformed inputs before ownership lookup. The client primes crystal damage with a Python set; `InventoryRpcFixTests.GetDamageForCrystals_refuses_malformed_shapes_and_nonpositive_item_ids` covers the refusal cases.

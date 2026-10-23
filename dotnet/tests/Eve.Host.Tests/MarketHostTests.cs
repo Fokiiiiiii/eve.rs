@@ -367,7 +367,7 @@ public sealed class MarketHostTests : IAsyncLifetime
 
         var askResult=await market.CallAsync(Call(buyerSession,"GetStationAsks",4));
         var askDetails=Assert.IsType<PyDict>(Assert.IsType<PyTuple>(Assert.IsType<PyObject>(askResult).Args).Items[0]);
-        Assert.Equal(new PyStr("stationid"),Field(askDetails,"sessionInfo"));
+        Assert.Equal(new PyBytes("stationid"u8.ToArray()),Field(askDetails,"sessionInfo"));
         var asks=Assert.IsType<PyDict>(Received(askResult));
         Assert.Contains(asks.Entries,entry=>entry.Key==new PyInt(Tritanium));
         var askSummary=Assert.IsType<PyObject>(asks.Entries.Single(entry=>entry.Key==new PyInt(Tritanium)).Value);

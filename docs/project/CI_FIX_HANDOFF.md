@@ -264,3 +264,9 @@ CI run 672 on `1669e6dc` failed the structure market Host test because the fixtu
 ## 2026-10-23 handoff before current push
 
 - Origin/main `bcc231a9` adds documentation updates only and is included in the local merge `3980b75a`. The latest code gate remains run 689 on `1a9e73e9`; .NET build, Rust tests, E2E and Windows are still active. The local branch carries the persisted-contact type assertions and market refusal detail alongside the latest main fixes.
+
+## 2026-10-23 market Host sessionInfo wire type
+
+- CI run 686 (`40015069193`) failed `MarketHostTests.The_host_dispatches_accessible_structure_market_orders_and_recovers_partial_settlement_after_restart`: the test expected `PyStr("stationid")`, but the method result contains `PyBytes`.
+- `ObjectCaching.Raw` intentionally encodes `sessionInfo` as ASCII bytes, and the V24.01 client passes that value to `getattr(session, details['sessionInfo'], None)` when invalidating cached calls. The Host wire value is correct; the test expectation now matches that Python 2 `str` representation.
+- The focused Agent test and push-triggered CI run will verify the correction.

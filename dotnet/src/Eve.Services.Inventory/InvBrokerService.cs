@@ -537,7 +537,10 @@ public sealed partial class InvBrokerService(
         }
         var flags = call.Arg(0);
         if (flags is PyNone) flags = call.Kwarg("flags") ?? PyNone.Instance;
-        var wanted = (flags switch { PyTuple t => t.Items, PyList l => l.Items, _ => [] }).Select(IdOf).Where(v => v is not null).Select(v => (int)v!.Value).ToHashSet();
+        var requestedFlags = flags switch { PyTuple t => t.Items, PyList l => l.Items, _ => [] };
+        if (requestedFlags.Count > MaxGetItemsIds)
+            throw MachoErrors.ThrowUserError("INVENTORY_BULK_LIMIT_EXCEEDED");
+        var wanted = requestedFlags.Select(IdOf).Where(v => v is not null).Select(v => (int)v!.Value).ToHashSet();
         var contents = await ContentsAsync(context, call.Session, call.Cancellation);
         return new PyList([.. contents.Where(r => wanted.Contains(r.Flag)).Select(r => InventoryWire.PackedRow(r))]);
     }

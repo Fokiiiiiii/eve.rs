@@ -5627,3 +5627,5 @@ charMgr.SetCharacterDescription now consumes 10 weighted per-session units becau
 Corporation profile, logo, division-name, abilities, acceptance, mail-restriction, aggression, and reinforce-hour writes now consume 10 weighted per-session units. The underlying store still rechecks persisted Director authority; reinforce-hour values remain limited to 0–23. The dispatcher regression covers all eight settings write methods.
 
 `invbroker.GetAssetWorth` now costs 10 weighted per-session units because it traverses the character's full owned-item set; ordinary inventory reads remain at 2 units. The dispatcher regression verifies the asset valuation call exhausts the configured budget.
+
+`invbroker.ListByFlags` now refuses more than 500 raw flags with `INVENTORY_BULK_LIMIT_EXCEEDED` before reading inventory contents; the client supplies a small sequence of inventory flags. `InventoryRpcFixTests.ListByFlags_refuses_more_than_500_requested_flags` covers the refusal.

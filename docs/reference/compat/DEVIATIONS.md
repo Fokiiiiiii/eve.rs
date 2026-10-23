@@ -5761,3 +5761,8 @@ The security inventory now lists each active `charUnboundMgr` RPC by caller scop
 
 
 `officeManager.GetMyCorporationsOffices` now consumes 10 weighted per-session units to bound repeated enumeration of a corporation’s office list. `DispatchGoldenTests.Corporation_office_impound_reads_use_the_named_per_session_budget` verifies the second costly office call is refused at the configured limit.
+
+
+## Event log input bounds (2026-10-23)
+
+`eventLog.LogClientStats` now requires the client-supplied session ID to match the authenticated connection, a nonnegative integral location ID, list/tuple row collections capped at 5,000 entries, and a boolean `isShutdown` keyword when supplied. It costs 10 weighted per-session units. The Host logs bounded metadata only and does not retain client-supplied payloads; this avoids keeping unbounded client-controlled telemetry without an authoritative event-log store. `EventLogHostTests` and `DispatchGoldenTests.Client_stats_logging_uses_a_named_per_session_budget` cover the refusal and cost behavior.

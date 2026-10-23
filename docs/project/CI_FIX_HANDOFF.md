@@ -260,3 +260,7 @@ CI run 672 on `1669e6dc` failed the structure market Host test because the fixtu
 
 - Origin/main is `1a9e73e9`, with commit `67753d67` correcting the SKINR live draft fixture's inner component-ID field and excluding SDE components disallowed for the chosen slot. The prior focused Agent run on `d8f4dab4` failed before that fix; run 688 is still active, while the corrected full gate run 689 and focused run 165 are now active on `1a9e73e9`.
 - Local Python syntax compilation passed after merging the layout changes. The latest local Host.Tests build and no-database SKINR response-shape test passed on the market affiliation fixture. No local PostgreSQL test was run.
+
+## 2026-10-23 handoff before current push
+
+- Origin/main `bcc231a9` adds documentation updates only and is included in the local merge `3980b75a`. The latest code gate remains run 689 on `1a9e73e9`; .NET build, Rust tests, E2E and Windows are still active. The local branch carries the persisted-contact type assertions and market refusal detail alongside the latest main fixes.

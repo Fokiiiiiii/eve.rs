@@ -98,15 +98,15 @@ public sealed class MarketHostTests : IAsyncLifetime
     private static PyValue Line(int typeId, long quantity, double price) => Py.KeyVal(
         ("typeID", new PyInt(typeId)), ("quantity", new PyInt(quantity)), ("price", new PyReal(price)), ("minVolume", new PyInt(1)));
 
-    /// <summary>A character with 10000 ISK docked at the station, in the scratch schemas.</summary>
-    private async Task<long> CreateTraderAsync(NpgsqlDataSource source, Station station, string name, long corporationId = 1000044)
+    /// <summary>A character with 10000 ISK docked at the station or supplied location, in the scratch schemas.</summary>
+    private async Task<long> CreateTraderAsync(NpgsqlDataSource source, Station station, string name, long corporationId = 1000044, long? currentStationId = null)
     {
         long actor;
         await using var c = await source.OpenConnectionAsync();
         await using var tx = await c.BeginTransactionAsync();
         actor = await new PgCharacterStore(source, Schema("EVE_CHARACTERS_SCHEMA")).InsertAsync(c, tx,
             new NewCharacter(1, name, 0, 1, 1, 1, 11, 1376, corporationId, null,
-                station.Id, station.SolarSystemId, station.ConstellationId, station.RegionId, null, null));
+                currentStationId ?? station.Id, station.SolarSystemId, station.ConstellationId, station.RegionId, null, null));
         await new PgWalletStore(source, Schema("EVE_WALLET_SCHEMA")).OpenAsync(c, tx, actor, 10000m, 0);
         await tx.CommitAsync();
         return actor;
@@ -268,11 +268,11 @@ public sealed class MarketHostTests : IAsyncLifetime
             row.Doc.TryGetProperty("name",out var name) && SdeReader.English(name)=="Fortizar").Key);
         const long structureId=9_000_000_001_001;
         const long ownerCorporationId=1000044;
-        var seller=await CreateTraderAsync(source,station,"Structure Seller",ownerCorporationId);
-        var buyer=await CreateTraderAsync(source,station,"Structure Buyer",ownerCorporationId);
-        var contenderA=await CreateTraderAsync(source,station,"Structure Contender A",ownerCorporationId);
-        var contenderB=await CreateTraderAsync(source,station,"Structure Contender B",ownerCorporationId);
-        var denied=await CreateTraderAsync(source,station,"Structure Denied",1000015);
+        var seller=await CreateTraderAsync(source,station,"Structure Seller",ownerCorporationId,structureId);
+        var buyer=await CreateTraderAsync(source,station,"Structure Buyer",ownerCorporationId,structureId);
+        var contenderA=await CreateTraderAsync(source,station,"Structure Contender A",ownerCorporationId,structureId);
+        var contenderB=await CreateTraderAsync(source,station,"Structure Contender B",ownerCorporationId,structureId);
+        var denied=await CreateTraderAsync(source,station,"Structure Denied",1000015,structureId);
 
         var structures=new StructureStore(source,Schema("EVE_STRUCTURES_SCHEMA"));
         await using (var connection=await source.OpenConnectionAsync())

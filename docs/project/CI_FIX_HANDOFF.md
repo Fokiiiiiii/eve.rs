@@ -160,3 +160,10 @@ Use lane `eve_p4` only and run database work through `tools/dev/db-lock.sh`. The
 - Updated those two persisted-read assertions to `PyInt`; kept the direct `OnNotificationReceived` packet assertions unchanged. The `Eve.Host.Tests` project build passed locally with zero warnings and errors.
 - The focused database-backed Actions check will run after this merge is pushed. No local PostgreSQL test was run.
 - CI run 672 on `1669e6dc` still showed the earlier SKINR HTTP 400 without the new diagnostic and a structure-market sell-order Host failure. These independent failures remain open for the next recovery commits.
+
+## 2026-10-23 structure market Host fixture location
+
+- CI run 672 on `1669e6dc` failed `The_host_dispatches_accessible_structure_market_orders_and_recovers_partial_settlement_after_restart` at its first sell order. The fixture set each session's `structureid` to the Upwell structure but persisted each character at the SDE station.
+- `MarketTrading` checks the persisted character location against the order venue. With no Marketing skill the sell range is `-1`; a station-to-structure distance of 0 is outside that range, so the test was trying a remote order without the required skill.
+- The test characters now start at the structure ID, matching the session and the intended in-structure trade. This also covers the immediate-buy participants in the same scenario. The focused database-backed Actions check will run after push; no local PostgreSQL test was run.
+- CI run 672's SKINR HTTP 400 still needs the error detail added in main's `b5ecf895` test diagnostic on the next E2E run.

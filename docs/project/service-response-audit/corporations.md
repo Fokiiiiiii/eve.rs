@@ -10,6 +10,10 @@ Accepting an invite changes the war and removes its ally relations in the same t
 
 - `dotnet build` passed for `Eve.Relations`, `Eve.Services.Corporations`, and `Eve.Host`.
 - The focused `OrganizationContactsNotificationTests.Mutual_war_updates_reach_both_owners_after_the_response` test passed (1 passed, 0 skipped); it uses no database.
+- The GitHub Actions focused run for `dac5cebb` passed (run `40007561503`, 1 passed, 0 skipped).
+- The push CI run for `dac5cebb` failed in the live SKINR consume test (HTTP 400) and in `CharacterHostTests.Contact_add_persists_and_routes_the_recipient_notification` (test helper cast `PyBytes` to `PyStr`). The same failures appeared on parent commit `40110cc0` (run `40007125434`), so they predate this corporation change. Eight slow/live cases were skipped by their configured gates.
+- CI run `40009991286` for `574dcfd4` reported failures in the live SKINR consume case, `MarketHostTests.The_host_dispatches_accessible_structure_market_orders_and_recovers_partial_settlement_after_restart`, and the contact notification test (`PyLong` expected, `PyInt` returned). Its remaining jobs were still running when checked.
+- Main advanced to `ebf1ec87`, which updated the contact test and SKINR fixture. CI run `40011062817` is in progress; build, Rust checks/tests, fixtures and Python client checks have passed so far. No final result is recorded here.
 - This task prohibits PostgreSQL use, so RelationStore persistence across restart, concurrent replies, and database transaction rollback were not exercised here. Keep the TODO row OPEN until a database-backed regression check covers those transitions.
 - The real V24.01 graphical client was not used.
 

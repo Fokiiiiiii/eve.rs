@@ -134,17 +134,17 @@ Use lane `eve_p4` only and run database work through `tools/dev/db-lock.sh`. The
 - The local `Eve.Services.Dogma.Tests` project build passed with zero warnings and errors. Agent run 127 (`40005187593`) passed the focused database-backed regression on pushed commit `fbc39d63`.
 - Agent run 123 on `e0cb832e` passed the two `Eve.Host.Tests` matches, then failed because the same `FullyQualifiedName~SignalTracker` filter selected zero tests in `Eve.Services.Core.Tests`. This was a test-selection mismatch; dispatch that filter to the Host project only.
 
-<<### Market RPC budget regression test setup
+### Market RPC budget regression test setup
 
 - CI run 660 (`4f38c72f`) failed both market budget regression tests because each configured only `MaxExpensiveRpcUnitsPerMinute = 10`, while `PacketDispatcher` routes `marketProxy` through `MaxMarketRpcUnitsPerMinute`. The tests now set both limits to 10. Agent run 128 (`40005500782`) passed both focused regressions on `94e37e82`.
 
 ### SKINR unlimited component license sentinel
 
-- Agent run 124 and CI runs 661/666 reached the live consume request and received HTTP 400. The fixture selects a published compatible mission-SDE component with `associatedTypeIDs.licenseUsesGranted = -1`; the run on `40110cc0` showed that simply allowing the negative value through the catalog did not fix consumption.
-- Current main maps the SDE `-1` unlimited marker to the gateway's runtime `0` sentinel, excludes values below -1, and preserves positive finite uses. `ShipSkinrCatalogDataTests.Unlimited_license_types_use_the_runtime_unlimited_sentinel` covers all three cases.
-- CI run 666 on `40110cc0` still returned 400. Agent run 138 and CI run 671 are checking the current main commit `287c530d`; update this entry with their results.
+- Runs 661 and 666 reached the live consume request and returned HTTP 400 for a published compatible mission-SDE component whose `associatedTypeIDs.licenseUsesGranted` is `-1`. On `40110cc0`, allowing the negative value through the catalog did not resolve the failure.
+- Commit `4b3cd33b` maps the SDE `-1` unlimited marker to the gateway's runtime `0` sentinel, rejects values below -1 and keeps positive finite grants. `ShipSkinrCatalogDataTests.Unlimited_license_types_use_the_runtime_unlimited_sentinel` covers those cases. Agent run 135 (`40007743442`) passed the focused live SKINR walk 1/1 with no skips.
+- CI run 666 predates that parser fix and still returned 400. Agent run 138 and CI run 671 are checking current main `287c530d`; CI 668 is checking the preceding head `4b3cd33b`.
 
 ### Contact notification dictionary keys
 
-- CI runs 664 (`774b7a18`) and 666 (`40110cc0`) failed `CharacterHostTests.Contact_add_persists_and_routes_the_recipient_notification`: the test treated a Python `str` dictionary key as `PyStr`, while the packet codec exposes it as `PyBytes`.
-- Main commit `d2b2821d` now reads notification keys through `JsSemantics.StringValue`. This worktree's `dfe630d1` also makes the shared `Field` helper compare both Marshal string forms. The `Eve.Host.Tests` project compiled locally with zero warnings and errors before merging current main; the focused Actions regression will run after this merge is pushed.
+- CI runs 664 (`774b7a18`) and 666 (`40110cc0`) failed `CharacterHostTests.Contact_add_persists_and_routes_the_recipient_notification`: the test treated a Python `str` dictionary key as `PyStr`, while the decoded packet exposes it as `PyBytes`.
+- Main commit `d2b2821d` reads notification keys through `JsSemantics.StringValue`; this worktree's `dfe630d1` also makes the shared `Field` helper compare both Marshal string forms. The `Eve.Host.Tests` project compiled locally with zero warnings and errors before merging current main. CI 671 will cover the Host shard; dispatch a focused Actions check if that shard does not finish the contact regression.

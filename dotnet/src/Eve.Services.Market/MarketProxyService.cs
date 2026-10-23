@@ -70,6 +70,7 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
         "MktInvalidMinVolumeCannotExceedQuantity" => MachoErrors.ThrowUserError(error.Code),
         "MARKET_BULK_LIMIT_EXCEEDED" => MachoErrors.ThrowUserError(error.Code),
         "MARKET_TYPE_ID_INVALID" => MachoErrors.ThrowUserError(error.Code),
+        "MARKET_BULK_ARGUMENT_INVALID" => MachoErrors.ThrowUserError(error.Code),
         "MktBrokersFeeUnexpected2" => MachoErrors.ThrowUserError(error.Code,
             [.. error.Arguments.Select(argument => (argument.Name,(PyValue)Py.Number(Convert.ToDouble(argument.Value,System.Globalization.CultureInfo.InvariantCulture))))]),
         "MARKET_MODIFY_TOO_SOON" => MachoErrors.ThrowUserError("CustomInfo",("info",new PyStr(
@@ -423,6 +424,8 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
     public async ValueTask<PyValue> PlaceMultiSellOrder(ServiceCall call)
     {
         Actor(call);
+        if (call.Arg(0) is not (PyList or PyTuple))
+            throw Error(new MarketError("MARKET_BULK_ARGUMENT_INVALID"));
         var entries = Sequence(call.Arg(0));
         if (entries.Count > MaxMultiSellOrderEntries)
             throw Error(new MarketError("MARKET_BULK_LIMIT_EXCEEDED"));

@@ -240,6 +240,20 @@ public class MarketRpcTests
     }
 
     [PgFact]
+    public async Task Multi_sell_refuses_a_non_sequence_payload_instead_of_returning_false()
+    {
+        await using var r = await TradeRig.Create();
+        var actor = await r.Actor("Malformed Multi Seller");
+        var seat = await SeatAsync(r, actor);
+
+        var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() => seat.Proxy.PlaceMultiSellOrder(
+            Call(seat.Session, "PlaceMultiSellOrder", 3, new PyStr("not-a-list"), PyBool.False,
+                new PyInt(1), PyNone.Instance)).AsTask());
+
+        Assert.Equal("MARKET_BULK_ARGUMENT_INVALID", refusal.Error.UserErrorMessage);
+    }
+
+    [PgFact]
     public async Task Buy_multi_fills_each_line_at_its_limit_and_books_the_unfilled_rest_of_each_line()
     {
         // BuyMultipleItems (EVE.js proxy 6915): immediate buys; a line fills what matches at its limit and books the rest as a buy order; the answer is the

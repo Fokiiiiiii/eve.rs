@@ -5541,3 +5541,8 @@ The fleetObject Init RPC costs 10 weighted per-session units because it updates 
 ## Contract RPCs use persisted affiliation (2026-10-23)
 
 `contractProxy` now supplies the current corporation and alliance from the persisted character record to contract readers and writers, ignoring stale session organization fields. EveJS and the V24.01 client use session organization values; this Host policy prevents old corporation contract lists and escrow summaries from remaining visible after affiliation changes. `ContractProxyServiceTests.Login_info_uses_the_three_client_rowsets_and_session_scope` and `Escrow_read_uses_the_persisted_summary` cover the authoritative IDs.
+
+
+## Market multi-sell payload shape (2026-10-23)
+
+`marketProxy.PlaceMultiSellOrder` requires the client batch argument to be a list or tuple before iterating. Other shapes now return the named `MARKET_BULK_ARGUMENT_INVALID` refusal instead of a false result with no work. The V24.01 market UI submits a list of sell rows; `MarketRpcTests.Multi_sell_refuses_a_non_sequence_payload_instead_of_returning_false` covers the malformed call.

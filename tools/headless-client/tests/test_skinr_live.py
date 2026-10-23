@@ -185,7 +185,7 @@ def _skinr_fixture() -> tuple[int, int, int, int, int, int, int, int]:
 
 def _layout(ship_type_id: int, slot_id: int, component_id: int, category: int) -> bytes:
     configuration = field(1, type_identifier(slot_id)) + field(
-        2, field(category, type_identifier(component_id))
+        2, field(category, field(1, type_identifier(component_id)))
     )
     return field(1, configuration) + field(2, type_identifier(ship_type_id))
 

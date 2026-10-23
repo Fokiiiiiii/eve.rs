@@ -55,3 +55,9 @@
 - Agent run 158 on `253597a9` advanced through component consumption and failed at Draft.SaveRequest with HTTP 400. The V24 client messenger builds the slot layout and sends editor configurations; Host catalog validation also rejects SDE components marked disallowed for the selected slot.
 - Updated the live test's SDE selector to exclude `disallowedSlots` for its chosen slot, matching the same catalog condition used by the Host. The save assertion now prints the gateway response on failure. The current full push gate run 686 (`40015069193`) is checking the parent fixture and market affiliation update; the new selector needs Actions verification after push.
 - No local PostgreSQL test or graphical-client check was run.
+
+## 2026-10-23 SKINR draft layout wire correction
+
+- Agent run 158 (`253597a9`) passed component consumption and failed the next `Draft.SaveRequest`. The V24 client encodes a slot as `Slot.id` plus `Slot.configuration`; `SlotConfiguration` selects coating/pattern by category, and the selected variant wraps its identifier in inner field 1. `_layout` omitted that inner wrapper, so `ReadSlot` could not read the component ID.
+- Added the missing nested field in `_layout`, kept `_component_kind` category-selected per the V24 `ComponentLicense` builder, excluded SDE `disallowedSlots` in the fixture selector, and surfaced the SaveRequest response message.
+- The current full gate on `4484ec9c` predates these wire changes. The updated Python live test and correct MarketHost affiliation fixture require the next Actions gate. No PostgreSQL or graphical-client test was run locally.

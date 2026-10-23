@@ -94,7 +94,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .cache/sde
-          key: sde-${{ steps.sde-build.outputs.build }}
+          key: sde-${{ steps.sde-build.outputs.build }}-${{ hashFiles('sde/lock.json') }}
       - name: Fetch the static data
         if: steps.sde.outputs.cache-hit != 'true'
         run: cargo run -q -p eve-sde -- ensure
@@ -205,7 +205,7 @@ jobs:
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .cache/sde
-          key: sde-${{ steps.sde-build.outputs.build }}
+          key: sde-${{ steps.sde-build.outputs.build }}-${{ hashFiles('sde/lock.json') }}
       - name: Load the static data into PostgreSQL
         run: |
           cargo run -q -p eve-sde -- ensure --pg "$EVE_PG_URL"
@@ -352,7 +352,7 @@ jobs:
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .cache/sde
-          key: sde-${{ steps.sde-build.outputs.build }}
+          key: sde-${{ steps.sde-build.outputs.build }}-${{ hashFiles('sde/lock.json') }}
       - name: Load the static data into PostgreSQL
         run: cargo run -q -p eve-sde -- ensure --pg "$EVE_PG_URL"
       - name: Install the headless client

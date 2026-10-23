@@ -28,13 +28,14 @@ Authenticate the V24.01 `ConnectionService.LoginSso` path from the inbound `user
 - Host, Host.Tests, and Identity.Tests Release builds: passed. No-database identity verifier theory: 5 passed, 0 failed, 0 skipped.
 - Agent test `39975779919` for feature commit `7b8ae52a`: Host.Tests SSO cases 5/5 and Identity.Tests SSO cases 8/8 passed; zero skips.
 - Push-triggered CI `39975764343` found Host startup composition failing because `InventoryRpc` wraps `InvBrokerService`, while character composition searched only for the inner type. The wrapper-unwrapping fix and focused composition test were pushed in `0cc56f79`.
-- Agent test `39989413962` and CI `39989400403` both failed at .NET test compilation because the composition fixture still supplied a two-argument lambda to `Action<long>`. The fixture is now corrected, and the full dependency-including Host.Tests Release build passes with zero warnings and errors. The live workflow step also failed in that CI run; its captured failure tail contains no diagnostic beyond the step start.
+- Agent test `39989413962` and CI `39989400403` failed at .NET test compilation because the composition fixture supplied a two-argument lambda to `Action<long>`. The fixture correction passed a full dependency-including Host.Tests Release build with zero warnings and errors, was committed, and pushed to `main` as `872df205`.
+- Focused Host/Identity Actions run `39991052345` completed successfully for the SSO and composition filter. Push CI `39991023879` passed Rust format/Clippy, Rust tests, fixture checks, Python client tests, and the full .NET build, but Host startup in the live workflow and a Host test shard failed because `sde.skinrComponentPointValues` is absent. The pinned lock lists three records for that table. The CI SDE cache key is build-only, so a stale extracted table set is the likely cause; the workflow cache key now also includes the lock hash, pending push and rerun.
 - The concurrent main merge also surfaced separate space-container test failures in CI `39975764343`; they are outside this SSO path. No PostgreSQL test was run locally.
 - Workspace Rust fmt and Clippy cannot complete in this worktree because it already lacks `crates/eve-space/src/targeting/*`; those pre-existing deletions remain untouched. Targeted eve-net checks pass.
 - No PostgreSQL database was used locally. The live SSO scenario still needs a passing Actions run; the graphical V24 client was not exercised.
 
 ## Next steps
 
-1. Commit the corrected composition fixture and this checkpoint, fetch and merge `origin/main`, then push `HEAD:main`.
-2. Run focused Host/Identity agent tests and inspect the new push-triggered CI run, including the live headless SSO scenario.
-3. Keep the TODO row open until Actions verification is recorded.
+1. Commit and push the SDE cache-key update after fetching and merging `origin/main`.
+2. Dispatch focused Host/Identity tests and inspect the new CI run, including the live headless SSO scenario.
+3. Record Actions verification and whether the graphical V24 client was exercised.

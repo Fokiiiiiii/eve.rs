@@ -712,3 +712,5 @@ Security finding for `pingService.Ping` argument validation and liveness budget 
 Post-push handoff: ping service finding `db05a53c` is on `main`, merged at `0d2a7312`; 1,374 registered service/method pairs remain to be fully classified.
 
 Security finding for `chatAuthenticationService.GetAuthenticationToken` input validation and read budgeting was pushed to `main` on 2026-10-23. On `eve_p3`, the focused refusal test passed (1), `Eve.Services.Core.Tests` passed (891), and `Eve.Services.Tests` passed (253), with no skips. The registry has 1,374 service/method pairs; full classification is still incomplete.
+
+Post-push handoff: chat token boundary finding `cb2ae20d` is on `main`, merged at `beaa821b`. The live registry contains 1,374 pairs and still needs method-by-method classification.

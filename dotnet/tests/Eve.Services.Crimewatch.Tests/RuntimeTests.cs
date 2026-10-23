@@ -791,6 +791,14 @@ public class RuntimeTests : IAsyncLifetime
         using var runtime = Runtime();
         var service = new CrimewatchService(Store, runtime, () => _now);
 
+        await ((IService)service).CallAsync(new ServiceCall
+        {
+            Method = "StartDuelChallenge",
+            Args = [new PyReal(2.5)],
+            Session = challenger,
+        });
+        Assert.Empty(_persistence.ChallengesStarted);
+
         Assert.Equal(PyNone.Instance, await ((IService)service).CallAsync(new ServiceCall
         {
             Method = "StartDuelChallenge",

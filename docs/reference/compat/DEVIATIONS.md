@@ -5556,3 +5556,8 @@ The security inventory now records each PLEX market route separately: the order 
 ## Crimewatch history and kill-right RPC bounds (2026-10-23)
 
 `crimewatch.GetSecurityStatusTransactions` is session-character scoped and consumes 10 weighted per-session units; `GetClientStates` reads current session combat timers, engagements and system flags, while scalar safety/status reads and duel state transitions remain unbudgeted. `killRightMgr.GetKillRights` consumes 10 weighted per-session units. Kill-right target batches refuse more than 500 raw IDs before store access with `CRIMEWATCH_BULK_LIMIT_EXCEEDED`; returned rights remain scoped to the session character as owner. `Crimewatch_history_and_kill_right_lists_use_named_per_session_budgets` and `GetKillRights_refuses_more_than_500_raw_target_ids` cover the limits.
+
+
+## Crimewatch numeric identifier parsing (2026-10-23)
+
+`crimewatch` numeric character, duel-peer, and challenge-expiry fields now reject fractional, non-finite, and out-of-range floating identifiers rather than narrowing them to a different integer. The duel lifecycle regression confirms a fractional target does not create a challenge.

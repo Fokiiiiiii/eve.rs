@@ -5616,3 +5616,8 @@ The security inventory now records `contractProxy.GetMyBids`, `GetContractListFo
 ## Character description write budget (2026-10-23)
 
 charMgr.SetCharacterDescription now consumes 10 weighted per-session units because it persists user text. Its active-character scope and 2,500-character client-derived text bound are unchanged. The named dispatcher regression verifies the refusal after the allowance is consumed.
+
+
+## Corporation settings RPC budget (2026-10-23)
+
+Corporation profile, logo, division-name, abilities, acceptance, mail-restriction, aggression, and reinforce-hour writes now consume 10 weighted per-session units. The underlying store still rechecks persisted Director authority; reinforce-hour values remain limited to 0–23. The dispatcher regression covers all eight settings write methods.

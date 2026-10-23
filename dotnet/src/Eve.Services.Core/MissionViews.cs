@@ -164,15 +164,21 @@ public static class MissionViews
         if (view.Courier is { } courier)
         {
             fields.Add(Field("location", new PyInt(courier.PickupStationId)));
-            fields.Add(Field("destination", new PyInt(courier.DropoffStationId)));
+            fields.Add(Field("objectiveDestinationID", new PyInt(courier.DropoffStationId)));
             fields.Add(Field("quantity", new PyInt(courier.Quantity)));
             fields.Add(Field("typeID", new PyInt(courier.TypeId)));
         }
         else if (view.Fetch is { } fetch)
         {
             fields.Add(Field("location", new PyInt(fetch.StationId)));
+            fields.Add(Field("objectiveDestinationID", new PyInt(fetch.StationId)));
             fields.Add(Field("quantity", new PyInt(fetch.Quantity)));
             fields.Add(Field("typeID", new PyInt(fetch.TypeId)));
+        }
+        if (view.Mission.Reward is { RewardTypeId: > 0, RewardQuantity: > 0 } reward)
+        {
+            fields.Add(Field("rewardTypeID", new PyInt(reward.RewardTypeId!.Value)));
+            fields.Add(Field("rewardQuantity", new PyInt(reward.RewardQuantity)));
         }
         return new PyDict(fields);
     }

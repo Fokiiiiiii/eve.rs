@@ -60,3 +60,12 @@ The V24.01 chat inventory in `docs/reference/compat/DEVIATIONS.md` identifies XM
 - Local compile-checks passed: `Eve.Bookmarks.Tests` and `Eve.Host.Tests`, each with 0 warnings and 0 errors. No PostgreSQL tests were run locally.
 - Focused Actions run 40039315645 for `fd4828ca` and push CI run 40039308083 were in progress at this update.
 - Remaining gaps include mail mutations, XMPP offline invites/room deletion/configuration/history/alliance MOTD, in-space `BookmarkLocation`, broader organization contact mutation coverage, and graphical-client validation.
+
+
+## Follow-up verification (2026-10-23)
+
+- Focused run 40039315645 passed the bookmark prime regression 1/1, but the Host EditContact test failed because its test helper treated the notification row as a `PyObject`; the actual row and nested data are `PyDict`. Commit `9f7ad7a0` now handles both forms. Its focused run 40041021170 passed with no failed tests or jobs.
+- Push CI 40039308083 also exposed an inherited mission keyword gap in `MissionViews.Keywords`: the response lacked state-derived `objectiveDestinationID` and reward fields. The current follow-up restores these values from the courier/fetch view and mission reward; the focused Core regression is being rerun.
+- The same push CI had unrelated concurrent structure/market failures: Fortizar docking timed out in the live market walk; the control-tower scoop fixture had only 5040 free volume for an 8000-volume item; and the space scoop test returned a wrapped refusal. Its Host RPC inventory expectation was 1378 while the registry exposed 1382 after four other routes were added. These do not involve the chat/contact/bookmark edits.
+- Local focused `AgentMissionServiceTests.Bound_agent_mission_queries_project_courier_cargo_keywords_standing_gains_and_offer_removal` passed 1/1 without a database. Local Host and Bookmarks compile-checks passed with 0 warnings and 0 errors.
+- Focused rerun for the mission keyword correction and the current push CI status are pending. No real graphical-client run was performed.

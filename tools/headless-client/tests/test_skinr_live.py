@@ -184,7 +184,7 @@ def _layout(ship_type_id: int, slot_id: int, component_id: int, category: int) -
 
 
 def _component_kind(component_id: int, category: int, *, infinite: bool) -> bytes:
-    identifier_field = field(category, type_identifier(component_id))
+    identifier_field = field(1, type_identifier(component_id))
     kind = field(1, identifier_field)
     return kind + (number_field(3, 1) if infinite else number_field(2, 1))
 

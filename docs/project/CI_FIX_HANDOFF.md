@@ -195,3 +195,9 @@ Use lane `eve_p4` only and run database work through `tools/dev/db-lock.sh`. The
 - Run 683 on `8610990c` moved past the sell-range issue and failed with `StructureMarketDenied`. Structure service access reads the character's `CorporationMember` relation through `RelationStore`; the Host test helper set only the character row's corporation ID and omitted the authoritative relation that `CharacterCreation` writes.
 - The `MarketHostTests.CreateTraderAsync` fixture now inserts that relation in its scratch relations schema in the same transaction as the character and wallet. The denied trader receives its different corporation relation, preserving the denial case.
 - The local `Eve.Host.Tests` project build passed with zero warnings and errors. Run 683 is still active; the new fixture needs its Actions check after push. No PostgreSQL test was run locally.
+
+
+## 2026-10-23 SKINR layout oneof encoding
+
+- The focused run on `253597a9` passed consumption but got HTTP 400 when saving the design. V24.01's `component_instance.build_config_proto_from_component_instance` selects outer `SlotConfiguration.coating` or `.pattern` by category; both inner messages store their identifier in field 1. The headless fixture incorrectly used the category as the inner identifier field, making category-2 component IDs unreadable by `ShipSkinrCatalog.ReadSlot`.
+- `_component_kind` now uses the category only for the outer oneof and always emits the component identifier at inner field 1. The existing SaveRequest assertion prints the gateway error if this remains invalid. Python syntax compilation passed; a focused live Actions check is pending.

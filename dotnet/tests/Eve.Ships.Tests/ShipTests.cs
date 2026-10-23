@@ -63,6 +63,15 @@ public class ShipTests
             location: c.ShipId,
             flag: CharacterShips.CargoFlag);
 
+        var storedCargo = (await rig.Items.InContainerAsync(c.ShipId))
+            .Where(item => item.Flag == CharacterShips.CargoFlag)
+            .ToArray();
+        var usedCargo = await rig.Ships.VolumeOfAsync(storedCargo);
+        Assert.True(usedCargo > capacityAfter, $"cargo fixture used {usedCargo} m3; offline capacity is {capacityAfter} m3");
+        Assert.Equal(ItemState.Online, (await rig.Modules.StatesAsync([module]))[module]);
+        var currentSnapshot = (await rig.Ships.LoadShipAsync(c.CharacterId, c.ShipId))!;
+        Assert.Equal(capacityBefore, currentSnapshot.World.Get(c.ShipId, capacityAttribute), 6);
+
         var offlineRefusal = Assert.IsType<ShipRefused>(
             await rig.Ships.SetOnlineAsync(c.CharacterId, c.ShipId, module, online: false));
         Assert.Equal(ShipRefusal.CargoWouldOverflow, offlineRefusal.Reason);

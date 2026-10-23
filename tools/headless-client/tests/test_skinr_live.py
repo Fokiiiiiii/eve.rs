@@ -60,6 +60,8 @@ SKINR_FIXTURE_SQL = """WITH ship_types AS (
         ON ship_group.key = type.doc->>'groupID'
     JOIN sde_mission."categories" AS ship_category
         ON ship_category.key = ship_group.doc->>'categoryID'
+    JOIN sde_mission."skinrTierThresholds" AS tiers
+        ON tiers.key = ship_group.key
     WHERE ship_category.doc->'name'->>'en' = 'Ship'
 ),
 configurations AS (

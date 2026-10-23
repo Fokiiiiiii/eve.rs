@@ -37,10 +37,19 @@ Authenticate the V24.01 `ConnectionService.LoginSso` path from the inbound `user
 - Local verification: Host.Tests Release build succeeded (0 warnings/errors); ShipSkinrCatalogDataTests passed 2/2, zero skips; cargo +1.94.1 check -p eve-sde, package formatting and targeted Clippy passed. Workspace Rust fmt and Clippy were attempted; both are blocked by the pre-existing missing crates/eve-space/src/targeting/* files, which remain untouched.
 - Commit a00e62c9 applies the Host SDE-schema startup fix. Commit 6573728b adds the official JSONL parser correction and focused data tests; it was pushed to main at cae36a3c. Push CI 39998018028 and the focused no-database Host test run 39998073817 are pending. The graphical V24 client was not exercised.
 - Commit bb6029d1 fixes the SKINR test's nested protobuf string decoding and was pushed to main. Push CI 39999180175 and focused Host test run 39999200314 are pending.
+- Commit 5ecf9205 updates the live SKINR fixture to use the official mission SDE schema and its actual JSONL data forms; it was pushed to main. Push CI 39999682477 and the focused SKINR Host test run 39999709247 are pending.
 - No PostgreSQL database was used locally. The live SSO scenario still needs a passing Actions run; the graphical V24 client was not exercised.
 
 ## Next steps
 
-1. Commit and push the mission SDE fixture correction, then review the new push CI and focused test runs.
-2. Identify the Linux and Windows Rust workspace failures and fix them if they are caused by this work.
+1. Review push CI 39998018028, 39999180175, and 39999682477, plus focused Host runs 39999200314 and 39999709247.
+2. Identify the Rust workspace failures and fix any failure caused by this work.
 3. Confirm the live deterministic-issuer handshake reaches character selection; record separately that the graphical V24 client was not exercised.
+
+
+## Latest continuation (2026-10-23)
+
+- The live SKINR fixture now joins official mission `skinrTierThresholds` for candidate ship groups, matching Host layout validation. Python syntax compilation and `git diff --check` passed after the change.
+- Focused no-database Host SKINR data tests passed in Actions run 39999709247.
+- At 18:07 UTC, push CI runs 39999180175 (bb6029d1) and 39999682477 (5ecf9205) were still in progress. The latter includes `test_v24_sso_handshake_reaches_and_selects_a_character`, which logs in with the deterministic issuer, requests selection data, creates/selects a character, and checks the linked account session id. Await its Actions result before claiming the live SSO flow passed.
+- The graphical V24 client was not exercised; no local PostgreSQL database was used.

@@ -370,17 +370,24 @@ public sealed class MarketHostTests : IAsyncLifetime
         var publicAsk=Assert.IsType<PyObject>(regional.Entries.Single(entry=>entry.Key==new PyInt(Tritanium)).Value);
         Assert.Equal(new PyLong(station.Id),Field(Assert.IsType<PyDict>(publicAsk.Args),"stationID"));
         var systemAsks=Assert.IsType<PyDict>(Received(await market.CallAsync(Call(deniedSession,"GetSystemAsks",5))));
-        Assert.Contains(systemAsks.Entries,entry=>entry.Key==new PyInt(Tritanium));
+        var systemAsk=Assert.IsType<PyTuple>(systemAsks.Entries.Single(entry=>entry.Key==new PyInt(Tritanium)).Value);
+        Assert.Equal(4,systemAsk.Items.Count);
+        Assert.Equal(new PyInt(12),systemAsk.Items[0]);
+        Assert.Equal(new PyInt(10),systemAsk.Items[1]);
+        Assert.Equal(new PyInt(Tritanium),systemAsk.Items[2]);
+        Assert.Equal(new PyLong(station.Id),systemAsk.Items[3]);
 
         var askResult=await market.CallAsync(Call(buyerSession,"GetStationAsks",4));
         var askDetails=Assert.IsType<PyDict>(Assert.IsType<PyTuple>(Assert.IsType<PyObject>(askResult).Args).Items[0]);
         Assert.Equal(new PyBytes("stationid"u8.ToArray()),Field(askDetails,"sessionInfo"));
         var asks=Assert.IsType<PyDict>(Received(askResult));
         Assert.Contains(asks.Entries,entry=>entry.Key==new PyInt(Tritanium));
-        var askSummary=Assert.IsType<PyObject>(asks.Entries.Single(entry=>entry.Key==new PyInt(Tritanium)).Value);
-        var askFields=Assert.IsType<PyDict>(askSummary.Args);
-        Assert.Equal(new PyInt(Tritanium),Field(askFields,"typeID"));
-        Assert.Equal(new PyLong(structureId),Field(askFields,"stationID"));
+        var askSummary=Assert.IsType<PyTuple>(asks.Entries.Single(entry=>entry.Key==new PyInt(Tritanium)).Value);
+        Assert.Equal(4,askSummary.Items.Count);
+        Assert.Equal(new PyInt(10),askSummary.Items[0]);
+        Assert.Equal(new PyInt(2),askSummary.Items[1]);
+        Assert.Equal(new PyInt(Tritanium),askSummary.Items[2]);
+        Assert.Equal(new PyLong(structureId),askSummary.Items[3]);
         static IReadOnlyList<PyValue> Lines(PyValue value)
         {
             var fields=Assert.IsType<PyDict>(Assert.IsType<PyObject>(value).Args);
@@ -464,8 +471,10 @@ public sealed class MarketHostTests : IAsyncLifetime
         Assert.Equal(1,contenderATransactions.Items.Count+contenderBTransactions.Items.Count);
         var contenderABalance=(await new PgWalletStore(source,Schema("EVE_WALLET_SCHEMA")).GetAsync(contenderA))!.Isk;
         var contenderBBalance=(await new PgWalletStore(source,Schema("EVE_WALLET_SCHEMA")).GetAsync(contenderB))!.Isk;
-        Assert.Equal(19_980m,contenderABalance+contenderBBalance);
+        // The losing immediate buy rests at 10 ISK per unit and pays the structure minimum broker fee and SCC surcharge.
+        Assert.Equal(19_835m,contenderABalance+contenderBBalance);
         Assert.Contains(new[]{contenderABalance,contenderBBalance},balance=>balance==9_980m);
+        Assert.Contains(new[]{contenderABalance,contenderBBalance},balance=>balance==9_855m);
         await using (var command=source.CreateCommand($"SELECT COALESCE(sum(quantity),0)::bigint FROM {Schema("EVE_INVENTORY_SCHEMA")}.items WHERE owner_id=ANY($1) AND location_id=$2 AND flag=$3 AND type_id=$4"))
         {
             command.Parameters.AddWithValue(new[]{buyer,contenderA,contenderB});

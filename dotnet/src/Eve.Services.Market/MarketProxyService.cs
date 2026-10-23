@@ -163,12 +163,6 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
             new PyStr(group.Description),PyNone.Instance,group.HasTypes ? PyBool.True : PyBool.False,
             group.IconId is { } icon ? new PyInt(icon) : PyNone.Instance,new PyInt(group.Id),PyNone.Instance,PyNone.Instance)));
 
-    /// <summary>
-    /// The V24 market client reads station ask values as KeyVals (market/quote.py BuyStationAsk uses ask.typeID).
-    /// Both EveJS snapshots return tuple summaries here; that shape fails the client consumer, so keep the named KeyVal fields.
-    /// </summary>
-    private static PyValue AskSummary(MarketOrder order,long quantity) => MarketWire.BestByOrder(order,quantity);
-
     private async Task<IReadOnlyList<(MarketOrder Order,long Quantity)>> VisibleSummaries(
         long actorId,IReadOnlyList<(MarketOrder Order,long Quantity)> rows,CancellationToken token)
     {
@@ -228,7 +222,7 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
             catch(MarketError error) { throw Error(error); }
         }
         var entries=rows.Select(row=>new KeyValuePair<PyValue,PyValue>(
-            new PyInt(row.Order.TypeId),AskSummary(row.Order,row.Quantity))).ToArray();
+            new PyInt(row.Order.TypeId),MarketWire.BestByOrderTuple(row.Order,row.Quantity))).ToArray();
         return ObjectCaching.MethodResult(new PyDict(entries),now(),sessionInfo:"stationid");
     }
 
@@ -244,7 +238,7 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
             rows=await VisibleSummaries(characterId,rows,call.Cancellation);
         }
         var entries=rows.Select(row=>new KeyValuePair<PyValue,PyValue>(
-            new PyInt(row.Order.TypeId),AskSummary(row.Order,row.Quantity))).ToArray();
+            new PyInt(row.Order.TypeId),MarketWire.BestByOrderTuple(row.Order,row.Quantity))).ToArray();
         return ObjectCaching.MethodResult(new PyDict(entries),now(),sessionInfo:"solarsystemid2");
     }
 

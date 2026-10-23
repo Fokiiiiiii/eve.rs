@@ -28,7 +28,6 @@ from tests.test_undock import arrive
 pytestmark = pytest.mark.skipif(not base.LIVE, reason="set EVE_LIVE_HOST=host:port to test against a running server")
 
 TRITANIUM = 34
-ASK_ROW_NAMES = {"typeID", "stationID", "price", "volRemaining"}  # marketsvc.py:297-300; quote.py:97-100 reads .typeID
 
 def _new_character(client, run: str) -> int:
     creation = next(step for step in base.WALK["steps"] if step["call"][1] == "CreateCharacterWithDoll" and "ok" in step)
@@ -62,12 +61,12 @@ def test_a_docked_character_reads_the_market_as_the_client_does():
         station_id = client.session.session_init.get("stationid")
         assert isinstance(station_id, int), "a character that selected its station is docked: the session says where"
 
-        # GetStationAsks (proxy 6211): a dict of typeID -> KeyVal rows read by name; empty while nobody sells here
+        # Station/system range asks are (price, volRemaining, typeID, stationID) tuples for MarketBase conversion.
         asks = _payload(m.plain(client.call("marketProxy", "GetStationAsks")))
         assert isinstance(asks, dict)
         for type_id, row in asks.items():
-            assert isinstance(row, dict) and ASK_ROW_NAMES <= set(row), f"ask row for {type_id} has {sorted(row)}"
-            assert row["typeID"] == type_id
+            assert isinstance(row, tuple) and len(row) == 4, f"ask row for {type_id} is {row!r}"
+            assert row[2] == type_id and row[3] == station_id
 
         # the own-order lists and the escrow of a character that trades nothing yet are empty, not errors (proxy 6469, 6652)
         assert m.plain(client.call("marketProxy", "GetCharOrders")) is not None
@@ -204,11 +203,10 @@ def test_docked_corporation_members_trade_at_an_eligible_upwell_structure():
         ask = next(row for row in _own_orders(seller) if _field(row, "typeID") == TRITANIUM)
         ask_id = _field(ask, "orderID")
         assert _field(ask, "volRemaining") == 2 and _number(_field(ask, "stationID")) == structure_id, ask
+        summary = _payload(m.plain(buyer.call("marketProxy", "GetStationAsks")))[TRITANIUM]
+        assert isinstance(summary, tuple) and len(summary) == 4, summary
+        assert summary == (50, 2, TRITANIUM, structure_id)
         assert all(_field(row, "orderID") != bid_id for row in _own_orders(buyer))
-        asks = _payload(m.plain(buyer.call("marketProxy", "GetStationAsks")))
-        best = _named(asks[TRITANIUM])
-        assert best["typeID"] == TRITANIUM and best["stationID"] == structure_id
-        assert best["price"] == 50.0 and best["volRemaining"] == 2, best
 
         order_books = _payload(m.plain(buyer.call("marketProxy", "GetOrders", TRITANIUM)))
         visible_asks = _plain_rows(order_books[0])

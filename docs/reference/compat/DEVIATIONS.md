@@ -5680,3 +5680,8 @@ corpRegistry.GetAllianceApplications now queries at most 5,001 rows and refuses 
 ## Corporation manager RPC budgets (2026-10-23)
 
 corpmgr.GetPublicInfo, GetCorporations, and GetCorporationIDForCharacter now consume 10 weighted per-session units. The two corporation info calls include member counts, while the character lookup resolves one public corporation affiliation. `DispatchGoldenTests.Corporation_manager_public_reads_use_a_named_per_session_budget` covers all three calls.
+
+
+## Mutual war invitation provider refusal and budgets (2026-10-23)
+
+The Host does not configure mutual-war invitation persistence. All six mutualWarInviteMgr RPCs now consume 10 weighted per-session units, and the two reads return the same named unavailable refusal as writes instead of empty or false success values. `SendInviteByPlayer` also refuses when its blocking-state reader is absent. `CorporationProtocolTests.Mutual_war_invite_mgr_exposes_reference_routes_and_callback_shapes` and `DispatchGoldenTests.Mutual_war_invite_methods_use_a_named_per_session_budget` cover these behaviors.

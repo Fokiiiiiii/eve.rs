@@ -1787,16 +1787,21 @@ private static PyValue RowField(PyValue value,string key)
         Assert.Equal((7001L, true), blockChange);
 
         var unconfigured = new MutualWarInviteMgrService();
-        Assert.Empty(Assert.IsType<PyList>(await unconfigured.GetPendingInvitesForSession(
-            Call(session, "GetPendingInvitesForSession"))).Items);
-        Assert.Equal(new PyInt(0), await unconfigured.IsCorpInvitesBlockedPlayer(
-            Call(session, "IsCorpInvitesBlockedPlayer")));
-        foreach (var method in new[] { "SendInviteByPlayer", "WithdrawInviteByPlayer", "RespondToInviteByPlayer", "SetInvitesBlockedByPlayer" })
+        foreach (var method in new[]
+        {
+            "GetPendingInvitesForSession", "IsCorpInvitesBlockedPlayer", "SendInviteByPlayer",
+            "WithdrawInviteByPlayer", "RespondToInviteByPlayer", "SetInvitesBlockedByPlayer"
+        })
         {
             var refused = await Assert.ThrowsAsync<MachoWrappedException>(async () => await ((IService)unconfigured).CallAsync(
                 Call(session, method, new PyInt(8002), PyBool.True)));
             Assert.Equal("CustomNotify", refused.Error.UserErrorMessage);
         }
+
+        var sendWithoutBlockReader = new MutualWarInviteMgrService(sendInvite: (_, _, _, _) => ValueTask.CompletedTask);
+        var missingBlockCheck = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await sendWithoutBlockReader.SendInviteByPlayer(Call(session, "SendInviteByPlayer", new PyInt(8002))));
+        Assert.Equal("CustomNotify", missingBlockCheck.Error.UserErrorMessage);
     }
 
     [Fact]

@@ -95,13 +95,13 @@ public sealed class AgentMissionDispatchTests
             Assert.NotNull(oid);
 
             Assert.True(await dispatcher.DispatchAsync(Request(2, null, new PyStr(oid!), "DoAction", PyNone.Instance), session));
-            var greeting = DialogueReply(sink.Packets[^1]);
-            Assert.Contains(greeting.Actions, action => action.Items[0] is PyInt id && id.Value == AgentDialogueToken.Request);
+            var greeting = DialogueActions(sink.Packets[^1]);
+            Assert.Contains(greeting, action => action.Items[0] is PyInt id && id.Value == AgentDialogueToken.Request);
 
             Assert.True(await dispatcher.DispatchAsync(Request(3, null, new PyStr(oid!), "DoAction",
                 new PyInt(AgentDialogueToken.Request)), session));
-            var offered = DialogueReply(sink.Packets[^1]);
-            Assert.Contains(offered.Actions, action => action.Items[0] is PyInt id && id.Value == AgentDialogueToken.Accept);
+            var offered = DialogueActions(sink.Packets[^1]);
+            Assert.Contains(offered, action => action.Items[0] is PyInt id && id.Value == AgentDialogueToken.Accept);
             Assert.Equal(AgentMissionState.Offered, (await store.ReadAsync(Pilot, Agent))!.State);
 
             Assert.True(await dispatcher.DispatchAsync(Request(4, null, new PyStr(oid!), "DoAction",

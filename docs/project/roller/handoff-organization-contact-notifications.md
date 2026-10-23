@@ -57,6 +57,6 @@ The V24.01 chat inventory in `docs/reference/compat/DEVIATIONS.md` identifies XM
 
 - Added `ExpiredBookmarkPrimeTests.Priming_removes_expired_shared_bookmarks_and_notifies_other_active_viewers_after_the_reply`: covers `GetMyActiveBookmarks` three-list reply, expiry removal, exact shared-folder update, after-response ordering and no duplicate notice to the reader.
 - Added `ContactEditHostWireTests.EditContact_persists_type_90_and_routes_the_client_notification_to_the_recipient`: dispatches the Host `charMgr.EditContact` RPC and checks persisted notification fields and the recipient event.
-- The bookmarks test project compile-check passed with 0 warnings and 0 errors. The Host test project compile-check is in progress; the focused PostgreSQL tests are for GitHub Actions after push.
-- No PostgreSQL database was used locally, and no real graphical-client run was performed.
+- Local compile-checks passed: `Eve.Bookmarks.Tests` and `Eve.Host.Tests`, each with 0 warnings and 0 errors. No PostgreSQL tests were run locally.
+- Focused Actions run 40039315645 for `fd4828ca` and push CI run 40039308083 were in progress at this update.
 - Remaining gaps include mail mutations, XMPP offline invites/room deletion/configuration/history/alliance MOTD, in-space `BookmarkLocation`, broader organization contact mutation coverage, and graphical-client validation.

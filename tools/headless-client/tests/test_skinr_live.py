@@ -1,6 +1,6 @@
 """A V24 SKINR draft-to-license walk through the live public gateway.
 
-The test derives a published hull slot, component, license item, binder and hull from the pinned SDE. It enters a real character,
+The test derives a published hull slot, component, license item, binder and hull from the official mission SDE tables. It enters a real character,
 saves and edits a draft, consumes the component license, exercises skill/binder/PLEX refusals, retries one sequence concurrently,
 observes the committed completion notices, activates the resulting license, and applies it to the matching owned ship.
 The durable job due time is advanced in the isolated live-run schemas so the normal scheduler completes it without waiting hours.
@@ -53,25 +53,55 @@ LICENSE = "eve_public.cosmetic.ship.skin.thirdparty.license.api."
 NOTICES_CONSUME = "/eve_public.gateway.Notices/Consume"
 SEQUENCE_KIND = "ship-skinr.sequence.complete"
 
-SKINR_FIXTURE_SQL = """
-WITH hull_slots AS (
+SKINR_FIXTURE_SQL = """WITH ship_types AS (
+    SELECT type.key::int AS ship_type_id
+    FROM sde_mission."types" AS type
+    JOIN sde_mission."groups" AS ship_group
+        ON ship_group.key = type.doc->>'groupID'
+    JOIN sde_mission."categories" AS ship_category
+        ON ship_category.key = ship_group.doc->>'categoryID'
+    WHERE ship_category.doc->'name'->>'en' = 'Ship'
+),
+configurations AS (
     SELECT
-        COALESCE(
-            NULLIF(configuration.doc->>'shipTypeID', '')::int,
-            NULLIF(configuration.doc->>'shipTypeId', '')::int,
-            NULLIF(configuration.doc->>'typeID', '')::int,
-            NULLIF(configuration.doc->>'typeId', '')::int,
-            configuration.key::int
-        ) AS ship_type_id,
+        configuration.key::int AS configuration_id,
+        COALESCE(NULLIF(configuration.doc->>'priority', '')::int, 0) AS priority,
+        configuration.doc->'config' AS slot_configuration,
+        COALESCE(configuration.doc->'ships', '[]'::jsonb) AS ships,
+        configuration.doc->>'allowAllShips' = 'true' AS allow_all_ships
+    FROM sde_mission."skinrSlotConfigurations" AS configuration
+),
+explicit_ship_configurations AS (
+    SELECT DISTINCT ON (ship.value::int)
+        ship.value::int AS ship_type_id,
+        configuration.slot_configuration
+    FROM configurations AS configuration
+    CROSS JOIN LATERAL jsonb_array_elements_text(configuration.ships) AS ship(value)
+    ORDER BY ship.value::int, configuration.priority, configuration.configuration_id
+),
+hull_configurations AS (
+    SELECT ship_type_id, slot_configuration
+    FROM explicit_ship_configurations
+    WHERE slot_configuration IS NOT NULL
+    UNION ALL
+    SELECT ship.ship_type_id, configuration.slot_configuration
+    FROM configurations AS configuration
+    CROSS JOIN ship_types AS ship
+    WHERE configuration.allow_all_ships
+      AND configuration.slot_configuration IS NOT NULL
+      AND NOT EXISTS (
+          SELECT 1
+          FROM configurations AS claimed_configuration
+          CROSS JOIN LATERAL jsonb_array_elements_text(claimed_configuration.ships) AS claimed(ship_type_id)
+          WHERE claimed.ship_type_id::int = ship.ship_type_id
+      )
+),
+hull_slots AS (
+    SELECT
+        hull.ship_type_id,
         slot.value::int AS slot_id
-    FROM sde."skinrSlotConfigurations" AS configuration
-    CROSS JOIN LATERAL jsonb_array_elements_text(
-        COALESCE(
-            configuration.doc->'slotIDs',
-            configuration.doc->'slotIds',
-            configuration.doc->'slots'
-        )
-    ) AS slot(value)
+    FROM hull_configurations AS hull
+    CROSS JOIN LATERAL jsonb_array_elements_text(hull.slot_configuration) AS slot(value)
 )
 SELECT concat_ws(
     '|',
@@ -96,14 +126,14 @@ SELECT concat_ws(
     COALESCE(NULLIF(binder.item_type->>'count', '')::int, 0)
 )
 FROM hull_slots
-JOIN sde."skinrSlots" AS slot
+JOIN sde_mission."skinrSlots" AS slot
     ON COALESCE(
         NULLIF(slot.doc->>'id', '')::int,
         NULLIF(slot.doc->>'slotID', '')::int,
         NULLIF(slot.doc->>'slotId', '')::int,
         slot.key::int
     ) = hull_slots.slot_id
-CROSS JOIN sde."skinrComponents" AS component
+CROSS JOIN sde_mission."skinrComponents" AS component
 CROSS JOIN LATERAL jsonb_array_elements(
     COALESCE(component.doc->'associatedTypeIDs', component.doc->'associatedTypeIds', '[]'::jsonb)
 ) AS associated(value)
@@ -124,7 +154,7 @@ WHERE component.doc->>'published' = 'true'
         NULLIF(associated.value->>'licenseUsesGranted', '')::int,
         NULLIF(associated.value->>'license_uses_granted', '')::int,
         0
-      ) = 0
+      ) = -1
   AND COALESCE(
         NULLIF(binder.item_type->>'itemTypeID', '')::int,
         NULLIF(binder.item_type->>'itemTypeId', '')::int,
@@ -138,7 +168,7 @@ LIMIT 1
 
 def _skinr_fixture() -> tuple[int, int, int, int, int, int, int, int]:
     row = dbseed.sql(SKINR_FIXTURE_SQL)
-    assert row, "the pinned SDE has no published unlimited SKINR component with a compatible slot and binder"
+    assert row, "the mission SDE has no published unlimited SKINR component with a compatible slot and binder"
     values = tuple(int(value) for value in row.split("|"))
     assert len(values) == 8, values
     return values

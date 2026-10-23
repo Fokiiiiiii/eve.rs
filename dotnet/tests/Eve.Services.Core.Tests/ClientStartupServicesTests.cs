@@ -11,7 +11,12 @@ public sealed class ClientStartupServicesTests
     public void Security_manager_returns_the_empty_indexed_rowset()
     {
         var service = new SecurityMgrService();
-        var result = service.GetModifiedSystems(null!);
+        var result = service.GetModifiedSystems(new ServiceCall
+        {
+            Method = "get_modified_systems",
+            Args = [],
+            Session = new ClientSession(),
+        });
         var descriptor = Descriptor.FromHeader(new PyObjectEx(ObjectExKind.Ex1,
             Py.Tuple(new PyToken("blue.DBRowDescriptor"), Py.Tuple(Py.Tuple(
                 Py.Tuple(new PyStr("solarSystemID"), new PyInt(0x03)),
@@ -22,6 +27,21 @@ public sealed class ClientStartupServicesTests
                 Py.Dict(("header", descriptor.Header), ("columnName", new PyStr("solarSystemID")))), [], []);
 
         Assert.Equal(expected, result);
+    }
+
+    [Fact]
+    public async Task Security_manager_refuses_client_arguments()
+    {
+        var service = (IService)new SecurityMgrService();
+        foreach (var call in new[]
+        {
+            new ServiceCall { Method = "get_modified_systems", Args = [new PyInt(30000142)], Session = new ClientSession() },
+            new ServiceCall { Method = "get_modified_systems", Args = [], Kwargs = Py.Dict(("systemID", new PyInt(30000142))), Session = new ClientSession() },
+        })
+        {
+            var error = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(call).AsTask());
+            Assert.Equal("SECURITY_MANAGER_ARGUMENTS_INVALID", error.Error.UserErrorMessage);
+        }
     }
 
     [Fact]

@@ -668,6 +668,14 @@ V24.01 calls deployment with `(item_id, game_mode_id)`, entrance activation with
 
 Security finding `c6a4c688` was pushed to `main` on 2026-10-23; the 20 non-skipped Abyssal Host flow tests passed on `eve_p3`.
 
+### Client security startup RPC
+
+| RPC | Caller and target scope | Input bounds | Per-session cost |
+|---|---|---|---|
+| `securityMgr.get_modified_systems` | Public static modified-security-system snapshot | No positional or keyword arguments | One unit; fixed-size read. On `eve_p3`, the focused Core tests passed (2), all `Eve.Services.Core.Tests` passed (889), and all `Eve.Services.Tests` passed (251), with no skips. |
+
+V24.01 calls this read with no arguments (`security/client/securitySvc.py:41`). `ClientStartupServicesTests.Security_manager_refuses_client_arguments` checks malformed positional and keyword inputs; `DispatchGoldenTests.Security_manager_read_uses_a_named_per_session_budget` checks cost.
+
 
 ### Contextual Offer Manager RPC detail
 
@@ -692,3 +700,5 @@ Post-push handoff: FastCheckout fixed-read finding `be2f9493` is on `main`; the 
 Security finding for `shipKillCounter.GetItemKillCountPlayer` wire validation and provider failure behavior was pushed to `main` on 2026-10-23. On `eve_p3`, the focused Core tests passed (7), `Eve.Services.Core.Tests` passed (888), `Eve.Services.Tests` passed (250), and `ShipKillCounterPersistenceTests` passed (1), with no skips. The registry has 1,374 service/method pairs and method-by-method classification remains open.
 
 Post-push handoff: ship kill counter finding `6f681a14` is on `main`, merged at `fe730510`. Registry enumeration remains 1,374 pairs; the full security inventory is unfinished.
+
+Security finding for `securityMgr.get_modified_systems` input validation and read budgeting was pushed to `main` on 2026-10-23. On `eve_p3`, its focused Core tests passed (2), `Eve.Services.Core.Tests` passed (889), and `Eve.Services.Tests` passed (251), with no skips. The Host registry contains 1,374 service/method pairs; classification is still in progress.

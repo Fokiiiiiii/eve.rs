@@ -1,7 +1,9 @@
 using System.Globalization;
 using System.Text;
 using System.Text.Json.Nodes;
+using Eve.Macho;
 using Eve.Marshal;
+using Eve.Services;
 
 namespace Eve.Services.Core;
 
@@ -22,7 +24,12 @@ public sealed partial class SecurityMgrService
     }
 
     [Method("get_modified_systems")]
-    public PyValue GetModifiedSystems(ServiceCall call) => EmptyModifiedSystems();
+    public PyValue GetModifiedSystems(ServiceCall call)
+    {
+        if (call.Args.Count != 0 || call.Kwargs is not PyNone)
+            throw MachoErrors.ThrowUserError("SECURITY_MANAGER_ARGUMENTS_INVALID");
+        return EmptyModifiedSystems();
+    }
 }
 
 [Service("alert")]

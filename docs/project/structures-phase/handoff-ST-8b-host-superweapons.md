@@ -53,3 +53,7 @@ The same hook should cover the shared PointDefense/AoE action without changing i
 4. Re-evaluate current owner-corporation legality on each pulse; Sim must apply only the Host-returned allowed IDs.
 5. Route structure lightning through the same hook for the primary target and each ordered secondary hop, preserving the SDE type list, range, maximum chain count, and per-hop falloff.
 6. Re-run focused Space and Host tests serially under the parent task, then record those results separately from this worker's work. Real V24.01 client acceptance remains not confirmed.
+
+## 2026-10-23 PANIC follow-up
+
+Implemented in the ship PANIC path: activation burns out the source module, and docking is refused for the source ship while its PANIC action runs. Fleet grants still use the existing Host and Sim flow. Focused Rust docking test passed; Space service and test project compile checks passed; Rust workspace clippy and formatting checks passed. The .NET PgFact regression is covered by Actions rather than run locally because local database tests are prohibited. Fleetmate docking refusal, ejection/logout timer, reconnect cleanup, and real-client acceptance remain outstanding.

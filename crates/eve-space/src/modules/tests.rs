@@ -3845,6 +3845,30 @@ fn a_panic_asks_the_ships_in_its_reach_for_their_buffs_and_starts_when_they_are_
 }
 
 #[test]
+fn a_panic_module_blocks_docking_until_its_effect_stops() {
+    let (mut scene, t) = mining_rock(99_300_005);
+    let asked = scene.activate(A, panic_effect(200_000.0), t);
+    let cycle = asked
+        .iter()
+        .find_map(|out| match out {
+            Out::ModuleWorkCycle { cycle_id, command: WORK_PANIC, .. } => Some(*cycle_id),
+            _ => None,
+        })
+        .expect("P.A.N.I.C. waits for the Host grant");
+    scene.module_work_result(
+        A,
+        MODULE,
+        ModuleWorkAnswer { target_id: 0, cycle_id: cycle, accepted: true, reason: "", depleted: false },
+        t,
+    );
+
+    assert_eq!(
+        scene.command(A, Command::Dock { station_id: STATION }, t + SECOND),
+        [Out::Refused { session: A, command: 4, reason: "DOCKING_BLOCKED" }]
+    );
+}
+
+#[test]
 fn a_panic_reaches_only_the_ships_within_200_km() {
     let (mut scene, t) = mining_rock(99_300_002);
     let ship_a = scene.pilots[&A].ship.spec.ship_id;

@@ -54,6 +54,20 @@ public sealed class JumpCloneShipInstallTests
 
         Assert.Equal(new[] { "OnShipJumpCloneInstallationCanceled" }, Notifications(rig.OfferingSink).Select(n => n.Name).ToArray());
         Assert.Equal(new[] { "OnShipJumpCloneInstallationOffered", "OnShipJumpCloneInstallationCanceled" }, Notifications(rig.TargetSink).Select(n => n.Name).ToArray());
+        Assert.Equal(new long[] { Offering, Target, Ship, 0 }, Payload(Notifications(rig.OfferingSink)[0].Args));
+        Assert.Equal(new long[] { Offering, Target, Ship, 0 }, Payload(Notifications(rig.TargetSink)[1].Args));
+        Assert.Equal("Clone install offer expired", Notify(await Assert.ThrowsAsync<MachoWrappedException>(() => rig.Call(target, "AcceptShipCloneInstallation"))));
+        Assert.Empty(rig.Store.Installs);
+
+        rig.OfferingSink.Packets.Clear();
+        rig.TargetSink.Packets.Clear();
+        await rig.Call(offering, "OfferShipCloneInstallation", new PyLong(Target));
+        Assert.Same(PyNone.Instance, await rig.Call(target, "CancelShipCloneInstallation"));
+
+        Assert.Equal(new[] { "OnShipJumpCloneInstallationCanceled" }, Notifications(rig.OfferingSink).Select(n => n.Name).ToArray());
+        Assert.Equal(new[] { "OnShipJumpCloneInstallationOffered", "OnShipJumpCloneInstallationCanceled" }, Notifications(rig.TargetSink).Select(n => n.Name).ToArray());
+        Assert.Equal(new long[] { Offering, Target, Ship, 0 }, Payload(Notifications(rig.OfferingSink)[0].Args));
+        Assert.Equal(new long[] { Offering, Target, Ship, 0 }, Payload(Notifications(rig.TargetSink)[1].Args));
         Assert.Equal("Clone install offer expired", Notify(await Assert.ThrowsAsync<MachoWrappedException>(() => rig.Call(target, "AcceptShipCloneInstallation"))));
         Assert.Empty(rig.Store.Installs);
     }

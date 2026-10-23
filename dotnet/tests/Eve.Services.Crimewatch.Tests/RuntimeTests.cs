@@ -19,6 +19,22 @@ internal sealed class Capture : IPacketSink
 
     public List<PyValue> Sent { get; } = [];
 
+    public int CountOf<T>() where T : PyValue
+    {
+        lock (_gate)
+            return Sent.OfType<T>().Count();
+    }
+
+    public PyValue[] Drain()
+    {
+        lock (_gate)
+        {
+            var packets = Sent.ToArray();
+            Sent.Clear();
+            return packets;
+        }
+    }
+
     public void Send(PyValue packet)
     {
         lock (_gate)
@@ -56,7 +72,7 @@ internal static class Notes
     public static IReadOnlyList<Note> Of(Capture sink)
     {
         var notes = new List<Note>();
-        foreach (var packet in sink.Sent.OfType<PyObject>())
+        foreach (var packet in sink.Drain().OfType<PyObject>())
         {
             var state = ((PyTuple)packet.Args).Items;
             if (state[0] is not PyInt { Value: MachoMessage.Notification })
@@ -69,7 +85,6 @@ internal static class Notes
             var args = ((PyTuple)((PyTuple)inner.Items[1]).Items[1]).Items;
             notes.Add(new Note(JsSemantics.StringValue(address[1])!, JsSemantics.StringValue(address[3])!, [.. args]));
         }
-        sink.Sent.Clear();
         return notes;
     }
 }
@@ -861,7 +876,7 @@ public class RuntimeTests : IAsyncLifetime
 
         _now = Start + 310_005;
         _waits.Made[^1].Done.SetResult();
-        await Settle(() => _sinks[1].Sent.OfType<PyObject>().Count() >= 2);
+        await Settle(() => _sinks[1].CountOf<PyObject>() >= 2);
 
         var ended = Told(1);
         Assert.Equal(["OnNpcTimerUpdate", "OnDisapprovalTimerUpdate"], ended.Select(note => note.Name));

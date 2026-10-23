@@ -1,0 +1,131 @@
+name: Agent test
+run-name: Agent test ${{ inputs.ref }}
+# Trigger mode is set by tools/dev/ci-mode.py; this workflow is dispatch-only.
+
+'on':
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch or commit SHA to check out
+        required: true
+        default: main
+        type: string
+      dotnet_projects:
+        description: Comma-separated test project names or all; empty skips .NET tests
+        required: true
+        default: all
+        type: string
+      dotnet_filter:
+        description: Optional dotnet test filter
+        required: false
+        default: ''
+        type: string
+      live_tests:
+        description: Comma-separated headless test files, fast, slow, or all; empty skips live tests
+        required: true
+        default: fast
+        type: string
+      rust:
+        description: Rust tests, clippy, or all Rust checks
+        required: true
+        default: none
+        type: choice
+        options:
+          - none
+          - tests
+          - clippy
+          - all
+
+concurrency:
+  group: agent-test-${{ github.run_id }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  RUST_TOOLCHAIN: "1.99.0"
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  DOTNET_NOLOGO: "1"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_CLI_USE_MSBUILD_SERVER: "0"
+  MSBUILDDISABLENODEREUSE: "1"
+  EVE_MARKET_SEED: skip
+
+jobs:
+  agent-test:
+    name: Selected agent tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: eve
+          POSTGRES_INITDB_ARGS: "-c max_connections=400 -c shared_buffers=512MB -c fsync=off -c full_page_writes=off -c synchronous_commit=off"
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d eve"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      EVE_PG_URL: postgres://postgres:postgres@127.0.0.1:5432/eve
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: tools/headless-client/requirements*.txt
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master as of 2026-10-19
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('dotnet/Directory.Packages.props', 'dotnet/**/*.csproj', 'dotnet/**/*.props', 'dotnet/**/*.targets') }}
+          restore-keys: nuget-${{ runner.os }}-
+      - id: sde-build
+        run: echo "build=$(sed -n 's/^PINNED_BUILD=//p' sde/fetch.sh)" >> "$GITHUB_OUTPUT"
+      - id: sde-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache/sde
+          key: sde-${{ steps.sde-build.outputs.build }}
+      - name: Load pinned SDE and mission data
+        run: |
+          cargo run -q -p eve-sde -- ensure --pg "$EVE_PG_URL"
+          cargo run -q -p eve-sde -- ensure --missions --pg "$EVE_PG_URL"
+      - name: Install the headless client
+        if: inputs.live_tests != ''
+        run: |
+          python3 -m venv tools/headless-client/.venv
+          tools/headless-client/.venv/bin/pip install -q -r tools/headless-client/requirements-dev.txt
+      - id: tests
+        name: Run the requested tests and print per-test failures
+        env:
+          DOTNET_PROJECTS: ${{ inputs.dotnet_projects }}
+          DOTNET_FILTER: ${{ inputs.dotnet_filter }}
+          LIVE_TESTS: ${{ inputs.live_tests }}
+          RUST_TESTS: ${{ inputs.rust }}
+        run: python3 tools/dev/agent-test.py
+      - name: Upload full test and server logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: agent-test-logs-${{ github.run_id }}
+          path: .agent-test-logs/
+          if-no-files-found: ignore
+          include-hidden-files: true
+          retention-days: 7

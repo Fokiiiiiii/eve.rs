@@ -6,7 +6,7 @@ name: CI
 # server stack and headless client, and call the Windows build and live-client workflow. The slow end-to-end tests
 # are live-slow.yml (also by hand).
 
-# Push runs share a branch concurrency group with one running run and one replaceable pending SHA. Manual runs use a separate group, can cancel older manual runs, and accept a comma-separated job selection.
+# Main pushes use one concurrency group per SHA and cannot cancel one another. Superseded branch and pull request runs can be cancelled. Manual runs accept a comma-separated job selection.
 # The default runs every required gate. The Windows workflow runs on a native runner. The same local checks can be run
 # with tools/dev/check-all.sh.
 on:
@@ -27,8 +27,8 @@ on:
         type: string
 
 concurrency:
-  group: ${{ github.event_name == 'push' && format('ci-push-{0}', github.ref) || format('ci-{0}-interactive', github.ref) }}
-  cancel-in-progress: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request' }}
+  group: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && format('ci-main-{0}', github.sha) || format('ci-{0}-interactive', github.ref) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref != 'refs/heads/main') || github.event_name == 'workflow_dispatch' }}
 
 permissions:
   contents: read
@@ -286,6 +286,8 @@ jobs:
           cache: pip
           cache-dependency-path: tools/headless-client/requirements*.txt
       - run: pip install -r requirements-dev.txt
+      - name: Test CI status output parsing
+        run: python3 ../dev/test_ci_status.py
       # the live tests skip without a server; what is left runs on its own (the marshal golden frames, the mock server)
       - run: python -m pytest -q -rs
 

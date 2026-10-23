@@ -131,6 +131,9 @@ public sealed class AchievementTrackerMgrService(
     Func<ServiceCall, CancellationToken, ValueTask<PyValue?>>? rpcHandler = null,
     Func<long, PyDict, PyDict, CancellationToken, ValueTask>? writeState = null) : IService
 {
+    private const int MaxStateEntries = 5_000;
+    private const int MaxEventNameBytes = 256;
+
     public AchievementTrackerMgrService(Func<ServiceCall, ValueTask<PyValue?>> stateHandler)
         : this(rpcHandler: (call, _) => stateHandler(call))
     {
@@ -147,6 +150,22 @@ public sealed class AchievementTrackerMgrService(
     {
         if (!HasMethod(call.Method)) return PyNone.Instance;
         call.Cancellation.ThrowIfCancellationRequested();
+        if (call.Kwargs is not PyNone)
+            throw MachoErrors.ThrowUserError("ACHIEVEMENT_ARGUMENTS_INVALID");
+        switch (call.Method)
+        {
+            case "HasEverWarped":
+            case "GetCompletedAchievementsAndClientEventCount":
+                if (call.Args.Count != 0)
+                    throw MachoErrors.ThrowUserError("ACHIEVEMENT_ARGUMENTS_INVALID");
+                break;
+            case "UpdateClientAchievmentsAndCounters":
+                if (call.Args.Count != 2 || call.Arg(0) is not PyDict completed || call.Arg(1) is not PyDict eventCounts)
+                    throw MachoErrors.ThrowUserError("ACHIEVEMENT_STATE_INVALID");
+                ValidateState(completed, eventCounts);
+                break;
+        }
+
         if (rpcHandler is not null && await rpcHandler(call, call.Cancellation) is { } handled)
             return handled;
 
@@ -185,6 +204,28 @@ public sealed class AchievementTrackerMgrService(
         new(new PyStr(key), value);
 
     private static KeyValuePair<PyValue, PyValue> Entry(PyValue key, PyValue value) => new(key, value);
+
+    private static void ValidateState(PyDict completed, PyDict eventCounts)
+    {
+        if (completed.Entries.Count > MaxStateEntries || eventCounts.Entries.Count > MaxStateEntries)
+            throw MachoErrors.ThrowUserError("ACHIEVEMENT_STATE_TOO_LARGE");
+
+        foreach (var (key, value) in completed.Entries)
+        {
+            var achievementId = key switch { PyInt i => i.Value, PyLong l => l.Value, _ => 0 };
+            var completedAt = value switch { PyInt i => i.Value, PyLong l => l.Value, _ => -1 };
+            if (achievementId is <= 0 or > int.MaxValue || completedAt < 0)
+                throw MachoErrors.ThrowUserError("ACHIEVEMENT_STATE_INVALID");
+        }
+
+        foreach (var (key, value) in eventCounts.Entries)
+        {
+            var count = value switch { PyInt i => i.Value, PyLong l => l.Value, _ => -1 };
+            if (key is not PyStr name || string.IsNullOrWhiteSpace(name.Value)
+                || System.Text.Encoding.UTF8.GetByteCount(name.Value) > MaxEventNameBytes || count < 0)
+                throw MachoErrors.ThrowUserError("ACHIEVEMENT_STATE_INVALID");
+        }
+    }
 }
 
 public sealed class OperationsManagerService(
@@ -647,8 +688,47 @@ public sealed class AbyssalMgrService : IService
     {
         if (!HasMethod(call.Method)) return PyNone.Instance;
         call.Cancellation.ThrowIfCancellationRequested();
+        ValidateCall(call);
         return await _rpcHandler(call, call.Cancellation).ConfigureAwait(false);
     }
+
+    private static void ValidateCall(ServiceCall call)
+    {
+        var expectedArgs = call.Method switch
+        {
+            "ClientIsReady" => 0,
+            "AbyssalEntranceDeployment" => 2,
+            "AbyssalEntranceGateActivation" or "AbyssalGateActivation" or "AbyssalEndGateActivation" => 1,
+            _ => -1,
+        };
+        if (call.Args.Count != expectedArgs)
+            throw MachoErrors.ThrowUserError("ABYSSAL_ARGUMENTS_INVALID");
+
+        if (call.Kwargs is not PyNone)
+        {
+            var isAllowedSafetyFlag = call.Method == "AbyssalGateActivation" && call.Kwargs is PyDict kwargs &&
+                kwargs.Entries.Count == 1 && kwargs.Entries[0].Key is PyStr { Value: "violateSafetyTimer" } &&
+                kwargs.Entries[0].Value is PyBool;
+            if (!isAllowedSafetyFlag)
+                throw MachoErrors.ThrowUserError("ABYSSAL_ARGUMENTS_INVALID");
+        }
+
+        for (var index = 0; index < call.Args.Count; index++)
+        {
+            if (call.Arg(index) is not (PyInt or PyLong) || PositiveId(call.Arg(index)) <= 0)
+                throw MachoErrors.ThrowUserError("ABYSSAL_ARGUMENTS_INVALID");
+        }
+
+        if (call.Method == "AbyssalEntranceDeployment" && PositiveId(call.Arg(1)) is not (1 or 2 or 3))
+            throw MachoErrors.ThrowUserError("ABYSSAL_ARGUMENTS_INVALID");
+    }
+
+    private static long PositiveId(PyValue value) => value switch
+    {
+        PyInt integer when integer.Value > 0 => integer.Value,
+        PyLong integer when integer.Value > 0 => integer.Value,
+        _ => 0,
+    };
 }
 
 public sealed class VoidSpaceMgrService(

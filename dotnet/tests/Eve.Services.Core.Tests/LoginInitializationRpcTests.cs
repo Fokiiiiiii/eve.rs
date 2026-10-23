@@ -46,7 +46,7 @@ public sealed class LoginInitializationRpcTests
         Assert.IsType<PyDict>(Value(result, "eventDict"));
         Assert.IsType<PyDict>(Value(result, "completedDict"));
         Assert.Same(PyBool.False, await Call(service, new ClientSession(), "HasEverWarped"));
-        Assert.Same(PyNone.Instance, await Call(service, new ClientSession(), "UpdateClientAchievmentsAndCounters"));
+        Assert.Same(PyNone.Instance, await Call(service, new ClientSession(), "UpdateClientAchievmentsAndCounters", new PyDict([]), new PyDict([])));
 
         var knownWarped = (IService)new AchievementTrackerMgrService(
             hasEverWarped: (_, _) => ValueTask.FromResult(true));
@@ -135,7 +135,19 @@ public sealed class LoginInitializationRpcTests
                 return ValueTask.FromResult<PyValue>(expected);
             });
             Assert.True(abyssal.HasMethod(method));
-            Assert.Same(expected, await Call(abyssal, session, method));
+            var args = method switch
+            {
+                "AbyssalEntranceDeployment" => new PyValue[] { new PyLong(900001), new PyInt(1) },
+                "AbyssalEntranceGateActivation" or "AbyssalGateActivation" or "AbyssalEndGateActivation" => [new PyLong(900002)],
+                _ => [],
+            };
+            PyValue kwargs = method == "AbyssalGateActivation"
+                ? new PyDict([new(new PyStr("violateSafetyTimer"), PyBool.True)])
+                : PyNone.Instance;
+            Assert.Same(expected, await abyssal.CallAsync(new ServiceCall
+            {
+                Method = method, Args = args, Kwargs = kwargs, Session = session,
+            }));
             Assert.Equal(1, calls);
             return;
         }

@@ -71,6 +71,47 @@ public sealed class FactionActivityRpcServicesTests
     }
 
     [Fact]
+    public async Task Resource_wars_refuse_malformed_system_queries_before_callbacks()
+    {
+        var callbackCalls = 0;
+        var service = new RWManagerService(new RwManagerRpcCallbacks(
+            (_, _) =>
+            {
+                callbackCalls++;
+                return ValueTask.FromResult<IReadOnlyDictionary<long, long>>(new Dictionary<long, long>());
+            },
+            (_, _) =>
+            {
+                callbackCalls++;
+                return ValueTask.FromResult(false);
+            }));
+        var session = new ClientSession();
+        session.Set("solarsystemid2", new PyInt(30000142));
+
+        foreach (var call in new[]
+        {
+            Call(service, "get_closest_rw_stations", session),
+            Call(service, "get_closest_rw_stations", session, new PyReal(30000142)),
+            Call(service, "get_closest_rw_stations", session, new PyInt(-1)),
+            new ServiceCall
+            {
+                Method = "get_closest_rw_stations", Args = [new PyInt(30000142)],
+                Kwargs = new PyDict([]), Session = session,
+            },
+            Call(service, "solarsystem_contains_rw_instances", session, new PyInt(30000142)),
+        })
+        {
+            var error = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(call).AsTask());
+            Assert.Contains(error.Error.UserErrorMessage, new[]
+            {
+                "RESOURCE_WARS_ARGUMENTS_INVALID", "RESOURCE_WARS_SYSTEM_ID_INVALID",
+            });
+        }
+
+        Assert.Equal(0, callbackCalls);
+    }
+
+    [Fact]
     public async Task Enlistment_reads_corporation_policy_persists_direct_membership_and_changes_session()
     {
         var fileTime = 133000000000000000L;

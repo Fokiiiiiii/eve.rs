@@ -81,7 +81,6 @@ public sealed partial class PersistenceStructureAssetSafetyReadModel : Eve.Servi
         if (characterId <= 0)
             return new Eve.Marshal.PyList([]);
 
-        var data = await CatalogAsync(cancellationToken);
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
         await using var command = new Npgsql.NpgsqlCommand(
             $"""
@@ -93,14 +92,18 @@ public sealed partial class PersistenceStructureAssetSafetyReadModel : Eve.Servi
         command.Parameters.Add(new Npgsql.NpgsqlParameter { Value = Personal });
         command.Parameters.Add(new Npgsql.NpgsqlParameter { Value = characterId });
         command.Parameters.Add(new Npgsql.NpgsqlParameter { Value = Stored });
-        var rows = new System.Collections.Generic.List<Eve.Marshal.PyValue>();
+        var rows = new System.Collections.Generic.List<(long WrapId, int SourceSystemId, string Name, long CreatedAt)>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
-        {
-            var station = NearestAutomaticStation(reader.GetInt32(1), data);
-            rows.Add(WrapPayload(reader.GetInt64(0), reader.GetInt32(1), reader.GetString(2), reader.GetInt64(3), station));
-        }
-        return new Eve.Marshal.PyList(rows);
+            rows.Add((reader.GetInt64(0), reader.GetInt32(1), reader.GetString(2), reader.GetInt64(3)));
+        await reader.DisposeAsync();
+        if (rows.Count == 0)
+            return new Eve.Marshal.PyList([]);
+
+        var data = await CatalogAsync(cancellationToken);
+        return new Eve.Marshal.PyList(rows.Select(row => WrapPayload(
+            row.WrapId, row.SourceSystemId, row.Name, row.CreatedAt,
+            NearestAutomaticStation(row.SourceSystemId, data))).ToArray());
     }
 
     public async System.Threading.Tasks.ValueTask<Eve.Marshal.PyList> GetItemsInSafetyForCorpAsync(
@@ -119,7 +122,6 @@ public sealed partial class PersistenceStructureAssetSafetyReadModel : Eve.Servi
             return new Eve.Marshal.PyList([]);
         }
 
-        var data = await CatalogAsync(cancellationToken);
         await using var command = new Npgsql.NpgsqlCommand(
             $"""
             SELECT wrap_id, source_system_id, wrap_name, created_at_ms
@@ -130,16 +132,23 @@ public sealed partial class PersistenceStructureAssetSafetyReadModel : Eve.Servi
         command.Parameters.Add(new Npgsql.NpgsqlParameter { Value = Corporation });
         command.Parameters.Add(new Npgsql.NpgsqlParameter { Value = corporationId });
         command.Parameters.Add(new Npgsql.NpgsqlParameter { Value = Stored });
-        var rows = new System.Collections.Generic.List<Eve.Marshal.PyValue>();
+        var rows = new System.Collections.Generic.List<(long WrapId, int SourceSystemId, string Name, long CreatedAt)>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
-        {
-            var station = NearestAutomaticStation(reader.GetInt32(1), data);
-            rows.Add(WrapPayload(reader.GetInt64(0), reader.GetInt32(1), reader.GetString(2), reader.GetInt64(3), station));
-        }
+            rows.Add((reader.GetInt64(0), reader.GetInt32(1), reader.GetString(2), reader.GetInt64(3)));
         await reader.DisposeAsync();
+        if (rows.Count == 0)
+        {
+            await transaction.CommitAsync(cancellationToken);
+            return new Eve.Marshal.PyList([]);
+        }
+
+        var data = await CatalogAsync(cancellationToken);
+        var result = rows.Select(row => WrapPayload(
+            row.WrapId, row.SourceSystemId, row.Name, row.CreatedAt,
+            NearestAutomaticStation(row.SourceSystemId, data))).ToArray();
         await transaction.CommitAsync(cancellationToken);
-        return new Eve.Marshal.PyList(rows);
+        return new Eve.Marshal.PyList(result);
     }
 
     public async System.Threading.Tasks.ValueTask<Eve.Marshal.PyDict> GetWrapNamesAsync(
@@ -353,7 +362,6 @@ public sealed partial class PersistenceStructureAssetSafetyReadModel : Eve.Servi
     public async System.Threading.Tasks.ValueTask ProcessDueAutomaticDeliveriesAsync(
         System.Threading.CancellationToken cancellationToken)
     {
-        var data = await CatalogAsync(cancellationToken);
         var now = _now();
         var due = new System.Collections.Generic.List<long>();
         await using (var connection = await _source.OpenConnectionAsync(cancellationToken))
@@ -371,6 +379,11 @@ public sealed partial class PersistenceStructureAssetSafetyReadModel : Eve.Servi
             while (await reader.ReadAsync(cancellationToken))
                 due.Add(reader.GetInt64(0));
         }
+
+        if (due.Count == 0)
+            return;
+
+        var data = await CatalogAsync(cancellationToken);
 
         foreach (var wrapId in due)
         {

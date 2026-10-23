@@ -10,6 +10,7 @@ public sealed class LookupSvcService : IService
     private const int CorporationTypeId = 2;
     private const int AllianceTypeId = 16159;
     private const int FactionTypeId = 30;
+    private const int MaxLookupSearchLength = 256;
     private const int CharacterGroupId = 1;
     private const int CorporationGroupId = 2;
     private const int AllianceGroupId = 32;
@@ -58,6 +59,7 @@ public sealed class LookupSvcService : IService
     private async ValueTask<PyValue> LookupCharactersAsync(ServiceCall call)
     {
         var search = SearchString(call.Arg(0));
+        if (Collapse(search).Length == 0) return new PyList([]);
         var exactMode = ExactMode(call.Arg(1));
         var characters = await directory.CharactersAsync(call.Cancellation);
         var entries = characters
@@ -77,6 +79,7 @@ public sealed class LookupSvcService : IService
     private async ValueTask<PyValue> LookupCorporationsAsync(ServiceCall call)
     {
         var search = SearchString(call.Arg(0));
+        if (Collapse(search).Length == 0) return new PyList([]);
         var exactMode = ExactMode(call.Arg(1));
         var corporations = await directory.CorporationsAsync(call.Cancellation);
         var entries = corporations.Where(corporation => corporation.Id > 0)
@@ -97,6 +100,7 @@ public sealed class LookupSvcService : IService
     private async ValueTask<PyValue> LookupFactionsAsync(ServiceCall call)
     {
         var search = SearchString(call.Arg(0));
+        if (Collapse(search).Length == 0) return new PyList([]);
         var exactMode = ExactMode(call.Arg(1));
         var factions = await directory.FactionsAsync(call.Cancellation);
         var entries = factions.Where(faction => faction.Id > 0)
@@ -117,6 +121,7 @@ public sealed class LookupSvcService : IService
             ? (int)Math.Truncate(rawGroup)
             : 0;
         var search = SearchString(call.Arg(1)) ?? string.Empty;
+        if (Collapse(search).Length == 0) return new PyList([]);
         var exactMode = ExactMode(call.Arg(2));
         var locations = await directory.LocationsByGroupAsync(groupId, call.Cancellation);
         var rows = locations
@@ -137,6 +142,7 @@ public sealed class LookupSvcService : IService
         bool includeFactions)
     {
         var search = SearchString(call.Arg(0));
+        if (Collapse(search).Length == 0) return new PyList([]);
         var exactMode = ExactMode(call.Arg(1));
         var characters = await directory.CharactersAsync(call.Cancellation);
         var corporations = await directory.CorporationsAsync(call.Cancellation);
@@ -198,6 +204,7 @@ public sealed class LookupSvcService : IService
     private async ValueTask<PyValue> LookupWarableCorporationsOrAlliancesAsync(ServiceCall call)
     {
         var search = (SearchString(call.Arg(0)) ?? string.Empty).ToLowerInvariant();
+        if (Collapse(search).Length == 0) return new PyList([]);
         var exact = JsTruthy(call.Arg(1));
         var corporations = await directory.CorporationsAsync(call.Cancellation);
         var alliances = await directory.AlliancesAsync(call.Cancellation);
@@ -358,7 +365,13 @@ public sealed class LookupSvcService : IService
         return integral is >= int.MinValue and <= int.MaxValue ? (int)integral : 0;
     }
 
-    private static string SearchString(PyValue value) => JsSemantics.StringValue(value)?.Trim() ?? string.Empty;
+    private static string SearchString(PyValue value)
+    {
+        var search = JsSemantics.StringValue(value)?.Trim() ?? string.Empty;
+        if (search.Length > MaxLookupSearchLength)
+            throw MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr("Lookup text is too long.")));
+        return search;
+    }
     private static string Normalize(string value) => value.Trim().ToLowerInvariant();
 
     private static string Collapse(string value)

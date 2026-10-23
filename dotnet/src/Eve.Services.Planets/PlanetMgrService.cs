@@ -29,6 +29,8 @@ public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStor
     private const long UnboundPlanetKey = -1;
     private readonly Dictionary<string, long> _boundPlanets = [];
     private readonly Dictionary<long, PlanetBody> _bodies = [];
+    private readonly object _rawResourceTypeIdsGate = new();
+    private Task<int[]>? _rawResourceTypeIds;
 
     /// <summary><c>MachoBindObject(planetID, (method, args, kwargs))</c>: binds the planet, then makes the nested call.</summary>
     [Method("MachoResolveObject")]
@@ -162,11 +164,17 @@ public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStor
     {
         var planetId = PlanetOf(call);
         if (dogma is null) return new PyDict([]);
-        var raw = (await dogma.TypesInGroupsAsync(RawResourceGroups, call.Cancellation)).Select(type => type.TypeId).ToList();
+        Task<int[]> rawResourceTypeIds;
+        lock (_rawResourceTypeIdsGate)
+            rawResourceTypeIds = _rawResourceTypeIds ??= LoadRawResourceTypeIdsAsync();
+        var raw = await rawResourceTypeIds.WaitAsync(call.Cancellation);
         var survey = PlanetSurvey.ResourcesOf(planetId, raw)
             .Select(type => new KeyValuePair<PyValue, PyValue>(new PyInt(type), new PyReal(PlanetSurvey.QualityOf(field, planetId, type))));
         return new PyDict([.. survey]);
     }
+
+    private async Task<int[]> LoadRawResourceTypeIdsAsync() =>
+        (await dogma!.TypesInGroupsAsync(RawResourceGroups)).Select(type => type.TypeId).ToArray();
 
     /// <summary>The raw planetary resource groups (SDE 1032, 1033, 1035: solid, liquid-gas, organic).</summary>
     private static readonly string[] RawResourceGroups = ["Planet Solid - Raw Resource", "Planet Liquid-Gas - Raw Resource", "Planet Organic - Raw Resource"];

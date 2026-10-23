@@ -44,7 +44,7 @@ public sealed class ProjectDiscoveryServiceTests
         Assert.Equal(new PyInt(0), await service.CallAsync(Request("get_player_analysis_kredits", session)));
         Assert.Equal(PyBool.False, await service.CallAsync(Request("get_tutorial_completion_status", session)));
         Assert.Equal(PyBool.True, await service.CallAsync(Request("is_enabled", session)));
-        Assert.Equal(PyNone.Instance, await service.CallAsync(Request("fix_task_id", session, new PyStr("42"))));
+        Assert.Equal(PyNone.Instance, await service.CallAsync(Request("fix_task_id", session, new PyLong(42))));
         Assert.Equal(
             new PyDict(
             [
@@ -85,9 +85,48 @@ public sealed class ProjectDiscoveryServiceTests
                 ("tutorialLevel", new PyInt(2))),
             await service.CallAsync(Request("get_player_state", session)));
         Assert.Equal(98000001, readCharacter);
-        await service.CallAsync(Request("fix_task_id", session, new PyStr("42.5")));
+        await service.CallAsync(Request("fix_task_id", session, new PyLong(42)));
         Assert.Equal(98000001, fixedCharacter);
-        Assert.Equal(42.5, fixedTaskId);
+        Assert.Equal(42, fixedTaskId);
+    }
+
+    [Fact]
+    public async Task Project_discovery_refuses_malformed_arguments_before_player_callbacks()
+    {
+        var callbackCalls = 0;
+        var service = new ProjectDiscoveryService(new ProjectDiscoveryRpcCallbacks(
+            ReadPlayerStateAsync: (_, _) =>
+            {
+                callbackCalls++;
+                return ValueTask.FromResult<ProjectDiscoveryPlayerState?>(new ProjectDiscoveryPlayerState());
+            },
+            FixTaskIdAsync: (_, _, _) =>
+            {
+                callbackCalls++;
+                return ValueTask.CompletedTask;
+            }));
+        var session = new ClientSession { CharacterId = 42 };
+
+        foreach (var call in new[]
+        {
+            Request("get_player_state", session, new PyInt(99)),
+            Request("fix_task_id", session, new PyStr("42")),
+            Request("fix_task_id", session, new PyReal(42.5)),
+            Request("fix_task_id", session, new PyInt(-1)),
+            new ServiceCall
+            {
+                Method = "get_player_state", Args = [], Kwargs = new PyDict([]), Session = session,
+            },
+        })
+        {
+            var error = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(call).AsTask());
+            Assert.Contains(error.Error.UserErrorMessage, new[]
+            {
+                "PROJECT_DISCOVERY_ARGUMENTS_INVALID", "PROJECT_DISCOVERY_TASK_ID_INVALID",
+            });
+        }
+
+        Assert.Equal(0, callbackCalls);
     }
 
     private static ServiceCall Request(string method, ClientSession session, params PyValue[] args) => new()

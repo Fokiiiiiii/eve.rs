@@ -385,7 +385,7 @@ public sealed class MarketHostTests : IAsyncLifetime
         var askSummary=Assert.IsType<PyTuple>(asks.Entries.Single(entry=>entry.Key==new PyInt(Tritanium)).Value);
         Assert.Equal(4,askSummary.Items.Count);
         Assert.Equal(new PyInt(10),askSummary.Items[0]);
-        Assert.Equal(new PyInt(2),askSummary.Items[1]);
+        Assert.Equal(new PyInt(4),askSummary.Items[1]);
         Assert.Equal(new PyInt(Tritanium),askSummary.Items[2]);
         Assert.Equal(new PyLong(structureId),askSummary.Items[3]);
         static IReadOnlyList<PyValue> Lines(PyValue value)

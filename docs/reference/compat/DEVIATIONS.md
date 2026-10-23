@@ -5524,3 +5524,5 @@ The fleetObject Init RPC costs 10 weighted per-session units because it updates 
 `allianceRegistry.GetBillBalance` consumes 10 weighted per-session units because it reads the active corporation wallet division for an alliance accountant. Existing role checks and balance response remain unchanged. `DispatchGoldenTests.Alliance_expensive_methods_use_a_named_per_session_budget` covers the call.
 
 `corporationSvc` employment-history and medal-list reads, medal-status batches, and medal-award batches consume 10 weighted per-session units. Existing privacy filtering, persisted role checks, and response shapes remain unchanged. `DispatchGoldenTests.Corporation_service_list_and_bulk_methods_use_a_named_per_session_budget` covers each bounded route.
+
+`charMgr.GetPublicInfo`, `GetPublicInfo3`, `GetCharacterDescription`, and `GetCharacterCreationDate` each consume 10 weighted per-session units to bound repeated public-character profile reads. Client-visible fields and shapes remain unchanged. `DispatchGoldenTests.Character_public_profile_reads_use_a_named_per_session_budget` verifies all four methods.

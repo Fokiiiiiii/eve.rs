@@ -73,4 +73,10 @@ The V24.01 chat inventory in `docs/reference/compat/DEVIATIONS.md` identifies XM
 
 ## Current verification (2026-10-23)
 
-Commit `cf391eec` is on main. The focused Actions run `40041993458` includes the bookmark prime, Host EditContact and AgentMission service regressions; push CI run `40041988259` is also active. Both have been dispatched, but their results are pending. No PostgreSQL tests were run locally.
+Commit `cf391eec` is on main. Focused Actions run `40041993458` passed, with no failed tests or jobs, for the bookmark prime, Host EditContact and AgentMission service regressions. The local AgentMission focused test passed 1/1. Push CI run `40041988259` remains in progress. No PostgreSQL tests were run locally.
+
+
+## Remaining checks
+
+- Review push CI `40041988259` when it completes; its failures on `fd4828ca` included unrelated live structure/market and Space scoop fixtures, alongside the now-fixed Host dictionary helper and mission keyword omissions.
+- No graphical-client verification has been performed.

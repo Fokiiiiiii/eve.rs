@@ -136,7 +136,7 @@ public class TradingTests
     {
         await using var r=await TradeRig.Create();
         var buyer=await r.Actor("Multi Buyer");
-        (MarketRequest Request,string OperationKey)[] failed=[(r.Buy(buyer,10,10),"multi-0"),(r.Buy(buyer,1000,100),"multi-1")];
+        (MarketRequest Request,string OperationKey)[] failed=[(r.Buy(buyer,10,10,days:90),"multi-0"),(r.Buy(buyer,1000,100,days:90),"multi-1")];
 
         await Assert.ThrowsAsync<InsufficientFundsException>(() => r.Trading.PlaceBuyOrdersAsync(failed));
         Assert.Equal(10000m,(await r.WalletStore.GetAsync(buyer))!.Isk);
@@ -144,15 +144,14 @@ public class TradingTests
         await using (var check=r.Source.CreateCommand($"SELECT count(*) FROM {r.MarketSchema}.commands WHERE operation_key IN ('multi-0','multi-1')"))
             Assert.Equal(0L,(long)(await check.ExecuteScalarAsync())!);
 
-        (MarketRequest Request,string OperationKey)[] retry=[(r.Buy(buyer,10,10),"multi-0"),(r.Buy(buyer,20,1),"multi-1")];
+        (MarketRequest Request,string OperationKey)[] retry=[(r.Buy(buyer,10,10,days:90),"multi-0"),(r.Buy(buyer,20,1,days:90),"multi-1")];
         var receipts=await r.Trading.PlaceBuyOrdersAsync(retry);
         Assert.Equal(2,receipts.Count);
         Assert.All(receipts,receipt => Assert.NotNull(receipt.OrderId));
-        var balance=(await r.WalletStore.GetAsync(buyer))!.Isk;
-        Assert.Equal(9680m,balance);
+        Assert.Equal(9680m,(await r.WalletStore.GetAsync(buyer))!.Isk);
         var replay=await r.Reopen().PlaceBuyOrdersAsync(retry);
         Assert.Equal(receipts.Select(receipt => receipt.OrderId),replay.Select(receipt => receipt.OrderId));
-        Assert.Equal(balance,(await r.WalletStore.GetAsync(buyer))!.Isk);
+        Assert.Equal(9680m,(await r.WalletStore.GetAsync(buyer))!.Isk);
         Assert.Equal(2,(await r.Book.BookAsync(r.Station.RegionId,34,r.Now)).Bids.Count);
     }
 

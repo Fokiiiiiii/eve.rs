@@ -1016,8 +1016,12 @@ private static double RelationshipValue(PyValue value)
         };
         if (items.Count > MaxAllianceContactIds)
             throw new CorporationError("ALLIANCE_BULK_LIMIT_EXCEEDED");
-        var ids = items.Select(Number).ToArray();
-        if (ids.Any(id => id <= 0)) throw AllianceAccessDenied();
+        var ids = items.Select(item => item switch
+        {
+            PyInt { Value: > 0 } id => id.Value,
+            PyLong { Value: > 0 } id => id.Value,
+            _ => throw AllianceAccessDenied(),
+        }).ToArray();
         return ids.Distinct().ToArray();
     }
 

@@ -5664,7 +5664,7 @@ corpRegistry.GetSuggestedAllianceShortNames now refuses alliance names above the
 
 ## Alliance and character data RPC classification (2026-10-23)
 
-The inventory now records allianceRegistry.CancelCapitalSystemTransition, GetPrimeTimeInfo, and IsAllianceLocal; corpRegistry.GetAllianceApplications with their bound/current alliance or corporation scope and costs. GetAllianceApplications is corporation-scoped, costs 10 units, and refuses above 5,000 matching rows after a bounded 5,001-row query. corpRegistry.GetPendingAutoKicks is recorded as an empty result with no client-selected target. charMgr.SetNote is documented as active-character scoped with a 5,000-character bound and 10-unit cost.
+The inventory now records allianceRegistry.CancelCapitalSystemTransition, GetPrimeTimeInfo, and IsAllianceLocal with their bound/current alliance scopes, plus corpRegistry.GetAllianceApplications with its current-corporation scope and cost. GetAllianceApplications is corporation-scoped, costs 10 units, and refuses above 5,000 matching rows after a bounded 5,001-row query. corpRegistry.GetPendingAutoKicks is recorded as an empty result with no client-selected target. charMgr.SetNote is documented as active-character scoped with a 5,000-character bound and 10-unit cost.
 
 
 ## Fleet proxy and manager budgets (2026-10-23)

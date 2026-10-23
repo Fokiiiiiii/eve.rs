@@ -811,6 +811,29 @@ public class DispatchGoldenTests
     }
 
     [Fact]
+    public async Task Corporation_application_lists_use_a_named_per_session_budget()
+    {
+        long sessionId = 914;
+        foreach (var method in new[] { "GetApplications", "GetOldApplications" })
+        {
+            var capture = new Capture();
+            var session = new ClientSession(capture) { SessionId = sessionId++ };
+            var registry = new ServiceRegistry();
+            var service = new ExpensiveService("corpRegistry");
+            registry.Register(service);
+            var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 10 };
+
+            await dispatcher.DispatchAsync(CallRequestPacket("corpRegistry", method), session);
+            await dispatcher.DispatchAsync(CallRequestPacket("corpRegistry", method), session);
+
+            Assert.Equal(1, service.Calls);
+            Assert.Equal(2, capture.Sent.Count);
+            Assert.Equal(ErrorResponseCommand, CommandOf(capture.Sent[1]));
+            Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[1])));
+        }
+    }
+
+    [Fact]
     public async Task Alliance_full_list_reads_use_a_named_per_session_budget()
     {
         long sessionId = 913;
@@ -1177,7 +1200,7 @@ public class DispatchGoldenTests
 
         public string Name => name;
 
-        public bool HasMethod(string method) => method is "GetOrders" or "GetCharOrders" or "GetCorporationOrders" or "GetCharEscrow" or "GetMarketOrderHistory" or "GetOldPriceHistory" or "GetNewPriceHistory" or "GetPlexOrders" or "GetPlexBest" or "GetPlexHistory" or "GetPlexOldPriceHistory" or "GetPlexNewPriceHistory" or "CharGetTransactions" or "CorpGetTransactions" or "BuyMultipleItems" or "PlaceMultiSellOrder" or "GetHistoryForManyTypeIDs" or "GetJobCounts" or "GetJob" or "GetJobsByOwner" or "InstallJob" or "CompleteJob" or "CompleteManyJobs" or "CancelJob" or "ActivateSkinLicense" or "ApplySkinToShip" or "GetLicencedSkins" or "GiveSkin" or "RemoveSkin" or "GMExpireSkinLicense" or "GetBills" or "GetBillsReceivable" or "GetApplications" or "GetAllianceMembers" or "GetRankedAlliances" or "GetOrganizationInfoForCharacters" or "SendBroadcast" or "Invite" or "MassInvite" or "Init" or "ExecuteActions" or "GetNumberOfPotentialCEOs" or "GetFittings" or "GetAssetInventory" or "GetAssetInventoryForLocation" or "SearchAssets" or "GetAggressionSettingsForCorps" or "AuditMember" or "CheckMyDockingAccessToStructures" or "GetMyDockableStructures" or "GetMyCharacterStructures" or "GetMyCorporationStructures" or "InjectSkillIntoBrain" or "InjectSkillpoints" or "ExtractSkills" or "GetDiminishedSpFromInjectors" or "SplitSkillInjector" or "CombineSkillInjector" or "GetContractListForOwner" or "CharPayBill" or "GetAutomaticPaySettings" or "GetCorporationBills" or "GetCorporationBillsReceivable" or "PayCorporationBill" or "SendAutomaticPaySettings";
+        public bool HasMethod(string method) => method is "GetOrders" or "GetCharOrders" or "GetCorporationOrders" or "GetCharEscrow" or "GetMarketOrderHistory" or "GetOldPriceHistory" or "GetNewPriceHistory" or "GetPlexOrders" or "GetPlexBest" or "GetPlexHistory" or "GetPlexOldPriceHistory" or "GetPlexNewPriceHistory" or "CharGetTransactions" or "CorpGetTransactions" or "BuyMultipleItems" or "PlaceMultiSellOrder" or "GetHistoryForManyTypeIDs" or "GetJobCounts" or "GetJob" or "GetJobsByOwner" or "InstallJob" or "CompleteJob" or "CompleteManyJobs" or "CancelJob" or "ActivateSkinLicense" or "ApplySkinToShip" or "GetLicencedSkins" or "GiveSkin" or "RemoveSkin" or "GMExpireSkinLicense" or "GetBills" or "GetBillsReceivable" or "GetApplications" or "GetAllianceMembers" or "GetRankedAlliances" or "GetOrganizationInfoForCharacters" or "SendBroadcast" or "Invite" or "MassInvite" or "Init" or "ExecuteActions" or "GetNumberOfPotentialCEOs" or "GetFittings" or "GetAssetInventory" or "GetAssetInventoryForLocation" or "SearchAssets" or "GetAggressionSettingsForCorps" or "AuditMember" or "CheckMyDockingAccessToStructures" or "GetMyDockableStructures" or "GetMyCharacterStructures" or "GetMyCorporationStructures" or "InjectSkillIntoBrain" or "InjectSkillpoints" or "ExtractSkills" or "GetDiminishedSpFromInjectors" or "SplitSkillInjector" or "CombineSkillInjector" or "GetContractListForOwner" or "GetApplications" or "GetOldApplications" or "CharPayBill" or "GetAutomaticPaySettings" or "GetCorporationBills" or "GetCorporationBillsReceivable" or "PayCorporationBill" or "SendAutomaticPaySettings";
 
         public ValueTask<PyValue> CallAsync(ServiceCall call)
         {

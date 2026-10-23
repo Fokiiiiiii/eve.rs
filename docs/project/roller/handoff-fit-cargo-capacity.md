@@ -14,11 +14,14 @@ EveJS 261018.1 checks this before changing state and returns a CustomNotify carr
 - The refusal carries measured volumes and maps to the reference notification text.
 - Ship tests cover below/equal/above resulting limits, refusal state preservation, freeing cargo and retrying, online/offline, unfit, batch preflight, notification order, and a fresh ship-state reload.
 - Inventory service tests dispatch client-shaped batch MultiAdd, assert the notification payload, and check all source items and cargo stay put.
+- The headless client scenario follows V24.01 inventory Add and Dogma online/offline calls, fills cargo until the server refuses another addition, checks an offline refusal, frees cargo and retries, then unfits the module.
 
 ## Verification and handoff
 
-No database was used locally. The focused no-database capacity predicate test passed. Ship and Inventory test projects both built successfully with zero warnings and errors. The database-backed ship and inventory cases need GitHub Actions verification. No graphical-client or live headless walk was performed.
+No database was used locally. The focused no-database capacity predicate test passed. Ship and Inventory test projects both built successfully with zero warnings and errors.
+
+The first Actions dispatch supplied an empty live-test input, but GitHub selected the workflow default fast set and started 12 live test files. That run failed during the live-test step; the returned log tail did not include the underlying case details. The new focused headless walk is added and should be dispatched by filename to avoid the default set. Database-backed ship and inventory cases still need Actions verification. No graphical-client check was made.
 
 Keep the worktree's pre-existing deletions under crates/eve-net, crates/eve-sde, crates/eve-sim, and crates/eve-space out of the commit.
 
-Implementation push: 80d07d8c. Handoff update push and Actions run: pending.
+Implementation pushes: 80d07d8c and 55f2dd87. Main merge: 1a0c608d. Focused headless and database regressions: pending.

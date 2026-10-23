@@ -57,3 +57,5 @@ Open S9 items: live death walk on the merged tree (hull walk still open, suicide
 - The new live end-to-end walk and graphical-client acceptance remain open. The new walk needs a running Host, so no live run is recorded here.
 
 - GitHub Actions agent-test run 40020647231 completed successfully for the focused `Station_item_bits_are_a_tuple_in_reference_order` test; the selected run reported no failed tests or jobs. The push-triggered `ci.yml` run was queued at the last status check.
+
+- Push-triggered ci.yml run 40020695071 for c068f252 failed outside this task's login/station/undock files: test_skinr_live.py asserted the old description in the name field (expected “Edited live design”, received the default skin name), and MarketHostTests.The_host_dispatches_accessible_structure_market_orders_and_recovers_partial_settlement_after_restart expected 2 visible units but received 0. Main later advanced through 29168097, which changed the SKINR live assertions; the MarketHost failure is still recorded for its owning area. These neighboring feature failures were not changed here.

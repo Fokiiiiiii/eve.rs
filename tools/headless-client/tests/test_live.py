@@ -9,7 +9,10 @@ EVE_LIVE_STRICT_PASSWORDS=1 (which a hardened server such as eve.rs would set).
 """
 
 import os
+import subprocess
+import sys
 import time
+from pathlib import Path
 
 import pytest
 
@@ -70,3 +73,52 @@ def test_wrong_password_is_rejected():
     with _client() as client:
         with pytest.raises(handshake.LoginRejected):
             client.login("evecli-strict", "wrong")
+
+
+def test_login_rate_limit_rejects_the_correct_password_after_ten_failures():
+    account = f"evecli-rl-{os.urandom(6).hex()}"
+    with _client() as client:
+        client.login(account, "right")
+
+    for _ in range(10):
+        with _client() as client:
+            with pytest.raises(handshake.LoginRejected):
+                client.login(account, "wrong")
+
+    with _client() as client:
+        with pytest.raises(handshake.LoginRejected):
+            client.login(account, "right")
+
+
+def test_reconnect_after_client_process_exits_abruptly():
+    host, separator, port = LIVE.partition(":")
+    assert separator and host and port
+    account = f"evecli-re-{os.urandom(6).hex()}"
+    code = (
+        "import os, sys; "
+        "from evecli.client import Client; "
+        "Client(sys.argv[1], int(sys.argv[2]), timeout=20).login(sys.argv[3], sys.argv[4]); "
+        "os._exit(0)"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code, host, port, account, "right"],
+        capture_output=True,
+        timeout=30,
+        cwd=Path(__file__).resolve().parents[1],
+    )
+    assert result.returncode == 0, result.stderr.decode(errors="replace")
+
+    with _client() as client:
+        client.login(account, "right")
+
+
+def test_a_second_login_of_the_same_account_disconnects_the_previous_client():
+    account = f"evecli-ml-{os.urandom(6).hex()}"
+    with _client() as first, _client() as second:
+        first.login(account, "right")
+        first_user_id = first.session.user_id
+        second.login(account, "right")
+        assert second.session.user_id == first_user_id
+        with pytest.raises(handshake.TransportClosed) as closed:
+            first.call("machoNet", "GetServiceInfo")
+        assert closed.value.reason == "Another client logged in to this account."

@@ -706,6 +706,49 @@ public sealed class CharacterHostTests
     }
 
     [PgFact]
+    public async Task Contact_add_persists_and_routes_the_recipient_notification()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync();
+        var senderId = await rig.CreateCharacterAsync();
+        var recipientId = await rig.CreateCharacterAsync();
+        var sink = new RecordingPacketSink();
+        var recipientSession = new ClientSession { CharacterId = recipientId, UserId = 1, Sink = sink };
+        rig.Sessions.Enter(recipientId, recipientSession);
+        var charMgr = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("charMgr"));
+
+        Assert.IsType<PyNone>(await CallAsync(charMgr, "AddContact",
+            new ClientSession { CharacterId = senderId, UserId = 1 },
+            new PyLong(recipientId), new PyInt(-10), PyBool.True, PyBool.True, new PyStr("Hello")));
+
+        var (name, args) = Assert.Single(Notifications(sink));
+        Assert.Equal("OnNotificationReceived", name);
+        Assert.Equal(5, args.Length);
+        Assert.True(((PyLong)args[0]).Value > 0);
+        Assert.Equal(new PyInt(89), args[1]);
+        Assert.Equal(new PyLong(senderId), args[2]);
+        var data = Assert.IsType<PyDict>(args[4]);
+        Assert.Equal(new PyInt(-10), Field(data, "level"));
+        Assert.Equal(new PyStr("Hello"), Field(data, "message"));
+
+        var notificationMgr = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("notificationMgr"));
+        var notifications = Assert.IsType<PyList>(await CallAsync(notificationMgr, "GetAllNotifications", recipientSession));
+        var row = Assert.Single(notifications.Items);
+        Assert.Equal(new PyInt(89), Field(row, "typeID"));
+        Assert.Equal(new PyLong(senderId), Field(row, "senderID"));
+        Assert.Equal(new PyLong(recipientId), Field(row, "receiverID"));
+
+        await rig.RestartAsync();
+        notificationMgr = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("notificationMgr"));
+        notifications = Assert.IsType<PyList>(await CallAsync(notificationMgr, "GetAllNotifications", recipientSession));
+        row = Assert.Single(notifications.Items);
+        Assert.Equal(new PyInt(89), Field(row, "typeID"));
+        Assert.Equal(new PyDict([
+            new(new PyStr("level"), new PyLong(-10)),
+            new(new PyStr("message"), new PyStr("Hello")),
+        ]), Field(row, "data"));
+    }
+
+    [PgFact]
 public async Task Notification_manager_mutations_persist_and_notify_after_the_commit()
 {
     var pgUrl = Environment.GetEnvironmentVariable("EVE_PG_URL");

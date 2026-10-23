@@ -6,7 +6,7 @@ charUnboundMgr.GetCharacterSelectionData projects paperdollState from the Postgr
 
 PgCharacterStore.ResolvedPaperdollStateAsync reads paperdoll_state, doll_info, and portrait_info together. A persisted state is returned as stored; otherwise appearance yields 0 and missing appearance yields 2. CharMgrService.GetPaperdollState uses this reader when its optional recustomization reader has no value. SetAppearanceAsync clears the persisted forced state in the same update.
 
-Migration 0015 expands the character paperdoll state constraint to admit state 4 alongside existing recustomization states 1 and 3. States 0 and 2 are derived from appearance data.
+Migration 0015 expands the database constraint to admit forced state 4 alongside existing recustomization states 1 and 3. States 0 and 2 are derived from appearance data.
 
 ## Evidence
 
@@ -19,8 +19,8 @@ Migration 0015 expands the character paperdoll state constraint to admit state 4
 
 ## Regression coverage
 
-CharacterReSculptHostTests.Character_selection_dispatch_projects_paperdoll_state_and_a_saved_avatar_can_enter checks the client wire shape, states 0/2/4, retry, Host restart, save reset, and SelectCharacterID. The test bootstraps Host migrations before inserting fixture characters. The live headless test test_paperdoll_selection.py walks login, selection state 0, missing-appearance state 2, appearance save, and game entry.
+CharacterReSculptHostTests.Character_selection_dispatch_projects_paperdoll_state_and_a_saved_avatar_can_enter checks the client wire shape, states 0/2/4, retry, Host restart, save reset, and SelectCharacterID. Host migrations run before test fixture inserts. The live headless test test_paperdoll_selection.py checks state 0, missing-appearance state 2, saved-appearance state 0, then game entry.
 
 ## Verification
 
-Host dispatch run 39962217896 compiled and reached the focused test. It exposed that the old database CHECK constraint allowed only states 1 and 3; migration 0015 now adds state 4. A new focused run is pending. Headless run 39962220831 is in progress. The graphical-client route has not been exercised.
+Migration 0015 resolves the database rejection of state 4. Host run 39964185288 and headless run 39964072899 are in progress for commit 988ef94f8c8787f570ca09c5ded1137ace618150. Earlier Host run 39962217896 reached the test and failed at the old state constraint; that run predates migration 0015. The graphical-client route has not been exercised.

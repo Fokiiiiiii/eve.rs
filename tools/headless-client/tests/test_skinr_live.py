@@ -417,14 +417,14 @@ def test_v24_skinr_design_sequences_and_applies_a_persisted_license():
             line_name = "Live design"
             draft_id = uuid.uuid4()
             save_payload = field(1, name.encode()) + field(2, line_name.encode()) + field(3, layout)
-            status, response_type, saved = _send(
+            status, response_type, saved, message = _send_detail(
                 channel,
                 DRAFT + "SaveRequest",
                 character,
                 save_payload,
                 draft_id,
             )
-            assert (status, response_type) == (200, DRAFT + "SaveResponse")
+            assert (status, response_type) == (200, DRAFT + "SaveResponse"), message
             assert uuid.UUID(bytes=read_fields(read_fields(saved)[1][0])[1][0]) == draft_id
             assert _skin_hex_from_draft(saved)
 

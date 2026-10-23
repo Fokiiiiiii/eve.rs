@@ -668,11 +668,12 @@ V24.01 calls deployment with `(item_id, game_mode_id)`, entrance activation with
 
 Security finding `c6a4c688` was pushed to `main` on 2026-10-23; the 20 non-skipped Abyssal Host flow tests passed on `eve_p3`.
 
-### Client security startup RPC
+### Client fixed-response RPCs
 
 | RPC | Caller and target scope | Input bounds | Per-session cost |
 |---|---|---|---|
 | `securityMgr.get_modified_systems` | Public static modified-security-system snapshot | No positional or keyword arguments | One unit; fixed-size read. On `eve_p3`, the focused Core tests passed (2), all `Eve.Services.Core.Tests` passed (889), and all `Eve.Services.Tests` passed (251), with no skips. |
+| `pingService.Ping` | Authenticated connection liveness | No positional or keyword arguments | One unit; fixed-size liveness response. V24.01 `connectionService.py:189` calls it with no arguments. `ClientStartupServicesTests.Ping_service_refuses_client_arguments` checks both malformed shapes; `DispatchGoldenTests.Ping_service_uses_a_named_per_session_budget` checks cost. On `eve_p3`, the focused refusal test passed (1), `Eve.Services.Core.Tests` passed (890), and `Eve.Services.Tests` passed (252), with no skips. |
 
 V24.01 calls this read with no arguments (`security/client/securitySvc.py:41`). `ClientStartupServicesTests.Security_manager_refuses_client_arguments` checks malformed positional and keyword inputs; `DispatchGoldenTests.Security_manager_read_uses_a_named_per_session_budget` checks cost.
 
@@ -704,3 +705,5 @@ Post-push handoff: ship kill counter finding `6f681a14` is on `main`, merged at 
 Security finding for `securityMgr.get_modified_systems` input validation and read budgeting was pushed to `main` on 2026-10-23. On `eve_p3`, its focused Core tests passed (2), `Eve.Services.Core.Tests` passed (889), and `Eve.Services.Tests` passed (251), with no skips. The Host registry contains 1,374 service/method pairs; classification is still in progress.
 
 Post-push handoff: security manager read finding `2ae88e4d` is on `main`; method-by-method security classification remains open across the 1,374-pair registry.
+
+Security finding for `pingService.Ping` argument validation and liveness budget was pushed to `main` on 2026-10-23. On `eve_p3`, the focused refusal test passed (1), `Eve.Services.Core.Tests` passed (890), and `Eve.Services.Tests` passed (252), with no skips. The 1,374-pair registry inventory remains incomplete.

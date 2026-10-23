@@ -45,6 +45,21 @@ public sealed class ClientStartupServicesTests
     }
 
     [Fact]
+    public async Task Ping_service_refuses_client_arguments()
+    {
+        IService service = new PingService();
+        foreach (var call in new[]
+        {
+            new ServiceCall { Method = "Ping", Args = [new PyInt(1)], Session = new ClientSession() },
+            new ServiceCall { Method = "Ping", Args = [], Kwargs = Py.Dict(("silent", PyBool.True)), Session = new ClientSession() },
+        })
+        {
+            var error = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(call).AsTask());
+            Assert.Equal("PING_ARGUMENTS_INVALID", error.Error.UserErrorMessage);
+        }
+    }
+
+    [Fact]
     public void Alert_beancount_requests_a_stack_trace_with_a_pair()
     {
         var service = new AlertService();

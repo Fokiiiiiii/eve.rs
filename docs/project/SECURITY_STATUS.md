@@ -304,6 +304,20 @@ The reviewed identifier-bearing methods classify as follows:
 | `mutualWarInviteMgr` pending, block-status, invite, withdraw, and response methods | Corporation/alliance owner IDs | Production mutations unavailable and fail closed | Host composition registers the service without persistence callbacks: pending reads return empty, block-status reads return false, and invite, withdraw, response, and block-setting mutations return `CustomNotify`. Owner IDs are derived from the active session, while client-supplied target IDs cannot reach a production mutation callback. `Mutual_war_invite_mgr_exposes_reference_routes_and_callback_shapes` checks the unconfigured refusal path and callback argument flow. |
 | Other Host RPC methods accepting identifiers | Various | Not yet classified | The `[Method]` source scan found 75 service source files and 885 public `ValueTask<PyValue>` methods with the standard `ServiceCall` signature; the matrix above and the reviewed classes listed here do not yet classify every identifier-taking method. The complete per-service inventory remains open. |
 
+### Station service RPC detail
+
+| RPC | Caller and target scope | Input bounds | Per-session cost |
+|---|---|---|---|
+| `stationSvc.GetStation` | Any authenticated caller; requested station is public static data | One integral station ID; unknown or invalid values return `None` | None; one catalog lookup |
+| `stationSvc.GetStationsForOwner` | Any authenticated caller; requested owner is public | One integral owner ID; invalid or nonpositive values return an empty list | None; scans the fixed station catalog |
+| `stationSvc.GetStationItemBits`, `GetSolarSystem` | Authenticated caller; both derive the station from the session's current station ID | No caller-selected target | None; one station lookup |
+| `stationSvc.GetGuests` | Any authenticated caller; result is the current station's guest list | Station comes from session state; reads current sessions and matching character rows | 10 units; client caches the station result until a station transition |
+| `stationSvc.GetAllianceSystems` | Authenticated caller; alliance comes from the session | No caller-selected alliance ID | None; returns the current alliance sovereignty system list |
+| `stationSvc.GetSystemsForAlliance` | Any authenticated caller; requested alliance sovereignty list is public | One integral alliance ID; invalid or nonpositive values return an empty list | None; one provider query |
+| `stationSvc.GetCorporationsWithOffices`, `GetEmptyOfficeCount`, `HasCorpImpoundedItems`, `GetImpoundReleasePrice`, `TrashImpoundedOffice`, `PrimeOfficeItem`, `UnrentOffice` | Authenticated caller; delegated office service checks current corporation membership, roles, and bound station as applicable | Delegated request parsing and checks; office scans and mutations are budgeted | 10 units each; covered by `DispatchGoldenTests.Station_service_office_calls_share_the_office_rpc_budget` |
+
+`stationSvc` is also registered under the client-facing `station` alias. The dispatcher resolves aliases to the same registered service object before applying named-service costs, so the same target checks and budget apply to both names. `GetStation` and `GetStationItemBits` have no independent authorization decision because their results are public catalog records or session-derived station state. `GetGuests` uses active station sessions and character persistence; its rate bound limits repeated enumeration.
+
 ### Wallet RPC detail
 
 | RPC | Caller and target scope | Input bounds | Per-session cost |

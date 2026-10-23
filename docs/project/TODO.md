@@ -1047,6 +1047,8 @@ Open after slice C:
 | BOUNDARY | Docked-ship deferred change and fitting bootstrap: implemented in the entry hooks (`SpaceSessions`, `CharacterDogmaSync`); the ship state belongs to the ships track | ships track the owning implementation |
 
 
+
+The RPC security inventory now classifies each `stationSvc` method by caller, target scope, bounds, and cost; `station` resolves to the same service instance. See `SECURITY_STATUS.md`, “Station service RPC detail.”
 ## 41. Station entry, init services and account requests (slice D, 2026-10-10)
 
 Done in slice D (DEVIATIONS.md, "Station entry, account requests and the live suite (slice D, 2026-10-10)"; the ranked table is in the scratchpad `work/sliceD-status.md`):

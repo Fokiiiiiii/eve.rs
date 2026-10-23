@@ -134,7 +134,7 @@ Use lane `eve_p4` only and run database work through `tools/dev/db-lock.sh`. The
 - The local `Eve.Services.Dogma.Tests` project build passed with zero warnings and errors. Agent run 127 (`40005187593`) passed the focused database-backed regression on pushed commit `fbc39d63`.
 - Agent run 123 on `e0cb832e` passed the two `Eve.Host.Tests` matches, then failed because the same `FullyQualifiedName~SignalTracker` filter selected zero tests in `Eve.Services.Core.Tests`. This was a test-selection mismatch; dispatch that filter to the Host project only.
 
-<<### Market RPC budget regression test setup
+### Market RPC budget regression test setup
 
 - CI run 660 (`4f38c72f`) failed both market budget regression tests because each configured only `MaxExpensiveRpcUnitsPerMinute = 10`, while `PacketDispatcher` routes `marketProxy` through `MaxMarketRpcUnitsPerMinute`. The tests now set both limits to 10. Agent run 128 (`40005500782`) passed both focused regressions on `94e37e82`.
 
@@ -144,4 +144,10 @@ Use lane `eve_p4` only and run database work through `tools/dev/db-lock.sh`. The
 - The catalog now maps SDE `-1` to the runtime's `0` unlimited sentinel, excludes values below `-1`, and preserves positive finite uses. The existing gateway transaction consumes the item and persists the unlimited grant; the live scenario also covers retry, sequencing and application.
 - Added `Unlimited_license_types_use_the_runtime_unlimited_sentinel` for unlimited, invalid and finite values. `Eve.Host.Tests` Release build passed with zero warnings and errors, and the focused test passed 1/1 with no skips. No database was used.
 - CI run 662 (`40005488739`) completed on `94e37e82`; Windows and all other selected jobs passed, while the E2E job reproduced the pre-fix HTTP 400 at `ConsumeRequest`. Its regression is the reason for this catalog fix.
-- After merging current main, `Eve.Host.Tests` Release build passed with zero warnings and errors and the focused regression passed 1/1 with no skips. No database was used. The push-triggered gate for the catalog fix will recheck both the Windows entry flow and the persisted SKINR walk.
+- After merging current main, `Eve.Host.Tests` Release build passed with zero warnings and errors and the focused regression passed 1/1 with no skips. No database was used.
+- Pushed the catalog fix as `4b3cd33b`. Selected Agent Actions run `40007743442` is in progress; push-triggered CI run `40007726336` is queued. Windows TODO rows are closed based on run 662; this push's Windows job will check the combined head.
+
+## 2026-10-23 Character notification test helper
+
+- CI run 668 on `4b3cd33b` reported `CharacterHostTests.Contact_add_persists_and_routes_the_recipient_notification` failing in the test-only `Field` helper: it cast a wire-decoded dictionary key to `PyStr`, while the actual decoded Python string key is `PyBytes`.
+- The helper now matches either `PyStr` or UTF-8 `PyBytes` keys; no Host RPC or client wire behavior changed. `Eve.Host.Tests` Release build passed with zero warnings and errors. The regression uses PostgreSQL and will be run through Agent Actions after push.

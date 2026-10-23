@@ -353,6 +353,16 @@ PLEX order and history reads use the same authoritative selected-character marke
 
 `GetMultiLocationsEx` resolves public stations and systems from static catalogs. Dynamic item names require a matching item owner and selected character. The bulk cap applies before deduplication so repeated IDs cannot create unbounded parsing work. `ConfigServiceTests.Batched_config_lookups_refuse_more_than_500_raw_ids` and `DispatchGoldenTests.Config_bulk_lookups_use_a_named_per_session_budget` cover the input and work bounds.
 
+### Home station RPC detail
+
+| RPC | Caller and target scope | Input bounds | Per-session cost |
+|---|---|---|---|
+| `home_station.get_home_station`, `get_home_station_candidates`, `get_next_remote_change_time` | Active character derived from the authenticated session | No client-selected character or station IDs; candidates are resolved from the character's station, school, and eligible corporation structure state | None; one character snapshot/candidate resolution |
+| `home_station.set_home_station` | Active character only; selected station must be in that character's current candidate list | One integral station ID and a remote-confirmation boolean; noncandidate, wormhole, current-home and cooldown violations are refused | None; validated transactional mutation |
+| `home_station.reset_remote_change_time` | Active character only; requires server-set QA, Programmer, or staff account role | No client-supplied character ID; generic session `role` fields do not grant access | None; one character cooldown update |
+
+The reset method follows EveJS v261018.1's `ROLE_QA | ROLE_PROGRAMMER | ROLEMASK_VIEW` account-role gate. `Home_station_remote_change_persists_notifies_serializes_datetime_and_resets` checks that a player with a forged generic role leaves the cooldown intact and a server-set QA account role can reset it.
+
 ### Wallet RPC detail
 
 | RPC | Caller and target scope | Input bounds | Per-session cost |

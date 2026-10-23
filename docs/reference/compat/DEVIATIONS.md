@@ -5566,3 +5566,8 @@ The security inventory now records each PLEX market route separately: the order 
 ## Security inventory status summary (2026-10-23)
 
 The overview now points to the config, crimewatch, station, and map method-level RPC classifications and their verified budgets or public/session-derived scopes. The broader identifier inventory remains in progress.
+
+
+## Home station cooldown reset authorization (2026-10-23)
+
+`home_station.reset_remote_change_time` now requires a server-set QA, Programmer, or staff account role, matching EveJS v261018.1. A player session with a forged generic `role` value is refused before the cooldown changes; a QA account role is allowed. The existing PostgreSQL home-station lifecycle regression covers both paths.

@@ -45,6 +45,7 @@ TRITANIUM = 34
 CARGO_FLAG = 5  # the ship's cargo hold (CharacterShips ship-hold flags)
 DELIVERIES_FLAG = 173
 ASTRAHUS = 35832
+OBELISK = 20187  # the freighter has room for the control tower hull
 # a system where Upwell structures can be anchored (its pinned SDE record does not forbid category 65 or the Astrahus group): low security, not a
 # trade hub, one station and no asteroid belt (mapSolarSystems, npcStations, mapAsteroidBelts in the pinned SDE)
 LEGAL_SYSTEM, LEGAL_STATION = 30000903, 60014062
@@ -616,7 +617,7 @@ def test_a_corporation_unanchors_and_scoops_its_control_tower():
             f"values ({character}, 11584, 3, 0) on conflict (character_id, type_id) do update set level = 3, skill_points = 0"
         )
         _relocate(character, ship_id)
-        dbseed.sql(f"update {dbseed.schema('INVENTORY')}.items set type_id = 1944 where id = {ship_id}")
+        dbseed.sql(f"update {dbseed.schema('INVENTORY')}.items set type_id = {OBELISK} where id = {ship_id}")
         _reenter(client, character)
         _undock(client, ship_id, fitted, LEGAL_STATION, LEGAL_SYSTEM)
 

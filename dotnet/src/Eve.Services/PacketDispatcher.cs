@@ -281,6 +281,8 @@ public sealed class PacketDispatcher
             return 10;
         if (service == "corporationSvc" && method is "GetEmploymentRecord" or "GetEmployementRecordAndCharacterTransfers" or "GetMyCorporationInfo" or "GetMedalsReceived" or "GetAllCorpMedals" or "GetRecipientsOfMedal" or "SetMedalStatus" or "GiveMedalToCharacters")
             return 10;
+        if (service == "corpmgr" && method is "GetPublicInfo" or "GetCorporations" or "GetCorporationIDForCharacter")
+            return 10;
         if (service == "ownerGroupManager")
             return 10;
         if (service == "mailMgr" && method is "SyncMail" or "GetMailHeaders" or "GetBody" or "MarkAsRead" or "SendMail" or "PokePlayerAboutChatMsgGm")

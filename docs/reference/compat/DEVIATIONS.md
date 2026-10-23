@@ -5666,3 +5666,8 @@ Fleet proxy join and advert operations now consume 10 weighted per-session units
 ## Alliance application read cap (2026-10-23)
 
 corpRegistry.GetAllianceApplications now queries at most 5,001 rows and refuses collections above 5,000 before building the wire response. The caller must be the current corporation CEO or Director. The PostgreSQL regression creates 5,001 applications and verifies the named refusal.
+
+
+## Corporation manager RPC budgets (2026-10-23)
+
+corpmgr.GetPublicInfo, GetCorporations, and GetCorporationIDForCharacter now consume 10 weighted per-session units. The two corporation info calls include member counts, while the character lookup resolves one public corporation affiliation. `DispatchGoldenTests.Corporation_manager_public_reads_use_a_named_per_session_budget` covers all three calls.

@@ -744,3 +744,5 @@ Post-push handoff: epic arc RPC finding `f7646151` is on `main`; the 1,374-metho
 Security finding for `dynamicBountyMgr.GetOutputForClientSolarSystem` argument validation and budgeting was pushed to `main` on 2026-10-23. On `eve_p3`, the focused refusal test passed (1), `Eve.Services.Core.Tests` passed (894), and `Eve.Services.Tests` passed (256), with no skips. The full 1,374-pair inventory remains incomplete.
 
 Post-push handoff: dynamic bounty read finding `55aff570` is on `main`, merged at `0c062d6d`; inventory remains open at 1,374 registered methods.
+
+Final handoff check on 2026-10-23: the live Host registry audit `RpcSecurityInventoryTests.Real_host_registry_methods_are_enumerable` passed on `eve_p3` and asserted 1,374 registered service/method pairs with no registered service omitted. This confirms enumeration only; method-by-method security classification remains incomplete.

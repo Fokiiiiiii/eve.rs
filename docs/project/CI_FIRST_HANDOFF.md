@@ -2,7 +2,7 @@
 
 ## Current state
 
-- Remote `main` is `f59f9df7`; it contains candidate `dd223b9f). The concurrent `.NET DispatchGoldenTests` conflict was resolved with the latest main-side mock registrations.
+- Remote main contains candidate dd223b9f and the CI-first changes described here. The concurrent DispatchGoldenTests conflict was resolved with the latest main-side mock registrations.
 - Agent-test run `39931135089` succeeded on `dd223b9f`. It ran project `Eve.Services.Tests`, filter `Market_owner_history_reads_have_a_named_per_session_budget`, live test `test_login_to_character.py`, and Rust tests.
 - Push CI runs `39931188008` (`0d2a7312`), `39931680738` (`beaa821b`), `39932084783` (`8baa4ba6`), and `39932448507` (`f7646151`) completed successfully, including Windows and the required gate.
 - Main CI run `39932859826` (`0c062d6d`) has all Linux jobs, end-to-end, and .NET shards passing; Windows was still running at last check. Later pushes did not cancel earlier main runs.

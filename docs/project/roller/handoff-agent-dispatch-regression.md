@@ -16,4 +16,4 @@ The test sends a MachoNet `MachoBindObject` request to `agentMgr`, extracts the 
 
 ## Verification
 
-The test is database-backed through the existing `PgFact` harness. Local compilation was killed by Roslyn exit code 137 under shared-machine memory pressure. The first Actions run found two stale helper references in the greeting and offered assertions; both were corrected. The next run reached acceptance and exposed an incorrect assertion: at the agent's station the accepted conversation includes the Quit action. The test now asserts that client-visible button and token. A rerun is pending. No graphical client was used.
+The test is database-backed through the existing `PgFact` harness. Local compilation was killed by Roslyn exit code 137 under shared-machine memory pressure. Actions run `39962148006` on commit `b74153a` passed: 1 test passed, 0 failed, 0 skipped. The test checks the Quit button offered after acceptance at the agent's station. Push-triggered `ci.yml` run `39962135905` was still in progress at this handoff update. No graphical client was used. No graphical client was used.

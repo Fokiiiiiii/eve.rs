@@ -1147,7 +1147,11 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
     public async ValueTask<PyValue> CanBeKickedOut(ServiceCall call)
     {
         var corp = await Current(call);
+        var actor = call.Session.CharacterId;
         var target = PositiveId(call.Arg(0));
+        if (target is { } targetId && actor is { } actorId && targetId != actorId &&
+            !await CanAdminister(call))
+            return new PyInt(0);
         if (corp is null || target is null || await store.MemberAsync(target.Value,call.Cancellation) is not { } member ||
             member.CorporationId != corp.Id || corp.CeoId == target || !Kickable(member))
             return new PyInt(0);

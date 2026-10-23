@@ -869,10 +869,14 @@ private static PyValue RowField(PyValue value,string key)
         await using var rig = await Rig.CreateAsync();
         var founder = await rig.CharacterAsync("Role Founder");
         var member = await rig.CharacterAsync("Role Member");
+        var kickCandidate = await rig.CharacterAsync("Role Kick Candidate");
         var corp = await rig.Store.CreateAsync(founder,new("Role Works","ROLE","","",0.05m),"roles");
         var application = await rig.Store.ApplyAsync(member,corp.Id,"");
         await rig.Store.RespondAsync(founder,application,6,"","");
         await rig.Store.RespondAsync(member,application,2,"","");
+        var kickApplication = await rig.Store.ApplyAsync(kickCandidate,corp.Id,"");
+        await rig.Store.RespondAsync(founder,kickApplication,6,"","");
+        await rig.Store.RespondAsync(kickCandidate,kickApplication,2,"","");
         var registry = (IService)new CorpRegistryService(rig.Store,rig.Characters,() => rig.Now);
         var manager = (IService)new CorpMgrService(rig.Store,rig.Characters);
         var founderSession = new ClientSession();
@@ -883,8 +887,12 @@ private static PyValue RowField(PyValue value,string key)
         memberSession.Set("corpid",new PyInt(corp.Id));
         ValueTask<PyValue> CorpRpc(string method,params PyValue[] args) => registry.CallAsync(Call(founderSession,method,args));
         ValueTask<PyValue> ManagerRpc(string method,params PyValue[] args) => manager.CallAsync(Call(founderSession,method,args));
+        Assert.Equal(new PyInt(1),await CorpRpc("CanBeKickedOut",new PyInt(member)));
+        Assert.Equal(new PyInt(1),await CorpRpc("CanBeKickedOut",new PyInt(kickCandidate)));
+        Assert.Equal(new PyInt(0),await registry.CallAsync(Call(memberSession,"CanBeKickedOut",new PyInt(kickCandidate))));
+        Assert.Equal(new PyInt(1),await registry.CallAsync(Call(memberSession,"CanBeKickedOut",new PyInt(member))));
         var memberTracking = Assert.IsType<PyList>(await registry.CallAsync(Call(memberSession,"GetMemberTrackingInfoSimple")));
-        Assert.Equal(2,memberTracking.Items.Count);
+        Assert.Equal(3,memberTracking.Items.Count);
         var memberTrackingRows = memberTracking.Items.Select(row => Assert.IsType<PyList>(row)).ToArray();
         Assert.All(memberTrackingRows,row => Assert.Equal(PyValue.None,row.Items[7]));
         Assert.All(memberTrackingRows,row => Assert.Equal(PyValue.None,row.Items[9]));
@@ -1004,7 +1012,8 @@ private static PyValue RowField(PyValue value,string key)
         Assert.Contains(await rig.Store.TitlesAsync(corp.Id),t => t.Id == 32768 && t.Name == "");
 
         var candidates = Assert.IsType<PyList>(await CorpRpc("ResignFromCEO"));
-        Assert.Equal(new PyInt(member),Assert.Single(candidates.Items));
+        Assert.Contains(new PyInt(member),candidates.Items);
+        Assert.Contains(new PyInt(kickCandidate),candidates.Items);
         Assert.IsType<PyNone>(await CorpRpc("ResignFromCEO",new PyInt(member)));
         var afterHandover = await rig.Store.MemberAsync(member);
         Assert.Equal(member,(await rig.Store.GetAsync(corp.Id))!.CeoId);

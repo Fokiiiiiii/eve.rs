@@ -1111,7 +1111,7 @@ private static double RelationshipValue(PyValue value)
     public async ValueTask<PyValue> GetBulletin(ServiceCall call)
     {
         var authority = await RequireAllianceMember(call);
-        var bulletin = await store.AllianceBulletinAsync(authority.Alliance, Number(call.Arg(0)), call.Cancellation);
+        var bulletin = await store.AllianceBulletinAsync(authority.Alliance, PositiveIntegerId(call.Arg(0)), call.Cancellation);
         return bulletin is null ? PyNone.Instance : AllianceBulletinRow(AllianceBulletinDescriptor, bulletin);
     }
 
@@ -1125,7 +1125,7 @@ private static double RelationshipValue(PyValue value)
             throw new CorporationError("ALLIANCE_BULLETIN_LIMIT_EXCEEDED");
         var nowFiletime = Number(CorporationWire.Time(now()));
         var editFiletime = Number(call.Arg(3));
-        var bulletinId = Number(call.Arg(2));
+        var bulletinId = call.Arg(2) is PyNone ? 0 : PositiveIntegerId(call.Arg(2));
         var id = await store.AddAllianceBulletinAsync(alliance, actor, title, body,
             bulletinId > 0 ? bulletinId : null, nowFiletime,
             editFiletime > 0 ? editFiletime : nowFiletime, call.Cancellation);
@@ -1136,8 +1136,7 @@ private static double RelationshipValue(PyValue value)
     public async ValueTask<PyValue> UpdateBulletin(ServiceCall call)
     {
         var (actor, alliance) = await RequireAllianceDirector(call);
-        var bulletinId = Number(call.Arg(0));
-        if (bulletinId <= 0) throw new CorporationError("ALLIANCE_BULLETIN_INVALID");
+        var bulletinId = PositiveIntegerId(call.Arg(0));
         var title = JsSemantics.StringValue(call.Arg(1)) ?? "";
         var body = JsSemantics.StringValue(call.Arg(2)) ?? "";
         if (title.Length > 100 || body.Length > 4000)
@@ -1152,9 +1151,8 @@ private static double RelationshipValue(PyValue value)
     public async ValueTask<PyValue> DeleteBulletin(ServiceCall call)
     {
         var (actor, alliance) = await RequireAllianceDirector(call);
-        var bulletinId = Number(call.Arg(0));
-        if (bulletinId > 0)
-            await store.DeleteAllianceBulletinAsync(alliance, actor, bulletinId, call.Cancellation);
+        if (call.Arg(0) is not PyNone)
+            await store.DeleteAllianceBulletinAsync(alliance, actor, PositiveIntegerId(call.Arg(0)), call.Cancellation);
         return PyNone.Instance;
     }
 

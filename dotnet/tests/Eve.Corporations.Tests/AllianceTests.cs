@@ -1538,6 +1538,16 @@ public class AllianceTests
             var single = Assert.IsType<Eve.Marshal.PyPackedRow>(await service.CallAsync(Call(director,
                 "GetBulletin", new Eve.Marshal.PyInt(bulletinId))));
             Assert.Equal(Eve.Marshal.MarshalCodec.Encode(row), Eve.Marshal.MarshalCodec.Encode(single));
+            await Assert.ThrowsAnyAsync<Exception>(() => service.CallAsync(Call(director,
+                "GetBulletin", new Eve.Marshal.PyReal(bulletinId + 0.5))).AsTask());
+            await Assert.ThrowsAnyAsync<Exception>(() => service.CallAsync(Call(director,
+                "UpdateBulletin", new Eve.Marshal.PyReal(bulletinId + 0.5),
+                new Eve.Marshal.PyWString("Tampered"), new Eve.Marshal.PyWString("Body"))).AsTask());
+            await Assert.ThrowsAnyAsync<Exception>(() => service.CallAsync(Call(director,
+                "DeleteBulletin", new Eve.Marshal.PyReal(bulletinId + 0.5))).AsTask());
+            var afterMalformedIds = Assert.IsType<Eve.Marshal.PyPackedRow>(await service.CallAsync(Call(director,
+                "GetBulletin", new Eve.Marshal.PyInt(bulletinId))));
+            Assert.Equal(new Eve.Marshal.PyWString("Maintenance"), afterMalformedIds.Values[5]);
 
             await Assert.ThrowsAsync<Eve.Corporations.CorporationError>(() => service.CallAsync(Call(director,
                 "UpdateBulletin", new Eve.Marshal.PyInt(bulletinId),

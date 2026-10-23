@@ -43,10 +43,10 @@ def plan_attributes(name: str, description: str, requirements) -> bytes:
     body = field(1, name.encode()) + b"".join(field(2, requirement(t, lv)) for t, lv in requirements) + field(3, description.encode())
     return body
 
-def request(name: str, character: int, payload: bytes) -> bytes:
+def request(name: str, character: int, payload: bytes, request_id: uuid.UUID | None = None) -> bytes:
     any_message = field(1, ("type.evetech.net/" + name).encode()) + field(2, payload)
     identity = field(10, field(1, number_field(1, character)))
-    return field(2, uuid.uuid4().bytes) + field(3, any_message) + field(6, identity)
+    return field(2, (request_id or uuid.uuid4()).bytes) + field(3, any_message) + field(6, identity)
 
 def read_fields(data: bytes) -> dict:
     """The fields of a message as {number: [values]} (varints as ints, the others as bytes)."""
@@ -103,7 +103,7 @@ class Authorized:
         return lambda request: self._channel.unary_unary(method)(request, metadata=self._metadata)
 
     def stream_stream(self, method):
-        return lambda requests: self._channel.stream_stream(method)(requests, metadata=self._metadata)
+        return lambda requests, **kwargs: self._channel.stream_stream(method)(requests, metadata=self._metadata, **kwargs)
 
 def as_user(channel, user_id: int) -> Authorized:
     return Authorized(channel, bearer(user_id))

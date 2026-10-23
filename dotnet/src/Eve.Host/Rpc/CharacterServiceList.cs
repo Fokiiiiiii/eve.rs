@@ -60,11 +60,8 @@ internal sealed partial class CharacterServicesComposition
             .. AgentRpc(),
         ];
         services = [.. services, .. SpaceRpc()];
-        var inventory = services.OfType<IndustryInventoryChangePublisher>()
-            .Select(publisher => publisher.InnerService)
-            .OfType<InvBrokerService>()
-            .Single();
-        services = [.. services, new RepackagingService(inventory)];
+        services = [.. services, new RepackagingService(
+            (InvBrokerService)services.OfType<IndustryInventoryChangePublisher>().Single().InnerService)];
         services = [.. services, new Eve.Services.Corporations.BillMgrService(
             corporations,
             corporationOfficeStore,

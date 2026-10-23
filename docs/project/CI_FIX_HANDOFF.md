@@ -288,9 +288,8 @@ CI run 672 on `1669e6dc` failed the structure market Host test because the fixtu
 - The rollback check now captures both participants' balances immediately before the failing transaction and asserts they remain unchanged, while retaining the item, transaction-history, retry, and partial-settlement assertions. This tests transaction atomicity without assuming a station fee schedule.
 - The Host.Tests project build passed with 0 warnings and 0 errors. The focused Actions check is pending. No local database test was run.
 
-## 2026-10-23 SKINR sequence license lookup fixture
+## 2026-10-23 SKINR sequence and skin data fixture fields
 
-- CI run 692 (40018629614) on 1d96ae32 passed the Windows job, then the live SKINR sequence completed and published both notices. Its post-completion license query failed because `_skin_hex_from_draft` decoded the nested `Skin.hex` protobuf message as if it were the string itself.
-- Main commit d9d806d1 unwraps `SavedDraft.attributes.skin.hex` before checking `skinr_ship_licenses`; this corrects the test's key and follows the Host response encoding. The market settlement test remains a separate CI failure.
-- Python syntax compilation and a focused SKINR live Actions run will check the fixture correction. No local database was used.
-
+- CI run 692 (`40018629614`) on `1d96ae32` completed the sequence, published both expected notices, then failed to find the license by the test's `skin_hex` key. The live helper had decoded the nested `SavedDraft.attributes.skin.hex` message as direct text.
+- Commit `d9d806d1` unwraps `SavedDraft.attributes.skin.hex`; CI run 693 (`40020293319`) confirmed license persistence and GetRequest now work, then showed the test reading `SkinDesign.name` field 2 as `line_name`. V24 and `ShipSkinrSequencingGateway.EncodeSkinDesign` put `name` in field 2 and `line_name` in field 3.
+- The assertion now reads field 3. Python syntax compilation passed; focused live Agent run and push CI verification are pending. No local database test was run.

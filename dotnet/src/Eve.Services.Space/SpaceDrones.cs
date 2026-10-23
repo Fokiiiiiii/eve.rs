@@ -61,6 +61,8 @@ public sealed class SpaceDrones : ISpaceDrones, ISpaceDroneBays, IDisposable
 
     /// <summary>How long after a drone's item moved the client is sent its row again (the reference's window refresh).</summary>
     private static readonly TimeSpan Settle = TimeSpan.FromMilliseconds(500);
+    // The simulation forwards drone launch actions on its whole-second update boundary before the inventory rows.
+    private static readonly TimeSpan LaunchSettle = TimeSpan.FromMilliseconds(1200);
 
     /// <summary>Where the items of what is gone are told to be (the client's junkyard).</summary>
     private const long Junkyard = 6;
@@ -234,11 +236,6 @@ public (long CharacterId, int TypeId, int SolarSystemId, long CorporationId, lon
                     break;
                 }
                 var drone = launch.Drone;
-                // the stack that gave a unit is told at once; the drone itself once it is in space
-                foreach (var change in launch.Changes.Where(c => c.After.Id != drone.Id))
-                {
-                    ShipNotifications.SendItemChange(session, change, RowOf);
-                }
                 snapshot.World.Add(ItemDogma.Of(drone, characterId, shipId, CharacterShips.DroneBayFlag, mutation: launch.Mutation));
                 // what the ship's world does to the drone (its modules' bonuses) is part of the numbers the client and the simulation are given
                 var effective = snapshot.World.Attributes(drone.Id);
@@ -266,9 +263,17 @@ public (long CharacterId, int TypeId, int SolarSystemId, long CorporationId, lon
 
         foreach (var (entry, launch) in launchedNow)
         {
-            var change = launch.Changes.First(c => c.After.Id == entry.ItemId);
-            ShipNotifications.SendItemChange(session, change, RowOf);
-            Later(() => ShipNotifications.SendItemChange(session, change, RowOf));
+            var changes = launch.Changes.Where(c => c.After.Id != entry.ItemId).ToArray();
+            var droneChange = launch.Changes.First(c => c.After.Id == entry.ItemId);
+            Later(() =>
+            {
+                foreach (var change in changes)
+                {
+                    ShipNotifications.SendItemChange(session, change, RowOf);
+                }
+                ShipNotifications.SendItemChange(session, droneChange, RowOf);
+                ShipNotifications.SendItemChange(session, droneChange, RowOf);
+            }, LaunchSettle);
         }
         return Dict(answer);
     }
@@ -351,11 +356,11 @@ public (long CharacterId, int TypeId, int SolarSystemId, long CorporationId, lon
                 ("wallclockTime", new PyLong(fileTime))));
     }
 
-    private void Later(Action action) => _ = Task.Run(async () =>
+    private void Later(Action action, TimeSpan? delay = null) => _ = Task.Run(async () =>
     {
         try
         {
-            await Task.Delay(Settle).ConfigureAwait(false);
+            await Task.Delay(delay ?? Settle).ConfigureAwait(false);
             action();
         }
         catch (Exception error)

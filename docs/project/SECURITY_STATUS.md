@@ -676,6 +676,12 @@ Security finding `c6a4c688` was pushed to `main` on 2026-10-23; the 20 non-skipp
 | `pingService.Ping` | Authenticated connection liveness | No positional or keyword arguments | One unit; fixed-size liveness response. V24.01 `connectionService.py:189` calls it with no arguments. `ClientStartupServicesTests.Ping_service_refuses_client_arguments` checks both malformed shapes; `DispatchGoldenTests.Ping_service_uses_a_named_per_session_budget` checks cost. On `eve_p3`, the focused refusal test passed (1), `Eve.Services.Core.Tests` passed (890), and `Eve.Services.Tests` passed (252), with no skips. |
 | `chatAuthenticationService.GetAuthenticationToken` | Active session character's chat token; token generation is session-local | No positional or keyword arguments | One unit. The character ID comes only from the authenticated session; invalid shapes refuse before token lookup, provider invocation, or generation. V24.01 `xmppchatsvc.py:318` calls it without arguments. `SessionStartupRpcServicesTests.Chat_authentication_refuses_client_arguments_before_provider_or_token_creation` checks both malformed shapes; `DispatchGoldenTests.Chat_authentication_reads_use_a_named_per_session_budget` checks cost. On `eve_p3`, the focused refusal test passed (1), `Eve.Services.Core.Tests` passed (891), and `Eve.Services.Tests` passed (253), with no skips. |
 
+### Character-scoped jump timer read
+
+| RPC | Caller and target scope | Input bounds | Per-session cost |
+|---|---|---|---|
+| `jumpTimers.GetTimers` | Active session character only | Exactly one positive integral character ID equal to the session character; no keywords | One unit. Invalid shapes or foreign IDs refuse before the read callback. V24.01 `crimewatchSvc.py:607` calls it with `session.charid`. `SessionStartupRpcServicesTests.Jump_timers_refuse_malformed_or_foreign_character_ids_before_reading` checks shape, type, and ownership; `DispatchGoldenTests.Jump_timer_reads_use_a_named_per_session_budget` checks cost. On `eve_p3`, the focused refusal test passed (1), `Eve.Services.Core.Tests` passed (892), and `Eve.Services.Tests` passed (254), with no skips. |
+
 V24.01 calls this read with no arguments (`security/client/securitySvc.py:41`). `ClientStartupServicesTests.Security_manager_refuses_client_arguments` checks malformed positional and keyword inputs; `DispatchGoldenTests.Security_manager_read_uses_a_named_per_session_budget` checks cost.
 
 
@@ -714,3 +720,5 @@ Post-push handoff: ping service finding `db05a53c` is on `main`, merged at `0d2a
 Security finding for `chatAuthenticationService.GetAuthenticationToken` input validation and read budgeting was pushed to `main` on 2026-10-23. On `eve_p3`, the focused refusal test passed (1), `Eve.Services.Core.Tests` passed (891), and `Eve.Services.Tests` passed (253), with no skips. The registry has 1,374 service/method pairs; full classification is still incomplete.
 
 Post-push handoff: chat token boundary finding `cb2ae20d` is on `main`, merged at `beaa821b`. The live registry contains 1,374 pairs and still needs method-by-method classification.
+
+Security finding for `jumpTimers.GetTimers` target validation and budgeting was pushed to `main` on 2026-10-23. On `eve_p3`, the focused refusal test passed (1), `Eve.Services.Core.Tests` passed (892), and `Eve.Services.Tests` passed (254), with no skips. The full 1,374-pair RPC inventory remains incomplete.

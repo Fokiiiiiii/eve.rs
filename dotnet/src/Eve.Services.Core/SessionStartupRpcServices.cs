@@ -71,10 +71,12 @@ public sealed partial class JumpTimersService(ReadJumpTimersCallback? readTimers
     public async ValueTask<PyValue> GetTimers(ServiceCall call)
     {
         call.Cancellation.ThrowIfCancellationRequested();
-        var characterId = call.Session.CharacterId ?? 0;
+        if (call.Args.Count != 1 || call.Kwargs is not PyNone)
+            throw MachoErrors.ThrowUserError("JUMP_TIMER_ARGUMENTS_INVALID");
         var requested = Positive(call.Arg(0));
-        if (requested > 0 && requested == characterId)
-            characterId = requested;
+        var characterId = call.Session.CharacterId ?? 0;
+        if (requested <= 0 || characterId <= 0 || requested != characterId)
+            throw MachoErrors.ThrowUserError("JUMP_TIMER_CHARACTER_INVALID");
         var state = characterId > 0 && readTimers is { } read
             ? await read(characterId, call.Cancellation)
             : null;

@@ -83,14 +83,53 @@ public sealed class SessionStartupRpcServicesTests
         });
 
         var result = Assert.IsType<PyTuple>(await service.CallAsync(Call(
-            service, "GetTimers", session, [new PyInt(21)])));
+            service, "GetTimers", session, [new PyInt(20)])));
         Assert.Equal(20, observedCharacter);
         Assert.Equal(new PyTuple([new PyLong(101), new PyLong(202), new PyLong(303)]), result);
 
         IService emptyTimers = new JumpTimersService();
         var empty = Assert.IsType<PyTuple>(await emptyTimers.CallAsync(
-            Call(emptyTimers, "GetTimers", session)));
+            Call(emptyTimers, "GetTimers", session, [new PyInt(20)])));
         Assert.Equal(new PyTuple([PyNone.Instance, PyNone.Instance, PyNone.Instance]), empty);
+    }
+
+    [Fact]
+    public async Task Jump_timers_refuse_malformed_or_foreign_character_ids_before_reading()
+    {
+        var readCalls = 0;
+        IService service = new JumpTimersService((_, _) =>
+        {
+            readCalls++;
+            return ValueTask.FromResult<JumpTimerState?>(new(1, 2, 3));
+        });
+        var session = new ClientSession { CharacterId = 20 };
+        foreach (var call in new[]
+        {
+            new ServiceCall { Method = "GetTimers", Args = [], Session = session },
+            new ServiceCall { Method = "GetTimers", Args = [new PyInt(20), new PyInt(21)], Session = session },
+            new ServiceCall { Method = "GetTimers", Args = [new PyInt(20)], Kwargs = Py.Dict(("characterID", new PyInt(20))), Session = session },
+        })
+        {
+            var error = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(call).AsTask());
+            Assert.Equal("JUMP_TIMER_ARGUMENTS_INVALID", error.Error.UserErrorMessage);
+        }
+
+        var foreign = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(new ServiceCall
+        {
+            Method = "GetTimers",
+            Args = [new PyInt(21)],
+            Session = session,
+        }).AsTask());
+        Assert.Equal("JUMP_TIMER_CHARACTER_INVALID", foreign.Error.UserErrorMessage);
+
+        var wrongType = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(new ServiceCall
+        {
+            Method = "GetTimers",
+            Args = [new PyReal(20)],
+            Session = session,
+        }).AsTask());
+        Assert.Equal("JUMP_TIMER_CHARACTER_INVALID", wrongType.Error.UserErrorMessage);
+        Assert.Equal(0, readCalls);
     }
 
     [Fact]

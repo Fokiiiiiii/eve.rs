@@ -65,9 +65,10 @@ The owner’s captures and process logs were read through `tools/mitm show` and 
 ## (h) missing href and Japanese UnicodeEncodeError
 
 - Symptom: the client logs `KeyError: 'href'` in `aurumStoreView.SetupStoreData` while processing store offers. It separately logs a CP1252 `UnicodeEncodeError` while formatting a Japanese localized module name in `_DetectAndFixMissingHudModules`.
-- Root cause: open; inspect the store response for the missing field. The Unicode exception is raised by client traceback encoding; identify whether a server payload contributes before deciding a server-side change.
-- Fix commit: pending.
-- Regression test: pending.
+- Root cause: the `href` exception is in the client `storeManager.get_offers(4)` path. The server's `NewEdenStoreCatalog` came from the approved EveJS seed, which has valid offer hrefs, but `gen-new-eden-store-catalog.py` explicitly removed each store 4 offer's href before generating the response. The separate Unicode exception is raised by the client's CP1252 traceback encoder while it logs Japanese localized names from the HUD repair diagnostic; it is not a server request failure and the names are valid localized client data.
+- Fix: preserve the seed's store 4 offer hrefs in the generated catalog and test the Host service response for the Omega offer. The CP1252 exception is raised while formatting a client traceback, outside the RPC path; the Japanese names are not altered server-side.
+- Fix commit: `Preserve New Eden Store offer links from the seed`.
+- Regression test: `NewEdenStoreCatalogTests.The_store_4_offers_are_the_15_seeded_offers_with_real_type_ids_for_every_product` and `NewEdenStoreCatalogTests.The_store_lists_the_catalog_offers_and_answers_can_purchase_from_it` (6 focused tests passed); related catalog and store service tests passed 18/18; `NewEdenStoreHostTests` passed 7/7 through the `eve_p3` DB lock. Zero skips.
 
 ## (i) eve-net handshake timeout / eve-sim exits before hello
 

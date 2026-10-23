@@ -5656,3 +5656,8 @@ corpRegistry.GetSuggestedAllianceShortNames now refuses alliance names above the
 ## Alliance and character data RPC classification (2026-10-23)
 
 The inventory now records allianceRegistry.CancelCapitalSystemTransition, GetAllianceApplications, GetPrimeTimeInfo, and IsAllianceLocal with their bound/current alliance or corporation scope and costs. GetAllianceApplications returns its full caller-corporation collection under a 10-unit call charge. corpRegistry.GetPendingAutoKicks is recorded as an empty result with no client-selected target. charMgr.SetNote is documented as active-character scoped with a 5,000-character bound and 10-unit cost.
+
+
+## Fleet proxy and manager budgets (2026-10-23)
+
+Fleet proxy join and advert operations now consume 10 weighted per-session units. Fleet manager leave and broadcast fanout calls also consume 10 units; watchlist mutations remain capped at 100 current fleet members. Focused dispatcher regressions cover all 11 methods.

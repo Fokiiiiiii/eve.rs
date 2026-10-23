@@ -537,7 +537,7 @@ public sealed partial class PgCharacterStore
         return !reader.IsDBNull(1) || !reader.IsDBNull(2) ? 0 : 2;
     }
 
-    /// <summary>Sets the recustomization state (1 or 3) in the caller's transaction.</summary>
+    /// <summary>Sets a persisted paperdoll recustomization state (1, 3, or forced recustomization 4) in the caller's transaction.</summary>
     public async Task SetPaperdollStateAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long id, short state, CancellationToken cancellationToken = default)
     {
         await using var command = new NpgsqlCommand($"UPDATE {_schema}.characters SET paperdoll_state = $2 WHERE id = $1", connection, transaction);

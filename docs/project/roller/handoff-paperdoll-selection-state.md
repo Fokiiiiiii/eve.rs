@@ -6,7 +6,7 @@ charUnboundMgr.GetCharacterSelectionData projects paperdollState from the Postgr
 
 PgCharacterStore.ResolvedPaperdollStateAsync reads paperdoll_state, doll_info, and portrait_info together. A persisted state is returned as stored; otherwise appearance yields 0 and missing appearance yields 2. CharMgrService.GetPaperdollState uses this reader when its optional recustomization reader has no value. SetAppearanceAsync clears the persisted forced state in the same update.
 
-Host composition resolves the InvBrokerService through IndustryInventoryChangePublisher when wiring RepackagingService.
+Migration 0015 expands the character paperdoll state constraint to admit state 4 alongside existing recustomization states 1 and 3. States 0 and 2 are derived from appearance data.
 
 ## Evidence
 
@@ -19,8 +19,8 @@ Host composition resolves the InvBrokerService through IndustryInventoryChangePu
 
 ## Regression coverage
 
-CharacterReSculptHostTests.Character_selection_dispatch_projects_paperdoll_state_and_a_saved_avatar_can_enter checks the client wire shape, 0/2/4, retry, Host restart, save reset, and SelectCharacterID. The test now bootstraps Host migrations before inserting its fixture characters. The live headless test test_paperdoll_selection.py walks login, selection state 0, missing-appearance state 2, appearance save, and game entry.
+CharacterReSculptHostTests.Character_selection_dispatch_projects_paperdoll_state_and_a_saved_avatar_can_enter checks the client wire shape, states 0/2/4, retry, Host restart, save reset, and SelectCharacterID. The test bootstraps Host migrations before inserting fixture characters. The live headless test test_paperdoll_selection.py walks login, selection state 0, missing-appearance state 2, appearance save, and game entry.
 
 ## Verification
 
-Full-SHA Host dispatch run 39960126401 compiled and ran the focused test, which failed because its fixture characters were inserted before Host created the characters table. That setup order is fixed. Headless run 39960167925 is still in progress. The graphical-client route has not been exercised.
+Host dispatch run 39962217896 compiled and reached the focused test. It exposed that the old database CHECK constraint allowed only states 1 and 3; migration 0015 now adds state 4. A new focused run is pending. Headless run 39962220831 is in progress. The graphical-client route has not been exercised.

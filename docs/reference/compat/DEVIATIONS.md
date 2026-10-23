@@ -5626,3 +5626,8 @@ Corporation profile, logo, division-name, abilities, acceptance, mail-restrictio
 ## Alliance administration RPC budgets (2026-10-23)
 
 Executor selection, alliance contact and label writes, and bulletin writes now consume 10 weighted per-session units each. They retain persisted executor/director checks, the bound-alliance check, 500-ID collection caps, client-derived label and bulletin text bounds, and existing notifications. The dispatcher regression covers all 13 write methods.
+
+
+## Corporation content write budgets (2026-10-23)
+
+Title, corporate contact, contact-label, and bulletin writes now consume 10 weighted per-session units each. CorporationStore still applies the persisted Director, Diplomat, or Chat Manager gate for each operation; existing title, label, bulk-contact, and bulletin bounds remain in force. A focused dispatcher regression covers the 12 individual methods.

@@ -230,6 +230,8 @@ public sealed partial class ConfigService(
             PyTuple tuple => tuple.Items,
             _ => [],
         };
+        if (items.Count > 500)
+            throw MachoErrors.ThrowUserError("CONFIG_BULK_LIMIT_EXCEEDED");
         return items.Select(item => item switch
             {
                 PyInt number => number.Value,

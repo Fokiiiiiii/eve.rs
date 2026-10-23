@@ -22,7 +22,8 @@ namespace Eve.Services.Planets;
 [Service("planetMgr")]
 public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStore store, PlanetCatalog catalog, IResourceField field,
     PgItemStore items, WalletTransactions wallets, PgSkillStore skills, Func<long> nowMs, Func<long, PyValue?, Task> notify, Func<long, Task> notifyLaunches, string inventorySchema,
-    ISimulation? simulation = null, PgSpaceItemStore? spaceItems = null, DogmaStatic? dogma = null)
+    ISimulation? simulation = null, PgSpaceItemStore? spaceItems = null, DogmaStatic? dogma = null,
+    Func<long, long, CancellationToken, Task<bool>>? canManageCustomsOffice = null)
     : Eve.Services.Inventory.ICustomsOffices
 {
     private const long UnboundPlanetKey = -1;

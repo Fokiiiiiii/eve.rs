@@ -1,4 +1,5 @@
 using Eve.Characters;
+using Eve.Corporations;
 using Eve.Identity;
 using Eve.Data;
 using Eve.Inventory;
@@ -7,6 +8,7 @@ using Eve.Planets;
 using Eve.Services;
 using Eve.Services.Inventory;
 using Eve.Services.Planets;
+using Eve.Skills;
 using Eve.Wallet;
 using Npgsql;
 
@@ -74,6 +76,24 @@ public sealed class CustomsOfficeHostTests : IAsyncLifetime
             await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Url));
             var characters = new PgCharacterStore(source, Schema("EVE_CHARACTERS_SCHEMA"));
             var pilot = await InsertPilotAsync(source, characters);
+            var wallets = new WalletTransactions(source, Schema("EVE_WALLET_SCHEMA"));
+            var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            await using (var connection = await source.OpenConnectionAsync())
+            await using (var transaction = await connection.BeginTransactionAsync())
+            {
+                await wallets.EnsureAsync(connection, transaction, pilot);
+                await wallets.AdjustAsync(connection, transaction, pilot, 2_000_000m, 0, 0,
+                    "customs office authority test funds", nowMs, $"customs-authority-funds:{Guid.NewGuid():N}");
+                await transaction.CommitAsync();
+            }
+            var corporationStore = new CorporationStore(source, characters,
+                new PgWalletStore(source, Schema("EVE_WALLET_SCHEMA")), wallets,
+                new PgSkillStore(source, Schema("EVE_SKILLS_SCHEMA")), () => nowMs, Schema("EVE_CORPORATIONS_SCHEMA"));
+            var corporation = await corporationStore.CreateAsync(pilot,
+                new NewCorporation("Customs Authority Corporation", "CUSAU", "", "", 0.05m),
+                $"customs-authority:{Guid.NewGuid():N}");
+            var corporationId = corporation.Id;
+            var nonDirector = await InsertPilotAsync(source, characters);
             var planetId = await ScalarAsync<long>(source, """
                 SELECT p.key::bigint
                 FROM sde."mapPlanets" p JOIN sde."mapStars" s ON p.doc->>'orbitID' = s.key
@@ -83,9 +103,12 @@ public sealed class CustomsOfficeHostTests : IAsyncLifetime
             var officeId = Customs.OfficeId(planetId);
             var beforeRestart = await HostTaxRateAsync(host, pilot, officeId);
             await using (var owner = source.CreateCommand(
-                $"UPDATE {Schema("EVE_INVENTORY_SCHEMA")}.items SET owner_id = {CorporationId} WHERE id = {officeId}"))
+                $"UPDATE {Schema("EVE_INVENTORY_SCHEMA")}.items SET owner_id = {corporationId} WHERE id = {officeId}"))
                 Assert.Equal(1, await owner.ExecuteNonQueryAsync());
-            await UpdateOfficeRatesAsync(host, pilot, officeId, 0.03);
+            var denied = await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(
+                () => UpdateOfficeRatesAsync(host, nonDirector, corporationId, officeId, 0.03));
+            Assert.Equal("CustomsOfficeAccessDenied", denied.Error.UserErrorMessage);
+            await UpdateOfficeRatesAsync(host, pilot, corporationId, officeId, 0.03);
             Assert.Equal(0.10, beforeRestart, 6);
             Assert.Equal(0.13, await HostTaxRateAsync(host, pilot, officeId), 6);
             await host.ShutdownAsync();
@@ -93,7 +116,7 @@ public sealed class CustomsOfficeHostTests : IAsyncLifetime
             host = await HostComposition.BuildAsync(Settings());
             Assert.Equal(0.13, await HostTaxRateAsync(host, pilot, officeId), 6);
             Assert.Equal(1L, await ScalarAsync<long>(source,
-                $"SELECT count(*) FROM {Schema("EVE_PLANETS_SCHEMA")}.customs_offices WHERE office_id = {officeId} AND owner_corporation_id = {CorporationId}"));
+                $"SELECT count(*) FROM {Schema("EVE_PLANETS_SCHEMA")}.customs_offices WHERE office_id = {officeId} AND owner_corporation_id = {corporationId}"));
         }
         finally
         {
@@ -252,7 +275,7 @@ public sealed class CustomsOfficeHostTests : IAsyncLifetime
 
     private static async Task<long> InsertPilotAsync(NpgsqlDataSource source, PgCharacterStore characters)
     {
-        var pilot = new NewCharacter(AccountId, "Customs Host Pilot", Gender: 1, RaceId: 1, BloodlineId: 1, AncestryId: 10, SchoolId: 35, TypeId: 1373,
+        var pilot = new NewCharacter(AccountId, $"Customs Host Pilot {Guid.NewGuid():N}", Gender: 1, RaceId: 1, BloodlineId: 1, AncestryId: 10, SchoolId: 35, TypeId: 1373,
             CorporationId: CorporationId, FactionId: 500001, StationId: 60000610, SolarSystemId: Jita, ConstellationId: 20000020, RegionId: 10000002,
             DollInfo: null, PortraitInfo: null);
         await using var connection = await source.OpenConnectionAsync();
@@ -262,10 +285,11 @@ public sealed class CustomsOfficeHostTests : IAsyncLifetime
         return id;
     }
 
-    private static async Task UpdateOfficeRatesAsync(HostRuntime host, long pilot, long officeId, double rate)
+    private static async Task UpdateOfficeRatesAsync(HostRuntime host, long pilot, long corporationId, long officeId, double rate)
     {
         var service = host.Registry.Lookup("planetOrbitalRegistryBroker")!;
         var session = Session(pilot);
+        session.Set("corpid", new PyLong(corporationId));
         session.Set("corprole", new PyInt(1));
         var rates = Py.Dict(
             ("corporation", new PyReal(rate)), ("alliance", new PyReal(0.05)),

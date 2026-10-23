@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Eve.Agents;
 using Eve.Macho;
 using Eve.Marshal;
 using Eve.Services;
@@ -35,7 +36,9 @@ public sealed record AgentMissionRpcCallbacks(
     Func<long, CancellationToken, ValueTask<IReadOnlyList<long>>>? ReadPlausibleMissionIds = null,
     Func<CancellationToken, ValueTask<JsonObject?>>? ReadEpicArcMessages = null,
     Func<long, CancellationToken, ValueTask<long?>>? ReadSolarSystemOfAgent = null,
-    Func<long, long, CancellationToken, ValueTask<HeldMissionView?>>? ReadHeldMission = null);
+    Func<long, long, CancellationToken, ValueTask<HeldMissionView?>>? ReadHeldMission = null,
+    Func<long, long, long, CancellationToken, ValueTask<IReadOnlyDictionary<long, double>>>? ReadStandingGainsForMission = null,
+    Func<long, long, CancellationToken, ValueTask>? RemoveOfferFromJournal = null);
 
 // Readers return persisted character mission state, character-owned bookmark records,
 // and the character's already-resolved seven-field research rows. They never write.
@@ -69,6 +72,10 @@ public sealed class AgentMissionService(
         "DoAction" or
         "GetMissionBriefingInfo" or
         "GetMissionObjectiveInfo" or
+        "GetMissionJournalInfo" or
+        "GetMissionKeywords" or
+        "GetStandingGainsForMission" or
+        "RemoveOfferFromJournal" or
         "GetMyJournalDetails" or
         "GetAgents" or
         "GetCompletedCareerAgentIDs" or
@@ -101,6 +108,10 @@ public sealed class AgentMissionService(
         "GetAgentLocationWrap" => ReadAgentLocationWrapAsync(call),
         "GetMissionBriefingInfo" => ReadHeldMissionAsync(call, MissionViews.Briefing),
         "GetMissionObjectiveInfo" => ReadHeldMissionAsync(call, MissionViews.Objective),
+        "GetMissionJournalInfo" => ReadMissionJournalInfoAsync(call),
+        "GetMissionKeywords" => ReadMissionKeywordsAsync(call),
+        "GetStandingGainsForMission" => ReadStandingGainsForMissionAsync(call),
+        "RemoveOfferFromJournal" => RemoveOfferFromJournalAsync(call),
         _ => throw MachoErrors.ThrowUserError("CustomInfo",
             ("info", new PyStr($"The agent service method {call.Method} is not available on this server yet."))),
     };
@@ -123,6 +134,75 @@ public sealed class AgentMissionService(
         var agentId = BoundAgentId(call);
         if (characterId == 0 || agentId == 0 || rpcCallbacks?.ReadHeldMission is not { } readHeld) return PyNone.Instance;
         return await readHeld(characterId, agentId, call.Cancellation) is { } view ? answer(view) : PyNone.Instance;
+    }
+
+    private async ValueTask<PyValue> ReadMissionJournalInfoAsync(ServiceCall call)
+    {
+        call.Cancellation.ThrowIfCancellationRequested();
+        var characterId = Positive(call.Session.Get("charid"));
+        var agentId = BoundAgentId(call);
+        if (characterId == 0 || agentId == 0 || rpcCallbacks?.ReadHeldMission is not { } readHeld)
+            return PyNone.Instance;
+        var mission = await readHeld(characterId, agentId, call.Cancellation);
+        call.Cancellation.ThrowIfCancellationRequested();
+        return mission is null ? PyNone.Instance : MissionViews.JournalInfo(mission);
+    }
+
+    private async ValueTask<PyValue> ReadMissionKeywordsAsync(ServiceCall call)
+    {
+        call.Cancellation.ThrowIfCancellationRequested();
+        var characterId = Positive(call.Session.Get("charid"));
+        var agentId = BoundAgentId(call);
+        if (characterId == 0 || agentId == 0 || rpcCallbacks?.ReadHeldMission is not { } readHeld)
+            return new PyDict([]);
+        var mission = await readHeld(characterId, agentId, call.Cancellation);
+        call.Cancellation.ThrowIfCancellationRequested();
+        if (mission is null) return new PyDict([]);
+        var agent = rpcCallbacks?.ReadAgents is { } readAgents
+            ? (await readAgents(call.Cancellation)).FirstOrDefault(item => item.AgentId == agentId)
+            : null;
+        call.Cancellation.ThrowIfCancellationRequested();
+        return agent is null ? new PyDict([]) : MissionViews.Keywords(agent, mission);
+    }
+
+    private async ValueTask<PyValue> ReadStandingGainsForMissionAsync(ServiceCall call)
+    {
+        call.Cancellation.ThrowIfCancellationRequested();
+        var characterId = Positive(call.Session.Get("charid"));
+        var agentId = BoundAgentId(call);
+        var contentId = Positive(call.Args.Count > 0 ? call.Arg(0) : null);
+        if (characterId == 0 || agentId == 0 || contentId == 0 ||
+            rpcCallbacks?.ReadStandingGainsForMission is not { } readGains)
+            return new PyDict([]);
+        var gains = await readGains(characterId, agentId, contentId, call.Cancellation);
+        call.Cancellation.ThrowIfCancellationRequested();
+        return new PyDict(
+        [
+            .. gains.Where(pair => pair.Key > 0 && double.IsFinite(pair.Value))
+                .OrderBy(pair => pair.Key)
+                .Select(pair => new KeyValuePair<PyValue, PyValue>(new PyInt(pair.Key), new PyReal(pair.Value))),
+        ]);
+    }
+
+    private async ValueTask<PyValue> RemoveOfferFromJournalAsync(ServiceCall call)
+    {
+        call.Cancellation.ThrowIfCancellationRequested();
+        var characterId = Positive(call.Session.Get("charid"));
+        var agentId = BoundAgentId(call);
+        if (characterId == 0 || agentId == 0) return PyNone.Instance;
+        if (rpcCallbacks?.RemoveOfferFromJournal is not { } removeOffer)
+            throw MachoErrors.ThrowUserError("CustomInfo",
+                ("info", new PyStr("The agent mission store is not available on this server.")));
+        try
+        {
+            await removeOffer(characterId, agentId, call.Cancellation);
+        }
+        catch (AgentMissionRefusedException refused)
+        {
+            throw MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr(refused.Message)));
+        }
+        call.Cancellation.ThrowIfCancellationRequested();
+        return PyNone.Instance;
     }
 
     private async ValueTask<AgentMissionAgentData> BoundAgentAsync(ServiceCall call)

@@ -132,6 +132,66 @@ public sealed class AgentMissionDispatchTests
         }
     }
 
+    [PgFact]
+    public async Task Bound_RemoveOffer_dispatch_commits_once_survives_restart_and_preserves_an_accepted_mission()
+    {
+        var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var schema = "agent_remove_dispatch_" + Guid.NewGuid().ToString("N")[..12];
+        try
+        {
+            await AgentMissionStore.MigrateAsync(source, schema);
+            var store = new AgentMissionStore(source, schema);
+            var committed = new List<AgentMissionChange>();
+            store.Committed += committed.Add;
+            var agent = AgentData();
+            var service = new AgentMissionService(
+                (_, _) => ValueTask.FromResult<System.Text.Json.Nodes.JsonObject?>(null),
+                (_, _, _) => ValueTask.FromResult<IReadOnlyDictionary<long, System.Text.Json.Nodes.JsonObject>>(new Dictionary<long, System.Text.Json.Nodes.JsonObject>()),
+                (_, _) => ValueTask.FromResult<System.Text.Json.Nodes.JsonArray?>(null),
+                rpcCallbacks: new AgentMissionRpcCallbacks(
+                    ReadAgents: _ => ValueTask.FromResult<IReadOnlyList<AgentMissionAgentData>>([agent]),
+                    RemoveOfferFromJournal: async (characterId, agentId, ct) =>
+                        await store.RemoveOfferAsync(characterId, agentId, Start, ct)));
+            var registry = new ServiceRegistry();
+            registry.Register(service);
+            var dispatcher = new PacketDispatcher(registry, () => Start.ToUnixTimeMilliseconds());
+            var sink = new Sink();
+            var session = new ClientSession(sink) { UserId = 7, CharacterId = Pilot };
+            session.Set("charid", new PyInt(Pilot));
+            session.Set("userid", new PyInt(7));
+
+            Assert.True(await dispatcher.DispatchAsync(Request(1, "agentMgr", new PyInt(1), "MachoBindObject",
+                new PyTuple([new PyInt(Agent)]), PyNone.Instance), session));
+            var binding = Assert.IsType<PyTuple>(ResponseResult(sink.Packets[^1]));
+            var boundAgent = Assert.IsType<PySubStruct>(binding.Items[0]);
+            var oid = BoundObjects.ExtractName(boundAgent)!;
+
+            await store.OfferAsync(Pilot, Agent, new AgentMissionContent(5001, 9100, "Courier Job", "courier", false), Start, "seed-offer");
+            Assert.True(await dispatcher.DispatchAsync(Request(2, null, new PyStr(oid), "RemoveOfferFromJournal"), session));
+            Assert.Equal(PyNone.Instance, ResponseResult(sink.Packets[^1]));
+            Assert.Equal(AgentMissionState.Allocated, (await new AgentMissionStore(source, schema).ReadAsync(Pilot, Agent))!.State);
+            Assert.Single(committed, change => change.Action == "offer_removed");
+
+            Assert.True(await dispatcher.DispatchAsync(Request(3, null, new PyStr(oid), "RemoveOfferFromJournal"), session));
+            Assert.Equal(PyNone.Instance, ResponseResult(sink.Packets[^1]));
+            Assert.Single(committed, change => change.Action == "offer_removed");
+
+            var acceptedCharacter = Pilot + 1;
+            await store.OfferAsync(acceptedCharacter, Agent, new AgentMissionContent(5002, 9101, "Accepted Job", "courier", false), Start, "seed-accepted");
+            await store.AcceptAsync(acceptedCharacter, Agent, Start, "seed-accept");
+            session.Set("charid", new PyInt(acceptedCharacter));
+            Assert.True(await dispatcher.DispatchAsync(Request(4, null, new PyStr(oid), "RemoveOfferFromJournal"), session));
+            Assert.Equal(MachoErrors.UserErrorClass, ErrorClass(sink.Packets[^1]));
+            Assert.Equal(AgentMissionState.Accepted, (await new AgentMissionStore(source, schema).ReadAsync(acceptedCharacter, Agent))!.State);
+        }
+        finally
+        {
+            await using (var drop = source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE"))
+                await drop.ExecuteNonQueryAsync();
+            await source.DisposeAsync();
+        }
+    }
+
     private static PyValue Request(long callId, string? service, PyValue remoteObject, string method, params PyValue[] args)
     {
         var body = new PyTuple([

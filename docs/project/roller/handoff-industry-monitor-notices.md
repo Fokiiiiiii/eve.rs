@@ -16,14 +16,13 @@
 
 ## Checks
 
-- PASS before the final Host composition adjustment: Host build succeeded with 0 warnings/errors; the local no-DB focused test passed (1 passed, 0 skipped).
-- PASS on Actions for commit `9cec6507`: `Eve.Host.Tests` selected tests (2 passed, 0 failed, 0 skipped).
-- Actions live tests for `9cec6507` failed at Host startup because the initial decorator replaced the concrete `InvBrokerService` before `RepackagingService`'s type lookup. The current composition unwraps the decorated service for that lookup.
-- A local focused test rerun after the composition changes was terminated when Roslyn `csc` exited with code 137 under shared machine memory/CPU load. No database was used locally.
-- Host build and Actions for the current composition are pending.
-- No existing headless end-to-end industry job walk was found. No live industry walk or graphical-client session has been performed.
+- PASS: `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/src/Eve.Host/Eve.Host.csproj --no-restore -m:1 -p:UseSharedCompilation=false` (0 warnings, 0 errors; about 54 minutes under shared machine load).
+- PASS: local no-DB focused test `Host_inventory_dispatch_publishes_changed_materials_once_after_item_change_and_isolates_sessions` (1 passed, 0 skipped).
+- PASS on Actions for commit `9cec6507`: selected `Eve.Host.Tests` (2 passed, 0 failed, 0 skipped).
+- Earlier Actions live tests failed at Host startup because the initial decorator replaced the concrete `InvBrokerService` before `RepackagingService`'s lookup. The current composition unwraps the decorated broker for that lookup; current Actions checks are pending push.
+- The headless test index has no existing end-to-end industry job walk. No live industry walk or graphical-client session has been performed.
 - Nine unrelated Rust deletions were present at initial inspection and remain unstaged.
 
 ## Remaining
 
-Verify the current build and composition on Actions, inspect push-triggered CI, and report headless and graphical-client verification separately.
+Push the current composition, run selected Host tests on Actions and inspect push-triggered CI. Report headless and graphical-client verification separately.

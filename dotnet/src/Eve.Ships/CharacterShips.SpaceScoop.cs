@@ -11,6 +11,7 @@ public sealed partial class CharacterShips
     /// </summary>
     public async Task<ShipOutcome> ScoopSpaceArtifactAsync(
         long characterId,
+        long corporationId,
         long expectedShipId,
         int solarSystemId,
         long itemId,
@@ -18,7 +19,7 @@ public sealed partial class CharacterShips
         PgSpaceItemStore spaceItems,
         CancellationToken cancellationToken = default)
     {
-        if (characterId <= 0 || expectedShipId <= 0 || solarSystemId <= 0 || itemId <= 0 || string.IsNullOrEmpty(expectedMarker))
+        if (characterId <= 0 || corporationId <= 0 || expectedShipId <= 0 || solarSystemId <= 0 || itemId <= 0 || string.IsNullOrEmpty(expectedMarker))
         {
             return new NothingHappened();
         }
@@ -53,7 +54,8 @@ public sealed partial class CharacterShips
         {
             return new ShipRefused(ShipRefusal.NotAllowedInHold, ModuleTypeId: item.TypeId, ShipTypeId: snapshot.Ship.TypeId);
         }
-        if (spaceItem.GroupId != type.GroupId || spaceItem.LauncherId <= 0 || spaceItem.CorporationId != item.OwnerId)
+        if (spaceItem.GroupId != type.GroupId || spaceItem.LauncherId <= 0 || spaceItem.CorporationId != corporationId ||
+            item.OwnerId != characterId && item.OwnerId != corporationId)
         {
             throw new InvalidOperationException($"Space artifact {itemId} disagrees with its SDE identity or custody record.");
         }

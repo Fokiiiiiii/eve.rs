@@ -387,6 +387,41 @@ public class DispatchGoldenTests
     }
 
     [Fact]
+    public async Task The_fitting_inventory_rereads_fit_the_default_session_budget()
+    {
+        var capture = new Capture();
+        var session = new ClientSession(capture) { SessionId = 902 };
+        var registry = new ServiceRegistry();
+        foreach (var serviceName in new[] { "charUnboundMgr", "invbroker", "dogmaIM" })
+            registry.Register(new RpcBudgetScenarioService(serviceName));
+        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs);
+
+        async Task Call(string service, string method)
+        {
+            await dispatcher.DispatchAsync(CallRequestPacket(service, method), session);
+            Assert.Equal(7, CommandOf(capture.Sent[^1]));
+        }
+
+        await Call("charUnboundMgr", "CreateCharacterWithDoll");
+        await Call("charUnboundMgr", "SelectCharacterID");
+        await Call("invbroker", "GetInventory");
+        await Call("invbroker", "List");
+        await Call("invbroker", "GetInventory");
+        await Call("invbroker", "List");
+        await Call("dogmaIM", "GetAllInfo");
+        await Call("dogmaIM", "GetAllInfo");
+
+        for (var step = 0; step < 6; step++)
+        {
+            await Call("invbroker", "GetInventory");
+            await Call("invbroker", "List");
+            await Call("dogmaIM", "GetAllInfo");
+        }
+
+        Assert.Equal(26, capture.Sent.Count);
+    }
+
+    [Fact]
     public async Task Config_multi_lookups_have_a_named_per_session_budget()
     {
         var capture = new Capture();
@@ -1898,6 +1933,15 @@ public class DispatchGoldenTests
             Calls++;
             return ValueTask.FromResult<PyValue>(PyNone.Instance);
         }
+    }
+
+    private sealed class RpcBudgetScenarioService(string name) : IService
+    {
+        public string Name => name;
+
+        public bool HasMethod(string method) => true;
+
+        public ValueTask<PyValue> CallAsync(ServiceCall call) => ValueTask.FromResult<PyValue>(PyNone.Instance);
     }
 
     private sealed class ExpensiveService(string name = "marketProxy") : IService

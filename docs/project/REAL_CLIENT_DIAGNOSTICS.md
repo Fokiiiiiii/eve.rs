@@ -14,9 +14,11 @@ The owner’s captures and process logs were read through `tools/mitm show` and 
 ## (b) eventLog.LogClientStats service missing
 
 - Symptom: `ServiceNotFound: eventLog`; the graphical capture calls `eventLog.LogClientStats` and receives an error. EveJS logs the event and returns `None`.
-- Root cause: open.
-- Fix commit: pending.
-- Regression test: pending.
+- Root cause: `eventLog` was not registered in the Host service registry, so MachoNet returned ServiceNotFound before the stats call could be recorded.
+- Fix: add a client-facing `eventLog.LogClientStats` RPC that records a privacy-limited summary in the Host log and answers `None`, matching EveJS’s return shape.
+- Fix commit: `Register eventLog stats RPC in Host`.
+- Regression: `EventLogHostTests.The_host_registers_event_log_and_records_client_stats_before_returning_none` covers Host wiring, the four-argument call shape, the `None` response, and the recorded summary (1 passed).
+- Sources: V24.01 `eve/client/script/sys/clientStatsSvc.py`; EveJS `server/src/services/logging/eventLogService.js`.
 
 ## (c) structureDirectory.GetStructureMapData errors
 
@@ -28,8 +30,8 @@ The owner’s captures and process logs were read through `tools/mitm show` and 
 
 ## (d) UnavailableInventoryLocation in space
 
-- Symptom: the client log says `UnavailableInventoryLocation: Failed to retrieve items; character is not located in a station` during `NeocomInventoryBadging.OnSessionChanged`.
-- Root cause: open; identify the exact inventory location and request sequence before changing the inventory read side.
+- Symptom: the client log says `UnavailableInventoryLocation: Failed to retrieve items; character is not located in a station` during `NeocomInventoryBadging.OnSessionChanged`. The client callsite is `GetItemsInCurrentStationShipHangar`; the capture shows a station-bound `GetInventory(containerHangar=10004)` request receiving `SessionRpcBudgetExceeded` during the transition to space.
+- Root cause: `PacketDispatcher` charges station inventory reads against the same per-session expensive-RPC budget as unrelated setup and market calls. After that shared bucket is consumed, the client's guarded station hangar read is refused and translated to `UnavailableInventoryLocation`.
 - Fix commit: pending.
 - Regression test: pending.
 

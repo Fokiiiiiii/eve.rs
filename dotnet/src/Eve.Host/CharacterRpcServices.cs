@@ -296,6 +296,7 @@ public sealed class PaperDollServerRpcService : IService
 
 public sealed class ClientStatLoggerRpcService : IService
 {
+    private const int MaxMessageBytes = 4096;
     private readonly Action<string> _log;
 
     public ClientStatLoggerRpcService(Action<string>? log = null)
@@ -308,7 +309,13 @@ public sealed class ClientStatLoggerRpcService : IService
     {
         if (!HasMethod(call.Method)) return ValueTask.FromResult<PyValue>(PyNone.Instance);
         call.Cancellation.ThrowIfCancellationRequested();
-        var message = call.Arg(0) is PyNone ? "" : JsSemantics.StringValue(call.Arg(0)) ?? "";
+        if (call.Args.Count != 1 || call.Kwargs is not PyNone)
+            throw MachoErrors.ThrowUserError("CLIENT_LOG_ARGUMENTS_INVALID");
+        if (call.Arg(0) is not PyStr text)
+            throw MachoErrors.ThrowUserError("CLIENT_LOG_MESSAGE_INVALID");
+        if (System.Text.Encoding.UTF8.GetByteCount(text.Value) > MaxMessageBytes)
+            throw MachoErrors.ThrowUserError("CLIENT_LOG_MESSAGE_LIMIT_EXCEEDED");
+        var message = text.Value;
         _log(message);
         return ValueTask.FromResult<PyValue>(PyNone.Instance);
     }

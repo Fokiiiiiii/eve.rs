@@ -76,6 +76,22 @@ public sealed class CompatibilityRpcServiceTests
 
         Assert.IsType<PyNone>(response);
         Assert.Equal(["ballpark startup failed"], messages);
+
+        var refusals = new (ServiceCall Call, string Error)[]
+        {
+            (Call("LogString", args: []), "CLIENT_LOG_ARGUMENTS_INVALID"),
+            (Call("LogString", args: [new PyInt(7)]), "CLIENT_LOG_MESSAGE_INVALID"),
+            (Call("LogString", args: [new PyStr(new string('あ', 1366))]), "CLIENT_LOG_MESSAGE_LIMIT_EXCEEDED"),
+            (Call("LogString", args: [new PyStr("ok"), new PyStr("extra")]), "CLIENT_LOG_ARGUMENTS_INVALID"),
+            (new ServiceCall { Method = "LogString", Args = [new PyStr("ok")], Kwargs = new PyDict([]), Session = Session() }, "CLIENT_LOG_ARGUMENTS_INVALID"),
+        };
+        foreach (var (call, error) in refusals)
+        {
+            var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(call).AsTask());
+            Assert.Equal(MachoErrors.UserErrorClass, refusal.Error.ClassName);
+            Assert.Equal(error, refusal.Error.UserErrorMessage);
+        }
+        Assert.Equal(["ballpark startup failed"], messages);
     }
 
     [Fact]

@@ -322,6 +322,8 @@ public sealed class PacketDispatcher
             return 10;
         if (service == "eventLog" && method == "LogClientStats")
             return 10;
+        if (service == "clientStatLogger" && method == "LogString")
+            return 1;
         if (service == "XmppChatMgr" && method is "SetMotd" or "CreatePlayerOwnedChannel" or "AddCharacterToChannel" or "GrantChannelOwnership" or "ResyncSystemChannelAccess")
             return 10;
         if (service == "contextualOfferMgr" && method is "TrackOfferDelivered" or "TrackOfferSeen" or "TrackOfferBuyPress" or "TrackOfferClosed" or "TrackOfferPurchased" or "TrackOfferPurchasedSeen")

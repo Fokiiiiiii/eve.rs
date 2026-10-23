@@ -554,6 +554,15 @@ Security slice `c7b0c185` was pushed to `main` on 2026-10-23. Verification on `e
 Registry audit correction `7c6ebab4` was pushed to `main` on 2026-10-23. Its focused Host test passed on `eve_p3` with 1,374 registered service/method pairs and no registered service omitted from the enumeration.
 
 
+### Client stat logger RPC detail
+
+| RPC | Caller and target scope | Input bounds | Per-session cost |
+|---|---|---|---|
+| `clientStatLogger.LogString` | Any authenticated session; message is diagnostic text and no target identity is accepted | Exactly one positional `PyStr`, at most 4,096 UTF-8 bytes; keyword arguments refused | 1 unit |
+
+The client sends jump and ballpark diagnostics (`eve/client/script/util/jumpMonitor.py`, `eve/client/script/remote/michelle.py`). The Host validates type, count, keywords, and encoded byte length before logging. `CompatibilityRpcServiceTests.Client_stat_log_records_the_message_and_answers_none` checks the accepted message and all refusal cases; `DispatchGoldenTests.Client_log_string_calls_use_a_named_per_session_budget` checks cost. On `eve_p3`, the focused Host test passed (1), and all `Eve.Services.Tests` passed (225, no skips).
+
+
 ### Contextual Offer Manager RPC detail
 
 | RPC | Caller and target scope | Input bounds | Per-session cost |

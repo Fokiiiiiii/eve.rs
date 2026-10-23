@@ -722,3 +722,5 @@ Security finding for `chatAuthenticationService.GetAuthenticationToken` input va
 Post-push handoff: chat token boundary finding `cb2ae20d` is on `main`, merged at `beaa821b`. The live registry contains 1,374 pairs and still needs method-by-method classification.
 
 Security finding for `jumpTimers.GetTimers` target validation and budgeting was pushed to `main` on 2026-10-23. On `eve_p3`, the focused refusal test passed (1), `Eve.Services.Core.Tests` passed (892), and `Eve.Services.Tests` passed (254), with no skips. The full 1,374-pair RPC inventory remains incomplete.
+
+Post-push handoff: jump timer finding `8baa4ba6` is on `main`; method-by-method classification remains open for the 1,374 registered pairs.

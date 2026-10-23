@@ -169,3 +169,9 @@ Use lane `eve_p4` only and run database work through `tools/dev/db-lock.sh`. The
 - Run 675's Host tests found the persisted contact `senderID` type mismatch; the local expectation now matches the returned `PyInt`. The project build and focused Actions rerun are pending.
 - Run 675's Windows job remains in progress at this handoff update. Update TODO 14 after checking its completed result; keep the owner-machine console checks open unless they run on that machine.
 - The current worktree reports the market sell refusal in the failing test message. The Release build of `Eve.Host.Tests` passed with zero warnings and errors; no local database tests were run.
+
+
+## 2026-10-23 SKINR live fixture catalog eligibility
+
+- Run 675 and Agent run 146 reported `INVALID_COMPONENT_LICENSE_ITEM` for the unlimited license item. The live fixture query previously selected any published compatible component with a license item and binder, while `ShipSkinrCatalog.LoadAsync` only registers a component when its category and rarity have an authoritative point value.
+- The SKINR live fixture now requires a matching `skinrComponentPointValues` entry, including both supported object-map and `_key`/`_value` array shapes, so it selects an item the runtime catalog can resolve. The Python file passed `python3 -m py_compile`; the live Actions check is pending.

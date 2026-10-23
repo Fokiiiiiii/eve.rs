@@ -157,6 +157,20 @@ WHERE component.doc->>'published' = 'true'
         NULLIF(associated.value->>'license_uses_granted', '')::int,
         0
       ) = -1
+  AND EXISTS (
+        SELECT 1
+        FROM sde_mission."skinrComponentPointValues" AS point_values
+        WHERE point_values.key = (component.doc->>'category')::bigint
+          AND (
+              COALESCE(point_values.doc->'values', point_values.doc->'_value', '{}'::jsonb)
+                  ? (component.doc->>'rarity')
+              OR jsonb_path_exists(
+                  COALESCE(point_values.doc->'values', point_values.doc->'_value', '[]'::jsonb),
+                  '$[*] ? (@._key == $rarity)',
+                  jsonb_build_object('rarity', (component.doc->>'rarity')::int)
+              )
+          )
+      )
   AND COALESCE(
         NULLIF(binder.item_type->>'itemTypeID', '')::int,
         NULLIF(binder.item_type->>'itemTypeId', '')::int,

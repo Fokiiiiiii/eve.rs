@@ -54,8 +54,7 @@ public sealed partial class FleetManagerService(
         if (context is null) throw MachoErrors.ThrowUserError("FleetNotInFleet");
         var (fleetId, snapshot, _) = context.Value;
         var members = snapshot.Members.Select(member => member.CharacterId).ToHashSet();
-        var removed = Number(call.Arg(0));
-        if (removed is not > 0) throw MachoErrors.ThrowUserError("FleetError");
+        var removed = WatchlistId(call.Arg(0));
         var remaining = Ids(call.Arg(1)).Where(id => id != removed && members.Contains(id)).Distinct().Take(100).ToArray();
         SetWatchlist(call.Session, WatchlistSessionKey, remaining);
         return PyBool.True;
@@ -225,11 +224,15 @@ public sealed partial class FleetManagerService(
             throw MachoErrors.ThrowUserError("FleetError");
         if (values.Count > MaxWatchlistInputIds)
             throw MachoErrors.ThrowUserError("FleetError");
-        var ids = values.Select(Number).ToArray();
-        if (ids.Any(id => id is not > 0))
-            throw MachoErrors.ThrowUserError("FleetError");
-        return ids.Select(id => id!.Value).ToArray();
+        return values.Select(WatchlistId).ToArray();
     }
+
+    private static long WatchlistId(PyValue value) => value switch
+    {
+        PyInt { Value: > 0 } id => id.Value,
+        PyLong { Value: > 0 } id => id.Value,
+        _ => throw MachoErrors.ThrowUserError("FleetError"),
+    };
 
     private static IReadOnlyList<PyValue> Sequence(PyValue value)
     {

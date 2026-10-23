@@ -4470,7 +4470,9 @@ public class SpaceServiceTests
             await AssertRefused("AddToWatchlist",new PyStr("not-a-list"),new PyList([]));
             await AssertRefused("RegisterForDamageUpdates",new PyList(
                 Enumerable.Range(1,501).Select(id => (PyValue)new PyLong(id)).ToArray()));
+            await AssertRefused("RegisterForDamageUpdates",new PyList([new PyReal(1.5)]));
             await AssertRefused("RemoveFromWatchlist",new PyLong(-1),new PyList([]));
+            await AssertRefused("RemoveFromWatchlist",new PyStr("123"),new PyList([]));
         }
         finally
         {

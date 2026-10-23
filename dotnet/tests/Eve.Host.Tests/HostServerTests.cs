@@ -2853,7 +2853,33 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
         Assert.Empty(Assert.IsType<Eve.Marshal.PyList>(await unknown.GetNearbyJumpBridgesAsync(accessCall)).Items);
     }
 
-[Fact]
+    [Fact]
+    public async Task Structure_directory_batch_read_loads_the_store_once_for_large_id_lists()
+    {
+        var reads = 0;
+        Task<System.Text.Json.Nodes.JsonObject> ReadTable(string tableName, CancellationToken token)
+        {
+            _ = tableName;
+            token.ThrowIfCancellationRequested();
+            reads++;
+            return Task.FromResult(new System.Text.Json.Nodes.JsonObject());
+        }
+        Task<Eve.Relations.Affiliation> Affiliation(long characterId, CancellationToken token)
+        {
+            _ = characterId;
+            token.ThrowIfCancellationRequested();
+            return Task.FromResult(new Eve.Relations.Affiliation(null, null, null));
+        }
+        var model = new PersistenceStructureDirectoryReadModel(ReadTable, Affiliation);
+        var ids = Enumerable.Repeat(9_223_372_036_854_775_000L, 16_384).ToArray();
+
+        var result = await model.GetStructureInfosAsync(ids, CancellationToken.None);
+
+        Assert.Empty(result);
+        Assert.Equal(1, reads);
+    }
+
+    [Fact]
     public async Task Structure_directory_host_reads_deployed_rows_and_docking_profiles()
     {
         const long structureId = 88000011;

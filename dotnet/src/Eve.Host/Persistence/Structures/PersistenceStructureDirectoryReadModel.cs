@@ -167,6 +167,29 @@ public async ValueTask<Eve.Services.Core.PersistedStructureInfo?> GetStructureIn
             StructureInfoPayload(structureId, structure));
     }
 
+public async ValueTask<IReadOnlyDictionary<long, Eve.Services.Core.PersistedStructureInfo>> GetStructureInfosAsync(
+    IReadOnlyList<long> structureIds,
+    CancellationToken cancellationToken)
+{
+    var requested = structureIds.Where(id => id > 0).ToHashSet();
+    if (requested.Count == 0)
+        return new Dictionary<long, Eve.Services.Core.PersistedStructureInfo>();
+
+    var structures = await readTable("structures", cancellationToken);
+    var result = new Dictionary<long, Eve.Services.Core.PersistedStructureInfo>();
+    foreach (var structureId in requested)
+    {
+        var key = structureId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        if (structures[key] is not JsonObject structure || !IsPersistentlyDeployedStructure(structure, structureId))
+            continue;
+        result[structureId] = new Eve.Services.Core.PersistedStructureInfo(
+            structureId,
+            true,
+            StructureInfoPayload(structureId, structure));
+    }
+    return result;
+}
+
     public async ValueTask<Eve.Services.Core.PersistedStructureInfo?> GetStructureInfoForCharacterAsync(
     long characterId,
     long structureId,

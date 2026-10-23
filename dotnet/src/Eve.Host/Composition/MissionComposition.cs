@@ -409,8 +409,20 @@ internal sealed partial class CharacterServicesComposition
         if (agentMissionStatic.Mission(record.Content.MissionId) is not { } mission) return null;
         long? briefing = clientMissionMessages.TryGetValue(mission.MissionId, out var texts) && texts.TryGetValue(ClientMissionMessages.BriefingKey, out var id) ? id : null;
         var loyaltyAmount = await MissionLoyaltyPointsAsync(characterId, agentId, record.Content, cancellationToken);
+        var state = await ReadGameStoreTableAsync("missionRuntimeState", cancellationToken);
+        var character = (state["charactersByID"] as JsonObject)?[characterId.ToString(System.Globalization.CultureInfo.InvariantCulture)] as JsonObject;
+        var storedMission = (character?["missionsByAgentID"] as JsonObject)?[agentId.ToString(System.Globalization.CultureInfo.InvariantCulture)] as JsonObject;
+        var position = storedMission?["missionPosition"] as JsonObject;
+        static long? PositiveLong(JsonNode? value) => value is JsonValue json && json.TryGetValue<long>(out var number) && number > 0 ? number : null;
+        static double? FiniteNumber(JsonNode? value) => value is JsonValue json && json.TryGetValue<double>(out var number) && double.IsFinite(number) ? number : null;
+        var systemId = PositiveLong(storedMission?["missionSystemID"])
+            ?? (agentMissionAgentById.TryGetValue(agentId, out var agent) ? agent.SolarSystemId : null);
+        var location = systemId is > 0
+            ? new Eve.Services.Core.MissionDungeonLocation(systemId.Value,
+                FiniteNumber(position?["x"]), FiniteNumber(position?["y"]), FiniteNumber(position?["z"]))
+            : null;
         return new Eve.Services.Core.HeldMissionView(mission, record, briefing, await FetchObjectiveAsync(characterId, record, cancellationToken),
-            await CourierObjectiveAsync(characterId, record, cancellationToken), loyaltyAmount);
+            await CourierObjectiveAsync(characterId, record, cancellationToken), loyaltyAmount, location);
     }
 
     private async Task<long> MissionLoyaltyPointsAsync(long characterId, long agentId, Eve.Agents.AgentMissionContent mission, CancellationToken cancellationToken)

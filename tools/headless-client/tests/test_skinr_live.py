@@ -678,8 +678,10 @@ def test_v24_skinr_design_sequences_and_applies_a_persisted_license():
                 "eve_public.cosmetic.ship.skin.thirdparty.api.GetResponse",
             )
             saved_skin = read_fields(skin_data)[1][0]
-            assert read_fields(saved_skin)[2][0] == updated_line.encode()
-            assert read_fields(saved_skin)[4][0] == layout
+            saved_fields = read_fields(saved_skin)
+            assert saved_fields[2][0] == name.encode()
+            assert saved_fields[3][0] == updated_line.encode()
+            assert saved_fields[4][0] == layout
 
             license_id = _skin_identifier(character, skin_hex)
             status, response_type, owned = _send(

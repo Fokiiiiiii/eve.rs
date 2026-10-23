@@ -60,11 +60,21 @@ public class MissionViewsTests
     {
         var view = new HeldMissionView(Kill(), new AgentMissionRecord(1, 2, AgentMissionState.Accepted,
             new AgentMissionContent(9301, 57289, "Kill Step", "", false), null, null, null, null, null, null), null,
-            LoyaltyPoints: 153);
+            LoyaltyPoints: 153, DungeonLocation: new MissionDungeonLocation(30005204, 12.5, -8, 400));
         var fields = MissionViews.Objective(view).Entries.ToDictionary(entry => ((PyStr)entry.Key).Value, entry => entry.Value);
         var dungeon = Assert.IsType<PyDict>(Assert.IsType<PyList>(fields["dungeons"]).Items[0]);
         Assert.Equal(3509, ((PyInt)dungeon.Entries.Single(entry => ((PyStr)entry.Key).Value == "dungeonID").Value).Value);
         Assert.Equal(500021, ((PyInt)dungeon.Entries.Single(entry => ((PyStr)entry.Key).Value == "ownerID").Value).Value);
+        var location = Assert.IsType<PyDict>(dungeon.Entries.Single(entry => ((PyStr)entry.Key).Value == "location").Value);
+        Assert.Equal(30005204, ((PyInt)location.Entries.Single(entry => ((PyStr)entry.Key).Value == "locationID").Value).Value);
+        Assert.Equal(30005204, ((PyInt)location.Entries.Single(entry => ((PyStr)entry.Key).Value == "solarsystemID").Value).Value);
+        Assert.Equal(2, ((PyInt)location.Entries.Single(entry => ((PyStr)entry.Key).Value == "agentID").Value).Value);
+        var coordinates = Assert.IsType<PyTuple>(location.Entries.Single(entry => ((PyStr)entry.Key).Value == "coords").Value);
+        Assert.Equal(12.5, ((PyReal)coordinates.Items[0]).Value);
+        Assert.Equal(-8, ((PyReal)coordinates.Items[1]).Value);
+        Assert.Equal(400, ((PyReal)coordinates.Items[2]).Value);
+        var locations = Assert.IsType<PyList>(fields["locations"]);
+        Assert.Equal(30005204, ((PyInt)Assert.Single(locations.Items)).Value);
         var reward = Assert.IsType<PyTuple>(Assert.Single(Assert.IsType<PyList>(fields["normalRewards"]).Items));
         Assert.Equal(100000, ((PyInt)reward.Items[1]).Value);
         Assert.Equal(2, ((PyInt)fields["missionState"]).Value);

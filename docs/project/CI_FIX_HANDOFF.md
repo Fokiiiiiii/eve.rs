@@ -288,23 +288,24 @@ CI run 672 on `1669e6dc` failed the structure market Host test because the fixtu
 - The rollback check now captures both participants' balances immediately before the failing transaction and asserts they remain unchanged, while retaining the item, transaction-history, retry, and partial-settlement assertions. This tests transaction atomicity without assuming a station fee schedule.
 - The Host.Tests project build passed with 0 warnings and 0 errors. The focused Actions check is pending. No local database test was run.
 
-## 2026-10-23 SKINR sequence license lookup fixture
-
-- CI run 692 (40018629614) on 1d96ae32 passed the Windows job, then the live SKINR sequence completed and published both notices. Its post-completion license query failed because `_skin_hex_from_draft` decoded the nested `Skin.hex` protobuf message as if it were the string itself.
-- Main commit d9d806d1 unwraps `SavedDraft.attributes.skin.hex` before checking `skinr_ship_licenses`; this corrects the test's key and follows the Host response encoding. The market settlement test remains a separate CI failure.
-- Python syntax compilation and a focused SKINR live Actions run will check the fixture correction. No local database was used.
+## 2026-10-23 SKINR sequence and skin data fixture fields
 
 
 ## 2026-10-23 partial sell-order escrow assertion
 
 - Focused Agent run 175 (40020585589) on 0d9ecbb8 passed the new pre-failure wallet comparisons, then failed at the later partial-settlement check: the test expected two Tritanium in the seller's structure hangar, but found zero.
 - `MarketTrading.PlaceWithinTransactionAsync` moves the unfilled sell stack to `EscrowBase + orderId` and links it through `orders.escrow_item_id`. A partial buy transfers only its filled quantity to the buyer and keeps the remainder in order escrow. EveJS v0.12.9 follows the same `MARKET_ESCROW_PLACE` / `MARKET_ESCROW_DELIVER` flow.
-- The test now checks the two remaining units by joining the active sell order's `escrow_item_id` to inventory instead of querying the seller's hangar. The Host.Tests build and focused Actions regression check are pending; no local database test was run.
-- Current main `c068f252` has CI runs 695 and 696 plus Agent run 176 in progress. CI run 694 for parent `0d9ecbb8` is also still active.
+- The test now checks the two remaining units by joining the active sell order's `escrow_item_id` to inventory instead of querying the seller's hangar. The Host.Tests build passed with 0 warnings and 0 errors. No local database test was run.
 
 ## 2026-10-23 market escrow remainder correction
 
-- Agent run 175 (40020585589) on 0d9ecbb8 passed the pre-failure wallet comparisons, then exposed a second test assumption: it expected the two unfilled units in the seller's hangar, while the order correctly keeps them in escrow.
-- The regression assertion now joins the active sell order through `orders.escrow_item_id` to inventory, checking the two units remain attached to the order. The Host.Tests build passed with 0 warnings and 0 errors.
-- CI runs 694 (0d9ecbb8), 695 and 696 (c068f252) failed the old Host assertion. Runs 695 and 696 also exposed a separate live-test field-number mistake in the saved SKIN response; main commit fa667e96 corrects the test to read the name and line-name fields separately.
-- Current main is f2d0d09f. CI run 698 and Agent runs 178/179 are checking that head; Agent run 176 passed the station-undock client test. The corrected focused market check is pending push. No local database test was run.
+- Agent run 175 on 0d9ecbb8 failed the old hangar assertion (expected 2, actual 0). The replacement checks two remaining units through the active order's escrow item reference.
+- CI runs 694 (0d9ecbb8), 695 and 696 (c068f252) also failed that old Host assertion. The current market fix is committed locally as c0857c18 and awaits its focused Actions check.
+- CI runs 695 and 696 exposed a separate live-test field-number mistake. Main commit fa667e96 fixes it: `SkinDesign.name` is field 2 and `line_name` is field 3.
+
+## 2026-10-23 SKINR sequence and skin data fixture fields
+
+- CI run 692 (40018629614) on 1d96ae32 completed the sequence and published both expected notices, then failed to find the license by the test's `skin_hex` key. The live helper had decoded the nested `SavedDraft.attributes.skin.hex` message as direct text.
+- Commit d9d806d1 unwraps `SavedDraft.attributes.skin.hex`; CI run 693 (40020293319) confirmed license persistence and `GetRequest` now work, then showed the test reading `SkinDesign.name` field 2 as `line_name`. V24 and `ShipSkinrSequencingGateway.EncodeSkinDesign` put `name` in field 2 and `line_name` in field 3.
+- The assertion now reads field 3. Python syntax compilation passed; focused live Agent run and push CI verification are pending. No local database test was run.
+- Current main is f2d0d09f. CI run 698 and Agent runs 178/179 are active; Agent run 176 passed the station-undock client test.

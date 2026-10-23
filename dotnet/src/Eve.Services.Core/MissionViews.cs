@@ -5,7 +5,9 @@ namespace Eve.Services.Core;
 
 
 public sealed record HeldMissionView(MissionStatic Mission, AgentMissionRecord Record, long? BriefingMessageId, FetchObjectiveView? Fetch = null,
-    CourierObjectiveView? Courier = null, long LoyaltyPoints = 0);
+    CourierObjectiveView? Courier = null, long LoyaltyPoints = 0, MissionDungeonLocation? DungeonLocation = null);
+
+public sealed record MissionDungeonLocation(long SolarSystemId, double? X = null, double? Y = null, double? Z = null);
 
 
 
@@ -39,6 +41,25 @@ public static class MissionViews
         Field("Mission Briefing ID", IdOrNone(view.BriefingMessageId)),
     ]);
 
+    private static PyValue DungeonLocation(HeldMissionView view)
+    {
+        if (view.DungeonLocation is not { SolarSystemId: > 0 } location) return PyNone.Instance;
+        var fields = new List<KeyValuePair<PyValue, PyValue>>
+        {
+            Field("typeID", new PyInt(5)),
+            Field("locationID", new PyInt(location.SolarSystemId)),
+            Field("shipTypeID", PyNone.Instance),
+            Field("locationType", new PyStr("dungeon")),
+
+            Field("solarsystemID", new PyInt(location.SolarSystemId)),
+            Field("agentID", new PyInt(view.Record.AgentId)),
+            Field("locationNumber", new PyInt(0)),
+        };
+        if (location.X is { } x && location.Y is { } y && location.Z is { } z)
+            fields.Insert(1, Field("coords", new PyTuple([new PyReal(x), new PyReal(y), new PyReal(z)])));
+        return new PyDict(fields);
+    }
+
     public static PyDict Objective(HeldMissionView view)
     {
         var mission = view.Mission;
@@ -51,7 +72,8 @@ public static class MissionViews
             [
                 Field("briefingMessage", IdOrNone(view.BriefingMessageId)),
                 Field("dungeonID", new PyInt(dungeonId)),
-                Field("location", new PyDict([Field("typeID", new PyInt(1531)), Field("solarsystemID", new PyInt(0)), Field("locationID", new PyInt(0))])),
+                Field("location", DungeonLocation(view)),
+
                 Field("objectiveCompleted", completed ? new PyInt(1) : PyNone.Instance),
                 Field("ownerID", IdOrNone(mission.FactionId)),
                 Field("optional", PyBool.False),
@@ -102,7 +124,10 @@ public static class MissionViews
             Field("collateral", new PyList([])),
             Field("dungeons", new PyList(dungeons)),
             Field("objectives", new PyList(objectives)),
-            Field("locations", new PyList([])),
+            Field("locations", view.DungeonLocation is { SolarSystemId: > 0 } location
+                ? new PyList([new PyInt(location.SolarSystemId)])
+                : new PyList([])),
+
             Field("importantStandings", new PyInt(0)),
             Field("missionExtra", PyNone.Instance),
             Field("contentID", PyNone.Instance),

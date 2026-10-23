@@ -594,7 +594,7 @@ public class DispatchGoldenTests
         var registry = new ServiceRegistry();
         var service = new ExpensiveService("marketProxy");
         registry.Register(service);
-        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 10 };
+        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 10, MaxMarketRpcUnitsPerMinute = 10 };
 
         await dispatcher.DispatchAsync(CallRequestPacket("marketProxy", "GetPlexHistory"), session);
         await dispatcher.DispatchAsync(CallRequestPacket("marketProxy", "GetPlexHistory"), session);
@@ -877,7 +877,7 @@ public class DispatchGoldenTests
         var service = new ExpensiveService();
         captureRegistry.Register(service);
         var now = FixedNowMs;
-        var dispatcher = new PacketDispatcher(captureRegistry, () => now) { MaxExpensiveRpcUnitsPerMinute = 10 };
+        var dispatcher = new PacketDispatcher(captureRegistry, () => now) { MaxExpensiveRpcUnitsPerMinute = 10, MaxMarketRpcUnitsPerMinute = 10 };
         var methods = new[]
         {
             "GetCharOrders",

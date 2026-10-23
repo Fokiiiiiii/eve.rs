@@ -106,3 +106,35 @@ Use lane `eve_p4` only and run database work through `tools/dev/db-lock.sh`. The
 - Run 650 also logged a Python `SyntaxError` in the embedded `run-eve-live.sh` URL converter: shell quoting removed the nested Python key strings. The runner now uses single-quoted keys and formatting placeholders and exits if conversion returns an empty URL; `bash -n` passes, and the live Action check is pending.
 - Agent run 106 selected an unrelated .NET notice test for a commit that changed the live client harness; its project build still caught an `Action<long>` delegate mismatch, already corrected by `ed01d2d8`. Agent run 108 targeted capacity tests for a documentation-only handoff commit, so its failure does not describe that commit. Future dispatches should select tests from the changed source paths; docs-only handoffs need no test dispatch.
 - Recovery fixes through the SSO row assertion are pushed separately. The nine pre-existing Rust source deletions in this worktree are being preserved; they prevent the local workspace-wide fmt and Clippy commands from resolving `eve-space::targeting`. The touched `eve-sde` package check, package fmt, focused test and Clippy passed. Push-triggered Actions run the complete checks against a clean checkout.
+
+## 2026-10-23 Windows entry and pre-push toolchain
+
+- The required Linux and Windows CI jobs and `tools/dev/check-all.sh` now select Rust 1.94.1 by default. The Windows job checks the .NET SDK selected from `global.json`.
+- The Windows job runs the UTF-8 marshal fixture test under Windows PowerShell 5.1, starts the production PowerShell server, waits for the TCP front, then performs the live login-to-character walk and stops the stack.
+- Focused regression `WindowsAndPrePushCoverageTests.test_required_ci_pre_push_toolchain_and_windows_character_entry` passed locally.
+- Push-triggered Actions will determine the current Windows and full-gate result; update the Windows TODO rows after that run completes.
+
+### Public Gateway test tokens
+
+- CI run 653's live SKINR walk received status 401 because the shared headless helper still minted an unsigned bearer token, while `GatewayTokens.TryReadIdentity` now requires a valid Host-signed token with its current key and claims.
+- The gateway helper now obtains the token through the logged-in client's `userSvc.GetUserToken` RPC. SKINR, skill-plan, and title live walks use that helper, including the fresh login after Host restart. A small helper regression test verifies the RPC and authorization metadata.
+- The local focused helper test passed after installing the headless-client requirements into a temporary environment. The focused live SKINR Action check will run on the pushed commit.
+
+## 2026-10-23 market budget test configuration
+
+- CI run 660 on `4f38c72f` exposed two dispatcher assertions that expected the market-specific budget to reject a second read, but their test dispatchers only lowered the general RPC budget.
+- The market service has a separate `MaxMarketRpcUnitsPerMinute` limit. The two tests now set that value to 10, matching the intended per-session refusal scenario.
+- `Eve.Services.Tests` builds locally, and the focused market-owner and PLEX-history tests passed 2/2 without a database. The next push gate will verify the fix.
+
+
+### Dogma reload test cleanup race
+
+- The .NET shard failure reproduced on runs 653, 657, and 658 in `ReloadServiceTests.A_gun_that_runs_dry_is_loaded_from_the_hold_when_the_reload_time_has_run_and_the_simulation_is_answered_with_the_rounds`. The test used `FakeRounds.Asked` as its completion signal, but that list is updated before the awaited store callback finishes; fixture cleanup could drop the schema during the callback's item transaction and PostgreSQL returned deadlock 40P01.
+- `FakeRounds` now exposes completion after its callback returns. The live dry-gun test awaits that signal before teardown and checks the persisted 80-round module / 120-round hold result. The matching no-fit test also waits for callback completion.
+- The local `Eve.Services.Dogma.Tests` project build passed with zero warnings and errors. Agent run 127 (`40005187593`) is checking the focused database-backed regression on pushed commit `fbc39d63`.
+- Agent run 123 on `e0cb832e` passed the two `Eve.Host.Tests` matches, then failed because the same `FullyQualifiedName~SignalTracker` filter selected zero tests in `Eve.Services.Core.Tests`. This was a test-selection mismatch; dispatch that filter to the Host project only.
+
+### Market RPC budget regression test setup
+
+- CI run 660 (`4f38c72f`) failed both market budget regression tests because each configured only `MaxExpensiveRpcUnitsPerMinute = 10`, while `PacketDispatcher` now routes `marketProxy` through `MaxMarketRpcUnitsPerMinute`. The service therefore received the second call and the tests observed two calls instead of one.
+- The tests now set both limits to 10, so their rejection assertion exercises the market-specific session budget. The focused local `Eve.Services.Tests` check passed (1 passed, 0 skipped); focused Agent Actions verification will run after this commit.

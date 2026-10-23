@@ -1,57 +1,26 @@
 # SSO handshake and account-link handoff
 
-## Objective
+## Objective and implementation
 
-Authenticate the V24.01 `ConnectionService.LoginSso` path from the inbound `user_sso_token`, resolve it only through a persisted CCP issuer/subject account link, and keep the client acknowledgement's local gateway `access_token` separate.
+Authenticate V24.01 `ConnectionService.LoginSso` using inbound `user_sso_token`, then resolve a stable eve.rs account only through a persisted issuer/subject link.
 
-## Source findings
+- Rust classifies the V24 SSO handshake and forwards the token as the HostLink SSO credential. Debug formatting redacts the token.
+- Host verifies the JWT signature with issuer JWKS, RS256, issuer, configured audiences, expiration/not-before, and the character subject before resolving the link. Invalid credentials, missing verifier, unknown subject, or missing link refuse with `LoginAuthFailed`; refused logins do not open a session or send initial state.
+- `identity.external_identity_links` persists unique issuer/subject-to-account links. Link lookup is explicit; the `EVE-SSO-CONNECTION` sentinel is not used as an account identity.
+- The CCP token is not forwarded as a local gateway token. The game-session acknowledgement retains `access_token` and `computer_hash` fields with their existing separate-provider semantics.
+- Account setup requires `EVE_SSO_AUDIENCES` to contain `EVE Online` and the actual application client ID. The inspected V24 callsites do not expose that ID, so deployment configuration must provide it.
 
-- V24.01 sends `user_name=EVE-SSO-CONNECTION`, `user_password=fakePW`, and `user_sso_token`; the Rust handshake classifies that path as SSO and forwards the token in HostLink v2.
-- CCP SSO documentation requires RS256/JWKS signature validation, issuer validation, both `EVE Online` and the application's client ID in `aud`, and a live `exp`; CCP `sub` identifies the chosen character.
-- The inspected V24 callsites do not expose the application client ID. Production SSO requires `EVE_SSO_AUDIENCES` with the actual client ID and `EVE Online`; the implementation does not guess it.
-- Account binding is explicit: `identity.external_identity_links` stores the issuer, character subject, and stable account id. EveJS v0.12.9 only records the SSO token and does not define an account mapping.
-- The CCP token is used only as the inbound SSO credential. `access_token=None` and `computer_hash=None` remain in the game-session acknowledgement; the separate multi-login computer-hash gate is outside this change.
+## Verified
 
-## Implementation and coverage
+- Host dispatch contract coverage checks the SSO credential, linked account, session userid/role/language, and refusal before session-open.
+- Identity coverage checks signature, issuer, audience, expiry, subject, repeated login, cross-account isolation, and persistent link resolution.
+- Deterministic-issuer headless scenario logs in, requests character selection, creates a character, selects it, and checks the linked account session id.
+- Actions run [40004676875](https://github.com/Fokiiiiiii/eve.rs/actions/runs/40004676875) on commit 607cf277: Host SSO 5 passed/0 failed/0 skipped; Identity SSO 8 passed/0 failed/0 skipped; live SSO 1 passed/0 failed/0 skipped. The first live run, 40001119508, exposed a KeyVal parsing issue after successful login; main commit e0cb832e fixed the parser and the rerun passed.
+- Earlier Host contract run 40000836917 and Identity run 40002097933 also passed.
+- Local Rust package check, formatting and targeted Clippy passed. Host.Tests Release build passed with zero warnings/errors. No PostgreSQL instance was used locally; Actions exercised its isolated test database.
+- The graphical V24 client was not exercised.
 
-- Rust parses and forwards the V24 token with redacted debug output; HostLink protocol version 2 carries credential kind and token.
-- The Host verifies CCP JWT signature, issuer, configured audiences, expiration/not-before, and character subject before resolving the explicit link.
-- Missing verifier, invalid token, unknown subject, or absent link refuses with `LoginAuthFailed`. Session opening remains after accepted authentication.
-- PostgreSQL migration `0005_sso_identity_links.sql` persists a unique issuer/subject link. Identity coverage includes signature, issuer, audience, expiry, subject, repeated login, and cross-account isolation. PostgreSQL coverage checks resolution through a newly created directory.
-- Host socket coverage checks the SSO credential/token, verified account id, role, country, and resulting `userid`/role/language initial state; it also checks an unlinked refusal before session-open.
-- `tools/headless-client/tests/test_sso_login_live.py` uses a local RSA test issuer, provisions a persisted link in the live-run scratch schema, and reaches character selection and `SelectCharacterID`. The runner configures the matching local issuer and audience and retains the merged paperdoll live test.
+## Remaining scope notes
 
-## Checkpoint
-
-- Rust `cargo +1.94.1 check -p eve-net`, package fmt, and targeted all-target Clippy: passed.
-- Python compile checks and HostLink fixture generation (14 valid, 10 invalid cases): passed.
-- Host, Host.Tests, and Identity.Tests Release builds: passed. No-database identity verifier theory: 5 passed, 0 failed, 0 skipped.
-- Agent test `39975779919` for feature commit `7b8ae52a`: Host.Tests SSO cases 5/5 and Identity.Tests SSO cases 8/8 passed; zero skips. Agent test `39992399196` also passed its selected Host/Identity SSO and composition filter.
-- Push-triggered CI `39975764343` found Host startup composition failing because `InventoryRpc` wraps `InvBrokerService`, while character composition searched only for the inner type. The wrapper-unwrapping fix and focused composition test were pushed in `0cc56f79`.
-- Agent test `39989413962` and CI `39989400403` failed at .NET test compilation because the composition fixture supplied a two-argument lambda to `Action<long>`. The fixture correction passed a full dependency-including Host.Tests Release build with zero warnings and errors, was committed, and pushed to `main` as `872df205`.
-- Focused Host/Identity Actions run 39991052345 completed successfully for the SSO and composition filter. Push CI 39991023879 passed Rust format/Clippy, Rust tests, fixture checks, Python client tests, and the full .NET build, but Host startup in the live workflow and a Host test shard failed because sde.skinrComponentPointValues is absent. The pinned lock lists three records for that table. The pinned client build 3396210 has no SKINR authority tables; official CCP mission build 3405148 has them. The lock-hash cache update pushed as 86c11a0c did not resolve this. This is a Host startup prerequisite for exercising SSO, not part of account authentication. The second CI run 39992377417 reproduced the missing-table failure despite the cache change.
-- Push CI 39995121778 reproduced Host startup failure after the mission schema was loaded. The exact official build 3405148 JSONL rows show that point values and tier thresholds use nested _value arrays of _key/_value pairs, while slot configurations use config, ships, and allowAllShips; the categories table identifies ship types. The loader now reads these forms and resolves explicit priority overrides before the default all-ships configuration. A focused no-database test covers nested map parsing and ship override/exclusion behavior.
-- Agent test 39995138268 passed its selected Host/Identity SSO and composition filter (zero failed jobs). The concurrent main merge also surfaced separate space-container test failures in CI 39975764343; they are outside this SSO path. No PostgreSQL database was used locally.
-- Push CI 39998018028 failed after reaching the headless SKINR scenario: its fixture queried SKINR tables from sde, but the official authority data is loaded in sde_mission. The same fixture also treated per-hull slot configurations and unlimited licenses using obsolete shapes. It now reads mission schema categories/types/groups and SKINR rows, resolves priority-listed ships before the default configuration, and selects the SDE's unlimited license value. Python syntax compilation and diff checks passed. This run did not establish the SSO headless completion result.
-- The dedicated ShipSkinrCatalogDataTests Actions run 39998073817 passed (zero failures, zero skips). Host shard 3/4 also found the prior nested protobuf assertion; commit bb6029d1 now decodes the full V24 string field and awaits CI verification. Rust workspace jobs failed in both Linux and Windows jobs; their failing cases still need identification.
-- Local verification: Host.Tests Release build succeeded (0 warnings/errors); ShipSkinrCatalogDataTests passed 2/2, zero skips; cargo +1.94.1 check -p eve-sde, package formatting and targeted Clippy passed. Workspace Rust fmt and Clippy were attempted; both are blocked by the pre-existing missing crates/eve-space/src/targeting/* files, which remain untouched.
-- Commit a00e62c9 applies the Host SDE-schema startup fix. Commit 6573728b adds the official JSONL parser correction and focused data tests; it was pushed to main at cae36a3c. Push CI 39998018028 and the focused no-database Host test run 39998073817 are pending. The graphical V24 client was not exercised.
-- Commit bb6029d1 fixes the SKINR test's nested protobuf string decoding and was pushed to main. Push CI 39999180175 and focused Host test run 39999200314 are pending.
-- Commit 5ecf9205 updates the live SKINR fixture to use the official mission SDE schema and its actual JSONL data forms; it was pushed to main. Push CI 39999682477 and the focused SKINR Host test run 39999709247 are pending.
-- No PostgreSQL database was used locally. The live SSO scenario still needs a passing Actions run; the graphical V24 client was not exercised.
-
-## Next steps
-
-1. Review push CI 39998018028, 39999180175, and 39999682477, plus focused Host runs 39999200314 and 39999709247.
-2. Identify the Rust workspace failures and fix any failure caused by this work.
-3. Confirm the live deterministic-issuer handshake reaches character selection; record separately that the graphical V24 client was not exercised.
-
-
-## Latest continuation (2026-10-23)
-
-- The live SKINR fixture now joins official mission `skinrTierThresholds` for candidate ship groups, matching Host layout validation. Python syntax compilation and `git diff --check` passed after the change.
-- Focused no-database Host SKINR data tests passed in Actions run 39999709247.
-- At 18:07 UTC, push CI runs 39999180175 (bb6029d1) and 39999682477 (5ecf9205) were still in progress. The latter includes `test_v24_sso_handshake_reaches_and_selects_a_character`, which logs in with the deterministic issuer, requests selection data, creates/selects a character, and checks the linked account session id. Await its Actions result before claiming the live SSO flow passed.
-- The graphical V24 client was not exercised; no local PostgreSQL database was used.
-
-- Post-push update: commit 7aee51f5 was pushed to main with the tier-threshold fixture constraint. Push CI run 40000814361 and focused Host SSO dispatch run 40000836917 are in progress; the earlier focused Host SKINR run 39999709247 passed.
+- Production SSO needs the deployment's real application client ID in `EVE_SSO_AUDIENCES`.
+- Older main CI run 40002451993 failed in the SKINR live test because its helper sent an unsigned fake gateway bearer (401), and in two unrelated market dispatch golden tests. Gateway token verification is owned by the separate 07-gateway-security task; those failures were outside this SSO change.

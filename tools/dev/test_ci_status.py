@@ -64,6 +64,22 @@ class AgentTestRefResolutionTests(unittest.TestCase):
         self.assertIn('python3 tools/dev/resolve-agent-test-ref.py "$TEST_REF"', workflow)
 
 
+class WindowsAndPrePushCoverageTests(unittest.TestCase):
+    def test_required_ci_pre_push_toolchain_and_windows_character_entry(self):
+        ci = (REPO_ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        windows = (REPO_ROOT / ".github/workflows/ci-windows.yml").read_text(encoding="utf-8")
+        pre_push = (REPO_ROOT / "tools/dev/check-all.sh").read_text(encoding="utf-8")
+        fixture_test = (REPO_ROOT / "tools/headless-client/tests/test_marshal_golden.py").read_text(encoding="utf-8")
+
+        self.assertIn('RUST_TOOLCHAIN: "1.94.1"', ci)
+        self.assertIn('RUST_TOOLCHAIN: "1.94.1"', windows)
+        self.assertIn('TOOLCHAIN="${RUST_TOOLCHAIN:-1.94.1}"', pre_push)
+        self.assertIn("Verify global.json SDK selection", windows)
+        self.assertIn("tools/windows/start-server.ps1", windows)
+        self.assertIn("tests/test_login_to_character.py", windows)
+        self.assertIn('read_text(encoding="utf-8")', fixture_test)
+
+
 class FailureParsingTests(unittest.TestCase):
     def test_pytest_failure_name_and_section_tail(self):
         log = """=================================== FAILURES ===================================

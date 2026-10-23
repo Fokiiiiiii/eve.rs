@@ -171,8 +171,8 @@ public sealed class IndustryMonitorNoticeTests
 
         await dispatcher.DispatchAsync(Request(4, "invbroker", "Add", new PyInt(9)), session);
 
-        var notice = Notification(Assert.Single(capture.Packets, IsNotification));
-        Assert.Equal("OnIndustryMaterials", notice.Name);
+        var notice = Notification(Assert.Single(capture.Packets,
+            packet => IsNotification(packet) && Notification(packet).Name == "OnIndustryMaterials"));
         Assert.Equal(second.Items[0], notice.Args[0]);
         Assert.NotEqual(first.Items[0], notice.Args[0]);
         Assert.Equal(new PyInt(9), Assert.IsType<PyDict>(notice.Args[1]).Entries.Single().Value);

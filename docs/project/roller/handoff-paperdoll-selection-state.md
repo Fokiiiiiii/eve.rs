@@ -8,6 +8,8 @@ PgCharacterStore.ResolvedPaperdollStateAsync reads paperdoll_state, doll_info, a
 
 Migration 0015 expands the database constraint to admit forced state 4 alongside existing recustomization states 1 and 3. States 0 and 2 are derived from appearance data.
 
+Host composition builds RepackagingService from the raw InvBrokerService, then wraps registered brokers with IndustryInventoryChangePublisher. This preserves the broker dependency after the inventory publisher moved to the final service-list wiring stage.
+
 ## Evidence
 
 - V24.01 client route: /home/user/eve-logic/eve/client/script/ui/login/charSelection/characterSelection.py:727-740; states 2 and 4 call CreateNewAvatar.
@@ -19,8 +21,8 @@ Migration 0015 expands the database constraint to admit forced state 4 alongside
 
 ## Regression coverage
 
-CharacterReSculptHostTests.Character_selection_dispatch_projects_paperdoll_state_and_a_saved_avatar_can_enter checks the client wire shape, states 0/2/4, retry, Host restart, save reset, and SelectCharacterID. Host migrations run before test fixture inserts. The live headless test test_paperdoll_selection.py checks state 0, missing-appearance state 2, saved-appearance state 0, then game entry.
+CharacterReSculptHostTests.Character_selection_dispatch_projects_paperdoll_state_and_a_saved_avatar_can_enter checks tuple and row wire shape, states 0/2/4, retry, restart persistence, save reset, and SelectCharacterID. Host migrations run before fixture inserts. Headless test test_paperdoll_selection.py checks state 0, missing-appearance state 2, saved-appearance state 0, and game entry.
 
 ## Verification
 
-Migration 0015 resolves the database rejection of state 4. Host run 39964185288 and headless run 39964072899 are in progress for commit 988ef94f8c8787f570ca09c5ded1137ace618150. Earlier Host run 39962217896 reached the test and failed at the old state constraint; that run predates migration 0015. The graphical-client route has not been exercised.
+Host dispatch run 39964185288 passed; focused headless run 39965636111 passed with 1 passed, 0 failed, and 0 skipped. Push CI run 39965909645 failed because the current main service composition moved the inventory broker wrapper after RepackagingService registration; the composition lookup is corrected to pass the raw broker and is pending focused Actions verification. The graphical-client route has not been exercised.

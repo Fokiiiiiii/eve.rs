@@ -5484,4 +5484,4 @@ The fleetObject Init RPC costs 10 weighted per-session units because it updates 
 
 ## Alliance bill-list work budget (2026-10-22)
 
-`allianceRegistry.GetBills` and `GetBillsReceivable` return complete bill collections for the authenticated alliance accountant, and `GetApplications` returns the full application collection to the executor director. Each call costs 10 weighted per-session units to bound repeated full-list reads. The wire results and persisted role checks are unchanged. `DispatchGoldenTests.Alliance_full_list_reads_use_a_named_per_session_budget` verifies the next bill-list call is refused after the session allowance is consumed.
+`allianceRegistry.GetBills` and `GetBillsReceivable` return complete bill collections for the authenticated alliance accountant, and `GetApplications` returns the full application collection to the executor director. Each call costs 10 weighted per-session units to bound repeated full-list reads. The wire results and persisted role checks are unchanged. `DispatchGoldenTests.Alliance_full_list_reads_use_a_named_per_session_budget` verifies the next full-list call is refused after the session allowance is consumed.

@@ -139,6 +139,40 @@ public sealed class UnportedFeatureRpcServicesTests
     }
 
     [Fact]
+    public async Task Epic_arc_status_refuses_malformed_agent_ids_before_callback()
+    {
+        var callbackCalls = 0;
+        IService service = new EpicArcStatusService((_, characterId, _) =>
+        {
+            Assert.Equal(42, characterId);
+            callbackCalls++;
+            return ValueTask.FromResult(true);
+        });
+        var session = new ClientSession { CharacterId = 42 };
+        foreach (var call in new[]
+        {
+            new ServiceCall { Method = "AgentHasEpicMissionsForCharacter", Args = [], Session = session },
+            new ServiceCall { Method = "AgentHasEpicMissionsForCharacter", Args = [new PyInt(300), new PyInt(42)], Session = session },
+            new ServiceCall { Method = "AgentHasEpicMissionsForCharacter", Args = [new PyInt(300)], Kwargs = Py.Dict(("characterID", new PyInt(42))), Session = session },
+        })
+        {
+            var error = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(call).AsTask());
+            Assert.Equal("EPIC_ARC_STATUS_ARGUMENTS_INVALID", error.Error.UserErrorMessage);
+        }
+
+        foreach (var invalid in new PyValue[] { new PyInt(0), new PyInt(-1), new PyReal(300), PyNone.Instance })
+        {
+            var error = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(Call(
+                "AgentHasEpicMissionsForCharacter", session, invalid)).AsTask());
+            Assert.Equal("EPIC_ARC_STATUS_AGENT_INVALID", error.Error.UserErrorMessage);
+        }
+
+        Assert.Equal(0, callbackCalls);
+        Assert.Equal(PyBool.True, await service.CallAsync(Call("AgentHasEpicMissionsForCharacter", session, new PyLong(300))));
+        Assert.Equal(1, callbackCalls);
+    }
+
+    [Fact]
     public async Task Abyssal_spawn_report_requires_staff_bounded_wire_inputs_and_a_provider()
     {
         var callbackCalls = 0;

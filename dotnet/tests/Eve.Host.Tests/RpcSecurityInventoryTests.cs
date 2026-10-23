@@ -67,12 +67,15 @@ public sealed class RpcSecurityInventoryTests : IAsyncLifetime
                 .SelectMany(serviceName =>
                 {
                     var service = host.Registry.Lookup(serviceName)!;
-                    var candidates = service.GetType().GetMethods(BindingFlags.Instance | BindingFlags.Public)
+                    var methods = service.GetType().GetMethods(BindingFlags.Instance | BindingFlags.Public);
+                    var generated = methods
                         .Where(method => method.GetParameters() is [{ ParameterType: var parameterType }] && parameterType == typeof(ServiceCall))
                         .Where(method => method.ReturnType == typeof(Eve.Marshal.PyValue) ||
                             method.ReturnType == typeof(Task<Eve.Marshal.PyValue>) ||
                             method.ReturnType == typeof(ValueTask<Eve.Marshal.PyValue>))
                         .Select(method => method.GetCustomAttribute<MethodAttribute>()?.Name ?? method.Name)
+                        .Where(service.HasMethod);
+                    var candidates = generated.Concat(ManualMethodNames(service))
                         .Where(service.HasMethod)
                         .Distinct(StringComparer.Ordinal)
                         .Select(method => $"{serviceName}.{method}");
@@ -80,13 +83,79 @@ public sealed class RpcSecurityInventoryTests : IAsyncLifetime
                 })
                 .Order(StringComparer.Ordinal)
                 .ToArray();
-            Assert.Equal(956, rows.Length);
+            var missingServices = host.Registry.ServiceNames.Distinct(StringComparer.Ordinal)
+                .Where(serviceName => rows.All(row => !row.StartsWith($"{serviceName}.", StringComparison.Ordinal)))
+                .Order(StringComparer.Ordinal)
+                .ToArray();
+            Assert.True(missingServices.Length == 0, $"RPC methods were not enumerated for: {string.Join(", ", missingServices)}");
+            Assert.Equal(1374, rows.Length);
             Console.WriteLine($"RPC_INVENTORY_COUNT={rows.Length}");
             foreach (var row in rows) Console.WriteLine($"RPC_INVENTORY={row}");
         }
         finally
         {
             await host.ShutdownAsync();
+        }
+    }
+
+    private static IEnumerable<string> ManualMethodNames(IService service)
+    {
+        var type = service.GetType();
+        if (type.GetCustomAttribute<ServiceAttribute>() is not null)
+            return [];
+
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var method in type.GetMethods(BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
+        {
+            var il = method.GetMethodBody()?.GetILAsByteArray();
+            if (il is null) continue;
+            for (var i = 0; i + sizeof(int) < il.Length; i++)
+            {
+                if (il[i] != 0x72) continue; // ldstr
+                try
+                {
+                    var token = BitConverter.ToInt32(il, i + 1);
+                    var candidate = method.Module.ResolveString(token);
+                    if (service.HasMethod(candidate)) names.Add(candidate);
+                }
+                catch (ArgumentException)
+                {
+                    // Other instruction bytes can share the ldstr opcode value.
+                }
+            }
+        }
+
+        var visited = new HashSet<object>(ReferenceEqualityComparer.Instance);
+        AddCatalogFields(service, names, visited, depth: 0);
+        return names;
+    }
+
+    private static void AddCatalogFields(object target, HashSet<string> names, HashSet<object> visited, int depth)
+    {
+        if (depth > 2 || !visited.Add(target)) return;
+        foreach (var field in target.GetType().GetFields(BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic))
+        {
+            object? value;
+            try { value = field.GetValue(field.IsStatic ? null : target); }
+            catch (TargetException) { continue; }
+            if (value is IEnumerable<string> candidates)
+            {
+                foreach (var candidate in candidates) names.Add(candidate);
+            }
+            else if (value is IService nested && !ReferenceEquals(nested, target))
+            {
+                foreach (var candidate in nested.GetType().GetMethods(BindingFlags.Instance | BindingFlags.Public)
+                    .Where(method => method.GetParameters() is [{ ParameterType: var parameterType }] && parameterType == typeof(ServiceCall))
+                    .Select(method => method.GetCustomAttribute<MethodAttribute>()?.Name ?? method.Name)
+                    .Concat(ManualMethodNames(nested)))
+                    if (nested.HasMethod(candidate)) names.Add(candidate);
+            }
+            else if (value is System.Collections.IDictionary dictionary)
+            {
+                foreach (System.Collections.DictionaryEntry entry in dictionary)
+                    if (entry.Value is IEnumerable<string> entries)
+                        foreach (var candidate in entries) names.Add(candidate);
+            }
         }
     }
 }

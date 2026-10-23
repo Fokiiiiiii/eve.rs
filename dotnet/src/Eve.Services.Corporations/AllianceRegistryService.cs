@@ -677,7 +677,7 @@ private static double RelationshipValue(PyValue value)
     public async ValueTask<PyValue> PayBill(ServiceCall call)
     {
         var authority = await RequireAllianceRole(call,CorporationRoles.Accountant,true);
-        var billId = Number(call.Arg(0));
+        var billId = PositiveIntegerId(call.Arg(0));
         var accountKey = Number(call.Kwarg("fromAccountKey") ?? call.Arg(1));
         if (accountKey is < 1000 or > 1006) accountKey = 1000;
         var paid = await store.PayAllianceBillAsync(billId,authority.Alliance,authority.Corporation,
@@ -691,8 +691,8 @@ private static double RelationshipValue(PyValue value)
     {
         var (actor,allianceId) = await RequireAllianceExecutorDirector(call);
         if (relations is null) throw new CorporationError("WAR_DECLARATION_UNAVAILABLE");
-        var againstId = Number(call.Arg(0));
-        if (againstId <= 0 || againstId == allianceId)
+        var againstId = PositiveIntegerId(call.Arg(0));
+        if (againstId == allianceId)
             throw new CorporationError("ALLIANCE_WAR_DECLARATION_INVALID");
         long? warHqId = null;
         if (call.Args.Count > 1 && call.Arg(1) is not PyNone)

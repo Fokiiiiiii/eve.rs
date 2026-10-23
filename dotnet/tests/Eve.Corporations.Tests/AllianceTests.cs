@@ -2209,6 +2209,12 @@ public class AllianceTests
 
             await Assert.ThrowsAsync<Eve.Corporations.CorporationError>(() =>
                 service.CallAsync(DeclareCall(targetCorp.Id + 10, 60000001)).AsTask());
+            await Assert.ThrowsAnyAsync<Exception>(() => service.CallAsync(new Eve.Services.ServiceCall
+            {
+                Session = session, Method = "DeclareWarAgainst",
+                Args = [new Eve.Marshal.PyReal(targetCorp.Id + 0.5), Eve.Marshal.PyNone.Instance],
+                CallId = new Eve.Marshal.PyInt(71004)
+            }).AsTask());
             Assert.Empty(await rig.Store.AllianceBillsAsync(alliance.Id));
             Assert.Null(await relations.GetAsync("war", alliance.Id, targetCorp.Id + 10));
 
@@ -2248,6 +2254,11 @@ public class AllianceTests
             var beforeBalance = await rig.Transactions.AccountBalanceAsync(new Eve.Wallet.WalletAccount(executorCorp.Id,1000));
             Assert.True(beforeBalance is > 100_000_000m);
             Assert.Equal(new Eve.Marshal.PyInt((long)beforeBalance!.Value),balance);
+            await Assert.ThrowsAnyAsync<Exception>(() => service.CallAsync(new Eve.Services.ServiceCall
+            {
+                Session = session, Method = "PayBill", Args = [new Eve.Marshal.PyReal(billId + 0.5)]
+            }).AsTask());
+            Assert.Single(await rig.Store.AllianceBillsAsync(alliance.Id));
             Assert.IsType<Eve.Marshal.PyNone>(await service.CallAsync(new Eve.Services.ServiceCall
             {
                 Session = session, Method = "PayBill", Args = [new Eve.Marshal.PyInt(billId)]

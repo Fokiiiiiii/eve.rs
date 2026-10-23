@@ -5,10 +5,13 @@ Scope: the rows that were in `docs/project/TODO.md` lines 1200–1600 at the ori
 ## Closed or reconciled
 
 - 1240 — Data/relic site containers, hacking, loot and clear event. Evidence: `SiteContainerHacks.OnItemLeftAsync`; `SiteContainerTests`, `SiteLootTests`, `ContainerSiteEndToEndTests`, `SiteContainerRestartTests`, `HackingCompositionTests`; section 48 supersedes the old ST-10 blocker.
-- 1259 — Epic arc inventory reconciled to 21 in section 43b; the wiki/design lists were incomplete subsets. Evidence: `MissionStaticCatalog`, `EpicArcOffersTests`, owner decision in DEVIATIONS.
+- 1259 — Epic arc inventory reconciled to 21 in section 43b; the wiki/design lists were incomplete subsets. Evidence: section 43b inventory and owner-confirmed decision in DEVIATIONS “Epic arc availability”; `EpicArcOffersTests` covers arc offer behavior, not the total count.
 - 1368 — Corporation-office compression source and access path. Evidence: `StructureCompressionAuthority.SourceItemAsync`; `StructureCompressionTests` (9). Live walk remains open as a separate row.
 - 1372–1373 — Pharolux jump-drive and Host registry backend. Evidence: `StructureBeaconTravelTests`, `CynoJumpHostTests.A_revelation_jumps_to_an_accessible_structure_beacon_as_it_does_to_a_field`, `StructureCynoBeaconSimTests.A_pharolux_beacon_is_placed_when_its_service_comes_online_and_taken_out_when_it_goes_offline`, `StructureCompositionTests.A_structure_cyno_beacon_jump_is_refused_by_name_through_the_registry_for_a_jammed_system_and_for_no_access`. Live client walk remains open.
 - 1374 — Owner corporation fuel-burn notifications. Evidence: all three `StructureFuelOwnerNotificationTests` methods; hull fuel reductions remain open.
+- 1450 — Analysis-beacon link lock, bounded to the live-tested lock and movement/warp refusal behavior. Evidence: `test_crab_walk.py` and simulation `LINK_HOLD` test; graphical cloak/tether and UI checks remain open.
+- 1532 — Insurgency campaign start in each warzone, with the documented hourly interval and hub-choice shortcuts. Evidence: `InsurgencyDirectorTests.Each_warzone_with_systems_starts_one_campaign_in_forecasting_covering_its_hub_and_its_nearest_low_systems`; live `test_fob_walk.py` and `test_fob_insystem_walk.py`.
+- 1534 — Existing pirate/empire site starts and once-per-system site scoring plus contributor kill reward. Evidence: `InsurgencyDirectorTests.A_campaign_starts_its_sites_when_it_becomes_active_and_a_completed_site_scores_its_system_once`, `InsurgencyDirectorTests.A_pirate_win_pays_each_contributor_the_victory_points_and_ends_the_other_sites`.
 - 1552 — Basic level-4 mission dungeon start has a live headless walk. Evidence: `tools/headless-client/tests/test_mission_walk.py` (section 55); arc 29 mission 14117 remains open.
 - 1554 — Talk-step completion and one-time reward. Evidence: `MissionDungeonRuntime.OnConversationAsync`, `AgentDialogueSources.OnConversation`, `Arc29StepsTests`.
 - 1556 — Basic kill re-offer after the four-hour reference delay. Evidence: `BasicKillOffers.cs`, `BasicKillOffersTests` (5). Bonus/LP remains open.
@@ -29,8 +32,12 @@ Scope: the rows that were in `docs/project/TODO.md` lines 1200–1600 at the ori
 - 1369 — Compression backend is Host-tested, but `test_structures.py` has no live compression/corporation-office scenario.
 - 1374 — No live `CmdJumpToStructureBeacon` walk verifies beacon choice, fuel debit and destination transition.
 - 1377 — `StructureFuel.HourAsync` burns base `FuelPerHour`; SDE hull-bonus inputs and reduced-burn tests are absent. EVE University documents hull-specific service fuel reductions.
-- 1456 — `AnalysisBeaconDirector` has no damage/target handler and the deployment is not a damageable simulation body; current Host tests cover links, scans and rewards.
-- 1457 — Graphical beacon UI/scan behavior has no client walk; the V24.01 snapshot has no scan-UI caller.
+- 1455 — Analysis-beacon D-R1 payouts remain open: `Eve.Npc.PgBountyStore` handles ordinary NPC prizes, but `AnalysisBeaconDirector` has no bounty-credit path; EveJS v0.12.9 `mobileAnalysisBeaconRuntime.grantMobileAnalysisBeaconScanReward` grants item stacks only. The proposed prize table is owner-supplied with no source-backed amounts/recipient rules.
+- 1456 — `AnalysisBeaconDirector` has no damage/target handler and the deployment is not a damageable simulation body; current Host tests cover links, scans and rewards only.
+- 1457 — Graphical cloak/tether restrictions and the link UI, activation timer, scan UI and beacon ball kind have no matching live graphical walk; simulation tests cover some restrictions only. A split row also requires the same D-L2 scenario on EveJS v0.12.9; its character store is not seeded in the available environment.
+
+- 1531 — Insurgency notice publication exists in Host composition, but no V24.01 live walk verifies client text, handling, recipients or order.
+- 1534 — Corruption spread at level 3, per-stage contribution percentages, Ice Refinery Heist and Counter-Insurgency Outposts remain open because source-backed rules and producer regressions are absent.
 - 1535 (BLOCKED) — Owner deferred C-G1 until the client gateway call path and truthful progress/threshold authority exist. Transport exists; insurgency handlers, cumulative progress owner and source-backed stage thresholds/effects do not.
 - 1556 — Arc 29 mission 14117 remains held because template 3509 lacks Damsel content; the basic live walk does not cover it.
 - 1557, 1561 — Timed bonus eligibility/settlement and LP need source-backed dynamic rewards and deadline/replay tests.
@@ -40,4 +47,4 @@ Scope: the rows that were in `docs/project/TODO.md` lines 1200–1600 at the ori
 
 ## Verification in this run
 
-CBM and Serena source/test declarations were inspected; external mechanics claims were checked against EVE University and EveJS. No PostgreSQL database was used, and no tests were executed in this worktree during this audit. The cited existing PG tests still need the selected GitHub Actions checks before these documentation closures are accepted.
+CBM and Serena source/test declarations were inspected; external mechanics claims were checked against EVE University and EveJS. No PostgreSQL database was used and no tests were executed locally. Selected GitHub Actions run 39939081849 passed for the site, structure, and mission test filters. Run 39940442097 passed `Eve.Services.Space.Tests` (4/4) and `Eve.Insurgency.Tests` (7/7), with no failures or skips in either .NET project. Its generic fast live set reported 101 passed and 8 skipped; the skipped cases are recorded separately and do not count as passes. Neither run verifies the outstanding graphical client walks. The docs/evidence follow-up was pushed in merge commit `0eedb3cf5a37e215a9d7b997ec1594fc46bee532`; `ci-status.py failures` found no `ci.yml` run for that SHA at the time of this check.

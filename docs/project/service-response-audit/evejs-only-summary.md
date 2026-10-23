@@ -20,6 +20,10 @@ EveJSがclientへ広告する143名のうち、RSのfull profileにない名前�
 
 特に `publicGatewaySvc` はV24ではclient-localのgRPC adapterです。MachoNet広告の名前がないだけで、remoteサービス破損とは断定できません。EveJSの `send_request` fallbackもlegacy枠です。[EJS-0355](../../../docs/project/service-response-audit/evejs-only-responses.md:606)
 
+## 2026-10-23 second-half caller classification
+
+The second half of the ledger, EJS-0337 through EJS-0672, now has a per-row V24 need decision: 241 rows cite a V24 client or request-type reference and are marked required; 95 rows have no demonstrated direct V24 caller or are covered by a verified client-local alias. These are source-level caller classifications, not completed feature implementations or client acceptance. The 241 required rows still need Host wiring, authoritative state, persistence/notifications where applicable, and focused regression tests. The named-RPC caller search used exact endpoint identifiers; public-gateway request checks excluded generated schemas and mock-only references. The grouped provider/session rows retain their source-specific decisions and limits in the detailed ledger.
+
 ## 2. named出口差476行の分類と、利用者への影響
 
 ### named出口未実装448件／client-local対応3件／legacy未確認25件

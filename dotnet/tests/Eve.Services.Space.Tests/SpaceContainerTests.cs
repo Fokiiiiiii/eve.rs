@@ -710,15 +710,25 @@ public class SpaceContainerTests
                 flying.Session, long.MaxValue, stack.Id, CancellationToken.None));
         Assert.Equal("FakeItemNotFound", UserError(absentSource).Name);
 
-        var other = await rig.NewCharacterAsync("Other Loot Owner", account: 2);
+        var active = (await rig.Items.GetAsync(flying.Character.ShipId))!;
+        var launchable = (await rig.Ships.GrantAsync(flying.Character.CharacterId, active.TypeId, 1, singleton: true))!
+            .Single().After;
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await rig.Items.MoveAsync(connection, transaction, launchable.Id, can, 0);
+            await rig.Items.MoveToOwnerAsync(
+                connection, transaction, can, long.MaxValue, can, Eve.Ships.CharacterShips.InSpaceFlag);
+            await transaction.CommitAsync();
+        }
         var rights = (await rig.SpaceItems.GetAsync(can))!;
-        await rig.SpaceItems.SaveAsync(rights with { CharacterId = other.CharacterId, CorporationId = 0 });
+        await rig.SpaceItems.SaveAsync(rights with { CharacterId = long.MaxValue, CorporationId = 0 });
         var inaccessible = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
             await rig.Containers.LaunchShipOrContainerFromWreckOrContainerAsync(
-                flying.Session, can, stack.Id, CancellationToken.None));
+                flying.Session, can, launchable.Id, CancellationToken.None));
         Assert.Equal("SafetyActivated", UserError(inaccessible).Name);
-        Assert.Equal(can, (await rig.Items.GetAsync(stack.Id))!.LocationId);
-        Assert.Null(await rig.SpaceItems.GetAsync(stack.Id));
+        Assert.Equal(can, (await rig.Items.GetAsync(launchable.Id))!.LocationId);
+        Assert.Null(await rig.SpaceItems.GetAsync(launchable.Id));
     }
 
 }

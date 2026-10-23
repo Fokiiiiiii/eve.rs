@@ -25,13 +25,15 @@ Authenticate the V24.01 `ConnectionService.LoginSso` path from the inbound `user
 
 - Rust `cargo +1.94.1 check -p eve-net`, package fmt, and targeted all-target Clippy: passed.
 - Python compile checks and HostLink fixture generation (14 valid, 10 invalid cases): passed.
-- Host Release, Host.Tests Release, and Identity.Tests Release builds: passed before the main merge. No-database identity verifier theory: 5 passed, 0 failed, 0 skipped.
-- Agent test for feature merge `fafa7948`: Identity.Tests SSO cases passed (8/8); Host.Tests found one fixture setup error because the linked account used default `AutoCreate=false`. The fixture now enables account creation; a follow-up validation is pending.
+- Host, Host.Tests, and Identity.Tests Release builds: passed. No-database identity verifier theory: 5 passed, 0 failed, 0 skipped.
+- Agent test `39975779919` for feature commit `7b8ae52a`: Host.Tests SSO cases 5/5 and Identity.Tests SSO cases 8/8 passed; zero skips.
+- Push-triggered CI `39975764343` compiled the solution and passed Rust tests, Rust format/Clippy, .NET build, and Python tests. Its host startup failed because `InventoryRpc` now wraps `InvBrokerService`, while character composition still searched only for the inner type. A focused wrapper-unwrapping fix and composition test are in the worktree and Host.Tests Release build passes.
+- That CI run also found separate space-container tests failing after the concurrent main merge; their results are outside the SSO paths and remain open for review.
 - Workspace Rust fmt and Clippy cannot complete in this worktree because it already lacks `crates/eve-space/src/targeting/*`; those pre-existing deletions remain untouched. Targeted eve-net checks pass.
-- No PostgreSQL database was used locally. Push-triggered `ci.yml` and the follow-up Actions run are pending. The graphical V24 client exercise remains outstanding.
+- No PostgreSQL database was used locally. The live SSO scenario and graphical V24 client exercise remain to be confirmed.
 
 ## Next steps
 
-1. Commit the Host fixture correction and this checkpoint, fetch and merge `origin/main`, then push `HEAD:main`.
-2. Dispatch Host/Identity SSO tests for the new feature SHA and inspect the push-triggered CI run, including the live headless scenario; update this note with results.
+1. Commit the composition startup fix and this checkpoint, fetch and merge `origin/main`, then push `HEAD:main`.
+2. Run focused Host/Identity agent tests and inspect the new push-triggered CI run, including the live headless SSO scenario.
 3. Keep the TODO row open until Actions verification is recorded.

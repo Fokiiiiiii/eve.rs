@@ -24,6 +24,7 @@ from evecli import marshal as m
 from tests import dbseed
 from tests.gateway_wire import (
     REQUEST_SEND,
+    Authorized,
     as_user,
     answer,
     field,
@@ -305,11 +306,13 @@ def _restart_host() -> subprocess.Popen:
     simulation_socket = os.environ["EVE_SIM_SOCKET"]
     host_dll = os.environ["EVE_HOST_DLL"]
     old_pid = int(os.environ["EVE_HOST_PID"])
+    front_port = os.environ["EVE_LIVE_PORT"]
+    net_binary = os.environ["EVE_NET_BINARY"]
     os.kill(old_pid, signal.SIGTERM)
 
     deadline = time.monotonic() + 45
-    while _unix_listener_open(socket_path):
-        assert time.monotonic() < deadline, "the existing host did not close its socket"
+    while _unix_listener_open(socket_path) or _tcp_listener_open(f"127.0.0.1:{front_port}"):
+        assert time.monotonic() < deadline, "the existing host and front did not close their listeners"
         time.sleep(0.1)
 
     log_path = os.path.join(
@@ -331,18 +334,40 @@ def _restart_host() -> subprocess.Popen:
         )
 
     deadline = time.monotonic() + 120
-    gateway_ready = False
     while time.monotonic() < deadline:
         if process.poll() is not None:
             with open(log_path, encoding="utf-8", errors="replace") as log:
                 details = "".join(log.readlines()[-80:])
             raise AssertionError(f"the restarted host exited early:\n{details}")
         if _unix_listener_open(socket_path) and _tcp_listener_open(GATEWAY):
-            gateway_ready = True
             break
         time.sleep(0.2)
-    assert gateway_ready, f"the restarted host did not reopen its listeners; see {log_path}"
+    else:
+        raise AssertionError(f"the restarted host did not reopen its listeners; see {log_path}")
+
+    net_env = os.environ.copy()
+    net_env.update(EVE_HOST=socket_path, EVE_NET_LISTEN=f"127.0.0.1:{front_port}")
+    with open(log_path, "ab") as log:
+        net_process = subprocess.Popen(
+            [net_binary],
+            env=net_env,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+        )
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        if net_process.poll() is not None:
+            _stop_restarted_host(process)
+            raise AssertionError("the restarted front exited before it reopened its listener")
+        if _tcp_listener_open(f"127.0.0.1:{front_port}"):
+            break
+        time.sleep(0.1)
+    else:
+        _stop_restarted_host(net_process)
+        _stop_restarted_host(process)
+        raise AssertionError("the restarted front did not reopen its listener")
     atexit.register(_stop_restarted_host, process)
+    atexit.register(_stop_restarted_host, net_process)
     return process
 
 

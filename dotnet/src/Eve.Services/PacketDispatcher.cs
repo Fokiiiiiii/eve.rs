@@ -20,6 +20,7 @@ public sealed class PacketDispatcher
     private readonly Func<long> _nowUnixMs;
     private readonly ConditionalWeakTable<ClientSession, ExpensiveRpcBudget> _expensiveBudgets = new();
     private readonly ConditionalWeakTable<ClientSession, ExpensiveRpcBudget> _inventoryBudgets = new();
+    private readonly ConditionalWeakTable<ClientSession, ExpensiveRpcBudget> _industryBudgets = new();
     private readonly ConditionalWeakTable<ClientSession, ExpensiveRpcBudget> _marketBudgets = new();
 
     public PacketDispatcher(ServiceRegistry registry, Func<long>? nowUnixMs = null)
@@ -43,6 +44,9 @@ public sealed class PacketDispatcher
 
     /// <summary>Weighted work units available to one session during a rolling minute.</summary>
     public int MaxExpensiveRpcUnitsPerMinute { get; init; } = 160;
+
+    /// <summary>Weighted industry job work units available to one session during a rolling minute.</summary>
+    public int MaxIndustryRpcUnitsPerMinute { get; init; } = 160;
 
     /// <summary>Weighted market work units available to one session during a rolling minute.</summary>
     public int MaxMarketRpcUnitsPerMinute { get; init; } = 460;
@@ -177,12 +181,16 @@ public sealed class PacketDispatcher
         var budget = service.Name switch
         {
             "invbroker" => _inventoryBudgets,
+            "industryManager" => _industryBudgets,
             "marketProxy" => _marketBudgets,
             _ => _expensiveBudgets,
         };
-        var budgetLimit = service.Name == "marketProxy"
-            ? MaxMarketRpcUnitsPerMinute
-            : MaxExpensiveRpcUnitsPerMinute;
+        var budgetLimit = service.Name switch
+        {
+            "industryManager" => MaxIndustryRpcUnitsPerMinute,
+            "marketProxy" => MaxMarketRpcUnitsPerMinute,
+            _ => MaxExpensiveRpcUnitsPerMinute,
+        };
         if (cost > 0 && !budget.GetValue(session, _ => new ExpensiveRpcBudget())
                 .TryConsume(_nowUnixMs(), cost, budgetLimit))
         {

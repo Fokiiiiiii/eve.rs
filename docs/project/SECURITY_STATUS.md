@@ -732,3 +732,5 @@ Security finding for `jumpTimers.GetTimers` target validation and budgeting was 
 Post-push handoff: jump timer finding `8baa4ba6` is on `main`; method-by-method classification remains open for the 1,374 registered pairs.
 
 Security finding for `epicArcStatus.AgentHasEpicMissionsForCharacter` input validation and budgeting was pushed to `main` on 2026-10-23. On `eve_p3`, the focused refusal test passed (1), `Eve.Services.Core.Tests` passed (893), and `Eve.Services.Tests` passed (255), with no skips. The 1,374-method registry inventory remains in progress.
+
+Post-push handoff: epic arc RPC finding `f7646151` is on `main`; the 1,374-method registry inventory remains incomplete.

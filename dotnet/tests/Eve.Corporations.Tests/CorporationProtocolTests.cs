@@ -1817,12 +1817,16 @@ private static PyValue RowField(PyValue value,string key)
                 Call(session,method)));
             Assert.Equal("CustomNotify",refused.Error.UserErrorMessage);
         }
-        foreach (var method in new[] { "SendInviteByPlayer", "WithdrawInviteByPlayer", "RespondToInviteByPlayer", "SetInvitesBlockedByPlayer" })
-        {
+        foreach (var method in new[] { "SendInviteByPlayer", "WithdrawInviteByPlayer", "RespondToInviteByPlayer", "SetInvitesBlockedByPlayer" })        {
             var refused = await Assert.ThrowsAsync<MachoWrappedException>(async () => await ((IService)unconfigured).CallAsync(
                 Call(session, method, new PyInt(8002), PyBool.True)));
             Assert.Equal("CustomNotify", refused.Error.UserErrorMessage);
         }
+
+        var sendWithoutBlockReader = new MutualWarInviteMgrService(sendInvite: (_, _, _, _) => ValueTask.CompletedTask);
+        var missingBlockCheck = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await sendWithoutBlockReader.SendInviteByPlayer(Call(session, "SendInviteByPlayer", new PyInt(8002))));
+        Assert.Equal("CustomNotify", missingBlockCheck.Error.UserErrorMessage);
     }
 
     [Fact]
@@ -2943,6 +2947,10 @@ private static PyValue RowField(PyValue value,string key)
         Assert.True(persisted.Settings.GetProperty("restrictCorpMails").GetBoolean());
         Assert.Equal(7,persisted.Settings.GetProperty("structureReinforceDefault").GetInt32());
         await Assert.ThrowsAsync<CorporationError>(async () => await Rpc(session,"SetStructureReinforceDefault",new PyInt(24)));
+        await Assert.ThrowsAsync<CorporationError>(async () =>
+            await Rpc(session,"SetStructureReinforceDefault",new PyReal(7.5)));
+        var afterMalformed = await rig.ReopenStore().GetAsync(corp.Id);
+        Assert.Equal(7,afterMalformed!.Settings.GetProperty("structureReinforceDefault").GetInt32());
 
         var outsiderSession = new ClientSession();
         outsiderSession.CharacterId = outsider;

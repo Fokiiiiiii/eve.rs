@@ -6,6 +6,7 @@ namespace Eve.Ships.Tests;
 public class DeathTests
 {
     private const int FrigateWreck = 26506;
+    private const int ValueImplant = 13166; // Inherent Implants 'Lancer' Gunnery RF-903 in pinned SDE 3396210.
 
     private const int Ibis = 601;
 
@@ -344,16 +345,20 @@ public class DeathTests
     }
 
     [PgFact]
-    public async Task What_was_in_a_capsule_is_destroyed_with_it()
+    public async Task Capsule_contents_and_destructible_implants_are_destroyed_with_it()
     {
         var (rig, c, capsule, home) = await InCapsuleAsync();
         await using var _ = rig;
+        await rig.Statics.EnsureTypesAsync([ValueImplant]);
         var left = await rig.GiveAsync(c.CharacterId, 34, false, 10, capsule, CharacterShips.CargoFlag);
+        var implant = await rig.GiveAsync(c.CharacterId, ValueImplant, true, 1, c.CharacterId, PilotAugmentations.ImplantFlag);
 
         var pod = (await rig.Ships.DestroyCapsuleAsync(c.CharacterId, capsule, CorpseMale, "Ship Tester", Cockroach, home))!;
 
         Assert.Equal([left], pod.Held.Select(i => i.Id));
+        Assert.Equal([implant], pod.Implants.Select(i => i.Id));
         Assert.Null(await rig.Items.GetAsync(left));
+        Assert.Null(await rig.Items.GetAsync(implant));
     }
 
     [PgFact]

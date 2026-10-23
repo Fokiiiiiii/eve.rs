@@ -172,6 +172,19 @@ public sealed class ServiceRegistry
         }
     }
 
+    /// <summary>Each registered service instance once, with aliases collapsed.</summary>
+    public IReadOnlyList<IService> RegisteredServices
+    {
+        get
+        {
+            lock (_gate)
+            {
+                var seen = new HashSet<IService>(ReferenceEqualityComparer.Instance);
+                return _services.Values.Where(seen.Add).ToArray();
+            }
+        }
+    }
+
     /// <summary>The number of registered names, aliases included.</summary>
     public int Count
     {

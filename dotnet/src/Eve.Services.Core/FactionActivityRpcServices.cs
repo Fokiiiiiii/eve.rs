@@ -17,6 +17,8 @@ public sealed class RWManagerService(RwManagerRpcCallbacks? callbacks = null) : 
 
     public async ValueTask<PyValue> CallAsync(ServiceCall call)
     {
+        if (!HasMethod(call.Method)) return PyNone.Instance;
+        call.Cancellation.ThrowIfCancellationRequested();
         var systemId = RequestedSystemId(call);
         switch (call.Method)
         {
@@ -41,10 +43,31 @@ public sealed class RWManagerService(RwManagerRpcCallbacks? callbacks = null) : 
         }
     }
 
-    private static long RequestedSystemId(ServiceCall call) =>
-        PositiveInteger(call.Arg(0)) is var requested && requested > 0
-            ? requested
-            : call.Session.GetInt("solarsystemid2") ?? call.Session.GetInt("solarsystemid") ?? 0;
+    private static long RequestedSystemId(ServiceCall call)
+    {
+        if (call.Kwargs is not PyNone)
+            throw MachoErrors.ThrowUserError("RESOURCE_WARS_ARGUMENTS_INVALID");
+        if (call.Method == "get_closest_rw_stations")
+        {
+            if (call.Args.Count != 1)
+                throw MachoErrors.ThrowUserError("RESOURCE_WARS_ARGUMENTS_INVALID");
+            var requested = PositiveWireSystemId(call.Arg(0));
+            if (requested <= 0)
+                throw MachoErrors.ThrowUserError("RESOURCE_WARS_SYSTEM_ID_INVALID");
+            return requested;
+        }
+
+        if (call.Args.Count != 0)
+            throw MachoErrors.ThrowUserError("RESOURCE_WARS_ARGUMENTS_INVALID");
+        return call.Session.GetInt("solarsystemid2") ?? call.Session.GetInt("solarsystemid") ?? 0;
+    }
+
+    private static long PositiveWireSystemId(PyValue? value) => value switch
+    {
+        PyInt number when number.Value > 0 => number.Value,
+        PyLong number when number.Value > 0 => number.Value,
+        _ => 0,
+    };
 
     internal static long PositiveInteger(PyValue? value) => value switch
     {

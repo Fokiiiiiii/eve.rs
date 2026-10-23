@@ -167,6 +167,29 @@ public async ValueTask<Eve.Services.Core.PersistedStructureInfo?> GetStructureIn
             StructureInfoPayload(structureId, structure));
     }
 
+public async ValueTask<IReadOnlyDictionary<long, Eve.Services.Core.PersistedStructureInfo>> GetStructureInfosAsync(
+    IReadOnlyList<long> structureIds,
+    CancellationToken cancellationToken)
+{
+    var requested = structureIds.Where(id => id > 0).ToHashSet();
+    if (requested.Count == 0)
+        return new Dictionary<long, Eve.Services.Core.PersistedStructureInfo>();
+
+    var structures = await readTable("structures", cancellationToken);
+    var result = new Dictionary<long, Eve.Services.Core.PersistedStructureInfo>();
+    foreach (var structureId in requested)
+    {
+        var key = structureId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        if (structures[key] is not JsonObject structure || !IsPersistentlyDeployedStructure(structure, structureId))
+            continue;
+        result[structureId] = new Eve.Services.Core.PersistedStructureInfo(
+            structureId,
+            true,
+            StructureInfoPayload(structureId, structure));
+    }
+    return result;
+}
+
     public async ValueTask<Eve.Services.Core.PersistedStructureInfo?> GetStructureInfoForCharacterAsync(
     long characterId,
     long structureId,
@@ -338,7 +361,7 @@ public async ValueTask<IReadOnlyList<Eve.Services.Core.StructureDockingAccessSna
         structures.Sort(static (left, right) => left.Id.CompareTo(right.Id));
 
         var typeIds = structures.Select(entry => (long)Positive(Integer(entry.Row["typeID"]))).Distinct().ToArray();
-        var types = (await sde.ReadAsync("invTypes", typeIds, cancellationToken))
+        var types = (await sde.ReadAsync("types", typeIds, cancellationToken))
             .ToDictionary(row => row.Key);
 
         var descriptor = Descriptor.FromHeader(new PyObjectEx(
@@ -539,7 +562,7 @@ public async ValueTask<bool> IsValidWarHQAsync(
         }
 
         var typeRows = await sde.ReadAsync(
-            "invTypes", structures.Select(entry => (long)Positive(Integer(entry.Row["typeID"]))).Distinct(), cancellationToken);
+            "types", structures.Select(entry => (long)Positive(Integer(entry.Row["typeID"]))).Distinct(), cancellationToken);
         var types = typeRows.ToDictionary(row => row.Key);
         var systemRows = await sde.ReadAsync(
             "mapSolarSystems", structures.Select(entry => (long)Positive(Integer(entry.Row["solarSystemID"]))).Distinct(), cancellationToken);

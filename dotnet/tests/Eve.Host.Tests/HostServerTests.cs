@@ -449,6 +449,26 @@ public class HostServerTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task A_shipcaster_call_without_state_returns_a_host_error_instead_of_an_empty_success()
+    {
+        Start(configure: registry => registry.Register(new Eve.Services.Space.ShipcasterRpcService(
+            "shipCasterLandingPadMgr",
+            new Eve.Universe.SolarSystemCatalog([]))));
+        var front = await Handshaken(await ConnectAsync());
+        var open = Open();
+        await front.SendAsync(open);
+        await front.ReceiveAsync();
+
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(Packets.Call(
+            open, 1, "shipCasterLandingPadMgr", "GetAllLandingPads"))));
+        var reply = Assert.IsType<Send>(await front.ReceiveAsync());
+        var response = Assert.IsType<PyObject>(MarshalCodec.Decode(reply.Payload));
+        var state = Assert.IsType<PyTuple>(response.Args).Items;
+
+        Assert.Equal((int)MachoMessage.ErrorResponse, Assert.IsType<PyInt>(state[0]).Value);
+    }
+
+    [Fact]
     public async Task GetInitVals_lists_the_services_and_the_global_configuration()
     {
         Start();
@@ -1996,6 +2016,20 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
     }
 
     [Fact]
+    public async Task Empty_personal_asset_safety_read_skips_the_static_catalog()
+    {
+        await using var rig = await AssetSafetyPgRig.CreateAsync();
+        const long characterId = 900009;
+        var allocatedBefore = GC.GetTotalAllocatedBytes(precise: false);
+
+        var result = await rig.Store.GetItemsInSafetyForCharacterAsync(characterId, CancellationToken.None);
+
+        var allocated = GC.GetTotalAllocatedBytes(precise: false) - allocatedBefore;
+        Assert.Empty(result.Items);
+        Assert.InRange(allocated, 0, 64L * 1024 * 1024);
+    }
+
+    [Fact]
     public async Task Asset_safety_manual_personal_delivery_enforces_five_days_half_percent_and_call_replay()
     {
         await using var rig = await AssetSafetyPgRig.CreateAsync();
@@ -2839,7 +2873,33 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
         Assert.Empty(Assert.IsType<Eve.Marshal.PyList>(await unknown.GetNearbyJumpBridgesAsync(accessCall)).Items);
     }
 
-[Fact]
+    [Fact]
+    public async Task Structure_directory_batch_read_loads_the_store_once_for_large_id_lists()
+    {
+        var reads = 0;
+        Task<System.Text.Json.Nodes.JsonObject> ReadTable(string tableName, CancellationToken token)
+        {
+            _ = tableName;
+            token.ThrowIfCancellationRequested();
+            reads++;
+            return Task.FromResult(new System.Text.Json.Nodes.JsonObject());
+        }
+        Task<Eve.Relations.Affiliation> Affiliation(long characterId, CancellationToken token)
+        {
+            _ = characterId;
+            token.ThrowIfCancellationRequested();
+            return Task.FromResult(new Eve.Relations.Affiliation(null, null, null));
+        }
+        var model = new PersistenceStructureDirectoryReadModel(ReadTable, Affiliation);
+        var ids = Enumerable.Repeat(9_223_372_036_854_775_000L, 16_384).ToArray();
+
+        var result = await model.GetStructureInfosAsync(ids, CancellationToken.None);
+
+        Assert.Empty(result);
+        Assert.Equal(1, reads);
+    }
+
+    [Fact]
     public async Task Structure_directory_host_reads_deployed_rows_and_docking_profiles()
     {
         const long structureId = 88000011;

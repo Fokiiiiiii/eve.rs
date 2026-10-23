@@ -212,6 +212,46 @@ fn distances_and_angles_are_measured_between_surfaces_and_centres() {
 }
 
 #[test]
+fn equal_speed_pilots_at_the_live_undock_separation_are_beyond_small_turret_falloff() {
+    let velocity = [0.0, 2.123_705_862_224_755_3, 339.243_352_732_829_2];
+    let attacker = ship([0.0; 3], velocity, 47.0, 52.0);
+    let target = ship([0.0, 0.0, 10_398.858], velocity, 47.0, 52.0);
+    let gun = turret([0.0, 2.5, 3.75, 0.0], 550.0, 40_000.0, 5_280.0, 2_100.0);
+
+    let distance = surface_distance(&attacker, &target);
+    assert!((distance - 10_304.858).abs() < 1e-6, "{distance}");
+    assert!(angular_velocity(&attacker, &target).abs() < 1e-12);
+    let expected = 0.5_f64.powf(((distance - gun.optimal_range) / gun.falloff).powi(2));
+    let chance = chance_to_hit(&gun, &attacker, &target);
+    assert!((chance - expected).abs() < 1e-12, "{chance} != {expected}");
+    assert!((chance - 0.018_900_37).abs() < 1e-7, "{chance}");
+    assert!(!resolve_shot(&gun, &attacker, &target, 0.02).hit);
+
+    let inside_falloff = ship([0.0, 0.0, 6_000.0], velocity, 47.0, 52.0);
+    assert!(chance_to_hit(&gun, &attacker, &inside_falloff) > 0.9);
+}
+
+#[test]
+fn a_125mm_railgun_hits_a_stopped_rifter_but_loses_tracking_on_a_fast_transversal() {
+    // Pinned SDE: type 10678 has 89.25 tracking, 40,000 optimal signature resolution, 9,000 m optimal and 5,000 m falloff.
+    // Type 587 has a 31 m radius, 35 m signature radius and 365 m/s maximum velocity. Motion Prediction V adds 25% tracking.
+    let attacker = ship([0.0; 3], [0.0; 3], 31.0, 35.0);
+    let gun = turret([1.0, 0.0, 0.0, 0.0], 89.25 * 1.25, 40_000.0, 9_000.0, 5_000.0);
+    let stopped = ship([0.0, 0.0, 1_000.0], [0.0; 3], 31.0, 35.0);
+    assert_eq!(chance_to_hit(&gun, &attacker, &stopped), 1.0);
+    assert!(resolve_shot(&gun, &attacker, &stopped, 0.5).hit);
+
+    let moving_transversally = ship([0.0, 0.0, 1_000.0], [0.0, 365.0, 0.0], 31.0, 35.0);
+    let angular: f64 = 365.0 / 1_000.0;
+    let tracking_term = angular * 40_000.0 / (89.25 * 1.25 * 35.0);
+    let expected = 0.5_f64.powf(tracking_term.powi(2));
+    let chance = chance_to_hit(&gun, &attacker, &moving_transversally);
+    assert!((chance - expected).abs() < 1e-12, "{chance} != {expected}");
+    assert!(chance < 0.0001, "{chance}");
+    assert!(!resolve_shot(&gun, &attacker, &moving_transversally, 0.0001).hit);
+}
+
+#[test]
 fn a_target_without_a_signature_is_as_big_as_its_radius() {
     let attacker = ship([0.0; 3], [0.0; 3], 10.0, 0.0);
     let gun = turret([1.0; 4], 0.4, 40.0, 5_000.0, 1_000.0);

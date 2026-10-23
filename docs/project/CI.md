@@ -1,8 +1,8 @@
 # GitHub Actions CI
 
-The workflows are currently in the automatic mode while the repository is public. `ci.yml` uses push and weekly schedule triggers; `ci-windows.yml` handles Windows checks on platform-sensitive pushes, every six hours, and manual dispatch; `live-slow.yml` remains dispatch-only. When the repository becomes private again run `python3 tools/dev/ci-mode.py manual` and push. This makes every workflow manual only through `workflow_dispatch`; it removes push, schedule, and pull request triggers. Use `python3 tools/dev/ci-mode.py --check` to print the current mode. Run `python3 tools/dev/ci-mode.py auto` to restore automatic triggers. The automatic trigger definitions are kept in the script.
+The workflows are currently in the automatic mode while the repository is public. `ci.yml` uses push and weekly schedule triggers; `ci-nightly.yml` runs extended coverage on a nightly schedule and manual dispatch; `ci-windows.yml` runs Windows checks every six hours and when called by the push gate or nightly workflow; `live-slow.yml` supports manual dispatch and the nightly workflow. When the repository becomes private again run `python3 tools/dev/ci-mode.py manual` and push. This makes every workflow manual only through `workflow_dispatch`; it removes push, schedule, and pull request triggers. Use `python3 tools/dev/ci-mode.py --check` to print the current mode. Run `python3 tools/dev/ci-mode.py auto` to restore automatic triggers. The automatic trigger definitions are kept in the script.
 
-`ci.yml` runs its Linux jobs on pushes to `main` except documentation-only changes and `.github/dependabot.yml`. Push runs share a branch concurrency group with `cancel-in-progress: false`; GitHub keeps the running run and the newest pending SHA, replacing older pending runs. Manual runs use a separate interactive group and can cancel older manual runs. Manual `workflow_dispatch` runs can cancel older manual runs and select jobs. The separate `ci-windows.yml` workflow provisions PostgreSQL 18 on the Windows runner and runs Rust, .NET, Python, and a login-to-character walk. Its 45-minute job timeout and independent workflow run keep Windows diagnostics outside the Linux push queue and `Required CI gate`. `live-slow.yml` is dispatch-only and runs each selected headless-client test file in its own matrix job. The CI workflow builds and tests with Rust 1.99.0; `Cargo.toml` retains the Rust 1.94 minimum supported version.
+`ci.yml` runs its Linux jobs on pushes to `main` except documentation-only changes and `.github/dependabot.yml`. Each main SHA has its own concurrency group with cancellation disabled, so a later push cannot cancel an earlier run. Superseded branch and pull request runs may be cancelled. Manual runs use an interactive group and can cancel older manual runs. The separate `ci-windows.yml` workflow provisions PostgreSQL 18 on the Windows runner and runs Rust, .NET, Python, and a login-to-character walk. Its result is reported separately from the Linux `Required CI gate`. `live-slow.yml` runs each selected headless-client test file in its own matrix job and can be called by the nightly workflow. The CI workflow builds and tests with Rust 1.99.0; `Cargo.toml` retains the Rust 1.94 minimum supported version.
 
 ## Read the result for a commit
 
@@ -17,7 +17,7 @@ python3 tools/dev/ci-status.py cancel-queued --branch main --workflow ci.yml
 
 The status command lists run URLs, per-job conclusions and durations, failing steps, and a failing-step log tail when the token can download job logs. To save output while a run is still active, add `--no-logs`.
 
-Push runs are serialized by branch, with one replaceable pending run, so runner queues remain bounded while the newest push receives a verdict. The `Required CI gate` prints its `GITHUB_SHA` and dependency results; use `status --sha` to verify the completed run's `head_sha` matches the commit being checked.
+The `Required CI gate` prints its `GITHUB_SHA` and dependency results; use `status --sha` to verify the completed run's `head_sha` matches the commit being checked.
 
 ## Dispatch
 
@@ -47,6 +47,21 @@ python3 tools/dev/ci-status.py dispatch live-slow.yml --ref main --test-file all
 ```
 
 The token can list runs and jobs (`GET /actions/runs` and `GET /actions/runs/{run_id}/jobs`, HTTP 200), dispatch both workflows (HTTP 204), and download a current failed job log (`GET /actions/jobs/{job_id}/logs`, HTTP 200). A request for an older job log returned HTTP 401. The helper reports log-download errors while retaining run, job, and failed-step information. If dispatch is denied elsewhere, it prints the HTTP status and API response.
+
+## Selected agent tests and nightly coverage
+
+Use `agent-test.yml` for a focused set of .NET test projects, headless-client files, and Rust checks. Its `ref` input is checked out by the job; the workflow itself is dispatched from `main`. The selected .NET tests share one Release solution build and use `--no-build`. Full command logs, TRX/JUnit reports, and live-stack logs are uploaded as seven-day artifacts.
+
+```sh
+python3 tools/dev/ci-status.py dispatch-agent-test --ref main --projects Eve.Host.Tests --filter 'FullyQualifiedName~Hostile_method_is_refused' --live '' --rust none
+python3 tools/dev/ci-status.py dispatch-agent-test --ref main --projects '' --filter '' --live fast --rust tests
+python3 tools/dev/ci-status.py wait <run-id>
+python3 tools/dev/ci-status.py failures <commit-sha>
+```
+
+`ci-nightly.yml` runs the slow live-client matrix and additional recent walk files, the fast skill-training walk on its own Host configured at 60,000x speed, the `eve-bench` benchmark against its recorded baseline, the complete `ci-windows.yml` workflow, and the extended `EVE_RPC_FUZZ_LONG=1` Host test. Its summary names each job result and its logs remain available as artifacts. This workflow runs nightly and by manual dispatch, and is separate from the required push gate.
+
+Use `python3 tools/dev/test_ci_status.py` for the focused standard-library tests covering failure-name parsing and log-tail extraction.
 
 ## Dependency audit
 

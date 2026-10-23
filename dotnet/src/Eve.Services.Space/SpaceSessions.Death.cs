@@ -591,13 +591,17 @@ public sealed partial class SpaceSessions
         Announce("ship.lost", new { characterId = loss.CharacterId, shipId = loss.ShipId, shipTypeId = loss.ShipTypeId, cause = loss.Cause.ToString(), solarSystemId = loss.SolarSystemId, killerCharacterId = loss.KillerCharacterId }, $"char:{loss.CharacterId}");
     }
 
-    private void RaisePodLost(Pilot pilot, Item capsule, SimDestroyed destroyed)
+    private void RaisePodLost(Pilot pilot, Item capsule, SimDestroyed destroyed, IReadOnlyList<Item> implants)
     {
         var killer = destroyed.KillerShipId == 0 ? null : _pilots.Values.FirstOrDefault(other => other.ShipId == destroyed.KillerShipId);
         var cause = killer is not null ? ShipLossCause.Player
             : destroyed.KillerShipId != 0 && _npcShips.ContainsKey(destroyed.KillerShipId) ? ShipLossCause.Npc
             : ShipLossCause.Unknown;
-        Raise(PodLost, new PodLoss(pilot.CharacterId, capsule.Id, pilot.SolarSystemId, cause, cause == ShipLossCause.Player ? killer!.CharacterId : 0), nameof(PodLost));
+        IReadOnlyList<ShipLossItem>? contents = implants.Count == 0
+            ? null
+            : implants.Select(implant => new ShipLossItem(implant.TypeId, implant.Quantity)).ToArray();
+        Raise(PodLost, new PodLoss(pilot.CharacterId, capsule.Id, pilot.SolarSystemId, cause,
+            cause == ShipLossCause.Player ? killer!.CharacterId : 0, contents), nameof(PodLost));
     }
 
     /// <summary>The corpse of a pilot whose capsule was destroyed: <c>resolveCorpseTypeID</c> of EVE.js (the client's <c>genderFemale = 0</c>; anything else leaves the male one).</summary>
@@ -657,7 +661,7 @@ public sealed partial class SpaceSessions
                 var death = result!;
                 _pilots.TryRemove(id, out _);
                 _sim.Leave(id, LeaveWhy.Docked);
-                RaisePodLost(pilot, death.Capsule, destroyed);
+                RaisePodLost(pilot, death.Capsule, destroyed, death.Implants);
                 if (death.Corpse is { } corpse)
                 {
                     var type = _statics.Type(corpse.TypeId);
@@ -713,6 +717,8 @@ public sealed partial class SpaceSessions
                         new PyInt(0),
                         None
                     ]));
+                if (death.Implants.Count > 0)
+                    session.SendNotification("OnJumpCloneCacheInvalidated", "clientID");
                 return Task.CompletedTask;
             },
             CancellationToken.None,

@@ -1,5 +1,6 @@
 using Eve.Inventory;
 using Eve.Macho;
+using Eve.Ships;
 using Eve.Marshal;
 using Eve.Space;
 
@@ -469,10 +470,20 @@ public class PlayerDeathTests
     }
 
     [PgFact]
-    public async Task A_pod_shot_dead_by_another_pilot_is_raised_as_a_pod_loss_that_names_the_killer_and_is_not_a_ship_loss()
+    public async Task A_pod_shot_dead_by_another_pilot_carries_destroyed_implants_in_its_loss_record()
     {
         var (rig, c, session, capsule) = await InCapsuleAsync();
         await using var _ = rig;
+        const int implantType = 13166; // Inherent Implants 'Lancer' Gunnery RF-903 in pinned SDE 3396210.
+        await rig.Statics.EnsureTypesAsync([implantType]);
+        long implantId;
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            implantId = await rig.Items.CreateAsync(connection, transaction,
+                new NewItem(implantType, c.CharacterId, c.CharacterId, PilotAugmentations.ImplantFlag, 1, true));
+            await transaction.CommitAsync();
+        }
         var killer = await rig.NewCharacterAsync("Pod Killer", 2, Ibis);
         var killerSession = await rig.SessionAsync(killer, 2);
         var oid = await rig.BindShipAsync(killerSession);
@@ -488,7 +499,14 @@ public class PlayerDeathTests
         rig.Sim.Say(new SimDestroyed((ulong)session.SessionId, capsule, 0, Place, Facing, 47, killerSession.GetInt("shipid")!.Value, null));
         await Rig.UntilAsync(() => pods.Count == 1);
 
-        Assert.Equal(new PodLoss(c.CharacterId, capsule, system, ShipLossCause.Player, killer.CharacterId), Assert.Single(pods));
+        var loss = Assert.Single(pods);
+        Assert.Equal((c.CharacterId, capsule, system, ShipLossCause.Player, killer.CharacterId),
+            (loss.CharacterId, loss.CapsuleId, loss.SolarSystemId, loss.Cause, loss.KillerCharacterId));
+        Assert.Equal([new ShipLossItem(implantType, 1)], loss.Contents);
+        Assert.Null(await rig.Items.GetAsync(implantId));
+        var notifications = Events.Of(session);
+        Assert.Equal("OnJumpCloneCacheInvalidated", notifications.Last().Name);
+        Assert.Empty(notifications.Last().Args);
         Assert.Empty(ships);
     }
 }

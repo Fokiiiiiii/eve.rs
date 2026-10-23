@@ -14,6 +14,8 @@ public sealed class PlayerBountyKillsTests
     private const long Victim = 96_000_010, Hunter = 96_000_011, Placer = 96_000_012, VictimCorporation = 98_000_001, HunterCorporation = 98_000_002;
     private const long ShipId = 96_500_001;
     private const int ShipType = 648;
+    private const int ImplantType = 13166; // Inherent Implants 'Lancer' Gunnery RF-903, base price 200,000 ISK in pinned SDE 3396210.
+    private const decimal ImplantBasePrice = 200_000m;
 
     [PgFact]
     public async Task A_kill_claims_the_pilot_pool_first_once_and_the_hunter_is_credited_once_across_a_restart()
@@ -32,7 +34,7 @@ public sealed class PlayerBountyKillsTests
             {
                 await new PgWalletStore(source, walletSchema).OpenAsync(connection, transaction, Hunter, 0m, 0);
                 var placements = new PlayerBountyStore(source, crimewatch);
-                await placements.RecordPlacementAsync(connection, transaction, new BountyPool(Victim, BountyOwnerKind.Character, VictimCorporation, 0, 0), Placer, 2_000_000m, "placement-1", 1);
+                await placements.RecordPlacementAsync(connection, transaction, new BountyPool(Victim, BountyOwnerKind.Character, VictimCorporation, 0, 0), Placer, 3_000_000m, "placement-1", 1);
                 await placements.RecordPlacementAsync(connection, transaction, new BountyPool(VictimCorporation, BountyOwnerKind.Corporation, VictimCorporation, 0, 0), Placer, 1_000_000m, "placement-2", 1);
                 await transaction.CommitAsync();
             }
@@ -41,28 +43,28 @@ public sealed class PlayerBountyKillsTests
             Task Schedule(NpgsqlConnection _, NpgsqlTransaction __, string ___) { scheduled++; return Task.CompletedTask; }
             var kills = Kills(source, crimewatch, walletSchema);
 
-            // the ship is worth 10,000,000: a fifth is 2,000,000, which the pilot's pool (2,000,000) pays in full; the corporation keeps its 1,000,000
-            var payout = await kills.ClaimShipLossAsync(Victim, ShipId, ShipType, [], Hunter, 100, Schedule);
+            // The ship and a 200,000 ISK implant are worth 10,200,000: the 20% claim includes the implant's SDE base price.
+            var payout = await kills.ClaimShipLossAsync(Victim, ShipId, ShipType, [(ImplantType, 1)], Hunter, 100, Schedule);
             Assert.NotNull(payout);
             Assert.Equal("kill:" + ShipId, payout);
             Assert.Equal(1, scheduled);
-            Assert.Equal(0m, await PoolAsync(source, crimewatch, Victim));
+            Assert.Equal(960_000m, await PoolAsync(source, crimewatch, Victim));
             Assert.Equal(1_000_000m, await PoolAsync(source, crimewatch, VictimCorporation));
-            Assert.Equal(2_000_000m, await ScalarAsync<decimal>(source,
+            Assert.Equal(2_040_000m, await ScalarAsync<decimal>(source,
                 $"SELECT bounties_claimed FROM {crimewatch}.player_bounty_hunters WHERE owner_kind = 1 AND hunter_id = {Hunter}"));
             Assert.Equal(1L, await ScalarAsync<long>(source,
                 $"SELECT number_of_kills FROM {crimewatch}.player_bounty_hunters WHERE owner_kind = 1 AND hunter_id = {Hunter}"));
 
             // the same kill again is answered as it was: nothing moves and nothing is scheduled again
-            Assert.Equal(payout, await kills.ClaimShipLossAsync(Victim, ShipId, ShipType, [], Hunter, 200, Schedule));
+            Assert.Equal(payout, await kills.ClaimShipLossAsync(Victim, ShipId, ShipType, [(ImplantType, 1)], Hunter, 200, Schedule));
             Assert.Equal(1, scheduled);
             Assert.Equal(1_000_000m, await PoolAsync(source, crimewatch, VictimCorporation));
 
             // the job credits the hunter once; a second run, and a run after a restart, credit nothing more
             await SettleAsync(source, kills, payout!, 300, walletSchema);
-            Assert.Equal(2_000_000m, await IskAsync(source, walletSchema, Hunter));
+            Assert.Equal(2_040_000m, await IskAsync(source, walletSchema, Hunter));
             await SettleAsync(source, Kills(source, crimewatch, walletSchema), payout!, 400, walletSchema);
-            Assert.Equal(2_000_000m, await IskAsync(source, walletSchema, Hunter));
+            Assert.Equal(2_040_000m, await IskAsync(source, walletSchema, Hunter));
             Assert.Equal("paid", await ScalarAsync<string>(source, $"SELECT status FROM {crimewatch}.player_bounty_payouts WHERE payout_id = 'kill:{ShipId}'"));
 
             // a hunter who is not a pilot claims nothing
@@ -128,7 +130,8 @@ public sealed class PlayerBountyKillsTests
 
     private static PlayerBountyKills Kills(NpgsqlDataSource source, string crimewatch, string walletSchema) => new(
         new PlayerBountyStore(source, crimewatch), crimewatch, new WalletTransactions(source, walletSchema),
-        (typeIds, _) => Task.FromResult<IReadOnlyDictionary<long, decimal>>(typeIds.ToDictionary(id => id, id => id == ShipType ? 10_000_000m : 0m)),
+        (typeIds, _) => Task.FromResult<IReadOnlyDictionary<long, decimal>>(typeIds.ToDictionary(id => id,
+            id => id == ShipType ? 10_000_000m : id == ImplantType ? ImplantBasePrice : 0m)),
         (characterId, _) => Task.FromResult<(long, long)?>(characterId switch
         {
             Victim => (VictimCorporation, 0L),

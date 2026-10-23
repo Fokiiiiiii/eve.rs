@@ -18,7 +18,7 @@ class CiModeTests(unittest.TestCase):
             root = Path(directory)
             workflows = root / ".github" / "workflows"
             workflows.mkdir(parents=True)
-            for name in ("ci.yml", "live-slow.yml"):
+            for name in ("ci.yml", "live-slow.yml", "ci-nightly.yml", "agent-test.yml"):
                 shutil.copy2(ci_mode.WORKFLOWS / name, workflows / name)
             paths = sorted(workflows.glob("*.yml"))
             originals = {path.name: path.read_text(encoding="utf-8") for path in paths}
@@ -42,11 +42,17 @@ class CiModeTests(unittest.TestCase):
                         self.assertNotRegex(trigger, r"(?m)^  (push|schedule|pull_request):")
                     elif path.name in ci_mode.AUTOMATIC_PUSH_WORKFLOWS:
                         self.assertIn("  push:", text)
+                    elif path.name in ci_mode.AUTOMATIC_SCHEDULES:
+                        self.assertIn("  schedule:", text)
                     else:
                         self.assertNotRegex(text, r"(?m)^  (push|schedule):")
+                    if path.name == "live-slow.yml":
+                        self.assertIn("workflow_call:", text)
+                        self.assertIn("        type: string", text)
                 if mode == "auto":
                     self.assertIn("- cron: '0 6 * * 1'", (workflows / "ci.yml").read_text(encoding="utf-8"))
-            self.assertIn("The nightly schedule is switched off", originals["live-slow.yml"])
+                    self.assertIn("- cron: '0 4 * * *'", (workflows / "ci-nightly.yml").read_text(encoding="utf-8"))
+            self.assertIn("The nightly schedule lives in ci-nightly.yml", originals["live-slow.yml"])
 
 if __name__ == "__main__":
     unittest.main()

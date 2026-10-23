@@ -59,6 +59,37 @@ public class OmegaStateTests
     }
 
     [Fact]
+    public async Task Subscription_and_login_reward_reads_refuse_client_arguments_before_session_changes()
+    {
+        var services = CoreServices.Create(new Store(), () => Now)
+            .Where(service => service.Name is "subscriptionMgr" or "loginRewardFacilities")
+            .ToDictionary(service => service.Name, StringComparer.Ordinal);
+        var methods = new Dictionary<string, string[]>(StringComparer.Ordinal)
+        {
+            ["subscriptionMgr"] = ["GetSubscriptionStatus", "GetSubscriptionInfo", "GetSubscriptionTime", "GetCloneGrade"],
+            ["loginRewardFacilities"] = ["get_my_clone_grade"],
+        };
+
+        foreach (var (serviceName, routeNames) in methods)
+        foreach (var method in routeNames)
+        foreach (var kwargs in new PyValue[] { PyNone.Instance, new PyDict([]) })
+        {
+            var session = SessionOf(7);
+            var call = new ServiceCall
+            {
+                Method = method,
+                Args = kwargs is PyNone ? [new PyInt(9)] : [],
+                Kwargs = kwargs,
+                Session = session,
+            };
+            var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() => services[serviceName].CallAsync(call).AsTask());
+            Assert.Equal(MachoErrors.UserErrorClass, refusal.Error.ClassName);
+            Assert.Equal("SUBSCRIPTION_ARGUMENTS_INVALID", refusal.Error.UserErrorMessage);
+            Assert.Null(session.Get(SubscriptionMgrService.AnnouncedCloneGradeKey));
+        }
+    }
+
+    [Fact]
     public async Task A_stored_end_in_the_past_is_alpha_with_no_end_time_and_has_lapsed()
     {
         var store = new Store { Values = { [2] = Lapsed } };

@@ -25,6 +25,35 @@ public sealed class CharacterHostTests
     private const long ProxyNode = MachoMessage.ProxyNodeId;
 
     [PgFact]
+    public async Task Achievement_tracker_updates_are_validated_before_persisting_and_survive_host_restart()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync();
+        var character = await rig.CreateCharacterAsync();
+        var session = new ClientSession { CharacterId = character };
+        session.Set("charid", new PyLong(character));
+        var tracker = new Eve.Characters.AchievementTrackerStore(rig.Source, rig.CharactersSchema);
+        var service = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("achievementTrackerMgr"));
+
+        var invalid = await Assert.ThrowsAsync<MachoWrappedException>(() => CallAsync(service,
+            "UpdateClientAchievmentsAndCounters", session, new PyDict([new(new PyStr("9"), new PyLong(100))]), new PyDict([])));
+        Assert.Equal("ACHIEVEMENT_STATE_INVALID", invalid.Error.UserErrorMessage);
+        Assert.Null(await tracker.ReadAsync(character));
+
+        var completed = new PyDict([new(new PyInt(9), new PyLong(134273341290000000))]);
+        var eventCounts = new PyDict([new(new PyStr("client_openMap"), new PyInt(3))]);
+        Assert.IsType<PyNone>(await CallAsync(service, "UpdateClientAchievmentsAndCounters", session, completed, eventCounts));
+        var persisted = Assert.IsType<Eve.Characters.AchievementTrackerRecord>(await tracker.ReadAsync(character));
+        Assert.Equal([(9, 134273341290000000L)], persisted.Completed);
+        Assert.Equal([("client_openMap", 3L)], persisted.EventCounts);
+
+        await rig.RestartAsync();
+        service = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("achievementTrackerMgr"));
+        var state = Assert.IsType<PyDict>(await CallAsync(service, "GetCompletedAchievementsAndClientEventCount", session));
+        Assert.Equal(completed, Field(state, "completedDict"));
+        Assert.Equal(new PyDict([new(new PyStr("client_openMap"), new PyLong(3))]), Field(state, "eventDict"));
+    }
+
+    [PgFact]
     public async Task Skill_injector_applies_sequential_awards_and_persists_points_and_inventory_through_host()
     {
         await using var rig = await CharacterHostRig.CreateAsync();

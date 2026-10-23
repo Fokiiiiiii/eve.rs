@@ -11,7 +11,12 @@ public sealed class ClientStartupServicesTests
     public void Security_manager_returns_the_empty_indexed_rowset()
     {
         var service = new SecurityMgrService();
-        var result = service.GetModifiedSystems(null!);
+        var result = service.GetModifiedSystems(new ServiceCall
+        {
+            Method = "get_modified_systems",
+            Args = [],
+            Session = new ClientSession(),
+        });
         var descriptor = Descriptor.FromHeader(new PyObjectEx(ObjectExKind.Ex1,
             Py.Tuple(new PyToken("blue.DBRowDescriptor"), Py.Tuple(Py.Tuple(
                 Py.Tuple(new PyStr("solarSystemID"), new PyInt(0x03)),
@@ -25,10 +30,43 @@ public sealed class ClientStartupServicesTests
     }
 
     [Fact]
+    public async Task Security_manager_refuses_client_arguments()
+    {
+        var service = (IService)new SecurityMgrService();
+        foreach (var call in new[]
+        {
+            new ServiceCall { Method = "get_modified_systems", Args = [new PyInt(30000142)], Session = new ClientSession() },
+            new ServiceCall { Method = "get_modified_systems", Args = [], Kwargs = Py.Dict(("systemID", new PyInt(30000142))), Session = new ClientSession() },
+        })
+        {
+            var error = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(call).AsTask());
+            Assert.Equal("SECURITY_MANAGER_ARGUMENTS_INVALID", error.Error.UserErrorMessage);
+        }
+    }
+
+    [Fact]
+    public async Task Ping_service_refuses_client_arguments()
+    {
+        IService service = new PingService();
+        foreach (var call in new[]
+        {
+            new ServiceCall { Method = "Ping", Args = [new PyInt(1)], Session = new ClientSession() },
+            new ServiceCall { Method = "Ping", Args = [], Kwargs = Py.Dict(("silent", PyBool.True)), Session = new ClientSession() },
+        })
+        {
+            var error = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(call).AsTask());
+            Assert.Equal("PING_ARGUMENTS_INVALID", error.Error.UserErrorMessage);
+        }
+    }
+
+    [Fact]
     public void Alert_beancount_requests_a_stack_trace_with_a_pair()
     {
         var service = new AlertService();
-        var result = service.BeanCount(null!);
+        var result = service.BeanCount(new ServiceCall
+        {
+            Method = "BeanCount", Args = [new PyInt(123)], Session = new ClientSession(),
+        });
 
         Assert.Equal(new PyTuple([PyNone.Instance, PyNone.Instance]), result);
     }
@@ -51,6 +89,41 @@ public sealed class ClientStartupServicesTests
         Assert.Equal(first.Items[0], repeated.Items[0]);
         Assert.NotEqual(first.Items[0], distinct.Items[0]);
         Assert.Equal(new PyStr("D"), first.Items[1]);
+    }
+
+    [Fact]
+    public async Task Alert_stacktrace_rpc_refuses_malformed_and_oversized_inputs()
+    {
+        var service = (IService)new AlertService();
+        var session = new ClientSession();
+        async Task Refused(ServiceCall call)
+        {
+            var error = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(call).AsTask());
+            Assert.Equal("ALERT_ARGUMENTS_INVALID", error.Error.UserErrorMessage);
+        }
+
+        await Refused(new ServiceCall { Method = "BeanCount", Args = [], Session = session });
+        await Refused(new ServiceCall
+        {
+            Method = "SendClientStackTraceAlert", Session = session,
+            Args = [new PyTuple([new PyInt(1), new PyStr("key")]), new PyStr("trace"), new PyStr("Error"), new PyInt(2), new PyInt(3)],
+        });
+        await Refused(new ServiceCall
+        {
+            Method = "SendClientStackTraceAlert", Session = session,
+            Args = [new PyList(Enumerable.Repeat((PyValue)new PyInt(1), 1_000).ToArray()), new PyStr("trace"), new PyStr("Error")],
+        });
+        await Refused(new ServiceCall
+        {
+            Method = "SendClientStackTraceAlert", Session = session,
+            Args = [new PyTuple([new PyInt(1), new PyStr("key")]), new PyBytes(new byte[16_385]), new PyStr("Error")],
+        });
+        await Refused(new ServiceCall
+        {
+            Method = "SendClientStackTraceAlert", Session = session,
+            Args = [new PyTuple([new PyInt(1), new PyStr("key")]), new PyStr("trace"), new PyStr("Error")],
+            Kwargs = new PyDict([]),
+        });
     }
 
     [Fact]
@@ -134,21 +207,21 @@ public sealed class ClientStartupServicesTests
     }
 
     [Fact]
-    public async Task Missing_ship_kill_counter_returns_zero_for_hangar_rendering()
+    public async Task Missing_ship_kill_counter_provider_fails_closed()
     {
         IService service = new ShipKillCounterService();
-        var result = await service.CallAsync(new ServiceCall
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(new ServiceCall
         {
             Method = "GetItemKillCountPlayer",
-            Args = [PyNone.Instance],
+            Args = [new PyInt(74000001)],
             Session = new ClientSession(),
-        });
+        }).AsTask());
 
-        Assert.Equal(new PyInt(0), result);
+        Assert.Equal("SHIP_KILL_COUNTER_UNAVAILABLE", error.Error.UserErrorMessage);
     }
 
     [Fact]
-    public async Task Ship_kill_counter_does_not_query_nonpositive_item_ids()
+    public async Task Ship_kill_counter_refuses_nonpositive_item_ids_before_provider_access()
     {
         var queried = false;
         IService service = new ShipKillCounterService(_ =>
@@ -156,14 +229,46 @@ public sealed class ClientStartupServicesTests
             queried = true;
             return Task.FromResult(new System.Text.Json.Nodes.JsonObject());
         });
-        var result = await service.CallAsync(new ServiceCall
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(new ServiceCall
         {
             Method = "GetItemKillCountPlayer",
             Args = [new PyInt(0)],
             Session = new ClientSession(),
-        });
+        }).AsTask());
 
-        Assert.Equal(new PyInt(0), result);
+        Assert.Equal("SHIP_KILL_COUNTER_ITEM_ID_INVALID", error.Error.UserErrorMessage);
+        Assert.False(queried);
+    }
+
+    [Fact]
+    public async Task Ship_kill_counter_refuses_malformed_wire_shapes_before_provider_access()
+    {
+        var queried = false;
+        IService service = new ShipKillCounterService(_ =>
+        {
+            queried = true;
+            return Task.FromResult(new JsonObject());
+        });
+        var session = new ClientSession();
+        foreach (var call in new[]
+        {
+            new ServiceCall { Method = "GetItemKillCountPlayer", Args = [], Session = session },
+            new ServiceCall { Method = "GetItemKillCountPlayer", Args = [new PyInt(42), new PyInt(43)], Session = session },
+            new ServiceCall { Method = "GetItemKillCountPlayer", Args = [new PyInt(42)], Kwargs = Py.Dict(("itemID", new PyInt(42))), Session = session },
+        })
+        {
+            var error = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(call).AsTask());
+            Assert.Equal("SHIP_KILL_COUNTER_ARGUMENTS_INVALID", error.Error.UserErrorMessage);
+        }
+
+        var wrongType = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(new ServiceCall
+        {
+            Method = "GetItemKillCountPlayer",
+            Args = [new PyReal(42)],
+            Session = session,
+        }).AsTask());
+        Assert.Equal("SHIP_KILL_COUNTER_ITEM_ID_INVALID", wrongType.Error.UserErrorMessage);
+
         Assert.False(queried);
     }
 

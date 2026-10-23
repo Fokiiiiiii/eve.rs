@@ -1,4 +1,3 @@
-using System.Globalization;
 using Eve.Marshal;
 using Eve.Services;
 
@@ -40,6 +39,15 @@ public sealed class ProjectDiscoveryService(ProjectDiscoveryRpcCallbacks? callba
 
     public async ValueTask<PyValue> CallAsync(ServiceCall call)
     {
+        if (!HasMethod(call.Method)) return PyNone.Instance;
+        call.Cancellation.ThrowIfCancellationRequested();
+
+        var expectedArgs = call.Method == "fix_task_id" ? 1 : 0;
+        if (call.Kwargs is not PyNone || call.Args.Count != expectedArgs)
+            throw MachoErrors.ThrowUserError("PROJECT_DISCOVERY_ARGUMENTS_INVALID");
+        if (call.Method == "fix_task_id" && call.Arg(0) is not (PyInt or PyLong))
+            throw MachoErrors.ThrowUserError("PROJECT_DISCOVERY_TASK_ID_INVALID");
+
         var characterId = call.Session.CharacterId.GetValueOrDefault();
         switch (call.Method)
         {
@@ -47,8 +55,11 @@ public sealed class ProjectDiscoveryService(ProjectDiscoveryRpcCallbacks? callba
                 return PyBool.True;
 
             case "fix_task_id":
+                var taskId = PositiveIntegralTaskId(call.Arg(0));
+                if (taskId < 0)
+                    throw MachoErrors.ThrowUserError("PROJECT_DISCOVERY_TASK_ID_INVALID");
                 if (characterId > 0 && _callbacks.FixTaskIdAsync is { } fixTaskId)
-                    await fixTaskId(characterId, PositiveFiniteNumber(call.Arg(0)), call.Cancellation);
+                    await fixTaskId(characterId, taskId == 0 ? null : taskId, call.Cancellation);
                 return PyNone.Instance;
 
             case "get_player_analysis_kredits":
@@ -114,19 +125,10 @@ public sealed class ProjectDiscoveryService(ProjectDiscoveryRpcCallbacks? callba
     private static double NonNegativeInteger(double value) =>
         double.IsFinite(value) ? Math.Max(0, Math.Truncate(value)) : 0;
 
-    private static double? PositiveFiniteNumber(PyValue value)
+    private static double PositiveIntegralTaskId(PyValue value) => value switch
     {
-        var number = value switch
-        {
-            PyInt integer => integer.Value,
-            PyLong integer => integer.Value,
-            PyReal real => real.Value,
-            PyBool boolean => boolean.Value ? 1 : 0,
-            PyStr text when string.IsNullOrWhiteSpace(text.Value) => 0,
-            PyStr text when double.TryParse(text.Value, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed) => parsed,
-            PyNone => 0,
-            _ => double.NaN,
-        };
-        return double.IsFinite(number) && number > 0 ? number : null;
-    }
+        PyInt integer when integer.Value >= 0 => integer.Value,
+        PyLong integer when integer.Value >= 0 => integer.Value,
+        _ => -1,
+    };
 }

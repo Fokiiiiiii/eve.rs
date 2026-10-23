@@ -448,7 +448,9 @@ internal sealed partial class CharacterServicesComposition
 
     async ValueTask<PyValue?> FacilityManagerRpcAsync(ServiceCall call, CancellationToken token)
     {
-        async ValueTask<PyValue?> ReadFacilityAsync(long facilityId)
+        async ValueTask<PyValue?> ReadFacilityAsync(
+            long facilityId,
+            Eve.Services.Core.PersistedStructureInfo? persistedStructure = null)
         {
             if (facilityId <= 0) return null;
             var station = stations.Get(facilityId);
@@ -456,7 +458,7 @@ internal sealed partial class CharacterServicesComposition
             var typeId = station?.TypeId ?? 0;
             if (station is null)
             {
-                var info = await structureDirectoryReadModel.GetStructureInfoAsync(facilityId, token);
+                var info = persistedStructure ?? await structureDirectoryReadModel.GetStructureInfoAsync(facilityId, token);
                 if (info is not { PersistentlyDeployed: true }) return null;
                 systemId = (int)FacilityNumber(FacilityField(info.Info, "solarSystemID"));
                 typeId = (int)FacilityNumber(FacilityField(info.Info, "typeID"));
@@ -505,10 +507,19 @@ internal sealed partial class CharacterServicesComposition
             PyTuple tuple => tuple.Items,
             _ => Array.Empty<PyValue>(),
         };
+        var structureInfos = await structureDirectoryReadModel.GetStructureInfosAsync(
+            requested.Select(FacilityNumber).Where(id => id > 0 && stations.Get(id) is null).ToArray(), token);
         var facilities = new List<PyValue>();
         foreach (var raw in requested)
-            if (await ReadFacilityAsync(FacilityNumber(raw)) is { } facility)
+        {
+            var facilityId = FacilityNumber(raw);
+            var station = stations.Get(facilityId);
+            if (facilityId > 0 && station is null && !structureInfos.TryGetValue(facilityId, out _))
+                continue;
+            structureInfos.TryGetValue(facilityId, out var persistedStructure);
+            if (await ReadFacilityAsync(facilityId, persistedStructure) is { } facility)
                 facilities.Add(facility);
+        }
         return new PyList(facilities);
     }
 

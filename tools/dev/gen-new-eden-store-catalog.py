@@ -66,7 +66,6 @@ def main():
             product.pop("imageUrl", None)
         offer.pop("thirdpartyinfo", None)
         offer.pop("label", None)
-        offer.pop("href", None)
         offer.pop("imageUrl", None)
 
     fast_offers = []

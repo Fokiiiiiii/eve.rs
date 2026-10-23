@@ -1082,8 +1082,8 @@ def test_authentication_age_gate_uses_verified_account_state():
 
     run = uuid.uuid4().hex[:10]
     user_name = f"underage-{run}"
-    # Password-login headless sessions have no SSO JWT; the RPC still requires its non-empty token field.
-    login_jwt = "test.header.signature"
+    # Password-login headless sessions have no SSO JWT; exercise the RPC with its accepted Unicode token type.
+    login_jwt = m.WString("test.header.signature")
     with connect(user_name) as client:
         dbseed.set_underage(user_name, False)
         kind, outcome = attempt(client, "authentication", "AmUnderage", login_jwt)

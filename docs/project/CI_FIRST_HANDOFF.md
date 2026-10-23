@@ -2,22 +2,23 @@
 
 ## Current state
 
-- Remote `main` is `32d87282`. This includes the fix in `tools/headless-client/tests/test_login_to_character.py`: `AmUnderage` is now called with a non-empty JWT-shaped test value. V24.01 calls it with `connection.GetLoginJWT()`, and the eve.rs RPC rejects an empty token field.
-- Run 569 (`39927500454`, SHA `32d87282`) was queued at the last check.
-- Agent-test run `39927613179` was dispatched against `main` for the focused `test_login_to_character.py` live file; waiting for its result.
-- Required runs 562 (`39925475745`) and 564 (`39925943103`) both failed only in their fast live end-to-end job on the empty-token call above. All Rust, .NET test shards, Windows, Python, and fixture jobs in those runs passed. The gate failed in run 562 and was still queued in run 564 at the last check.
-- Nightly run `39926148439` was manually dispatched against `main`. It runs the slow live matrix, isolated skill-training-speed Host, benchmarks, Windows, and extended RPC fuzz. Seven jobs had failed at the last check; logs were not yet available while the run continued.
-- Earlier agent-test run `39923041081` passed for `main` with a focused paper-doll RPC test, fast live files, and Rust workspace tests. Its full log artifact was uploaded.
-- Main push CI uses a SHA-specific concurrency group with cancellation disabled. Runs 556 and 562 remained active across later pushes; Windows uses a per-caller run ID group.
+- Remote `main` is `ae6c86ce`. The slow live workflow now loads pinned mission data as well as the SDE; nightly `test_arc29_walk.py` failed because `sde_mission.epicArcs` was absent.
+- CI run 574 (`39929853113`, SHA `ae6c86ce`) is active. Fixtures passed; Rust format/clippy, .NET build, Rust tests, Python, end-to-end, advisory Rust, and Windows were running at last check.
+- Live-slow run `39929860762` was dispatched against `main` for `test_arc29_walk.py` to verify mission setup.
+- Agent-test run `39929447455` is active against SHA `46b929af` for `test_login_to_character.py`. It uses the updated Unicode token value. Run `39927613179` checked the earlier incorrect byte-string value.
+- CI run 573 (`39929438401`, SHA `46b929af`) failed in the fast live end-to-end job with `AUTHENTICATION_TOKEN_INVALID`: plain Python `str` encoded to `PyBytes`, which the RPC does not accept. The test now sends `m.WString(...)`; run 574 tests this change. Rust format/clippy, fixtures, Python, and Rust tests passed in run 573.
+- Nightly run `39926148439` completed on SHA `622509c2` with 22 failed jobs (21 live/skill-training checks plus the summary). RPC fuzz, benchmarks, and Windows passed. The missing mission-data setup is fixed in `live-slow.yml`; remaining failures include observed gameplay/timing errors and need triage if they recur on the corrected workflow.
+- Earlier agent-test run `39923041081` passed for `main` with a paper-doll RPC test, fast live files, and Rust tests; its log artifact was uploaded.
+- Main push CI uses SHA-specific groups with cancellation disabled. Runs 556 and 562 stayed active across later pushes; Windows has a per-caller run ID group.
 
 ## Verification
 
-- `python3 tools/dev/test_ci_status.py`: 8 focused tests passed, including timestamped/ANSI Actions log parsing.
-- The DB-free .NET focused test for the corrected paper-doll input passed: 1 passed, 0 failed, 0 skipped.
-- The authentication test source compiles with `python3 -m py_compile`; its live integration test is being checked through agent-test Actions. No local database or broad local suite was used.
+- `python3 tools/dev/test_ci_status.py`: 8 focused parser tests passed, including timestamped/ANSI Actions logs.
+- The DB-free .NET focused paper-doll test passed: 1 passed, 0 failed, 0 skipped.
+- The updated underage live test file passed `python3 -m py_compile`; Actions is checking it. No local database or broad local suite was used.
 
 ## Next steps
 
-1. Check agent-test run 39927613179 and push CI run 569.
-2. Once nightly run 39926148439 completes, inspect each failed job's test names and log tails and fix root causes.
-3. Record final run IDs and outcomes here before final handoff.
+1. Check agent-test 39929447455, live-slow 39929860762, and CI run 574.
+2. Review any remaining nightly failures against the corrected setup.
+3. Record final outcomes here before final handoff.

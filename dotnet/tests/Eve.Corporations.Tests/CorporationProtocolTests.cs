@@ -1712,6 +1712,15 @@ private static PyValue RowField(PyValue value,string key)
 
         await Assert.ThrowsAsync<CorporationError>(() => service.GetAggressionSettingsForCorps(
             Call(new ClientSession(), "GetAggressionSettingsForCorps", ids)).AsTask());
+        var malformedShape = await Assert.ThrowsAsync<CorporationError>(() => service.GetAggressionSettingsForCorps(
+            Call(new ClientSession(),"GetAggressionSettingsForCorps",new PyStr("not-a-list"))).AsTask());
+        Assert.Equal("CORPMGR_BULK_ARGUMENT_INVALID",malformedShape.Code);
+        var malformedId = await Assert.ThrowsAsync<CorporationError>(() => service.GetAggressionSettingsForCorps(
+            Call(new ClientSession(),"GetAggressionSettingsForCorps",new PyList([new PyInt(1),new PyReal(2.0)]))).AsTask());
+        Assert.Equal("CORPMGR_CORPORATION_ID_INVALID",malformedId.Code);
+        var negativeId = await Assert.ThrowsAsync<CorporationError>(() => service.GetAggressionSettingsForCorps(
+            Call(new ClientSession(),"GetAggressionSettingsForCorps",new PyList([new PyInt(-1)]))).AsTask());
+        Assert.Equal("CORPMGR_CORPORATION_ID_INVALID",negativeId.Code);
     }
 
     [Fact]

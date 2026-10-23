@@ -2752,3 +2752,5 @@ Security review follow-up: fitting bulk save/delete RPCs now refuse wrong outer 
 Security review follow-up: single fitting deletes now require a positive fitting ID in the selected owner scope and confirm deletion before announcing the change.
 
 Security review follow-up: corporation recruitment ad list/search RPCs now cap reads at 5,000 rows and fail with a named refusal above that ceiling; they do not truncate a larger result into a success response.
+
+Security review follow-up: `corpMgr.GetAggressionSettingsForCorps` rejects malformed container shapes and nonpositive or non-integer IDs before storage reads, while retaining the 500-entry cap.

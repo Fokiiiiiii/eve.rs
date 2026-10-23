@@ -5655,3 +5655,6 @@ Corporation registry batch RPCs `ExecuteActions`, `GetMembersByIds`, `GetMemberI
 
 
 `corpRecProxy` recruitment list/search methods now refuse collections above 5,000 rows with `CORPORATION_RECRUITMENT_AD_LIMIT_EXCEEDED` instead of materializing and returning an unbounded result. The query reads at most one row beyond the supported result ceiling and never returns a partial successful list. `Corporation_recruitment_ad_enumeration_refuses_more_than_5000_rows` covers the store and search RPC.
+
+
+`corpMgr.GetAggressionSettingsForCorps` now requires list, tuple, or dictionary input containing positive integer corporation IDs. Malformed shapes or entries receive `CORPMGR_BULK_ARGUMENT_INVALID` or `CORPMGR_CORPORATION_ID_INVALID` before reads; the 500 raw-entry ceiling remains. Valid dictionary keys and duplicate collapse remain supported. `CorporationProtocolTests.Corp_mgr_aggression_reads_refuse_more_than_500_corporations_before_storage_access` covers malformed shapes and IDs.

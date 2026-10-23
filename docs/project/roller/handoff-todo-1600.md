@@ -54,4 +54,4 @@ These were stale OPEN entries: later TODO evidence, source code, and named regre
 
 ## Checks in this handoff
 
-No PostgreSQL command was used. The wormhole service tests named above are `PgFact` tests and require the CI database lane; this worktree run did not execute them. A focused CI run is required before treating the documentation update as green.
+No PostgreSQL command was used. CI agent-test run `39940268962` passed the focused `Eve.Services.Space.Tests` filter `FullyQualifiedName~A_jump_into_a_system_with_an_environment_gives_the_simulation_the_ship_again_with_that_environment` on pushed commit `3309464f573e587109f5debb6b96770b22309e38`. An earlier dispatch with the abbreviated SHA failed at checkout because Actions treated it as a branch name; the full-SHA retry passed. `ci-status.py failures` found no push-triggered `ci.yml` run for this commit. Other `PgFact` cases cited above were not part of the focused filter.

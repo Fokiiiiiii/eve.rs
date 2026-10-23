@@ -114,11 +114,11 @@ def _plain_rows(value):
         return [_named(row) for row in plain]
     if isinstance(plain, tuple) and len(plain) == 2 and isinstance(plain[1], dict):
         args = plain[1]
-        header, lines = args.get("header"), args.get("lines")
+        lines, columns = args.get("lines"), args.get("columns")
         if isinstance(lines, list) and all(isinstance(line, dict) for line in lines):
             return lines
-        if isinstance(lines, list) and isinstance(header, list):
-            names = [str(name) for name in header]
+        if isinstance(lines, list) and isinstance(columns, list):
+            names = [str(name) for name in columns]
             return [dict(zip(names, line)) for line in lines]
     raise AssertionError(f"not a rowset or a list of rows: {type(plain).__name__} {str(plain)[:600]}")
 

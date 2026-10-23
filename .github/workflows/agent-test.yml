@@ -22,7 +22,7 @@ run-name: Agent test ${{ inputs.ref }}
         type: string
       live_tests:
         description: Comma-separated headless test files, fast, slow, or all; empty skips live tests
-        required: true
+        required: false
         default: ''
         type: string
       rust:

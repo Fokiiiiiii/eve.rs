@@ -351,7 +351,9 @@ CI run 672 on `1669e6dc` failed the structure market Host test because the fixtu
 
 - The live restart test sends SIGTERM again, so it verifies the production shutdown path, persisted license recovery and the next request against the restarted Host. Local Host Release build passed with 0 warnings and 0 errors.
 - Focused run 186 (`40027152541`) confirmed the old Host listener closed, then the next client login failed at the front TCP port: `eve-net` exits after its Host link closes. The restart helper now restarts `eve-net` after Host readiness, using the same front port and socket.
-- Focused run 189 (`40028383063`) reached the restarted gateway but the pre-restart bearer token received 401. The live walk now logs in again through the restarted front, reselects the character and obtains a fresh token before checking persistence and applying the license. Focused rerun and push CI are pending. No local PostgreSQL test was run.
+- Focused run 189 (`40028383063`) reached the restarted gateway but the pre-restart bearer token received 401. The live walk now logs in again through the restarted front and reselects the character before checking persistence and applying the license.
+- Focused run 192 (`40029216605`) passed persistence reads and license application, then saw no queued front notifications because the headless client drains them while awaiting a client RPC response. The test now makes a harmless `GetUserToken` call before checking the queued cosmetic notifications. Focused rerun and push CI are pending. No local PostgreSQL test was run.
+
 ## 2026-10-23 pre-push update on 1bf92f6f
 
 - Main CI 713 (40029399172) is active on 1bf92f6f; CI 712 on 1bfd22e4 is also still active. The last completed relevant failure, CI 707 on cce06a2d, showed the stale initial ask quantity and a post-restart front connection refusal. Main now contains the corrections in 3cf0d3e0 and aa8030a4.

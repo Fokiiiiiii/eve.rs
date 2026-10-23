@@ -4,9 +4,9 @@
 
 The pilot is seeded with an original of blueprint 681 (sde.blueprints: 86 of type 38 make 165) and the materials in its station hangar.
 The install payload is the client's job.dump(): the wallet account, the character and corporation IDs, and the input and output
-locations as objects. A job's end is moved into the past in the database (the walk does not wait out the job's time); the
-completion then runs the same delivery path as the client's Deliver button. Invention needs skills and a decryptor, which this walk
-does not seed; the copy path is not walked (its completion would wait 480 seconds per run).
+locations as objects. Each job's end is moved into the past in the database (the walk does not wait out the job's time); completion
+uses the client's `CompleteJob` request and normal inventory delivery. The research walk delivers ME and TE jobs before manufacturing
+with that original. Copying and invention cases seed their required skills and inputs, then complete through the same delivery path.
 """
 
 from __future__ import annotations
@@ -173,12 +173,22 @@ def test_research_raises_material_efficiency_then_time_efficiency_by_two():
         me = number(who.call("industryManager", "InstallJob", job_dump(character, blueprint, RESEARCH_MATERIAL, lab_system, facility=lab)))
         ready_now(me)
         who.call("industryManager", "CompleteJob", me, lab_system)
+        assert job_status(me) == 100, "material research is delivered before its efficiency is read"
         assert efficiencies(who, blueprint) == (1, 0)
 
         te = number(who.call("industryManager", "InstallJob", job_dump(character, blueprint, RESEARCH_TIME, lab_system, facility=lab)))
         ready_now(te)
         who.call("industryManager", "CompleteJob", te, lab_system)
+        assert job_status(te) == 100, "time research is delivered before manufacturing"
         assert efficiencies(who, blueprint) == (1, 2)
+
+        # The researched original can immediately start manufacturing, whose product is delivered to the station hangar.
+        dbseed.new_item(MATERIAL, owner=character, location=STATION, quantity=86)
+        manufacturing = number(who.call("industryManager", "InstallJob", job_dump(character, blueprint, MANUFACTURING, system)))
+        ready_now(manufacturing)
+        who.call("industryManager", "CompleteJob", manufacturing, system)
+        assert job_status(manufacturing) == 100
+        assert dbseed.items_of(character, PRODUCT), "manufacturing after research delivers its product"
 
 def grant_skills(character: int, skills: list[tuple[int, int]]) -> None:
     for type_id, level in skills:

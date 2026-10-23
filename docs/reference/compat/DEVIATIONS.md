@@ -5530,3 +5530,8 @@ The fleetObject Init RPC costs 10 weighted per-session units because it updates 
 `charMgr.GetPrivateInfo` consumes 10 weighted per-session units because it joins character, corporation-role, wallet, and security-status data for the corporation member editor. Its persisted role gate and response are unchanged; the character profile budget regression verifies the named refusal.
 
 `mailMgr.SendMail` now refuses a nonpositive or non-integer character recipient ID with `MAIL_RECIPIENT_INVALID` before invoking persistence, rather than dropping malformed IDs from a mixed recipient list. Valid integer IDs and duplicate suppression keep their existing behavior. `MailServiceTests.SendMail_refuses_malformed_recipient_ids_before_sending` covers negative, textual, and non-finite recipients without a send callback.
+
+
+## PI and industry walk time controls (2026-10-23)
+
+The PI and industry test harnesses advance colony and job timestamps to fit production and delivery into live test time. `tools/headless-client/tests/test_planet_walk.py` and `test_walk_industry.py` exercise the client RPCs, state changes, persistence and delivery paths. EveJS 261018.1 routes extractor output and settles customs transfers in `server/src/services/planet/planetRuntimeStore.js` and `server/src/services/inventory/invBroker/planetaryImportExport.js`; its `industryManagerService.js` sends `CompleteJob` through `deliverIndustryJob`. This records test-time control only; it does not change runtime timing or client-visible rules.

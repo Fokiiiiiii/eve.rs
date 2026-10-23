@@ -377,6 +377,25 @@ public class DispatchGoldenTests
     }
 
     [Fact]
+    public async Task Config_multi_lookups_have_a_named_per_session_budget()
+    {
+        var capture = new Capture();
+        var session = new ClientSession(capture) { SessionId = 918 };
+        var registry = new ServiceRegistry();
+        var service = new ConfigLookupBudgetService();
+        registry.Register(service);
+        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 10 };
+
+        await dispatcher.DispatchAsync(CallRequestPacket("config", "GetMultiOwnersEx"), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("config", "GetMultiLocationsEx"), session);
+
+        Assert.Equal(1, service.Calls);
+        Assert.Equal(2, capture.Sent.Count);
+        Assert.Equal(ErrorResponseCommand, CommandOf(capture.Sent[1]));
+        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[1])));
+    }
+
+    [Fact]
     public async Task Bill_manager_calls_have_a_named_per_session_budget()
     {
         var captureRegistry = new ServiceRegistry();
@@ -1295,6 +1314,18 @@ public class DispatchGoldenTests
 
         public bool HasMethod(string method) => method is "GetTransactions" or "GiveCash" or "GiveCashFromCorpAccount";
 
+        public ValueTask<PyValue> CallAsync(ServiceCall call)
+        {
+            Calls++;
+            return ValueTask.FromResult<PyValue>(PyNone.Instance);
+        }
+    }
+
+    private sealed class ConfigLookupBudgetService : IService
+    {
+        public int Calls { get; private set; }
+        public string Name => "config";
+        public bool HasMethod(string method) => method is "GetMultiOwnersEx" or "GetMultiCorpTickerNamesEx" or "GetMultiAllianceShortNamesEx" or "GetMultiLocationsEx";
         public ValueTask<PyValue> CallAsync(ServiceCall call)
         {
             Calls++;

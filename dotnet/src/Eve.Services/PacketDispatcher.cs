@@ -270,6 +270,10 @@ public sealed class PacketDispatcher
     {
         if (method == "GetAllInfo")
             return 10;
+        if (service == "config" && method is
+            "GetMultiOwnersEx" or "GetMultiCorpTickerNamesEx" or
+            "GetMultiAllianceShortNamesEx" or "GetMultiLocationsEx")
+            return 10;
         if (service == "marketProxy" && method is
             "GetOrders" or "GetStationAsks" or "GetSystemAsks" or "GetRegionBest" or
             "GetMarketOrderHistory" or "GetOldPriceHistory" or "GetNewPriceHistory" or

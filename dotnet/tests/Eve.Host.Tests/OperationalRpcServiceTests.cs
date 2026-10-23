@@ -105,13 +105,14 @@ public sealed class OperationalRpcServiceTests
     }
 
     [Fact]
-    public async Task Launch_from_wreck_without_a_space_backend_returns_none()
+    public async Task Launch_from_wreck_without_a_space_backend_returns_a_client_visible_error()
     {
         IService service = new EjectRpcService();
 
-        Assert.IsType<PyNone>(await service.CallAsync(Call(
-            "LaunchShipOrContainerFromWreckOrContainer",
-            args: [new PyLong(900), new PyLong(901)])));
+        await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await service.CallAsync(Call(
+                "LaunchShipOrContainerFromWreckOrContainer",
+                args: [new PyLong(900), new PyLong(901)])));
     }
 
     [Fact]

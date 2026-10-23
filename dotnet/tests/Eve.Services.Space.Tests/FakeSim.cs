@@ -436,7 +436,8 @@ internal sealed class FakeSim : ISimulation
             var targetId = (long)args[0];
             return Task.FromResult(new CommandReply(true, 0, null)
             {
-                Position = PositionAnswers.GetValueOrDefault(targetId, [0, 0, 0])
+                Position = PositionAnswers.GetValueOrDefault(targetId, [0, 0, 0]),
+                Direction = [1, 0, 0]
             });
         }
         return Task.FromResult(code switch { SimCommands.WarpTo or SimCommands.WarpToPoint => WarpAnswer, SimCommands.Jump => JumpAnswer, SimCommands.CynoJump or SimCommands.OpenBridge or SimCommands.BridgeJump or SimCommands.ConduitJump => CynoJumpAnswer, _ => DockAnswer });

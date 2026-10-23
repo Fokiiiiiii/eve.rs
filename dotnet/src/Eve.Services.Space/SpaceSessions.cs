@@ -1179,7 +1179,8 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
             ship.AllianceId,
             ship.WarFactionId,
             // The active ship's pose must survive restarts until the next character entry consumes it.
-            long.MaxValue);
+            long.MaxValue,
+            Kind: SpaceItemKind.ActiveShip);
         try
         {
             await _spaceItems.SaveAsync(state, CancellationToken.None);

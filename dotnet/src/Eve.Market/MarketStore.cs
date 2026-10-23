@@ -290,40 +290,57 @@ public sealed partial class MarketStore
 
 
     public Task<IReadOnlyList<(MarketOrder Order,long Quantity)>> StationAsksAsync(
-        int region,long stationId,IReadOnlySet<long> npcStationIds,long nowMs,CancellationToken token = default) =>
-        AskSummariesAsync(region,null,stationId,npcStationIds,nowMs,token);
+        int region,long stationId,long nowMs,CancellationToken token = default) =>
+        AskSummariesAsync(region,null,stationId,null,nowMs,token,false);
+
+    public Task<IReadOnlyList<(MarketOrder Order,long Quantity)>> StationAsksAsync(
+        int region,long stationId,IReadOnlySet<long> npcStationIds,long nowMs,CancellationToken token = default)
+    {
+        ArgumentNullException.ThrowIfNull(npcStationIds);
+        return npcStationIds.Contains(stationId)
+            ? StationAsksAsync(region,stationId,nowMs,token)
+            : Task.FromResult<IReadOnlyList<(MarketOrder Order,long Quantity)>>([]);
+    }
+
+    public Task<IReadOnlyList<(MarketOrder Order,long Quantity)>> SystemAsksAsync(
+        int region,int solarSystemId,long nowMs,CancellationToken token = default) =>
+        AskSummariesAsync(region,solarSystemId,null,null,nowMs,token,true);
 
     public Task<IReadOnlyList<(MarketOrder Order,long Quantity)>> SystemAsksAsync(
         int region,int solarSystemId,IReadOnlySet<long> npcStationIds,long nowMs,CancellationToken token = default) =>
-        AskSummariesAsync(region,solarSystemId,null,npcStationIds,nowMs,token);
+        AskSummariesAsync(region,solarSystemId,null,npcStationIds,nowMs,token,false);
+
+    public Task<IReadOnlyList<(MarketOrder Order,long Quantity)>> RegionBestAsync(
+        int region,long nowMs,CancellationToken token = default) =>
+        AskSummariesAsync(region,null,null,null,nowMs,token,true);
 
     public Task<IReadOnlyList<(MarketOrder Order,long Quantity)>> RegionBestAsync(
         int region,IReadOnlySet<long> npcStationIds,long nowMs,CancellationToken token = default) =>
-        AskSummariesAsync(region,null,null,npcStationIds,nowMs,token);
+        AskSummariesAsync(region,null,null,npcStationIds,nowMs,token,false);
 
     private async Task<IReadOnlyList<(MarketOrder Order,long Quantity)>> AskSummariesAsync(
-        int region,int? solarSystemId,long? stationId,IReadOnlySet<long> npcStationIds,long nowMs,CancellationToken token)
+        int region,int? solarSystemId,long? stationId,IReadOnlySet<long>? stationIds,long nowMs,CancellationToken token,bool includeLocationCandidates)
     {
-        ArgumentNullException.ThrowIfNull(npcStationIds);
-        if(region<=0 || npcStationIds.Count==0 || solarSystemId is <= 0 || stationId is <= 0 ||
-            stationId is { } selectedStation && !npcStationIds.Contains(selectedStation))
+        if(region<=0 || solarSystemId is <= 0 || stationId is <= 0 ||
+            stationId is { } selectedStation && stationIds is not null && !stationIds.Contains(selectedStation))
             return [];
 
+        var locationKey=includeLocationCandidates ? ",station_id" : "";
         await using var connection=await _source.OpenConnectionAsync(token);
         await using var command=new NpgsqlCommand($"""
             WITH scoped AS (
                 SELECT {BookColumns} FROM {_schema}.orders
                 WHERE region_id=$1 AND bid=false AND state=0 AND vol_remaining>0
                     AND (is_npc OR issued_ms + duration_days::bigint*86400000 > $2)
-                    AND station_id=ANY($3)
+                    AND ($3::bigint[] IS NULL OR station_id=ANY($3))
                     AND ($4::integer IS NULL OR solar_system_id=$4)
                     AND ($5::bigint IS NULL OR station_id=$5)
             ),
             summaries AS (
-                SELECT DISTINCT ON (type_id) *,
-                    LEAST(SUM(vol_remaining) OVER (PARTITION BY type_id),9223372036854775807)::bigint AS total_ask_quantity
+                SELECT DISTINCT ON (type_id{locationKey}) *,
+                    LEAST(SUM(vol_remaining) OVER (PARTITION BY type_id{locationKey}),9223372036854775807)::bigint AS total_ask_quantity
                 FROM scoped
-                ORDER BY type_id,price,issued_ms,id
+                ORDER BY type_id{locationKey},price,issued_ms,id
             )
             SELECT {BookColumns},total_ask_quantity FROM summaries ORDER BY type_id
             """,connection)
@@ -332,7 +349,8 @@ public sealed partial class MarketStore
             {
                 new(){Value=region},
                 new(){Value=nowMs},
-                new(){Value=npcStationIds.ToArray()},
+                new NpgsqlParameter { NpgsqlDbType=NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Bigint,
+                    Value=stationIds is null ? DBNull.Value : stationIds.ToArray() },
                 new(){Value=solarSystemId is { } system ? system : DBNull.Value},
                 new(){Value=stationId is { } station ? station : DBNull.Value},
             },

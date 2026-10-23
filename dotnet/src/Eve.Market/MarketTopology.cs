@@ -13,14 +13,35 @@ public readonly record struct MarketLocation(long StationId,int SolarSystemId,in
 public sealed class MarketTopology
 {
     private readonly Dictionary<int,int[]> _neighbors;
+    private readonly Dictionary<int,(int ConstellationId,int RegionId)> _systemLocations;
     private readonly ConcurrentDictionary<(int From,int To),int> _distances = new();
-    public MarketTopology(IEnumerable<(int From,int To)> links) => _neighbors = links
-        .Where(e => e.From > 0 && e.To > 0).SelectMany(e => new[]{e,(e.To,e.From)})
-        .GroupBy(e => e.Item1).ToDictionary(g => g.Key,g => g.Select(e => e.Item2).Distinct().ToArray());
 
-    public static async Task<MarketTopology> LoadAsync(SdeReader sde,CancellationToken token = default) =>
-        new((await sde.ReadAsync("mapStargates",cancellationToken:token))
-            .Select(r => (r.Doc.GetProperty("solarSystemID").GetInt32(),r.Doc.GetProperty("destination").GetProperty("solarSystemID").GetInt32())));
+    public MarketTopology(
+        IEnumerable<(int From,int To)> links,
+        IEnumerable<(int SystemId,int ConstellationId,int RegionId)>? systems = null)
+    {
+        _neighbors = links
+            .Where(e => e.From > 0 && e.To > 0).SelectMany(e => new[]{e,(e.To,e.From)})
+            .GroupBy(e => e.Item1).ToDictionary(g => g.Key,g => g.Select(e => e.Item2).Distinct().ToArray());
+        _systemLocations = (systems ?? []).Where(system => system.SystemId > 0 &&
+                system.ConstellationId > 0 && system.RegionId > 0)
+            .ToDictionary(system => system.SystemId, system => (system.ConstellationId,system.RegionId));
+    }
+
+    /// <summary>Builds the full market location for a persisted structure from the pinned SDE solar-system hierarchy.</summary>
+    public MarketLocation? StructureLocation(long structureId,int solarSystemId) =>
+        _systemLocations.TryGetValue(solarSystemId,out var system)
+            ? new MarketLocation(structureId,solarSystemId,system.ConstellationId,system.RegionId)
+            : null;
+
+    public static async Task<MarketTopology> LoadAsync(SdeReader sde,CancellationToken token = default)
+    {
+        var gates = await sde.ReadAsync("mapStargates",cancellationToken:token);
+        var systems = await sde.ReadAsync("mapSolarSystems",cancellationToken:token);
+        return new MarketTopology(
+            gates.Select(r => (r.Doc.GetProperty("solarSystemID").GetInt32(),r.Doc.GetProperty("destination").GetProperty("solarSystemID").GetInt32())),
+            systems.Select(r => ((int)r.Key,r.Doc.GetProperty("constellationID").GetInt32(),r.Doc.GetProperty("regionID").GetInt32())));
+    }
 
     public int Jumps(int from,int to)
     {

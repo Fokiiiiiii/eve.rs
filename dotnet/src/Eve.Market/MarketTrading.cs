@@ -39,8 +39,18 @@ public sealed record TouchedBook(int RegionId,int TypeId);
 public sealed class MarketTrading(NpgsqlDataSource source,MarketStore store,PgCharacterStore characters,CorporationStore corporations,
     PgSkillStore skills,PgItemStore items,WalletTransactions wallets,StationCatalog stations,MarketTopology topology,Func<long> now,IMarketExpiryJobs expiryJobs)
 {
+    private sealed record MarketVenue(
+        long Id,long OwnerId,long? FactionId,int TypeId,string Name,
+        int SolarSystemId,int ConstellationId,int RegionId,bool IsStructure,double? BrokerTaxPercent)
+    {
+        public MarketLocation Location => new(Id,SolarSystemId,ConstellationId,RegionId);
+        public static MarketVenue From(Station station) => new(station.Id,station.OwnerId,station.FactionId,station.TypeId,
+            station.Name,station.SolarSystemId,station.ConstellationId,station.RegionId,false,null);
+    }
+
     private string Schema => store.Schema;
     private const long EscrowBase = 9200000000;
+    public IMarketStructureDirectory? StructureDirectory { get; set; }
     public long CandidateRowsLocked => Interlocked.Read(ref _candidateRowsLocked);
     private long _candidateRowsLocked;
     /// <summary>Maximum resting-order rows locked by one candidate read.</summary>
@@ -73,32 +83,65 @@ public sealed class MarketTrading(NpgsqlDataSource source,MarketStore store,PgCh
     public Func<NpgsqlConnection,NpgsqlTransaction,long,long,CancellationToken,ValueTask<int>>? FactionWarfareUpgradeLevel { get; init; }
     public Func<long,long,CancellationToken,Task<double>>? StandingToward { get; init; }
 
-    private async Task<MarketContext> Context(NpgsqlConnection c,NpgsqlTransaction tx,long actor,Station station,CancellationToken token)
+    private async Task<MarketContext> Context(NpgsqlConnection c,NpgsqlTransaction tx,long actor,MarketVenue venue,CancellationToken token)
     {
         var levels = (await skills.ForCharacterAsync(c,tx,actor,token)).ToDictionary(s => s.TypeId,s => s.Level);
         int Level(int id) => levels.GetValueOrDefault(id);
-        var upgrade = FactionWarfareUpgradeLevel is null ? 0 : await FactionWarfareUpgradeLevel(c,tx,actor,station.SolarSystemId,token);
-        var factionStanding = StandingToward is null || station.FactionId is not { } faction
+        var marketSkills=new MarketSkillLevels(Level(3443),Level(3444),Level(3446),Level(3447),Level(16595),Level(16596),Level(16597),
+            Level(16598),Level(16594),Level(16622),Level(18580));
+        if (venue.IsStructure)
+            return MarketRules.StructureContext(marketSkills,venue.BrokerTaxPercent);
+        var upgrade = FactionWarfareUpgradeLevel is null ? 0 : await FactionWarfareUpgradeLevel(c,tx,actor,venue.SolarSystemId,token);
+        var factionStanding = StandingToward is null || venue.FactionId is not { } faction
             ? 0 : await StandingToward(actor,faction,token);
-        var corpStanding = StandingToward is null ? 0 : await StandingToward(actor,station.OwnerId,token);
-        return MarketRules.Context(new(Level(3443),Level(3444),Level(3446),Level(3447),Level(16595),Level(16596),Level(16597),
-            Level(16598),Level(16594),Level(16622),Level(18580)),true,factionStanding,corpStanding,
-            solarSystem:station.SolarSystemId,factionWarfareUpgradeLevel:upgrade);
+        var corpStanding = StandingToward is null ? 0 : await StandingToward(actor,venue.OwnerId,token);
+        return MarketRules.Context(marketSkills,true,factionStanding,corpStanding,
+            solarSystem:venue.SolarSystemId,factionWarfareUpgradeLevel:upgrade);
+    }
+
+    private async Task<MarketVenue> ResolveVenueAsync(long actorId,long locationId,bool requireAccess,CancellationToken token)
+    {
+        if (stations.Get(locationId) is { } station)
+            return MarketVenue.From(station);
+        var directory=StructureDirectory;
+        var structure=directory is null ? null : await directory.GetAsync(locationId,token);
+        if (structure is null || structure.Id != locationId || structure.OwnerCorporationId <= 0 ||
+            structure.Location.StationId != locationId || structure.Location.RegionId <= 0)
+            throw new MarketError("MARKET_STATION_NOT_FOUND");
+        if (requireAccess && !await directory!.CanAccessMarketAsync(actorId,locationId,token))
+            throw new MarketError("StructureMarketDenied",("structureName",structure.Name));
+        var brokerTax=requireAccess ? await directory!.BrokerTaxPercentAsync(actorId,locationId,token) : null;
+        return new MarketVenue(structure.Id,structure.OwnerCorporationId,null,structure.TypeId,structure.Name,
+            structure.Location.SolarSystemId,structure.Location.ConstellationId,structure.Location.RegionId,true,brokerTax);
+    }
+
+    public async Task<MarketLocation> RequireMarketLocationAsync(long actorId,long locationId,CancellationToken token = default) =>
+        (await ResolveVenueAsync(actorId,locationId,true,token)).Location;
+
+    public async Task<bool> CanViewAtAsync(long actorId,long locationId,CancellationToken token = default)
+    {
+        if (stations.Get(locationId) is not null) return true;
+        return StructureDirectory is { } directory && await directory.CanAccessMarketAsync(actorId,locationId,token);
     }
     /// <summary>
     /// Reads the book in (price, issue time, id) batches under FOR UPDATE and stops when filled; one final batch may contain unfilled rows.
     /// </summary>
     private async Task<(List<HeldOrder> Held,IReadOnlyList<MarketFillPlan> Fills)> MatchAsync(NpgsqlConnection c,NpgsqlTransaction tx,
-        int typeId,bool buying,decimal priceLimit,long quantity,int range,Station station,long time,CancellationToken token)
+        long actorId,int typeId,bool buying,decimal priceLimit,long quantity,int range,MarketVenue venue,long time,CancellationToken token)
     {
-        var walk=new MarketFillWalk(topology,typeId,buying,MarketLocation.From(station),priceLimit,quantity,range,time);
+        var walk=new MarketFillWalk(topology,typeId,buying,venue.Location,priceLimit,quantity,range,time);
         var held=new List<HeldOrder>();
+        var visibility=new Dictionary<long,bool>();
         HeldOrder? cursor=null;
         while (!walk.Filled)
         {
-            var batch=await CandidateBatchAsync(c,tx,typeId,buying,priceLimit,station.RegionId,time,cursor,token);
+            var batch=await CandidateBatchAsync(c,tx,typeId,buying,priceLimit,venue.RegionId,time,cursor,token);
             foreach (var order in batch)
             {
+                var locationId=order.Row.Location.StationId;
+                if (!visibility.TryGetValue(locationId,out var canView))
+                    visibility[locationId]=canView=await CanViewAtAsync(actorId,locationId,token);
+                if (!canView) continue;
                 held.Add(order);
                 walk.Offer(order.Row);
             }
@@ -194,12 +237,11 @@ public sealed class MarketTrading(NpgsqlDataSource source,MarketStore store,PgCh
         await using (var guard = Command(c,tx,"SELECT pg_advisory_xact_lock(hashtextextended($1,0))","market:"+Schema+":command:"+operationKey))
             await guard.ExecuteNonQueryAsync(token);
         var actor = await characters.LockAndGetAsync(c,tx,request.ActorId,token) ?? throw new MarketError("CHARACTER_NOT_FOUND");
-        var station = stations.Get(request.StationId) ?? throw new MarketError("MARKET_STATION_NOT_FOUND");
         var account=new WalletAccount(actor.Id);
         SessionRoles? corporationRoles=null;
         if(request.UseCorporation)
         {
-            var authority=await corporations.MarketAuthorityAsync(c,tx,actor.Id,null,station.Id,token);
+            var authority=await corporations.MarketAuthorityAsync(c,tx,actor.Id,null,request.StationId,token);
             account=authority.Wallet;
             corporationRoles=authority.Roles;
         }
@@ -214,10 +256,11 @@ public sealed class MarketTrading(NpgsqlDataSource source,MarketStore store,PgCh
                 return JsonSerializer.Deserialize<MarketReceipt>(reader.GetString(1))!;
             }
         }
+        var station=await ResolveVenueAsync(actor.Id,request.StationId,true,token);
         var time = now();
         var context = await Context(c,tx,actor.Id,station,token);
         var current = new MarketLocation(actor.StationId,actor.SolarSystemId,actor.ConstellationId,actor.RegionId);
-        var location = MarketLocation.From(station);
+        var location = station.Location;
 
         var duration = request.Buying && request.Duration == 0 ? MarketRules.ImmediateBuyBookedDays : request.Duration;
         if (!request.Buying || duration>0)
@@ -236,7 +279,7 @@ public sealed class MarketTrading(NpgsqlDataSource source,MarketStore store,PgCh
 
         await using (var bookLock = Command(c,tx,"SELECT pg_advisory_xact_lock(hashtextextended($1,0))",$"market:{Schema}:book:{station.RegionId}:{request.TypeId}"))
             await bookLock.ExecuteNonQueryAsync(token);
-        var (held,plans) = await MatchAsync(c,tx,request.TypeId,request.Buying,request.Price,request.Quantity,request.Range,station,time,token);
+        var (held,plans) = await MatchAsync(c,tx,actor.Id,request.TypeId,request.Buying,request.Price,request.Quantity,request.Range,station,time,token);
         var byId = held.ToDictionary(o => o.Row.Id);
         var makerRemaining = held.ToDictionary(o => o.Row.Id,o => o.Row.VolumeRemaining);
         var makerEscrow = held.ToDictionary(o => o.Row.Id,o => o.Escrow);
@@ -269,7 +312,7 @@ public sealed class MarketTrading(NpgsqlDataSource source,MarketStore store,PgCh
             var maker = byId[plan.Order.Id];
             var makerVolume = makerRemaining[maker.Row.Id];
             if (plan.Quantity <= 0 || plan.Quantity > makerVolume) throw new MarketError("MARKET_ESCROW_INCONSISTENT");
-            var makerStation = stations.Get(maker.Row.Location.StationId) ?? throw new MarketError("MARKET_STATION_NOT_FOUND");
+            var makerStation = await ResolveVenueAsync(actor.Id,maker.Row.Location.StationId,true,token);
             var makerAccount = maker.Row.IsNpc ? new WalletAccount(makerStation.OwnerId) : maker.Wallet;
             var makerActor = maker.Row.IsNpc ? makerStation.OwnerId : maker.Actor;
             var buyer = request.Buying ? actor.Id : makerActor;
@@ -448,7 +491,7 @@ public Task<MarketReceipt> ModifyAsync(long actorId,long orderId,decimal newPric
             var current=await GetOrder(c,tx,orderId,true,token) ?? throw new MarketError("MARKET_ORDER_NOT_FOUND");
             var order=current.Order;
             if (order.Row.IsNpc) throw new MarketError("MARKET_ORDER_ACCESS_DENIED");
-            var station=stations.Get(order.Row.Location.StationId) ?? throw new MarketError("MARKET_STATION_NOT_FOUND");
+            var station=await ResolveVenueAsync(actor.Id,order.Row.Location.StationId,true,token);
             var time=now();
             async Task<MarketReceipt> Save(MarketReceipt receipt)
             {
@@ -468,7 +511,7 @@ public Task<MarketReceipt> ModifyAsync(long actorId,long orderId,decimal newPric
             if (time < readyAt) throw new MarketError("MARKET_MODIFY_TOO_SOON",("remainingSeconds",(readyAt-time+999)/1000));
             var context=await Context(c,tx,actor.Id,station,token);
             var location=new MarketLocation(actor.StationId,actor.SolarSystemId,actor.ConstellationId,actor.RegionId);
-            if (topology.OrderDistance(location,MarketLocation.From(station)) > context.Limits.ModifyRange)
+            if (topology.OrderDistance(location,station.Location) > context.Limits.ModifyRange)
                 throw new MarketError("MARKET_REMOTE_SKILL_REQUIRED");
             if (order.Row.Price == newPrice) return await Save(new(operationKey,orderId,0,0m,[],[]));
 
@@ -477,7 +520,7 @@ public Task<MarketReceipt> ModifyAsync(long actorId,long orderId,decimal newPric
             var newValue=checked(newPrice*oldVolume);
             if (order.Row.Bid && order.Escrow != oldValue || !order.Row.Bid && order.Escrow != 0m)
                 throw new MarketError("MARKET_ESCROW_INCONSISTENT");
-            var (opposing,fills)=await MatchAsync(c,tx,order.Row.TypeId,order.Row.Bid,newPrice,oldVolume,order.Row.Range,station,time,token);
+            var (opposing,fills)=await MatchAsync(c,tx,actor.Id,order.Row.TypeId,order.Row.Bid,newPrice,oldVolume,order.Row.Range,station,time,token);
             var byId=opposing.ToDictionary(o=>o.Row.Id);
             var makerRemaining=opposing.ToDictionary(o=>o.Row.Id,o=>o.Row.VolumeRemaining);
             var makerEscrow=opposing.ToDictionary(o=>o.Row.Id,o=>o.Escrow);
@@ -513,7 +556,7 @@ public Task<MarketReceipt> ModifyAsync(long actorId,long orderId,decimal newPric
             var remaining=oldVolume;
             var escrow=order.Row.Bid ? newValue : 0m;
             var sellerContexts=new Dictionary<(long CharacterId,long StationId),MarketContext>();
-            async Task<MarketContext> SellerContext(long characterId,Station sellerStation)
+            async Task<MarketContext> SellerContext(long characterId,MarketVenue sellerStation)
             {
                 var key=(characterId,sellerStation.Id);
                 if (!sellerContexts.TryGetValue(key,out var sellerContext))
@@ -527,7 +570,7 @@ public Task<MarketReceipt> ModifyAsync(long actorId,long orderId,decimal newPric
                 var makerVolume=makerRemaining[maker.Row.Id];
                 if (plan.Quantity <= 0 || plan.Quantity > makerVolume)
                     throw new MarketError("MARKET_ESCROW_INCONSISTENT");
-                var makerStation=stations.Get(maker.Row.Location.StationId) ?? throw new MarketError("MARKET_STATION_NOT_FOUND");
+                var makerStation=await ResolveVenueAsync(actor.Id,maker.Row.Location.StationId,true,token);
                 var makerActor=maker.Row.IsNpc ? makerStation.OwnerId : maker.Actor;
                 var makerAccount=maker.Row.IsNpc ? new WalletAccount(makerStation.OwnerId) : maker.Wallet;
                 var destination=order.Row.Bid ? makerStation : station;
@@ -710,7 +753,7 @@ public Task<MarketReceipt> ModifyAsync(long actorId,long orderId,decimal newPric
             var current=await GetOrder(c,tx,orderId,true,token) ?? throw new MarketError("MARKET_ORDER_NOT_FOUND");
             var order=current.Order;
             if (order.Row.IsNpc || current.State != 0) throw new MarketError("MARKET_ORDER_NOT_ACTIVE");
-            var station=stations.Get(order.Row.Location.StationId) ?? throw new MarketError("MARKET_STATION_NOT_FOUND");
+            var station=await ResolveVenueAsync(expired ? 0 : actorId,order.Row.Location.StationId,false,token);
             if (!expired && order.Wallet.OwnerId == order.Actor && actor!.Id != order.Actor)
                 throw new MarketError("MARKET_ORDER_ACCESS_DENIED");
             var nowMs=now();

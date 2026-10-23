@@ -487,6 +487,8 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
     [Method("BuyMultipleItems")]
     public async ValueTask<PyValue> BuyMultipleItems(ServiceCall call)
     {
+        if (call.Arg(1) is not (PyList or PyTuple))
+            throw Error(new MarketError("MARKET_BULK_ARGUMENT_INVALID"));
         var entries = Sequence(call.Arg(1));
         if (entries.Count > MaxBuyMultipleItems)
             throw Error(new MarketError("MARKET_BULK_LIMIT_EXCEEDED"));
@@ -498,8 +500,10 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
         {
             var typeId = Int32(Field(entry, "typeID"));
             var quantity = Integer(Field(entry, "quantity"));
-            if (typeId <= 0 || quantity <= 0) continue;
-            var request = new MarketRequest(actor, typeId, true, Money(Field(entry, "price")), quantity, stationId, 0,
+            var price = Money(Field(entry, "price"));
+            if (typeId <= 0 || quantity <= 0 || price <= 0)
+                throw Error(new MarketError("MARKET_BULK_ARGUMENT_INVALID"));
+            var request = new MarketRequest(actor, typeId, true, price, quantity, stationId, 0,
                 MarketRules.RangeStation, Math.Max(1, Integer(Field(entry, "minVolume"), 1)), UseCorporation: useCorporation);
             RefuseRepeatedPlacement(call, request);
             if (requests.Any(previous => previous.Request == request))

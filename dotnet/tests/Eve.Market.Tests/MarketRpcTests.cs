@@ -240,6 +240,28 @@ public class MarketRpcTests
     }
 
     [PgFact]
+    public async Task Buy_multi_refuses_malformed_batches_before_any_order_is_written()
+    {
+        await using var r = await TradeRig.Create();
+        var actor = await r.Actor("Malformed Multi Buyer", 10000m);
+        var seat = await SeatAsync(r, actor);
+
+        foreach (var input in new PyValue[]
+        {
+            new PyStr("not-a-list"),
+            new PyList([Line(Tritanium, 1, 10), new PyStr("not-an-order")]),
+            new PyList([Line(Tritanium, -1, 10)]),
+        })
+        {
+            var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() => seat.Proxy.BuyMultipleItems(
+                Call(seat.Session, "BuyMultipleItems", 3, new PyInt(r.Station.Id), input, PyBool.False)).AsTask());
+            Assert.Equal("MARKET_BULK_ARGUMENT_INVALID", refusal.Error.UserErrorMessage);
+        }
+
+        Assert.Empty((await r.Book.BookAsync(r.Station.RegionId, Tritanium, r.Now)).Bids);
+    }
+
+    [PgFact]
     public async Task Multi_sell_refuses_a_non_sequence_payload_instead_of_returning_false()
     {
         await using var r = await TradeRig.Create();

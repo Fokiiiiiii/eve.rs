@@ -18,6 +18,25 @@ public sealed class FastCheckoutServiceTests
             Assert.IsType<PyDict>(await service.CallAsync(Call("GetOffersForUser"))), "plex")).Items);
     }
 
+    [Theory]
+    [InlineData("IsFastCheckoutEnabledForUser")]
+    [InlineData("ClearFastCheckoutCacheForUser")]
+    [InlineData("GetTestingConfiguration")]
+    [InlineData("GetOffersForUser")]
+    public async Task Fixed_fast_checkout_reads_refuse_client_arguments(string method)
+    {
+        IService service = new FastCheckoutService(NewEdenStoreCatalog.Default);
+        foreach (var call in new[]
+        {
+            new ServiceCall { Method = method, Args = [new PyInt(42)], Session = new ClientSession() },
+            new ServiceCall { Method = method, Args = [], Kwargs = Py.Dict(("userID", new PyInt(42))), Session = new ClientSession() },
+        })
+        {
+            var error = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(call).AsTask());
+            Assert.Equal("FAST_CHECKOUT_ARGUMENTS_INVALID", error.Error.UserErrorMessage);
+        }
+    }
+
     [Fact]
     public async Task Buy_offer_fails_closed_even_for_a_valid_offer()
     {

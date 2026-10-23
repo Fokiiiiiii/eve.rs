@@ -498,9 +498,9 @@ The update path ignores cached `corprole`/`rolesAtAll` fields and checks current
 |---|---|---|---|
 | `storeManager.get_offers`, `get_categories`, `get_products`, `can_purchase_offer` | Authenticated caller; public catalog only | Fixed catalog response; one offer identifier for availability | None; catalog-backed read |
 | `storeManager.buy_offer` | Any connected caller reaches the route; no owner or recipient is inspected while settlement is absent | Purchase arguments are not processed; returns `STORE_CHECKOUT_UNAVAILABLE` before catalog reads or mutation | 10 units |
-| `FastCheckoutService.IsFastCheckoutEnabledForUser`, `GetOffersForUser` | Authenticated caller; service-wide configuration and public offers | Fixed response; offers list is empty while checkout is disabled | None; fixed-size response |
+| `FastCheckoutService.IsFastCheckoutEnabledForUser`, `GetOffersForUser` | Authenticated caller; service-wide configuration and public offers | No positional or keyword arguments; offers list is empty while checkout is disabled | One unit each; fixed-size reads |
 | `FastCheckoutService.BuyOffer` | Any connected caller reaches the route; no owner or recipient is inspected while checkout is disabled | Purchase payload is not processed; returns `FAST_CHECKOUT_UNAVAILABLE` before mutation | 10 units |
-| `FastCheckoutService.ClearFastCheckoutCacheForUser`, `GetTestingConfiguration` | Authenticated caller; fixed service configuration | No variable-size input | None; fixed-size response |
+| `FastCheckoutService.ClearFastCheckoutCacheForUser`, `GetTestingConfiguration` | Authenticated caller; fixed service configuration | No positional or keyword arguments | One unit each; fixed-size response |
 
 Host composition does not connect a payment settlement provider. Therefore valid catalog offers report `payment_unavailable`, the global VGS/FastCheckout flags are disabled, and purchase methods fail closed without changing wallet, inventory, subscription, or training state. `StoreOffersServiceTests.Valid_catalog_offer_is_not_advertised_as_purchasable_without_settlement_provider`, `NewEdenStoreHostTests`, `NewEdenEntitlementHostTests`, `FastCheckoutServiceTests`, and `DispatchGoldenTests.Store_checkout_methods_use_a_named_per_session_budget` cover those outcomes. Redeem-token activation of already-owned training certificates is a separate service path.
 
@@ -683,3 +683,5 @@ Security finding `d3fac208` for `abyssal_content_manager.generate_abyss_npc_spaw
 Security finding for `alphaInjectorMgr.GetNextAvailableInjection` input validation and budget was pushed to `main` on 2026-10-23. On `eve_p3`, the focused refusal test passed (1), `Eve.Services.Skills.Tests` passed (74), and `Eve.Services.Tests` passed (245), with no skips. The Host registry contains 1,374 registered service/method pairs; the method-by-method inventory remains open.
 
 Post-push handoff: alpha injector read finding `77850e01` is on `main`; the active registry audit still has 1,374 pairs and remains incomplete.
+
+Security finding for FastCheckout fixed-read argument validation and budgets was pushed to `main` on 2026-10-23. On `eve_p3`, the focused Core refusal tests passed (4), all `Eve.Services.Core.Tests` passed (887), and all `Eve.Services.Tests` passed (249), with no skips. The Host registry contains 1,374 registered service/method pairs; the method-by-method inventory remains open.

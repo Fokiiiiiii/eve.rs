@@ -81,29 +81,29 @@ public sealed class CompatibilityRpcServicesTests
         Assert.Equal(new PyStr("http://127.0.0.1:26002/kiring/billing/"), Value(endpoints, "billing"));
         Assert.Equal(new PyStr("http://127.0.0.1:26002/kiring/redirect/"), Value(endpoints, "redirect_uri"));
 
-        Assert.Equal(new PyInt(1), await rpc.CallAsync(Call("GetSAuthAid")));
         Assert.Equal(new PyInt(201), await rpc.CallAsync(Call("GetAntiAddictionCode")));
         Assert.Same(PyNone.Instance, await rpc.CallAsync(Call("GetEveGuardServerAddress")));
         Assert.Same(PyBool.False, await rpc.CallAsync(Call("IsMonochromeStyleEnabled")));
         Assert.Same(PyBool.False, await rpc.CallAsync(Call("ShouldKickCheater")));
         Assert.Same(PyBool.False, await rpc.CallAsync(Call("ActivateRedeemingCode")));
 
-        var order = Assert.IsType<PyStr>(await rpc.CallAsync(Call("PlaceKiringOrder")));
-        Assert.StartsWith("evejs-kiring-", order.Value);
-        var authentication = Assert.IsType<PyTuple>(await rpc.CallAsync(new ServiceCall
+        foreach (var (method, args, error) in new[]
         {
-            Method = "PerformKiringServerSideAuthenticationFromCode",
-            Args = [new PyStr("code"), new PyStr("device-42"), new PyStr("client-1")],
-            Session = new ClientSession(),
-        }));
-        Assert.Equal(new PyInt(1), authentication.Items[0]);
-        Assert.Equal(new PyStr("evejs-local-user"), authentication.Items[1]);
-        Assert.Equal(new PyStr("evejs-local-token"), authentication.Items[2]);
-        var encoded = Assert.IsType<PyStr>(authentication.Items[3]).Value;
-        var accountJson = System.Text.Encoding.UTF8.GetString(
-            Convert.FromBase64String(encoded[(encoded.IndexOf('-') + 1)..]));
-        Assert.Equal("{\"odi\":\"device-42\",\"s\":\"evejs-local-token\"}", accountJson);
-        Assert.Equal(new PyStr("EVE.JS Local"), authentication.Items[4]);
+            ("PerformKiringServerSideAuthenticationFromCode", Array.Empty<PyValue>(), "KIRING_AUTH_UNAVAILABLE"),
+            ("PerformKiringServerSideAuthenticationFromCode", new PyValue[] { new PyStr("code"), new PyStr("device-42"), new PyStr("client-1") }, "KIRING_AUTH_UNAVAILABLE"),
+            ("GetSAuthAid", new PyValue[] { new PyStr("forged-user"), new PyStr("forged-account"), new PyStr("forged-device") }, "KIRING_AUTH_UNAVAILABLE"),
+            ("PlaceKiringOrder", Array.Empty<PyValue>(), "KIRING_PURCHASE_UNAVAILABLE"),
+        })
+        {
+            var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() => rpc.CallAsync(new ServiceCall
+            {
+                Method = method,
+                Args = args,
+                Session = new ClientSession(),
+            }).AsTask());
+            Assert.Equal(MachoErrors.UserErrorClass, refusal.Error.ClassName);
+            Assert.Equal(error, refusal.Error.UserErrorMessage);
+        }
     }
 
     [Fact]

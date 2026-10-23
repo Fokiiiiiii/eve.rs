@@ -140,4 +140,40 @@ public static class MissionViews
             Field("missionTitleID", IdOrNone(mission.NameId)),
         ]);
     }
+
+    public static PyDict JournalInfo(HeldMissionView view) => new(
+    [
+        Field("missionNameID", IdOrNone(view.Mission.NameId)),
+        Field("contentID", PyNone.Instance),
+        Field("briefingTextID", IdOrNone(view.BriefingMessageId)),
+        Field("missionImage", PyNone.Instance),
+        Field("expirationTime", view.Record.ExpiresAt is { } expires ? new PyInt(expires.ToFileTime()) : PyNone.Instance),
+        Field("missionState", new PyInt((int)view.Record.State)),
+        Field("objectives", Objective(view)),
+        Field("bookmarks", new PyList([])),
+        Field("iconID", view.Courier is not null ? new PyInt(16) : PyNone.Instance),
+    ]);
+
+    public static PyDict Keywords(AgentMissionAgentData agent, HeldMissionView view)
+    {
+        var fields = new List<KeyValuePair<PyValue, PyValue>>
+        {
+            Field("missionName", new PyStr(view.Record.Content.Title.Length > 0 ? view.Record.Content.Title : view.Mission.NameEn)),
+            Field("missionTypeLabel", new PyStr(agent.MissionTypeLabel)),
+        };
+        if (view.Courier is { } courier)
+        {
+            fields.Add(Field("location", new PyInt(courier.PickupStationId)));
+            fields.Add(Field("destination", new PyInt(courier.DropoffStationId)));
+            fields.Add(Field("quantity", new PyInt(courier.Quantity)));
+            fields.Add(Field("typeID", new PyInt(courier.TypeId)));
+        }
+        else if (view.Fetch is { } fetch)
+        {
+            fields.Add(Field("location", new PyInt(fetch.StationId)));
+            fields.Add(Field("quantity", new PyInt(fetch.Quantity)));
+            fields.Add(Field("typeID", new PyInt(fetch.TypeId)));
+        }
+        return new PyDict(fields);
+    }
 }

@@ -1,8 +1,17 @@
 """Live login-to-selection walk for the client-facing paperdoll states."""
 
+import os
 import uuid
 
+import pytest
+
 from tests.test_login_to_character import WALK, connect, m, revive
+
+LIVE = os.environ.get("EVE_LIVE_HOST", "")
+pytestmark = pytest.mark.skipif(
+    not LIVE,
+    reason="set EVE_LIVE_HOST=host:port to test against a running server",
+)
 
 
 def test_selection_routes_missing_appearance_through_avatar_save_before_game_entry():

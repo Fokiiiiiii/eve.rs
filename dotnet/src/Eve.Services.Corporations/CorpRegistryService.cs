@@ -740,7 +740,12 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
         if (call.Session.CharacterId is not { } actor || await Current(call) is not { } corporation ||
             !await CanAdminister(call))
             throw CorporationAccessDenied();
-        var hour = Number(call.Arg(0));
+        var hour = call.Arg(0) switch
+        {
+            PyInt value => value.Value,
+            PyLong value => value.Value,
+            _ => throw new CorporationError("CORPORATION_INVALID_REINFORCE_HOUR"),
+        };
         if (hour is < 0 or > 23)
             throw new CorporationError("CORPORATION_INVALID_REINFORCE_HOUR");
         var before = SettingInteger(corporation,"structureReinforceDefault",20);

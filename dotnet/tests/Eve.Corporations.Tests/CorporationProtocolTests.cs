@@ -2917,6 +2917,10 @@ private static PyValue RowField(PyValue value,string key)
         Assert.True(persisted.Settings.GetProperty("restrictCorpMails").GetBoolean());
         Assert.Equal(7,persisted.Settings.GetProperty("structureReinforceDefault").GetInt32());
         await Assert.ThrowsAsync<CorporationError>(async () => await Rpc(session,"SetStructureReinforceDefault",new PyInt(24)));
+        await Assert.ThrowsAsync<CorporationError>(async () =>
+            await Rpc(session,"SetStructureReinforceDefault",new PyReal(7.5)));
+        var afterMalformed = await rig.ReopenStore().GetAsync(corp.Id);
+        Assert.Equal(7,afterMalformed!.Settings.GetProperty("structureReinforceDefault").GetInt32());
 
         var outsiderSession = new ClientSession();
         outsiderSession.CharacterId = outsider;

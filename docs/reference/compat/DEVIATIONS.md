@@ -5636,3 +5636,8 @@ Title, corporate contact, contact-label, and bulletin writes now consume 10 weig
 ## Corporation membership RPC budgets (2026-10-23)
 
 Corporation creation, application submission, invitations, CEO succession, member removal, and account-key changes now consume 10 weighted per-session units. The store retains its transactional founder, application, Personnel Manager, membership, kickability, and division checks. The focused dispatcher regression covers the six methods.
+
+
+## Corporation reinforce-hour numeric validation (2026-10-23)
+
+SetStructureReinforceDefault now accepts only integral wire values from 0 through 23. Fractional or other numeric payloads are refused instead of being converted to hour zero. The PostgreSQL corporation settings regression verifies refusal and confirms the persisted hour remains unchanged.

@@ -65,14 +65,9 @@ internal sealed class ShipSkinrCatalog
         var pointsByCategoryAndRarity = new Dictionary<int, Dictionary<int, int>>();
         foreach (var row in await sde.ReadAsync("skinrComponentPointValues", cancellationToken: cancellationToken))
         {
-            var values = Property(row.Doc, "values");
-            if (values.ValueKind != JsonValueKind.Object) continue;
-            var points = new Dictionary<int, int>();
-            foreach (var value in values.EnumerateObject())
-                if (int.TryParse(value.Name, NumberStyles.Integer, CultureInfo.InvariantCulture, out var rarityId) &&
-                    TryInt(value.Value, out var pointValue))
-                    points[rarityId] = pointValue;
-            if (points.Count > 0) pointsByCategoryAndRarity[checked((int)row.Key)] = points;
+            if (row.Key is <= 0 or > int.MaxValue) continue;
+            var points = ReadKeyedIntMap(Property(row.Doc, "values", "_value"));
+            if (points.Count > 0) pointsByCategoryAndRarity[(int)row.Key] = points;
         }
 
         var components = new Dictionary<int, Component>();
@@ -102,15 +97,6 @@ internal sealed class ShipSkinrCatalog
                 binderTypeId, binderCount, usesByType, disallowed, published);
         }
 
-        var slotsByShipType = new Dictionary<int, IReadOnlySet<int>>();
-        foreach (var row in await sde.ReadAsync("skinrSlotConfigurations", cancellationToken: cancellationToken))
-        {
-            var shipTypeId = Int(Property(row.Doc, "shipTypeID", "shipTypeId", "typeID", "typeId"));
-            if (shipTypeId == 0 && row.Key is > 0 and <= int.MaxValue) shipTypeId = (int)row.Key;
-            var slotIds = Array(Property(row.Doc, "slotIDs", "slotIds", "slots")).Select(Int).Where(id => id > 0).ToHashSet();
-            if (shipTypeId > 0 && slotIds.Count > 0) slotsByShipType[shipTypeId] = slotIds;
-        }
-
         var categoriesBySlot = new Dictionary<int, IReadOnlySet<int>>();
         foreach (var row in await sde.ReadAsync("skinrSlots", cancellationToken: cancellationToken))
         {
@@ -138,24 +124,94 @@ internal sealed class ShipSkinrCatalog
                 groupByShipType[(int)type.Key] = groupId;
         }
 
+        var shipCategoryIds = (await sde.ReadAsync("categories", cancellationToken: cancellationToken))
+            .Where(row => SdeReader.English(Property(row.Doc, "name")) == "Ship")
+            .Where(row => row.Key is > 0 and <= int.MaxValue)
+            .Select(row => (int)row.Key)
+            .Distinct()
+            .ToArray();
+        if (shipCategoryIds.Length != 1)
+            throw new InvalidOperationException("the mission SDE must identify exactly one Ship category");
+        var slotsByShipType = BuildSlotsByShipType(
+            await sde.ReadAsync("skinrSlotConfigurations", cancellationToken: cancellationToken),
+            groupByShipType,
+            categoryByGroup,
+            shipCategoryIds[0]);
+
         var thresholdsByGroup = new Dictionary<int, IReadOnlyDictionary<int, int>>();
         foreach (var row in await sde.ReadAsync("skinrTierThresholds", cancellationToken: cancellationToken))
         {
             var groupId = Int(Property(row.Doc, "groupID", "groupId"));
             if (groupId == 0 && row.Key is > 0 and <= int.MaxValue) groupId = (int)row.Key;
-            var thresholdObject = Property(row.Doc, "thresholds", "tierThresholds", "tier_thresholds");
-            if (thresholdObject.ValueKind != JsonValueKind.Object) continue;
-            var thresholds = new Dictionary<int, int>();
-            foreach (var threshold in thresholdObject.EnumerateObject())
-                if (int.TryParse(threshold.Name, NumberStyles.Integer, CultureInfo.InvariantCulture, out var tier) &&
-                    TryInt(threshold.Value, out var limit) && tier > 0)
-                    thresholds[tier] = limit;
+            var thresholds = ReadKeyedIntMap(Property(row.Doc, "thresholds", "tierThresholds", "tier_thresholds", "_value"))
+                .Where(pair => pair.Key > 0)
+                .ToDictionary(pair => pair.Key, pair => pair.Value);
             if (groupId > 0 && thresholds.Count > 0) thresholdsByGroup[groupId] = thresholds;
         }
 
-        if (components.Count == 0 || slotsByShipType.Count == 0 || categoriesBySlot.Count == 0 || thresholdsByGroup.Count == 0 || categoryByGroup.Count == 0)
-            throw new InvalidOperationException("the pinned SDE does not contain the SKINR component and hull authority tables");
-        return new ShipSkinrCatalog(components, slotsByShipType, categoriesBySlot, groupByShipType, categoryByGroup, thresholdsByGroup);
+        if (components.Count == 0 || slotsByShipType.Count == 0 || categoriesBySlot.Count == 0 ||
+            thresholdsByGroup.Count == 0 || categoryByGroup.Count == 0)
+        {
+            throw new InvalidOperationException(
+                $"mission SDE has incomplete SKINR authority data (components={components.Count}, " +
+                $"ship configurations={slotsByShipType.Count}, slots={categoriesBySlot.Count}, " +
+                $"tier groups={thresholdsByGroup.Count}, groups={categoryByGroup.Count})");
+        }
+
+        return new ShipSkinrCatalog(components, slotsByShipType, categoriesBySlot, groupByShipType,
+            categoryByGroup, thresholdsByGroup);
+    }
+
+    internal static Dictionary<int, int> ReadKeyedIntMap(JsonElement value)
+    {
+        var entries = new Dictionary<int, int>();
+        if (value.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var item in value.EnumerateObject())
+                if (int.TryParse(item.Name, NumberStyles.Integer, CultureInfo.InvariantCulture, out var key) &&
+                    TryInt(item.Value, out var mappedValue))
+                    entries[key] = mappedValue;
+        }
+        else if (value.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in value.EnumerateArray())
+                if (TryInt(Property(item, "_key"), out var key) &&
+                    TryInt(Property(item, "_value"), out var mappedValue))
+                    entries[key] = mappedValue;
+        }
+        return entries;
+    }
+
+    internal static IReadOnlyDictionary<int, IReadOnlySet<int>> BuildSlotsByShipType(
+        IReadOnlyList<SdeRow> configurations,
+        IReadOnlyDictionary<int, int> groupByType,
+        IReadOnlyDictionary<int, int> categoryByGroup,
+        int shipCategoryId)
+    {
+        var slotsByShipType = new Dictionary<int, IReadOnlySet<int>>();
+        var resolvedTypes = new HashSet<int>();
+        foreach (var row in configurations
+            .OrderBy(row => Int(Property(row.Doc, "priority")))
+            .ThenBy(row => row.Key))
+        {
+            var slotIds = Array(Property(row.Doc, "config", "slotIDs", "slotIds", "slots"))
+                .Select(Int).Where(id => id > 0).ToHashSet();
+            var ships = Array(Property(row.Doc, "ships")).Select(Int).Where(id => id > 0);
+            foreach (var shipTypeId in ships)
+            {
+                if (resolvedTypes.Add(shipTypeId) && slotIds.Count > 0)
+                    slotsByShipType[shipTypeId] = slotIds;
+            }
+
+            if (!Bool(Property(row.Doc, "allowAllShips"), false) || slotIds.Count == 0) continue;
+            foreach (var (typeId, groupId) in groupByType)
+            {
+                if (categoryByGroup.TryGetValue(groupId, out var categoryId) &&
+                    categoryId == shipCategoryId && resolvedTypes.Add(typeId))
+                    slotsByShipType[typeId] = slotIds;
+            }
+        }
+        return slotsByShipType;
     }
 
     public bool TryValidateLayout(ReadOnlyMemory<byte> layoutBytes, out int shipTypeId, out int tier, out string error)

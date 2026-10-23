@@ -19,6 +19,7 @@ pub const MISSION_SCHEMA: &str = "sde_mission";
 pub const MISSION_TABLES: &[&str] = &[
     "missions",
     "epicArcs",
+    "categories",
     "groups",
     "types",
     "skinrComponentPointValues",

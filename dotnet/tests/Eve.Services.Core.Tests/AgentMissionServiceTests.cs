@@ -1,4 +1,5 @@
 using System.Text.Json.Nodes;
+using Eve.Agents;
 using Eve.Macho;
 using Eve.Marshal;
 using Eve.Services;
@@ -341,6 +342,10 @@ public sealed class AgentMissionServiceTests
         string[] methods =
         [
             "GetAgents",
+            "GetMissionJournalInfo",
+            "GetMissionKeywords",
+            "GetStandingGainsForMission",
+            "RemoveOfferFromJournal",
             "GetCompletedCareerAgentIDs",
             "GetDisabledMissions",
             "GetMessagesForEpicArcMissions",
@@ -351,6 +356,100 @@ public sealed class AgentMissionServiceTests
 
         Assert.All(methods, method => Assert.True(service.HasMethod(method), method));
     }
+
+    [Fact]
+    public async Task Bound_agent_mission_queries_project_courier_cargo_keywords_standing_gains_and_offer_removal()
+    {
+        const long characterId = 90000031;
+        const long agentId = 7031;
+        const long missionId = 62031;
+        var agent = new AgentMissionAgentData(
+            agentId, 2, 22, 1, 6000031, 1000031, false, false, null, false,
+            "courier", "UI/Agents/StandardMission/Courier", null, 1531, null, 30000031, null, null, null);
+        var content = new AgentMissionContent(missionId, 93031, "Courier Job", agent.MissionTypeLabel, false);
+        var record = new AgentMissionRecord(
+            characterId, agentId, AgentMissionState.Accepted, content,
+            DateTimeOffset.UnixEpoch, null, DateTimeOffset.UnixEpoch, null, null, null);
+        var mission = new MissionStatic(
+            missionId, "Courier Job", true, 60, null, null, null, null,
+            new MissionStaticCourier(34, 3, false),
+            new MissionStaticReward(29, 1500, null, 0, null),
+            null, 0, [], new Dictionary<string, string>(), 93031);
+        var held = new HeldMissionView(
+            mission, record, 94131, null,
+            new CourierObjectiveView(34, 3, 0.1, true, 6000031, 6000032, 1000031));
+        var removeCalls = 0;
+        var service = CreateAgentRpcService(rpcCallbacks: new AgentMissionRpcCallbacks(
+            ReadAgents: _ => ValueTask.FromResult<IReadOnlyList<AgentMissionAgentData>>([agent]),
+            ReadHeldMission: (character, boundAgent, _) => ValueTask.FromResult<HeldMissionView?>(
+                character == characterId && boundAgent == agentId ? held : null),
+            ReadStandingGainsForMission: (character, boundAgent, requestedMission, _) =>
+                ValueTask.FromResult<IReadOnlyDictionary<long, double>>(
+                    character == characterId && boundAgent == agentId && requestedMission == missionId
+                        ? new Dictionary<long, double> { [500003] = 0.25 }
+                        : new Dictionary<long, double>()),
+            RemoveOfferFromJournal: (character, boundAgent, _) =>
+            {
+                if (character == characterId && boundAgent == agentId) removeCalls++;
+                return ValueTask.CompletedTask;
+            }));
+        var session = new ClientSession();
+        session.Set("charid", new PyInt(characterId));
+        var binding = await service.CallAsync(RpcCall("MachoBindObject", session, new PyInt(agentId), PyNone.Instance));
+        var oid = Assert.Single(BoundObjects.Registrations(binding)).Oid;
+
+        var journal = Assert.IsType<PyDict>(await service.CallAsync(new ServiceCall
+        {
+            Method = "GetMissionJournalInfo", Args = [], Session = session, BoundObjectId = oid,
+        }));
+        var objectives = Assert.IsType<PyDict>(DictField(journal, "objectives"));
+        var objective = Assert.IsType<PyTuple>(Assert.Single(Assert.IsType<PyList>(DictField(objectives, "objectives")).Items));
+        Assert.Equal(new PyStr("transport"), objective.Items[0]);
+        var transport = Assert.IsType<PyTuple>(objective.Items[1]);
+        Assert.Equal(new PyInt(34), DictField(Assert.IsType<PyDict>(transport.Items[4]), "typeID"));
+        Assert.Equal(PyBool.True, DictField(Assert.IsType<PyDict>(transport.Items[4]), "hasCargo"));
+        Assert.Equal(new PyInt((int)AgentMissionState.Accepted), DictField(objectives, "missionState"));
+
+        var keywords = Assert.IsType<PyDict>(await service.CallAsync(new ServiceCall
+        {
+            Method = "GetMissionKeywords", Args = [new PyInt(missionId)], Session = session, BoundObjectId = oid,
+        }));
+        Assert.Equal(new PyStr("Courier Job"), DictField(keywords, "missionName"));
+        Assert.Equal(new PyInt(6000032), DictField(keywords, "objectiveDestinationID"));
+        Assert.Equal(new PyInt(1500), DictField(keywords, "rewardQuantity"));
+
+        var gains = Assert.IsType<PyDict>(await service.CallAsync(new ServiceCall
+        {
+            Method = "GetStandingGainsForMission", Args = [new PyInt(missionId)], Session = session, BoundObjectId = oid,
+        }));
+        Assert.Equal(new PyReal(0.25), DictField(gains, new PyInt(500003)));
+
+        Assert.Equal(PyNone.Instance, await service.CallAsync(new ServiceCall
+        {
+            Method = "RemoveOfferFromJournal", Args = [], Session = session, BoundObjectId = oid,
+        }));
+        Assert.Equal(1, removeCalls);
+
+        held = null;
+        Assert.Equal(PyNone.Instance, await service.CallAsync(new ServiceCall
+        {
+            Method = "GetMissionJournalInfo", Args = [], Session = session, BoundObjectId = oid,
+        }));
+        Assert.Empty(Assert.IsType<PyDict>(await service.CallAsync(new ServiceCall
+        {
+            Method = "GetMissionKeywords", Args = [new PyInt(missionId)], Session = session, BoundObjectId = oid,
+        })).Entries);
+        Assert.Empty(Assert.IsType<PyDict>(await service.CallAsync(new ServiceCall
+        {
+            Method = "GetStandingGainsForMission", Args = [new PyInt(999999)], Session = session, BoundObjectId = oid,
+        })).Entries);
+    }
+
+    private static PyValue DictField(PyDict dict, string key) =>
+        Assert.Single(dict.Entries, pair => pair.Key == new PyStr(key)).Value;
+
+    private static PyValue DictField(PyDict dict, PyValue key) =>
+        Assert.Single(dict.Entries, pair => pair.Key == key).Value;
 
     [Fact]
     public async Task Binding_an_agent_gives_a_bound_object_for_that_agent_until_it_is_released()

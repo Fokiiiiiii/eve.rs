@@ -39,6 +39,56 @@ public static class MissionViews
         Field("Mission Briefing ID", IdOrNone(view.BriefingMessageId)),
     ]);
 
+    public static PyDict JournalInfo(HeldMissionView view)
+    {
+        var mission = view.Mission;
+        PyValue expires = view.Record.ExpiresAt is { } expiry
+            ? new PyLong(expiry.UtcDateTime.ToFileTimeUtc())
+            : PyNone.Instance;
+        return new PyDict(
+        [
+            Field("missionNameID", IdOrNone(mission.NameId)),
+            Field("contentID", new PyInt(mission.MissionId)),
+            Field("briefingTextID", IdOrNone(view.BriefingMessageId)),
+            Field("missionImage", PyNone.Instance),
+            Field("expirationTime", expires),
+            Field("missionState", new PyInt((int)view.Record.State)),
+            Field("objectives", Objective(view)),
+            Field("bookmarks", new PyList([])),
+            Field("iconID", view.Courier is null ? PyNone.Instance : new PyInt(16)),
+        ]);
+    }
+
+    public static PyDict Keywords(AgentMissionAgentData agent, HeldMissionView view)
+    {
+        var fields = new List<KeyValuePair<PyValue, PyValue>>
+        {
+            Field("missionName", new PyStr(view.Record.Content.Title.Length > 0
+                ? view.Record.Content.Title
+                : view.Mission.NameEn)),
+            Field("missionTypeLabel", new PyStr(view.Record.Content.MissionTypeLabel)),
+        };
+        if (view.Courier is { } courier)
+        {
+            fields.Add(Field("objectiveLocationID", new PyInt(courier.PickupStationId)));
+            fields.Add(Field("objectiveDestinationID", new PyInt(courier.DropoffStationId)));
+            fields.Add(Field("objectiveQuantity", new PyInt(courier.Quantity)));
+            fields.Add(Field("objectiveTypeID", new PyInt(courier.TypeId)));
+        }
+        else if (view.Fetch is { } fetch)
+        {
+            fields.Add(Field("objectiveLocationID", new PyInt(fetch.StationId)));
+            fields.Add(Field("objectiveQuantity", new PyInt(fetch.Quantity)));
+            fields.Add(Field("objectiveTypeID", new PyInt(fetch.TypeId)));
+        }
+        if (view.Mission.Reward is { } reward && reward.RewardTypeId is { } rewardType && reward.RewardQuantity > 0)
+        {
+            fields.Add(Field("rewardTypeID", new PyInt(rewardType)));
+            fields.Add(Field("rewardQuantity", new PyInt(reward.RewardQuantity)));
+        }
+        return new PyDict(fields);
+    }
+
     public static PyDict Objective(HeldMissionView view)
     {
         var mission = view.Mission;

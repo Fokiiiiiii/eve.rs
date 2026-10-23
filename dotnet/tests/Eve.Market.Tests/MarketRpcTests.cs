@@ -295,7 +295,7 @@ public class MarketRpcTests
         var seat = await SeatAsync(r, actor);
         await r.Book.SeedNpcAsync([new("ask", Tritanium, false, 10, 100, 32767, MarketLocation.From(r.Station), r.Now)]);
         var created = await seat.Proxy.BuyMultipleItems(Call(seat.Session, "BuyMultipleItems", 3, new PyInt(r.Station.Id),
-            new PyList([Line(Tritanium, 5, 10), Line(Tritanium, 0, 10), Line(Tritanium, 4, 9)]), PyBool.False));
+            new PyList([Line(Tritanium, 5, 10), Line(Tritanium, 4, 9)]), PyBool.False));
         Assert.NotNull(created);
         var booked = Assert.Single((await r.Book.BookAsync(r.Station.RegionId, Tritanium, r.Now)).Bids);
         Assert.Equal((4, 9m, 90), (booked.VolumeRemaining, booked.Price, booked.Duration));

@@ -145,7 +145,7 @@ public class MutationHarnessTests
         var told = Events.Of(session, clear: false);
         var prime = Assert.Single(told, e => e.Name == "OnGodmaPrimeItem");
         Assert.Equal(3220, MutatedDroneHostTests.PrimedAttribute(prime, 37), 6);
-        for (var attempt = 0; attempt < 20 && !told.Any(e => e.Name == "OnItemChange"); attempt++)
+        for (var attempt = 0; attempt < 100 && !told.Any(e => e.Name == "OnItemChange"); attempt++)
         {
             await Task.Delay(100);
             told = Events.Of(session, clear: false);

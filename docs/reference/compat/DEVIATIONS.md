@@ -5500,3 +5500,5 @@ The fleetObject Init RPC costs 10 weighted per-session units because it updates 
 ## Corporation bulletin text bounds (2026-10-23)
 
 `corpRegistry.AddBulletin` and `UpdateBulletin` enforce the V24.01 editor limits of 100 UTF-16 code units for titles and 4,000 for bodies before persistence. Larger text returns `CORPORATION_BULLETIN_LIMIT_EXCEEDED`; accepted response shapes and role checks are unchanged. `CorporationProtocolTests.Corp_registry_contacts_labels_and_bulletins_persist_and_enforce_roles` checks refusals before storage, both exact boundaries, and persisted values.
+
+`allianceRegistry.GetDaysInAlliance` also consumes 10 weighted per-session units because it reads the full alliance member collection to resolve one corporation. The response and public lookup behavior are unchanged. `DispatchGoldenTests.Alliance_full_list_reads_use_a_named_per_session_budget` covers the call budget.

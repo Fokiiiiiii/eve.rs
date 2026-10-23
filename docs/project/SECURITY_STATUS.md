@@ -562,6 +562,8 @@ Registry audit correction `7c6ebab4` was pushed to `main` on 2026-10-23. Its foc
 
 The client sends jump and ballpark diagnostics (`eve/client/script/util/jumpMonitor.py`, `eve/client/script/remote/michelle.py`). The Host validates type, count, keywords, and encoded byte length before logging. `CompatibilityRpcServiceTests.Client_stat_log_records_the_message_and_answers_none` checks the accepted message and all refusal cases; `DispatchGoldenTests.Client_log_string_calls_use_a_named_per_session_budget` checks cost. On `eve_p3`, the focused Host test passed (1), and all `Eve.Services.Tests` passed (225, no skips).
 
+Security finding `0da0dd98` was pushed to `main` on 2026-10-23.
+
 
 ### Contextual Offer Manager RPC detail
 

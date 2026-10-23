@@ -5611,3 +5611,8 @@ The security inventory now records `contractProxy.GetMyBids`, `GetContractListFo
 ## Inventory root and contents RPC classification (2026-10-23)
 
 `invbroker.GetInventory` binds only the caller's current docked station hangar and consumes 2 weighted per-session units. `GetContainerContents` reads only a server-held session binding and consumes 2 units. `GetItemDescriptor` returns the fixed row descriptor without an identifier or state lookup.
+
+
+## Character description write budget (2026-10-23)
+
+charMgr.SetCharacterDescription now consumes 10 weighted per-session units because it persists user text. Its active-character scope and 2,500-character client-derived text bound are unchanged. The named dispatcher regression verifies the refusal after the allowance is consumed.

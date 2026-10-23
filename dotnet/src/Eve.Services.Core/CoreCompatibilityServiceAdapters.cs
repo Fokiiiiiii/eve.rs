@@ -238,20 +238,13 @@ public sealed partial class KiringMgrService
 
     [Method("PerformKiringServerSideAuthenticationFromCode")]
     public ValueTask<PyValue> PerformKiringServerSideAuthenticationFromCode(ServiceCall call) =>
-        CompatibilityRpc.Invoke(call, RpcHandler, () =>
-        {
-            const int aid = 1;
-            const string token = "evejs-local-token";
-            var deviceId = Truthy(call.Arg(1)) ? Eve.Macho.JsSemantics.StringValue(call.Arg(1)) : "evejs-local-device";
-            var json = System.Text.Json.JsonSerializer.Serialize(new { odi = deviceId, s = token });
-            var account = $"{aid}-{Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(json))}";
-            return Py.Tuple(new PyInt(aid), new PyStr("evejs-local-user"), new PyStr(token),
-                new PyStr(account), new PyStr("EVE.JS Local"));
-        });
+        CompatibilityRpc.Invoke(call, RpcHandler, static () =>
+            throw MachoErrors.ThrowUserError("KIRING_AUTH_UNAVAILABLE"));
 
     [Method("GetSAuthAid")]
     public ValueTask<PyValue> GetSAuthAid(ServiceCall call) =>
-        CompatibilityRpc.Invoke(call, RpcHandler, static () => new PyInt(1));
+        CompatibilityRpc.Invoke(call, RpcHandler, static () =>
+            throw MachoErrors.ThrowUserError("KIRING_AUTH_UNAVAILABLE"));
 
     [Method("GetAntiAddictionCode")]
     public ValueTask<PyValue> GetAntiAddictionCode(ServiceCall call) =>
@@ -273,7 +266,7 @@ public sealed partial class KiringMgrService
     [Method("PlaceKiringOrder")]
     public ValueTask<PyValue> PlaceKiringOrder(ServiceCall call) =>
         CompatibilityRpc.Invoke(call, RpcHandler, static () =>
-            new PyStr($"evejs-kiring-{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}"));
+            throw MachoErrors.ThrowUserError("KIRING_PURCHASE_UNAVAILABLE"));
 
     /// <summary>
     /// No redeeming-code store exists, so no code is accepted: the answer is False (DEVIATIONS, "Account and social requests").
@@ -303,15 +296,4 @@ public sealed partial class KiringMgrService
                 ("app", new PyStr("evejs_local")))));
     }
 
-    private static bool Truthy(PyValue value) => value switch
-    {
-        PyNone => false,
-        PyBool boolean => boolean.Value,
-        PyInt number => number.Value != 0,
-        PyLong number => number.Value != 0,
-        PyReal number => number.Value != 0 && !double.IsNaN(number.Value),
-        var text when Eve.Macho.JsSemantics.StringValue(text) is not null => Eve.Macho.JsSemantics.StringValue(text)!.Length > 0,
-        PyBytes bytes => bytes.Value.Length > 0,
-        _ => true,
-    };
 }

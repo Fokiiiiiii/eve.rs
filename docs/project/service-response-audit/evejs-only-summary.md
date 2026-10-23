@@ -119,3 +119,9 @@ The V24 caller for `contractProxy.GetLoginInfo` is confirmed at `eve/client/scri
 ### Follow-up: contract startup reads (2026-10-19)
 
 `contractProxy.GetLoginInfo` now reads issuer/assignee state from PostgreSQL through the Host contract read model and returns the V24 KeyVal with `needsAttention`, `inProgress`, and `assignedToMe` rowsets. `GetMyContractEscrow` reads personal plus corporation-issued ISK and item totals. The Core wire tests (2) and PostgreSQL Host read test (1, `eve_p3`) passed. The Host has no contract writer yet; creation, accepted contract transitions, searches, bids, courier settlement, notifications, and the live two-character flow remain open. See `docs/project/CONTRACTS_DESIGN.md`.
+
+### Follow-up: activityMgr client flow (2026-10-23)
+
+The V24.01 ActivitiesService calls all four activityMgr exports: ActivitySeen on selection, GetActivityBadgeStatuses while loading activity status, and Get/SetActivitiesPopState for the popup preference. EveJS stores seen IDs and popup state by character in process memory; eve.rs now registers the same four RPCs from CoreServices and returns the sorted seen-ID list with OnSystemActivityUpdated. The focused Core regression passed. The activity state is intentionally process-local, matching EveJS; restart retention and graphical-client operation were not exercised.
+
+Rebased from the 2026-10-13 source inventory, the service profile adds one key and four RPC paths (182/1,284). Four named differences move to implemented, leaving 472 (444 unimplemented, 3 client-local covered, 25 legacy); the absent-service rows become 140. These derived counters keep the four ledger rows, so 672 total rows remain.

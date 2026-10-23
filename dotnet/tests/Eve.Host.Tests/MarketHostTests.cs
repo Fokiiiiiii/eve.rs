@@ -108,6 +108,19 @@ public sealed class MarketHostTests : IAsyncLifetime
             new NewCharacter(1, name, 0, 1, 1, 1, 11, 1376, corporationId, null,
                 currentStationId ?? station.Id, station.SolarSystemId, station.ConstellationId, station.RegionId, null, null));
         await new PgWalletStore(source, Schema("EVE_WALLET_SCHEMA")).OpenAsync(c, tx, actor, 10000m, 0);
+        await using (var membership = new NpgsqlCommand($"""
+            INSERT INTO {Schema("EVE_RELATIONS_SCHEMA")}.relations
+                (kind, subject, object, value, attrs, since_ms, until_ms, updated_ms)
+            VALUES ($1, $2, $3, 1, $4::jsonb, $5, NULL, $5)
+            """, c, tx))
+        {
+            membership.Parameters.Add(new NpgsqlParameter { Value = Eve.Relations.RelationKinds.CorporationMember.Name });
+            membership.Parameters.Add(new NpgsqlParameter { Value = actor });
+            membership.Parameters.Add(new NpgsqlParameter { Value = corporationId });
+            membership.Parameters.Add(new NpgsqlParameter { Value = "{}" });
+            membership.Parameters.Add(new NpgsqlParameter { Value = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() });
+            await membership.ExecuteNonQueryAsync();
+        }
         await tx.CommitAsync();
         return actor;
     }

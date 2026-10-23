@@ -187,3 +187,9 @@ Use lane `eve_p4` only and run database work through `tools/dev/db-lock.sh`. The
 - Commit `8610990c` corrects the headless `ConsumeRequest` fixture to the V24.01 two-message nesting. The source is the client's `ConsumeRequest.item` descriptor, `ItemIdentifier.item`, and generic inventory `Identifier.sequential` field. This fixes the test's zero item ID and leaves Host validation aligned with the client.
 - The push-triggered CI run is `40014207144` (run 683), queued at this handoff update. The merged-parent run `40014191246` (run 682) is still running. The full CI gate covers the live flow; no separate database-backed agent test was dispatched because this task requires no PostgreSQL use.
 - No local PostgreSQL or graphical-client verification was performed.
+
+## 2026-10-23 structure market affiliation fixture
+
+- Run 683 on `8610990c` moved past the sell-range issue and failed with `StructureMarketDenied`. Structure service access reads the character's `CorporationMember` relation through `RelationStore`; the Host test helper set only the character row's corporation ID and omitted the authoritative relation that `CharacterCreation` writes.
+- The `MarketHostTests.CreateTraderAsync` fixture now inserts that relation in its scratch relations schema in the same transaction as the character and wallet. The denied trader receives its different corporation relation, preserving the denial case.
+- The local `Eve.Host.Tests` project build passed with zero warnings and errors. Run 683 is still active; the new fixture needs its Actions check after push. No PostgreSQL test was run locally.

@@ -27,7 +27,7 @@ Each listed method costs 10 units. Counts include attempted requests, including 
 ## Verification
 
 - Local: `MSBUILDDISABLENODEREUSE=1 dotnet test dotnet/tests/Eve.Services.Tests/Eve.Services.Tests.csproj -p:UseSharedCompilation=false --no-restore --filter 'FullyQualifiedName~Market_region_and_plex_browse_calls_keep_native_rows_through_a_mixed_session'` passed (1 passed, 0 failed, 0 skipped). It built the touched .NET project and dispatcher dependency.
-- GitHub Actions boundary test and live headless walk are pending push.
-- No PostgreSQL database was used. The graphical EVE client has not been used for this change.
+- First Actions run `39951814653` built the requested .NET projects but the live host failed during startup: `CharacterServicesComposition` could not find `InvBrokerService` because `IndustryInventoryChangePublisher` wrapped it. `CharacterServiceList` now resolves the wrapped broker for `RepackagingService`; rerun the boundary and live checks on the follow-up commit.
+- Local Host build could not complete: `project.assets.json` was missing, and the restore-enabled build remained blocked in restore until cancelled. The first Actions build reached Host startup but did not complete the live check. No PostgreSQL database was used locally. The graphical EVE client has not been used for this change.
 
 The working tree also began with nine unrelated deleted Rust source files. They are untouched and must remain excluded from this task's commit.

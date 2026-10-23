@@ -281,3 +281,9 @@ CI run 672 on `1669e6dc` failed the structure market Host test because the fixtu
 - Push CI run 690 (`40016706205`) on `5bcb27c5` reached the active sequencing-job walk, then the live test passed a serialized `Identifier` message to `uuid.UUID(bytes=...)` instead of its raw UUID field.
 - V24 declares `GetAllActiveResponse.Job.id` and `CompletedNotice.id` as `sequencing.job.Identifier`, whose field 1 is the 16-byte UUID. The Host responses already use this wrapper; the live test now unwraps `Identifier.uuid` for the active-job and completion-notice assertions.
 - Python syntax check, focused live Agent run, and push-triggered CI verification are pending.
+
+## 2026-10-23 SKINR sequence license lookup fixture
+
+- CI run 692 (`40018629614`) on `1d96ae32` passed the Windows job, then the live SKINR sequence completed and published both notices. Its post-completion license query failed because `_skin_hex_from_draft` decoded the nested `Skin.hex` protobuf message as if it were the string itself.
+- The live helper now unwraps `SavedDraft.attributes.skin.hex` before checking `skinr_ship_licenses`; this corrects the test's key and follows the Host response encoding. Market settlement test `The_host_dispatches_accessible_structure_market_orders_and_recovers_partial_settlement_after_restart` remains a separate CI failure (expected 9900, actual 9875.00) owned by market work.
+- Python syntax compilation and a focused SKINR live Actions run will check the fixture correction. No local database was used.

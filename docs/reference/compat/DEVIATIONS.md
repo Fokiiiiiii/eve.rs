@@ -5489,4 +5489,4 @@ The fleetObject Init RPC costs 10 weighted per-session units because it updates 
 
 ## Corporation application-list work budget (2026-10-23)
 
-`corpRegistry.GetApplications` and `GetOldApplications` return complete application collections for the caller’s current corporation after Personnel Manager authorization. Each call costs 10 weighted per-session units to bound repeated reads. The RPC response shapes and membership checks are unchanged. `DispatchGoldenTests.Corporation_application_lists_use_a_named_per_session_budget` verifies that a second list read exceeds the session allowance.
+`corpRegistry.GetApplications` and `GetOldApplications` return complete application collections for the caller’s current corporation after Personnel Manager authorization. Each call costs 10 weighted per-session units to bound repeated reads. The RPC response shapes and membership checks are unchanged. `DispatchGoldenTests.Corporation_application_lists_and_history_use_a_named_per_session_budget` verifies that a second list read exceeds the session allowance.

@@ -28,26 +28,6 @@ def test_a_pilot_launches_an_assembled_ship_from_a_space_container():
     run = uuid.uuid4().hex[:10]
     with base.connect(f"walk-eject-{run}") as who:
         _, ship, _, _ = arrive(who, plain_race({"pilot": race}, "pilot"), run)
-        station = who.call("invbroker", "MachoBindObject", (STATION, 15), None)[0]
-        hangar = who.call_bound(station, "GetInventory", 10004)
-        hold = who.call(
-            "invbroker",
-            "MachoBindObject",
-            (STATION, 15),
-            ("GetInventoryFromId", (ship, 0), None),
-        )[1]
-
-        ship_grant = m.plain(who.call("slash", "SlashCmd", f"/giveitem {KESTREL} 1"))
-        ore_grant = m.plain(who.call("slash", "SlashCmd", f"/giveitem {TRITANIUM} 1"))
-        assert "was added to your station hangar." in ship_grant, ship_grant
-        assert "was added to your station hangar." in ore_grant, ore_grant
-        hangar = who.call_bound(station, "GetInventory", 10004)
-        rows = who.call_bound(hangar, "List")
-        kestrel = next(int(row.fields()["itemID"]) for row in rows if int(row.fields()["typeID"]) == KESTREL)
-        tritanium = next(int(row.fields()["itemID"]) for row in rows if int(row.fields()["typeID"]) == TRITANIUM)
-        who.call_bound(hold, "Add", kestrel, STATION, qty=1, flag=5)
-        who.call_bound(hold, "Add", tritanium, STATION, qty=1, flag=5)
-
         events = {"events": who}
         ship_service = who.call("ship", "MachoBindObject", (STATION, 15), None)
         who.call_bound(ship_service[0], "Undock", ship, False)
@@ -55,6 +35,19 @@ def test_a_pilot_launches_an_assembled_ship_from_a_space_container():
         who.call_bound(who.call("dogmaIM", "MachoBindObject", (SYSTEM, 5), None)[0], "GetAllInfo", True, True, None)
         watch(events, 45.0, until=lambda seen: any(e["name"] == "OnInvulnCancelled" for e in seen["events"]))
 
+        ship_grant = m.plain(who.call("slash", "SlashCmd", f"/createitem {KESTREL} 1"))
+        ore_grant = m.plain(who.call("slash", "SlashCmd", f"/createitem {TRITANIUM} 1"))
+        assert "was added to your ship's cargo hold." in ship_grant, ship_grant
+        assert "was added to your ship's cargo hold." in ore_grant, ore_grant
+        ship_hold = who.call(
+            "invbroker",
+            "MachoBindObject",
+            (SYSTEM, 5),
+            ("GetInventoryFromId", (ship, 0), None),
+        )[1]
+        rows = who.call_bound(ship_hold, "List")
+        kestrel = next(int(row.fields()["itemID"]) for row in rows if int(row.fields()["typeID"]) == KESTREL)
+        tritanium = next(int(row.fields()["itemID"]) for row in rows if int(row.fields()["typeID"]) == TRITANIUM)
         space_ship = who.call("ship", "MachoBindObject", SYSTEM, None)[0]
         who.call_bound(space_ship, "Jettison", m.List([tritanium]))
         created = watch(events, 4.0)

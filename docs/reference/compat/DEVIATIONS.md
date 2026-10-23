@@ -5633,3 +5633,5 @@ Corporation profile, logo, division-name, abilities, acceptance, mail-restrictio
 `invbroker.GetDamageForCrystals` now requires the client's set/list/tuple shape and positive integer item IDs, refusing malformed inputs before ownership lookup. The client primes crystal damage with a Python set; `InventoryRpcFixTests.GetDamageForCrystals_refuses_malformed_shapes_and_nonpositive_item_ids` covers the refusal cases.
 
 `invbroker.ListStations` and `ListStationItems` now cost 10 weighted per-session units because each traverses owned inventory and asset locations. `DispatchGoldenTests.Inventory_asset_locations_use_the_expensive_rpc_budget` checks both calls.
+
+`SaveManyFittings` now requires the client dictionary/KeyVal shape, and `DeleteManyFittings` requires a list or tuple. Wrong outer shapes return a named `CustomNotify` refusal before processing rather than looking like a successful empty batch. The existing fitting bulk regression now covers both malformed shapes.

@@ -24,7 +24,6 @@ from evecli import marshal as m
 from tests import dbseed
 from tests.gateway_wire import (
     REQUEST_SEND,
-    Authorized,
     as_user,
     answer,
     field,
@@ -761,12 +760,20 @@ def test_v24_skinr_design_sequences_and_applies_a_persisted_license():
             notices.cancel()
 
             # Restart the Host after completion and activation, then read and apply the persisted license.
-            restart_token = m.plain(client.call("userSvc", "GetUserToken"))
-            assert isinstance(restart_token, str)
             restarted_host = _restart_host()
             assert restarted_host.poll() is None
+            restarted_client = connect(f"skinr-{run}")
+            atexit.register(restarted_client.close)
+            restarted_client.call(
+                "charUnboundMgr",
+                "SelectCharacterID",
+                charID=character,
+                secondChoiceID=None,
+                skipTutorial=False,
+            )
+            restarted_client.notifications.clear()
             with grpc.insecure_channel(GATEWAY) as restarted_raw:
-                restarted_channel = Authorized(restarted_raw, restart_token)
+                restarted_channel = as_user(restarted_raw, restarted_client)
                 restarted_notices = restarted_channel.stream_stream(NOTICES_CONSUME)(
                     iter([request("eve_public.gateway.Notices.Consume", character, b"")]),
                     timeout=45.0,
@@ -791,7 +798,7 @@ def test_v24_skinr_design_sequences_and_applies_a_persisted_license():
                 assert read_fields(persisted_attributes).get(1, [0])[0] == 1
                 assert read_fields(persisted_attributes).get(2, [0])[0] == 0
 
-                # Apply through the public gateway after Host restart; eve-net closes with its Host link.
+                # Apply through the public gateway after the client reconnects to the restarted Host.
                 application_payload = field(1, license_id) + field(
                     2, field(1, type_identifier(ship))
                 )

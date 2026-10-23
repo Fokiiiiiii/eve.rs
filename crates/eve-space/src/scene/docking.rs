@@ -164,6 +164,14 @@ impl Scene {
         if self.overlay(session, pilot.ship.spec.ship_id, DISALLOW_DOCKING) > 0.0 {
             return vec![Out::Refused { session, command: code, reason: "DOCKING_DISALLOWED_BY_MODULE" }];
         }
+        if pilot
+            .modules
+            .running
+            .iter()
+            .any(|run| matches!(run.effect.action.as_ref(), Some(crate::modules::Action::Panic { .. })))
+        {
+            return vec![Out::Refused { session, command: code, reason: "DOCKING_BLOCKED" }];
+        }
         if pilot.jump.is_some() {
             return vec![Out::Refused { session, command: code, reason: "JUMPING" }];
         }

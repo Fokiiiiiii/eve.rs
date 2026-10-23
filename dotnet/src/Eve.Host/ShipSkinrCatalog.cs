@@ -76,7 +76,7 @@ internal sealed class ShipSkinrCatalog
             if (row.Key <= 0 || row.Key > int.MaxValue) continue;
             var categoryId = Int(Property(row.Doc, "category"));
             var rarityId = Int(Property(row.Doc, "rarity"));
-            var usesByType = ReadLicenseUsesByType(Property(row.Doc, "associatedTypeIDs", "associatedTypeIds"));
+<<var usesByType = ReadLicenseUsesByType(Property(row.Doc, "associatedTypeIDs", "associatedTypeIds"));
             var binder = Property(row.Doc, "sequenceBinder", "sequence_binder");
             var binderTypeId = Int(Property(binder, "itemTypeID", "itemTypeId"));
             var binderCount = Int(Property(binder, "count"));

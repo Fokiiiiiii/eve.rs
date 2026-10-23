@@ -233,7 +233,7 @@ internal sealed class ShipSkinrSequencingGateway(
                 return Error(400, "INVALID_COMPONENT_LICENSE_ITEM", responseType);
             componentId = license.Component.Id;
             categoryId = license.Component.CategoryId;
-            infinite = license.Uses == 0;
+            infinite = license.Uses <= 0;
             var consume = infinite ? 1L : quantity;
             grantUses = infinite ? 0 : checked((long)license.Uses * consume);
             if (quantity != consume || (!infinite && grantUses <= 0))

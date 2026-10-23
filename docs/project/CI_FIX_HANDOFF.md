@@ -131,12 +131,16 @@ Use lane `eve_p4` only and run database work through `tools/dev/db-lock.sh`. The
 
 - The .NET shard failure reproduced on runs 653, 657, and 658 in `ReloadServiceTests.A_gun_that_runs_dry_is_loaded_from_the_hold_when_the_reload_time_has_run_and_the_simulation_is_answered_with_the_rounds`. The test used `FakeRounds.Asked` as its completion signal, but that list is updated before the awaited store callback finishes; fixture cleanup could drop the schema during the callback's item transaction and PostgreSQL returned deadlock 40P01.
 - `FakeRounds` now exposes completion after its callback returns. The live dry-gun test awaits that signal before teardown and checks the persisted 80-round module / 120-round hold result. The matching no-fit test also waits for callback completion.
-- The local `Eve.Services.Dogma.Tests` project build passed with zero warnings and errors. The focused database-backed regression is dispatched to Agent Actions after this commit.
+- The local `Eve.Services.Dogma.Tests` project build passed with zero warnings and errors. Agent run 127 (`40005187593`) passed the focused database-backed regression on pushed commit `fbc39d63`.
 - Agent run 123 on `e0cb832e` passed the two `Eve.Host.Tests` matches, then failed because the same `FullyQualifiedName~SignalTracker` filter selected zero tests in `Eve.Services.Core.Tests`. This was a test-selection mismatch; dispatch that filter to the Host project only.
 
-## 2026-10-23 SKINR unlimited component licenses
+<<### Market RPC budget regression test setup
 
-- CI run 660 returned HTTP 400 during the live persisted-license walk. Its fixture selects official SDE component types whose `licenseUsesGranted` is `-1` (unlimited), but the Host catalog discarded every negative count. The item was then absent from the catalog and the valid design request was refused.
-- `ShipSkinrCatalog` now maps the SDE unlimited sentinel `-1` to the runtime unlimited value `0`, while excluding invalid values below `-1`; positive finite uses are unchanged. Added `Unlimited_license_types_use_the_runtime_unlimited_sentinel` for all three cases.
-- `Eve.Host.Tests` Release build passed with zero warnings and errors, and the focused regression passed 1/1 with no skips. No database was used. Agent run 128 for the market budget regression passed 2/2; push CI run 40005488739 for `94e37e82` is still in progress.
+- CI run 660 (`4f38c72f`) failed both market budget regression tests because each configured only `MaxExpensiveRpcUnitsPerMinute = 10`, while `PacketDispatcher` routes `marketProxy` through `MaxMarketRpcUnitsPerMinute`. The tests now set both limits to 10. Agent run 128 (`40005500782`) passed both focused regressions on `94e37e82`.
 
+### SKINR unlimited component license sentinel
+
+- CI run 660 returned HTTP 400 during the live persisted-license walk. Its fixture selects a published compatible component from the official mission SDE with `associatedTypeIDs.licenseUsesGranted = -1` (unlimited), but the Host catalog discarded negative counts. The item type then could not resolve to a component license, so the valid design request was refused.
+- The catalog now maps SDE `-1` to the runtime's `0` unlimited sentinel, excludes values below `-1`, and preserves positive finite uses. The existing gateway transaction consumes the item and persists the unlimited grant; the live scenario also covers retry, sequencing and application.
+- Added `Unlimited_license_types_use_the_runtime_unlimited_sentinel` for unlimited, invalid and finite values. `Eve.Host.Tests` Release build passed with zero warnings and errors, and the focused test passed 1/1 with no skips. No database was used.
+- Push-triggered CI run 40005488739 for `94e37e82` was still in progress at the previous status check; the next push gate checks this fix.

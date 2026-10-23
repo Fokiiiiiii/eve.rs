@@ -132,6 +132,28 @@ public sealed class PlanetStore(NpgsqlDataSource source, string schema = PlanetS
         return found;
     }
 
+    /// <summary>Reads one live launch only when the caller owns it; the expiry predicate makes stale journal rows non-warpable.</summary>
+    public async Task<LaunchRecord?> LaunchOfAsync(long ownerId, long launchId, long nowTicks, CancellationToken cancellationToken = default)
+    {
+        if (ownerId <= 0 || launchId <= 0)
+            return null;
+
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var command = new NpgsqlCommand($"""
+            SELECT launch_id, owner_id, planet_id, solar_system_id, item_id, status, launch_time, expires_ticks, x, y, z, contents::text
+            FROM {schema}.launches
+            WHERE owner_id = $1 AND launch_id = $2 AND NOT deleted AND expires_ticks > $3
+            """, connection)
+        {
+            Parameters = { new() { Value = ownerId }, new() { Value = launchId }, new() { Value = nowTicks } },
+        };
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        return await reader.ReadAsync(cancellationToken)
+            ? new LaunchRecord(reader.GetInt64(0), reader.GetInt64(1), reader.GetInt64(2), reader.GetInt64(3), reader.GetInt64(4), reader.GetBoolean(5),
+                reader.GetInt64(6), reader.GetInt64(7), reader.GetDouble(8), reader.GetDouble(9), reader.GetDouble(10), reader.GetString(11))
+            : null;
+    }
+
     public async Task ExpireLaunchesAsync(long ownerId, long nowTicks, CancellationToken cancellationToken = default)
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
@@ -156,3 +178,33 @@ public sealed class PlanetStore(NpgsqlDataSource source, string schema = PlanetS
 /// <summary>A launch record: the commodities put in orbit by a command center, their item and their place.</summary>
 public sealed record LaunchRecord(long LaunchId, long OwnerId, long PlanetId, long SolarSystemId, long ItemId, bool Status, long LaunchTime,
     long ExpiresTicks, double X, double Y, double Z, string ContentsJson);
+
+/// <summary>A finite, current-system destination projected from an owned, unexpired launch row.</summary>
+public sealed record PlanetLaunchWarpTarget(int SolarSystemId, double X, double Y, double Z)
+{
+    public static PlanetLaunchWarpTarget? Resolve(
+        LaunchRecord? launch,
+        long ownerId,
+        long launchId,
+        long currentSystemId,
+        long nowTicks)
+    {
+        if (launch is null
+            || ownerId <= 0
+            || launchId <= 0
+            || currentSystemId <= 0
+            || launch.OwnerId != ownerId
+            || launch.LaunchId != launchId
+            || launch.SolarSystemId != currentSystemId
+            || launch.ExpiresTicks <= nowTicks
+            || launch.SolarSystemId > int.MaxValue
+            || !double.IsFinite(launch.X)
+            || !double.IsFinite(launch.Y)
+            || !double.IsFinite(launch.Z))
+        {
+            return null;
+        }
+
+        return new PlanetLaunchWarpTarget((int)launch.SolarSystemId, launch.X, launch.Y, launch.Z);
+    }
+}

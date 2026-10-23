@@ -722,13 +722,17 @@ public sealed class CharacterHostTests
 
         var (name, args) = Assert.Single(Notifications(sink));
         Assert.Equal("OnNotificationReceived", name);
+        var packet = Assert.Single(sink.Sent.OfType<PyObject>());
+        var address = MachoAddress.Decode(((PyTuple)packet.Args).Items[2]);
+        Assert.Equal("OnNotificationReceived", address.BroadcastId);
+        Assert.Equal("clientID", address.IdType);
         Assert.Equal(5, args.Length);
         Assert.True(((PyLong)args[0]).Value > 0);
         Assert.Equal(new PyInt(89), args[1]);
         Assert.Equal(new PyLong(senderId), args[2]);
         var data = Assert.IsType<PyDict>(args[4]);
-        Assert.Equal(new PyInt(-10), Field(data, "level"));
-        Assert.Equal(new PyStr("Hello"), Field(data, "message"));
+        Assert.Equal(new PyLong(-10), NotificationValue(data, "level"));
+        Assert.Equal("Hello", Eve.Macho.JsSemantics.StringValue(NotificationValue(data, "message")));
 
         var notificationMgr = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("notificationMgr"));
         var notifications = Assert.IsType<PyList>(await CallAsync(notificationMgr, "GetAllNotifications", recipientSession));
@@ -1256,6 +1260,9 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
             _ => false,
         }).Value;
     }
+
+    private static PyValue NotificationValue(PyDict data, string name) =>
+        data.Entries.Single(entry => Eve.Macho.JsSemantics.StringValue(entry.Key) == name).Value;
 
     private static List<PyList> Rows(PyValue rowset) => Assert.IsType<PyList>(Field(rowset, "lines")).Items
         .Select(line => Assert.IsType<PyList>(line)).ToList();

@@ -224,6 +224,7 @@ internal sealed partial class CharacterServicesComposition
             (characterId, structureId, setting, token) => structureDirectoryReadModel.CharacterHasSettingAsync(characterId, structureId, setting, token));
         SetupStructureModules();
         var rules = await StructureRulesSource.LoadAsync(sde);
+        var refineryTypeIds = await PersistenceMarketStructureDirectory.ReadRefineryTypeIdsAsync(sde);
         var unanchorDrop = CreateStructureUnanchorDropAuthority();
         var destructionLoot = CreateStructureDestructionLootAuthority();
         structureTimers = new Eve.Structures.StructureTimers(structureStore, foundations.Scheduler, foundations.Events, rules,
@@ -293,7 +294,7 @@ internal sealed partial class CharacterServicesComposition
                 });
         }
 
-        structureFuel = new Eve.Structures.StructureFuel(structureStore, foundations.Scheduler, structureTimers, ServiceFuelRulesSource.Load(dogma), new InventoryStructureFuelBay(items, dogma, foundations.Events));
+        structureFuel = new Eve.Structures.StructureFuel(structureStore, foundations.Scheduler, structureTimers, await ServiceFuelRulesSource.LoadAsync(dogma,sde), new InventoryStructureFuelBay(items, dogma, foundations.Events));
         structureFuel.Register();
         SetupStructureCynoBeaconRuntime();
 
@@ -329,6 +330,8 @@ internal sealed partial class CharacterServicesComposition
                 return (roles.CorpRole & (Eve.Corporations.CorporationRoles.StationManager |
                     Eve.Corporations.CorporationRoles.BrandManager)) != 0;
             });
+        marketTrading.StructureDirectory = new PersistenceMarketStructureDirectory(
+            structureStore,structureDirectoryReadModel,marketTopology,rules,refineryTypeIds);
         if (spaceSessions is not null)
             spaceSessions.StructureExistsAsync = async (structureId, cancellationToken) =>
                 await structureDirectoryReadModel.GetStructureInfoAsync(structureId, cancellationToken) is { PersistentlyDeployed: true };

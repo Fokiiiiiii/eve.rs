@@ -183,6 +183,8 @@ def walk_into_dungeon(who, race, run: str):
     # the offer names the mission (891, a basic level 4 kill) with accept and decline (377, 378); the accept leaves no button
     assert "891" in replies["request"] and "(377, 3)" in replies["request"], replies["request"][:400]
     assert "891" in replies["accept"] and "(377, 3)" not in replies["accept"], replies["accept"][:400]
+    objective = reply_text(who.call_bound(agent[0], "GetMissionObjectiveInfo"))
+    assert "ownerID" in objective and "locationType" in objective and str(NEXT_SYSTEM) in objective, objective[:500]
 
     arrived: set[int] = set()
     arrived_types: dict[int, int] = {}

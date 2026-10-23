@@ -88,11 +88,13 @@ public sealed class ShipSkinrDispatchTests
         var identifier = Message(saved, 1);
         Assert.Equal(id.ToByteArray(bigEndian: true), Message(identifier, 1).ToArray());
         var attributes = Message(saved, 2);
-        Assert.Equal(hex, System.Text.Encoding.UTF8.GetString(Message(attributes, 1).Span));
+        var savedSkin = Message(attributes, 1);
+        Assert.Equal(hex, System.Text.Encoding.UTF8.GetString(Message(savedSkin, 1).Span));
 
         var read = ShipSkinrGateway.EncodeAttributesResponse(draft, 1);
         Assert.Equal(new[] { 1 }, ProtoReader.Fields(read).Select(field => field.Number));
-        Assert.Equal(hex, System.Text.Encoding.UTF8.GetString(Message(Message(read, 1), 1).Span));
+        var readSkin = Message(Message(read, 1), 1);
+        Assert.Equal(hex, System.Text.Encoding.UTF8.GetString(Message(readSkin, 1).Span));
         Assert.Single(Fields(Message(read, 1).ToArray(), 3));
     }
 

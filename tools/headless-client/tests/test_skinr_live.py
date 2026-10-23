@@ -379,14 +379,14 @@ def test_v24_skinr_design_sequences_and_applies_a_persisted_license():
 
             # ConsumeRequest is retried with the same correlation UUID: the item and its license change once.
             consume_request_id = uuid.uuid4()
-            status, response_type, _ = _send(
+            status, response_type, _, message = _send_detail(
                 channel,
                 COMPONENT_ITEM + "ConsumeRequest",
                 character,
                 _item_consume_payload(item),
                 consume_request_id,
             )
-            assert (status, response_type) == (200, COMPONENT_ITEM + "ConsumeResponse")
+            assert (status, response_type) == (200, COMPONENT_ITEM + "ConsumeResponse"), message
             assert _send(
                 channel,
                 COMPONENT_ITEM + "ConsumeRequest",

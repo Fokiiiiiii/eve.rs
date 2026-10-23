@@ -1162,7 +1162,7 @@ public class DispatchGoldenTests
         var registry = new ServiceRegistry();
         var service = new ExpensiveService("industryManager");
         registry.Register(service);
-        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 10 };
+        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxIndustryRpcUnitsPerMinute = 10 };
 
         await dispatcher.DispatchAsync(CallRequestPacket("industryManager", "GetJobsByOwner"), session);
         await dispatcher.DispatchAsync(CallRequestPacket("industryManager", "GetJobsByOwner"), session);
@@ -1170,6 +1170,33 @@ public class DispatchGoldenTests
         Assert.Equal(1, service.Calls);
         Assert.Equal(2, capture.Sent.Count);
         Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[1])));
+    }
+
+    [Fact]
+    public async Task Industry_jobs_use_a_separate_per_session_budget()
+    {
+        var capture = new Capture();
+        var session = new ClientSession(capture) { SessionId = 1027 };
+        var registry = new ServiceRegistry();
+        var fittingService = new ExpensiveService("charFittingMgr");
+        var industryService = new ExpensiveService("industryManager");
+        registry.Register(fittingService);
+        registry.Register(industryService);
+        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs)
+        {
+            MaxExpensiveRpcUnitsPerMinute = 10,
+            MaxIndustryRpcUnitsPerMinute = 10,
+        };
+
+        await dispatcher.DispatchAsync(CallRequestPacket("charFittingMgr", "GetFittings"), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("industryManager", "GetJobCounts"), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("industryManager", "GetJobCounts"), session);
+
+        Assert.Equal(1, fittingService.Calls);
+        Assert.Equal(1, industryService.Calls);
+        Assert.Equal(3, capture.Sent.Count);
+        Assert.NotEqual(ErrorResponseCommand, CommandOf(capture.Sent[1]));
+        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[2])));
     }
 
     [Fact]

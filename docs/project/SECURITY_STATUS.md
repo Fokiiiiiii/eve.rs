@@ -573,6 +573,8 @@ Security finding `0da0dd98` was pushed to `main` on 2026-10-23.
 
 The V24.01 character energy service calls `GetMyEnergyState()` without arguments (`eve/client/script/ui/services/characterEnergySvc.py`). EveJS derives the character from the session and returns its current energy state. The Host now refuses extra arguments before reading game-store state; `CompatibilityRpcServiceTests.Character_energy_read_refuses_client_selected_targets` and `DispatchGoldenTests.Character_energy_reads_use_a_named_per_session_budget` cover the boundary and cost. On `eve_p3`, the focused Host test passed (1), and all `Eve.Services.Tests` passed (226, no skips).
 
+Security finding `423063a5` was pushed to `main` on 2026-10-23.
+
 
 ### Contextual Offer Manager RPC detail
 

@@ -82,9 +82,14 @@ public sealed partial class CacheService
     public Func<ServiceCall, ValueTask<PyValue?>>? RpcHandler { get; set; }
 
     [Method("GetServerVersionAndBuild")]
-    public ValueTask<PyValue> GetServerVersionAndBuild(ServiceCall call) =>
-        CompatibilityRpc.Invoke(call, RpcHandler, static () =>
+    public ValueTask<PyValue> GetServerVersionAndBuild(ServiceCall call)
+    {
+        call.Cancellation.ThrowIfCancellationRequested();
+        if (call.Args.Count != 0 || call.Kwargs is not PyNone)
+            throw MachoErrors.ThrowUserError("CACHE_ARGUMENTS_INVALID");
+        return CompatibilityRpc.Invoke(call, RpcHandler, static () =>
             Py.Tuple(new PyReal(ServerBuildInfo.BootVersion), new PyInt(ServerBuildInfo.BootBuild)));
+    }
 }
 
 [Service("communityTrackMgr")]

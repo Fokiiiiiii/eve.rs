@@ -332,6 +332,18 @@ public sealed class PacketDispatcher
             return 1;
         if (service == "air_npe" && method == "skip_air_npe")
             return 10;
+        if (service == "authentication" && method == "AmUnderage")
+            return 10;
+        if (service == "authentication" && method is "AccruedTime" or "SetLanguageID")
+            return 1;
+        if (service == "infoGatheringMgr" && method == "GetStateAndConfig")
+            return 1;
+        if (service == "infoGatheringMgr" && method == "LogInfoEventsFromClient")
+            return 10;
+        if (service == "browserLockdownSvc")
+            return 1;
+        if (service == "cache" && method == "GetServerVersionAndBuild")
+            return 1;
         if (service == "RWManager" && method is "get_closest_rw_stations" or "solarsystem_contains_rw_instances")
             return 1;
         if (service == "clientStatLogger" && method == "LogString")

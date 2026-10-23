@@ -67,6 +67,8 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
     /// </summary>
     private static MachoWrappedException MarketErrorPayload(MarketError error) => error.Code switch
     {
+        "StructureMarketDenied" => MachoErrors.ThrowUserError(error.Code,
+            [("structureName",(PyValue)new PyStr(Convert.ToString(error.Arguments[0].Value,System.Globalization.CultureInfo.InvariantCulture) ?? "Structure"))]),
         "MktInvalidMinVolumeCannotExceedQuantity" => MachoErrors.ThrowUserError(error.Code),
         "MARKET_BULK_LIMIT_EXCEEDED" => MachoErrors.ThrowUserError(error.Code),
         "MARKET_TYPE_ID_INVALID" => MachoErrors.ThrowUserError(error.Code),
@@ -113,7 +115,7 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
             ("typeID",new PyInt(order.TypeId)),
             ("charID",new PyInt(ownerId)),
             ("regionID",new PyInt(order.Location.RegionId)),
-            ("stationID",new PyInt(order.Location.StationId)),
+            ("stationID",new PyLong(order.Location.StationId)),
             ("range",new PyInt(order.Range)),
             ("bid",new PyInt(order.Bid ? 1 : 0)),
             ("price",Py.Number(MarketRules.RoundIsk((double)order.Price))),
@@ -161,17 +163,70 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
             new PyStr(group.Description),PyNone.Instance,group.HasTypes ? PyBool.True : PyBool.False,
             group.IconId is { } icon ? new PyInt(icon) : PyNone.Instance,new PyInt(group.Id),PyNone.Instance,PyNone.Instance)));
 
-    /// <summary>Ask summaries are currently encoded as named KeyVal fields; the V24 tuple-consumer path remains unresolved.</summary>
+    /// <summary>
+    /// The V24 market client reads station ask values as KeyVals (market/quote.py BuyStationAsk uses ask.typeID).
+    /// Both EveJS snapshots return tuple summaries here; that shape fails the client consumer, so keep the named KeyVal fields.
+    /// </summary>
     private static PyValue AskSummary(MarketOrder order,long quantity) => MarketWire.BestByOrder(order,quantity);
+
+    private async Task<IReadOnlyList<(MarketOrder Order,long Quantity)>> VisibleSummaries(
+        long actorId,IReadOnlyList<(MarketOrder Order,long Quantity)> rows,CancellationToken token)
+    {
+        var access=new Dictionary<long,bool>();
+        var visible=new List<(MarketOrder Order,long Quantity)>(rows.Count);
+        foreach (var row in rows)
+        {
+            var locationId=row.Order.Location.StationId;
+            if (!access.TryGetValue(locationId,out var allowed))
+                access[locationId]=allowed=await trading.CanViewAtAsync(actorId,locationId,token);
+            if (allowed) visible.Add(row);
+        }
+        return visible.GroupBy(row => row.Order.TypeId).Select(group =>
+        {
+            var best=group.OrderBy(row => row.Order.Price).ThenBy(row => row.Order.IssuedMs).ThenBy(row => row.Order.Id).First();
+            var quantity=group.Aggregate(0L,(total,row) => long.MaxValue-total<row.Quantity ? long.MaxValue : total+row.Quantity);
+            return (Order:best.Order,Quantity:quantity);
+        }).ToArray();
+    }
+
+    private async Task<IReadOnlyList<MarketOrder>> VisibleOrders(
+        long actorId,IReadOnlyList<MarketOrder> rows,CancellationToken token)
+    {
+        var access=new Dictionary<long,bool>();
+        var visible=new List<MarketOrder>(rows.Count);
+        foreach (var row in rows)
+        {
+            var locationId=row.Location.StationId;
+            if (!access.TryGetValue(locationId,out var allowed))
+                access[locationId]=allowed=await trading.CanViewAtAsync(actorId,locationId,token);
+            if (allowed) visible.Add(row);
+        }
+        return visible;
+    }
+
+    private static long MarketLocationId(ClientSession session,long fallback)
+    {
+        var stationId=session.GetInt("stationid") ?? 0;
+        return stationId>0 ? stationId : session.GetInt("structureid") ?? fallback;
+    }
 
     [Method("GetStationAsks")]
     public async ValueTask<PyValue> GetStationAsks(ServiceCall call)
     {
-        var character=call.Session.CharacterId is { } id ? await characters.GetAsync(id,call.Cancellation) : null;
+        var actor=call.Session.CharacterId;
+        var character=actor is { } id ? await characters.GetAsync(id,call.Cancellation) : null;
+        var locationId=MarketLocationId(call.Session,character?.StationId ?? 0);
         IReadOnlyList<(MarketOrder Order,long Quantity)> rows=[];
-        if(character is not null && character.StationId>0 && character.RegionId>0 &&
-            catalog.NpcStationIds.Contains(character.StationId))
-            rows=await store.StationAsksAsync(character.RegionId,character.StationId,catalog.NpcStationIds,now(),call.Cancellation);
+        if(actor is { } characterId && locationId>0)
+        {
+            try
+            {
+                var location=await trading.RequireMarketLocationAsync(characterId,locationId,call.Cancellation);
+                if(location.RegionId>0)
+                    rows=await store.StationAsksAsync(location.RegionId,locationId,now(),call.Cancellation);
+            }
+            catch(MarketError error) { throw Error(error); }
+        }
         var entries=rows.Select(row=>new KeyValuePair<PyValue,PyValue>(
             new PyInt(row.Order.TypeId),AskSummary(row.Order,row.Quantity))).ToArray();
         return ObjectCaching.MethodResult(new PyDict(entries),now(),sessionInfo:"stationid");
@@ -180,10 +235,14 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
     [Method("GetSystemAsks")]
     public async ValueTask<PyValue> GetSystemAsks(ServiceCall call)
     {
-        var character=call.Session.CharacterId is { } id ? await characters.GetAsync(id,call.Cancellation) : null;
+        var actor=call.Session.CharacterId;
+        var character=actor is { } id ? await characters.GetAsync(id,call.Cancellation) : null;
         IReadOnlyList<(MarketOrder Order,long Quantity)> rows=[];
-        if(character is not null && character.SolarSystemId>0 && character.RegionId>0)
-            rows=await store.SystemAsksAsync(character.RegionId,character.SolarSystemId,catalog.NpcStationIds,now(),call.Cancellation);
+        if(actor is { } characterId && character is not null && character.SolarSystemId>0 && character.RegionId>0)
+        {
+            rows=await store.SystemAsksAsync(character.RegionId,character.SolarSystemId,now(),call.Cancellation);
+            rows=await VisibleSummaries(characterId,rows,call.Cancellation);
+        }
         var entries=rows.Select(row=>new KeyValuePair<PyValue,PyValue>(
             new PyInt(row.Order.TypeId),AskSummary(row.Order,row.Quantity))).ToArray();
         return ObjectCaching.MethodResult(new PyDict(entries),now(),sessionInfo:"solarsystemid2");
@@ -193,8 +252,8 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
     public async ValueTask<PyValue> GetRegionBest(ServiceCall call)
     {
         var region=await MarketRegion(call);
-        var rows=region>0
-            ? await store.RegionBestAsync(region,catalog.NpcStationIds,now(),call.Cancellation)
+        var rows=region>0 && call.Session.CharacterId is { } actor
+            ? await VisibleSummaries(actor,await store.RegionBestAsync(region,now(),call.Cancellation),call.Cancellation)
             : [];
         var entries=rows.Select(row=>new KeyValuePair<PyValue,PyValue>(
             new PyInt(row.Order.TypeId),MarketWire.BestByOrder(row.Order,row.Quantity))).ToArray();
@@ -266,9 +325,13 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
     public async ValueTask<PyValue> GetOrders(ServiceCall call)
     {
         var type=Int32(call.Arg(0));
-        var c=call.Session.CharacterId is { } id ? await characters.GetAsync(id,call.Cancellation) : null;
-        var viewer=c is null ? default : new MarketLocation(c.StationId,c.SolarSystemId,c.ConstellationId,c.RegionId);
+        var actor=call.Session.CharacterId;
+        var c=actor is { } id ? await characters.GetAsync(id,call.Cancellation) : null;
+        var locationId=MarketLocationId(call.Session,c?.StationId ?? 0);
+        var viewer=c is null ? default : new MarketLocation(locationId,c.SolarSystemId,c.ConstellationId,c.RegionId);
         var book=c is null || type<=0 ? new MarketBook([],[]) : await store.BookAsync(c.RegionId,type,now(),call.Cancellation);
+        if (actor is { } actorId)
+            book=new MarketBook(await VisibleOrders(actorId,book.Asks,call.Cancellation),await VisibleOrders(actorId,book.Bids,call.Cancellation));
         return ObjectCaching.MethodResult(Py.Tuple(MarketWire.Orders(book.Asks,topology,viewer),MarketWire.Orders(book.Bids,topology,viewer)),
             now(),sessionInfo:"solarsystemid2");
     }
@@ -288,7 +351,7 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
             var escrow=order.Bid ? MarketRules.RoundIsk((double)order.Price*order.VolumeRemaining) : 0d;
             return (PyValue)Py.Tuple(
                 new PyLong(order.Id),new PyInt(order.TypeId),new PyInt(isCorp ? 0 : owned.ActorId),
-                new PyInt(order.Location.RegionId),new PyInt(order.Location.StationId),new PyInt(order.Range),
+                new PyInt(order.Location.RegionId),new PyLong(order.Location.StationId),new PyInt(order.Range),
                 new PyInt(order.Bid ? 1 : 0),Py.Number(MarketRules.RoundIsk((double)order.Price)),
                 new PyInt(order.VolumeEntered),new PyInt(order.VolumeRemaining),
                 new PyLong(Py.FileTimeFromUnixMs(order.IssuedMs)),new PyInt(order.MinimumVolume),new PyInt(0),
@@ -365,9 +428,13 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
     [Method("GetPlexOrders")]
     public async ValueTask<PyValue> GetPlexOrders(ServiceCall call)
     {
-        var character=call.Session.CharacterId is { } actor ? await characters.GetAsync(actor,call.Cancellation) : null;
-        var viewer=character is null ? default : new MarketLocation(character.StationId,character.SolarSystemId,character.ConstellationId,character.RegionId);
+        var actor=call.Session.CharacterId;
+        var character=actor is { } characterId ? await characters.GetAsync(characterId,call.Cancellation) : null;
+        var locationId=MarketLocationId(call.Session,character?.StationId ?? 0);
+        var viewer=character is null ? default : new MarketLocation(locationId,character.SolarSystemId,character.ConstellationId,character.RegionId);
         var book=character is null || character.RegionId<=0 ? new MarketBook([],[]) : await store.BookAsync(character.RegionId,PlexTypeId,now(),call.Cancellation);
+        if (actor is { } actorId)
+            book=new MarketBook(await VisibleOrders(actorId,book.Asks,call.Cancellation),await VisibleOrders(actorId,book.Bids,call.Cancellation));
         return ObjectCaching.MethodResult(Py.Tuple(MarketWire.Orders(book.Asks,topology,viewer),MarketWire.Orders(book.Bids,topology,viewer)),
             now(),sessionInfo:"regionid");
     }
@@ -377,13 +444,14 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
     {
         var region=await MarketRegion(call);
         var entries=new List<KeyValuePair<PyValue,PyValue>>();
-        if(region>0)
+        if(region>0 && call.Session.CharacterId is { } actorId)
         {
             var book=await store.BookAsync(region,PlexTypeId,now(),call.Cancellation);
-            if(book.Asks.Count>0)
+            var asks=await VisibleOrders(actorId,book.Asks,call.Cancellation);
+            if(asks.Count>0)
             {
-                var best=book.Asks[0];
-                var quantity=book.Asks.TakeWhile(order=>order.Price==best.Price).Sum(order=>order.VolumeRemaining);
+                var best=asks[0];
+                var quantity=asks.TakeWhile(order=>order.Price==best.Price).Sum(order=>order.VolumeRemaining);
                 entries.Add(new(new PyInt(PlexTypeId),MarketWire.BestByOrder(best,quantity)));
             }
         }

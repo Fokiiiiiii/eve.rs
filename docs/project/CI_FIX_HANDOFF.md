@@ -134,17 +134,17 @@ Use lane `eve_p4` only and run database work through `tools/dev/db-lock.sh`. The
 - The local `Eve.Services.Dogma.Tests` project build passed with zero warnings and errors. Agent run 127 (`40005187593`) passed the focused database-backed regression on pushed commit `fbc39d63`.
 - Agent run 123 on `e0cb832e` passed the two `Eve.Host.Tests` matches, then failed because the same `FullyQualifiedName~SignalTracker` filter selected zero tests in `Eve.Services.Core.Tests`. This was a test-selection mismatch; dispatch that filter to the Host project only.
 
-### Market RPC budget regression test setup
+<<### Market RPC budget regression test setup
 
-- CI run 660 (`4f38c72f`) failed both market budget regression tests because each configured only `MaxExpensiveRpcUnitsPerMinute = 10`, while `PacketDispatcher` now routes `marketProxy` through `MaxMarketRpcUnitsPerMinute`. The service therefore received the second call and the tests observed two calls instead of one.
-- The tests now set both limits to 10, so their rejection assertion exercises the market-specific session budget. The focused local `Eve.Services.Tests` check passed (1 passed, 0 skipped). Agent run 130 (`40005698972`) passed both focused regressions on pushed commit `56ccc077`.
+- CI run 660 (`4f38c72f`) failed both market budget regression tests because each configured only `MaxExpensiveRpcUnitsPerMinute = 10`, while `PacketDispatcher` routes `marketProxy` through `MaxMarketRpcUnitsPerMinute`. The tests now set both limits to 10. Agent run 128 (`40005500782`) passed both focused regressions on `94e37e82`.
 
 ### SKINR unlimited component license sentinel
 
-- Agent run 124 reached `ConsumeRequest` after the signed-token fix and received a 400. CI run 661 on `fbc39d63` reproduced the same 400 at `ConsumeRequest` in `tests/test_skinr_live.py`. The existing live scenario selects a published compatible component from mission SDE build 3405148 with `associatedTypeIDs.licenseUsesGranted = -1`, then verifies that consuming it persists an infinite license. The pinned mission-SDE query is in `tools/headless-client/tests/test_skinr_live.py`.
-- `ShipSkinrCatalog.LoadAsync` discarded every negative use count, so the item type could not resolve to a component license. `ConsumeComponentItemAsync` also recognized only zero as unlimited. The catalog now accepts the SDE's -1 sentinel and the gateway treats nonpositive grants as unlimited, consuming one item and persisting the infinite grant in the existing transaction.
-- CCP's Equinox SKINR description confirms that design elements may be unlimited-use and require sequence binders: https://www.eveonline.com/news/view/equinox-in-focus-personalized-ship-skins. The live test covers consume, retry, persisted license, sequencing and application. The local `Eve.Host` build passed with zero warnings and errors. Agent run 133 (`40007137511`) failed without the pytest result in the workflow tail, and CI run 666 (`40110cc0`) confirms that `ConsumeRequest` still returns HTTP 400; accepting the `-1` sentinel did not resolve this root cause.
+- Agent run 124 and CI runs 661/666 reached the live consume request and received HTTP 400. The fixture selects a published compatible mission-SDE component with `associatedTypeIDs.licenseUsesGranted = -1`; the run on `40110cc0` showed that simply allowing the negative value through the catalog did not fix consumption.
+- Current main maps the SDE `-1` unlimited marker to the gateway's runtime `0` sentinel, excludes values below -1, and preserves positive finite uses. `ShipSkinrCatalogDataTests.Unlimited_license_types_use_the_runtime_unlimited_sentinel` covers all three cases.
+- CI run 666 on `40110cc0` still returned 400. Agent run 138 and CI run 671 are checking the current main commit `287c530d`; update this entry with their results.
+
 ### Contact notification dictionary keys
 
-- CI runs 664 (`774b7a18`) and 666 (`40110cc0`) failed `CharacterHostTests.Contact_add_persists_and_routes_the_recipient_notification`: `Field` cast every dictionary key to `PyStr`, while the packet codec represents Python `str` keys as `PyBytes`. The test helper now matches either type; production notification encoding is unchanged.
-- The `Eve.Host.Tests` project compiles locally with zero warnings and errors. A focused Agent Actions check will run after this commit.
+- CI runs 664 (`774b7a18`) and 666 (`40110cc0`) failed `CharacterHostTests.Contact_add_persists_and_routes_the_recipient_notification`: the test treated a Python `str` dictionary key as `PyStr`, while the packet codec exposes it as `PyBytes`.
+- Main commit `d2b2821d` now reads notification keys through `JsSemantics.StringValue`. This worktree's `dfe630d1` also makes the shared `Field` helper compare both Marshal string forms. The `Eve.Host.Tests` project compiled locally with zero warnings and errors before merging current main; the focused Actions regression will run after this merge is pushed.

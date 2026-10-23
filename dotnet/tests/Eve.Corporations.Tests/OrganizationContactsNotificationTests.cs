@@ -69,6 +69,33 @@ public sealed class OrganizationContactsNotificationTests
         ]), alliancePayload.Items[1]);
     }
 
+    [Fact]
+    public void Mutual_war_updates_reach_both_owners_after_the_response()
+    {
+        var sessions = new CharacterSessions();
+        var actor = NewSession(sessions, 201, 601, corporationId: 9001, allianceId: 8001);
+        var corporationPeer = NewSession(sessions, 202, 602, corporationId: 9001);
+        var target = NewSession(sessions, 203, 603, corporationId: 9003, allianceId: 8003);
+        var outsider = NewSession(sessions, 204, 604, corporationId: 9004, allianceId: 8004);
+        var call = new ServiceCall { Session = actor.Session, Method = "SendInviteByPlayer", Args = [] };
+
+        CorporationNotificationAdapter.MutualWarsUpdated(sessions, call, 9001, 8003);
+
+        Assert.Empty(actor.Sink.Packets);
+        Assert.Empty(corporationPeer.Sink.Packets);
+        Assert.Empty(target.Sink.Packets);
+        actor.Session.RunAfterResponse();
+
+        foreach (var recipient in new[] { actor, corporationPeer, target })
+        {
+            var packet = Assert.Single(recipient.Sink.Packets);
+            Assert.Equal("OnMutualWarsUpdated_Remote", Name(packet));
+            Assert.Equal("clientID", Address(packet).IdType);
+            Assert.Empty(Arguments(packet).Items);
+        }
+        Assert.Empty(outsider.Sink.Packets);
+    }
+
     private static (ClientSession Session, PacketSink Sink) NewSession(
         CharacterSessions sessions, long characterId, long clientId, long corporationId, long? allianceId = null)
     {

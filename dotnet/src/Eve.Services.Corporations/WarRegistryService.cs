@@ -160,7 +160,7 @@ public sealed partial class WarRegistryService(
 
     private async Task<IReadOnlyList<WarsInfoMgrService.WarRecord>> WarsAsync(CancellationToken token) => await WarsInfoMgrService.ReadWarsAsync(relations, token);
 
-    private static PyValue Payload(WarsInfoMgrService.WarRecord war) => Py.KeyVal(
+    internal static PyValue Payload(WarsInfoMgrService.WarRecord war) => Py.KeyVal(
         ("warID", InventoryWire.Id(war.WarId)),
         ("declaredByID", InventoryWire.Id(war.DeclaredById)),
         ("againstID", InventoryWire.Id(war.AgainstId)),

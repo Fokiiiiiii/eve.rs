@@ -361,7 +361,7 @@ public async ValueTask<IReadOnlyList<Eve.Services.Core.StructureDockingAccessSna
         structures.Sort(static (left, right) => left.Id.CompareTo(right.Id));
 
         var typeIds = structures.Select(entry => (long)Positive(Integer(entry.Row["typeID"]))).Distinct().ToArray();
-        var types = (await sde.ReadAsync("invTypes", typeIds, cancellationToken))
+        var types = (await sde.ReadAsync("types", typeIds, cancellationToken))
             .ToDictionary(row => row.Key);
 
         var descriptor = Descriptor.FromHeader(new PyObjectEx(
@@ -562,7 +562,7 @@ public async ValueTask<bool> IsValidWarHQAsync(
         }
 
         var typeRows = await sde.ReadAsync(
-            "invTypes", structures.Select(entry => (long)Positive(Integer(entry.Row["typeID"]))).Distinct(), cancellationToken);
+            "types", structures.Select(entry => (long)Positive(Integer(entry.Row["typeID"]))).Distinct(), cancellationToken);
         var types = typeRows.ToDictionary(row => row.Key);
         var systemRows = await sde.ReadAsync(
             "mapSolarSystems", structures.Select(entry => (long)Positive(Integer(entry.Row["solarSystemID"]))).Distinct(), cancellationToken);

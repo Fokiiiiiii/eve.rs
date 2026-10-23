@@ -76,6 +76,65 @@ public sealed class CompatibilityRpcServiceTests
 
         Assert.IsType<PyNone>(response);
         Assert.Equal(["ballpark startup failed"], messages);
+
+        var refusals = new (ServiceCall Call, string Error)[]
+        {
+            (Call("LogString", args: []), "CLIENT_LOG_ARGUMENTS_INVALID"),
+            (Call("LogString", args: [new PyInt(7)]), "CLIENT_LOG_MESSAGE_INVALID"),
+            (Call("LogString", args: [new PyStr(new string('あ', 1366))]), "CLIENT_LOG_MESSAGE_LIMIT_EXCEEDED"),
+            (Call("LogString", args: [new PyStr("ok"), new PyStr("extra")]), "CLIENT_LOG_ARGUMENTS_INVALID"),
+            (new ServiceCall { Method = "LogString", Args = [new PyStr("ok")], Kwargs = new PyDict([]), Session = Session() }, "CLIENT_LOG_ARGUMENTS_INVALID"),
+        };
+        foreach (var (call, error) in refusals)
+        {
+            var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(call).AsTask());
+            Assert.Equal(MachoErrors.UserErrorClass, refusal.Error.ClassName);
+            Assert.Equal(error, refusal.Error.UserErrorMessage);
+        }
+        Assert.Equal(["ballpark startup failed"], messages);
+    }
+
+    [Fact]
+    public async Task Character_energy_read_refuses_client_selected_targets()
+    {
+        var service = new CharacterEnergyMgrRpcService(nowUnixMs: () => 1_700_000_000_000L);
+        var session = Session(20);
+        var valid = await service.CallAsync(Call("GetMyEnergyState", session));
+        Assert.IsType<PyObjectEx>(valid);
+
+        var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(
+            Call("GetMyEnergyState", session, new PyLong(21))).AsTask());
+        Assert.Equal(MachoErrors.UserErrorClass, refusal.Error.ClassName);
+        Assert.Equal("CHARACTER_ENERGY_ARGUMENTS_INVALID", refusal.Error.UserErrorMessage);
+    }
+
+    [Fact]
+    public async Task Paper_doll_batch_reads_require_bounded_positive_integral_character_ids()
+    {
+        var service = new PaperDollServerRpcService();
+        var session = Session(20);
+        var valid = Assert.IsType<PyDict>(await service.CallAsync(Call("GetPaperDollDataBatch", session,
+            new PyList([new PyInt(20), new PyLong(21), new PyLong(20)]))));
+        Assert.Equal(2, valid.Entries.Count);
+
+        var oversized = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(Call(
+            "GetPaperDollDataBatch", session, new PyList(Enumerable.Repeat<PyValue>(new PyLong(20), 501).ToArray()))).AsTask());
+        Assert.Equal("PAPERDOLL_BATCH_LIMIT_EXCEEDED", oversized.Error.UserErrorMessage);
+
+        var wrongShape = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(
+            Call("GetPaperDollDataBatch", session, new PyStr("20"))).AsTask());
+        Assert.Equal("PAPERDOLL_BATCH_ARGUMENT_INVALID", wrongShape.Error.UserErrorMessage);
+
+        foreach (var invalidIdValue in new PyValue[]
+        {
+            new PyLong(-20),
+            new PyReal(20.5),
+        })
+        {
+            var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(
+                Call("GetPaperDollDataBatch", session, new PyList([invalidIdValue]))).AsTask());
+            Assert.Equal("PAPERDOLL_CHARACTER_ID_INVALID", refusal.Error.UserErrorMessage);
+        }
     }
 
     [Fact]

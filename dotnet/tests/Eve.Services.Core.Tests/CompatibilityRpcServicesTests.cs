@@ -81,29 +81,68 @@ public sealed class CompatibilityRpcServicesTests
         Assert.Equal(new PyStr("http://127.0.0.1:26002/kiring/billing/"), Value(endpoints, "billing"));
         Assert.Equal(new PyStr("http://127.0.0.1:26002/kiring/redirect/"), Value(endpoints, "redirect_uri"));
 
-        Assert.Equal(new PyInt(1), await rpc.CallAsync(Call("GetSAuthAid")));
         Assert.Equal(new PyInt(201), await rpc.CallAsync(Call("GetAntiAddictionCode")));
         Assert.Same(PyNone.Instance, await rpc.CallAsync(Call("GetEveGuardServerAddress")));
         Assert.Same(PyBool.False, await rpc.CallAsync(Call("IsMonochromeStyleEnabled")));
         Assert.Same(PyBool.False, await rpc.CallAsync(Call("ShouldKickCheater")));
         Assert.Same(PyBool.False, await rpc.CallAsync(Call("ActivateRedeemingCode")));
 
-        var order = Assert.IsType<PyStr>(await rpc.CallAsync(Call("PlaceKiringOrder")));
-        Assert.StartsWith("evejs-kiring-", order.Value);
-        var authentication = Assert.IsType<PyTuple>(await rpc.CallAsync(new ServiceCall
+        foreach (var (method, args, error) in new[]
         {
-            Method = "PerformKiringServerSideAuthenticationFromCode",
-            Args = [new PyStr("code"), new PyStr("device-42"), new PyStr("client-1")],
-            Session = new ClientSession(),
-        }));
-        Assert.Equal(new PyInt(1), authentication.Items[0]);
-        Assert.Equal(new PyStr("evejs-local-user"), authentication.Items[1]);
-        Assert.Equal(new PyStr("evejs-local-token"), authentication.Items[2]);
-        var encoded = Assert.IsType<PyStr>(authentication.Items[3]).Value;
-        var accountJson = System.Text.Encoding.UTF8.GetString(
-            Convert.FromBase64String(encoded[(encoded.IndexOf('-') + 1)..]));
-        Assert.Equal("{\"odi\":\"device-42\",\"s\":\"evejs-local-token\"}", accountJson);
-        Assert.Equal(new PyStr("EVE.JS Local"), authentication.Items[4]);
+            ("PerformKiringServerSideAuthenticationFromCode", Array.Empty<PyValue>(), "KIRING_AUTH_UNAVAILABLE"),
+            ("PerformKiringServerSideAuthenticationFromCode", new PyValue[] { new PyStr("code"), new PyStr("device-42"), new PyStr("client-1") }, "KIRING_AUTH_UNAVAILABLE"),
+            ("GetSAuthAid", new PyValue[] { new PyStr("forged-user"), new PyStr("forged-account"), new PyStr("forged-device") }, "KIRING_AUTH_UNAVAILABLE"),
+            ("PlaceKiringOrder", Array.Empty<PyValue>(), "KIRING_PURCHASE_UNAVAILABLE"),
+        })
+        {
+            var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() => rpc.CallAsync(new ServiceCall
+            {
+                Method = method,
+                Args = args,
+                Session = new ClientSession(),
+            }).AsTask());
+            Assert.Equal(MachoErrors.UserErrorClass, refusal.Error.ClassName);
+            Assert.Equal(error, refusal.Error.UserErrorMessage);
+        }
+    }
+
+    [Fact]
+    public async Task Contextual_offer_tracking_keeps_a_bounded_event_history()
+    {
+        var service = new ContextualOfferMgrService();
+        var rpc = (IService)service;
+
+        for (var id = 1; id <= 1100; id++)
+            await rpc.CallAsync(Call("TrackOfferSeen", new PyLong(id)));
+
+        Assert.Equal(1024, service.Events.Count);
+        Assert.Equal(77, service.Events[0].EventId);
+        Assert.Equal(1100, service.Events[^1].EventId);
+        Assert.Equal(1100, service.Events[^1].OfferId);
+    }
+
+    [Fact]
+    public async Task Contextual_offer_tracking_refuses_invalid_offer_ids_without_recording()
+    {
+        var callbackCalled = false;
+        var service = new ContextualOfferMgrService
+        {
+            RpcHandler = _ =>
+            {
+                callbackCalled = true;
+                return ValueTask.FromResult<PyValue?>(PyNone.Instance);
+            },
+        };
+        var rpc = (IService)service;
+
+        foreach (var value in new PyValue[] { PyNone.Instance, new PyStr("17"), new PyLong(0), new PyLong(-1) })
+        {
+            var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() => rpc.CallAsync(Call("TrackOfferSeen", value)).AsTask());
+            Assert.Equal(MachoErrors.UserErrorClass, refusal.Error.ClassName);
+            Assert.Equal("CONTEXTUAL_OFFER_ID_INVALID", refusal.Error.UserErrorMessage);
+            Assert.Empty(service.Events);
+            Assert.False(callbackCalled);
+        }
     }
 
     [Fact]

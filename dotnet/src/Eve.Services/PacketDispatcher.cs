@@ -19,6 +19,7 @@ public sealed class PacketDispatcher
     private readonly ServiceRegistry _registry;
     private readonly Func<long> _nowUnixMs;
     private readonly ConditionalWeakTable<ClientSession, ExpensiveRpcBudget> _expensiveBudgets = new();
+    private readonly ConditionalWeakTable<ClientSession, ExpensiveRpcBudget> _inventoryBudgets = new();
 
     public PacketDispatcher(ServiceRegistry registry, Func<long>? nowUnixMs = null)
     {
@@ -40,7 +41,7 @@ public sealed class PacketDispatcher
     public bool StrictRpc { get; init; }
 
     /// <summary>Weighted work units available to one session during a rolling minute.</summary>
-    public int MaxExpensiveRpcUnitsPerMinute { get; init; } = 120;
+    public int MaxExpensiveRpcUnitsPerMinute { get; init; } = 160;
 
     /// <summary>
     /// Handles one decoded packet from <paramref name="session"/>. Returns whether it was handled;
@@ -169,7 +170,10 @@ public sealed class PacketDispatcher
         if (call.Method == "MachoBindObject" && call.Args.Count > 1 &&
             NestedBoundMethod(call.Args[1]) is { } nestedMethod)
             cost = Math.Max(cost, ExpensiveRpcCost(service.Name, nestedMethod));
-        if (cost > 0 && !_expensiveBudgets.GetValue(session, _ => new ExpensiveRpcBudget())
+        var budget = service.Name == "invbroker"
+            ? _inventoryBudgets
+            : _expensiveBudgets;
+        if (cost > 0 && !budget.GetValue(session, _ => new ExpensiveRpcBudget())
                 .TryConsume(_nowUnixMs(), cost, MaxExpensiveRpcUnitsPerMinute))
         {
             SendError(packet, MachoErrors.UserError("SessionRpcBudgetExceeded"), session, serviceName);
@@ -314,6 +318,20 @@ public sealed class PacketDispatcher
             return 10;
         if (service == "insuranceSvc" && method == "GetContracts")
             return 10;
+        if (service == "kiringMgr" && method is "PerformKiringServerSideAuthenticationFromCode" or "GetSAuthAid" or "PlaceKiringOrder")
+            return 10;
+        if (service == "eventLog" && method == "LogClientStats")
+            return 10;
+        if (service == "clientStatLogger" && method == "LogString")
+            return 1;
+        if (service == "characterEnergyMgr" && method == "GetMyEnergyState")
+            return 1;
+        if (service == "paperDollServer" && method == "GetPaperDollDataBatch")
+            return 10;
+        if (service == "XmppChatMgr" && method is "SetMotd" or "CreatePlayerOwnedChannel" or "AddCharacterToChannel" or "GrantChannelOwnership" or "ResyncSystemChannelAccess")
+            return 10;
+        if (service == "contextualOfferMgr" && method is "TrackOfferDelivered" or "TrackOfferSeen" or "TrackOfferBuyPress" or "TrackOfferClosed" or "TrackOfferPurchased" or "TrackOfferPurchasedSeen")
+            return 1;
         if (service == "planetOrbitalRegistryBroker" && method == "GetTaxRate")
             return 2;
         if (service == "planetOrbitalRegistryBroker" && method == "UpdateSettings")

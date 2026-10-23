@@ -21,6 +21,8 @@ public sealed class NewEdenStoreCatalogTests
             offer["products"]!.AsArray(), product => Assert.True(product!["typeId"]!.GetValue<long>() > 0)));
         Assert.Equal(OmegaClone, FirstProductTypeId(offers, "omega_30_days"));
         Assert.Equal(MultipleTraining, FirstProductTypeId(offers, "mct_slot_30_days"));
+        Assert.All(offers, offer => Assert.StartsWith("/store/4/offers/", offer["href"]!.GetValue<string>()));
+        Assert.Equal("/store/4/offers/omega-30-days", offers.Single(offer => offer["storeOfferID"]!.GetValue<string>() == "omega_30_days")["href"]!.GetValue<string>());
     }
 
     [Fact]
@@ -81,11 +83,19 @@ public sealed class NewEdenStoreCatalogTests
     [Fact]
     public async Task The_store_lists_the_catalog_offers_and_answers_can_purchase_from_it()
     {
+        var purchaseCalls = 0;
         var service = new StoreOffersService(
             _ => ValueTask.FromResult<JsonObject?>(NewEdenStoreCatalog.Default.Root),
-            (_, _) => ValueTask.FromResult<PyValue>(PyBool.True));
+            (_, _) =>
+            {
+                purchaseCalls++;
+                throw new InvalidOperationException("Availability reads must not start a purchase.");
+            });
 
-        Assert.Equal(15, Assert.IsType<PyList>(await service.CallAsync(Call("get_offers", new PyInt(4)))).Items.Count);
+        var inGameOffers = Assert.IsType<PyList>(await service.CallAsync(Call("get_offers", new PyInt(4))));
+        Assert.Equal(15, inGameOffers.Items.Count);
+        var omega = Assert.IsType<PyDict>(inGameOffers.Items.Single(offer => Field(Assert.IsType<PyDict>(offer), "storeOfferID") is PyStr { Value: "omega_30_days" }));
+        Assert.Equal(new PyStr("/store/4/offers/omega-30-days"), Field(omega, "href"));
         Assert.Equal(21, Assert.IsType<PyList>(await service.CallAsync(Call("get_offers", new PyInt(9)))).Items.Count);
         Assert.Equal(15, Assert.IsType<PyList>(await service.CallAsync(Call("get_products", new PyInt(4)))).Items.Count);
 
@@ -93,6 +103,7 @@ public sealed class NewEdenStoreCatalogTests
         Assert.Equal(PyBool.True, Field(available, "canPurchase"));
         var unknown = Assert.IsType<PyDict>(await service.CallAsync(Call("can_purchase_offer", new PyStr("no_such_offer"))));
         Assert.Equal(PyBool.False, Field(unknown, "canPurchase"));
+        Assert.Equal(0, purchaseCalls);
     }
 
     private static List<JsonObject> StoreOffers(JsonObject root, string storeId) =>

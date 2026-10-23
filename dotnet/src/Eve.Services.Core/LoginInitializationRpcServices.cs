@@ -688,8 +688,47 @@ public sealed class AbyssalMgrService : IService
     {
         if (!HasMethod(call.Method)) return PyNone.Instance;
         call.Cancellation.ThrowIfCancellationRequested();
+        ValidateCall(call);
         return await _rpcHandler(call, call.Cancellation).ConfigureAwait(false);
     }
+
+    private static void ValidateCall(ServiceCall call)
+    {
+        var expectedArgs = call.Method switch
+        {
+            "ClientIsReady" => 0,
+            "AbyssalEntranceDeployment" => 2,
+            "AbyssalEntranceGateActivation" or "AbyssalGateActivation" or "AbyssalEndGateActivation" => 1,
+            _ => -1,
+        };
+        if (call.Args.Count != expectedArgs)
+            throw MachoErrors.ThrowUserError("ABYSSAL_ARGUMENTS_INVALID");
+
+        if (call.Kwargs is not PyNone)
+        {
+            var isAllowedSafetyFlag = call.Method == "AbyssalGateActivation" && call.Kwargs is PyDict kwargs &&
+                kwargs.Entries.Count == 1 && kwargs.Entries[0].Key is PyStr { Value: "violateSafetyTimer" } &&
+                kwargs.Entries[0].Value is PyBool;
+            if (!isAllowedSafetyFlag)
+                throw MachoErrors.ThrowUserError("ABYSSAL_ARGUMENTS_INVALID");
+        }
+
+        for (var index = 0; index < call.Args.Count; index++)
+        {
+            if (call.Arg(index) is not (PyInt or PyLong) || PositiveId(call.Arg(index)) <= 0)
+                throw MachoErrors.ThrowUserError("ABYSSAL_ARGUMENTS_INVALID");
+        }
+
+        if (call.Method == "AbyssalEntranceDeployment" && PositiveId(call.Arg(1)) is not (1 or 2 or 3))
+            throw MachoErrors.ThrowUserError("ABYSSAL_ARGUMENTS_INVALID");
+    }
+
+    private static long PositiveId(PyValue value) => value switch
+    {
+        PyInt integer when integer.Value > 0 => integer.Value,
+        PyLong integer when integer.Value > 0 => integer.Value,
+        _ => 0,
+    };
 }
 
 public sealed class VoidSpaceMgrService(

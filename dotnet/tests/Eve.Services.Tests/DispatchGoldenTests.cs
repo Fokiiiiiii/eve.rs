@@ -1853,6 +1853,37 @@ public class DispatchGoldenTests
     }
 
     [Fact]
+    public async Task Client_stacktrace_reports_use_a_named_per_session_budget()
+    {
+        var capture = new Capture();
+        var session = new ClientSession(capture) { SessionId = 921 };
+        var registry = new ServiceRegistry();
+        var service = new AlertBudgetService();
+        registry.Register(service);
+        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 1 };
+
+        await dispatcher.DispatchAsync(CallRequestPacket("alert", "SendClientStackTraceAlert"), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("alert", "SendClientStackTraceAlert"), session);
+
+        Assert.Equal(1, service.Calls);
+        Assert.Equal(2, capture.Sent.Count);
+        Assert.Equal(ErrorResponseCommand, CommandOf(capture.Sent[1]));
+        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[1])));
+    }
+
+    private sealed class AlertBudgetService : IService
+    {
+        public int Calls { get; private set; }
+        public string Name => "alert";
+        public bool HasMethod(string method) => method == "SendClientStackTraceAlert";
+        public ValueTask<PyValue> CallAsync(ServiceCall call)
+        {
+            Calls++;
+            return ValueTask.FromResult<PyValue>(PyNone.Instance);
+        }
+    }
+
+    [Fact]
     public async Task Character_energy_reads_use_a_named_per_session_budget()
     {
         var capture = new Capture();
@@ -1927,6 +1958,44 @@ public class DispatchGoldenTests
         Assert.Equal(2, capture.Sent.Count);
         Assert.Equal(ErrorResponseCommand, CommandOf(capture.Sent[1]));
         Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[1])));
+    }
+
+    [Fact]
+    public async Task Abyssal_lifecycle_rpcs_use_named_per_session_budgets()
+    {
+        var capture = new Capture();
+        var registry = new ServiceRegistry();
+        var service = new AbyssalBudgetService();
+        registry.Register(service);
+        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 10 };
+        string[] methods = [
+            "ClientIsReady", "AbyssalEntranceDeployment", "AbyssalEntranceGateActivation",
+            "AbyssalGateActivation", "AbyssalEndGateActivation",
+        ];
+
+        foreach (var method in methods)
+        {
+            var session = new ClientSession(capture) { SessionId = 920 + Array.IndexOf(methods, method) };
+            var previousCalls = service.Calls;
+            await dispatcher.DispatchAsync(CallRequestPacket("abyssalMgr", method), session);
+            await dispatcher.DispatchAsync(CallRequestPacket("abyssalMgr", method), session);
+            Assert.Equal(previousCalls + 1, service.Calls);
+            Assert.Equal(ErrorResponseCommand, CommandOf(capture.Sent[^1]));
+            Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[^1])));
+        }
+    }
+
+    private sealed class AbyssalBudgetService : IService
+    {
+        public int Calls { get; private set; }
+        public string Name => "abyssalMgr";
+        public bool HasMethod(string method) => method is "ClientIsReady" or "AbyssalEntranceDeployment" or
+            "AbyssalEntranceGateActivation" or "AbyssalGateActivation" or "AbyssalEndGateActivation";
+        public ValueTask<PyValue> CallAsync(ServiceCall call)
+        {
+            Calls++;
+            return ValueTask.FromResult<PyValue>(PyNone.Instance);
+        }
     }
 
     private sealed class AchievementTrackerBudgetService : IService

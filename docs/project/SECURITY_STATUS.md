@@ -565,6 +565,18 @@ The client sends jump and ballpark diagnostics (`eve/client/script/util/jumpMoni
 Security finding `0da0dd98` was pushed to `main` on 2026-10-23.
 
 
+### Client alert RPC detail
+
+| RPC | Caller and target scope | Input bounds | Per-session cost |
+|---|---|---|---|
+| `alert.BeanCount` | Any authenticated client; fixed crash-report negotiation response | Exactly one integral stack hash; no keyword arguments | None |
+| `alert.SendClientStackTraceAlert` | Any authenticated client; diagnostic is keyed to the supplied stack ID and carries no target owner | Three or four positional arguments; stack ID is a two-value tuple/list with bounded key parts; trace max 16,384 UTF-8 bytes; mode max 32 bytes; optional next key is a bounded scalar; no keyword arguments | 1 unit |
+
+V24.01 sends `BeanCount(stackID[0])` and `SendClientStackTraceAlert(stackID, stackTrace, mode, nextErrorKeyHash)` (`carbon/common/script/sys/alert.py:233,495,512-516`). Host now validates the wire types and sizes before decoding or logging, and charges the trace report route. `ClientStartupServicesTests.Alert_stacktrace_rpc_refuses_malformed_and_oversized_inputs` covers shape, count, and size refusals; `DispatchGoldenTests.Client_stacktrace_reports_use_a_named_per_session_budget` checks cost. On `eve_p3`, the focused Core test passed (1), all `Eve.Services.Core.Tests` passed (867), and all `Eve.Services.Tests` passed (231), with no skips.
+
+Security finding `0c47ea43` was pushed to `main` on 2026-10-23.
+
+
 ### Character energy RPC detail
 
 | RPC | Caller and target scope | Input bounds | Per-session cost |
@@ -601,6 +613,19 @@ Security finding for the three single paper-doll reads was pushed to `main` on 2
 The V24.01 caller reads with no arguments and writes its full completion and event-count maps (`achievements/client/achievementSvc.py:129,229`). EveJS derives the character from the session and forwards the two maps to its tracker. Host now rejects malformed or oversized updates before storage and charges all three routes; `AchievementTrackerWriteTests.Achievement_tracker_refuses_malformed_or_oversized_state_before_storage` covers argument, type, range, and count refusals, `CharacterHostTests.Achievement_tracker_updates_are_validated_before_persisting_and_survive_host_restart` checks persistence through the real registry, and `DispatchGoldenTests.Achievement_state_updates_use_a_named_per_session_budget` covers the write cost. On `eve_p3`, the focused Host regression passed (1), all `Eve.Services.Core.Tests` passed (865), and all `Eve.Services.Tests` passed (229), with no skips.
 
 Security finding `50c8c200` for achievement tracker boundaries and budgets was pushed to `main` on 2026-10-23. Its focused Host regression passed on `eve_p3` (1); `Eve.Services.Core.Tests` passed (865) and `Eve.Services.Tests` passed (229), with no skips.
+
+
+### Abyssal lifecycle RPC detail
+
+| RPC | Caller and target scope | Input bounds | Per-session cost |
+|---|---|---|---|
+| `abyssalMgr.ClientIsReady` | Current authenticated character and ship | No positional or keyword arguments | 10 units |
+| `abyssalMgr.AbyssalEntranceDeployment` | Current character, ship, and fleet; filament item is resolved against the character's inventory | Exactly two positive integral arguments; game mode must be 1, 2, or 3; no keyword arguments | 10 units |
+| `abyssalMgr.AbyssalEntranceGateActivation`, `AbyssalGateActivation`, `AbyssalEndGateActivation` | Current run participant and in-space gate | Exactly one positive integral gate or trace item ID; only `AbyssalGateActivation` accepts the `violateSafetyTimer` boolean keyword | 10 units each |
+
+V24.01 calls deployment with `(item_id, game_mode_id)`, entrance activation with the trace item, gate activation with `itemID` plus `violateSafetyTimer=True`, and end-gate activation with `itemID` (`abyss/client/abyssal_service.py:53,58`; `eve/client/script/ui/services/menuSvcExtras/movementFunctions.py:569,579`). Host derives the actor, ship and active participant from the session and validates the item or gate against authoritative inventory, run and spatial state. `MiningAndAbyssalRpcTests.Abyssal_lifecycle_rpc_refuses_malformed_client_targets_before_the_host_callback` covers malformed shape, types and values; `DispatchGoldenTests.Abyssal_lifecycle_rpcs_use_named_per_session_budgets` checks each route's cost. The end-to-end Abyssal Host flow suite checks valid deployment, entry, gate and reconnect transitions. On `eve_p3`, the focused refusal test passed (1), all `Eve.Services.Core.Tests` passed (866), all `Eve.Services.Tests` passed (230), and the 20 non-skipped Abyssal Host flow tests passed with no failures or skips; two other Host flow cases are marked skip and excluded from that pass count.
+
+Security finding `c6a4c688` was pushed to `main` on 2026-10-23; the 20 non-skipped Abyssal Host flow tests passed on `eve_p3`.
 
 
 ### Contextual Offer Manager RPC detail

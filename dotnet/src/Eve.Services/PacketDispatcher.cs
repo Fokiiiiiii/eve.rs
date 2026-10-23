@@ -322,6 +322,8 @@ public sealed class PacketDispatcher
             return 10;
         if (service == "eventLog" && method == "LogClientStats")
             return 10;
+        if (service == "alert" && method == "SendClientStackTraceAlert")
+            return 1;
         if (service == "clientStatLogger" && method == "LogString")
             return 1;
         if (service == "characterEnergyMgr" && method == "GetMyEnergyState")
@@ -329,6 +331,9 @@ public sealed class PacketDispatcher
         if (service == "achievementTrackerMgr" && method is "HasEverWarped" or "GetCompletedAchievementsAndClientEventCount")
             return 1;
         if (service == "achievementTrackerMgr" && method == "UpdateClientAchievmentsAndCounters")
+            return 10;
+        if (service == "abyssalMgr" && method is "ClientIsReady" or "AbyssalEntranceDeployment" or
+            "AbyssalEntranceGateActivation" or "AbyssalGateActivation" or "AbyssalEndGateActivation")
             return 10;
         if (service == "paperDollServer" && method == "GetPaperDollDataBatch")
             return 10;

@@ -35,17 +35,28 @@ public sealed partial class AlertService
     private static readonly Queue<string> StackHashOrder = new();
 
     [Method("BeanCount")]
-    public PyValue BeanCount(ServiceCall call) => new PyTuple([PyNone.Instance, PyNone.Instance]);
+    public PyValue BeanCount(ServiceCall call)
+    {
+        if (call.Args.Count != 1 || call.Kwargs is not PyNone || call.Arg(0) is not (PyInt or PyLong))
+            throw MachoErrors.ThrowUserError("ALERT_ARGUMENTS_INVALID");
+        return new PyTuple([PyNone.Instance, PyNone.Instance]);
+    }
 
     [Method("SendClientStackTraceAlert")]
     public PyValue SendClientStackTraceAlert(ServiceCall call)
     {
+        if (call.Kwargs is not PyNone || call.Args.Count is < 3 or > 4)
+            throw MachoErrors.ThrowUserError("ALERT_ARGUMENTS_INVALID");
         var stackId = call.Arg(0) switch
         {
             PyTuple tuple => tuple.Items,
             PyList list => list.Items,
             _ => [],
         };
+        if (stackId.Count != 2 || !StableKeyAllowed(stackId[0]) || !BoundedText(stackId[1], 256)
+            || !BoundedText(call.Arg(1), 16_384) || !BoundedText(call.Arg(2), 32)
+            || (call.Args.Count == 4 && call.Arg(3) is not PyNone && !StableKeyAllowed(call.Arg(3))))
+            throw MachoErrors.ThrowUserError("ALERT_ARGUMENTS_INVALID");
         var stackHash = stackId.Count > 0 ? StableKey(stackId[0]) : null;
         var stackKey = stackId.Count > 1 ? Limit(Text(stackId[1]), 256) : "";
         var mode = Limit(Text(call.Arg(2)), 32);
@@ -55,6 +66,22 @@ public sealed partial class AlertService
         var errorId = ResolveErrorId(key);
         return new PyTuple([new PyLong(errorId), new PyStr("D")]);
     }
+
+    private static bool StableKeyAllowed(PyValue value) => value switch
+    {
+        PyInt or PyLong or PyStr or PyToken => true,
+        PyBytes bytes => bytes.Value.Length <= 256,
+        _ => false,
+    };
+
+    private static bool BoundedText(PyValue value, int maxBytes) => value switch
+    {
+        PyStr text => Encoding.UTF8.GetByteCount(text.Value) <= maxBytes,
+        PyWString text => Encoding.UTF8.GetByteCount(text.Value) <= maxBytes,
+        PyToken text => Encoding.UTF8.GetByteCount(text.Value) <= maxBytes,
+        PyBytes bytes => bytes.Value.Length <= maxBytes,
+        _ => false,
+    };
 
     private static long ResolveErrorId(string? key)
     {

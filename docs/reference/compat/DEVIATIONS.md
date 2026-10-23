@@ -5601,3 +5601,8 @@ The overview now points to the config, crimewatch, station, and map method-level
 ## Mail label read scope (2026-10-23)
 
 `mailMgr.GetLabels` returns the selected character's mailbox labels and accepts no caller-selected owner or label ID. It uses the authenticated session character's mailbox state; other mail reads and mutations retain their per-message membership and batch checks.
+
+
+## Contract list RPC classification (2026-10-23)
+
+The security inventory now records `contractProxy.GetMyBids`, `GetContractListForOwner`, `GetMyCurrentContractList`, and `GetMyExpiredContractList` individually. Character owners are derived from the selected session; corporate views require current persisted Contract Manager authority. Owner list status/type/page arguments are bounded, and the contract service's 10-unit per-session budget covers these reads.

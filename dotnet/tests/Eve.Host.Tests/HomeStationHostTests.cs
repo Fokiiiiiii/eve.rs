@@ -74,6 +74,7 @@ public sealed class HomeStationHostTests
         Assert.Equal(new PyInt(rig.RemoteOfficeStation.Id), session.Get("cloneStationID"));
         Assert.Equal(2, Notifications(sink).Count);
 
+        session.Set("role", new PyLong(Eve.Services.GameMasterRoles.Qa));
         await Assert.ThrowsAsync<MachoWrappedException>(async () =>
         {
             await CallAsync(service, "reset_remote_change_time", session);

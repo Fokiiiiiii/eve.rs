@@ -4,13 +4,10 @@ using Npgsql;
 
 namespace Eve.Services.Space.Entosis;
 
-/// <summary>A command node spawned in a stage's system (ST-17 a): the event's payload.</summary>
 public sealed record CommandNodeSpawned(long HubId, long NodeId, int SolarSystemId, long AtMs);
 
-/// <summary>A command node captured by one side (ST-17 a): the event's payload.</summary>
 public sealed record CommandNodeCaptured(long HubId, long NodeId, int SolarSystemId, bool ByAttackers, long AtMs);
 
-/// <summary>The end of a command node stage (ST-17 a): its outcome, and the nodes that were still live (they leave with it).</summary>
 public sealed record CommandStageEnded(long HubId, int SolarSystemId, CommandNodeOutcome Outcome, IReadOnlyList<long> RemovedNodeIds, long AtMs);
 
 /// <summary>The stage has started in the constellation (the notice of the defender: EVE.js notifySovCommandNodeEventStarted, V24.01 161).</summary>
@@ -26,7 +23,6 @@ public sealed record EntosisDestroyedHub(long HubId, int SolarSystemId, long Def
 public sealed record CommandNodeDue(long NodeId);
 
 /// <summary>
-/// The command node stage of a reinforced Sovereignty Hub (ST-17 a; the wiki's "Command nodes"). The stage starts at the reinforcement's exit: four nodes spawn
 /// in the constellation (a further node about every 30 minutes, up to the caps). A node is a target of the entosis links like the hub: an attacker's link moves
 /// it toward capture, a defender's back, and the node regenerates when no link is on it. A captured node moves the stage's bar by 7% and a new one spawns; nine
 /// attacker captures end the stage with the hub destroyed, six defender captures with the hub defended (invulnerable until the next window). The node is the
@@ -271,7 +267,7 @@ public sealed partial class EntosisCaptureService
         var outcome = CommandNodeRules.Outcome(attackers, defenders);
         if (outcome == CommandNodeOutcome.Open)
         {
-            // the wiki: once a node is captured, a new node spawns
+
             await SpawnNodeAsync(connection, transaction, node.HubId, await SystemsOfAsync(campaign.SolarSystemId, cancellationToken), now, cancellationToken);
             return;
         }
@@ -279,8 +275,6 @@ public sealed partial class EntosisCaptureService
     }
 
     /// <summary>
-    /// The end of a stage, in its transaction: the live nodes and their links leave, and the hub is defended (invulnerable until the next window; the owner keeps it)
-    /// or destroyed (the wiki: the hub and its upgrades are destroyed; the sovereignty records are not changed here).
     /// </summary>
     private async Task EndStageAsync(
         NpgsqlConnection connection, NpgsqlTransaction transaction, long hubId, int solarSystemId, CommandNodeOutcome outcome, long now,
@@ -405,7 +399,6 @@ public sealed partial class EntosisCaptureService
 
     /// <summary>
     /// The destruction of a hub (the job <see cref="HubDestroyDueKind"/>): the sovereignty records lose it (the callback), then the hub is 'destroyed' and the
-    /// event <see cref="HubDestroyedTopic"/> tells the owner and the simulation. A failed write is retried a minute later.
     /// </summary>
     public async Task HubDestroyDueAsync(long hubId, CancellationToken cancellationToken)
     {
@@ -545,7 +538,6 @@ public sealed partial class EntosisCaptureService
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
-    /// <summary>The invulnerability of a defended hub: the time it ends, or null (the wiki: until the next vulnerability window).</summary>
     private async Task<long?> ReadInvulnerableUntilAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long hubId, CancellationToken cancellationToken)
     {
         await using var command = Command("SELECT invulnerable_until_ms FROM {schema}.hubs WHERE hub_id = $1", connection, transaction, hubId);

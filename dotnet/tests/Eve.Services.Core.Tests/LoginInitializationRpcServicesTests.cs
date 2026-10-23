@@ -12,7 +12,7 @@ public sealed class LoginInitializationRpcServicesTests
         var achievement = new AchievementTrackerMgrService();
         var operations = new OperationsManagerService();
         var missions = new MissionTrackerMgrService();
-        var abyssal = new AbyssalMgrService();
+        var abyssal = new AbyssalMgrService((_, _) => ValueTask.FromResult<PyValue>(PyNone.Instance));
         var voidSpace = new VoidSpaceMgrService();
         var airNpe = new AirNpeService(
             () => "disabled",
@@ -187,7 +187,12 @@ public sealed class LoginInitializationRpcServicesTests
         Assert.Equal(["start_site", "unblock_task"], operationCalls);
 
         var readyCalls = 0;
-        var abyssal = new AbyssalMgrService(_ => { readyCalls++; return ValueTask.CompletedTask; });
+        var abyssal = new AbyssalMgrService((call, _) =>
+        {
+            Assert.Equal("ClientIsReady", call.Method);
+            readyCalls++;
+            return ValueTask.FromResult<PyValue>(PyNone.Instance);
+        });
         var voidSpace = new VoidSpaceMgrService(_ => { readyCalls++; return ValueTask.CompletedTask; });
         Assert.Same(PyNone.Instance, await abyssal.CallAsync(Call("ClientIsReady", session)));
         Assert.Same(PyNone.Instance, await voidSpace.CallAsync(Call("ClientIsReady", session)));

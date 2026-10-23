@@ -323,6 +323,16 @@ public sealed class PgSkillStore
     /// Removes what the skills keep about a character (its skills, queue, history, point changes and boosters), inside the caller's
     /// transaction. Used when the character is deleted.
     /// </summary>
+    /// <summary>Deletes the character's rows of the given skills, or of all skills when <paramref name="typeIds"/> is null (the caller's transaction).</summary>
+    public async Task DeleteAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId, IReadOnlyList<int>? typeIds, CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand($"DELETE FROM {_schema}.character_skills WHERE character_id = $1 AND ($2::int[] IS NULL OR type_id = ANY($2))", connection, transaction)
+        {
+            Parameters = { new() { Value = characterId }, new() { Value = typeIds is null ? DBNull.Value : (object)typeIds.ToArray() } },
+        };
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     public async Task ClearCharacterAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId, CancellationToken cancellationToken = default)
     {
         foreach (var table in new[]
@@ -391,7 +401,6 @@ public sealed class PgSkillStore
         return await command.ExecuteScalarAsync(cancellationToken) is long points ? points : 0L;
     }
 
-
     public async Task<long> FreeSkillPointsAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId, CancellationToken cancellationToken = default)
     {
         await using var command = new NpgsqlCommand(
@@ -433,7 +442,6 @@ public sealed class PgSkillStore
         return (long)(await command.ExecuteScalarAsync(cancellationToken)
             ?? throw new InvalidOperationException("free skill point grant did not return a balance"));
     }
-
 
     /// <summary>
     /// Records a Daily Alpha Injector use unless the character already used one since the last downtime (one use per downtime).

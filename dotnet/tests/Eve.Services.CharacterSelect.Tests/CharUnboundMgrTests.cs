@@ -73,8 +73,6 @@ public class CharUnboundMgrTests
         Assert.Equal(0, CharUnboundMgrService.FinishedSkillsCount([new(40, SkillEvents.TrainingStarted, 3305, 250, 2)]));
     }
 
-    // ── the screen before any character ─────────────────────────────────────
-
     [PgFact]
     public async Task A_new_account_has_no_characters_and_the_fixed_answers_are_the_references()
     {
@@ -121,8 +119,6 @@ public class CharUnboundMgrTests
         Assert.InRange(created, Py.FileTimeFromUnixMs(DateTimeOffset.UtcNow.AddMinutes(-5).ToUnixTimeMilliseconds()), Py.FileTimeFromUnixMs(DateTimeOffset.UtcNow.AddMinutes(5).ToUnixTimeMilliseconds()));
     }
 
-    // ── names ───────────────────────────────────────────────────────────────
-
     [PgFact]
     public async Task Every_recorded_name_check_gets_the_recorded_answer_but_one()
     {
@@ -162,6 +158,7 @@ public class CharUnboundMgrTests
         // an invalid name is reported as invalid, not as taken
         Assert.Equal(new PyInt(-1), await h.CallAsync(session, "ValidateNameEx", new PyStr("ab")));
         Assert.Equal(new PyInt(-1), await h.CallAsync(session, "ValidateNameEx", PyNone.Instance));
+        Assert.Equal(new PyInt(-2), await h.CallAsync(session, "ValidateNameEx", new PyStr(new string('x', 1_000_000))));
     }
 
     [PgFact]
@@ -179,8 +176,6 @@ public class CharUnboundMgrTests
             }
         }
     }
-
-    // ── creation ────────────────────────────────────────────────────────────
 
     [PgFact]
     public async Task Creating_a_character_answers_its_id_and_the_account_then_lists_it_in_the_recorded_shapes()
@@ -244,8 +239,10 @@ public class CharUnboundMgrTests
             new PyStr("a"), new PyInt(1), new PyInt(1), new PyInt(1), new PyInt(10), Doll, Portrait, new PyInt(35), PyNone.Instance, PyNone.Instance));
         var taken = await ErrorOfAsync(() => h.CallAsync(session, "CreateCharacterWithDoll",
             new PyStr("recorded pilot"), new PyInt(1), new PyInt(1), new PyInt(1), new PyInt(10), Doll, Portrait, new PyInt(35), PyNone.Instance, PyNone.Instance));
+        var tooLong = await ErrorOfAsync(() => h.CallAsync(session, "CreateCharacterWithDoll",
+            new PyStr(new string('x', 1_000_000)), new PyInt(1), new PyInt(1), new PyInt(1), new PyInt(10), Doll, Portrait, new PyInt(35), PyNone.Instance, PyNone.Instance));
 
-        foreach (var error in new[] { tooShort, taken })
+        foreach (var error in new[] { tooShort, taken, tooLong })
         {
             Assert.Equal(2, error.ErrorCode);
             Assert.True(error.IsUserError);
@@ -259,6 +256,9 @@ public class CharUnboundMgrTests
             Assert.Equal(2, step["error"]!["code"]!.GetValue<int>());
             Assert.Equal("CharNameInvalid", step["error"]!["payload"]!["$objectex"]!["$tuple"]![1]!["$tuple"]![0]!.GetValue<string>());
         });
+        var fractionalRace = await ErrorOfAsync(() => h.CallAsync(session, "CreateCharacterWithDoll",
+            new PyStr("Fractional Pilot"), new PyReal(1.5), new PyInt(1), new PyInt(1), new PyInt(10), Doll, Portrait, new PyInt(35), PyNone.Instance, PyNone.Instance));
+        Assert.Equal("CustomInfo", fractionalRace.UserErrorMessage);
         Assert.Equal(new PyInt(1), await h.CallAsync(session, "GetNumCharacters"));
     }
 
@@ -302,12 +302,10 @@ public class CharUnboundMgrTests
         Assert.Equal(2, ((PyList)await h.CallAsync(two, "GetCharactersToSelect")).Items.Count);
     }
 
-    // ── choosing a character ────────────────────────────────────────────────
-
     [PgFact]
     public async Task Selecting_a_character_puts_its_active_ship_in_the_selection_session_change()
     {
-        // the reference's selection notification carries shipid (EveJS capture evejs-nes_intro): the client reads it when it builds the hold tracker
+
         await using var h = await Harness.CreateAsync();
         var (session, sink) = await h.LoginAsync("selection-shipid");
         var character = await CreateAsync(h, session, "Ship Pilot");
@@ -730,6 +728,9 @@ public class CharUnboundMgrTests
 
         await h.CallAsync(session, "UpdateCharacterGender", new PyLong(id), new PyInt(3));
         Assert.Equal(1, (await h.Characters.GetAsync(id))!.Gender);
+        var fractionalGender = await ErrorOfAsync(() => h.CallAsync(session, "UpdateCharacterGender", new PyLong(id), new PyReal(1.5)));
+        Assert.Equal("CustomInfo", fractionalGender.UserErrorMessage);
+        Assert.Equal(1, (await h.Characters.GetAsync(id))!.Gender);
         await h.CallAsync(session, "UpdateCharacterGender", new PyLong(id));
         Assert.Equal(1, (await h.Characters.GetAsync(id))!.Gender);
     }
@@ -751,6 +752,14 @@ public class CharUnboundMgrTests
         Assert.Equal(new PyInt(2), session.Get("raceID"));
         Assert.Equal(new PyInt(2), session.Get("raceid"));
         Assert.Equal(new PyInt(1375), session.Get("characterTypeID"));
+
+        var invalidBloodline = await ErrorOfAsync(() => h.CallAsync(session, "UpdateCharacterBloodline", new PyLong(id), new PyInt(999999)));
+        Assert.Equal("CustomInfo", invalidBloodline.UserErrorMessage);
+        var fractionalBloodline = await ErrorOfAsync(() => h.CallAsync(session, "UpdateCharacterBloodline", new PyLong(id), new PyReal(3.5)));
+        Assert.Equal("CustomInfo", fractionalBloodline.UserErrorMessage);
+        var unchanged = (await h.Characters.GetAsync(id))!;
+        Assert.Equal((3, 2, 1375), (unchanged.BloodlineId, unchanged.RaceId, unchanged.TypeId));
+        Assert.Equal(new PyInt(3), session.Get("bloodlineID"));
     }
 
     [PgFact]

@@ -1,5 +1,4 @@
 //! How the game names what is in space.
-
 /// The Roman numeral of a planet's number (1 is I). Numbers below 1 are written as themselves.
 pub fn roman(number: i32) -> String {
     if number <= 0 {

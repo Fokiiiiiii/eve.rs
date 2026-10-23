@@ -1,5 +1,6 @@
 using System.Text.Json.Nodes;
 using Eve.Marshal;
+using Eve.Macho;
 using Eve.Services;
 using Eve.Services.Core;
 
@@ -51,7 +52,7 @@ public sealed class StoreOffersServiceTests
     [InlineData("AUR", 4)]
     [InlineData("USD", 9)]
     [InlineData("EUR", 9)]
-    public async Task Buy_offer_passes_the_full_request_to_the_grant_for_any_accepted_currency(string currency, long storeId)
+    public async Task A_configured_settlement_provider_receives_the_full_request_for_any_currency(string currency, long storeId)
     {
         var call = PurchaseCall(currency, storeId: storeId);
         var response = new PyStr("granted");
@@ -93,9 +94,9 @@ public sealed class StoreOffersServiceTests
     }
 
     [Fact]
-    public async Task Buy_offer_does_not_need_a_positive_price_row_because_nothing_is_charged()
+    public async Task Settlement_provider_receives_the_offer_without_local_price_interpretation()
     {
-        // The price rows are the listed prices shown to the player; the purchase names a currency and is granted at no charge.
+        // Price interpretation and settlement belong to the configured provider.
         var providerCalls = 0;
         var service = Service(StoreState("PLX", price: 0, storeId: 9), (_, _) =>
         {
@@ -105,6 +106,18 @@ public sealed class StoreOffersServiceTests
 
         Assert.Equal(new PyStr("granted"), await service.CallAsync(PurchaseCall("USD", storeId: 9)));
         Assert.Equal(1, providerCalls);
+    }
+
+    [Fact]
+    public async Task Valid_catalog_offer_is_not_advertised_as_purchasable_without_settlement_provider()
+    {
+        var service = Service(StoreState("PLX"));
+        var availability = Assert.IsType<PyDict>(await service.CallAsync(Request("can_purchase_offer", new PyInt(100))));
+
+        Assert.Equal(PyBool.False, availability.Entries.Single(entry => JsSemantics.StringValue(entry.Key) == "canPurchase").Value);
+        Assert.Equal(new PyStr("payment_unavailable"), availability.Entries.Single(entry => JsSemantics.StringValue(entry.Key) == "purchaseLimitedReason").Value);
+        var refusal = await Assert.ThrowsAsync<MachoWrappedException>(async () => await service.CallAsync(PurchaseCall("PLX")));
+        Assert.Equal("STORE_CHECKOUT_UNAVAILABLE", refusal.Error.UserErrorMessage);
     }
 
     [Fact]
@@ -147,13 +160,12 @@ public sealed class StoreOffersServiceTests
     }
 
     [Fact]
-    public async Task Buy_offer_requires_a_grant_provider_and_fails_when_the_grant_is_rejected()
+    public async Task Buy_offer_requires_a_settlement_provider_and_fails_when_it_rejects()
     {
         var call = PurchaseCall("PLX");
-        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-        {
-            await Service(StoreState("PLX")).CallAsync(call);
-        });
+        var unavailable = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await Service(StoreState("PLX")).CallAsync(call));
+        Assert.Equal("STORE_CHECKOUT_UNAVAILABLE", unavailable.Error.UserErrorMessage);
 
         var providerCalls = 0;
         var rejectingProvider = Service(StoreState("PLX"), (_, _) =>
@@ -248,7 +260,6 @@ public sealed class StoreOffersServiceTests
         },
     };
 }
-
 
 public sealed class RedeemServiceTests
 {
@@ -428,8 +439,6 @@ public sealed class RedeemServiceTests
     }
 }
 
-
-
 public sealed class VaultManagerServiceTests
 {
     [Fact]
@@ -468,6 +477,23 @@ public sealed class VaultManagerServiceTests
         });
 
         Assert.Null(callbacks.AuthenticatedUserId);
+    }
+
+    [Fact]
+    public async Task Get_account_balance_reads_the_currency_the_client_sends_as_a_byte_string()
+    {
+        var callbacks = new FakeVaultManagerCallbacks(4_294_967_321);
+        IService service = (IService)(object)new VaultManagerService(callbacks);
+
+        var result = await service.CallAsync(new ServiceCall
+        {
+            Method = "get_account_balance",
+            Args = [new PyBytes("PLX"u8.ToArray())],
+            Session = new ClientSession { UserId = 9001 },
+        });
+
+        Assert.Equal(new PyLong(4_294_967_321), result);
+        Assert.Equal(9001L, callbacks.AuthenticatedUserId);
     }
 
     [Fact]

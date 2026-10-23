@@ -41,6 +41,34 @@ public class RulesTests
         Assert.Equal(504, count);
     }
 
+    [Fact]
+    public void Station_broker_fee_uses_faction_and_corporation_standings_after_skill_and_warfare_adjustments()
+    {
+        var context = MarketRules.Context(new MarketSkillLevels(Broker: 5), true,
+            factionStanding: 5, corpStanding: 10, factionWarfareUpgradeLevel: 2);
+
+        Assert.Equal(0.0085, context.BrokerCommissionRate, 12);
+        Assert.Equal(850, MarketRules.BrokerFee(context, null, 100_000).Amount);
+    }
+
+    [Fact]
+    public void Structure_market_tax_is_a_broker_rate_separate_from_accounting_sales_tax()
+    {
+        var skills = new MarketSkillLevels(Accounting: 5);
+        var context = MarketRules.StructureContext(skills, 1.0);
+
+        Assert.Equal(0.01, context.BrokerCommissionRate);
+        Assert.Equal(0.005, context.SccSurchargeRate);
+        Assert.Equal(0.03375, context.Limits.TransactionTaxRate, 10);
+        Assert.Equal(1_000, MarketRules.BrokerFee(context, null, 100_000).Amount);
+        Assert.Equal(500, MarketRules.SccSurcharge(context, null, 100_000).Amount);
+        Assert.Equal(3_375, MarketRules.SalesTax(context, 100_000));
+
+        var defaultRate = MarketRules.StructureContext(skills, null);
+        Assert.Equal(0.01, defaultRate.BrokerCommissionRate);
+        Assert.Equal(0.115, MarketRules.StructureContext(skills, 20).BrokerCommissionRate);
+    }
+
     private static void Check(JsonElement expected, FeeInfo actual)
     {
         Assert.Equal(expected.GetProperty("amount").GetDouble(), actual.Amount);

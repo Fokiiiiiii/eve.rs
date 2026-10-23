@@ -21,9 +21,10 @@ import pytest
 
 from evecli import marshal as m
 from evecli.describe import describe
+from tests import dbseed
 from tests import test_login_to_character as base
 from tests.test_ammo import TOLERANCE, of_the_gun, rows_call
-from tests.test_others import watch
+from tests.test_others import hold_still, watch
 from tests.test_target import compare_answer, plain_race, timing
 from tests.test_undock import STATION, SYSTEM, arrive, compare_events, number, outcome
 from tests.test_weapon import effect_of, shots_of, slims_in
@@ -37,7 +38,6 @@ pytestmark = [
 LAUNCHER, ROCKET = 10629, 266
 MISSILE_MODE, FREE_AND_MASSIVE = 5, 5
 
-
 def actions_of(event: dict) -> list:
     """The `(name, args)` of every action of a `DoDestinyUpdate`."""
     try:
@@ -45,7 +45,6 @@ def actions_of(event: dict) -> list:
     except (KeyError, TypeError):
         return []
     return [(a["$tuple"][1]["$tuple"][0], a["$tuple"][1]["$tuple"][1]["$tuple"]) for a in actions]
-
 
 def plain(value):
     """A described value as plain python: tuples and lists as lists, longs as ints, dictionaries as dicts."""
@@ -60,7 +59,6 @@ def plain(value):
     if isinstance(value, list):
         return [plain(v) for v in value]
     return value
-
 
 def ball_of(buffer: str) -> dict:
     """The fields of a missile ball (`encodeFreeBall` in `MISSILE` mode) a client reads; the places and the speed it starts at depend on where the pilot fired from."""
@@ -79,7 +77,6 @@ def ball_of(buffer: str) -> dict:
     out["followTarget"], out["followRange"], out["owner"], out["effectStamp"] = read("q"), read("f"), read("q"), read("i")
     return out
 
-
 def launches_of(events: list) -> list:
     """The missiles the pilot is shown: the ball, the slim item and the launch of each, from the updates that add them."""
     found = []
@@ -95,7 +92,6 @@ def launches_of(events: list) -> list:
         found.append({"ball": ball_of(buffer), "slim": added[1][0], "launch": plain(dict(actions)["LaunchMissile"]), "names": names})
     return found
 
-
 def removals_of(events: list, missiles: set) -> int:
     """How many of the missiles' balls are taken away."""
     count = 0
@@ -106,7 +102,6 @@ def removals_of(events: list, missiles: set) -> int:
                     count += sum(1 for ball in plain(args[0]) if ball in missiles)
     return count
 
-
 def test_a_pilot_fires_a_launcher_and_sees_its_missiles_as_it_did_in_the_reference():
     race = MISSILE["races"][0]
     roles = race["roles"]
@@ -115,6 +110,7 @@ def test_a_pilot_fires_a_launcher_and_sees_its_missiles_as_it_did_in_the_referen
     steps = {step["label"]: step for step in race["steps"]}
     with base.connect(f"walk-missile-{run}") as who:
         character, ship, _modules, mapping = arrive(who, plain_race({"pilot": race}, "pilot"), run)
+        dbseed.set_hull(ship, dbseed.COCKROACH)
         only = {"events": who}
         slash = lambda command: (lambda: who.call("slash", "SlashCmd", command))  # noqa: E731
 
@@ -156,7 +152,8 @@ def test_a_pilot_fires_a_launcher_and_sees_its_missiles_as_it_did_in_the_referen
         who.call_bound(dogma[0], "GetAllInfo", True, True, None)
         watch(only, 1.0)
         watch(only, 45.0, until=lambda seen: any(e["name"] == "OnInvulnCancelled" for e in seen["events"]))
-        text = who.call("slash", "SlashCmd", "/npc 1 Blood Visionary")
+        hold_still(who, ballpark[0])
+        text = who.call("slash", "SlashCmd", "/npc 1 Blood Visionary still")
         spawn = watch(only, 8.0)["events"]
         text = text.decode() if isinstance(text, bytes) else str(getattr(text, "value", text))
         assert text.startswith("Spawned 1 hull from Blood Visionary"), text
@@ -174,7 +171,9 @@ def test_a_pilot_fires_a_launcher_and_sees_its_missiles_as_it_did_in_the_referen
         watch(only, 20.0, until=locked)
         who.call("slash", "SlashCmd", "/heal")
         watch(only, 1.0)
-        who.call_bound(ballpark[0], "CmdFollowBall", rat, 1500)
+        who.call_bound(ballpark[0], "CmdFollowBall", rat, 300)
+        # the pilot closes in on the rat before it fires: a rocket from the edge of the launcher's reach runs out of flight time short of a rat that does not move
+        watch(only, 12.0)
         stopped = lambda seen: any(e["name"] == "OnGodmaShipEffect" and effect_of(e)[3] == 0 for e in seen)  # noqa: E731
 
         # a rocket flies a few kilometres: the pilot closes in on the rat, mended as it goes, and fires when it is near enough (the answer names how far a missile goes)
@@ -221,7 +220,7 @@ def test_a_pilot_fires_a_launcher_and_sees_its_missiles_as_it_did_in_the_referen
                 problems.append(f"{where}: ball follows {b['ball']['followTarget']} for {b['ball']['owner']}")
             if b["launch"][0] != b["ball"]["id"] or b["launch"][1:] != [rat, ship, 1, 1]:
                 problems.append(f"{where}: the launch is {b['launch']}")
-        # with nothing in it the launcher is refused; the last missile is still on its way when the effect stops, and what it does comes in this step
+
         after_label = "the pilot fires the launcher with nothing in it"
         raw, error = outcome(lambda: who.call_bound(dogma[0], "Activate", launcher, "missileLaunching", rat, 1000))
         problems.extend(compare_answer(after_label, steps[after_label], raw, error, mapping))

@@ -46,6 +46,54 @@ impl Scene {
         self.damage_through(ship_id, raw, now, false)
     }
 
+    /// An already-resolved damage amount lands as a scalar, with no inferred type distribution.
+    pub(crate) fn damage_resolved(
+        &mut self,
+        ship_id: i64,
+        amount: f64,
+        now: i64,
+    ) -> (Vec<Out>, Option<Applied>) {
+        if self.is_tethered(ship_id, now) {
+            return (Vec::new(), None);
+        }
+        let Some(session) = self
+            .pilots
+            .iter()
+            .find(|(_, pilot)| pilot.ship.spec.ship_id == ship_id)
+            .map(|(session, _)| *session)
+        else {
+            return (Vec::new(), None);
+        };
+        let resistance_bonus = self.link_effects_active(session, now);
+        let pilot = self.pilots.get_mut(&session).expect("the pilot is in the scene");
+        let owner = pilot.ship.spec.character_id;
+        let amount = if resistance_bonus {
+            amount * (1.0 - crate::deployable::CRAB_LINK_RESISTANCE_BONUS)
+        } else {
+            amount
+        };
+        let Some(applied) = pilot.ship.health.apply_resolved_amount(now, amount) else {
+            return (Vec::new(), None);
+        };
+        let mut out: Vec<Out> = Self::health_told(session, owner, ship_id, now, &applied.attribute_changes())
+            .into_iter()
+            .collect();
+        if applied.changed
+            && let Some(brains) = self.brains.as_mut()
+        {
+            brains.damage_changed(ship_id);
+        }
+        if applied.changed
+            && let Some(subject) = self.subject(ship_id, now)
+        {
+            out.extend(self.announce_damage_state(&subject, now));
+        }
+        if !applied.destroyed {
+            out.extend(self.tell_squadron_size(session, now));
+        }
+        (out, Some(applied))
+    }
+
     fn damage_through(
         &mut self,
         ship_id: i64,
@@ -60,9 +108,16 @@ impl Scene {
         else {
             return (Vec::new(), None);
         };
+        let resistance_bonus = resisted && self.link_effects_active(session, now);
         let pilot = self.pilots.get_mut(&session).expect("the pilot is in the scene");
         let owner = pilot.ship.spec.character_id;
-        let applied = if resisted {
+        let applied = if resistance_bonus {
+            pilot.ship.health.apply_with_resistance_bonus(
+                now,
+                raw,
+                crate::deployable::CRAB_LINK_RESISTANCE_BONUS,
+            )
+        } else if resisted {
             pilot.ship.health.apply(now, raw)
         } else {
             pilot.ship.health.apply_unresisted(now, raw)
@@ -71,6 +126,11 @@ impl Scene {
         let mut out: Vec<Out> = Self::health_told(session, owner, ship_id, now, &applied.attribute_changes())
             .into_iter()
             .collect();
+        if applied.changed
+            && let Some(brains) = self.brains.as_mut()
+        {
+            brains.damage_changed(ship_id);
+        }
         if applied.changed
             && let Some(subject) = self.subject(ship_id, now)
         {

@@ -54,6 +54,8 @@ public sealed class StoreOffersService(
 
     private async ValueTask<PyValue> PurchaseAsync(ServiceCall call)
     {
+        if (purchaseOffer is null)
+            throw MachoErrors.ThrowUserError("STORE_CHECKOUT_UNAVAILABLE");
         var requestedStoreId = call.Kwarg("store_id");
         var storeId = requestedStoreId is null ? DefaultStoreId : PositiveId(requestedStoreId, 0);
         var state = await readStoreState(call.Cancellation).ConfigureAwait(false);
@@ -66,9 +68,6 @@ public sealed class StoreOffersService(
             throw new UnauthorizedAccessException("An authenticated account is required to buy a store offer.");
         if (call.Session.CharacterId is not { } authenticatedCharacterId || authenticatedCharacterId <= 0)
             throw new UnauthorizedAccessException("An authenticated character is required to buy a store offer.");
-        if (purchaseOffer is null)
-            throw new InvalidOperationException("Store offer fulfillment provider is unavailable.");
-
         var request = new StoreOfferPurchaseRequest(
             authenticatedCharacterId,
             call.Arg(0),
@@ -111,12 +110,12 @@ public sealed class StoreOffersService(
         ? new PyList([.. values.Select(ToPyValue)])
         : new PyList([]);
 
-    private static PyValue PurchaseAvailability(JsonObject? state, JsonObject? store, PyValue requestedValue)
+    private PyValue PurchaseAvailability(JsonObject? state, JsonObject? store, PyValue requestedValue)
     {
         var storeDisabled = (state?["config"] as JsonObject)?["enabled"] is JsonValue enabledValue &&
             enabledValue.TryGetValue<bool>(out var enabled) && !enabled;
         var offer = storeDisabled ? null : FindOffer(store?["offers"] as JsonArray, requestedValue);
-        var canPurchase = offer is not null;
+        var canPurchase = offer is not null && purchaseOffer is not null;
         var offerId = offer is null ? 0 : PositiveId(offer["id"], 0);
         var storeOfferValue = offer?["storeOfferID"];
         var storeOfferId = JsTruthy(storeOfferValue) ? JsString(storeOfferValue) : null;
@@ -125,7 +124,7 @@ public sealed class StoreOffersService(
             ("canPurchase", canPurchase ? PyBool.True : PyBool.False),
             ("offerID", canPurchase ? new PyInt(offerId) : PyNone.Instance),
             ("storeOfferID", canPurchase && storeOfferId is not null ? new PyStr(storeOfferId) : PyNone.Instance),
-            ("purchaseLimitedReason", canPurchase ? PyNone.Instance : new PyStr(storeDisabled ? "store_disabled" : "offer_unavailable")));
+            ("purchaseLimitedReason", canPurchase ? PyNone.Instance : new PyStr(storeDisabled ? "store_disabled" : offer is null ? "offer_unavailable" : "payment_unavailable")));
     }
 
     private static JsonObject? FindOffer(JsonArray? offers, PyValue requestedValue)
@@ -368,7 +367,8 @@ public sealed partial class VaultManagerService(IVaultManagerCallbacks callbacks
     [Method("get_account_balance")]
     public async ValueTask<PyValue> GetAccountBalance(ServiceCall call)
     {
-        if (call.Arg(0) is not PyStr { Value: "PLX" })
+        // the client sends the currency as a byte string (PyBytes), as its other text arguments (JsSemantics.StringValue)
+        if (Eve.Macho.JsSemantics.StringValue(call.Arg(0)) != "PLX")
             throw new NotSupportedException("Only PLX account balances are supported.");
 
         var authenticatedUserId = call.Session.UserId is { } userId && userId > 0

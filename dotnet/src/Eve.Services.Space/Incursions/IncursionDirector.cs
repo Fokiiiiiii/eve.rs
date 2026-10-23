@@ -13,8 +13,6 @@ namespace Eve.Services.Space.Incursions;
 
 /// <summary>
 /// The lifecycle of the Sansha incursions (B-L1) and their staging sites (B-S1). Each band keeps its capacity of incursions: when one ends, the band's next one is
-/// scheduled 12 to 36 hours later. An incursion is mobilized for 48 hours, established for a day and withdrawing for a day, then it is gone; each phase change is a durable
-/// scheduler job that checks the phase it leaves before it moves on, so a repeated or late job changes nothing. The state is in PostgreSQL (<c>incursions</c>), so a
 /// restart resumes the phases where they were. Its staging sites are dungeons of the wave runtime (<see cref="DungeonWaveDirector"/>), owned by no pilot: they live as long as
 /// their incursion and are ended with it, and their NPCs are taken out by the director's sweep.
 /// </summary>
@@ -247,7 +245,7 @@ public sealed class IncursionDirector
         {
             return;
         }
-        // the spawn decisions are taken one at a time: two bands' jobs must not pick the same constellation, or overfill a band
+
         await Sql.ExecuteAsync(context.Connection, context.Transaction, "SELECT pg_advisory_xact_lock(hashtext('eve.incursion.spawn'))", cancellationToken);
         long open = (long)(await Sql.ScalarAsync(context.Connection, context.Transaction,
             Q("SELECT count(*) FROM {schema}.incursions WHERE band = $1 AND ended_ms IS NULL"), cancellationToken, due.Band))!;
@@ -280,7 +278,7 @@ public sealed class IncursionDirector
         SolarSystemInfo stagingSystem = inBand[Pick(inBand.Count)];
         int staging = stagingSystem.Id;
         int[] systems = members.Select(s => s.Id).ToArray();
-        // the layout by stargate jumps from the staging system: the farthest system is the headquarters, the nearest ones are vanguards and assaults (EveJS buildIncursionSystemLayout)
+
         var jumps = _stargates.JumpsFrom(staging);
         if (members.Any(s => !jumps.ContainsKey(s.Id)))
         {
@@ -324,12 +322,12 @@ public sealed class IncursionDirector
                 (phase, band) = (reader.GetString(0), reader.GetString(1));
             }
         }
-        // a phase is left once: a job for a phase the incursion is no longer in changes nothing
+
         if (phase != IncursionRules.NameOf(from))
         {
             return;
         }
-        // the time the phase was due (not the time the job ran): a late run does not stretch the phases
+
         long nowMs = context.ScheduledForMs;
         if (from == IncursionPhase.Withdrawing)
         {
@@ -444,14 +442,12 @@ public sealed class IncursionDirector
             cancellationToken, due.IncursionId, MothershipIndex, mothershipDungeon, mothershipOrigin[0], mothershipOrigin[1], mothershipOrigin[2], mothershipInstance, headquarters);
     }
 
-    /// <summary>Whether the incursion's headquarters site is completed (the mothership needs it: EveJS <c>maybeCreateFinalEncounter</c>).</summary>
     private async Task<bool> HeadquartersDoneAsync(JobContext context, long incursionId, CancellationToken cancellationToken) =>
         await Sql.ScalarAsync(context.Connection, context.Transaction,
             Q("SELECT 1 FROM {schema}.incursion_sites WHERE incursion_id = $1 AND role = 'headquarters' AND completed_ms IS NOT NULL"), cancellationToken, incursionId) is not null;
 
     /// <summary>
     /// A site completed (the content runtime's <c>content.dungeon.completed</c>): when it is one of the incursion's sites, its completion is recorded and the influence
-    /// falls by its share of the sites (EveJS: every seeded site contributes the same share). The mothership's completion ends the incursion with its reward.
     /// </summary>
     private async Task OnSiteCompletedAsync(EventContext context, CancellationToken cancellationToken)
     {
@@ -503,7 +499,6 @@ public sealed class IncursionDirector
             new JobSpec(SitesJob, _scheduler.Now) { Key = $"sites:{incursionId}:done:{instanceId}", Payload = new IncursionRef(incursionId) }, cancellationToken);
     }
 
-    /// <summary>Ends an incursion: its phase is ended, its sites are abandoned (their NPCs go with the sweep) and its band's next incursion is scheduled.</summary>
     private async Task EndAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long incursionId, string band, string reason, long nowMs, CancellationToken cancellationToken)
     {
         await Sql.ExecuteAsync(connection, transaction,

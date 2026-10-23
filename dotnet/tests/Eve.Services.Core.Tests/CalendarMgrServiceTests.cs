@@ -1,5 +1,6 @@
 using Eve.Calendar;
 using Eve.Marshal;
+using Eve.Macho;
 using Eve.Services;
 using Eve.Services.Core;
 
@@ -52,6 +53,94 @@ public class CalendarMgrServiceTests
         Assert.Equal(2, corporationResponses.Items.Count);
         Assert.All(corporationResponses.Items, row =>
             Assert.Equal(CalendarResponseStates.Undecided, ReadStatus(row)));
+    }
+
+    [Fact]
+    public async Task Personal_event_creation_notifies_online_invitees_after_commit_and_excludes_the_creator_session()
+    {
+        var creatorSink = new Sink();
+        var inviteeSink = new Sink();
+        var creator = Session();
+        creator.Sink = creatorSink;
+        var invitee = Session(OtherCharacterId);
+        invitee.Sink = inviteeSink;
+        var sessions = new CharacterSessions();
+        sessions.Enter(CharacterId, creator);
+        sessions.Enter(OtherCharacterId, invitee);
+        var (services, store) = CalendarServicesWithSessions(sessions);
+        var manager = services.Lookup("calendarMgr")!;
+        var start = FutureFileTime();
+
+        var created = Assert.IsType<PyLong>(await manager.CallAsync(Request(
+            "CreatePersonalEvent", creator, new PyLong(start), new PyInt(60), new PyStr("Fleet form-up"),
+            new PyStr("Rally at the undock"), new PyInt(0), new PyList([new PyInt(OtherCharacterId)]))));
+
+        Assert.Single(store.Events);
+        Assert.Empty(creatorSink.Packets);
+        var packet = Assert.Single(inviteeSink.Packets);
+        Assert.Equal(
+            ClientNotification.Build(invitee.UserId ?? 0, invitee.NodeId, "OnNewCalendarEvent", "clientID",
+            [new PyTuple([
+                new PyLong(created.Value), new PyLong(CharacterId), new PyLong(start), new PyInt(60),
+                new PyStr("Fleet form-up"), new PyInt(0), PyNone.Instance, PyBool.True,
+            ])], 0),
+            packet);
+    }
+
+    [Fact]
+    public async Task Calendar_mutations_publish_the_reference_notifications_to_the_affected_live_characters()
+    {
+        var creatorSink = new Sink();
+        var inviteeSink = new Sink();
+        var addedSink = new Sink();
+        var creator = Session(); creator.Sink = creatorSink;
+        var invitee = Session(OtherCharacterId); invitee.Sink = inviteeSink;
+        var added = Session(90_000_004); added.Sink = addedSink;
+        var sessions = new CharacterSessions();
+        sessions.Enter(CharacterId, creator);
+        sessions.Enter(OtherCharacterId, invitee);
+        sessions.Enter(90_000_004, added);
+        var (services, _) = CalendarServicesWithSessions(sessions);
+        var manager = services.Lookup("calendarMgr")!;
+        var start = FutureFileTime();
+        var created = Assert.IsType<PyLong>(await manager.CallAsync(Request(
+            "CreatePersonalEvent", creator, new PyLong(start), new PyInt(60), new PyStr("Fleet"),
+            new PyStr("Meet"), new PyInt(0), new PyList([new PyInt(OtherCharacterId)]))));
+        var newStart = start + TimeSpan.FromDays(1).Ticks;
+
+        await manager.CallAsync(Request("EditPersonalEvent", creator, new PyLong(created.Value), new PyLong(start),
+            new PyLong(newStart), new PyInt(75), new PyStr("Fleet updated"), new PyStr("Meet elsewhere"), new PyInt(1)));
+        await manager.CallAsync(Request("SendEventResponse", invitee, new PyLong(created.Value),
+            new PyLong(CharacterId), new PyInt(CalendarResponseStates.Maybe)));
+        await manager.CallAsync(Request("UpdateEventParticipants", creator, new PyLong(created.Value),
+            new PyList([new PyInt(90_000_004)]), new PyList([new PyInt(OtherCharacterId)])));
+        await manager.CallAsync(Request("DeleteEvent", creator, new PyLong(created.Value), new PyLong(CharacterId)));
+
+        Assert.Equal(new[] { "OnEditCalendarEvent", "OnEventResponseByExternal", "OnRemoveCalendarEvent" },
+            NotificationNames(creatorSink));
+        Assert.Equal(new[] { "OnNewCalendarEvent", "OnEditCalendarEvent", "OnRemoveCalendarEvent" },
+            NotificationNames(inviteeSink));
+        Assert.Equal(new[] { "OnNewCalendarEvent", "OnRemoveCalendarEvent" }, NotificationNames(addedSink));
+    }
+
+    [Fact]
+    public async Task Corporation_calendar_creation_notifies_online_members_including_the_creator()
+    {
+        var creatorSink = new Sink();
+        var memberSink = new Sink();
+        var creator = Session(); creator.Sink = creatorSink;
+        var member = Session(OtherCharacterId); member.Sink = memberSink;
+        var sessions = new CharacterSessions();
+        sessions.Enter(CharacterId, creator);
+        sessions.Enter(OtherCharacterId, member);
+        var (services, _) = CalendarServicesWithSessions(sessions);
+        var manager = services.Lookup("calendarMgr")!;
+
+        await manager.CallAsync(Request("CreateCorporationEvent", creator, new PyLong(FutureFileTime()), new PyInt(60),
+            new PyStr("Corp event"), new PyStr("Details"), new PyInt(0)));
+
+        Assert.Equal(new[] { "OnNewCalendarEvent" }, NotificationNames(creatorSink));
+        Assert.Equal(new[] { "OnNewCalendarEvent" }, NotificationNames(memberSink));
     }
 
     [Fact]
@@ -199,13 +288,49 @@ public class CalendarMgrServiceTests
         Assert.Contains("CREATE TABLE responses", migration.Sql, StringComparison.Ordinal);
     }
 
-    private static (ServiceRegistry Services, FakeCalendarStore Store) CalendarServices(params CalendarEvent[] events)
+    [Fact]
+    public async Task Group_calendar_mutations_refuse_a_revoked_persisted_manager_role()
+    {
+        var date = FutureFileTime();
+        var existing = Event(77, CorporationId, CalendarTags.Corporation, date, "Corp meeting");
+        var (services, store) = CalendarServicesWithSessions(null, false, existing);
+        var manager = services.Lookup("calendarMgr")!;
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(() => manager.CallAsync(Request(
+            "DeleteEvent", Session(role: ChatManagerRole), new PyLong(existing.EventId),
+            new PyLong(existing.OwnerId))).AsTask());
+
+        Assert.Equal("CustomNotify", error.Error.UserErrorMessage);
+        Assert.False(store.Events.Single(row => row.EventId == existing.EventId).IsDeleted);
+        var detailError = await Assert.ThrowsAsync<MachoWrappedException>(() => services.Lookup("calendarProxy")!
+            .CallAsync(Request("GetEventDetails", Session(role: ChatManagerRole), new PyLong(existing.EventId),
+                new PyLong(existing.OwnerId))).AsTask());
+        Assert.Equal("CustomNotify", detailError.Error.UserErrorMessage);
+        var responseError = await Assert.ThrowsAsync<MachoWrappedException>(() => manager.CallAsync(Request(
+            "GetResponsesToEvent", Session(role: ChatManagerRole), new PyLong(existing.EventId),
+            new PyLong(existing.OwnerId))).AsTask());
+        Assert.Equal("CustomNotify", responseError.Error.UserErrorMessage);
+
+        var createError = await Assert.ThrowsAsync<MachoWrappedException>(() => manager.CallAsync(Request(
+            "CreateAllianceEvent", Session(role: ChatManagerRole), new PyLong(date), new PyInt(30),
+            new PyStr("Denied alliance meeting"), new PyStr(""), new PyInt(0))).AsTask());
+        Assert.Equal("CustomNotify", createError.Error.UserErrorMessage);
+        Assert.Single(store.Events);
+    }
+
+    private static (ServiceRegistry Services, FakeCalendarStore Store) CalendarServices(params CalendarEvent[] events) =>
+        CalendarServicesWithSessions(null, events: events);
+
+    private static (ServiceRegistry Services, FakeCalendarStore Store) CalendarServicesWithSessions(
+        CharacterSessions? sessions, bool groupAuthority = true, params CalendarEvent[] events)
     {
         var store = new FakeCalendarStore();
         store.Events.AddRange(events);
         var services = new ServiceRegistry();
-        services.Register((IService)new CalendarMgrService(store, new FakeCalendarAudienceReader()));
-        services.Register((IService)new CalendarProxyService(store));
+        services.Register((IService)new CalendarMgrService(store, new FakeCalendarAudienceReader(), sessions,
+            (_, _, _, _) => ValueTask.FromResult(groupAuthority),
+            (_, _) => ValueTask.FromResult(groupAuthority ? (CorporationId, AllianceId) : (0L, 0L))));
+        services.Register((IService)new CalendarProxyService(store,
+            (_, _) => ValueTask.FromResult(groupAuthority ? (CorporationId, AllianceId) : (0L, 0L))));
         return (services, store);
     }
 
@@ -225,6 +350,14 @@ public class CalendarMgrServiceTests
         session.Set("corprole", new PyLong(role));
         return session;
     }
+
+    private static string[] NotificationNames(Sink sink) => sink.Packets.OfType<PyObject>().Select(packet =>
+    {
+        var fields = Assert.IsType<PyTuple>(packet.Args).Items;
+        Assert.Equal(MachoMessage.Notification, Assert.IsType<PyInt>(fields[0]).Value);
+        var address = Assert.IsType<PyTuple>(Assert.IsType<PyObject>(fields[2]).Args).Items;
+        return Assert.IsType<PyStr>(address[1]).Value;
+    }).ToArray();
 
     private static long FutureFileTime() => DateTime.UtcNow.AddDays(2).ToFileTimeUtc();
 
@@ -251,7 +384,6 @@ public class CalendarMgrServiceTests
 
     private static short ResponseStatus(FakeCalendarStore store, long eventId, long characterId) =>
         store.Responses.Single(row => row.EventId == eventId && row.CharacterId == characterId).Status;
-
 
     private static short ReadStatus(PyValue value)
     {
@@ -392,6 +524,7 @@ public class CalendarMgrServiceTests
 
     private sealed class Sink : IPacketSink
     {
-        public void Send(PyValue packet) { }
+        public List<PyValue> Packets { get; } = [];
+        public void Send(PyValue packet) => Packets.Add(packet);
     }
 }

@@ -1,6 +1,6 @@
-"""The CRAB walk: a pilot in a Cockroach flies to low-security space, launches a CONCORD Rogue Analysis Beacon from its hold, sees
-its first Rogue Drone wave come into space, links the beacon (four minutes, the ship is held meanwhile) and is refused a warp during
-the link. After the link and its minute the warp is free again (slice 2; eve.rs only).
+"""The CRAB walk: a pilot in a Cockroach flies to low-security space, launches a CONCORD Rogue Analysis Beacon from its hold,
+links after its 20-second activation, and sees the first Rogue Drone wave after the four-minute link completes. Warp is refused during
+the link and the 60-second status tail, then allowed (slice 2; eve.rs only).
 
     EVE_LIVE_SLOW=1 EVE_LIVE_HOST=host:port EVE_PSQL_URL=... EVE_INVENTORY_SCHEMA=... EVE_SKILLS_SCHEMA=... pytest tests/test_crab_walk.py
 
@@ -35,16 +35,14 @@ pytestmark = [
 ]
 
 CRAB = 60244  # the standard CONCORD Rogue Analysis Beacon (SDE 60244)
-ANCHORING = 11584  # the skill a CRAB's launch needs (the wiki's CRAB page; the host checks it at level 3)
+ANCHORING = 11584
 LOW_SYSTEM = 30004988  # security 0.43, four gates from Manifest (SDE mapStargates, the shortest route)
 LOW_HOPS = [(50017727, 50016629, 30005204), (50003291, 50003399, 30005206), (50003400, 50003410, 30004987), (50003411, 50004520, 30004988)]
 WARP_GATE = 50004521  # another gate of LOW_SYSTEM (SDE mapStargates), about 380,000 km from the arrival gate: a warp target the ship can make
 
-
 def sql(text: str) -> str:
     url = os.environ["EVE_PSQL_URL"]
     return subprocess.run(["psql", url, "-At", "-c", text], check=True, capture_output=True, text=True).stdout.strip()
-
 
 def seed_crab(ship_id: int) -> int:
     """A fixture, not a server path: a standard CRAB in the ship's cargo (flag 5) and the anchoring skill at level 3 for its owner."""
@@ -55,7 +53,6 @@ def seed_crab(ship_id: int) -> int:
     crab = sql(f"INSERT INTO {inventory}.items (type_id, owner_id, location_id, flag, quantity, singleton) "
                f"VALUES ({CRAB}, {owner}, {ship_id}, 5, 1, true) RETURNING id")
     return int(crab.split()[0])
-
 
 def fly_from(who, ship_id: int, ballpark):
     """The gates of the low-security route in turn, from the system the pilot is bound to: warp to the gate, jump, bind the next system."""
@@ -73,17 +70,15 @@ def fly_from(who, ship_id: int, ballpark):
         wait_quietly(who, 3.0)
     return ballpark
 
-
 def refused(error) -> bool:
     return error is not None and "warp" in str(error).lower()
-
 
 def test_a_crab_is_launched_linked_and_holds_the_ship_until_the_link_is_over():
     race = plain_race(DEATH["races"][0], "victim")
     run = uuid.uuid4().hex[:10]
     with base.connect(f"walk-crab-{run}") as who:
         _, ship_id, _, _ = arrive(who, race, run)
-        seed_cockroach(ship_id)  # the owner's test ship (the Cockroach is on the CRAB link lists)
+        seed_cockroach(ship_id)
         service = who.call("ship", "MachoBindObject", (STATION, 15), None)
         who.call_bound(service[0], "Undock", ship_id, False)
         wait_quietly(who, 2.0)
@@ -99,22 +94,24 @@ def test_a_crab_is_launched_linked_and_holds_the_ship_until_the_link_is_over():
         assert len(launched) == 1 and not refusals, f"the CRAB was not launched: {launched!r} {refusals!r}"
         beacon = int(launched[0])  # the beacon's own id in space (the link and its slim item name it)
 
-        # its first wave of Rogue Drones comes into space once it is active
-        drones: set[int] = set()
-        started = time.time()
-        while time.time() - started < 90 and len(drones) < 4:
-            for item, _ in slims_in(timed_events(who, 3.0)):
-                if item not in (ship_id, beacon):
-                    drones.add(item)
-        assert len(drones) >= 4, f"the first wave brought {len(drones)} NPCs into space"
-
-        # the link: the call is answered (None) and the ship is held: a warp during the link is refused
+        # the link starts once the activation delay has passed; its scan and first NPC wave wait until linking completes
+        wait_quietly(who, 21.0)
         who.call_bound(ballpark[0], "CallComponentFromClient", beacon, "linkWithShip", "InitiateLink")
         wait_quietly(who, 3.0)
         raw, error = outcome(lambda: who.call_bound(ballpark[0], "CmdWarpToStuff", "item", WARP_GATE, minRange=0))
         assert refused(error), f"a warp during the link was not refused: {error!r} {raw!r}"
 
-        # after four minutes the link is complete; the warp stays held for one minute more
-        wait_quietly(who, 4 * 60 + 90.0)
+        drones: set[int] = set()
+        started = time.time()
+        while time.time() - started < 270 and len(drones) < 4:
+            for item, _ in slims_in(timed_events(who, 3.0)):
+                if item not in (ship_id, beacon):
+                    drones.add(item)
+        assert len(drones) >= 4, f"the first wave brought {len(drones)} NPCs into space after the link completed"
         raw, error = outcome(lambda: who.call_bound(ballpark[0], "CmdWarpToStuff", "item", WARP_GATE, minRange=0))
-        assert error is None, f"the warp after the link was refused: {error!r}"
+        assert refused(error), f"a warp during the status tail was not refused: {error!r} {raw!r}"
+
+        # The four-minute link ends; the walk checks warp after the additional minute. Simulator tests cover cloak and tether restrictions.
+        wait_quietly(who, 60.0 + 15.0)
+        raw, error = outcome(lambda: who.call_bound(ballpark[0], "CmdWarpToStuff", "item", WARP_GATE, minRange=0))
+        assert error is None, f"the warp after the link status tail was refused: {error!r}"

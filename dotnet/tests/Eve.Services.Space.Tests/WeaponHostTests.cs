@@ -130,7 +130,6 @@ public class WeaponHostTests
         Assert.Equal(ModuleResult.Done, await rig.Space.ActivateAsync(session, gun, "targetAttack", other.GetInt("shipid")!.Value, 1000, CancellationToken.None));
     }
 
-
     [PgTheory]
     [InlineData(true, false, false, false, false, false)]
     [InlineData(false, true, false, false, false, false)]
@@ -174,7 +173,6 @@ public class WeaponHostTests
             session, gun, "targetAttack", other.GetInt("shipid")!.Value, 1000, CancellationToken.None));
         Assert.Equal(1, contextReads);
     }
-
 
     [Fact]
     public void Highsec_player_ship_safety_allows_only_illegal_aggression_with_safety_disabled()
@@ -242,7 +240,6 @@ public class WeaponHostTests
         Assert.False(WeaponSafety.StopsFire(Eve.Universe.SecurityClass.ZeroSec, Eve.Crimewatch.SafetyLevel.Full, capsule));
     }
 
-
     [PgFact]
     public async Task A_negative_sensor_dampener_still_uses_safety_and_aggression()
     {
@@ -285,7 +282,6 @@ public class WeaponHostTests
         var one = Assert.Single(aggression);
         Assert.Equal((attacker.CharacterId, victim.CharacterId, target), (one.Attacker, one.Target, one.TargetShipId));
     }
-
 
     [Fact]
     public void Weapon_safety_uses_the_shared_attack_policy_facts()

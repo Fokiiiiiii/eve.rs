@@ -3,7 +3,7 @@ namespace Eve.Relations;
 /// <summary>How many objects a subject can have in a relation of a kind.</summary>
 public enum Cardinality
 {
-    /// <summary>Any number (a character has a standing towards many owners).</summary>
+
     Many,
 
     /// <summary>One: setting a new object ends the old one (a character is in one corporation).</summary>
@@ -26,7 +26,7 @@ public sealed record RelationKind(string Name)
 /// <summary>The kinds the game has. Add yours here (or define it with <see cref="RelationStore.Define"/>) rather than keeping a table of your own.</summary>
 public static class RelationKinds
 {
-    /// <summary>subject's standing towards object (character, corporation, alliance, faction, agent), −10…10.</summary>
+
     public static readonly RelationKind Standing = new("standing") { Min = -10, Max = 10 };
 
     /// <summary>A character's security status; the object is <see cref="RelationStore.World"/>, −10…10.</summary>

@@ -97,7 +97,6 @@ public sealed class IndustryJobsServiceTests
         Assert.Equal(new PyInt(3), Field(jobs.Items[0], "status"));
     }
 
-
     [Fact]
     public async Task Legacy_filetimes_and_blueprint_location_flags_are_normalized()
     {
@@ -143,6 +142,26 @@ public sealed class IndustryJobsServiceTests
         Assert.Equal(new PyInt(0), Field(pending, "jobID"));
         Assert.Equal(new PyInt(0), Field(pending, "status"));
         Assert.Equal([42001L], JobIds(await service.CallAsync(Call("GetJobsByOwner", [new PyInt(2002)], corporationId: 2002, corporationRole: 1024))));
+    }
+
+    [Fact]
+    public async Task Corporate_job_read_rechecks_persisted_factory_manager_access()
+    {
+        var persistedChecks = 0;
+        var service = Service(
+            Table((42001, Job(42001, ownerId: 2002))),
+            canAccessCorporationJobs: (_, _, _) =>
+            {
+                persistedChecks++;
+                return ValueTask.FromResult(false);
+            });
+
+        var result = await service.CallAsync(Call(
+            "GetJob", [new PyInt(42001)], corporationId: 2002, corporationRole: 1024));
+
+        Assert.Equal(1, persistedChecks);
+        Assert.Equal(new PyInt(0), Field(result, "jobID"));
+        Assert.Equal(new PyInt(0), Field(result, "ownerID"));
     }
 
     [Fact]
@@ -227,7 +246,7 @@ public sealed class IndustryJobsServiceTests
     public async Task Install_job_uses_the_typed_port_and_returns_only_the_committed_job_id()
     {
         var operations = new RecordingIndustryJobOperations { InstallResult = 52001 };
-        var service = Service(null, operations: operations);
+        var service = Service(null, operations: operations, isAlphaClone: userId => userId is PyInt { Value: 7001 });
         var job = Py.KeyVal(
             ("activityID", new PyInt(1)),
             ("blueprintID", new PyInt(50001)),
@@ -253,7 +272,7 @@ public sealed class IndustryJobsServiceTests
             ("timeInSeconds", new PyInt(1)));
 
         var result = await service.CallAsync(Call(
-            "InstallJob", [job], corporationId: 2002, corporationRole: 1024, corporationAccountKey: 1004, callId: 41));
+            "InstallJob", [job], corporationId: 2002, corporationRole: 1024, corporationAccountKey: 1004, callId: 41, accountId: 7001));
 
         Assert.Equal(new PyInt(52001), result);
         var request = Assert.IsType<IndustryJobInstallRequest>(operations.InstallRequest);
@@ -268,6 +287,7 @@ public sealed class IndustryJobsServiceTests
         Assert.Equal(3, request.Job.Runs);
         Assert.Equal(3, request.Job.LicensedRuns);
         Assert.Equal(new IndustryJobWallet(1001, 1000), request.Job.Wallet);
+        Assert.True(request.Job.IsAlphaClone);
     }
 
     [Fact]
@@ -319,6 +339,22 @@ public sealed class IndustryJobsServiceTests
     }
 
     [Fact]
+    public async Task Complete_many_refuses_more_than_500_rows_before_domain_dispatch()
+    {
+        var operations = new RecordingIndustryJobOperations();
+        var service = Service(null, operations: operations);
+        var rows = new List<PyValue>();
+        for (var index = 0; index < 501; index++)
+            rows.Add(PyTuple.Of(new PyInt(52_001 + index), new PyInt(30_000_142)));
+
+        var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            service.CallAsync(Call("CompleteManyJobs", [new PyList(rows)], callId: 46)).AsTask());
+
+        Assert.Equal("INDUSTRY_JOB_BULK_LIMIT_EXCEEDED", refusal.Error.UserErrorMessage);
+        Assert.Equal(0, operations.CompleteManyCalls);
+    }
+
+    [Fact]
     public async Task Domain_user_errors_keep_the_macho_user_error_envelope_and_failed_writes_do_not_return_success()
     {
         var operations = new RecordingIndustryJobOperations
@@ -356,8 +392,12 @@ public sealed class IndustryJobsServiceTests
         Func<ServiceCall, JsonObject, bool>? canViewStarbaseJob = null,
         Func<long, bool>? isStarbaseFacilityOnline = null,
         Func<long, long, long, long>? resolveBlueprintLocationFlagID = null,
-        IIndustryJobOperations? operations = null) =>
-        new(_ => ValueTask.FromResult(table), operations ?? new RecordingIndustryJobOperations(), () => now, canViewStarbaseJob, isStarbaseFacilityOnline, resolveBlueprintLocationFlagID);
+        IIndustryJobOperations? operations = null,
+        Func<PyValue?, bool>? isAlphaClone = null,
+        Func<long, long, CancellationToken, ValueTask<bool>>? canAccessCorporationJobs = null) =>
+        new(_ => ValueTask.FromResult(table), operations ?? new RecordingIndustryJobOperations(), () => now, canViewStarbaseJob,
+            isStarbaseFacilityOnline, resolveBlueprintLocationFlagID, isAlphaClone,
+            canAccessCorporationJobs ?? ((_, _, _) => ValueTask.FromResult(true)));
 
     private static JsonObject Table(params (long Id, JsonObject Record)[] records)
     {
@@ -421,10 +461,12 @@ public sealed class IndustryJobsServiceTests
         long corporationRole = 0,
         int corporationAccountKey = 1000,
         long callId = 77,
-        CancellationToken cancellation = default)
+        CancellationToken cancellation = default,
+        long accountId = 0)
     {
         var session = new ClientSession();
         session.Set("charid", new PyInt(characterId));
+        if (accountId > 0) session.Set("userid", new PyInt(accountId));
         session.Set("corpid", new PyInt(corporationId));
         session.Set("corprole", new PyLong(corporationRole));
         session.Set("corpAccountKey", new PyInt(corporationAccountKey));

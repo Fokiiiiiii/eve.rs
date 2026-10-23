@@ -7,7 +7,7 @@ namespace Eve.Services.Core;
 /// returns its client-compatible PyValue without this RPC adapter changing row order or field types.
 /// </summary>
 /// <summary>
-/// Reads owner-scoped structure directory maps from deployed structure records.
+
 /// SDE data may supply metadata for a persisted deployment, but must not create a deployed entry by itself.
 /// </summary>
 public interface IStructureDirectoryReadCallbacks
@@ -30,7 +30,7 @@ public interface IStructureDirectoryReadCallbacks
     /// <summary>Returns valid war-HQ rows only for the authenticated corporation or alliance.</summary>
     ValueTask<PyValue> GetValidWarHQsAsync(ServiceCall call, long ownerId, CancellationToken cancellationToken);
 
-    /// <summary>Updates a persisted structure description after Host ownership and role checks.</summary>
+
     ValueTask<bool> SetStructureDescriptionAsync(ServiceCall call);
 
     /// <summary>Returns IDs of persisted, deployed structures with online docking in one system.</summary>
@@ -40,13 +40,15 @@ public interface IStructureDirectoryReadCallbacks
 
     /// <summary>Returns info only for an actually deployed structure row in persistent state.</summary>
     ValueTask<PersistedStructureInfo?> GetStructureInfoAsync(long structureId, CancellationToken cancellationToken);
+    ValueTask<PersistedStructureInfo?> GetStructureInfoForCharacterAsync(
+        long characterId, long structureId, CancellationToken cancellationToken);
 
     /// <summary>
     /// Returns exactly the requested deployed structures' profile data for the Docking service.
     /// The Host must resolve the setting through its existing SDE/client mapping (SettingIdForService),
-    /// include owner corporation/alliance and every assigned access list, and mark any missing profile,
+
     /// setting, or access-list data incomplete. A built-in default profile may be represented only by
-    /// its explicit authoritative owner-corporation rule. Do not synthesize structures from static type data.
+
     /// </summary>
     ValueTask<IReadOnlyList<StructureDockingAccessSnapshot>> GetDockingAccessSnapshotsAsync(
         long characterId,
@@ -166,7 +168,8 @@ public sealed class StructureDirectoryService(IStructureDirectoryReadCallbacks r
                 var structureId = PositiveId(call.Arg(0));
                 if (structureId <= 0)
                     return PyNone.Instance;
-                var structure = await _read.GetStructureInfoAsync(structureId, call.Cancellation);
+                var structure = await _read.GetStructureInfoForCharacterAsync(
+                    call.Session?.CharacterId ?? 0, structureId, call.Cancellation);
                 return structure is { PersistentlyDeployed: true } &&
                     structure.StructureId == structureId && structure.Info is not PyNone
                     ? structure.Info
@@ -177,7 +180,11 @@ public sealed class StructureDirectoryService(IStructureDirectoryReadCallbacks r
                 var characterId = call.Session?.CharacterId ?? 0;
                 var corporationId = call.Session?.GetInt("corpid") ?? 0;
                 var allianceId = call.Session?.GetInt("allianceid") ?? 0;
-                var requested = PositiveIds(call.Arg(0));
+                var requestedInput = call.Arg(0);
+                if ((requestedInput is PyList requestedList && requestedList.Items.Count > 500) ||
+                    (requestedInput is PyTuple requestedTuple && requestedTuple.Items.Count > 500))
+                    throw Eve.Services.MachoErrors.ThrowUserError("StructureBulkLimitExceeded");
+                var requested = PositiveIds(requestedInput);
                 if (characterId <= 0 || requested.Count == 0)
                     return new PyList([]);
 
@@ -406,7 +413,7 @@ public sealed class StructureGuestsService(
 /// <summary>
 /// Read callbacks for the client's structureSettings RPCs.
 /// Implementations must read deployed structure state (not SDE type rows) and enforce each structure's
-/// owner corporation/alliance and persisted access-profile/access-group rules for the supplied character.
+
 /// CharacterGetServices returns a service-ID keyed map; absent or inaccessible structures return an empty map,
 /// and the two Has calls return false.
 /// </summary>
@@ -564,9 +571,9 @@ public interface IStructureAssetSafetyReadCallbacks
         CancellationToken cancellationToken);
 
     /// <summary>
-    /// Atomically charges the correct fee and delivers this owner's persisted wrap to a valid same-system
-    /// NPC station/outpost/Upwell destination after day five; mark it delivered and notify the owner.
-    /// Revalidate wrap ownership, timer, source system, destination type and state in the transaction.
+
+
+
     /// </summary>
     ValueTask<AssetSafetyActionState> MoveSafetyWrapToStructureAsync(
         ServiceCall call,
@@ -715,8 +722,9 @@ public sealed class StructureAssetSafetyService(IStructureAssetSafetyReadCallbac
             {
                 var assetWrapId = PositiveId(call.Arg(0));
                 var days = PositiveId(call.Arg(1));
-                var role = call.Session?.GetInt("role") ?? 0;
-                if ((role & (1L << 54)) == 0 || assetWrapId <= 0 || days is not 5 and not 30)
+                if (call.Session is null ||
+                    !Eve.Services.GameMasterRoles.Has(call.Session, Eve.Services.GameMasterRoles.Gml) ||
+                    assetWrapId <= 0 || days is not 5 and not 30)
                     throw MoveEjectTimeDenied();
                 if (!await _read.MoveEjectTimeGMAsync(call, assetWrapId, (int)days, call.Cancellation))
                     throw MoveEjectTimeDenied();

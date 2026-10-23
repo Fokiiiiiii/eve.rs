@@ -50,14 +50,13 @@ QA_SMARTBOMB = 18642
 POLARIS, POLARIS_LEVEL5_POINTS = 9955, 128000
 HANGAR, SPACE_FLAG = 4, 0
 FAR_FUTURE_MS = 4_102_444_800_000
-REWARD_REF_TYPE = 33  # the wallet journal reference type of an agent mission reward (MissionDungeonRuntime.AgentMissionRewardRefType)
+REWARD_REF_TYPE = 33
 COMPLETED, ACCEPTED = 4, 2  # AgentMissionState
 
 Step = namedtuple("Step", "mission agent system in_space station kind dungeon objective quantity reward next_agents drop_off", defaults=((), None))
-# the arc on the offer path: mission, agent, the system the agent is in (its in-space system when it is in space), whether it is in space,
+
 # its station, the kind (kill, talk or courier), the kill's dungeon, the objective item and quantity (fetch), the ISK reward (SDE)
 ARC = int(os.environ.get("EVE_WALK_ARC", "29"))  # the epic arc walked (29: The Blood-Stained Stars)
-
 
 def arc_path(arc: int) -> list:
     """The arc's steps in the order the server offers them: the lowest offerable mission ID first, a fork resolved by that rule (the
@@ -86,7 +85,7 @@ def arc_path(arc: int) -> list:
             break
         done.append(min(offerable))
         if not steps[done[-1]].get("nextMissions"):
-            break  # a terminal step ends the run: the arc cools down for its restart interval, so later entries wait for the next run
+            break
     path = []
     for key in done:
         mission = json.loads(sql(f"SELECT (doc - 'messages' - 'name')::text FROM sde_mission.missions WHERE key = '{key}'"))
@@ -100,8 +99,8 @@ def arc_path(arc: int) -> list:
         courier = mission.get("courierMission", {})
         kind = "courier" if courier else ("kill" if kill else "talk")
         reward_row = mission.get("missionRewards", {}).get("reward", {})
-        reward = int(reward_row.get("rewardQuantity", 0) or 0) if reward_row.get("rewardTypeID") == 29 else 0  # ISK only (type 29)
-        if courier:  # the cargo of a courier: picked up at the agent, delivered to the drop-off station
+        reward = int(reward_row.get("rewardQuantity", 0) or 0) if reward_row.get("rewardTypeID") == 29 else 0
+        if courier:
             objective, quantity = courier.get("objectiveTypeID"), courier.get("objectiveQuantity")
         elif kill and "objectiveTypeID" in kill:
             objective, quantity = kill.get("objectiveTypeID"), kill.get("objectiveQuantity")
@@ -114,27 +113,22 @@ def arc_path(arc: int) -> list:
 ARC_WALK_RUN = uuid.uuid4().hex[:10]
 ACCOUNT = f"arc29-{ARC_WALK_RUN}"
 
-
 def schema(module: str) -> str:
     return os.environ[f"EVE_{module}_SCHEMA"]
-
 
 def sql(text: str) -> str:
     done = subprocess.run(["psql", PG, "-At", "-F", "|", "-v", "ON_ERROR_STOP=1", "-c", text], check=True, capture_output=True, text=True)
     # psql prints the command tag ("INSERT 0 1") after the rows: the rows are the answer
     return "\n".join(line for line in done.stdout.splitlines() if not line.startswith(("INSERT ", "UPDATE ", "DELETE "))).strip()
 
-
 def ship_of(character: int) -> int:
     return int(sql(f"SELECT ship_id FROM {schema('CHARACTERS')}.characters WHERE id = {character}"))
-
 
 def place_rows(step: Step) -> tuple[str, str]:
     """The SDE constellation and region of the step's system."""
     row = sql(f"SELECT doc->>'constellationID', doc->>'regionID' FROM sde.\"mapSolarSystems\" WHERE key = '{step.system}'")
     constellation, region = row.split("|")
     return constellation, region
-
 
 def seed_place(character: int, ship: int, step: Step) -> None:
     """The pilot as a pilot who logged off there keeps it: docked in the station (ship in its hangar), or in space in the system (the
@@ -155,7 +149,6 @@ def seed_place(character: int, ship: int, step: Step) -> None:
             f"region_id = {region} WHERE id = {character}")
         sql(f"DELETE FROM {poses} WHERE item_id = {ship}")
 
-
 @contextmanager
 def session(character: int, ship: int, step: Step, where: str):
     """A session of the pilot where the step needs it: seeded, then selected."""
@@ -167,13 +160,11 @@ def session(character: int, ship: int, step: Step, where: str):
         wait_quietly(who, 1.0)
         yield who
 
-
 def fit_smartbomb(character: int, ship: int) -> int:
     """The Cockroach's QA Smartbombs in its free high slots (dbseed.seed_qa_arsenal: the SDE's slot, the red safety and the Polaris skill that
     fitting needs); the walk activates the first."""
     from tests import dbseed
     return dbseed.seed_qa_arsenal(ship)[0]
-
 
 def _old_fit_smartbomb_unused(character: int, ship: int) -> int:
     items = f"{schema('INVENTORY')}.items"
@@ -187,23 +178,18 @@ def _old_fit_smartbomb_unused(character: int, ship: int) -> int:
     flag = next(slot for slot in range(19, 27) if slot not in used)
     return int(sql(f"INSERT INTO {items} (type_id, owner_id, location_id, flag, quantity, singleton) VALUES ({QA_SMARTBOMB}, {owner}, {ship}, {flag}, 1, true) RETURNING id"))
 
-
 def mission_state(character: int, agent: int):
     row = sql(f"SELECT state, mission_id FROM {schema('AGENTS')}.missions WHERE character_id = {character} AND agent_id = {agent}")
     return tuple(int(x) for x in row.split("|")) if row else None
 
-
 def completed(character: int, mission: int) -> int:
     return int(sql(f"SELECT count(*) FROM {schema('AGENTS')}.journal WHERE character_id = {character} AND mission_id = {mission} AND action = 'completed'"))
-
 
 def reward_total(character: int) -> int:
     return int(float(sql(f"SELECT coalesce(sum(amount), 0) FROM {schema('WALLET')}.journal WHERE owner_id = {character} AND ref_type_id = {REWARD_REF_TYPE}")))
 
-
 def held(character: int, type_id: int) -> int:
     return int(float(sql(f"SELECT coalesce(sum(quantity), 0) FROM {schema('INVENTORY')}.items WHERE owner_id = {character} AND type_id = {type_id}")))
-
 
 def seed_agent_standings(character: int, path: list) -> None:
     """A fixture: the standing a pilot has from earlier work with each agent's corporation (the client's CanUseAgent rule asks for one from a
@@ -214,17 +200,14 @@ def seed_agent_standings(character: int, path: list) -> None:
         sql(f"INSERT INTO {schema('RELATIONS')}.relations (kind, subject, object, value, since_ms, updated_ms) "
             f"VALUES ('standing', {corporation}, {character}, 10, 0, 0) ON CONFLICT (kind, subject, object) DO UPDATE SET value = EXCLUDED.value")
 
-
 def seed_completed(character: int, step: Step) -> None:
     """A completion the walk does not play: the journal row the server writes when the step is completed (see the module docstring)."""
     sql(f"INSERT INTO {schema('AGENTS')}.journal (character_id, agent_id, mission_id, from_state, to_state, action, reference) "
         f"VALUES ({character}, {step.agent}, {step.mission}, {ACCEPTED}, {COMPLETED}, 'completed', 'seed:arc29:{step.mission}:{character}')")
 
-
 def do(who, agent: int, action):
     handle = who.call("agentMgr", "MachoBindObject", agent, None)
     return reply_text(who.call_bound(handle[0], "DoAction", action))
-
 
 def offer(who, character: int, step: Step) -> None:
     """Greets the agent (which completes a talk step waiting for this agent), requests the offer, accepts it; the journal must hold it."""
@@ -237,7 +220,6 @@ def offer(who, character: int, step: Step) -> None:
     do(who, step.agent, ACCEPT)
     assert mission_state(character, step.agent) == (ACCEPTED, step.mission), f"mission {step.mission} is not accepted: {mission_state(character, step.agent)}"
 
-
 def stop(who, dogma, bomb: int) -> None:
     """Asks the smartbomb's effect to stop (the client's Deactivate: it stops at the end of its cycle). A refusal here is not a walk failure."""
     try:
@@ -245,10 +227,8 @@ def stop(who, dogma, bomb: int) -> None:
     except packet.MachoError:
         pass
 
-
 def _has_table(module: str, table: str) -> bool:
     return sql(f"SELECT to_regclass('{schema(module)}.{table}') IS NOT NULL") == "t"
-
 
 def fire(who, dogma, bomb: int, mission: int) -> None:
     """One activation of the smartbomb. A refusal for range or lock waits and tries again (as in_range); any other refusal fails the walk
@@ -264,7 +244,6 @@ def fire(who, dogma, bomb: int, mission: int) -> None:
             stop(who, dogma, bomb)
             watch({"events": who}, 5.0)
     raise AssertionError(f"mission {mission}: the smartbomb stayed out of range")
-
 
 def fight(character: int, ship: int, step: Step, bomb: int) -> None:
     """The pilot in space in the agent's system shoots the dungeon with the QA Smartbomb until the step's outcome is in the database."""
@@ -314,12 +293,10 @@ def fight(character: int, ship: int, step: Step, bomb: int) -> None:
             change = standings_of(character).get(faction, 0.0) - standing_before.get(faction, 0.0)
             assert abs(change - gain / 10) < 1e-6, f"mission {step.mission}: the standing toward {faction} moved {change}, expected {gain / 10}"
 
-
 def standings_of(character: int) -> dict:
     """The character's standings by entity (the relations rows of kind standing toward the character)."""
     rows = sql(f"SELECT subject, value FROM {schema('RELATIONS')}.relations WHERE kind = 'standing' AND object = {character}")
     return {int(subject): float(value) for subject, value in (line.split("|") for line in rows.splitlines() if line)}
-
 
 def extra_standings_of(mission: int) -> list:
     """The SDE's extraStandings of a mission as (entity, value in tenths)."""
@@ -327,7 +304,6 @@ def extra_standings_of(mission: int) -> list:
     if not raw or raw == "":
         return []
     return [(int(item["_key"]), float(item["_value"])) for item in json.loads(raw)]
-
 
 def drop_off_of(who, agent: int, cargo: int, quantity: int) -> int:
     """The courier's drop-off station, from the mission's transport objective (the client's contract: pickup, then drop-off, each with its
@@ -339,7 +315,6 @@ def drop_off_of(who, agent: int, cargo: int, quantity: int) -> int:
     found = [int(x) for x in re.findall(r"locationID[^0-9]{0,40}(\d+)", text[start:])]
     assert len(found) >= 2, f"the transport objective names no pickup and drop-off: {text[start:start + 300]}"
     return found[1]
-
 
 def deliver(character: int, ship: int, step: Step, pickup_check: bool) -> None:
     """A courier: the cargo is held (taken at the agent's station when the mission was accepted), the pilot flies to the drop-off station's
@@ -374,7 +349,6 @@ def deliver(character: int, ship: int, step: Step, pickup_check: bool) -> None:
     assert held(character, step.objective) == 0, f"mission {step.mission}: the cargo was not taken at the drop-off"
     assert reward_total(character) - reward_before == step.reward, (step.mission, step.reward, reward_total(character) - reward_before)
 
-
 def turn_in(character: int, ship: int, step: Step) -> None:
     """The fetch step's turn-in: the pilot talks to the step's agent with the objective items held; the step completes and the items go."""
     with session(character, ship, step, "turn-in") as who:
@@ -390,17 +364,14 @@ def turn_in(character: int, ship: int, step: Step) -> None:
     assert held(character, step.objective) == 0, f"mission {step.mission}: the objective items were not taken"
     assert reward_total(character) - reward_before == step.reward, (step.mission, reward_total(character) - reward_before)
 
-
 def outcome(call):
     try:
         return call(), None
     except Exception as failure:  # the client's refusal, shown in the failure
         return None, str(failure)
 
-
 def check_talk_done(character: int, step: Step) -> None:
     assert completed(character, step.mission) == 1, f"talk step {step.mission}: not completed by talking to its next agents {step.next_agents}"
-
 
 def test_arc_is_walked_step_by_step_in_the_order_the_server_offers_it():
     PATH = arc_path(ARC)
@@ -422,10 +393,10 @@ def test_arc_is_walked_step_by_step_in_the_order_the_server_offers_it():
             seed_completed(character, step)
             print(f"ARC29 step {index} mission {step.mission} courier: SEEDED completion (not walked)")
             continue
-        # the fetch step before this one is handed in at its agent before the next step is offered
+
         if index > FROM and PATH[index - 1].objective is not None and PATH[index - 1].kind == "kill":
             turn_in(character, ship, PATH[index - 1])
-        # a talk step completes when the pilot talks to one of the agents of the steps after it: the greeting in this session may do that
+
         with session(character, ship, step, "offer") as who:
             do(who, step.agent, None)
             for talk in [t for t in pending_talks if step.agent in t.next_agents]:

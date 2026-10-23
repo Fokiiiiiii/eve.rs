@@ -97,6 +97,32 @@ pub fn load_into(client: &mut Client, manifest: &SdeManifest, schema: &str) -> R
     load_selected(client, manifest, schema, None)
 }
 
+pub fn ensure_lookup_indexes(client: &mut Client, schema: &str) -> Result<(), LoadError> {
+    assert!(crate::manifest::is_valid_table_name(schema), "invalid schema name {schema:?}");
+    let mut tx = client.transaction()?;
+    tx.query_one("SELECT pg_advisory_xact_lock(hashtext($1)::bigint)", &[&schema])?;
+
+    let types_name = format!("{schema}.types");
+    let types_exist: bool = tx.query_one("SELECT to_regclass($1) IS NOT NULL", &[&types_name])?.get(0);
+    if types_exist {
+        tx.batch_execute(&format!(
+            "CREATE INDEX IF NOT EXISTS types_group_id_idx ON {schema}.types (((doc->>'groupID')::bigint)) WHERE jsonb_typeof(doc->'groupID') = 'number'"
+        ))?;
+    }
+
+    let type_dogma_name = format!("{schema}.\"typeDogma\"");
+    let type_dogma_exist: bool =
+        tx.query_one("SELECT to_regclass($1) IS NOT NULL", &[&type_dogma_name])?.get(0);
+    if type_dogma_exist {
+        tx.batch_execute(&format!(
+            "CREATE INDEX IF NOT EXISTS type_dogma_doc_gin_idx ON {schema}.\"typeDogma\" USING gin (doc jsonb_path_ops)"
+        ))?;
+    }
+
+    tx.commit()?;
+    Ok(())
+}
+
 /// [`load_into`] for the tables named in `tables` only. A name the archive does not hold is an
 /// error and nothing is loaded. The `_build` record lists only the tables loaded.
 pub fn load_tables_into(

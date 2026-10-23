@@ -6,7 +6,7 @@ public class SimClientTests
 
     private static SimShip Ship() => new(9988400001939, 140000342, 601, 237, 6, "Ibis", 140000342, 1000006, 0, 0, 0, 47, 1163000, 339.25, 4.0185, 3, 860000, 29700, 660, 28, 4, 149.5, 55.25, []);
 
-    private static SimEnter Enter(ulong session = 7) => new(session, 30100032, EnterHow.Undock, 60015249, Ship());
+    private static SimEnter Enter(ulong session = 7) => new(session, SimSceneKey.SolarSystem(30100032), EnterHow.Undock, 60015249, Ship());
 
     private static async Task<T> Within<T>(Task<T> task)
     {
@@ -54,6 +54,42 @@ public class SimClientTests
         Assert.Null(await Within(client.EnterAsync(Enter(7))));
         Assert.Equal("UNKNOWN_STATION 1", await Within(client.EnterAsync(Enter(8))));
         Assert.Equal(2, sim.HeardNow().OfType<SimEnter>().Count());
+    }
+
+    [Fact]
+    public async Task Abyssal_scene_move_and_rebind_requests_wait_for_their_correlated_replies()
+    {
+        var (sim, client) = await ConnectedAsync(message => message switch
+        {
+            SimEnsureAbyssalScene request => [new SimEnsureAbyssalSceneReply(request.RequestId, null)],
+            SimMoveAbyssalParticipant request => [new SimMoveAbyssalParticipantReply(request.RequestId, "DESTINATION_NOT_READY")],
+            SimRebindAbyssalSession request => [new SimRebindAbyssalSessionReply(request.RequestId, null)],
+            SimRemoveAbyssalScene request => [new SimRemoveAbyssalSceneReply(request.RequestId, null)],
+            _ => [],
+        });
+        await using var _ = sim;
+        await using var __ = client;
+        var scene = new SimSceneKey(31_000_201, 42, 2);
+        var profile = new SimAbyssalSceneSpec(
+            scene,
+            new SimAbyssalEnvironmentProfile([], []),
+            new SimAbyssalBoundaryProfile([0.0, 0.0, 0.0], 75_000.0, 1_000,
+                [new SimAbyssalBoundaryDamagePoint(0.0, 12.5)]),
+            134_351_527_136_350_000);
+
+        Assert.Null(await Within(client.EnsureAbyssalSceneAsync(new SimEnsureAbyssalScene(101, profile))));
+        Assert.Equal("DESTINATION_NOT_READY", await Within(client.MoveAbyssalParticipantAsync(new SimMoveAbyssalParticipant(
+            102, 9988400001939, new SimSceneKey(31_000_200, 42, 1), scene, [1.0, 2.0, 3.0], [0.0, 0.0, 1.0]))));
+        Assert.Null(await Within(client.RebindAbyssalSessionAsync(new SimRebindAbyssalSession(103, 8, 9988400001939, scene))));
+        Assert.Null(await Within(client.RemoveAbyssalSceneAsync(new SimRemoveAbyssalScene(104, scene))));
+        Assert.Equal([101UL, 102UL, 103UL, 104UL], sim.HeardNow().Skip(1).Select(message => message switch
+        {
+            SimEnsureAbyssalScene ensure => ensure.RequestId,
+            SimMoveAbyssalParticipant move => move.RequestId,
+            SimRebindAbyssalSession rebind => rebind.RequestId,
+            SimRemoveAbyssalScene remove => remove.RequestId,
+            _ => 0UL,
+        }));
     }
 
     [Fact]

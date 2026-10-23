@@ -1,7 +1,6 @@
 //! The scene as the world an NPC's tree acts in (`eve_behaviors::env::World`): what a task asks of the server's ballpark, dogma engine, inventory and
 //! the rest is answered from the scene, and what it orders is done to the scene's ships. Each trait is answered as far as the scene has the thing
 //! (`ballpark.rs`); what it has not is left at the trait's default, the answer of a world with nothing of the kind.
-
 use std::collections::BTreeMap;
 
 use eve_behaviors::env::{Entities, Inventory, InventoryItem, Logging, Random, Spawning, Universe};

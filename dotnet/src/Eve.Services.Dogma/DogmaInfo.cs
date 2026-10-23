@@ -8,7 +8,6 @@ namespace Eve.Services.Dogma;
 /// <summary>
 /// Builds what <c>dogmaIM.GetAllInfo</c> answers: for the ship, what is fitted to it and the character, their attributes and the
 /// effects running, and the brain of the character. The attribute values are the engine's; which attributes are listed follows the
-/// reference (docs/reference/compat/DEVIATIONS.md #11 and #12).
 /// </summary>
 public sealed class DogmaInfo(DogmaStatic statics)
 {
@@ -30,7 +29,7 @@ public sealed class DogmaInfo(DogmaStatic statics)
     private const int ShieldCapacity = 263;
     private const int ArmorHitPoints = 265;
     private const int CapacitorCapacity = 482;
-    internal const int Quantity = 805;
+    public const int Quantity = 805;
     private const int PilotSecurityStatus = 2610;
 
     /// <summary>Every item is told about these, with these values when its type has none of its own.</summary>
@@ -137,9 +136,11 @@ public sealed class DogmaInfo(DogmaStatic statics)
     }
 
     /// <summary>The brain as the client is told it changed: its version and the effects, marshalled (a list each for the character, the ship and the structure).</summary>
-    public PyValue BrainUpdate(ShipSnapshot s, int version)
+    public Brain BuildBrain(ShipSnapshot s) => BrainBuilder.Build(s.World, statics);
+
+    public PyValue BrainUpdate(ShipSnapshot s, int version, Brain? brain = null)
     {
-        var brain = BrainBuilder.Build(s.World, statics);
+        brain ??= BuildBrain(s);
         PyValue List(IEnumerable<BrainEffect> effects, long target) => new PyList([.. effects.Select(e => DogmaWire.BrainEffect(e, target))]);
         var grayMatter = MarshalCodec.Encode(Py.Tuple(List(brain.Character, s.Character.Id), List(brain.Ship, s.Ship.Id), List(brain.Structure, s.Character.Id)));
         return Py.Tuple(new PyInt(version), new PyBuffer(grayMatter));
@@ -227,7 +228,7 @@ public sealed class DogmaInfo(DogmaStatic statics)
     /// <c>GetAllInfo</c> for a character in its ship in a station. What is left out follows the reference: the character and
     /// ship info asked for; a docked ship asked for on its own brings the character with it.
     /// </summary>
-    public PyValue GetAllInfo(ShipSnapshot s, bool getCharInfo, bool getShipInfo, bool getStructureInfo, long fileTime, bool docked = true)
+    public PyValue GetAllInfo(ShipSnapshot s, bool getCharInfo, bool getShipInfo, bool getStructureInfo, long fileTime, bool docked = true, Brain? brain = null)
     {
         var structureInfo = getStructureInfo && s.World.StructureId == s.Ship.Id
             ? new PyDict([new(InventoryWire.Id(s.Ship.Id), DogmaWire.ItemInfo(
@@ -236,7 +237,10 @@ public sealed class DogmaInfo(DogmaStatic statics)
             : new PyDict([]);
         var dockedShipOnly = getShipInfo && !getCharInfo;
         var includeCharacter = getCharInfo || dockedShipOnly;
-        var brain = BrainBuilder.Build(s.World, statics);
+        if (includeCharacter)
+        {
+            brain ??= BuildBrain(s);
+        }
         return Py.KeyVal(
             ("systemWideEffectsOnShip", new PyDict([])),
             ("shipModifiedCharAttribs", getShipInfo && getCharInfo ? CharacterInfo(s, ShipModifiedCharacterAttributes(s), fileTime) : PyNone.Instance),
@@ -248,7 +252,7 @@ public sealed class DogmaInfo(DogmaStatic statics)
             ("charInfo", includeCharacter
                 ? Py.Tuple(
                     new PyDict([new(InventoryWire.Id(s.Character.Id), CharacterInfo(s, CharacterAttributes(s), fileTime))]),
-                    DogmaWire.Brain(brain, s.Character.Id, s.Ship.Id, s.World.StructureId != 0 ? s.World.StructureId : s.Character.Id))
+                    DogmaWire.Brain(brain!, s.Character.Id, s.Ship.Id, s.World.StructureId != 0 ? s.World.StructureId : s.Character.Id))
                 : PyNone.Instance));
     }
 }

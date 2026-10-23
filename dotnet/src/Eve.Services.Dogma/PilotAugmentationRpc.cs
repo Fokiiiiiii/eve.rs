@@ -10,7 +10,6 @@ namespace Eve.Services.Dogma;
 
 /// <summary>
 /// What the client does with its pilot's implants and boosters: <c>dogmaIM.InjectImplant</c> (plug in), <c>DestroyImplant</c> and <c>UseBooster</c>
-/// (consume). Each change is told in the order of the reference (EveJS <c>services/dogma/dogmaService/implantsAndBoosters.js</c>): the inventory
 /// rows, the implant or booster list, then the character's attributes and brain, then the skill queue, which was rebased at the old rate.
 /// </summary>
 public sealed class PilotAugmentationRpc(
@@ -59,7 +58,6 @@ public sealed class PilotAugmentationRpc(
 
     private ItemRow RowOf(Eve.Inventory.Item item) => DogmaInfo.RowOf(item, statics.Type(item.TypeId));
 
-    /// <summary>A refused change is told to the client in its words (EveJS <c>_formatImplantUserError</c>).</summary>
     private static void Refuse(string? error)
     {
         if (error is null)

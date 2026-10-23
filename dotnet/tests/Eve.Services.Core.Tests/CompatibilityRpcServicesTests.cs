@@ -39,7 +39,7 @@ public sealed class CompatibilityRpcServicesTests
         var community = (CommunityTrackMgrService)Services[2].Service;
         var communityService = (IService)community;
         Assert.Equal(new PyTuple([PyNone.Instance, PyNone.Instance]), await communityService.CallAsync(Call("get_instance_attributes_public", new PyLong(1337))));
-        Assert.IsType<PyNone>(await communityService.CallAsync(Call("change_qa_mode", PyBool.True)));
+        Assert.IsType<PyNone>(await communityService.CallAsync(StaffCall("change_qa_mode", PyBool.True)));
         Assert.True(community.QaMode);
 
         foreach (var method in Services[3].Methods)
@@ -47,14 +47,13 @@ public sealed class CompatibilityRpcServicesTests
 
         var localization = (LocalizationServerService)Services[4].Service;
         var localizationService = (IService)localization;
-        var textChanges = Assert.IsType<PyTuple>(await localizationService.CallAsync(Call("GetAllTextChanges", new PyDict([]))));
+        var textChanges = Assert.IsType<PyTuple>(await localizationService.CallAsync(StaffCall("GetAllTextChanges", new PyDict([]))));
         Assert.Equal(3, textChanges.Items.Count);
         Assert.All(textChanges.Items, value => Assert.Empty(Assert.IsType<PyDict>(value).Entries));
-        Assert.Equal(PyBool.False, await localizationService.CallAsync(Call("ReloadFSDPickle")));
-        Assert.IsType<PyNone>(await localizationService.CallAsync(Call("UpdateLocalizationQAWrap", PyBool.True)));
+        Assert.Equal(PyBool.False, await localizationService.CallAsync(StaffCall("ReloadFSDPickle")));
+        Assert.IsType<PyNone>(await localizationService.CallAsync(StaffCall("UpdateLocalizationQAWrap", PyBool.True)));
         Assert.True(localization.QaWrapActive);
     }
-
 
     [Fact]
     public async Task Kiring_initialization_rpcs_keep_the_reference_shapes()
@@ -129,17 +128,67 @@ public sealed class CompatibilityRpcServicesTests
 
         foreach (var (service, method) in services)
         {
-            var request = Call(method, new PyInt(42), kwargs: new PyDict([new(new PyStr("source"), new PyStr("test"))]));
+            var request = StaffCall(method, new PyInt(42), kwargs: new PyDict([new(new PyStr("source"), new PyStr("test"))]));
             Assert.Same(expected, await service.CallAsync(request));
             Assert.Same(request, received);
         }
     }
 
-    private static ServiceCall Call(string method, PyValue? arg = null, PyValue? kwargs = null) => new()
+    [Fact]
+    public async Task Localization_server_returns_configured_maps_and_bounds_public_read_events()
+    {
+        var expected = Py.Tuple(
+            new PyDict([new(new PyStr("en"), new PyStr("configured text"))]),
+            new PyDict([new(new PyStr("removed"), PyBool.True)]),
+            new PyDict([]));
+        var service = new LocalizationServerService(expected);
+
+        for (var index = 0; index <= 1024; index++)
+            Assert.Equal(expected, await service.GetAllTextChanges(Call("GetAllTextChanges", new PyDict([]))));
+
+        Assert.Equal(1024, service.Events.Count);
+        Assert.Throws<ArgumentException>(() => new LocalizationServerService(new PyDict([])));
+    }
+
+    [Fact]
+    public async Task Qa_rpcs_refuse_sessions_without_a_staff_account_role_and_change_nothing()
+    {
+        var handlerCalls = new List<string>();
+        ValueTask<PyValue?> Handler(ServiceCall call)
+        {
+            handlerCalls.Add(call.Method);
+            return ValueTask.FromResult<PyValue?>(PyBool.True);
+        }
+        var ordinary = new ClientSession { CharacterId = 42 };
+        ordinary.Set("role", new PyLong(GameMasterRoles.Staff)); // the generic role field is not a grant
+        var community = new CommunityTrackMgrService { RpcHandler = Handler };
+        var localization = new LocalizationServerService { RpcHandler = Handler };
+
+        Assert.IsType<PyNone>(await ((IService)community).CallAsync(Call("change_qa_mode", PyBool.True, session: ordinary)));
+        Assert.IsType<PyNone>(await ((IService)localization).CallAsync(Call("UpdateLocalizationQAWrap", PyBool.True, session: ordinary)));
+        Assert.Equal(PyBool.False, await ((IService)localization).CallAsync(Call("ReloadFSDPickle", session: ordinary)));
+        Assert.Empty(handlerCalls);
+        Assert.False(community.QaMode);
+        Assert.False(localization.QaWrapActive);
+        Assert.Empty(localization.Events);
+
+        var staffCommunity = new CommunityTrackMgrService();
+        Assert.IsType<PyNone>(await ((IService)staffCommunity).CallAsync(StaffCall("change_qa_mode", PyBool.True)));
+        Assert.True(staffCommunity.QaMode);
+    }
+
+    private static ServiceCall StaffCall(string method, PyValue? arg = null, PyValue? kwargs = null)
+    {
+        var session = new ClientSession { CharacterId = 42 };
+        session.Set("accountRole", new PyLong(GameMasterRoles.Staff));
+        return Call(method, arg, kwargs, session);
+    }
+
+    private static ServiceCall Call(string method, PyValue? arg = null, PyValue? kwargs = null, ClientSession? session = null) => new()
     {
         Method = method,
         Args = arg is null ? [] : [arg],
         Kwargs = kwargs ?? PyNone.Instance,
-        Session = new ClientSession { CharacterId = 42 },
+        Session = session ?? new ClientSession { CharacterId = 42 },
     };
 }

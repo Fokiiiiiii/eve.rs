@@ -1,6 +1,5 @@
 //! The damage over time of a breacher pod (`dot_weapons`): the formula of a tick, a pod's application ticking once a second for its duration, the strongest of
 //! several working alone and the others inert until it runs out, and the effect ending when the ship leaves the scene.
-
 use super::*;
 use crate::brains::rat_tests::actions_named;
 use crate::missiles::Missile;
@@ -84,6 +83,7 @@ fn launch_pod_at_b(scene: &mut Scene, missile: Missile, t: i64) -> Vec<Out> {
         fx: String::new(),
         duration_ms: 5_000.0,
         capacitor_need: 0.0,
+        fallback_capacitor_need: 0.0,
         repeat: 1,
         target_id: scene.pilots[&B].ship.spec.ship_id,
         turret: Some(Turret {

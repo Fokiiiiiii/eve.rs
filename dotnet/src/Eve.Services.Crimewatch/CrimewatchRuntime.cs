@@ -18,12 +18,9 @@ public sealed class CrimewatchRuntime(PgCrimewatchStore store, CharacterSessions
     /// <summary>Whether the law lets the first pilot attack the second at this time (a war, a limited engagement, a corporation that may shoot its own). Nothing is legal until something says so.</summary>
     public Func<long, long, long, CancellationToken, Task<bool>>? Legal { get; set; }
 
-
     public Func<AggressionRequest, long, CancellationToken, Task<PolicyFacts>>? AttackPolicyFactsOf { get; set; }
 
-
     public Func<long, long, long, CancellationToken, Task<RelationWars.AssistanceFacts>>? WarAssistanceFactsOf { get; set; }
-
 
     /// <summary>Host persistence hook for a new kill right. Return its ID only when a new right was persisted.</summary>
     public Func<KillRightGrantRequest, CancellationToken, Task<long?>>? CreateKillRight { get; set; }
@@ -257,7 +254,6 @@ public sealed class CrimewatchRuntime(PgCrimewatchStore store, CharacterSessions
         return result;
     }
 
-
     /// <summary>Applies the persisted kill-right activation to the target and tells the activator.</summary>
     public async Task ApplyKillRightActivationAsync(
         KillRightActivation activation,
@@ -277,7 +273,6 @@ public sealed class CrimewatchRuntime(PgCrimewatchStore store, CharacterSessions
             cancellationToken);
         sessions.Of(activation.ActivatorCharacterId)?.SendNotification("OnKillRightActivated", "clientID");
     }
-
 
     public async Task<PolicyDecision> EvaluateRemoteAssistanceAsync(
         AggressionRequest request,
@@ -378,6 +373,30 @@ public sealed class CrimewatchRuntime(PgCrimewatchStore store, CharacterSessions
         ScheduleConcordResponse(response, now + ConcordResponseDelayMs(request.Security), now);
     }
 
+    /// <summary>
+    /// </summary>
+    public async Task<long?> GrantKillRightAsync(long ownerCharacterId, long targetCharacterId, long solarSystemId, long now, CancellationToken cancellationToken)
+    {
+        if (CreateKillRight is not { } createKillRight) return null;
+        if (await createKillRight(new KillRightGrantRequest(ownerCharacterId, targetCharacterId, solarSystemId, now), cancellationToken) is not { } killRightId)
+            return null;
+        var created = new KillRightCreated(killRightId, ownerCharacterId, targetCharacterId, solarSystemId, now);
+        if (KillRightGranted is { } handlers)
+        {
+            foreach (var handler in handlers.GetInvocationList().Cast<Func<KillRightCreated, Task>>())
+            {
+                try
+                {
+                    await handler(created);
+                }
+                catch (Exception error)
+                {
+                    log?.Invoke($"crimewatch could not notify of kill right {killRightId}: {error.Message}");
+                }
+            }
+        }
+        return killRightId;
+    }
 
     private async Task RecordCriminalConsequencesAsync(
         AggressionRequest request,
@@ -507,7 +526,6 @@ public sealed class CrimewatchRuntime(PgCrimewatchStore store, CharacterSessions
         }
     }
 
-    /// <summary>Base delays taken from observed EVE University response times; CCP publishes no fixed response seconds.</summary>
     internal static long ConcordResponseDelayMs(double security) =>
         security >= 0.9 ? 6_000
         : security >= 0.8 ? 7_000

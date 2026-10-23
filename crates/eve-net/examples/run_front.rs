@@ -1,4 +1,3 @@
-//! Run the existing network front against an explicit host endpoint and listener (also on Windows).
 use eve_net::host::{Endpoint, HostLink};
 use eve_net::server::{ServeConfig, serve};
 use std::sync::Arc;

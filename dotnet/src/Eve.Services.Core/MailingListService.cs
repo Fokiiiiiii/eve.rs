@@ -7,7 +7,7 @@ using Eve.Marshal;
 namespace Eve.Services.Core;
 
 /// <summary>
-/// Mailing-list discovery and configuration reads. Source: EveJS v0.12.9,
+
 /// 828823a75f211fdecb945b087a26c225f111491f, services/mail/mailingListsMgrService.js
 /// and mailState.js; client: eve-logic, ui/services/mail/mailingListsSvc.py.
 /// </summary>
@@ -67,6 +67,7 @@ public sealed class MailingListService : IService
     }
 
     public string Name => "mailingListsMgr";
+    private const int MaxBulkMutationEntries = 1000;
 
     public bool HasMethod(string method) => method is
         "GetJoinedLists" or "GetInfo" or "GetMembers" or "GetSettings" or "GetWelcomeMail" ||
@@ -80,6 +81,16 @@ public sealed class MailingListService : IService
         call.Cancellation.ThrowIfCancellationRequested();
         if (ManagerMethod(call.Method) is { } managerMethod)
         {
+            if ((managerMethod is MailingListManagerMethod.KickMembers or
+                 MailingListManagerMethod.SetMembersMuted or
+                 MailingListManagerMethod.SetMembersOperator or
+                 MailingListManagerMethod.SetMembersClear) &&
+                call.Arg(1) is PyList memberTargets && memberTargets.Items.Count > MaxBulkMutationEntries)
+                throw MutationLimitRefusal();
+            if (managerMethod == MailingListManagerMethod.SetEntitiesAccess &&
+                call.Arg(1) is PyDict entityAccess && entityAccess.Entries.Count > MaxBulkMutationEntries)
+                throw MutationLimitRefusal();
+
             var callback = mutateMailingList ??
                 throw new InvalidOperationException("mailingListsMgr writes require an atomic persistence callback.");
             var caller = new MailingListCaller(
@@ -138,6 +149,9 @@ public sealed class MailingListService : IService
             _ => Empty(call.Method),
         };
     }
+
+    private static MachoWrappedException MutationLimitRefusal() => MachoErrors.ThrowUserError(
+        "CustomInfo", ("info", new PyStr("MAILING_LIST_BULK_LIMIT_EXCEEDED")));
 
     private static MailingListManagerMethod? ManagerMethod(string method) => method switch
     {

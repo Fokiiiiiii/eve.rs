@@ -7,13 +7,12 @@ using Eve.Ships;
 namespace Eve.Services.Space.Scanning;
 
 /// <summary>
-/// The directional scan (EVE.js <c>scanMgrService</c> <c>Handle_ConeScan</c>, the wiki's "Directional scanning"): from the ship, along the scan direction, the cone of
 /// the scan angle out to the scan range shows the objects in it by name and type, and only that (the rows are the client's: the item id, the type and the group).
 /// The scene says what there is (<see cref="SimDirectionalTargets"/>); this decides what a scan shows.
 /// </summary>
 public sealed class SpaceDirectionalScans
 {
-    /// <summary>The range the scanner reaches at most when the ship says none (EVE.js <c>DSCAN_FALLBACK_MAX_RANGE_METERS</c>; the wiki: "up to 14.3AU").</summary>
+
     private const double FallbackMaxRangeMeters = 14.3 * ProbeScanMath.AuMeters;
 
     /// <summary>The shortest range a scan can be asked for (EVE.js <c>DSCAN_MIN_RANGE_METERS</c>).</summary>
@@ -31,7 +30,6 @@ public sealed class SpaceDirectionalScans
     /// <summary>The radius of a type (SDE attribute 162): a ship's radius for the cone (EVE.js: an entity's radius is its type's).</summary>
     private const int AttrRadius = 162;
 
-    /// <summary>The groups the wiki's list shows: the wrecks (not corpses), the planets, the moons, the asteroid belts, the stargates and the stations.</summary>
     private const int GroupWreck = 186;
     private const int GroupCombatRecon = 906;
     private static readonly HashSet<int> CelestialGroups = [7, 8, 9, 10, 15];
@@ -61,7 +59,7 @@ public sealed class SpaceDirectionalScans
     /// </summary>
     public async Task<PyValue> ConeScanAsync(ClientSession session, PyValue angle, PyValue range, PyValue dx, PyValue dy, PyValue dz, CancellationToken cancellationToken)
     {
-        // a system whose client flag disallows scanning (Zarzakh: D-Scan is disabled, the wiki) answers nothing
+
         if (!_space.ScanningAllowedFor(session) || _space.ShipIdOf(session) is not { } shipId || _space.ShipTypeIdOf(session) is not { } shipType
             || await _space.PositionOfAsync(session, shipId, cancellationToken) is not { } ego)
         {
@@ -119,8 +117,6 @@ public sealed class SpaceDirectionalScans
     }
 
     /// <summary>
-    /// What a scan shows of a target (the wiki's list): a ship that is not cloaked, not in warp and not a combat recon ship; a drone; a scanner probe; a wreck (not a
-    /// corpse); the planets, moons, asteroid belts, stargates and stations; and nothing that is out of directional scans. Not shown: the NPCs (the wiki shows only
     /// those named with a diamond, and the simulation keeps no names of its NPCs), the fighter squadrons, the containers, the cosmic signatures and the beacons.
     /// </summary>
     private static bool Visible(SimDirectionalTarget target, TypeDef type)

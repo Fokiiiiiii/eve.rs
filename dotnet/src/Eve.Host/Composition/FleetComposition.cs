@@ -52,6 +52,30 @@ internal sealed partial class CharacterServicesComposition
     static bool SameFleetBubble(Eve.Services.ClientSession sender, Eve.Services.ClientSession recipient) =>
         sender.GetInt("ballparkid") is { } bubbleId && recipient.GetInt("ballparkid") == bubbleId;
 
+    internal static (int[] SkillIds, int[] Levels) FleetCommandSkills(
+        SkillCatalog catalog,
+        IReadOnlyList<CharacterSkill> trainedSkills)
+    {
+        var commandSkillIds = catalog.Skills
+            .Where(skill => skill.Name is "Leadership" or "Wing Command" or "Fleet Command")
+            .OrderBy(skill => skill.TypeId)
+            .Select(skill => skill.TypeId)
+            .ToArray();
+        if (commandSkillIds.Length != 3)
+            throw new InvalidOperationException("The SDE fleet command skill catalog must contain Leadership, Wing Command, and Fleet Command.");
+
+        var levelsBySkillId = trainedSkills.ToDictionary(skill => skill.TypeId, skill => skill.Level);
+        return (commandSkillIds, commandSkillIds.Select(skillId => levelsBySkillId.GetValueOrDefault(skillId)).ToArray());
+    }
+
+    async Task<IReadOnlyList<int>> FleetCommandSkillLevelsForCharacterAsync(
+        long characterId,
+        CancellationToken cancellationToken)
+    {
+        var trainedSkills = await skills.ForCharacterAsync(characterId, cancellationToken);
+        return FleetCommandSkills(skillCatalog, trainedSkills).Levels;
+    }
+
     async Task<PyValue> FleetCompositionForMembersAsync(
         IReadOnlyList<long> characterIds,
         CancellationToken cancellationToken)
@@ -75,11 +99,9 @@ internal sealed partial class CharacterServicesComposition
                 ? (long?)liveShipType
                 : shipTypes.GetValueOrDefault(characterId);
             var skillRows = await skills.ForCharacterAsync(characterId, cancellationToken);
-            var skillValues = new PyList([.. skillRows.Select(skill => (PyValue)Py.KeyVal(
-                ("typeID", new PyInt(skill.TypeId)),
-                ("level", new PyInt(skill.Level)),
-                ("skillPoints", new PyLong(skill.SkillPoints))))]);
-            var skillIds = new PyList([.. skillRows.Select(skill => (PyValue)new PyInt(skill.TypeId))]);
+            var (commandSkillIds, commandSkillLevels) = FleetCommandSkills(skillCatalog, skillRows);
+            var skillValues = new PyList([.. commandSkillLevels.Select(level => (PyValue)new PyInt(level))]);
+            var skillIds = new PyList([.. commandSkillIds.Select(skillId => (PyValue)new PyInt(skillId))]);
             result.Add(Py.KeyVal(
                 ("characterID", new PyLong(characterId)),
                 ("solarSystemID", session?.GetInt("solarsystemid2") is { } solarSystemId
@@ -182,7 +204,13 @@ internal sealed partial class CharacterServicesComposition
             Eve.Services.Space.FleetStore.FleetFinderAdvertPayloadMigration,
             Eve.Services.Space.FleetStore.FleetJoinRequestProfileMigration
         ], CancellationToken.None);
-        fleetStore = new Eve.Services.Space.FleetStore(source, fleetSchema);
+        var maxJoinRequestsText = Env("EVE_MAX_FLEET_JOIN_REQUESTS",
+            Eve.Services.Space.FleetStore.DefaultMaxJoinRequests.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        if (!int.TryParse(maxJoinRequestsText, System.Globalization.NumberStyles.None,
+                System.Globalization.CultureInfo.InvariantCulture, out var maxJoinRequests) ||
+            maxJoinRequests is < 1 or > Eve.Services.Space.FleetStore.MaximumConfiguredJoinRequests)
+            throw new InvalidOperationException("EVE_MAX_FLEET_JOIN_REQUESTS must be between 1 and 65536.");
+        fleetStore = new Eve.Services.Space.FleetStore(source, fleetSchema, maxJoinRequests);
         // the jump drive to a fleet's cynosural field reads the fleets, so it is made after them (the space simulation is set up before the fleets)
         if (spaceSessions is not null)
         {

@@ -180,6 +180,29 @@ pub(super) fn read_identity(reader: &mut Reader) -> Result<NpcIdentity, DecodeEr
     for _ in 0..count {
         weapons.push(read_weapon(reader)?);
     }
+    let repair_count = reader.u32()? as usize;
+    if repair_count > 2 {
+        return Err(DecodeError::BadValue("NPC self-repair count"));
+    }
+    if repair_count > reader.data.len() / 36 {
+        return Err(DecodeError::Truncated);
+    }
+    let mut self_repairs = Vec::with_capacity(repair_count);
+    for _ in 0..repair_count {
+        let repair = NpcSelfRepair {
+            effect_id: reader.i32()?,
+            amount: reader.f64()?,
+            cycle_ms: reader.f64()?,
+            capacitor_cost: reader.f64()?,
+            delay_chance: reader.f64()?,
+        };
+        if !repair.is_valid()
+            || self_repairs.iter().any(|existing: &NpcSelfRepair| existing.effect_id == repair.effect_id)
+        {
+            return Err(DecodeError::BadValue("NPC self-repair"));
+        }
+        self_repairs.push(repair);
+    }
     let wreck = read_wreck_kind(reader)?;
     let hull = match reader.u8()? {
         0 => false,
@@ -195,6 +218,7 @@ pub(super) fn read_identity(reader: &mut Reader) -> Result<NpcIdentity, DecodeEr
         hostile_response_threshold,
         friendly_response_threshold,
         combat: NpcCombat { weapons, aggression_range },
+        self_repairs,
         wreck,
         hull,
         host_wreck,
@@ -306,7 +330,7 @@ pub(super) fn read_changes(reader: &mut Reader) -> Result<Vec<Change>, DecodeErr
 /// The ships a command burst reaches (`ModuleWorkCycle`, protocol 43): a count, then each ship's id. A count the frame cannot hold is refused before it is read.
 pub(super) fn read_recipients(reader: &mut Reader) -> Result<Vec<i64>, DecodeError> {
     let count = reader.u32()? as usize;
-    if count > reader.data.len() / 8 {
+    if reader.data.len() < 4 || count > (reader.data.len() - 4) / 8 {
         return Err(DecodeError::Truncated);
     }
     (0..count).map(|_| reader.i64()).collect()
@@ -322,8 +346,8 @@ pub(super) fn read_effect(reader: &mut Reader) -> Result<Effect, DecodeError> {
     let repeat = reader.i32()?;
     let target_id = reader.i64()?;
     let flags = reader.u8()?;
-    // bits: 1 on, 2 off, 4 turret, 8 action, 16 burns fuel (a fuel cycle is asked of the host before each cycle that starts), 32 the module rules
-    if flags > 63 {
+    // bits: 1 on, 2 off, 4 turret, 8 action, 16 burns fuel, 32 module rules, 64 fallback capacitor need
+    if flags > 127 {
         return Err(DecodeError::BadValue("flags"));
     }
     let on = if flags & 1 != 0 { Some(read_numbers(reader)?) } else { None };
@@ -333,8 +357,10 @@ pub(super) fn read_effect(reader: &mut Reader) -> Result<Effect, DecodeError> {
     let turret = if flags & 4 != 0 { Some(read_turret(reader)?) } else { None };
     let action = if flags & 8 != 0 { Some(read_action(reader)?) } else { None };
     let rules = if flags & 32 != 0 { read_rules(reader)? } else { Rules::default() };
+    let fallback_capacitor_need = if flags & 64 != 0 { reader.f64()? } else { 0.0 };
     Ok(Effect {
         rules,
+        fallback_capacitor_need,
         burns_fuel: flags & 16 != 0,
         module_id,
         module_type,

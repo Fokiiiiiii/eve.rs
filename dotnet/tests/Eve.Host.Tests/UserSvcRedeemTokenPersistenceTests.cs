@@ -28,7 +28,6 @@ public sealed class UserSvcRedeemTokenPersistenceTests
             var runtime = new PersistenceNewEdenStoreRuntime(
                 source, store, ownerFence, null!, null!, null!, null!, null!,
                 () => 1_700_000_000_123,
-                _ => Task.FromResult(new JsonObject()),
                 null!);
             var service = (IService)(object)new RedeemService(
                 runtime,
@@ -50,7 +49,7 @@ public sealed class UserSvcRedeemTokenPersistenceTests
                     new(new PyStr("blueprintMaterialLevel"), new PyInt(2)),
                     new(new PyStr("blueprintProductivityLevel"), new PyInt(4)),
                 ]),
-                Session = new ClientSession { UserId = 35 },
+                Session = StaffSession(35),
             };
 
             var payload = Assert.IsType<PyObject>(await service.CallAsync(call));
@@ -74,6 +73,13 @@ public sealed class UserSvcRedeemTokenPersistenceTests
             await using var command = new NpgsqlCommand($"DROP SCHEMA IF EXISTS \"{schema}\" CASCADE", connection);
             await command.ExecuteNonQueryAsync();
         }
+    }
+
+    private static ClientSession StaffSession(int userId)
+    {
+        var session = new ClientSession { UserId = userId };
+        session.Set("accountRole", new PyLong(GameMasterRoles.Qa));
+        return session;
     }
 
     private static PyValue Field(PyDict fields, string name) =>

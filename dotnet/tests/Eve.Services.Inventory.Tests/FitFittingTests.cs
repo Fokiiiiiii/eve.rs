@@ -8,7 +8,6 @@ using Eve.Skills;
 namespace Eve.Services.Inventory.Tests;
 
 /// <summary>
-/// The fitting of a saved fitting's modules onto a docked ship (EveJS <c>Handle_FitFitting</c>, module leg): the modules go into the slots they name, the
 /// ones that cannot go are the reply, and a ship that is not the one the fitting names is refused. Real moves, against the real static data.
 /// </summary>
 public class FitFittingTests
@@ -22,7 +21,7 @@ public class FitFittingTests
         await using var connection = await rig.Source.OpenConnectionAsync();
         await using var transaction = await connection.BeginTransactionAsync();
         await rig.Skills.GrantAsync(connection, transaction, Rig.Character,
-            [new CharacterSkill(3386, 1, 0), new CharacterSkill(24241, 1, 0), new CharacterSkill(3436, 1, 0)]);
+            [new CharacterSkill(3386, 1, 0), new CharacterSkill(24241, 1, 0), new CharacterSkill(3436, 1, 0), new CharacterSkill(3425, 1, 0)]);
         await transaction.CommitAsync();
     }
 
@@ -265,7 +264,6 @@ public class FitFittingTests
         Assert.Equal(Rig.Station, (await rig.Items.GetAsync(module))!.LocationId);
     }
 
-    /// <summary>The fit's changes are told to the pilot in one batch at the end (EveJS <c>_finalizeFitFittingBatch</c>), not one notice per move.</summary>
     [PgFact]
     public async Task A_fit_tells_the_pilot_its_changes_in_one_batch_at_the_end()
     {
@@ -286,6 +284,44 @@ public class FitFittingTests
 
         Assert.Empty(reply.Items);
         Assert.Equal((1, 1), (sink.Named("OnMultiEvent"), sink.Named("OnItemsChanged")));
+    }
+
+    [PgFact]
+    public async Task A_saved_fit_replaces_an_occupied_module_slot_and_keeps_the_old_module_in_the_hangar()
+    {
+        await using var rig = await Rig.CreateAsync(activeShip: true);
+        await TrainAsync(rig);
+        const int shieldExtender = 3829;
+        var ship = await rig.AddAsync(Ibis, Rig.Character, Rig.Station, singleton: true);
+        var oldModule = await rig.AddAsync(Afterburner, Rig.Character, Rig.Station);
+        var replacement = await rig.AddAsync(shieldExtender, Rig.Character, Rig.Station);
+        Assert.IsType<ShipChanged>(await rig.Ships.MoveAsync(
+            Rig.Character, oldModule, Rig.Station, ship, MediumSlot, null));
+        var session = Rig.Session();
+        var inventory = Rig.OidOf(await rig.CallAsync(session, "GetInventoryFromId", null, new PyLong(ship)));
+
+        var reply = Assert.IsType<PyList>(await ((IService)rig.Service).CallAsync(new ServiceCall
+        {
+            Method = "FitFitting",
+            BoundObjectId = inventory,
+            Session = session,
+            Args =
+            [
+                new PyLong(ship),
+                new PyInt(Ibis),
+                Map((new PyInt(shieldExtender), new PyList([new PyLong(replacement)]))),
+                new PyLong(Rig.Station),
+                Py.KeyVal(("modulesByFlag", Map((new PyInt(MediumSlot), new PyInt(shieldExtender))))),
+                Map(),
+                PyBool.True,
+            ],
+        }));
+
+        Assert.Empty(reply.Items);
+        var storedOldModule = (await rig.Items.GetAsync(oldModule))!;
+        var storedReplacement = (await rig.Items.GetAsync(replacement))!;
+        Assert.Equal((Rig.Station, Eve.Inventory.ItemFlags.Hangar), (storedOldModule.LocationId, storedOldModule.Flag));
+        Assert.Equal((ship, MediumSlot), (storedReplacement.LocationId, storedReplacement.Flag));
     }
 
     /// <summary>Records the packets a session sends, and counts the notifications of a name (the name is the broadcast address's).</summary>

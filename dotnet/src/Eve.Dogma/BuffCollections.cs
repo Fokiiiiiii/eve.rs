@@ -16,8 +16,9 @@ public sealed record BuffCollection(int Id, string Name, bool Weakest, IReadOnly
     public EffectDef EffectFor(double value) => new(Id, $"buff:{Id}", EffectDef.Passive, ModifiersFor(value));
 
     /// <summary>
-    /// The collection of one row of the static data. The modifiers reach the item the buff is on (<c>itemID</c>): its attributes (<c>itemModifiers</c>), the
-    /// items located in it of a group (<c>locationGroupModifiers</c>) and the ones located in it that need a skill (<c>locationRequiredSkillModifiers</c>).
+    /// The collection of one row of the static data. The modifiers reach the item the buff is on (<c>itemID</c>): its attributes (<c>itemModifiers</c>), all
+    /// items located in it (<c>locationModifiers</c>), the items located in it of a group (<c>locationGroupModifiers</c>), and the ones located in it that need a skill
+    /// (<c>locationRequiredSkillModifiers</c>).
     /// Null when the row applies an operation the engine does not know, so no buff of it is made.
     /// </summary>
     public static BuffCollection? From(int id, JsonElement doc)
@@ -33,6 +34,13 @@ public sealed record BuffCollection(int Id, string Name, bool Weakest, IReadOnly
             foreach (var row in items.EnumerateArray())
             {
                 shape.Add(new Modifier(ModifierFunc.Item, "itemID", op, row.GetProperty("dogmaAttributeID").GetInt32(), 0));
+            }
+        }
+        if (doc.TryGetProperty("locationModifiers", out var locations) && locations.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var row in locations.EnumerateArray())
+            {
+                shape.Add(new Modifier(ModifierFunc.Location, "itemID", op, row.GetProperty("dogmaAttributeID").GetInt32(), 0));
             }
         }
         if (doc.TryGetProperty("locationGroupModifiers", out var groups) && groups.ValueKind == JsonValueKind.Array)

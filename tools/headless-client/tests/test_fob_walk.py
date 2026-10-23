@@ -19,11 +19,9 @@ pytestmark = pytest.mark.skipif(not LIVE, reason="set EVE_LIVE_HOST=host:port to
 
 FOB_ID_FLOOR = 1_100_000_000_000
 
-
 def _client() -> Client:
     host, _, port = LIVE.partition(":")
     return Client(host or "127.0.0.1", int(port or 26000), timeout=20.0)
-
 
 def _integers(value):
     """Every integer in a decoded answer, whatever the containers are."""
@@ -39,7 +37,6 @@ def _integers(value):
             yield from _integers(item)
     elif hasattr(value, "__dict__"):
         yield from _integers(vars(value))
-
 
 def test_the_campaigns_at_boot_name_their_fob_structures():
     with _client() as client:

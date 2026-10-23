@@ -65,9 +65,8 @@ internal sealed partial class CharacterServicesComposition
             new Eve.Services.Core.LoginCampaignMgrService(storeRuntime),
             new Eve.Services.Core.SeasonalLoginCampaignMgrService(storeRuntime),
             new StoreOffersService(
-                _ => ValueTask.FromResult<JsonObject?>(Eve.Services.Core.NewEdenStoreCatalog.Default.Root),
-                storeRuntime.PurchaseAsync),
-            new Eve.Services.Core.FastCheckoutService(Eve.Services.Core.NewEdenStoreCatalog.Default, storeRuntime),
+                _ => ValueTask.FromResult<JsonObject?>(Eve.Services.Core.NewEdenStoreCatalog.Default.Root)),
+            new Eve.Services.Core.FastCheckoutService(Eve.Services.Core.NewEdenStoreCatalog.Default),
             new Eve.Services.Core.RedeemService(
                 storeRuntime,
                 async (userId, ct) => (await accounts.FindAsync(checked((uint)userId), ct))?.UserName,
@@ -81,6 +80,13 @@ internal sealed partial class CharacterServicesComposition
                     if (call.Method == "UserLogOffCharacter")
                         return PyValue.Of(await new CharacterLogoff(characters, online, characterEntryHooks, now)
                             .LogOffAsync(call.Session, ct).ConfigureAwait(false));
+                    if (call.Method == "GetUserToken")
+                    {
+                        if (call.Session.UserId is not { } userId || userId <= 0)
+                            throw new UnauthorizedAccessException("An authenticated account is required for a user token.");
+                        return new Eve.Marshal.PyStr(Eve.Host.PublicGateway.GatewayTokens.Issue(userId,
+                            call.Session.CharacterId is > 0 ? call.Session.CharacterId : null, DateTimeOffset.UtcNow));
+                    }
                     if (call.Method == "CreateRedeemTokenQA")
                         return await storeRuntime.CreateRedeemTokenQAAsync(call, ct).ConfigureAwait(false);
                     return null;

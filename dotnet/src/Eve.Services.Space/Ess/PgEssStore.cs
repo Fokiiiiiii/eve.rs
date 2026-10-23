@@ -46,7 +46,7 @@ public enum EssEventKind
     Theft,
     /// <summary>A link ended without a theft (the thief was no longer in the system).</summary>
     LinkEnded,
-    /// <summary>The bank's money or pulses changed on the clock (an owner payout or a reserve pulse).</summary>
+
     Changed,
 }
 
@@ -55,7 +55,6 @@ public sealed record EssEvent(EssEventKind Kind, int SolarSystemId, string LinkI
 
 /// <summary>
 /// The Encounter Surveillance Systems in PostgreSQL. A bounty earned in an ESS system pays <see cref="EssRules.MainBankShare"/> into its Main Bank in the same
-/// transaction that records the bounty; a link is a row that the clock completes (a theft, paid into the thief's wallet) or ends; the owner is paid on the
 /// clock; a Reserve Bank opened by a key pays its pulses on the clock. Every change is one transaction under the row lock of its system.
 /// </summary>
 public sealed class PgEssStore
@@ -67,9 +66,10 @@ public sealed class PgEssStore
     private readonly string _schema;
     private readonly Action<string>? _log;
     private readonly Func<int, long, long, CancellationToken, ValueTask<EssHolder?>>? _holderOf;
-    private readonly Func<NpgsqlConnection, NpgsqlTransaction, long, long, CancellationToken, ValueTask<bool>>? _consumeKey;
+    private readonly Func<NpgsqlConnection, NpgsqlTransaction, long, long, long, CancellationToken, ValueTask<bool>>? _consumeKey;
     private readonly Func<int, string?>? _quadrantOf;
     private readonly Func<int, CancellationToken, ValueTask<long?>>? _sovereigntyOwnerOf;
+    private readonly Func<long, CancellationToken, ValueTask<long?>>? _corporationOf;
     private readonly double _reserveMaxPayout;
 
     /// <param name="holderOf">
@@ -81,7 +81,6 @@ public sealed class PgEssStore
     /// false when the character has none.
     /// </param>
     /// <param name="quadrantOf">The quadrant of a system, or null when it is in none.</param>
-    /// <param name="sovereigntyOwnerOf">The alliance that holds the system's sovereignty, or null when none does (the owner is then the configured one).</param>
     /// <param name="reserveMaxPayout">The largest payout of one reserve pulse (<see cref="EssRules.ReserveBankMaxPayout"/> unless a test sets another).</param>
     public PgEssStore(
         NpgsqlDataSource source,
@@ -89,10 +88,11 @@ public sealed class PgEssStore
         string schema = DefaultSchema,
         Action<string>? log = null,
         Func<int, long, long, CancellationToken, ValueTask<EssHolder?>>? holderOf = null,
-        Func<NpgsqlConnection, NpgsqlTransaction, long, long, CancellationToken, ValueTask<bool>>? consumeKey = null,
+        Func<NpgsqlConnection, NpgsqlTransaction, long, long, long, CancellationToken, ValueTask<bool>>? consumeKey = null,
         Func<int, string?>? quadrantOf = null,
         Func<int, CancellationToken, ValueTask<long?>>? sovereigntyOwnerOf = null,
-        double reserveMaxPayout = EssRules.ReserveBankMaxPayout)
+        double reserveMaxPayout = EssRules.ReserveBankMaxPayout,
+        Func<long, CancellationToken, ValueTask<long?>>? corporationOf = null)
     {
         if (!System.Text.RegularExpressions.Regex.IsMatch(schema, "^[a-z_][a-z0-9_]{0,62}$"))
         {
@@ -106,6 +106,7 @@ public sealed class PgEssStore
         _consumeKey = consumeKey;
         _quadrantOf = quadrantOf;
         _sovereigntyOwnerOf = sovereigntyOwnerOf;
+        _corporationOf = corporationOf;
         _reserveMaxPayout = reserveMaxPayout;
     }
 
@@ -129,7 +130,6 @@ public sealed class PgEssStore
         return command;
     }
 
-    /// <summary>Makes a solar system's ESS exist (or updates its ids and owner); the operator places them, nothing else does yet.</summary>
     public async Task RegisterAsync(int solarSystemId, long essId, long? ownerId, long nowMs, CancellationToken cancellationToken = default)
     {
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
@@ -286,7 +286,8 @@ public sealed class PgEssStore
                 // a key opens a bank only in its own quadrant, and only when the character holds one: the key is taken out of the inventory
                 if (EssReserveKeys.Find(request.KeyTypeId) is not { } key || state.PulsesRemaining > 0 ||
                     _quadrantOf?.Invoke(systemId) != key.Quadrant || _consumeKey is null ||
-                    !await _consumeKey(connection, transaction, character, key.KeyTypeId, cancellationToken))
+                    request.Call.Session.GetInt("shipid") is not { } shipId ||
+                    !await _consumeKey(connection, transaction, character, shipId, key.KeyTypeId, cancellationToken))
                 {
                     return new EssMgrOperationResult(false, ToClient(state));
                 }
@@ -315,11 +316,31 @@ public sealed class PgEssStore
     }
 
     /// <summary>The pilot of a character in the system when it may link now (in the system, a linkable ship, within range); null otherwise.</summary>
-    private async ValueTask<EssHolder?> LinkHolderAsync(int systemId, long characterId, long essId, CancellationToken cancellationToken) =>
-        await HolderAsync(systemId, characterId, essId, cancellationToken) is { InSystem: true, LinkableShip: true } holder
-        && holder.DistanceMeters <= EssRules.MaxLinkDistanceMeters
-            ? holder
-            : null;
+    private async ValueTask<EssHolder?> LinkHolderAsync(int systemId, long characterId, long essId, CancellationToken cancellationToken)
+    {
+        var holder = await HolderAsync(systemId, characterId, essId, cancellationToken);
+        if (holder is null)
+        {
+            _log?.Invoke("ESS link refused: no ship position is available for the pilot.");
+            return null;
+        }
+        if (!holder.InSystem)
+        {
+            _log?.Invoke("ESS link refused: pilot is outside the ESS solar system.");
+            return null;
+        }
+        if (!holder.LinkableShip)
+        {
+            _log?.Invoke("ESS link refused: the current ship is not in SDE type list 231.");
+            return null;
+        }
+        if (holder.DistanceMeters > EssRules.MaxLinkDistanceMeters)
+        {
+            _log?.Invoke($"ESS link refused: ship is {holder.DistanceMeters:0} m from the ESS; maximum is {EssRules.MaxLinkDistanceMeters:0} m.");
+            return null;
+        }
+        return holder;
+    }
 
     private async ValueTask<EssHolder?> HolderAsync(int systemId, long characterId, long essId, CancellationToken cancellationToken) =>
         _holderOf is null ? null : await _holderOf(systemId, characterId, essId, cancellationToken);
@@ -327,7 +348,6 @@ public sealed class PgEssStore
     /// <summary>
     /// What the clock does now. A link is checked on every tick: a thief who has left the system, changed ship, or gone beyond the link range breaks it (the
     /// client's reasons 1 and 2); a link that completes while its thief is still linked is a theft (the thief's wallet gets <see cref="EssRules.ThiefPayout"/>,
-    /// the bank is emptied, the rest is destroyed). The owner is paid when its time comes (the sovereignty holder when there is one, else the configured owner),
     /// and each Reserve Bank pulse that is due is paid to the linked characters. Systems are worked one at a time; a system whose wallet cannot take the money is
     /// logged and retried at the next tick.
     /// </summary>
@@ -437,11 +457,23 @@ public sealed class PgEssStore
                 var share = EssRules.Money(payout / linked.Count);
                 if (share > 0)
                 {
+                    var sharesByCorporation = new Dictionary<long, decimal>();
                     foreach (var character in linked)
                     {
-                        await _wallet.AdjustAsync(connection, transaction, character, share, 0, EssRules.EssRefType, "ESS reserve bank payout",
-                            due, $"ess:reserve:{systemId}:{state.ReserveOpenedMs}:{pulse}:{character}", cancellationToken);
+                        var corporationId = _corporationOf is null
+                            ? throw new InvalidOperationException("ESS reserve payouts require the linked character's corporation")
+                            : await _corporationOf(character, cancellationToken);
+                        if (corporationId is not > 0)
+                            throw new InvalidOperationException($"ESS reserve recipient {character} has no corporation");
+                        sharesByCorporation[corporationId.Value] = sharesByCorporation.GetValueOrDefault(corporationId.Value) + share;
                         await InsertTheftAsync(connection, transaction, systemId, "reserve", character, share, due, cancellationToken);
+                    }
+                    foreach (var (corporationId, amount) in sharesByCorporation.OrderBy(pair => pair.Key))
+                    {
+                        await _wallet.OpenCorporationDivisionsAsync(connection, transaction, corporationId, cancellationToken);
+                        await _wallet.AdjustAsync(connection, transaction, new WalletAccount(corporationId, 1001), amount, 0, EssRules.EssRefType,
+                            "ESS reserve bank payout", due, $"ess:reserve:{systemId}:{state.ReserveOpenedMs}:{pulse}:{corporationId}",
+                            "ess-reserve", cancellationToken);
                     }
                     state = state with { ReserveValue = state.ReserveValue - share * linked.Count };
                 }
@@ -452,6 +484,14 @@ public sealed class PgEssStore
                 NextPulseMs = state.PulsesRemaining - 1 > 0 ? due + EssRules.PulseIntervalMs : null,
             };
             pulsed = true;
+        }
+        if (state.PulsesRemaining == 0 && state.ReserveLinked.Count > 0)
+        {
+            await using var expireLinks = Command(
+                "DELETE FROM {schema}.reserve_links WHERE solar_system_id = $1",
+                connection, transaction, systemId);
+            await expireLinks.ExecuteNonQueryAsync(cancellationToken);
+            state = state with { ReserveLinked = new HashSet<long>() };
         }
         if (pulsed)
         {

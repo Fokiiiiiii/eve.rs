@@ -3,9 +3,6 @@ using Npgsql;
 namespace Eve.Services.Space;
 
 /// <summary>
-/// The loot of a data or relic site's container, as EveJS gives it (<c>dungeonUniverseSiteService.js</c>: the profiles <c>generic_data_loot</c> and
-/// <c>generic_relic_loot</c>). The wiki lists no loot. Each tag of a profile names five candidate types; the container's seed takes one of the
-/// candidates the static data has, and a quantity between the tag's bounds. The ST-11 data has no population tags, so a profile takes all its tags
 /// (DEVIATIONS "Site loot").
 /// </summary>
 public static class SiteLoot

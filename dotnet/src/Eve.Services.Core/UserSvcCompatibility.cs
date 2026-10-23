@@ -27,7 +27,7 @@ public sealed partial class RedeemService
 
     /// <summary>
     /// <c>ActivateMultiTraining(itemID, trainingID=...)</c>: uses a certificate item of the account. The item is consumed and the queue gets
-    /// 30 days. A refusal is the reference's CustomInfo text (EveJS and the wiki are the sources; EveJS itself only refreshes the slots).
+
     /// </summary>
     [Method("ActivateMultiTraining")]
     public async ValueTask<PyValue> ActivateMultiTraining(ServiceCall call)
@@ -87,6 +87,8 @@ public sealed partial class RedeemService
     public async ValueTask<PyValue> CreateRedeemTokenQA(ServiceCall call)
     {
         call.Cancellation.ThrowIfCancellationRequested();
+        // A QA tool: the server-set staff role gates every grant, so a player cannot mint items for any account.
+        if (!CompatibilityRpc.IsStaff(call)) return PyBool.False;
         var accountId = PositiveInteger(call.Kwarg("userID") ?? PyNone.Instance);
         if (accountId <= 0) accountId = call.Session.UserId ?? 0;
         if (accountId is <= 0 or > int.MaxValue || PositiveInteger(call.Kwarg("typeID") ?? PyNone.Instance) is <= 0 or > int.MaxValue)
@@ -108,22 +110,22 @@ public sealed partial class RedeemService
         return await OverrideUserCallAsync(call, activated ? PyBool.True : PyBool.False);
     }
 
-    /// <summary>GATE-C (owner decision): answers true and keeps nothing, as the reference does (EveJS <c>userService.js</c> 1104). The client does not read the answer.</summary>
+
     [Method("CastUpvote")]
     public async ValueTask<PyValue> CastUpvote(ServiceCall call) =>
         await OverrideUserCallAsync(call, PyBool.True);
 
-    /// <summary>GATE-C (owner decision): answers true and keeps nothing, as the reference does (EveJS <c>userService.js</c> 1109). The client does not read the answer.</summary>
+
     [Method("CastDownvote")]
     public async ValueTask<PyValue> CastDownvote(ServiceCall call) =>
         await OverrideUserCallAsync(call, PyBool.True);
 
-    /// <summary>GATE-C (owner decision): answers true and keeps nothing, as the reference does (EveJS <c>userService.js</c> 1115). The client does not read the answer.</summary>
+
     [Method("ReportBot")]
     public async ValueTask<PyValue> ReportBot(ServiceCall call) =>
         await OverrideUserCallAsync(call, PyBool.True);
 
-    /// <summary>GATE-C (owner decision): answers true and keeps nothing, as the reference does (EveJS <c>userService.js</c> 1122). The client does not read the answer.</summary>
+
     [Method("ReportISKSpammer")]
     public async ValueTask<PyValue> ReportISKSpammer(ServiceCall call) =>
         await OverrideUserCallAsync(call, PyBool.True);
@@ -168,8 +170,8 @@ public sealed partial class RedeemService
     [Method("GetUserToken")]
     public async ValueTask<PyValue> GetUserToken(ServiceCall call)
     {
-        if (await UserOverrideAsync(call).ConfigureAwait(false) is { } overridden) return overridden;
-        return new PyStr($"evejs-local-token-{call.Session.UserId ?? 0}-{call.Session.CharacterId ?? 0}");
+        if (await UserOverrideAsync(call).ConfigureAwait(false) is { } token) return token;
+        throw new InvalidOperationException("User token issuance is not wired on this host.");
     }
 
     private async ValueTask<PyValue> OverrideUserCallAsync(ServiceCall call, PyValue fallback) =>

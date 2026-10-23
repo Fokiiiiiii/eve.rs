@@ -160,12 +160,36 @@ public sealed class StructureCompositionTests : IAsyncLifetime
         var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
         await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
         await PgCharacterStore.MigrateAsync(source, Schema("EVE_CHARACTERS_SCHEMA"));
+        await Eve.Corporations.CorporationStore.MigrateAsync(source, Schema("EVE_CORPORATIONS_SCHEMA"));
         var station = (await StationCatalog.LoadAsync(new SdeReader(source))).All.First();
         await using var connection = await source.OpenConnectionAsync();
         await using var transaction = await connection.BeginTransactionAsync();
         var characterId = await new PgCharacterStore(source, Schema("EVE_CHARACTERS_SCHEMA")).InsertAsync(connection, transaction,
             new NewCharacter(1, name, 0, 1, 1, 1, 11, 1376, corporationId, null, station.Id, station.SolarSystemId, station.ConstellationId, station.RegionId, null, null));
         await transaction.CommitAsync();
+        await using (var owner = source.CreateCommand($"INSERT INTO {Schema("EVE_CORPORATIONS_SCHEMA")}.owner_names(owner_id,name_key,ticker_key) VALUES ($1,$2,$3) ON CONFLICT(owner_id) DO NOTHING"))
+        {
+            owner.Parameters.AddWithValue(corporationId);
+            owner.Parameters.AddWithValue($"structure-test-{corporationId}");
+            owner.Parameters.AddWithValue($"s{corporationId}");
+            await owner.ExecuteNonQueryAsync();
+        }
+        await using (var corporation = source.CreateCommand($"INSERT INTO {Schema("EVE_CORPORATIONS_SCHEMA")}.corporations(id,name,ticker,ceo_id,creator_id,station_id,solar_system_id,tax_rate,lp_tax_rate,description,url,member_limit,created_ms) VALUES ($1,$2,$3,$4,$4,$5,$6,0,0,'','',1000,0) ON CONFLICT(id) DO NOTHING"))
+        {
+            corporation.Parameters.AddWithValue(corporationId);
+            corporation.Parameters.AddWithValue($"Structure Test {corporationId}");
+            corporation.Parameters.AddWithValue($"S{corporationId}");
+            corporation.Parameters.AddWithValue(characterId + 1);
+            corporation.Parameters.AddWithValue(station.Id);
+            corporation.Parameters.AddWithValue(station.SolarSystemId);
+            await corporation.ExecuteNonQueryAsync();
+        }
+        await using (var member = source.CreateCommand($"INSERT INTO {Schema("EVE_CORPORATIONS_SCHEMA")}.members(character_id,corporation_id,started_ms,roles) VALUES ($1,$2,0,2048) ON CONFLICT(character_id) DO UPDATE SET corporation_id=EXCLUDED.corporation_id, roles=EXCLUDED.roles"))
+        {
+            member.Parameters.AddWithValue(characterId);
+            member.Parameters.AddWithValue(corporationId);
+            await member.ExecuteNonQueryAsync();
+        }
         return characterId;
     }
 
@@ -588,21 +612,26 @@ public sealed class StructureCompositionTests : IAsyncLifetime
         var manager = await Assert.ThrowsAsync<MachoWrappedException>(async () => await deployment.CallAsync(Call(RoleSession(characterId, Corporation, 2048), "Unanchor", 1, new PyInt(StructureId))));
         Assert.Equal("CrpAccessDenied", Refusal(manager).Name);
 
+        var noCorporation = await Assert.ThrowsAsync<MachoWrappedException>(async () => await deployment.CallAsync(
+            Call(RoleSession(characterId, 0, 1), "Unanchor", 2, new PyInt(StructureId))));
+        Assert.Equal("CrpAccessDenied", Refusal(noCorporation).Name);
+        Assert.Equal(0, (await store.GetAsync(StructureId))!.Snapshot.UnanchorEndsMs);
+
         var director = RoleSession(characterId, Corporation, 1);
         var before = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        await deployment.CallAsync(Call(director, "Unanchor", 2, new PyInt(StructureId)));
+        await deployment.CallAsync(Call(director, "Unanchor", 3, new PyInt(StructureId)));
         var after = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         var unanchoring = (await store.GetAsync(StructureId))!.Snapshot.UnanchorEndsMs;
         Assert.InRange(unanchoring, before + StructureTimes.UnanchoringMs, after + StructureTimes.UnanchoringMs);
 
         // asking again while it runs changes nothing (EVE.js answers success)
-        await deployment.CallAsync(Call(director, "Unanchor", 3, new PyInt(StructureId)));
+        await deployment.CallAsync(Call(director, "Unanchor", 4, new PyInt(StructureId)));
         Assert.Equal(unanchoring, (await store.GetAsync(StructureId))!.Snapshot.UnanchorEndsMs);
 
-        await deployment.CallAsync(Call(director, "CancelUnanchor", 4, new PyInt(StructureId)));
+        await deployment.CallAsync(Call(director, "CancelUnanchor", 5, new PyInt(StructureId)));
         Assert.Equal(0, (await store.GetAsync(StructureId))!.Snapshot.UnanchorEndsMs);
         // nothing to cancel is not an error
-        await deployment.CallAsync(Call(director, "CancelUnanchor", 5, new PyInt(StructureId)));
+        await deployment.CallAsync(Call(director, "CancelUnanchor", 6, new PyInt(StructureId)));
         await host.ShutdownAsync();
     }
 
@@ -724,10 +753,19 @@ public sealed class StructureCompositionTests : IAsyncLifetime
     /// </summary>
     private static async Task<HostRuntime> BuildWithSpaceServicesAsync()
     {
+        var previousSimulation = Environment.GetEnvironmentVariable("EVE_SIM");
+        var previousSocket = Environment.GetEnvironmentVariable("EVE_SIM_SOCKET");
         Environment.SetEnvironmentVariable("EVE_SIM", "on");
         Environment.SetEnvironmentVariable("EVE_SIM_SOCKET", Path.Combine(Path.GetTempPath(), "eve-no-sim-" + Guid.NewGuid().ToString("N") + ".sock"));
-        try { return await HostComposition.BuildAsync(Settings()); }
-        finally { Environment.SetEnvironmentVariable("EVE_SIM", "off"); }
+        try
+        {
+            return await HostComposition.BuildAsync(Settings());
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("EVE_SIM", previousSimulation);
+            Environment.SetEnvironmentVariable("EVE_SIM_SOCKET", previousSocket);
+        }
     }
 
     [PgFact]

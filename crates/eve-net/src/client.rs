@@ -1,7 +1,3 @@
-//! A minimal EVE client, for tests and load generation: the client half of the handshake, and the packets
-//! a session sends. It is not a game client; `tools/headless-client` (evecli) is the reference for what a
-//! real one does.
-
 use bytes::Bytes;
 use eve_marshal::{SubStream, Value, decode_bytes, encode_packet};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
@@ -64,7 +60,6 @@ pub fn int_of(value: &Value) -> Option<i64> {
     }
 }
 
-/// CRC-HQX (CRC-16/XMODEM), the hash the Placebo crypto pack answers a challenge with.
 pub fn crc_hqx(data: &[u8]) -> u16 {
     let mut crc = 0u16;
     for &byte in data {

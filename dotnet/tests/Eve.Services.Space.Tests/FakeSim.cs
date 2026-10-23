@@ -19,6 +19,94 @@ internal sealed class FakeSim : ISimulation
     /// <summary>What an <c>Enter</c> is answered with: null (done) or a reason.</summary>
     public string? EnterAnswer { get; set; }
 
+    public Task<string?> EnsureAbyssalSceneAsync(SimEnsureAbyssalScene scene, CancellationToken cancellationToken = default) =>
+        RecordAbyssalAsync(scene, cancellationToken);
+
+    public Task<string?> EnsureAbyssalSceneObjectAsync(SimEnsureAbyssalSceneObject sceneObject, CancellationToken cancellationToken = default) =>
+        RecordAbyssalAsync(sceneObject, cancellationToken);
+
+    public Task<string?> EnsureAbyssalEnvironmentObjectAsync(SimEnsureAbyssalEnvironmentObject environment, CancellationToken cancellationToken = default) =>
+        RecordAbyssalAsync(environment, cancellationToken);
+
+    public Task<string?> RefreshAbyssalNpcAsync(SimRefreshAbyssalNpc npc, CancellationToken cancellationToken = default) =>
+        RecordAbyssalAsync(npc, cancellationToken);
+
+    public Task<string?> EnsureAbyssalRewardCacheAsync(SimEnsureAbyssalRewardCache cache, CancellationToken cancellationToken = default) =>
+        RecordAbyssalAsync(cache, cancellationToken);
+
+    public Task<string?> EnsureAbyssalLootContainerAsync(SimEnsureAbyssalLootContainer container, CancellationToken cancellationToken = default) =>
+        RecordAbyssalAsync(container, cancellationToken);
+
+    public Task<string?> MoveAbyssalParticipantAsync(SimMoveAbyssalParticipant move, CancellationToken cancellationToken = default) =>
+        RecordAbyssalAsync(move, cancellationToken);
+
+    public Task<string?> RebindAbyssalSessionAsync(SimRebindAbyssalSession rebind, CancellationToken cancellationToken = default) =>
+        RecordAbyssalAsync(rebind, cancellationToken);
+
+    public Task<string?> RemoveAbyssalSceneAsync(SimRemoveAbyssalScene scene, CancellationToken cancellationToken = default) =>
+        RecordAbyssalAsync(scene, cancellationToken);
+
+    public async Task<string?> MoveAbyssalParticipantInOrderAsync(
+        SimMoveAbyssalParticipant move,
+        Action<SimMoveAbyssalParticipantReply> beforeFollowingMessages,
+        CancellationToken cancellationToken = default)
+    {
+        var error = await RecordAbyssalAsync(move, cancellationToken).ConfigureAwait(false);
+        beforeFollowingMessages(new SimMoveAbyssalParticipantReply(move.RequestId, error));
+        return error;
+    }
+
+    public Task<SimGetAbyssalParticipantPoseReply> GetAbyssalParticipantPoseAsync(
+        SimGetAbyssalParticipantPose request, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!IsConnected) throw new SimUnavailableException("the simulation is not running");
+        Heard.Enqueue(request);
+        return Task.FromResult(new SimGetAbyssalParticipantPoseReply(
+            request.RequestId, request.Scene, request.ShipId, [0.0, 0.0, 0.0], [0.0, 0.0, 1.0], null)
+        { Deployment = request.Scene.InstanceId == 0 ? new(false, false, false, false, false, []) : null });
+    }
+
+    public Task<SimEnsureAbyssalTracePublishedReply> EnsureAbyssalTracePublishedAsync(
+        SimEnsureAbyssalTracePublished trace, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!IsConnected) throw new SimUnavailableException("the simulation is not running");
+        Heard.Enqueue(trace);
+        return Task.FromResult(new SimEnsureAbyssalTracePublishedReply(
+            trace.RequestId, SimAbyssalTraceStatus.Created, 0, false, null));
+    }
+
+    public Task<SimRemoveAbyssalTraceReply> RemoveAbyssalTraceAsync(
+        SimRemoveAbyssalTrace trace, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!IsConnected) throw new SimUnavailableException("the simulation is not running");
+        Heard.Enqueue(trace);
+        return Task.FromResult(new SimRemoveAbyssalTraceReply(
+            trace.RequestId, SimAbyssalTraceStatus.Removed, 0, null));
+    }
+
+    public Func<SimRemoveAbyssalParticipant, SimRemoveAbyssalParticipantReply>? RemoveAbyssalParticipantAnswer { get; set; }
+
+    public Task<SimRemoveAbyssalParticipantReply> RemoveAbyssalParticipantAsync(
+        SimRemoveAbyssalParticipant participant, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!IsConnected) throw new SimUnavailableException("the simulation is not running");
+        Heard.Enqueue(participant);
+        return Task.FromResult(RemoveAbyssalParticipantAnswer?.Invoke(participant)
+            ?? new SimRemoveAbyssalParticipantReply(participant.RequestId, false, null));
+    }
+
+    private Task<string?> RecordAbyssalAsync(SimMessage message, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!IsConnected) throw new SimUnavailableException("the simulation is not running");
+        Heard.Enqueue(message);
+        return Task.FromResult<string?>(null);
+    }
+
     public CommandReply DockAnswer { get; set; } = new(true, 134351527136350000, null);
 
     /// <summary>What a warp is answered with.</summary>
@@ -151,6 +239,7 @@ internal sealed class FakeSim : ISimulation
 
     /// <summary>What a can that is placed is answered with: where it lies (the test's own place when none is set), or why not.</summary>
     public CommandReply? PlaceContainerAnswer { get; set; }
+    public Func<SimPlaceContainer, Task<CommandReply>>? PlaceContainerHandler { get; set; }
 
     public Task<CommandReply> PlaceContainerAsync(SimPlaceContainer can, CancellationToken cancellationToken = default)
     {
@@ -159,7 +248,7 @@ internal sealed class FakeSim : ISimulation
             throw new SimUnavailableException("the simulation is not running");
         }
         Heard.Enqueue(can);
-        return Task.FromResult(PlaceContainerAnswer ?? new CommandReply(true, 0, null) { Position = [1000.0, 2000.0, 3000.0], Direction = [1.0, 0.0, 0.0] });
+        return PlaceContainerHandler?.Invoke(can) ?? Task.FromResult(PlaceContainerAnswer ?? new CommandReply(true, 0, null) { Position = [1000.0, 2000.0, 3000.0], Direction = [1.0, 0.0, 0.0] });
     }
 
     /// <summary>What a change of the rounds of a gun is answered with (the default: the gun does not run, the host has its rounds).</summary>
@@ -223,6 +312,8 @@ internal sealed class FakeSim : ISimulation
 
     public void PlaceAnalysisBeacon(SimPlaceAnalysisBeacon beacon) => Heard.Enqueue(beacon);
 
+    public void SetSlimField(long itemId, string fieldName, SimSlimValue value) => Heard.Enqueue(new SimSetSlimField(itemId, fieldName, value));
+
     public void SetAnalysisBeaconState(long deployableId, SimAnalysisBeaconState state) => Heard.Enqueue(new SimSetAnalysisBeaconState(deployableId, state));
 
     public void PlaceInhibitor(SimPlaceInhibitor inhibitor) => Heard.Enqueue(inhibitor);
@@ -233,6 +324,9 @@ internal sealed class FakeSim : ISimulation
     public void PlaceObservatory(SimPlaceObservatory observatory) => Heard.Enqueue(observatory);
     public void PlaceControlTower(SimPlaceControlTower tower) => Heard.Enqueue(tower);
     public void PlaceDeadspacePocket(SimPlaceDeadspacePocket pocket) => Heard.Enqueue(pocket);
+    public void PlaceAccelerationGate(SimPlaceAccelerationGate gate) => Heard.Enqueue(gate);
+    public void PlaceCapturePoint(SimPlaceCapturePoint point) => Heard.Enqueue(point);
+    public void PlaceBattlefieldScoreboard(SimPlaceBattlefieldScoreboard scoreboard) => Heard.Enqueue(scoreboard);
 
     public void RemoteDecloakPing(int solarSystemId, long observatoryId) => Heard.Enqueue(new SimRemoteDecloakPing(solarSystemId, observatoryId));
 

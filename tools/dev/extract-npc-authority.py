@@ -19,11 +19,9 @@ OUT = os.path.join(HERE, "..", "..", "dotnet", "src", "Eve.Npc", "Data", "npc_au
 EVEJS = sys.argv[1] if len(sys.argv) > 1 else "/home/user/evejs-v0.12.9"
 TABLES = os.path.join(EVEJS, "tools", "DatabaseCreator", "staticTables")
 
-
 def read(table, key):
     with open(os.path.join(TABLES, table, "data.json"), encoding="utf-8") as handle:
         return json.load(handle)[key]
-
 
 profiles = [
     {
@@ -64,11 +62,8 @@ pools = [
     for p in read("npcSpawnPools", "spawnPools")
 ]
 
-
-
 def strings(value):
     return [] if value is None else [str(v) for v in value] if isinstance(value, list) else [str(value)]
-
 
 # only what the reference's roll reads of the authored tables (`rollNpcLootEntries`): the rules of a table, and the bounds of a plain draw
 loot_tables = [

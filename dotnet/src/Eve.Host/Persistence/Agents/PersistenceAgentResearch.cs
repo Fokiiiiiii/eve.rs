@@ -15,14 +15,14 @@ namespace Eve.Host;
 /// refDatacoreFee), creates the datacores in the station hangar, and re-anchors the project, all in one transaction. A refusal
 /// writes nothing. The buyer is told of the datacores after the commit.
 /// </summary>
-internal sealed class PersistenceAgentResearch(
+public sealed class PersistenceAgentResearch(
     NpgsqlDataSource source,
     ResearchProjectStore projects,
     WalletTransactions wallets,
     PgItemStore items,
     ItemTypeCatalog types,
     CharacterSessions sessions,
-    IReadOnlyList<AgentResearchField> fields,
+    IReadOnlyDictionary<long, IReadOnlyList<AgentResearchField>> fieldsByAgent,
     Func<long> nowMs) : IAgentResearchPort
 {
     /// <summary>The journal reference type of the datacore fee (eve-logic appConst.py:741, refDatacoreFee).</summary>
@@ -30,25 +30,40 @@ internal sealed class PersistenceAgentResearch(
 
     private const int RequiredSkillAttribute = 182;
 
-    public IReadOnlyList<AgentResearchField> Fields { get; } = fields;
+    public IReadOnlyList<AgentResearchField> FieldsFor(long agentId) =>
+        fieldsByAgent.TryGetValue(agentId, out var fields) ? fields : [];
 
     public ResearchProjectStore Projects { get; } = projects;
 
-    /// <summary>The research fields, from the SDE types and the dogma attribute that links each datacore to its skill.</summary>
-    public static async Task<IReadOnlyList<AgentResearchField>> LoadFieldsAsync(SdeReader sde, CancellationToken cancellationToken)
+    /// <summary>
+
+    /// (published) and their required skill (dogma attribute 182). The reference builds the same table from these three files.
+    /// </summary>
+    public static async Task<IReadOnlyDictionary<long, IReadOnlyList<AgentResearchField>>> LoadFieldsAsync(SdeReader sde, CancellationToken cancellationToken)
     {
-        var typeRows = await sde.ReadAsync("types", cancellationToken: cancellationToken);
-        var datacores = typeRows.Where(row => EnglishName(row.Doc).StartsWith("Datacore - ", StringComparison.Ordinal)).Select(row => row.Key).ToArray();
+        var typeRows = await sde.ReadTypeSummariesAsync(cancellationToken);
+        var datacores = typeRows
+            .Where(row => row.GroupId == AgentResearchFields.DatacoreGroupId && row.Published)
+            .Select(row => (long)row.TypeId)
+            .ToArray();
         var skillOf = (await sde.ReadAsync("typeDogma", datacores, cancellationToken))
             .ToDictionary(row => row.Key, row => RequiredSkill(row.Doc));
-        return AgentResearchFields.FromSde(typeRows.Select(row => new AgentResearchTypeRow(row.Key, EnglishName(row.Doc), skillOf.GetValueOrDefault(row.Key))));
+        var types = typeRows.Select(row => new AgentResearchTypeRow(
+            row.TypeId,
+            row.Name,
+            row.GroupId,
+            row.Published,
+            skillOf.GetValueOrDefault(row.TypeId)));
+        var agents = (await sde.ReadAsync("npcCharacters", cancellationToken: cancellationToken)).Select(row => new AgentResearchAgentRow(
+            row.Key, AgentTypeId(row.Doc), Skills(row.Doc)));
+        return AgentResearchFields.FieldsByAgent(types, agents);
     }
 
     public async ValueTask<AgentDatacorePurchase> BuyDatacoresAsync(
         long characterId, long agentId, long skillTypeId, long quantity, long stationId, CancellationToken cancellationToken)
     {
-        var field = Fields.FirstOrDefault(candidate => candidate.SkillTypeId == skillTypeId);
-        if (field is null || quantity <= 0 || stationId <= 0)
+        var field = FieldsFor(agentId).FirstOrDefault(candidate => candidate.SkillTypeId == skillTypeId);
+        if (field is null || field.DatacoreTypeId <= 0 || quantity <= 0 || stationId <= 0)
             return new AgentDatacorePurchase(AgentDatacoreRefusal.NotDeliverable, 0);
         var rpCost = quantity * ResearchRules.DatacoreResearchPoints;
         var iskCost = quantity * ResearchRules.DatacoreIsk;
@@ -87,13 +102,25 @@ internal sealed class PersistenceAgentResearch(
             InventoryWire.PackedRow(new ItemRow(itemId, (int)field.DatacoreTypeId, characterId, stationId, ItemFlags.Hangar, quantity,
                 type?.GroupId ?? 0, type?.CategoryId ?? 0)),
             new Eve.Marshal.PyDict([]), Eve.Marshal.PyNone.Instance);
+        // The client's agents.py OnDatacoreBought(characterID, agentID, balance): it refreshes the research view and the cash.
+        if (settlement.Entries.LastOrDefault(entry => entry.OwnerId == characterId && entry.AccountKey == 1000) is { } cash)
+            sessions.Of(characterId)?.SendNotification("OnDatacoreBought", "clientID",
+                new Eve.Marshal.PyInt(characterId), new Eve.Marshal.PyInt(agentId), new Eve.Marshal.PyReal((double)cash.Balance));
         return new AgentDatacorePurchase(AgentDatacoreRefusal.None, quantity);
     }
 
-    private static string EnglishName(JsonElement doc) =>
-        doc.TryGetProperty("name", out var names) && names.TryGetProperty("en", out var english) && english.ValueKind == JsonValueKind.String
-            ? english.GetString() ?? ""
-            : "";
+    private static int AgentTypeId(JsonElement doc) =>
+        doc.TryGetProperty("agent", out var agent) && agent.TryGetProperty("agentTypeID", out var type) &&
+        type.ValueKind == JsonValueKind.Number ? type.GetInt32() : 0;
+
+    /// <summary>The skill type ids an NPC character offers (npcCharacters.skills), empty when it offers none.</summary>
+    private static IReadOnlyList<long> Skills(JsonElement doc) =>
+        doc.TryGetProperty("skills", out var skills) && skills.ValueKind == JsonValueKind.Array
+            ? skills.EnumerateArray()
+                .Where(skill => skill.TryGetProperty("typeID", out var id) && id.ValueKind == JsonValueKind.Number)
+                .Select(skill => skill.GetProperty("typeID").GetInt64())
+                .ToArray()
+            : [];
 
     private static long? RequiredSkill(JsonElement doc)
     {

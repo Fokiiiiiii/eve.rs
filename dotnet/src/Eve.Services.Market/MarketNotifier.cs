@@ -4,14 +4,6 @@ using Eve.Wallet;
 
 namespace Eve.Services.Market;
 
-/// <summary>
-/// The client's notices of a market receipt, and the cache coherence that goes with them. Before the notices, the cached results that the
-/// receipt made stale are dropped (M4). The client keeps a book (GetOrders, the station and system asks) and its owner lists in objectCaching
-/// for the whole run (versionCheck "run", objectCaching.py:576-588), so a change is pushed as InvalidateCachedMethodCall, the mechanism the
-/// fittings use (FittingMgrServices.cs:248). The client adds its own session attribute (region, system, station, character, corporation) to
-/// the key, so the arguments name only the method and its own arguments. The notices reach the characters that see the order: the RPCs answer
-/// with them, and the expiry jobs send them, since a job has no call to answer.
-/// </summary>
 public sealed class MarketNotifier(WalletTransactions wallets, CharacterSessions? sessions)
 {
     private const string ObjectCachingService = "objectCaching";
@@ -68,7 +60,6 @@ public sealed class MarketNotifier(WalletTransactions wallets, CharacterSessions
         }
     }
 
-    /// <summary>The owner lists of each character a change reaches: its own orders, or the corporation's for a corporation order, and its history.</summary>
     private void InvalidateOwnerLists(IReadOnlyList<MarketOrderChange> changes)
     {
         foreach (var change in changes)

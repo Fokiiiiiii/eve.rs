@@ -6,7 +6,7 @@ impl Scene {
         self.entries
     }
 
-    pub(super) fn presence(&self, session: SessionId) -> Option<Presence> {
+    pub(crate) fn presence(&self, session: SessionId) -> Option<Presence> {
         if let Some(pilot) = self.pilots.get(&session) {
             return Some(Presence {
                 position: pilot.ship.position,
@@ -30,9 +30,9 @@ impl Scene {
 
     /// The sessions of the pilots, in the order they came into the scene.
     pub(crate) fn in_entry_order(&self) -> Vec<SessionId> {
-        let mut order: Vec<(u64, SessionId)> = self.pilots.iter().map(|(s, p)| (p.entered, *s)).collect();
-        order.sort_unstable();
-        order.into_iter().map(|(_, s)| s).collect()
+        let mut order: Vec<SessionId> = self.pilots.keys().copied().collect();
+        order.sort_unstable_by_key(|session| (self.pilots[session].entered, *session));
+        order
     }
 
     /// Every client that currently has a scene view, ordered by pilot arrival then observer session.

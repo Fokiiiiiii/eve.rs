@@ -96,6 +96,7 @@ public sealed partial class SpaceSessions
             _log?.Invoke($"bridge jump of session {session.SessionId} through ship {bridgeShipId} refused: {reply.Reason}");
             throw BridgeRefusal(reply.Reason);
         }
+        await CancelShipSelfDestructAsync(pilot.ShipId, cancellationToken);
         SendJumpQueueUpdate(session, pilot.CharacterId, destination);
         return Py.Tuple(boundObjectId is null ? None : new PyStr(boundObjectId), new PyLong(Py.FileTimeFromUnixMs(_nowUnixMs() + SessionChangeCooldownMs)));
     }
@@ -145,11 +146,12 @@ public sealed partial class SpaceSessions
             _log?.Invoke($"conduit jump of session {session.SessionId} to field {fieldId} refused: {reply.Reason}");
             throw BridgeRefusal(reply.Reason);
         }
+        foreach (var jumper in jumpingPilots)
+            await CancelShipSelfDestructAsync(jumper.ShipId, cancellationToken);
         SendJumpQueueUpdate(session, pilot.CharacterId, destination);
         return Py.Tuple(boundObjectId is null ? None : new PyStr(boundObjectId), new PyLong(Py.FileTimeFromUnixMs(_nowUnixMs() + SessionChangeCooldownMs)));
     }
 
-    /// <summary>The refusal of a bridge, by the simulation's reason: the wording of the texts is ours (the wiki gives none; DEVIATIONS, Track A8 bridges).</summary>
     private static MachoWrappedException BridgeRefusal(string? reason) => reason switch
     {
         "NOT_ENOUGH_CAPACITOR" => Notify("Your ship does not have enough capacitor to open the jump bridge."),
@@ -218,13 +220,14 @@ public sealed partial class SpaceSessions
         {
             pilot.CynoJumpPending = false;
             _log?.Invoke($"cynosural jump of session {session.SessionId} to field {fieldId} refused: {reply.Reason}");
-            // the wording is ours: the wiki gives no refusal text (DEVIATIONS, Track A8)
+
             if (reply.Reason == "NOT_ENOUGH_CAPACITOR")
             {
                 throw Notify("Your ship does not have enough capacitor to activate its jump drive.");
             }
             throw JumpRefused(reply.Reason);
         }
+        await CancelShipSelfDestructAsync(pilot.ShipId, cancellationToken);
         SendJumpQueueUpdate(session, pilot.CharacterId, destination);
         return Py.Tuple(boundObjectId is null ? None : new PyStr(boundObjectId), new PyLong(Py.FileTimeFromUnixMs(_nowUnixMs() + SessionChangeCooldownMs)));
     }

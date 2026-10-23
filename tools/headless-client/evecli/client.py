@@ -11,15 +11,12 @@ from . import marshal as m
 # Windows FILETIME (100 ns ticks since 1601-01-01) to Unix seconds.
 _FILETIME_EPOCH_OFFSET = 116444736000000000
 
-
 def filetime_to_unix(filetime: int) -> float:
     return (int(filetime) - _FILETIME_EPOCH_OFFSET) / 1e7
-
 
 def _is_provisional(received: packet.Packet) -> bool:
     named = m.plain(received.named_payload)
     return isinstance(named, dict) and "provisional" in named
-
 
 class Client:
     def __init__(self, host: str = "127.0.0.1", port: int = 26000, timeout: float = 10.0):
@@ -31,11 +28,9 @@ class Client:
         self.service_info: dict[str, Any] = {}
         self.global_config: dict[str, Any] = {}
         self._service_nodes: dict[str, Any] = {}
-        # the client's dialogs: scripted answers per method (queued in order), and every server call it was asked
+        # Dialog answers are queued by method; dialogs record server calls that need answers.
         self.scripted: dict[str, list] = {}
         self.dialogs: list[tuple[str, tuple]] = []
-
-    # ── connection ──
 
     def login(self, user: str, password: str) -> handshake.SessionInfo:
         self.close()
@@ -64,8 +59,6 @@ class Client:
 
     def __exit__(self, *exc) -> None:
         self.close()
-
-    # ── packets ──
 
     def _next_call_id(self) -> int:
         self._call_id += 1
@@ -137,7 +130,11 @@ class Client:
         while True:
             if time.monotonic() > deadline:
                 raise TimeoutError(f"no response to call {call_id}")
-            received = packet.Packet.parse(self.conn.recv())
+            value = self.conn.recv()
+            reason = handshake._rejection_reason(value)
+            if reason:
+                raise handshake.TransportClosed(reason)
+            received = packet.Packet.parse(value)
             if received.command == packet.CALL_REQ:
                 self._answer_server_call(received)
                 continue
@@ -148,7 +145,7 @@ class Client:
             if received.command == packet.ERRORRESPONSE:
                 raise packet.MachoError.from_packet(received)
             if received.command == command and received.destination.call_id in (call_id, None):
-                # a provisional answer (the server's deferred call) is not the result: the dialog it raised is answered, then the result comes
+                # Provisional call responses are followed by a dialog answer and the final result.
                 if _is_provisional(received):
                     continue
                 return received

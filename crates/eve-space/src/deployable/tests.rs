@@ -1,8 +1,8 @@
 //! The warp-disruption sources and the bombs of the simulation (`deployable`): a bubble holds the ships in its range unless they are immune, a cloak that is not
 //! warp-safe holds its ship, a probe holds the ships in its range until its lifetime is up and is then taken out, and a bomb's blast reaches the ships within its
 //! radius but not its launcher.
-
 use super::*;
+use crate::link::SlimValue;
 use crate::modules::{Action, Effect};
 use crate::scene::tests::{NOON, STATION, spec, system};
 use crate::scene::{Command, Out, Scene};
@@ -59,6 +59,7 @@ fn module(module_id: i64, action: Action, duration_ms: f64) -> Effect {
         fx: String::new(),
         duration_ms,
         capacitor_need: 0.0,
+        fallback_capacitor_need: 0.0,
         repeat: 1,
         target_id: 0,
         turret: None,
@@ -204,7 +205,6 @@ fn a_bomb_goes_off_where_it_is_and_hurts_the_ships_in_its_blast_but_not_its_laun
 #[test]
 fn a_cynosural_field_is_lit_where_the_ship_is_as_its_activation_ends_and_is_taken_out_when_its_lifetime_is_up()
  {
-    // the wiki: a field is lit after the generator's activation time; the SDE: a field lives its explosionDelay (600000 ms) and does not explode
     let (mut scene, t) = crowd();
     let field = Action::CynoField {
         ball: Spec {
@@ -399,7 +399,6 @@ fn a_control_tower_is_in_space_unanchored_until_the_host_anchors_it_and_stops_no
     assert!(accepted(&lit), "a control tower stops no field: {lit:?}");
 }
 
-/// Pochven (SDE region 10000070) is a region-wide cynosural jammer: no field lights there, a covert or an industrial one neither (the wiki, "Pochven":
 /// "stops anyone from lighting a cyno"), and the same field lights in a system of another region. Each scene is made anew from its system, as a restarted
 /// simulation makes it: the region is the static data's and nothing of the refusal is kept.
 #[test]
@@ -570,7 +569,7 @@ fn a_defender_launcher_shoots_down_the_hostile_missile_in_its_reach() {
     use crate::missile_entity::{MISSILE_ID_BASE, MissileEntity, Shooter};
     use crate::missiles::Missile;
     let (mut scene, t) = crowd();
-    // a missile of another owner flies from B at A: five kilometres off, with little hit points
+
     let incoming = Missile {
         charge_type_id: 27_000,
         group_id: 385,
@@ -720,7 +719,7 @@ fn third_ship(scene: &mut Scene, corporation: i32, metres: f64, t: i64) -> i64 {
 #[test]
 fn an_fof_launch_goes_for_the_nearest_enemy_that_fired_on_the_shooter_and_locks_none() {
     let (mut scene, t) = crowd();
-    // B is of another corporation and fired on A (the wiki: the nearest enemy that has previously fired on you); the corporation-mate below is A's
+
     scene.pilots.get_mut(&B).unwrap().ship.spec.corporation_id = 98_000_001;
     let a_corp = scene.pilots[&A].ship.spec.corporation_id;
     let b_ship = scene.pilots[&B].ship.spec.ship_id;
@@ -1018,6 +1017,98 @@ fn crab_placement(scene: &Scene, state: AnalysisBeaconState) -> crate::link::Ana
 }
 
 #[test]
+fn a_dynamic_slim_field_the_host_sets_is_told_with_the_slim_item_only_when_it_changes() {
+    let (mut scene, t) = crowd();
+    let idle = AnalysisBeaconState {
+        active: false,
+        activate_at: 133_900_000_000_000_000,
+        deployed_at: 133_899_999_000_000_000,
+        activation_seconds: 20,
+        link_state: 1,
+        link_complete_at: 0,
+        linked_ship_id: 0,
+    };
+    scene.place_analysis_beacon(crab_placement(&scene, idle), t);
+    let name = "component_fwCapturePoint_factionInfo".to_string();
+    let factions = SlimValue::Tuple(vec![SlimValue::Int(500_003), SlimValue::Int(500_001)]);
+
+    let told = scene.set_slim_field(CRAB, name.clone(), factions.clone(), t);
+    let text = format!("{told:?}");
+    assert!(
+        !told.is_empty() && text.contains("OnSlimItemChange"),
+        "those who see it are told its slim item again"
+    );
+    assert!(text.contains(&name), "the slim item carries the field");
+    assert!(
+        text.contains("Int(500003)") && text.contains("Int(500001)"),
+        "the tuple is told as the host set it"
+    );
+    assert!(
+        scene.set_slim_field(CRAB, name.clone(), factions, t).is_empty(),
+        "a value already set is not told again"
+    );
+    let told = scene.set_slim_field(CRAB, name.clone(), SlimValue::None, t);
+    assert!(!told.is_empty(), "a new value (none) is told");
+    assert!(
+        scene.set_slim_field(CRAB + 1, name, SlimValue::Bool(true), t).is_empty(),
+        "a deployable that is not in space is left alone"
+    );
+}
+
+#[test]
+fn a_capture_point_is_put_in_space_once_with_the_factions_and_next_point_time_the_host_gives() {
+    let (mut scene, t) = crowd();
+    let a = scene.pilots[&A].ship.position;
+    let point = crate::link::CapturePointPlacement {
+        deployable_id: CRAB + 10,
+        solar_system_id: 30_100_032,
+        name: "Caldari Control Zone A".to_string(),
+        type_id: 73_445,
+        group_id: 4_494,
+        position: [a.x + 1_000.0, a.y, a.z],
+        radius: 231.0,
+        attacker_faction: 500_004,
+        occupier_faction: 500_001,
+        next_point_time: 133_900_000_000_000_000,
+    };
+    let told = scene.place_capture_point(point.clone(), t);
+    let text = format!("{told:?}");
+    assert!(text.contains("AddBalls2"), "the capture point is put in a client ball");
+    assert!(
+        text.contains("component_fwCapturePoint_factionInfo")
+            && text.contains("Int(500004)")
+            && text.contains("Int(500001)")
+    );
+    assert!(
+        text.contains("component_fwCapturePoint_nextPointTime") && text.contains("Long(133900000000000000)")
+    );
+    assert_eq!(scene.deployables[&(CRAB + 10)].role, Role::CapturePoint);
+    assert!(scene.place_capture_point(point, t).is_empty(), "given once");
+}
+
+#[test]
+fn a_battlefield_scoreboard_is_put_in_space_once_with_no_score_until_the_host_sets_one() {
+    let (mut scene, t) = crowd();
+    let a = scene.pilots[&A].ship.position;
+    let board = crate::link::ScoreboardPlacement {
+        deployable_id: CRAB + 11,
+        solar_system_id: 30_100_032,
+        name: "Caldari Scoreboard".to_string(),
+        type_id: 73_449,
+        group_id: 227,
+        position: [a.x + 1_000.0, a.y, a.z],
+        radius: 0.0,
+    };
+    let told = format!("{:?}", scene.place_battlefield_scoreboard(board.clone(), t));
+    assert!(
+        told.contains("AddBalls2") && !told.contains("component_fwScoreboard_score"),
+        "the ball is told with no score field"
+    );
+    assert_eq!(scene.deployables[&(CRAB + 11)].role, Role::BattlefieldScoreboard);
+    assert!(scene.place_battlefield_scoreboard(board, t).is_empty(), "given once");
+}
+
+#[test]
 fn a_crab_is_put_in_space_once_and_the_state_the_host_sets_is_told_only_when_it_changes() {
     let (mut scene, t) = crowd();
     let idle = AnalysisBeaconState {
@@ -1099,6 +1190,14 @@ fn a_linked_ship_is_held_until_its_link_is_complete_and_out_of_warp_for_a_minute
     assert!(!held(&scene.command(A, Command::Stop, t), "LINK_HOLD"), "a stop is never held");
     assert!(!held(&scene.command(B, goto, t), "LINK_HOLD"), "another pilot's ship is not held");
 
+    assert!(scene.link_effects_active(A, t), "link restrictions start with the link");
+    assert!(
+        scene.link_effects_active(A, link_done + 59 * SECOND),
+        "link restrictions include the 60-second tail"
+    );
+    assert!(!scene.link_effects_active(A, link_done + 60 * SECOND), "link restrictions clear after the tail");
+    assert!(!scene.link_effects_active(B, t), "another pilot is not restricted");
+
     let after_link = link_done + SECOND;
     assert!(
         !held(&scene.command(A, goto, after_link), "LINK_HOLD"),
@@ -1111,6 +1210,39 @@ fn a_linked_ship_is_held_until_its_link_is_complete_and_out_of_warp_for_a_minute
     assert!(
         !held(&scene.command(A, warp, link_done + 61 * SECOND), "LINK_HOLD"),
         "the warp is free after the status clear delay"
+    );
+}
+
+#[test]
+fn a_crab_link_reduces_damage_by_ten_percent_until_the_status_tail_clears() {
+    let (mut scene, t) = crowd();
+    let ship = scene.pilots[&A].ship.spec.ship_id;
+    let idle = AnalysisBeaconState {
+        active: true,
+        activate_at: 0,
+        deployed_at: t,
+        activation_seconds: 20,
+        link_state: 1,
+        link_complete_at: 0,
+        linked_ship_id: 0,
+    };
+    scene.place_analysis_beacon(crab_placement(&scene, idle), t);
+    let link_done = t + 240 * SECOND;
+    scene.set_analysis_beacon_state(
+        CRAB,
+        AnalysisBeaconState { link_state: 2, link_complete_at: link_done, linked_ship_id: ship, ..idle },
+        t,
+    );
+
+    let (_, linked_hit) = scene.damage(ship, [0.0, 0.0, 100.0, 0.0], t);
+    let linked_hit = linked_hit.expect("the linked ship has damageable shields");
+    assert!((linked_hit.taken.shield - 54.0).abs() < 1e-9, "10% less than 60 damage: {linked_hit:?}");
+
+    let (_, after_tail_hit) = scene.damage(ship, [0.0, 0.0, 100.0, 0.0], link_done + 61 * SECOND);
+    let after_tail_hit = after_tail_hit.expect("the linked ship still has damageable shields");
+    assert!(
+        (after_tail_hit.taken.shield - 60.0).abs() < 1e-9,
+        "the bonus ends with the status tail: {after_tail_hit:?}"
     );
 }
 
@@ -1199,4 +1331,46 @@ fn a_deadspace_pocket_is_in_the_scene_in_no_client_ball_and_stops_no_field() {
 
     let lit = scene.activate(A, module(MODULE, field(21_094), 20_000.0), t);
     assert!(accepted(&lit), "a deadspace pocket stops no field: {lit:?}");
+}
+
+#[test]
+fn a_deployable_reaches_a_pilot_that_comes_into_its_view_and_leaves_with_it() {
+    // the acceleration gates and the capture points of a battlefield are placed where the pilots are not yet: a pilot that flies into their box is told them
+    let (mut scene, t) = crowd();
+    let a = scene.pilots[&A].ship.position;
+    // 20,000 km is more than two public-grid boxes (7,864 km each): the point is in another box for certain
+    let far = eve_destiny::Vec3::new(a.x + 20_000_000.0, a.y, a.z);
+    let point = crate::link::CapturePointPlacement {
+        deployable_id: CRAB + 20,
+        solar_system_id: 30_100_032,
+        name: "Caldari Control Zone A".to_string(),
+        type_id: 73_445,
+        group_id: 4_494,
+        position: [far.x, far.y, far.z],
+        radius: 231.0,
+        attacker_faction: 500_004,
+        occupier_faction: 500_001,
+        next_point_time: 0,
+    };
+    let placed = scene.place_capture_point(point, t);
+    assert!(!format!("{placed:?}").contains("AddBalls2"), "a pilot out of the point's box is not told it");
+    assert!(
+        scene.reconcile_deployables(t + SECOND).is_empty(),
+        "a pilot out of the box is still not told it"
+    );
+
+    place(&mut scene, A, far);
+    let told = format!("{:?}", scene.reconcile_deployables(t + 2 * SECOND));
+    assert!(
+        told.contains("AddBalls2") && told.contains("Caldari Control Zone A"),
+        "the pilot that comes into view is told the point: {told}"
+    );
+    assert!(
+        scene.reconcile_deployables(t + 3 * SECOND).is_empty(),
+        "a point already in view is not told again"
+    );
+
+    place(&mut scene, A, a);
+    let gone = format!("{:?}", scene.reconcile_deployables(t + 4 * SECOND));
+    assert!(gone.contains("RemoveBalls"), "the pilot that leaves the box is told the point is gone: {gone}");
 }

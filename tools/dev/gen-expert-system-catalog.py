@@ -14,7 +14,6 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 OUT = HERE.parent.parent / "dotnet" / "src" / "Eve.Skills" / "Data" / "expert-systems.v1.json"
 
-
 def main() -> None:
     evejs = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("/home/user/evejs-v0.12.9")
     source = json.loads((evejs / "tools/DatabaseCreator/staticTables/expertSystems/data.json").read_text(encoding="utf-8"))
@@ -45,7 +44,6 @@ def main() -> None:
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(json.dumps(document, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
     print(f"wrote {len(rows)} expert systems to {OUT}")
-
 
 if __name__ == "__main__":
     main()

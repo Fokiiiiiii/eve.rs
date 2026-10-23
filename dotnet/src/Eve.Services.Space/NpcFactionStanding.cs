@@ -3,13 +3,10 @@ using Eve.Relations;
 namespace Eve.Services.Space;
 
 /// <summary>
-/// The standing a pilot loses with a faction when it destroys one of the faction's NPCs (EveJS <c>factionKillStandingRuntime.js</c>; the wiki's
-/// "Faction standing" page has no text, so the rule is EveJS's, calibrated from its golden mission logs). One raw change per kill, debounced per pilot,
-/// faction and system for ten minutes (in memory, as EveJS keeps the window).
 /// </summary>
 public sealed class NpcFactionStanding(RelationStore relations, Func<long> nowMs)
 {
-    /// <summary>The raw change of one kill (EveJS <c>FACTION_STANDING_LOSS_PER_KILL_RAW</c>).</summary>
+
     public const double LossPerKillRaw = -0.00006875;
 
     private static readonly long DebounceMs = (long)TimeSpan.FromMinutes(10).TotalMilliseconds;
@@ -30,11 +27,11 @@ public sealed class NpcFactionStanding(RelationStore relations, Func<long> nowMs
                 return null;
         }
 
-        var standing = await relations.ValueAsync(RelationKinds.Standing.Name, characterId, factionId, 0, cancellationToken: cancellationToken);
+        var standing = await relations.ValueAsync(RelationKinds.Standing.Name, factionId, characterId, 0, cancellationToken: cancellationToken);
         var next = UndockContraband.StandingAfter(standing, LossPerKillRaw);
         if (next == standing)
             return null;
-        await relations.SetAsync(RelationKinds.Standing.Name, characterId, factionId, next, Reason, cancellationToken);
+        await relations.SetAsync(RelationKinds.Standing.Name, factionId, characterId, next, Reason, cancellationToken);
         lock (_gate)
         {
             _lastApplied[key] = now;

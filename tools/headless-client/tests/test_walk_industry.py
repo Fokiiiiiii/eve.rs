@@ -4,9 +4,9 @@
 
 The pilot is seeded with an original of blueprint 681 (sde.blueprints: 86 of type 38 make 165) and the materials in its station hangar.
 The install payload is the client's job.dump(): the wallet account, the character and corporation IDs, and the input and output
-locations as objects. A job's end is moved into the past in the database (the walk does not wait out the job's time); the
-completion then runs the same delivery path as the client's Deliver button. Invention needs skills and a decryptor, which this walk
-does not seed; the copy path is not walked (its completion would wait 480 seconds per run).
+locations as objects. Each job's end is moved into the past in the database (the walk does not wait out the job's time); completion
+uses the client's `CompleteJob` request and normal inventory delivery. The research walk delivers ME and TE jobs before manufacturing
+with that original. Copying and invention cases seed their required skills and inputs, then complete through the same delivery path.
 """
 
 from __future__ import annotations
@@ -37,13 +37,10 @@ pytestmark = [
     pytest.mark.skipif(os.environ.get("EVE_LIVE_SERVER", "eve.rs") == "reference", reason="seeding needs the database: eve.rs only"),
 ]
 
-
 def station_system() -> int:
     return int(dbseed.sql(f"select doc->>'solarSystemID' from sde.\"npcStations\" where key = '{STATION}'"))
 
-
 SCIENTIFIC_NETWORKING = 24270  # the distance skill of the science activities: 5 jumps per level (the client's DISTANCE_PER_LEVEL)
-
 
 def nearest_laboratory(origin: int) -> tuple[int, int, int]:
     """The nearest station with a Laboratory (service 15): `(station, its system, jumps from the origin system)`. The stargates
@@ -74,7 +71,6 @@ def nearest_laboratory(origin: int) -> tuple[int, int, int]:
                 frontier.append(neighbour)
     raise AssertionError(f"no laboratory within 25 jumps of system {origin}")
 
-
 def job_dump(character: int, blueprint: int, activity: int, system: int, runs: int = 1, materials: dict | None = None,
              facility: int = STATION, blueprint_type: int = BLUEPRINT, corporation: int = 0, flag: int = dbseed.HANGAR,
              output_flag: int | None = None) -> dict:
@@ -100,21 +96,17 @@ def job_dump(character: int, blueprint: int, activity: int, system: int, runs: i
         "productTypeID": None,
     }
 
-
 def job_status(job: int) -> int:
     return int(dbseed.sql(f"select status from {dbseed.schema('INDUSTRY')}.jobs where job_id = {int(job)}"))
-
 
 def ready_now(job: int) -> None:
     """Moves the job's end into the past, so its completion (the Deliver button) is allowed."""
     dbseed.sql(f"update {dbseed.schema('INDUSTRY')}.jobs set end_date_filetime = 1 where job_id = {int(job)}")
 
-
 def efficiencies(who, blueprint: int) -> tuple[int, int]:
     """The blueprint's material and time efficiency as the blueprint manager reports them to the client."""
     fields = dict(describe(who.call("blueprintManager", "GetBlueprintData", blueprint))["args"]["$dict"])
     return number(fields["materialEfficiency"]), number(fields["timeEfficiency"])
-
 
 def wait_for_notification(who, name: str, seconds: float = 3.0) -> bool:
     """Whether a named notification reaches the session within the time (the event pump delivers within its poll interval)."""
@@ -125,7 +117,6 @@ def wait_for_notification(who, name: str, seconds: float = 3.0) -> bool:
         if time.monotonic() >= deadline:
             return False
         time.sleep(0.2)
-
 
 def test_a_pilot_installs_lists_and_cancels_a_manufacturing_job():
     race = HEALTH["races"][0]
@@ -139,7 +130,7 @@ def test_a_pilot_installs_lists_and_cancels_a_manufacturing_job():
         job = number(who.call("industryManager", "InstallJob", job_dump(character, blueprint, MANUFACTURING, system)))
         assert job_status(job) == 1
         assert dbseed.items_of(character, MATERIAL) == [], "the 86 units are consumed at install"
-        # the client's job list is kept by OnIndustryJob, which the change subscriber sends to the owner's session
+
         assert wait_for_notification(who, "OnIndustryJob"), "no OnIndustryJob after the install"
 
         listed = who.call("industryManager", "GetJobsByOwner", character, False)
@@ -149,7 +140,6 @@ def test_a_pilot_installs_lists_and_cancels_a_manufacturing_job():
         assert job_status(job) == 102
         answer, error = outcome(lambda: who.call("industryManager", "CompleteJob", job, system))
         assert error is not None, answer  # a cancelled job cannot be delivered
-
 
 def test_a_pilot_delivers_a_manufacturing_job_and_gets_the_product():
     race = HEALTH["races"][0]
@@ -168,7 +158,6 @@ def test_a_pilot_delivers_a_manufacturing_job_and_gets_the_product():
         assert dbseed.items_of(character, PRODUCT), "the product is delivered to the output hangar"
         assert dbseed.sql(f"select count(*) from {dbseed.schema('INDUSTRY')}.jobs where job_id = {int(job)} and output_item_ids <> '{{}}'") == "1"
 
-
 def test_research_raises_material_efficiency_then_time_efficiency_by_two():
     race = HEALTH["races"][0]
     run = uuid.uuid4().hex[:10]
@@ -184,19 +173,27 @@ def test_research_raises_material_efficiency_then_time_efficiency_by_two():
         me = number(who.call("industryManager", "InstallJob", job_dump(character, blueprint, RESEARCH_MATERIAL, lab_system, facility=lab)))
         ready_now(me)
         who.call("industryManager", "CompleteJob", me, lab_system)
+        assert job_status(me) == 100, "material research is delivered before its efficiency is read"
         assert efficiencies(who, blueprint) == (1, 0)
 
         te = number(who.call("industryManager", "InstallJob", job_dump(character, blueprint, RESEARCH_TIME, lab_system, facility=lab)))
         ready_now(te)
         who.call("industryManager", "CompleteJob", te, lab_system)
+        assert job_status(te) == 100, "time research is delivered before manufacturing"
         assert efficiencies(who, blueprint) == (1, 2)
 
+        # The researched original can immediately start manufacturing, whose product is delivered to the station hangar.
+        dbseed.new_item(MATERIAL, owner=character, location=STATION, quantity=86)
+        manufacturing = number(who.call("industryManager", "InstallJob", job_dump(character, blueprint, MANUFACTURING, system)))
+        ready_now(manufacturing)
+        who.call("industryManager", "CompleteJob", manufacturing, system)
+        assert job_status(manufacturing) == 100
+        assert dbseed.items_of(character, PRODUCT), "manufacturing after research delivers its product"
 
 def grant_skills(character: int, skills: list[tuple[int, int]]) -> None:
     for type_id, level in skills:
         dbseed.sql(f"insert into {dbseed.schema('SKILLS')}.character_skills (character_id, type_id, level, skill_points) "
                    f"values ({int(character)}, {int(type_id)}, {int(level)}, 1000)")
-
 
 def test_a_pilot_copies_a_blueprint_at_a_laboratory_and_receives_the_copy():
     race = HEALTH["races"][0]
@@ -218,7 +215,6 @@ def test_a_pilot_copies_a_blueprint_at_a_laboratory_and_receives_the_copy():
         copies = dbseed.sql(f"select count(*) from {dbseed.schema('INVENTORY')}.items "
                             f"where owner_id = {int(character)} and type_id = {BLUEPRINT} and blueprint_copy")
         assert copies == "1", copies
-
 
 def test_an_invention_uses_the_decryptor_the_client_lists_and_its_skills():
     race = HEALTH["races"][0]
@@ -254,7 +250,6 @@ def test_an_invention_uses_the_decryptor_the_client_lists_and_its_skills():
         for row in [line for line in outputs.splitlines() if line]:
             assert row.split("|") == ["2", "4", "14"], row
 
-
 def _entries(described) -> list:
     """The (key, value) pairs of a described dictionary, util.KeyVal object or Python dictionary."""
     if not isinstance(described, dict):
@@ -267,11 +262,9 @@ def _entries(described) -> list:
         return _entries(described["args"])
     return list(described.items())
 
-
 def _fields(value) -> dict:
     """The fields of a result, by name (the values stay described)."""
     return dict(_entries(describe(value)))
-
 
 def test_the_facility_selector_sees_the_station_its_activities_its_hangar_and_its_tax():
     race = HEALTH["races"][0]
@@ -302,21 +295,17 @@ def test_the_facility_selector_sees_the_station_its_activities_its_hangar_and_it
         ids = [number(dict(_entries(row))["facilityID"]) for row in listed]
         assert STATION in ids, ids
 
-
 CORPORATION_HANGAR_1 = 115  # flagCorpSAG1 (inventorycommon/const.py); the deliveries are flag 62
-CORPORATION_HANGAR_3 = 117
 FACTORY_MANAGER = 1024  # the client's ROLE_FACTORY_MANAGER
 MANUFACTURING_ROLE = 1 << 50  # the client's ROLE_FACTORY_MANUFACTURING
 WALLET_DIVISION_1_TAKE = 1 << 27  # the Account Take 1 role (CorporationRoles.WalletTakeRole(1000))
-
 
 def reenter(who, character: int) -> None:
     """The character logs off and selects again, so its session takes the corporation and roles the database now has."""
     who.call("userSvc", "UserLogOffCharacter")
     assert base.attempt(who, "charUnboundMgr", "SelectCharacterID", character, None, False) == ("ok", None)
 
-
-def test_a_corporation_job_is_paid_from_its_division_announced_to_its_managers_and_delivered_to_the_chosen_hangar():
+def test_a_corporation_job_without_a_selected_output_uses_corp_deliveries():
     race = HEALTH["races"][0]
     run = uuid.uuid4().hex[:8]
     system = station_system()
@@ -335,8 +324,9 @@ def test_a_corporation_job_is_paid_from_its_division_announced_to_its_managers_a
 
         blueprint = dbseed.new_item(BLUEPRINT, owner=corporation, location=STATION, flag=CORPORATION_HANGAR_1, singleton=True, quantity=-1)
         dbseed.new_item(MATERIAL, owner=corporation, location=STATION, flag=CORPORATION_HANGAR_1, quantity=86)
-        dump = job_dump(director, blueprint, MANUFACTURING, system, corporation=corporation, flag=CORPORATION_HANGAR_1,
-                        output_flag=CORPORATION_HANGAR_3)
+        dump = job_dump(director, blueprint, MANUFACTURING, system, corporation=corporation, flag=CORPORATION_HANGAR_1)
+        # With no output choice, the client's MatchLocation default is Corp Deliveries (flag 62).
+        dump.pop("outputLocation")
         job = number(who.call("industryManager", "InstallJob", dump))
 
         assert job_status(job) == 1
@@ -352,5 +342,5 @@ def test_a_corporation_job_is_paid_from_its_division_announced_to_its_managers_a
         ready_now(job)
         who.call("industryManager", "CompleteJob", job, system)
         product_flags = dbseed.sql(f"select flag from {dbseed.schema('INVENTORY')}.items where owner_id = {corporation} and type_id = {PRODUCT}")
-        assert product_flags.split() == [str(CORPORATION_HANGAR_3)], product_flags
+        assert product_flags.split() == ["62"], product_flags
 

@@ -1,7 +1,6 @@
 //! A ship warps to a stargate and jumps as the reference's ship did (`oracle/fixtures/scenarios/jump.json`): where the warp ends, what the
 //! client is told when the ship goes into the gate, how long it is before the ship is in the other system, where it appears and what it is sent
 //! when it binds the ballpark there.
-
 mod support;
 
 use std::sync::Arc;
@@ -61,7 +60,6 @@ fn point(args: &Value) -> Vec3 {
     Vec3::new(a[1].as_f64().unwrap(), a[2].as_f64().unwrap(), a[3].as_f64().unwrap())
 }
 
-/// The last recorded `SetBallPosition` of a step.
 fn last_position(step: &Value) -> Vec3 {
     let (_, _, args) =
         destiny_actions(step).into_iter().rfind(|(_, name, _)| name == "SetBallPosition").unwrap();

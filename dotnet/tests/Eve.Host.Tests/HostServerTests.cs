@@ -11,6 +11,7 @@ using Eve.Services;
 using Eve.Services.Core;
 using Eve.Services.CharacterSelect;
 using Eve.Services.CharacterInfo;
+using Eve.Skills;
 
 namespace Eve.Host.Tests;
 
@@ -39,7 +40,7 @@ public class HostServerTests : IAsyncLifetime
 
     public Task InitializeAsync() => Task.CompletedTask;
 
-    private void Start(AccountOptions? identity = null, int maxPending = 10_000, Action<ServiceRegistry>? configure = null, IAccountDirectory? accounts = null, bool strictRpc = false, Action<string, Exception?>? onProblem = null)
+    private void Start(AccountOptions? identity = null, int maxPending = 10_000, Action<ServiceRegistry>? configure = null, IAccountDirectory? accounts = null, bool strictRpc = false, Action<string, Exception?>? onProblem = null, Action<ClientSession>? sessionOpened = null, long maxOutboundBytes = 8 * 1024 * 1024, long maxPendingBytes = 16 * 1024 * 1024, int maxConnections = 1_024)
     {
         var registry = new ServiceRegistry();
         configure?.Invoke(registry);
@@ -55,7 +56,7 @@ public class HostServerTests : IAsyncLifetime
         var dispatcher = new PacketDispatcher(registry, now) { StrictRpc = strictRpc, OnProblem = onProblem };
         var encoded = MarshalCodec.Encode(config);
         _server = new HostServer(
-            new HostOptions { MaxPendingPacketsPerSession = maxPending, Log = message => { lock (_log) { _log.Add(message); } } },
+            new HostOptions { MaxFrontConnections = maxConnections, MaxPendingPacketsPerSession = maxPending, MaxPendingBytesPerSession = maxPendingBytes, MaxQueuedOutboundBytesPerSession = maxOutboundBytes, Log = message => { lock (_log) { _log.Add(message); } }, SessionOpened = sessionOpened },
             dispatcher,
             accounts ?? new InMemoryAccountDirectory(identity ?? new AccountOptions { AutoCreate = true }),
             () => encoded);
@@ -120,6 +121,10 @@ public class HostServerTests : IAsyncLifetime
             ValueTask.FromResult<Eve.Marshal.PyValue>(new Eve.Marshal.PyStr(""));
 
         public ValueTask<Eve.Services.Core.PersistedStructureInfo?> GetStructureInfoAsync(long structureId, CancellationToken cancellationToken) =>
+            ValueTask.FromResult<Eve.Services.Core.PersistedStructureInfo?>(null);
+
+        public ValueTask<Eve.Services.Core.PersistedStructureInfo?> GetStructureInfoForCharacterAsync(
+            long characterId, long structureId, CancellationToken cancellationToken) =>
             ValueTask.FromResult<Eve.Services.Core.PersistedStructureInfo?>(null);
 
         public ValueTask<IReadOnlyList<Eve.Services.Core.StructureDockingAccessSnapshot>> GetDockingAccessSnapshotsAsync(
@@ -201,6 +206,7 @@ public class HostServerTests : IAsyncLifetime
         public PyDict GlobalConfig() => config;
 
         public int UserCount() => 0;
+        public PyValue ClusterGameStatisticsForClient() => Py.Tuple(new PyDict([]), new PyDict([]), new PyInt(1));
     }
 
     // ── helpers ─────────────────────────────────────────────────────────────
@@ -228,6 +234,28 @@ public class HostServerTests : IAsyncLifetime
     }
 
     // ── tests ───────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void Fleet_composition_maps_catalog_command_skills_to_levels_and_zero_for_untrained()
+    {
+        var catalog = new SkillCatalog(
+        [
+            new SkillType(3348, "Leadership", 1, "Leadership", true, 1, 0, 0, [], 0m, true),
+            new SkillType(11572, "Wing Command", 1, "Leadership", true, 1, 0, 0, [], 0m, true),
+            new SkillType(24764, "Fleet Command", 1, "Leadership", true, 1, 0, 0, [], 0m, true),
+            new SkillType(99999, "Unrelated Skill", 1, "Other", true, 1, 0, 0, [], 0m, true)
+        ], new Dictionary<int, IReadOnlyList<StartingSkill>>());
+
+        var projection = CharacterServicesComposition.FleetCommandSkills(catalog,
+        [
+            new CharacterSkill(24764, 2, 45_255),
+            new CharacterSkill(3348, 4, 452_550),
+            new CharacterSkill(99999, 5, 2_000_000)
+        ]);
+
+        Assert.Equal([3348, 11572, 24764], projection.SkillIds);
+        Assert.Equal([4, 0, 2], projection.Levels);
+    }
 
     [Fact]
     public async Task A_front_that_says_hello_gets_an_ack_and_the_cluster_config()
@@ -301,7 +329,32 @@ public class HostServerTests : IAsyncLifetime
         var front = await Handshaken(await ConnectAsync());
         Assert.Equal(new Rejected("Unavailable"), (await front.AuthenticateAsync("pilot", [1], 1)).Outcome);
         Assert.Equal(new Rejected("Unavailable"), (await front.AuthenticateAsync("pilot", [1], 2)).Outcome); // still answering
-        Assert.Contains(_log, line => line.Contains("the database is down", StringComparison.Ordinal));
+        Assert.Contains(_log, line => line == "account authentication failed due to a host error");
+        Assert.DoesNotContain(_log, line => line.Contains("pilot", StringComparison.Ordinal));
+        Assert.DoesNotContain(_log, line => line.Contains("database is down", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Repeated_bad_logins_are_bounded_per_account_and_source_address()
+    {
+        var calls = 0;
+        Start(accounts: new FixedAccounts(_ =>
+        {
+            calls++;
+            return new LoginRefused(LoginRefused.BadCredentials);
+        }));
+        var front = await Handshaken(await ConnectAsync());
+
+        for (var attempt = 0; attempt < 10; attempt++)
+            Assert.Equal(new Rejected(LoginRefused.BadCredentials), (await front.AuthenticateAsync("pilot", [1], (uint)(attempt + 1))).Outcome);
+        Assert.Equal(new Rejected(LoginRefused.BadCredentials), (await front.AuthenticateAsync("pilot", [1], 11u)).Outcome);
+        Assert.Equal(10, calls);
+
+        for (var attempt = 0; attempt < 40; attempt++)
+            Assert.Equal(new Rejected(LoginRefused.BadCredentials), (await front.AuthenticateAsync($"pilot{attempt}", [1], (uint)(attempt + 12))).Outcome);
+        Assert.Equal(50, calls);
+        Assert.Equal(new Rejected(LoginRefused.BadCredentials), (await front.AuthenticateAsync("another-pilot", [1], 99u)).Outcome);
+        Assert.Equal(50, calls);
     }
 
     [Fact]
@@ -1220,7 +1273,8 @@ public class HostServerTests : IAsyncLifetime
             Npgsql.NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest("Host=127.0.0.1;Port=1;Database=unused")),
             new Dictionary<string, string> { [Eve.Services.Core.MiningLedgerQueries.SpaceSchema] = "unused" }));
         var characterMining = new Eve.Services.Core.CharacterMiningLedgerService(ledgerReads);
-        var corporationMining = new Eve.Services.Core.CorpMiningLedgerService(ledgerReads);
+        var corporationMining = new Eve.Services.Core.CorpMiningLedgerService(
+            ledgerReads, (_, _, _) => ValueTask.FromResult(false));
         var agents = new Eve.Services.Core.AgentMissionService(
             (_, _) => ValueTask.FromResult<System.Text.Json.Nodes.JsonObject?>(null),
             (_, _, _) => ValueTask.FromResult<IReadOnlyDictionary<long, System.Text.Json.Nodes.JsonObject>>(new Dictionary<long, System.Text.Json.Nodes.JsonObject>()),
@@ -1579,6 +1633,29 @@ public class HostServerTests : IAsyncLifetime
         Assert.Equal(Py.FileTimeFromUnixMs(FixedNowMs), time.Value);
     }
 
+[Fact]
+    public async Task A_second_front_login_disconnects_the_previous_session_of_the_same_account()
+    {
+        var connected = new ConnectedSessions();
+        Start(sessionOpened: session =>
+        {
+            var previous = connected.AddExclusive(session);
+            previous?.RequestDisconnect("Another client logged in to this account.");
+            session.Closed += () => connected.Remove(session);
+        });
+        using var first = await Handshaken(await ConnectAsync());
+        using var second = await Handshaken(await ConnectAsync());
+
+        await first.SendAsync(Open(11, 42));
+        Assert.IsType<Send>(await first.ReceiveAsync());
+
+        await second.SendAsync(Open(22, 42));
+        var disconnect = Assert.IsType<Disconnect>(await first.ReceiveAsync());
+        Assert.Equal(11UL, disconnect.SessionId);
+        Assert.Equal("Another client logged in to this account.", disconnect.Reason);
+        Assert.IsType<Send>(await second.ReceiveAsync());
+    }
+
     [Fact]
     public async Task One_sessions_packets_are_answered_in_order_and_sessions_do_not_mix()
     {
@@ -1747,6 +1824,43 @@ public class HostServerTests : IAsyncLifetime
         Assert.Equal("Overloaded", disconnect.Reason);
     }
 
+
+    [Fact]
+    public async Task An_inbound_byte_budget_disconnects_only_the_session()
+    {
+        Start(maxPendingBytes: 64);
+        var front = await Handshaken(await ConnectAsync());
+        var open = Open();
+        await front.SendAsync(open);
+        await front.ReceiveAsync();
+
+        var packet = MarshalCodec.Encode(Packets.Call(open, 1, "pingService", "Ping"));
+        Assert.True(packet.Length > 64);
+        await front.SendAsync(new Packet(open.SessionId, packet));
+
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        Disconnect? disconnect = null;
+        while (disconnect is null)
+        {
+            var message = await front.ReceiveAsync(timeout.Token);
+            disconnect = message as Disconnect;
+        }
+        Assert.Equal(open.SessionId, disconnect.SessionId);
+        Assert.Equal("Overloaded", disconnect.Reason);
+    }
+
+    [Fact]
+    public async Task An_outbound_byte_budget_disconnects_only_the_session()
+    {
+        Start(maxOutboundBytes: 1);
+        var front = await Handshaken(await ConnectAsync());
+        var open = Open();
+        await front.SendAsync(open);
+        var disconnect = Assert.IsType<Disconnect>(await front.ReceiveAsync());
+        Assert.Equal(open.SessionId, disconnect.SessionId);
+        Assert.Equal("OutgoingOverloaded", disconnect.Reason);
+    }
+
 private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
     {
         public const int SystemId = 30000142;
@@ -1785,6 +1899,27 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
         var (ra, rb) = (await a.AuthenticateAsync("a", [1], 1), await b.AuthenticateAsync("b", [2], 1));
         Assert.NotEqual(Assert.IsType<Accepted>(ra.Outcome).UserId, Assert.IsType<Accepted>(rb.Outcome).UserId);
         Assert.Equal(2, _server.ConnectedFronts);
+    }
+
+
+    [Fact]
+    public async Task Front_connections_above_the_server_limit_are_closed_before_dispatch()
+    {
+        Start(maxConnections: 1);
+        var first = await Handshaken(await ConnectAsync());
+        var second = await ConnectAsync();
+
+        Assert.Null(await second.ReceiveOrEndAsync());
+        Assert.Equal(1, _server.ConnectedFronts);
+        await first.AuthenticateAsync("bounded", [1], 1);
+        Assert.Equal(1, _server.ConnectedFronts);
+    }
+
+
+    [Fact]
+    public void Front_connection_limit_must_be_positive()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => Start(maxConnections: 0));
     }
 
     [Fact]
@@ -2793,14 +2928,23 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
             Task.FromResult(id == characterId
                 ? new Eve.Relations.Affiliation(corporationId, allianceId, null)
                 : new Eve.Relations.Affiliation(98000012, null, null));
-        var readModel = new PersistenceStructureDirectoryReadModel(ReadTable, Affiliation, null!, null!);
-        var persisted = await readModel.GetStructureInfoAsync(structureId, CancellationToken.None);
+        var readModel = new PersistenceStructureDirectoryReadModel(
+            ReadTable, Affiliation, null!, null!, null, null,
+            (_, _, _) => Task.FromResult(true));
+        var persisted = await readModel.GetStructureInfoForCharacterAsync(characterId, structureId, CancellationToken.None);
         Assert.NotNull(persisted);
         Assert.True(persisted.PersistentlyDeployed);
         Assert.NotSame(Eve.Marshal.PyNone.Instance, persisted.Info);
+        var ownerInfo = Assert.IsType<Eve.Marshal.PyObject>(persisted.Info);
+        var ownerFields = Assert.IsType<Eve.Marshal.PyDict>(ownerInfo.Args).Entries;
+        Assert.Contains(ownerFields, entry => entry.Key.Equals(new Eve.Marshal.PyStr("services")));
+        var foreignInfo = await readModel.GetStructureInfoForCharacterAsync(characterId + 1, structureId, CancellationToken.None);
+        var publicFields = Assert.IsType<Eve.Marshal.PyDict>(Assert.IsType<Eve.Marshal.PyObject>(foreignInfo!.Info).Args).Entries;
+        Assert.DoesNotContain(publicFields, entry => entry.Key.Equals(new Eve.Marshal.PyStr("services")));
+        Assert.DoesNotContain(publicFields, entry => entry.Key.Equals(new Eve.Marshal.PyStr("allianceID")));
 
         var myStructures = await readModel.GetMyCharacterStructuresAsync(characterId, CancellationToken.None);
-        Assert.Equal(new long[] { structureId, deniedStructureId },
+        Assert.Equal(new long[] { structureId },
             myStructures.Entries.Select(entry => entry.Key switch
             {
                 Eve.Marshal.PyInt number => (long)number.Value,
@@ -2809,7 +2953,7 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
             }).OrderBy(id => id));
         var corporationStructures = await readModel.GetMyCorporationStructuresAsync(
             characterId, corporationId, CancellationToken.None);
-        Assert.Equal(myStructures.Entries.Count, corporationStructures.Entries.Count);
+        Assert.Equal(2, corporationStructures.Entries.Count);
         var otherCorporationStructures = await readModel.GetMyCorporationStructuresAsync(
             characterId, corporationId + 1, CancellationToken.None);
         Assert.Empty(otherCorporationStructures.Entries);
@@ -2818,6 +2962,23 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
         session.Set("corpid", new Eve.Marshal.PyInt(corporationId));
         session.Set("allianceid", new Eve.Marshal.PyInt(allianceId));
         var service = new Eve.Services.Core.StructureDirectoryService(readModel);
+        var ownerDetails = Assert.IsType<Eve.Marshal.PyObject>(await service.CallAsync(new Eve.Services.ServiceCall
+        {
+            Method = "GetStructureInfo",
+            Args = [new Eve.Marshal.PyLong(structureId)],
+            Session = session,
+        }));
+        Assert.Contains(Assert.IsType<Eve.Marshal.PyDict>(ownerDetails.Args).Entries,
+            entry => entry.Key.Equals(new Eve.Marshal.PyStr("services")));
+        var publicSession = new Eve.Services.ClientSession { CharacterId = characterId + 1 };
+        var publicDetails = Assert.IsType<Eve.Marshal.PyObject>(await service.CallAsync(new Eve.Services.ServiceCall
+        {
+            Method = "GetStructureInfo",
+            Args = [new Eve.Marshal.PyLong(structureId)],
+            Session = publicSession,
+        }));
+        var publicInfoFields = Assert.IsType<Eve.Marshal.PyDict>(publicDetails.Args).Entries;
+        Assert.DoesNotContain(publicInfoFields, entry => entry.Key.Equals(new Eve.Marshal.PyStr("services")));
         var docking = await service.CallAsync(new Eve.Services.ServiceCall
         {
             Method = "CheckMyDockingAccessToStructures",
@@ -2832,6 +2993,109 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
                 Eve.Marshal.PyLong number => number.Value,
                 _ => throw new InvalidOperationException("Expected an integer structure ID."),
             }));
+    }
+
+    [Fact]
+    public async Task Corporation_structure_directory_requires_persisted_manager_access()
+    {
+        const long structureId = 88000015;
+        const long characterId = 90000015;
+        const long corporationId = 98000015;
+        var tables = new Dictionary<string, System.Text.Json.Nodes.JsonObject>
+        {
+            ["structures"] = new()
+            {
+                [structureId.ToString(System.Globalization.CultureInfo.InvariantCulture)] = new System.Text.Json.Nodes.JsonObject
+                {
+                    ["structureID"] = structureId,
+                    ["typeID"] = 35841,
+                    ["solarSystemID"] = 30000142,
+                    ["ownerCorpID"] = corporationId,
+                },
+            },
+        };
+        var structureReads = 0;
+        Task<System.Text.Json.Nodes.JsonObject> ReadTable(string name, CancellationToken _)
+        {
+            if (name == "structures") structureReads++;
+            return Task.FromResult((System.Text.Json.Nodes.JsonObject)tables.GetValueOrDefault(name, new()).DeepClone());
+        }
+        Task<Eve.Relations.Affiliation> Affiliation(long id, CancellationToken _) =>
+            Task.FromResult(new Eve.Relations.Affiliation(corporationId, null, null));
+        var directoryAccess = false;
+        Task<bool> PersistedDirectoryAccess(long actorId, long ownerCorporationId, CancellationToken token) =>
+            Task.FromResult(actorId == characterId && ownerCorporationId == corporationId && directoryAccess);
+        var readModel = new PersistenceStructureDirectoryReadModel(
+            ReadTable, Affiliation, null!, null!, null, null, PersistedDirectoryAccess);
+        var session = new Eve.Services.ClientSession { CharacterId = characterId };
+        session.Set("corpid", new Eve.Marshal.PyInt(corporationId));
+        session.Set("corprole", new Eve.Marshal.PyInt(Eve.Corporations.CorporationRoles.StationManager));
+        var service = new Eve.Services.Core.StructureDirectoryService(readModel);
+        var call = new Eve.Services.ServiceCall
+        {
+            Method = "GetMyCorporationStructures",
+            Args = [],
+            Session = session,
+        };
+
+        var denied = await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(() => service.CallAsync(call).AsTask());
+        Assert.Equal("CrpAccessDenied", denied.Error.UserErrorMessage);
+        Assert.Equal(0, structureReads);
+
+        directoryAccess = true;
+        session.Set("corprole", new Eve.Marshal.PyInt(0));
+        var result = Assert.IsType<Eve.Marshal.PyDict>(await service.CallAsync(call));
+        Assert.Single(result.Entries);
+    }
+
+    [Fact]
+    public async Task Structure_description_rechecks_persisted_station_manager_role_after_login()
+    {
+        const long structureId = 88000013;
+        const long characterId = 90000013;
+        const long corporationId = 98000013;
+        var tables = new Dictionary<string, System.Text.Json.Nodes.JsonObject>
+        {
+            ["structures"] = new()
+            {
+                [structureId.ToString(System.Globalization.CultureInfo.InvariantCulture)] = new System.Text.Json.Nodes.JsonObject
+                {
+                    ["structureID"] = structureId,
+                    ["typeID"] = 35841,
+                    ["solarSystemID"] = 30000142,
+                    ["ownerCorpID"] = corporationId,
+                },
+            },
+        };
+        Task<System.Text.Json.Nodes.JsonObject> ReadTable(string name, CancellationToken _) =>
+            Task.FromResult((System.Text.Json.Nodes.JsonObject)tables.GetValueOrDefault(name, new()).DeepClone());
+        Task<Eve.Relations.Affiliation> Affiliation(long id, CancellationToken _) =>
+            Task.FromResult(id == characterId
+                ? new Eve.Relations.Affiliation(corporationId, null, null)
+                : new Eve.Relations.Affiliation(null, null, null));
+        var descriptionWritten = false;
+        Task SetDescription(long structure, string description, CancellationToken token)
+        {
+            descriptionWritten = true;
+            return Task.CompletedTask;
+        }
+        Task<bool> PersistedStationManager(long actorId, long ownerCorporationId, CancellationToken token) => Task.FromResult(false);
+        var readModel = new PersistenceStructureDirectoryReadModel(
+            ReadTable, Affiliation, null!, SetDescription, null, PersistedStationManager);
+        var session = new Eve.Services.ClientSession { CharacterId = characterId };
+        session.Set("corpid", new Eve.Marshal.PyInt(corporationId));
+        session.Set("corprole", new Eve.Marshal.PyInt(2048));
+        var service = new Eve.Services.Core.StructureDirectoryService(readModel);
+
+        var exception = await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(() => service.CallAsync(new Eve.Services.ServiceCall
+        {
+            Method = "SetStructureDescription",
+            Args = [new Eve.Marshal.PyInt(structureId), new Eve.Marshal.PyStr("revoked after login")],
+            Session = session,
+        }).AsTask());
+
+        Assert.Equal("CrpAccessDenied", exception.Error.UserErrorMessage);
+        Assert.False(descriptionWritten);
     }
 
     [Fact]
@@ -2952,7 +3216,7 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
                     ["ownerCorpID"] = ownerCorporationId,
                     ["allianceID"] = ownerAllianceId,
                     ["profileID"] = profileId,
-                    ["serviceStates"] = new System.Text.Json.Nodes.JsonObject { ["1"] = 1, ["15"] = 1, ["999"] = 1 },
+                    ["serviceStates"] = new System.Text.Json.Nodes.JsonObject { ["1"] = 1, ["6"] = 1, ["15"] = 1, ["999"] = 1 },
                 },
             },
             ["structureProfiles"] = new()
@@ -2968,6 +3232,8 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
                             ["19"] = new System.Text.Json.Nodes.JsonArray(
                                 new System.Text.Json.Nodes.JsonObject { ["groupID"] = groupId, ["value"] = 1 },
                                 new System.Text.Json.Nodes.JsonObject { ["groupID"] = overrideGroupId, ["value"] = 1 }),
+                            ["23"] = new System.Text.Json.Nodes.JsonArray(
+                                new System.Text.Json.Nodes.JsonObject { ["groupID"] = groupId, ["value"] = 1 }),
                             ["34"] = new System.Text.Json.Nodes.JsonArray(
                                 new System.Text.Json.Nodes.JsonObject { ["groupID"] = 70003, ["value"] = 1 }),
                         },
@@ -3016,9 +3282,9 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
 
         var allowedServices = Assert.IsType<Eve.Marshal.PyDict>(
             await model.CharacterGetServicesAsync(allowedCharacterId, structureId, CancellationToken.None));
-        var visibleService = Assert.Single(allowedServices.Entries);
-        Assert.Equal(new Eve.Marshal.PyInt(1), visibleService.Key);
+        Assert.Equal(new long[] { 1, 6 }, allowedServices.Entries.Select(entry => ((Eve.Marshal.PyInt)entry.Key).Value).Order().ToArray());
         Assert.True(await model.CharacterHasServiceAsync(allowedCharacterId, structureId, 1, CancellationToken.None));
+        Assert.True(await model.CharacterHasServiceAsync(allowedCharacterId, structureId, Eve.Structures.StructureServiceIds.Medical, CancellationToken.None));
         Assert.False(await model.CharacterHasServiceAsync(allowedCharacterId, structureId, 15, CancellationToken.None));
         Assert.False(await model.CharacterHasServiceAsync(allowedCharacterId, structureId, 999, CancellationToken.None));
         Assert.True(await model.CharacterHasSettingAsync(allowedCharacterId, structureId, 19, CancellationToken.None));
@@ -3028,6 +3294,7 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
             await model.CharacterGetServicesAsync(deniedCharacterId, structureId, CancellationToken.None));
         Assert.Empty(deniedServices.Entries);
         Assert.False(await model.CharacterHasServiceAsync(deniedCharacterId, structureId, 1, CancellationToken.None));
+        Assert.False(await model.CharacterHasServiceAsync(deniedCharacterId, structureId, Eve.Structures.StructureServiceIds.Medical, CancellationToken.None));
         Assert.False(await model.CharacterHasServiceAsync(deniedCharacterId, structureId, 15, CancellationToken.None));
         Assert.False(await model.CharacterHasSettingAsync(deniedCharacterId, structureId, 19, CancellationToken.None));
         Assert.Equal(new[] { "structures", "structureProfiles", "accessGroups" }, tableReads.Distinct());
@@ -3566,6 +3833,53 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
             saved["systems"]![otherAllianceSystemId.ToString(System.Globalization.CultureInfo.InvariantCulture)]!["corporationID"]!.GetValue<long>());
         Assert.Equal(fromCorporationId,
             saved["hubs"]![otherHubId.ToString(System.Globalization.CultureInfo.InvariantCulture)]!["corporationID"]!.GetValue<long>());
+    }
+
+    [Fact]
+    public void Expanded_mail_recipients_are_merged_and_capped_before_delivery()
+    {
+        var recipientIds = new List<long>();
+        var labels = new Dictionary<long, int>();
+
+        Assert.True(MailOrganizationAuthorization.TryAddRecipient(recipientIds, labels, 101, 1, maximum: 1));
+        Assert.True(MailOrganizationAuthorization.TryAddRecipient(recipientIds, labels, 101, 8, maximum: 1));
+        Assert.False(MailOrganizationAuthorization.TryAddRecipient(recipientIds, labels, 102, 1, maximum: 1));
+        Assert.Equal(new[] { 101L }, recipientIds);
+        Assert.Equal(9, labels[101]);
+    }
+
+    [Fact]
+    public void Mail_organization_recipient_requires_own_corporation_or_chat_manager()
+    {
+        const long senderId = 90000101;
+        const long corporationId = 90000102;
+        const long allianceId = 90000103;
+        using var settingsDocument = System.Text.Json.JsonDocument.Parse("{}");
+        var corporation = new Eve.Corporations.Corporation(
+            corporationId, "Test Corp", "TST", senderId + 1, senderId, allianceId,
+            0, 0, 0m, 0m, "", "", 100, false, false, 0, settingsDocument.RootElement.Clone());
+        var chatManagerRole = Eve.Corporations.CorporationRoles.ChatManager;
+        var titleMember = new Eve.Corporations.Member(
+            senderId, corporationId, 0, "", new Eve.Corporations.RoleMasks(), null, 1, false, 1000);
+        var title = new Eve.Corporations.CorporationTitle(
+            1, "Chat Manager", new Eve.Corporations.RoleMasks(Roles: chatManagerRole));
+        var titleRoles = Eve.Corporations.CorporationRoles.Session(
+            corporation, titleMember, null, [title]).CorpRole;
+
+        Assert.True(MailOrganizationAuthorization.CanSendOrganizationMail(corporationId, corporation, 0));
+        Assert.False(MailOrganizationAuthorization.CanSendOrganizationMail(corporationId + 10, corporation, 0));
+        Assert.False(MailOrganizationAuthorization.CanSendOrganizationMail(allianceId, corporation, 0));
+        Assert.False(MailOrganizationAuthorization.CanSendOrganizationMail(corporationId, corporation, null));
+        Assert.True(MailOrganizationAuthorization.CanSendOrganizationMail(
+            allianceId, corporation, chatManagerRole));
+        Assert.True(MailOrganizationAuthorization.CanSendOrganizationMail(
+            allianceId, corporation, titleRoles));
+        Assert.False(MailOrganizationAuthorization.CanSendOrganizationMail(
+            allianceId, corporation, chatManagerRole & ~chatManagerRole));
+        Assert.False(MailOrganizationAuthorization.CanSendOrganizationMail(
+            allianceId, corporation with { IsNpc = true }, chatManagerRole));
+        Assert.False(MailOrganizationAuthorization.CanSendOrganizationMail(
+            allianceId, corporation with { Deleted = true }, chatManagerRole));
     }
 
     [Fact]

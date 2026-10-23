@@ -18,7 +18,6 @@ public static class CorporationWire
             _ => None,
         } : fallback ?? None;
 
-
     public static long? FactionId(Corporation? corporation)
     {
         return corporation is null ? null : PositiveSetting(corporation, "factionID");
@@ -251,7 +250,6 @@ private static readonly (string Name,int Type)[] MemberTrackingColumns =
             new PyPackedRow(TitleDescriptor,[new PyInt(t.Id),new PyWString(t.Name),.. Masks(t.Masks)])))]);
 }
 
-
 [Eve.Services.Service("voteManager")]
 public sealed partial class VoteManagerService(Eve.Corporations.CorporationStore store)
 {
@@ -353,8 +351,8 @@ public sealed partial class VoteManagerService(Eve.Corporations.CorporationStore
         var actorId = call.Session.CharacterId ?? 0;
         var corporationId = CurrentCorporation(call.Session);
         if (actorId <= 0 || corporationId <= 0) throw new Eve.Corporations.CorporationError("CORPORATION_ACCESS_DENIED");
-        var voteCaseText = Text(call.Arg(0));
-        var description = Text(call.Arg(1));
+        var voteCaseText = Text(call.Arg(0), 500);
+        var description = Text(call.Arg(1), 1000);
         var voteType = checked((int)Number(call.Arg(2)));
         var options = call.Arg(3);
         var (optionCount,parameter,parameter1,parameter2) = VoteOptions(voteType,options);
@@ -434,7 +432,8 @@ public sealed partial class VoteManagerService(Eve.Corporations.CorporationStore
         if (voteType == VoteGeneral)
         {
             if (options is not PyList list || list.Items.Count is < 2 or > 50 ||
-                list.Items.Any(option => option is not PyStr and not PyWString))
+                list.Items.Any(option => option is not PyStr and not PyWString ||
+                    Eve.Macho.JsSemantics.StringValue(option) is not { Length: > 0 and <= 100 }))
                 throw new Eve.Corporations.CorporationError("CORPORATION_INVALID_VOTE_OPTIONS");
             return (list.Items.Count,null,null,null);
         }
@@ -454,11 +453,10 @@ public sealed partial class VoteManagerService(Eve.Corporations.CorporationStore
                          real.Value >= long.MinValue && real.Value <= long.MaxValue => (long)real.Value,
         _ => throw new Eve.Corporations.CorporationError("CORPORATION_INVALID_VOTE_ARGUMENT"),
     };
-    private static string Text(PyValue value) => value switch
-    {
-        var text when Eve.Macho.JsSemantics.StringValue(text) is not null => Eve.Macho.JsSemantics.StringValue(text)!,
-        _ => throw new Eve.Corporations.CorporationError("CORPORATION_INVALID_VOTE_ARGUMENT"),
-    };
+    private static string Text(PyValue value, int maxLength) =>
+        Eve.Macho.JsSemantics.StringValue(value) is { } text && text.Length <= maxLength
+            ? text
+            : throw new Eve.Corporations.CorporationError("CORPORATION_INVALID_VOTE_ARGUMENT");
     private static long CurrentCorporation(Eve.Services.ClientSession session) =>
         session.GetInt("corporationID") ?? session.GetInt("corpid") ?? 0;
 }

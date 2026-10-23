@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using Eve.Dogma;
 using Eve.Inventory;
 using Eve.Marshal;
+using Eve.Planets;
 using Eve.Scheduler;
 using Eve.Services.Ships;
 using Eve.Ships;
@@ -34,6 +35,7 @@ public sealed partial class SpaceContainers : ISpaceContainers, IDisposable
 
     private const int CanGroup = 12;
     private const int WreckGroup = 186;
+    private const int AnalysisBeaconGroup = 4137;
     private const int CanDestructionEffect = 3;
     private const int RemovedCanLocation = 10;
     private const int CargoFlag = CharacterShips.CargoFlag;
@@ -115,44 +117,50 @@ public sealed partial class SpaceContainers : ISpaceContainers, IDisposable
 
     public async Task<Item?> OpenAsync(ClientSession session, long containerId, CancellationToken cancellationToken)
     {
-        if (!_space.IsInSpace(session) || _space.SolarSystemOf(session) is not { } system || await _items.GetAsync(containerId, cancellationToken) is not { } item || item.LocationId != system)
-        {
+        var inSpace = _space.IsInSpace(session);
+        var system = _space.SolarSystemOf(session);
+        var item = await _items.GetAsync(containerId, cancellationToken);
+        if (!inSpace || system is not { } solarSystem || item is null || item.LocationId != solarSystem)
             return null;
-        }
+
         await _statics.EnsureTypesAsync([item.TypeId], cancellationToken);
         var type = _statics.Type(item.TypeId);
         if (type is null ||
-            (type.GroupId != CanGroup && type.GroupId != WreckGroup &&
+            (type.GroupId != CanGroup && type.GroupId != WreckGroup && type.GroupId != AnalysisBeaconGroup && type.GroupId != Customs.OfficeGroupId &&
              !Eve.Structures.StructureUnanchorDrop.IsFittingsContainer(item.TypeId, item.CustomInfo) &&
              !(await IsLootedSiteContainerAsync(item.Id, item.TypeId, type.GroupId, cancellationToken))))
-        {
             return null;
-        }
+        if (type.GroupId == AnalysisBeaconGroup && item.CustomInfo != "analysis_beacon_wreck"
+            && !HasAnalysisBeaconLootAccess(item, session.CharacterId)) return null;
+
         CommandReply reply;
         try
         {
-            reply = await _sim.CommandAsync((ulong)session.SessionId, SimCommands.Measure, [containerId], cancellationToken);
+            var args = type.GroupId == Customs.OfficeGroupId
+                ? new[] { (double)containerId, (double)session.GetInt("shipid")!.Value }
+                : [(double)containerId];
+            reply = await _sim.CommandAsync((ulong)session.SessionId, SimCommands.Measure, args, cancellationToken);
         }
-        catch (SimUnavailableException error)
+        catch (SimUnavailableException)
         {
-            _log?.Invoke($"opening {containerId} for session {session.SessionId}: {error.Message}");
             throw Unavailable();
         }
         // not in the scene, or not in view: the reference answers as for an item that is not there
         if (!reply.Accepted || reply.Distance is not { } distance)
-        {
             throw MachoErrors.ThrowUserError("FakeItemNotFound");
-        }
         if (distance > OpenRange)
-        {
             throw MachoErrors.ThrowUserError("TargetTooFar");
-        }
         return item;
     }
 
-    /// <summary>Whether the pilot may take what is in the container: it is the pilot's own, or its corporation's (a can's owner is the one who jettisoned into it).</summary>
     private async Task<bool> MayTakeFromAsync(long characterId, Item container, CancellationToken cancellationToken, SpaceItem? rights = null, IReadOnlyList<long>? itemIds = null)
     {
+        if (container.CustomInfo == "analysis_beacon_wreck")
+        {
+            return true;
+        }
+        if (container.CustomInfo?.StartsWith("analysis_beacon_loot:", StringComparison.Ordinal) == true)
+            return HasAnalysisBeaconLootAccess(container, characterId);
         if (Eve.Structures.StructureUnanchorDrop.IsFittingsContainer(container.TypeId, container.CustomInfo) ||
             _abandonedLoot.ContainsKey(container.Id) || container.OwnerId == characterId)
         {
@@ -171,9 +179,16 @@ public sealed partial class SpaceContainers : ISpaceContainers, IDisposable
             && await _ships.CharacterAsync(container.OwnerId, cancellationToken) is { } owner && owner.CorporationId == pilot.CorporationId;
     }
 
+    private bool HasAnalysisBeaconLootAccess(Item item, long? characterId)
+    {
+        var fields = item.CustomInfo?.Split(':');
+        return characterId is > 0 && fields is { Length: 3 } && fields[0] == "analysis_beacon_loot"
+            && long.TryParse(fields[1], out var linkedPilot) && linkedPilot == characterId.Value
+            && long.TryParse(fields[2], out var accessUntil) && _nowUnixMs() < accessUntil;
+    }
+
     /// <summary>
     /// Whether the pilot may pull the wreck or can with a tractor beam: the rights that its stored loot rights give (the same rights as taking from it:
-    /// abandoned, the owner's own, or its corporation's). Null when no wreck or can has that id, which the simulation refuses as not there.
     /// </summary>
     private async Task<bool?> MayPullAsync(long characterId, long wreckId, CancellationToken cancellationToken)
     {
@@ -321,8 +336,6 @@ public sealed partial class SpaceContainers : ISpaceContainers, IDisposable
             ? _space.RefreshShipAsync(session, cancellationToken)
             : Task.CompletedTask;
 
-
-
     /// <summary>
     /// What the client is told of a batch that was taken from a can or a wreck (recorded: <c>loot.json</c>): each stack that moved (<c>OnItemsChanged</c>, to the character, with no place for the
     /// loot window), the scene's word for each of them of what is in the container now, the single <c>OnClientEvent_MoveFromCargoToHangar</c>, and when nothing is left the single
@@ -385,6 +398,10 @@ public sealed partial class SpaceContainers : ISpaceContainers, IDisposable
         {
             return [];
         }
+        var runSpaceScope = _space.RunSpaceScopeOf(session);
+        var expectedScene = runSpaceScope is { } scope
+            ? new SimSceneKey(scope.SpaceLocationId, scope.InstanceId, scope.RoomOrdinal)
+            : SimSceneKey.SolarSystem(system);
         var now = _nowUnixMs();
         var id = (ulong)session.SessionId;
         if (_cooldownUntil.TryGetValue(id, out var until) && until > now)
@@ -397,7 +414,7 @@ public sealed partial class SpaceContainers : ISpaceContainers, IDisposable
         }
         await _statics.EnsureTypesAsync([CharacterShips.CargoContainerTypeId], cancellationToken);
         var canType = _statics.Type(CharacterShips.CargoContainerTypeId);
-        var can = await _ships.CreateCanAsync(characterId, system, cancellationToken);
+        var can = await _ships.CreateCanAsync(characterId, system, cancellationToken, runSpaceScope: runSpaceScope);
 
         // the can comes into space first (the client is told the ball and the effect), then the stacks go into it
         CommandReply placed;
@@ -406,7 +423,8 @@ public sealed partial class SpaceContainers : ISpaceContainers, IDisposable
             placed = await _sim.PlaceContainerAsync(new SimPlaceContainer(
                 id, can.Id, new SimWreckKind(CharacterShips.CargoContainerTypeId, canType?.Name ?? "Cargo Container", canType?.GraphicId ?? 0),
                 canType?.Attributes.GetValueOrDefault(162, CanRadiusFallback) ?? CanRadiusFallback, shipId,
-                new SimCredit(pilot.Id, pilot.CorporationId, pilot.AllianceId ?? 0, 0), JettisonDistance), cancellationToken);
+                new SimCredit(pilot.Id, pilot.CorporationId, pilot.AllianceId ?? 0, 0), JettisonDistance)
+                { ExpectedScene = expectedScene }, cancellationToken);
         }
         catch (SimUnavailableException error)
         {
@@ -533,7 +551,6 @@ private void OnReceived(SimMessage message)
         }
     }
 
-    /// <summary>ST-9 c: the capture of Sovereignty Hubs by entosis links, set by the host. Without it an entosis link's cycle is refused by name.</summary>
     public Eve.Services.Space.Entosis.EntosisCaptureService? EntosisCaptures { get; set; }
 
     /// <summary>A module's end report: an entosis link stops counting (its capture is moved to now first). A failure is logged; the capture is then moved at its next event.</summary>
@@ -559,13 +576,18 @@ private void OnReceived(SimMessage message)
     {
         try
         {
+            if (wreck.Scene.InstanceId > 0)
+            {
+                // Abyssal loot is owned by the run's persisted entity plan, not the normal solar-system restore table.
+                return;
+            }
             if (Eve.Structures.StructureUnanchorDrop.IsArtifact((await _items.GetAsync(wreck.WreckId))?.CustomInfo))
             {
                 // The transactional handoff wrote an unbounded space row; don't replace it with a jettison lifetime.
                 return;
             }
             var item = new SpaceItem(
-                wreck.WreckId, wreck.SolarSystemId, wreck.Position, wreck.Direction, wreck.Radius, wreck.GroupId, wreck.LauncherId, wreck.Credit.CharacterId, wreck.Credit.CorporationId,
+                wreck.WreckId, wreck.Scene.LocationId, wreck.Position, wreck.Direction, wreck.Radius, wreck.GroupId, wreck.LauncherId, wreck.Credit.CharacterId, wreck.Credit.CorporationId,
                 wreck.Credit.AllianceId, wreck.Credit.WarFactionId, _nowUnixMs() + (long)CanLifetime.TotalMilliseconds);
             var saved = _abandonedLoot.ContainsKey(wreck.WreckId) ? Abandon(item) : item;
             await _spaceItems.SaveAsync(saved);
@@ -622,6 +644,8 @@ private void OnReceived(SimMessage message)
                         await ForgetAsync(item.ItemId);
                         continue;
                     }
+                    // Private-run items are restored/settled by their exact durable run scope, never as public solar-system balls.
+                    if (stored.RunSpaceProvenance is not null) continue;
                     await _statics.EnsureTypesAsync([stored.TypeId]);
                     var type = _statics.Type(stored.TypeId);
                     if (type is not null && _statics.CategoryName(type.CategoryId) == "Asteroid")
@@ -644,7 +668,7 @@ private void OnReceived(SimMessage message)
                     }
                     var empty = (await _items.InContainerAsync(item.ItemId)).Count == 0;
                     _sim.PlaceWreck(new SimPlaceWreck(
-                        system, item.ItemId, item.GroupId,
+                        SimSceneKey.SolarSystem(system), item.ItemId, item.GroupId,
                         new SimWreckKind(stored.TypeId, stored.CustomName ?? type?.Name ?? "", type?.GraphicId ?? 0),
                         item.Position, item.Direction, item.Radius, item.LauncherId,
                         new SimCredit(item.CharacterId, item.CorporationId, item.AllianceId, item.WarFactionId), empty));
@@ -661,7 +685,6 @@ private void OnReceived(SimMessage message)
             _log?.Invoke($"what lies in space in system {system} was not put back: {error.Message}");
         }
     }
-
 
     internal void RemoveMoonFieldRocks(IEnumerable<long> asteroidIds)
     {

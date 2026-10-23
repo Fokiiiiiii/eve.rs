@@ -8,7 +8,6 @@ using Eve.Wallet;
 namespace Eve.Market.Tests;
 
 /// <summary>
-/// M4: two sessions in one region. The client keeps a book (GetOrders, the station and system asks) and its owner lists in objectCaching until
 /// the server drops them with InvalidateCachedMethodCall (objectCaching.py:222-238). Each change sends that invalidation before its notices,
 /// the next read shows the change, and a session in another region is not asked to drop this region's book.
 /// </summary>
@@ -91,7 +90,8 @@ public class MarketCoherenceTests
             var stream = Assert.IsType<PySubStream>(entry.Items[1]);
             var body = Assert.IsType<PyTuple>(stream.Decoded ?? MarshalCodec.Decode(stream.Raw));
             if (JsSemantics.PlainText(body.Items[1]) != "InvalidateCachedMethodCall") continue;
-            found.Add(string.Join(" ", Assert.IsType<PyList>(body.Items[2]).Items.Select(Text)));
+            // the invalidated call's arguments: a tuple, as the engine's *args gives them (ClientCallRequest)
+            found.Add(string.Join(" ", Assert.IsType<PyTuple>(body.Items[2]).Items.Select(Text)));
         }
         return found;
     }

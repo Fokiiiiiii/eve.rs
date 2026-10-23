@@ -1,6 +1,8 @@
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using Eve.Marshal;
+using Eve.Ships;
 using Eve.Services.Ships;
 using Eve.Space;
 
@@ -75,7 +77,31 @@ public sealed partial class SpaceSessions
         }
         var sessionId = (ulong)session.SessionId;
         await SendShipAsync(sessionId, pilot, null, cancellationToken);
+        if (await ModuleShipAsync(pilot, cancellationToken) is { } snapshot)
+        {
+            TellBuffedDogmaAttributes(session, snapshot);
+        }
         await RefreshRunningAsync(pilot, sessionId, cancellationToken);
+    }
+
+    /// <summary>The dogma cache is updated with the ship and module values that the buff changed.</summary>
+    private void TellBuffedDogmaAttributes(ClientSession session, ShipSnapshot snapshot)
+    {
+        var info = new Eve.Services.Dogma.DogmaInfo(_statics);
+        var fileTime = Py.FileTimeFromUnixMs(_nowUnixMs());
+        var changes = info.ShipAttributes(snapshot)
+            .Where(attribute => attribute.Key != Eve.Services.Dogma.DogmaInfo.Quantity)
+            .Select(attribute => Eve.Services.Ships.ShipNotifications.AttributeChange(
+                snapshot.Character.Id, snapshot.Ship.Id, attribute.Key, fileTime, null, attribute.Value))
+            .Concat(snapshot.Fitted.SelectMany(module => info.ModuleAttributes(snapshot, module.Id)
+                .Where(attribute => attribute.Key != Eve.Services.Dogma.DogmaInfo.Quantity)
+                .Select(attribute => Eve.Services.Ships.ShipNotifications.AttributeChange(
+                    snapshot.Character.Id, module.Id, attribute.Key, fileTime, null, attribute.Value))))
+            .ToArray();
+        if (changes.Length > 0)
+        {
+            session.SendNotification("OnModuleAttributeChanges", "clientID", new PyList(changes));
+        }
     }
 
     private async Task RefreshRunningAsync(Pilot pilot, ulong sessionId, CancellationToken cancellationToken)

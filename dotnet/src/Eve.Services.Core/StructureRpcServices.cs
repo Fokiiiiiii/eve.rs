@@ -64,13 +64,14 @@ public sealed record StructureRpcCallbacks
 }
 
 /// <summary>
-/// Implements the EveJS structure RPC surface. Missing domain backends use the same empty/null
+
 /// wire values as the reference handlers and can be supplied through <see cref="StructureRpcCallbacks"/>.
 /// </summary>
 public sealed class StructureRpcService : IService
 {
     private const long StationManagerRole = 2048;
     private const int NoReinforcementWeekday = 255;
+    private const int MaximumBulkIds = 500;
     private static readonly IReadOnlyDictionary<string, string[]> Methods = new Dictionary<string, string[]>(StringComparer.Ordinal)
     {
         ["structureCargoDelivery"] = ["DropOffItems"],
@@ -319,6 +320,8 @@ public sealed class StructureRpcService : IService
             PyTuple tuple => tuple.Items,
             _ => Array.Empty<PyValue>(),
         };
+        if (values.Count > MaximumBulkIds)
+            throwNotify("STRUCTURE_BULK_LIMIT_EXCEEDED");
         var seen = new HashSet<long>();
         return values.Select(value => PositiveId(value)).Where(id => id > 0 && seen.Add(id)).ToArray();
     }

@@ -43,7 +43,7 @@ internal sealed partial class CharacterServicesComposition
         new Eve.Crimewatch.PlayerBountyStore(source, crimewatchSchema), source, economyWallets, wallets, ResolveBountyOwnerAsync, now, NotifyBountyPlacedAsync);
 
     /// <summary>
-    /// The placement notifications (EveJS <c>bountyNotifications.js</c>): a pilot is told (112) when a bounty is placed on it, each member of a
+
     /// corporation (113) and of an alliance's corporations (114) too. The placer is never told, and each recipient gets one notification per placement.
     /// </summary>
     private async ValueTask NotifyBountyPlacedAsync(Eve.Services.Crimewatch.BountyPlacement placement, CancellationToken cancellationToken)
@@ -78,10 +78,10 @@ internal sealed partial class CharacterServicesComposition
         }
     }
 
-    /// <summary>The notification types of a bounty placement (EveJS <c>NOTIFICATION_TYPE.BOUNTY_PLACED_*</c>).</summary>
+
     private const int BountyPlacedCharTypeId = 112, BountyPlacedCorpTypeId = 113, BountyPlacedAllianceTypeId = 114;
 
-    /// <summary>What a bounty target is (EveJS <c>inferOwnerKind</c>): a known pilot, corporation or alliance, else the id range of its kind.</summary>
+
     private async ValueTask<Eve.Services.Crimewatch.PlayerBountyOwner> ResolveBountyOwnerAsync(long targetId, CancellationToken cancellationToken)
     {
         if (await characters.GetAsync(targetId, cancellationToken) is { } character)
@@ -121,6 +121,14 @@ internal sealed partial class CharacterServicesComposition
                 store: crimewatchStore,
                 notificationWriter: mailSendWriter.WriteKillRightNotificationAsync,
                 nowUnixMs: now,
-                bountyRpcHandler: PlayerBounties.HandleAsync),
+                bountyRpcHandler: PlayerBounties.HandleAsync,
+                resolveOrganization: async (characterId, token) =>
+                {
+                    var member = await corporations.MemberAsync(characterId, token);
+                    if (member is null)
+                        return (0, 0);
+                    var corporation = await corporations.GetAsync(member.CorporationId, token);
+                    return (member.CorporationId, corporation?.AllianceId ?? 0);
+                }),
     ];
 }

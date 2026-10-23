@@ -10,7 +10,9 @@ namespace Eve.Services.Wallet;
 /// The CONCORD exchange and the two donations (transfers between wallets) are refused with the reason, not answered as done:
 /// their rules (destination validation, the Evermark exception, director roles, membership age) are not built yet.
 /// </summary>
-public sealed class LoyaltyPointsService(LoyaltyPointStore store) : IService
+public sealed class LoyaltyPointsService(
+    LoyaltyPointStore store,
+    Func<long, CancellationToken, Task<long?>>? corporationOfCharacter = null) : IService
 {
     private static readonly string[] BalanceColumns = ["issuerCorpID", "loyaltyPoints"];
 
@@ -43,9 +45,10 @@ public sealed class LoyaltyPointsService(LoyaltyPointStore store) : IService
 
     private async ValueTask<PyValue> CorporationBalancesAsync(ServiceCall call)
     {
-        var corporationId = Positive(call.Session.Get("corporationID")) is > 0 and var id
-            ? id
-            : Positive(call.Session.Get("corpid"));
+        var characterId = call.Session.CharacterId ?? Positive(call.Session.Get("charid"));
+        var corporationId = characterId > 0 && corporationOfCharacter is not null
+            ? await corporationOfCharacter(characterId, call.Cancellation) ?? 0
+            : 0;
         var holder = new LoyaltyHolder(LoyaltyHolderKind.Corporation, corporationId);
         return await BalanceRowsAsync(holder, call.Cancellation);
     }
@@ -68,11 +71,6 @@ public sealed class LoyaltyPointsService(LoyaltyPointStore store) : IService
     };
 }
 
-/// <summary>
-/// Tells the sessions a loyalty point balance changed (committed changes only): <c>OnLPChange</c> to the character's session,
-/// <c>OnCorpLPChange</c> to every session of the corporation (eve-logic loyaltyPointsWalletSvc.py:59-67; EveJS
-/// lpWalletState.js:348-390).
-/// </summary>
 public sealed class LoyaltyPointAnnouncer : IDisposable
 {
     private readonly LoyaltyPointStore _store;

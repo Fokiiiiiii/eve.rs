@@ -72,7 +72,6 @@ public sealed class SkillBoosterLapse(
     }
 
     /// <summary>
-    /// A clone jump ends the body's normal boosters (the wiki: only the cerebral accelerators go on with the pilot). Their rows and their
     /// items go in the caller's transaction, so the jump and the end commit together. Returns whether any booster ended; the caller then
     /// calls <see cref="AnnounceEndedAsync"/> after the commit.
     /// </summary>

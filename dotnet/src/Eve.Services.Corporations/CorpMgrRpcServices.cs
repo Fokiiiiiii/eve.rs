@@ -67,11 +67,24 @@ public sealed partial class CorpMgrService
     [Method("GetAggressionSettingsForCorps")]
     public async ValueTask<PyValue> GetAggressionSettingsForCorps(ServiceCall call)
     {
+        var identifiers = call.Arg(0) switch
+        {
+            PyList list => list.Items,
+            PyTuple tuple => tuple.Items,
+            PyDict dictionary => dictionary.Entries.Select(entry => entry.Key).ToArray(),
+            _ => throw new CorporationError("CORPMGR_BULK_ARGUMENT_INVALID"),
+        };
+        if (identifiers.Count > 500)
+            throw new CorporationError("CORPMGR_BULK_LIMIT_EXCEEDED");
+        var corporationIds = identifiers.Select(value => value switch
+        {
+            PyInt { Value: > 0 } id => id.Value,
+            PyLong { Value: > 0 } id => id.Value,
+            _ => throw new CorporationError("CORPMGR_CORPORATION_ID_INVALID"),
+        }).Distinct().ToArray();
+
         var entries = new List<KeyValuePair<PyValue, PyValue>>();
-        foreach (var corporationId in CorpMgrSequence(call.Arg(0))
-                     .Select(value => CorpMgrLong(value))
-                     .Where(id => id > 0)
-                     .Distinct())
+        foreach (var corporationId in corporationIds)
         {
             entries.Add(new KeyValuePair<PyValue, PyValue>(
                 new PyLong(corporationId),
@@ -180,16 +193,22 @@ public sealed partial class CorpMgrService
         var minimumQuantity = CorpMgrLong(call.Arg(4));
         var snapshot = await BuildAssetSnapshotAsync(corporationId, call.Cancellation);
         var hasFilter = categoryId > 0 || groupId > 0 || typeId > 0 || minimumQuantity > 0;
-        var entries = hasFilter
-            ? snapshot.Locations[bucket].Where(location =>
-                snapshot.Items[bucket].Any(item => item.RootLocationId == location.LocationId &&
+        var locations = snapshot.Locations[bucket];
+        if (hasFilter)
+        {
+            var matchingLocationIds = snapshot.Items[bucket]
+                .Where(item =>
                     (categoryId <= 0 || item.CategoryId == categoryId) &&
                     (groupId <= 0 || item.GroupId == groupId) &&
                     (typeId <= 0 || item.Item.TypeId == typeId) &&
-                    (minimumQuantity <= 0 || item.Item.Quantity >= minimumQuantity)))
-            : snapshot.Locations[bucket];
+                    (minimumQuantity <= 0 || item.Item.Quantity >= minimumQuantity))
+                .Select(item => item.RootLocationId)
+                .ToHashSet();
+            locations = locations.Where(location => matchingLocationIds.Contains(location.LocationId)).ToArray();
+        }
+
         return CachedAssets(BuildCRowset(AssetSearchColumns,
-            entries.Select(location => new PyValue[] { new PyLong(location.LocationId) })));
+            locations.Select(location => new PyValue[] { new PyLong(location.LocationId) })));
     }
 
     private async ValueTask<CorpMgrAggressionSettings> ReadAggressionSettingsAsync(
@@ -233,12 +252,6 @@ public sealed partial class CorpMgrService
             member.CorporationId != corporationId)
             return false;
 
-        var sessionRoles = call.Session.GetInt("corprole") ?? 0;
-        if (sessionRoles == 0)
-            sessionRoles = call.Session.GetInt("rolesAtAll") ?? call.Session.GetInt("corpRole") ?? 0;
-        if (HasAuditRole(sessionRoles) || HasAuditRole(member.Masks.Roles))
-            return true;
-
         var titles = await store.TitlesAsync(corporationId, cancellationToken);
         return HasAuditRole(CorporationRoles.Session(corporation, member, character.StationId, titles).CorpRole);
     }
@@ -249,11 +262,17 @@ public sealed partial class CorpMgrService
         var characterId = call.Session.CharacterId;
         var sessionCorporationId = call.Session.GetInt("corporationID") ?? call.Session.GetInt("corpid") ?? 0;
         if (corporationId <= 0 || sessionCorporationId != corporationId || characterId is not > 0 ||
-            await store.GetAsync(corporationId, cancellationToken) is not { IsNpc: false, Deleted: false } ||
+            await store.GetAsync(corporationId, cancellationToken) is not { IsNpc: false, Deleted: false } corporation ||
             await characters.GetAsync(characterId.Value, cancellationToken) is not { } character ||
             character.CorporationId != corporationId ||
-            await store.MemberAsync(characterId.Value, cancellationToken) is not { CorporationId: var memberCorporation } ||
+            await store.MemberAsync(characterId.Value, cancellationToken) is not { CorporationId: var memberCorporation } member ||
             memberCorporation != corporationId)
+            throw new CorporationError("CORPORATION_ACCESS_DENIED");
+
+        var roles = CorporationRoles.Session(
+            corporation, member, character.StationId,
+            await store.TitlesAsync(corporationId, cancellationToken)).CorpRole;
+        if ((roles & (CorporationRoles.Accountant | CorporationRoles.JuniorAccountant)) == 0)
             throw new CorporationError("CORPORATION_ACCESS_DENIED");
     }
 
@@ -526,7 +545,6 @@ public sealed partial class CorpMgrService
     private static long? UnixMs(long filetime) =>
         filetime <= 0 ? null : (filetime - FiletimeUnixEpoch) / 10000;
 
-
     private static long? OptionalFiletime(JsonElement source, string name, long? fallback)
     {
         if (!TryProperty(source, name, out var value))
@@ -599,7 +617,6 @@ public sealed partial class CorpMgrService
 
 public sealed record MutualWarInvite(long FromOwnerId, long ToOwnerId, long SentDateFiletime);
 
-// Persistent invite state and mutual-war notifications are supplied by callbacks when that backend is available.
 [Service("mutualWarInviteMgr")]
 public sealed partial class MutualWarInviteMgrService(
     Func<long, CancellationToken, ValueTask<IReadOnlyList<MutualWarInvite>>>? readPendingInvites = null,
@@ -612,8 +629,9 @@ public sealed partial class MutualWarInviteMgrService(
     [Method("GetPendingInvitesForSession")]
     public async ValueTask<PyValue> GetPendingInvitesForSession(ServiceCall call)
     {
+if (readPendingInvites is null) throw NotAvailable();
         var ownerId = OwnerId(call.Session);
-        IReadOnlyList<MutualWarInvite> invites = ownerId <= 0 || readPendingInvites is null
+        IReadOnlyList<MutualWarInvite> invites = ownerId <= 0
             ? Array.Empty<MutualWarInvite>()
             : await readPendingInvites(ownerId, call.Cancellation);
         return new PyList([.. invites
@@ -628,8 +646,9 @@ public sealed partial class MutualWarInviteMgrService(
     [Method("IsCorpInvitesBlockedPlayer")]
     public async ValueTask<PyValue> IsCorpInvitesBlockedPlayer(ServiceCall call)
     {
+if (readInvitesBlocked is null) throw NotAvailable();
         var ownerId = OwnerId(call.Session);
-        var blocked = ownerId > 0 && readInvitesBlocked is not null &&
+        var blocked = ownerId > 0 &&
             await readInvitesBlocked(ownerId, call.Cancellation);
         return new PyInt(blocked ? 1 : 0);
     }
@@ -637,12 +656,12 @@ public sealed partial class MutualWarInviteMgrService(
     [Method("SendInviteByPlayer")]
     public async ValueTask<PyValue> SendInviteByPlayer(ServiceCall call)
     {
-        if (sendInvite is null)
+        if (sendInvite is null || readInvitesBlocked is null)
             throw NotAvailable();
         var fromOwnerId = OwnerId(call.Session);
         var toOwnerId = InviteInteger(call.Arg(0));
         if (fromOwnerId > 0 && toOwnerId > 0 &&
-            (readInvitesBlocked is null || !await readInvitesBlocked(toOwnerId, call.Cancellation)))
+            !await readInvitesBlocked(toOwnerId, call.Cancellation))
             await sendInvite(call, fromOwnerId, toOwnerId, call.Cancellation);
         return PyNone.Instance;
     }

@@ -1,6 +1,5 @@
 //! A belt rat in a scene, beside a player: it sees the player come near, locks, shoots, and what the player is told is what the client is told when
 //! an NPC attacks it on the reference's server (`oracle/fixtures/scenarios/health.json` has the shapes).
-
 use std::sync::Arc;
 
 use eve_destiny::Vec3;
@@ -10,7 +9,8 @@ use super::{BELT_RAT, RAT_TAG};
 use crate::npc::NpcPlace;
 use crate::scene::tests::{NOON, STATION, spec};
 use crate::scene::{Out, Scene, SessionId, TICKS_PER_SECOND};
-use crate::ship::{NpcCombat, NpcIdentity, NpcWeapon, ShipSpec};
+use crate::ship::{NpcCombat, NpcIdentity, NpcSelfRepair, NpcWeapon, ShipSpec};
+use crate::targeting::{LockOrigin, Order};
 use crate::weapons::Turret;
 use crate::world::{Body, BodyKind, Detail, SolarSystem};
 
@@ -268,6 +268,196 @@ fn a_rat_locks_and_shoots_a_player_who_came_near_and_the_player_is_told_what_the
     // the player's ship is the worse for it
     let shield = scene.pilots[&PLAYER].ship.health.layers_at(LATER + 40 * SECOND).shield;
     assert!(shield < spec().vitals.shield_capacity, "shield {shield}");
+}
+
+#[test]
+fn a_belt_rat_repairs_shield_at_cycle_start_and_armor_at_cycle_end_then_stops_with_combat() {
+    let mut scene = scene_with_a_player();
+    let place = place_near(&mut scene, 8_000.0);
+    let mut identity = rat_identity(15_000.0);
+    identity.self_repairs.extend([
+        NpcSelfRepair {
+            effect_id: 6_884,
+            amount: 80.0,
+            cycle_ms: 1_000.0,
+            capacitor_cost: 0.0,
+            delay_chance: 0.0,
+        },
+        NpcSelfRepair {
+            effect_id: 6_990,
+            amount: 50.0,
+            cycle_ms: 1_000.0,
+            capacitor_cost: 0.0,
+            delay_chance: 0.0,
+        },
+    ]);
+    let (rat, _) = scene.spawn_npc_with_behavior(rat_spec(), identity, place, BELT_RAT, LATER).unwrap();
+    scene.damage(RAT_SHIP, [0.0, 0.0, 1_500.0, 0.0], LATER);
+    let damaged = scene.pilots[&rat].ship.health.layers_at(LATER);
+    let mut now = LATER;
+    let mut shield_started = false;
+    for _ in 0..=12 * 4 {
+        scene.poll(now);
+        let pilot = &scene.pilots[&rat];
+        let shield_cycle = pilot.modules.running.iter().find(|run| run.effect.effect_id == 6_990);
+        if let Some(run) = shield_cycle {
+            let layers = pilot.ship.health.layers_at(now);
+            assert!(layers.shield > damaged.shield, "shield booster did not apply at cycle start");
+            assert_eq!(layers.armor, damaged.armor, "armor repair must wait for cycle end");
+            assert_ne!(run.effect.module_id, RAT_SHIP, "self-repair shares the weapon module owner");
+            shield_started = true;
+            break;
+        }
+        now += SECOND / 4;
+    }
+    assert!(shield_started, "NPC did not start its shield self-effect in combat");
+
+    run(&mut scene, now, 3);
+    let after_cycle = scene.pilots[&rat].ship.health.layers_at(now + 3 * SECOND);
+    assert!(after_cycle.shield > damaged.shield);
+    assert!(after_cycle.armor > damaged.armor);
+    assert!(after_cycle.shield <= scene.pilots[&rat].ship.health.vitals().shield_capacity);
+    assert!(after_cycle.armor <= scene.pilots[&rat].ship.health.vitals().armor_hp);
+
+    let leave_at = now + 3 * SECOND;
+    scene.leave(PLAYER, crate::scene::Departure::Docked, leave_at);
+    run(&mut scene, leave_at, 3);
+    let stopped_armor = scene.pilots[&rat].ship.health.layers_at(leave_at + 3 * SECOND).armor;
+    assert_eq!(stopped_armor, after_cycle.armor, "repair continued after the combat target left");
+    assert!(
+        !scene.pilots[&rat].modules.running.iter().any(|run| matches!(run.effect.effect_id, 6_884 | 6_990))
+    );
+
+    scene.remove_npc(rat, leave_at + 3 * SECOND).unwrap();
+    assert!(!scene.pilots.contains_key(&rat));
+}
+
+#[test]
+fn a_belt_rat_does_not_start_self_repair_without_a_combat_target() {
+    let mut scene = scene_with_a_player();
+    let place = place_near(&mut scene, 8_000.0);
+    let mut identity = rat_identity(0.0);
+    identity.self_repairs.push(NpcSelfRepair {
+        effect_id: 6_884,
+        amount: 80.0,
+        cycle_ms: 1_000.0,
+        capacitor_cost: 0.0,
+        delay_chance: 0.0,
+    });
+    let (rat, _) = scene.spawn_npc_with_behavior(rat_spec(), identity, place, BELT_RAT, LATER).unwrap();
+    scene.damage(RAT_SHIP, [0.0, 0.0, 1_500.0, 0.0], LATER);
+    let damaged_armor = scene.pilots[&rat].ship.health.layers_at(LATER).armor;
+
+    run(&mut scene, LATER, 3);
+
+    assert_eq!(scene.pilots[&rat].ship.health.layers_at(LATER + 3 * SECOND).armor, damaged_armor);
+    assert!(!scene.pilots[&rat].modules.running.iter().any(|run| run.effect.effect_id == 6_884));
+}
+
+#[test]
+fn a_sots_active_tank_waits_for_layer_damage_and_then_starts_the_npc_self_repair_owner() {
+    let mut scene = scene_with_a_player();
+    let place = place_near(&mut scene, 8_000.0);
+    let mut identity = rat_identity(15_000.0);
+    identity.self_repairs.extend([
+        NpcSelfRepair {
+            effect_id: 6_884,
+            amount: 80.0,
+            cycle_ms: 1_000.0,
+            capacitor_cost: 0.0,
+            delay_chance: 0.0,
+        },
+        NpcSelfRepair {
+            effect_id: 6_990,
+            amount: 50.0,
+            cycle_ms: 1_000.0,
+            capacitor_cost: 0.0,
+            delay_chance: 0.0,
+        },
+    ]);
+    let mut sots_spec = rat_spec();
+    sots_spec.scan_resolution = 1.0e12;
+    let (rat, _) = scene.spawn_npc(sots_spec, identity, place, LATER);
+    scene.lock(rat, spec().ship_id, &Order::Lock(spec().ship_id), LockOrigin::Player, LATER);
+    assert!(!scene.locked_by(rat).is_empty(), "the test fixture must begin with a locked target");
+    scene.give_behavior(rat, "Shadow Of The Serpent").unwrap();
+
+    let _full_health = run(&mut scene, LATER, 3);
+    assert!(
+        !scene.pilots[&rat].modules.running.iter().any(|run| matches!(run.effect.effect_id, 6_884 | 6_990)),
+        "SotS ActiveTank must remain damage-gated at full health"
+    );
+
+    let damaged_at = LATER + 15 * SECOND;
+    scene.damage(RAT_SHIP, [0.0, 0.0, 1_500.0, 0.0], damaged_at);
+    let damaged = scene.pilots[&rat].ship.health.layers_at(damaged_at);
+    assert!(damaged.armor < scene.pilots[&rat].ship.health.vitals().armor_hp);
+    run(&mut scene, damaged_at, 1);
+    assert!(
+        scene.pilots[&rat].modules.running.iter().any(|run| run.effect.effect_id == 6_884),
+        "SotS ActiveTank did not start the profile's repair owner after armor damage"
+    );
+    let repaired_armor = scene.pilots[&rat].ship.health.layers_at(damaged_at + SECOND).armor;
+    assert!(
+        repaired_armor > damaged.armor,
+        "one armor repair cycle must increase actual hull armor: before={}, after={repaired_armor}",
+        damaged.armor
+    );
+
+    run(&mut scene, damaged_at + SECOND, 24);
+    let fully_repaired = scene.pilots[&rat].ship.health.layers_at(damaged_at + 25 * SECOND);
+    let armor_hp = scene.pilots[&rat].ship.health.vitals().armor_hp;
+    assert_eq!(fully_repaired.armor, armor_hp, "the SotS armor tank must reach full armor");
+    assert!(!scene.locked_by(rat).is_empty(), "the SotS combat target is still locked");
+    assert!(
+        !scene.pilots[&rat].modules.running.iter().any(|run| run.effect.effect_id == 6_884),
+        "the ActiveTank owner must stop after its armor layer is full"
+    );
+}
+
+#[test]
+fn a_belt_rats_self_repair_delay_chance_can_skip_each_repair_cycle() {
+    let mut scene = scene_with_a_player();
+    let place = place_near(&mut scene, 8_000.0);
+    let mut identity = rat_identity(15_000.0);
+    identity.self_repairs.push(NpcSelfRepair {
+        effect_id: 6_884,
+        amount: 80.0,
+        cycle_ms: 1_000.0,
+        capacitor_cost: 0.0,
+        delay_chance: 1.0,
+    });
+    let (rat, _) = scene.spawn_npc_with_behavior(rat_spec(), identity, place, BELT_RAT, LATER).unwrap();
+    scene.damage(RAT_SHIP, [0.0, 0.0, 1_500.0, 0.0], LATER);
+    let damaged_armor = scene.pilots[&rat].ship.health.layers_at(LATER).armor;
+
+    run(&mut scene, LATER, 12);
+
+    assert_eq!(scene.pilots[&rat].ship.health.layers_at(LATER + 12 * SECOND).armor, damaged_armor);
+}
+
+#[test]
+fn a_player_session_cannot_run_a_forged_npc_self_repair_identity() {
+    let mut scene = scene_with_a_player();
+    let place = place_near(&mut scene, 8_000.0);
+    scene.spawn_npc_with_behavior(rat_spec(), rat_identity(15_000.0), place, BELT_RAT, LATER).unwrap();
+    let mut forged = NpcIdentity::default();
+    forged.self_repairs.push(NpcSelfRepair {
+        effect_id: 6_990,
+        amount: 100.0,
+        cycle_ms: 1_000.0,
+        capacitor_cost: 0.0,
+        delay_chance: 0.0,
+    });
+    scene.pilots.get_mut(&PLAYER).unwrap().ship.npc = Some(forged);
+    scene.damage(spec().ship_id, [0.0, 0.0, 1_500.0, 0.0], LATER);
+    let before = scene.pilots[&PLAYER].ship.health.layers_at(LATER).armor;
+
+    run(&mut scene, LATER, 12);
+
+    let player = &scene.pilots[&PLAYER];
+    assert!(player.ship.health.layers_at(LATER + 12 * SECOND).armor <= before);
+    assert!(!player.modules.running.iter().any(|run| matches!(run.effect.effect_id, 6_884 | 6_990)));
 }
 
 /// A rat that launches missiles of its own (a hull with `missileLaunchingForEntity`): the weapon of its identity flies a missile and has no rounds to spend.

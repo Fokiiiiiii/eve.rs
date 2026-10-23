@@ -72,7 +72,13 @@ public static class FittingRules
         }
     }
 
-    /// <summary>The first skill a type needs that its owner has not trained far enough, with the level it needs and the level the owner has.</summary>
+    /// <summary>Whether a pilot's trained levels meet every skill requirement on a ship or module type.</summary>
+    public static bool HasRequiredSkills(TypeDef type, Func<int, int> levelOfSkill) =>
+        RequiredSkills(type).All(requirement => levelOfSkill(requirement.Skill) >= requirement.Level);
+
+    /// <summary>The client allows rigs to be removed without destruction from Strategic Cruisers (the SDE group 963).</summary>
+    public static bool CanUnfitRigWithoutDestruction(TypeDef shipType) => shipType.GroupId == 963;
+
     public static FitFailure? MissingSkill(DogmaWorld world, long ownerId, TypeDef type)
     {
         foreach (var (skill, level) in RequiredSkills(type))

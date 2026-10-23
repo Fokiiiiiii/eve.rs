@@ -2,7 +2,6 @@
 //! its ball (one stamp), it stops being a pilot of the scene (its locks are let go, its tree is forgotten), and it leaves a wreck (`crate::wreck`),
 //! which those who can see the place are sent. What is done to the pilot of a player's ship (a capsule to fly, the ship's items, the wreck's
 //! contents) is the host's: it is told with [`Out::Destroyed`].
-
 use eve_destiny::Vec3;
 use eve_marshal::Value;
 
@@ -61,7 +60,10 @@ impl Scene {
         }
         let Some(pilot) = self.pilots.remove(&session) else { return Vec::new() };
         let unpiloted = self.unpiloted.values().any(|candidate| *candidate == session);
-        if !is_npc_session(session) && !unpiloted {
+        if self.abyssal.is_some() && !is_npc_session(session) && !unpiloted {
+            self.abyssal_participant_deaths.insert(pilot.ship.spec.ship_id, session);
+        }
+        if self.abyssal.is_none() && !is_npc_session(session) && !unpiloted {
             // the client keeps its ballpark: what it is given next (a capsule) is added to it
             self.widowed.insert(
                 session,
@@ -69,6 +71,7 @@ impl Scene {
                     bound: pilot.bound,
                     sees: pilot.sees.clone(),
                     sees_wrecks: pilot.sees_wrecks.clone(),
+                    sees_abyssal_traces: pilot.sees_abyssal_traces.clone(),
                     sees_asteroids: pilot.sees_asteroids.clone(),
                 },
             );
@@ -81,6 +84,12 @@ impl Scene {
         }
         let ship = &pilot.ship;
         let ship_id = ship.spec.ship_id;
+        self.abyssal_boundary_exposure_ms.remove(&ship_id);
+        if self.abyssal.is_some()
+            && let Some(receipt) = self.abyssal_npc_spawn_receipts.get_mut(&ship_id)
+        {
+            receipt.destroyed = true;
+        }
         self.sim_damageable_entities.remove(&ship_id);
         self.unpiloted.remove(&ship_id);
         let mut out = self.drop_targeting(ship_id, &pilot.targeting, now);
@@ -115,7 +124,7 @@ impl Scene {
             });
         }
         // an NPC that says what it leaves leaves that; else the wreck of the ship's type, as the reference's rules have it
-        let kind = if drone.is_some() {
+        let kind = if drone.is_some() || self.abyssal_reward_caches.contains_key(&ship_id) {
             None
         } else {
             ship.npc.as_ref().and_then(|npc| npc.wreck.clone()).or_else(|| {
@@ -167,6 +176,9 @@ impl Scene {
             ship_type_id: ship.spec.type_id,
             corporation_id: ship.spec.corporation_id,
         });
+        if let Some(receipt) = self.abyssal_reward_caches.get_mut(&ship_id) {
+            receipt.destruction = out.last().cloned();
+        }
         out
     }
 
@@ -191,12 +203,13 @@ impl Scene {
         {
             let ship_id = spec.ship_id;
             // Keep the hull's current position, velocity, and damage while applying
-            // the new pilot's ship specification and ownership.
+
             pilot.ship.spec = spec;
             pilot.bound = widow.bound;
             pilot.entered = self.next_entry();
             pilot.sees = widow.sees;
             pilot.sees_wrecks = widow.sees_wrecks;
+            pilot.sees_abyssal_traces = widow.sees_abyssal_traces;
             pilot.sees_asteroids = widow.sees_asteroids;
             self.pilots.insert(session, pilot);
             let mut out = self.announce_departure(unpiloted_session, ship_id, now);
@@ -221,6 +234,7 @@ impl Scene {
         pilot.bound = widow.bound;
         pilot.sees = widow.sees;
         pilot.sees_wrecks = widow.sees_wrecks;
+        pilot.sees_abyssal_traces = widow.sees_abyssal_traces;
         pilot.sees_asteroids = widow.sees_asteroids;
         self.pilots.insert(session, pilot);
         let mut out = Vec::new();

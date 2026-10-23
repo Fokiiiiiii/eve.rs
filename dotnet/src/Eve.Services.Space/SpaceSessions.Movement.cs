@@ -52,7 +52,7 @@ public sealed partial class SpaceSessions
                 // the ship is on its way to the station; the client is told how far it was (the reference rounds half up)
                 throw MachoErrors.ThrowUserError("DockingApproach", ("distance", new PyInt((long)Math.Max(0, Math.Floor(distance + 0.5)))));
             }
-            // a module that disallows docking is running (disallowDocking 2354): the wording is EveJS's (beyonceService: DOCKING_DISALLOWED_BY_MODULE)
+
             if (reply.Reason == "DOCKING_DISALLOWED_BY_MODULE")
             {
                 throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("You cannot dock while a module that prevents docking is active.")));
@@ -66,6 +66,9 @@ public sealed partial class SpaceSessions
         return None;
     }
 
+    /// <summary>Called after the simulation accepts a character's warp command.</summary>
+    public Func<long, CancellationToken, Task>? WarpAcceptedAsync { get; set; }
+
     /// <summary>
     /// <c>CmdWarpToStuff</c> to a body of the system: the answer is nothing whether the ship goes or not, and a warp that cannot be done is a message
     /// the client shows ("You cannot warp there right now."). A ship that is in warp already is told so and nothing else happens. The first movement
@@ -73,7 +76,6 @@ public sealed partial class SpaceSessions
     /// </summary>
     public Task<PyValue> WarpAsync(ClientSession session, long targetId, double range, CancellationToken cancellationToken) =>
         WarpCommandAsync(session, SimCommands.WarpTo, [targetId, range], $"to {targetId}", cancellationToken);
-
 
     public Task<PyValue> WarpToPointAsync(
         ClientSession session,
@@ -83,7 +85,6 @@ public sealed partial class SpaceSessions
         double range,
         CancellationToken cancellationToken) =>
         WarpCommandAsync(session, SimCommands.WarpToPoint, [x, y, z, range], "to coordinates", cancellationToken);
-
 
     public Task<WarpCoordinates?> WarpTargetPointAsync(
         ClientSession session,
@@ -96,6 +97,39 @@ public sealed partial class SpaceSessions
     public Task<WarpCoordinates?> DropPointAsync(ClientSession session, double distance, CancellationToken cancellationToken) =>
         QueryPositionAsync(session, SimCommands.DropPoint, [distance], cancellationToken);
 
+    /// <summary>Whether a candidate deployment point is within the checkpoint's 10,000 km asteroid exclusion radius.</summary>
+    public async Task<bool> HasAsteroidWithinDistanceAsync(int solarSystemId, IReadOnlyList<double> position, double distanceMeters, CancellationToken cancellationToken = default)
+    {
+        if (_spaceItems is null)
+        {
+            throw new InvalidOperationException("space item storage is required for asteroid placement checks");
+        }
+        if (solarSystemId <= 0 || position.Count != 3 || position.Any(value => !double.IsFinite(value)) || !double.IsFinite(distanceMeters) || distanceMeters < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(position), "a solar system, finite 3D point and nonnegative finite radius are required");
+        }
+
+        var asteroidGroups = (await _statics.TypesInCategoryAsync("Asteroid", cancellationToken))
+            .Select(type => type.GroupId)
+            .ToHashSet();
+        var radiusSquared = distanceMeters * distanceMeters;
+        foreach (var item in await _spaceItems.InSystemAsync(solarSystemId, cancellationToken))
+        {
+            if (!asteroidGroups.Contains(item.GroupId) || item.Position.Count != 3)
+            {
+                continue;
+            }
+            var x = position[0] - item.Position[0];
+            var y = position[1] - item.Position[1];
+            var z = position[2] - item.Position[2];
+            if (x * x + y * y + z * z <= radiusSquared)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public Task<WarpCoordinates?> PositionOfAsync(
         ClientSession session,
         long targetId,
@@ -103,7 +137,6 @@ public sealed partial class SpaceSessions
         QueryPositionAsync(session, SimCommands.PositionOf, [targetId], cancellationToken);
 
     /// <summary>
-    /// The place of a pilot's ship as the pilot boards a structure from space (ST-23): the ship stays in the scene, and its place is saved, because the simulation
     /// answers the pilot of a ship only and the return to the ship asks for the place later (<see cref="ScenePositionOfAsync"/>). Called while the session still pilots it.
     /// </summary>
     public async Task RecordBoardingPlaceAsync(ClientSession session, long shipId, CancellationToken cancellationToken)
@@ -122,7 +155,6 @@ public sealed partial class SpaceSessions
 
     /// <summary>
     /// Where a ship of the scene is, asked by a session that may no longer pilot it: a structure observer's own ship, boarded from space, stays in the scene
-    /// (ST-23, the return to the ship). The session's system is the answer's.
     /// </summary>
     public async Task<WarpCoordinates?> ScenePositionOfAsync(ClientSession session, long shipId, CancellationToken cancellationToken)
     {
@@ -186,6 +218,7 @@ public sealed partial class SpaceSessions
         {
             return None;
         }
+        if (pilot.SimulationScene.InstanceId > 0) throw Notify(AbyssalWarpBlockedMessage);
         // a ship that its buffs scramble (warpScrambleStatus 104, the warp penalty of a fleet grant) cannot warp: the same refusal as a scrambler's
         if (await ShipAttributeAsync(pilot, Eve.Services.Space.Effects.ModuleAttributes.WarpScrambleStatus, cancellationToken))
         {
@@ -210,6 +243,20 @@ public sealed partial class SpaceSessions
         {
             _warping[(ulong)session.SessionId] = 0;
             EndInvulnerability(pilot);
+            var warpHistoryNeedsPersistence = pilot.Session.GetInt("hasEverWarpedPersisted") != 1;
+            pilot.Session.Set("hasEverWarped", new PyInt(1));
+            if (warpHistoryNeedsPersistence && WarpAcceptedAsync is { } acceptedWarp)
+            {
+                try
+                {
+                    await acceptedWarp(pilot.CharacterId, CancellationToken.None).ConfigureAwait(false);
+                    pilot.Session.Set("hasEverWarpedPersisted", new PyInt(1));
+                }
+                catch (Exception error)
+                {
+                    _log?.Invoke($"accepted warp history for character {pilot.CharacterId} could not be saved: {error.Message}");
+                }
+            }
             return None;
         }
         _log?.Invoke($"warp of session {session.SessionId} {destination} refused: {reply.Reason}");
@@ -233,7 +280,6 @@ public sealed partial class SpaceSessions
         }
         throw Notify("You cannot warp there right now.");
     }
-
 
     /// <summary>Whether the pilot's ship carries an attribute of its own above zero, as it flies (its buffs; a fleet grant sets the ship's attributes).</summary>
     private async Task<bool> ShipAttributeAsync(Pilot pilot, int attributeId, CancellationToken cancellationToken) =>
@@ -306,7 +352,8 @@ public sealed partial class SpaceSessions
             _log?.Invoke($"jump of session {session.SessionId} through {gateId} refused: {reply.Reason}");
             throw JumpRefused(reply.Reason);
         }
-        // leaving a restricted system ends its emanation lock; entering one through a gate locks the pilot to the gate it arrived by (the wiki)
+
+        await CancelShipSelfDestructAsync(pilot.ShipId, cancellationToken);
         // EVE.js jumpSessionViaStargate: the contraband of the ship is inspected in the system it arrives in
         await ApplyContrabandAsync(session, pilot.CharacterId, pilot.ShipId, destination, cancellationToken);
         _emanationLocks.Left(pilot.CharacterId, pilot.SolarSystemId);
@@ -320,7 +367,6 @@ public sealed partial class SpaceSessions
 
     /// <summary>
     /// The gate toll of the gate (the client's alignment-based toll, computed as the client computes it), charged to the pilot's wallet. Null when the
-    /// gate has no toll or the toll is zero for this pilot (a pirate-aligned pilot). The toll is a sink: no source names a payee (DEVIATIONS, slice 3).
     /// </summary>
     private async Task<(long CharacterId, string Key, decimal Amount)?> ChargeTollAsync(ClientSession session, Pilot pilot, long gateId, CancellationToken cancellationToken)
     {
@@ -354,7 +400,6 @@ public sealed partial class SpaceSessions
     private async Task<double> ShipMassAsync(Pilot pilot, CancellationToken cancellationToken) =>
         await FlownShipAsync(pilot, cancellationToken) is { } flown ? flown.World.Get(flown.Ship.Id, Eve.Services.Space.Effects.ModuleAttributes.Mass) : 0;
 
-    /// <summary>The stargate rules: the Pochven refusal of capital ships (the wiki, "Pochven"), then the client data's rules of the gate: the pilot's ship group
     /// against the gate's list, and the emanation lock of the system it is in.</summary>
     private async Task CheckGateRulesAsync(Pilot pilot, long gateId, CancellationToken cancellationToken)
     {
@@ -511,6 +556,8 @@ public sealed partial class SpaceSessions
                         ? null
                         : new ShipCondition(condition.Damage, condition.Charge, condition.ShieldCharge, condition.ArmorDamage, false);
                     var docked = await _ships.DockAsync(pilot.CharacterId, stationId, shipCondition, cancellationToken);
+                    if (docked.Moved is not null)
+                        await CancelShipSelfDestructAsync(pilot.ShipId, cancellationToken);
                     if (docked.Moved is not null && PilotDocked is { } onDocked) await onDocked(pilot.CharacterId, stationId, cancellationToken);
                     return docked;
                 },
@@ -532,7 +579,7 @@ public sealed partial class SpaceSessions
                         inStructure
                             ? Py.Tuple(new PyStr("Structure"), InventoryWire.Id(stationId), new PyStr("StructureShipHangar"))
                             : Py.Tuple(new PyStr("Station"), InventoryWire.Id(stationId), new PyStr("StationHangar")));
-                    // the client needs the solar system while docked in a structure (EveJS applies it there for the hangar bootstrap)
+
                     if (inStructure)
                         session.Change(("stationid", None), ("structureid", new PyInt(stationId)), ("locationid", new PyInt(pilot.SolarSystemId)), ("solarsystemid", new PyInt(pilot.SolarSystemId)));
                     else

@@ -306,6 +306,24 @@ public sealed class StructureDirectoryServiceTests
     }
 
     [Fact]
+    public async Task Docking_access_refuses_more_than_500_structure_ids_before_the_callback()
+    {
+        var callbacks = new TestReadCallbacks();
+        var service = new StructureDirectoryService(callbacks);
+        var session = new ClientSession { CharacterId = 42 };
+        var ids = new PyList([.. Enumerable.Range(1, 501).Select(id => (PyValue)new PyInt(id))]);
+
+        var error = await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(async () =>
+            await service.CallAsync(new ServiceCall
+            {
+                Method = "CheckMyDockingAccessToStructures", Args = [ids], Session = session,
+            }));
+
+        Assert.NotNull(error);
+        Assert.Null(callbacks.DockingRequest);
+    }
+
+    [Fact]
     public async Task Get_structure_info_returns_only_the_persistent_callback_result_for_can_contract_from()
     {
         var info = Py.KeyVal(("structureID", new PyInt(1001)));
@@ -619,16 +637,17 @@ public sealed class StructureDirectoryServiceTests
     }
 
     [Fact]
-    public async Task Move_eject_time_gm_requires_gml_and_accepts_only_client_timer_options()
+    public async Task Move_eject_time_gm_requires_gml_account_role_and_accepts_only_client_timer_options()
     {
         const long wrapId = 90000001;
-        const long gmlRole = 1L << 54;
+        var gmlRole = Eve.Services.GameMasterRoles.Gml;
         var callbacks = new TestAssetSafetyReadCallbacks();
         var service = new StructureAssetSafetyService(callbacks);
-        ServiceCall Request(int days, long role)
+        ServiceCall Request(int days, long accountRole, long sessionRole = 0)
         {
             var session = new ClientSession { CharacterId = 42 };
-            session.Set("role", new PyLong(role));
+            session.Set("accountRole", new PyLong(accountRole));
+            session.Set("role", new PyLong(sessionRole));
             return new ServiceCall
             {
                 Method = "MoveEjectTimeGM",
@@ -638,7 +657,7 @@ public sealed class StructureDirectoryServiceTests
         }
 
         await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(() =>
-            service.CallAsync(Request(5, 0)).AsTask());
+            service.CallAsync(Request(5, 0, gmlRole)).AsTask());
         await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(() =>
             service.CallAsync(Request(10, gmlRole)).AsTask());
         Assert.Empty(callbacks.GmTimerRequests);
@@ -798,6 +817,10 @@ public sealed class StructureDirectoryServiceTests
             return ValueTask.FromResult(StructureInfoResult);
         }
 
+        public ValueTask<PersistedStructureInfo?> GetStructureInfoForCharacterAsync(
+            long characterId, long structureId, CancellationToken cancellationToken) =>
+            GetStructureInfoAsync(structureId, cancellationToken);
+
         public ValueTask<IReadOnlyList<StructureDockingAccessSnapshot>> GetDockingAccessSnapshotsAsync(
             long characterId,
             long corporationId,
@@ -922,7 +945,6 @@ public sealed class StructureDirectoryServiceTests
         }
     }
 }
-
 
 public sealed class StructureSettingsServiceTests
 {

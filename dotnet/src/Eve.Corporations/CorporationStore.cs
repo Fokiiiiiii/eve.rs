@@ -11,6 +11,7 @@ namespace Eve.Corporations;
 
 public sealed partial class CorporationStore
 {
+    private const int MaxRecruitmentAdRows = 5_000;
     public const string DefaultSchema = "corporations";
     public const decimal CorporationFoundingCost = 1599800m;
     public const decimal AllianceFoundingCost = 1000000000m;
@@ -442,7 +443,6 @@ private readonly Func<NpgsqlConnection,NpgsqlTransaction,long,long,long,long,boo
         return result;
     }
 
-    /// <summary>Resolve the wallet from canonical membership, never from caller-supplied owner or cached session masks.</summary>
     public async Task<WalletAccount> WalletAccountAsync(long characterId,int accountKey,bool requireTake,CancellationToken token = default)
     {
         if (accountKey is < 1000 or > 1006) throw new CorporationError("CORPORATION_ACCESS_DENIED");
@@ -471,6 +471,16 @@ private readonly Func<NpgsqlConnection,NpgsqlTransaction,long,long,long,long,boo
         var roles = CorporationRoles.Session(corp,member,character!.StationId,await TitlesAsync(corp.Id,token)).AtAll;
         if ((roles & (CorporationRoles.Accountant | CorporationRoles.JuniorAccountant)) != 0) return true;
         return accountKey is { } key && key is >= 1000 and <= 1006 && (roles & CorporationRoles.WalletTakeRole(key)) != 0;
+    }
+
+    public async Task<bool> CanReadCorporationMarketOrdersAsync(long characterId,CancellationToken token = default)
+    {
+        var character = await _characters.GetAsync(characterId,token);
+        var corp = character is null ? null : await GetAsync(character.CorporationId,token);
+        var member = await MemberAsync(characterId,token);
+        if (corp is null || corp.IsNpc || corp.Deleted || member?.CorporationId != corp.Id) return false;
+        var roles = CorporationRoles.Session(corp,member,character!.StationId,await TitlesAsync(corp.Id,token)).AtAll;
+        return (roles & CorporationRoles.Accountant) != 0;
     }
 
     /// <summary>The market's Trader authority, read under the same transaction as custody and wallet settlement.</summary>
@@ -626,7 +636,6 @@ private readonly Func<NpgsqlConnection,NpgsqlTransaction,long,long,long,long,boo
             return 0;
         },token);
 
-
     public async Task<string> GetCorpWelcomeMailAsync(long corporation,CancellationToken token = default)
     {
         await using var connection = await _source.OpenConnectionAsync(token);
@@ -671,11 +680,16 @@ private readonly Func<NpgsqlConnection,NpgsqlTransaction,long,long,long,long,boo
         if (corporationId is <= 0) throw new CorporationError("CORPORATION_NOT_FOUND");
         await using var connection = await _source.OpenConnectionAsync(token);
         await using var command = corporationId is { } corpId
-            ? Command(connection,null,$"SELECT {RecruitmentAdColumns} FROM {_schema}.corporation_recruitment_ads WHERE corporation_id=$1 ORDER BY ad_id",corpId)
-            : Command(connection,null,$"SELECT {RecruitmentAdColumns} FROM {_schema}.corporation_recruitment_ads ORDER BY corporation_id,ad_id");
+            ? Command(connection,null,$"SELECT {RecruitmentAdColumns} FROM {_schema}.corporation_recruitment_ads WHERE corporation_id=$1 ORDER BY ad_id LIMIT {MaxRecruitmentAdRows + 1}",corpId)
+            : Command(connection,null,$"SELECT {RecruitmentAdColumns} FROM {_schema}.corporation_recruitment_ads ORDER BY corporation_id,ad_id LIMIT {MaxRecruitmentAdRows + 1}");
         await using var reader = await command.ExecuteReaderAsync(token);
         var ads = new List<CorporationRecruitmentAd>();
-        while (await reader.ReadAsync(token)) ads.Add(ReadRecruitmentAd(reader));
+        while (await reader.ReadAsync(token))
+        {
+            if (ads.Count == MaxRecruitmentAdRows)
+                throw new CorporationError("CORPORATION_RECRUITMENT_AD_LIMIT_EXCEEDED");
+            ads.Add(ReadRecruitmentAd(reader));
+        }
         return ads;
     }
 

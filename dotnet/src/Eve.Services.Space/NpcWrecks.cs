@@ -47,7 +47,6 @@ public sealed class NpcWrecks
         }
     }
 
-    /// <summary>Makes the wreck of type <paramref name="wreckTypeId"/> in the solar system, held by <paramref name="ownerId"/>, with what <paramref name="lootTableId"/> gives.</summary>
     public async Task<MadeWreck> LeaveAsync(int wreckTypeId, string lootTableId, long ownerId, int solarSystemId, CancellationToken cancellationToken = default)
     {
         var drops = (await LootAsync()).Roll(_tableOf(lootTableId), _random);

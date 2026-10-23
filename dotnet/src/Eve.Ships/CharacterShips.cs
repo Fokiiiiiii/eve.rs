@@ -35,7 +35,6 @@ public sealed partial class CharacterShips(
     public Task<ShipSnapshot?> LoadAsync(long characterId, CancellationToken cancellationToken = default) =>
         LoadSelectedShipAsync(characterId, null, cancellationToken);
 
-
     public Task<ShipSnapshot?> LoadShipAsync(long characterId, long shipId, CancellationToken cancellationToken = default) =>
         LoadSelectedShipAsync(characterId, shipId, cancellationToken);
 
@@ -160,9 +159,10 @@ public sealed partial class CharacterShips(
         {
             return new NothingHappened();
         }
-        if (inShip && Slots.FamilyOfFlag(item.Flag) == SlotFamily.Rig && !toShip)
+        if (inShip && Slots.FamilyOfFlag(item.Flag) == SlotFamily.Rig && !toShip &&
+            (statics.Type(ship.TypeId) is not { } shipType || !FittingRules.CanUnfitRigWithoutDestruction(shipType)))
         {
-            return new NothingHappened(); // a rig cannot be taken out: it has to be destroyed
+            return new NothingHappened(); // rigs on other hulls remain non-removable here
         }
 
         var unpack = toShip && !ship.Singleton;
@@ -241,7 +241,6 @@ public sealed partial class CharacterShips(
             && !await ShipContentsAllowedInBayAsync(item, destinationFlag, world, characterId, cancellationToken))
             return new ShipRefused(ShipRefusal.NotAllowedInHold, ModuleTypeId: item.TypeId, ShipTypeId: ship.TypeId);
 
-        // Corporation-owned ship inventories retain corporation ownership, as EveJS resolves the ship owner as the destination owner.
         var destinationItemOwnerId = destinationOwnerId ?? characterId;
 
         // what the ship is once the item is where it goes
@@ -319,7 +318,6 @@ public sealed partial class CharacterShips(
     }
 
     /// <summary>Repackages eligible items in the active station hangar.</summary>
-
     public async Task<(IReadOnlyList<ShipChanged> Changes, IReadOnlyList<long> ConfirmationItemIds)> RepackageItemsAsync(
         long characterId,
         IReadOnlyList<RepackageItemRequest> requests,

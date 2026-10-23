@@ -6,6 +6,7 @@ using Eve.Npc;
 using Eve.Scheduler;
 using Eve.Services.Space.Waves;
 using Npgsql;
+using System.Diagnostics;
 
 namespace Eve.Services.Space.Tests;
 
@@ -101,6 +102,41 @@ public sealed class DungeonWaveTests
     }
 
     [PgFact]
+    public async Task Sixteen_four_wave_dungeons_progress_and_complete_with_bounded_database_work()
+    {
+        await using var rig = await WaveRig.CreateAsync();
+        const int dungeonCount = 16;
+        for (var index = 0; index < dungeonCount; index++)
+        {
+            var start = await rig.Director.StartAsync(Pilot + index, SystemId, Origin, 2158);
+            Assert.True(start.Started, start.Refusal);
+        }
+
+        var timer = Stopwatch.StartNew();
+        rig.Advance(TimeSpan.FromSeconds(240));
+        for (var wave = 0; wave < 4; wave++)
+        {
+            await rig.RunDueAndDeliverAsync();
+            var batches = rig.Spawner.Batches.Skip(wave * dungeonCount).Take(dungeonCount).ToArray();
+            Assert.Equal(dungeonCount, batches.Length);
+            foreach (var batch in batches)
+            {
+                foreach (var ship in batch.Ships)
+                {
+                    await rig.Bus.PublishAsync("npc.killed", new { shipId = ship, solarSystemId = SystemId, characterId = Pilot, typeId = 0, profile = "load" });
+                }
+            }
+        }
+        await rig.RunDueAndDeliverAsync();
+        timer.Stop();
+
+        Assert.Equal(16 * 4, rig.Spawner.Batches.Count);
+        Assert.Equal(16 * (7 + 8 + 9 + 10), rig.Spawner.Batches.Sum(batch => batch.Amount));
+        Assert.Equal(dungeonCount, rig.Completions.Count(completion => completion.Topic == "content.dungeon.completed"));
+        Assert.True(timer.Elapsed < TimeSpan.FromSeconds(30), $"16 four-wave dungeons progressed in {timer.Elapsed}");
+    }
+
+    [PgFact]
     public async Task A_kill_count_wave_is_cleared_by_its_last_npc_once_and_a_repeated_or_foreign_kill_counts_nothing()
     {
         await using var rig = await WaveRig.CreateAsync();
@@ -186,6 +222,28 @@ public sealed class DungeonWaveTests
         Assert.Empty(rig.Spawner.Removed);
         Assert.Single(await rig.Content.ActiveByKindAsync(DungeonWaveDirector.Kind));
         Assert.NotEmpty(ships);
+    }
+
+    [PgFact]
+    public async Task A_wave_that_comes_due_while_its_pilot_is_away_waits_and_spawns_when_the_pilot_is_back()
+    {
+        await using var rig = await WaveRig.CreateAsync();
+        await rig.Director.StartAsync(Pilot, SystemId, Origin, 2173);
+
+        // the first wave comes due while the pilot is out of the system: it is not refused, failed or spawned yet
+        rig.Spawner.Present = false;
+        await rig.RunDueAndDeliverAsync();
+        Assert.Empty(rig.Spawner.Batches);
+        Assert.Single(await rig.Content.ActiveByKindAsync(DungeonWaveDirector.Kind));
+        Assert.Empty(rig.Completions);
+
+        // back in the system: the wave is retried and spawns its NPCs once
+        rig.Spawner.Present = true;
+        rig.Advance(TimeSpan.FromSeconds(15));
+        await rig.RunDueAndDeliverAsync();
+        Assert.Single(rig.Spawner.Batches);
+        Assert.NotEmpty(Assert.Single(rig.Spawner.Batches).Ships);
+        Assert.Single(await rig.Content.ActiveByKindAsync(DungeonWaveDirector.Kind));
     }
 
     [PgFact]

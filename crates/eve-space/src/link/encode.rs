@@ -144,6 +144,14 @@ pub(super) fn put_identity(out: &mut Vec<u8>, identity: &NpcIdentity) {
     for weapon in &identity.combat.weapons {
         put_weapon(out, weapon);
     }
+    out.extend_from_slice(&(identity.self_repairs.len() as u32).to_le_bytes());
+    for repair in &identity.self_repairs {
+        out.extend_from_slice(&repair.effect_id.to_le_bytes());
+        out.extend_from_slice(&repair.amount.to_le_bytes());
+        out.extend_from_slice(&repair.cycle_ms.to_le_bytes());
+        out.extend_from_slice(&repair.capacitor_cost.to_le_bytes());
+        out.extend_from_slice(&repair.delay_chance.to_le_bytes());
+    }
     put_wreck_kind(out, identity.wreck.as_ref());
     out.push(u8::from(identity.hull));
     out.push(u8::from(identity.host_wreck));
@@ -361,7 +369,8 @@ pub(super) fn put_effect(out: &mut Vec<u8>, effect: &Effect) {
             | (u8::from(effect.turret.is_some()) << 2)
             | (u8::from(effect.action.is_some()) << 3)
             | (u8::from(effect.burns_fuel) << 4)
-            | (u8::from(effect.rules != Rules::default()) << 5),
+            | (u8::from(effect.rules != Rules::default()) << 5)
+            | (u8::from(effect.fallback_capacitor_need != 0.0) << 6),
     );
     for numbers in [&effect.on, &effect.off].into_iter().flatten() {
         put_numbers(out, numbers);
@@ -388,6 +397,9 @@ pub(super) fn put_effect(out: &mut Vec<u8>, effect: &Effect) {
         // the speed limits (protocol 38, WP19): the highest and the lowest speed a module starts at (0 for none)
         out.extend_from_slice(&rules.max_velocity_limit.to_le_bytes());
         out.extend_from_slice(&rules.min_velocity_limit.to_le_bytes());
+    }
+    if effect.fallback_capacitor_need != 0.0 {
+        out.extend_from_slice(&effect.fallback_capacitor_need.to_le_bytes());
     }
 }
 

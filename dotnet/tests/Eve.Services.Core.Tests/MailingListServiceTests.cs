@@ -222,6 +222,31 @@ public sealed class MailingListServiceTests
     }
 
     [Fact]
+    public async Task Mailing_list_bulk_mutations_reject_oversized_raw_collections_before_host_callbacks()
+    {
+        var callbackCalls = 0;
+        MailingListMutationCallback callback = (_, _) =>
+        {
+            callbackCalls++;
+            return ValueTask.FromResult<PyValue>(PyNone.Instance);
+        };
+        IService service = new MailingListService(_ => throw new InvalidOperationException(), callback);
+        var tooManyMembers = new PyList(Enumerable.Range(1, 1001).Select(id => (PyValue)new PyInt(id)).ToList());
+        var tooManyEntities = new PyDict(Enumerable.Range(1, 1001).Select(id =>
+            new KeyValuePair<PyValue, PyValue>(new PyInt(id), new PyInt(0))).ToArray());
+
+        foreach (var request in new[]
+        {
+            MutationRequest("KickMembers", 42, [new PyInt(500000000), tooManyMembers]),
+            MutationRequest("SetMembersMuted", 42, [new PyInt(500000000), tooManyMembers]),
+            MutationRequest("SetEntitiesAccess", 42, [new PyInt(500000000), tooManyEntities]),
+        })
+            await Assert.ThrowsAsync<MachoWrappedException>(async () => await service.CallAsync(request));
+
+        Assert.Equal(0, callbackCalls);
+    }
+
+    [Fact]
     public async Task Server_write_methods_are_advertised_and_forwarded_with_session_identity()
     {
         var accessByEntity = new PyDict([

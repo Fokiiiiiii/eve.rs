@@ -22,7 +22,6 @@ public sealed class FittingPgFactAttribute : FactAttribute
 
 /// <summary>
 /// The fitting managers end to end on the real saved-fitting store: the client's calls and their KeyVal shapes, the refusals the client shows, the
-/// access rules of the owner scopes, and the notifications each change sends to the owner's sessions.
 /// </summary>
 public sealed class FittingMgrServicesTests : IAsyncLifetime
 {
@@ -35,13 +34,19 @@ public sealed class FittingMgrServicesTests : IAsyncLifetime
     private sealed class Host : IFittingHost
     {
         public bool FittingManager { get; set; }
+        public bool OwnerAccess { get; set; } = true;
         public long? Executor { get; set; } = FittingMgrServicesTests.Executor;
+        public int CategoryReads { get; private set; }
         public List<ClientSession> Sessions { get; } = [];
 
-        public Task<IReadOnlyDictionary<int, int>> CategoriesAsync(IReadOnlyCollection<int> typeIds, CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyDictionary<int, int>>(typeIds.Where(id => id is Tengu or Ibis or DamageControl)
+        public Task<IReadOnlyDictionary<int, int>> CategoriesAsync(IReadOnlyCollection<int> typeIds, CancellationToken cancellationToken)
+        {
+            CategoryReads++;
+            return Task.FromResult<IReadOnlyDictionary<int, int>>(typeIds.Where(id => id is Tengu or Ibis or DamageControl)
                 .ToDictionary(id => id, id => id == DamageControl ? 7 : 6));
+        }
         public Task<bool> HasFittingManagerRoleAsync(long characterId, CancellationToken cancellationToken) => Task.FromResult(FittingManager);
+        public Task<bool> CanAccessOwnerAsync(long characterId, long ownerId, FittingOwnerScope scope, CancellationToken cancellationToken) => Task.FromResult(OwnerAccess);
         public Task<long?> AllianceExecutorAsync(long allianceId, CancellationToken cancellationToken) => Task.FromResult(Executor);
         public IReadOnlyList<ClientSession> SessionsOf(FittingOwnerScope scope, long ownerId) => Sessions;
     }
@@ -145,6 +150,27 @@ public sealed class FittingMgrServicesTests : IAsyncLifetime
     }
 
     [FittingPgFact]
+    public async Task Delete_fitting_refuses_missing_or_foreign_ids_without_a_false_notification()
+    {
+        var (_, host, calls) = await SetUpAsync();
+        var sink = new Sink();
+        var session = SessionOf(sink, Character);
+        IService service = new CharFittingMgrService(calls);
+        var fittingId = ((PyLong)await service.CallAsync(Call("SaveFitting", session, new PyInt(Character), Fitting()))).Value;
+        var packetCount = sink.Packets.Count;
+
+        var missing = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            service.CallAsync(Call("DeleteFitting", session, new PyInt(Character), new PyInt(-1))).AsTask());
+        var foreign = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            service.CallAsync(Call("DeleteFitting", session, new PyInt(Character), new PyLong(fittingId + 1))).AsTask());
+
+        Assert.Equal("CustomNotify", missing.Error.UserErrorMessage);
+        Assert.Equal("CustomNotify", foreign.Error.UserErrorMessage);
+        Assert.Equal(packetCount, sink.Packets.Count);
+        Assert.Single(Assert.IsType<PyDict>(await service.CallAsync(Call("GetFittings", session, new PyInt(Character)))).Entries);
+    }
+
+    [FittingPgFact]
     public async Task A_character_cannot_read_or_change_another_characters_fittings()
     {
         var (_, _, calls) = await SetUpAsync();
@@ -155,6 +181,35 @@ public sealed class FittingMgrServicesTests : IAsyncLifetime
         Assert.Equal(MachoErrors.UserErrorClass, error.Error.ClassName);
         Assert.Equal("CustomNotify", error.Error.UserErrorMessage);
     }
+
+
+    [Fact]
+    public async Task Fitting_identifiers_outside_int32_are_refused_before_storage()
+    {
+        using var source = NpgsqlDataSource.Create(
+            PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var store = new PgSavedFittingStore(source, "sfsvc_test");
+        var calls = new FittingMgrCalls(store, new Host(), () => 1_700_000_000_000);
+        var member = SessionOf(new Sink(), Character, Corporation);
+        IService service = new CharFittingMgrService(calls);
+        var overflow = (long)int.MaxValue + 1;
+        var invalidShip = Py.KeyVal(
+            ("name", new PyStr("overflow")),
+            ("description", new PyStr("text")),
+            ("shipTypeID", new PyLong(overflow)),
+            ("fitData", new PyList([Py.Tuple(new PyInt(DamageControl), new PyInt(11), new PyInt(1))])));
+        var invalidItem = Py.KeyVal(
+            ("name", new PyStr("overflow")),
+            ("description", new PyStr("text")),
+            ("shipTypeID", new PyInt(Tengu)),
+            ("fitData", new PyList([Py.Tuple(new PyLong(overflow), new PyInt(11), new PyInt(1))])));
+
+        await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(
+            Call("SaveFitting", member, new PyInt(Character), invalidShip)).AsTask());
+        await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(
+            Call("SaveFitting", member, new PyInt(Character), invalidItem)).AsTask());
+    }
+
 
     [FittingPgFact]
     public async Task A_corporation_fitting_needs_the_fitting_manager_role_to_change_and_is_announced_to_the_corporation()
@@ -174,6 +229,24 @@ public sealed class FittingMgrServicesTests : IAsyncLifetime
     }
 
     [FittingPgFact]
+    public async Task A_departed_member_cannot_read_fittings_through_stale_corporation_or_alliance_session_ids()
+    {
+        var (_, host, calls) = await SetUpAsync();
+        var formerMember = SessionOf(new Sink(), Character, Corporation, Alliance);
+        host.OwnerAccess = false;
+        IService corporation = new CorpFittingMgrService(calls);
+        IService alliance = new AllianceFittingMgrService(calls);
+
+        var corporationError = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            corporation.CallAsync(Call("GetFittings", formerMember, new PyInt(Corporation))).AsTask());
+        var allianceError = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            alliance.CallAsync(Call("GetFittings", formerMember, new PyInt(Alliance))).AsTask());
+
+        Assert.Equal("CustomNotify", corporationError.Error.UserErrorMessage);
+        Assert.Equal("CustomNotify", allianceError.Error.UserErrorMessage);
+    }
+
+    [FittingPgFact]
     public async Task An_alliance_fitting_can_be_changed_only_by_the_executor_corporation()
     {
         var (_, host, calls) = await SetUpAsync();
@@ -185,6 +258,45 @@ public sealed class FittingMgrServicesTests : IAsyncLifetime
 
         var executor = SessionOf(new Sink(), Character, Executor, Alliance);
         Assert.True(((PyLong)await alliance.CallAsync(Call("SaveFitting", executor, new PyInt(Alliance), Fitting()))).Value > 0);
+    }
+
+[FittingPgFact]
+    public async Task Fitting_bulk_batches_refuse_raw_counts_before_validation_or_deletion()
+    {
+        var (_, host, calls) = await SetUpAsync();
+        var sink = new Sink();
+        var session = SessionOf(sink, Character);
+        IService service = new CharFittingMgrService(calls);
+        var entries = new PyDict([.. Enumerable.Range(0, 501).Select(i =>
+            new KeyValuePair<PyValue, PyValue>(new PyInt(i + 1), Fitting($"fit {i}")))]);
+
+        var saveError = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            service.CallAsync(Call("SaveManyFittings", session, new PyInt(Character), entries)).AsTask());
+        Assert.Equal("CustomNotify", saveError.Error.UserErrorMessage);
+        Assert.Equal(0, host.CategoryReads);
+
+        var malformedSave = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            service.CallAsync(Call("SaveManyFittings", session, new PyInt(Character), new PyStr("not-a-dictionary"))).AsTask());
+        Assert.Equal("CustomNotify", malformedSave.Error.UserErrorMessage);
+        var malformedSaveKey = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            service.CallAsync(Call("SaveManyFittings", session, new PyInt(Character), new PyDict([
+                new KeyValuePair<PyValue, PyValue>(new PyStr("not-a-temp-id"), Fitting())]))).AsTask());
+        Assert.Equal("CustomNotify", malformedSaveKey.Error.UserErrorMessage);
+        Assert.Equal(0, host.CategoryReads);
+
+        var saved = (PyLong)await service.CallAsync(Call("SaveFitting", session, new PyInt(Character), Fitting()));
+        var repeatedIds = new PyList([.. Enumerable.Repeat<PyValue>(new PyLong(saved.Value), 501)]);
+        var deleteError = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            service.CallAsync(Call("DeleteManyFittings", session, new PyInt(Character), repeatedIds)).AsTask());
+        Assert.Equal("CustomNotify", deleteError.Error.UserErrorMessage);
+        var malformedDelete = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            service.CallAsync(Call("DeleteManyFittings", session, new PyInt(Character), PyNone.Instance)).AsTask());
+        Assert.Equal("CustomNotify", malformedDelete.Error.UserErrorMessage);
+        var mixedDelete = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            service.CallAsync(Call("DeleteManyFittings", session, new PyInt(Character), new PyList([
+                new PyLong(saved.Value), new PyInt(-1)]))).AsTask());
+        Assert.Equal("CustomNotify", mixedDelete.Error.UserErrorMessage);
+        Assert.Single(Assert.IsType<PyDict>(await service.CallAsync(Call("GetFittings", session, new PyInt(Character)))).Entries);
     }
 
     [FittingPgFact]

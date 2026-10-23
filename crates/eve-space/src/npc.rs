@@ -2,7 +2,6 @@
 //! above any the host gives a player), so a ship's motion, warp, locks, modules and health work the same for both and a player sees an NPC as it sees
 //! any other ship. What differs is what the client is told about one: its ball has no session and is not interactive, its slim item has no name, and
 //! nothing is ever sent to an NPC (`Out`s for an NPC's session are dropped where the scene meets the host, `Sim`).
-
 use eve_destiny::Vec3;
 
 use crate::brains::{Brains, GiveError};
@@ -23,6 +22,42 @@ pub const NO_GROUP: i64 = eve_behaviors::env::INVALID_GROUP_ID;
 /// Whether a session is an NPC's.
 pub fn is_npc_session(session: SessionId) -> bool {
     session >= NPC_SESSION_BASE
+}
+
+pub(crate) fn npc_self_repair_module_id(effect_id: i32) -> i64 {
+    i64::MIN + i64::from(effect_id)
+}
+
+pub(crate) fn npc_self_repair_effect(
+    module_type: i32,
+    repair: crate::ship::NpcSelfRepair,
+    repeat: i32,
+) -> crate::modules::Effect {
+    let (layer, when) =
+        if i64::from(repair.effect_id) == eve_behaviors::consts::EFFECT_NPC_BEHAVIOR_ARMOR_REPAIRER {
+            (crate::health::Layer::Armor, crate::modules::Applies::CycleEnd)
+        } else {
+            (crate::health::Layer::Shield, crate::modules::Applies::CycleStart)
+        };
+    crate::modules::Effect {
+        rules: Default::default(),
+        burns_fuel: false,
+        module_id: npc_self_repair_module_id(repair.effect_id),
+        module_type,
+        effect_id: repair.effect_id,
+        fx: String::new(),
+        duration_ms: repair.cycle_ms,
+        capacitor_need: repair.capacitor_cost,
+        fallback_capacitor_need: 0.0,
+        repeat: repeat.max(1),
+        target_id: 0,
+        turret: None,
+        action: Some(crate::modules::Action::Repair { layer, amount: repair.amount, when }),
+        on: None,
+        off: None,
+        on_changes: Vec::new(),
+        off_changes: Vec::new(),
+    }
 }
 
 /// Where an NPC comes into a scene and how it is moving.
@@ -117,7 +152,7 @@ impl Scene {
         let ship = pilot.ship.clone();
         let system_id = i64::from(self.system().id);
         let group = group.unwrap_or_else(|| self.new_entity_group());
-        // the owners a Pochven NPC attacks, by its behavior (`pochven_population::owners_for`)
+
         let in_zone = crate::pochven_population::is_zone(self.system().id);
         let owners =
             crate::pochven_population::owners_for(behavior, i64::from(ship.spec.corporation_id), in_zone);
@@ -203,11 +238,59 @@ impl Scene {
             self.brains = Some(brains);
             return Vec::new();
         }
-        let out = brains.run(self, now);
+        let mut out = brains.run(self, now);
+        out.extend(self.sync_npc_self_repairs(now, &brains));
         if let Some(spawned) = self.brains.replace(brains).filter(|spawned| !spawned.is_empty())
             && let Some(mine) = self.brains.as_mut()
         {
             mine.absorb(spawned);
+        }
+        out
+    }
+
+    /// Keeps NPC hull self-repair effects on their SDE-defined module cycles while combat has a locked target.
+    fn sync_npc_self_repairs(&mut self, now: i64, brains: &Brains) -> Vec<Out> {
+        let mut out = Vec::new();
+        for session in self.npc_sessions() {
+            let Some(pilot) = self.pilots.get(&session) else { continue };
+            let Some(identity) = pilot.ship.npc.as_ref() else { continue };
+            if identity.self_repairs.iter().any(|repair| !repair.is_valid())
+                || identity.self_repairs.iter().enumerate().any(|(i, repair)| {
+                    identity.self_repairs[..i].iter().any(|prior| prior.effect_id == repair.effect_id)
+                })
+            {
+                continue;
+            }
+            if brains.has_active_tank(session) {
+                continue;
+            }
+            let repairs = identity.self_repairs.clone();
+            let target_exists = !self.locked_by(session).is_empty();
+            let module_type = pilot.ship.spec.type_id;
+
+            for repair in repairs {
+                let module_id = npc_self_repair_module_id(repair.effect_id);
+                let (running, pending) = self.pilots.get(&session).map_or((false, false), |pilot| {
+                    (
+                        pilot.modules.running.iter().any(|run| run.effect.module_id == module_id),
+                        pilot.modules.active_or_pending_effects().any(|effect| effect.module_id == module_id)
+                            && !pilot.modules.running.iter().any(|run| run.effect.module_id == module_id),
+                    )
+                });
+                if !target_exists {
+                    if pending {
+                        out.extend(self.deactivate(session, module_id, now));
+                    } else if running {
+                        out.extend(self.offline_module(session, module_id, now));
+                    }
+                    continue;
+                }
+                if running || pending {
+                    continue;
+                }
+                let effect = npc_self_repair_effect(module_type, repair, i32::MAX);
+                out.extend(self.activate(session, effect, now));
+            }
         }
         out
     }

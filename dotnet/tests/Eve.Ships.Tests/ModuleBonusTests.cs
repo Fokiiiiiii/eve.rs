@@ -18,7 +18,7 @@ public class ModuleBonusTests
     private const int BastionModuleI = 33400, TriageModuleI = 27951, CapitalIndustrialCoreI = 28583;
     private const int ShieldCommandBurstI = 42529, ShieldHarmonizing = 42695, CovertCloakII = 11578, CovertCynosuralGeneratorI = 28646;
     private const int CommandDestroyers = 37615;
-    private const int Sleipnir = 22444, CommandShips = 23950, SleipnirRole = 33098, CommandShipStrength = 1924;
+    private const int Drake = 24698, Sleipnir = 22444, CommandShips = 23950, SleipnirRole = 33098, CommandShipStrength = 1924;
 
     private const int MaxVelocity = 37, WarpScrambleStatus = 104, DisallowDocking = 2354;
     private const int RemoteRepairImpedance = 2116, RemoteAssistanceImpedance = 2135, SensorDampenerResistance = 2112;
@@ -164,5 +164,28 @@ public class ModuleBonusTests
         var (_, generator, running) = await FitAndStartAsync(rig, Redeemer, CovertCynosuralGeneratorI);
 
         Assert.Equal(Percent(Base(rig, CovertCynosuralGeneratorI, CynoDuration), Base(rig, Redeemer, CynoDurationBonus)), running.World.Get(generator, CynoDuration), 9);
+    }
+
+
+    /// <summary>
+    /// The skill's SDE strength bonus is 10% per level (attribute 2572, effect 6775); effects 6776, 6777 and 6780 apply that strength to the
+    /// corresponding charge-derived values. At level V, the Mk I module's value 1 and charge multipliers -8/-8/40 (2596) resolve to -12/-12/60.
+    /// </summary>
+    [PgFact]
+    public async Task Armor_shield_and_mining_burst_strength_uses_the_level_five_sde_skill_bonus()
+    {
+        (int Hull, int Module, int Charge, int StrengthSkill, double Expected)[] cases =
+        [
+            (Drake, 42526, 42832, 11569, -12),      // Armor Energizing: -8 * (1 + 50%)
+            (Drake, 42529, 42695, 3351, -12),       // Shield Harmonizing: -8 * (1 + 50%)
+            (Rorqual, 42528, 42829, 28374, 50),     // Capital Industrial Ships: 40 * (1 + skill 5 * 5%)
+        ];
+
+        foreach (var (hullTypeId, moduleTypeId, chargeTypeId, strengthSkill, expected) in cases)
+        {
+            await using var rig = await Rig.CreateAsync();
+            var (_, burst, running) = await FitAndStartAsync(rig, hullTypeId, moduleTypeId, chargeTypeId, strengthSkill);
+            Assert.Equal(expected, running.World.Get(burst, BuffValue), 9);
+        }
     }
 }

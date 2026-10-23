@@ -8,7 +8,6 @@ using Npgsql;
 namespace Eve.Services.Core.Tests;
 
 /// <summary>
-/// The kill mission runtime on the PostgreSQL store: an accepted kill mission starts its dungeon for the pilot in space in the agent's system,
 /// the dungeon's outcome decides the mission, and the reward is credited once (a replayed outcome pays nothing).
 /// </summary>
 public class MissionDungeonRuntimeTests
@@ -89,7 +88,7 @@ public class MissionDungeonRuntimeTests
         }
 
         public async Task<bool> CompleteMissionAsync(long characterId, long agentId, DateTimeOffset now, string reference,
-            IReadOnlyList<MissionStandingGain> standings, IReadOnlyList<(int TypeId, long Quantity, string? Tag)> consume, CancellationToken cancellationToken)
+            IReadOnlyList<MissionStandingGain> standings, IReadOnlyList<(int TypeId, long Quantity, string? Tag)> consume, long loyaltyPoints, long issuerCorporationId, CancellationToken cancellationToken)
         {
             if (Store is null) return false;
             if (consume.Any(need => Held.GetValueOrDefault(need.TypeId) < need.Quantity)) return false;
@@ -146,6 +145,34 @@ public class MissionDungeonRuntimeTests
         Assert.Single(host.Credits);
     }
 
+    [AgentsPgFact]
+    public async Task A_game_master_completion_pays_the_accepted_mission_once_and_refuses_one_that_is_not_accepted()
+    {
+        var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var schema = "mdr_" + Guid.NewGuid().ToString("N")[..12];
+        await using var cleanup = new Cleanup(source, schema);
+        await AgentMissionStore.MigrateAsync(source, schema);
+        var store = new AgentMissionStore(source, schema);
+        var host = new FakeHost { Store = store };
+        var runtime = new MissionDungeonRuntime(store, Catalog(), host, agent => agent == Agent ? new MissionAgentPlace(System, Corporation) : null, () => Start);
+        await store.OfferAsync(Pilot, Agent, new AgentMissionContent(9101, 1234, "Kill Step", "", false), Start, "offer:1");
+
+        // an offer is not a mission the pilot holds: nothing is paid and the offer stays
+        Assert.False(await runtime.GmCompleteAsync(Pilot, Agent));
+        Assert.Equal(AgentMissionState.Offered, (await store.ReadAsync(Pilot, Agent))!.State);
+        Assert.Empty(host.Credits);
+
+        await store.AcceptAsync(Pilot, Agent, Start, "accept:1");
+        Assert.True(await runtime.GmCompleteAsync(Pilot, Agent));
+        var credit = Assert.Single(host.Credits);
+        Assert.Equal((Pilot, 100000L, Corporation, 33), (credit.Character, credit.Amount, credit.Counterparty, credit.RefType));
+        Assert.Equal("agent-mission:" + Pilot + ":9101:gm:9101", credit.Key);
+        Assert.Equal(AgentMissionState.Completed, (await store.ReadAsync(Pilot, Agent))!.State);
+
+        Assert.False(await runtime.GmCompleteAsync(Pilot, Agent));
+        Assert.Single(host.Credits);
+    }
+
     private const string BasicKillMission = """
         {"_key": 9103, "name": {"en": "Basic Kill Step"}, "nameID": 1237, "hasStandingRewards": false,
          "killMission": {"dungeonID": 3509, "objectiveQuantity": 0}}
@@ -156,7 +183,7 @@ public class MissionDungeonRuntimeTests
         """;
 
     [AgentsPgFact]
-    public async Task A_basic_level_4_kill_mission_with_no_reward_in_the_static_data_pays_the_level_4_isk_base_once()
+    public async Task A_basic_level_4_mission_uses_the_configured_isk_and_standing_reward_once()
     {
         var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var schema = "mdr_" + Guid.NewGuid().ToString("N")[..12];
@@ -166,16 +193,20 @@ public class MissionDungeonRuntimeTests
         var host = new FakeHost { Store = store };
         var catalog = MissionStaticCatalog.FromRows(3405148, [new SdeRow(9103, JsonDocument.Parse(BasicKillMission).RootElement.Clone())], [],
             levels: MissionLevelTags.FromJson(BasicLevel4Tag, "test"));
-        var runtime = new MissionDungeonRuntime(store, catalog, host, agent => new MissionAgentPlace(System, Corporation), () => Start);
+        var basicReward = new ApproximateMissionBasicReward(920_000, 0.031, 0.062);
+        var rewardConfiguration = new ApproximateMissionRewardConfiguration(
+            BasicMissionRewards: new Dictionary<int, ApproximateMissionBasicReward> { [4] = basicReward });
+        var runtime = new MissionDungeonRuntime(store, catalog, host, agent => new MissionAgentPlace(System, Corporation), () => Start,
+            missionRewardConfiguration: rewardConfiguration);
         await store.OfferAsync(Pilot, Agent, new AgentMissionContent(9103, 1237, "Basic Kill Step", "", false), Start, "offer:b");
         await store.AcceptAsync(Pilot, Agent, Start, "accept:b");
         Assert.Equal(1, await runtime.SweepAsync());
 
         await runtime.OnDungeonOutcomeAsync("completed", Pilot, "dungeon.3509", 78, default);
         var credit = Assert.Single(host.Credits);
-        Assert.Equal((Pilot, 675_000L, Corporation), (credit.Character, credit.Amount, credit.Counterparty));
-        // the agent's and the corporation's diminishing gains of a level 4 mission, in the same completion
-        Assert.Equal(new[] { (Pilot, Agent, 0.028), (Pilot, Corporation, 0.055) }, host.Standings.Select(s => (s.Character, s.Faction, s.Delta)));
+        Assert.Equal((Pilot, 920_000L, Corporation), (credit.Character, credit.Amount, credit.Counterparty));
+
+        Assert.Equal(new[] { (Pilot, Agent, 0.031), (Pilot, Corporation, 0.062) }, host.Standings.Select(s => (s.Character, s.Faction, s.Delta)));
         Assert.Equal(AgentMissionState.Completed, (await store.ReadAsync(Pilot, Agent))!.State);
     }
 
@@ -226,7 +257,6 @@ public class MissionDungeonRuntimeTests
         Assert.Equal(AgentMissionState.Accepted, (await store.ReadAsync(Pilot, Agent))!.State);
     }
 
-    // A kill mission whose completion moves the standing toward a faction by the SDE's 7.0 (the wiki's +0.7).
     private const string StandingMission = """
         {"_key": 9201, "name": {"en": "Standing Step"}, "nameID": 1236, "killMission": {"dungeonID": 3509, "objectiveQuantity": 0},
          "extraStandings": [{"_key": 500003, "_value": 7.0}]}
@@ -254,7 +284,6 @@ public class MissionDungeonRuntimeTests
         Assert.Equal(0.7, standing.Delta, 6);
     }
 
-    // A fetch step: the dungeon yields one Strange Datacore (30755, the SDE's objective of arc 29 step 14119), handed in at the agent.
     private const string FetchMission = """
         {"_key": 9301, "name": {"en": "Fetch Step"}, "nameID": 1238, "hasStandingRewards": false,
          "killMission": {"dungeonID": 3509, "objectiveTypeID": 30755, "objectiveQuantity": 1},
@@ -357,7 +386,6 @@ public class MissionDungeonRuntimeTests
         Assert.Equal(1, host.Held.GetValueOrDefault(Datacore));
     }
 
-    // A courier step: two Strange Datacores (30755, not singletons), paid 100000 ISK; the expiry of the data is 10080 minutes (seven days).
     private const string CourierMission = """
         {"_key": 9401, "name": {"en": "Courier Step"}, "nameID": 1239, "hasStandingRewards": false,
          "courierMission": {"objectiveTypeID": 30755, "objectiveQuantity": 2, "objectiveSingleton": 0},
@@ -436,7 +464,7 @@ public class MissionDungeonRuntimeTests
 
         Assert.Equal(1, await runtime.ExpireCouriersAsync(Start + TimeSpan.FromDays(8)));
         Assert.Equal(AgentMissionState.Failed, (await store.ReadAsync(Pilot, Agent))!.State);
-        // the agent takes the cargo back (the mission's tagged stacks), and no standing changes
+
         Assert.Equal((9401L, Pilot), Assert.Single(host.TakenBack));
         Assert.Empty(host.Standings);
     }
@@ -460,7 +488,6 @@ public class MissionDungeonRuntimeTests
         await store.AcceptAsync(Pilot, Agent, Start, "accept:c5");
         await runtime.OnAcceptedAsync(Pilot, Agent);
 
-        // a limit of zero minutes failed the courier at once (live: arc 40, step 14898, accepted and failed seven seconds apart)
         Assert.Equal(0, await runtime.ExpireCouriersAsync(Start + TimeSpan.FromMinutes(5)));
         Assert.Equal(AgentMissionState.Accepted, (await store.ReadAsync(Pilot, Agent))!.State);
         Assert.Empty(host.TakenBack);
@@ -491,7 +518,6 @@ public class MissionDungeonRuntimeTests
         Assert.Equal(AgentMissionState.Quit, (await store.ReadAsync(Pilot, Agent))!.State);
     }
 
-    // A storyline trade (3 Strange Datacores, paid 100000 ISK) and a basic mining step (ore loot of a dungeon, level 4).
     private const string StorylineTrade = """
         {"_key": 9501, "name": {"en": "Trade Step"}, "nameID": 1245, "hasStandingRewards": false,
          "courierMission": {"objectiveTypeID": 30755, "objectiveQuantity": 3, "objectiveSingleton": 0},
@@ -529,7 +555,6 @@ public class MissionDungeonRuntimeTests
         await runtime.OnDockedAsync(Pilot, DestinationStation);
         Assert.Equal(AgentMissionState.Accepted, (await store.ReadAsync(Pilot, Agent))!.State);
 
-        // the turn-in at the agent: a short holding changes nothing; the held quantity is consumed and the step pays
         host.Held[Datacore] = 2;
         await runtime.OnConversationAsync(Pilot, Agent, together: true);
         Assert.Equal(AgentMissionState.Accepted, (await store.ReadAsync(Pilot, Agent))!.State);
@@ -561,7 +586,6 @@ public class MissionDungeonRuntimeTests
         Assert.Empty(host.Grants);
         Assert.Equal(AgentMissionState.Accepted, (await store.ReadAsync(Pilot, Agent))!.State);
 
-        // the pilot hands in the ore it holds: one unit short changes nothing, the full quantity completes the step
         host.Held[Datacore] = 17999;
         await runtime.OnConversationAsync(Pilot, Agent, together: true);
         Assert.Equal(AgentMissionState.Accepted, (await store.ReadAsync(Pilot, Agent))!.State);
@@ -606,7 +630,6 @@ public class MissionDungeonRuntimeTests
         Assert.Contains(level1!.Id, new long[] { 11, 20, 30 });
     }
 
-    // An epic arc with one courier step (9401, agent 3008500): the arc's step has no mission level, so its jump range comes from its agent.
     private const string CourierArc = """
         {"_key": 9001, "name": {"en": "Courier Arc"}, "arcRestartInterval": 129600,
          "missions": [{"_key": 9401, "agentID": 3008500, "nextMissions": []}]}

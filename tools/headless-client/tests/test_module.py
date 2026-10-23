@@ -38,7 +38,6 @@ CAPACITOR = 18
 # the steps whose error is the reference's own (a miner that has no rock to work on): only that they are refused is compared
 REFUSED_ANYWAY = ("the actor works the miner on the watcher",)
 
-
 def changes_of(event: dict):
     """The `(item, attribute, new, old)` lines of an `OnModuleAttributeChanges`."""
     try:
@@ -52,27 +51,24 @@ def changes_of(event: dict):
         out.append((item, t[3], t[5], t[6]))
     return out
 
-
 def is_capacitor(event: dict) -> bool:
     lines = changes_of(event) if event["name"] == "OnModuleAttributeChanges" else []
     return bool(lines) and all(attribute == CAPACITOR for _, attribute, _, _ in lines)
-
 
 def without_capacitor(events: list) -> list:
     """The events without the stream of the capacitor's charge, and without the attribute the reference tells of a module that has nothing to do with
     the effect (its miner's range, told again at every start and stop)."""
     return [e for e in events if not is_capacitor(e) and not (e["name"] == "OnModuleAttributeChanges" and [a for _, a, _, _ in changes_of(e)] == [54])]
 
-
 def capacitor_values(events: list) -> list:
     return [(e["at"], new, old) for e in events if is_capacitor(e) for _, _, new, old in changes_of(e)]
-
 
 def test_a_ship_works_its_afterburner_as_it_did_in_the_reference():
     race = MODULE["races"][0]
     run = uuid.uuid4().hex[:10]
     problems: list[str] = []
     steps = {step["label"]: step for step in race["steps"]}
+    destiny_events = {"actor": {"recorded": [], "actual": []}, "watcher": {"recorded": [], "actual": []}}
     with base.connect(f"walk-module-a-{run}") as a, base.connect(f"walk-module-b-{run}") as b:
         _, a_ship, _, a_mapping = arrive(a, plain_race(race, "watcher"), run)
         _, b_ship, b_modules, b_mapping = arrive(b, plain_race(race, "actor"), run)
@@ -90,7 +86,12 @@ def test_a_ship_works_its_afterburner_as_it_did_in_the_reference():
             for who, key in (("the actor", "events"), ("the watcher", "seen")):
                 theirs = [e for e in steps[label][key] if e["name"] != "OnInvulnCancelled"]
                 ours = [e for e in got[key] if e["name"] != "OnInvulnCancelled"]
-                problems.extend(compare_events(without_capacitor(theirs), without_capacitor(ours), f"{label} ({who})", mapping))
+                destiny = destiny_events["actor" if key == "events" else "watcher"]
+                destiny["recorded"].extend(event for event in theirs if event["name"] == "DoDestinyUpdate")
+                destiny["actual"].extend(event for event in ours if event["name"] == "DoDestinyUpdate")
+                ordinary_theirs = [event for event in theirs if event["name"] != "DoDestinyUpdate"]
+                ordinary_ours = [event for event in ours if event["name"] != "DoDestinyUpdate"]
+                problems.extend(compare_events(without_capacitor(ordinary_theirs), without_capacitor(ordinary_ours), f"{label} ({who})", mapping))
                 problems.extend(timing(without_capacitor(theirs), without_capacitor(ours), f"{label} ({who})", TOLERANCE, ("OnGodmaShipEffect", "DoDestinyUpdate")))
             # the charge of the capacitor: it is told, and its values follow the reference's curve
             theirs, ours = capacitor_values(steps[label]["events"]), capacitor_values(got["events"])
@@ -131,4 +132,6 @@ def test_a_ship_works_its_afterburner_as_it_did_in_the_reference():
         step("the actor fires the gun at the watcher without a charge", activate(gun, "targetAttack", a_ship), 3.0)
         step("the actor works the miner on the watcher", activate(miner, "miningLaser", a_ship), 3.0)
         step("the actor works the miner with no target", activate(miner, "miningLaser"), 2.0)
+        for who, events in destiny_events.items():
+            problems.extend(compare_events(events["recorded"], events["actual"], f"the {who}'s destiny updates across the walk", mapping))
     assert problems == [], "\n".join(problems[:40])

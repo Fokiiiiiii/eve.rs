@@ -1,8 +1,4 @@
-//! The Pochven rules the simulation applies (`dotnet/src/Eve.Services.Space/Pochven/PochvenRules.cs` is the same rule for the host; keep both in step).
-//! Pochven is SDE region 10000070: the Triglavian space of the Final Liminality systems. Its four NPC factions attack each other on sight (the wiki's
-//! "Pochven" page). The factions are matched by the corporation the SDE names for each one (`factions.corporationID`), which is the owner id of an
 //! NPC ship.
-
 /// The Pochven region (SDE `mapRegions` 10000070).
 pub const POCHVEN_REGION_ID: i32 = 10_000_070;
 
@@ -33,11 +29,8 @@ pub fn faction_of_corporation(corporation_id: i64) -> Option<i64> {
     }
 }
 
-/// An owner id no NPC has: the sensor accepts an owner only from its list, so a list of this id accepts nothing.
 pub const NO_OWNER: i64 = 0;
 
-/// The owners (corporations) a Pochven NPC of `corporation_id` attacks: the corporations of the other Pochven factions while the system is in Pochven,
-/// and `[NO_OWNER]` (nothing) anywhere else, or for a corporation that is not one of the four.
 pub fn hostile_corporations(corporation_id: i64, in_pochven: bool) -> Vec<i64> {
     let Some(mine) = faction_of_corporation(corporation_id).filter(|_| in_pochven) else {
         return vec![NO_OWNER];

@@ -1,4 +1,4 @@
-"""A Cockroach logs into a Pochven system directly in space, and the Triglavian NPCs the simulation spawns there are observed.
+"""A Cockroach logs into a Pochven system directly in space and is attacked by its Triglavian gate NPCs.
 
     EVE_LIVE_HOST=host:port EVE_PG_URL=postgres://... pytest tests/test_pochven_live.py
 
@@ -7,7 +7,7 @@ the way a pilot who logged off in Pochven would have it: the character row names
 in-space flag (0), and a space_items pose lies in the system until a year out (SpaceSessions.GetSessionAttributesAsync and
 OnCharacterEnteredAsync). Then the character is selected. Experiment: the walk asserts that the selection is answered and
 that the session is put in space; the notifications it is sent are returned for comparison with the reference (tools/mitm).
-Skipped unless EVE_LIVE_HOST and EVE_PG_URL are set.
+The walk asserts the session placement, Triglavian ball arrival, target lock, and damage notification. Skipped unless EVE_LIVE_HOST and EVE_PG_URL are set.
 """
 
 import collections
@@ -40,7 +40,6 @@ GATE = (-120679911185.50594, -8208806312.394073, -25334939508.729)
 EGO = (GATE[0] + 5_000.0, GATE[1], GATE[2])
 FAR_FUTURE_MS = 4_102_444_800_000  # 2100-01-01: the pose outlives the walk (the server refuses an expired one)
 
-
 def seed_pochven_pilot(character_id: int, ship: int) -> None:
     """The pilot's state as a pilot in space in Pochven keeps it (see the module docstring)."""
     items = f"{schema('EVE_INVENTORY_SCHEMA')}.items"
@@ -51,7 +50,6 @@ def seed_pochven_pilot(character_id: int, ship: int) -> None:
     psql(f"INSERT INTO {poses} (item_id, solar_system_id, x, y, z, dx, dy, dz, radius, group_id, launcher_id, character_id, corporation_id, alliance_id, war_faction_id, expires_at_ms) "
          f"SELECT {ship}, {POCHVEN_SYSTEM}, {EGO[0]}, {EGO[1]}, {EGO[2]}, 1, 0, 0, 42, {COCKROACH_GROUP}, 0, {character_id}, corporation_id, 0, 0, {FAR_FUTURE_MS} "
          f"FROM {characters} WHERE id = {character_id}")
-
 
 def test_a_cockroach_logs_into_a_pochven_system_in_space():
     creation = next(step for step in WALK["steps"] if step["call"][1] == "CreateCharacterWithDoll" and "ok" in step)
@@ -92,3 +90,5 @@ def test_a_cockroach_logs_into_a_pochven_system_in_space():
                     pairs.update(re.findall(r'\["typeID", (\d+)\]', json.dumps(action.get("args"))))
         print("POCHVEN_BALL_TYPES", dict(pairs))
         assert TRIGLAVIAN_TYPES & set(pairs), "no Triglavian ball was added to the pilot's scene in the system"
+        assert notes["OnTarget"] > 0, "the Triglavian gate NPC did not lock the default-standing pilot"
+        assert notes["OnDamageMessage"] > 0, "the Triglavian gate NPC did not damage the pilot"

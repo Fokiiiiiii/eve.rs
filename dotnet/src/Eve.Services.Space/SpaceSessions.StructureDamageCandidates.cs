@@ -60,7 +60,7 @@ private sealed record SimDamageableEntityRegistration(
             }
 
             // Kind 88 is emitted only after successful insertion into the Sim's damageable scene set.
-            // SDE health and owner sources are checked before this identity can authorize a target.
+
             _simDamageableEntities[update.EntityId] = new SimDamageableEntityRegistration(
                 update.SolarSystemId, update.TypeId, update.OwnerId, update.CorporationId, update.AllianceId, update.WarFactionId);
         }
@@ -141,13 +141,8 @@ private sealed record SimDamageableEntityRegistration(
     /// <summary>Reads the current persistent controller lease for a controlled structure session.</summary>
     public Func<ClientSession, long, CancellationToken, Task<long?>>? StructureControlLeaseGenerationOf { get; set; }
 
-    /// <summary>Returns the owner of a currently launched or abandoned drone entity.</summary>
-
-
-    /// <summary>Returns current, non-destroyed Upwell structure owners for candidate IDs in one solar system.</summary>
     public Func<IReadOnlyList<long>, int, CancellationToken, Task<IReadOnlyDictionary<long, (long OwnerCorporationId, int TypeId, long AllianceId)>>>? StructureDamageTargetCorporationsOf { get; set; }
 
-    /// <summary>Evaluates a structure-owner corporation against a player structure's owner corporation.</summary>
     public Func<long, long, CancellationToken, Task<WeaponTargetContext>>? StructureDamageTargetCorporationContextOf { get; set; }
 
     internal static bool IsStructureDamageModuleType(DogmaStatic statics, TypeDef type) =>
@@ -198,7 +193,7 @@ private sealed record SimDamageableEntityRegistration(
         SimStructureDamageCandidatesRequest request,
         CancellationToken cancellationToken)
     {
-        // ST-17 d: a ship-fitted burst projector's pulse comes from the pilot's own ship (no structure, no lease)
+
         if (request.SessionId != 0 && !_structureObservers.ContainsKey(request.SessionId))
             return AuthorizeShipBurstCandidates(request);
 
@@ -361,9 +356,9 @@ private sealed record SimDamageableEntityRegistration(
                     owners[index] = new(StructureDamageCandidateKind.Unknown, 0);
             }
             else if (_npcShips.TryGetValue(candidateId, out var npc)
-                && npc.SolarSystemId == controller.SolarSystemId)
+                && npc.SolarSystemId == controller.SolarSystemId
+                && npc.Profile is { } profile)
             {
-                var profile = npc.Profile;
                 if (RegistrationMatches(profile.CorporationId, profile.CorporationId, profile.AllianceId, profile.FactionId, npc.TypeId))
                     owners[index] = new(StructureDamageCandidateKind.Npc, 0);
                 else
@@ -406,7 +401,7 @@ private sealed record SimDamageableEntityRegistration(
             }
             else
             {
-                // A zero owner is not an NPC classification. It is authorized only when the
+
                 // current Host source or a validated NPC creation profile above identifies it.
                 owners[index] = new(StructureDamageCandidateKind.Unknown, 0);
             }
@@ -604,7 +599,6 @@ private sealed record SimDamageableEntityRegistration(
     }
 
     /// <summary>
-    /// ST-17 d: the grant of one pulse of a ship-fitted burst projector. The source is the pilot's ship, the lease is 0, and the candidates are the ships in reach
     /// that the simulation found (a burst is friendly fire, as the ship area effects are); the pilot's own ship is never a candidate.
     /// </summary>
     private StructureDamageAuthorization AuthorizeShipBurstCandidates(SimStructureDamageCandidatesRequest request)

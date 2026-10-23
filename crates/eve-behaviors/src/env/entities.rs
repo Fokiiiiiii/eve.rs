@@ -93,7 +93,6 @@ pub trait Entities {
         None
     }
 
-    /// `groupManager.GetGroup(groupId).GetGroupOwnerId()`.
     fn group_owner_id(&self, _group_id: i64) -> Option<i64> {
         None
     }
@@ -113,7 +112,6 @@ pub trait Entities {
         INVALID_GROUP_ID
     }
 
-    /// `entityLocation.GetBehaviorEntityGroup(groupId)`: the owner of the group when it is a behavior group.
     fn behavior_group_owner_id(&self, _group_id: i64) -> Option<i64> {
         None
     }
@@ -239,7 +237,6 @@ pub trait Entities {
         false
     }
 
-    /// `reinforcementManager.AddEntityGroupReinforcement(CreateReinforcedGroup(entityCount, ownerId, wave, None).SetEntityGroupID(groupId))`.
     fn add_entity_group_reinforcement(
         &mut self,
         _group_id: i64,
@@ -308,7 +305,6 @@ pub trait Entities {
     ) {
     }
 
-    /// `GetGroupAwarenessManager().register_spawn_pool_fleet_awareness(spawnPoolId, ownerId, blackboardId, behaviorId, config)`.
     fn register_spawn_pool_fleet_awareness(
         &mut self,
         _spawn_pool_id: &Value,

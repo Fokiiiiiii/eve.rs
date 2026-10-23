@@ -120,8 +120,17 @@ internal sealed partial class CharacterServicesComposition
         announcer.Attach();
         multipleTrainingExpiry = new MultipleTrainingSlotExpiry(
             foundations.Scheduler, training, announcer, characterSessions,
-            async (accountId, token) => [.. (await characters.ForAccountAsync(checked((int)accountId), token)).Select(c => c.Id)]);
+            async (accountId, token) => [.. (await characters.ForAccountAsync(checked((int)accountId), token)).Select(c => c.Id)],
+            async token =>
+            {
+                if (accounts is not Eve.Identity.PgAccountDirectory pgAccounts)
+                    return Array.Empty<(long AccountId, DateTimeOffset EndsAt)>();
+                return (await pgAccounts.TrainingSlotExpiriesAsync(token))
+                    .Select(slot => (AccountId: (long)slot.AccountId, slot.EndsAt))
+                    .ToArray();
+            });
         multipleTrainingExpiry.Register();
+        await multipleTrainingExpiry.ReconcileSavedSlotsAsync(CancellationToken.None);
         readAugmentations = SkillHandlerService.CreateAugmentationReader(items, dogma, skills, now);
         skillHandler = new SkillHandlerService(
             skills, skillCatalog, training, characters, items, dogma, announcer, now, readAugmentations,
@@ -194,10 +203,16 @@ internal sealed partial class CharacterServicesComposition
         insuranceWriteModel = new PersistenceInsuranceWriteModel(
             source, items, mailStore, mailStoreOwner.Fence, economyWallets, insuranceReadModel, now);
         items.ShipInsuranceInvalidator = insuranceWriteModel;
-        insuranceService = new Eve.Services.Core.InsuranceService(insuranceReadModel, now, insuranceWriteModel);
+        insuranceService = new Eve.Services.Core.InsuranceService(
+            insuranceReadModel, now, insuranceWriteModel,
+            async (characterId, corporationId, cancellationToken) =>
+                await corporations.HasRoleAsync(characterId, corporationId,
+                    Eve.Corporations.CorporationRoles.Accountant, cancellationToken) ||
+                await corporations.HasRoleAsync(characterId, corporationId,
+                    Eve.Corporations.CorporationRoles.JuniorAccountant, cancellationToken));
         storeRuntime = new PersistenceNewEdenStoreRuntime(
             source, mailStore, mailStoreOwner.Fence, wallets, characters, items, itemTypes,
-            characterSessions, now, _ => Task.FromResult(Eve.Services.Core.NewEdenStoreCatalog.Default.Root), accounts);
+            characterSessions, now, accounts);
         // a slot's end pauses the queues it no longer covers: the job is scheduled with the grant (multipleTrainingExpiry is set by TrainingSkillsAndCreation)
         storeRuntime.ScheduleSlotExpiry = (connection, transaction, accountId, endsAt, token) =>
             multipleTrainingExpiry.ScheduleAsync(connection, transaction, accountId, endsAt, token);
@@ -207,6 +222,7 @@ internal sealed partial class CharacterServicesComposition
     private Task CharacterEntryHooks()
     {
         publicQaSlashService = null;
+        jumpCloneSpace.CloneDeletedNotification = mailSendWriter.WriteJumpCloneDeletedNotificationAsync;
         gameRpcCallbacks = new Eve.Services.Core.GameRpcCallbacks(
             ReadSharedSettings: () => mailCache.Read("sharedSettings", "/").Data as JsonObject,
                     ReadOverviewPresets: () => mailCache.Read("overviewSharedPresets", "/").Data as JsonObject,

@@ -58,7 +58,6 @@ public class AgentAccessRuleTests
     }
 
     // The faction and corporation standings are kept negative in these tests: a 0 standing takes the Connections bonus too
-    // (standingUtil.py:33-35 gives any standing that is not negative a bonus), which would make the other two stand in for the agent.
 
     [Fact]
     public void A_connections_skill_raises_a_positive_standing_by_its_bonus()

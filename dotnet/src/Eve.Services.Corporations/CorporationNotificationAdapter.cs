@@ -56,7 +56,6 @@ public static void ApplicationChanged(CharacterSessions? sessions,ServiceCall ca
         });
     }
 
-    // eve.rs extension: the local EveJS medal service emits no push event on award.
     public static void MedalsReceived(CharacterSessions? sessions,ServiceCall call,long medalId,
         IEnumerable<long> recipients)
     {
@@ -205,7 +204,7 @@ public static void ApplicationChanged(CharacterSessions? sessions,ServiceCall ca
         return new PyDict(changes);
     }
 
-    private static void Send(ClientSession session,string name,string idType,PyValue payload)
+    private static void Send(ClientSession session,string name,string idType,params PyValue[] payload)
     {
         try { session.SendNotification(name,idType,payload); }
         catch (Exception) { }
@@ -227,7 +226,7 @@ public static void ApplicationChanged(CharacterSessions? sessions,ServiceCall ca
                 var change = AllianceMemberChange(before,after,session.GetInt("corpid") == corporationId);
                 if (change.Entries.Count > 0)
                     Send(session,"OnAllianceMemberChanged","ownerid",
-                        Py.Tuple(CorporationWire.Id(allianceId),CorporationWire.Id(corporationId),change));
+                        CorporationWire.Id(allianceId),CorporationWire.Id(corporationId),change);
             }
         });
     }
@@ -243,7 +242,7 @@ public static void ApplicationChanged(CharacterSessions? sessions,ServiceCall ca
             var change = AllianceMemberChange(before,after,session.GetInt("corpid") == corporationId);
             if (change.Entries.Count > 0)
                 Send(session,"OnAllianceMemberChanged","ownerid",
-                    Py.Tuple(CorporationWire.Id(allianceId),CorporationWire.Id(corporationId),change));
+                    CorporationWire.Id(allianceId),CorporationWire.Id(corporationId),change);
         }
     }
 
@@ -371,7 +370,7 @@ public static void ApplicationChanged(CharacterSessions? sessions,ServiceCall ca
         var changes = new List<KeyValuePair<PyValue,PyValue>>();
         void Add(string name,PyValue oldValue,PyValue newValue)
         {
-            if (!oldValue.Equals(newValue))
+            if (before is null || after is null || !oldValue.Equals(newValue))
                 changes.Add(new(new PyStr(name),new PyList([oldValue,newValue])));
         }
         Add("corporationID",CorporationWire.Id(before?.CorporationId),CorporationWire.Id(after?.CorporationId));

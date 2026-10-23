@@ -49,6 +49,11 @@ impl Scene {
         can: crate::link::ContainerPlacement,
         now: i64,
     ) -> Vec<Out> {
+        let actual_scene = self
+            .abyssal
+            .as_ref()
+            .map(|spec| spec.scene)
+            .unwrap_or_else(|| crate::link::SceneKey::solar_system(self.system().id));
         let Some(ship) = self.ship(session, now) else {
             return vec![Out::Refused {
                 session,
@@ -56,6 +61,18 @@ impl Scene {
                 reason: "NO_SHIP_IN_SPACE",
             }];
         };
+        if let Some(expected) = can.expected_scene {
+            let reason = if expected != actual_scene {
+                Some("SCENE_CHANGED")
+            } else if ship.spec.ship_id != can.launcher_id {
+                Some("SHIP_CHANGED")
+            } else {
+                None
+            };
+            if let Some(reason) = reason {
+                return vec![Out::Refused { session, command: crate::link::kind::PLACE_CONTAINER, reason }];
+            }
+        }
         let (origin, facing) = (ship.position, ship.direction);
         let length = (facing.x * facing.x + facing.y * facing.y + facing.z * facing.z).sqrt();
         let forward = if length > 0.0 && length.is_finite() {

@@ -17,7 +17,7 @@ internal sealed class NoticeSubscriber(long? account)
 
 /// <summary>
 /// The notices the public gateway pushes to its open Notices.Consume streams. A notice goes to the streams whose identity it is for, as
-/// EveJS publicGatewayLocal.js routes them: by character (the stream's active character) or by user (the stream's account). The other
+
 /// target groups are not published by this host yet.
 /// </summary>
 internal sealed class NoticeHub

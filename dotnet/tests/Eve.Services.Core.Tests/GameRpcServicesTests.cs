@@ -35,6 +35,32 @@ public sealed class GameRpcServicesTests
     }
 
     [Fact]
+    public async Task Raffle_and_gateway_QA_methods_refuse_non_staff_sessions()
+    {
+        var seedCalls = 0;
+        var hijackChanges = 0;
+        var callbacks = new GameRpcCallbacks(
+            SeedRafflesAsync: (_, _) =>
+            {
+                seedCalls++;
+                return ValueTask.FromResult<int?>(4);
+            },
+            SetHijackMode: (_, _, _) => hijackChanges++);
+        var services = CoreServices.Create(new NoAccounts(), () => 1_700_000_000_000,
+            gameRpcCallbacks: callbacks);
+        var raffle = services.Single(service => service.Name == "raffleMgr");
+        var gateway = services.Single(service => service.Name == "serviceGatewayMgr");
+        var player = Session(2);
+
+        Assert.Equal(new PyInt(0), await raffle.CallAsync(Call("QA_SeedRaffles", player, new PyInt(99))));
+        Assert.Same(PyNone.Instance, await gateway.CallAsync(Call("qa_enable_hijack_mode", player, new PyStr("timeout"), new PyInt(15))));
+        Assert.Same(PyNone.Instance, await gateway.CallAsync(Call("qa_disable_hijack_mode", player)));
+        Assert.Equal(PyBool.False, await gateway.CallAsync(Call("qa_is_hijack_mode_enabled", player)));
+        Assert.Equal(0, seedCalls);
+        Assert.Equal(0, hijackChanges);
+    }
+
+    [Fact]
     public async Task Raffle_and_gateway_methods_keep_the_reference_return_shapes()
     {
         var seededQuantity = -1;
@@ -46,25 +72,24 @@ public sealed class GameRpcServicesTests
             });
         var services = CoreServices.Create(new NoAccounts(), () => 1_700_000_000_000,
             gameRpcCallbacks: callbacks);
+        var staff = Session(1);
+        staff.Set("accountRole", new PyInt(GameMasterRoles.Qa));
         var raffle = services.Single(service => service.Name == "raffleMgr");
         var raffleProxy = services.Single(service => service.Name == "raffleProxy");
-        var contractProxy = services.Single(service => service.Name == "contractProxy");
         var jumpClone = services.Single(service => service.Name == "jumpCloneSvc");
         var gateway = services.Single(service => service.Name == "serviceGatewayMgr");
 
-        Assert.Equal(new PyInt(3), await raffle.CallAsync(Call("QA_SeedRaffles", new PyInt(3))));
+        Assert.Equal(new PyInt(3), await raffle.CallAsync(Call("QA_SeedRaffles", staff, new PyInt(3))));
         Assert.Equal(3, seededQuantity);
-        Assert.Equal(new PyInt(8), await raffle.CallAsync(Call("QA_SeedRaffles")));
+        Assert.Equal(new PyInt(8), await raffle.CallAsync(Call("QA_SeedRaffles", staff)));
         Assert.Equal(PyBool.False, await raffleProxy.CallAsync(Call("AmIBanned")));
-        Assert.Equal(Py.KeyVal(("iskEscrow", Py.Number(0d)), ("itemsEscrow", new PyInt(0))),
-            await contractProxy.CallAsync(Call("GetMyContractEscrow")));
         Assert.Equal(new PyInt(Eve.Macho.MachoMessage.ProxyNodeId),
             await jumpClone.CallAsync(Call("MachoResolveObject")));
 
-        Assert.Same(PyNone.Instance, await gateway.CallAsync(Call("qa_enable_hijack_mode", new PyStr("timeout"), new PyInt(15))));
-        Assert.Equal(PyBool.True, await gateway.CallAsync(Call("qa_is_hijack_mode_enabled")));
-        Assert.Same(PyNone.Instance, await gateway.CallAsync(Call("qa_disable_hijack_mode")));
-        Assert.Equal(PyBool.False, await gateway.CallAsync(Call("qa_is_hijack_mode_enabled")));
+        Assert.Same(PyNone.Instance, await gateway.CallAsync(Call("qa_enable_hijack_mode", staff, new PyStr("timeout"), new PyInt(15))));
+        Assert.Equal(PyBool.True, await gateway.CallAsync(Call("qa_is_hijack_mode_enabled", staff)));
+        Assert.Same(PyNone.Instance, await gateway.CallAsync(Call("qa_disable_hijack_mode", staff)));
+        Assert.Equal(PyBool.False, await gateway.CallAsync(Call("qa_is_hijack_mode_enabled", staff)));
     }
 
     [Fact]

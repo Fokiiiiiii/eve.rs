@@ -25,12 +25,57 @@ public sealed class CharacterHostTests
     private const long ProxyNode = MachoMessage.ProxyNodeId;
 
     [PgFact]
+    public async Task Skill_injector_applies_sequential_awards_and_persists_points_and_inventory_through_host()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync();
+        var character = await rig.CreateCharacterAsync();
+        var sink = new RecordingPacketSink();
+        var session = new ClientSession { CharacterId = character, Sink = sink };
+        session.Set("stationid", new PyInt(rig.Station));
+        rig.Sessions.Enter(character, session);
+        var skills = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("skillHandler"));
+        var sde = new Eve.Sde.SdeReader(rig.Source);
+        var catalog = await Eve.Skills.SkillCatalog.LoadAsync(sde);
+        var large = catalog.ItemTypeId("Large Skill Injector")!.Value;
+        var itemStore = new PgItemStore(rig.Source, rig.InventorySchema);
+        var itemId = await CreateHostItemAsync(rig, itemStore,
+            new NewItem(large, character, rig.Station, 4, 2, Singleton: false));
+        var store = new PgSkillStore(rig.Source, rig.SkillsSchema);
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await store.GrantFreeSkillPointsAsync(connection, transaction, character, 4_501_000);
+            await transaction.CommitAsync();
+        }
+
+        Assert.Equal(new PyInt(900_000), await CallAsync(skills, "InjectSkillpoints", session,
+            new PyLong(itemId), new PyInt(2)));
+        Assert.Equal(5_401_000, await store.FreeSkillPointsAsync(character));
+        Assert.Null(await itemStore.GetAsync(itemId));
+        Assert.Equal(new[] { "OnItemChange", "OnFreeSkillPointsChanged" }, Notifications(sink).Select(n => n.Name));
+
+        await rig.RestartAsync();
+        Assert.Equal(5_401_000, await new PgSkillStore(rig.Source, rig.SkillsSchema).FreeSkillPointsAsync(character));
+        Assert.Null(await new PgItemStore(rig.Source, rig.InventorySchema).GetAsync(itemId));
+    }
+
+    private static async Task<long> CreateHostItemAsync(CharacterHostRig rig, PgItemStore store, NewItem item)
+    {
+        await using var connection = await rig.Source.OpenConnectionAsync();
+        await using var transaction = await connection.BeginTransactionAsync();
+        var id = await store.CreateAsync(connection, transaction, item);
+        await transaction.CommitAsync();
+        return id;
+    }
+
+    [PgFact]
     public async Task Jump_clones_are_read_changed_and_kept_through_the_host_registry_and_a_restart()
     {
         await using var rig = await CharacterHostRig.CreateAsync();
         var character = await rig.CreateCharacterAsync();
         var sink = new RecordingPacketSink();
         var session = new ClientSession { CharacterId = character, Sink = sink };
+        session.Set("charid", new PyLong(character));
         session.Set("stationid", new PyInt(rig.Station));
         var service = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("jumpCloneSvc"));
         foreach (var method in new[]
@@ -89,12 +134,26 @@ public sealed class CharacterHostTests
         Assert.Equal(new[] { first, other }, Rows(Field(afterRestart, "clones")).Select(row => ((PyLong)row.Items[0]).Value).ToArray());
         Assert.Equal("Renamed", ((PyWString)Rows(Field(afterRestart, "clones"))[0].Items[2]).Value);
 
-        // destroy removes the clone; the last jump reset is persisted as zero
+        // destroy removes the clone and persists the same notification row returned by notificationMgr
         Assert.IsType<PyNone>(await BoundAsync(restarted, session, "DestroyInstalledClone", new PyLong(other)));
         Assert.Equal(new[] { first }, Rows(Field(await BoundAsync(restarted, session, "GetCloneState"), "clones"))
             .Select(row => ((PyLong)row.Items[0]).Value).ToArray());
-        Assert.IsType<PyNone>(await BoundAsync(restarted, session, "ResetLastCloneJumpTime"));
-        Assert.Equal(new PyLong(0), Field(await BoundAsync(restarted, session, "GetCloneState"), "timeLastJump"));
+        var notifications = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("notificationMgr"));
+        var deleted = Assert.Single(Assert.IsType<PyList>(await CallAsync(notifications, "GetAllNotifications", session)).Items);
+        Assert.Equal(new PyInt(56), Field(deleted, "typeID"));
+        var deletionData = Field(deleted, "data");
+        Assert.Equal(new PyInt(character), Field(deletionData, "locationOwnerID"));
+        Assert.Equal(new PyInt(character), Field(deletionData, "destroyerID"));
+        Assert.Empty(Assert.IsType<PyList>(Field(deletionData, "typeIDs")).Items);
+
+        await rig.RestartAsync();
+        var notificationsAfterRestart = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("notificationMgr"));
+        var persistedDeletion = Assert.Single(Assert.IsType<PyList>(await CallAsync(notificationsAfterRestart, "GetAllNotifications", session)).Items);
+        Assert.Equal(new PyInt(56), Field(persistedDeletion, "typeID"));
+
+        var restartedClones = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("jumpCloneSvc"));
+        Assert.IsType<PyNone>(await BoundAsync(restartedClones, session, "ResetLastCloneJumpTime"));
+        Assert.Equal(new PyLong(0), Field(await BoundAsync(restartedClones, session, "GetCloneState"), "timeLastJump"));
     }
 
     [PgFact]
@@ -425,6 +484,71 @@ public sealed class CharacterHostTests
             await transaction.CommitAsync();
         }
         await rig.SetSkillLevelAsync(character, 3300, 3);
+        var skillPlans = new Eve.Skills.PgSkillPlanStore(rig.Source, rig.SkillsSchema);
+        var skillPlanId = await skillPlans.CreateAsync(character, "Private plan", "", []);
+        var otherCharacter = await rig.CreateCharacterAsync();
+        var titleId = Guid.NewGuid();
+        foreach (var ownerId in new[] { character, otherCharacter })
+        {
+            await using var connection = await rig.Source.OpenConnectionAsync();
+            await using var transaction = await connection.BeginTransactionAsync();
+            foreach (var statement in new[]
+            {
+                $"INSERT INTO {rig.CharactersSchema}.character_titles(character_id, title_id, granted_ms) VALUES ($1, $2, 1)",
+                $"INSERT INTO {rig.CharactersSchema}.character_equipped_titles(character_id, title_id) VALUES ($1, $2)",
+                $"INSERT INTO {rig.CharactersSchema}.achievement_trackers(character_id, updated_ms) VALUES ($1, 1)",
+                $"INSERT INTO {rig.CharactersSchema}.achievement_completions(character_id, achievement_id, completed_filetime) VALUES ($1, 1, 1)",
+                $"INSERT INTO {rig.CharactersSchema}.achievement_event_counts(character_id, event_name, event_count) VALUES ($1, 'login', 1)",
+                $"UPDATE {rig.CharactersSchema}.characters SET time_last_clone_jump_filetime = 123 WHERE id = $1",
+            })
+            {
+                await using var command = new NpgsqlCommand(statement, connection, transaction);
+                command.Parameters.Add(new NpgsqlParameter { Value = ownerId });
+                if (statement.Contains("title_id", StringComparison.Ordinal))
+                    command.Parameters.Add(new NpgsqlParameter { Value = titleId });
+                await command.ExecuteNonQueryAsync();
+            }
+            await transaction.CommitAsync();
+            await rig.AddCloneAsync(ownerId, rig.Station, "station", "Private clone", [10]);
+            await using var characterStateConnection = await rig.Source.OpenConnectionAsync();
+            foreach (var statement in new[]
+            {
+                $"INSERT INTO {rig.CharactersSchema}.nes_intro_states(character_id, state, updated_ms) VALUES ($1, 2, 1)",
+                $"INSERT INTO {rig.CharactersSchema}.project_discovery_tutorials(character_id, finished, tutorial_level, updated_ms) VALUES ($1, true, 1, 1)",
+            })
+            {
+                await using var state = new NpgsqlCommand(statement, characterStateConnection);
+                state.Parameters.Add(new NpgsqlParameter { Value = ownerId });
+                await state.ExecuteNonQueryAsync();
+            }
+            await using (var settlement = new NpgsqlCommand(
+                $"INSERT INTO {rig.CharactersSchema}.character_jump_clone_settlements(operation_id, character_id, jump_clone_id, location_id, location_kind, amount, offering_character_id) VALUES ($1, $2, $2, $3, 'station', 1, $4)", characterStateConnection))
+            {
+                settlement.Parameters.Add(new NpgsqlParameter { Value = $"delete-{ownerId}" });
+                settlement.Parameters.Add(new NpgsqlParameter { Value = ownerId });
+                settlement.Parameters.Add(new NpgsqlParameter { Value = rig.Station });
+                settlement.Parameters.Add(new NpgsqlParameter { Value = ownerId });
+                await settlement.ExecuteNonQueryAsync();
+            }
+        }
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var settlement = new NpgsqlCommand(
+            $"INSERT INTO {rig.CharactersSchema}.character_jump_clone_settlements(operation_id, character_id, jump_clone_id, location_id, location_kind, amount, offering_character_id) VALUES ('offered-by-deleted', $1, $1, $2, 'station', 1, $3)", connection))
+        {
+            settlement.Parameters.Add(new NpgsqlParameter { Value = otherCharacter });
+            settlement.Parameters.Add(new NpgsqlParameter { Value = rig.Station });
+            settlement.Parameters.Add(new NpgsqlParameter { Value = character });
+            await settlement.ExecuteNonQueryAsync();
+        }
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var queue = new NpgsqlCommand(
+            $"INSERT INTO {rig.SkillsSchema}.skill_queue (character_id, position, type_id, to_level) VALUES ($1, 0, 3300, 4)", connection))
+        {
+            queue.Parameters.Add(new NpgsqlParameter { Value = character });
+            await queue.ExecuteNonQueryAsync();
+        }
+
+        await rig.Characters.SetAppearanceAsync(character, [1, 2], true, [3, 4], true);
 
         // prepare again, move the waiting time into the past (the test's clock), then delete
         await CallAsync(restarted, "PrepareCharacterForDelete", session, new PyLong(character));
@@ -435,6 +559,7 @@ public sealed class CharacterHostTests
             command.Parameters.Add(new NpgsqlParameter { Value = character });
             await command.ExecuteNonQueryAsync();
         }
+        Assert.IsType<PyNone>(await CallAsync(restarted, "DeleteCharacter", session, new PyLong(character)));
         Assert.IsType<PyNone>(await CallAsync(restarted, "DeleteCharacter", session, new PyLong(character)));
 
         // the assets are in the corporation's deliveries (flag 62), the cargo still inside the ship, and the skills are gone
@@ -451,12 +576,45 @@ public sealed class CharacterHostTests
             count.Parameters.Add(new NpgsqlParameter { Value = character });
             Assert.Equal(0L, (long)(await count.ExecuteScalarAsync())!);
         }
+        Assert.Empty(await skillPlans.ListAsync(character));
+        Assert.Null(await skillPlans.GetAsync(character, skillPlanId));
+        await using (var purgeConnection = await rig.Source.OpenConnectionAsync())
+        {
+            foreach (var table in new[]
+            {
+                "character_jump_clones", "character_jump_clone_settlements", "character_titles", "character_equipped_titles",
+                "achievement_trackers", "achievement_completions", "achievement_event_counts", "nes_intro_states",
+                "project_discovery_tutorials",
+            })
+            {
+                await using var deletedCount = new NpgsqlCommand(
+                    $"SELECT count(*) FROM {rig.CharactersSchema}.{table} WHERE character_id = $1", purgeConnection);
+                deletedCount.Parameters.Add(new NpgsqlParameter { Value = character });
+                Assert.Equal(0L, (long)(await deletedCount.ExecuteScalarAsync())!);
+                await using var retainedCount = new NpgsqlCommand(
+                    $"SELECT count(*) FROM {rig.CharactersSchema}.{table} WHERE character_id = $1", purgeConnection);
+                retainedCount.Parameters.Add(new NpgsqlParameter { Value = otherCharacter });
+                Assert.Equal(1L, (long)(await retainedCount.ExecuteScalarAsync())!);
+            }
+            await using var lastJump = new NpgsqlCommand(
+                $"SELECT time_last_clone_jump_filetime FROM {rig.CharactersSchema}.characters WHERE id = $1", purgeConnection);
+            lastJump.Parameters.Add(new NpgsqlParameter { Value = character });
+            Assert.Equal(0L, (long)(await lastJump.ExecuteScalarAsync())!);
+        }
+        await using (var queueConnection = await rig.Source.OpenConnectionAsync())
+        await using (var queueCount = new NpgsqlCommand(
+            $"SELECT count(*) FROM {rig.SkillsSchema}.skill_queue WHERE character_id = $1", queueConnection))
+        {
+            queueCount.Parameters.Add(new NpgsqlParameter { Value = character });
+            Assert.Equal(0L, (long)(await queueCount.ExecuteScalarAsync())!);
+        }
         // the graveyard corporation (EveJS DOOMHEIM_CORPORATION_ID)
         Assert.Equal(1000001L, (await rig.Characters.GetAsync(character))!.CorporationId);
 
         // the deleted character is hidden from its account and refused at selection
         var deleted = Assert.IsType<Character>(await rig.Characters.GetAsync(character));
         Assert.True(deleted.IsDeleted);
+        Assert.Equal((null, null), await rig.Characters.AppearanceAsync(character));
         Assert.DoesNotContain(await rig.Characters.ForAccountAsync(1), c => c.Id == character);
         var refused = await Assert.ThrowsAsync<MachoWrappedException>(() =>
             CallAsync(restarted, "SelectCharacterID", session, new PyLong(character), PyNone.Instance, PyBool.False));
@@ -488,6 +646,175 @@ public sealed class CharacterHostTests
         Assert.Empty(Notifications(sink));
     }
 
+
+    [PgFact]
+    public async Task Character_contact_labels_persist_through_the_host_and_a_restart()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync();
+        var character = await rig.CreateCharacterAsync();
+        var session = new ClientSession { CharacterId = character, UserId = 1, Sink = new RecordingPacketSink() };
+        var charMgr = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("charMgr"));
+
+        Assert.Equal(new PyInt(1), await CallAsync(charMgr, "CreateLabel", session, new PyStr("Fleet"), new PyInt(7)));
+        Assert.Equal(new PyInt(2), await CallAsync(charMgr, "CreateLabel", session, new PyStr("Friends"), new PyInt(3)));
+        await CallAsync(charMgr, "AssignLabels", session, new PyList([new PyLong(77_001)]), new PyLong(3));
+        Assert.IsType<PyNone>(await CallAsync(charMgr, "DeleteLabel", session, new PyLong(2)));
+
+        var expectedLabels = new PyDict([new KeyValuePair<PyValue, PyValue>(
+            new PyInt(1), Py.KeyVal(("labelID", new PyInt(1)), ("name", new PyStr("Fleet")), ("color", new PyInt(7))))]);
+        var expectedContacts = Py.KeyVal(
+            ("addresses", Py.Rowset(["contactID", "inWatchlist", "relationshipID", "labelMask"],
+                [new PyList([new PyInt(77_001), new PyInt(0), new PyInt(0), new PyInt(1)])])),
+            ("blocked", Py.Rowset(["senderID"], [])));
+        Assert.Equal(expectedLabels, await CallAsync(charMgr, "GetLabels", session));
+        Assert.Equal(expectedContacts, await CallAsync(charMgr, "GetContactList", session));
+
+        await rig.RestartAsync();
+        charMgr = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("charMgr"));
+        Assert.Equal(expectedLabels, await CallAsync(charMgr, "GetLabels", session));
+        Assert.Equal(expectedContacts, await CallAsync(charMgr, "GetContactList", session));
+        Assert.Equal(new PyInt(4), await CallAsync(charMgr, "CreateLabel", session, new PyStr("Next"), new PyInt(5)));
+    }
+
+    [PgFact]
+public async Task Notification_manager_mutations_persist_and_notify_after_the_commit()
+{
+    var pgUrl = Environment.GetEnvironmentVariable("EVE_PG_URL");
+    Assert.False(string.IsNullOrWhiteSpace(pgUrl));
+    await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(pgUrl!));
+    var schema = "notification_mgr_" + Guid.NewGuid().ToString("N");
+    var store = new Eve.GameStore.PersistenceStore(source, schema);
+    try
+    {
+        await store.EnsureSchemaAsync();
+        await using (var owner = await Eve.GameStore.OwnerSession.StartAsync(
+            store, Eve.GameStore.PersistenceRoles.World, $"notification-mgr-{Guid.NewGuid():N}"))
+        await using (var cache = new Eve.GameStore.GameStoreCache(store, owner, new Eve.GameStore.GameStoreCacheOptions
+        {
+            ProcessRole = Eve.GameStore.PersistenceRoles.World,
+            FlushDelay = TimeSpan.FromHours(1),
+        }))
+        {
+            await cache.RecoverAsync();
+            await cache.LoadAsync("notifications");
+            const long character = 90000091;
+            var box = new System.Text.Json.Nodes.JsonObject
+            {
+                ["order"] = new System.Text.Json.Nodes.JsonArray(100, 101, 102, 103),
+                ["byID"] = new System.Text.Json.Nodes.JsonObject
+                {
+                    ["100"] = Notification(100, character),
+                    ["101"] = Notification(101, character),
+                    ["102"] = Notification(102, character, 3),
+                    ["103"] = Notification(103, character, 3),
+                },
+            };
+            Assert.True(cache.Write("notifications", $"/boxes/{character}", box).Success);
+
+            async Task<System.Text.Json.Nodes.JsonObject> ReadTable(string table, CancellationToken cancellationToken)
+            {
+                await cache.LoadAsync(table, cancellationToken);
+                return cache.Read(table, "/").Data as System.Text.Json.Nodes.JsonObject ?? new();
+            }
+
+            async Task<bool> DeletedRowIsCommitted(CancellationToken cancellationToken)
+            {
+                await using var persistedCache = new Eve.GameStore.GameStoreCache(
+                    store, null, new Eve.GameStore.GameStoreCacheOptions
+                    {
+                        ProcessRole = Eve.GameStore.PersistenceRoles.Reader,
+                    });
+                await persistedCache.LoadAsync("notifications", cancellationToken);
+                var persistedBox = persistedCache.Read("notifications", $"/boxes/{character}").Data
+                    as System.Text.Json.Nodes.JsonObject;
+                return persistedBox?["byID"]?["102"] is null;
+            }
+
+            var notificationWasCommittedAtSend = false;
+            var sessions = new Eve.Services.CharacterSessions();
+            var requestingSession = new ClientSession { CharacterId = character, UserId = 1 };
+            var sink = new RecordingPacketSink(() =>
+                notificationWasCommittedAtSend = DeletedRowIsCommitted(CancellationToken.None).GetAwaiter().GetResult());
+            sessions.Enter(character, new ClientSession { CharacterId = character, UserId = 1, Sink = sink });
+
+            var adapter = new NotificationMgrHostAdapter(cache, ReadTable, sessions);
+            var manager = new Eve.Services.Core.NotificationMgrService(
+                adapter.ReadAsync, () => 1_700_000_000_000, mutate: adapter.MutateAsync);
+            Assert.True(manager.HasMethod("MarkAllAsProcessed"));
+            Assert.True(manager.HasMethod("MarkAsProcessed"));
+            Assert.True(manager.HasMethod("DeleteNotifications"));
+            Assert.True(manager.HasMethod("MarkGroupAsProcessed"));
+            Assert.True(manager.HasMethod("DeleteGroupNotifications"));
+            Assert.True(manager.HasMethod("DeleteAllNotifications"));
+
+            await CallAsync(manager, "MarkAsProcessed", requestingSession, new PyList([new PyInt(100)]));
+            Assert.Equal(3, Assert.IsType<PyList>(
+                await CallAsync(manager, "GetUnprocessed", requestingSession)).Items.Count);
+
+            await CallAsync(manager, "MarkGroupAsProcessed", requestingSession, new PyInt(2));
+            Assert.Equal(2, Assert.IsType<PyList>(
+                await CallAsync(manager, "GetUnprocessed", requestingSession)).Items.Count);
+            await CallAsync(manager, "MarkAllAsProcessed", requestingSession);
+            await CallAsync(manager, "DeleteNotifications", requestingSession, new PyList([new PyInt(102)]));
+            await CallAsync(manager, "DeleteGroupNotifications", requestingSession, new PyInt(3));
+
+            Assert.Equal(2, Assert.IsType<PyList>(
+                await CallAsync(manager, "GetAllNotifications", requestingSession)).Items.Count);
+            await CallAsync(manager, "DeleteAllNotifications", requestingSession);
+            Assert.Empty(Assert.IsType<PyList>(
+                await CallAsync(manager, "GetAllNotifications", requestingSession)).Items);
+            Assert.Empty(Assert.IsType<PyList>(
+                await CallAsync(manager, "GetUnprocessed", requestingSession)).Items);
+            Assert.True(notificationWasCommittedAtSend);
+            var deleted = Notifications(sink).Where(item => item.Name == "OnNotificationDeleted").ToArray();
+            Assert.Equal(3, deleted.Length);
+            Assert.All(deleted, item => Assert.Single(item.Args));
+            await cache.FlushTableAsync("notifications");
+        }
+
+        await using (var persistedCache = new Eve.GameStore.GameStoreCache(
+            store, null, new Eve.GameStore.GameStoreCacheOptions
+            {
+                ProcessRole = Eve.GameStore.PersistenceRoles.Reader,
+            }))
+        {
+            await persistedCache.LoadAsync("notifications");
+            async Task<System.Text.Json.Nodes.JsonObject> ReadTable(string table, CancellationToken cancellationToken)
+            {
+                await persistedCache.LoadAsync(table, cancellationToken);
+                return persistedCache.Read(table, "/").Data as System.Text.Json.Nodes.JsonObject ?? new();
+            }
+
+            var adapter = new NotificationMgrHostAdapter(
+                persistedCache, ReadTable, new Eve.Services.CharacterSessions());
+            var manager = new Eve.Services.Core.NotificationMgrService(adapter.ReadAsync, () => 1_700_000_000_000);
+            var requestingSession = new ClientSession { CharacterId = 90000091, UserId = 1 };
+            Assert.Empty(Assert.IsType<PyList>(
+                await CallAsync(manager, "GetAllNotifications", requestingSession)).Items);
+            Assert.Empty(Assert.IsType<PyList>(
+                await CallAsync(manager, "GetUnprocessed", requestingSession)).Items);
+        }
+    }
+    finally
+    {
+        await using var connection = await source.OpenConnectionAsync();
+        await using var command = new NpgsqlCommand($"DROP SCHEMA IF EXISTS \"{schema}\" CASCADE", connection);
+        await command.ExecuteNonQueryAsync();
+    }
+
+    static System.Text.Json.Nodes.JsonObject Notification(long id, long receiverId, long groupId = 2) => new()
+    {
+        ["notificationID"] = id,
+        ["typeID"] = 1,
+        ["senderID"] = 10,
+        ["receiverID"] = receiverId,
+        ["groupID"] = groupId,
+        ["processed"] = false,
+        ["created"] = "133000000000000000",
+        ["data"] = new System.Text.Json.Nodes.JsonObject(),
+    };
+}
+
     [PgFact]
     public async Task Skill_bundle_info_answers_the_client_empty_shape_through_the_registry()
     {
@@ -504,6 +831,28 @@ public sealed class CharacterHostTests
         Assert.Equal(string.Empty, Assert.IsType<PyWString>(answer.Items[0]).Value);
         Assert.IsType<PyNone>(answer.Items[1]);
         Assert.Empty(Notifications(sink));
+    }
+
+    [PgFact]
+    public async Task CharMgr_global_assets_moniker_resolves_and_lists_through_the_host_wrapper()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync();
+        var character = await rig.CreateCharacterAsync();
+        var session = new ClientSession { CharacterId = character, UserId = 1 };
+        var charMgr = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("charMgr"));
+
+        var node = await CallAsync(charMgr, "MachoResolveObject", session,
+            new PyTuple([new PyLong(character), new PyInt(10002)]));
+        Assert.Equal(new PyInt(ProxyNode), node);
+        var foreignNode = await CallAsync(charMgr, "MachoResolveObject", session,
+            new PyTuple([new PyLong(character + 1), new PyInt(10002)]));
+        Assert.IsType<PyNone>(foreignNode);
+
+        var binding = Assert.IsType<PyTuple>(await CallAsync(charMgr, "MachoBindObject", session,
+            new PyTuple([new PyLong(character), new PyInt(10002)]),
+            new PyTuple([new PyStr("ListStations"), new PyTuple([]), PyNone.Instance])));
+        Assert.IsType<PySubStruct>(binding.Items[0]);
+        Assert.IsType<PyObject>(binding.Items[1]);
     }
 
     [PgFact]
@@ -639,6 +988,28 @@ public sealed class CharacterHostTests
     }
 
     [PgFact]
+    public async Task Host_startup_recreates_expiry_jobs_for_existing_training_slots()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync();
+        Assert.Equal(1, await rig.CreateAccountAsync());
+        var endsAt = DateTimeOffset.UtcNow.AddDays(30);
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var command = new NpgsqlCommand(
+            $"INSERT INTO {rig.IdentitySchema}.account_training_slots(account_id, slot, ends_at) VALUES (1, 2, $1)", connection))
+        {
+            command.Parameters.Add(new NpgsqlParameter { Value = endsAt });
+            await command.ExecuteNonQueryAsync();
+        }
+
+        await rig.RestartAsync();
+
+        var key = $"1:{endsAt.ToUnixTimeMilliseconds()}";
+        var job = await rig.Scheduler.FindAsync(Eve.Services.Skills.MultipleTrainingSlotExpiry.JobKind, key);
+        Assert.NotNull(job);
+        Assert.Equal(endsAt.ToUnixTimeMilliseconds(), job.RunAtMs);
+    }
+
+    [PgFact]
     public async Task A_stack_of_multiple_character_training_certificates_gives_up_one_certificate_per_activation()
     {
         await using var rig = await CharacterHostRig.CreateAsync();
@@ -730,6 +1101,7 @@ public sealed class CharacterHostTests
 
         // its Medical service online: the install goes ahead, the fee moves to the owner corporation's wallet, and the clone survives a restart
         await rig.AddStructureAsync(structure, Eve.Structures.StructureServiceIds.Medical);
+        clones = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("jumpCloneSvc"));
         Assert.Empty(Assert.IsType<PyList>(await BoundAsync(clones, session, "ValidateInstallJumpClone")).Items);
         Assert.IsType<PyNone>(await CallAsync(clones, "InstallCloneInStructure", session));
         Assert.Equal(new[] { structure }, Rows(await BoundAsync(clones, session, "GetStationCloneState")).Select(row => ((PyLong)row.Items[1]).Value).ToArray());
@@ -799,7 +1171,12 @@ public sealed class CharacterHostTests
 
     private static PyValue Field(PyValue keyVal, string key)
     {
-        var entries = Assert.IsType<PyDict>(Assert.IsType<PyObject>(keyVal).Args).Entries;
+        var entries = keyVal switch
+        {
+            PyObject obj => Assert.IsType<PyDict>(obj.Args).Entries,
+            PyDict dict => dict.Entries,
+            _ => throw new Xunit.Sdk.XunitException($"Expected a dictionary, got {keyVal.GetType().Name}"),
+        };
         return entries.Single(entry => ((PyStr)entry.Key).Value == key).Value;
     }
 
@@ -823,11 +1200,15 @@ public sealed class CharacterHostTests
         return events;
     }
 
-    private sealed class RecordingPacketSink : IPacketSink
+    private sealed class RecordingPacketSink(Action? onSend = null) : IPacketSink
     {
         public List<PyValue> Sent { get; } = [];
 
-        public void Send(PyValue packet) => Sent.Add(packet);
+        public void Send(PyValue packet)
+        {
+            Sent.Add(packet);
+            onSend?.Invoke();
+        }
     }
 
     internal sealed class CharacterHostRig : IAsyncDisposable
@@ -874,14 +1255,45 @@ public sealed class CharacterHostTests
         /// <summary>A structure of the rig's corporation, with the given services online (the clone bay reads them).</summary>
         public async Task AddStructureAsync(long structureId, params int[] onlineServices)
         {
-            await using var connection = await Source.OpenConnectionAsync();
-            await using var transaction = await connection.BeginTransactionAsync();
-            var structures = new Eve.Structures.StructureStore(Source, StructuresSchema);
-            Assert.True(await structures.CreateAsync(connection, transaction, new Eve.Structures.NewStructure(structureId, 35832, 30000142, 0, 0, 0, 0,
-                CorporationId, 0, "Clone bay", "")));
-            foreach (var service in onlineServices)
-                await structures.SetServiceAsync(connection, transaction, structureId, service, Eve.Structures.ServiceState.Online, 1_000);
-            await transaction.CommitAsync();
+            await _shutdown();
+            await using (var connection = await Source.OpenConnectionAsync())
+            await using (var transaction = await connection.BeginTransactionAsync())
+            {
+                var structures = new Eve.Structures.StructureStore(Source, StructuresSchema);
+                Assert.True(await structures.CreateAsync(connection, transaction, new Eve.Structures.NewStructure(structureId, 35832, 30000142, 0, 0, 0, 0,
+                    CorporationId, 0, "Clone bay", "")));
+                foreach (var service in onlineServices)
+                    await structures.SetServiceAsync(connection, transaction, structureId, service, Eve.Structures.ServiceState.Online, 1_000);
+                await transaction.CommitAsync();
+            }
+
+            await using (var store = new PersistenceStore(Source, GameStoreSchema))
+            {
+                await store.EnsureSchemaAsync();
+                await using var owner = await OwnerSession.StartAsync(
+                    store, PersistenceRoles.World, "character-host-structure-" + Guid.NewGuid().ToString("N"));
+                await using var cache = new GameStoreCache(store, owner,
+                    new GameStoreCacheOptions { ProcessRole = PersistenceRoles.World, FlushDelay = TimeSpan.FromHours(1) });
+                await cache.RecoverAsync();
+                await cache.LoadAsync("structures");
+                var serviceStates = new System.Text.Json.Nodes.JsonObject();
+                foreach (var service in onlineServices)
+                    serviceStates[service.ToString(System.Globalization.CultureInfo.InvariantCulture)] = (int)Eve.Structures.ServiceState.Online;
+                Assert.True(cache.Write("structures", "/" + structureId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    new System.Text.Json.Nodes.JsonObject
+                    {
+                        ["structureID"] = structureId,
+                        ["typeID"] = 35832,
+                        ["solarSystemID"] = 30000142,
+                        ["ownerCorpID"] = CorporationId,
+                        ["allianceID"] = 0,
+                        ["profileID"] = 0,
+                        ["serviceStates"] = serviceStates,
+                    }).Success);
+                await cache.FlushTableAsync("structures");
+            }
+
+            (_runtime, _shutdown) = await BuildHostAsync(_schemas);
         }
 
         /// <summary>Sets a character's ISK balance (the wallet row is opened here if the character has none yet).</summary>

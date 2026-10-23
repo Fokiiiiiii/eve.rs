@@ -40,6 +40,7 @@ public sealed partial class RaffleMgrService(Func<int?, CancellationToken, Value
     [Method("QA_SeedRaffles")]
     public async ValueTask<PyValue> QaSeedRaffles(ServiceCall call)
     {
+        if (!CompatibilityRpc.IsStaff(call)) return new PyInt(0);
         var seeded = seedRafflesAsync is null
             ? 0
             : await seedRafflesAsync(NullableInteger(call.Arg(0)), call.Cancellation).ConfigureAwait(false) ?? 0;
@@ -70,14 +71,517 @@ public sealed partial class RaffleProxyService
 
 
 [Service("contractProxy")]
-public sealed partial class ContractProxyService
+public sealed partial class ContractProxyService(
+    Eve.Services.Core.IContractReadModel? readModel = null,
+    IContractWriteModel? writeModel = null,
+    Func<long, int, CancellationToken, ValueTask<int>>? readSkillLevel = null,
+    Func<long, long, CancellationToken, ValueTask<decimal>>? readBrokerFeeAdjustment = null,
+    Func<long, long, CancellationToken, ValueTask<bool>>? hasContractManagerRole = null,
+    Func<long, CancellationToken, ValueTask<(long CorporationId, long AllianceId)>>? readCurrentOrganizationIds = null)
 {
-    // shortcut: contract records are not persisted; calculate escrow from the contract store once it exists.
+    private const long CorpRoleContractManager = 72057594037927936L; // appConst.corpRoleContractManager
+    private const int ContractingSkill = 25235;
+    private const int AdvancedContractingSkill = 73912;
+    private const int CorporationContractingSkill = 25233;
+    private const int AccountingSkill = 16622;
+    private const int BrokerRelationsSkill = 3446;
+    private const int HangarFlag = 4;
+    private const int CorporationDivisionFirstFlag = 115;
+    private const int CorporationWalletBase = 1000;
+    private const int PersonalWalletKey = 1000;
+
+    [Method("CreateContract")]
+    public async Task<PyValue> CreateContract(ServiceCall call)
+    {
+        var writer = writeModel ?? throw new InvalidOperationException("contract writer is not wired");
+        var skillLevel = readSkillLevel ?? throw new InvalidOperationException("contract skill reads are not wired");
+        var issuerId = call.Session.CharacterId ?? throw new InvalidOperationException("contract creation requires a character session");
+        var (corporationId, allianceId) = await ReadCurrentOrganizationIdsAsync(call);
+        var info = ParseCreationInfo(call.Arg(0));
+
+        if (info.ContractType is < 1 or > 3)
+            throw MachoErrors.ThrowUserError("ConIllegalType");
+        if (info.ForCorp && !await HasContractManagerRoleAsync(call, issuerId, corporationId))
+            throw MachoErrors.ThrowUserError("ConNotContractManager");
+        if (call.Session.GetInt("stationid") != info.StartStationId)
+            throw MachoErrors.ThrowUserError("ConNotInStation");
+
+        var availability = AvailabilityOf(info, corporationId, allianceId);
+        var contracting = await skillLevel(issuerId, ContractingSkill, call.Cancellation);
+        var advanced = await skillLevel(issuerId, AdvancedContractingSkill, call.Cancellation);
+        var corporationContracting = info.ForCorp ? await skillLevel(issuerId, CorporationContractingSkill, call.Cancellation) : 0;
+        var accounting = await skillLevel(issuerId, AccountingSkill, call.Cancellation);
+        var brokerRelations = await skillLevel(issuerId, BrokerRelationsSkill, call.Cancellation);
+
+        // Corporation-assigned contracts count against the shared corporation maximum (the client's innerCorp rule).
+        var limit = availability == 2 ? ContractCreationLimits.MaxNumContracts
+            : info.ForCorp ? ContractCreationLimits.Corporation(corporationContracting)
+            : ContractCreationLimits.Personal(contracting, advanced);
+        var brokerFeeAdjustment = readBrokerFeeAdjustment is null
+            ? 1m
+            : await readBrokerFeeAdjustment(issuerId, call.Session.GetInt("solarsystemid2") ?? 0, call.Cancellation);
+        var fees = ContractFeesCalculator.Calculate((short)info.ContractType, (short)availability, info.Price, info.Reward,
+            info.MinutesExpire, brokerRelations, accounting, brokerFeeAdjustment);
+        var courier = info.ContractType == 3;
+        var request = new CreateItemExchangeRequest(
+            IssuerCharacterId: issuerId,
+            IssuerCorporationId: corporationId,
+            IsCorporationIssued: info.ForCorp,
+            StartStationId: info.StartStationId,
+            StartStationDivision: info.ForCorp ? info.StartStationDivision : HangarFlag,
+            Availability: availability,
+            AssigneeId: availability == 0 ? 0 : info.AssignedToId,
+            ExpiryMinutes: info.MinutesExpire,
+            Price: info.Price,
+            Reward: info.Reward,
+            BrokerFee: fees.BrokerFee,
+            Deposit: fees.Deposit,
+            SalesTax: fees.SalesTax,
+            WalletAccountKey: info.ForCorp ? CorporationWalletBase + (info.StartStationDivision - CorporationDivisionFirstFlag) : PersonalWalletKey,
+            Title: info.Title,
+            Description: info.Description,
+            Items: info.ItemList,
+            OutstandingLimit: limit,
+            ContractType: (short)info.ContractType,
+            EndStationId: courier ? info.DestinationId : 0,
+            Collateral: info.Collateral,
+            NumDays: courier ? info.NumDays : 0,
+            RequestedItems: info.RequestedTypes);
+
+        try
+        {
+            var created = await writer.CreateContractAsync(request, call.Cancellation);
+            return new PyList([new PyInt(created.ContractId)]);
+        }
+        catch (ContractUserErrorException error)
+        {
+            throw MachoErrors.ThrowUserError(error.Message, error.Values.ToArray());
+        }
+        catch (ArgumentException error)
+        {
+            var detail = error.ParamName == nameof(request.Title)
+                ? $" (title blank={string.IsNullOrWhiteSpace(request.Title)}, length={request.Title.Length})"
+                : string.Empty;
+            Console.Error.WriteLine($"eve-host: contract writer rejected arguments ({error.GetType().Name}, parameter {error.ParamName ?? "none"}){detail}");
+            throw MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr("The contract terms are outside the supported limits.")));
+        }
+    }
+
+    private static ContractCreationInfo ParseCreationInfo(PyValue value)
+    {
+        try
+        {
+            return ContractCreationInfo.Parse(value);
+        }
+        catch (ArgumentException)
+        {
+            throw MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr("The contract terms are malformed.")));
+        }
+        catch (OverflowException)
+        {
+            throw MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr("The contract terms are malformed.")));
+        }
+    }
+
+    // Availability codes: 0 public, 1 private (one character), 2 my corporation, 3 my alliance (appConst conAvail*).
+    private static int AvailabilityOf(ContractCreationInfo info, long corporationId, long allianceId)
+    {
+        if (info.AssignedToId == 0)
+            return 0;
+        if (corporationId > 0 && info.AssignedToId == corporationId)
+            return 2;
+        if (allianceId > 0 && info.AssignedToId == allianceId)
+            return 3;
+        return 1;
+    }
+
+    private static bool TryPositiveBidAmount(PyValue value, out decimal amount)
+    {
+        if (value is PyInt integer)
+        {
+            amount = integer.Value;
+            return amount > 0;
+        }
+        if (value is PyLong longInteger)
+        {
+            amount = longInteger.Value;
+            return amount > 0;
+        }
+        if (value is PyReal real && double.IsFinite(real.Value) &&
+            decimal.TryParse(real.Value.ToString("R", System.Globalization.CultureInfo.InvariantCulture),
+                System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture,
+                out amount))
+            return amount > 0;
+
+        amount = 0;
+        return false;
+    }
+
+    [Method("PlaceBid")]
+    public async Task<PyValue> PlaceBid(ServiceCall call)
+    {
+        var writer = writeModel ?? throw new InvalidOperationException("contract writer is not wired");
+        var characterId = call.Session.CharacterId
+            ?? throw new InvalidOperationException("contract bidding requires a character session");
+        var (corporationId, allianceId) = await ReadCurrentOrganizationIdsAsync(call);
+        var contractId = call.Arg(0) switch
+        {
+            PyInt value => value.Value,
+            PyLong value => value.Value,
+            _ => throw MachoErrors.ThrowUserError("ConContractNotFound"),
+        };
+        if (!TryPositiveBidAmount(call.Arg(1), out var amount))
+            throw MachoErrors.ThrowUserError("ConBidTooLow");
+        var bidForCorporation = call.Arg(2) switch
+        {
+            PyBool value => value.Value,
+            PyInt value => value.Value != 0,
+            PyLong value => value.Value != 0,
+            _ => false,
+        };
+        if (bidForCorporation && !await HasContractManagerRoleAsync(call, characterId, corporationId))
+            throw MachoErrors.ThrowUserError("ConNotContractManager");
+        var walletKeyValue = call.Session.GetInt("corpAccountKey")
+            ?? call.Session.GetInt("corpaccountkey")
+            ?? call.Session.GetInt("accountKey")
+            ?? CorporationWalletBase;
+        if (walletKeyValue is < 1000 or > 1006)
+            throw MachoErrors.ThrowUserError("ConNotContractManager");
+        try
+        {
+            var placed = await writer.PlaceBidAsync(contractId, characterId, corporationId, allianceId, bidForCorporation,
+                (int)walletKeyValue, amount, call.Cancellation);
+            return placed ? PyBool.True : PyBool.False;
+        }
+        catch (ContractUserErrorException error)
+        {
+            throw MachoErrors.ThrowUserError(error.Message, error.Values.ToArray());
+        }
+    }
+
+    [Method("AcceptContract")]
+    public async Task<PyValue> AcceptContract(ServiceCall call)
+    {
+        var writer = writeModel ?? throw new InvalidOperationException("contract writer is not wired");
+        var characterId = call.Session.CharacterId
+            ?? throw new InvalidOperationException("contract acceptance requires a character session");
+        var (corporationId, allianceId) = await ReadCurrentOrganizationIdsAsync(call);
+        var contractId = call.Arg(0) switch
+        {
+            PyInt value => value.Value,
+            PyLong value => value.Value,
+            _ => throw MachoErrors.ThrowUserError("ConContractNotFound"),
+        };
+        var acceptForCorporation = call.Arg(1) switch
+        {
+            PyBool value => value.Value,
+            PyInt value => value.Value != 0,
+            PyLong value => value.Value != 0,
+            _ => false,
+        };
+        if (acceptForCorporation && !await HasContractManagerRoleAsync(call, characterId, corporationId))
+            throw MachoErrors.ThrowUserError("ConNotContractManager");
+        try
+        {
+            var walletKeyValue = call.Session.GetInt("corpAccountKey")
+                ?? call.Session.GetInt("corpaccountkey")
+                ?? call.Session.GetInt("accountKey")
+                ?? CorporationWalletBase;
+            if (walletKeyValue is < 1000 or > 1006)
+                throw MachoErrors.ThrowUserError("ConNotContractManager");
+            var acceptorWalletKey = (int)walletKeyValue;
+            var currentStationId = call.Session.GetInt("stationid") ?? call.Session.GetInt("stationid2") ?? 0;
+            var accepted = await writer.AcceptContractAsync(contractId, characterId, corporationId, allianceId,
+                acceptForCorporation, acceptorWalletKey, currentStationId, call.Cancellation);
+            return Eve.Services.Py.KeyVal(
+                ("contractID", new PyInt(accepted.ContractId)),
+                ("type", new PyInt(accepted.Type)),
+                ("status", new PyInt(accepted.Status)),
+                ("issuerID", new PyInt(accepted.IssuerId)),
+                ("issuerCorpID", new PyInt(accepted.IssuerCorporationId)),
+                ("forCorp", accepted.IsCorporationIssued ? PyBool.True : PyBool.False),
+                ("acceptorID", new PyInt(accepted.AcceptorId)),
+                ("dateAccepted", new PyLong(accepted.DateAcceptedFileTime)),
+                ("numDays", new PyInt(accepted.NumDays)),
+                ("startStationID", new PyInt(accepted.StartStationId)),
+                ("endStationID", new PyInt(accepted.EndStationId)));
+        }
+        catch (ContractUserErrorException error)
+        {
+            throw MachoErrors.ThrowUserError(error.Message, error.Values.ToArray());
+        }
+    }
+
+    [Method("CompleteContract")]
+    public async Task<PyValue> CompleteContract(ServiceCall call)
+    {
+        var writer = writeModel ?? throw new InvalidOperationException("contract writer is not wired");
+        var characterId = call.Session.CharacterId
+            ?? throw new InvalidOperationException("contract completion requires a character session");
+        var (corporationId, _) = await ReadCurrentOrganizationIdsAsync(call);
+        var contractId = call.Arg(0) switch
+        {
+            PyInt value => value.Value,
+            PyLong value => value.Value,
+            _ => throw MachoErrors.ThrowUserError("ConContractNotFound"),
+        };
+        var status = call.Arg(1) switch
+        {
+            PyInt or PyLong => ContractInt(call.Arg(1)),
+            _ => throw MachoErrors.ThrowUserError("ConContractNotAvailable"),
+        };
+        try
+        {
+            var currentStationId = call.Session.GetInt("stationid") ?? call.Session.GetInt("stationid2") ?? 0;
+            var isCorpManager = await HasContractManagerRoleAsync(call, characterId, corporationId);
+            return await writer.CompleteContractAsync(contractId, status, characterId, corporationId,
+                currentStationId, isCorpManager, call.Cancellation) ? PyBool.True : PyBool.False;
+        }
+        catch (ContractUserErrorException error)
+        {
+            throw MachoErrors.ThrowUserError(error.Message, error.Values.ToArray());
+        }
+    }
+
+    [Method("DeleteContract")]
+    public async Task<PyValue> DeleteContract(ServiceCall call)
+    {
+        var writer = writeModel ?? throw new InvalidOperationException("contract writer is not wired");
+        var characterId = call.Session.CharacterId
+            ?? throw new InvalidOperationException("contract deletion requires a character session");
+        var (corporationId, _) = await ReadCurrentOrganizationIdsAsync(call);
+        var contractId = call.Arg(0) switch
+        {
+            PyInt value => value.Value,
+            PyLong value => value.Value,
+            _ => throw MachoErrors.ThrowUserError("ConContractNotFound"),
+        };
+        try
+        {
+            var hasCorpContractManager = await HasContractManagerRoleAsync(call, characterId, corporationId);
+            return await writer.DeleteContractAsync(contractId, characterId, corporationId,
+                hasCorpContractManager, call.Cancellation) ? PyBool.True : PyBool.False;
+        }
+        catch (ContractUserErrorException error)
+        {
+            throw MachoErrors.ThrowUserError(error.Message, error.Values.ToArray());
+        }
+    }
+
+    [Method("GetLoginInfo")]
+    public async Task<PyValue> GetLoginInfo(ServiceCall call)
+    {
+        var store = readModel ?? throw new InvalidOperationException("contract read model is not wired");
+        var characterId = call.Session.CharacterId
+            ?? throw new InvalidOperationException("contract login reads require a character session");
+        var (corporationId, allianceId) = await ReadCurrentOrganizationIdsAsync(call);
+        var now = Eve.Services.Py.FileTimeFromUnixMs(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        var info = await store.GetLoginInfoAsync(characterId, corporationId, allianceId, now, call.Cancellation);
+        return Eve.Services.Py.KeyVal(
+            ("needsAttention", Eve.Services.Py.Rowset(
+                ["contractID", "state"],
+                info.NeedsAttention.Select(row => Eve.Services.Py.Tuple(new PyInt(row.ContractId), new PyInt(row.State))))),
+            ("inProgress", Eve.Services.Py.Rowset(
+                ["contractID", "startStationID", "endStationID", "expires"],
+                info.InProgress.Select(row => Eve.Services.Py.Tuple(
+                    new PyInt(row.ContractId), new PyInt(row.StartStationId), new PyInt(row.EndStationId), new PyLong(row.Expires))))),
+            ("assignedToMe", Eve.Services.Py.Rowset(
+                ["contractID", "issuerID"],
+                info.AssignedToMe.Select(row => Eve.Services.Py.Tuple(new PyInt(row.ContractId), new PyInt(row.IssuerId))))));
+    }
+
     [Method("GetMyContractEscrow")]
-    public PyValue GetMyContractEscrow(ServiceCall _) =>
-        Eve.Services.Py.KeyVal(
-            ("iskEscrow", Eve.Services.Py.Number(0d)),
-            ("itemsEscrow", new PyInt(0)));
+    public async Task<PyValue> GetMyContractEscrow(ServiceCall call)
+    {
+        var store = readModel ?? throw new InvalidOperationException("contract read model is not wired");
+        var characterId = call.Session.CharacterId
+            ?? throw new InvalidOperationException("contract escrow reads require a character session");
+        var (corporationId, _) = await ReadCurrentOrganizationIdsAsync(call);
+        var escrow = await store.GetMyContractEscrowAsync(characterId, corporationId, call.Cancellation);
+        return Eve.Services.Py.KeyVal(
+            ("iskEscrow", Eve.Services.Py.Number((double)escrow.IskEscrow)),
+            ("itemsEscrow", new PyInt(escrow.ItemsEscrow)));
+    }
+
+
+    [Method("GetMyBids")]
+    public async Task<PyValue> GetMyBids(ServiceCall call)
+    {
+        var store = readModel ?? throw new InvalidOperationException("contract read model is not wired");
+        var characterId = call.Session.CharacterId
+            ?? throw new InvalidOperationException("contract bid reads require a character session");
+        var (corporationId, _) = await ReadCurrentOrganizationIdsAsync(call);
+        var forCorporation = call.Arg(0) switch
+        {
+            PyBool value => value.Value,
+            PyInt value => value.Value != 0,
+            PyLong value => value.Value != 0,
+            _ => false,
+        };
+        if (forCorporation && !await HasContractManagerRoleAsync(call, characterId, corporationId))
+            throw MachoErrors.ThrowUserError("ConNotContractManager");
+
+        var nowFileTime = Eve.Services.Py.FileTimeFromUnixMs(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        var bundle = await store.GetMyBidsAsync(characterId, corporationId, forCorporation, nowFileTime, call.Cancellation);
+        return BuildContractBundle(bundle);
+    }
+
+
+    [Method("GetContractListForOwner")]
+    public async Task<PyValue> GetContractListForOwner(ServiceCall call)
+    {
+        var store = readModel ?? throw new InvalidOperationException("contract read model is not wired");
+        var characterId = call.Session.CharacterId
+            ?? throw new InvalidOperationException("contract list reads require a character session");
+        var (corporationId, _) = await ReadCurrentOrganizationIdsAsync(call);
+        var ownerId = ContractLong(call.Arg(0));
+        if (ownerId != characterId && ownerId != corporationId)
+            throw MachoErrors.ThrowUserError("ConContractNotFound");
+        if (ownerId == corporationId && !await HasContractManagerRoleAsync(call, characterId, corporationId))
+            throw MachoErrors.ThrowUserError("ConNotContractManager");
+
+        var status = ContractInt(call.Arg(1));
+        var contractType = call.Args.Count > 2 ? ContractInt(call.Arg(2)) : 0;
+        var issuedBy = call.Args.Count > 3 ? ContractLong(call.Arg(3)) : 0;
+        var pageSize = call.Kwarg("num") is { } numValue ? ContractInt(numValue) : 100;
+        var startContractId = call.Kwarg("startContractID") is { } startValue && startValue is not PyNone
+            ? ContractLong(startValue)
+            : (long?)null;
+        if (status is not (-1 or 0 or 1 or 4) || contractType is < 0 or > 3 || issuedBy < 0 ||
+            pageSize is < 1 or > 100 || startContractId is <= 0)
+            throw MachoErrors.ThrowUserError("ConContractNotAvailable");
+
+        var nowFileTime = Eve.Services.Py.FileTimeFromUnixMs(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        var bundle = await store.GetContractListForOwnerAsync(characterId, corporationId, ownerId,
+            status, contractType, issuedBy, pageSize, startContractId, nowFileTime, call.Cancellation);
+        return BuildContractBundle(bundle);
+    }
+
+
+    [Method("GetMyCurrentContractList")]
+    public async Task<PyValue> GetMyCurrentContractList(ServiceCall call)
+    {
+        var store = readModel ?? throw new InvalidOperationException("contract read model is not wired");
+        var characterId = call.Session.CharacterId
+            ?? throw new InvalidOperationException("contract list reads require a character session");
+        var (corporationId, _) = await ReadCurrentOrganizationIdsAsync(call);
+        var isAccepted = call.Arg(0) switch
+        {
+            PyBool value => value.Value,
+            PyInt value => value.Value != 0,
+            PyLong value => value.Value != 0,
+            _ => false,
+        };
+        var forCorporation = call.Arg(1) switch
+        {
+            PyBool value => value.Value,
+            PyInt value => value.Value != 0,
+            PyLong value => value.Value != 0,
+            _ => false,
+        };
+        if (forCorporation && !await HasContractManagerRoleAsync(call, characterId, corporationId))
+            throw MachoErrors.ThrowUserError("ConNotContractManager");
+
+        var nowFileTime = Eve.Services.Py.FileTimeFromUnixMs(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        var bundle = await store.GetMyCurrentContractListAsync(
+            characterId, corporationId, isAccepted, forCorporation, nowFileTime, call.Cancellation);
+        return BuildContractBundle(bundle);
+    }
+
+    [Method("GetMyExpiredContractList")]
+    public async Task<PyValue> GetMyExpiredContractList(ServiceCall call)
+    {
+        var store = readModel ?? throw new InvalidOperationException("contract read model is not wired");
+        var characterId = call.Session.CharacterId
+            ?? throw new InvalidOperationException("contract list reads require a character session");
+        var (corporationId, _) = await ReadCurrentOrganizationIdsAsync(call);
+        var forCorporation = call.Arg(0) switch
+        {
+            PyBool value => value.Value,
+            PyInt value => value.Value != 0,
+            PyLong value => value.Value != 0,
+            _ => false,
+        };
+        if (forCorporation && !await HasContractManagerRoleAsync(call, characterId, corporationId))
+            throw MachoErrors.ThrowUserError("ConNotContractManager");
+
+        var nowFileTime = Eve.Services.Py.FileTimeFromUnixMs(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        var bundle = await store.GetMyExpiredContractListAsync(
+            characterId, corporationId, forCorporation, nowFileTime, call.Cancellation);
+        return BuildContractBundle(bundle);
+    }
+
+    private async ValueTask<(long CorporationId, long AllianceId)> ReadCurrentOrganizationIdsAsync(ServiceCall call)
+    {
+        var characterId = call.Session.CharacterId ?? call.Session.GetInt("charid") ?? 0;
+        if (characterId > 0 && readCurrentOrganizationIds is not null)
+            return await readCurrentOrganizationIds(characterId, call.Cancellation);
+        return (call.Session.GetInt("corpid") ?? 0, call.Session.GetInt("allianceid") ?? 0);
+    }
+
+    private async ValueTask<bool> HasContractManagerRoleAsync(ServiceCall call, long characterId, long corporationId)
+    {
+        if (corporationId <= 0 || ((call.Session.GetInt("corprole") ?? 0) & CorpRoleContractManager) == 0)
+            return false;
+        return hasContractManagerRole is null
+            || await hasContractManagerRole(characterId, corporationId, call.Cancellation);
+    }
+
+    private static long ContractLong(PyValue value) => value switch
+    {
+        PyInt integer => integer.Value,
+        PyLong integer => integer.Value,
+        PyNone => 0,
+        _ => throw MachoErrors.ThrowUserError("ConContractNotAvailable"),
+    };
+
+
+    private static int ContractInt(PyValue value)
+    {
+        var integer = ContractLong(value);
+        return integer is >= int.MinValue and <= int.MaxValue
+            ? (int)integer
+            : throw MachoErrors.ThrowUserError("ConContractNotAvailable");
+    }
+
+    private static PyValue BuildContractBundle(ContractReadBundle bundle)
+    {
+        var rows = bundle.Contracts.Select(contract => (PyValue)Eve.Services.Py.KeyVal(
+            ("contractID", new PyInt(contract.ContractId)),
+            ("type", new PyInt(contract.Type)),
+            ("status", new PyInt(contract.Status)),
+            ("availability", new PyInt(contract.Availability)),
+            ("issuerID", new PyInt(contract.IssuerId)),
+            ("issuerCorpID", new PyInt(contract.IssuerCorporationId)),
+            ("forCorp", contract.IsCorporationIssued ? PyBool.True : PyBool.False),
+            ("assigneeID", new PyInt(contract.AssigneeId)),
+            ("acceptorID", new PyInt(contract.AcceptorId)),
+            ("dateIssued", new PyLong(contract.DateIssuedFileTime)),
+            ("dateExpired", new PyLong(contract.DateExpiredFileTime)),
+            ("dateAccepted", new PyLong(contract.DateAcceptedFileTime)),
+            ("dateCompleted", new PyLong(contract.DateCompletedFileTime)),
+            ("numDays", new PyInt(contract.NumDays)),
+            ("startStationID", new PyInt(contract.StartStationId)),
+            ("endStationID", new PyInt(contract.EndStationId)),
+            ("price", Eve.Services.Py.Number((double)contract.Price)),
+            ("reward", Eve.Services.Py.Number((double)contract.Reward)),
+            ("collateral", Eve.Services.Py.Number((double)contract.Collateral)),
+            ("title", new PyStr(contract.Title)),
+            ("description", new PyStr(contract.Description)))).ToArray();
+        var items = new PyDict(bundle.Contracts.Select(contract => new KeyValuePair<PyValue, PyValue>(
+            new PyInt(contract.ContractId),
+            Eve.Services.Py.List(contract.Items.Select(item => (PyValue)Eve.Services.Py.KeyVal(
+                ("itemID", new PyInt(item.ItemId)),
+                ("recordID", new PyInt(item.ItemId)),
+                ("itemTypeID", new PyInt(item.TypeId)),
+                ("typeID", new PyInt(item.TypeId)),
+                ("quantity", new PyInt(item.Quantity)),
+                ("inCrate", item.InCrate ? PyBool.True : PyBool.False),
+                ("isPackage", item.IsPackage ? PyBool.True : PyBool.False))).ToArray()))).ToArray());
+        return Eve.Services.Py.KeyVal(
+            ("contracts", Eve.Services.Py.List(rows)),
+            ("items", items));
+    }
 }
 
 [Service("serviceGatewayMgr")]
@@ -90,6 +594,7 @@ public sealed partial class ServiceGatewayMgrService(
     [Method("qa_enable_hijack_mode")]
     public PyValue QaEnableHijackMode(ServiceCall call)
     {
+        if (!CompatibilityRpc.IsStaff(call)) return PyNone.Instance;
         _enabled = true;
         setHijackMode?.Invoke(true, call.Arg(0), call.Arg(1));
         return PyNone.Instance;
@@ -98,6 +603,7 @@ public sealed partial class ServiceGatewayMgrService(
     [Method("qa_disable_hijack_mode")]
     public PyValue QaDisableHijackMode(ServiceCall call)
     {
+        if (!CompatibilityRpc.IsStaff(call)) return PyNone.Instance;
         _enabled = false;
         setHijackMode?.Invoke(false, PyNone.Instance, PyNone.Instance);
         return PyNone.Instance;
@@ -105,7 +611,8 @@ public sealed partial class ServiceGatewayMgrService(
 
     [Method("qa_is_hijack_mode_enabled")]
     public PyValue QaIsHijackModeEnabled(ServiceCall call) =>
-        (isHijackModeEnabled?.Invoke() ?? _enabled) ? PyBool.True : PyBool.False;
+        !CompatibilityRpc.IsStaff(call) ? PyBool.False :
+            (isHijackModeEnabled?.Invoke() ?? _enabled) ? PyBool.True : PyBool.False;
 }
 
 [Service("sharedSettingsMgr")]
@@ -391,7 +898,7 @@ public sealed partial class ShipStanceMgrService(
             throw Notify("SHIP_NOT_FOUND");
         if (setShipStanceAsync is null)
             throw Notify("ITEM_CREATE_FAILED");
-        // the wiki's rule: a tactical mode is switched in space (Tactical Destroyers, Mobile Depot aside); the client offers the buttons in station too
+
         if (isInSpace is not null && !isInSpace(call.Session))
             throw Notify("SHIP_STANCE_NOT_IN_SPACE");
 

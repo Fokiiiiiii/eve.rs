@@ -39,7 +39,6 @@ public sealed record LpStorePurchaseReceipt(
     decimal IskCost,
     IReadOnlyList<LpStoreItemChange> ItemChanges);
 
-/// <summary>A purchase refused by name. The code is the reference's error key (EveJS lpStoreMgrService.js ERROR_MESSAGES); nothing was written.</summary>
 public sealed class LpStorePurchaseRefusedException(string code) : Exception(code)
 {
     public string Code { get; } = code;
@@ -50,8 +49,7 @@ public sealed class LpStorePurchaseRefusedException(string code) : Exception(cod
 /// transaction: the loyalty points, the ISK, the required items of the character's hangar at the station, and the granted item
 /// in that hangar. A refusal rolls the transaction back, so a purchase that is refused changes nothing. The purchase row and the
 /// journal rows share one id (the purchase id), so each committed purchase is journalled once. Announcements go out after the
-/// commit only. The offers are the ones ESI holds (<see cref="LpStoreOfferCache"/>); ESI gives no standing condition, so none
-/// is checked (DEVIATIONS "Agents slice AG-3, A9").
+/// commit only. No standing condition is checked because the offer source supplies none.
 /// </summary>
 public sealed class LpStorePurchases
 {
@@ -61,6 +59,7 @@ public sealed class LpStorePurchases
     private const string Reason = "LP store purchase";
     private const long JunkLocation = 6;
     private const long MaximumCount = 1_000_000;
+    private const long MaximumGeneratedItems = 256;
 
     private readonly NpgsqlDataSource _source;
     private readonly string _schema;
@@ -219,7 +218,7 @@ public sealed class LpStorePurchases
             var singleton = rewardType.CategoryId is 6 or 9;
             var itemCount = singleton ? grantedQuantity : 1;
             var stackQuantity = singleton ? 1 : grantedQuantity;
-            if (itemCount > MaximumCount) throw Refused("INVALID_QUANTITY");
+            if (itemCount > MaximumGeneratedItems) throw Refused("INVALID_QUANTITY");
             for (var index = 0L; index < itemCount; index++)
             {
                 var itemId = await _items.CreateAsync(connection, transaction,

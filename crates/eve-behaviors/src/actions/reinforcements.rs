@@ -29,7 +29,6 @@ enter_task!(
     }
 );
 
-/// Adds a wave of reinforcements to my group, by the owner of the group and the security of the system.
 #[derive(Debug, Default)]
 pub struct AddReinforcementsByOwnerId;
 
@@ -52,7 +51,6 @@ impl Task for AddReinforcementsByOwnerId {
             return;
         }
         if !spawnlist.truthy() {
-            // the client logs an error: the owner of the group has no reinforcements defined
             t.world().log_error(
                 "Unable to add reinforcements: the owner of the group has no reinforcements defined",
             );

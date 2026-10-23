@@ -8,7 +8,7 @@ using Eve.Marshal;
 namespace Eve.Services.Core;
 
 /// <summary>
-/// The mailMgr read contract from EveJS 828823a75f211fdecb945b087a26c225f111491f:
+
 /// server/src/services/mail/{mailMgrService,mailState}.js.
 /// Client: eve-logic 1dbb5711a072a146e1d228365668ac05655eefe1,
 /// eve/client/script/ui/services/mail/mailSvc.py (SyncMail, GetBody, GetLabels).
@@ -31,9 +31,16 @@ public sealed class MailService(
     private readonly Func<MailSendRequest, ClientSession, CancellationToken, Task<long?>>? _sendMail = sendMail;
     private readonly GmChatPokeMailCallback? _pokePlayerAboutChatMsgGm = pokePlayerAboutChatMsgGm;
 
+    private const int MaxCharacterRecipients = 50;
+    private const int MaxMailboxMessageIds = 500;
+    private const int MaxMailboxSyncEntries = 5_000;
+    private const int MaxSubjectCharacters = 150;
+    private const int MaxBodyCharacters = 8000;
+    private const int MaxGmChatChannelCharacters = 256;
+
     public string Name => "mailMgr";
 
-    public bool HasMethod(string method) => method is "SyncMail" or "GetMailHeaders" or "GetBody" or "GetLabels" or "SendMail" or "PokePlayerAboutChatMsgGm";
+    public bool HasMethod(string method) => method is "SyncMail" or "GetMailHeaders" or "GetBody" or "GetLabels" or "MarkAsRead" or "SendMail" or "PokePlayerAboutChatMsgGm";
 
     public async ValueTask<PyValue> CallAsync(ServiceCall call)
     {
@@ -41,6 +48,17 @@ public sealed class MailService(
             return PyNone.Instance;
         call.Cancellation.ThrowIfCancellationRequested();
 
+        if (call.Method == "MarkAsRead")
+        {
+            var requestedIds = Items(call.Arg(0));
+            if (requestedIds.Count > MaxMailboxMessageIds)
+                throw MailLimitRefusal("MAIL_BULK_LIMIT_EXCEEDED");
+            var requestingCharacterId = call.Session.CharacterId.GetValueOrDefault();
+            if (requestingCharacterId > 0)
+                foreach (var id in requestedIds.Select(PositiveId).Where(id => id > 0).Distinct())
+                    await _markAsRead(requestingCharacterId, id, call.Session, call.Cancellation);
+            return PyNone.Instance;
+        }
         if (call.Method == "SendMail")
             return await SendMailAsync(call);
         if (call.Method == "PokePlayerAboutChatMsgGm")
@@ -58,8 +76,11 @@ public sealed class MailService(
                 return SyncMail(messages, statuses, call.Arg(0), call.Arg(1));
             case "GetMailHeaders":
             {
+                var requestedIds = Items(call.Arg(0));
+                if (requestedIds.Count > MaxMailboxMessageIds)
+                    throw MailLimitRefusal("MAIL_BULK_LIMIT_EXCEEDED");
                 var headers = new List<PyValue>();
-                foreach (var id in Items(call.Arg(0)).Select(PositiveId).Where(id => id > 0).Distinct())
+                foreach (var id in requestedIds.Select(PositiveId).Where(id => id > 0).Distinct())
                     if (Entry(messages, statuses, id) is { } entry)
                         headers.Add(Header(entry.Message));
                 return new PyList(headers);
@@ -100,13 +121,15 @@ private async ValueTask<PyValue> SendMailAsync(ServiceCall call)
         if (_sendMail is null)
             throw new InvalidOperationException("mailMgr.SendMail requires a durable persistence callback.");
 
+        var title = BoundedText(call.Arg(3), MaxSubjectCharacters, "MAIL_SUBJECT_LIMIT_EXCEEDED");
+        var body = BoundedText(call.Arg(4), MaxBodyCharacters, "MAIL_BODY_LIMIT_EXCEEDED");
         var request = new MailSendRequest(
             characterId,
             RecipientIds(call.Arg(0)),
             OptionalPositiveId(call.Arg(1)),
             OptionalRecipientIds(call.Arg(2)),
-            StringArgument(call.Arg(3)),
-            StringArgument(call.Arg(4)),
+            title,
+            body,
             OptionalPositiveId(call.Arg(5)),
             OptionalPositiveId(call.Arg(6)));
         var messageId = await _sendMail(request, call.Session, call.Cancellation);
@@ -115,13 +138,16 @@ private async ValueTask<PyValue> SendMailAsync(ServiceCall call)
 
     private async ValueTask<PyValue> PokePlayerAboutChatMsgGmAsync(ServiceCall call)
     {
+        if (!Eve.Services.GameMasterRoles.Has(call.Session, Eve.Services.GameMasterRoles.Gml))
+            return PyNone.Instance;
+
         var characterId = PositiveId(call.Arg(0));
         if (characterId <= 0 || _pokePlayerAboutChatMsgGm is null)
             return PyNone.Instance;
 
         var channelName = call.Arg(1) is PyNone
             ? "Unknown Channel"
-            : JsSemantics.StringValue(call.Arg(1)) ?? "Unknown Channel";
+            : BoundedText(call.Arg(1), MaxGmChatChannelCharacters, "MAIL_CHANNEL_LIMIT_EXCEEDED");
         var request = new GmChatPokeMailRequest(
             characterId,
             140000004,
@@ -142,7 +168,22 @@ private async ValueTask<PyValue> SendMailAsync(ServiceCall call)
             PyNone => [],
             _ => [value],
         };
-        return [.. values.Select(PositiveId).Where(id => id > 0).Distinct()];
+        if (values.Count > MaxCharacterRecipients)
+            throw MailLimitRefusal("MAIL_RECIPIENT_LIMIT_EXCEEDED");
+        var ids = new List<long>(values.Count);
+        foreach (var recipientValue in values)
+        {
+            var id = recipientValue switch
+            {
+                PyInt integer when integer.Value > 0 => integer.Value,
+                PyLong integer when integer.Value > 0 => integer.Value,
+                _ => 0
+            };
+            if (id <= 0)
+                throw MailLimitRefusal("MAIL_RECIPIENT_INVALID");
+            ids.Add(id);
+        }
+        return ids.Distinct().ToArray();
     }
 
 private static IReadOnlyList<long>? OptionalRecipientIds(PyValue value) =>
@@ -151,11 +192,17 @@ private static IReadOnlyList<long>? OptionalRecipientIds(PyValue value) =>
     private static long? OptionalPositiveId(PyValue value) =>
         PositiveId(value) is > 0 and var id ? id : null;
 
-    private static string StringArgument(PyValue value) =>
-        value is PyStr text ? text.Value : "";
+    private static string StringArgument(PyValue value) => value switch
+    {
+        PyStr text => text.Value,
+        PyBytes bytes => Encoding.UTF8.GetString(bytes.Value.Span),
+        _ => string.Empty,
+    };
 
     private static PyValue SyncMail(JsonObject? messages, JsonObject? statuses, PyValue first, PyValue last)
     {
+        if (statuses?.Count > MaxMailboxSyncEntries)
+            throw MailLimitRefusal("MAIL_SYNC_LIMIT_EXCEEDED");
         var entries = new List<(JsonObject Message, JsonObject Status)>();
         if (statuses is not null && messages is not null)
             foreach (var (key, status) in statuses)
@@ -229,6 +276,19 @@ private static PyValue OptionalIds(JsonNode? value) => value is JsonArray ids
         ? new PyList([.. ids.Select(Integer).Where(id => id > 0).Select(id => (PyValue)new PyInt(id))])
         : OptionalId(value);
 
+    private static string BoundedText(PyValue value, int maximumCharacters, string refusalCode)
+    {
+        var text = StringArgument(value);
+        var characters = 0;
+        foreach (var _ in text.EnumerateRunes())
+            if (++characters > maximumCharacters)
+                throw MailLimitRefusal(refusalCode);
+        return text;
+    }
+
+    private static MachoWrappedException MailLimitRefusal(string refusalCode) =>
+        MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr(refusalCode)));
+
     private static IReadOnlyList<PyValue> Items(PyValue value) => value switch
     {
         PyList list => list.Items,
@@ -238,12 +298,14 @@ private static PyValue OptionalIds(JsonNode? value) => value is JsonArray ids
 
     private static string Key(long id) => id.ToString(CultureInfo.InvariantCulture);
 
-    private static long PositiveId(PyValue value)
+    private static long PositiveId(PyValue value) => value switch
     {
-        var number = JsSemantics.ToNumber(value);
-        return double.IsFinite(number) && number >= 1 && number < long.MaxValue
-            ? (long)Math.Truncate(number) : 0;
-    }
+        PyInt integer when integer.Value > 0 => integer.Value,
+        PyLong integer when integer.Value is > 0 and < long.MaxValue => integer.Value,
+        PyReal real when double.IsFinite(real.Value) && real.Value >= 1 && real.Value < long.MaxValue
+            && real.Value == Math.Truncate(real.Value) => (long)real.Value,
+        _ => 0,
+    };
 
     private static long Integer(JsonNode? value)
     {

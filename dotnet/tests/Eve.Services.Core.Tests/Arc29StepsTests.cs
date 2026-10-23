@@ -9,8 +9,6 @@ using Npgsql;
 namespace Eve.Services.Core.Tests;
 
 /// <summary>
-/// Arc 29 steps 1 and 2 through the real store, the dialogue and the runtime (fixture rows shaped like the official records): the kill step 14117
-/// at Alitura (station, Arnon) starts its dungeon when the pilot is in space there and pays once; the talk step 14118 is accepted from Alitura and
 /// completed by talking to Tevis Jak (in space, Tar); 14119 is then offered by Tevis. Generic sites are offered by the switch.
 /// </summary>
 public class Arc29StepsTests
@@ -76,8 +74,8 @@ public class Arc29StepsTests
         public AgentMissionStore? Store { get; set; }
 
         public async Task<bool> CompleteMissionAsync(long characterId, long agentId, DateTimeOffset now, string reference,
-            IReadOnlyList<MissionStandingGain> standings, IReadOnlyList<(int TypeId, long Quantity, string? Tag)> consume, CancellationToken cancellationToken) =>
-            // the items of a fetch step are not modelled here: the arc's first steps consume nothing
+            IReadOnlyList<MissionStandingGain> standings, IReadOnlyList<(int TypeId, long Quantity, string? Tag)> consume, long loyaltyPoints, long issuerCorporationId, CancellationToken cancellationToken) =>
+
             consume.Count == 0 && Store is not null && await Store.CompleteAsync(characterId, agentId, now, reference, cancellationToken) is not null;
 
         public Task GrantObjectiveItemAsync(long characterId, int typeId, long quantity, long stationId, CancellationToken cancellationToken) =>
@@ -132,7 +130,6 @@ public class Arc29StepsTests
             (characterId, agent, atLocation, ct) => new ValueTask(runtime.OnConversationAsync(characterId, agent.AgentId,
                 agent.IsInSpace ? host.IsPilotInSystem(characterId, (int)agent.SolarSystemId!.Value) : atLocation, ct))));
 
-        // step 1: the kill mission at Alitura, the dungeon in Arnon, the kills (the outcome), the reward once
         now = now.AddMinutes(1);
         await machine.DoActionAsync(Pilot, agents[Alitura], new PyInt(AgentDialogueToken.Request), true, default);
         Assert.Equal(14117, (await store.ReadAsync(Pilot, Alitura))!.Content.MissionId);
@@ -145,7 +142,6 @@ public class Arc29StepsTests
         Assert.Equal(100000, Assert.Single(host.Credits).Amount);
         Assert.Equal(AgentMissionState.Completed, (await store.ReadAsync(Pilot, Alitura))!.State);
 
-        // step 2: the talk step 14118 from Alitura; the talk with Tevis Jak in space completes it, and pays once
         now = now.AddMinutes(1);
         await machine.DoActionAsync(Pilot, agents[Alitura], new PyInt(AgentDialogueToken.Request), true, default);
         Assert.Equal(14118, (await store.ReadAsync(Pilot, Alitura))!.Content.MissionId);

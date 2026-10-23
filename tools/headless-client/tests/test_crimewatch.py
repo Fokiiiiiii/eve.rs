@@ -28,7 +28,6 @@ pytestmark = pytest.mark.skipif(not base.LIVE, reason="set EVE_LIVE_HOST=host:po
 
 LAST_DOCKED_STEP = "the client asks for the transactions of its security status"
 
-
 def test_a_pilot_asks_crimewatch_for_its_states_and_sets_its_safety_as_in_the_reference():
     race = CRIMEWATCH["races"][0]
     run = uuid.uuid4().hex[:10]
@@ -43,7 +42,11 @@ def test_a_pilot_asks_crimewatch_for_its_states_and_sets_its_safety_as_in_the_re
             if "error" in recorded or error is not None:
                 problems.append(f"{label}: error {base.brief(error)} in place of {base.brief(recorded.get('ok', recorded.get('error')))}")
             else:
-                problems.extend(differences(base.blank_times(mine(recorded["ok"], set())), base.blank_times(mine(describe(raw), {character})), label))
+                answer = describe(raw)
+                # an empty CRowset (what the real client's crowset carries) is the reference's empty list: the client iterates either (DEVIATIONS #61)
+                if isinstance(answer, dict) and "$objectex" in answer and answer.get("list") == []:
+                    answer = []
+                problems.extend(differences(base.blank_times(mine(recorded["ok"], set())), base.blank_times(mine(answer, {character})), label))
             got = flags_of(watch(only, seconds)["events"], {character})   # a pilot flagged by another run (a flag lasts a quarter of an hour) is no part of this one
             wanted = [e for e in recorded["events"] if e["name"] != "OnInvulnCancelled"]
             problems.extend(compare_events(wanted, [e for e in got if e["name"] != "OnInvulnCancelled"], label, {}))

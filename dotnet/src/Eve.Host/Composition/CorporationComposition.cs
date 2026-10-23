@@ -136,7 +136,11 @@ internal sealed partial class CharacterServicesComposition
             Console.Error.WriteLine($"eve-host: native market v4 seed already loaded for SDE build {build}");
         }
         marketTopology = await Eve.Market.MarketTopology.LoadAsync(sde);
-        marketTrading = new Eve.Market.MarketTrading(source, market, characters, corporations, skills, items, economyWallets, stations, marketTopology, now, new Eve.Services.Market.DurableExpiryJobs(foundations.Scheduler));
+        marketTrading = new Eve.Market.MarketTrading(source, market, characters, corporations, skills, items, economyWallets, stations, marketTopology, now, new Eve.Services.Market.DurableExpiryJobs(foundations.Scheduler))
+        {
+            FactionWarfareUpgradeLevel = FactionWarfareUpgradeLevelAsync,
+            StandingToward = (character, owner, token) => foundations.Relations.StandingTowardAsync(character, owner, token),
+        };
         // M3: resting orders expire as durable jobs; the minute sweep and the restart reschedule are started with the market
         var marketNotifier = new Eve.Services.Market.MarketNotifier(economyWallets, characterSessions);
         // M8: the minute sweep runs the market's invariants (escrow, item custody, fill journal) and logs any mismatch
@@ -179,7 +183,9 @@ internal sealed partial class CharacterServicesComposition
             relations: foundations.Relations,
             characterSessions: characterSessions,
             readSovSnapshot: ReadAllianceSovSnapshotAsync,
-            readStaticOwners: ReadAllianceStaticOwnersAsync);
+            readStaticOwners: ReadAllianceStaticOwnersAsync,
+            validateWarHQ: (call, ownerId, structureId, token) =>
+                structureDirectoryReadModel.IsValidWarHQAsync(call, ownerId, structureId, token));
     }
 
     private async Task<Eve.Services.Corporations.AllianceSovSnapshot?> ReadAllianceSovSnapshotAsync(
@@ -268,13 +274,13 @@ internal sealed partial class CharacterServicesComposition
                 : null,
             now,
             structureOffices);
-        // ST-12: the rent of an office at a structure falls due as a durable job (an unpaid one gives the office up)
+
         corporationOfficeStore.RenewalRentSource = structureOffices.RenewalRentAsync;
         var rentDue = new StructureOfficeRentDue(source, corporationOfficeStore, economyWallets, foundations.Scheduler, structureOffices,
             items, characters, notificationMailbox ?? throw new InvalidOperationException("The notifications mailbox is wired before the offices."));
         rentDue.Register();
         rentDue.SubscribeClosures(foundations.Events);
-        // ST-16: the rent bills taken at a station before the creditor was recorded get the station's owner, once (a no-op from the second start)
+
         await rentDue.CreditStationBillsAsync(id => stations.Get(id) is { } station ? (long?)station.OwnerId : null);
         skinCosmeticsCatalog = await ShipCosmeticsCatalog.LoadAsync(sde);
     }

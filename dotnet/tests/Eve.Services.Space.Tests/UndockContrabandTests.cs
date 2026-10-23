@@ -114,7 +114,7 @@ public sealed class UndockContrabandTests
         Assert.NotNull(await rig.Items.GetAsync(cargo[1]));
 
         // the standing toward the faction falls by the SDE standingLoss (0.02): 10 x -0.02 from a neutral standing
-        Assert.Equal(-0.2, await rig.Relations.ValueAsync("standing", CharacterId, FactionA));
+        Assert.Equal(-0.2, await rig.Relations.ValueAsync("standing", FactionA, CharacterId));
         // the fine is journaled with the client's ref type (contraband fine, 51) against the faction
         Assert.Equal((51, (long)FactionA, -20m), await rig.JournalFineAsync());
         Assert.Empty(await rig.Scheduler.ListAsync(UndockContraband.SettleJobKind));
@@ -122,7 +122,7 @@ public sealed class UndockContrabandTests
         // the same contraband is not fined twice
         Assert.Null(await rig.Inspector.ApplyAsync(CharacterId, rig.ShipId, SystemAHigh));
         Assert.Equal(980m, await rig.Balance());
-        Assert.Equal(-0.2, await rig.Relations.ValueAsync("standing", CharacterId, FactionA));
+        Assert.Equal(-0.2, await rig.Relations.ValueAsync("standing", FactionA, CharacterId));
     }
 
     [PgFact]
@@ -144,7 +144,7 @@ public sealed class UndockContrabandTests
         Assert.Null(await restarted.Items.GetAsync(restarted.Cargo[0]));
         Assert.Equal(0, await restarted.Scheduler.RunDueAsync());
         Assert.Equal(990m, await restarted.Balance());
-        Assert.Equal(-0.2, await restarted.Relations.ValueAsync("standing", CharacterId, FactionA));
+        Assert.Equal(-0.2, await restarted.Relations.ValueAsync("standing", FactionA, CharacterId));
     }
 
     [PgFact]
@@ -157,7 +157,7 @@ public sealed class UndockContrabandTests
         Assert.NotNull(await rig.Items.GetAsync(cargo[0]));
         Assert.Equal(1000m, await rig.Balance());
         Assert.Empty(await rig.Scheduler.ListAsync(UndockContraband.SettleJobKind));
-        Assert.Equal(0d, await rig.Relations.ValueAsync("standing", CharacterId, FactionA));
+        Assert.Equal(0d, await rig.Relations.ValueAsync("standing", FactionA, CharacterId));
     }
 
     [PgFact]

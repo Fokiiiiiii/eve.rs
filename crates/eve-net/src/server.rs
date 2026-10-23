@@ -10,10 +10,13 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use bytes::{Bytes, BytesMut};
 use tokio::io::{AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use crate::frame::{FrameReader, MAX_FRAME, put_frame};
 use crate::handshake::{self, Environment, HandshakeError, SessionIds};
 use crate::host::{ClientOut, HostLink, client_queue};
+
+const MAX_PENDING_HANDSHAKES: usize = 256;
 
 #[derive(Debug, Clone)]
 pub struct ServeConfig {
@@ -27,6 +30,10 @@ impl Default for ServeConfig {
     fn default() -> Self {
         Self { node_id: crate::profile::PROXY_NODE_ID, handshake_timeout: Duration::from_secs(30) }
     }
+}
+
+fn reserve_pending_handshake(pending: &Arc<Semaphore>) -> Option<OwnedSemaphorePermit> {
+    pending.clone().try_acquire_owned().ok()
 }
 
 fn now_ms() -> u64 {
@@ -43,12 +50,15 @@ pub async fn serve(
     let config = Arc::new(config);
     let signed_func = handshake::tidi_signed_func();
     let session_ids = Arc::new(SessionIds::default());
+    let pending_handshakes = Arc::new(Semaphore::new(MAX_PENDING_HANDSHAKES));
     tokio::pin!(shutdown);
     loop {
         tokio::select! {
             accepted = listener.accept() => {
                 let (stream, peer) = accepted?;
-                tokio::spawn(connection(stream, peer, link.clone(), config.clone(), signed_func.clone(), session_ids.clone()));
+                if let Some(permit) = reserve_pending_handshake(&pending_handshakes) {
+                      tokio::spawn(connection(stream, peer, link.clone(), config.clone(), signed_func.clone(), session_ids.clone(), permit));
+                  }
             }
             () = &mut shutdown => return Ok(()),
             () = link.closed() => return Err(io::Error::new(io::ErrorKind::ConnectionAborted, "the link to the host closed")),
@@ -63,6 +73,7 @@ async fn connection(
     config: Arc<ServeConfig>,
     signed_func: Bytes,
     session_ids: Arc<SessionIds>,
+    handshake_permit: OwnedSemaphorePermit,
 ) {
     let _ = stream.set_nodelay(true);
     let (read, mut write) = stream.into_split();
@@ -90,6 +101,7 @@ async fn connection(
         }
     };
 
+    drop(handshake_permit);
     let session_id = login.session_id;
     let (queue, outgoing) = client_queue();
     if link.open_session(&login, queue).await.is_err() {
@@ -154,5 +166,24 @@ async fn client_writer<W: AsyncWrite + Unpin>(
             let _ = writer.shutdown().await;
             return;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{MAX_PENDING_HANDSHAKES, reserve_pending_handshake};
+    use std::sync::Arc;
+    use tokio::sync::Semaphore;
+
+    #[test]
+    fn pending_handshakes_are_capped_until_a_slot_is_released() {
+        let pending = Arc::new(Semaphore::new(MAX_PENDING_HANDSHAKES));
+        let permits: Vec<_> = (0..MAX_PENDING_HANDSHAKES)
+            .map(|_| reserve_pending_handshake(&pending).expect("available handshake slot"))
+            .collect();
+
+        assert!(reserve_pending_handshake(&pending).is_none());
+        drop(permits);
+        assert!(reserve_pending_handshake(&pending).is_some());
     }
 }

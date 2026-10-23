@@ -1,5 +1,4 @@
 //! Reading what the reference recorded (`oracle/fixtures/scenarios/undock.json`) so the tests can hold the world to it.
-
 #![allow(dead_code)]
 
 use std::path::PathBuf;
@@ -34,7 +33,6 @@ pub fn step<'a>(race: &'a Value, label: &str) -> &'a Value {
         .unwrap_or_else(|| panic!("no step {label}"))
 }
 
-/// The actions of every `DoDestinyUpdate` a step recorded, as `(stamp, name, args)`.
 pub fn destiny_actions(step: &Value) -> Vec<(i64, String, Value)> {
     let mut out = Vec::new();
     for event in step["events"].as_array().unwrap() {
@@ -91,7 +89,6 @@ pub fn rigid_balls(buffer: &[u8]) -> Vec<RecordedBall> {
     balls
 }
 
-/// The bytes of the rigid balls of a state buffer, one slice per ball, and what follows them (the ship's free ball).
 pub fn split_state(buffer: &[u8]) -> (Vec<(i64, &[u8])>, &[u8]) {
     let mut balls = Vec::new();
     let mut at = 5;
@@ -267,7 +264,6 @@ pub fn event_args(event: &Value) -> Value {
     event["args"]["$tuple"][1]["$tuple"][1].clone()
 }
 
-/// The recorded events of a step with this name.
 pub fn events_named<'a>(step: &'a Value, name: &str) -> Vec<&'a Value> {
     step["events"].as_array().unwrap().iter().filter(|e| e["name"] == name).collect()
 }

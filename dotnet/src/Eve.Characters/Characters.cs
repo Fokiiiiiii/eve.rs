@@ -173,7 +173,6 @@ public sealed partial class PgCharacterStore
         return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
     }
 
-
     public async Task<bool> SetFactionWarfareStateAsync(
         long characterId,
         long? directFactionId,
@@ -251,6 +250,30 @@ public sealed partial class PgCharacterStore
         command.Parameters.Add(new NpgsqlParameter { Value = characterId });
         command.Parameters.Add(new NpgsqlParameter { Value = airNpeEnabled });
         return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
+    }
+
+    /// <summary>
+    /// The members of a war faction: a character whose direct factional warfare enlistment is the faction, or, with none, whose corporation is one of
+    /// <paramref name="enlistedCorporationIds"/> (the corporations enlisted in the faction). Factional warfare statistics (facWarMgr FactionInfo).
+    /// </summary>
+    public async Task<long> CountWarFactionMembersAsync(long factionId, IReadOnlyList<long> enlistedCorporationIds, CancellationToken cancellationToken = default)
+    {
+        await using var command = _source.CreateCommand($"SELECT count(*) FROM {_schema}.characters WHERE deleted_at IS NULL AND (direct_faction_id = $1 OR (direct_faction_id IS NULL AND corporation_id = ANY($2)))");
+        command.Parameters.Add(new NpgsqlParameter { Value = factionId });
+        command.Parameters.Add(new NpgsqlParameter { Value = enlistedCorporationIds.ToArray() });
+        return (long)(await command.ExecuteScalarAsync(cancellationToken))!;
+    }
+
+    /// <summary>The number of characters of each corporation of the list (a corporation with none is absent).</summary>
+    public async Task<IReadOnlyDictionary<long, long>> CountByCorporationAsync(IReadOnlyList<long> corporationIds, CancellationToken cancellationToken = default)
+    {
+        await using var command = _source.CreateCommand($"SELECT corporation_id, count(*) FROM {_schema}.characters WHERE deleted_at IS NULL AND corporation_id = ANY($1) GROUP BY corporation_id");
+        command.Parameters.Add(new NpgsqlParameter { Value = corporationIds.ToArray() });
+        var counts = new Dictionary<long, long>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+            counts[reader.GetInt64(0)] = reader.GetInt64(1);
+        return counts;
     }
 
     public async Task<int> CountForAccountAsync(int accountId, CancellationToken cancellationToken = default)
@@ -472,7 +495,6 @@ public sealed partial class PgCharacterStore
             : (null, null);
     }
 
-
     /// <summary>The paper doll and portrait payloads for a batch of character ids.</summary>
     public async Task<IReadOnlyDictionary<long, (byte[]? Doll, byte[]? Portrait)>> AppearanceManyAsync(
         IEnumerable<long> ids, CancellationToken cancellationToken = default)
@@ -522,5 +544,15 @@ public sealed partial class PgCharacterStore
         command.Parameters.Add(new NpgsqlParameter { Value = updatePortrait });
         command.Parameters.Add(new NpgsqlParameter { Value = (object?)portrait ?? DBNull.Value });
         return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
+    }
+
+    /// <summary>Removes appearance data as part of the character deletion transaction.</summary>
+    public async Task ClearAppearanceAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long id, CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand(
+            $"UPDATE {_schema}.characters SET doll_info = NULL, portrait_info = NULL, paperdoll_state = NULL WHERE id = $1",
+            connection, transaction);
+        command.Parameters.Add(new NpgsqlParameter { Value = id });
+        await command.ExecuteNonQueryAsync(cancellationToken);
     }
 }

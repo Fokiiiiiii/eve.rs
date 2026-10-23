@@ -8,7 +8,6 @@ namespace Eve.Services.Space.Tests;
 
 /// <summary>
 /// A cynosural field generator (Cynosural Field Generator I, group 658): a pilot lights it only as a fleet member, and never in high-security space
-/// (EVE University wiki, Cynosural Field Generator). The rig's station is in Manifest (security 1.0), so both refusals are reached in the rig.
 /// </summary>
 public class CynoFieldHostTests
 {

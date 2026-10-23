@@ -33,7 +33,6 @@ public class CorporationTests
         Assert.All(history,e => Assert.True(e.EndedMs is null || e.EndedMs >= e.StartedMs));
     }
 
-
     [PgFact]
     public async Task Faction_warfare_policy_updates_keep_other_corporation_settings()
     {
@@ -47,7 +46,6 @@ public class CorporationTests
         Assert.True(settings.GetProperty("fw").GetProperty("existing").GetBoolean());
         Assert.Equal([500001L, 500002L], settings.GetProperty("fw").GetProperty("allowedEnlistmentFactions").EnumerateArray().Select(value => value.GetInt64()));
     }
-
 
     [PgFact]
     public async Task Character_login_restores_direct_war_faction_then_corporation_faction()
@@ -160,7 +158,6 @@ public class CorporationTests
         Assert.False(CorporationRoles.HasHangarAccess(null, corporation.StationId, 115, take: false));
     }
 
-
     [PgFact]
     public async Task Corporation_membership_projects_affiliation_without_an_alliance_zero_sentinel()
     {
@@ -206,7 +203,6 @@ public class CorporationTests
             }
         }
     }
-
 
     [PgFact]
     public async Task Accepted_application_and_leaving_move_the_corporation_membership_relation_at_runtime()
@@ -278,7 +274,6 @@ public class CorporationTests
             rig.Characters.AffiliationsAfterAsync(0, Eve.Characters.PgCharacterStore.CorporationAffiliationPageSize + 1));
     }
 
-
     [PgFact]
     public async Task Corporation_membership_and_relation_outbox_roll_back_together()
     {
@@ -331,7 +326,6 @@ public class CorporationTests
         }
     }
 }
-
 
 public sealed class CorporationOfficeTests
 {
@@ -497,6 +491,44 @@ public sealed class CorporationOfficeTests
     }
 
     [PgFact]
+    public async Task Impound_status_and_release_price_require_current_corporation_membership()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (actor, corporation) = await CreateCorporationAsync(rig);
+        await SetOfficeRoleAsync(rig, actor, CorporationRoles.RentOffice);
+        var service = CreateService(rig);
+        var quote = await QuoteAsync(service, actor, corporation.Id);
+        await service.RentOffice(Call("RentOffice", actor, corporation.Id, new Eve.Marshal.PyReal((double)quote)));
+        var office = Assert.Single(await rig.OfficeStore.ForCorporationAsync(corporation.Id));
+        await CreateItemAsync(rig, corporation.Id, Station.Id, Eve.Inventory.ItemFlags.CorpSAG1);
+
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await Eve.Services.Corporations.StationOfficeImpound.ImpoundAsync(
+                rig.Items, rig.OfficeStore, connection, transaction, office, rig.Now, CancellationToken.None);
+            await transaction.CommitAsync();
+        }
+
+        Assert.Equal(Eve.Marshal.PyBool.True,
+            await service.HasCorpImpoundedItems(Call("HasCorpImpoundedItems", actor, corporation.Id)));
+        Assert.True(((Eve.Marshal.PyReal)await service.GetImpoundReleasePrice(
+            Call("GetImpoundReleasePrice", actor, corporation.Id))).Value > 0);
+
+        await using (var revoke = rig.Source.CreateCommand(
+            $"DELETE FROM {rig.CorporationSchema}.members WHERE character_id=$1"))
+        {
+            revoke.Parameters.Add(new Npgsql.NpgsqlParameter { Value = actor });
+            Assert.Equal(1, await revoke.ExecuteNonQueryAsync());
+        }
+
+        Assert.Equal(Eve.Marshal.PyBool.False,
+            await service.HasCorpImpoundedItems(Call("HasCorpImpoundedItems", actor, corporation.Id)));
+        Assert.Equal(new Eve.Marshal.PyInt(0),
+            await service.GetImpoundReleasePrice(Call("GetImpoundReleasePrice", actor, corporation.Id)));
+    }
+
+    [PgFact]
     public async Task Unpaid_station_office_is_impounded_with_its_hangar_items_and_ends()
     {
         await using var rig = await Rig.CreateAsync();
@@ -529,6 +561,32 @@ public sealed class CorporationOfficeTests
         await service.TrashImpoundedOffice(Call("TrashImpoundedOffice", actor, corporation.Id));
 
         Assert.Null(await rig.Items.GetAsync(itemId));
+    }
+
+    [PgFact]
+    public async Task Office_list_reads_stop_after_the_session_member_leaves()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (actor, corporation) = await CreateCorporationAsync(rig);
+        await SetOfficeRoleAsync(rig, actor, CorporationRoles.RentOffice);
+        var service = CreateService(rig);
+        var quote = await QuoteAsync(service, actor, corporation.Id);
+        await service.RentOffice(Call("RentOffice", actor, corporation.Id, new Eve.Marshal.PyReal((double)quote)));
+
+        var beforeLeave = Assert.IsType<Eve.Marshal.PyList>(
+            await service.GetMyCorporationsOffices(Call("GetMyCorporationsOffices", actor, corporation.Id)));
+        Assert.Single(beforeLeave.Items);
+
+        await using (var revoke = rig.Source.CreateCommand(
+            $"DELETE FROM {rig.CorporationSchema}.members WHERE character_id=$1"))
+        {
+            revoke.Parameters.Add(new Npgsql.NpgsqlParameter { Value = actor });
+            Assert.Equal(1, await revoke.ExecuteNonQueryAsync());
+        }
+
+        var afterLeave = Assert.IsType<Eve.Marshal.PyList>(
+            await service.GetMyCorporationsOffices(Call("GetMyCorporationsOffices", actor, corporation.Id)));
+        Assert.Empty(afterLeave.Items);
     }
 
     [PgFact]
@@ -600,6 +658,7 @@ public sealed class CorporationOfficeTests
             Assert.True((bool)(await migrationCheck.ExecuteScalarAsync())!);
         }
         var (actor, corporation) = await CreateCorporationAsync(rig);
+        await rig.SeedNpcCorporationAsync(Station.OwnerId);
         await SetOfficeRoleAsync(rig, actor, CorporationRoles.RentOffice | CorporationRoles.Accountant);
         var officeManager = CreateService(rig);
         var quote = await QuoteAsync(officeManager, actor, corporation.Id);
@@ -636,7 +695,7 @@ public sealed class CorporationOfficeTests
         Assert.Equal(new Eve.Marshal.PyList([expectedBill]), listedBills);
 
         var receivableBeforePayment = Assert.IsType<Eve.Marshal.PyList>(
-            await billMgr.CallAsync(Call("GetCorporationBillsReceivable", actor, Station.OwnerId)));
+            await billMgr.CallAsync(Call("GetCorporationBillsReceivable", 0, Station.OwnerId)));
         Assert.Equal(new Eve.Marshal.PyList([expectedBill]), receivableBeforePayment);
 
         var submitted = new Eve.Marshal.PyDict(

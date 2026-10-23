@@ -5,29 +5,77 @@ namespace Eve.Services.Core.Tests;
 
 public sealed class IndustryRulesTests
 {
-    [Fact]
-    public void Material_quantity_rounds_up_after_rounding_to_two_decimals_and_is_at_least_one_per_run()
+    [Theory]
+    [InlineData(86, 0.9, 1, 1, 78)]
+    [InlineData(1, 0.9, 10, 10, 10)]
+    [InlineData(100, 1.0, 10, 10, 1000)]
+    [InlineData(10, 1.015, 1, 1, 11)]
+    [InlineData(1, 1.0, 20, 2, 20)]
+    public void Material_quantity_matches_client_round_then_ceil_and_per_run_floor(
+        long baseQuantity, double modifier, long materialRuns, long runs, long expected)
     {
-        Assert.Equal(78, IndustryRules.MaterialQuantity(86, IndustryRules.MaterialEfficiencyModifier(10), 1, 1));
-        Assert.Equal(10, IndustryRules.MaterialQuantity(1, IndustryRules.MaterialEfficiencyModifier(10), 10, 10));
-        Assert.Equal(1000, IndustryRules.MaterialQuantity(100, 1.0, 10, 10));
+        // industry/job.py Job._get_materials rounds to MATERIAL_ROUND_PRECISION, then ceil, with runs as the floor.
+        Assert.Equal(expected, IndustryRules.MaterialQuantity(baseQuantity, modifier, materialRuns, runs));
+    }
+
+    [Theory]
+    [InlineData(0, 0, 1.0, 1.0)]
+    [InlineData(10, 20, 0.9, 0.8)]
+    [InlineData(5, 10, 0.95, 0.9)]
+    public void Blueprint_efficiency_modifiers_match_client_percentage_rules(
+        int materialEfficiency, int timeEfficiency, double expectedMaterial, double expectedTime)
+    {
+        Assert.Equal(expectedMaterial, IndustryRules.MaterialEfficiencyModifier(materialEfficiency), 12);
+        Assert.Equal(expectedTime, IndustryRules.TimeEfficiencyModifier(timeEfficiency), 12);
+    }
+
+    [Theory]
+    [InlineData(-4, 5, 0.8)]
+    [InlineData(-2, 5, 0.9)]
+    public void Skill_modifiers_match_client_percent_per_level_rule(
+        double attributePerLevelPercent, int level, double expected)
+    {
+        Assert.Equal(expected, IndustryRules.SkillModifier(attributePerLevelPercent, level), 12);
+    }
+
+    [Theory]
+    [InlineData(1_000_000, 0.05, 0.10, true, 1, 50_000, 100_000, 40_000, 50_000)]
+    [InlineData(1_000_000, 0.0, 0.0, false, 3, 0, 0, 20_000, 0)]
+    [InlineData(10_000, 0.01505, 0.00505, true, 1, 151, 51, 400, 500)]
+    [InlineData(100.6, 0.5, 0.0, false, 1, 50, 0, 4, 0)]
+    public void Install_cost_matches_client_rounded_base_shares(
+        double baseCost, double costIndex, double facilityTax, bool highSecurity, int activity,
+        long expectedCost, long expectedTax, long expectedScc, long expectedSecurityTax)
+    {
+        var parts = IndustryRules.CostParts(baseCost, costIndex, facilityTax, highSecurity, activity);
+        Assert.Equal(new InstallCostParts(expectedCost, expectedTax, expectedScc, expectedSecurityTax), parts);
     }
 
     [Fact]
-    public void Efficiency_modifiers_follow_the_client_percentages()
+    public void Alpha_clone_industry_tax_adds_quarter_percent_of_unrounded_base_cost()
     {
-        Assert.Equal(0.9, IndustryRules.MaterialEfficiencyModifier(10), 12);
-        Assert.Equal(1.0, IndustryRules.MaterialEfficiencyModifier(0), 12);
-        Assert.Equal(0.8, IndustryRules.TimeEfficiencyModifier(20), 12);
-        Assert.Equal(0.8, IndustryRules.SkillModifier(-4, 5), 12);
+        var omega = IndustryRules.CostParts(100_002.5, 0.2, 0.1, false, IndustryRules.Manufacturing);
+        var alpha = IndustryRules.CostParts(100_002.5, 0.2, 0.1, false, IndustryRules.Manufacturing, alphaClone: true);
+        Assert.Equal(20001, omega.Cost);
+        Assert.Equal(20251, alpha.Cost);
+        Assert.Equal(250, alpha.Cost - omega.Cost);
+        Assert.Equal(omega.Tax, alpha.Tax);
+    }
+
+    [Theory]
+    [InlineData(2.5, 3)]
+    [InlineData(100.5, 101)]
+    [InlineData(100.4, 100)]
+    public void Client_round_breaks_ties_away_from_zero_as_python_2_does(double value, long expected)
+    {
+        Assert.Equal(expected, IndustryRules.Round(value));
     }
 
     [Fact]
-    public void Install_cost_is_the_index_tax_scc_and_security_shares_of_the_base_cost()
+    public void Two_industry_skills_multiply_as_dogma_post_percent_modifiers()
     {
-        var parts = IndustryRules.CostParts(1_000_000, 0.05, 0.10, highSecurity: true, IndustryRules.Manufacturing);
-        Assert.Equal(new InstallCostParts(50_000, 100_000, 40_000, 50_000), parts);
-        Assert.Equal(240_000, IndustryRules.Total(parts));
+        // Industry 5 (-20%) and Advanced Industry 5 (-15%) stack multiplicatively: 0.8 x 0.85, not 0.65.
+        Assert.Equal(680, IndustryRules.DurationSeconds(1000, [IndustryRules.SkillModifier(-4, 5), IndustryRules.SkillModifier(-3, 5)]));
     }
 
     [Fact]
@@ -37,10 +85,15 @@ public sealed class IndustryRulesTests
         Assert.Equal(new InstallCostParts(0, 0, 20_000, 0), parts);
     }
 
-    [Fact]
-    public void Duration_multiplies_the_base_seconds_by_every_modifier()
+    [Theory]
+    [InlineData(1200, 0.9, 0.8, 864)]
+    [InlineData(100, 1.0, 0.0, 0)]
+    [InlineData(201, 0.5, 1.0, 101)]
+    public void Duration_matches_client_multiplier_order_and_rounding(
+        double baseSeconds, double firstModifier, double secondModifier, long expected)
     {
-        Assert.Equal(864, IndustryRules.DurationSeconds(1200, [0.9, 0.8]));
+        // industry/job.py Job._get_time multiplies each applicable modifier and rounds the final seconds.
+        Assert.Equal(expected, IndustryRules.DurationSeconds(baseSeconds, [firstModifier, secondModifier]));
     }
 
     [Fact]

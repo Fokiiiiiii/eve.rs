@@ -27,7 +27,6 @@ public sealed class PgFactAttribute : FactAttribute
     }
 }
 
-
 public sealed class PgTheoryAttribute : TheoryAttribute
 {
     public PgTheoryAttribute()
@@ -115,11 +114,12 @@ private readonly Dictionary<long, ClientSession> _fleetSessions = new();
     /// <summary>The schema of this rig's fleets (a second store on it reads what the rig's store wrote).</summary>
     public string FleetSchema => $"pl_{_suffix}";
 
-    private Rig(NpgsqlDataSource source, string suffix, DogmaStatic statics, CharacterCreation creation, CreationCatalog catalog, StationCatalog stations, SolarSystemCatalog systems, PgModuleStateStore modules, TimeSpan protection, TimeSpan jumpCloak, bool npcLoot, Eve.Npc.BeltRatConfig? beltRats, Eve.Scheduler.LocalTimers? localTimers, Eve.Npc.NpcAuthority? npcAuthority)
+    private Rig(NpgsqlDataSource source, string suffix, DogmaStatic statics, CharacterCreation creation, CreationCatalog catalog, StationCatalog stations, SolarSystemCatalog systems, PgModuleStateStore modules, TimeSpan protection, TimeSpan jumpCloak, bool npcLoot, Eve.Npc.BeltRatConfig? beltRats, Eve.Scheduler.LocalTimers? localTimers, Eve.Npc.NpcAuthority? npcAuthority, int? maxFleetJoinRequests)
     {
         Source = source;
         // the fleets have a schema of their own: the shared one kept the memberships of earlier tests
-        FleetStore = new Eve.Services.Space.FleetStore(source, $"pl_{suffix}");
+        FleetStore = new Eve.Services.Space.FleetStore(source, $"pl_{suffix}",
+            maxFleetJoinRequests ?? Eve.Services.Space.FleetStore.DefaultMaxJoinRequests);
         _suffix = suffix;
         _schemas = [$"pc_{suffix}", $"pi_{suffix}", $"ps_{suffix}", $"pw_{suffix}", $"pf_{suffix}", $"pn_{suffix}", $"pp_{suffix}", $"pd_{suffix}", $"pe_{suffix}", $"pl_{suffix}", $"pt_{suffix}"];
         Events = new Eve.Events.EventBus(source, new Eve.Scheduler.DurableScheduler(source, () => Now, null, _schemas[7]), null, _schemas[8]);
@@ -139,9 +139,16 @@ private readonly Dictionary<long, ClientSession> _fleetSessions = new();
         WalletTransactions = new WalletTransactions(source, _schemas[3]);
         Bounties = new Eve.Npc.PgBountyStore(source, WalletTransactions, _schemas[5], Log.Add);
         var npcAuthorityOf = npcAuthority ?? Eve.Npc.NpcAuthority.Load();
-        Space = new SpaceSessions(Sim, Ships, statics, stations, systems, () => Now, Log.Add, protection, jumpCloak, localTimers) { Registry = Registry, RookieShipOfRace = race => catalog.Race(race)?.ShipTypeId, Npcs = new Eve.Npc.NpcSelector(npcAuthorityOf), NpcWrecks = npcLoot ? new NpcWrecks(_ => LootTable, () => Task.FromResult(new Eve.Npc.NpcLoot(LootPool)), Ships, () => 0) : null, BeltRats = beltRats is null ? null : new Eve.Npc.BeltRats(npcAuthorityOf, beltRats, type => Eve.Npc.NpcHull.HasHitPoints(statics.Type(type))) };
+        Space = new SpaceSessions(Sim, Ships, statics, stations, systems, () => Now, Log.Add, protection, jumpCloak, localTimers, spaceItems: SpaceItems) { Registry = Registry, RookieShipOfRace = race => catalog.Race(race)?.ShipTypeId, Npcs = new Eve.Npc.NpcSelector(npcAuthorityOf), NpcWrecks = npcLoot ? new NpcWrecks(_ => LootTable, () => Task.FromResult(new Eve.Npc.NpcLoot(LootPool)), Ships, () => 0) : null, BeltRats = beltRats is null ? null : new Eve.Npc.BeltRats(npcAuthorityOf, beltRats, type => Eve.Npc.NpcHull.HasHitPoints(statics.Type(type))) };
         Space.UseBounties(Bounties);
         Scheduler = new Eve.Scheduler.DurableScheduler(source, () => Now, null, _schemas[7]);
+        Space.TimedActions = Scheduler;
+        Scheduler.Register(SpaceSessions.ShipSelfDestructJobKind, async (context, token) =>
+        {
+            var countdown = context.Payload<Eve.Services.ShipSelfDestructCountdown>()
+                ?? throw new InvalidDataException("A ship self-destruct deadline has no payload.");
+            await Space.CompleteShipSelfDestructAsync(countdown, token);
+        });
         Containers = new SpaceContainers(Sim, Ships, Items, SpaceItems, new Eve.Ships.PgWorkCycleLedger(source, _schemas[6]), new EventBusFacts(Events), statics, Space, () => Now, Log.Add, deployed: Deployed, scheduler: Scheduler);
         Scheduler.Register(SpaceContainers.AnchorJob, async (context, token) => await Containers.AnchorAsync(context.Payload<SpaceContainers.DisruptorAnchorDue>()!.DeployableId, token));
         Scheduler.Register(SpaceContainers.ObservatoryPingJob, async (context, token) => await Containers.PingObservatoryAsync(context.Payload<SpaceContainers.ObservatoryPingDue>()!.DeployableId, token));
@@ -170,10 +177,7 @@ private readonly Dictionary<long, ClientSession> _fleetSessions = new();
     /// <summary>The schema of the rig's event bus (a restarted bus over the same cursors is made over it).</summary>
     public string EventsSchema => _schemas[8];
 
-    /// <summary>The Eve.Structures schema of this rig (ST-1 d tests).</summary>
     public string StructureSchema => _schemas[^1];
-
-
 
     /// <summary>What every NPC leaves when the rig has loot (<c>npcLoot</c>): a stack of seven to nine of the first type of <see cref="LootPool"/>, or nothing when null (the dice always come out 0).</summary>
     public Eve.Npc.LootTable? LootTable { get; set; } = new("test_loot", "", 1, 1, 0, false, false, 7, 9, [], false);
@@ -257,7 +261,8 @@ private readonly Dictionary<long, ClientSession> _fleetSessions = new();
             CreationCatalog.Schools.Select(s => source.StarterFor(s.CorporationId)!));
 
     public static async Task<Rig> CreateAsync(TimeSpan? protection = null, TimeSpan? jumpCloak = null, bool npcLoot = false, Eve.Npc.BeltRatConfig? beltRats = null, Eve.Scheduler.LocalTimers? localTimers = null, Eve.Npc.NpcAuthority? npcAuthority = null,
-        IReadOnlyDictionary<int, Eve.Universe.ClientSystemFlags>? clientFlags = null)
+        IReadOnlyDictionary<int, Eve.Universe.ClientSystemFlags>? clientFlags = null,
+        Func<DogmaStatic, Task<DogmaStatic>>? staticsOverride = null, int? maxFleetJoinRequests = null)
     {
         CharacterNames.EnsureUnicodeSupport();
         var source = NpgsqlDataSource.Create(PgConnection.ForTest(Url!));
@@ -366,7 +371,12 @@ private readonly Dictionary<long, ClientSession> _fleetSessions = new();
         var catalog = CockroachCatalog(await CreationCatalog.LoadAsync(sde, Station));
         var creation = new CharacterCreation(
             source, characters, items, skills, await SkillCatalog.LoadAsync(sde), wallets, new StartingWallet(), catalog, modules);
-        return new Rig(source, suffix, await DogmaStatic.LoadAsync(sde), creation, catalog, await StationCatalog.LoadAsync(sde), await SolarSystemCatalog.LoadAsync(sde, clientFlags), modules, protection ?? Timeout.InfiniteTimeSpan, jumpCloak ?? Timeout.InfiniteTimeSpan, npcLoot, beltRats, localTimers, npcAuthority);
+        var statics = await DogmaStatic.LoadAsync(sde);
+        if (staticsOverride is { } customizeStatics)
+        {
+            statics = await customizeStatics(statics);
+        }
+        return new Rig(source, suffix, statics, creation, catalog, await StationCatalog.LoadAsync(sde), await SolarSystemCatalog.LoadAsync(sde, clientFlags), modules, protection ?? Timeout.InfiniteTimeSpan, jumpCloak ?? Timeout.InfiniteTimeSpan, npcLoot, beltRats, localTimers, npcAuthority, maxFleetJoinRequests);
     }
 
     public string InventorySchema => _schemas[1];

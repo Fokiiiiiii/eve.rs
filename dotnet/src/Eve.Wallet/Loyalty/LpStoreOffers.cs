@@ -151,7 +151,6 @@ public sealed class LpStoreOfferStore
 
 /// <summary>
 /// The official ESI loyalty store route (<c>GET /loyalty/stores/{corporation_id}/offers</c>, tranquility). It is the only offer
-/// source: the SDE build holds no LP offer rows (DEVIATIONS "Agents slice AG-2, A9").
 /// </summary>
 public sealed class EsiLpStoreOffers(HttpClient http, Uri baseUri)
 {

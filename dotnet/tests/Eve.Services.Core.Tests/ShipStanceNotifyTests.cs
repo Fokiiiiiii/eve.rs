@@ -7,7 +7,6 @@ namespace Eve.Services.Core.Tests;
 
 /// <summary>
 /// A stance set answers after its commit: <c>OnStanceActive</c> (shipID, stanceID) goes to the pilot, then a ship in space is sent again. A stance that did not
-/// change announces nothing (EveJS <c>shipStanceRuntime.js</c> <c>setShipStance</c>: the notification follows the replacement of the hidden modifier item).
 /// </summary>
 public sealed class ShipStanceNotifyTests
 {

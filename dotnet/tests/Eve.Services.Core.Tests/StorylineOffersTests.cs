@@ -7,7 +7,6 @@ using Npgsql;
 namespace Eve.Services.Core.Tests;
 
 /// <summary>
-/// The storyline offer path: the 16th completion makes one storyline trade due at a storyline agent of the faction; the offer is picked, a decline keeps
 /// the pending count, and the acceptance marks it made.
 /// </summary>
 public class StorylineOffersTests

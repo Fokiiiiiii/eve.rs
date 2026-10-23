@@ -48,7 +48,12 @@ internal sealed class Rig : IAsyncDisposable
 
     private readonly string _schema = $"inv_{Guid.NewGuid():N}"[..20];
 
-    private Rig(NpgsqlDataSource source, DogmaStatic statics, CorporationHangarAccess? corporationHangarAccess)
+    private Rig(
+        NpgsqlDataSource source,
+        DogmaStatic statics,
+        CorporationHangarAccess? corporationHangarAccess,
+        Func<Eve.Services.ClientSession, long, CancellationToken, ValueTask<ControlledStructureInventory?>>? controlledStructureInventory,
+        Func<long, CancellationToken, ValueTask<DockableAssetLocation?>>? dockableAssetLocation)
     {
         Source = source;
         Statics = statics;
@@ -58,7 +63,11 @@ internal sealed class Rig : IAsyncDisposable
         Modules = new PgModuleStateStore(source, _schema + "f");
         Ships = new CharacterShips(source, statics, Characters, Items, Skills, Modules);
         Service = new InvBrokerService(Items, new ItemTypeCatalog(new SdeReader(source)), Stations, Ships, statics,
-            () => ClockMs, corporationHangarAccess: corporationHangarAccess);
+            () => ClockMs, corporationHangarAccess: corporationHangarAccess,
+            controlledStructureInventory: controlledStructureInventory,
+            dockableAssetLocation: dockableAssetLocation,
+            crystalDamage: async (itemIds, token) => (await Modules.ModuleConditionsAsync(itemIds, token))
+                .ToDictionary(entry => entry.Key, entry => entry.Value.Damage));
     }
 
     /// <summary>Ships that these reads never ask anything of.</summary>
@@ -81,12 +90,18 @@ internal sealed class Rig : IAsyncDisposable
 
     public InvBrokerService Service { get; }
 
-    public static async Task<Rig> CreateAsync(bool activeShip = false, CorporationHangarAccess? corporationHangarAccess = null, int characterTypeId = 1)
+    public static async Task<Rig> CreateAsync(
+        bool activeShip = false,
+        CorporationHangarAccess? corporationHangarAccess = null,
+        int characterTypeId = 1,
+        Func<Eve.Services.ClientSession, long, CancellationToken, ValueTask<ControlledStructureInventory?>>? controlledStructureInventory = null,
+        Func<long, CancellationToken, ValueTask<DockableAssetLocation?>>? dockableAssetLocation = null)
     {
         var source = NpgsqlDataSource.Create(PgConnection.ForTest(Url!));
         var sde = new SdeReader(source);
         Assert.True(await sde.BuildAsync() is not null, "no SDE is loaded: run `cargo run -p eve-sde -- ensure --pg $EVE_PG_URL`");
-        var rig = new Rig(source, await DogmaStatic.LoadAsync(sde), corporationHangarAccess);
+        var rig = new Rig(source, await DogmaStatic.LoadAsync(sde), corporationHangarAccess,
+            controlledStructureInventory, dockableAssetLocation);
         await PgItemStore.MigrateAsync(source, rig._schema);
         await PgCharacterStore.MigrateAsync(source, rig._schema + "c");
         await PgSkillStore.MigrateAsync(source, rig._schema + "s");
@@ -94,7 +109,6 @@ internal sealed class Rig : IAsyncDisposable
         await rig.SeedCharacterAsync(activeShip, characterTypeId);
         return rig;
     }
-
 
     public const long Corporation = 1_000_001;
 
@@ -357,8 +371,7 @@ public class InvBrokerTests
         Assert.Equal([ship], rows.Select(r => ((PyLong)r.Values[0]).Value));
     }
 
-
-    [PgFact]
+[PgFact]
     public async Task Station_inventory_rpcs_list_owned_items_and_set_a_ship_label()
     {
         await using var rig = await Rig.CreateAsync();
@@ -366,8 +379,14 @@ public class InvBrokerTests
         var cargo = await rig.AddAsync(Rig.Tritanium, Rig.Character, ship, flag: 5, quantity: 10);
         var session = Rig.Session();
 
-        var stationIds = Assert.IsType<PyList>(await rig.CallAsync(session, "ListStations"));
-        Assert.Contains(InventoryWire.Id(Rig.Station), stationIds.Items);
+        var stationRowset = Assert.IsType<PyObject>(await rig.CallAsync(session, "ListStations"));
+        Assert.Equal("eve.common.script.sys.rowset.Rowset", JsSemantics.StringValue(stationRowset.Name));
+        var stationArgs = Assert.IsType<PyDict>(stationRowset.Args);
+        var stationRows = Assert.IsType<PyList>(stationArgs.Entries[3].Value);
+        Assert.Single(stationRows.Items);
+        var stationLines = Assert.IsType<PyList>(stationArgs.Entries.Single(entry => entry.Key == new PyStr("lines")).Value);
+        Assert.Contains(stationLines.Items, row => row is PyTuple tuple && tuple.Items[0] == InventoryWire.Id(Rig.Station));
+
         var stationItems = Rows(await rig.CallAsync(session, "ListStationItems", null, new PyLong(Rig.Station)));
         Assert.Contains(stationItems, row => PackedItemId(row) == ship);
         Assert.Equal(PyBool.True, await rig.CallAsync(session, "IsMyItemAtDockableLocation", null, new PyLong(ship), new PyLong(Rig.Station)));
@@ -430,6 +449,28 @@ public class InvBrokerTests
         Assert.False((await rig.Items.GetAsync(itemId))!.Singleton);
     }
 
+    [PgFact]
+    public async Task Repackaging_refuses_items_owned_by_another_character()
+    {
+        await using var rig = await Rig.CreateAsync(activeShip: true);
+        var foreignItemId = await rig.AddAsync(Rig.Tritanium, Rig.Character + 1, Rig.Station, singleton: true);
+        var service = new RepackagingService(rig.Service);
+        var request = new PyDict([
+            new(new PyLong(Rig.Station), new PyList([
+                PyTuple.Of(new PyLong(foreignItemId), new PyLong(Rig.Station)),
+            ])),
+        ]);
+
+        var result = await ((IService)service).CallAsync(new ServiceCall
+        {
+            Method = "RepackageItems",
+            Session = Rig.Session(),
+            Args = [request],
+        });
+
+        Assert.Equal(PyNone.Instance, result);
+        Assert.True((await rig.Items.GetAsync(foreignItemId))!.Singleton);
+    }
 
     [PgFact]
     public async Task Corporation_ship_inventory_reads_and_docked_add_and_multiadd_enforce_division_access()
@@ -504,8 +545,12 @@ public class InvBrokerTests
         var cargo = await rig.AddAsync(Rig.Tritanium, Rig.Character, ship, flag: 5, quantity: 10);
         var session = Rig.Session();
 
-        var stations = Assert.IsType<PyList>(await rig.CallAsync(session, "ListStations"));
-        Assert.Contains(InventoryWire.Id(Rig.Station), stations.Items);
+        var stations = Assert.IsType<PyObject>(await rig.CallAsync(session, "ListStations"));
+        Assert.Equal("eve.common.script.sys.rowset.Rowset", JsSemantics.StringValue(stations.Name));
+        var assetWorth = Assert.IsType<PyTuple>(await rig.CallAsync(session, "GetAssetWorth"));
+        Assert.Equal(2, assetWorth.Items.Count);
+        Assert.DoesNotContain(PyNone.Instance, assetWorth.Items);
+
         var stationItems = Rows(await rig.CallAsync(session, "ListStationItems", null, new PyLong(Rig.Station)));
         Assert.Contains(stationItems, row => PackedItemId(row) == ship);
         Assert.Equal(PyBool.True, await rig.CallAsync(session, "IsMyItemAtDockableLocation", null, new PyLong(ship), new PyLong(Rig.Station)));
@@ -519,6 +564,125 @@ public class InvBrokerTests
     }
 
     [PgFact]
+    public async Task Global_assets_bind_lists_personal_station_assets_and_nested_container_items()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var ship = await rig.AddAsync(Rig.Cockroach, Rig.Character, Rig.Station, singleton: true);
+        var cargo = await rig.AddAsync(Rig.Tritanium, Rig.Character, ship, flag: 5, quantity: 10);
+        var session = Rig.Session();
+
+        var binding = Assert.IsType<PyTuple>(await rig.CallAsync(
+            session,
+            "MachoBindObject",
+            null,
+            new PyTuple([new PyLong(Rig.Character), new PyLong(10002)]),
+            new PyTuple([new PyStr("ListStations"), new PyTuple([]), PyNone.Instance])));
+        var opened = Assert.IsType<PySubStruct>(binding.Items[0]);
+        var oid = Rig.OidOf(opened);
+        Assert.IsType<PyObject>(binding.Items[1]);
+
+        Assert.Contains(Rows(await rig.CallAsync(session, "List", oid)), row => PackedItemId(row) == ship);
+        Assert.Contains(Rows(await rig.CallAsync(session, "ListStationItems", oid, new PyLong(Rig.Station))),
+            row => PackedItemId(row) == ship);
+        var all = Rows(await rig.CallAsync(session, "ListIncludingContainers", oid));
+        Assert.Contains(all, row => PackedItemId(row) == ship);
+        Assert.Contains(all, row => PackedItemId(row) == cargo);
+        Assert.Equal(2, Assert.IsType<PyTuple>(await rig.CallAsync(session, "GetAssetWorth", oid)).Items.Count);
+        Assert.Equal(PyNone.Instance, await rig.CallAsync(Rig.Session(id: 2), "List", oid));
+    }
+
+    [PgFact]
+    public async Task Global_assets_resolve_structure_roots_and_nested_personal_items()
+    {
+        const long structureId = 4_000_000_001;
+        const long solarSystemId = 30_000_142;
+        await using var rig = await Rig.CreateAsync(
+            dockableAssetLocation: (id, _) => ValueTask.FromResult<DockableAssetLocation?>(
+                id == structureId ? new DockableAssetLocation(structureId, solarSystemId, 35832) : null));
+        var container = await rig.AddAsync(Rig.Cockroach, Rig.Character, structureId, flag: 5, singleton: true);
+        var nestedItem = await rig.AddAsync(Rig.Tritanium, Rig.Character, container, flag: 5, quantity: 10);
+        var session = Rig.Session();
+
+        var binding = Assert.IsType<PyTuple>(await rig.CallAsync(
+            session,
+            "MachoBindObject",
+            null,
+            new PyTuple([new PyLong(Rig.Character), new PyLong(10002)]),
+            new PyTuple([new PyStr("ListStations"), new PyTuple([]), PyNone.Instance])));
+        var oid = Rig.OidOf(Assert.IsType<PySubStruct>(binding.Items[0]));
+
+        var stationRowset = Assert.IsType<PyObject>(await rig.CallAsync(session, "ListStations", oid));
+        var stationArgs = Assert.IsType<PyDict>(stationRowset.Args);
+        var stationLines = Assert.IsType<PyList>(stationArgs.Entries.Single(entry => entry.Key == new PyStr("lines")).Value);
+        var stationRow = Assert.IsType<PyTuple>(Assert.Single(stationLines.Items));
+        Assert.Equal(structureId, Assert.IsType<PyLong>(stationRow.Items[0]).Value);
+        Assert.Equal(solarSystemId, Assert.IsType<PyInt>(stationRow.Items[1]).Value);
+        Assert.Equal(1, Assert.IsType<PyInt>(stationRow.Items[3]).Value);
+
+        var topLevel = Rows(await rig.CallAsync(session, "List", oid));
+        Assert.Contains(topLevel, row => PackedItemId(row) == container);
+        Assert.DoesNotContain(topLevel, row => PackedItemId(row) == nestedItem);
+
+        var stationItems = Rows(await rig.CallAsync(session, "ListStationItems", oid, new PyLong(structureId)));
+        Assert.Contains(stationItems, row => PackedItemId(row) == container);
+
+        var all = Rows(await rig.CallAsync(session, "ListIncludingContainers", oid));
+        Assert.Contains(all, row => PackedItemId(row) == container);
+        Assert.Contains(all, row => PackedItemId(row) == nestedItem);
+    }
+
+    [PgFact]
+    public async Task Crystal_damage_lists_only_owned_damageable_crystals_from_persisted_module_conditions()
+    {
+        await using var rig = await Rig.CreateAsync();
+        const int crystalTypeId = 12552;
+        await rig.Statics.EnsureTypesAsync([crystalTypeId]);
+        var attributeId = Assert.IsType<int>(rig.Statics.AttributeId("crystalsGetDamaged"));
+        Assert.True(rig.Statics.Type(crystalTypeId)!.Attributes.GetValueOrDefault(attributeId) > 0);
+
+        var damagedCrystal = await rig.AddAsync(crystalTypeId, Rig.Character, Rig.Station, singleton: true);
+        var freshCrystal = await rig.AddAsync(crystalTypeId, Rig.Character, Rig.Station, singleton: true);
+        var foreignCrystal = await rig.AddAsync(crystalTypeId, Rig.Character + 1, Rig.Station, singleton: true);
+        var tritanium = await rig.AddAsync(Rig.Tritanium, Rig.Character, Rig.Station);
+        await rig.Modules.SetModuleConditionsAsync(new Dictionary<long, Eve.Fitting.ModuleCondition>
+        {
+            [damagedCrystal] = new(0.375, 0, 0, false),
+        });
+
+        var result = Assert.IsType<PyDict>(await rig.CallAsync(
+            Rig.Session(), "GetDamageForCrystals", null,
+            PyValue.PythonSet([new PyLong(damagedCrystal), new PyLong(freshCrystal), new PyLong(foreignCrystal), new PyLong(tritanium)])));
+        Assert.Equal(new PyReal(0.375), Assert.Single(result.Entries, entry => entry.Key == new PyLong(damagedCrystal)).Value);
+        Assert.Equal(new PyReal(0), Assert.Single(result.Entries, entry => entry.Key == new PyLong(freshCrystal)).Value);
+        Assert.DoesNotContain(result.Entries, entry => entry.Key == new PyLong(foreignCrystal));
+        Assert.DoesNotContain(result.Entries, entry => entry.Key == new PyLong(tritanium));
+    }
+
+    [PgFact]
+    public async Task Container_open_validation_accepts_owned_items_and_expires_foreign_location_cache_entries()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var session = Rig.Session();
+        var ownContainer = await rig.AddAsync(Rig.Tritanium, Rig.Character, Rig.Station, singleton: true);
+        var foreignContainer = await rig.AddAsync(Rig.Tritanium, Rig.Character + 1, Rig.Station, singleton: true);
+        var remoteOwnedContainer = await rig.AddAsync(Rig.Tritanium, Rig.Character, Rig.OtherStation, singleton: true);
+        var remoteForeignContainer = await rig.AddAsync(Rig.Tritanium, Rig.Character + 1, Rig.OtherStation, singleton: true);
+        var hangar = await rig.HangarAsync(session);
+        var ownRow = Assert.Single(Rows(await rig.CallAsync(session, "List", hangar)));
+
+        Assert.Equal(PyBool.True, await rig.CallAsync(session, "ValidateItemCanBeOpened", null, ownRow));
+        Assert.Equal(PyBool.False, await rig.CallAsync(session, "ValidateItemCanBeOpened", null, new PyLong(foreignContainer)));
+        Assert.Equal(PyBool.False, await rig.CallAsync(session, "ValidateItemCanBeOpened", null, new PyLong(ownContainer + 1000)));
+        Assert.Equal(PyBool.False, await rig.CallAsync(session, "ValidateItemCanBeOpened", null, new PyLong(remoteOwnedContainer)));
+        Assert.Equal(PyBool.False, await rig.CallAsync(session, "ValidateItemCanBeOpened", null, new PyLong(remoteForeignContainer)));
+
+        var invalid = Assert.IsType<PyList>(await rig.CallAsync(session, "ValidateItemListCanBeOpened", null,
+            PyList.Of(ownRow, new PyLong(foreignContainer), new PyLong(remoteOwnedContainer), new PyLong(remoteForeignContainer))));
+        Assert.Equal(new PyList([new PyLong(foreignContainer), new PyLong(remoteOwnedContainer), new PyLong(remoteForeignContainer)]), invalid);
+        Assert.Equal(PyBool.True, await rig.CallAsync(session, "ValidateItemCanBeOpened", null, PyNone.Instance));
+    }
+
+    [PgFact]
     public async Task The_station_is_the_item_the_hangar_is_in_as_a_util_row_and_as_a_packed_row()
     {
         await using var rig = await Rig.CreateAsync();
@@ -528,7 +692,7 @@ public class InvBrokerTests
         var row = (PyObject)await rig.CallAsync(session, "GetItem", hangar);
         Assert.Equal("util.Row", JsSemantics.StringValue(row.Name));
         var line = (PyTuple)((PyDict)row.Args).Entries[1].Value;
-        // the station: its type, its owner, itself as the place, no flag, a stack of one, group 15 of category 3
+
         Assert.Equal(
             new PyTuple([new PyInt(Rig.Station), new PyInt(92885), new PyInt(1000413), new PyInt(Rig.Station), new PyInt(0), new PyInt(1), new PyInt(15), new PyInt(3), new PyStr(""), new PyInt(1), new PyInt(1)]),
             line);
@@ -602,7 +766,6 @@ public class InvBrokerTests
         Assert.Empty(Rows(await rig.CallAsync(session, "List", inventory)));
         Assert.Equal(PyNone.Instance, await rig.CallAsync(session, "GetSelfInvItem", inventory));
     }
-
 
     [PgFact]
     public async Task Owned_docked_containers_can_be_opened_listed_and_traversed_when_nested()
@@ -699,7 +862,6 @@ public class InvBrokerTests
         Assert.NotEqual(first, second);
     }
 
-
     [PgFact]
     public async Task MultiMerge_moves_the_requested_quantity_between_owned_stacks()
     {
@@ -716,6 +878,25 @@ public class InvBrokerTests
         Assert.Equal(25, (await rig.Items.GetAsync(destination))!.Quantity);
     }
 
+    [PgFact]
+    public async Task MultiMerge_refuses_negative_quantity_before_mutating_stacks()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var ship = await rig.AddAsync(Rig.Cockroach, Rig.Character, Rig.Station, singleton: true);
+        var source = await rig.AddAsync(Rig.Tritanium, Rig.Character, ship, flag: 5, quantity: 15);
+        var destination = await rig.AddAsync(Rig.Tritanium, Rig.Character, ship, flag: 5, quantity: 20);
+        var session = Rig.Session();
+        var inventory = Rig.OidOf(await rig.CallAsync(session, "GetInventoryFromId", null, new PyLong(ship)));
+        var validOperation = Py.Tuple(new PyLong(source), new PyLong(destination), new PyInt(5));
+        var invalidOperation = Py.Tuple(new PyLong(source), new PyLong(destination), new PyInt(-1));
+
+        var refusal = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await rig.CallAsync(session, "MultiMerge", inventory, new PyList([validOperation, invalidOperation]), new PyLong(ship)));
+
+        Assert.Equal("INVENTORY_OPERATION_INVALID", refusal.Error.UserErrorMessage);
+        Assert.Equal(15, (await rig.Items.GetAsync(source))!.Quantity);
+        Assert.Equal(20, (await rig.Items.GetAsync(destination))!.Quantity);
+    }
 
     [PgFact]
     public async Task A_bound_inventory_answers_only_the_session_that_opened_it_and_only_until_it_is_released()
@@ -896,14 +1077,20 @@ public class InvBrokerTests
     private sealed class FakeSpace : Eve.Services.Ships.ISpaceContainers
     {
         public bool? Answer { get; set; }
+        public Item? OpenResult { get; set; }
 
         public List<(IReadOnlyList<long> Ids, long Source, long Destination)> Asked { get; } = [];
+        public List<long> Opened { get; } = [];
 
         public bool IsInSpace(ClientSession session) => true;
 
         public int? SolarSystemOf(ClientSession session) => 30100032;
 
-        public Task<Item?> OpenAsync(ClientSession session, long containerId, CancellationToken cancellationToken) => Task.FromResult<Item?>(null);
+        public Task<Item?> OpenAsync(ClientSession session, long containerId, CancellationToken cancellationToken)
+        {
+            Opened.Add(containerId);
+            return Task.FromResult(OpenResult);
+        }
 
         public Task<long?> MoveAsync(ClientSession session, long itemId, long sourceId, long destinationId, long? quantity, CancellationToken cancellationToken) => Task.FromResult<long?>(null);
 
@@ -914,6 +1101,162 @@ public class InvBrokerTests
         }
 
         public Task<IReadOnlyList<long>> JettisonAsync(ClientSession session, IReadOnlyList<long> itemIds, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<long>>([]);
+    }
+
+    private sealed class FakeCustoms(long officeId) : ICustomsOffices
+    {
+        public int ImportCalls { get; private set; }
+        public int MoveCalls { get; private set; }
+        public ValueTask<bool> IsOfficeAsync(long requestedOfficeId, CancellationToken cancellationToken) => ValueTask.FromResult(requestedOfficeId == officeId);
+        public double OfficeCapacity => 35_000;
+        public ValueTask ImportExportAsync(ClientSession session, long requestedOfficeId, long launchpadId,
+            IReadOnlyDictionary<long, long> imports, IReadOnlyDictionary<int, long> exports, double taxRate, CancellationToken cancellationToken) =>
+            ImportCalled();
+        public ValueTask<long> MoveToOfficeAsync(ClientSession session, long requestedOfficeId, long itemId, long quantity, CancellationToken cancellationToken) =>
+            MoveCalled();
+
+        private ValueTask ImportCalled() { ImportCalls++; return ValueTask.CompletedTask; }
+        private ValueTask<long> MoveCalled() { MoveCalls++; return ValueTask.FromResult(0L); }
+    }
+
+    [PgFact]
+    public async Task A_customs_office_inventory_is_bound_only_after_the_space_open_check()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var space = new FakeSpace();
+        var officeId = 1_200_040_491_241L;
+        var service = new InvBrokerService(rig.Items, new ItemTypeCatalog(new SdeReader(rig.Source)), Rig.Stations,
+            Rig.Unused(rig.Source, rig.Items, new DogmaStatic([], [], [])), new DogmaStatic([], [], []), () => 1, space)
+        {
+            Customs = new FakeCustoms(officeId),
+        };
+        var session = Rig.Session(station: null);
+        session.Set("shipid", new PyLong(9_988_400_000_001));
+        session.Set("solarsystemid", new PyInt(30100032));
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(() => service.GetInventoryFromId(new ServiceCall
+        {
+            Method = "GetInventoryFromId",
+            Args = [new PyLong(officeId)],
+            Session = session,
+        }).AsTask());
+
+        Assert.Equal("FakeItemNotFound", error.Error.UserErrorMessage);
+        Assert.Equal([officeId], space.Opened);
+    }
+
+    [PgFact]
+    public async Task Customs_import_export_refuses_oversized_and_malformed_dictionaries_before_callback()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var officeId = 1_200_040_491_241L;
+        var space = new FakeSpace
+        {
+            OpenResult = new Item(officeId, 2233, 1_000_125, 30100032, 0, 1, true, null),
+        };
+        var customs = new FakeCustoms(officeId);
+        var service = new InvBrokerService(rig.Items, new ItemTypeCatalog(new SdeReader(rig.Source)), Rig.Stations,
+            Rig.Unused(rig.Source, rig.Items, new DogmaStatic([], [], [])), new DogmaStatic([], [], []), () => 1, space)
+        {
+            Customs = customs,
+        };
+        var session = Rig.Session(station: null);
+        session.Set("shipid", new PyLong(9_988_400_000_001));
+        session.Set("solarsystemid", new PyInt(30100032));
+        var binding = await service.GetInventoryFromId(new ServiceCall
+        {
+            Method = "GetInventoryFromId",
+            Args = [new PyLong(officeId)],
+            Session = session,
+        });
+        var oid = Rig.OidOf(binding);
+        var tooMany = new PyDict([.. Enumerable.Range(1, 501).Select(index =>
+            new KeyValuePair<PyValue, PyValue>(new PyLong(index), new PyLong(1)))]);
+
+        var limit = await Assert.ThrowsAsync<MachoWrappedException>(() => service.ImportExportWithPlanet(new ServiceCall
+        {
+            Method = "ImportExportWithPlanet",
+            Args = [new PyLong(77), tooMany, new PyDict([]), new PyReal(0.1)],
+            Session = session,
+            BoundObjectId = oid,
+        }).AsTask());
+        Assert.Equal("INVENTORY_BULK_LIMIT_EXCEEDED", limit.Error.UserErrorMessage);
+
+        var malformed = new PyDict([new(new PyLong(-1), new PyLong(-2))]);
+        var invalid = await Assert.ThrowsAsync<MachoWrappedException>(() => service.ImportExportWithPlanet(new ServiceCall
+        {
+            Method = "ImportExportWithPlanet",
+            Args = [new PyLong(77), malformed, new PyDict([]), new PyReal(double.NaN)],
+            Session = session,
+            BoundObjectId = oid,
+        }).AsTask());
+        Assert.Equal("INVENTORY_OPERATION_INVALID", invalid.Error.UserErrorMessage);
+
+        var nonFiniteRate = await Assert.ThrowsAsync<MachoWrappedException>(() => service.ImportExportWithPlanet(new ServiceCall
+        {
+            Method = "ImportExportWithPlanet",
+            Args = [new PyLong(77), new PyDict([]), new PyDict([]), new PyReal(double.NaN)],
+            Session = session,
+            BoundObjectId = oid,
+        }).AsTask());
+        Assert.Equal("INVENTORY_OPERATION_INVALID", nonFiniteRate.Error.UserErrorMessage);
+
+        var wrongShape = await Assert.ThrowsAsync<MachoWrappedException>(() => service.ImportExportWithPlanet(new ServiceCall
+        {
+            Method = "ImportExportWithPlanet",
+            Args = [new PyLong(77), new PyStr("imports"), new PyDict([]), new PyReal(0.1)],
+            Session = session,
+            BoundObjectId = oid,
+        }).AsTask());
+        Assert.Equal("INVENTORY_OPERATION_INVALID", wrongShape.Error.UserErrorMessage);
+        Assert.Equal(0, customs.ImportCalls);
+    }
+
+    [PgFact]
+    public async Task Customs_office_bound_mutations_recheck_space_access()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var officeId = 1_200_040_491_241L;
+        var space = new FakeSpace
+        {
+            OpenResult = new Item(officeId, 2233, 1_000_125, 30100032, 0, 1, true, null),
+        };
+        var customs = new FakeCustoms(officeId);
+        var service = new InvBrokerService(rig.Items, new ItemTypeCatalog(new SdeReader(rig.Source)), Rig.Stations,
+            Rig.Unused(rig.Source, rig.Items, new DogmaStatic([], [], [])), new DogmaStatic([], [], []), () => 1, space)
+        {
+            Customs = customs,
+        };
+        var session = Rig.Session(station: null);
+        session.Set("shipid", new PyLong(9_988_400_000_001));
+        session.Set("solarsystemid", new PyInt(30100032));
+        var binding = await service.GetInventoryFromId(new ServiceCall
+        {
+            Method = "GetInventoryFromId",
+            Args = [new PyLong(officeId)],
+            Session = session,
+        });
+        var oid = Rig.OidOf(binding);
+        space.OpenResult = null;
+
+        var move = await service.Add(new ServiceCall
+        {
+            Method = "Add",
+            Args = [new PyLong(77), new PyLong(9_988_400_000_001)],
+            Session = session,
+            BoundObjectId = oid,
+        });
+        Assert.Equal(PyNone.Instance, move);
+        var import = await Assert.ThrowsAsync<MachoWrappedException>(() => service.ImportExportWithPlanet(new ServiceCall
+        {
+            Method = "ImportExportWithPlanet",
+            Args = [],
+            Session = session,
+            BoundObjectId = oid,
+        }).AsTask());
+
+        Assert.Equal("CustomsOfficeAccessDenied", import.Error.UserErrorMessage);
+        Assert.Equal([officeId, officeId, officeId], space.Opened);
+        Assert.Equal((0, 0), (customs.MoveCalls, customs.ImportCalls));
     }
 
     [PgFact]
@@ -970,7 +1313,6 @@ public class InvBrokerTests
         Assert.Equal(InventoryWire.DescriptorHeader, service.GetItemDescriptor(new ServiceCall { Method = "GetItemDescriptor", Args = [], Session = new ClientSession() }));
     }
 
-
     [PgFact]
     public async Task Available_turret_slots_are_a_python_integer_zero_when_the_bound_session_has_no_character()
     {
@@ -980,7 +1322,6 @@ public class InvBrokerTests
 
         Assert.Equal(new PyInt(0), await rig.CallAsync(session, "GetAvailableTurretSlots", hangar));
     }
-
 
     [PgFact]
     public async Task Available_turret_slots_without_a_bound_object_uses_the_prepared_active_ship()

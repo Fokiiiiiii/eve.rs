@@ -61,14 +61,18 @@ internal sealed partial class CharacterServicesComposition
         ];
         services = [.. services, .. SpaceRpc()];
         services = [.. services, new RepackagingService(services.OfType<InvBrokerService>().Single())];
-          services = [.. services, new Eve.Services.Corporations.BillMgrService(
-              corporations,
-              corporationOfficeStore,
-              economyWallets,
-              stationId => stations.Get(stationId)?.OwnerId,
-              now)];
+        services = [.. services, new Eve.Services.Corporations.BillMgrService(
+            corporations,
+            corporationOfficeStore,
+            economyWallets,
+            stationId => stations.Get(stationId)?.OwnerId,
+            now)];
+        var sharedNotifier = new Eve.Services.Core.SharedFolderNotifier(bookmarks, MemberLists, characterSessions, AffiliationsOf);
+        allianceRegistry.PlanSharedFolderAffiliationChangesAsync = sharedNotifier.PlanAffiliationChangesAsync;
         services = [.. services, allianceRegistry];
-        services = [.. services, new Eve.Services.Core.BookmarkRefusals(new Eve.Services.Core.AccessGroupBookmarkMgrService(bookmarks, StaticBookmarkTarget))];
+        UpkeepSharedFolders(sharedNotifier);
+        services = [.. services, new Eve.Services.Core.OwnerGroupRefusals(new Eve.Services.Core.OwnerGroupManagerService(accessGroups, OwnerKind, characterSessions, sharedNotifier))];
+        services = [.. services, new Eve.Services.Core.BookmarkRefusals(new Eve.Services.Core.AccessGroupBookmarkMgrService(bookmarks, StaticBookmarkTarget, MemberLists, characterSessions, sharedNotifier))];
         return Task.CompletedTask;
     }
 }

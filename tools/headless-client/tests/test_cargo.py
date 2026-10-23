@@ -22,7 +22,7 @@ from tests import test_login_to_character as base
 from tests.test_ammo import canon, canon_events
 from tests.test_others import watch
 from tests.test_target import compare_answer, plain_race
-from tests.test_undock import STATION, SYSTEM, arrive, compare_events, ids, outcome
+from tests.test_undock import STATION, SYSTEM, arrive, compare_events, compare_events_by_source, ids, outcome
 from tests.test_weapon import slims_in
 
 CARGO = base.load("cargo.json")
@@ -30,7 +30,6 @@ pytestmark = pytest.mark.skipif(not base.LIVE, reason="set EVE_LIVE_HOST=host:po
 
 TRITANIUM = 34
 LAST_DOCKED_STEP = "the pilot asks for its hold after"
-
 
 def test_a_pilot_fills_and_empties_its_hold_as_in_the_reference():
     race = CARGO["races"][0]
@@ -66,7 +65,7 @@ def test_a_pilot_fills_and_empties_its_hold_as_in_the_reference():
             return raw
 
         def base_events(recorded: list, got: list, label: str) -> list[str]:
-            return compare_events(canon_events(recorded, seen_recorded, known), canon_events(got, seen_ids), label, {})
+            return compare_events_by_source(canon_events(recorded, seen_recorded, known), canon_events(got, seen_ids), label, {})
 
         def stacks(handle, flag=None) -> dict:
             rows = who.call_bound(handle, "List", flag) if flag else who.call_bound(handle, "List")

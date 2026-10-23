@@ -1,8 +1,5 @@
-//! `behaviors/utility/owner.py`.
-
 use crate::tree::TaskCtx;
 
-/// `get_owner_id`: the owner of my behavior group, else of my slim item.
 pub fn get_owner_id(t: &mut TaskCtx<'_, '_>) -> Option<i64> {
     let group_id = t.ctx().my_entity_group_id;
     if let Some(owner) = group_id.and_then(|id| t.world().behavior_group_owner_id(id)) {

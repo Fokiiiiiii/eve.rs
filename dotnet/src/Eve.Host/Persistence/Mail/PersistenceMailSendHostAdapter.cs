@@ -349,7 +349,7 @@ public sealed class PersistenceMailSendHostAdapter(
             Eve.Services.Crimewatch.KillRightNotificationTypes.MiscGroup,
             data, idempotencyKey, cancellationToken);
 
-    /// <summary>The bounty placement notification (EveJS <c>bountyNotifications.js</c>): the placer is the sender, the group is bounties (10).</summary>
+
     public Task WriteBountyPlacedNotificationAsync(
         long recipientId,
         long placerId,
@@ -359,7 +359,34 @@ public sealed class PersistenceMailSendHostAdapter(
         CancellationToken cancellationToken) =>
         WriteNotificationAsync(recipientId, placerId, typeId, BountiesGroupId, data, idempotencyKey, cancellationToken);
 
-    /// <summary>The notification group of bounties (EveJS <c>NOTIFICATION_GROUP.BOUNTIES</c>).</summary>
+    public Task WriteJumpCloneDeletedNotificationAsync(
+        long characterId,
+        long cloneId,
+        IReadOnlyList<int> implantTypeIds,
+        CancellationToken cancellationToken)
+    {
+        if (characterId <= 0)
+            throw new ArgumentOutOfRangeException(nameof(characterId));
+        if (cloneId <= 0)
+            throw new ArgumentOutOfRangeException(nameof(cloneId));
+
+        var data = new JsonObject
+        {
+            ["locationOwnerID"] = characterId,
+            ["destroyerID"] = characterId,
+            ["typeIDs"] = new JsonArray(implantTypeIds.Select(typeId => (JsonNode?)JsonValue.Create(typeId)).ToArray()),
+        };
+        return WriteNotificationAsync(
+            characterId,
+            characterId,
+            typeId: 56,
+            groupId: 4,
+            data,
+            $"jump-clone-deleted:{characterId}:{cloneId}",
+            cancellationToken);
+    }
+
+
     private const int BountiesGroupId = 10;
 
     public Task WriteAllianceMaintenanceBillNotificationAsync(
@@ -375,7 +402,7 @@ public sealed class PersistenceMailSendHostAdapter(
     // Structure delivery holds the same gate until its SQL commit and cache publication finish.
     public SemaphoreSlim MutationGate => _sendGate;
 
-    /// <summary>The located notification (type 69, group agents), sent by the agent; the key keeps one locate to one notification.</summary>
+
     public Task WriteLocateNotificationAsync(long recipientId, long agentId, JsonObject data, string idempotencyKey, CancellationToken cancellationToken) =>
         WriteNotificationAsync(recipientId, agentId, 69, 1, data, idempotencyKey, cancellationToken);
 

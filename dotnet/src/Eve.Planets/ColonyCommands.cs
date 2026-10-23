@@ -22,6 +22,9 @@ public sealed record AddExtractorHeadCommand(long PinId, int HeadId, double Lati
 public sealed record KillExtractorHeadCommand(long PinId, int HeadId) : ColonyCommand;
 public sealed record MoveExtractorHeadCommand(long PinId, int HeadId, double Latitude, double Longitude) : ColonyCommand;
 public sealed record InstallProgramCommand(long PinId, int? TypeId, double HeadRadius) : ColonyCommand;
+public sealed record GmAddCommodityCommand(long PinId, int TypeId, long Quantity) : ColonyCommand;
+public sealed record GmConvertCommandCenterCommand(long PinId) : ColonyCommand;
+public sealed record GmForceInstallProgramCommand(long PinId, int TypeId, long CycleTime, long LifetimeTicks, long QtyPerCycle, double HeadRadius) : ColonyCommand;
 
 /// <summary>The result of a batch: the ISK it costs (non-command pins, command center upgrades) and whether the command center went.</summary>
 public sealed record CommandOutcome(long IskCost, bool Abandoned);
@@ -81,6 +84,15 @@ public sealed partial class Colony
                 case InstallProgramCommand c:
                     InstallProgram(c.PinId, c.TypeId, c.HeadRadius);
                     break;
+                case GmAddCommodityCommand c:
+                    GmAddCommodity(c.PinId, c.TypeId, c.Quantity);
+                    break;
+                case GmConvertCommandCenterCommand c:
+                    GmConvertCommandCenter(c.PinId);
+                    break;
+                case GmForceInstallProgramCommand c:
+                    GmForceInstallProgram(c.PinId, c.TypeId, c.CycleTime, c.LifetimeTicks, c.QtyPerCycle, c.HeadRadius);
+                    break;
                 default:
                     throw new PlanetRefusal("InvalidCommand");
             }
@@ -111,8 +123,6 @@ public sealed partial class Colony
     }
 
     private static (long A, long B) Ordered(long a, long b) => a > b ? (b, a) : (a, b);
-
-    // ----- pins -----
 
     /// <summary>
     /// CreatePin (clientPlanet.CreatePin, baseColony.ValidateCreatePin, clientColony.PostValidateCreatePin). Returns the ISK it
@@ -173,8 +183,6 @@ public sealed partial class Colony
 
     private IEnumerable<Link> LinksOf(long pinId) => Links.Values.Where(l => l.End1 == pinId || l.End2 == pinId).OrderBy(l => l.End1).ThenBy(l => l.End2);
 
-    // ----- links -----
-
     /// <summary>CreateLink (baseColony.ValidateCreateLink). The new link's CPU and power must fit the colony.</summary>
     public void CreateLink(long end1, long end2, int typeId, int level)
     {
@@ -216,8 +224,6 @@ public sealed partial class Colony
         }
         link.Level = level;
     }
-
-    // ----- routes -----
 
     /// <summary>CreateRoute (baseColony.ValidateCreateRoute, then PrimeRoute and OnRouteCreated).</summary>
     public void CreateRoute(long routeId, IReadOnlyList<long> path, int typeId, long quantity)
@@ -277,8 +283,6 @@ public sealed partial class Colony
         if (!Routes.Remove(routeId)) throw new PlanetRefusal("RouteDoesNotExist");
     }
 
-    // ----- processors -----
-
     /// <summary>SetSchematic (ProcessPin.InstallSchematic, SetSchematic, StimulateIdlePin, then the obsolete routes go).</summary>
     public void SetSchematic(long pinId, int schematicId)
     {
@@ -305,7 +309,6 @@ public sealed partial class Colony
         }
     }
 
-    /// <summary>UpgradeCommandCenter: the level rises, one step at a time, within the skill. Returns the ISK it costs.</summary>
     public long UpgradeCommandCenter(long pinId, int level, ColonyContext ctx)
     {
         var pin = PinOf(pinId);
@@ -317,8 +320,6 @@ public sealed partial class Colony
         Level = level;
         return cost;
     }
-
-    // ----- extractor heads and programs -----
 
     private double AreaOfInfluence(Pin ecu) => Catalog.Type(ecu.TypeId).Attr(PlanetAttr.EcuAreaOfInfluence);
 
@@ -395,8 +396,11 @@ public sealed partial class Colony
     public void InstallProgram(long pinId, int? typeId, double headRadius)
     {
         var ecu = EcuOf(pinId);
+        // a program is refused until its install cooldown ends, for a change and for a stop alike (ecuPin.CanInstallProgram)
+        if (ecu.ProgramType is not null && ecu.ExpiryTime > CurrentSimTime && ecu.InstallTime + PlanetRules.ProgramInstallCooldown > CurrentSimTime)
+            throw new PlanetRefusal("CantInstallProgramNeedsCooldown");
         if (ecu.Heads.Count < 1) typeId = null;
-        if (headRadius < PlanetRules.RadiusMin || headRadius > PlanetRules.RadiusMax) throw new PlanetRefusal("InvalidProgramRadius");
+        if (!double.IsFinite(headRadius) || headRadius < PlanetRules.RadiusMin || headRadius > PlanetRules.RadiusMax) throw new PlanetRefusal("InvalidProgramRadius");
 
         long qtyToDistribute = 0;
         long cycle = 0;
@@ -491,6 +495,47 @@ public sealed partial class Colony
         ecu.State = 0;
     }
 
+    /// <summary>
+    /// GMAddCommodity (the client's processor container, shown to ROLE_GML only): the pin takes what its own rules accept
+    /// (<c>CanAccept</c>: the free volume of storage or the demand of a processor). Nothing taken is refused.
+    /// </summary>
+    public void GmAddCommodity(long pinId, int typeId, long quantity)
+    {
+        var pin = PinOf(pinId);
+        if (!Catalog.Exists(typeId) || quantity <= 0) throw new PlanetRefusal("InvalidCommand");
+        var added = CanAccept(pin, typeId, quantity);
+        if (added <= 0) throw new PlanetRefusal("CannotImportCapacityExceeded");
+        pin.Contents[typeId] = pin.Contents.GetValueOrDefault(typeId) + added;
+    }
+
+    /// <summary>
+    /// GMConvertCommandCenter (the client's pin menu, ROLE_GML only): the command center becomes the command center type of this
+    /// planet's type. The SDE gives each command center type its planet type (the planetRestriction attribute), the same rule the
+    /// placement check uses. A planet type with no such command center is refused.
+    /// </summary>
+    public void GmConvertCommandCenter(long pinId)
+    {
+        var pin = PinOf(pinId);
+        if (pin.Kind != PinKind.CommandCenter) throw new PlanetRefusal("InvalidPinType");
+        var target = Catalog.TypesInGroup(PlanetGroups.CommandCenter)
+            .FirstOrDefault(t => t.HasAttr(PlanetAttr.PlanetRestriction) && (int)t.Attr(PlanetAttr.PlanetRestriction) == PlanetTypeId)
+            ?? throw new PlanetRefusal("InvalidPinType");
+        pin.TypeId = target.TypeId;
+    }
+
+    /// <summary>
+    /// GMForceInstallProgram (the client's GM deposit designer, clientPlanet.GMInstallProgram): the program starts now with the given cycle,
+    /// output and lifetime. No head, install cooldown or resource check applies; routes of another commodity from this unit are removed.
+    /// </summary>
+    public void GmForceInstallProgram(long pinId, int typeId, long cycleTime, long lifetimeTicks, long qtyPerCycle, double headRadius)
+    {
+        var ecu = EcuOf(pinId);
+        if (cycleTime <= 0 || lifetimeTicks <= 0 || qtyPerCycle < 0 || headRadius <= 0) throw new PlanetRefusal("InvalidCommand");
+        foreach (var route in Routes.Values.Where(r => r.Source == pinId && r.TypeId != typeId).OrderBy(r => r.Id).ToList()) RemoveRoute(route.Id);
+        InstallProgramOn(ecu, typeId, headRadius, qtyPerCycle, cycleTime, 0);
+        ecu.ExpiryTime = CurrentSimTime + lifetimeTicks;
+    }
+
     private void InstallProgramOn(Pin ecu, int type, double headRadius, long qtyPerCycle, long cycle, int numCycles)
     {
         var start = CurrentSimTime;
@@ -521,8 +566,6 @@ public sealed partial class Colony
             quantity = (long)(minimum.Value * cycle / (PlanetRules.Hour * volume));
         return quantity;
     }
-
-    // ----- launches and expedited transfers -----
 
     /// <summary>
     /// UserLaunchCommodities: takes the commodities out of the command center and records the launch. Returns the launch time.
@@ -604,8 +647,6 @@ public sealed partial class Colony
         if (quantity < 1 || pad.Contents.GetValueOrDefault(typeId) < quantity) throw new PlanetRefusal("RouteFailedValidationExpeditedSourceLacksCommodityQty");
         RemoveCommodity(pad, typeId, quantity);
     }
-
-    // ----- helpers for the host -----
 
     /// <summary>Route removal of a pin's routes, for an abandoned colony's or a removed pin's links (exposed for tests).</summary>
     public IReadOnlyList<Route> RoutesFrom(long pinId) => Routes.Values.Where(r => r.Source == pinId).OrderBy(r => r.Id).ToList();

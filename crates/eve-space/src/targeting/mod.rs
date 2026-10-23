@@ -63,7 +63,6 @@ impl Order {
 }
 
 /// Who asks for a lock, and so whether the ship that is locked is told. A player's order and an auto-targeting sweep tell it (`otheradd`); a
-/// passive targeter may keep it quiet (EveJS `suppressTargetNotice`). Every origin takes the same checks, range, capacity and lock time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LockOrigin {
     /// The pilot asked for the lock.

@@ -1,4 +1,3 @@
-//! Modules that run: an effect of a fitted module (an afterburner, for now) is started, goes on cycle after cycle, costs capacitor at the start of
 //! each cycle, changes the numbers of the ship while it runs, and is stopped at the end of the cycle it is in when the pilot asks.
 //!
 //! What an effect does to the ship is worked out by the host (dogma): it says, when the effect is started, what the ship's mass and top speed are
@@ -185,7 +184,7 @@ impl Remote {
             ]
             .into_iter()
             .all(|percent| percent >= 0.0),
-            // a computer (a tracking or guidance computer) gives every percentage its own way; a disruptor takes some of them the other way (FP-3: a
+
             // positive tracking disruption is assistance, not an attack)
             Self::Disrupt { range_percent, falloff_percent, tracking_percent } => {
                 [*range_percent, *falloff_percent, *tracking_percent].into_iter().any(|percent| percent < 0.0)
@@ -385,7 +384,6 @@ pub(crate) const WORK_ENTOSIS: u8 = 14;
 pub(crate) const WORK_RESEND_TICKS: i64 = 2 * TICKS_PER_SECOND;
 
 /// The ids of work cycles are drawn from one counter of the process, seeded from the clock, so an id is never sent twice by one run of the simulation
-/// and never by a later run either: the host keeps the last cycle it settled for each owner, and a repeated id is answered from that record.
 pub(crate) fn next_work_cycle_id() -> u64 {
     static NEXT: std::sync::LazyLock<std::sync::atomic::AtomicU64> = std::sync::LazyLock::new(|| {
         let seconds = std::time::SystemTime::now()
@@ -416,7 +414,7 @@ pub enum Action {
         damage: crate::health::Damage,
         hurts_pilots: bool,
     },
-    /// A Standup Point Defense cycle waits for Host's correlated per-target Crimewatch decision before applying this typed damage.
+
     PointDefense {
         range_meters: f64,
         damage: crate::health::Damage,
@@ -644,6 +642,8 @@ pub struct Effect {
     pub duration_ms: f64,
     /// The capacitor a cycle takes, taken at its start.
     pub capacitor_need: f64,
+    /// The capacitor cost of each cycle after a charged effect's charges are exhausted.
+    pub fallback_capacitor_need: f64,
     /// How many cycles the pilot asked for.
     pub repeat: i32,
     pub target_id: i64,
@@ -866,7 +866,6 @@ struct PendingRemoteRepairCycle {
     range_share: f64,
 }
 
-/// What a correlated Host authorization reply will settle for this damage step.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum PendingStructureDamageOperation {
     PointDefense {
@@ -901,7 +900,6 @@ pub(crate) enum PendingStructureDamageOperation {
     },
 }
 
-/// One controlled-structure damage step parked on the Host's correlated allowed-target reply.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct PendingStructureDamageRequest {
     pub(crate) structure_id: i64,
@@ -943,7 +941,7 @@ pub(crate) struct Running {
     pending_remote_repair: Option<PendingRemoteRepairCycle>,
     /// The work cycle the host has not answered yet: the module is parked on it (no cycle is timed) until the answer, a stop or the loss of the target.
     pending_work: Option<PendingWorkCycle>,
-    /// A damage step waiting for Host's allowed-target subset; the module cycle is parked until the exact reply arrives.
+
     pending_structure_damage: Option<PendingStructureDamageRequest>,
     /// The damage ramp a precursor weapon has built on its target; it ends with the effect, so a new one starts from none.
     spool: SpoolState,
@@ -1054,7 +1052,6 @@ fn no_charges(module_type: i32) -> Value {
     tuple([text("NoCharges"), dict([("launcher", tuple([int(4), int(i64::from(module_type))]))])])
 }
 
-/// One line of an `OnModuleAttributeChanges`: `(name, owner, item, attribute, when, new value, old value, when)`.
 /// The armor resonances that changed between two states, as `(attribute, new, old)` (each rounded as it is told). `attribute_ids` are in the order of the
 /// damage vector, as the resonances are.
 pub(crate) fn armor_changes(
@@ -1120,7 +1117,7 @@ enum Moment {
     Shield,
     /// A parked work cycle is sent again (same id, same rolls).
     WorkResend(usize),
-    /// A structure damage step is resent with the same full correlation tuple until Host answers.
+
     StructureDamageResend(usize),
     /// The target of a parked work cycle is gone: the effect stops.
     WorkStop(usize),

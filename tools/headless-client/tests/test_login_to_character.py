@@ -16,10 +16,12 @@ Skipped unless EVE_LIVE_HOST is set. tools/dev/run-eve-live.sh starts eve.rs and
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
 import uuid
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -46,23 +48,29 @@ VOLATILE = {
 # the ids in a skill entry are this character's
 ITEM_FIELDS = {"itemID", "ownerID", "locationID"}
 
-
 def load(name):
     with open(os.path.join(SCENARIOS, name), encoding="utf-8") as handle:
         return json.load(handle)
-
 
 WALK = load("login_to_character.json")
 STARTERS = load("starters.json")["starters"]
 RECORDED_RUN = re.search(r"(\d{6,})$", next(s["call"][2][0] for s in WALK["steps"] if s["call"][1] == "CreateCharacterWithDoll")).group(1)
 
-
 def connect(name: str) -> Client:
     host, _, port = LIVE.partition(":")
-    client = Client(host or "127.0.0.1", int(port or 26000), timeout=30.0)
+    address = (host or "127.0.0.1", int(port or 26000))
+    if os.environ.get("EVE_IDENTITY_SCHEMA"):
+        # eve.rs with its database: the account is made by its first login and its role bits are read at a login, so the walk's account is a
+        # game master's (the slash commands need a staff role) by a fixture, and the walk logs in again after it
+        first = Client(*address, timeout=30.0)
+        first.login(name, "walk-password")
+        first.close()
+        from tests import dbseed  # noqa: PLC0415  (only the walks that run against the database need it)
+
+        dbseed.grant_roles(name)
+    client = Client(*address, timeout=30.0)
     client.login(name, "walk-password")
     return client
-
 
 def attempt(client: Client, service: str, method: str, *args):
     """("ok", description) or ("error", {"code", "payload"})."""
@@ -70,7 +78,6 @@ def attempt(client: Client, service: str, method: str, *args):
         return "ok", describe(client.call(service, method, *args))
     except p.MachoError as error:
         return "error", {"code": describe(error.code), "payload": describe(error.payload)}
-
 
 def revive(value, run: str, ids: dict | None = None, recorded_run: str = RECORDED_RUN):
     """A recorded argument as a value to send. Names carry the run they were recorded in: they get this one, and
@@ -89,15 +96,12 @@ def revive(value, run: str, ids: dict | None = None, recorded_run: str = RECORDE
         return tuple(revive(v, run, ids, recorded_run) for v in value["$tuple"])
     raise ValueError(f"cannot replay {value!r}")
 
-
 def brief(outcome) -> str:
     return json.dumps(outcome, ensure_ascii=False)[:300]
-
 
 def as_dict(plain: dict):
     """A plain {name: description} mapping in the form `differences` compares."""
     return {"$dict": [[k, v] for k, v in plain.items()]}
-
 
 def blank(described, *path):
     """A copy of a description with the value at `path` (indexes and keys) replaced by a marker."""
@@ -108,13 +112,10 @@ def blank(described, *path):
     node[path[-1]] = "$blanked"
     return copy
 
-
 def same_way(expected, actual, where: str, volatile=VOLATILE) -> list[str]:
     return differences(expected, actual, where, volatile_keys=volatile)
 
-
 # ── the walk ────────────────────────────────────────────────────────────────
-
 
 def test_the_session_starts_with_the_recorded_keys_and_types():
     with connect(f"walk-init-{uuid.uuid4().hex[:8]}") as client:
@@ -124,7 +125,7 @@ def test_the_session_starts_with_the_recorded_keys_and_types():
     recorded = {"$dict": [[k, v] for k, v in WALK["login"]["sessionInit"].items()]}
     # This client's plain session view unwraps PyLong; the Host wire test checks role's actual type.
     # maxSessionTime and inDetention are not sent on purpose (SessionInitialState.cs): the reference's notification omits
-    # None-valued keys (oracle capture of evejs-login), and the client reads an absent session attribute as None
+
     # (basesession.py GetDefaultValueOfAttribute; mailSvc.SendMsgDlg reads inDetention). Neither key is re-added here.
     not_sent = {"maxSessionTime", "inDetention"}
     assert not_sent.isdisjoint(init), sorted(not_sent & set(init))
@@ -133,7 +134,6 @@ def test_the_session_starts_with_the_recorded_keys_and_types():
     assert "role" in init
     # every value is per run or per account: keys and types must agree, values need not
     assert same_way(recorded, ours, "sessionInit", volatile=set(WALK["login"]["sessionInit"]) - not_sent) == []
-
 
 def test_the_recorded_walk_replays():
     run = uuid.uuid4().hex[:10]
@@ -189,11 +189,28 @@ def test_the_recorded_walk_replays():
             if method == "GetNumCharacters" and not REFERENCE:
                 recorded_ok = min(recorded_ok, 3)  # DEVIATION (slots), see above
             if method == "ToggleValidation":
-                # The recording was made from a GM session (role bit 54), whose first toggle turns the check off. The walk's
-                # account is not elevated, and for such a session the answer is True (charService.js:1883-1891). The elevated
-                # answer is pinned by ValidationAndOmegaTests in the dotnet suite.
-                recorded_ok = True
+                # The recording and this walk use a GM account (role bit 54), whose first toggle disables validation.
+                # The headless-client fixture grants staff roles for this account; the elevated path is also pinned by
+                # ValidationAndOmegaTests in the .NET suite.
+                recorded_ok = False
             problems += same_way(recorded_ok, outcome, where)
+
+        user_id = walker.session.session_init.get("userid")
+        character_id = walker.session.session_init.get("charid")
+        assert isinstance(user_id, int) and user_id > 0
+        assert isinstance(character_id, int) and character_id > 0
+        assert walker.call("achievementTrackerMgr", "HasEverWarped") is False
+        token = walker.call("userSvc", "GetUserToken")
+        if REFERENCE:
+            assert token == f"evejs-local-token-{user_id}-{character_id}".encode("utf-8")
+        else:
+            header, payload, signature = token.decode("ascii").split(".")
+            claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+            assert header == "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"
+            assert claims["sub"] == f"USER:EVE:{user_id}"
+            assert claims["character_id"] == character_id
+            assert int(claims["exp"]) > int(datetime.now(timezone.utc).timestamp())
+            assert signature
 
         # Compare the recorded session and skills packets after checking eve.rs's extra selection notification.
         walker.ping()
@@ -246,6 +263,14 @@ def test_new_account_enters_a_new_character_with_named_arguments():
 
         assert m.plain(result) is None
         assert client.session.session_init.get("charid") == character_id
+
+        contract_login = dict(m.plain(client.call("contractProxy", "GetLoginInfo"))[1])
+        for name in ("needsAttention", "inProgress", "assignedToMe"):
+            assert m.plain(contract_login[name])[1]["lines"] == []
+        contract_escrow = dict(m.plain(client.call("contractProxy", "GetMyContractEscrow"))[1])
+        assert m.plain(contract_escrow["iskEscrow"]) == 0.0
+        assert m.plain(contract_escrow["itemsEscrow"]) == 0
+
         if not REFERENCE:
             selected = next(event for event in notifications_of(client) if event["name"] == "OnCharacterSelected")
             # Zero positional arguments: GameUI.OnCharacterSelected(self) and StationSvc.OnCharacterSelected(self)
@@ -257,9 +282,7 @@ def test_new_account_enters_a_new_character_with_named_arguments():
         notifications = m.plain(client.call("notificationMgr", "GetAllNotifications"))
         assert any(row[1]["typeID"] == 1004 for row in notifications)
 
-
 OMEGA_END_FILETIME = 157469184000000000  # 2100-01-01T00:00:00Z: the end time every new account is written with
-
 
 def test_a_new_account_is_omega_until_2100_on_every_answer():
     """The Omega state is one stored value per account (its subscription end time). A new account is Omega until 2100:
@@ -271,7 +294,19 @@ def test_a_new_account_is_omega_until_2100_on_every_answer():
         assert m.plain(client.call("charUnboundMgr", "GetCharOmegaDowngradeStatus")) is False
         account_row = m.plain(client.call("charUnboundMgr", "GetCharacterSelectionData"))[0][0][1]
         assert account_row["subscriptionEndTime"] == OMEGA_END_FILETIME
-
+        token = m.plain(client.call("userSvc", "GetUserToken"))
+        header, payload, signature = token.split(".")
+        claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+        assert header == "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"
+        assert claims["sub"].startswith("USER:EVE:")
+        assert int(claims["exp"]) > int(datetime.now(timezone.utc).timestamp())
+        assert signature
+        accrued = m.plain(client.call("authentication", "AccruedTime"))
+        assert len(accrued) == 2
+        assert [int(row[0]) for row in accrued] == sorted(int(row[0]) for row in accrued)
+        for session_id, started, ended in accrued:
+            assert int(session_id) > 0
+            assert int(started) <= int(ended)
 
 def test_a_character_logs_off_to_the_selection_screen_and_selects_again():
     """The client's "log off character": userSvc.UserLogOffCharacter answers True, the connection stays open, the
@@ -295,7 +330,6 @@ def test_a_character_logs_off_to_the_selection_screen_and_selects_again():
         assert m.plain(client.call("charUnboundMgr", "SelectCharacterID", charID=character_id, secondChoiceID=None, skipTutorial=False)) is None
         assert client.session.session_init.get("charid") == character_id
 
-
 def test_the_loyalty_point_wallet_answers_and_the_concord_exchange_is_refused():
     """LPSvc (the loyalty point wallet): a new character's balance rowset is answered (no source credits points yet), and
     ExchangeConcordLP is refused with the reason rather than answered as done (AG-1, DEVIATIONS.md)."""
@@ -314,9 +348,7 @@ def test_the_loyalty_point_wallet_answers_and_the_concord_exchange_is_refused():
         with pytest.raises(p.MachoError):
             client.call("LPSvc", "ExchangeConcordLP", 1000125, 10)
 
-
 GROUP_CHARACTER = 1  # appLogConst.groupCharacter
-
 
 def test_the_population_cap_answers_through_its_moniker():
     """The selection screen's populationCap moniker: bind with (charID, groupCharacter) and a nested GetCharacterLoadSlot,
@@ -349,11 +381,9 @@ def test_the_population_cap_answers_through_its_moniker():
             with pytest.raises(p.MachoError):
                 client.call_bound(bound, "MoveCharacterToNewSystem", character_id, system, key)
 
-
 def _call(step, run):
     service, method, described = step["call"]
     return (service, method, *[revive(a, run) for a in described])
-
 
 def _expect_info_error(kind, outcome, where) -> list[str]:
     if kind != "error":
@@ -363,7 +393,6 @@ def _expect_info_error(kind, outcome, where) -> list[str]:
         return [f"{where}: expected CustomInfo, got {brief(outcome)}"]
     return []
 
-
 def _blank_ship_value(described):
     copy = json.loads(json.dumps(described))
     for entry in copy["$tuple"][4]["$tuple"][1]["$tuple"][1]["$dict"]:
@@ -371,11 +400,10 @@ def _blank_ship_value(described):
             entry[1] = "$blanked"
     return copy
 
-
 def _compare_session_change(recorded, ours) -> list[str]:
     if ours is None:
         return ["no SessionChangeNotification after SelectCharacterID"]
-    # the active ship is in the selection change, as the reference's capture has it (evejs-nes_intro); its id is per run, like the character's
+
     recorded, ours = _blank_ship_value(recorded), _blank_ship_value(ours)
     # who it is for and which session are per run
     for path in (("$tuple", 3), ("$tuple", 4, "$tuple", 0), ("$tuple", 2, "args", "$tuple", 1)):
@@ -387,14 +415,12 @@ def _compare_session_change(recorded, ours) -> list[str]:
         out.append(f"SessionChangeNotification: attributes {names(ours)} in place of {names(recorded)}")
     return out
 
-
 def unpack(notification):
     """A notification with the marshalled stream inside it decoded, so it can be compared as the values it holds."""
     copy = json.loads(json.dumps(notification))
     wrapper = copy["$tuple"][4]["$tuple"][0]["$tuple"]
     wrapper[1] = describe(m.decode(bytes.fromhex(wrapper[1]["$buffer"])))
     return copy
-
 
 def _compare_skills_notification(recorded, ours) -> list[str]:
     recorded, ours = unpack(recorded), unpack(ours)
@@ -403,9 +429,7 @@ def _compare_skills_notification(recorded, ours) -> list[str]:
         recorded, ours = blank(recorded, *path), blank(ours, *path)
     return same_way(recorded, ours, "OnServerSkillsChanged", volatile=VOLATILE | ITEM_FIELDS)
 
-
 # ── names ───────────────────────────────────────────────────────────────────
-
 
 @pytest.mark.parametrize("entry", WALK["names"], ids=lambda e: repr(e["name"]))
 def test_name_validation_answers_as_recorded(entry):
@@ -415,9 +439,7 @@ def test_name_validation_answers_as_recorded(entry):
     with connect(f"walk-names-{uuid.uuid4().hex[:8]}") as client:
         assert client.call("charUnboundMgr", "ValidateNameEx", entry["name"]) == expected
 
-
 # ── what each bloodline starts with ─────────────────────────────────────────
-
 
 @pytest.mark.parametrize("starter", STARTERS, ids=lambda s: f"bloodline-{s['bloodlineID']}")
 def test_each_bloodline_starts_as_recorded(starter):
@@ -430,7 +452,6 @@ def test_each_bloodline_starts_as_recorded(starter):
         assert kind == "ok", brief(selection)
     assert same_way(starter["selection"]["ok"], selection, f"bloodline {starter['bloodlineID']}") == []
 
-
 def _item_ids_follow_the_scheme(skills, where: str) -> list[str]:
     """A skill's item id is its character's id times 100000 plus the skill's type (both servers number them so)."""
     out = []
@@ -441,12 +462,10 @@ def _item_ids_follow_the_scheme(skills, where: str) -> list[str]:
             out.append(f"{where}: skill {type_id} has item id {item}, expected {owner * 100000 + type_id}")
     return out
 
-
 # ── the skills of a new character ───────────────────────────────────────────
 
 SKILLS = load("skills.json")
 RECORDED_SKILLS_RUN = re.search(r"(\d{6,})$", SKILLS["races"][0]["create"]["call"][2][0]).group(1)
-
 
 def expand(step, shared):
     """A recorded answer with the list it shares with `GetSkills` put back."""
@@ -454,7 +473,6 @@ def expand(step, shared):
     if '"$same"' not in text:
         return step["ok"]
     return json.loads(text.replace('{"$same": "GetSkills"}', json.dumps(shared)))
-
 
 @pytest.mark.parametrize("race", SKILLS["races"], ids=lambda r: f"race-{r['raceID']}")
 def test_a_new_character_has_the_skills_the_reference_gives(race):
@@ -500,14 +518,12 @@ def test_a_new_character_has_the_skills_the_reference_gives(race):
                 problems += _item_ids_follow_the_scheme(outcome, where)
     assert problems == [], "\n".join(problems[:20])
 
-
 # ── what the character manager and the wallet say about a new character ─────
 
 INFO = load("character_info.json")
 RECORDED_INFO_RUN = re.search(r"(\d{6,})$", INFO["races"][0]["create"]["call"][2][0]).group(1)
 TIMES = {"createDateTime", "startDateTime"}
 DESCRIPTION = "Character created via EveJS Elysian"
-
 
 def substitute(described, ids: dict):
     """A recorded answer with the character ids the recording made replaced by the ones this server gave."""
@@ -521,13 +537,11 @@ def substitute(described, ids: dict):
         return {key: substitute(value, ids) for key, value in described.items()}
     return described
 
-
 def without_cache_time(described):
     """A cached method result without the time its version was made (the checksum after it is the marshalled result's)."""
     if isinstance(described, dict) and described.get("$object", "").endswith("CachedMethodCallResult"):
         return blank(described, "args", "$tuple", 2, 0)
     return described
-
 
 def with_description(described, text: str):
     """A recorded public record whose description is `text` (the reference's own is its branding)."""
@@ -538,7 +552,6 @@ def with_description(described, text: str):
             if pair[0] == "description":
                 pair[1] = text
     return copy
-
 
 @pytest.mark.parametrize("race", INFO["races"], ids=lambda r: f"race-{r['raceID']}")
 def test_a_new_character_is_described_as_the_reference_describes_it(race):
@@ -577,11 +590,9 @@ def test_a_new_character_is_described_as_the_reference_describes_it(race):
             problems += same_way(expected, outcome, where, volatile=VOLATILE | TIMES)
     assert problems == [], "\n".join(problems[:20])
 
-
 # ── the stations of the game ────────────────────────────────────────────────
 
 STATIONS = load("stations.json")["stations"]
-
 
 def test_every_recorded_station_is_reported_as_the_reference_reported_it():
     with connect(f"walk-stations-{uuid.uuid4().hex[:8]}") as client:
@@ -596,7 +607,6 @@ def test_every_recorded_station_is_reported_as_the_reference_reported_it():
             problems += same_way(without_cache_time(station["call"]["ok"]), without_cache_time(outcome), where)
         assert problems == [], "\n".join(problems[:20])
 
-
 def test_a_station_that_does_not_exist_is_not_made_up():
     if REFERENCE:
         pytest.skip("the reference answers a made-up station id with Jita IV (DEVIATIONS.md, row 9)")
@@ -604,12 +614,10 @@ def test_a_station_that_does_not_exist_is_not_made_up():
         assert client.call("stationSvc", "GetStation", 1) is None
         assert client.call("stationSvc", "GetStation", 60003759) is None
 
-
 # ── the inventories of a docked character ───────────────────────────────────
 
 INVENTORY = load("inventory.json")
 RECORDED_INVENTORY_RUN = re.search(r"(\d{6,})$", INVENTORY["races"][0]["create"]["call"][2][0]).group(1)
-
 
 def unwrap_longs(described):
     """The same description with `{"$long": n}` as `n`: an item id is a long or an int by its size, and the client reads both alike."""
@@ -620,7 +628,6 @@ def unwrap_longs(described):
     if isinstance(described, list):
         return [unwrap_longs(item) for item in described]
     return described
-
 
 def as_rows(described):
     """`util.Row` and `Rowset` answers as the packed rows they hold, so that they compare with the same rules."""
@@ -635,20 +642,16 @@ def as_rows(described):
         return {"$tuple": [{"$row": dict(zip(header, line["$tuple"]))} for line in parts["lines"]]}
     return described
 
-
 def inventory_form(described):
     return unwrap_longs(as_rows(described))
-
 
 def lines_of(rowset: dict) -> list:
     """The lines of a described `Rowset`."""
     return next(v for k, v in rowset["args"]["$dict"] if k == "lines")
 
-
 def lines_dropped(rowset: dict) -> dict:
     """The same described `Rowset` without its lines."""
     return {**rowset, "args": {"$dict": [[k, [] if k == "lines" else v] for k, v in rowset["args"]["$dict"]]}}
-
 
 @pytest.mark.parametrize("race", INVENTORY["races"], ids=lambda r: f"race-{r['raceID']}")
 def test_a_new_characters_inventories_are_those_of_the_reference(race):
@@ -670,7 +673,10 @@ def test_a_new_characters_inventories_are_those_of_the_reference(race):
         ids[race["shipID"]] = int(ship_id)
         for label, inventory in race["inventories"].items():
             opener, argument = inventory["open"]["call"][1], revive(inventory["open"]["call"][2][0], run, ids, RECORDED_INVENTORY_RUN)
-            handle = client.call("invbroker", opener, argument)
+            try:
+                handle = client.call("invbroker", opener, argument)
+            except p.MachoError as error:
+                raise AssertionError(f"race {race['raceID']} {label}.{opener}({argument}): {brief(describe(error.payload))}") from error
             opened = describe(handle)
             problems += same_way(
                 blank(inventory["open"]["ok"], "$substruct", "$substream", "$tuple"), blank(opened, "$substruct", "$substream", "$tuple"), f"{label}: {opener}")
@@ -694,7 +700,6 @@ def test_a_new_characters_inventories_are_those_of_the_reference(race):
                 problems += same_way(inventory_form(expected), inventory_form(outcome), where, volatile=VOLATILE | ITEM_FIELDS)
     assert problems == [], "\n".join(problems[:20])
 
-
 # ── dogma: the ship, its fitting and the character ──────────────────────────
 
 DOGMA = load("dogma.json")
@@ -704,25 +709,20 @@ FILETIME_RANGE = (10**17, 2 * 10**17)
 # two servers work out the attributes separately: to nine digits is the same number
 DOGMA_TOLERANCE = 1e-9
 
-
 def number(described):
     return described["$long"] if isinstance(described, dict) else described
-
 
 def keyval(described) -> dict:
     return {k: v for k, v in described["args"]["$dict"]}
 
-
 def pairs(described) -> list:
     return described["$dict"]
-
 
 def dogma_ids(info) -> list[int]:
     """The ids of a GetAllInfo answer that belong to a run: the character, the ship and what is fitted to it."""
     fields = keyval(info)
     (character, _), = pairs(fields["charInfo"]["$tuple"][0])
     return [number(character)] + [number(key) for key, _ in pairs(fields["shipInfo"])]
-
 
 def substitute(described, mapping: dict[int, int]):
     """A description with the ids of a recording replaced by the ones this run was given."""
@@ -740,7 +740,6 @@ def substitute(described, mapping: dict[int, int]):
         return {k: substitute(v, mapping) for k, v in described.items()}
     return described
 
-
 def blank_times(described):
     """A description with every FILETIME replaced by a marker: when something started is not part of what it is."""
     if isinstance(described, list):
@@ -751,20 +750,16 @@ def blank_times(described):
         return {k: blank_times(v) for k, v in described.items()}
     return described
 
-
 def events_form(events: list[dict]) -> list:
     """Recorded events (plain dictionaries: name, id type, arguments) in the form `differences` compares."""
     return [as_dict({"name": e["name"], "idType": e["idType"], "args": e["args"]}) for e in events]
-
 
 def where_form(state: dict) -> dict:
     """Where things are (plain dictionaries of lists) in the form `differences` compares."""
     return as_dict({k: json_list(rows) for k, rows in state.items()})
 
-
 def json_list(rows: list) -> list:
     return [as_dict(row) for row in rows]
-
 
 def set_attribute(attributes: list, attribute: int, value) -> None:
     for pair in attributes:
@@ -772,7 +767,6 @@ def set_attribute(attributes: list, attribute: int, value) -> None:
             pair[1] = value
             return
     raise AssertionError(f"attribute {attribute} is not in the recording")
-
 
 @pytest.mark.parametrize("race", DOGMA["races"], ids=lambda r: f"race-{r['raceID']}")
 def test_a_new_characters_dogma_is_that_of_the_reference(race):
@@ -799,7 +793,7 @@ def test_a_new_characters_dogma_is_that_of_the_reference(race):
     expected_info = substitute(expected_info, dict(zip(recorded_ids, given_ids)))
     if not REFERENCE:
         # DEVIATION (drone limits on the ship): the reference also gives the ship the character's two drone limits, which the client
-        # reads from the character (docs/reference/compat/DEVIATIONS.md #12)
+
         ship_attributes = pairs(keyval(pairs(keyval(expected_info)["shipInfo"])[0][1])["attributes"])
         ship_attributes[:] = [pair for pair in ship_attributes if pair[0] not in (352, 458)]
         # DEVIATION (the character as the ship changes it): eve.rs applies every modifier that reaches the character: the trade
@@ -821,12 +815,10 @@ def test_a_new_characters_dogma_is_that_of_the_reference(race):
         expected_events, blank_times(events_form(sent)), "GetAllInfo events", volatile_keys=set(), float_tolerance=DOGMA_TOLERANCE)
     assert problems == [], "\n".join(problems[:30])
 
-
 # ── fitting: switching modules and moving them out of their slots ───────────
 
 FITTING = load("fitting.json")
 RECORDED_FITTING_RUN = re.search(r"(\d{6,})$", FITTING["races"][0]["create"]["call"][2][0]).group(1)
-
 
 @pytest.mark.parametrize("race", FITTING["races"], ids=lambda r: f"race-{r['raceID']}")
 def test_switching_and_moving_modules_is_what_the_reference_does(race):
@@ -862,14 +854,13 @@ def test_switching_and_moving_modules_is_what_the_reference_does(race):
                 continue
             sent = notifications_of(client)
             after = hangar_and_ship(client, mgr, ship_id)
-            notifications_of(client)  # what looking made the server send is not part of the step
+            notifications_of(client)
             problems += differences(substitute(step["ok"], mapping), outcome, f"{where}: answer")
             problems += differences(
                 blank_times(events_form(substitute(step["notifications"], mapping))), blank_times(events_form(sent)), f"{where}: events",
                 float_tolerance=DOGMA_TOLERANCE)
             problems += differences(where_form(blank_times(substitute(step["after"], mapping))), where_form(blank_times(after)), f"{where}: after")
     assert problems == [], "\n".join(problems[:30])
-
 
 # ── skill training: the queue, and levels that finish ───────────────────────
 
@@ -879,7 +870,6 @@ TRAINING_FAST = load("training_fast.json")
 RECORDED_FAST_RUN = re.search(r"(\d{6,})$", TRAINING_FAST["create"]["call"][2][0]).group(1)
 # a skill in training gains a point every couple of seconds: the points it has are the recording's within what a slow test adds
 TRAINING_POINTS_SLACK = 30
-
 
 def queue_form(queue: list[dict]) -> list[dict]:
     """A queue in a form that does not depend on the clock: a line's start as its distance from the first line's start, and how long it takes."""
@@ -897,7 +887,6 @@ def queue_form(queue: list[dict]) -> list[dict]:
         })
     return lines
 
-
 def view_problems(expected: dict, actual: dict, where: str) -> list[str]:
     """What the skill window shows, compared: the queue by its shape in time, the skills by level and points (a skill that is training may
     have gained a few points more or less), the totals."""
@@ -909,7 +898,7 @@ def view_problems(expected: dict, actual: dict, where: str) -> list[str]:
     recorded = {int(k): v for k, v in expected["skills"].items()}
     if not REFERENCE and not any(line["trainingStartTime"] for line in expected["queue"]):
         # DEVIATION (a paused queue): the reference shows the first skill of a queue that does not run as in training; eve.rs shows what
-        # trains (DEVIATIONS.md #14)
+
         recorded = {t: {**v, "inTraining": False} for t, v in recorded.items()}
     if set(recorded) != set(actual["skills"]):
         problems.append(f"{where}: skills {sorted(actual['skills'])} instead of {sorted(recorded)}")
@@ -926,7 +915,6 @@ def view_problems(expected: dict, actual: dict, where: str) -> list[str]:
         problems.append(f"{where}: {actual['skillPoints']} skill points instead of {expected['skillPoints']}")
     return problems
 
-
 def training_client(name: str, recording: dict, recorded_run: str, run: str, ids: dict) -> tuple[Client, int]:
     client = connect(name)
     service, method, *args = [recording["create"]["call"][0], recording["create"]["call"][1], *[revive(a, run, ids, recorded_run) for a in recording["create"]["call"][2]]]
@@ -935,16 +923,63 @@ def training_client(name: str, recording: dict, recorded_run: str, run: str, ids
     assert attempt(client, "charUnboundMgr", "SelectCharacterID", int(made), None, False) == ("ok", None)
     return client, int(made)
 
+def test_project_discovery_availability_is_enabled_after_character_selection():
+    run = uuid.uuid4().hex[:10]
+    race = TRAINING["races"][0]
+    client, _character = training_client(f"walk-project-discovery-{run}", race, RECORDED_TRAINING_RUN, run, {})
+    try:
+        assert m.plain(client.call("ProjectDiscovery", "is_enabled")) is True
+    finally:
+        client.close()
+
+
+def test_global_assets_moniker_resolves_and_lists_the_active_ship():
+    run = uuid.uuid4().hex[:10]
+    race = TRAINING["races"][0]
+    client, character = training_client(f"walk-global-assets-{run}", race, RECORDED_TRAINING_RUN, run, {})
+    try:
+        node_id = m.plain(client.call("charMgr", "MachoResolveObject", (character, 10002)))
+        assert node_id == 0xFFAA
+        bound = client.call("charMgr", "MachoBindObject", (character, 10002), ("List", (), None))[0]
+        asset_ids = {int(row.fields()["itemID"]) for row in client.call_bound(bound, "List")}
+        assert ship_of(client) in asset_ids
+    finally:
+        client.close()
+
+
+def test_personal_calendar_event_notifies_an_online_invitee_after_commit():
+    run = uuid.uuid4().hex[:8]
+    creator_run, invitee_run = f"{run}a", f"{run}b"
+    race = TRAINING["races"][0]
+    creator, creator_id = training_client(f"walk-calendar-owner-{run}", race, RECORDED_TRAINING_RUN, creator_run, {})
+    invitee, invitee_id = training_client(f"walk-calendar-invitee-{run}", race, RECORDED_TRAINING_RUN, invitee_run, {})
+    try:
+        notifications_of(invitee)
+        event_time = int((datetime.now(timezone.utc) + timedelta(days=2)).timestamp() * 10_000_000) + 116_444_736_000_000_000
+        event_id = m.plain(creator.call(
+            "calendarMgr", "CreatePersonalEvent", event_time, 60, "Calendar integration", "Invite notification", 0, [invitee_id]
+        ))
+        assert event_id > 0
+        event = m.plain(creator.call("calendarProxy", "GetEventDetails", event_id, creator_id))
+        assert event["eventText"] == "Invite notification"
+        received = notifications_of(invitee)
+        created = [notice for notice in received if notice["name"] == "OnNewCalendarEvent"]
+        assert len(created) == 1, received
+        event_payload = created[0]["args"]["$tuple"][1]["$tuple"][1]["$tuple"][0]["$tuple"]
+        assert event_payload[0] == {"$long": event_id}
+        assert event_payload[4] == "Calendar integration"
+    finally:
+        creator.close()
+        invitee.close()
+
 
 def id_mapping(recorded_character: int, character: int, skills) -> dict[int, int]:
     """The ids of a recording that belong to the run: the character, and the item id of each of its skills (the character's id and the type)."""
     return {recorded_character: character, **{recorded_character * 100000 + int(t): character * 100000 + int(t) for t in skills}}
 
-
 def speed_of(client: Client) -> float:
     """How fast this server trains: its learning attributes over the game's 20 (the server's multiplier is in them)."""
     return describe(client.call("skillHandler", "GetAttributes"))["$dict"][0][1] / 20
-
 
 @pytest.mark.parametrize("race", TRAINING["races"], ids=lambda r: f"race-{r['raceID']}")
 def test_the_skill_queue_is_what_the_reference_does(race):
@@ -990,17 +1025,15 @@ def test_the_skill_queue_is_what_the_reference_does(race):
                 blank_times(events_form(substitute(expected_events, mapping))), blank_times(events_form(sent)), f"{where}: events", float_tolerance=DOGMA_TOLERANCE)
             if expected_after is not None:
                 problems += view_problems(expected_after, training_view(client), f"{where}: after")
-                notifications_of(client)  # what looking made the server send is not part of the step
+                notifications_of(client)
             recorded_steps[step["label"]] = step
     assert problems == [], "\n".join(problems[:30])
-
 
 def _history_problems(expected: list, actual: list, where: str) -> list[str]:
     """What the history lists, without its dates."""
     def form(entries):
         return [{k: v for k, v in e["args"]["$dict"] if k != "logDate"} for e in entries]
     return [] if form(expected) == form(actual) else [f"{where}: history {form(actual)} instead of {form(expected)}"]
-
 
 def test_a_queue_that_finishes_while_the_client_watches_is_told_level_by_level():
     run = uuid.uuid4().hex[:10]
@@ -1043,3 +1076,35 @@ def test_a_queue_that_finishes_while_the_client_watches_is_told_level_by_level()
         problems += view_problems(away["after"], training_view(back), "finished while away: after")
     assert problems == [], "\n".join(problems[:30])
 
+
+def test_authentication_age_gate_uses_verified_account_state():
+    from tests import dbseed
+
+    run = uuid.uuid4().hex[:10]
+    user_name = f"underage-{run}"
+    with connect(user_name) as client:
+        dbseed.set_underage(user_name, False)
+        kind, outcome = attempt(client, "authentication", "AmUnderage", None)
+        assert kind == "ok", brief(outcome)
+        assert outcome is False
+        dbseed.set_underage(user_name, True)
+        kind, outcome = attempt(client, "authentication", "AmUnderage", None)
+        assert kind == "ok", brief(outcome)
+        assert outcome is True
+
+
+def test_active_survey_id_uses_reference_default():
+    run = uuid.uuid4().hex[:10]
+    with connect(f"survey-default-{run}") as client:
+        kind, outcome = attempt(client, "survey", "GetActiveSurveyID")
+        assert kind == "ok", brief(outcome)
+        assert outcome is None, f"expected no active survey, got {outcome!r}"
+
+
+def test_localization_text_changes_keep_the_reference_empty_shape():
+    run = uuid.uuid4().hex[:10]
+    expected = {"$tuple": [{"$dict": []}, {"$dict": []}, {"$dict": []}]}
+    with connect(f"localization-{run}") as client:
+        kind, outcome = attempt(client, "localizationServer", "GetAllTextChanges", m.Dict([]))
+        assert kind == "ok", brief(outcome)
+        assert outcome == expected, f"expected empty localization changes, got {outcome!r}"

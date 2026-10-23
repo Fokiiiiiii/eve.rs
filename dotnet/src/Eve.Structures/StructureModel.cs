@@ -49,7 +49,6 @@ public enum SecurityBand { HighSec, LowSec, NullSec, Wormhole, Pochven }
 
 public enum StructureLayer { Shield, Armor, Hull }
 
-/// <summary>The durations of the structure timeline, in milliseconds (EVE University wiki "Vulnerability", client <c>structures/const.py</c>).</summary>
 public static class StructureTimes
 {
     public const long Second = 1_000;
@@ -64,7 +63,7 @@ public static class StructureTimes
     public const long UnanchoringMs = 7 * Day;
     /// <summary>A Flex structure (client <c>FLEX_UNANCHORING_TIME</c>).</summary>
     public const long FlexUnanchoringMs = 2_700 * Second;
-    /// <summary>A FOB's armor reinforcement: 3 hours, with 1 hour of variance either way (wiki "Forward Operating Bases"; patch 24.01).</summary>
+
     public const long FobArmorReinforceMs = 3 * Hour;
     public const long FobReinforceJitterMs = Hour;
     /// <summary>A structure that stays in Low Power for this long is abandoned.</summary>
@@ -110,7 +109,6 @@ public sealed record StructureRules(StructureSize Size, SecurityBand Band, bool 
         _ => StructureTimes.Day,
     };
 
-    /// <summary>Duration of the hull reinforcement. A Flex structure waits 30 minutes (wiki); the others depend on the space.</summary>
     public long HullReinforceMs => Size == StructureSize.Flex
         ? 1_800 * StructureTimes.Second
         : Band switch
@@ -120,7 +118,6 @@ public sealed record StructureRules(StructureSize Size, SecurityBand Band, bool 
             _ => 216_000 * StructureTimes.Second,
         };
 
-    /// <summary>How far the exit time may stray from the owner's hour: 1.5 hours for Medium, 30 minutes for Flex, 3 hours for the rest.</summary>
     public long ExitJitterMs => Size switch
     {
         StructureSize.Fob => StructureTimes.FobReinforceJitterMs,
@@ -201,7 +198,6 @@ public sealed record FobExposed : StructureEvent;
 /// <summary>The FOB leaves space without a fight (the insurgency ended in the pirates' favour, or with no winner).</summary>
 public sealed record FobDespawned : StructureEvent;
 
-/// <summary>The owner asked for another reinforcement day and hour. It becomes the structure's own after <see cref="StructureTimes.ReinforceChangeDelayMs"/>.</summary>
 public sealed record ReinforceTimeRequested(int Weekday, int Hour) : StructureEvent;
 
 public enum StructureRemoval { None, Unanchored, Destroyed }

@@ -3,7 +3,6 @@ using Npgsql;
 
 namespace Eve.Structures;
 
-/// <summary>The EveJS service ids (<c>structureConstants.js</c> STRUCTURE_SERVICE_ID) the structure phase uses, and the service module type that carries each one.</summary>
 public static class StructureServiceIds
 {
     public const int Docking = 1;
@@ -16,7 +15,6 @@ public static class StructureServiceIds
     public const int CynoJammer = 17;
     public const int MoonMining = 14;
 
-    /// <summary>The Corporation Offices service (EVE.js OFFICES): available to an anchored structure with no service module and no fuel (EVE University wiki, Upwell structures; SDE type 35893 has no fuel attribute).</summary>
     public const int Offices = 3;
 
     /// <summary>The service module of each service (SDE): Standup Reprocessing Facility I, the Pharolux's built-in Standup Cynosural Field Generator I, Standup Cynosural System Jammer I.</summary>
@@ -44,8 +42,6 @@ public sealed record StructureFuelItemChange(long ItemId, int TypeId, long Owner
 /// <summary>The amount and item changes from a fuel-bay take in the caller's transaction.</summary>
 public sealed record StructureFuelTake(long Taken, IReadOnlyList<StructureFuelItemChange> Changes);
 
-
-
 /// <summary>The fuel bay of a structure: the fuel blocks in it (inventory items at the structure, flag 172). The Host implements it over the item store; this module owns
 /// the rule of when fuel is taken, not where it is kept.</summary>
 public interface IStructureFuelBay
@@ -65,7 +61,6 @@ public enum ServiceOnlineOutcome
 }
 
 /// <summary>
-/// The fuel of the service modules: a service goes online against a charge of fuel (EveJS <c>consumeStructureServiceModuleOnlineFuel</c>, the SDE's 2110), then burns
 /// its hourly amount (2109) at each full hour. When the bay cannot pay the hour, every service goes offline and the structure enters Low Power
 /// (<see cref="StructureTimers.FuelOutAsync"/>). The hourly job is the durable job <c>structure.fuel_hour</c> (key <c>structure:{id}</c>): the same
 /// structure has one, and a replay after a restart finds the hour already paid. Every method takes the caller's transaction.

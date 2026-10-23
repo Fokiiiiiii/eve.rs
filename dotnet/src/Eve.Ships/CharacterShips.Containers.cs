@@ -21,13 +21,67 @@ public sealed partial class CharacterShips
     public static bool IsJettisonable(int flag) => flag is CargoFlag or 134 or 135 or 136 or 143 or 149 or 172 or 181 or 182 or 185 or 188;
 
     /// <summary>The can for cargo a pilot jettisons: an item of the character's, in the solar system, with nothing in it yet.</summary>
-    public async Task<Item> CreateCanAsync(long characterId, int solarSystemId, CancellationToken cancellationToken = default)
+    public async Task<Item> CreateCanAsync(
+        long characterId,
+        int solarSystemId,
+        CancellationToken cancellationToken = default,
+        RunSpaceItemScope? runSpaceScope = null)
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-        var id = await items.CreateAsync(connection, transaction, new NewItem(CargoContainerTypeId, characterId, solarSystemId, InSpaceFlag, 1, Singleton: true), cancellationToken);
+
+        RunSpaceItemProvenance? provenance = null;
+        if (runSpaceScope is not null)
+        {
+            ValidateRunSpaceScope(runSpaceScope, characterId, solarSystemId, requireSettlementKey: false);
+            await LockAsync(connection, transaction, characterId, cancellationToken);
+            if (await characters.GetAsync(characterId, cancellationToken) is not { ShipId: { } shipId } character ||
+                character.SolarSystemId != solarSystemId)
+            {
+                throw new InvalidOperationException("A run-space can requires the recipient's active ship in the scoped system.");
+            }
+            var ship = await items.LockAndGetAsync(connection, transaction, shipId, cancellationToken);
+            if (ship is null || ship.OwnerId != characterId || ship.LocationId != solarSystemId ||
+                ship.Flag != InSpaceFlag || ship.TypeId == CapsuleTypeId)
+            {
+                throw new InvalidOperationException("The run-space can source ship no longer matches the active character ship.");
+            }
+            provenance = new RunSpaceItemProvenance(
+                runSpaceScope, RunSpaceItemRole.Can, characterId, ship.Id, ship.Id);
+        }
+
+        var id = await items.CreateAsync(
+            connection,
+            transaction,
+            new NewItem(CargoContainerTypeId, characterId, solarSystemId, InSpaceFlag, 1, Singleton: true)
+            {
+                RunSpaceProvenance = provenance,
+            },
+            cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return (await items.GetAsync(id, cancellationToken))!;
+    }
+
+    private static void ValidateRunSpaceScope(
+        RunSpaceItemScope scope,
+        long characterId,
+        long solarSystemId,
+        bool requireSettlementKey)
+    {
+        if (scope.ContentId == Guid.Empty || scope.InstanceId <= 0 || scope.RoomOrdinal is < 1 or > 3 ||
+            scope.SpaceLocationId <= 0 || scope.RecipientCharacterId <= 0 ||
+            (scope.SettlementKey is not null && string.IsNullOrWhiteSpace(scope.SettlementKey)))
+        {
+            throw new ArgumentException("The run-space item scope is invalid.", nameof(scope));
+        }
+        if (scope.RecipientCharacterId != characterId || scope.SpaceLocationId != solarSystemId)
+        {
+            throw new ArgumentException("The run-space item scope does not match the authorized character and system.", nameof(scope));
+        }
+        if (requireSettlementKey && string.IsNullOrWhiteSpace(scope.SettlementKey))
+        {
+            throw new ArgumentException("Death-created run-space items require a settlement key.", nameof(scope));
+        }
     }
 
     /// <summary>
@@ -38,20 +92,62 @@ public sealed partial class CharacterShips
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        var removed = await RemoveContainerAsync(connection, transaction, containerId, withContents, cancellationToken);
+        if (removed is not null)
+            await transaction.CommitAsync(cancellationToken);
+        return removed;
+    }
+
+    /// <summary>Removes a container and, when requested, its current contents inside the caller's transaction.</summary>
+    public async Task<Item?> RemoveContainerAsync(
+        Npgsql.NpgsqlConnection connection,
+        Npgsql.NpgsqlTransaction transaction,
+        long containerId,
+        bool withContents,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(connection);
+        ArgumentNullException.ThrowIfNull(transaction);
         if (await items.LockAndGetAsync(connection, transaction, containerId, cancellationToken) is not { } container)
-        {
             return null;
-        }
+
         if (withContents)
-        {
-            foreach (var inside in await items.InContainerAsync(containerId, cancellationToken))
-            {
-                await items.DeleteAsync(connection, transaction, inside.Id, cancellationToken);
-            }
-        }
+            await RemoveContainerContentsAsync(connection, transaction, containerId, new HashSet<long>(), cancellationToken);
+
         await items.DeleteAsync(connection, transaction, containerId, cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
         return container;
+    }
+
+    private async Task RemoveContainerContentsAsync(
+        Npgsql.NpgsqlConnection connection,
+        Npgsql.NpgsqlTransaction transaction,
+        long containerId,
+        HashSet<long> ancestors,
+        CancellationToken cancellationToken)
+    {
+        if (!ancestors.Add(containerId))
+            throw new InvalidOperationException("A cycle exists in the container contents.");
+
+        foreach (var snapshot in await items.LockContainerAsync(connection, transaction, containerId, cancellationToken))
+        {
+            if (snapshot.LocationId != containerId)
+                continue;
+
+            var child = await items.LockAndGetAsync(connection, transaction, snapshot.Id, cancellationToken);
+            if (child is null || child.LocationId != containerId)
+                continue;
+            if (ancestors.Contains(child.Id))
+                throw new InvalidOperationException("A cycle exists in the container contents.");
+
+            await RemoveContainerContentsAsync(connection, transaction, child.Id, ancestors, cancellationToken);
+
+            var current = await items.LockAndGetAsync(connection, transaction, child.Id, cancellationToken);
+            if (current is null || current.LocationId != containerId)
+                continue;
+            await items.DeleteAsync(connection, transaction, child.Id, cancellationToken);
+        }
+
+        ancestors.Remove(containerId);
     }
 
     /// <summary>
@@ -79,7 +175,6 @@ public sealed partial class CharacterShips
         return moved;
     }
 
-
     private bool IsCargoContainerType(TypeDef type)
     {
         if (type.TypeId == CargoContainerTypeId) return true;
@@ -103,7 +198,6 @@ public sealed partial class CharacterShips
         return new Room(capacity, await VolumeOfAsync(await items.InContainerAsync(containerId, cancellationToken), cancellationToken));
     }
 
-
     private async Task<bool> IsOwnedDockedInventoryAsync(long itemId, long ownerId, long stationId, CancellationToken cancellationToken)
     {
         var seen = new HashSet<long>();
@@ -125,7 +219,6 @@ public sealed partial class CharacterShips
         return false;
     }
 
-
     public async Task<bool> IsOwnedDockedContainerAsync(long containerId, long ownerId, long stationId, CancellationToken cancellationToken = default)
     {
         if (await items.GetAsync(containerId, cancellationToken) is not { OwnerId: var owner, Singleton: true, Quantity: 1, TypeId: var typeId }
@@ -135,7 +228,6 @@ public sealed partial class CharacterShips
         return statics.Type(typeId) is { } type && IsCargoContainerType(type)
             && await IsOwnedDockedInventoryAsync(containerId, ownerId, stationId, cancellationToken);
     }
-
 
     private async Task<bool> IsNestedUnderAsync(long itemId, long ancestorId, CancellationToken cancellationToken)
     {

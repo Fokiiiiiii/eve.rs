@@ -7,9 +7,7 @@ using Eve.Structures;
 namespace Eve.Services.Space.Tests;
 
 /// <summary>
-/// The player control tower launched from a ship (ST-19, protocol 73): a pilot drops one from the hold 2,500 m ahead of the ship, in a system below 0.5 security.
 /// It is anchored when its anchoring time is over (the SDE's: 30 minutes for the Amarr Control Tower), never ends by time, and only its launching corporation
-/// removes it. A tower within 100 km refuses a Mobile Observatory (the wiki, Mobile Observatory), and a restart puts it back with the state its record gives.
 /// </summary>
 public class ControlTowerHostTests
 {
@@ -121,7 +119,6 @@ public class ControlTowerHostTests
         var (tower, observatory) = (items[0], items[1]);
         await rig.Containers.LaunchFromShipAsync(session, tower, CancellationToken.None);
 
-        // the observatory is dropped at the tower's point: refused (the wiki: 100 km from a control tower)
         var refused = await Assert.ThrowsAsync<MachoWrappedException>(() => rig.Containers.LaunchFromShipAsync(session, observatory, CancellationToken.None));
         Assert.Contains("control tower", Texts(refused.Error.Payload));
         Assert.Equal(CharacterShips.CargoFlag, (await rig.Items.GetAsync(observatory))!.Flag);

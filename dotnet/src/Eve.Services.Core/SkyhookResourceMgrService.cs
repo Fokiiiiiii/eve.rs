@@ -3,7 +3,7 @@ using Eve.Marshal;
 using Eve.Macho;
 
 /// <summary>
-/// EVE.js v0.12.9 lookupSvc owner lookup methods, pinned to
+
 /// 828823a75f211fdecb945b087a26c225f111491f.
 /// </summary>
 public sealed class SkyhookResourceMgrService : IService

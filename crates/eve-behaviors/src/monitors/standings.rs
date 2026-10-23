@@ -54,7 +54,6 @@ impl StandingsAddresses {
 }
 
 /// `MonitorProximitySensorForGroupStanding(attributes)`: the proximity sensors of my group's members, and what they see sorted by how the NPC stands
-/// with its owner.
 pub fn monitor_proximity_sensor_for_group_standing(attributes: &Attrs) -> MonitorProximitySensors {
     let mut addresses = StandingsAddresses::default();
     addresses.map_address_to_class(

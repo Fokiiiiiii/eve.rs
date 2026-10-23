@@ -22,6 +22,34 @@ public class DeathTests
         Enumerable.Range(0, 10_000).Select(n => $"probe:{n}").First(seed => items.All(item => DeathOutcome.HashToDrop(seed, item.Id, 0) == item.Drops));
 
     [PgFact]
+    public async Task Run_space_wreck_provenance_is_committed_with_the_death_and_found_by_exact_scope()
+    {
+        var (rig, character) = await InSpaceAsync();
+        await using var _ = rig;
+        var systemId = checked((int)(await rig.Characters.GetAsync(character.CharacterId))!.SolarSystemId);
+        var scope = new RunSpaceItemScope(Guid.NewGuid(), 95101, 2, systemId, character.CharacterId, "ship-death:95101");
+
+        var death = await rig.Ships.DestroyShipAsync(
+            character.CharacterId, character.ShipId, FrigateWreck, "seed", runSpaceScope: scope);
+
+        Assert.NotNull(death?.Wreck);
+        var wreck = (await rig.Items.GetAsync(death.Wreck.Id))!;
+        Assert.Equal(scope, wreck.RunSpaceProvenance!.Scope);
+        Assert.Equal(RunSpaceItemRole.Wreck, wreck.RunSpaceProvenance.Role);
+        Assert.Equal(character.CharacterId, wreck.RunSpaceProvenance.SourceCharacterId);
+        Assert.Equal(character.ShipId, wreck.RunSpaceProvenance.SourceShipId);
+        Assert.Equal(character.ShipId, wreck.RunSpaceProvenance.SourceItemId);
+
+        await using var connection = await rig.Source.OpenConnectionAsync();
+        await using var transaction = await connection.BeginTransactionAsync();
+        var exact = await rig.Items.FindRunSpaceItemsAsync(connection, transaction, scope);
+        Assert.Single(exact);
+        Assert.Equal(wreck.Id, exact[0].Id);
+        Assert.Equal(RunSpaceItemRole.Wreck, exact[0].RunSpaceProvenance!.Role);
+        await transaction.CommitAsync();
+    }
+
+    [PgFact]
     public async Task DestroyShip_publishes_transition_within_the_death_transaction()
     {
         var (rig, character) = await InSpaceAsync();
@@ -249,6 +277,34 @@ public class DeathTests
         Assert.Equal(new Eve.Ships.ShipTransitionEvent(
             "capsule-destroyed", character.CharacterId, capsuleId, death.Ship.Id,
             home.SolarSystemId, CharacterShips.InSpaceFlag, home.StationId, ItemFlags.Hangar), observed);
+    }
+
+    [PgFact]
+    public async Task Run_space_corpse_provenance_is_exact_even_with_the_normal_zero_flag()
+    {
+        var (rig, character, capsuleId, home) = await InCapsuleAsync();
+        await using var _ = rig;
+        var scope = new RunSpaceItemScope(Guid.NewGuid(), 95102, 3, home.SolarSystemId, character.CharacterId, "pod-death:95102");
+
+        var death = await rig.Ships.DestroyCapsuleAsync(
+            character.CharacterId, capsuleId, CorpseMale, "Abyssal Pilot", Cockroach, home, runSpaceScope: scope);
+
+        Assert.NotNull(death?.Corpse);
+        var corpse = (await rig.Items.GetAsync(death.Corpse.Id))!;
+        Assert.Equal(0, corpse.Flag);
+        Assert.Equal(scope, corpse.RunSpaceProvenance!.Scope);
+        Assert.Equal(RunSpaceItemRole.Corpse, corpse.RunSpaceProvenance.Role);
+        Assert.Equal(character.CharacterId, corpse.RunSpaceProvenance.SourceCharacterId);
+        Assert.Equal(capsuleId, corpse.RunSpaceProvenance.SourceShipId);
+        Assert.Equal(capsuleId, corpse.RunSpaceProvenance.SourceItemId);
+
+        await using var connection = await rig.Source.OpenConnectionAsync();
+        await using var transaction = await connection.BeginTransactionAsync();
+        var exact = await rig.Items.FindRunSpaceItemsAsync(connection, transaction, scope);
+        Assert.Single(exact);
+        Assert.Equal(corpse.Id, exact[0].Id);
+        Assert.Equal(0, exact[0].Flag);
+        await transaction.CommitAsync();
     }
 
     [PgFact]

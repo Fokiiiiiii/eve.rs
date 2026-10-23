@@ -29,10 +29,8 @@ public sealed record SiteRecord(long InstanceId, int SolarSystemId, string Kind,
 }
 
 /// <summary>
-/// The cosmic sites of the solar systems (docs/design/FOUNDATIONS.md, "A feature, end to end: an anomaly"). Each site is an instance of the content runtime: an <c>anomaly</c> (found in
 /// the system scanner) or a <c>signature</c> (found with probes), owned by its solar system, started once for a slot of the system (<c>system:{id}:slot:{n}</c>), with the NPCs it holds
 /// counted by an objective of <c>npc.killed</c>. The director keeps every slot of a system filled: a recurring job <see cref="SpawnJob"/> per system fills what is missing, and a
-/// site that is cleared or runs out of time is replaced at once, somewhere else (the wiki: sites respawn immediately after they are cleared, and not after downtime). No table of sites
 /// of its own exists; the instance is the site and its data say where it is.
 /// </summary>
 public sealed class CosmicSiteDirector
@@ -85,7 +83,6 @@ public sealed class CosmicSiteDirector
     public Func<string, bool, (int TypeId, int GroupId)?>? ContainerType { get; set; }
     private readonly ConcurrentDictionary<int, Lazy<Task>> _ensured = new();
 
-    /// <param name="occupied">Whether a pilot is in a system. A system nobody is in gets no site (the wiki: sites do not respawn during downtime, and a
     /// system nobody is in is not seen); null means every system is kept filled.</param>
     /// <param name="wormholeClassOf">The wormhole class of a J-space system (null for any other system). Such a system's sites are the plan of <see cref="WormholeSites"/>;
     /// null means J-space has no sites.</param>
@@ -149,7 +146,6 @@ public sealed class CosmicSiteDirector
     }
 
     /// <summary>
-    /// Systems that get no sites: Zarzakh (30100000). The wiki names no site of it, and EveJS's site policy refuses them there, so none are placed.
     /// </summary>
     public static readonly IReadOnlySet<int> NoSiteSystems = new HashSet<int> { 30_100_000 };
 
@@ -252,7 +248,6 @@ public sealed class CosmicSiteDirector
 
     /// <summary>
     /// The sites of a J-space system: the plan of <see cref="WormholeSites"/> for its class and id, one site per planned signature, its index as the slot. A site
-    /// that ends is replaced in the same slot of the plan, somewhere else (the seed carries what was in the slot before). The plan keeps its template: the wiki
     /// names the site of each signature, and no rule for its respawn is published (DEVIATIONS).
     /// </summary>
     private async Task FillWormholeAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, int solarSystemId, int wormholeClass, CancellationToken cancellationToken)
@@ -268,7 +263,7 @@ public sealed class CosmicSiteDirector
         for (var index = 0; index < plan.Count; index++)
         {
             var planned = plan[index];
-            // an ore deposit is an anomaly (warpable, in the scanner); the others are found with probes (the wiki)
+
             var kind = planned.Category is "combat" or "ore" ? SiteTemplate.Anomaly : SiteTemplate.Signature;
             if (_templates.ById($"wormhole-{planned.DungeonKey}") is not { } template)
             {

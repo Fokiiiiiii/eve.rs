@@ -29,7 +29,16 @@ public static class CoreServices
         SuperWeaponRpcCallbacks? superWeaponRpcCallbacks = null,
         TourneyQueryCallback? tourneyQueryCallback = null,
         ISpaceModules? spaceModules = null,
-        Func<ClientSession, bool>? isShipInSpace = null)
+        Func<ClientSession, bool>? isShipInSpace = null,
+        IContractReadModel? contractReadModel = null,
+        IContractWriteModel? contractWriteModel = null,
+        Func<long, int, CancellationToken, ValueTask<int>>? contractSkillLevel = null,
+        CharacterSessions? calendarSessions = null,
+        Func<long, long, CancellationToken, ValueTask<decimal>>? contractBrokerFeeAdjustment = null,
+        Func<long, long, CancellationToken, ValueTask<bool>>? hasContractManagerRole = null,
+        PyValue? localizationTextChanges = null,
+        Func<long, long, short, CancellationToken, ValueTask<bool>>? canManageCalendarGroupEvent = null,
+        Func<long, CancellationToken, ValueTask<(long CorporationId, long AllianceId)>>? readCurrentCalendarGroups = null)
     {
         gameRpcCallbacks ??= new GameRpcCallbacks();
         var licenses = new OmegaLicenses(accounts, nowUnixMs);
@@ -37,10 +46,11 @@ public static class CoreServices
         var calendarManager = calendarStore is null
             ? new CalendarMgrService()
             : new CalendarMgrService(calendarStore,
-                calendarAudience ?? throw new ArgumentNullException(nameof(calendarAudience)));
+                calendarAudience ?? throw new ArgumentNullException(nameof(calendarAudience)), calendarSessions,
+                canManageCalendarGroupEvent, readCurrentCalendarGroups);
         var calendarProxy = calendarStore is null
             ? new CalendarProxyService()
-            : new CalendarProxyService(calendarStore);
+            : new CalendarProxyService(calendarStore, readCurrentCalendarGroups);
         return
         [
             new PingService(),
@@ -61,7 +71,8 @@ public static class CoreServices
             new TourneyMgrService(tourneyQueryCallback),
             new RaffleMgrService(gameRpcCallbacks.SeedRafflesAsync),
             new RaffleProxyService(),
-            new ContractProxyService(),
+            new ContractProxyService(contractReadModel, contractWriteModel, contractSkillLevel, contractBrokerFeeAdjustment,
+                hasContractManagerRole, readCurrentCalendarGroups),
             new JumpCloneService(gameRpcCallbacks.JumpClones, gameRpcCallbacks.JumpCloneSpace),
             new ServiceGatewayMgrService(gameRpcCallbacks.SetHijackMode, gameRpcCallbacks.IsHijackModeEnabled),
             new SharedSettingsMgrService(gameRpcCallbacks.ReadSharedSettings, gameRpcCallbacks.WriteSharedSettingsAsync, nowUnixMs),
@@ -81,7 +92,7 @@ public static class CoreServices
               new InGameReportService(submitInGameReport),
               new NonDiminishingInjectionMgrService(readNonDiminishingInjections),
             new ProjectDiscoveryService(new ProjectDiscoveryRpcCallbacks(ReadPlayerStateAsync: gameRpcCallbacks.ReadProjectDiscoveryState)),
-            new LocalizationServerService(),
+              new LocalizationServerService(localizationTextChanges),
               new SeasonManagerService(),
             authentication ?? new AuthenticationRpcService(),
             infoGatheringMgr ?? new InfoGatheringMgrService(),

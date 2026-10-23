@@ -60,8 +60,8 @@ not exist is the scene: which balls a system has, who is where, how commands cha
    | `Notify` | 9 | sim -> host | `u64 sessionId`, text `name`, text `idType`, bytes `marshalledArgs` (a marshalled tuple of the arguments) |
    | `Docked` | 10 | sim -> host | `u64 sessionId`, `i64 stationId`: the ship has arrived and the docking is done in space; the host moves the character |
    | `Refused` | 11 | sim -> host | `u64 sessionId`, `u8 command`, text `reason`: a command the scene cannot do (the host answers the client with the reason) |
-   | `Accepted` | 12 | sim -> host | `u64 sessionId`, `u8 command`, `i64 filetime`: a command was accepted, sent after the update it made (a `Dock` is answered with the time) |
-   | `Approaching` | 14 | sim -> host | `u64 sessionId`, `u8 command`, `f64 distance`: a `Dock` could not be done from here, the ship now follows the station; the host answers the call with `DockingApproach` (the distance is metres off the station's surface) |
+   | `Accepted` | 12 | sim -> host | `u64 sessionId`, `u8 command`, `i64 filetime`: a command was accepted (a `Dock` is answered with the time). Its `DoDestinyUpdate` notifications are held for the next whole-second boundary; this reply stays immediate. |
+   | `Approaching` | 14 | sim -> host | `u64 sessionId`, `u8 command`, `f64 distance`: a `Dock` could not be done from here, the ship now follows the station; the host answers the call with `DockingApproach` (the distance is metres off the station's surface). The scene retains that station as the pending dock target and accepts docking when the ship reaches range, after rechecking current eligibility. |
    | `Jumping` | 15 | sim -> host | `u64 sessionId`, `u8 command`, `i32 destinationSystem`, `i64 destinationGate`: a `Jump` was accepted (the jump-out effect was sent, sent after that update); the host queues the pilot for the system and answers the call |
    | `Jumped` | 16 | sim -> host | `u64 sessionId`, `i32 fromSystem`, `i64 fromGate`, `i32 toSystem`, `i64 toGate`: the ship has left the scene it was in and is in that of the other system, in front of `toGate`; the host moves the ship and the character and tells the client |
 
@@ -222,7 +222,7 @@ not exist is the scene: which balls a system has, who is where, how commands cha
 
 - 2026-10-03, version 4, the rounds of a gun that runs: the simulation keeps the rounds of a turret that fires a charge while it runs, so when a pilot loads or unloads the gun in space the host asks the simulation first.
   `AdjustCharge` (33: `request_id u64`, `session_id u64`, `module_id i64`, the kind of charge `i32`, an op `u8`: 0 add with the capacity `i64` and what the hold has `i64`, 1 remove with the quantity `i64`, 0 for all, and an unused `i64`)
-  is answered with `ChargeAdjusted` (34: `request_id u64`, `running u8`, the rounds before `i64` and after `i64`): for a gun that does not run `running` is 0 and nothing was changed (the host has its rounds). Adding takes the gun up
+  is answered with `ChargeAdjusted` (34: `request_id u64`, `running u8`, the rounds before `i64` and after `i64`): for a gun that does not exercised `running` is 0 and nothing was changed (the host has its rounds). Adding takes the gun up
   to the capacity and no more than the hold has, and only of the kind it fires; removing takes out what is asked, and a gun left with fewer rounds than a cycle spends stops at the end of its cycle with `NoCharges` and no shot.
   The answer follows every `ChargeSpent` the simulation told before it on the link, so the host orders what it does about the inventory with the counts (`ChargeSpentQueue.EnqueueWork`). `Hello` and `HelloAck` carry 4.
   `oracle/fixtures/simlink/messages.json` holds the frames; `docs/reference/compat/DEVIATIONS.md` #57 says what differs from the reference.

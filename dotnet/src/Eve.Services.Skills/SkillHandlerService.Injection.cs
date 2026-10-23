@@ -8,13 +8,22 @@ namespace Eve.Services.Skills;
 
 public sealed partial class SkillHandlerService
 {
-    [Method("InjectSkillIntoBrain")]
-    public async ValueTask<PyValue> InjectSkillIntoBrain(ServiceCall call) =>
-        await InjectSkillBooksAsync(call.Session, [.. ItemsOf(call.Arg(0)).Select(IdOf).OfType<long>()], call.Cancellation);
+    private const int MaximumSkillOperationEntries = 500;
 
+    [Method("InjectSkillIntoBrain")]
+    public async ValueTask<PyValue> InjectSkillIntoBrain(ServiceCall call)
+    {
+        var itemIds = ItemsOf(call.Arg(0)).Take(MaximumSkillOperationEntries + 1)
+            .Select(IdOf).OfType<long>().ToArray();
+        if (itemIds.Length > MaximumSkillOperationEntries)
+            throw MachoErrors.ThrowUserError("SkillBulkLimitExceeded");
+        return await InjectSkillBooksAsync(call.Session, itemIds, call.Cancellation);
+    }
 
     public async Task<PyValue> InjectSkillBooksAsync(ClientSession session, IReadOnlyList<long> itemIds, CancellationToken cancellationToken)
     {
+        if (itemIds.Count > MaximumSkillOperationEntries)
+            throw MachoErrors.ThrowUserError("SkillBulkLimitExceeded");
         if (session.CharacterId is not { } character || session.GetInt("stationid") is not { } station)
             throw MachoErrors.ThrowUserError("SkillExtractorNotDockedInStation");
         var shipId = session.GetInt("shipid");
@@ -52,6 +61,14 @@ public sealed partial class SkillHandlerService
         return new PyList([.. injected.Select(typeId => (PyValue)new PyInt(typeId))]);
     }
 
+private static long DiminishingTotal(long trained, long free)
+    {
+        if (trained < 0 || free < 0)
+            throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("That skill injector cannot be used.")));
+        const long threshold = 80_000_000;
+        return trained >= threshold || free >= threshold - trained ? threshold : trained + free;
+    }
+
 private long DiminishedInjectorSp(long totalSp, int typeId, long quantity, long nonDiminishing)
     {
         var dailyAlpha = catalog.ItemTypeId("Daily Alpha Injector");
@@ -85,11 +102,11 @@ private long DiminishedInjectorSp(long totalSp, int typeId, long quantity, long 
     public async ValueTask<PyValue> GetDiminishedSpFromInjectors(ServiceCall call)
     {
         if (CharacterOf(call) is not { } character || IdOf(call.Arg(0)) is not { } typeId
-            || IdOf(call.Arg(1)) is not { } quantity)
+            || typeId <= 0 || typeId > int.MaxValue || IdOf(call.Arg(1)) is not { } quantity)
             return new PyInt(0);
         var allocated = (await store.TotalPointsAsync([character], call.Cancellation)).GetValueOrDefault(character);
         var free = await store.FreeSkillPointsAsync(character, call.Cancellation);
-        return new PyInt(DiminishedInjectorSp(allocated + free, (int)typeId, quantity, IdOf(call.Arg(2)) ?? 0));
+        return new PyInt(DiminishedInjectorSp(DiminishingTotal(allocated, free), (int)typeId, quantity, IdOf(call.Arg(2)) ?? 0));
     }
 
     [Method("CheckInjectionConstraints")]
@@ -137,7 +154,7 @@ private long DiminishedInjectorSp(long totalSp, int typeId, long quantity, long 
                 throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("A Daily Alpha Injector can only be used once per day.")));
             var total = await store.TotalPointsAsync(connection, transaction, character, token);
             var free = await store.FreeSkillPointsAsync(connection, transaction, character, token);
-            var award = DiminishedInjectorSp(total + free, item.TypeId, quantity, 0);
+            var award = DiminishedInjectorSp(DiminishingTotal(total, free), item.TypeId, quantity, 0);
             if (award <= 0) throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("That skill injector cannot be used.")));
             var newBalance = await store.GrantFreeSkillPointsAsync(connection, transaction, character, award, token);
             if (item.Singleton || quantity == item.Quantity)
@@ -146,7 +163,7 @@ private long DiminishedInjectorSp(long totalSp, int typeId, long quantity, long 
                 await items.SetQuantityAsync(connection, transaction, itemId, item.Quantity - quantity, token);
             var before = new ItemRow(item.Id, item.TypeId, item.OwnerId, item.LocationId, item.Flag,
                 item.Singleton ? -1 : item.Quantity, type.GroupId, type.CategoryId);
-            // EveJS removes consumed items from the client's cache at location 6.
+
             var after = item.Singleton || quantity == item.Quantity
                 ? before with { LocationId = 6 }
                 : before with { Quantity = item.Quantity - quantity };
@@ -155,7 +172,6 @@ private long DiminishedInjectorSp(long totalSp, int typeId, long quantity, long 
         announcer.AnnounceInjectedPoints(call.Session, committed.Before, committed.After, committed.Balance);
         return new PyInt(committed.Award);
     }
-
 
     [Method("ExtractSkills")]
     public async ValueTask<PyValue> ExtractSkills(ServiceCall call)
@@ -189,12 +205,19 @@ private long DiminishedInjectorSp(long totalSp, int typeId, long quantity, long 
             || extractor.LocationId != station || extractor.Flag != HangarFlag || extractor.Quantity < 1)
             throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("That skill extractor cannot be used.")));
 
-        var requested = call.Args
+        var rawTargets = call.Args
             .Where((_, index) => index != extractorArgument)
             .SelectMany(ExtractionTargetsOf)
+            .Take(MaximumSkillOperationEntries + 1)
+            .ToArray();
+        if (rawTargets.Length > MaximumSkillOperationEntries)
+            throw MachoErrors.ThrowUserError("SkillBulkLimitExceeded");
+
+        var requested = rawTargets
             .Where(target => target.SkillTypeId is >= 0 and <= int.MaxValue && target.Points > 0)
             .GroupBy(target => (int)target.SkillTypeId)
-            .Select(group => (SkillTypeId: group.Key, Points: group.Aggregate(0L, (sum, target) => target.Points == long.MaxValue ? long.MaxValue : Math.Min(long.MaxValue, sum + target.Points))))
+            .Select(group => (SkillTypeId: group.Key, Points: group.Aggregate(0L, (sum, target) =>
+                target.Points >= long.MaxValue - sum ? long.MaxValue : sum + target.Points)))
             .ToArray();
         if (requested.Length == 0)
             throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Select skills to extract.")));
@@ -314,6 +337,8 @@ private long DiminishedInjectorSp(long totalSp, int typeId, long quantity, long 
         var toType = splitting ? smallType.Value : largeType.Value;
         if (!splitting && (quantity < 3 || quantity % 3 != 0))
             throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Three small skill injectors are required to combine.")));
+        if (splitting && quantity > long.MaxValue / 3)
+            throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("That skill injector stack cannot be transformed.")));
 
         await store.InTransactionAsync(async (connection, transaction, token) =>
         {
@@ -321,7 +346,7 @@ private long DiminishedInjectorSp(long totalSp, int typeId, long quantity, long 
                 || item.OwnerId != character || item.LocationId != station || item.TypeId != fromType
                 || item.Singleton && quantity != 1 || !item.Singleton && quantity > item.Quantity)
                 throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("That skill injector stack cannot be transformed.")));
-            var outputQuantity = splitting ? checked(quantity * 3) : quantity / 3;
+            var outputQuantity = splitting ? quantity * 3 : quantity / 3;
             if (item.Singleton || quantity == item.Quantity)
                 await items.DeleteAsync(connection, transaction, itemId, token);
             else
@@ -366,7 +391,6 @@ private long DiminishedInjectorSp(long totalSp, int typeId, long quantity, long 
         PyList list => list.Items,
         _ => [],
     };
-
 
     private static IEnumerable<(long SkillTypeId, long Points)> ExtractionTargetsOf(PyValue value)
     {

@@ -3,11 +3,9 @@ using Eve.Universe;
 namespace Eve.Wormholes;
 
 /// <summary>
-/// Thera's wormholes (slice 8). The EVE University "Thera" page: Thera has "a dozen or so wormholes to high-, low-, and null-sec at any given
 /// time" (tracked by EVE Scout); the "Wormhole Types" table gives the eight types with an end in Thera and the space at their other end.
 /// Rule: <see cref="Count"/> connections (12, "a dozen or so"), each of a type drawn with the seed; the free end of the connection is a
 /// system of one of the type's classes (the high-, low- or null-sec systems, or the J-space classes the type names), not Thera and not
-/// already connected to Thera. A collapsed one is opened again the same way (the owner's rule: respawn after collapse). The counts per type
 /// are not published (DEVIATIONS).
 /// </summary>
 public sealed record TheraType(string Code, int TypeId, bool FromThera, int[] FreeClasses);
@@ -16,7 +14,6 @@ public static class TheraConnections
 {
     public const int SystemId = 31_000_005;
 
-    /// <summary>"a dozen or so" wormholes at any given time (EVE University, "Thera").</summary>
     public const int Count = 12;
 
     public static readonly TheraType[] Types =

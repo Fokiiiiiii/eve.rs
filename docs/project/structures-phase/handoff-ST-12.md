@@ -27,7 +27,7 @@ Rules: `agent-rules.md`. Decisions and sources: DEVIATIONS "Structure corporatio
 
 ## Open (TODO 57)
 
-- Station owner credit; station due/impound job; notices to the corporation (OnItemChange, rental change, bill refresh); the client acceptance (office window, structure corporate division listing, rent dialogue). No graphical client run. Done in ST-13: renewal repricing and the destroyed or unanchored closure.
+- Remaining after ST-13: migration for pre-change station bills without a creditor; Host coverage for the station due job and rent-due/eviction notices; corporation notices for structure office rent or give-up; and graphical-client acceptance of the office window, structure corporate division listing, and rent dialogue. See TODO sections 57 and 58.
 
 ## Things that will bite
 

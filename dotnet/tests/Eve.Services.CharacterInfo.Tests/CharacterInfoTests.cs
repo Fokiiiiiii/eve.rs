@@ -64,11 +64,14 @@ internal sealed class Rig : IAsyncDisposable
     Func<long, PyValue, CancellationToken, ValueTask>? writeLogSettings = null,
     Func<long, CancellationToken, ValueTask<long?>>? readCorporationMemberStartedMs = null,
     Func<IReadOnlyList<Character>, CancellationToken, ValueTask<IReadOnlyDictionary<long, CharMgrOrganizationInfo>>>? readOrganizationInfo = null,
-    HomeStationResolver? homeStations = null) =>
+    HomeStationResolver? homeStations = null,
+    Func<long, long, CancellationToken, ValueTask<bool>>? canReadPrivateCorporationMemberInfo = null) =>
     new(Characters, homeStations ?? CreateHomeStationResolver(Characters), ReadRecentShipKillmailPageAsync,
         ReadCharacterDescriptionAsync, WriteCharacterDescriptionAsync, ReadSecurityStatusAsync, ReadMedal1GraphicIdAsync,
         readPersonalData, updatePersonalData, writeActivityStatus, writeLogSettings,
-        readCorporationMemberStartedMs, readOrganizationInfo);
+        readCorporationMemberStartedMs, readOrganizationInfo,
+        readBalance: async (characterId, token) => (await Wallets.GetAsync(characterId, token))?.Isk,
+        canReadPrivateCorporationMemberInfo: canReadPrivateCorporationMemberInfo);
 
 public static HomeStationResolver CreateHomeStationResolver(
     PgCharacterStore characters,
@@ -263,6 +266,16 @@ public class CharMgrTests
             await Rig.CallAsync(rig.CharMgr, session, "SetCharacterDescription", new PyStr("ASCII bio")));
         Assert.Equal(new PyStr("ASCII bio"),
             await Rig.CallAsync(rig.CharMgr, session, "GetCharacterDescription", Id(id)));
+
+        var refusal = await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(() => Rig.CallAsync(
+            rig.CharMgr, session, "SetCharacterDescription", new PyWString(new string('x', 2501))));
+        Assert.Equal(MachoErrors.UserErrorClass, refusal.Error.ClassName);
+        var errorHeader = Assert.IsType<PyTuple>(Assert.IsType<PyObjectEx>(refusal.Error.Payload).Header);
+        Assert.Equal(new PyStr("CHARMGR_DESCRIPTION_LIMIT_EXCEEDED"),
+            Assert.IsType<PyTuple>(errorHeader.Items[1]).Items[0]);
+        Assert.Equal(new PyStr("ASCII bio"),
+            await Rig.CallAsync(rig.CharMgr, session, "GetCharacterDescription", Id(id)));
+
         Assert.Equal(PyNone.Instance,
             await Rig.CallAsync(rig.CharMgr, session, "GetCharacterDescription", Id(1)));
 
@@ -275,6 +288,38 @@ public class CharMgrTests
         var now = Py.FileTimeFromUnixMs(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
         Assert.InRange(created, now - (5 * 60 * 10_000_000L), now + (60 * 10_000_000L));
         Assert.Equal(PyNone.Instance, await Rig.CallAsync(rig.CharMgr, session, "GetCharacterCreationDate", Id(1)));
+    }
+
+    [PgFact]
+    public async Task Activity_status_extra_info_is_bounded_before_the_persistence_callback()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var characterId = await rig.MakeAsync("Activity Pilot");
+        long writtenCharacterId = 0;
+        long writtenStatus = 0;
+        string? writtenExtraInfo = null;
+        var service = rig.CreateCharMgr(writeActivityStatus: (id, status, extraInfo, _) =>
+        {
+            writtenCharacterId = id;
+            writtenStatus = status;
+            writtenExtraInfo = extraInfo;
+            return ValueTask.CompletedTask;
+        });
+        var (session, _) = Rig.Session(characterId);
+
+        Assert.Equal(PyNone.Instance, await Rig.CallAsync(service, session, "SetActivityStatus",
+            new PyInt(1), new PyLong(134_000_000_000_000_000L)));
+        Assert.Equal(characterId, writtenCharacterId);
+        Assert.Equal(1, writtenStatus);
+        Assert.Equal("134000000000000000", writtenExtraInfo);
+
+        var refusal = await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(() =>
+            Rig.CallAsync(service, session, "SetActivityStatus", new PyInt(1), new PyWString(new string('x', 33))));
+        Assert.Equal(MachoErrors.UserErrorClass, refusal.Error.ClassName);
+        var errorHeader = Assert.IsType<PyTuple>(Assert.IsType<PyObjectEx>(refusal.Error.Payload).Header);
+        Assert.Equal(new PyStr("CHARMGR_ACTIVITY_INFO_LIMIT_EXCEEDED"),
+            Assert.IsType<PyTuple>(errorHeader.Items[1]).Items[0]);
+        Assert.Equal("134000000000000000", writtenExtraInfo);
     }
 
     [PgFact]
@@ -297,7 +342,6 @@ public class CharMgrTests
         Assert.Equal((Id(30100032), Id(20010001), Id(10001004), Id(1000413)), (f["solarSystemID"], f["constellationID"], f["regionID"], f["ownerID"]));
         Assert.Equal((PyBool.False, PyBool.False), (f["is_fallback"], f["isFallback"]));
     }
-
 
     [PgFact]
     public async Task Home_station_and_character_asset_resolution_use_persisted_character_state()
@@ -433,6 +477,19 @@ public class CharMgrTests
     }
 
     [PgFact]
+    public async Task Paperdoll_state_ignores_a_client_supplied_other_character_id()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var ownId = await rig.MakeAsync("Doll Ann");
+        var otherId = await rig.MakeAsync("Doll Bob");
+        await rig.Characters.SetAppearanceAsync(otherId,
+            MarshalCodec.Encode(new PyDict([new(new PyStr("recorded"), new PyInt(1))])), true, null, false);
+        var (session, _) = Rig.Session(ownId);
+
+        Assert.Equal(new PyInt(2), await Rig.CallAsync(rig.CharMgr, session, "GetPaperdollState", Id(otherId)));
+    }
+
+    [PgFact]
     public async Task The_fixed_answers_are_the_recorded_ones()
     {
         await using var rig = await Rig.CreateAsync();
@@ -480,6 +537,9 @@ public class CharMgrTests
             await Rig.CallAsync(rig.CharMgr, session, "GetRecentShipKillsAndLosses", Id(2), Id(1)));
         Assert.Equal((characterId, 2, 1), rig.LastKillmailPage!.Value);
 
+        _ = await Rig.CallAsync(rig.CharMgr, session, "GetRecentShipKillsAndLosses", Id(1000), Id(0));
+        Assert.Equal((characterId, 25, 0), rig.LastKillmailPage!.Value);
+
         Assert.Equal(new PyList([]),
             await Rig.CallAsync(rig.CharMgr, session, "GetRecentShipKillsAndLosses", Id(2), Id(3)));
         Assert.Equal((characterId, 2, 3), rig.LastKillmailPage!.Value);
@@ -522,6 +582,48 @@ public class CharMgrTests
         Assert.Equal(await Rig.CallAsync(rig.CharMgr, session, "GetCharacterCreationDate", Id(characterId)), fields["startDateTime"]);
         Assert.Equal(Py.Number(-2.5), fields["securityStatus"]);
         Assert.Equal(Id(9876), fields["medal1GraphicID"]);
+    }
+
+    [PgFact]
+    public async Task Private_info_returns_the_authoritative_member_editor_row()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var characterId = await rig.MakeAsync("Ann Lee", isk: 54321.75m);
+        rig.SecurityStatuses[characterId] = -1.25;
+        var character = (await rig.Characters.GetAsync(characterId))!;
+        var (session, _) = Rig.Session(characterId);
+        session.Set("corpid", Id(character.CorporationId));
+        session.Set("rolesAtAll", Id(Eve.Corporations.CorporationRoles.PersonnelManager));
+
+        var actual = await Rig.CallAsync(rig.CharMgr, session, "GetPrivateInfo", Id(characterId));
+        var expected = Py.Rowset(
+            ["characterID", "gender", "createDateTime", "raceID", "bloodlineID", "ancestryID", "balance", "securityRating"],
+            [new PyList([
+                Id(characterId), new PyInt(character.Gender), await Rig.CallAsync(rig.CharMgr, session, "GetCharacterCreationDate", Id(characterId)),
+                new PyInt(character.RaceId), new PyInt(character.BloodlineId), new PyInt(character.AncestryId),
+                Py.Number(54321.75), Py.Number(-1.25),
+            ])]);
+        Assert.True(PyValue.DeepEquals(expected, actual));
+    }
+
+    [PgFact]
+    public async Task Private_member_info_requires_an_authorized_role_in_the_members_corporation()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var characterId = await rig.MakeAsync("Private Member");
+        var character = (await rig.Characters.GetAsync(characterId))!;
+        var (session, _) = Rig.Session(characterId);
+        var roleIsCurrent = true;
+        var service = rig.CreateCharMgr(canReadPrivateCorporationMemberInfo: (_, _, _) => ValueTask.FromResult(roleIsCurrent));
+
+        Assert.IsType<PyNone>(await Rig.CallAsync(service, session, "GetPrivateInfo", Id(characterId)));
+        session.Set("corpid", Id(character.CorporationId));
+        session.Set("rolesAtAll", Id(Eve.Corporations.CorporationRoles.PersonnelManager));
+        Assert.IsType<PyObject>(await Rig.CallAsync(service, session, "GetPrivateInfo", Id(characterId)));
+        roleIsCurrent = false;
+        Assert.IsType<PyNone>(await Rig.CallAsync(service, session, "GetPrivateInfo", Id(characterId)));
+        session.Set("corpid", Id(character.CorporationId + 1));
+        Assert.IsType<PyNone>(await Rig.CallAsync(service, session, "GetPrivateInfo", Id(characterId)));
     }
 
     [PgFact]
@@ -605,6 +707,86 @@ public class CharMgrTests
         Assert.Equal(new PyStr(""), await Ask(second, "GetNote", Id(4001)));
     }
 
+    [PgFact]
+    public async Task Personal_contact_labels_can_be_created_edited_assigned_removed_and_deleted()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var characterId = await rig.MakeAsync("Ann Lee");
+        var state = new CharMgrPersonalData(
+            [new CharMgrContact(2001, true, -10, 1)], [],
+            new Dictionary<long, CharMgrContactLabel> { [1] = new("Fleet", 7) }, [],
+            new Dictionary<long, string>())
+        { NextContactLabelId = 3 };
+        var service = rig.CreateCharMgr(
+            (ownerId, _) => ValueTask.FromResult<CharMgrPersonalData?>(ownerId == characterId ? state : null),
+            (_, update, _) =>
+            {
+                state = update(state);
+                return ValueTask.FromResult<CharMgrPersonalData?>(state);
+            });
+        var (session, _) = Rig.Session(characterId);
+        async Task<PyValue> Call(string method, params PyValue[] args) => await Rig.CallAsync(service, session, method, args);
+
+        Assert.Equal(Id(4), await Call("CreateLabel", new PyStr("Wing"), Id(5)));
+        Assert.Equal(new CharMgrContact(2001, true, -10, 1), Assert.Single(state.Contacts));
+        Assert.IsType<PyNone>(await Call("AssignLabels", new PyList([Id(2001), Id(2002)]), new PyLong(4)));
+        Assert.Equal(new[] { new CharMgrContact(2001, true, -10, 5), new CharMgrContact(2002, false, 0, 4) },
+            state.Contacts.OrderBy(contact => contact.ContactId));
+        Assert.IsType<PyNone>(await Call("EditLabel", new PyLong(1), new PyStr("Fleet pilots"), Id(9)));
+        Assert.IsType<PyNone>(await Call("RemoveLabels", new PyList([Id(2001)]), new PyLong(1)));
+        Assert.IsType<PyNone>(await Call("DeleteLabel", new PyLong(4)));
+        Assert.Equal(Id(8), await Call("CreateLabel", new PyStr("Next"), Id(6)));
+        Assert.Equal(new Dictionary<long, CharMgrContactLabel>
+        {
+            [1] = new("Fleet pilots", 9), [8] = new("Next", 6),
+        }, state.Labels);
+        Assert.Equal(new[] { new CharMgrContact(2001, true, -10, 0), new CharMgrContact(2002, false, 0, 0) },
+            state.Contacts.OrderBy(contact => contact.ContactId));
+        var beforeOversizedInput = state;
+        var oversizedIds = new PyList(Enumerable.Range(1, 501).Select(id => (PyValue)Id(id)).ToArray());
+        var refusal = await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(() =>
+            Call("BlockOwners", oversizedIds));
+        Assert.Equal(MachoErrors.UserErrorClass, refusal.Error.ClassName);
+        var errorHeader = Assert.IsType<PyTuple>(Assert.IsType<PyObjectEx>(refusal.Error.Payload).Header);
+        Assert.Equal(new PyStr("CHARMGR_BULK_LIMIT_EXCEEDED"),
+            Assert.IsType<PyTuple>(errorHeader.Items[1]).Items[0]);
+        Assert.Same(beforeOversizedInput, state);
+
+        async Task AssertInvalidBatch(PyValue argument, string expectedCode)
+        {
+            var malformed = await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(() =>
+                Call("BlockOwners", argument));
+            var header = Assert.IsType<PyTuple>(Assert.IsType<PyObjectEx>(malformed.Error.Payload).Header);
+            Assert.Equal(new PyStr(expectedCode), Assert.IsType<PyTuple>(header.Items[1]).Items[0]);
+            Assert.Same(beforeOversizedInput, state);
+        }
+
+        await AssertInvalidBatch(new PyStr("not-a-list"), "CHARMGR_CONTACT_IDS_INVALID");
+        await AssertInvalidBatch(new PyList([Id(3001), Id(-1)]), "CHARMGR_CONTACT_ID_INVALID");
+        await AssertInvalidBatch(new PyList([Id(3001), new PyReal(3.0)]), "CHARMGR_CONTACT_ID_INVALID");
+    }
+
+    [PgFact]
+    public async Task EditContact_updates_relationship_and_watchlist_through_the_client_method()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var characterId = await rig.MakeAsync("Ann Lee");
+        var state = new CharMgrPersonalData(
+            [new CharMgrContact(2001, false, 0, 3)], [],
+            new Dictionary<long, CharMgrContactLabel> { [1] = new("Fleet", 7) }, [],
+            new Dictionary<long, string>());
+        var service = rig.CreateCharMgr(
+            (ownerId, _) => ValueTask.FromResult<CharMgrPersonalData?>(ownerId == characterId ? state : null),
+            (_, update, _) =>
+            {
+                state = update(state);
+                return ValueTask.FromResult<CharMgrPersonalData?>(state);
+            });
+        var (session, _) = Rig.Session(characterId);
+        var result = await Rig.CallAsync(service, session, "EditContact", [Id(2001), Id(-10), PyBool.True]);
+        Assert.IsType<PyNone>(result);
+        Assert.Equal(new CharMgrContact(2001, true, -10, 3), Assert.Single(state.Contacts));
+    }
 
     [PgFact]
     public async Task Get_private_info_on_corporation_change_returns_the_reference_keyval_shape()
@@ -622,6 +804,24 @@ public class CharMgrTests
             await Rig.CallAsync(service, session, "GetPrivateInfoOnCorpChange", Id(characterId)));
     }
 
+    [PgFact]
+    public async Task Private_corporation_change_info_ignores_a_client_supplied_other_character_id()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var ownId = await rig.MakeAsync("Own Corp Change");
+        var otherId = await rig.MakeAsync("Other Corp Change");
+        long? readCharacterId = null;
+        var service = rig.CreateCharMgr(readCorporationMemberStartedMs: (id, _) =>
+        {
+            readCharacterId = id;
+            return ValueTask.FromResult<long?>(1_700_000_000_123);
+        });
+        var (session, _) = Rig.Session(ownId);
+
+        await Rig.CallAsync(service, session, "GetPrivateInfoOnCorpChange", Id(otherId));
+
+        Assert.Equal(ownId, readCharacterId);
+    }
 
     [PgFact]
     public async Task Personal_char_mgr_rpcs_preserve_client_shapes_and_update_owner_scoped_state()
@@ -688,6 +888,45 @@ public class CharMgrTests
                 ("blocked", Py.Rowset(["senderID"], [new PyList([Id(3000)]), new PyList([Id(3002)])]))),
             list);
 
+        var contactLabelName = new string('L',40);
+        var contactLabelId = Assert.IsType<PyInt>(await Rig.CallAsync(service,session,"CreateLabel",new PyWString(contactLabelName),Id(5)));
+        Assert.Equal(contactLabelName,store[characterId].Labels[contactLabelId.Value].Name);
+        var oversizedContactLabel = await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(() =>
+            Rig.CallAsync(service,session,"CreateLabel",new PyWString(contactLabelName + "x"),Id(5)));
+        var oversizedContactLabelHeader = Assert.IsType<PyTuple>(Assert.IsType<PyObjectEx>(oversizedContactLabel.Error.Payload).Header);
+        Assert.Equal(new PyStr("CHARMGR_CONTACT_LABEL_NAME_LIMIT_EXCEEDED"),
+            Assert.IsType<PyTuple>(oversizedContactLabelHeader.Items[1]).Items[0]);
+        Assert.Single(store[characterId].Labels);
+        var oversizedContactLabelEdit = await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(() =>
+            Rig.CallAsync(service,session,"EditLabel",contactLabelId,new PyWString(contactLabelName + "x")));
+        var oversizedContactLabelEditHeader = Assert.IsType<PyTuple>(Assert.IsType<PyObjectEx>(oversizedContactLabelEdit.Error.Payload).Header);
+        Assert.Equal(new PyStr("CHARMGR_CONTACT_LABEL_NAME_LIMIT_EXCEEDED"),
+            Assert.IsType<PyTuple>(oversizedContactLabelEditHeader.Items[1]).Items[0]);
+        Assert.Equal(contactLabelName,store[characterId].Labels[contactLabelId.Value].Name);
+        Assert.Equal(PyNone.Instance,await Rig.CallAsync(service,session,"EditLabel",contactLabelId,new PyWString(contactLabelName),Id(6)));
+
+        var ownerNoteRefusal = await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(() =>
+            Rig.CallAsync(service, session, "AddOwnerNote", new PyStr("Long"), new PyWString(new string('x', 3901))));
+        Assert.Equal(MachoErrors.UserErrorClass, ownerNoteRefusal.Error.ClassName);
+        var ownerErrorHeader = Assert.IsType<PyTuple>(Assert.IsType<PyObjectEx>(ownerNoteRefusal.Error.Payload).Header);
+        Assert.Equal(new PyStr("CHARMGR_NOTE_LIMIT_EXCEEDED"),
+            Assert.IsType<PyTuple>(ownerErrorHeader.Items[1]).Items[0]);
+
+        var labelRefusal = await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(() =>
+            Rig.CallAsync(service, session, "AddOwnerNote", new PyStr(new string('x', 83)), new PyStr("body")));
+        Assert.Equal(MachoErrors.UserErrorClass, labelRefusal.Error.ClassName);
+        var labelErrorHeader = Assert.IsType<PyTuple>(Assert.IsType<PyObjectEx>(labelRefusal.Error.Payload).Header);
+        Assert.Equal(new PyStr("CHARMGR_NOTE_LABEL_LIMIT_EXCEEDED"),
+            Assert.IsType<PyTuple>(labelErrorHeader.Items[1]).Items[0]);
+
+        var editRefusal = await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(() =>
+            Rig.CallAsync(service, session, "EditOwnerNote", Id(2), PyNone.Instance, new PyWString(new string('x', 3901))));
+        Assert.Equal(MachoErrors.UserErrorClass, editRefusal.Error.ClassName);
+        var editErrorHeader = Assert.IsType<PyTuple>(Assert.IsType<PyObjectEx>(editRefusal.Error.Payload).Header);
+        Assert.Equal(new PyStr("CHARMGR_NOTE_LIMIT_EXCEEDED"),
+            Assert.IsType<PyTuple>(editErrorHeader.Items[1]).Items[0]);
+        Assert.Equal("old", store[characterId].OwnerNotes.Single(note => note.NoteId == 2).Note);
+
         Assert.Equal(Id(5), await Rig.CallAsync(service, session, "AddOwnerNote", new PyStr("Status"), new PyStr("ready")));
         Assert.Equal(PyNone.Instance, await Rig.CallAsync(service, session, "EditOwnerNote", Id(5), new PyStr("Updated")));
         Assert.Equal(
@@ -695,6 +934,13 @@ public class CharMgrTests
             await Rig.CallAsync(service, session, "GetOwnerNote", Id(5)));
         Assert.Equal(PyNone.Instance, await Rig.CallAsync(service, session, "RemoveOwnerNote", Id(5)));
         Assert.Equal(PyNone.Instance, await Rig.CallAsync(service, session, "SetNote", Id(4002), new PyStr("saved")));
+        Assert.Equal(new PyStr("saved"), await Rig.CallAsync(service, session, "GetNote", Id(4002)));
+        var itemNoteRefusal = await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(() =>
+            Rig.CallAsync(service, session, "SetNote", Id(4002), new PyWString(new string('x', 5001))));
+        Assert.Equal(MachoErrors.UserErrorClass, itemNoteRefusal.Error.ClassName);
+        var itemErrorHeader = Assert.IsType<PyTuple>(Assert.IsType<PyObjectEx>(itemNoteRefusal.Error.Payload).Header);
+        Assert.Equal(new PyStr("CHARMGR_ITEM_NOTE_LIMIT_EXCEEDED"),
+            Assert.IsType<PyTuple>(itemErrorHeader.Items[1]).Items[0]);
         Assert.Equal(new PyStr("saved"), await Rig.CallAsync(service, session, "GetNote", Id(4002)));
 
         Assert.Equal(PyNone.Instance, await ((IService)service).CallAsync(new ServiceCall
@@ -722,6 +968,18 @@ public class CharMgrTests
         Assert.Equal(savedSettings, await Rig.CallAsync(service, session, "GetCharacterSettings"));
         await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(() => Rig.CallAsync(
             service, session, "SaveCharacterSetting", new PyStr("large"), new PyStr(new string('x', 102401))));
+        var nested = (PyValue)new PyList(Enumerable.Repeat<PyValue>(new PyInt(1), 20001).ToArray());
+        await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(() => Rig.CallAsync(
+            service, session, "SaveCharacterSetting", new PyStr("tooMany"), nested));
+        var deep = (PyValue)PyNone.Instance;
+        for (var depth = 0; depth < 65; depth++)
+            deep = new PyList([deep]);
+        await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(() => Rig.CallAsync(
+            service, session, "SaveCharacterSetting", new PyStr("tooDeep"), deep));
+        await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(() => Rig.CallAsync(
+            service, session, "SaveCharacterSetting", deep, new PyStr("value")));
+        await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(() => Rig.CallAsync(
+            service, session, "LogSettings", deep));
         Assert.Equal(savedSettings, await Rig.CallAsync(service, session, "GetCharacterSettings"));
         Assert.Equal(PyNone.Instance, await Rig.CallAsync(service, session, "DeleteCharacterSetting", new PyStr("window")));
         Assert.Equal(
@@ -730,7 +988,6 @@ public class CharMgrTests
         Assert.Equal(PyNone.Instance, await Rig.CallAsync(service, session, "DeleteCharacterSetting", new PyStr("fleetSetups")));
         Assert.Equal(new PyDict([]), await Rig.CallAsync(service, session, "GetCharacterSettings"));
     }
-
 
     [PgFact]
     public async Task Get_organization_info_for_local_chat_returns_keyed_keyvals_from_the_existing_stores()
@@ -777,6 +1034,15 @@ public class CharMgrTests
                         ("warFactionID", Id(0)))),
             ]),
             result);
+
+        var oversizedIds = new PyList(Enumerable.Range(1, 501)
+            .Select(id => (PyValue)Id(id)).ToArray());
+        var refusal = await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(() => Rig.CallAsync(
+            service, session, "GetOrganizationInfoForCharacters", oversizedIds));
+        Assert.Equal(MachoErrors.UserErrorClass, refusal.Error.ClassName);
+        var errorHeader = Assert.IsType<PyTuple>(Assert.IsType<PyObjectEx>(refusal.Error.Payload).Header);
+        Assert.Equal(new PyStr("CHARMGR_BULK_LIMIT_EXCEEDED"),
+            Assert.IsType<PyTuple>(errorHeader.Items[1]).Items[0]);
     }
 
     [PgFact]
@@ -935,6 +1201,13 @@ public class CharMgrTests
             rig.Characters.ResetRemoteHomeStationChangeTimeAsync, () => expectedNext + 1);
         Assert.Equal(PyNone.Instance, await Rig.CallAsync(expiredService, session, "get_next_remote_change_time"));
 
+        session.Set("role", new PyLong(Eve.Services.GameMasterRoles.Staff));
+        await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(async () =>
+            await Rig.CallAsync(service, session, "reset_remote_change_time"));
+        persisted = Assert.IsType<Character>(await rig.Characters.GetAsync(id, CancellationToken.None));
+        Assert.Equal(expectedNext, persisted.NextRemoteHomeStationChangeFileTime);
+
+        session.Set("accountRole", new PyLong(Eve.Services.GameMasterRoles.Qa));
         Assert.Equal(PyNone.Instance, await Rig.CallAsync(service, session, "reset_remote_change_time"));
         persisted = Assert.IsType<Character>(await rig.Characters.GetAsync(id, CancellationToken.None));
         Assert.Equal(0, persisted.NextRemoteHomeStationChangeFileTime);
@@ -1026,7 +1299,6 @@ public class CharMgrTests
         var errors = state.Entries.Single(entry => Assert.IsType<PyStr>(entry.Key).Value == "errors").Value;
         Assert.Equal(new PyList([new PyInt(code)]), errors);
     }
-
 
 }
 

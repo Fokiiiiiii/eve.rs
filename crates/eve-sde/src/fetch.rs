@@ -1,16 +1,3 @@
-//! Getting an SDE build onto disk: download, verify, extract.
-//!
-//! [`ensure_extracted`] is idempotent. A build already extracted under the cache
-//! directory is used as it is. Otherwise the archive comes from a local file or
-//! is downloaded, its SHA-256 is checked against the pin in `sde/lock.json`, and
-//! it is extracted flat into `<cache>/<name>/`. The downloaded archive is deleted
-//! afterwards unless [`FetchOptions::keep_archive`] is set.
-//!
-//! Downloads run through `curl`, which brings the proxy, CA-bundle, redirect and
-//! retry handling of the host it runs on. Sources are tried in order and one that
-//! fails or does not match the pinned hash is skipped, so a mirror can serve the
-//! build but cannot substitute other data.
-
 use std::fs::{self, File};
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
@@ -19,10 +6,8 @@ use std::process::{Command, Stdio};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-/// CCP's static-data host.
 pub const OFFICIAL_BASE: &str = "https://developers.eveonline.com/static-data";
 
-/// `sde/lock.json`, compiled in: the pinned build, its SHA-256 and where to get it.
 pub const LOCK: &str = include_str!("../../../sde/lock.json");
 
 #[derive(Debug)]
@@ -87,7 +72,6 @@ impl From<zip::result::ZipError> for FetchError {
     }
 }
 
-/// What the archive's hash must be.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Expect {
     Sha256(String),
@@ -102,12 +86,10 @@ pub struct Pin {
     pub sources: Vec<String>,
 }
 
-/// The base name of a build's archive and of its extracted directory.
 pub fn archive_name(build: u64) -> String {
     format!("eve-online-static-data-{build}-jsonl")
 }
 
-/// Where a build's archive lives under a static-data base URL.
 pub fn official_url(base: &str, build: u64) -> String {
     format!("{}/tranquility/{}.zip", base.trim_end_matches('/'), archive_name(build))
 }
@@ -152,11 +134,9 @@ pub fn pin_from(lock: &str, build: Option<u64>) -> Result<Pin, FetchError> {
     Ok(Pin { build, sha256, sources })
 }
 
-/// What [`ensure_extracted`] should do.
 #[derive(Debug, Clone)]
 pub struct FetchOptions {
     pub build: u64,
-    /// Holds `<name>/` (the extracted build) and, briefly, `<name>.zip`.
     pub cache_dir: PathBuf,
     /// Tried in order.
     pub sources: Vec<String>,
@@ -166,10 +146,8 @@ pub struct FetchOptions {
     pub keep_archive: bool,
 }
 
-/// Where an extracted build came from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Origin {
-    /// It was already extracted.
     Cached,
     LocalArchive(PathBuf),
     Downloaded(String),
@@ -185,7 +163,6 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-/// The SHA-256 of a file, as lowercase hex.
 pub fn sha256_hex(path: &Path) -> io::Result<String> {
     let mut file = File::open(path)?;
     let mut hasher = Sha256::new();
@@ -257,8 +234,16 @@ fn verify(path: &Path, source: &str, expect: &Expect) -> Result<(), FetchError> 
             return Err(FetchError::Sha256 { source: source.to_owned(), expected: expected.clone(), actual });
         }
     }
-    let archive = zip::ZipArchive::new(File::open(path)?)?;
-    if !archive.file_names().any(|name| base_name(name) == Some("_sde.jsonl")) {
+    let mut archive = zip::ZipArchive::new(File::open(path)?)?;
+    let mut has_metadata = false;
+    for index in 0..archive.len() {
+        let entry = archive.by_index(index)?;
+        if base_name(entry.name()?.as_ref()) == Some("_sde.jsonl") {
+            has_metadata = true;
+            break;
+        }
+    }
+    if !has_metadata {
         return Err(FetchError::BadArchive("it has no _sde.jsonl".to_owned()));
     }
     Ok(())
@@ -322,7 +307,8 @@ fn extract_into(archive: &Path, partial: &Path, only: Option<&[String]>) -> Resu
         if entry.is_dir() {
             continue;
         }
-        let Some(name) = base_name(entry.name()).map(str::to_owned) else { continue };
+        let member = entry.name()?.into_owned();
+        let Some(name) = base_name(&member).map(str::to_owned) else { continue };
         if only.is_some_and(|wanted| name != "_sde.jsonl" && !wanted.contains(&name)) {
             continue;
         }
@@ -372,7 +358,6 @@ pub fn fetch_archive(options: &FetchOptions) -> Result<(PathBuf, Origin), FetchE
     Err(FetchError::AllSourcesFailed(failures))
 }
 
-/// Make sure the build is extracted under `options.cache_dir`, fetching it if not.
 pub fn ensure_extracted(options: &FetchOptions) -> Result<Extracted, FetchError> {
     let name = archive_name(options.build);
     let dir = options.cache_dir.join(&name);

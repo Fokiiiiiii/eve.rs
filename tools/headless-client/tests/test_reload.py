@@ -22,9 +22,10 @@ import pytest
 
 from evecli import marshal as m
 from evecli.describe import describe, differences
+from tests import dbseed
 from tests import test_login_to_character as base
 from tests.test_ammo import ANTIMATTER, RAILGUN, canon, canon_events, of_the_gun
-from tests.test_others import watch
+from tests.test_others import hold_still, watch
 from tests.test_target import compare_answer, plain_race, timing
 from tests.test_undock import STATION, SYSTEM, arrive, compare_events, ids, number, outcome
 from tests.test_weapon import effect_of, shots_of, slims_in
@@ -39,7 +40,6 @@ pytestmark = [
 TOLERANCE = 0.8
 RELOAD_EVENTS = ("OnItemsChanged", "OnGodmaPrimeItem", "OnChargeBeingLoadedToModule")
 
-
 def of_the_reload(events: list, gun: int, ship: int) -> list:
     """What a reload and an unload make the pilot's client hear: the stacks of the hold that changed, the charge that is primed and announced, and the numbers of the
     module and of the rounds in its slot (the next activation time is one of them), with what the gun does."""
@@ -51,7 +51,6 @@ def of_the_reload(events: list, gun: int, ship: int) -> list:
             out.extend(of_the_gun([event], gun, ship))
     return out
 
-
 def test_a_pilot_loads_a_gun_in_space_and_waits_for_the_reload_as_in_the_reference():
     race = RELOAD["races"][0]
     roles = race["roles"]
@@ -62,6 +61,7 @@ def test_a_pilot_loads_a_gun_in_space_and_waits_for_the_reload_as_in_the_referen
     seen_recorded: dict = {}
     with base.connect(f"walk-reload-{run}") as who:
         _, ship, _, mapping = arrive(who, plain_race({"pilot": race}, "pilot"), run)
+        dbseed.set_hull(ship, dbseed.COCKROACH)
         known = dict(mapping)  # the ids both sides have from the start (the items made later are told apart by the order they appear in)
         only = {"events": who}
         slash = lambda command: (lambda: who.call("slash", "SlashCmd", command))  # noqa: E731
@@ -79,7 +79,9 @@ def test_a_pilot_loads_a_gun_in_space_and_waits_for_the_reload_as_in_the_referen
                 problems.extend(compare_answer(label, recorded, raw, error, mapping))
             else:
                 # what is answered may be the id of a stack that was made (per run): told apart by the order the ids appear in, as in the events
-                problems.extend(differences(canon(base.blank_times(ids(recorded["ok"], known)), seen_recorded), canon(base.blank_times(describe(raw)), seen_ids), label))
+                # the test ship is the Cockroach where the recording's was an Ibis: the answer names the hull it is fitted to (DEVIATIONS #59)
+                expected = recorded["ok"].replace(" to Ibis ", " to Cockroach ") if isinstance(recorded["ok"], str) else recorded["ok"]
+                problems.extend(differences(canon(base.blank_times(ids(expected, known)), seen_recorded), canon(base.blank_times(describe(raw)), seen_ids), label))
             got = watch(only, seconds)["events"]
             if events:
                 problems.extend(compare_events(canon_events(steps[label]["events"], seen_recorded, known), canon_events(got, seen_ids), label, {}))
@@ -109,12 +111,13 @@ def test_a_pilot_loads_a_gun_in_space_and_waits_for_the_reload_as_in_the_referen
         service = who.call("ship", "MachoBindObject", (STATION, 15), None)
         who.call_bound(service[0], "Undock", ship, False)
         watch(only, 2.5)
-        who.call("beyonce", "MachoBindObject", SYSTEM, None)
+        ballpark = who.call("beyonce", "MachoBindObject", SYSTEM, None)
         watch(only, 3.0)
         space = who.call("dogmaIM", "MachoBindObject", (SYSTEM, 5), None)
         who.call_bound(space[0], "GetAllInfo", True, True, None)
         watch(only, 1.0)
         watch(only, 45.0, until=lambda seen: any(e["name"] == "OnInvulnCancelled" for e in seen["events"]))
+        hold_still(who, ballpark[0])
         hold = who.call("invbroker", "MachoBindObject", (SYSTEM, 5), ("GetInventoryFromId", (ship, 0), None))[1]
         text = who.call("slash", "SlashCmd", "/npc 1 Blood Visionary")
         spawn = watch(only, 8.0)["events"]
@@ -183,7 +186,7 @@ def test_a_pilot_loads_a_gun_in_space_and_waits_for_the_reload_as_in_the_referen
                 ours_answer = canon(base.blank_times(describe(raw)), seen_ids)
                 problems.extend(differences(theirs_answer, ours_answer, label))
             got = watch_and_heal(seconds, until)
-            if os.environ.get("EVE_RELOAD_DUMP"):  # what this side was sent, step by step, to read beside the recording when they differ
+            if os.environ.get("EVE_RELOAD_DUMP"):
                 with open(os.environ["EVE_RELOAD_DUMP"], "a", encoding="utf-8") as dump:
                     dump.write(json.dumps({"label": label, "events": got}, default=str) + "\n")
             if not events:

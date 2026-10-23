@@ -8,7 +8,6 @@ using Npgsql;
 namespace Eve.Services.Space.Tests;
 
 /// <summary>
-/// The CRAB rules (<see cref="AnalysisBeaconRules"/>): the embedded owner figures load and refuse what the first cut does not build, and the beacon types, their
 /// link lists and their reward types are the pinned SDE's (SDE 3396210, types 60244 and 92183, group 4137).
 /// </summary>
 public class AnalysisBeaconRulesTests
@@ -33,8 +32,8 @@ public class AnalysisBeaconRulesTests
         Assert.Equal(2, rules.Types.Count);
         Assert.Equal([new BeaconWaveRule(0, "rogue_drones", 4), new BeaconWaveRule(0.5, "rogue_drones", 4)], rules.For(60244)!.Waves);
         Assert.Equal([new BeaconWaveRule(0, "rogue_drones_deadspace_pve", 6), new BeaconWaveRule(0.5, "rogue_drones_deadspace_pve", 6)], rules.For(92183)!.Waves);
-        Assert.Equal([new BeaconRewardRule(60459, 1441), new BeaconRewardRule(60466, 1), new BeaconRewardRule(60464, 1)], rules.For(60244)!.Rewards);
-        Assert.Equal([new BeaconRewardRule(60459, 2270), new BeaconRewardRule(60473, 1)], rules.For(92183)!.Rewards);
+        Assert.Equal([new BeaconRewardRule(60459, 1441), new BeaconRewardRule(60466, 1), new BeaconRewardRule(60463, 1), new BeaconRewardRule(60465, 1), new BeaconRewardRule(60464, 1)], rules.For(60244)!.Rewards);
+        Assert.Equal([new BeaconRewardRule(60459, 2270), new BeaconRewardRule(60473, 1), new BeaconRewardRule(60472, 1), new BeaconRewardRule(60474, 1), new BeaconRewardRule(60475, 1)], rules.For(92183)!.Rewards);
     }
 
     [Fact]
@@ -49,6 +48,26 @@ public class AnalysisBeaconRulesTests
         Assert.Equal(946, AnalysisBeaconRules.LinkTypeListOf(92183));
         Assert.True(AnalysisBeaconRules.IsBeacon(60244) && AnalysisBeaconRules.IsBeacon(92183));
         Assert.False(AnalysisBeaconRules.IsBeacon(60245));
+    }
+
+    [Fact]
+    public void Character_energy_and_system_interference_regenerate_continuously_to_their_caps()
+    {
+        Assert.Equal(50, AnalysisBeaconRules.RegenerateResource(0, 1_000, 1_000 + 11 * 60 * 60 * 1000L,
+            AnalysisBeaconRules.MaximumCharacterEnergy, AnalysisBeaconRules.CharacterEnergyFullRegeneration), 8);
+        Assert.Equal(100, AnalysisBeaconRules.RegenerateResource(0, 1_000, 1_000 + 22 * 60 * 60 * 1000L,
+            AnalysisBeaconRules.MaximumCharacterEnergy, AnalysisBeaconRules.CharacterEnergyFullRegeneration), 8);
+        Assert.Equal(2, AnalysisBeaconRules.RegenerateResource(50, 1_000, 1_000 + 12 * 60 * 60 * 1000L,
+            AnalysisBeaconRules.MaximumSignalInterference, AnalysisBeaconRules.SignalInterferenceFullDecay, decays: true), 8);
+    }
+
+    [Fact]
+    public void Link_costs_preserve_the_reported_daily_use_rates()
+    {
+        Assert.Equal(100d / 3, AnalysisBeaconRules.CharacterEnergyCostOf(AnalysisBeaconRules.StandardType), 8);
+        Assert.Equal(25, AnalysisBeaconRules.CharacterEnergyCostOf(AnalysisBeaconRules.CarrierType));
+        Assert.Equal(3, AnalysisBeaconRules.SignalInterferenceCostOf(AnalysisBeaconRules.StandardType));
+        Assert.Equal(2.5, AnalysisBeaconRules.SignalInterferenceCostOf(AnalysisBeaconRules.CarrierType));
     }
 
     [Fact]
@@ -122,6 +141,42 @@ public class AnalysisBeaconRulesTests
         }
         // the SDE's English name of the reward item (the group is "Rogue Drone Analysis Data")
         Assert.Equal("Rogue Drone Infestation Data", statics.Type(60459)!.Name);
+        Assert.Equal("Exigent Heavy Drone Firepower Mutaplasmid", statics.Type(60464)!.Name);
+        Assert.Equal("Exigent Heavy Drone Projection Mutaplasmid", statics.Type(60466)!.Name);
+        Assert.Equal("Exigent Heavy Drone Navigation Mutaplasmid", statics.Type(60463)!.Name);
+        Assert.Equal("Exigent Heavy Drone Durability Mutaplasmid", statics.Type(60465)!.Name);
+        Assert.Equal("Exigent Medium Drone Firepower Mutaplasmid", statics.Type(60473)!.Name);
+        Assert.Equal("Exigent Medium Drone Navigation Mutaplasmid", statics.Type(60472)!.Name);
+        Assert.Equal("Exigent Medium Drone Durability Mutaplasmid", statics.Type(60474)!.Name);
+        Assert.Equal("Exigent Medium Drone Projection Mutaplasmid", statics.Type(60475)!.Name);
+    }
+
+    [PgFact]
+    public async Task Both_beacon_blueprints_match_the_pinned_sde_manufacturing_recipe()
+    {
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var sde = new SdeReader(source);
+        Assert.Equal(3396210L, await sde.BuildAsync());
+        var blueprints = await sde.ReadAsync("blueprints", [60514, 92182]);
+
+        foreach (var blueprint in blueprints)
+        {
+            var manufacturing = blueprint.Doc.GetProperty("activities").GetProperty("manufacturing");
+            Assert.Equal(12_000, manufacturing.GetProperty("time").GetInt32());
+            Assert.Equal(1, manufacturing.GetProperty("products")[0].GetProperty("quantity").GetInt32());
+            var productType = manufacturing.GetProperty("products")[0].GetProperty("typeID").GetInt32();
+            Assert.Contains(productType, new[] { AnalysisBeaconRules.StandardType, AnalysisBeaconRules.CarrierType });
+
+            var materials = manufacturing.GetProperty("materials").EnumerateArray()
+                .ToDictionary(row => row.GetProperty("typeID").GetInt32(), row => row.GetProperty("quantity").GetInt32());
+            Assert.Equal(new Dictionary<int, int>
+            {
+                [34] = 1_400_000, [35] = 400_000, [37] = 6_000, [39] = 10_000, [40] = 5_000,
+                [2867] = 2, [2872] = 1, [2875] = 1, [2876] = 1,
+            }, materials);
+        }
+
+        Assert.Equal(2, blueprints.Count);
     }
 
     [PgFact]

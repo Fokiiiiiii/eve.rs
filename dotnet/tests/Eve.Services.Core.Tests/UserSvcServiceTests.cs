@@ -7,12 +7,22 @@ namespace Eve.Services.Core.Tests;
 public sealed class RedeemUserSvcCompatibilityTests
 {
     [Fact]
+    public async Task Get_user_token_requires_a_live_issuer()
+    {
+        var service = (IService)(object)new RedeemService(new FakeCallbacks());
+        var session = new ClientSession { UserId = 35, CharacterId = 90000003 };
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => Call(service, session, "GetUserToken"));
+    }
+
+    [Fact]
     public async Task User_svc_exposes_the_complete_reference_surface_and_uses_account_reads()
     {
         var service = (IService)(object)new RedeemService(
             new FakeCallbacks(),
             (userId, _) => ValueTask.FromResult<string?>(userId == 35 ? "capsuleer" : null),
-            (characterId, _) => ValueTask.FromResult<long?>(characterId == 90000003 ? 133801234567890123 : null));
+            (characterId, _) => ValueTask.FromResult<long?>(characterId == 90000003 ? 133801234567890123 : null),
+            (call, _) => ValueTask.FromResult<PyValue?>(call.Method == "GetUserToken" ? new PyStr("issued-token") : null));
         string[] methods =
         [
             "GetRedeemTokens", "ClaimRedeemTokens", "ReverseRedeem", "TrashRedeemTokens",
@@ -27,7 +37,7 @@ public sealed class RedeemUserSvcCompatibilityTests
         Assert.Equal(new PyLong(133801234567890123), await Call(service, session, "GetCreateDate"));
         Assert.Equal(new PyInt(0), await Call(service, session, "GetSessionPlaytimeMinutes"));
         Assert.Equal(new PyStr("capsuleer"), await Call(service, session, "GetUserName"));
-        Assert.Equal(new PyStr("evejs-local-token-35-90000003"), await Call(service, session, "GetUserToken"));
+        Assert.Equal(new PyStr("issued-token"), await Call(service, session, "GetUserToken"));
 
         // Without a Multiple Character Training store the account has no extra queues, and no activation grants one.
         Assert.Empty(Assert.IsType<PyDict>(await Call(service, session, "GetMultiCharactersTrainingSlots")).Entries);
@@ -36,12 +46,41 @@ public sealed class RedeemUserSvcCompatibilityTests
         await Assert.ThrowsAsync<MachoWrappedException>(() => Call(service, session, "ActivateMultiTraining"));
         Assert.Empty(Assert.IsType<PyDict>(await Call(service, session, "GetMultiCharactersTrainingSlots")).Entries);
 
-        // GATE-C: the votes and reports answer true and keep nothing (EveJS userService.js 1104-1127)
         Assert.Same(PyBool.True, await Call(service, session, "CastUpvote"));
         Assert.Same(PyBool.True, await Call(service, session, "CastDownvote", new PyStr("feedback")));
         Assert.Same(PyBool.True, await Call(service, session, "ReportBot", new PyInt(90000004)));
         Assert.Same(PyBool.True, await Call(service, session, "ReportISKSpammer", new PyInt(90000004)));
         Assert.Same(PyBool.False, await Call(service, session, "CreateRedeemTokenQA"));
+    }
+
+    [Fact]
+    public async Task Create_redeem_token_qa_grants_nothing_without_a_staff_account_role()
+    {
+        var userRpcCalls = new List<string>();
+        var service = (IService)(object)new RedeemService(
+            new FakeCallbacks(),
+            userRpcHandler: (call, _) =>
+            {
+                userRpcCalls.Add(call.Method);
+                return ValueTask.FromResult<PyValue?>(PyBool.True);
+            });
+        Task<PyValue> Grant(ClientSession session) => service.CallAsync(new ServiceCall
+        {
+            Method = "CreateRedeemTokenQA",
+            Args = [],
+            Kwargs = new PyDict([new(new PyStr("userID"), new PyInt(36)), new(new PyStr("typeID"), new PyInt(34))]),
+            Session = session,
+        }).AsTask();
+
+        var ordinary = new ClientSession { UserId = 35, CharacterId = 90000003 };
+        ordinary.Set("role", new PyLong(GameMasterRoles.Staff)); // the generic role field is not a grant
+        Assert.Same(PyBool.False, await Grant(ordinary));
+        Assert.Empty(userRpcCalls);
+
+        var staff = new ClientSession { UserId = 35, CharacterId = 90000003 };
+        staff.Set("accountRole", new PyLong(GameMasterRoles.Qa));
+        Assert.Same(PyBool.True, await Grant(staff));
+        Assert.Equal(new[] { "CreateRedeemTokenQA" }, userRpcCalls);
     }
 
     [Fact]
@@ -114,7 +153,7 @@ public sealed class RedeemUserSvcCompatibilityTests
             Method = "CreateRedeemTokenQA",
             Args = [],
             Kwargs = new PyDict([new(new PyStr("typeID"), new PyInt(0))]),
-            Session = new ClientSession { UserId = 35 },
+            Session = StaffSession(35),
         };
 
         Assert.Same(PyBool.False, await service.CallAsync(call));
@@ -125,7 +164,7 @@ public sealed class RedeemUserSvcCompatibilityTests
             Method = "CreateRedeemTokenQA",
             Args = [],
             Kwargs = new PyDict([new(new PyStr("typeID"), new PyReal(34.5))]),
-            Session = new ClientSession { UserId = 35 },
+            Session = StaffSession(35),
         };
         Assert.Same(PyBool.False, await service.CallAsync(fractionalTypeIdCall));
         Assert.False(dispatched);
@@ -148,7 +187,7 @@ public sealed class RedeemUserSvcCompatibilityTests
             Method = "CreateRedeemTokenQA",
             Args = [],
             Kwargs = new PyDict([new(new PyStr("typeID"), new PyStr("34"))]),
-            Session = new ClientSession { UserId = 35 },
+            Session = StaffSession(35),
         };
 
         Assert.Same(payload, await service.CallAsync(call));
@@ -177,7 +216,7 @@ public sealed class RedeemUserSvcCompatibilityTests
                 new(new PyStr("typeID"), new PyInt(34)),
                 new(new PyStr("quantity"), new PyInt(2)),
             ]),
-            Session = new ClientSession { UserId = 35 },
+            Session = StaffSession(35),
         };
 
         Assert.Same(payload, await service.CallAsync(call));
@@ -231,6 +270,13 @@ public sealed class RedeemUserSvcCompatibilityTests
         public ValueTask<IReadOnlyList<(int Slot, long EndsAt)>> ActivateItemAsync(
             long authenticatedUserId, long itemId, int? trainingId, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("That item is not a Multiple Character Training certificate.");
+    }
+
+    private static ClientSession StaffSession(int userId)
+    {
+        var session = new ClientSession { UserId = userId };
+        session.Set("accountRole", new PyLong(GameMasterRoles.Qa));
+        return session;
     }
 
     private static Task<PyValue> Call(IService service, ClientSession session, string method, params PyValue[] args) =>

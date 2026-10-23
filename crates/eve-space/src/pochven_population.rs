@@ -1,4 +1,3 @@
-//! The Pochven population of a scene (`docs/project/POCHVEN_DESIGN.md`): what a Pochven system holds once a ship is in it. The published data gives the
 //! numbers of the sentries and the hulls (the SDE, build 3396210, the values below); it does not give where they stand, how often the factions fight or
 //! how many of them there are. Those are the rules of this module, stated here and in DEVIATIONS:
 //! * a sentry at every stargate of the system, 20 km from the gate towards the system's centre: an Entropic Disintegrator Werpost of the Triglavians,
@@ -9,7 +8,6 @@
 //!
 //! The shot of a turret is the SDE's damage times the hull's damage multiplier, once every [`SHOT_CYCLE_MS`]: the SDE gives no cycle for these types, so the
 //! cycle is the rule of this module.
-
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
@@ -134,7 +132,6 @@ pub const SENTINEL: NpcType = NpcType {
     shot: [97.2, 69.435, 0.0, 0.0],
 };
 
-/// Interfering Phase-II Legionary (56493), Rogue Drone Entities: the Rogue Drone hull of a skirmish.
 pub const LEGIONARY: NpcType = NpcType {
     type_id: 56493,
     group_id: 4037,
@@ -286,16 +283,12 @@ pub const SENTRY_TRIGLAVIAN: &str = "pochven sentry triglavian";
 pub const SENTRY_EDENCOM: &str = "pochven sentry edencom";
 pub const CAMP_EDENCOM: &str = "pochven camp edencom";
 
-/// The owners (corporations) a Pochven NPC's sensor reports to its tree: the tree attacks an NPC of an owner in `valid` (every owner when empty) that is
-/// not in `invalid`. `[NO_OWNER]` in `valid` is nothing.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Owners {
     pub valid: Vec<i64>,
     pub invalid: Vec<i64>,
 }
 
-/// The owners a Pochven NPC of the behavior and corporation attacks (`pochven::hostile_corporations` for the fighters). A Triglavian camp or sentry
-/// attacks every ship that is not Triglavian, pilots included (the wiki: Triglavian rats are hostile at 0.00 and below, and a pilot starts at 0.00); an
 /// EDENCOM sentry attacks the other Pochven factions' NPCs and no pilot (EDENCOM rats are hostile below 0.00, and nothing here lowers a pilot's standing).
 /// Outside Pochven nothing is attacked.
 pub fn owners_for(behavior: &str, corporation_id: i64, in_zone: bool) -> Owners {
@@ -547,13 +540,13 @@ impl Scene {
         let at = at.into();
         let ship_id = 980_100_000_000 + self.npc_sequence as i64;
         let place = NpcPlace::at_rest(Vec3::new(at.0, at.1, at.2));
-        match self.spawn_npc_with_behavior(
-            npc_spec(ship_id, npc_type),
-            npc_identity(ship_id, npc_type, aggression),
-            place,
-            behavior,
-            now,
-        ) {
+        let mut identity = npc_identity(ship_id, npc_type, aggression);
+        if matches!(behavior, SENTRY_TRIGLAVIAN | CAMP) {
+            // A neutral pilot has 0.00 standing to the Triglavians and is hostile at that inclusive boundary.
+            // The shared behavior task uses a strict comparison, so move its integer threshold just above zero.
+            identity.hostile_response_threshold = 1;
+        }
+        match self.spawn_npc_with_behavior(npc_spec(ship_id, npc_type), identity, place, behavior, now) {
             Ok((_, mut outs)) => {
                 outs.insert(
                     0,

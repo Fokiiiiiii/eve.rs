@@ -26,7 +26,6 @@ public sealed partial class SpaceContainers
 
     /// <summary>
     /// <c>CompressItemInSpace</c>: the pilot compresses a stack of its own ship at the compression facility <paramref name="facilityShipId"/> (the ship's own ball or a fleet
-    /// member's, whichever shows the compressor in the client's slim item). The rules are the wiki's (Compression): the facility's compressor must run, its pilot must be in
     /// the fleet of the one who compresses (the ship's own pilot always is), the item's type must be in the type list the compressor works, and the ship must be within the
     /// compressor's range (the surface distance, measured by the simulation). Anything else is a named <c>CustomNotify</c> refusal, never <c>None</c>. The stack is replaced by
     /// its compressed type in the same hold in one inventory transaction and the pilot is told the item changes.

@@ -77,7 +77,14 @@ public sealed partial class CrimewatchService(
         return Py.Tuple(bound, result);
     }
 
-    private static long? Number(PyValue value) => value switch { PyInt i => i.Value, PyLong l => l.Value, PyReal r => (long)r.Value, _ => null };
+    private static long? Number(PyValue value) => value switch
+    {
+        PyInt integer => integer.Value,
+        PyLong integer => integer.Value,
+        PyReal real when double.IsFinite(real.Value) && real.Value == Math.Truncate(real.Value) &&
+            real.Value >= long.MinValue && real.Value < 9_223_372_036_854_775_808d => (long)real.Value,
+        _ => null,
+    };
 
     /// <summary>
     /// <c>GetClientStates()</c>: <c>((weapons, pvp, npc, criminal, disapproval), engagements, (criminals, suspects), safetyLevel)</c>. Each timer is <c>(state, expiry)</c>, idle with no
@@ -204,7 +211,6 @@ public sealed partial class CrimewatchService(
     /// <summary><c>GetKillRights(toIDs)</c>: the caller's active kill rights against the requested characters.</summary>
 }
 
-
 [Service("killRightMgr")]
 public sealed partial class KillRightMgrService(
     PgCrimewatchStore store,
@@ -214,10 +220,6 @@ public sealed partial class KillRightMgrService(
     Func<long>? nowUnixMs = null,
     Action<string>? log = null)
 {
-    /// <summary>
-    /// Future notification-service hook: EveJS persists a kill-right-used notification for the owner
-    /// when somebody else activates it.
-    /// </summary>
     public Func<KillRightActivation, CancellationToken, Task>? KillRightUsedNotification { get; set; }
 
     /// <summary>
@@ -239,6 +241,8 @@ public sealed partial class KillRightMgrService(
             PyTuple tuple => tuple.Items,
             _ => [],
         };
+        if (targetIds.Count > 500)
+            throw Eve.Services.MachoErrors.ThrowUserError("CRIMEWATCH_BULK_LIMIT_EXCEEDED");
         var requestedTargets = targetIds
             .Select(Number)
             .Where(id => id is > 0)

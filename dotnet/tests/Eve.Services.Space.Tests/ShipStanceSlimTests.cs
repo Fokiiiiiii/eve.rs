@@ -6,7 +6,6 @@ namespace Eve.Services.Space.Tests;
 
 /// <summary>
 /// A ship's stance reaches the simulation with the ship (protocol 55): the stance and the time of its switch, as the slim item's <c>shipStance</c> carries them
-/// (SF-6; EveJS <c>shipStanceRuntime.js</c> <c>broadcastShipStanceSlimChange</c>; client <c>environment/spaceObject/ship.py</c>). The host sends the ship again when a stance is set in space.
 /// </summary>
 public class ShipStanceSlimTests
 {

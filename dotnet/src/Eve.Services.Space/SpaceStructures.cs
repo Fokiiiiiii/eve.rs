@@ -6,7 +6,6 @@ using Npgsql;
 namespace Eve.Services.Space;
 
 /// <summary>
-/// The Upwell structures in the simulation (ST-1 d). The structures of a system are in its scene once a pilot has come into it: each is put in space with
 /// its vitals and limits from the static data, and its slim state from the record. A change of the record's state is given to the simulation, and a
 /// damage notice of the simulation is a state event of the record, applied in the transaction of the record's own event (FOUNDATIONS rule 1).
 /// </summary>

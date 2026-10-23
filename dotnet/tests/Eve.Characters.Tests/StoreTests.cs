@@ -100,7 +100,6 @@ public class StoreTests
         Assert.False(many.ContainsKey(999));
     }
 
-
     [PgFact]
     public async Task Appearance_updates_preserve_omitted_fields_and_clear_a_missing_doll()
     {
@@ -160,7 +159,6 @@ public class StoreTests
         Assert.Throws<ArgumentException>(() => new Eve.Inventory.PgItemStore(source, "Inventory"));
     }
 
-
     [PgFact]
     public async Task Direct_enlistment_faction_and_cooldown_round_trip_through_character_store()
     {
@@ -196,7 +194,11 @@ public class StoreTests
             await Eve.Data.Migrations.ApplyAsync(s.Source, s.CharactersSchema, legacyMigrations));
         var id = await Insert(s, Pilot("Legacy Home"));
         Assert.Equal(
+<<<<<<< HEAD
             new[] { "0004_remote_home_station_cooldown", "0005_nes_intro_state", "0006_jump_clones", "0007_character_deletion", "0008_login_milestones", "0009_achievement_tracker", "0010_project_discovery_tutorial", "0011_paperdoll_state", "0012_jump_clone_settlements", "0013_character_titles" },
+=======
+            new[] { "0004_remote_home_station_cooldown", "0005_nes_intro_state", "0006_jump_clones", "0007_character_deletion", "0008_login_milestones", "0009_achievement_tracker", "0010_project_discovery_tutorial", "0011_paperdoll_state", "0012_jump_clone_settlements", "0013_character_titles", "0014_achievement_has_ever_warped" },
+>>>>>>> origin/main
             await PgCharacterStore.MigrateAsync(s.Source, s.CharactersSchema));
 
         var migrated = (await s.Characters.GetAsync(id))!;

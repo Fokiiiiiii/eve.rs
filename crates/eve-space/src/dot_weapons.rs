@@ -1,15 +1,10 @@
 //! Damage over time (the breacher pods). A hit does no damage: it starts a `Dot` on the ship it reaches. A ship can carry several applications, but one
 //! works on it at a time: the strongest (the most a tick does at the ship's current total hit points; the one already working wins a tie, then the one
-//! that landed first). The others wait, inert, and their clocks stop until it runs out (EVE University wiki, "Breacher Pod": "the player who has the
 //! strongest breacher pod effect will deal damage to the target, and the weaker effect stays inert until the stronger one expires").
 //!
-//! A tick is one second (the wiki: "every second"; the V24.01 client's `DOT_TICK_RATE_SEC` is 1). It does the lower of the charge's percentage of the
 //! ship's total hit points (shield, armor and hull, their capacities) and its flat cap, rounded down (`int(min(...))` in eve-logic `dotUtil.py`), and it
-//! goes through every layer as it is: the wiki says it "completely ignores resistances". The effect ends when the ship leaves the scene (a jump, a dock,
-//! a death): the wiki's "until a player leaves the solarsystem or docks up". It goes on through warp and tethers.
 //!
 //! Nothing is persisted: a restart drops the applications, as it drops the missiles in flight.
-
 use std::borrow::Cow;
 use std::cmp::Ordering;
 

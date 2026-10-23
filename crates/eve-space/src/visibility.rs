@@ -4,7 +4,6 @@
 //! 50 000 km away, taking it out at the first one-second sample beyond that (`destiny/visibility/constants.js`; the recorded watcher was told a
 //! ship that had warped off was gone 7 seconds into its warp, `oracle/fixtures/scenarios/others.json`). The static bodies of a system are always
 //! in view (every recorded `SetState` holds all of them), so this is about ships only.
-
 use eve_destiny::Vec3;
 
 /// The side of a box of the public grid, in metres.

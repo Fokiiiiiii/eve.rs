@@ -34,7 +34,6 @@ public sealed class UndockContraband
     /// <summary>The wallet reason of the fine (EVE.js "Contraband fine").</summary>
     public const string FineReason = "Contraband fine";
 
-    /// <summary>The journal ref type of the fine: eve-logic appConst.refContrabandFine (EVE.js names the admin adjustment instead, DEVIATIONS, ST-18).</summary>
     public const int FineRefType = 51;
 
     /// <summary>The standing event of the loss: eve-logic appLogConst.eventStandingContrabandTrafficking.</summary>
@@ -330,7 +329,7 @@ public sealed class UndockContraband
         var charged = Math.Min(balance, fine);
         if (charged > 0)
         {
-            // a fine is a journal line against the faction (EVE.js ownerID2 and referenceID); no faction wallet is credited
+
             await _wallets.AdjustAsync(connection, transaction, character, -charged, settlement.FactionId, FineRefType, FineReason, job.NowMs,
                 $"contraband-penalty:{settlement.OperationId}:wallet", $"contraband-penalty:{settlement.OperationId}", ct, referenceId: settlement.FactionId);
         }
@@ -338,11 +337,11 @@ public sealed class UndockContraband
         var loss = taken.Sum(line => line.StandingLoss);
         if (loss > 0)
         {
-            var standing = await _relations!.ValueAsync(Standing, settlement.CharacterId, settlement.FactionId, 0, connection, transaction, ct);
+            var standing = await _relations!.ValueAsync(Standing, settlement.FactionId, settlement.CharacterId, 0, connection, transaction, ct);
             var next = StandingAfter(standing, -loss);
             if (next != standing)
             {
-                await _relations.SetAsync(connection, transaction, Standing, settlement.CharacterId, settlement.FactionId, next,
+                await _relations.SetAsync(connection, transaction, Standing, settlement.FactionId, settlement.CharacterId, next,
                     StandingReason(settlement, taken, -loss), cancellationToken: ct);
             }
         }

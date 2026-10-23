@@ -129,7 +129,6 @@ public class AgentMissionStoreTests
     [PgFact]
     public async Task An_offer_does_not_expire_so_a_late_accept_is_taken_and_the_sweep_leaves_it_alone()
     {
-        // the wiki's seven-day expiry is for COSMOS agents only (not identified in the data): other agents' offers stay until accepted or declined
         await using var rig = await Rig.Create();
         await rig.Store.OfferAsync(Character, Agent, Courier, Rig.Start, "offer:1");
         var late = Rig.Start + TimeSpan.FromDays(30);
@@ -186,5 +185,49 @@ public class AgentMissionStoreTests
         Assert.Equal(AgentMissionState.Quit, quit!.State);
         Assert.Equal(Rig.Start + Hour, quit.QuitAt);
         Assert.Equal(["offered:0>1", "accepted:1>2", "quit:2>6"], await rig.JournalAsync(Character, Agent));
+    }
+
+    [PgFact]
+    public async Task A_reset_returns_an_accepted_mission_to_none_and_the_agent_offers_again()
+    {
+        await using var rig = await Rig.Create();
+        await rig.Store.OfferAsync(Character, Agent, Courier, Rig.Start, "offer:1");
+        await rig.Store.AcceptAsync(Character, Agent, Rig.Start + Hour, "accept:1");
+
+        var change = await rig.Store.ResetAsync(Character, Agent, Rig.Start + Hour * 2, "reset:1");
+
+        Assert.NotNull(change);
+        Assert.Equal((AgentMissionState.Accepted, AgentMissionState.Allocated, "reset"), (change.From, change.To, change.Action));
+        var held = await rig.Store.ReadAsync(Character, Agent);
+        Assert.True(held is null || held.State == AgentMissionState.Allocated);
+        Assert.Equal(["offered:0>1", "accepted:1>2", "reset:2>0"], await rig.JournalAsync(Character, Agent));
+        Assert.Equal(change, rig.Changes[^1]);
+        Assert.NotNull(await rig.Store.OfferAsync(Character, Agent, Courier, Rig.Start + Hour * 2, "offer:2"));
+    }
+
+    [PgFact]
+    public async Task A_reset_clears_a_decline_timer_so_the_agent_offers_at_once()
+    {
+        await using var rig = await Rig.Create();
+        await rig.Store.OfferAsync(Character, Agent, Courier, Rig.Start, "offer:1");
+        await rig.Store.DeclineAsync(Character, Agent, Rig.Start, "decline:1");
+        Assert.NotNull((await rig.Store.ReadAsync(Character, Agent))!.DeclineUntil);
+
+        await rig.Store.ResetAsync(Character, Agent, Rig.Start, "reset:1");
+
+        Assert.NotNull(await rig.Store.OfferAsync(Character, Agent, Courier, Rig.Start, "offer:2"));
+    }
+
+    [PgFact]
+    public async Task A_reset_of_a_character_with_no_mission_is_refused_and_writes_nothing()
+    {
+        await using var rig = await Rig.Create();
+
+        var refused = await Assert.ThrowsAsync<AgentMissionRefusedException>(() =>
+            rig.Store.ResetAsync(Character, Agent, Rig.Start, "reset:1"));
+
+        Assert.Equal("not_held", refused.Reason);
+        Assert.Empty(await rig.JournalAsync(Character, Agent));
+        Assert.Empty(rig.Changes);
     }
 }

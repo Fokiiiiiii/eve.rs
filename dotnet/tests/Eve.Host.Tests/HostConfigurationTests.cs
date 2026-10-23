@@ -1,4 +1,5 @@
 using System.Net;
+using Eve.Marshal;
 
 namespace Eve.Host.Tests;
 
@@ -15,9 +16,40 @@ public class HostConfigurationTests
     }
 
     [Fact]
+    public void Active_survey_configuration_requires_a_positive_integer()
+    {
+        Assert.Null(HostConfiguration.ParseActiveSurveyId(null));
+        Assert.Null(HostConfiguration.ParseActiveSurveyId(""));
+        Assert.Equal(73, HostConfiguration.ParseActiveSurveyId("73"));
+        Assert.Throws<InvalidOperationException>(() => HostConfiguration.ParseActiveSurveyId("0"));
+        Assert.Throws<InvalidOperationException>(() => HostConfiguration.ParseActiveSurveyId("survey"));
+    }
+
+    [Fact]
+    public void Localization_changes_require_three_maps_and_preserve_nested_values()
+    {
+        Assert.Null(HostConfiguration.ParseLocalizationTextChanges(""));
+        var changes = Assert.IsType<PyTuple>(HostConfiguration.ParseLocalizationTextChanges("[{\"en\":{\"messageID\":73}}, {}, {\"fr\":null}]"));
+        Assert.Equal(3, changes.Items.Count);
+        Assert.Single(Assert.IsType<PyDict>(changes.Items[0]).Entries);
+        Assert.Empty(Assert.IsType<PyDict>(changes.Items[1]).Entries);
+        Assert.Single(Assert.IsType<PyDict>(changes.Items[2]).Entries);
+        Assert.ThrowsAny<System.Text.Json.JsonException>(() => HostConfiguration.ParseLocalizationTextChanges("{"));
+        Assert.Throws<InvalidOperationException>(() => HostConfiguration.ParseLocalizationTextChanges("[{}, {}]"));
+    }
+
+    [Fact]
     public void The_Windows_defaults_are_numeric_addresses_the_listener_and_the_simulation_client_can_bind()
     {
         Assert.True(IPEndPoint.TryParse("127.0.0.1:26010", out _));
         Assert.True(IPEndPoint.TryParse("127.0.0.1:26011", out _));
+    }
+
+
+    [Fact]
+    public void Gm_account_grant_status_logs_do_not_include_configured_account_names()
+    {
+        Assert.Equal("eve-host: EVE_GM_ACCOUNTS grant: role bits added", HostConfiguration.GmAccountGrantLog(true));
+        Assert.Equal("eve-host: EVE_GM_ACCOUNTS grant: no such account (it is created by its first login)", HostConfiguration.GmAccountGrantLog(false));
     }
 }

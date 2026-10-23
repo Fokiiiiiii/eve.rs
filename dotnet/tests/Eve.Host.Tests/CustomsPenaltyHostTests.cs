@@ -101,7 +101,7 @@ public sealed class CustomsPenaltyHostTests : IAsyncLifetime
         Assert.Equal(1L, settled);
         Assert.Null(await items.GetAsync(cargo));
         Assert.Equal(-0.2, await ScalarAsync<double>(source,
-            $"SELECT value FROM {Schema("EVE_RELATIONS_SCHEMA")}.relations WHERE kind = 'standing' AND subject = {Pilot} AND object = {Faction}"));
+            $"SELECT value FROM {Schema("EVE_RELATIONS_SCHEMA")}.relations WHERE kind = 'standing' AND subject = {Faction} AND object = {Pilot}"));
         Assert.Equal(0L, await ScalarAsync<long>(source, $"SELECT count(*) FROM {Schema("EVE_SCHEDULER_SCHEMA")}.jobs WHERE key = 'contraband-penalty:{operation}'"));
     }
 

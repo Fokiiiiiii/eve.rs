@@ -18,9 +18,10 @@ import pytest
 
 from evecli import packet
 
+from tests import dbseed
 from tests import test_login_to_character as base
 from tests.test_death import DEATH, _names
-from tests.test_others import watch
+from tests.test_others import hold_still, watch
 from tests.test_target import plain_race
 from tests.test_weapon import shots_of, slims_in
 from tests.test_undock import STATION, SYSTEM, arrive
@@ -31,18 +32,19 @@ pytestmark = [
     pytest.mark.skipif(os.environ.get("EVE_LIVE_SERVER", "eve.rs") == "reference", reason="the reference's NPCs are its own"),
 ]
 
-
 def test_a_spawned_rat_locks_the_pilot_and_shoots_it():
     race = plain_race(DEATH["races"][0], "victim")
     run = uuid.uuid4().hex[:10]
     with base.connect(f"walk-npc-{run}") as who:
         _, ship_id, _, _ = arrive(who, race, run)
+        dbseed.set_hull(ship_id, dbseed.COCKROACH)
         service = who.call("ship", "MachoBindObject", (STATION, 15), None)
         who.call_bound(service[0], "Undock", ship_id, False)
-        who.call("beyonce", "MachoBindObject", SYSTEM, None)
+        ballpark = who.call("beyonce", "MachoBindObject", SYSTEM, None)
         watch({"events": who}, 3.0)
         who.call("dogmaIM", "MachoBindObject", (SYSTEM, 5), None)
         watch({"events": who}, 45.0, until=lambda seen: any(e["name"] == "OnInvulnCancelled" for e in seen["events"]))
+        hold_still(who, ballpark[0])
 
         reply = who.call("slash", "SlashCmd", "/npc 1 Blood Visionary")
         text = getattr(reply, "value", reply)
@@ -58,7 +60,6 @@ def test_a_spawned_rat_locks_the_pilot_and_shoots_it():
         assert "OnTarget" in names, sorted(set(names))
         assert "OnDamageMessage" in names, sorted(set(names))
 
-
 def test_a_pilot_who_shoots_a_rat_dead_is_told_of_its_bounty():
     """The pilot locks the smallest armed rat there is (15 points of hull in all: `Petty Thief`) and fires its gun until the rat is gone: the rat's ball is
     taken out of space and the pilot is told what it will be paid (`OnBountyAddedToPayout`)."""
@@ -66,6 +67,7 @@ def test_a_pilot_who_shoots_a_rat_dead_is_told_of_its_bounty():
     run = uuid.uuid4().hex[:10]
     with base.connect(f"walk-npc-kill-{run}") as who:
         _, ship_id, modules, _ = arrive(who, race, run)
+        dbseed.set_hull(ship_id, dbseed.COCKROACH)
         gun = modules[1]
         service = who.call("ship", "MachoBindObject", (STATION, 15), None)
         who.call_bound(service[0], "Undock", ship_id, False)
@@ -73,6 +75,7 @@ def test_a_pilot_who_shoots_a_rat_dead_is_told_of_its_bounty():
         watch({"events": who}, 3.0)
         dogma = who.call("dogmaIM", "MachoBindObject", (SYSTEM, 5), None)
         watch({"events": who}, 45.0, until=lambda seen: any(e["name"] == "OnInvulnCancelled" for e in seen["events"]))
+        hold_still(who, ballpark[0])
 
         reply = who.call("slash", "SlashCmd", "/npc 1 Petty Thief")
         text = getattr(reply, "value", reply)
@@ -89,7 +92,17 @@ def test_a_pilot_who_shoots_a_rat_dead_is_told_of_its_bounty():
         who.call_bound(ballpark[0], "CmdOrbit", rat, 2000)
         watch({"events": who}, 8.0)
         who.call_bound(dogma[0], "Activate", gun, "targetAttack", rat, 1000)
-        seen = watch({"events": who}, 120.0, until=lambda s: any(e["name"] == "OnBountyAddedToPayout" for e in s["events"]))["events"]
+        def payout_and_ball_removal(seen: dict[str, list[dict]]) -> bool:
+            events = seen["events"]
+            has_payout = any(event["name"] == "OnBountyAddedToPayout" for event in events)
+            has_removal = any(
+                "RemoveBalls" in _names(event)
+                for event in events
+                if event["name"] == "DoDestinyUpdate"
+            )
+            return has_payout and has_removal
+
+        seen = watch({"events": who}, 120.0, until=payout_and_ball_removal)["events"]
         names = [e["name"] for e in seen]
         counts = {n: names.count(n) for n in set(names)}
         hits = [str(shot.get("damage")) for shot in shots_of(seen)]
@@ -121,7 +134,6 @@ def test_a_pilot_who_shoots_a_rat_dead_is_told_of_its_bounty():
         if shown_empty is not None:
             assert (shown_empty.group(1).lower() in ("true", "1")) == (not rows), (shown_empty.group(1), rows)
 
-
 def test_a_rat_that_launches_missiles_shows_the_pilot_each_missile_and_the_missiles_hurt_it():
     """A hull with `missileLaunchingForEntity` (the Guristas Invader: Scourge Rockets) launches missiles of its own: the pilot is shown each as a ball with a launch, and
     the damage of one that lands is told at the hit quality of a missile (`oracle/fixtures/npc/hull_weapons.json`: the launcher is what the reference makes of the hull)."""
@@ -129,14 +141,16 @@ def test_a_rat_that_launches_missiles_shows_the_pilot_each_missile_and_the_missi
     run = uuid.uuid4().hex[:10]
     with base.connect(f"walk-npc-missile-{run}") as who:
         _, ship_id, _, _ = arrive(who, race, run)
+        dbseed.set_hull(ship_id, dbseed.COCKROACH)
         service = who.call("ship", "MachoBindObject", (STATION, 15), None)
         who.call_bound(service[0], "Undock", ship_id, False)
         ballpark = who.call("beyonce", "MachoBindObject", SYSTEM, None)
         watch({"events": who}, 3.0)
         who.call("dogmaIM", "MachoBindObject", (SYSTEM, 5), None)
         watch({"events": who}, 45.0, until=lambda seen: any(e["name"] == "OnInvulnCancelled" for e in seen["events"]))
+        hold_still(who, ballpark[0])
 
-        reply = who.call("slash", "SlashCmd", "/npc 1 Guristas Invader")
+        reply = who.call("slash", "SlashCmd", "/npc 1 Guristas Invader still")
         text = getattr(reply, "value", reply)
         text = text.decode() if isinstance(text, bytes) else str(text)
         assert text.startswith("Spawned 1 hull from Guristas Invader"), text
@@ -153,7 +167,6 @@ def test_a_rat_that_launches_missiles_shows_the_pilot_each_missile_and_the_missi
         assert "AddBalls2" in actions, sorted(set(actions))
         assert hits, "no missile landed"
         assert {h["hitQuality"] for h in hits} == {3}, hits
-
 
 def shots_of_others(events: list) -> list:
     """The combat-log messages of attacks on the pilot (`attackType` `otherPlayerWeapons`), as `{key: value}`."""

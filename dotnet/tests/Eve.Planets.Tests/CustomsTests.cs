@@ -53,6 +53,35 @@ public class CustomsTests
     public void The_office_rate_is_the_npc_rate_less_the_skill_in_high_security(double security, int skill, double rate) =>
         Assert.Equal(rate, Customs.Rate(security, skill), 9);
 
+    [Theory]
+    [InlineData(10.0, 0.01)]
+    [InlineData(5.0, 0.02)]
+    [InlineData(0.0, 0.03)]
+    [InlineData(-5.0, 0.04)]
+    [InlineData(-10.0, 0.05)]
+    public void An_owner_rate_uses_the_highest_reached_standing_band(double standing, double expected)
+    {
+        var rates = new Customs.OwnerTaxRates(0.06, 0.07, 0.01, 0.02, 0.03, 0.04, 0.05);
+        Assert.Equal(expected, rates.TierRate(standing), 9);
+    }
+
+    [Fact]
+    public void Corporation_and_alliance_rates_take_precedence_over_standing()
+    {
+        var rates = new Customs.OwnerTaxRates(0.06, 0.07, 0.01, 0.02, 0.03, 0.04, 0.05);
+        Assert.Equal(0.06, rates.ForPilot(sameCorporation: true, sameAlliance: true, standing: -10), 9);
+        Assert.Equal(0.07, rates.ForPilot(sameCorporation: false, sameAlliance: true, standing: -10), 9);
+        Assert.Equal(0.05, rates.ForPilot(sameCorporation: false, sameAlliance: false, standing: -10), 9);
+    }
+
+    [Theory]
+    [InlineData(0.10, 0.02, 0.12)]
+    [InlineData(0.05, 0.02, 0.07)]
+    [InlineData(0.17, 0.02, 0.19)]
+    [InlineData(0.10, 1.0, 1.0)]
+    public void Npc_and_owner_rates_combine_without_exceeding_one(double npc, double owner, double expected) =>
+        Assert.Equal(expected, Customs.CombinedRate(npc, owner), 9);
+
     [Fact]
     public void The_fees_are_quantity_times_the_pad_rate_times_the_commodity_multiplier_times_the_office_rate()
     {

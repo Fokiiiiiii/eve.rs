@@ -97,7 +97,7 @@ public sealed partial class SpaceSessions
                 {
                     if (inStructure && PlaceStructuresAsync is { } placeStructures)
                         await placeStructures(systemId, token);
-                    refusal = await _sim.EnterAsync(new SimEnter(sessionId, systemId, EnterHow.Undock, placeId, spec), token);
+                      refusal = await _sim.EnterAsync(new SimEnter(sessionId, SimSceneKey.SolarSystem(systemId), EnterHow.Undock, placeId, spec), token);
                     if (refusal is null)
                         await PlaceWormholeEndsAsync(systemId, token);
                     if (refusal is null)
@@ -138,7 +138,7 @@ public sealed partial class SpaceSessions
                     new PyList([InventoryWire.PackedRow(ShipRow(moved.Ship, type), new PyStr(inStructure ? "UndockingStructure:" : $"Undocking:{placeId}"))]),
                     ChangedFrom(moved), None);
                 ReleaseBoundObjects(session);
-                // the reference's undock announces neither stationid2 nor a change of it (EveJS applyTqDockingTransitionSessionChangeShape), yet its
+
                 // server value is cleared (characterState: session.stationid2 = null); a later docking announces it from nothing (a pod's death does)
                 session.Set("stationid2", None);
                 session.Change((placeKey, None), ("locationid", new PyInt(systemId)), ("solarsystemid", new PyInt(systemId)));
@@ -159,16 +159,15 @@ public sealed partial class SpaceSessions
             new PyLong(Py.FileTimeFromUnixMs(_nowUnixMs() + SessionChangeCooldownMs)));
     }
 
-
     /// <summary>Boards another ship from the current station hangar and updates the active session ship.</summary>
     /// <summary>Leaves a docked ship, activates the character's capsule, and keeps the ship in the hangar.</summary>
-
     /// <summary>Boards a ship already in the character's station hangar.</summary>
     public ValueTask<PyValue> EjectAsync(ClientSession session, CancellationToken cancellationToken) =>
         EjectPhysicalShipAsync(session, ShipIdOf(session) ?? 0, false, cancellationToken);
 
     private async ValueTask<PyValue> EjectPhysicalShipAsync(ClientSession session, long expectedSessionShipId, bool exitStructure, CancellationToken cancellationToken)
     {
+        AssertAbyssalShipSwapAllowed(session);
         var id = (ulong)session.SessionId;
         CancelSafeLogoff(session);
         if (LifecycleBlockers is not { } readBlockers
@@ -300,6 +299,7 @@ public sealed partial class SpaceSessions
 
     public async ValueTask<PyValue> BoardAsync(ClientSession session, long shipId, long currentShipId, CancellationToken cancellationToken)
     {
+        AssertAbyssalShipSwapAllowed(session);
         CancelSafeLogoff(session);
         var id = (ulong)session.SessionId;
         if (session.CharacterId is not { } characterId
@@ -541,7 +541,7 @@ public sealed partial class SpaceSessions
         CancelSafeLogoff(session);
         if (_pilots.TryGetValue((ulong)session.SessionId, out var pilot))
         {
-            // a ship a fleet grant of the invulnerability core holds still (the wiki: protected ships cannot move) takes no movement order
+
             if (IsMovementOrder(code, args) && Buffs.IsImmobile(pilot.ShipId, _nowUnixMs()))
             {
                 _log?.Invoke($"movement command {code} of session {session.SessionId} refused: the ship is held still by a fleet grant");

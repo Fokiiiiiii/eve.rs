@@ -4,7 +4,6 @@ using Xunit;
 namespace Eve.Services.Space.Tests;
 
 /// <summary>
-/// The probe scan's arithmetic: the wiki's scan range steps, probe strength and deviation tables, the skills' bonuses, the signal a target needs, the certainty
 /// tiers, and the engine's results (no database).
 /// </summary>
 public class ProbeScanMathTests
@@ -14,7 +13,7 @@ public class ProbeScanMathTests
     [Fact]
     public void Core_probes_scan_from_a_quarter_of_an_astronomical_unit_to_32_and_combat_probes_from_half_to_64()
     {
-        // the SDE: core probes 0.25 AU at a range factor of 2; combat probes 0.5 AU (wiki: "Core Scanner Probes haves a maximum scan range of 32 AU")
+
         Assert.Equal(0.25 * Au, ProbeScanMath.ScanRangeMeters(0.25, 2, 1), 0);
         Assert.Equal(32 * Au, ProbeScanMath.ScanRangeMeters(0.25, 2, 8), 0);
         Assert.Equal(0.5 * Au, ProbeScanMath.ScanRangeMeters(0.5, 2, 1), 0);
@@ -24,17 +23,17 @@ public class ProbeScanMathTests
     [Fact]
     public void A_probe_has_40_strength_at_the_base_range_and_the_wiki_minimum_of_42_with_astrometrics_one()
     {
-        // wiki: "The minimum probe sensor strength is 42 (base strength of 40 ... plus 5% due to Astrometrics I)"
+
         Assert.Equal(40, ProbeScanMath.StrengthAtStep(40, 2, 1, 0), 9);
         Assert.Equal(42, ProbeScanMath.StrengthAtStep(40, 2, 1, 5), 9);
-        // the strength halves with each range step (the base strength is given at the base scan range)
+
         Assert.Equal(20, ProbeScanMath.StrengthAtStep(40, 2, 2, 0), 9);
     }
 
     [Fact]
     public void The_largest_deviation_follows_the_wiki_table_for_core_and_combat_probes()
     {
-        // wiki table, Astrometrics I: core probe (0.125 AU at 0.25 AU) 0.1188 at 0.25 AU and 1.9 at 4 AU; astrometrics five at 4 AU: 1.5
+
         Assert.Equal(0.1188, ProbeScanMath.MaxDeviationMeters(0.125, 0.25, 0.25 * Au, 0.95) / Au, 4);
         Assert.Equal(1.9, ProbeScanMath.MaxDeviationMeters(0.125, 0.25, 4 * Au, 0.95) / Au, 4);
         Assert.Equal(1.5, ProbeScanMath.MaxDeviationMeters(0.125, 0.25, 4 * Au, 0.75) / Au, 4);

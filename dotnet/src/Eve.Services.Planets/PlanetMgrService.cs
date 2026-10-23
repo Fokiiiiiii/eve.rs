@@ -21,8 +21,9 @@ namespace Eve.Services.Planets;
 /// </summary>
 [Service("planetMgr")]
 public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStore store, PlanetCatalog catalog, IResourceField field,
-    PgItemStore items, WalletTransactions wallets, PgSkillStore skills, Func<long> nowMs, Func<long, PyValue?, Task> notify, string inventorySchema,
-    ISimulation? simulation = null, PgSpaceItemStore? spaceItems = null, DogmaStatic? dogma = null)
+    PgItemStore items, WalletTransactions wallets, PgSkillStore skills, Func<long> nowMs, Func<long, PyValue?, Task> notify, Func<long, Task> notifyLaunches, string inventorySchema,
+    ISimulation? simulation = null, PgSpaceItemStore? spaceItems = null, DogmaStatic? dogma = null,
+    Func<long, long, CancellationToken, Task<bool>>? canManageCustomsOffice = null)
     : Eve.Services.Inventory.ICustomsOffices
 {
     private const long UnboundPlanetKey = -1;
@@ -85,7 +86,6 @@ public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStor
              PyValue.Of(l.Status), new PyLong(l.LaunchTime), new PyReal(l.X), new PyReal(l.Y), new PyReal(l.Z)]))]);
     }
 
-    /// <summary>DeleteLaunch(launchID): the owner takes the launch off the list (journal.py:464).</summary>
     [Method("DeleteLaunch")]
     public async ValueTask<PyValue> DeleteLaunch(ServiceCall call)
     {
@@ -113,7 +113,6 @@ public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStor
         return Py.KeyVal([.. fields]);
     }
 
-    /// <summary>GetFullNetworkForOwner(planetID, characterID): another character's colony on the planet (planetSvc.py:106).</summary>
     [Method("GetFullNetworkForOwner")]
     public async ValueTask<PyValue> GetFullNetworkForOwner(ServiceCall call)
     {
@@ -172,8 +171,6 @@ public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStor
     /// <summary>The raw planetary resource groups (SDE 1032, 1033, 1035: solid, liquid-gas, organic).</summary>
     private static readonly string[] RawResourceGroups = ["Planet Solid - Raw Resource", "Planet Liquid-Gas - Raw Resource", "Planet Organic - Raw Resource"];
 
-    // ----- the writes -----
-
     /// <summary>UserUpdateNetwork(changes): the batch of the client's command stream, applied in one transaction (clientPlanet.SubmitChanges).</summary>
     [Method("UserUpdateNetwork")]
     public async ValueTask<PyValue> UserUpdateNetwork(ServiceCall call)
@@ -188,6 +185,72 @@ public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStor
             return commands;
         }, call.Cancellation);
         return Py.KeyVal([.. snapshot.Snapshot]);
+    }
+
+    /// <summary>
+    /// GMForceInstallProgram(pinID, typeID, cycleTime, lifetimeHours, qtyPerCycle, headRadius): the game master's program on an extractor
+    /// control unit of the caller's colony. Served to ROLE_GML only (the client shows the deposit designer to that role alone).
+    /// </summary>
+    [Method("GMForceInstallProgram")]
+    public async ValueTask<PyValue> GMForceInstallProgram(ServiceCall call)
+    {
+        RequireGameMaster(call);
+        var planetId = PlanetOf(call);
+        var owner = RequireOwner(call);
+        var pinId = Integral(call.Arg(0)) ?? 0;
+        var typeId = (int)(Integral(call.Arg(1)) ?? 0);
+        var cycleTime = Integral(call.Arg(2)) ?? 0;
+        var hours = Math.Min(Integral(call.Arg(3)) ?? 0, long.MaxValue / PlanetRules.Hour);
+        var qtyPerCycle = Integral(call.Arg(4)) ?? 0;
+        var headRadius = Number(call.Arg(5));
+        await ChangeAsync(owner, planetId, (_, _) => Task.FromResult<List<ColonyCommand>>(
+            [new GmForceInstallProgramCommand(pinId, typeId, cycleTime, hours * PlanetRules.Hour, qtyPerCycle, headRadius)]), call.Cancellation);
+        return PyNone.Instance;
+    }
+
+    /// <summary>GMAddCommodity(pinID, typeID, quantity): the game master's commodity on a pin of the caller's colony (ROLE_GML only).</summary>
+    [Method("GMAddCommodity")]
+    public async ValueTask<PyValue> GMAddCommodity(ServiceCall call)
+    {
+        RequireGameMaster(call);
+        var planetId = PlanetOf(call);
+        var owner = RequireOwner(call);
+        var pinId = Integral(call.Arg(0)) ?? 0;
+        var typeId = (int)(Integral(call.Arg(1)) ?? 0);
+        var quantity = Integral(call.Arg(2)) ?? 0;
+        await ChangeAsync(owner, planetId, (_, _) => Task.FromResult<List<ColonyCommand>>([new GmAddCommodityCommand(pinId, typeId, quantity)]), call.Cancellation);
+        return PyNone.Instance;
+    }
+
+    /// <summary>GMConvertCommandCenter(pinID): the command center takes the type of its planet (ROLE_GML only).</summary>
+    [Method("GMConvertCommandCenter")]
+    public async ValueTask<PyValue> GMConvertCommandCenter(ServiceCall call)
+    {
+        RequireGameMaster(call);
+        var planetId = PlanetOf(call);
+        var owner = RequireOwner(call);
+        var pinId = Integral(call.Arg(0)) ?? 0;
+        await ChangeAsync(owner, planetId, (_, _) => Task.FromResult<List<ColonyCommand>>([new GmConvertCommandCenterCommand(pinId)]), call.Cancellation);
+        return PyNone.Instance;
+    }
+
+    [Method("GMGetSynchedServerState")]
+    public async ValueTask<PyValue> GMGetSynchedServerState(ServiceCall call)
+    {
+        RequireGameMaster(call);
+        var planetId = PlanetOf(call);
+        var owner = Integral(call.Arg(0)) ?? call.Session.CharacterId ?? 0;
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
+        var colony = owner == 0 ? null : await SnapshotAsync(owner, planetId, call.Cancellation);
+        var duration = System.Diagnostics.Stopwatch.GetElapsedTime(started).Ticks;
+        var fields = colony?.Fields ?? [("level", new PyInt(0)), ("currentSimTime", new PyLong(0)), ("pins", new PyList([]))];
+        return Py.Tuple(new PyLong(duration), Py.KeyVal([.. fields]));
+    }
+
+    private static void RequireGameMaster(ServiceCall call)
+    {
+        if (!GameMasterRoles.Has(call.Session, GameMasterRoles.Gml))
+            throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("ROLE_GML is required")));
     }
 
     /// <summary>UserAbandonPlanet: the colony goes; its pins' items go with it.</summary>
@@ -217,7 +280,7 @@ public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStor
             return Task.FromResult<List<ColonyCommand>>([]);
         }, call.Cancellation, extra: async (connection, transaction) =>
         {
-            // the launch container: a can in the system with the commodities inside, as the owner's items (the can model of CharacterShips)
+
             var container = await items.CreateAsync(connection, transaction, new NewItem(LaunchContainerType, owner, body.SolarSystemId, ContainerFlag, 1, Singleton: true), call.Cancellation);
             canId = container;
             foreach (var (type, quantity) in commodities)
@@ -229,12 +292,13 @@ public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStor
                 call.Cancellation);
         });
         await PlaceLaunchCanAsync(body, canId, owner, call.Cancellation);
+
+        await notifyLaunches(owner);
         return new PyLong(launchTime);
     }
 
     /// <summary>
     /// Puts a launch's can in space two radii out from its planet, where the launch record says: the simulation's ball of a can, and its space row
-    /// (the owner's rights, and the time the launch lasts). Only the owner may take from it: a launch has no corporation.
     /// </summary>
     private async Task PlaceLaunchCanAsync(PlanetBody body, long canId, long owner, CancellationToken cancellationToken)
     {
@@ -247,7 +311,7 @@ public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStor
         var expiresMs = nowMs() + PlanetRules.LaunchLifetime / 10_000;
         await spaceItems.SaveAsync(new SpaceItem(canId, (int)body.SolarSystemId, position, direction, radius, LaunchCanGroup, 0, owner, 0, 0, 0, expiresMs),
             cancellationToken);
-        simulation.PlaceWreck(new SimPlaceWreck((int)body.SolarSystemId, canId, LaunchCanGroup,
+        simulation.PlaceWreck(new SimPlaceWreck(SimSceneKey.SolarSystem((int)body.SolarSystemId), canId, LaunchCanGroup,
             new SimWreckKind(LaunchContainerType, type?.Name ?? "Cargo Container", type?.GraphicId ?? 0), position, direction, radius, 0,
             new SimCredit(owner, 0, 0, 0), false));
     }
@@ -269,8 +333,6 @@ public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStor
         return Py.Tuple(new PyLong(times.Item1), new PyLong(times.Item2));
     }
 
-    // ----- the transaction -----
-
     private sealed class ChangeContext(NpgsqlConnection connection, NpgsqlTransaction transaction, long owner, long planetId)
     {
         public NpgsqlConnection Connection { get; } = connection;
@@ -283,9 +345,13 @@ public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStor
 
     private sealed record ChangeResult(long Owner, long PlanetId, IReadOnlyList<(string, PyValue)> Snapshot);
 
+    public Task<IReadOnlyList<ColonyDocument>> GmColoniesAsync(long owner, CancellationToken cancellationToken) => store.ColoniesOfAsync(owner, cancellationToken);
+
+    public async Task GmChangeAsync(long owner, long planetId, ColonyCommand command, CancellationToken cancellationToken) =>
+        await ChangeAsync(owner, planetId, (_, _) => Task.FromResult<List<ColonyCommand>>([command]), cancellationToken);
+
     /// <summary>
     /// One change of a colony: locks it, runs the colony to now, lets <paramref name="build"/> make the commands (and the direct
-    /// changes such as a launch), applies the commands, saves the colony, charges the ISK, and commits. Notifies the owner.
     /// </summary>
     private async Task<ChangeResult> ChangeAsync(long owner, long planetId, Func<Colony, ChangeContext, Task<List<ColonyCommand>>> build,
         CancellationToken cancellationToken, Func<NpgsqlConnection, NpgsqlTransaction, Task>? extra = null)
@@ -379,7 +445,7 @@ public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStor
         PyValue At(int i) => i < a.Count ? a[i] : PyNone.Instance;
         switch (change.Id)
         {
-            case 1: // CreatePin(pinID, typeID, latitude, longitude)
+            case 1:
             {
                 var typeId = (int)(Integral(At(1)) ?? 0);
                 var kind = colony.Catalog.KindOf(typeId) ?? throw MachoErrors.ThrowUserError("InvalidPinType");
@@ -402,15 +468,15 @@ public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStor
                 }
                 return new CreatePinCommand(pinId, typeId, Number(At(2)), Number(At(3)));
             }
-            case 2: // RemovePin(pinID)
+            case 2:
                 return new RemovePinCommand(Real(c, At(0), c.PinIds));
-            case 3: // CreateLink(endpoint1, endpoint2, level)
+            case 3:
                 return new CreateLinkCommand(Real(c, At(0), c.PinIds), Real(c, At(1), c.PinIds), colony.Catalog.LinkTypeId, (int)(Integral(At(2)) ?? 0));
-            case 4: // RemoveLink(endpoint1, endpoint2)
+            case 4:
                 return new RemoveLinkCommand(Real(c, At(0), c.PinIds), Real(c, At(1), c.PinIds));
-            case 5: // SetLinkLevel(endpoint1, endpoint2, level)
+            case 5:
                 return new SetLinkLevelCommand(Real(c, At(0), c.PinIds), Real(c, At(1), c.PinIds), (int)(Integral(At(2)) ?? 0));
-            case 6: // CreateRoute(routeID, path, typeID, quantity)
+            case 6:
             {
                 long routeId;
                 if (TemporaryId(At(0)) is { } temp)
@@ -422,17 +488,17 @@ public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStor
                 var path = (At(1) switch { PyList l => l.Items, PyTuple t => t.Items, _ => [] }).Select(v => Real(c, v, c.PinIds)).ToList();
                 return new CreateRouteCommand(routeId, path, (int)(Integral(At(2)) ?? 0), Integral(At(3)) ?? 0);
             }
-            case 7: // RemoveRoute(routeID)
+            case 7:
                 return new RemoveRouteCommand(Real(c, At(0), c.RouteIds));
-            case 8: // SetSchematic(pinID, schematicID)
+            case 8:
                 return new SetSchematicCommand(Real(c, At(0), c.PinIds), (int)(Integral(At(1)) ?? 0));
-            case 9: // UpgradeCommandCenter(pinID, level)
+            case 9:
                 return new UpgradeCommandCenterCommand(Real(c, At(0), c.PinIds), (int)(Integral(At(1)) ?? 0));
-            case 10: // AddExtractorHead(pinID, headID, latitude, longitude)
+            case 10:
                 return new AddExtractorHeadCommand(Real(c, At(0), c.PinIds), (int)(Integral(At(1)) ?? 0), Number(At(2)), Number(At(3)));
-            case 11: // KillExtractorHead(pinID, headID)
+            case 11:
                 return new KillExtractorHeadCommand(Real(c, At(0), c.PinIds), (int)(Integral(At(1)) ?? 0));
-            case 12: // MoveExtractorHead(pinID, headID, latitude, longitude)
+            case 12:
                 return new MoveExtractorHeadCommand(Real(c, At(0), c.PinIds), (int)(Integral(At(1)) ?? 0), Number(At(2)), Number(At(3)));
             case 13: // InstallProgram(pinID, typeID or None, headRadius)
                 return new InstallProgramCommand(Real(c, At(0), c.PinIds), Integral(At(1)) is { } type ? (int)type : null, Number(At(2)));
@@ -440,8 +506,6 @@ public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStor
                 throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr($"Unknown planetary change {change.Id}")));
         }
     }
-
-    // ----- what the client reads -----
 
     private async ValueTask<PyValue> PinsOfKindAsync(ServiceCall call, PinKind kind)
     {
@@ -523,8 +587,6 @@ public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStor
         _bodies[planetId] = body;
         return body;
     }
-
-    // ----- small helpers -----
 
     private long PlanetOf(ServiceCall call)
     {

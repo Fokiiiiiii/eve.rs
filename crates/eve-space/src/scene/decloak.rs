@@ -1,6 +1,5 @@
 //! A cloak that ends on the simulation's account: a ship or a body close by breaks it, and the pilot is told why (`OnCloakModuleForceDeactivated`, client
 //! `cloakingSvc.py`; EVE.js `scene/cloaking.js` `notifyCloakModuleForceDeactivated` and `findCloakProximityTrigger`).
-
 use super::*;
 use crate::deployable::{Deployable, Role};
 use crate::modules::Action;
@@ -10,12 +9,10 @@ use crate::wire::dict;
 /// `uncloakRange`, `decloakRange` and `decloakFieldRange`, are in no module of the SDE).
 pub const CLOAK_PROXIMITY_METERS: f64 = 2_000.0;
 
-/// How long a module cloak is stabilized once it is switched on: a Mobile Observatory's ping cannot decloak the ship until then (the wiki, Mobile
 /// Observatory: only ships whose stabilization timer has run out are affected; EVE.js `DEFAULT_CLOAK_STABILIZATION_DURATION_MS`).
 /// shortcut: every cloak gets the default fifteen minutes; EVE.js reads each module's stabilizeCloakDuration, which `Action::Cloak` does not carry yet.
 pub const CLOAK_STABILIZATION_MS: i64 = 15 * 60 * 1000;
 
-/// The chance that a Mobile Observatory's ping decloaks a cloaked ship it reaches (the wiki and EVE.js `MOBILE_OBSERVATORY_DECLOAK_PROBABILITY`), rolled
 /// separately for each ship.
 pub const OBSERVATORY_DECLOAK_PROBABILITY: f64 = 0.4;
 

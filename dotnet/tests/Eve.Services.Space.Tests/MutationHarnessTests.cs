@@ -142,9 +142,14 @@ public class MutationHarnessTests
         Assert.Equal(35.2, launch.Weapon!.RawDamage[1], 6);
 
         // the client: the drone is primed with its mutated attributes, and the item moves out of the bay as an OnItemChange
-        var told = Events.Of(session);
+        var told = Events.Of(session, clear: false);
         var prime = Assert.Single(told, e => e.Name == "OnGodmaPrimeItem");
         Assert.Equal(3220, MutatedDroneHostTests.PrimedAttribute(prime, 37), 6);
+        for (var attempt = 0; attempt < 100 && !told.Any(e => e.Name == "OnItemChange"); attempt++)
+        {
+            await Task.Delay(100);
+            told = Events.Of(session, clear: false);
+        }
         Assert.Contains(told, e => e.Name == "OnItemChange");
 
         // GetDynamicItemInfo answers the same numbers for both items, with their provenance

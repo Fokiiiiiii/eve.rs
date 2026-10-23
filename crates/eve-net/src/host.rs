@@ -1,10 +1,4 @@
-//! The client end of the link to the service host (`docs/design/adr/0002-front-host-link.md`): one connection,
-//! shared by every client session the front serves.
-//!
-//! Outgoing messages go through one queue to a writer that batches what has piled up. A reader routes what
-//! the host sends: replies to the login that asked, packets to the session they are for, the cluster
-//! configuration to whoever starts a handshake. A client that cannot keep up is cut off instead of holding
-//! back the link.
+//! One host connection is shared by all front sessions. Slow clients are disconnected to protect it.
 
 use std::collections::HashMap;
 use std::io;
@@ -287,7 +281,6 @@ async fn read_loop<R: AsyncRead + Unpin>(
             }
         }
     }
-    // The link is down: nothing more will arrive for anyone.
     shared.pending.lock().unwrap().clear();
     shared.sessions.lock().unwrap().clear();
     let _ = closed.send(true);

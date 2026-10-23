@@ -9,11 +9,15 @@ namespace Eve.Services.Corporations;
 
 /// <summary>
 /// The client's <c>warRegistry</c>: the wars of a corporation or an alliance, read from the war relations, and the two changes a war's
-/// owner makes on its own war (open for allies, mutual retraction). The war negotiations (ally offers, surrenders) are not built: no
 /// negotiation can be opened here, so the calls that act on one are refused, and the lists of them are empty.
 /// </summary>
 [Service("warRegistry")]
-public sealed partial class WarRegistryService(Npgsql.NpgsqlDataSource source, RelationStore relations, CharacterSessions? sessions, Func<long> nowMs)
+public sealed partial class WarRegistryService(
+    Npgsql.NpgsqlDataSource source,
+    RelationStore relations,
+    CharacterSessions? sessions,
+    Func<long> nowMs,
+    Func<long, long, CancellationToken, Task<bool>>? canManageWarAsync = null)
 {
     private const string WarKind = "war";
     private const string NegotiationNotice = "War negotiations are not available on this server.";
@@ -48,7 +52,6 @@ public sealed partial class WarRegistryService(Npgsql.NpgsqlDataSource source, R
     [Method("IsAllianceOrCorpLocal")]
     public PyValue IsAllianceOrCorpLocal(ServiceCall call) => new PyInt(1);
 
-    /// <summary>The wars the owner (an argument, or the session's alliance or corporation) is in, keyed by war id.</summary>
     [Method("GetWars")]
     public async ValueTask<PyValue> GetWars(ServiceCall call)
     {
@@ -100,6 +103,7 @@ public sealed partial class WarRegistryService(Npgsql.NpgsqlDataSource source, R
         var warId = Integral(call.Arg(0)) ?? 0;
         var open = Truthy(call.Arg(1));
         var entity = EntityOf(call.Session);
+        await RequireWarDirectorAsync(call, entity);
         await ChangeWarAsync(warId, war => war.AgainstId == entity, (attrs, _) => attrs["openForAllies"] = open ? 1 : 0, null, call.Cancellation);
         return PyNone.Instance;
     }
@@ -112,6 +116,7 @@ public sealed partial class WarRegistryService(Npgsql.NpgsqlDataSource source, R
     {
         var warId = Integral(call.Arg(0)) ?? 0;
         var entity = EntityOf(call.Session);
+        await RequireWarDirectorAsync(call, entity);
         var now = nowMs();
         await ChangeWarAsync(warId, war => war.Mutual && (war.DeclaredById == entity || war.AgainstId == entity),
             (attrs, _) =>
@@ -143,6 +148,14 @@ public sealed partial class WarRegistryService(Npgsql.NpgsqlDataSource source, R
         var updated = await WarsAsync(token);
         var after = updated.FirstOrDefault(candidate => candidate.WarId == warId);
         if (after is not null) CorporationNotificationAdapter.WarChangedBackground(sessions, after.DeclaredById, after.AgainstId, Payload(after));
+    }
+
+    private async Task RequireWarDirectorAsync(ServiceCall call, long ownerId)
+    {
+        var characterId = call.Session.CharacterId ?? 0;
+        if (characterId <= 0 || ownerId <= 0 || canManageWarAsync is not { } canManage ||
+            !await canManage(characterId, ownerId, call.Cancellation))
+            throw MachoErrors.ThrowUserError("CrpAccessDenied", ("reason", new PyStr("UI/Corporations/AccessRestrictions/NotDirector")));
     }
 
     private async Task<IReadOnlyList<WarsInfoMgrService.WarRecord>> WarsAsync(CancellationToken token) => await WarsInfoMgrService.ReadWarsAsync(relations, token);

@@ -39,6 +39,16 @@ public sealed partial class PgAccountDirectory : IAccountDirectory, IAccountLook
 
     public string Schema { get; }
 
+    /// <summary>Adds role bits to an existing account (the operator's grant; nothing is taken away). False when no account has the name.</summary>
+    public async Task<bool> GrantRolesAsync(string userName, long roles, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await using var command = new NpgsqlCommand($"UPDATE {Schema}.accounts SET role = role | @roles WHERE user_name = @name", connection);
+        command.Parameters.AddWithValue("roles", roles);
+        command.Parameters.AddWithValue("name", userName);
+        return await command.ExecuteNonQueryAsync(cancellationToken) == 1;
+    }
+
     /// <summary>The migrations of this module.</summary>
     public static IReadOnlyList<Migration> MigrationSet() => Migrations.Embedded(typeof(PgAccountDirectory).Assembly, "Migrations");
 
@@ -85,6 +95,24 @@ public sealed partial class PgAccountDirectory : IAccountDirectory, IAccountLook
         command.ExecuteNonQuery();
     }
 
+    /// <summary>The account's authoritative age gate state, or false for an unknown account.</summary>
+    public async Task<bool> IsUnderageAsync(uint accountId, CancellationToken cancellationToken)
+    {
+        await using var command = _source.CreateCommand($"SELECT underage FROM {Schema}.accounts WHERE id = $1");
+        command.Parameters.Add(new NpgsqlParameter { Value = checked((int)accountId) });
+        var result = await command.ExecuteScalarAsync(cancellationToken);
+        return result is true;
+    }
+
+    /// <summary>Sets the account age gate state received from the account verification provider.</summary>
+    public async Task<bool> SetUnderageAsync(uint accountId, bool underage, CancellationToken cancellationToken = default)
+    {
+        await using var command = _source.CreateCommand($"UPDATE {Schema}.accounts SET underage = $2 WHERE id = $1");
+        command.Parameters.Add(new NpgsqlParameter { Value = checked((int)accountId) });
+        command.Parameters.Add(new NpgsqlParameter { Value = underage });
+        return await command.ExecuteNonQueryAsync(cancellationToken) == 1;
+    }
+
     /// <summary>The account's stored end time, or null when the account does not exist.</summary>
     public async Task<DateTimeOffset?> SubscriptionEndsAtAsync(uint accountId, CancellationToken cancellationToken)
     {
@@ -125,6 +153,17 @@ public sealed partial class PgAccountDirectory : IAccountDirectory, IAccountLook
         {
             slots[reader.GetInt16(0)] = reader.GetFieldValue<DateTimeOffset>(1);
         }
+        return slots;
+    }
+
+    /// <summary>Returns persisted slot expiries for Host scheduler recovery.</summary>
+    public async Task<IReadOnlyList<(uint AccountId, DateTimeOffset EndsAt)>> TrainingSlotExpiriesAsync(CancellationToken cancellationToken)
+    {
+        await using var command = _source.CreateCommand($"SELECT account_id, ends_at FROM {Schema}.account_training_slots ORDER BY account_id, slot");
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        var slots = new List<(uint AccountId, DateTimeOffset EndsAt)>();
+        while (await reader.ReadAsync(cancellationToken))
+            slots.Add((checked((uint)reader.GetInt32(0)), reader.GetFieldValue<DateTimeOffset>(1)));
         return slots;
     }
 

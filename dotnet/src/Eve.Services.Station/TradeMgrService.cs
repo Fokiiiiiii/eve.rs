@@ -17,6 +17,7 @@ public sealed partial class TradeMgrService(CharacterSessions sessions, TradeAut
 {
     private const string MonikerName = "carbon.common.script.net.moniker.Moniker";
     private const string RowName = "carbon.common.script.sys.row.Row";
+    internal const int MaxTradeBulkItems = 256;
 
     /// <summary>The header of the trade's list row, in the client's order (the client reads <c>tradeContainerID</c>, <c>traders</c>, <c>money</c> and <c>items</c>).</summary>
     private static readonly string[] ListHeader = ["tradeContainerID", "traders", "state", "money", "items"];
@@ -27,8 +28,6 @@ public sealed partial class TradeMgrService(CharacterSessions sessions, TradeAut
     private static PyValue None => PyNone.Instance;
 
     public void OnBoundObjectReleased(string oid, ClientSession? session) => _bound.TryRemove(oid, out _);
-
-    // ── InitiateTrade ────────────────────────────────────────────────────────
 
     [Method("InitiateTrade")]
     public async ValueTask<PyValue> InitiateTrade(ServiceCall call)
@@ -110,8 +109,6 @@ public sealed partial class TradeMgrService(CharacterSessions sessions, TradeAut
         return Py.Tuple(bound, result);
     }
 
-    // ── the bound trade ──────────────────────────────────────────────────────
-
     /// <summary>The trade the bound call is for, checked against the caller: it must be open, the caller must be in it, and it must be docked where the trade is.</summary>
     private async ValueTask<TradeView> BoundViewAsync(ServiceCall call)
     {
@@ -168,7 +165,7 @@ public sealed partial class TradeMgrService(CharacterSessions sessions, TradeAut
     public async ValueTask<PyValue> MultiAdd(ServiceCall call)
     {
         var view = await BoundViewAsync(call).ConfigureAwait(false);
-        var ids = ArgsOf(call.Arg(0)).Select(IdOf).Where(id => id is > 0).Select(id => id!.Value).Distinct().ToList();
+        var ids = ItemIdsOf(call.Arg(0));
         if (ids.Count == 0)
             return PyBool.False;
         foreach (var itemId in ids)
@@ -181,7 +178,7 @@ public sealed partial class TradeMgrService(CharacterSessions sessions, TradeAut
     public async ValueTask<PyValue> OfferMoney(ServiceCall call)
     {
         var view = await BoundViewAsync(call).ConfigureAwait(false);
-        var amount = Math.Round((decimal)NumberOf(call.Arg(0)), 2);
+        var amount = Math.Round(AmountOf(call.Arg(0)), 2);
         try
         {
             var change = await trades!.SetMoneyAsync(view.TradeId, CharacterOf(call.Session), amount, call.Cancellation).ConfigureAwait(false);
@@ -241,8 +238,6 @@ public sealed partial class TradeMgrService(CharacterSessions sessions, TradeAut
         await EndAsync(view.TradeId, call.Cancellation).ConfigureAwait(false);
         return PyBool.True;
     }
-
-    // ── changes and what the pilots are told ─────────────────────────────────
 
     private async Task StageAsync(TradeView view, long characterId, long itemId, long quantity, CancellationToken cancellationToken)
     {
@@ -332,8 +327,6 @@ public sealed partial class TradeMgrService(CharacterSessions sessions, TradeAut
         return new PyDict(differences);
     }
 
-    // ── rows ─────────────────────────────────────────────────────────────────
-
     private async Task<PyValue> ListRowAsync(TradeView view, CancellationToken cancellationToken)
     {
         var items = new List<PyValue>();
@@ -366,18 +359,15 @@ public sealed partial class TradeMgrService(CharacterSessions sessions, TradeAut
 
     private long Now() => nowUnixMs?.Invoke() ?? DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
-    // ── argument reading ─────────────────────────────────────────────────────
-
     /// <summary>The manifest of <c>MakeOffer</c>: the container, the ISK in trader order and the item ids of the set (each item an object with <c>itemID</c>).</summary>
     internal static (long Container, List<decimal> Money, HashSet<long> Items) ManifestOf(PyValue manifest)
     {
         var container = IdOf(FieldOf(manifest, "tradeContainerID")) ?? 0;
-        var money = ArgsOf(FieldOf(manifest, "money")).Select(v => Math.Round((decimal)NumberOf(v), 2)).ToList();
-        var items = new HashSet<long>();
-        foreach (var entry in ArgsOf(FieldOf(manifest, "tradeItems")))
-        {
-            if (ItemIdOf(entry) is { } id) items.Add(id);
-        }
+        var moneyValues = ArgsOf(FieldOf(manifest, "money")).Take(3).ToArray();
+        if (moneyValues.Length != 2)
+            throw Notify("The trade offer is malformed.");
+        var money = moneyValues.Select(v => Math.Round(AmountOf(v), 2)).ToList();
+        var items = ItemIdsOf(FieldOf(manifest, "tradeItems")).ToHashSet();
         return (container, money, items);
     }
 
@@ -405,10 +395,7 @@ public sealed partial class TradeMgrService(CharacterSessions sessions, TradeAut
         return None;
     }
 
-    /// <summary>
-    /// The item id of one element of a trade's item set: a plain id, an object with <c>itemID</c>, a packed row, or a row object whose
-    /// <c>line</c> starts with the id (the forms EveJS reads, <c>tradeMgrService.js</c> <c>getItemIDFromManifestEntry</c>).
-    /// </summary>
+    /// <summary>The item id of a trade item, read from plain ids, itemID fields, packed rows, or row objects whose line starts with the id.</summary>
     private static long? ItemIdOf(PyValue entry)
     {
         if (IdOf(entry) is { } direct) return direct;
@@ -433,19 +420,45 @@ public sealed partial class TradeMgrService(CharacterSessions sessions, TradeAut
 
     private static PyValue Kwarg(PyValue kwargs, string name) => FieldOf(kwargs, name);
 
+    internal static List<long> ItemIdsOf(PyValue value)
+    {
+        var requested = ArgsOf(value).Take(MaxTradeBulkItems + 1).ToArray();
+        if (requested.Length > MaxTradeBulkItems)
+            throw Notify("The trade item list exceeds the limit.");
+        var ids = new List<long>(requested.Length);
+        foreach (var entry in requested)
+        {
+            var id = ItemIdOf(entry);
+            if (id is not > 0)
+                throw Notify("The trade item list contains an invalid item.");
+            ids.Add(id.Value);
+        }
+        return ids.Distinct().ToList();
+    }
+
+    private static decimal AmountOf(PyValue value)
+    {
+        try
+        {
+            return value switch
+            {
+                PyInt number => number.Value,
+                PyLong number => number.Value,
+                PyReal real when double.IsFinite(real.Value) => checked((decimal)real.Value),
+                _ => throw Notify("The trade amount is invalid."),
+            };
+        }
+        catch (OverflowException)
+        {
+            throw Notify("The trade amount is outside the supported range.");
+        }
+    }
+
     private static long? IdOf(PyValue value) => value switch
     {
         PyInt number => number.Value,
         PyLong number => number.Value,
         _ => null,
-    };
-
-    private static double NumberOf(PyValue value) => value switch
-    {
-        PyInt number => number.Value,
-        PyLong number => number.Value,
-        PyReal real => real.Value,
-        _ => 0,
     };
 
     private static long PositiveCharacterId(PyValue value) => value switch

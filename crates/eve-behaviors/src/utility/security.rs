@@ -54,7 +54,6 @@ pub fn is_in_zero_sec(t: &mut TaskCtx<'_, '_>) -> bool {
     get_local_security_level(t) == Some(SECURITY_CLASS_ZERO_SEC)
 }
 
-/// `get_spawnlist_by_owner_map_by_security`: the task's map of owner to spawn list for the local security (high and safe share one).
 pub fn get_spawnlist_by_owner_map_by_security(t: &mut TaskCtx<'_, '_>) -> Value {
     if is_in_high_sec(t) || is_in_safe_sec(t) {
         t.attribute("highSecOwnerToSpawnlistMapping")
@@ -65,7 +64,6 @@ pub fn get_spawnlist_by_owner_map_by_security(t: &mut TaskCtx<'_, '_>) -> Value 
     }
 }
 
-/// `get_spawnlist_by_group_owner_and_security_level`: the spawn list of my group's owner in the local security (nothing for an owner the map lacks).
 pub fn get_spawnlist_by_group_owner_and_security_level(t: &mut TaskCtx<'_, '_>) -> Value {
     let mapping = get_spawnlist_by_owner_map_by_security(t);
     let Some(owner) = crate::groups::mixin::get_group_owner_id(t) else { return Value::None };

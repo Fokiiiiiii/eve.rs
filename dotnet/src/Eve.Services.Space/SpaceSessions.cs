@@ -42,7 +42,16 @@ public sealed partial class SpaceSessions : IDisposable, ISpaceTargeting, ISpace
 
         public int TypeId { get; } = typeId;
 
-        public int SolarSystemId { get; } = solarSystemId;
+        public int SolarSystemId { get; set; } = solarSystemId;
+
+        /// <summary>The scene the simulator currently owns for this ship; unlike SolarSystemId it includes an Abyssal run and room.</summary>
+        public SimSceneKey SimulationScene { get; set; } = SimSceneKey.SolarSystem(solarSystemId);
+
+        /// <summary>The domain content id for an active Abyssal participant; null outside a run.</summary>
+        public string? AbyssalContentId { get; set; }
+
+        /// <summary>The exact most recent Abyssal scene move, retained for Host receipt retries.</summary>
+        public AbyssalMoveReceipt? LastAbyssalMove { get; set; }
 
         public Task? StructureControlDeath { get; set; }
 
@@ -97,7 +106,6 @@ public sealed partial class SpaceSessions : IDisposable, ISpaceTargeting, ISpace
         /// <summary>The modules whose overheat the pilot asked for (accepted by the simulation as the request, applied at its next cycle): dogma sees them Overloaded.</summary>
         public ConcurrentDictionary<long, byte> Overheated { get; } = new();
 
-        /// <summary>Owner IDs for fitted modules whose charge counts the simulation may report after activation.</summary>
         public ConcurrentDictionary<long, long> ModuleChargeOwners { get; } = new();
 
         /// <summary>Module IDs activated on a controlled structure; cleared when structure control is released.</summary>
@@ -110,9 +118,9 @@ public sealed partial class SpaceSessions : IDisposable, ISpaceTargeting, ISpace
         }
     }
 
-
     private readonly ISimulation _sim;
     private readonly CharacterShips _ships;
+    public DurableScheduler? TimedActions { get; set; }
     private readonly PgSpaceItemStore? _spaceItems;
     public Func<long, CancellationToken, Task<bool>>? StructureExistsAsync { get; set; }
 
@@ -156,7 +164,6 @@ public sealed partial class SpaceSessions : IDisposable, ISpaceTargeting, ISpace
     /// <summary>Blockers owned by adjacent systems (crime timers, targeting, fleet, drone and movement state).</summary>
     public Func<ShipLifecycleAction, ClientSession, long?, CancellationToken, ValueTask<IReadOnlyList<string>>>? LifecycleBlockers { get; set; }
 
-    /// <summary>Invalidates the former owner's insurance after an outsider successfully boards their ejected ship.</summary>
     public Func<ShipBoarded, CancellationToken, ValueTask>? InvalidateInsuranceForBoarding { get; set; }
 
     private sealed record EjectedShip(
@@ -268,7 +275,6 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
 
     public Func<long, long, int, CancellationToken, Task<IReadOnlyList<int>>>? InspectUndockContrabandAsync { get; set; }
 
-    /// <summary>The contraband penalty of an undock or a stargate jump (ST-16 C): the fine charged and the contraband removed; null when there is none.</summary>
     public Func<long, long, int, CancellationToken, Task<ContrabandPenalty?>>? ApplyContrabandPenaltyAsync { get; set; }
 
     /// <summary>The host put the wreck of a destroyed ship (or the corpse of a pilot) in space.</summary>
@@ -304,7 +310,6 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
         get => _transitions.Events;
         set => _transitions.Events = value;
     }
-
 
     public TransitionRuntime Transitions => _transitions;
 
@@ -428,7 +433,6 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
     /// <summary>The solar system the session's ship is in, or null when it is not in space.</summary>
     public int? SolarSystemOf(ClientSession session) => _pilots.TryGetValue((ulong)session.SessionId, out var pilot) ? pilot.SolarSystemId : null;
 
-
     public long? ShipIdOf(ClientSession session) =>
         _pilots.TryGetValue((ulong)session.SessionId, out var pilot) ? pilot.ShipId : null;
 
@@ -437,9 +441,6 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
         _pilots.TryGetValue((ulong)session.SessionId, out var pilot) ? pilot.TypeId : null;
 
     public bool IsWarping(ClientSession session) => _warping.ContainsKey((ulong)session.SessionId);
-
-
-
 
     public ClientSession? ClientSessionOf(ulong sessionId) =>
         _pilots.TryGetValue(sessionId, out var pilot) ? pilot.Session : null;
@@ -499,7 +500,6 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
 
     private static MachoWrappedException Notify(string text) => MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr(text)));
 
-
     private static MachoWrappedException MovementRefused(PolicyDecision decision, string action) =>
         Notify(decision.BlockReason switch
         {
@@ -531,6 +531,23 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
             ship.LocationId == character.SolarSystemId &&
             ship.Flag == CharacterShips.InSpaceFlag)
         {
+            if (FindAbyssalReconnectAsync is { } find &&
+                ship.OwnerId == characterId && ship.Singleton && ship.Quantity == 1 &&
+                await find(session, characterId, ship.Id, cancellationToken).ConfigureAwait(false) is { } reconnect)
+            {
+                if (!reconnect.Scene.IsValid || reconnect.Scene.InstanceId <= 0)
+                    throw new InvalidDataException("The Abyssal reconnect returned an invalid scene key.");
+                var system = _systems.Get(reconnect.Scene.LocationId)
+                    ?? throw new InvalidDataException($"Abyssal reconnect system {reconnect.Scene.LocationId} is absent from the location catalog.");
+                attributes.AddRange([
+                    ("stationid", None),
+                    ("stationid2", None),
+                    ("structureid", None),
+                ]);
+                attributes.AddRange(AbyssalSessionLocationAttributes(reconnect.Scene, system));
+                return attributes;
+            }
+
             var live = _pilots.TryGetValue((ulong)session.SessionId, out var pilot) &&
                 pilot.CharacterId == characterId && pilot.ShipId == ship.Id &&
                 pilot.SolarSystemId == character.SolarSystemId;
@@ -617,13 +634,27 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
         var sessionId = (ulong)session.SessionId;
         if (_pilots.TryGetValue(sessionId, out var current) && current.CharacterId == characterId)
             return;
-        if (!IsSpaceSession(session))
+        var isSpaceSession = IsSpaceSession(session);
+        // Character selection may carry only solarsystemid2 for a persisted private run.
+        // Resolve its authoritative run binding before requiring the ordinary-space session shape.
+        var canRestoreAbyssal = FindAbyssalReconnectAsync is not null &&
+            session.GetInt("stationid") is null && session.GetInt("structureid") is null &&
+            session.GetInt("worldspaceid") is null && session.GetInt("solarsystemid2") is > 0 &&
+            session.GetInt("locationid") == session.GetInt("solarsystemid2");
+        if (!isSpaceSession && !canRestoreAbyssal) return;
+
+        if (await _ships.LoadAsync(characterId, cancellationToken) is not { } snapshot)
+        {
+            _log?.Invoke($"space login for character {characterId} has no persisted ship restore state");
+            throw Notify("Space is not available right now. Try again in a moment.");
+        }
+        if (await ReconnectAbyssalBeforeNormalEntryAsync(session, characterId, snapshot, cancellationToken).ConfigureAwait(false))
             return;
+        if (!isSpaceSession) return;
 
         // Preflight can be abandoned or invalidated by leaving the previous character; reload the durable restore at entry.
         var spaceItems = _spaceItems;
-        if (spaceItems is null ||
-            await _ships.LoadAsync(characterId, cancellationToken) is not { } snapshot)
+        if (spaceItems is null)
         {
             _log?.Invoke($"space login for character {characterId} has no persisted ship restore state");
             throw Notify("Space is not available right now. Try again in a moment.");
@@ -644,7 +675,7 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
         var refusal = await _sim.EnterAsync(
             new SimEnter(
                 sessionId,
-                systemId,
+                  SimSceneKey.SolarSystem(systemId),
                 EnterHow.InSpace,
                 0,
                 ship,
@@ -803,6 +834,9 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
         {
             switch (message)
             {
+                case SimHelloAck:
+                    Background(RestoreAbyssalTracesAsync);
+                    break;
                 case SimDamageableEntityUpserted upserted:
                     UpsertSimDamageableEntity(upserted);
                     break;
@@ -818,8 +852,8 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
                 case SimRemoteRepairCycle cycle:
                     HandleMutadaptiveRepairCycle(cycle);
                     break;
-                case SimNotify notify when _structureObservers.TryGetValue(notify.SessionId, out var observer):
-                    Forward(observer, notify);
+                case SimNotify notify when _structureObservers.TryGetValue(notify.SessionId, out var structureObserver):
+                    Forward(structureObserver, notify);
                     break;
                 case SimNotify notify when _pilots.TryGetValue(notify.SessionId, out var pilot):
                     Forward(pilot.Session, notify);
@@ -829,7 +863,7 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
                         _warping.TryRemove(accepted.SessionId, out _);
                     if (accepted.Command != SimCommands.Dock)
                         EndInvulnerability(mover);
-                    // a warp closes the hacking window of the pilot (EveJS hackingMgrService: the window closes when the ship enters warp)
+
                     if (accepted.Command == SimCommands.WarpTo && HackingService is { } hackingWindow)
                         Background(() => hackingWindow.CloseOnWarpAsync(mover.Session, mover.CharacterId, CancellationToken.None).AsTask());
                     break;
@@ -857,12 +891,29 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
                     EndTetherPilot(jumper);
                     Background(() => FinishJumpAsync(jumper, jumped));
                     break;
+                case SimAbyssalFieldMembership membership:
+                    Background(() => ApplyAbyssalFieldMembershipAsync(membership));
+                    break;
+                case SimDestroyed destroyed when _abyssalRewardCaches.TryGetValue(destroyed.ShipId, out var cache):
+                    Background(() => FinishAbyssalRewardCacheDestroyedAsync(cache, destroyed));
+                    break;
                 case SimDestroyed destroyed when _pilots.TryGetValue(destroyed.SessionId, out var victim) && victim.ShipId == destroyed.ShipId:
                     _warping.TryRemove(destroyed.SessionId, out _);
                     EndTetherPilot(victim);
                     ForgetLockedTarget(destroyed.ShipId);
                     _lockedTargets.TryRemove(destroyed.SessionId, out _);
-                    Background(() => FinishDeathAsync(victim, destroyed));
+                    if (victim.SimulationScene.InstanceId > 0 && victim.AbyssalContentId is not null)
+                        Background(() => FinishAbyssalParticipantDeathAsync(victim, null, destroyed));
+                    else
+                        Background(() => FinishDeathAsync(victim, destroyed));
+                    break;
+                case SimDestroyed destroyed
+                    when _abyssalOfflineResidents.TryGetValue(destroyed.ShipId, out var offline)
+                        && offline.SessionId == destroyed.SessionId
+                        && offline.ContentId is not null:
+                    _abyssalOfflineResidents.TryRemove(destroyed.ShipId, out _);
+                    ForgetLockedTarget(destroyed.ShipId);
+                    Background(() => FinishAbyssalParticipantDeathAsync(null, offline, destroyed));
                     break;
                 case SimDestroyed destroyed when _ejectedShips.TryRemove(destroyed.ShipId, out var abandoned):
                 {
@@ -902,7 +953,7 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
                 case SimChargeSpent spent when _pilots.TryGetValue(spent.SessionId, out var shooter):
                     var chargeOwnerId = shooter.ModuleChargeOwners.TryGetValue(spent.ModuleId, out var moduleOwner) ? moduleOwner : shooter.CharacterId;
                     _charges.Enqueue(spent.SessionId, chargeOwnerId, spent.ModuleId, spent.RoundsLeft);
-                    // Structure charges are persisted by owner, but the character's reload UI is for personal ships only.
+
                     if (!IsStructureObserver(shooter.Session)
                         && shooter.RunningModules.TryGetValue(spent.ModuleId, out var gun) && gun.Reloads && spent.RoundsLeft < gun.PerCycle)
                     {
@@ -936,7 +987,6 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
         }
     }
 
-
     private void HandleMutadaptiveRepairCycle(SimRemoteRepairCycle cycle)
     {
         var amount = 0d;
@@ -961,9 +1011,6 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
             Eve.Services.Space.Effects.ProjectedEffect.MutadaptiveSpool.CompleteCycle(cycle.ModuleId, cycle.CycleId);
         }
     }
-
-
-
 
     private void Forward(ClientSession session, SimNotify notify)
     {
@@ -1016,6 +1063,56 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
         ClearSimDamageableEntities();
         _warping.Clear();
         ForgetMutadaptiveSpools();
+
+        var abyssal = new List<(AbyssalSimulationParticipantLost Participant, Pilot? Pilot, AbyssalOfflineResident? Offline)>();
+        foreach (var pilot in _pilots.Values.Where(pilot => pilot.SimulationScene.InstanceId > 0 && pilot.AbyssalContentId is not null).ToArray())
+        {
+            var sessionId = (ulong)pilot.Session.SessionId;
+            if (pilot.AbyssalContentId is not { } contentId) continue;
+            _pilots.TryRemove(sessionId, out _);
+            _warping.TryRemove(sessionId, out _);
+            _lockedTargets.TryRemove(sessionId, out _);
+            EndTetherPilot(pilot);
+            pilot.End();
+            abyssal.Add((new AbyssalSimulationParticipantLost(pilot.CharacterId, pilot.ShipId,
+                pilot.SimulationScene.LocationId, pilot.SimulationScene.RoomIndex, pilot.Session), pilot, null));
+        }
+        foreach (var offline in _abyssalOfflineResidents.Values.ToArray())
+        {
+            if (offline.ContentId is null) continue;
+            abyssal.Add((new AbyssalSimulationParticipantLost(offline.CharacterId, offline.ShipId,
+                offline.Scene.LocationId, offline.Scene.RoomIndex, null), null, offline));
+        }
+        foreach (var run in abyssal.GroupBy(entry => (entry.Offline?.ContentId ?? entry.Pilot?.AbyssalContentId, entry.Offline?.Scene.InstanceId ?? entry.Pilot?.SimulationScene.InstanceId)))
+        {
+            if (run.Key.Item1 is not { } contentId || run.Key.Item2 is not { } instanceId) continue;
+            var entries = run.ToArray();
+            var notice = new AbyssalSimulationRunLost(instanceId, contentId, entries.Select(entry => entry.Participant).ToArray());
+            Background(async () =>
+            {
+                try
+                {
+                    foreach (var entry in entries)
+                    {
+                        if (entry.Pilot is not { } pilot) continue;
+                        await _charges.CloseAsync((ulong)pilot.Session.SessionId).ConfigureAwait(false);
+                        await CancelRepairsAsync(pilot, CancellationToken.None).ConfigureAwait(false);
+                    }
+                    if (AbyssalSimulationLostAsync is not { } reconcile)
+                        throw new InvalidOperationException("Abyssal simulation loss requires Host restart reconciliation.");
+                    await reconcile(notice, CancellationToken.None).ConfigureAwait(false);
+                    foreach (var entry in entries)
+                    {
+                        if (entry.Offline is { } offline) _abyssalOfflineResidents.TryRemove(offline.ShipId, out _);
+                    }
+                }
+                catch (Exception error) when (error is not OperationCanceledException)
+                {
+                    _log?.Invoke($"Abyssal restart reconciliation for run {instanceId} failed: {error.Message}");
+                }
+            });
+        }
+
         foreach (var pilot in _pilots.Values.ToArray())
         {
             Background(async () =>
@@ -1101,12 +1198,27 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
         catch (Exception error) { _log?.Invoke($"structure control cleanup on disconnect failed: {error.Message}"); }
         finally { ForgetStructureObserver(session); }
         var id = (ulong)session.SessionId;
+        var abyssalResident = _pilots.TryGetValue(id, out var resident)
+            && resident.SimulationScene.InstanceId > 0;
         CancelSafeLogoff(session);
         _transitions.EndSessionChange(id);
         _lockedTargets.TryRemove(id, out _);
         _targeting.TryRemove(id, out _); // not disposed: an order may still be waiting on it
         if (!_pilots.TryRemove(id, out var pilot))
             return;
+        try { await CancelShipSelfDestructAsync(pilot.ShipId, CancellationToken.None); }
+        catch (Exception error) { _log?.Invoke($"self-destruct cleanup on disconnect failed: {error.Message}"); }
+
+        if (abyssalResident && pilot.AbyssalContentId is { } disconnectedContent)
+        {
+            _abyssalOfflineResidents[pilot.ShipId] = new AbyssalOfflineResident(
+                id,
+                pilot.CharacterId,
+                pilot.ShipId,
+                disconnectedContent,
+                pilot.SimulationScene,
+                pilot.LastAbyssalMove);
+        }
 
         if (pilot.CynoArrival) TetherProtectionEnded(pilot);
         EndTetherPilot(pilot);
@@ -1127,9 +1239,23 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
                 _log?.Invoke($"the rounds of character {pilot.CharacterId} could not be written on disconnect: {error.Message}");
             }
 
-            var spaceStateSaved = chargesSaved && await SaveSpaceStateAsync(pilot).ConfigureAwait(false);
-            _log?.Invoke($"pilot {pilot.CharacterId} left space in system {pilot.SolarSystemId} (session {id}): position saved {spaceStateSaved}");
-            if (!spaceStateSaved && chargesSaved)
+            var spaceStateSaved = chargesSaved && !abyssalResident && await SaveSpaceStateAsync(pilot).ConfigureAwait(false);
+            if (abyssalResident)
+            {
+                if (pilot.AbyssalContentId is not { } contentId || AbyssalParticipantDisconnectedAsync is not { } disconnected)
+                    throw new InvalidOperationException("Abyssal disconnect persistence is not configured for this resident participant.");
+                await disconnected(new AbyssalParticipantDisconnectedNotice(
+                    pilot.SimulationScene.InstanceId,
+                    contentId,
+                    pilot.CharacterId,
+                    pilot.ShipId,
+                    pilot.SimulationScene.LocationId,
+                    pilot.SimulationScene.RoomIndex), CancellationToken.None).ConfigureAwait(false);
+            }
+            _log?.Invoke(abyssalResident
+                ? $"Abyssal pilot {pilot.CharacterId} disconnected in run {pilot.AbyssalContentId}; the resident ship remains in its room scene"
+                : $"pilot {pilot.CharacterId} left space in system {pilot.SolarSystemId} (session {id}): position saved {spaceStateSaved}");
+            if (!abyssalResident && !spaceStateSaved && chargesSaved)
             {
                 _log?.Invoke($"pilot {pilot.CharacterId} (session {id}): the ship is recovered to its station, its position was not saved");
                 await _ships.RecoverFromSpaceAsync(pilot.CharacterId, PlaceOfStation, CancellationToken.None).ConfigureAwait(false);
@@ -1141,7 +1267,10 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
         }
         finally
         {
-            _sim.Leave(id, LeaveWhy.LoggedOff);
+            if (!abyssalResident)
+            {
+                _sim.Leave(id, LeaveWhy.LoggedOff);
+            }
         }
     }
 }

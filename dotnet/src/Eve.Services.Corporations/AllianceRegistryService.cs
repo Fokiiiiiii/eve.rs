@@ -6,8 +6,6 @@ using Eve.Marshal;
 
 namespace Eve.Services.Corporations;
 
-// Wire contracts follow EveJS v0.12.9 allianceRegistryRuntime.js and allianceViewState.js (828823a75f211fdecb945b087a26c225f111491f).
-
 public sealed record AllianceSovSnapshot(
     IReadOnlyDictionary<long,long?> ClaimAllianceIdsBySolarSystemId,
     IReadOnlyDictionary<long,(long? AllianceId,long? HubId)> HubsBySolarSystemId,
@@ -42,7 +40,7 @@ public static class EveOwnerTypeIds
 }
 
 [Service("allianceRegistry")]
-public sealed partial class AllianceRegistryService(CorporationStore store,PgCharacterStore characters,Func<long> now,AllianceApplicationScheduleCallback? scheduleAllianceApplication = null,Action? wakeAllianceApplicationScheduler = null,Eve.Relations.RelationStore? relations = null,Func<long,CancellationToken,Task<AllianceSovSnapshot?>>? readSovSnapshot = null,CharacterSessions? characterSessions = null,Func<IReadOnlyList<long>,CancellationToken,Task<IReadOnlyDictionary<long,AllianceOwnerLookupRecord>>>? readStaticOwners = null) : IBoundObjectReleaseHandler
+public sealed partial class AllianceRegistryService(CorporationStore store,PgCharacterStore characters,Func<long> now,AllianceApplicationScheduleCallback? scheduleAllianceApplication = null,Action? wakeAllianceApplicationScheduler = null,Eve.Relations.RelationStore? relations = null,Func<long,CancellationToken,Task<AllianceSovSnapshot?>>? readSovSnapshot = null,CharacterSessions? characterSessions = null,Func<IReadOnlyList<long>,CancellationToken,Task<IReadOnlyDictionary<long,AllianceOwnerLookupRecord>>>? readStaticOwners = null,Func<ServiceCall,long,long,CancellationToken,ValueTask<bool>>? validateWarHQ = null) : IBoundObjectReleaseHandler
 {
 public AllianceRegistryService(CorporationStore store, PgCharacterStore characters, Func<long> now,
         Func<long, CancellationToken, Task>? legacyAffiliationChanged)
@@ -50,7 +48,10 @@ public AllianceRegistryService(CorporationStore store, PgCharacterStore characte
     {
         _ = legacyAffiliationChanged;
     }
+
+    public Func<CancellationToken, Task<Action?>>? PlanSharedFolderAffiliationChangesAsync { get; set; }
     private readonly ConcurrentDictionary<string,long> _alliancesByObject = new(StringComparer.Ordinal);
+    private const int MaxAllianceContactIds = 500;
 
     private static readonly string[] AllianceHeader =
     [
@@ -92,6 +93,20 @@ public AllianceRegistryService(CorporationStore store, PgCharacterStore characte
     }
 
     private static long Number(PyValue value) => value switch { PyInt n => n.Value,PyLong n => n.Value,PyTuple { Items.Count:>0 } t => Number(t.Items[0]),_ => 0 };
+private static double RelationshipValue(PyValue value)
+    {
+        var number = value switch
+        {
+            PyInt integer => integer.Value,
+            PyLong integer => (double)integer.Value,
+            PyReal real when double.IsFinite(real.Value) => real.Value,
+            _ => throw new CorporationError("ALLIANCE_RELATIONSHIP_INVALID")
+        };
+        if (!double.IsFinite(number) || number is < -10 or > 10)
+            throw new CorporationError("ALLIANCE_RELATIONSHIP_INVALID");
+        return number;
+    }
+
     private async Task<long> Id(ServiceCall call)
     {
         if (Number(call.Arg(0)) is > 0 and var requested) return requested;
@@ -245,7 +260,13 @@ public AllianceRegistryService(CorporationStore store, PgCharacterStore characte
     [Method("GetRankedAlliances")]
     public async ValueTask<PyValue> GetRankedAlliances(ServiceCall call)
     {
-        var maxLength = call.Arg(0) is PyNone ? 100 : Math.Max(0,Number(call.Arg(0)));
+        var maxLength = call.Arg(0) switch
+        {
+            PyNone => 100,
+            PyInt { Value: >= 0 } value => value.Value,
+            PyLong { Value: >= 0 } value => value.Value,
+            _ => throw new CorporationError("ALLIANCE_RANKED_LIMIT_INVALID"),
+        };
         var alliances = await store.RankedAlliancesAsync(maxLength == 0 ? null : maxLength,call.Cancellation);
         var counts = await store.AllianceCharacterCountsAsync(alliances.Select(alliance => alliance.Id).ToArray(),call.Cancellation);
         return new PyList([.. alliances.Select(alliance => AllianceRow(alliance,counts.GetValueOrDefault(alliance.Id)))]);
@@ -319,7 +340,12 @@ public AllianceRegistryService(CorporationStore store, PgCharacterStore characte
     public async ValueTask<PyValue> GetAllianceMembersOlderThan(ServiceCall call)
     {
         var alliance = await Id(call);
-        var minimumDays = Math.Max(0,Number(call.Arg(1)));
+        var minimumDays = call.Arg(1) switch
+        {
+            PyInt { Value: >= 0 } value => value.Value,
+            PyLong { Value: >= 0 } value => value.Value,
+            _ => throw new CorporationError("ALLIANCE_MEMBERSHIP_DAYS_INVALID"),
+        };
         var members = await store.AllianceMembersAsync(alliance,call.Cancellation);
         return new PyList([.. members.Where(member => AllianceMembershipDays(member.StartedMs) >= minimumDays)
             .Select(member => (PyValue)new PyInt(member.CorporationId))]);
@@ -371,7 +397,6 @@ public AllianceRegistryService(CorporationStore store, PgCharacterStore characte
         CorporationNotificationAdapter.AllianceChanged(characterSessions,call,alliance,beforeAlliance,afterAlliance);
         return PyNone.Instance;
     }
-
 
     [Method("SetPrimeHour")]
     public async ValueTask<PyValue> SetPrimeHour(ServiceCall call)
@@ -497,6 +522,8 @@ public AllianceRegistryService(CorporationStore store, PgCharacterStore characte
         var (actor, allianceId) = await RequireAllianceExecutorDirector(call);
         var corporationId = Number(call.Arg(0));
         var applicationText = JsSemantics.StringValue(call.Arg(1)) ?? "";
+        if (applicationText.Length > 1000)
+            throw new CorporationError("ALLIANCE_APPLICATION_TEXT_TOO_LONG");
         var state = Number(call.Arg(2));
         if (corporationId <= 0) throw new CorporationError("ALLIANCE_APPLICATION_NOT_FOUND");
         if (state is not (2 or 4)) throw new CorporationError("ALLIANCE_APPLICATION_INVALID_STATE");
@@ -547,7 +574,6 @@ public AllianceRegistryService(CorporationStore store, PgCharacterStore characte
         return PyNone.Instance;
     }
 
-
     [Method("DeleteMember")]
     public async ValueTask<PyValue> DeleteMember(ServiceCall call)
     {
@@ -579,6 +605,9 @@ public AllianceRegistryService(CorporationStore store, PgCharacterStore characte
             .SingleOrDefault(member => member.CorporationId == corporationId);
         if (beforeMember is null) throw AllianceAccessDenied();
         var beforeAlliance = await AllianceNotificationFieldsAsync(allianceId, call.Cancellation);
+        var previousAffiliations = PlanSharedFolderAffiliationChangesAsync is { } planAffiliationChanges
+            ? await planAffiliationChanges(call.Cancellation)
+            : null;
         var result = await store.RemoveAllianceMemberAsync(allianceId, corporationId, actor, mode, now(),
             WriteAllianceAffiliationAsync, call.Cancellation);
         if (result.Duplicate) return PyNone.Instance;
@@ -590,6 +619,10 @@ public AllianceRegistryService(CorporationStore store, PgCharacterStore characte
         CorporationNotificationAdapter.CorporationChanged(
             characterSessions, call, corporationId, "allianceID",
             new PyInt(allianceId), PyNone.Instance);
+        if (previousAffiliations is not null) call.Session.AfterResponse(previousAffiliations);
+        if (PlanSharedFolderAffiliationChangesAsync is { } planResultingAffiliations
+            && await planResultingAffiliations(call.Cancellation) is { } affiliationChanges)
+            call.Session.AfterResponse(affiliationChanges);
         return PyNone.Instance;
     }
 
@@ -610,7 +643,6 @@ public AllianceRegistryService(CorporationStore store, PgCharacterStore characte
             await relations.EndAsync(pgConnection,pgTransaction,kind,corporationId,current.Object,
                 "alliance membership ended",token);
     }
-
 
     [Method("GetBills")]
     public async ValueTask<PyValue> GetBills(ServiceCall call)
@@ -645,7 +677,7 @@ public AllianceRegistryService(CorporationStore store, PgCharacterStore characte
     public async ValueTask<PyValue> PayBill(ServiceCall call)
     {
         var authority = await RequireAllianceRole(call,CorporationRoles.Accountant,true);
-        var billId = Number(call.Arg(0));
+        var billId = PositiveIntegerId(call.Arg(0));
         var accountKey = Number(call.Kwarg("fromAccountKey") ?? call.Arg(1));
         if (accountKey is < 1000 or > 1006) accountKey = 1000;
         var paid = await store.PayAllianceBillAsync(billId,authority.Alliance,authority.Corporation,
@@ -659,11 +691,23 @@ public AllianceRegistryService(CorporationStore store, PgCharacterStore characte
     {
         var (actor,allianceId) = await RequireAllianceExecutorDirector(call);
         if (relations is null) throw new CorporationError("WAR_DECLARATION_UNAVAILABLE");
-        var againstId = Number(call.Arg(0));
-        if (againstId <= 0 || againstId == allianceId)
+        var againstId = PositiveIntegerId(call.Arg(0));
+        if (againstId == allianceId)
             throw new CorporationError("ALLIANCE_WAR_DECLARATION_INVALID");
-        var warHq = Number(call.Arg(1));
-        var warHqId = warHq > 0 ? warHq : (long?)null;
+        long? warHqId = null;
+        if (call.Args.Count > 1 && call.Arg(1) is not PyNone)
+        {
+            var requestedWarHqId = call.Arg(1) switch
+            {
+                PyInt { Value: > 0 } id => id.Value,
+                PyLong { Value: > 0 } id => id.Value,
+                _ => 0
+            };
+            if (requestedWarHqId <= 0 || validateWarHQ is null ||
+                !await validateWarHQ(call, allianceId, requestedWarHqId, call.Cancellation))
+                throw new CorporationError("ALLIANCE_WAR_HEADQUARTERS_INVALID");
+            warHqId = requestedWarHqId;
+        }
         var declaredAt = Number(CorporationWire.Time(now()));
         var startedAt = checked(declaredAt + 864_000_000_000L);
         var dueAt = checked(declaredAt + 6_048_000_000_000L);
@@ -728,12 +772,10 @@ public AllianceRegistryService(CorporationStore store, PgCharacterStore characte
         ("externalID",Py.Number(bill.ExternalId)),
         ("externalID2",Py.Number(bill.ExternalId2)));
 
-
     [Method("GMForceAcceptApplication")]
     public async ValueTask<PyValue> GMForceAcceptApplication(ServiceCall call)
     {
-        const long gmlRole = 1L << 54;
-        if (((call.Session.GetInt("role") ?? 0) & gmlRole) == 0)
+        if (!Eve.Services.GameMasterRoles.Has(call.Session, Eve.Services.GameMasterRoles.Gml))
             throw AllianceAccessDenied();
         var allianceId = call.BoundObjectId is { } oid && _alliancesByObject.TryGetValue(oid,out var bound)
             ? bound
@@ -744,7 +786,7 @@ public AllianceRegistryService(CorporationStore store, PgCharacterStore characte
         RequireBoundAlliance(call,allianceId);
         if (scheduleAllianceApplication is null)
             throw new CorporationError("ALLIANCE_DUE_SCHEDULER_UNAVAILABLE");
-        var corporationId = Number(call.Arg(0));
+        var corporationId = PositiveIntegerId(call.Arg(0));
         var application = (await store.AllianceApplicationsAsync(allianceId,call.Cancellation))
             .LastOrDefault(item => item.CorporationId == corporationId);
         if (application is null) throw new CorporationError("ALLIANCE_APPLICATION_NOT_FOUND");
@@ -777,7 +819,7 @@ public AllianceRegistryService(CorporationStore store, PgCharacterStore characte
     {
         var (actor,alliance) = await RequireAllianceExecutorDirector(call);
         RequireBoundAlliance(call,alliance);
-        var relationship = Number(call.Arg(0));
+        var relationship = RelationshipValue(call.Arg(0));
         var toId = Number(call.Arg(1));
         if (toId <= 0 || toId == alliance) throw AllianceAccessDenied();
         var relationStore = relations ?? throw new InvalidOperationException("Alliance relationship RPCs require RelationStore registration.");
@@ -840,7 +882,7 @@ public AllianceRegistryService(CorporationStore store, PgCharacterStore characte
     {
         var (actor,alliance) = await RequireAllianceExecutorDirector(call);
         RequireBoundAlliance(call,alliance);
-        await store.AddAllianceContactAsync(actor,alliance,Number(call.Arg(0)),Number(call.Arg(1)),call.Cancellation);
+        await store.AddAllianceContactAsync(actor,alliance,PositiveIntegerId(call.Arg(0)),IntegerValue(call.Arg(1)),call.Cancellation);
         return PyNone.Instance;
     }
 
@@ -849,7 +891,7 @@ public AllianceRegistryService(CorporationStore store, PgCharacterStore characte
     {
         var (actor,alliance) = await RequireAllianceExecutorDirector(call);
         RequireBoundAlliance(call,alliance);
-        await store.EditAllianceContactAsync(actor,alliance,Number(call.Arg(0)),Number(call.Arg(1)),call.Cancellation);
+        await store.EditAllianceContactAsync(actor,alliance,PositiveIntegerId(call.Arg(0)),IntegerValue(call.Arg(1)),call.Cancellation);
         return PyNone.Instance;
     }
 
@@ -867,7 +909,7 @@ public AllianceRegistryService(CorporationStore store, PgCharacterStore characte
     {
         var (actor,alliance) = await RequireAllianceExecutorDirector(call);
         RequireBoundAlliance(call,alliance);
-        await store.EditAllianceContactsRelationshipAsync(actor,alliance,ContactIds(call.Arg(0)),Number(call.Arg(1)),call.Cancellation);
+        await store.EditAllianceContactsRelationshipAsync(actor,alliance,ContactIds(call.Arg(0)),IntegerValue(call.Arg(1)),call.Cancellation);
         return PyNone.Instance;
     }
 
@@ -886,6 +928,8 @@ public AllianceRegistryService(CorporationStore store, PgCharacterStore characte
         var (actor,alliance) = await RequireAllianceExecutorDirector(call);
         RequireBoundAlliance(call,alliance);
         var name = JsSemantics.StringValue(call.Arg(0)) ?? "";
+        if (name.Length > 40)
+            throw new CorporationError("ALLIANCE_CONTACT_LABEL_NAME_LIMIT_EXCEEDED");
         var color = Number(call.Arg(1));
         if (color is < 0 or > 16777215) throw AllianceAccessDenied();
         var label = await store.CreateAllianceContactLabelAsync(actor,alliance,name,(int)color,call.Cancellation);
@@ -907,6 +951,8 @@ public AllianceRegistryService(CorporationStore store, PgCharacterStore characte
         var (actor,alliance) = await RequireAllianceExecutorDirector(call);
         RequireBoundAlliance(call,alliance);
         var name = call.Arg(1) is PyNone ? null : JsSemantics.StringValue(call.Arg(1));
+        if (name is { Length: > 40 })
+            throw new CorporationError("ALLIANCE_CONTACT_LABEL_NAME_LIMIT_EXCEEDED");
         int? color = null;
         if (call.Arg(2) is not PyNone)
         {
@@ -960,6 +1006,20 @@ public AllianceRegistryService(CorporationStore store, PgCharacterStore characte
             throw AllianceAccessDenied();
     }
 
+    private static long PositiveIntegerId(PyValue value) => value switch
+    {
+        PyInt { Value: > 0 } id => id.Value,
+        PyLong { Value: > 0 } id => id.Value,
+        _ => throw AllianceAccessDenied(),
+    };
+
+    private static long IntegerValue(PyValue value) => value switch
+    {
+        PyInt id => id.Value,
+        PyLong id => id.Value,
+        _ => throw AllianceAccessDenied(),
+    };
+
     private static long[] ContactIds(PyValue value)
     {
         var items = value switch
@@ -968,8 +1028,14 @@ public AllianceRegistryService(CorporationStore store, PgCharacterStore characte
             PyTuple tuple => tuple.Items,
             _ => throw AllianceAccessDenied(),
         };
-        var ids = items.Select(Number).ToArray();
-        if (ids.Any(id => id <= 0)) throw AllianceAccessDenied();
+        if (items.Count > MaxAllianceContactIds)
+            throw new CorporationError("ALLIANCE_BULK_LIMIT_EXCEEDED");
+        var ids = items.Select(item => item switch
+        {
+            PyInt { Value: > 0 } id => id.Value,
+            PyLong { Value: > 0 } id => id.Value,
+            _ => throw AllianceAccessDenied(),
+        }).ToArray();
         return ids.Distinct().ToArray();
     }
 
@@ -979,9 +1045,17 @@ public AllianceRegistryService(CorporationStore store, PgCharacterStore characte
         {
             PyList list => list.Items,
             PyTuple tuple => tuple.Items,
-            _ => Array.Empty<PyValue>()
+            _ => throw new CorporationError("ALLIANCE_OWNER_IDS_INVALID"),
         };
-        return items.Select(Number).Where(id => id > 0).ToArray();
+        if (items.Count > MaxAllianceContactIds)
+            throw new CorporationError("ALLIANCE_BULK_LIMIT_EXCEEDED");
+        var ids = items.Select(value => value switch
+        {
+            PyInt { Value: > 0 } id => id.Value,
+            PyLong { Value: > 0 } id => id.Value,
+            _ => throw new CorporationError("ALLIANCE_OWNER_ID_INVALID"),
+        }).ToArray();
+        return ids.Distinct().ToArray();
     }
 
     private static PyValue EveOwnerRow(long ownerId, string ownerName, int typeId, int gender)
@@ -1037,7 +1111,7 @@ public AllianceRegistryService(CorporationStore store, PgCharacterStore characte
     public async ValueTask<PyValue> GetBulletin(ServiceCall call)
     {
         var authority = await RequireAllianceMember(call);
-        var bulletin = await store.AllianceBulletinAsync(authority.Alliance, Number(call.Arg(0)), call.Cancellation);
+        var bulletin = await store.AllianceBulletinAsync(authority.Alliance, PositiveIntegerId(call.Arg(0)), call.Cancellation);
         return bulletin is null ? PyNone.Instance : AllianceBulletinRow(AllianceBulletinDescriptor, bulletin);
     }
 
@@ -1045,11 +1119,14 @@ public AllianceRegistryService(CorporationStore store, PgCharacterStore characte
     public async ValueTask<PyValue> AddBulletin(ServiceCall call)
     {
         var (actor, alliance) = await RequireAllianceDirector(call);
+        var title = JsSemantics.StringValue(call.Arg(0)) ?? "";
+        var body = JsSemantics.StringValue(call.Arg(1)) ?? "";
+        if (title.Length > 100 || body.Length > 4000)
+            throw new CorporationError("ALLIANCE_BULLETIN_LIMIT_EXCEEDED");
         var nowFiletime = Number(CorporationWire.Time(now()));
         var editFiletime = Number(call.Arg(3));
-        var bulletinId = Number(call.Arg(2));
-        var id = await store.AddAllianceBulletinAsync(alliance, actor,
-            JsSemantics.StringValue(call.Arg(0)) ?? "", JsSemantics.StringValue(call.Arg(1)) ?? "",
+        var bulletinId = call.Arg(2) is PyNone ? 0 : PositiveIntegerId(call.Arg(2));
+        var id = await store.AddAllianceBulletinAsync(alliance, actor, title, body,
             bulletinId > 0 ? bulletinId : null, nowFiletime,
             editFiletime > 0 ? editFiletime : nowFiletime, call.Cancellation);
         return new PyInt(id);
@@ -1059,12 +1136,14 @@ public AllianceRegistryService(CorporationStore store, PgCharacterStore characte
     public async ValueTask<PyValue> UpdateBulletin(ServiceCall call)
     {
         var (actor, alliance) = await RequireAllianceDirector(call);
-        var bulletinId = Number(call.Arg(0));
-        if (bulletinId <= 0) throw new CorporationError("ALLIANCE_BULLETIN_INVALID");
+        var bulletinId = PositiveIntegerId(call.Arg(0));
+        var title = JsSemantics.StringValue(call.Arg(1)) ?? "";
+        var body = JsSemantics.StringValue(call.Arg(2)) ?? "";
+        if (title.Length > 100 || body.Length > 4000)
+            throw new CorporationError("ALLIANCE_BULLETIN_LIMIT_EXCEEDED");
         var nowFiletime = Number(CorporationWire.Time(now()));
         var editFiletime = Number(call.Arg(3));
-        return new PyInt(await store.AddAllianceBulletinAsync(alliance, actor,
-            JsSemantics.StringValue(call.Arg(1)) ?? "", JsSemantics.StringValue(call.Arg(2)) ?? "",
+        return new PyInt(await store.AddAllianceBulletinAsync(alliance, actor, title, body,
             bulletinId, nowFiletime, editFiletime > 0 ? editFiletime : nowFiletime, call.Cancellation));
     }
 
@@ -1072,9 +1151,8 @@ public AllianceRegistryService(CorporationStore store, PgCharacterStore characte
     public async ValueTask<PyValue> DeleteBulletin(ServiceCall call)
     {
         var (actor, alliance) = await RequireAllianceDirector(call);
-        var bulletinId = Number(call.Arg(0));
-        if (bulletinId > 0)
-            await store.DeleteAllianceBulletinAsync(alliance, actor, bulletinId, call.Cancellation);
+        if (call.Arg(0) is not PyNone)
+            await store.DeleteAllianceBulletinAsync(alliance, actor, PositiveIntegerId(call.Arg(0)), call.Cancellation);
         return PyNone.Instance;
     }
 
@@ -1149,7 +1227,6 @@ public AllianceRegistryService(CorporationStore store, PgCharacterStore characte
         ]);
 }
 
-
 // Alliance application deadlines, war holds and affiliations use the shared Scheduler, Relations and EventBus.
 public sealed class AllianceApplicationDueWorker(
     CorporationStore store,
@@ -1175,7 +1252,6 @@ public sealed class AllianceApplicationDueWorker(
         foreach (var job in await store.PendingAllianceApplicationJobsAsync(token))
             await scheduler.ScheduleAsync(Spec(job), token);
     }
-
 
     private async Task ReconcileCorporationMemberAffiliationsAsync(CancellationToken token)
     {
@@ -1344,9 +1420,9 @@ public sealed class AllianceApplicationDueWorker(
         };
 }
 
-// CorpRegistry Alliance RPCs follow EveJS v0.12.9 corpRegistryRuntime.js (828823a75f211fdecb945b087a26c225f111491f).
 public sealed partial class CorpRegistryService
 {
+    private const int MaxAllianceApplications = 5000;
     private static readonly Descriptor AllianceApplicationDescriptor = CorporationWire.DescriptorOf(
         ("allianceID",3),("corporationID",3),("applicationText",130),("state",3),("applicationDateTime",64));
 
@@ -1404,7 +1480,10 @@ public sealed partial class CorpRegistryService
     public async ValueTask<PyValue> GetAllianceApplications(ServiceCall call)
     {
         var corporationId = await RequireAllianceApplicationDirector(call);
-        var applications = await store.AllianceApplicationsForCorporationAsync(corporationId,call.Cancellation);
+        var applications = await store.AllianceApplicationsForCorporationAsync(
+            corporationId, MaxAllianceApplications + 1, call.Cancellation);
+        if (applications.Count > MaxAllianceApplications)
+            throw new CorporationError("ALLIANCE_APPLICATION_LIMIT_EXCEEDED");
         return new PyObjectEx(ObjectExKind.Ex2,
             Py.Tuple(Py.Tuple(new PyToken("carbon.common.script.sys.crowset.CIndexedRowset")),
                 Py.Dict(("header",AllianceApplicationDescriptor.Header),("idName",new PyStr("allianceID")),
@@ -1418,7 +1497,10 @@ public sealed partial class CorpRegistryService
     [Method("GetSuggestedAllianceShortNames")]
     public ValueTask<PyValue> GetSuggestedAllianceShortNames(ServiceCall call)
     {
-        var normalized = new string((JsSemantics.StringValue(call.Arg(0)) ?? "")
+        var allianceName = JsSemantics.StringValue(call.Arg(0)) ?? "";
+        if (allianceName.Length > 50)
+            throw new CorporationError("ALLIANCE_NAME_LIMIT_EXCEEDED");
+        var normalized = new string(allianceName
             .Where(char.IsAsciiLetterOrDigit).Select(char.ToUpperInvariant).Take(5).ToArray());
         var basis = normalized.Length == 0 ? "ALLY" : normalized;
         var suggestions = new[] { basis,basis[..Math.Min(4,basis.Length)],basis[..Math.Min(3,basis.Length)] + "X" }
@@ -1427,7 +1509,6 @@ public sealed partial class CorpRegistryService
             (PyValue)Py.KeyVal(("shortName",new PyStr(value))))]));
     }
 }
-
 
 public sealed class AllianceMaintenanceBillWorker(
     CorporationStore store,
@@ -1497,7 +1578,6 @@ public sealed class AllianceMaintenanceBillWorker(
         foreach (var member in await store.MembersAsync(executorCorporationId, token))
             await notify(member.CharacterId, alliance.Id, bill.BillId, token);
     }
-
 
     private async Task CloseAllianceAtDowntimeAsync(
     AllianceMaintenanceBillDue payload, CancellationToken token)
@@ -1672,7 +1752,6 @@ private static Eve.Scheduler.JobSpec EmptyClosureSpec(long allianceId, long empt
     AllianceMember[]? MemberSnapshots = null,
     long CharacterCount = 0);
 }
-
 
 public sealed class AllianceWarInheritanceWorker(
     Npgsql.NpgsqlDataSource source,
@@ -2376,7 +2455,6 @@ public sealed class AllianceWarInheritanceWorker(
     AllianceWarAlly? AllianceAlly, AllianceWarAlly[] Allies, string AttrsJson);
     private sealed record AllianceWarAlly(long AllianceId, long TimeStartedFiletime, long? TimeFinishedFiletime);
 }
-
 
 public sealed class AllianceSovereigntyTransferWorker(
     CorporationStore store,

@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use eve_destiny::Vec3;
 use eve_sim::serve_connection;
-use eve_space::link::{Enter, How, Message, PROTOCOL_VERSION};
+use eve_space::link::{Enter, How, Message, PROTOCOL_VERSION, SceneKey};
 use eve_space::ship::ShipSpec;
 use eve_space::sim::{POLL_HZ, Universe};
 use eve_space::world::{Body, BodyKind, Detail, SolarSystem};
@@ -132,7 +132,7 @@ impl Host {
 fn enter() -> Message {
     Message::Enter(Box::new(Enter {
         session_id: SESSION,
-        solar_system_id: SYSTEM,
+        scene: SceneKey::solar_system(SYSTEM),
         how: How::Undock,
         station_id: STATION,
         ship: ship(),
@@ -166,8 +166,8 @@ async fn a_ship_is_sent_out_bound_told_to_dock_and_reported_docked() {
     assert!(
         matches!(host.recv().await, Message::Notify { name, id_type, .. } if name == "OnDockingAccepted" && id_type == "charid")
     );
-    assert!(matches!(host.recv().await, Message::Notify { name, .. } if name == "DoDestinyUpdate"));
     assert_eq!(host.recv().await, Message::Accepted { session_id: SESSION, command: 4, at: NOON });
+    assert!(matches!(host.recv().await, Message::Notify { name, .. } if name == "DoDestinyUpdate"));
 
     // the ship is docked once four seconds have gone by, which the simulation notices at its next poll
     host.clock.store(NOON + 5 * SECOND, Ordering::SeqCst);

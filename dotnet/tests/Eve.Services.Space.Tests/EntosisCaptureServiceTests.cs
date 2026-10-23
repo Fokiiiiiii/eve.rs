@@ -7,9 +7,7 @@ using Npgsql;
 namespace Eve.Services.Space.Tests;
 
 /// <summary>
-/// ST-9 c, e, the durable capture (PostgreSQL, the real store and the real durable scheduler; the clock is the test's): the first cycle of a link is its warm-up,
 /// a capture is moved at each settled cycle and completes as a job, a defender pauses it, a link's end stops it, and a restart reads the stored progress. An owned
-/// hub is refused outside its owner's window, completes into a reinforcement, and the owner is told by events (ST-9 e).
 /// </summary>
 public sealed class EntosisCaptureServiceTests
 {
@@ -68,7 +66,7 @@ public sealed class EntosisCaptureServiceTests
         var clock = new Clock();
         var holder = new Holder { Value = reading };
         var scheduler = new DurableScheduler(source, () => clock.Now, null, schedulerSchema);
-        // the owner's notices: the capture's events are collected by a subscriber (started once the first pump has run)
+
         var bus = new EventBus(source, scheduler, null, eventsSchema, _ => { });
         var notices = new List<object>();
         bus.Subscribe("test.entosis-notices",
@@ -98,7 +96,6 @@ public sealed class EntosisCaptureServiceTests
 
     private static EntosisHubReading Neutral() => new(Hub, System, null, 1);
 
-    /// <summary>An owned hub whose owner's prime hour is 22:00 UTC: its window at ADM 1 is 13:00 to 07:00, and the test's clock (22:13 UTC) is inside it.</summary>
     private static EntosisHubReading Owned(long alliance = 7) => new(Hub, System, alliance, 1, 22);
 
     private static Task<EntosisCaptureService.SettleResult> SettleAsync(Harness harness, long module, long alliance, long hub = Hub) =>
@@ -118,22 +115,26 @@ public sealed class EntosisCaptureServiceTests
         Assert.Equal(EntosisRules.CycleMs / EntosisRules.BaseCaptureMs, moved!.Progress, 9);
         Assert.Equal(EntosisPhase.Capturing, moved.Phase);
 
-        // restart-safe: a new service over the same tables reads the same progress
-        var restarted = new EntosisCaptureService(harness.Source, harness.Scheduler, () => harness.Clock.Now, (_, _) => Task.FromResult<EntosisHubReading?>(Neutral()), schema: harness.Schema);
+        // Recreate both the service and scheduler over PostgreSQL to model a process restart.
+        await using var restartedScheduler = new DurableScheduler(harness.Source, () => harness.Clock.Now, null, harness.SchedulerSchema);
+        var restarted = new EntosisCaptureService(
+            harness.Source, restartedScheduler, () => harness.Clock.Now,
+            (_, _) => Task.FromResult<EntosisHubReading?>(Neutral()), schema: harness.Schema);
+        restarted.Register();
         Assert.Equal(moved, await restarted.ReadAsync(Hub, CancellationToken.None));
 
-        // the capture completes at Start + 595 s: its completion is a durable job for the hub
-        var job = await harness.Scheduler.FindAsync(EntosisCaptureService.CaptureDueKind, Hub.ToString());
+        // The capture completion job is also recovered by the new scheduler.
+        var job = await restartedScheduler.FindAsync(EntosisCaptureService.CaptureDueKind, Hub.ToString());
         Assert.NotNull(job);
         Assert.InRange(job!.RunAtMs, Start + (long)EntosisRules.BaseCaptureMs - 2, Start + (long)EntosisRules.BaseCaptureMs + 2);
 
         harness.Clock.Now = job.RunAtMs;
-        await harness.Scheduler.RunDueAsync();
-        var captured = await harness.Service.ReadAsync(Hub, CancellationToken.None);
+        await restartedScheduler.RunDueAsync();
+        var captured = await restarted.ReadAsync(Hub, CancellationToken.None);
         Assert.Equal(EntosisPhase.Captured, captured!.Phase);
         Assert.Equal(1, captured.Progress);
 
-        // a captured hub refuses the next cycle by name
+        // A captured hub refuses the next cycle by name.
         var refused = await SettleAsync(harness, 1, 5);
         Assert.False(refused.Accepted);
         Assert.Equal("ENTOSIS_CAPTURE_COMPLETE", refused.Reason);
@@ -150,7 +151,6 @@ public sealed class EntosisCaptureServiceTests
         var before = (await harness.Service.ReadAsync(Hub, CancellationToken.None))!.Progress;
         Assert.True(before > 0);
 
-        // the owner's defender link warms up at the same time: its warm-up moves nothing, and from then on both links are there
         Assert.True((await SettleAsync(harness, 2, 7)).Accepted);
         harness.Clock.Now = Start + 2 * EntosisRules.CycleMs;
         await SettleAsync(harness, 1, 5);
@@ -224,7 +224,6 @@ public sealed class EntosisCaptureServiceTests
 
         await CompleteCaptureAsync(harness);
 
-        // the claim ends the capture: the hub is idle under its new owner, and the links of the capture are gone
         var claimed = await harness.Service.ReadAsync(Hub, CancellationToken.None);
         Assert.Equal((EntosisPhase.Idle, 0d), (claimed!.Phase, claimed.Progress));
         Assert.Equal("claimed", await harness.Service.HandoverAsync(Hub, CancellationToken.None));
@@ -262,7 +261,6 @@ public sealed class EntosisCaptureServiceTests
         Assert.Equal("owned", await harness.Service.HandoverAsync(Hub, CancellationToken.None));
         Assert.Equal(0, calls);
 
-        // the reinforcement lasts 48 hours at the earliest, then it ends inside a window of the owner (the wiki)
         await harness.Bus.PumpAsync();
         var started = Assert.Single(harness.Notices.OfType<EntosisCaptureStarted>());
         Assert.Equal((Hub, System, 7L, 1L), (started.HubId, started.SolarSystemId, started.DefenderAllianceId, started.ModuleId));
@@ -271,16 +269,32 @@ public sealed class EntosisCaptureServiceTests
         Assert.True(notice.ReinforcementExitMs >= completedMs + EntosisWindow.ReinforcementMs, "not before 48 hours");
         Assert.True(EntosisWindow.IsOpen(22, 1, notice.ReinforcementExitMs), "inside the owner's window");
 
-        // the reinforced hub refuses the next cycle by name, and a replayed pump delivers nothing twice
+        // The reinforced hub refuses cycles before its exit, and replayed notices stay idempotent.
         Assert.Equal("SOVEREIGNTY_HUB_ALREADY_REINFORCED", (await SettleAsync(harness, 1, 5)).Reason);
         await harness.Bus.PumpAsync();
         Assert.Equal(2, harness.Notices.Count);
+
+        // The reinforcement exit is stored as a durable job and resumes through a new scheduler.
+        var campaignJob = await harness.Scheduler.FindAsync(EntosisCaptureService.CampaignStartKind, Hub.ToString());
+        Assert.NotNull(campaignJob);
+        Assert.Equal(notice.ReinforcementExitMs, campaignJob!.RunAtMs);
+        await using var restartedScheduler = new DurableScheduler(harness.Source, () => harness.Clock.Now, null, harness.SchedulerSchema);
+        var restarted = new EntosisCaptureService(
+            harness.Source, restartedScheduler, () => harness.Clock.Now,
+            (_, _) => Task.FromResult<EntosisHubReading?>(Owned()), schema: harness.Schema);
+        restarted.Register();
+
+        harness.Clock.Now = campaignJob.RunAtMs;
+        Assert.Equal(1, await restartedScheduler.RunDueAsync());
+        Assert.Equal("active", await ScalarTextAsync(harness, "SELECT phase FROM {schema}.campaigns"));
+        Assert.Equal("4", await ScalarTextAsync(harness, "SELECT COUNT(*) FROM {schema}.nodes"));
+        Assert.Equal("reinforced", await ScalarTextAsync(harness, "SELECT phase FROM {schema}.hubs"));
     }
 
     [PgFact]
     public async Task A_cycle_outside_the_owners_vulnerability_window_is_refused_by_name_and_stores_nothing()
     {
-        // the owner's window is centred on 12:00 UTC (03:00 to 21:00 at ADM 1); the clock is 22:13 UTC
+
         await using var harness = await CreateAsync(new(Hub, System, 7, 1, 12));
 
         var refused = await SettleAsync(harness, 1, 5);
@@ -353,12 +367,10 @@ public sealed class EntosisCaptureServiceTests
         await using var harness = await CreateAsync(Owned());
         Assert.True((await harness.Service.SetHubWindowAsync(Hub, System, new EntosisWindowSetting(10, 2), CancellationToken.None)).Accepted);
 
-        // 02:00 is inside the default window, but the owner's window (09:00 to 11:00) is in force from 07:00 the next day: refused, nothing is stored
         harness.Clock.Now = Day + 50 * EntosisWindow.HourMs;
         Assert.Equal("SOVEREIGNTY_TARGET_NOT_VULNERABLE", (await SettleAsync(harness, 1, 5)).Reason);
         Assert.Null(await harness.Service.ReadAsync(Hub, CancellationToken.None));
 
-        // 10:00 of the day after the change is inside the owner's window: accepted
         harness.Clock.Now = Day + 34 * EntosisWindow.HourMs;
         Assert.True((await SettleAsync(harness, 1, 5)).Accepted);
     }
@@ -505,7 +517,7 @@ public sealed class EntosisCaptureServiceTests
 
         Assert.Equal("defended", await ScalarTextAsync(harness, "SELECT phase FROM {schema}.campaigns"));
         Assert.Equal("idle", await ScalarTextAsync(harness, "SELECT phase FROM {schema}.hubs"));
-        // the next window of the owner after the stage's end (prime hour 22, 18 hours at ADM 1: it starts at 13:00 the next day, Day+37 h)
+
         var until = long.Parse((await ScalarTextAsync(harness, "SELECT invulnerable_until_ms FROM {schema}.hubs"))!, global::System.Globalization.CultureInfo.InvariantCulture);
         Assert.Equal(Day + 37 * EntosisWindow.HourMs, until);
         harness.Clock.Now = Start + 3_600_000L * 7;

@@ -5,7 +5,7 @@
 ## 再現条件
 
 - `tools/mitm/README.md` の既存方式を使用: MITM capture → 同じpytest選択をEveJS/eve.rsへ実行 → `mitm diff --ignore-volatile`。
-- EveJSはread-only clone `828823a` のserver/index.jsを起動。依存packageのみインストール済runtimeからNODE_PATHで解決。SDE由来の生成データとアカウントはCodex作業領域の一時データrootへ分離した。
+- EveJSはread-only clone `828823a` のserver/index.jsを起動。依存packageのみインストール済runtimeからNODE_PATHで解決。SDE由来の生成データとアカウントは一時作業領域の一時データrootへ分離した。
 - 最初に使ったインストール済runtimeは参照cloneと195ファイル異なっていたため、正しいclone本体で再実行した。下記集計はclone本体の結果。
 - eve.rsは既存のdevelopment/strict runtimeへ接続。両方4 passed・1 skipped。skipはstrict-passwordシナリオであり、全ての認証経路が検証済みという意味ではない。
 
@@ -29,11 +29,11 @@ store flag4項目はEveJS `storeState.js:503-528` が文字列を返す。eve.rs
 
 ## ローカル証拠
 
-Codex作業領域 `service-audit-runtime` に次を保存している。生captureはGitへ含めない。
+一時作業領域 `service-audit-runtime` に次を保存している。生captureはGitへ含めない。
 
 - `evejs-reference-default-live.jsonl`
 - `eve-rs-default-live.jsonl`
 - `default-live-comparison-summary.json` — 12イベントすべてを既存比較関数で照合した結果
 - `default-live-field-differences.json` — service名とglobalConfigの全差分
 
-未検証: 全RPCの複数状態、実クライアントの出航・再入港、public gateway/XMPPのend-to-end、修正後runtimeでの再capture。上記のテスト成功はこれらを証明しない。
+未確認: 全RPCの複数状態、実クライアントの出航・再入港、public gateway/XMPPのend-to-end、修正後runtimeでの再capture。上記のテスト成功はこれらを証明しない。

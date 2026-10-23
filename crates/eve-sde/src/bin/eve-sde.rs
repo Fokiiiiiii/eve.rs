@@ -1,17 +1,6 @@
-//! eve-sde ensure [--build N|latest] [--cache DIR] [--pg URL] [--source URL]...
-//!                [--archive FILE] [--sha256 HEX|skip] [--keep-archive] [--missions]
-//! eve-sde info <dir>
-//! eve-sde load <dir> --pg <url>
-//! eve-sde verify <dir> --pg <url>
-//!
-//! `ensure` is the first-start step: it fetches the build if it is not on disk
-//! and, given `--pg` (or `EVE_PG_URL`), loads it unless the database already
-//! holds it. Progress goes to stderr; stdout gets the extracted directory, if there is one.
-//! `EVE_SDE_CACHE` sets the default `--cache` (`.cache/sde`) and
-//! `EVE_SDE_BASE_URL` replaces CCP's static-data host.
-//! `--missions` is the mission build (`missionPinned` in the lock): with `--pg` only its
-//! `missions` and `epicArcs` tables are loaded, into schema `sde_mission`; the archive and the
-//! extracted build are then removed (the lock keeps the hash).
+//! Usage: eve-sde ensure|info|load|verify ...
+//! `EVE_SDE_CACHE` sets the default cache; `EVE_SDE_BASE_URL` overrides the SDE host.
+//! `--missions` loads `missions` and `epicArcs` into `sde_mission`, then removes the archive and extracted build.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -32,12 +21,10 @@ fn usage() -> ExitCode {
     ExitCode::from(2)
 }
 
-/// The value after `flag`, if the flag is present.
 fn value<'a>(args: &'a [String], flag: &str) -> Option<&'a String> {
     args.iter().position(|arg| arg == flag).and_then(|index| args.get(index + 1))
 }
 
-/// Every value after each occurrence of `flag`.
 fn values<'a>(args: &'a [String], flag: &str) -> Vec<&'a String> {
     args.iter()
         .enumerate()
@@ -119,7 +106,6 @@ fn ensure_command(args: &[String]) -> Result<ExitCode, Failure> {
             extracted.dir
         }
     };
-    // With a database that already held the build, nothing was extracted.
     if dir.join(".complete").is_file() {
         println!("{}", dir.display());
     }

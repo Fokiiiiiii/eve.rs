@@ -8,7 +8,6 @@ namespace Eve.Ships;
 /// Nanite repair: the paste that mends a fitted module's damage in space. The rules are the reference's (EVE.js <c>dogmaService/moduleRepair.js</c>, the
 /// V24.01 client's <c>godma.RepairModule</c>): a repair starts when the module is damaged and not burned out, it repairs at the character's module repair
 /// rate, and it costs paste for the whole damage at the character's paste cost. The paste is taken as the repair is ended, for the part it mended
-/// (the EVE University wiki: "the part done kept and only its paste used"); the host checks at the start that the whole cost is in the hold.
 /// </summary>
 public sealed partial class CharacterShips
 {

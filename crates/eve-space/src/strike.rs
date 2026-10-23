@@ -3,11 +3,8 @@
 //! The geometry is the reference's (`superweaponRuntime.js`, `isEntityInsideCone` and `isEntityInsideCylinder`): the area starts at the hull's surface
 //! along the aim, runs `length` metres, and a cone's radius at a distance is that distance (a 45 degree half angle). The numbers are the host's: it sends
 //! the aim, the length, the damage per pulse and the windows (the SDE's values). The simulation only applies them.
-
 use crate::health::Damage;
 
-/// The share of the remote repair a ship takes while a disruptive lance has disrupted it (EveJS `DISRUPTIVE_LANCE_REMOTE_REPAIR_MULTIPLIER`, a CCP
-/// description has no SDE attribute: "massively inhibit the effectiveness of external repair beams"; the 0.5 is EveJS's, see DEVIATIONS 139).
 pub const DISRUPTED_REMOTE_REPAIR: f64 = 0.5;
 
 /// The shape of a strike, by the static data's `doomsdayAOEShape` value: 1 a cylinder, 3 a cone, 4 a sphere (the projected sphere of the Gravitational
@@ -72,7 +69,6 @@ pub struct Strike {
     pub debuff_ms: f64,
     /// A sweeping strike (a reaper, `isPointTargeted` 2): the end of the cylinder's axis at the last pulse, as an offset from the firing ship's centre. The
     /// start is `direction * length`; each pulse runs the axis from the centre toward the point `start + (end - start) * progress`, where progress is the
-    /// pulse's share of the window (EveJS `resolveSlashDamageVolume`). None for a fixed aim. Protocol 28.
     pub sweep_end: Option<[f64; 3]>,
     /// A lance's beacon (EVE.js `spawnLanceBeacon`, protocol 39): where the beam is anchored, as an offset from the firing ship's centre (the aim clamped to the
     /// strike's length). The simulation puts the beacon ball there when the strike starts. None for a strike with no beacon.

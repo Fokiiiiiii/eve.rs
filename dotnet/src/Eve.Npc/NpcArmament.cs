@@ -9,7 +9,6 @@ namespace Eve.Npc;
 /// What an NPC fights with. A retail entity type carries its weapon on its own dogma record (the effect <c>targetAttack</c> and the attributes of the ship
 /// itself), not in a module loadout: 5592 of the 5620 authored profiles point at the empty loadout by design. This is a port, as it is, of the part of
 /// <c>buildWeaponModuleSnapshot</c> (<c>server/src/space/combat/weaponDogma.js</c>) and <c>getNpcFittedWeaponModules</c> (<c>npc/npcEquipment.js</c>) of EVE.js
-/// that turns such a hull into a turret (ADR 0009). Modules fitted to an NPC are not armed here (see <c>docs/reference/compat/DEVIATIONS.md</c>).
 /// </summary>
 public static class NpcArmament
 {
@@ -25,6 +24,8 @@ public static class NpcArmament
     private const int KineticDamage = 117;
     private const int ThermalDamage = 118;
     private const int EntityAttackRange = 247;
+    private const string NpcArmorRepairEffect = "npcBehaviorArmorRepairer";
+    private const string NpcShieldBoosterEffect = "npcBehaviorShieldBooster";
 
     // what a hull that launches missiles carries (`getNpcEntityMissileWeaponSource` of npcEquipment.js)
     private const int MaxVelocity = 37;
@@ -209,6 +210,51 @@ public static class NpcArmament
             shipId, effect.Id, cycle, 0, hull.TypeId, fx, [Damage(EmDamage), Damage(ThermalDamage), Damage(KineticDamage), Damage(ExplosiveDamage)],
             Round6(speed * (flightTime / 1000)), 0, 0, 40_000, null, spec);
     }
+
+    /// <summary>Local armor and shield repair effects carried by an NPC hull's own type dogma.</summary>
+    public static IReadOnlyList<SimNpcSelfRepair> SelfRepairsOf(TypeDef hull, DogmaStatic statics)
+    {
+        var repairs = new List<SimNpcSelfRepair>();
+        foreach (var effectId in hull.EffectIds)
+        {
+            var effect = statics.Effect(effectId)
+                ?? throw new InvalidDataException($"NPC hull {hull.TypeId} refers to missing dogma effect {effectId}.");
+            var name = effect.Name.Trim();
+            var armor = name.Equals(NpcArmorRepairEffect, StringComparison.OrdinalIgnoreCase);
+            var shield = name.Equals(NpcShieldBoosterEffect, StringComparison.OrdinalIgnoreCase);
+            if (!armor && !shield)
+                continue;
+
+            var amountName = armor ? "behaviorArmorRepairerAmount" : "behaviorShieldBoosterAmount";
+            var delayName = armor ? "entityArmorRepairDelayChance" : "entityShieldBoostDelayChance";
+            var amountId = statics.AttributeId(amountName)
+                ?? throw new InvalidDataException($"SDE attribute {amountName} is missing for NPC effect {effectId}.");
+            var delayId = statics.AttributeId(delayName)
+                ?? throw new InvalidDataException($"SDE attribute {delayName} is missing for NPC effect {effectId}.");
+            if (effect.DurationAttributeId <= 0 || effect.DischargeAttributeId <= 0)
+                throw new InvalidDataException($"SDE effect {effectId} has no duration or discharge attribute.");
+
+            double AttributeValue(int attributeId, string attributeName)
+            {
+                var definition = statics.Attribute(attributeId)
+                    ?? throw new InvalidDataException($"SDE attribute {attributeName} ({attributeId}) is missing.");
+                return hull.Attributes.GetValueOrDefault(attributeId, definition.DefaultValue);
+            }
+
+            var repair = new SimNpcSelfRepair(
+                effectId,
+                AttributeValue(amountId, amountName),
+                AttributeValue(effect.DurationAttributeId, "duration"),
+                AttributeValue(effect.DischargeAttributeId, "discharge"),
+                AttributeValue(delayId, delayName));
+            if (!ValidSelfRepair(repair) || repairs.Any(existing => existing.EffectId == effectId))
+                throw new InvalidDataException($"NPC hull {hull.TypeId} has invalid or duplicate self-repair effect {effectId}.");
+            repairs.Add(repair);
+        }
+        return repairs;
+    }
+
+    public static bool ValidSelfRepair(SimNpcSelfRepair repair) => SimNpcSelfRepair.IsValid(repair);
 
     /// <summary>How near a ship must come for the NPC to attack it: the hull's <c>entityAttackRange</c>, or what that attribute is when a type has none.</summary>
     public static double AggressionRange(TypeDef hull, DogmaStatic statics) =>

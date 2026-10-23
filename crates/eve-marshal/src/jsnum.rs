@@ -1,8 +1,4 @@
-//! JavaScript number semantics the marshal reference relies on.
-//!
-//! The packed-row encoder accepts loosely typed input and coerces it with
-//! `Number(...)`, `Math.trunc`, `>>> 0` and `BigInt(...)`. These helpers
-//! reproduce those coercions so the Rust codec writes the same bytes.
+//! Preserve the marshal reference's numeric coercions for packed rows.
 
 use crate::value::Value;
 

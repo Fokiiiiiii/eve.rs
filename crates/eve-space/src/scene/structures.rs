@@ -1,6 +1,5 @@
 //! Upwell structures in the scene. A structure is a body of its system (`BodyKind::Structure`) that the host puts in space, takes out and gives
 //! its slim state. The simulation shows what the host says and decides none of it (ADR 0012, rule 3).
-
 use std::sync::Arc;
 
 use eve_destiny::Vec3;
@@ -69,7 +68,7 @@ impl Scene {
             ]
             .iter()
             .all(|value| value.is_finite())
-                || body.radius <= 0.0
+                || body.radius < 0.0
                 || ship.spec.radius <= 0.0
             {
                 return Err("INVALID_STRUCTURE_DEPOSIT_STATE");

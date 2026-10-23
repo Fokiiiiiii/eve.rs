@@ -4,11 +4,6 @@ using Eve.Universe;
 
 namespace Eve.Services.Station;
 
-/// <summary>
-/// What the client asks about the station its character is docked at (<c>stationSvc</c>, also reached as <c>station</c>):
-/// the station's record, which it keeps for the whole run, the ownership tuple its station window is built from, who else
-/// is docked here, and the solar system it is in.
-/// </summary>
 [Service("stationSvc", Aliases = ["station"])]
 public sealed partial class StationService(StationCatalog stations, PgCharacterStore characters, OnlineCharacters online, Func<long> nowUnixMs, Func<long, CancellationToken, ValueTask<IReadOnlyList<long>>>? sovereigntySystemsForAlliance = null, Eve.Services.Corporations.OfficeManagerService? officeManager = null, SeedObserverGuestLedgerCallback? seedObserverGuestLedger = null, CharacterSessions? characterSessions = null)
 {
@@ -66,7 +61,6 @@ public sealed partial class StationService(StationCatalog stations, PgCharacterS
             ? ObjectCaching.MethodResult(Record(station), nowUnixMs())
             : None;
 
-    /// <summary><c>GetStationsForOwner(ownerID)</c> returns owner stations as the list of compact station KeyVals used by the LP store.</summary>
     [Method("GetStationsForOwner")]
     public PyValue GetStationsForOwner(ServiceCall call)
     {
@@ -92,7 +86,6 @@ public sealed partial class StationService(StationCatalog stations, PgCharacterS
         return new PyList(rows.ToArray());
     }
 
-    /// <summary><c>(ownerID, stationID, operationID, stationTypeID)</c> of the session's station: the columns of the row the client builds.</summary>
     [Method("GetStationItemBits")]
     public PyValue GetStationItemBits(ServiceCall call) =>
         StationOf(call.Session) is { } s
@@ -179,7 +172,6 @@ public sealed partial class StationService(StationCatalog stations, PgCharacterS
         return new PyList([.. systems.Select(systemId => (PyValue)new PyInt(systemId))]);
     }
 
-
     private Eve.Services.Corporations.OfficeManagerService RequireOfficeManager() =>
         officeManager ?? throw new InvalidOperationException(
             "StationService requires the shared OfficeManagerService for office station-moniker calls.");
@@ -222,11 +214,16 @@ public sealed partial class MapService
     private const string StationCountQuery = "map.stationCount";
     private readonly Eve.ReadSide.ReadSide _reads;
     private readonly Func<long> _nowUnixMs;
+      private readonly Func<long, IEnumerable<(long CharacterId, long LocationId)>>? _readCorporationMemberLocations;
 
-    public MapService(Eve.ReadSide.ReadSide reads, Func<long> nowUnixMs)
+      public MapService(
+          Eve.ReadSide.ReadSide reads,
+          Func<long> nowUnixMs,
+          Func<long, IEnumerable<(long CharacterId, long LocationId)>>? readCorporationMemberLocations = null)
     {
         _reads = reads;
         _nowUnixMs = nowUnixMs;
+          _readCorporationMemberLocations = readCorporationMemberLocations;
         reads.Register(new Eve.ReadSide.RowsetQuery(
             StationInfoQuery,
             """
@@ -356,8 +353,20 @@ public sealed partial class MapService
         await ReadOrDefaultAsync(call, EmptyMapRowset("solarSystemID", "noOfJobs"));
 
     [Method("GetMyExtraMapInfo")]
-    public async ValueTask<PyValue> GetMyExtraMapInfo(ServiceCall call) =>
-        await ReadOrDefaultAsync(call, EmptyMapRowset("characterID", "locationID"));
+      public ValueTask<PyValue> GetMyExtraMapInfo(ServiceCall call)
+      {
+          var corporationId = call.Session.GetInt("corpid") ?? 0;
+          if (_readCorporationMemberLocations is not { } readLocations || corporationId <= 0)
+              return ReadOrDefaultAsync(call, EmptyMapRowset("characterID", "locationID"));
+
+          var rows = readLocations(corporationId)
+              .Where(row => row.CharacterId > 0 && row.LocationId > 0)
+              .Distinct()
+              .OrderBy(row => row.CharacterId)
+              .Select(row => (PyValue)Py.Tuple(new PyInt(row.CharacterId), new PyInt(row.LocationId)))
+              .ToArray();
+          return ValueTask.FromResult(Py.Rowset(["characterID", "locationID"], rows));
+      }
 
     [Method("GetMyExtraMapInfoAgents")]
     public async ValueTask<PyValue> GetMyExtraMapInfoAgents(ServiceCall call) =>

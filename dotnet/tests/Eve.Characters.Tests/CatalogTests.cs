@@ -11,6 +11,13 @@ public class CatalogTests
     private static readonly JsonObject Starters = (JsonObject)JsonNode.Parse(
         File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "fixtures", "scenarios", "starters.json")))!;
 
+    private readonly Xunit.Abstractions.ITestOutputHelper _output;
+
+    public CatalogTests(Xunit.Abstractions.ITestOutputHelper output)
+    {
+        _output = output;
+    }
+
     private static async Task<(CreationCatalog Catalog, NpgsqlDataSource Source)> LoadAsync()
     {
         var source = NpgsqlDataSource.Create(PgConnection.ForTest(PgSchemas.Url!));
@@ -158,6 +165,131 @@ public class CatalogTests
     public void The_character_type_follows_the_bloodline(int bloodline, int type)
     {
         Assert.Equal(type, CreationCatalog.CharacterTypeId(bloodline));
+    }
+
+    [PgFact]
+    public async Task ReadByFieldAsync_returns_types_in_requested_groups()
+    {
+        var (_, source) = await LoadAsync();
+        var reader = new SdeReader(source);
+
+        var rows = await reader.ReadByFieldAsync("types", "groupID", [6, 7, 8, 9]);
+
+        Assert.NotEmpty(rows);
+        Assert.All(rows, row => Assert.Contains(row.Doc.GetProperty("groupID").GetInt64(), new long[] { 6, 7, 8, 9 }));
+        Assert.Equal(rows.Count, rows.Select(row => row.Key).Distinct().Count());
+    }
+
+    [PgFact]
+    public async Task ReadContainingAsync_finds_type_dogma_rows_for_an_effect()
+    {
+        var (_, source) = await LoadAsync();
+        var reader = new SdeReader(source);
+
+        var rows = await reader.ReadContainingAsync("typeDogma", """{"dogmaEffects":[{"effectID":101}]}""");
+
+        Assert.NotEmpty(rows);
+        Assert.All(rows, row => Assert.Contains(
+            row.Doc.GetProperty("dogmaEffects").EnumerateArray(),
+            effect => effect.GetProperty("effectID").GetInt32() == 101));
+    }
+
+    [PgFact]
+    public async Task ReadTypeSummariesAsync_returns_ordered_catalog_fields()
+    {
+        var (_, source) = await LoadAsync();
+        var reader = new SdeReader(source);
+
+        var timer = System.Diagnostics.Stopwatch.StartNew();
+        var summaries = await reader.ReadTypeSummariesAsync();
+        timer.Stop();
+
+        var ibis = Assert.Single(summaries, summary => summary.TypeId == 601);
+        Assert.Equal("Ibis", ibis.Name);
+        Assert.True(ibis.GroupId > 0);
+        Assert.True(ibis.Published);
+        if (Environment.GetEnvironmentVariable("EVE_SDE_BENCH") == "1")
+        {
+            _output.WriteLine($"SDE type summaries: {timer.Elapsed.TotalMilliseconds:F3} ms; rows={summaries.Count}");
+        }
+    }
+
+    [PgFact]
+    public async Task Full_table_reads_are_shared_between_readers_for_the_same_sde_build()
+    {
+        var (_, source) = await LoadAsync();
+        var firstReader = new SdeReader(source);
+        var secondReader = new SdeReader(source);
+        Assert.NotNull(await firstReader.BuildAsync());
+        Assert.NotNull(await secondReader.BuildAsync());
+
+        var uncachedTimer = System.Diagnostics.Stopwatch.StartNew();
+        var first = await firstReader.ReadAsync("mapSolarSystems");
+        uncachedTimer.Stop();
+
+        using var cancelled = new CancellationTokenSource();
+        cancelled.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => secondReader.ReadAsync("mapSolarSystems", cancellationToken: cancelled.Token));
+
+        var cachedTimer = System.Diagnostics.Stopwatch.StartNew();
+        var second = await secondReader.ReadAsync("mapSolarSystems");
+        cachedTimer.Stop();
+
+        Assert.Same(first, second);
+        Assert.NotEmpty(first);
+
+        var typeUncachedTimer = System.Diagnostics.Stopwatch.StartNew();
+        var typeRows = await firstReader.ReadAsync("types");
+        typeUncachedTimer.Stop();
+        var typeCachedTimer = System.Diagnostics.Stopwatch.StartNew();
+        var cachedTypeRows = await secondReader.ReadAsync("types");
+        typeCachedTimer.Stop();
+        Assert.Same(typeRows, cachedTypeRows);
+        Assert.NotEmpty(typeRows);
+
+        var dogmaUncachedTimer = System.Diagnostics.Stopwatch.StartNew();
+        var dogmaRows = await firstReader.ReadAsync("typeDogma");
+        dogmaUncachedTimer.Stop();
+        var dogmaCachedTimer = System.Diagnostics.Stopwatch.StartNew();
+        var cachedDogmaRows = await secondReader.ReadAsync("typeDogma");
+        dogmaCachedTimer.Stop();
+        Assert.Same(dogmaRows, cachedDogmaRows);
+        Assert.NotEmpty(dogmaRows);
+
+        var summaryUncachedTimer = System.Diagnostics.Stopwatch.StartNew();
+        var summaries = await firstReader.ReadTypeSummariesAsync();
+        summaryUncachedTimer.Stop();
+        using var summaryCancelled = new CancellationTokenSource();
+        summaryCancelled.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => secondReader.ReadTypeSummariesAsync(summaryCancelled.Token));
+        var summaryCachedTimer = System.Diagnostics.Stopwatch.StartNew();
+        var cachedSummaries = await secondReader.ReadTypeSummariesAsync();
+        summaryCachedTimer.Stop();
+        Assert.Same(summaries, cachedSummaries);
+        Assert.NotEmpty(summaries);
+
+        var missionReader = new SdeReader(source, "sde_mission");
+        var secondMissionReader = new SdeReader(source, "sde_mission");
+        Assert.NotNull(await missionReader.BuildAsync());
+        Assert.NotNull(await secondMissionReader.BuildAsync());
+        var missionUncachedTimer = System.Diagnostics.Stopwatch.StartNew();
+        var missions = await missionReader.ReadAsync("missions");
+        missionUncachedTimer.Stop();
+        var missionCachedTimer = System.Diagnostics.Stopwatch.StartNew();
+        var cachedMissions = await secondMissionReader.ReadAsync("missions");
+        missionCachedTimer.Stop();
+        Assert.Same(missions, cachedMissions);
+
+        if (Environment.GetEnvironmentVariable("EVE_SDE_BENCH") == "1")
+        {
+            _output.WriteLine($"SDE mapSolarSystems full read: database={uncachedTimer.Elapsed.TotalMilliseconds:F3} ms; shared cache={cachedTimer.Elapsed.TotalMilliseconds:F3} ms; rows={first.Count}");
+            _output.WriteLine($"SDE types full read: database={typeUncachedTimer.Elapsed.TotalMilliseconds:F3} ms; shared cache={typeCachedTimer.Elapsed.TotalMilliseconds:F3} ms; rows={typeRows.Count}");
+            _output.WriteLine($"SDE typeDogma full read: database={dogmaUncachedTimer.Elapsed.TotalMilliseconds:F3} ms; shared cache={dogmaCachedTimer.Elapsed.TotalMilliseconds:F3} ms; rows={dogmaRows.Count}");
+            _output.WriteLine($"SDE type summaries: database={summaryUncachedTimer.Elapsed.TotalMilliseconds:F3} ms; shared cache={summaryCachedTimer.Elapsed.TotalMilliseconds:F3} ms; rows={summaries.Count}");
+            _output.WriteLine($"SDE missions full read: database={missionUncachedTimer.Elapsed.TotalMilliseconds:F3} ms; shared cache={missionCachedTimer.Elapsed.TotalMilliseconds:F3} ms; rows={missions.Count}");
+        }
     }
 
     [PgFact]

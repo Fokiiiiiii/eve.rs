@@ -37,18 +37,15 @@ from evecli.observe import ego_state, events_of, hangar_and_ship, notifications_
 SCHOOL_OF_RACE = {1: 35, 2: 33, 4: 31, 8: 37}
 RACE_OF_BLOODLINE = {1: 1, 2: 1, 3: 2, 4: 2, 5: 4, 6: 4, 7: 8, 8: 8, 11: 1, 12: 8, 13: 4, 14: 2}
 
-
 def load_jsonl(directory: str, name: str) -> list[dict]:
     with open(os.path.join(directory, name + ".jsonl"), encoding="utf-8") as handle:
         return [json.loads(line) for line in handle if line.strip()]
-
 
 def first_ancestry(sde: str) -> dict[int, int]:
     found: dict[int, int] = {}
     for row in load_jsonl(sde, "ancestries"):
         found.setdefault(row["bloodlineID"], row["_key"])
     return found
-
 
 class Recorder:
     def __init__(self, host: str, port: int, run: str) -> None:
@@ -82,7 +79,6 @@ class Recorder:
         client.notifications.clear()
         return seen
 
-
 def create_args(name: str, bloodline: int, gender: int, ancestry: int) -> tuple:
     """The arguments of the client's call: (name, raceID, bloodlineID, genderID, ancestryID, charInfo, portraitInfo,
     schoolID, _, qaStarterSystemID). The two payloads stand for the paper-doll blobs the client sends; the reference
@@ -91,7 +87,6 @@ def create_args(name: str, bloodline: int, gender: int, ancestry: int) -> tuple:
     doll = m.Dict([("recorded", 1)])
     portrait = m.Dict([("recorded", 2)])
     return (name, race, bloodline, gender, ancestry, doll, portrait, SCHOOL_OF_RACE[race], None, None)
-
 
 def record_walk(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -> None:
     # ── the walk: one new account, from nothing to a session with a character ──
@@ -148,7 +143,6 @@ def record_walk(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -
         json.dump({**meta, "note": "Recorded by tools/headless-client/scripts/record_character_scenarios.py", **walk}, handle, indent=1, ensure_ascii=False)
         handle.write("\n")
 
-
 def record_starters(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -> None:
     # ── what each playable bloodline gets ──
     starters = []
@@ -162,7 +156,6 @@ def record_starters(rec: Recorder, out: str, meta: dict, ancestry: dict, run: st
     with open(os.path.join(out, "starters.json"), "w", encoding="utf-8") as handle:
         json.dump({**meta, "note": "Recorded by tools/headless-client/scripts/record_character_scenarios.py", "starters": starters}, handle, indent=1, ensure_ascii=False)
         handle.write("\n")
-
 
 # What the client asks the skill handler, and with what, in the order its skill window and login make the calls.
 SKILL_CALLS = [
@@ -189,7 +182,6 @@ SKILL_CALLS = [
     ("skillHandler", "IsSkill", (587,)),
 ]
 
-
 def share_skill_list(calls: list) -> None:
     """The three calls that return the whole skill list return the same list: store it once (`{"$same": "GetSkills"}`)."""
     skills = next(step["ok"] for step in calls if step["call"][1] == "GetSkills")
@@ -201,7 +193,6 @@ def share_skill_list(calls: list) -> None:
             for pair in pairs:
                 if pair[0] == "skills" and pair[1] == skills:
                     pair[1] = {"$same": "GetSkills"}
-
 
 def record_skills(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -> None:
     """One new character per playable race, chosen, and what the skill handler tells it. The client gets its skill
@@ -225,7 +216,6 @@ def record_skills(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str)
     with open(os.path.join(out, "skills.json"), "w", encoding="utf-8") as handle:
         json.dump({**meta, "note": "Recorded by tools/headless-client/scripts/record_character_scenarios.py", "races": races}, handle, separators=(",", ":"), ensure_ascii=False)
         handle.write("\n")
-
 
 # What the client asks about the character it plays: `None` stands for the character's own id, filled in when the call is made.
 INFO_CALLS = [
@@ -254,7 +244,6 @@ INFO_CALLS = [
     ("stationSvc", "GetSystemsForAlliance", (0,)),
 ]
 
-
 def record_info(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -> None:
     """One new character per playable race, chosen, and what the character manager and the wallet tell it."""
     races = []
@@ -272,7 +261,6 @@ def record_info(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -
         json.dump({**meta, "note": "Recorded by tools/headless-client/scripts/record_character_scenarios.py", "races": races}, handle, indent=1, ensure_ascii=False)
         handle.write("\n")
 
-
 def record_stations(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str, sde: str = "") -> None:
     """The reference's station record for a sample of the stations in the static data (every 87th, in file order, and
     the two the character screens use), to check the names and places eve.rs derives from the same data."""
@@ -285,7 +273,6 @@ def record_stations(rec: Recorder, out: str, meta: dict, ancestry: dict, run: st
     with open(os.path.join(out, "stations.json"), "w", encoding="utf-8") as handle:
         json.dump({**meta, "note": "Recorded by tools/headless-client/scripts/record_character_scenarios.py", "stations": stations}, handle, separators=(",", ":"), ensure_ascii=False)
         handle.write("\n")
-
 
 # What the client asks a bound inventory. The three inventories are the character's hangar in its station, the station
 # itself and the ship in the hangar.
@@ -301,7 +288,6 @@ INVENTORY_CALLS = [
     ("GetItems", ()),
     ("GetContainerContents", ()),
 ]
-
 
 def record_inventory(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -> None:
     """One new character per playable race, chosen; then its hangar, its station and its ship opened as inventories and
@@ -338,7 +324,6 @@ def record_inventory(rec: Recorder, out: str, meta: dict, ancestry: dict, run: s
         json.dump({**meta, "note": "Recorded by tools/headless-client/scripts/record_character_scenarios.py", "races": races}, handle, indent=1, ensure_ascii=False)
         handle.write("\n")
 
-
 def record_dogma(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -> None:
     """One new character per playable race, chosen; then what the client asks the dogma manager when it enters the station:
     the location is bound with (station, group station) and `GetAllInfo(character, ship, structure)` is the nested call.
@@ -359,7 +344,6 @@ def record_dogma(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) 
     with open(os.path.join(out, "dogma.json"), "w", encoding="utf-8") as handle:
         json.dump({**meta, "note": "Recorded by tools/headless-client/scripts/record_character_scenarios.py", "races": races}, handle, separators=(",", ":"), ensure_ascii=False)
         handle.write("\n")
-
 
 def record_fitting(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -> None:
     """What the reference does when modules are switched and moved: the online state of the afterburner and the weapon
@@ -397,7 +381,7 @@ def record_fitting(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str
                 step["error"] = {"code": describe(error.code), "payload": describe(error.payload)}
             step["notifications"] = notifications_of(who)
             step["after"] = hangar_and_ship(who, mgr, ship_id)
-            notifications_of(who)  # what looking made the server send is not part of the step
+            notifications_of(who)
             steps.append(step)
         races.append({"bloodlineID": bloodline, "raceID": RACE_OF_BLOODLINE[bloodline], "create": created, "shipID": ship_id, "moduleIDs": ids, "before": before, "steps": steps})
         who.close()
@@ -405,7 +389,6 @@ def record_fitting(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str
     with open(os.path.join(out, "fitting.json"), "w", encoding="utf-8") as handle:
         json.dump({**meta, "note": "Recorded by tools/headless-client/scripts/record_character_scenarios.py", "races": races}, handle, separators=(",", ":"), ensure_ascii=False)
         handle.write("\n")
-
 
 def record_training(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -> None:
     """The skill queue as the client uses it, at the reference's normal training speed: starting a skill, saving and
@@ -476,7 +459,6 @@ def record_training(rec: Recorder, out: str, meta: dict, ancestry: dict, run: st
         json.dump({**meta, "note": "Recorded by tools/headless-client/scripts/record_character_scenarios.py", "races": races}, handle, separators=(",", ":"), ensure_ascii=False)
         handle.write("\n")
 
-
 def record_training_fast(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -> None:
     """Skills that finish while the client watches, which needs a reference started with a huge EVEJS_SKILL_TRAINING_SPEED
     (the file records the speed it saw): a queue of two levels running out, a rank 5 skill (its points are rounded up), and a
@@ -528,7 +510,6 @@ def record_training_fast(rec: Recorder, out: str, meta: dict, ancestry: dict, ru
                    "characterID": char_id, "shipID": ship_id, "before": before, "steps": steps}, handle, separators=(",", ":"), ensure_ascii=False)
         handle.write("\n")
 
-
 def record_undock(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -> None:
     """A new character leaves its station, is sent the solar system, flies and docks again: `ship.Undock` on the ship service bound
     to the station, the ballpark (`beyonce`) bound to the solar system, `UpdateStateRequest`, then the movement commands and
@@ -575,7 +556,6 @@ def record_undock(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str)
     with open(os.path.join(out, "undock.json"), "w", encoding="utf-8") as handle:
         json.dump({**meta, "note": "Recorded by tools/headless-client/scripts/record_character_scenarios.py", "races": races}, handle, separators=(",", ":"), ensure_ascii=False)
         handle.write("\n")
-
 
 def record_approach(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -> None:
     """A ship flies out of docking range of its station and is told to dock: the reference makes it approach the station and tells the client
@@ -658,7 +638,6 @@ def record_approach(rec: Recorder, out: str, meta: dict, ancestry: dict, run: st
         handle.write("\n")
     who.close()
 
-
 def record_movement(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -> None:
     """A ship in space is told to align to, orbit and follow the station: what each command makes the reference send (one destiny update
     with the action, and a speed fraction when the command changes it), and what it does with a target it does not know."""
@@ -707,7 +686,6 @@ def record_movement(rec: Recorder, out: str, meta: dict, ancestry: dict, run: st
         json.dump({**meta, "note": "Recorded by tools/headless-client/scripts/record_character_scenarios.py", "races": [race]}, handle, separators=(",", ":"), ensure_ascii=False)
         handle.write("\n")
     who.close()
-
 
 def record_warp(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -> None:
     """A ship warps to a planet two AU away and then stops there: `CmdWarpToStuff('item', planet, minRange=)` and what the client is sent while
@@ -771,14 +749,12 @@ def record_warp(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -
         handle.write("\n")
     who.close()
 
-
 def dest_names(event: dict) -> list:
     """The names of the destiny actions in a `DoDestinyUpdate` event."""
     if event["name"] != "DoDestinyUpdate":
         return []
     actions, _ = event["args"]["$tuple"][1]["$tuple"][1]["$tuple"]
     return [a["$tuple"][1]["$tuple"][0] for a in actions]
-
 
 def record_jump(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -> None:
     """A ship warps to the stargate of its system and jumps: `CmdStargateJump(from, to, shipID)`, what the client is sent (the session change to the
@@ -840,7 +816,6 @@ def record_jump(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -
         handle.write("\n")
     who.close()
 
-
 def watch(clients: dict, seconds: float, until=None) -> dict:
     """The events each client is sent in `seconds` (or until `until(all so far)` is true), with the seconds since the start each arrived at."""
     started = time.time()
@@ -854,7 +829,6 @@ def watch(clients: dict, seconds: float, until=None) -> dict:
             break
         time.sleep(0.25)
     return out
-
 
 def record_others(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -> None:
     """Two characters in one system: what the one that is in space (the watcher, A) is sent while the other (B) undocks, binds the ballpark, is
@@ -944,7 +918,6 @@ def record_others(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str)
         handle.write("\n")
     a.close()
     b.close()
-
 
 def record_target(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -> None:
     """Two characters in space by the same station: what the one that locks (the actor, B) and the one that is locked (the watcher, A) are
@@ -1055,7 +1028,6 @@ def record_target(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str)
     a.close()
     b.close()
 
-
 def record_module(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -> None:
     """Two characters in space by the same station: what the one that works its modules (the actor, B) and the one that watches (A) are sent as
     the actor flies, starts and stops its afterburner, and tries its gun and its miner where they cannot be used. Each step holds what B is sent
@@ -1135,7 +1107,6 @@ def record_module(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str)
     a.close()
     b.close()
 
-
 def slims_in(events: list) -> list[tuple[int, int]]:
     """The (itemID, typeID) of every slim item an event holds (the balls an `AddBalls2` brings into space), in order."""
     found: list[tuple[int, int]] = []
@@ -1143,7 +1114,6 @@ def slims_in(events: list) -> list[tuple[int, int]]:
         for item, kind in re.findall(r'\["itemID", \{"\$long": (\d+)\}\], \["typeID", (\d+)\]', json.dumps(event)):
             found.append((int(item), int(kind)))
     return found
-
 
 def record_weapon(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -> None:
     """One character in space with a rat beside it (`/npc`, the reference's way to make a target that may be shot: a ship of another pilot cannot
@@ -1216,7 +1186,6 @@ def record_weapon(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str)
         json.dump({**meta, "note": "Recorded by tools/headless-client/scripts/record_character_scenarios.py", "races": [race]}, handle, separators=(",", ":"), ensure_ascii=False)
         handle.write("\n")
     who.close()
-
 
 def record_ammo(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -> None:
     """One character with a gun that takes charges (a 125mm Railgun I, in the place of the miner): ammunition given, the gun loaded, loaded again, unloaded,
@@ -1311,7 +1280,6 @@ def record_ammo(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -
         json.dump({**meta, "note": "Recorded by tools/headless-client/scripts/record_character_scenarios.py", "races": [race]}, handle, separators=(",", ":"), ensure_ascii=False)
         handle.write("\n")
     who.close()
-
 
 def record_missile(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -> None:
     """One character with a launcher (a Rocket Launcher I in the place of the miner) and three Scourge Rockets: the launcher loaded in the station, then in space with a rat beside it
@@ -1411,7 +1379,6 @@ def record_missile(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str
         handle.write("\n")
     who.close()
 
-
 def record_drones(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -> None:
     """One character and the drone bay of its ship (flag 87), as the client uses it: in the station the bay and the room in it asked for, a drone (Hobgoblin I, 5 m3: the
     bay of the rookie ship holds one) given and put in it, a second refused for want of room, a thing that is not a drone refused, the bay asked for, the drone taken back
@@ -1486,7 +1453,6 @@ def record_drones(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str)
         json.dump({**meta, "note": "Recorded by tools/headless-client/scripts/record_character_scenarios.py", "races": [{"bloodlineID": 1, "raceID": 1, "solarSystemID": system, "stationID": station, "create": created, "characterID": char_id, "shipID": ship_id, "moduleIDs": [ship_id + 1, ship_id + 2, ship_id + 3], "steps": steps}]}, handle, separators=(",", ":"), ensure_ascii=False)
         handle.write("\n")
     who.close()
-
 
 def record_drone_flight(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -> None:
     """One character with a drone (Hobgoblin I) in the drone bay of its ship: in space with a rat beside it (`/npc`, the smallest armed rat there is) the drone is launched (`ship.LaunchDrones`), sent at the rat
@@ -1564,7 +1530,6 @@ def record_drone_flight(rec: Recorder, out: str, meta: dict, ancestry: dict, run
         json.dump({**meta, "note": "Recorded by tools/headless-client/scripts/record_character_scenarios.py", "races": [race]}, handle, separators=(",", ":"), ensure_ascii=False)
         handle.write("\n")
     who.close()
-
 
 def record_reload(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -> None:
     """One character with a gun that takes charges (a 125mm Railgun I in the place of the miner), loaded in the station with some more ammunition in the hold, then in
@@ -1668,7 +1633,6 @@ def record_reload(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str)
         handle.write("\n")
     who.close()
 
-
 def record_cargo(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -> None:
     """One character and the cargo hold of its ship, as the client uses it: in the station a stack of tritanium given, asked for, moved into the hold (all of it,
     part of it, more than the hold takes), stacked, moved back to the hangar; then in space the hold asked for, a stack jettisoned, the can that comes of it
@@ -1761,7 +1725,6 @@ def record_cargo(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) 
         handle.write("\n")
     who.close()
 
-
 def record_crimewatch(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -> None:
     """One character and the crimewatch service the client binds for the place it is in (`crimewatch`, bound by `(locationID, groupID)` like dogma): in the station
     the client states (the five combat timers, the engagements, who is flagged, the ship safety level), the safety level read, changed and read again, the character's
@@ -1815,7 +1778,6 @@ def record_crimewatch(rec: Recorder, out: str, meta: dict, ancestry: dict, run: 
         json.dump({**meta, "note": "Recorded by tools/headless-client/scripts/record_character_scenarios.py", "races": [{"bloodlineID": 1, "raceID": 1, "solarSystemID": system, "stationID": station, "create": created, "characterID": char_id, "shipID": ship_id, "steps": steps}]}, handle_out, separators=(",", ":"), ensure_ascii=False)
         handle_out.write("\n")
     who.close()
-
 
 def record_aggression(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -> None:
     """Two characters in space by the same station, in a high security system: the one that fires (the aggressor, B) at the other (the victim, A). Crimewatch is
@@ -1895,7 +1857,6 @@ def record_aggression(rec: Recorder, out: str, meta: dict, ancestry: dict, run: 
     a.close()
     b.close()
 
-
 def record_loot(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -> None:
     """One character in space takes what is in a can with the loot window's "Loot All" (`invbroker` `MultiAdd` on the ship's inventory: the item ids, the can they are
     in, `flag=5`): two stacks (tritanium and pyerite) are put in the hold, jettisoned into one can, the can is opened and everything is taken at once
@@ -1972,7 +1933,6 @@ def record_loot(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -
         handle.write("\n")
     who.close()
 
-
 def record_health(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -> None:
     """One character damages its ship in the hangar (`/dmg`, the reference's only way to hurt a ship on demand), asks for it, leaves the station
     with the damage, watches its shield and capacitor recharge, heals in space and tries to damage again there. Each step holds the answer (or
@@ -2028,7 +1988,6 @@ def record_health(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str)
         json.dump({**meta, "note": "Recorded by tools/headless-client/scripts/record_character_scenarios.py", "races": [race]}, handle, separators=(",", ":"), ensure_ascii=False)
         handle.write("\n")
     who.close()
-
 
 def record_death(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -> None:
     """Two characters in space by the same station: what both are sent when a hull that nobody flies is detonated beside them (`/deathtest`, the
@@ -2095,14 +2054,12 @@ def record_death(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) 
     a.close()
     b.close()
 
-
 def args_of_effect(event: dict) -> list:
     """The arguments of an `OnGodmaShipEffect`: `(itemID, effectID, when, isStart, isActive, environment, startTime, duration, repeat, error)`."""
     try:
         return event["args"]["$tuple"][1]["$tuple"][1]["$tuple"]
     except (KeyError, TypeError):
         return []
-
 
 def main() -> int:
     if len(sys.argv) < 4:
@@ -2127,7 +2084,6 @@ def main() -> int:
         rec.close()
     print("recorded to", out)
     return 0
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

@@ -10,11 +10,7 @@ using Npgsql;
 namespace Eve.Services.Space;
 
 /// <summary>
-/// A Black Ops conduit jump (the EVE University wiki, "Jump drives": a Black Ops with its Covert Jump Portal Generator fitted takes up to 30 ships in a 10 km
 /// radius through to a cynosural field of its fleet; a conduit jump costs isotopes a light year, not by mass). The numbers are the SDE's (the hull's 3131, 3133 and
-/// 866 to 868, the generator's 3126, 1298 and 3318 family, the passenger flag 3322); the reach is the wiki's and EveJS's (10 km). The anchor and the passengers
-/// jump at once (EveJS conduitJumpRuntime.js executeConduitPassengerJumps; no spool). A passenger is a fleetmate of the anchor, in its system and its 10 km,
-/// who is eligible (3322, its SDE default 0) and not cooling down; the others are not taken, as EveJS takes only those in range.
 /// </summary>
 public sealed class SpaceConduits(
     CharacterShips ships,

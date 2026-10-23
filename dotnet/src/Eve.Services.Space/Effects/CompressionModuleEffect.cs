@@ -6,7 +6,6 @@ namespace Eve.Services.Space.Effects;
 
 /// <summary>
 /// The ship compressors (group 4174, effect <c>industrialItemCompression</c>, 8364): a high-slot module of a Porpoise, Orca or Rorqual that, while it runs, makes the
-/// ship a compression facility for the ore, ice, gas or moon ore of its type list (3255) for the pilots of its fleet within the module's range (54; EVE University wiki,
 /// Compression). It is not a structure module: in-space compression needs no structure. The effect cycles for its duration (73) and costs nothing else; the work is done
 /// when a fleet member asks the facility to compress an item (<see cref="CompressionFacilities"/>, <c>inSpaceCompressionMgr.CompressItemInSpace</c>). The industrial core
 /// it needs (3265) is enforced by the simulation as for any module (<see cref="ShipEffect"/>), and a compressor stops with its core.

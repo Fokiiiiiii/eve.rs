@@ -76,7 +76,6 @@ public sealed class CosmicSiteRulesTests
         Assert.Equal(strength, ProbeScanMath.SignatureStrength(level));
 }
 
-/// <summary>The probe result of a cosmic signature by its level (the wiki: a probe that is weaker than the signature finds it only in part).</summary>
 public sealed class SignatureScanResultTests
 {
     [Theory]
@@ -179,6 +178,25 @@ public sealed class CosmicSiteDirectorTests
         Assert.Empty(after.Select(site => site.InstanceId).Intersect(before.Select(site => site.InstanceId)));
         Assert.Equal(4, after.Select(site => site.Code).Distinct().Count());
         Assert.Empty(after.Select(site => site.Code).Intersect(before.Select(site => site.Code)));
+    }
+
+    [PgFact]
+    public async Task A_burst_of_expired_sites_across_thirty_two_systems_finishes_within_twenty_seconds()
+    {
+        const int systemCount = 32;
+        await using var rig = await SiteRig.CreateAsync();
+        var systems = Enumerable.Range(0, systemCount).Select(index => 30_100_001 + index).ToArray();
+        foreach (var systemId in systems)
+            await rig.FillAsync(systemId);
+
+        rig.Advance(CosmicSiteDirector.Lifetime + TimeSpan.FromMinutes(1));
+        var timer = global::System.Diagnostics.Stopwatch.StartNew();
+        await rig.RunDueAndDeliverAsync();
+        timer.Stop();
+
+        Assert.True(timer.Elapsed < TimeSpan.FromSeconds(20), $"128 site expiries across 32 systems took {timer.Elapsed}");
+        foreach (var systemId in systems)
+            Assert.Equal(4, (await rig.Director.ActiveAsync(systemId)).Count);
     }
 
     [PgFact]
@@ -311,7 +329,12 @@ public sealed class CosmicSiteDirectorTests
             Scheduler = new DurableScheduler(source, () => _now, null, schemas[0]);
             Bus = new EventBus(source, Scheduler, null, schemas[1]);
             Content = new ContentRuntime(source, Scheduler, Bus, schemas[2]);
-            Systems = new SolarSystemCatalog([new SolarSystemInfo(NullSystem, "Test Null", 1, 1, -0.5)]);
+            Systems = new SolarSystemCatalog(
+            [
+                new SolarSystemInfo(NullSystem, "Test Null", 1, 1, -0.5),
+                .. Enumerable.Range(0, 32).Select(index =>
+                    new SolarSystemInfo(30_100_001 + index, $"Stress {index}", 1, 1, -0.5)),
+            ]);
             Director = NewDirector();
         }
 

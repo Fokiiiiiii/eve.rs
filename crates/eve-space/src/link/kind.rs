@@ -101,11 +101,11 @@ pub const TETHER_POLICY: u8 = 80;
 pub const TETHER_CHANGED: u8 = 81;
 /// Simulation-to-host damageable candidates for one structure pulse or ordered chain hop (protocol 68).
 pub const STRUCTURE_DAMAGE_CANDIDATES_REQUEST: u8 = 85;
-/// Host-to-simulation allowed targets for exactly the same correlated damage step (protocol 68).
+
 pub const STRUCTURE_DAMAGE_CANDIDATES_RESULT: u8 = 86;
 /// The host removes a structure-owned cyno beacon from its solar-system scene (protocol 68).
 pub const REMOVE_CYNO_BEACON: u8 = 87;
-/// The simulation registers or updates a created damageable entity's owner identity (protocol 69).
+
 pub const DAMAGEABLE_ENTITY_UPSERTED: u8 = 88;
 /// The simulation removes a non-destroyed damageable entity from the Host identity registry (protocol 69).
 pub const DAMAGEABLE_ENTITY_REMOVED: u8 = 89;
@@ -116,8 +116,62 @@ pub const REMOTE_DECLOAK_PING: u8 = 91;
 /// The host puts a player control tower in space where its pilot launched it, anchored or not (protocol 73): a disruptor's placement, with range 0.
 pub const PLACE_CONTROL_TOWER: u8 = 92;
 /// The host puts a deadspace pocket of a dungeon (a mission pocket or an incursion site) in space at its origin, with its radius (protocol 74): a disruptor's
-/// placement with type, group and range 0 and no owner. It is in no client ball.
 pub const PLACE_DEADSPACE_POCKET: u8 = 93;
+/// The host creates or refreshes a static-free Abyssal room scene (protocol 75).
+pub const ENSURE_ABYSSAL_SCENE: u8 = 98;
+/// Result of ensuring an Abyssal room scene (protocol 75).
+pub const ENSURE_ABYSSAL_SCENE_REPLY: u8 = 99;
+/// The host moves a resident participant and its live state between Abyssal rooms (protocol 75).
+pub const MOVE_ABYSSAL_PARTICIPANT: u8 = 100;
+/// Result of moving an Abyssal participant (protocol 75).
+pub const MOVE_ABYSSAL_PARTICIPANT_REPLY: u8 = 101;
+/// The host rebinds a new session to a resident Abyssal ship (protocol 75).
+pub const REBIND_ABYSSAL_SESSION: u8 = 102;
+/// Result of rebinding a session to an Abyssal ship (protocol 75).
+pub const REBIND_ABYSSAL_SESSION_REPLY: u8 = 103;
+/// The host discards an empty private Abyssal room scene (protocol 75).
+pub const REMOVE_ABYSSAL_SCENE: u8 = 104;
+/// Result of removing an Abyssal scene (protocol 75).
+pub const REMOVE_ABYSSAL_SCENE_REPLY: u8 = 105;
+/// The host materializes and publishes one persisted public Abyssal trace (protocol 75).
+pub const ENSURE_ABYSSAL_TRACE_PUBLISHED: u8 = 106;
+/// Result of materializing and publishing an Abyssal trace (protocol 75).
+pub const ENSURE_ABYSSAL_TRACE_PUBLISHED_REPLY: u8 = 107;
+/// The host removes one public Abyssal trace after its Domain/item cleanup (protocol 75).
+pub const REMOVE_ABYSSAL_TRACE: u8 = 108;
+/// Result of removing an Abyssal trace (protocol 75).
+pub const REMOVE_ABYSSAL_TRACE_REPLY: u8 = 109;
+/// The host settles a resident Abyssal participant without requiring its client session (protocol 75).
+pub const REMOVE_ABYSSAL_PARTICIPANT: u8 = 110;
+/// Result of removing an Abyssal participant (protocol 75).
+pub const REMOVE_ABYSSAL_PARTICIPANT_REPLY: u8 = 111;
+/// The Host reads a resident participant's authoritative Abyssal pose (protocol 75).
+pub const GET_ABYSSAL_PARTICIPANT_POSE: u8 = 112;
+/// Result of reading an Abyssal participant's pose (protocol 75).
+pub const GET_ABYSSAL_PARTICIPANT_POSE_REPLY: u8 = 113;
+/// Host request to ensure a static conduit exists as an isolated Abyssal scene body (protocol 75).
+pub const ENSURE_ABYSSAL_SCENE_OBJECT: u8 = 114;
+/// Result of ensuring a static Abyssal scene body (protocol 75).
+pub const ENSURE_ABYSSAL_SCENE_OBJECT_REPLY: u8 = 115;
+pub const ENSURE_ABYSSAL_REWARD_CACHE: u8 = 116;
+pub const ENSURE_ABYSSAL_REWARD_CACHE_REPLY: u8 = 117;
+pub const ENSURE_ABYSSAL_LOOT_CONTAINER: u8 = 118;
+pub const ENSURE_ABYSSAL_LOOT_CONTAINER_REPLY: u8 = 119;
+pub const ENSURE_ABYSSAL_ENVIRONMENT_OBJECT: u8 = 120;
+pub const ENSURE_ABYSSAL_ENVIRONMENT_OBJECT_REPLY: u8 = 121;
+pub const ABYSSAL_FIELD_MEMBERSHIP: u8 = 122;
+pub const REFRESH_ABYSSAL_NPC: u8 = 123;
+pub const REFRESH_ABYSSAL_NPC_REPLY: u8 = 124;
+
+/// The host puts an acceleration gate of a dungeon room in space (protocol 75).
+pub const PLACE_ACCELERATION_GATE: u8 = 94;
+pub const SET_SLIM_FIELD: u8 = 95;
+
+/// The host puts a battlefield's capture point in space (protocol 77).
+pub const PLACE_CAPTURE_POINT: u8 = 96;
+
+/// The host puts a battlefield's scoreboard in space (protocol 78).
+pub const PLACE_BATTLEFIELD_SCOREBOARD: u8 = 97;
 
 /// The host puts a wormhole end in space (protocol 63).
 pub const PLACE_WORMHOLE: u8 = 82;

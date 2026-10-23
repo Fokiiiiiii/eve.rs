@@ -45,18 +45,21 @@ public sealed class InsurgencyCampaigns
     private readonly EventBus _events;
     private readonly LoyaltyPointStore? _loyalty;
     private readonly Func<long, int>? _factionOfSystem;
+    private readonly Func<long, CancellationToken, ValueTask<(long CorporationId, decimal TaxRate)>>? _memberLpTerms;
 
     /// <summary>
     /// The campaigns. With a loyalty store, a win pays each contributor in the win's transaction (<see cref="InsurgencyRules.VictoryLp"/>): a pirate win from the
     /// pirate militia, an Empire win from the Empire militia of the faction that owns the FOB's system (<paramref name="factionOfSystem"/>; none: the warzone's fallback).
     /// </summary>
-    public InsurgencyCampaigns(InsurgencyStore store, DurableScheduler scheduler, EventBus events, LoyaltyPointStore? loyalty = null, Func<long, int>? factionOfSystem = null)
+    public InsurgencyCampaigns(InsurgencyStore store, DurableScheduler scheduler, EventBus events, LoyaltyPointStore? loyalty = null, Func<long, int>? factionOfSystem = null,
+        Func<long, CancellationToken, ValueTask<(long CorporationId, decimal TaxRate)>>? memberLpTerms = null)
     {
         _store = store;
         _scheduler = scheduler;
         _events = events;
         _loyalty = loyalty;
         _factionOfSystem = factionOfSystem;
+        _memberLpTerms = memberLpTerms;
     }
 
     public InsurgencyStore Store => _store;
@@ -186,7 +189,6 @@ public sealed class InsurgencyCampaigns
     }
 
     /// <summary>
-    /// The victory payout (the wiki: a win pays every contributor 1,500,000 LP, the winning side's): one credit per contributor, issued by the winning side's militia
     /// (a pirate win: the warzone's pirate militia; an Empire win: <see cref="InsurgencyWarzones.EmpireMilitiaOf"/>), keyed by the campaign and the character, so a
     /// replayed win credits nothing.
     /// </summary>
@@ -198,7 +200,9 @@ public sealed class InsurgencyCampaigns
             : InsurgencyWarzones.EmpireMilitiaOf(warzone, _factionOfSystem?.Invoke(campaign.OriginSolarSystemId) ?? 0);
         foreach (var character in await _store.ContributorsAsync(connection, transaction, campaign.CampaignId, cancellationToken))
         {
-            await _loyalty!.ApplyAsync(connection, transaction, new LoyaltyHolder(LoyaltyHolderKind.Character, character), issuer,
+            // The contributor’s corporation tax is applied to the victory LP.
+            var (corporationId, taxRate) = _memberLpTerms is null ? (0L, 0m) : await _memberLpTerms(character, cancellationToken);
+            await _loyalty!.CreditMemberAsync(connection, transaction, character, corporationId, taxRate, issuer,
                 InsurgencyRules.VictoryLp, "insurgency_victory", $"insurgency:{campaign.CampaignId}:{character}", cancellationToken);
         }
     }

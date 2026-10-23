@@ -81,6 +81,68 @@ public class InventoryRpcFixTests
     }
 
     [PgFact]
+    public async Task GetItems_refuses_more_than_500_requested_ids()
+    {
+        await using var rig = await Rig.CreateAsync(activeShip: true);
+        var ship = (await rig.Ships.LoadAsync(Rig.Character))!.Ship.Id;
+        var session = Session(new Sink());
+        var bound = Rig.OidOf(await rig.CallAsync(session, "GetInventoryFromId", null, InventoryWire.Id(ship)));
+
+        var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() => Call(rig, session, "GetItems", bound,
+            [new PyList(Enumerable.Range(1, 501).Select(id => (PyValue)new PyLong(id)).ToArray())]));
+
+        Assert.Equal("INVENTORY_BULK_LIMIT_EXCEEDED", refusal.Error.UserErrorMessage);
+    }
+
+    [PgFact]
+    public async Task ListByFlags_refuses_more_than_500_requested_flags()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var session = Session(new Sink());
+        var bound = await rig.HangarAsync(session);
+        var flags = new PyList(Enumerable.Range(1, 501).Select(value => (PyValue)new PyInt(value)).ToArray());
+
+        var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() => Call(rig, session, "ListByFlags", bound, [flags]));
+
+        Assert.Equal("INVENTORY_BULK_LIMIT_EXCEEDED", refusal.Error.UserErrorMessage);
+    }
+
+    [PgFact]
+    public async Task GetDamageForCrystals_refuses_malformed_shapes_and_nonpositive_item_ids()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var session = Session(new Sink());
+
+        var shape = await Assert.ThrowsAsync<MachoWrappedException>(() => Call(rig, session, "GetDamageForCrystals", null, [PyNone.Instance]));
+        var identifier = await Assert.ThrowsAsync<MachoWrappedException>(() => Call(rig, session, "GetDamageForCrystals", null, [new PyList([new PyInt(-1)])]));
+
+        Assert.Equal("INVENTORY_BULK_ARGUMENT_INVALID", shape.Error.UserErrorMessage);
+        Assert.Equal("INVENTORY_ITEM_ID_INVALID", identifier.Error.UserErrorMessage);
+    }
+
+    [PgFact]
+    public async Task Inventory_bulk_rpcs_refuse_more_than_500_ids_before_work()
+    {
+        await using var rig = await Rig.CreateAsync(activeShip: true);
+        var ship = (await rig.Ships.LoadAsync(Rig.Character))!.Ship.Id;
+        var session = Session(new Sink());
+        var bound = Rig.OidOf(await rig.CallAsync(session, "GetInventoryFromId", null, InventoryWire.Id(ship)));
+        var values = new PyList(Enumerable.Range(1, 501).Select(id => (PyValue)new PyLong(id)).ToArray());
+
+        var mergeRefusal = await Assert.ThrowsAsync<MachoWrappedException>(() => Call(rig, session, "MultiMerge", bound,
+            [values, InventoryWire.Id(Rig.Station)]));
+        var multiAddRefusal = await Assert.ThrowsAsync<MachoWrappedException>(() => Call(rig, session, "MultiAdd", bound,
+            [values, InventoryWire.Id(Rig.Station)]));
+        var crystalRefusal = await Assert.ThrowsAsync<MachoWrappedException>(() => Call(rig, session, "GetDamageForCrystals", null, [values]));
+        var openRefusal = await Assert.ThrowsAsync<MachoWrappedException>(() => Call(rig, session, "ValidateItemListCanBeOpened", null, [values]));
+
+        Assert.Equal("INVENTORY_BULK_LIMIT_EXCEEDED", mergeRefusal.Error.UserErrorMessage);
+        Assert.Equal("INVENTORY_BULK_LIMIT_EXCEEDED", multiAddRefusal.Error.UserErrorMessage);
+        Assert.Equal("INVENTORY_BULK_LIMIT_EXCEEDED", crystalRefusal.Error.UserErrorMessage);
+        Assert.Equal("INVENTORY_BULK_LIMIT_EXCEEDED", openRefusal.Error.UserErrorMessage);
+    }
+
+    [PgFact]
     public async Task MultiAdd_honors_both_quantity_names_and_publishes_only_committed_real_split_rows()
     {
         await using var rig = await Rig.CreateAsync(activeShip: true);

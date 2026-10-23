@@ -12,7 +12,6 @@ public interface ISiteAnchors
 
 /// <summary>
 /// The anchors from the static data: the planets, asteroid belts, stations and stargates of the system, in the positions the simulation gives them (not the sun: the reference
-/// leaves it out, and a site is not found at the star). The moons are left out, as the wiki says "may only be planets" and a planet has several.
 /// </summary>
 public sealed class SdeSiteAnchors(SdeReader sde) : ISiteAnchors
 {

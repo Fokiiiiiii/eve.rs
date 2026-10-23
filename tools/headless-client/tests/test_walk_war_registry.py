@@ -19,7 +19,6 @@ from tests.test_undock import arrive
 SERVICE = "warRegistry"
 pytestmark = pytest.mark.skipif(not base.LIVE, reason="set EVE_LIVE_HOST=host:port to test against a running server")
 
-
 def test_a_pilot_reads_its_wars_and_the_negotiations():
     race = HEALTH["races"][0]
     run = uuid.uuid4().hex[:10]

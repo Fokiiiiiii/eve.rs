@@ -38,6 +38,9 @@ public sealed partial class SpaceSessions
         {
             return SafeLogoffRefusal();
         }
+        if (TimedActions is { } scheduler &&
+            await scheduler.FindAsync(ShipSelfDestructJobKind, $"self-destruct:{pilot.ShipId}", cancellationToken) is not null)
+            return SafeLogoffRefusal();
 
         IReadOnlyList<string> blockers;
         try

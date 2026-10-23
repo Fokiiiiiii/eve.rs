@@ -46,6 +46,26 @@ internal sealed partial class CharacterServicesComposition
             catalog,
             ReadHomeStationStructureAsync,
             ReadHomeStationOfficeLocationsAsync);
+        var globalAssetsInventory = HostInventoryServiceFactory.CreateInvBroker(
+            items,
+            itemTypes,
+            stations,
+            ships,
+            dogma,
+            now,
+            spaceContainers,
+            spaceDrones,
+            corporations,
+            characterEntryHooks,
+            controlledStructureInventory: structureControlReadModel.InventoryAsync,
+            dockableAssetLocation: async (structureId, token) =>
+            {
+                if (await ReadHomeStationStructureAsync(structureId, token) is not { Location: { } location })
+                    return null;
+                return new DockableAssetLocation(location.Id, location.SolarSystemId, location.TypeId);
+            },
+            crystalDamage: async (itemIds, token) => (await modules.ModuleConditionsAsync(itemIds, token))
+                .ToDictionary(entry => entry.Key, entry => entry.Value.Damage));
         return [
             new SkillMgr2Service(),
             skillHandler,
@@ -86,13 +106,19 @@ internal sealed partial class CharacterServicesComposition
                             Math.Max(0, warFactionId));
                     });
                 },
-                async (characterId, token) => await characters.PaperdollStateAsync(characterId, token)),
+                async (characterId, token) => await characters.PaperdollStateAsync(characterId, token),
+                globalAssetsInventoryCall: call => ((IService)globalAssetsInventory).CallAsync(call),
+                readBalance: async (characterId, token) => (await wallets.GetAsync(characterId, token))?.Isk,
+                canReadPrivateCorporationMemberInfo: async (characterId, corporationId, token) =>
+                    await corporations.HasRoleAsync(characterId, corporationId, Eve.Corporations.CorporationRoles.Director, token)
+                    || await corporations.HasRoleAsync(characterId, corporationId, Eve.Corporations.CorporationRoles.PersonnelManager, token)),
             new Eve.Services.CharacterInfo.HomeStationService(
                 homeStations,
                 characters.TryChangeHomeStationAsync,
                 characters.ResetRemoteHomeStationChangeTimeAsync,
                 () => DateTimeOffset.FromUnixTimeMilliseconds(now()).ToFileTime()),
             new Eve.Services.CharacterInfo.OnlineStatusService(characterSessions, ReadWatchlistAsync),
+            new ClientStatLoggerRpcService(),
         ];
     }
 

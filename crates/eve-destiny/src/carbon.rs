@@ -28,7 +28,6 @@ impl Vec3 {
     }
 }
 
-/// Position and velocity after a step.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Motion {
     pub position: Vec3,

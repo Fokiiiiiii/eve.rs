@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text.Json;
 using Eve.Crimewatch;
 using Eve.Events;
 using Eve.Inventory;
@@ -18,6 +19,133 @@ namespace Eve.Services.Space;
 
 public sealed partial class SpaceSessions
 {
+    public const string ShipSelfDestructJobKind = "ship.self-destruct";
+    private static readonly TimeSpan ShipSelfDestructDuration = TimeSpan.FromSeconds(120);
+    private const string SelfDestructTimeField = "selfDestructTime";
+    private static readonly JsonSerializerOptions SelfDestructJson = new(JsonSerializerDefaults.Web);
+
+    private static string ShipSelfDestructJobKey(long shipId) => $"self-destruct:{shipId}";
+
+    private static long FileTimeOfUnixMs(long unixMs) => checked(116444736000000000L + unixMs * 10_000L);
+
+    private static void TellSelfDestruct(ClientSession session, string message) =>
+        session.SendNotification("OnRemoteMessage", "clientID", new PyStr(message), new PyDict([]));
+
+    private static MachoWrappedException SelfDestructError(string message) =>
+        MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr(message)));
+
+    public async ValueTask<PyValue> StartSelfDestructAsync(ClientSession session, long? requestedShipId, CancellationToken cancellationToken)
+    {
+        if (TimedActions is not { } scheduler || !_pilots.TryGetValue((ulong)session.SessionId, out var pilot) ||
+            !IsInSpace(session) || session.CharacterId != pilot.CharacterId || requestedShipId != pilot.ShipId ||
+            session.GetInt("shipid") != pilot.ShipId || await _ships.LoadAsync(pilot.CharacterId, cancellationToken) is not { } flown ||
+            flown.Ship.Id != pilot.ShipId)
+            throw SelfDestructError("The active ship cannot self-destruct here.");
+
+        var key = ShipSelfDestructJobKey(pilot.ShipId);
+        var existing = await scheduler.FindAsync(ShipSelfDestructJobKind, key, cancellationToken);
+        if (existing is not null)
+        {
+            if (existing.State != "pending")
+                throw SelfDestructError("The ship self-destruct is already completing.");
+            var prior = JsonSerializer.Deserialize<ShipSelfDestructCountdown>(existing.PayloadJson, SelfDestructJson);
+            if (prior?.ShipId != pilot.ShipId || prior.CharacterId != pilot.CharacterId ||
+                prior.SolarSystemId != pilot.SolarSystemId || prior.InstanceId != pilot.SimulationScene.InstanceId)
+                throw SelfDestructError("The active ship cannot self-destruct here.");
+            _sim.SetSlimField(pilot.ShipId, SelfDestructTimeField, new SimSlimInt(FileTimeOfUnixMs(existing.RunAtMs)));
+            return None;
+        }
+
+        var expiresAtMs = checked(_nowUnixMs() + (long)ShipSelfDestructDuration.TotalMilliseconds);
+        var countdown = new ShipSelfDestructCountdown(
+            pilot.ShipId, pilot.CharacterId, pilot.SolarSystemId, pilot.SimulationScene.InstanceId, expiresAtMs);
+        await scheduler.ScheduleAsync(new JobSpec(ShipSelfDestructJobKind, expiresAtMs)
+        {
+            Key = key, Payload = countdown, OnDuplicate = OnDuplicate.Keep,
+        }, cancellationToken);
+        var admitted = await scheduler.FindAsync(ShipSelfDestructJobKind, key, cancellationToken);
+        var admittedPayload = admitted is { State: "pending" }
+            ? JsonSerializer.Deserialize<ShipSelfDestructCountdown>(admitted.PayloadJson, SelfDestructJson)
+            : null;
+        if (admittedPayload != countdown)
+            throw SelfDestructError("The ship self-destruct could not be started.");
+        try
+        {
+            _sim.SetSlimField(pilot.ShipId, SelfDestructTimeField, new SimSlimInt(FileTimeOfUnixMs(expiresAtMs)));
+        }
+        catch
+        {
+            await scheduler.CancelAsync(ShipSelfDestructJobKind, key, CancellationToken.None);
+            throw;
+        }
+        CancelSafeLogoff(session);
+        TellSelfDestruct(session, "SelfDestructInitiatedOther");
+        return None;
+    }
+
+    public async ValueTask<PyValue> AbortSelfDestructAsync(ClientSession session, long? requestedShipId, CancellationToken cancellationToken)
+    {
+        if (TimedActions is not { } scheduler || !_pilots.TryGetValue((ulong)session.SessionId, out var pilot) ||
+            !IsInSpace(session) || session.CharacterId != pilot.CharacterId || requestedShipId != pilot.ShipId ||
+            session.GetInt("shipid") != pilot.ShipId)
+            throw SelfDestructError("The active ship cannot abort its self-destruct.");
+
+        var key = ShipSelfDestructJobKey(pilot.ShipId);
+        var job = await scheduler.FindAsync(ShipSelfDestructJobKind, key, cancellationToken);
+        if (job is null) return None;
+        var countdown = JsonSerializer.Deserialize<ShipSelfDestructCountdown>(job.PayloadJson, SelfDestructJson);
+        if (job.State != "pending" || countdown?.CharacterId != pilot.CharacterId)
+            throw SelfDestructError("The ship self-destruct can no longer be aborted.");
+        if (!await scheduler.CancelAsync(ShipSelfDestructJobKind, key, cancellationToken))
+            throw SelfDestructError("The ship self-destruct can no longer be aborted.");
+        _sim.SetSlimField(pilot.ShipId, SelfDestructTimeField, new SimSlimNone());
+        TellSelfDestruct(session, "SelfDestructAbortedOther2");
+        return None;
+    }
+
+    public async Task RefreshSelfDestructCountdownAsync(ClientSession session, CancellationToken cancellationToken)
+    {
+        if (TimedActions is not { } scheduler || !_pilots.TryGetValue((ulong)session.SessionId, out var pilot) ||
+            !IsInSpace(session) || session.GetInt("shipid") != pilot.ShipId) return;
+        var job = await scheduler.FindAsync(ShipSelfDestructJobKind, ShipSelfDestructJobKey(pilot.ShipId), cancellationToken);
+        if (job is not { State: "pending" }) return;
+        var countdown = JsonSerializer.Deserialize<ShipSelfDestructCountdown>(job.PayloadJson, SelfDestructJson);
+        if (countdown?.CharacterId == pilot.CharacterId && countdown.SolarSystemId == pilot.SolarSystemId &&
+            countdown.InstanceId == pilot.SimulationScene.InstanceId)
+            _sim.SetSlimField(pilot.ShipId, SelfDestructTimeField, new SimSlimInt(FileTimeOfUnixMs(job.RunAtMs)));
+        else if (await scheduler.CancelAsync(ShipSelfDestructJobKind, ShipSelfDestructJobKey(pilot.ShipId), cancellationToken))
+            _sim.SetSlimField(pilot.ShipId, SelfDestructTimeField, new SimSlimNone());
+    }
+
+    public async Task CompleteShipSelfDestructAsync(ShipSelfDestructCountdown countdown, CancellationToken cancellationToken)
+    {
+        if (_nowUnixMs() < countdown.ExpiresAtMs)
+            throw new InvalidOperationException("A ship self-destruct job ran before its deadline.");
+        var pilot = _pilots.Values.FirstOrDefault(candidate =>
+            candidate.CharacterId == countdown.CharacterId && candidate.ShipId == countdown.ShipId);
+        if (pilot is null)
+        {
+            _sim.SetSlimField(countdown.ShipId, SelfDestructTimeField, new SimSlimNone());
+            return;
+        }
+        if (pilot.SolarSystemId != countdown.SolarSystemId || pilot.SimulationScene.InstanceId != countdown.InstanceId)
+        {
+            _sim.SetSlimField(countdown.ShipId, SelfDestructTimeField, new SimSlimNone());
+            return;
+        }
+        TellSelfDestruct(pilot.Session, "SelfDestructImmediateOther");
+        if (await SelfDestructAsync(pilot.Session, cancellationToken) is null)
+            throw new InvalidOperationException("The ship self-destruct could not complete the active ship death.");
+    }
+
+    private async Task CancelShipSelfDestructAsync(long shipId, CancellationToken cancellationToken)
+    {
+        if (TimedActions is not { } scheduler) return;
+        var key = ShipSelfDestructJobKey(shipId);
+        if (!await scheduler.CancelAsync(ShipSelfDestructJobKind, key, cancellationToken)) return;
+        _sim.SetSlimField(shipId, SelfDestructTimeField, new SimSlimNone());
+    }
+
     /// <summary>How long <c>/suicide</c> waits for the simulation and the character's items before it says it failed.</summary>
     private static readonly TimeSpan SelfDestructWait = TimeSpan.FromSeconds(20);
 
@@ -129,7 +257,7 @@ public sealed partial class SpaceSessions
                     && _npcShips.TryGetValue(destroyed.KillerShipId, out var npc)
                     ? npc
                     : null;
-                var cause = npcKiller?.Profile.Id.Contains("concord_response", StringComparison.OrdinalIgnoreCase) == true
+                var cause = npcKiller?.Profile?.Id.Contains("concord_response", StringComparison.OrdinalIgnoreCase) == true
                     ? ShipLossCause.Concord
                     : killer is not null
                         ? ShipLossCause.Player
@@ -162,7 +290,7 @@ public sealed partial class SpaceSessions
             if (death.Wreck is { } left && destroyed.WreckKind is { } kind)
             {
                 PlaceWreck(new SimPlaceWreck(
-                    abandoned.SolarSystemId,
+                    SimSceneKey.SolarSystem(abandoned.SolarSystemId),
                     left.Id,
                     WreckGroup,
                     kind,
@@ -182,7 +310,7 @@ public sealed partial class SpaceSessions
         }
     }
 
-    private void NotifyDeathClient(Pilot pilot, ShipDeath lost, SimDestroyed destroyed, Item? recoveredCapsule = null)
+    private void NotifyDeathClient(Pilot pilot, ShipDeath lost, Item? recoveredCapsule = null)
     {
         var session = pilot.Session;
         if (lost.Capsule is { } capsule)
@@ -347,7 +475,7 @@ public sealed partial class SpaceSessions
                     if (lost.Wreck is { } wreckItem && destroyed.WreckKind is { } kind)
                     {
                         pendingWreck = new SimPlaceWreck(
-                            pilot.SolarSystemId,
+                            SimSceneKey.SolarSystem(pilot.SolarSystemId),
                             wreckItem.Id,
                             WreckGroup,
                             kind,
@@ -376,7 +504,7 @@ public sealed partial class SpaceSessions
                             return true;
                         }
                         _pilots.TryRemove(id, out _);
-                        NotifyDeathClient(pilot, lost, destroyed, recovered.Ship);
+                        NotifyDeathClient(pilot, lost, recovered.Ship);
                         var character = recovered.Character;
                         CharacterSessionRelocation.Docked(session, character.StationId, character.SolarSystemId, character.ConstellationId, character.RegionId, recovered.Ship.Id);
                         handedOver = true;
@@ -393,7 +521,7 @@ public sealed partial class SpaceSessions
                         session.Close();
                         return true;
                     }
-                    NotifyDeathClient(pilot, lost, destroyed);
+                    NotifyDeathClient(pilot, lost);
                     session.Change(("shipid", new PyLong(survivor.Id)));
                     Background(() => RefreshTetherPolicyAsync(session));
                     handedOver = true;
@@ -451,7 +579,7 @@ public sealed partial class SpaceSessions
         var concord = _concordDestroyed.TryRemove(pilot.ShipId, out _)
             || (destroyed.KillerShipId != 0
                 && _npcShips.TryGetValue(destroyed.KillerShipId, out var npc)
-                && npc.Profile.Id.Contains("concord_response", StringComparison.OrdinalIgnoreCase));
+                && npc.Profile?.Id.Contains("concord_response", StringComparison.OrdinalIgnoreCase) == true);
         var cause = _deaths.ContainsKey(pilot.ShipId) ? ShipLossCause.SelfDestruct
             : concord ? ShipLossCause.Concord
             : killer is not null ? ShipLossCause.Player
@@ -463,7 +591,6 @@ public sealed partial class SpaceSessions
         Announce("ship.lost", new { characterId = loss.CharacterId, shipId = loss.ShipId, shipTypeId = loss.ShipTypeId, cause = loss.Cause.ToString(), solarSystemId = loss.SolarSystemId, killerCharacterId = loss.KillerCharacterId }, $"char:{loss.CharacterId}");
     }
 
-    /// <summary>The capsule was destroyed: another pilot's last blow makes it a player kill of its own (EveJS: the pod is a loss apart from the ship).</summary>
     private void RaisePodLost(Pilot pilot, Item capsule, SimDestroyed destroyed)
     {
         var killer = destroyed.KillerShipId == 0 ? null : _pilots.Values.FirstOrDefault(other => other.ShipId == destroyed.KillerShipId);
@@ -537,7 +664,7 @@ public sealed partial class SpaceSessions
                     var kind = new SimWreckKind(corpse.TypeId, corpse.CustomName ?? character.Name, type?.GraphicId ?? 0);
                     var radius = type?.Attributes.GetValueOrDefault(162) ?? 0;
                     PlaceWreck(new SimPlaceWreck(
-                        pilot.SolarSystemId,
+                        SimSceneKey.SolarSystem(pilot.SolarSystemId),
                         corpse.Id,
                         CorpseGroup,
                         kind,

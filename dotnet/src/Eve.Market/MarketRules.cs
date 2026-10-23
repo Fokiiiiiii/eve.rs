@@ -20,9 +20,9 @@ public static class MarketRules
     public const int RangeEsiFourJumps = -4;
     public const int RangeRegion = 32767;
 
-    /// <summary>Base sales tax in percent: CCP patch 2025-03-12.1 ("Sales Tax has been increased from 4% to 7.5%"); decision Q1. Not the client's 8.0 default.</summary>
+
     public const double SalesTaxPercent = 7.5;
-    /// <summary>The modification discount grows by this much per Advanced Broker Relations level: the client's own constant (decision Q2; CCP's text says 5 points).</summary>
+
     public const double ModificationDiscountPerLevel = 0.06;
     /// <summary>A modification waits this long after the later of the order's issue and its last modification (CCP-BR; the client's mktModificationDelay = 300).</summary>
     public const long ModificationDelayMs = 300_000;
@@ -53,14 +53,16 @@ public static class MarketRules
     public static double RoundIsk(double amount) => double.IsFinite(amount) ? Math.Floor(amount * 100 + 0.5) / 100 : 0;
 
     public static MarketContext Context(MarketSkillLevels skills, bool isStation, double factionStanding = 0,
-        double corpStanding = 0, int warFaction = 0, int solarSystem = 0)
+        double corpStanding = 0, int warFaction = 0, int solarSystem = 0, int factionWarfareUpgradeLevel = 0)
     {
         var broker = 3.0 / 100;
         if (isStation)
-        {
             broker -= Skill(skills.Broker) * 0.3 / 100;
+        // The factional warfare system upgrade cuts the commission 10 percent per level, before the standing discounts (the client's
+        // facwarCommon.GetAdjustedFeePercentage in marketutil/brokerFee.py).
+        broker *= 1 - 0.1 * factionWarfareUpgradeLevel;
+        if (isStation)
             broker -= factionStanding * 0.0003 + corpStanding * 0.0002;
-        }
         var tax = SalesTaxPercent / 100;
         tax *= 1 - Skill(skills.Accounting) * 0.11;
         tax *= 1 - (solarSystem == 30100000 && warFaction is 500018 or 500019 ? 0.5 : 0);
@@ -68,6 +70,16 @@ public static class MarketRules
             new MarketLimits(5 + Skill(skills.Trade) * 4 + Skill(skills.Retail) * 8
                 + Skill(skills.Wholesale) * 16 + Skill(skills.Tycoon) * 32, tax,
                 RangeOf(skills.Marketing), RangeOf(skills.Procurement), RangeOf(skills.Visibility), RangeOf(skills.Daytrading)));
+    }
+
+
+    public static MarketContext StructureContext(MarketSkillLevels skills, double? configuredBrokerPercent)
+    {
+        var percent = configuredBrokerPercent is { } configured && double.IsFinite(configured)
+            ? Math.Clamp(configured, 0, 11.5)
+            : 1.0;
+        var context = Context(skills, false);
+        return context with { BrokerCommissionRate = percent / 100.0 };
     }
 
     public static FeeInfo BrokerFee(MarketContext context, double? oldAmount, double newAmount)

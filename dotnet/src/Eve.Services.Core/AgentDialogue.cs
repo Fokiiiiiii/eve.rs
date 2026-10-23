@@ -6,7 +6,7 @@ using Eve.Services;
 
 namespace Eve.Services.Core;
 
-/// <summary>The dialogue buttons (eve-logic appConst.py:146-164). A button id is what the client's agent window names.</summary>
+
 public static class AgentDialogueButton
 {
     public const int ViewMission = 1;
@@ -26,7 +26,7 @@ public static class AgentDialogueButton
 }
 
 /// <summary>
-/// The action slots the server hands the window (EveJS agentMissionRuntime.js:122-130). The window sends the slot back to DoAction;
+
 /// the slot maps to a stable button. The values are the reference's, and the client echoes them.
 /// </summary>
 public static class AgentDialogueToken
@@ -41,7 +41,7 @@ public static class AgentDialogueToken
     public const int QuitReady = 383;
     public const int RequestAfterCompletion = 384;
 
-    /// <summary>The research action tokens (EveJS researchDialogue.js:29-31); they name the buttons 12 to 14.</summary>
+
     public const int StartResearch = 830;
     public const int CancelResearch = 831;
     public const int BuyDatacores = 832;
@@ -69,15 +69,15 @@ public static class AgentDialogueToken
 
 /// <summary>What the dialogue needs from the rest of the server. Each is a read or an effect the host provides.</summary>
 /// <param name="Store">The agents store: the offers and the mission states.</param>
-/// <param name="ReadStandings">The character's standings toward the agent (agent, corporation and faction), read from the relations store.</param>
+
 /// <param name="ReadSkillLevel">A trained skill level of the character (0 when untrained).</param>
 /// <param name="FactionOfCorporation">The faction of an NPC corporation (0 when it has none).</param>
 /// <param name="PickOffer">
-/// The mission an agent would offer the character now, or null when the agent has none. The mission pool is not part of this
-/// server yet (DEVIATIONS "Agents slice AG-2, A5"); the host answers null for every agent until a pool is loaded.
+
+
 /// </param>
 /// <param name="Now">The clock.</param>
-/// <param name="OnConversation">Called when the character talks to the agent (a DoAction), with whether the character is with the agent (in the station, or in space in its system). Talk steps complete here; null: nothing.</param>
+
 public sealed record AgentDialogueSources(
     AgentMissionStore Store,
     Func<long, long, long, long, CancellationToken, ValueTask<AgentStandings>> ReadStandings,
@@ -91,7 +91,7 @@ public sealed record AgentDialogueSources(
     Func<long, long, CancellationToken, ValueTask>? OnAccepted = null,
     Func<long, long, CancellationToken, ValueTask>? OnQuit = null);
 
-/// <summary>The answer of DoAction: the agent's line, the buttons, and the last-action record the window reads.</summary>
+
 public sealed record AgentDialogueReply(PyValue AgentSays, IReadOnlyList<(long ActionId, int ButtonType)> Actions, PyDict LastActionInfo)
 {
     /// <summary>
@@ -108,34 +108,34 @@ public sealed record AgentDialogueReply(PyValue AgentSays, IReadOnlyList<(long A
 /// <summary>A client dialog the server raises before it answers (agents.YesNo, SingleChoiceBox or GetQuantity), with the continuation that takes the client's answer.</summary>
 public sealed record AgentDialoguePrompt(string Method, IReadOnlyList<PyValue> Args, PyDict Kwargs, Func<PyValue?, ValueTask<AgentDialogueStep>> Then);
 
-/// <summary>One step of the dialogue: the reply to send, or the prompt to raise first (its answer then leads to the next step).</summary>
+
 public sealed record AgentDialogueStep(AgentDialogueReply? Reply, AgentDialoguePrompt? Prompt)
 {
     public static AgentDialogueStep Of(AgentDialogueReply reply) => new(reply, null);
 }
 
 /// <summary>
-/// The agent dialogue behind DoAction (A4, narrowed). It answers the conversation the client asks for and makes the mission
+
 /// transitions it names through the agents store. Implemented: the greeting, the standing refusal, request (an offer from
-/// <see cref="AgentDialogueSources.PickOffer"/>), view, accept, decline (the four-hour replay), quit at the agent's station, and
+
 /// the states that show them, research (A6) and the locator (A7) when their ports are given (refused by name otherwise). The reference's
-/// confirmation windows for decline and quit are not part of this slice: the transition is made when the button is pressed
-/// (DEVIATIONS "Agents slice AG-2, A4").
+
+
 /// </summary>
 public sealed class AgentDialogueMachine(AgentDialogueSources sources)
 {
-    /// <summary>The first line of an agent with no conversation yet (appConst labels, resolved by the client's localization).</summary>
+
     public const string GreetingLabel = "UI/Agents/DefaultMessages/RootAgentSays/GenericGreetings";
 
-    /// <summary>A research agent's line when the standings are too low (researchRuntime.js LABEL_TOO_LOW_STANDINGS).</summary>
+
     public const string ResearchTooLowLabel = "UI/Agents/Research/TooLowStandings";
 
-    /// <summary>The reference's own line for a basic agent when the standings are too low (EveJS agentMissionRuntime.js:8057).</summary>
+
     public const string TooLowStandingsText = "Your current standings are not high enough for this agent to issue you a mission yet.";
 
     private static readonly int[] AccessSkills = [AgentAccessRule.ConnectionsSkill, AgentAccessRule.DiplomacySkill, AgentAccessRule.CriminalConnectionsSkill];
 
-    /// <summary>One DoAction, as a reply. Refused when the step needs the client to answer a question first (use <see cref="StepAsync"/>).</summary>
+
     public async ValueTask<AgentDialogueReply> DoActionAsync(
         long characterId, AgentMissionAgentData agent, PyValue? action, bool atAgentLocation, CancellationToken cancellationToken) =>
         (await StepAsync(characterId, agent, action, atAgentLocation, cancellationToken)).Reply
@@ -269,10 +269,10 @@ public sealed class AgentDialogueMachine(AgentDialogueSources sources)
     /// <summary>What the window is told when a prompt could not be answered (a client call that failed or raised).</summary>
     public static AgentDialogueReply FailureReply() => new(PlainText("The agent could not answer that request."), [], LastInfo());
 
-    /// <summary>The contentID the client's decline confirmation carries (EveJS agentMgrService.js:391-396).</summary>
+
     private const long DeclineContentId = 4802;
 
-    /// <summary>A YesNo prompt with the reference's arguments: the title and body labels, the agent, the content and the suppression id.</summary>
+
     private static AgentDialoguePrompt YesNo(string titleLabel, string bodyLabel, PyDict bodyKwargs, long agentId, long contentId, string suppressId,
         Func<bool, ValueTask<AgentDialogueStep>> then) => new(
             "YesNo",
@@ -321,7 +321,7 @@ public sealed class AgentDialogueMachine(AgentDialogueSources sources)
             lastInfo);
     }
 
-    // The R&D labels (EveJS researchRuntime.js:69-88), resolved by the client's localization.
+
     private const string SkillsNotSufficientLabel = "UI/Agents/Research/CharacterSkillsNotSufficient";
     private const string TooLowRpmLabel = "UI/Agents/Research/TooLowRpm";
     private const string ResearchStartedLabel = "UI/Agents/Research/ResearchStarted";
@@ -348,7 +348,7 @@ public sealed class AgentDialogueMachine(AgentDialogueSources sources)
         var science = await SkillAsync(characterId, ResearchRules.ScienceSkillTypeId, cancellationToken);
         if (science < ResearchRules.ScienceRequiredLevel) return Refusal(SkillsNotSufficientLabel);
         var fields = new List<AgentResearchField>();
-        foreach (var field in research.Fields)
+        foreach (var field in research.FieldsFor(agent.AgentId))
         {
             if (ResearchRules.Qualifies(science, await SkillAsync(characterId, (int)field.SkillTypeId, cancellationToken), (int)agent.Level))
                 fields.Add(field);
@@ -426,7 +426,7 @@ public sealed class AgentDialogueMachine(AgentDialogueSources sources)
     {
         var research = sources.Research!;
         var project = await research.Projects.ReadAsync(characterId, agent.AgentId, cancellationToken);
-        var field = project is null ? null : research.Fields.FirstOrDefault(candidate => candidate.SkillTypeId == project.SkillTypeId);
+        var field = project is null ? null : research.FieldsFor(agent.AgentId).FirstOrDefault(candidate => candidate.SkillTypeId == project.SkillTypeId && candidate.DatacoreTypeId > 0);
         if (project is null || field is null)
             return await AnswerAsync(characterId, agent, InvalidInputLabel, null, idle: true, cancellationToken);
         var affordable = (long)Math.Floor(ResearchProjectStore.AccruedPoints(project, now) / ResearchRules.DatacoreResearchPoints);
@@ -462,7 +462,7 @@ public sealed class AgentDialogueMachine(AgentDialogueSources sources)
             }));
     }
 
-    /// <summary>The buttons an R&amp;D agent shows: start with no project; datacores and cancel with one (EveJS buildResearchIdleActions).</summary>
+
     private async ValueTask<IReadOnlyList<(long ActionId, int ButtonType)>> ResearchIdleActionsAsync(
         long characterId, AgentMissionAgentData agent, CancellationToken cancellationToken)
     {
@@ -472,7 +472,7 @@ public sealed class AgentDialogueMachine(AgentDialogueSources sources)
             : [(AgentDialogueToken.BuyDatacores, AgentDialogueButton.BuyDatacores), (AgentDialogueToken.CancelResearch, AgentDialogueButton.CancelResearch)];
     }
 
-    // The locator (EveJS has no locate dialogue; the lines are plain text, see DEVIATIONS "Agents slice AG-4, A7").
+
     private const string LocateCaption = "Locate a pilot";
     private const string LocateLabel = "Enter the name of the pilot to locate.";
     private const string LocateUnavailableText = "This locator cannot find that pilot right now.";
@@ -524,8 +524,8 @@ public sealed class AgentDialogueMachine(AgentDialogueSources sources)
     }
 
     /// <summary>
-    /// The located notification's data (EveJS-client FormatLocateCharNotification, eve-logic notificationUtil.py:540): the pilot, the
-    /// intro variant, and the agent's and the pilot's places keyed by group id (3 region, 4 constellation, 5 system, 15 station).
+
+
     /// </summary>
     private static System.Text.Json.Nodes.JsonObject LocateResult(long targetCharacterId, AgentMissionAgentData agent, LocateQuote quote)
     {
@@ -545,7 +545,7 @@ public sealed class AgentDialogueMachine(AgentDialogueSources sources)
         };
     }
 
-    /// <summary>The fee for locating a pilot from the agent's system, or null when the locator cannot (offline, wormhole, or too far for its level).</summary>
+
     private async ValueTask<LocateQuote?> LocateQuoteAsync(AgentMissionAgentData agent, long targetCharacterId, CancellationToken cancellationToken)
     {
         var locator = sources.Locator!;
@@ -567,7 +567,7 @@ public sealed class AgentDialogueMachine(AgentDialogueSources sources)
         await sources.Locator!.Locates.ReadAsync(characterId, agent.AgentId, cancellationToken) is { LocatedAt: { } last } &&
         now < last.AddMinutes(LocatorRules.CooldownMinutesFor((int)agent.Level));
 
-    /// <summary>The buttons an agent shows when idle: the research ones, and the locator's (ask; or accept and reject while a request is open).</summary>
+
     private async ValueTask<IReadOnlyList<(long ActionId, int ButtonType)>> IdleActionsAsync(
         long characterId, AgentMissionAgentData agent, AccessReading standing, DateTimeOffset now, CancellationToken cancellationToken)
     {
@@ -584,7 +584,7 @@ public sealed class AgentDialogueMachine(AgentDialogueSources sources)
     private static AgentDialogueStep Say(string text, IReadOnlyList<(long ActionId, int ButtonType)> actions) =>
         AgentDialogueStep.Of(new AgentDialogueReply(PlainText(text), actions, LastInfo()));
 
-    /// <summary>The agent's line after a research action, with the idle buttons (EveJS buildPostActionConversation).</summary>
+
     private async ValueTask<AgentDialogueStep> AnswerAsync(
         long characterId, AgentMissionAgentData agent, string label, PyDict? kwargs, bool idle, CancellationToken cancellationToken) =>
         AgentDialogueStep.Of(new AgentDialogueReply(
@@ -592,7 +592,7 @@ public sealed class AgentDialogueMachine(AgentDialogueSources sources)
             idle ? await ResearchIdleActionsAsync(characterId, agent, cancellationToken) : [],
             LastInfo()));
 
-    /// <summary>A refusal by name: the agent's line with no buttons (EveJS saysConversation for a refusal).</summary>
+
     private static AgentDialogueStep Refusal(string label, PyDict? kwargs = null) => AgentDialogueStep.Of(new AgentDialogueReply(
         new PyTuple([new PyTuple([new PyStr(label), kwargs ?? EmptyDict()]), PyNone.Instance]), [], LastInfo()));
 
@@ -604,7 +604,7 @@ public sealed class AgentDialogueMachine(AgentDialogueSources sources)
     private async ValueTask<int> SkillAsync(long characterId, int skillTypeId, CancellationToken cancellationToken) =>
         await sources.ReadSkillLevel(characterId, skillTypeId, cancellationToken);
 
-    /// <summary>The index of a SingleChoiceBox answer: (true, "radioboxOption&lt;n&gt;Selected"), n counted from one (EveJS readChoiceIndex).</summary>
+
     private static int? ChoiceIndex(PyValue? answer) => answer is PyTuple { Items.Count: >= 2 } tuple &&
         tuple.Items[0] is PyBool { Value: true } &&
         JsSemantics.StringValue(tuple.Items[1]) is { } selection &&
@@ -656,7 +656,7 @@ public sealed class AgentDialogueMachine(AgentDialogueSources sources)
 
     private static PyDict EmptyDict() => new(new List<KeyValuePair<PyValue, PyValue>>());
 
-    /// <summary>The window's last-action record (EveJS buildDefaultMissionLastActionInfo, with the flags a transition sets).</summary>
+
     private static PyDict LastInfo(bool quit = false, bool declined = false) => new(
     [
         new KeyValuePair<PyValue, PyValue>(new PyStr("missionCompleted"), PyNone.Instance),

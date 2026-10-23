@@ -9,6 +9,32 @@ namespace Eve.Services.Core.Tests;
 public sealed class AgentMissionServiceTests
 {
     [Fact]
+    public async Task Completed_career_agent_reads_use_the_selected_character_state()
+    {
+        const long firstCharacterId = 90000001;
+        const long secondCharacterId = 90000002;
+        const long firstAgentId = 7001;
+        const long secondAgentId = 7002;
+        var states = new Dictionary<long, JsonObject>
+        {
+            [firstCharacterId] = JsonNode.Parse("""{"completedCareerAgentIDs":{"7001":true}}""")!.AsObject(),
+            [secondCharacterId] = JsonNode.Parse("""{"completedCareerAgentIDs":{"7002":true}}""")!.AsObject(),
+        };
+        var service = CreateAgentRpcService((characterId, _) =>
+            ValueTask.FromResult<JsonObject?>(states[characterId].DeepClone().AsObject()));
+        var agentIds = new PyList([new PyInt(firstAgentId), new PyInt(secondAgentId)]);
+        var firstSession = new ClientSession();
+        firstSession.Set("charid", new PyInt(firstCharacterId));
+        var secondSession = new ClientSession();
+        secondSession.Set("charid", new PyInt(secondCharacterId));
+
+        Assert.Equal(NumericDict((firstAgentId, PyBool.True), (secondAgentId, PyBool.False)),
+            await service.CallAsync(RpcCall("GetCompletedCareerAgentIDs", firstSession, agentIds)));
+        Assert.Equal(NumericDict((firstAgentId, PyBool.False), (secondAgentId, PyBool.True)),
+            await service.CallAsync(RpcCall("GetCompletedCareerAgentIDs", secondSession, agentIds)));
+    }
+
+    [Fact]
     public async Task GetMyJournalDetails_projects_saved_missions_bookmarks_and_research_to_the_wire_shape()
     {
         const long characterId = 90000001;
@@ -416,15 +442,13 @@ public sealed class AgentMissionServiceTests
         [
             "agentID", "agentTypeID", "divisionID", "level", "stationID", "corporationID",
             "isLocatorAgent", "isInSpace", "careerID", "importantMission", "missionKind",
-            "missionTypeLabel", "specialityID", "stationTypeID", "bloodlineID", "solarSystemID",
-            "dungeonID", "spawnPointID", "typeID",
+              "missionTypeLabel", "specialityID", "stationTypeID", "bloodlineID",
         ],
         [
             new PyList([
                 new PyInt(7004), new PyInt(8), new PyInt(24), new PyInt(3), PyNone.Instance,
                 new PyInt(1000036), PyBool.False, PyBool.True, new PyInt(17), PyBool.False,
-                new PyStr(""), new PyStr(""), new PyInt(18), new PyInt(1531), new PyInt(1),
-                new PyInt(30000165), new PyInt(416), new PyInt(4239), new PyInt(20520),
+                  new PyStr(""), new PyStr(""), new PyInt(18), new PyInt(1531), new PyInt(1),
             ]),
         ]), rowset);
         Assert.Equal(new PyInt(30000165),

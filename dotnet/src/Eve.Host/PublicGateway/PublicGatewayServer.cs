@@ -20,7 +20,7 @@ internal sealed record PublicGatewayRoutes(IReadOnlyDictionary<string, GatewayHa
 
 /// <summary>
 /// The public protobuf gateway of the V24.01 client, served on an HTTP/2 listener without TLS (h2c; the client reaches it through
-/// EVE_PUBLIC_GATEWAY_ADDRESS). The routes are those of EveJS publicGatewayLocal.js: Requests/Send answers one response frame per request
+
 /// frame, in order; the Ping calls answer an empty frame; Events/Publish is acknowledged and not stored (the reference keeps no events either).
 /// Notices/Consume is a stream the client keeps open: the request frames name the active character, and the notices routed to it (or to the
 /// token's account) are written to it. A request's character is trusted only when the account of the request's bearer token owns it
@@ -78,7 +78,7 @@ internal sealed class PublicGatewayServer : IAsyncDisposable
         }
         catch (Exception error) when (error is not OperationCanceledException)
         {
-            Console.Error.WriteLine($"eve-host: public gateway {context.Request.Path} failed: {error}");
+            Console.Error.WriteLine($"eve-host: public gateway request failed ({error.GetType().Name})");
             throw;
         }
     }
@@ -198,7 +198,7 @@ internal sealed class PublicGatewayServer : IAsyncDisposable
         }
         catch (FormatException error)
         {
-            Console.Error.WriteLine($"eve-host: public gateway request frame ({frame.Length} bytes) undecodable: {error.Message}: {Convert.ToHexString(frame, 0, Math.Min(frame.Length, 96))}");
+            Console.Error.WriteLine($"eve-host: public gateway request frame ({frame.Length} bytes) undecodable ({error.GetType().Name})");
             throw;
         }
         GatewayAnswer answer;
@@ -218,8 +218,8 @@ internal sealed class PublicGatewayServer : IAsyncDisposable
             }
             catch (Exception error) when (error is not OperationCanceledException)
             {
-                // the envelope still answers (status 500, not the stream reset): the cause goes to the host's log
-                Console.Error.WriteLine($"eve-host: public gateway {request.TypeName} failed: {error}");
+                // The response is generic; keep exception details and request data out of logs.
+                Console.Error.WriteLine("eve-host: public gateway handler failed");
                 answer = new GatewayAnswer(500, "internal error", "", []);
             }
         }

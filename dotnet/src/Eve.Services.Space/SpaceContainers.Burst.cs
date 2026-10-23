@@ -16,25 +16,50 @@ public sealed partial class SpaceContainers
     private async Task<WorkOutcome> SettleBurstAsync(WorkCycle cycle)
     {
         var session = _space.ClientSessionOf(cycle.SessionId);
-        if (session is null || session.CharacterId != cycle.CharacterId
-            || session.GetInt("shipid") is not { } shipId || shipId != cycle.ShipId
-            || !_space.IsInSpace(session) || _space.SolarSystemOf(session) != cycle.SolarSystemId)
+        if (session is null)
         {
+            _log?.Invoke($"command burst cycle {cycle.CycleId} refused: no pilot session for {cycle.SessionId}");
+            return WorkOutcome.Refuse("NO_PILOT");
+        }
+        if (session.CharacterId != cycle.CharacterId)
+        {
+            _log?.Invoke($"command burst cycle {cycle.CycleId} refused: session character {session.CharacterId} differs from cycle character {cycle.CharacterId}");
+            return WorkOutcome.Refuse("NO_PILOT");
+        }
+        if (session.GetInt("shipid") is not { } shipId || shipId != cycle.ShipId)
+        {
+            _log?.Invoke($"command burst cycle {cycle.CycleId} refused: session ship {session.GetInt("shipid")} differs from cycle ship {cycle.ShipId}");
+            return WorkOutcome.Refuse("NO_PILOT");
+        }
+        if (!_space.IsInSpace(session))
+        {
+            _log?.Invoke($"command burst cycle {cycle.CycleId} refused: source pilot is not in space");
+            return WorkOutcome.Refuse("NO_PILOT");
+        }
+        if (_space.SolarSystemOf(session) != cycle.SolarSystemId)
+        {
+            _log?.Invoke($"command burst cycle {cycle.CycleId} refused: session system {_space.SolarSystemOf(session)} differs from cycle system {cycle.SolarSystemId}");
             return WorkOutcome.Refuse("NO_PILOT");
         }
         if (!_space.IsModuleActive(cycle.SessionId, cycle.OwnerId))
         {
+            _log?.Invoke($"command burst cycle {cycle.CycleId} refused: module {cycle.OwnerId} is not active");
             return WorkOutcome.Refuse("NOT_CONTROLLED");
         }
         var ship = await _ships.LoadAsync(cycle.CharacterId);
         if (ship is null || ship.Ship.Id != cycle.ShipId || ship.Ship.LocationId != cycle.SolarSystemId || ship.Ship.Flag != CharacterShips.InSpaceFlag)
         {
+            _log?.Invoke($"command burst cycle {cycle.CycleId} refused: source ship {cycle.ShipId} is not in space system {cycle.SolarSystemId}");
             return WorkOutcome.Refuse("NO_SHIP");
         }
-        var buffs = CommandBurstBuffs.Of(ship.World, _statics, cycle.OwnerId);
+        var buffs = CommandBurstBuffs.Of(ship.World, _statics, cycle.OwnerId, cycle.ChargeTypeId);
         var duration = CommandBurstBuffs.DurationOf(ship.World, cycle.OwnerId);
         if (buffs.Count == 0 || duration <= 0)
         {
+            var module = ship.Fitted.FirstOrDefault(item => item.Id == cycle.OwnerId);
+            var charge = module is null ? null : ship.ChargeOf(module);
+            var ids = new[] { 2468, 2470, 2472, 2536 }.Select(attribute => ship.World.Get(cycle.OwnerId, attribute));
+            _log?.Invoke($"command burst cycle {cycle.CycleId} refused: module {cycle.OwnerId} has {buffs.Count} buffs and duration {duration}; fitted flag {module?.Flag}; charge {charge?.TypeId}/{charge?.LocationId}/{charge?.Flag}/{charge?.Quantity}; buff ids [{string.Join(",", ids)}]");
             return WorkOutcome.Refuse("INVALID_PROFILE");
         }
         var now = (double)_nowUnixMs();
@@ -62,6 +87,7 @@ public sealed partial class SpaceContainers
             Math.Max(0d, ship.World.Get(cycle.OwnerId, CommandBurstEffect.RangeAttribute)),
             _ => 0d,
             (first, second) => fleets.TryGetValue(first, out var fleetOfFirst) && fleets.TryGetValue(second, out var fleetOfSecond) && fleetOfFirst == fleetOfSecond);
+        _log?.Invoke($"command burst cycle {cycle.CycleId} resolved: pilots [{string.Join(",", pilots.Keys)}]; fleet ids [{string.Join(",", fleets.Select(pair => $"{pair.Key}:{pair.Value}"))}]; reached [{string.Join(",", reached)}]");
         foreach (var target in reached)
         {
             foreach (var (collection, value) in buffs)
@@ -148,7 +174,7 @@ public sealed partial class SpaceContainers
         }
         foreach (var target in reached)
         {
-            // the wiki: the protected ships cannot move, so each is held still for the grant's duration and stopped now
+
             _space.Buffs.Immobilize(target, now + duration);
             _sim.Command((ulong)pilots[target].SessionId, SimCommands.Stop, []);
             await TellBuffsAsync(pilots[target], target, now);
@@ -199,6 +225,7 @@ public sealed partial class SpaceContainers
         var entries = _space.Buffs.StateOf(shipId, now)
             .Select(state => new SimBuffEntry(state.CollectionId, state.Value, Math.Max(0d, state.ExpiresAtMs - now)))
             .ToArray();
+        _log?.Invoke($"command burst buff state sent: session {pilot.SessionId}; ship {shipId}; entries [{string.Join(",", entries.Select(entry => $"{entry.CollectionId}:{entry.Value}:{entry.RemainingMs:F0}"))}]");
         _sim.BuffState((ulong)pilot.SessionId, shipId, entries);
     }
 }

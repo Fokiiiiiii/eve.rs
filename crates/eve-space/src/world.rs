@@ -1,5 +1,4 @@
 //! A solar system's stations and celestials, built from the static data: what a ship undocking finds around it.
-
 use std::collections::HashMap;
 
 use eve_destiny::Vec3;
@@ -22,6 +21,9 @@ pub enum BodyKind {
     Structure,
     /// A wormhole end the host puts in space (protocol 63): a body of its system whose far end is in another system.
     Wormhole,
+    /// A static transfer or origin conduit in one isolated Abyssal room.
+    AbyssalConduit,
+    AbyssalEnvironment,
 }
 
 /// The category of a structure's item (`categoryID` 65 in the client).
@@ -77,6 +79,13 @@ pub enum Detail {
         destination_position: Vec3,
         destination_radius: f64,
         max_jump_mass: f64,
+    },
+    AbyssalConduit {
+        direction: Vec3,
+        is_open: bool,
+    },
+    AbyssalEnvironment {
+        direction: Vec3,
     },
 }
 

@@ -1,3 +1,4 @@
+use super::spawn::AbyssalParticipantMove;
 use super::*;
 use crate::scene::MAX_CONDUIT_PASSENGERS;
 
@@ -85,6 +86,13 @@ pub(super) fn command_of(code: u8, args: &[f64]) -> Option<Command> {
         (9, [gate, leads_to]) if is_id(*gate) && is_id(*leads_to) => {
             Some(Command::Jump { gate_id: *gate as i64, destination_gate: *leads_to as i64 })
         }
+        // the transit through an acceleration gate of a dungeon room: the gate's id and the point the pilot warps to in the other room (protocol 75)
+        (34, [gate, x, y, z]) if is_id(*gate) && [*x, *y, *z].iter().all(|v| v.is_finite()) => {
+            Some(Command::AccelerationGateTransit {
+                gate_id: *gate as i64,
+                destination: Vec3::new(*x, *y, *z),
+            })
+        }
         // the host's queries (the warp to a point, the warp target, a position, a drop point): answered by the scene, as the host asks them
         (21, [x, y, z, range]) if [*x, *y, *z, *range].iter().all(|v| v.is_finite()) => {
             Some(Command::WarpToPoint { destination: Vec3::new(*x, *y, *z), range: *range })
@@ -146,6 +154,9 @@ impl Sim {
             }
             Out::Docked { session, station_id, condition } => {
                 Message::Docked { session_id: session, station_id, condition }
+            }
+            Out::AbyssalFieldMembership { scene, source_item_id, ship_id, session_id, inside } => {
+                Message::AbyssalFieldMembership { scene, source_item_id, ship_id, session_id, inside }
             }
             Out::TetherChanged { session, previous_structure_id, structure_id, repairing } => {
                 Message::TetherChanged { session_id: session, previous_structure_id, structure_id, repairing }
@@ -354,6 +365,7 @@ impl Sim {
                 target_id,
                 cycle_id,
                 command,
+                charge_type_id,
                 mining_amount_m3,
                 waste_multiplier,
                 waste_probability,
@@ -373,6 +385,7 @@ impl Sim {
                 target_id,
                 cycle_id,
                 command,
+                charge_type_id,
                 mining_amount_m3,
                 waste_multiplier,
                 waste_probability,
@@ -404,6 +417,19 @@ impl Sim {
     pub fn handle(&mut self, message: Message, now: i64) -> Result<Vec<Message>, ProtocolError> {
         match message {
             Message::Hello { .. }
+            | Message::EnsureAbyssalScene { .. }
+            | Message::EnsureAbyssalSceneObject { .. }
+            | Message::EnsureAbyssalRewardCache { .. }
+            | Message::EnsureAbyssalEnvironmentObject { .. }
+            | Message::RefreshAbyssalNpc { .. }
+            | Message::EnsureAbyssalLootContainer { .. }
+            | Message::MoveAbyssalParticipant { .. }
+            | Message::RebindAbyssalSession { .. }
+            | Message::RemoveAbyssalScene { .. }
+            | Message::EnsureAbyssalTracePublished { .. }
+            | Message::RemoveAbyssalTrace { .. }
+            | Message::RemoveAbyssalParticipant { .. }
+            | Message::GetAbyssalParticipantPose { .. }
             | Message::Enter(..)
             | Message::Leave { .. }
             | Message::Bind { .. }
@@ -453,11 +479,15 @@ impl Sim {
             | Message::PlaceObservatory(..)
             | Message::PlaceControlTower(..)
             | Message::PlaceDeadspacePocket(..)
+            | Message::PlaceAccelerationGate(..)
+            | Message::PlaceCapturePoint(..)
+            | Message::PlaceBattlefieldScoreboard(..)
             | Message::RemoteDecloakPing { .. }
             | Message::SetDisruptorActive { .. }
             | Message::TetherPolicy { .. }
             | Message::PlaceAnalysisBeacon(..)
-            | Message::SetAnalysisBeaconState { .. } => self.handle_world(message, now),
+            | Message::SetAnalysisBeaconState { .. }
+            | Message::SetSlimField { .. } => self.handle_world(message, now),
             other => Err(ProtocolError(format!(
                 "a message of kind {} is for the host, not the simulation",
                 other.kind()
@@ -493,12 +523,13 @@ impl Sim {
         {
             return refused("INVALID_CONTROL_STRUCTURE_IDS");
         }
-        if self.sessions.get(&session_id).is_some_and(|system| *system != solar_system_id)
-            || self.widowed.get(&session_id).is_some_and(|system| *system != solar_system_id)
+        let scene_key = SceneKey::solar_system(solar_system_id);
+        if self.sessions.get(&session_id).is_some_and(|scene| *scene != scene_key)
+            || self.widowed.get(&session_id).is_some_and(|scene| *scene != scene_key)
         {
             return refused("CONTROL_STRUCTURE_SYSTEM_MISMATCH");
         }
-        let Some(scene) = self.scenes.get_mut(&solar_system_id) else {
+        let Some(scene) = self.scenes.get_mut(&scene_key) else {
             return refused("NO_SCENE");
         };
         let was_controlled = scene.controlled_structure_id(session_id).is_some();
@@ -522,15 +553,15 @@ impl Sim {
             return outs;
         }
         if active {
-            self.sessions.insert(session_id, solar_system_id);
+            self.sessions.insert(session_id, scene_key);
             self.widowed.remove(&session_id);
             if let Some(previous) = previous_controller.filter(|previous| *previous != session_id) {
                 if scene.contains(previous) {
-                    self.sessions.insert(previous, solar_system_id);
+                    self.sessions.insert(previous, scene_key);
                     self.widowed.remove(&previous);
                 } else if scene.awaiting_respawn(previous) {
                     self.sessions.remove(&previous);
-                    self.widowed.insert(previous, solar_system_id);
+                    self.widowed.insert(previous, scene_key);
                 } else {
                     scene.forget_widow(previous);
                     self.sessions.remove(&previous);
@@ -539,11 +570,11 @@ impl Sim {
             }
         } else if was_controlled {
             if scene.contains(session_id) {
-                self.sessions.insert(session_id, solar_system_id);
+                self.sessions.insert(session_id, scene_key);
                 self.widowed.remove(&session_id);
             } else if scene.awaiting_respawn(session_id) {
                 self.sessions.remove(&session_id);
-                self.widowed.insert(session_id, solar_system_id);
+                self.widowed.insert(session_id, scene_key);
             } else {
                 scene.forget_widow(session_id);
                 self.sessions.remove(&session_id);
@@ -558,6 +589,72 @@ impl Sim {
         let outs = match message {
             Message::Hello { .. } => {
                 return Ok(vec![Message::HelloAck { version: PROTOCOL_VERSION, poll_hz: POLL_HZ }]);
+            }
+            Message::EnsureAbyssalScene { request_id, spec } => {
+                return Ok(self.ensure_abyssal_scene(request_id, spec, now));
+            }
+            Message::EnsureAbyssalSceneObject { request_id, object } => {
+                return Ok(self.ensure_abyssal_scene_object(request_id, object, now));
+            }
+            Message::EnsureAbyssalEnvironmentObject { request_id, object } => {
+                return Ok(self.ensure_abyssal_environment_object(request_id, *object, now));
+            }
+            Message::RefreshAbyssalNpc { request_id, scene, session_id, ship, identity } => {
+                return Ok(self.refresh_abyssal_npc(request_id, scene, session_id, *ship, *identity, now));
+            }
+            Message::EnsureAbyssalRewardCache { request_id, cache } => {
+                return Ok(self.ensure_abyssal_reward_cache(request_id, *cache, now));
+            }
+            Message::EnsureAbyssalLootContainer { request_id, content_id, placement } => {
+                return self.ensure_abyssal_loot_container(request_id, content_id, *placement, now);
+            }
+            Message::MoveAbyssalParticipant {
+                request_id,
+                ship_id,
+                source,
+                destination,
+                preserve_source_pose,
+                session_handoff,
+                position,
+                direction,
+            } => {
+                return Ok(self.move_abyssal_participant(
+                    AbyssalParticipantMove {
+                        request_id,
+                        ship_id,
+                        source_key: source,
+                        destination_key: destination,
+                        preserve_source_pose,
+                        session_handoff,
+                        position,
+                        direction,
+                    },
+                    now,
+                ));
+            }
+            Message::RebindAbyssalSession { request_id, session_id, ship_id, scene } => {
+                return Ok(self.rebind_abyssal_session(request_id, session_id, ship_id, scene, now));
+            }
+            Message::RemoveAbyssalScene { request_id, scene, settled_npc_ids, settled_loot_ids } => {
+                return Ok(self.remove_abyssal_scene(
+                    request_id,
+                    scene,
+                    settled_npc_ids,
+                    settled_loot_ids,
+                    now,
+                ));
+            }
+            Message::EnsureAbyssalTracePublished { request_id, actor_session_id, trace } => {
+                return Ok(self.ensure_abyssal_trace(request_id, actor_session_id, trace, now));
+            }
+            Message::RemoveAbyssalTrace { request_id, solar_system_id, item_id } => {
+                return Ok(self.remove_abyssal_trace(request_id, solar_system_id, item_id, now));
+            }
+            Message::RemoveAbyssalParticipant { request_id, scene, ship_id } => {
+                return Ok(self.remove_abyssal_participant(request_id, scene, ship_id, now));
+            }
+            Message::GetAbyssalParticipantPose { request_id, scene, ship_id } => {
+                return Ok(self.get_abyssal_participant_pose(request_id, scene, ship_id, now));
             }
             Message::Enter(enter) => return Ok(self.enter(*enter, now)),
             Message::Leave { session_id, why } => {
@@ -581,12 +678,22 @@ impl Sim {
                 }
                 told
             }
-            Message::Bind { session_id } => {
-                self.scene_of(session_id).map(|s| s.bind(session_id, now)).unwrap_or_default()
-            }
-            Message::UpdateState { session_id } => {
-                self.scene_of(session_id).map(|s| s.update_state(session_id, now)).unwrap_or_default()
-            }
+            Message::Bind { session_id } => self
+                .scene_of(session_id)
+                .map(|s| {
+                    let mut out = s.bind(session_id, now);
+                    out.extend(s.abyssal_environment_fx(session_id, None, now, true));
+                    out
+                })
+                .unwrap_or_default(),
+            Message::UpdateState { session_id } => self
+                .scene_of(session_id)
+                .map(|s| {
+                    let mut out = s.update_state(session_id, now);
+                    out.extend(s.abyssal_environment_fx(session_id, None, now, true));
+                    out
+                })
+                .unwrap_or_default(),
             Message::ControlStructure {
                 session_id,
                 solar_system_id,
@@ -1105,34 +1212,36 @@ impl Sim {
     }
 
     /// Asteroids, wrecks and containers that the host places in a system or removes from it.
-    fn handle_world(&mut self, message: Message, now: i64) -> Result<Vec<Message>, ProtocolError> {
+    pub(super) fn handle_world(&mut self, message: Message, now: i64) -> Result<Vec<Message>, ProtocolError> {
         let outs = match message {
             Message::TetherPolicy { session_id, blocked_for_ms, lease_ms, candidates } => self
                 .scene_of(session_id)
                 .map(|scene| scene.set_tether_policy(session_id, blocked_for_ms, lease_ms, candidates, now))
                 .unwrap_or_default(),
-            Message::PlaceAsteroid(placement) => match self.scenes.get_mut(&placement.solar_system_id) {
-                Some(scene) => {
-                    let p = *placement;
-                    scene.place_asteroid(
-                        crate::wreck::Asteroid {
-                            id: p.asteroid_id,
-                            type_id: p.type_id,
-                            group_id: p.group_id,
-                            category_id: p.category_id,
-                            name: p.name,
-                            graphic_id: p.graphic_id,
-                            position: Vec3::new(p.position[0], p.position[1], p.position[2]),
-                            direction: Vec3::new(p.direction[0], p.direction[1], p.direction[2]),
-                            radius: p.radius,
-                            units_remaining: p.units_remaining,
-                        },
-                        now,
-                    )
+            Message::PlaceAsteroid(placement) => {
+                match self.scenes.get_mut(&SceneKey::solar_system(placement.solar_system_id)) {
+                    Some(scene) => {
+                        let p = *placement;
+                        scene.place_asteroid(
+                            crate::wreck::Asteroid {
+                                id: p.asteroid_id,
+                                type_id: p.type_id,
+                                group_id: p.group_id,
+                                category_id: p.category_id,
+                                name: p.name,
+                                graphic_id: p.graphic_id,
+                                position: Vec3::new(p.position[0], p.position[1], p.position[2]),
+                                direction: Vec3::new(p.direction[0], p.direction[1], p.direction[2]),
+                                radius: p.radius,
+                                units_remaining: p.units_remaining,
+                            },
+                            now,
+                        )
+                    }
+                    None => Vec::new(),
                 }
-                None => Vec::new(),
-            },
-            Message::PlaceWreck(placement) => match self.scenes.get_mut(&placement.solar_system_id) {
+            }
+            Message::PlaceWreck(placement) => match self.scenes.get_mut(&placement.scene) {
                 Some(scene) => {
                     let placement = *placement;
                     let wreck = Wreck {
@@ -1171,19 +1280,19 @@ impl Sim {
             },
             Message::Deployed(placement) => {
                 let placement = *placement;
-                match self.scenes.get_mut(&placement.solar_system_id) {
+                match self.scenes.get_mut(&SceneKey::solar_system(placement.solar_system_id)) {
                     Some(scene) => scene.restore_field(placement, now),
                     None => Vec::new(),
                 }
             }
             Message::PlaceStructure(structure) => {
                 let structure = *structure;
-                match self.scenes.get_mut(&structure.solar_system_id) {
+                match self.scenes.get_mut(&SceneKey::solar_system(structure.solar_system_id)) {
                     Some(scene) => scene.place_structure(structure, now),
                     None => match self.universe.system(structure.solar_system_id) {
                         Ok(system) => self
                             .scenes
-                            .entry(structure.solar_system_id)
+                            .entry(SceneKey::solar_system(structure.solar_system_id))
                             .or_insert_with(|| self.universe.scene_of(system))
                             .place_structure(structure, now),
                         Err(_) => Vec::new(),
@@ -1221,12 +1330,13 @@ impl Sim {
                 // or arrives in it, and the scene of the system is made for them (a scene with no ship is left as the arrival leaves it)
                 let wormhole = *wormhole;
                 let system_id = wormhole.solar_system_id;
-                if !self.scenes.contains_key(&system_id) {
+                let scene_key = SceneKey::solar_system(system_id);
+                if !self.scenes.contains_key(&scene_key) {
                     let Ok(system) = self.universe.system(system_id) else { return Ok(Vec::new()) };
                     let scene = self.universe.scene_of(system);
-                    self.scenes.insert(system_id, scene);
+                    self.scenes.insert(scene_key, scene);
                 }
-                match self.scenes.get_mut(&system_id) {
+                match self.scenes.get_mut(&scene_key) {
                     Some(scene) => scene.place_wormhole(wormhole, now),
                     None => Vec::new(),
                 }
@@ -1238,14 +1348,14 @@ impl Sim {
                 .map(|scene| scene.remove_wormhole(wormhole_id, now))
                 .unwrap_or_default(),
             Message::SetStructureState { solar_system_id, structure_id, status } => {
-                match self.scenes.get_mut(&solar_system_id) {
+                match self.scenes.get_mut(&SceneKey::solar_system(solar_system_id)) {
                     Some(scene) => scene.set_structure_state(structure_id, status, now),
                     None => Vec::new(),
                 }
             }
             Message::PlaceProbe(probe) => {
                 let probe = *probe;
-                match self.scenes.get_mut(&probe.solar_system_id) {
+                match self.scenes.get_mut(&SceneKey::solar_system(probe.solar_system_id)) {
                     Some(scene) => scene.place_probe(probe, now),
                     None => Vec::new(),
                 }
@@ -1258,14 +1368,14 @@ impl Sim {
                 .unwrap_or_default(),
             Message::PlaceDisruptor(disruptor) => {
                 let disruptor = *disruptor;
-                match self.scenes.get_mut(&disruptor.solar_system_id) {
+                match self.scenes.get_mut(&SceneKey::solar_system(disruptor.solar_system_id)) {
                     Some(scene) => scene.place_disruptor(disruptor, now),
                     None => Vec::new(),
                 }
             }
             Message::PlaceAnalysisBeacon(beacon) => {
                 let beacon = *beacon;
-                match self.scenes.get_mut(&beacon.solar_system_id) {
+                match self.scenes.get_mut(&SceneKey::solar_system(beacon.solar_system_id)) {
                     Some(scene) => scene.place_analysis_beacon(beacon, now),
                     None => Vec::new(),
                 }
@@ -1276,42 +1386,69 @@ impl Sim {
                 .find(|scene| scene.deployables.contains_key(&deployable_id))
                 .map(|scene| scene.set_analysis_beacon_state(deployable_id, state, now))
                 .unwrap_or_default(),
+            Message::SetSlimField { item_id, name, value } => self
+                .scenes
+                .values_mut()
+                .find(|scene| scene.deployables.contains_key(&item_id))
+                .map(|scene| scene.set_slim_field(item_id, name, value, now))
+                .unwrap_or_default(),
             Message::PlaceCynoBeacon(beacon) => {
                 let beacon = *beacon;
-                match self.scenes.get_mut(&beacon.solar_system_id) {
+                match self.scenes.get_mut(&SceneKey::solar_system(beacon.solar_system_id)) {
                     Some(scene) => scene.place_cyno_beacon(beacon, now),
                     None => Vec::new(),
                 }
             }
             Message::PlaceObservatory(observatory) => {
                 let observatory = *observatory;
-                match self.scenes.get_mut(&observatory.solar_system_id) {
+                match self.scenes.get_mut(&SceneKey::solar_system(observatory.solar_system_id)) {
                     Some(scene) => scene.place_observatory(observatory, now),
                     None => Vec::new(),
                 }
             }
             Message::PlaceControlTower(tower) => {
                 let tower = *tower;
-                match self.scenes.get_mut(&tower.solar_system_id) {
+                match self.scenes.get_mut(&SceneKey::solar_system(tower.solar_system_id)) {
                     Some(scene) => scene.place_control_tower(tower, now),
                     None => Vec::new(),
                 }
             }
             Message::PlaceDeadspacePocket(pocket) => {
                 let pocket = *pocket;
-                match self.scenes.get_mut(&pocket.solar_system_id) {
+                match self.scenes.get_mut(&SceneKey::solar_system(pocket.solar_system_id)) {
                     Some(scene) => scene.place_deadspace_pocket(pocket, now),
+                    None => Vec::new(),
+                }
+            }
+            Message::PlaceAccelerationGate(gate) => {
+                let gate = *gate;
+                match self.scenes.get_mut(&SceneKey::solar_system(gate.solar_system_id)) {
+                    Some(scene) => scene.place_acceleration_gate(gate, now),
+                    None => Vec::new(),
+                }
+            }
+            Message::PlaceCapturePoint(point) => {
+                let point = *point;
+                match self.scenes.get_mut(&SceneKey::solar_system(point.solar_system_id)) {
+                    Some(scene) => scene.place_capture_point(point, now),
+                    None => Vec::new(),
+                }
+            }
+            Message::PlaceBattlefieldScoreboard(scoreboard) => {
+                let scoreboard = *scoreboard;
+                match self.scenes.get_mut(&SceneKey::solar_system(scoreboard.solar_system_id)) {
+                    Some(scene) => scene.place_battlefield_scoreboard(scoreboard, now),
                     None => Vec::new(),
                 }
             }
             Message::RemoteDecloakPing { solar_system_id, observatory_id } => self
                 .scenes
-                .get_mut(&solar_system_id)
+                .get_mut(&SceneKey::solar_system(solar_system_id))
                 .map(|scene| scene.remote_decloak_ping(observatory_id, now))
                 .unwrap_or_default(),
             Message::PlaceInhibitor(inhibitor) => {
                 let inhibitor = *inhibitor;
-                match self.scenes.get_mut(&inhibitor.solar_system_id) {
+                match self.scenes.get_mut(&SceneKey::solar_system(inhibitor.solar_system_id)) {
                     Some(scene) => scene.place_inhibitor(inhibitor, now),
                     None => Vec::new(),
                 }
@@ -1324,7 +1461,7 @@ impl Sim {
                 .unwrap_or_default(),
             Message::RemoveCynoBeacon { solar_system_id, structure_beacon_id } => self
                 .scenes
-                .get_mut(&solar_system_id)
+                .get_mut(&SceneKey::solar_system(solar_system_id))
                 .map(|scene| scene.remove_cyno_beacon(solar_system_id, structure_beacon_id, now))
                 .unwrap_or_default(),
             Message::RemoveDeployed { deployable_id } => self

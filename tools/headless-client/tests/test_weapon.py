@@ -20,8 +20,9 @@ import uuid
 import pytest
 
 from evecli.describe import describe
+from tests import dbseed
 from tests import test_login_to_character as base
-from tests.test_others import watch
+from tests.test_others import hold_still, watch
 from tests.test_target import compare_answer, plain_race, timing
 from tests.test_undock import STATION, SYSTEM, arrive, args_of, compare_events, number, outcome
 
@@ -33,7 +34,6 @@ pytestmark = [
 
 # the moments an event may come after or before the recording's: a cycle is a little under two seconds, and this side works in quarters of a second
 TOLERANCE = 0.8
-
 
 def changes_of(event: dict):
     """The `(item, attribute, new, old)` lines of an `OnModuleAttributeChanges`."""
@@ -47,11 +47,9 @@ def changes_of(event: dict):
         out.append((number(t[2]), t[3], t[5], t[6]))
     return out
 
-
 def effect_of(event: dict):
     """The tuple an `OnGodmaShipEffect` carries."""
     return args_of(event)["$tuple"]
-
 
 def fx_actions(event: dict, module: int):
     """The `OnSpecialFX` actions of a `DoDestinyUpdate` that play the effect of this module (the arguments are `(ship, module, type, target, charge, effect, ...)`)."""
@@ -60,7 +58,6 @@ def fx_actions(event: dict, module: int):
     except (KeyError, TypeError):
         return []
     return [a for a in actions if a["$tuple"][1]["$tuple"][0] == "OnSpecialFX" and number(a["$tuple"][1]["$tuple"][1]["$tuple"][1]) == module]
-
 
 def of_the_gun(events: list, gun: int) -> list:
     """What the gun makes the pilot's client hear: the effect going on and off, the special effect that plays it and the numbers of the module it tells."""
@@ -74,7 +71,6 @@ def of_the_gun(events: list, gun: int) -> list:
             out.append(event)
     return out
 
-
 def shots_of(events: list) -> list:
     """The combat-log messages of the shots the pilot fired (`attackType` `me`), as `{key: value}`."""
     out = []
@@ -85,7 +81,6 @@ def shots_of(events: list) -> list:
                 out.append(message)
     return out
 
-
 def slims_in(events: list) -> list:
     """The `(itemID, typeID)` of every slim item an event holds, in order."""
     found = []
@@ -95,7 +90,6 @@ def slims_in(events: list) -> list:
             found.append((int(long_id or short_id), int(kind)))
     return found
 
-
 def test_a_pilot_fires_its_gun_as_it_did_in_the_reference():
     race = WEAPON["races"][0]
     run = uuid.uuid4().hex[:10]
@@ -103,6 +97,8 @@ def test_a_pilot_fires_its_gun_as_it_did_in_the_reference():
     steps = {step["label"]: step for step in race["steps"]}
     with base.connect(f"walk-weapon-{run}") as who:
         _, ship, modules, mapping = arrive(who, plain_race({"pilot": race}, "pilot"), run)
+
+        dbseed.set_hull(ship, dbseed.COCKROACH)
         gun = modules[1]
         mapping[race["modules"]["gun"]] = gun
         only = {"events": who}
@@ -116,7 +112,7 @@ def test_a_pilot_fires_its_gun_as_it_did_in_the_reference():
             recorded_gun, our_gun = of_the_gun(theirs, race["modules"]["gun"]), of_the_gun(ours, gun)
             problems.extend(compare_events(recorded_gun, our_gun, f"{label}", mapping))
             problems.extend(timing(recorded_gun, our_gun, label, TOLERANCE, ("OnGodmaShipEffect", "DoDestinyUpdate")))
-            # the shots the pilot fired: as many as the recording's, give or take the one at the edge of the step, of the same weapon at the same target
+
             recorded_shots, our_shots = shots_of(theirs), shots_of(got)
             if abs(len(recorded_shots) - len(our_shots)) > 1:
                 problems.append(f"{label}: {len(our_shots)} shots in the combat log in place of {len(recorded_shots)}")
@@ -133,12 +129,13 @@ def test_a_pilot_fires_its_gun_as_it_did_in_the_reference():
         watch(only, 0.5)
         who.call_bound(service[0], "Undock", ship, False)
         watch(only, 2.5)
-        who.call("beyonce", "MachoBindObject", SYSTEM, None)
+        ballpark = who.call("beyonce", "MachoBindObject", SYSTEM, None)
         watch(only, 3.0)
         dogma = who.call("dogmaIM", "MachoBindObject", (SYSTEM, 5), None)
         who.call_bound(dogma[0], "GetAllInfo", True, True, None)
         watch(only, 1.0)
         watch(only, 45.0, until=lambda seen: any(e["name"] == "OnInvulnCancelled" for e in seen["events"]))
+        hold_still(who, ballpark[0])
 
         slash = lambda command: (lambda: who.call("slash", "SlashCmd", command))  # noqa: E731
         activate = lambda target: (lambda: who.call_bound(dogma[0], "Activate", gun, "targetAttack", target, 1000))  # noqa: E731

@@ -195,7 +195,6 @@ public sealed class ClientSession
     /// </summary>
     /// <summary>
     /// Calls a client service and runs <paramref name="onResponse"/> with the client's answer (null when the client
-    /// cancels it). False when there is no sink to send to (EveJS sendClientCallRequest returns null then).
     /// </summary>
     public bool SendClientCall(string service, string method, IReadOnlyList<PyValue> args, Action<PyValue?> onResponse, PyDict? kwargs = null)
     {
@@ -223,10 +222,35 @@ public sealed class ClientSession
             Send(ClientNotification.Build(UserId ?? 0, NodeId, name, idType, args, ++_notificationSequence));
     }
 
+    public event Action<ClientSession, IReadOnlyList<string>>? AttributesChanged;
+
     /// <summary>Raised once, when the connection of this session has ended: modules release what the session held.</summary>
     public event Action? Closed;
 
     /// <summary>Ends the session. Later calls do nothing.</summary>
+private Action<string>? _disconnectClient;
+
+    /// <summary>Sets the front link action used to close this account's previous connection.</summary>
+    public void AttachDisconnectClient(Action<string> disconnect)
+    {
+        ArgumentNullException.ThrowIfNull(disconnect);
+        lock (_gate)
+        {
+            _disconnectClient = disconnect;
+        }
+    }
+
+    /// <summary>Requests a clean front-link disconnect with the supplied client-visible reason.</summary>
+    public void RequestDisconnect(string reason)
+    {
+        Action<string> disconnect;
+        lock (_gate)
+        {
+            disconnect = _disconnectClient ?? throw new InvalidOperationException("The session has no front-link disconnect action.");
+        }
+        disconnect(reason);
+    }
+
     public void Close()
     {
         if (Interlocked.Exchange(ref _closed, 1) == 0)
@@ -243,19 +267,26 @@ public sealed class ClientSession
     public IReadOnlyList<SessionChange> Change(params (string Name, PyValue Value)[] values)
     {
         List<SessionChange> announced = [];
+        List<string> changed = [];
         lock (_gate)
         {
             foreach (var (name, value) in values)
             {
                 var old = _attributes.GetValueOrDefault(name) ?? PyNone.Instance;
                 _attributes[name] = value;
-                if (SessionAttributes.ClientVisible.Contains(name) && !Equals(old, value))
-                    announced.Add(new SessionChange(name, old, value));
+                if (!Equals(old, value))
+                {
+                    changed.Add(name);
+                    if (SessionAttributes.ClientVisible.Contains(name))
+                        announced.Add(new SessionChange(name, old, value));
+                }
             }
             // Keep the announced order identical to the committed attribute order.
             if (announced.Count > 0)
                 Send(SessionChangeNotification.Build(SessionId, ClientId, UserId ?? 0, NodeId, announced));
         }
+        if (changed.Count > 0)
+            AttributesChanged?.Invoke(this, changed);
         return announced;
     }
 }

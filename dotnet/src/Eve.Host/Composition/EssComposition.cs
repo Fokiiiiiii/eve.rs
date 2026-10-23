@@ -14,23 +14,26 @@ namespace Eve.Host;
 
 /// <summary>
 /// The Encounter Surveillance Systems: their store, the calls of the client's essMgr and dynamic resource cache, the ESS ball each one has in space, the clock
-/// that works them, and the systems the operator places (<c>EVE_ESS_SYSTEMS</c>: <c>solarSystemId:essId[:ownerId]</c>, comma separated). With no entries there
+
 /// is no ESS in any system.
 /// </summary>
 internal sealed partial class CharacterServicesComposition
 {
     private string essSchema = default!;
     private PgEssStore? _ess;
+    private Eve.Services.Space.EssMgrService? _essMgrService;
+    private Eve.Services.Space.EssMgrService EssMgr => _essMgrService ??= new(EssCallbacks());
     private Dictionary<int, string> _essQuadrantBySystem = [];
 
     private PgEssStore Ess => _ess ??= new PgEssStore(
         source, new WalletTransactions(source, walletSchema), essSchema,
         message => Console.Error.WriteLine($"eve-host: ess: {message}"),
-        holderOf: async (systemId, characterId, _, cancellationToken) =>
-            spaceSessions is { } space ? await space.EssHolderAsync(systemId, characterId, cancellationToken) : null,
+        holderOf: async (systemId, characterId, essId, cancellationToken) =>
+            spaceSessions is { } space ? await space.EssHolderAsync(systemId, characterId, essId, cancellationToken) : null,
         consumeKey: ConsumeEssKeyAsync,
         quadrantOf: systemId => _essQuadrantBySystem.TryGetValue(systemId, out var quadrant) ? quadrant : null,
-        sovereigntyOwnerOf: SovereigntyOwnerOfAsync);
+        sovereigntyOwnerOf: SovereigntyOwnerOfAsync,
+        corporationOf: CharacterCorporationOfAsync);
 
     /// <summary>
     /// The ESS placement that the operator asks for. Each system's ESS is registered at start; a malformed entry stops the host, so that it does not run with
@@ -61,34 +64,36 @@ internal sealed partial class CharacterServicesComposition
     /// <summary>The quadrant of each solar system, from the SDE's system names (the quadrant lists name systems, not ids).</summary>
     private async Task<Dictionary<int, string>> ReadEssQuadrantsAsync()
     {
-        var names = new Dictionary<int, string>();
+        var regionNamesBySystemId = new Dictionary<int, string>();
         await using var connection = await source.OpenConnectionAsync();
         await using var command = new NpgsqlCommand(
-            "SELECT key::bigint, doc->'name'->>'en' FROM sde.\"mapSolarSystems\"", connection);
+            "SELECT systems.key::bigint, regions.doc->'name'->>'en' FROM sde.\"mapSolarSystems\" AS systems JOIN sde.\"mapRegions\" AS regions ON regions.key::bigint = (systems.doc->>'regionID')::bigint",
+            connection);
         await using var reader = await command.ExecuteReaderAsync();
         while (await reader.ReadAsync())
         {
             if (!reader.IsDBNull(1))
             {
-                names[checked((int)reader.GetInt64(0))] = reader.GetString(1);
+                regionNamesBySystemId[checked((int)reader.GetInt64(0))] = reader.GetString(1);
             }
         }
-        return EssQuadrants.BySystemId(names);
+        return EssQuadrants.BySystemId(regionNamesBySystemId);
     }
 
     /// <summary>
-    /// Takes one key of the type out of the character's hangar, in the bank's transaction: the candidate stack is found, then locked and read again inside the
-    /// transaction, so that a key taken by another request makes this one refuse (the key comes from the hangar only).
+    /// Takes one key of the type out of the current ship's cargo, in the bank's transaction: the candidate stack is found, then locked and read again inside the
+    /// transaction, so that a key taken by another request makes this one refuse.
     /// </summary>
-    private async ValueTask<bool> ConsumeEssKeyAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId, long keyTypeId, CancellationToken cancellationToken)
+    private async ValueTask<bool> ConsumeEssKeyAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId, long shipId, long keyTypeId, CancellationToken cancellationToken)
     {
         var candidate = (await items.OwnedByAsync(characterId, cancellationToken))
-            .FirstOrDefault(item => item.TypeId == keyTypeId && item.Flag == ItemFlags.Hangar && item.Quantity > 0);
+            .FirstOrDefault(item => item.TypeId == keyTypeId && item.LocationId == shipId && item.Flag == Eve.Ships.CharacterShips.CargoFlag && item.Quantity > 0);
         if (candidate is null || await items.LockAndGetAsync(connection, transaction, candidate.Id, cancellationToken) is not { } stack)
         {
             return false;
         }
-        if (stack.OwnerId != characterId || stack.TypeId != keyTypeId || stack.Flag != ItemFlags.Hangar || stack.Quantity <= 0)
+        if (stack.OwnerId != characterId || stack.LocationId != shipId || stack.TypeId != keyTypeId ||
+            stack.Flag != Eve.Ships.CharacterShips.CargoFlag || stack.Quantity <= 0)
         {
             return false;
         }
@@ -112,6 +117,21 @@ internal sealed partial class CharacterServicesComposition
                && long.TryParse(row["allianceID"]?.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var alliance)
                && alliance > 0
             ? alliance
+            : null;
+    }
+
+    private async ValueTask<long?> CharacterCorporationOfAsync(long characterId, CancellationToken cancellationToken)
+    {
+        var schema = Env("EVE_CHARACTERS_SCHEMA", "characters");
+        if (!System.Text.RegularExpressions.Regex.IsMatch(schema, "^[a-z_][a-z0-9_]{0,62}$"))
+            throw new InvalidOperationException("EVE_CHARACTERS_SCHEMA is not a usable schema name");
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var command = new NpgsqlCommand($"SELECT corporation_id FROM {schema}.characters WHERE id = $1", connection)
+        {
+            Parameters = { new() { Value = characterId } },
+        };
+        return await command.ExecuteScalarAsync(cancellationToken) is long corporationId && corporationId > 0
+            ? corporationId
             : null;
     }
 
@@ -155,23 +175,37 @@ internal sealed partial class CharacterServicesComposition
     private string? EssQuadrantOf(int systemId) => _essQuadrantBySystem.TryGetValue(systemId, out var quadrant) ? quadrant : null;
 
     /// <summary>
-    /// The ESS balls, one per ESS: a structure-kind ball at the system's origin (<see cref="EssRules.BallX"/>, the rule), with the type's hit points and radius,
-    /// put in space when the host starts so that a pilot in its system can link to it.
+    /// The ESS balls use the deterministic SDE anchor placement rule and the ESS type's static geometry when available, then enter space with the host.
     /// </summary>
     private async Task PlaceEssBallsAsync(ISimulation simulation)
     {
         var type = dogma.Type(EssRules.TypeEncounterSurveillanceSystem);
         double Attribute(int id) => type?.Attributes.GetValueOrDefault(id, 0d) ?? 0d;
+        var staticType = (await sde.ReadAsync("types", [(long)EssRules.TypeEncounterSurveillanceSystem])).SingleOrDefault();
+        if (staticType is null)
+        {
+            throw new InvalidDataException($"The SDE has no record for ESS type {EssRules.TypeEncounterSurveillanceSystem}.");
+        }
+        var radius = staticType.Doc.TryGetProperty("radius", out var radiusValue) && radiusValue.TryGetDouble(out var staticRadius)
+            ? staticRadius
+            : 0d;
+        if (!double.IsFinite(radius) || radius < 0)
+        {
+            throw new InvalidDataException($"The SDE has an unusable radius for ESS type {EssRules.TypeEncounterSurveillanceSystem}.");
+        }
+        var anchors = new Eve.Services.Space.Sites.SdeSiteAnchors(sde);
         foreach (var state in await Ess.ListAsync())
         {
+            var systemAnchors = await anchors.OfAsync(state.SolarSystemId);
+            var (_, position) = Eve.Services.Space.Sites.SitePlacement.Place(systemAnchors, $"ess:{state.SolarSystemId}:{state.EssId}");
             simulation.PlaceStructure(new SimPlaceStructure(
                 state.EssId,
                 state.SolarSystemId,
                 "Encounter Surveillance System",
                 EssRules.TypeEncounterSurveillanceSystem,
                 type?.GroupId ?? 0,
-                [EssRules.BallX, EssRules.BallY, EssRules.BallZ],
-                Attribute(162),
+                position,
+                radius,
                 state.OwnerId ?? 0,
                 0,
                 0,
@@ -180,7 +214,7 @@ internal sealed partial class CharacterServicesComposition
         }
     }
 
-    /// <summary>The clock of the ESS (<c>space.ess.tick</c>): thefts, link ends, owner payouts and reserve pulses, told to the pilots of their systems.</summary>
+
     private async Task TickEssAsync(CancellationToken cancellationToken)
     {
         var events = await Ess.TickAsync(now(), cancellationToken);

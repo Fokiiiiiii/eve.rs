@@ -16,7 +16,6 @@ public sealed record StructureUnanchorDrop(long HullItemId, long FittingsContain
     public static bool IsArtifact(string? customInfo) =>
         IsHullArtifact(customInfo) || IsFittingsArtifact(customInfo);
 
-
     public static bool IsHullArtifact(string? customInfo) => HasMarker(customInfo, "hull");
 
     public static bool IsFittingsArtifact(string? customInfo) => HasMarker(customInfo, "fittings");

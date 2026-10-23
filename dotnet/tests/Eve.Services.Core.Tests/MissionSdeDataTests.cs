@@ -6,7 +6,6 @@ using Npgsql;
 namespace Eve.Services.Core.Tests;
 
 /// <summary>
-/// The rule and the mission catalog against the real loaded data: the pinned SDE (<c>sde</c>, build 3396210) for the agent rule,
 /// and the mission build (<c>sde_mission</c>, build 3405148) for the catalog. Both need PostgreSQL and the data loaded
 /// (<c>eve-sde ensure</c>, and <c>eve-sde ensure --missions</c>).
 /// </summary>
@@ -94,12 +93,52 @@ public sealed class MissionSdeDataTests
         Assert.Equal(73, byKind[("courier", 3)]);
         Assert.Equal(64, byKind[("courier", 4)]);
         Assert.Equal(1, byKind[("courier", 5)]);
-        Assert.Equal(275, byKind[("kill", 1)]);
-        Assert.Equal(207, byKind[("kill", 2)]);
-        Assert.Equal(264, byKind[("kill", 3)]);
-        Assert.Equal(234, byKind[("kill", 4)]);
-        Assert.Equal(134, byKind[("kill", 5)]);
+        Assert.Equal(409, byKind[("kill", 1)]);
+        Assert.Equal(234, byKind[("kill", 2)]);
+        Assert.Equal(328, byKind[("kill", 3)]);
+        Assert.Equal(356, byKind[("kill", 4)]);
+        Assert.Equal(150, byKind[("kill", 5)]);
         Assert.DoesNotContain(byKind.Keys, key => key.Kind == "other");
+    }
+
+    [PgFact]
+    public async Task The_untagged_missions_have_no_static_level_or_dungeon_difficulty_basis()
+    {
+        await using var source = Source();
+        var reader = new SdeReader(source, MissionStaticCatalog.DefaultSchema);
+        var missionCatalog = await MissionStaticCatalog.LoadAsync(reader, MissionLevelTags.Committed);
+        Assert.True(missionCatalog.IsLoaded, missionCatalog.UnavailableReason);
+        var rows = await reader.ReadAsync("missions");
+        var taggedIds = MissionLevelTags.Committed.All.Select(tag => tag.MissionId).ToHashSet();
+        var untagged = missionCatalog.Missions.Where(mission => !taggedIds.Contains(mission.MissionId)).ToArray();
+        Assert.Equal(1100, untagged.Length);
+
+        var untaggedRows = rows.Where(row => !taggedIds.Contains(row.Key)).ToArray();
+        Assert.Equal(untagged.Length, untaggedRows.Length);
+        Assert.DoesNotContain(untaggedRows, row =>
+            new[] { "level", "missionLevel", "agentLevel" }
+                .Any(field => row.Doc.TryGetProperty(field, out _)));
+
+        var arcStepIds = missionCatalog.EpicArcs
+            .SelectMany(arc => arc.Steps)
+            .Select(step => step.MissionId)
+            .ToHashSet();
+        var dungeons = Eve.Dungeons.DungeonCatalog.LoadEmbedded();
+        Assert.DoesNotContain(untagged, mission =>
+            !arcStepIds.Contains(mission.MissionId) &&
+            mission.Kill is not null &&
+            dungeons.GetMission(mission.MissionId) is Eve.Dungeons.MissionFound
+            {
+                Dungeon: Eve.Dungeons.DungeonFound { Dungeon.Difficulty: not null },
+            });
+
+        foreach (var missionId in new long[] { 17183, 17184, 17185, 17186 })
+        {
+            Assert.Contains(missionId, arcStepIds);
+            Assert.Null(MissionLevelTags.Committed.Answer(missionId).Level);
+            var mission = Assert.IsType<Eve.Dungeons.MissionFound>(dungeons.GetMission(missionId));
+            Assert.IsType<Eve.Dungeons.DungeonNoTemplate>(mission.Dungeon);
+        }
     }
 
     private static long Read(System.Text.Json.JsonElement agent, string name) =>

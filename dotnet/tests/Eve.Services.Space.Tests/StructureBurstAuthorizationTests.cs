@@ -8,7 +8,6 @@ namespace Eve.Services.Space.Tests;
 
 /// <summary>
 /// The Standup burst projectors and the Standup HOG through the Host's structure path (ST-8b): a controlled structure's burst is sent to the simulation as a
-/// structure burst, each pulse asks the Host for its candidates, and the Host grants only the ships the structure's owner may affect (the owner corporation's facts).
 /// </summary>
 public sealed class StructureBurstAuthorizationTests
 {
@@ -69,6 +68,28 @@ public sealed class StructureBurstAuthorizationTests
         Assert.True((await RequestAsync(rig, pilot, effectId, 1, 1, [targetId])).AllowedTargetIds.SequenceEqual([targetId]));
         war = false;
         Assert.Empty((await RequestAsync(rig, pilot, effectId, 1, 2, [targetId])).AllowedTargetIds);
+    }
+
+    [PgFact]
+    public async Task A_standup_multirole_missile_launcher_uses_its_SDE_charge_and_checks_structure_war_authority()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var pilot = await DroneHostTests.FlyingWithADroneAsync(rig, solarSystemId: 30002537, characterName: "Missile Controller");
+        var target = await DroneHostTests.FlyingWithADroneAsync(rig, solarSystemId: pilot.System, characterName: "Missile Target", sessionId: 2);
+        var war = false;
+        await ControlStructureAsync(rig, pilot, 35922, "useMissiles", war: () => war, chargeTypeId: 37848);
+        var targetId = target.Session.GetInt("shipid")!.Value;
+
+        var refused = await rig.Space.ActivateAsync(pilot.Session, ModuleId, "useMissiles", targetId, 1, CancellationToken.None);
+        Assert.Equal(WeaponSafety.Refusal, refused?.Reason);
+        Assert.Empty(rig.Sim.Heard.OfType<SimActivate>());
+
+        war = true;
+        Assert.Equal(ModuleResult.Done, await rig.Space.ActivateAsync(pilot.Session, ModuleId, "useMissiles", targetId, 1, CancellationToken.None));
+        var activation = Assert.Single(rig.Sim.Heard.OfType<SimActivate>());
+        var turret = Assert.IsType<SimTurret>(activation.Effect.Turret);
+        Assert.Equal(37848, turret.Charge?.TypeId);
+        Assert.NotNull(turret.Missile);
     }
 
     [PgFact]

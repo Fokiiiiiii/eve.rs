@@ -153,10 +153,13 @@ public sealed class AchievementTrackerMgrService(
         if (call.Method == "HasEverWarped")
         {
             var characterId = call.Session.GetInt("charid") ?? 0;
-            return hasEverWarped is null ||
-                   characterId > 0 && await hasEverWarped(characterId, call.Cancellation)
-                ? PyBool.True
-                : PyBool.False;
+            if (call.Session.GetInt("hasEverWarped") == 1)
+                return PyBool.True;
+            var hasEverWarpedForCharacter = characterId > 0 && hasEverWarped is not null
+                && await hasEverWarped(characterId, call.Cancellation);
+            if (hasEverWarpedForCharacter)
+                call.Session.Set("hasEverWarped", new PyInt(1));
+            return hasEverWarpedForCharacter ? PyBool.True : PyBool.False;
         }
 
         // the client sends both maps whole when it stores them (its achievements and counters at logoff, and as they change)
@@ -622,10 +625,15 @@ public static class MissionTrackerGameStoreProjection
         node is JsonValue scalar && scalar.TryGetValue<string>(out var text) ? text : "";
 }
 
-public sealed class AbyssalMgrService(
-    Func<ServiceCall, ValueTask>? clientIsReady = null,
-    Func<ServiceCall, CancellationToken, ValueTask<PyValue?>>? rpcHandler = null) : IService
+public sealed class AbyssalMgrService : IService
 {
+    private readonly Func<ServiceCall, CancellationToken, ValueTask<PyValue>> _rpcHandler;
+
+    public AbyssalMgrService(Func<ServiceCall, CancellationToken, ValueTask<PyValue>> rpcHandler)
+    {
+        _rpcHandler = rpcHandler ?? throw new ArgumentNullException(nameof(rpcHandler));
+    }
+
     public string Name => "abyssalMgr";
 
     public bool HasMethod(string method) => method is
@@ -639,14 +647,7 @@ public sealed class AbyssalMgrService(
     {
         if (!HasMethod(call.Method)) return PyNone.Instance;
         call.Cancellation.ThrowIfCancellationRequested();
-        if (rpcHandler is not null && await rpcHandler(call, call.Cancellation) is { } handled)
-            return handled;
-        if (call.Method == "ClientIsReady" && clientIsReady is not null)
-            await clientIsReady(call);
-
-        return call.Method is "AbyssalGateActivation" or "AbyssalEndGateActivation"
-            ? throw MachoErrors.ThrowUserError("DeniedTargetAttemptFailed")
-            : PyNone.Instance;
+        return await _rpcHandler(call, call.Cancellation).ConfigureAwait(false);
     }
 }
 

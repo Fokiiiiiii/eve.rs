@@ -44,7 +44,6 @@ public sealed partial class CharUnboundMgrService(
 
     private static readonly PyValue None = PyNone.Instance;
 
-    /// <summary>The roles that may switch name validation off: programmer, QA, GML and content (EveJS CHARACTER_CREATION_VALIDATION_ROLE_MASK).</summary>
     private const long ValidationToggleRoles = (1L << 51) | (1L << 52) | (1L << 54) | (1L << 55);
 
     private const string ValidationSessionKey = "characterCreationValidation";
@@ -185,7 +184,9 @@ public sealed partial class CharUnboundMgrService(
     public async ValueTask<PyValue> ValidateNameEx(ServiceCall call)
     {
         var name = JsSemantics.StringValue(call.Arg(0));
-        var check = CharacterNames.Validate(name);
+        var check = name is { Length: > CharacterNames.MaxLength }
+            ? NameCheck.TooLong
+            : CharacterNames.Validate(name);
         if (check == NameCheck.Valid && await characters.NameTakenAsync(name!, Token(call)))
         {
             check = NameCheck.Unavailable;
@@ -207,7 +208,10 @@ public sealed partial class CharUnboundMgrService(
             throw Info("That character is not available on this account.");
         }
 
-        var requestedGender = IntOrDefault(call.Arg(1), 1);
+        var requestedGenderValue = call.Arg(1);
+        if (requestedGenderValue is not PyNone && !TryWireInt(requestedGenderValue, out _))
+            throw Info("That gender is invalid.");
+        var requestedGender = requestedGenderValue is PyNone ? 1 : IntOrDefault(requestedGenderValue, 1);
         var gender = requestedGender is >= 0 and <= 2 ? requestedGender : 1;
         await characters.SetGenderAsync(characterId, gender, Token(call));
         if (IsCurrentCharacter(call, characterId))
@@ -232,11 +236,16 @@ public sealed partial class CharUnboundMgrService(
             throw Info("That character is not available on this account.");
         }
 
-        var requestedBloodlineId = IntOrDefault(call.Arg(1), 1);
-        var bloodline = catalog.Bloodline(requestedBloodlineId);
+        var requestedBloodlineValue = call.Arg(1);
+        if (requestedBloodlineValue is not PyNone && !TryWireInt(requestedBloodlineValue, out _))
+            throw Info("That bloodline is invalid.");
+        var requestedBloodlineId = requestedBloodlineValue is PyNone ? 1 : IntOrDefault(requestedBloodlineValue, 1);
         var bloodlineId = requestedBloodlineId != 0 ? requestedBloodlineId : character.BloodlineId;
-        var raceId = bloodline?.RaceId ?? character.RaceId;
-        var typeId = CreationCatalog.CharacterTypeId(requestedBloodlineId, character.TypeId);
+        var bloodline = catalog.Bloodline(bloodlineId);
+        if (bloodline is null)
+            throw Info("That bloodline is invalid.");
+        var raceId = bloodline.RaceId;
+        var typeId = CreationCatalog.CharacterTypeId(bloodlineId, character.TypeId);
         await characters.SetBloodlineAsync(characterId, bloodlineId, raceId, typeId, Token(call));
         if (IsCurrentCharacter(call, characterId))
         {
@@ -257,14 +266,23 @@ public sealed partial class CharUnboundMgrService(
         {
             throw MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr("Log in before creating a character.")));
         }
+        var name = JsSemantics.StringValue(call.Arg(0)) ?? "";
+        if (name.Length > CharacterNames.MaxLength)
+            throw MachoErrors.ThrowUserError("CharNameInvalid");
+        if (!TryWireInt(call.Arg(1), out var raceId) ||
+            !TryWireInt(call.Arg(2), out var bloodlineId) ||
+            !TryWireInt(call.Arg(3), out var gender) ||
+            !TryWireInt(call.Arg(4), out var ancestryId) ||
+            !TryWireInt(call.Arg(7), out var schoolId))
+            throw Info("That character cannot be created.");
         var request = new CreationRequest(
             account,
-            JsSemantics.StringValue(call.Arg(0)) ?? "",
-            Int(call.Arg(1)),
-            Int(call.Arg(2)),
-            Int(call.Arg(3)),
-            Int(call.Arg(4)),
-            Int(call.Arg(7)),
+            name,
+            raceId,
+            bloodlineId,
+            gender,
+            ancestryId,
+            schoolId,
             Appearance(call.Arg(5)),
             Appearance(call.Arg(6)));
         var outcome = await creation.CreateAsync(request, Token(call));
@@ -297,7 +315,7 @@ public sealed partial class CharUnboundMgrService(
         if (character.IsQueuedForDeletion)
             throw Info("That character is queued for deletion and cannot enter the game.");
         // The population cap is checked here as well as on the selection screen, because the screen's answer can be stale by now. The room is
-        // checked and a seat taken in one step; the seat is given back when this call ends (the session counts from then on).
+
         using var seat = population is not null && character.SolarSystemId > 0
             ? population.TryReserve(character.SolarSystemId, character.Id) ?? throw Info("That solar system has no room for another pilot. Try again later.")
             : null;
@@ -457,9 +475,8 @@ public sealed partial class CharUnboundMgrService(
         return None;
     }
 
-    /// <summary>The biomass queue's waiting time before a queued character can be deleted (EveJS <c>characterDeletionDelayMinutes</c>, 600).</summary>
     private static readonly TimeSpan BiomassDelay = TimeSpan.FromMinutes(600);
-    /// <summary>The graveyard corporation a deleted character is moved into (EveJS <c>DOOMHEIM_CORPORATION_ID</c>).</summary>
+
     private const long DoomheimCorporationId = 1000001;
 
     private DateTimeOffset Now() => (clock ?? (() => DateTimeOffset.UtcNow))();
@@ -482,12 +499,19 @@ public sealed partial class CharUnboundMgrService(
 
     /// <summary>
     /// <c>DeleteCharacter(charID)</c>: deletes a queued character once its waiting time has passed. The character is then hidden
-    /// from its account. Its assets and private state are not moved or purged yet (CH-1 gap, see the handoff).
     /// </summary>
     [Method("DeleteCharacter")]
     public async ValueTask<PyValue> DeleteCharacter(ServiceCall call)
     {
-        var (character, account) = await OwnedOfflineCharacter(call);
+        var (character, account) = await OwnedOfflineCharacter(call, includeDeleted: true);
+        if (character.IsDeleted)
+        {
+            if (deletionPurge is not null)
+                await deletionPurge.PurgeAsync(character.Id, character.CorporationId, Token(call));
+            await characters.SetCorporationAsync(character.Id, DoomheimCorporationId, Token(call));
+            return None;
+        }
+
         if (character.DeletePrepareAt is not { } readyAt)
             throw Info("That character is not in the biomass queue.");
         var now = Now();
@@ -496,14 +520,14 @@ public sealed partial class CharUnboundMgrService(
         var originalCorporation = character.CorporationId;
         if (!await characters.MarkDeletedAsync(character.Id, account, now, Token(call)))
             throw Info("Failed to finalize that character deletion.");
-        // the graveyard corporation (EveJS DOOMHEIM_CORPORATION_ID), then the assets and the private state
+
         await characters.SetCorporationAsync(character.Id, DoomheimCorporationId, Token(call));
         if (deletionPurge is not null)
             await deletionPurge.PurgeAsync(character.Id, originalCorporation, Token(call));
         return None;
     }
 
-    private async ValueTask<(Character Character, int Account)> OwnedOfflineCharacter(ServiceCall call)
+    private async ValueTask<(Character Character, int Account)> OwnedOfflineCharacter(ServiceCall call, bool includeDeleted = false)
     {
         var characterId = RequestCharacterId(call);
         var character = await characters.GetAsync(characterId, Token(call));
@@ -511,7 +535,7 @@ public sealed partial class CharUnboundMgrService(
             throw Info("That character no longer exists.");
         if (AccountOf(call) is not { } account)
             throw Info("Character deletion requires a valid authenticated account.");
-        if (character.AccountId != account || character.IsDeleted)
+        if (character.AccountId != account || (character.IsDeleted && !includeDeleted))
             throw Info("That character is not available on this account.");
         if (online.IsOnline(characterId))
             throw Info("That character is currently online and cannot be deleted.");
@@ -576,6 +600,24 @@ public sealed partial class CharUnboundMgrService(
     };
 
     private static int IntOrDefault(PyValue value, int fallback) => value is PyInt or PyLong or PyReal ? Int(value) : fallback;
+
+    private static bool TryWireInt(PyValue value, out int result)
+    {
+        var number = value switch
+        {
+            PyInt integer => (double)integer.Value,
+            PyLong integer => integer.Value,
+            PyReal real => real.Value,
+            _ => double.NaN,
+        };
+        if (!double.IsFinite(number) || number != Math.Truncate(number) || number < int.MinValue || number > int.MaxValue)
+        {
+            result = 0;
+            return false;
+        }
+        result = (int)number;
+        return true;
+    }
 
     /// <summary>The paper doll or portrait the client sent, kept as it was sent.</summary>
     private static byte[]? Appearance(PyValue value) => value is PyNone ? null : MarshalCodec.Encode(value);

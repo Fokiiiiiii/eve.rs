@@ -62,7 +62,7 @@ public sealed partial class CommunityTrackMgrService
 
     [Method("change_qa_mode")]
     public ValueTask<PyValue> ChangeQaMode(ServiceCall call) =>
-        CompatibilityRpc.Invoke(call, RpcHandler, () =>
+        !CompatibilityRpc.IsStaff(call) ? ValueTask.FromResult<PyValue>(PyNone.Instance) : CompatibilityRpc.Invoke(call, RpcHandler, () =>
         {
             Interlocked.Exchange(ref _qaMode, Truthy(call.Arg(0)) ? 1 : 0);
             return PyNone.Instance;
@@ -138,18 +138,37 @@ public sealed record ContextualOfferEvent(
 [Service("localizationServer")]
 public sealed partial class LocalizationServerService
 {
+    private readonly PyValue? _configuredTextChanges;
+
+    public LocalizationServerService(PyValue? configuredTextChanges = null)
+    {
+        if (configuredTextChanges is not null &&
+            (configuredTextChanges is not PyTuple { Items.Count: 3 } changes || changes.Items.Any(value => value is not PyDict)))
+            throw new ArgumentException("Localization text changes must be a tuple of three dictionaries.", nameof(configuredTextChanges));
+        _configuredTextChanges = configuredTextChanges;
+    }
+
     public Func<ServiceCall, ValueTask<PyValue?>>? RpcHandler { get; set; }
 
     private int _qaWrapActive;
-    private readonly ConcurrentQueue<LocalizationServerEvent> _events = new();
+    private const int MaxRecordedEvents = 1024;
+    private readonly object _eventsLock = new();
+    private readonly Queue<LocalizationServerEvent> _events = new();
     private long _nextEventId;
 
     public bool QaWrapActive => Volatile.Read(ref _qaWrapActive) != 0;
-    public IReadOnlyList<LocalizationServerEvent> Events => _events.ToArray();
+    public IReadOnlyList<LocalizationServerEvent> Events
+    {
+        get
+        {
+            lock (_eventsLock)
+                return _events.ToArray();
+        }
+    }
 
     [Method("UpdateLocalizationQAWrap")]
     public ValueTask<PyValue> UpdateLocalizationQAWrap(ServiceCall call) =>
-        CompatibilityRpc.Invoke(call, RpcHandler, () =>
+        !CompatibilityRpc.IsStaff(call) ? ValueTask.FromResult<PyValue>(PyNone.Instance) : CompatibilityRpc.Invoke(call, RpcHandler, () =>
         {
             Interlocked.Exchange(ref _qaWrapActive, Truthy(call.Arg(0)) ? 1 : 0);
             Record(call, "update_qa_wrap");
@@ -161,21 +180,29 @@ public sealed partial class LocalizationServerService
         CompatibilityRpc.Invoke(call, RpcHandler, () =>
         {
             Record(call, "get_all_text_changes");
-            return Py.Tuple(new PyDict([]), new PyDict([]), new PyDict([]));
+            return _configuredTextChanges ?? Py.Tuple(new PyDict([]), new PyDict([]), new PyDict([]));
         });
 
     [Method("ReloadFSDPickle")]
     public ValueTask<PyValue> ReloadFSDPickle(ServiceCall call) =>
-        CompatibilityRpc.Invoke(call, RpcHandler, () =>
+        !CompatibilityRpc.IsStaff(call) ? ValueTask.FromResult<PyValue>(PyBool.False) : CompatibilityRpc.Invoke(call, RpcHandler, () =>
         {
             Record(call, "reload_fsd_pickle");
             return PyBool.False;
         });
 
-    private void Record(ServiceCall call, string eventType) =>
-        _events.Enqueue(new LocalizationServerEvent(
+    private void Record(ServiceCall call, string eventType)
+    {
+        var entry = new LocalizationServerEvent(
             Interlocked.Increment(ref _nextEventId), eventType, call.Session.CharacterId ?? 0,
-            call.Session.UserId ?? 0, DateTimeOffset.UtcNow));
+            call.Session.UserId ?? 0, DateTimeOffset.UtcNow);
+        lock (_eventsLock)
+        {
+            if (_events.Count == MaxRecordedEvents)
+                _events.Dequeue();
+            _events.Enqueue(entry);
+        }
+    }
 
     private static bool Truthy(PyValue value) => value switch
     {

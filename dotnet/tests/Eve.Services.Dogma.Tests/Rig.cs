@@ -45,7 +45,6 @@ internal sealed class Sink : IPacketSink
         }
     }
 
-    /// <summary>What was sent, and forgets it, in one step: nothing sent in between is lost.</summary>
     public IReadOnlyList<PyValue> Take()
     {
         lock (_gate)
@@ -75,10 +74,11 @@ internal sealed class Rig : IAsyncDisposable
 
     private readonly string[] _schemas;
 
-    private Rig(NpgsqlDataSource source, string suffix, SdeReader sde, DogmaStatic statics, CharacterCreation creation, PgModuleStateStore modules, SkillBoosterActivationHandler? activateBooster)
+    private Rig(NpgsqlDataSource source, string suffix, SdeReader sde, DogmaStatic statics, CharacterCreation creation, PgModuleStateStore modules, SkillBoosterActivationHandler? activateBooster, SkillCatalog catalog)
     {
         Source = source;
-        _schemas = [$"dc_{suffix}", $"di_{suffix}", $"ds_{suffix}", $"dw_{suffix}", $"df_{suffix}"];
+        Catalog = catalog;
+        _schemas = [$"dc_{suffix}", $"di_{suffix}", $"ds_{suffix}", $"dw_{suffix}", $"df_{suffix}", $"dk_{suffix}", $"de_{suffix}", $"dr_{suffix}", $"dx_{suffix}"];
         Characters = new PgCharacterStore(source, _schemas[0]);
         Items = new PgItemStore(source, _schemas[1]);
         Skills = new PgSkillStore(source, _schemas[2]);
@@ -89,7 +89,19 @@ internal sealed class Rig : IAsyncDisposable
         Timers = new Eve.Scheduler.LocalTimers(delay: Delay.WaitAsync);
         var boosterActivation = activateBooster ?? ((long _, long _, string _, long? _, long? _, CancellationToken _) => ValueTask.FromResult<bool?>(null));
         Service = new DogmaIMService(statics, Ships, () => ClockMs, boosterActivation, null, Targeting, SpaceModules, Health, Rounds, Delay.WaitAsync, localTimers: Timers).ListeningForDryGuns();
-        Slash = new SlashService(new ShipHealthCommands(Ships, statics, () => ClockMs, Health));
+        Transactions = new WalletTransactions(source, _schemas[3]);
+        Wallets = new PgWalletStore(source, _schemas[3]);
+        Loyalty = new Eve.Wallet.LoyaltyPointStore(source, _schemas[3]);
+        Scheduler = new Eve.Scheduler.DurableScheduler(source, () => ClockMs, new Eve.Scheduler.SchedulerOptions { Concurrency = 1 }, _schemas[5]);
+        Bus = new Eve.Events.EventBus(source, Scheduler, null, _schemas[6]);
+        Relations = new Eve.Relations.RelationStore(source, Scheduler, Bus, _schemas[7]);
+        Crimewatch = new Eve.Crimewatch.PgCrimewatchStore(source, _schemas[8]);
+        Slash = new SlashService(new ShipHealthCommands(Ships, statics, () => ClockMs, Health), items: new ItemCommands(new ItemTypeNames(sde), Ships, statics, () => ClockMs), isk: new IskCommands(Transactions, source, () => ClockMs, Wallets, Loyalty),
+            loyalty: new LoyaltyCommands(Loyalty, StandingDirectory, () => ClockMs),
+            standings: new StandingCommands(StandingDirectory, Relations, (character, owner, standing) => StandingNotices.Add((character, owner, standing))),
+            skillBulk: new SkillBulkCommands(catalog, Skills, source, Characters, null, () => ClockMs, _ => null),
+            dogmaUpdate: new DogmaUpdateCommands(statics),
+            killRight: new KillRightCommands(Characters, (owner, target, system, when, token) => Crimewatch.CreateKillRightAsync(owner, target, system, when, token), () => ClockMs));
         Inventory = new InvBrokerService(Items, new ItemTypeCatalog(sde), new Eve.Universe.StationCatalog([]), Ships, statics, () => ClockMs);
     }
 
@@ -111,6 +123,23 @@ internal sealed class Rig : IAsyncDisposable
     /// <summary>The game master's commands.</summary>
     public SlashService Slash { get; }
 
+    /// <summary>The wallets, the same schema the character's ISK lives in.</summary>
+    public PgWalletStore Wallets { get; }
+
+    public WalletTransactions Transactions { get; }
+
+    public FakeStandingDirectory StandingDirectory { get; } = new();
+
+    public List<(long Character, long Owner, double Standing)> StandingNotices { get; } = [];
+
+    public Eve.Wallet.LoyaltyPointStore Loyalty { get; }
+
+    public Eve.Scheduler.DurableScheduler Scheduler { get; }
+
+    public Eve.Events.EventBus Bus { get; }
+
+    public Eve.Relations.RelationStore Relations { get; }
+
     public NpgsqlDataSource Source { get; }
 
     public PgCharacterStore Characters { get; }
@@ -118,6 +147,11 @@ internal sealed class Rig : IAsyncDisposable
     public PgItemStore Items { get; }
 
     public PgSkillStore Skills { get; }
+
+    public Eve.Crimewatch.PgCrimewatchStore Crimewatch { get; }
+
+    /// <summary>The SDE skill catalog the rig was built with (the starting sets and the published skills).</summary>
+    public SkillCatalog Catalog { get; }
 
     public DogmaStatic Statics { get; }
 
@@ -158,9 +192,14 @@ internal sealed class Rig : IAsyncDisposable
         await PgSkillStore.MigrateAsync(source, $"ds_{suffix}");
         await PgWalletStore.MigrateAsync(source, $"dw_{suffix}");
         await PgModuleStateStore.MigrateAsync(source, $"df_{suffix}");
+        await Eve.Scheduler.DurableScheduler.MigrateAsync(source, $"dk_{suffix}");
+        await Eve.Events.EventBus.MigrateAsync(source, $"de_{suffix}");
+        await Eve.Relations.RelationStore.MigrateAsync(source, $"dr_{suffix}");
+        await Eve.Crimewatch.PgCrimewatchStore.MigrateAsync(source, $"dx_{suffix}");
+        var catalog = await SkillCatalog.LoadAsync(sde);
         var creation = new CharacterCreation(
-            source, characters, items, skills, await SkillCatalog.LoadAsync(sde), wallets, new StartingWallet(), CockroachCatalog(await CreationCatalog.LoadAsync(sde, Station)), modules);
-        return new Rig(source, suffix, sde, await DogmaStatic.LoadAsync(sde), creation, modules, activateBooster);
+            source, characters, items, skills, catalog, wallets, new StartingWallet(), CockroachCatalog(await CreationCatalog.LoadAsync(sde, Station)), modules);
+        return new Rig(source, suffix, sde, await DogmaStatic.LoadAsync(sde), creation, modules, activateBooster, catalog);
     }
 
     /// <summary>A new character of a race (Caldari by default), on the Cockroach test hull.</summary>
@@ -200,6 +239,7 @@ internal sealed class Rig : IAsyncDisposable
     public static ClientSession Session(long? character, long id = 1, long? station = Station)
     {
         var session = new ClientSession(new Sink()) { SessionId = id, ClientId = id, UserId = 34, NodeId = 65450 };
+        session.Set("accountRole", new PyLong(GameMasterRoles.Gml)); // the slash commands are the game masters' tools
         if (station is { } s)
         {
             session.Set("stationid", new PyInt(s));

@@ -4,7 +4,6 @@ namespace Eve.Services.CharacterInfo;
 
 /// <summary>
 /// Live character presence, filtered through mutual personal buddy lists.
-/// Contract: EveJS 828823a/server/src/services/online/{onlineStatusService,onlineStatusRuntime}.js,
 /// serviceHelpers.buildDbRowset, and eve-logic 1dbb571/eve/client/script/ui/shared/comtool/onlineStatus.py.
 /// CCP's March 2016 release requires mutual buddy-list membership for another character's status.
 /// </summary>
@@ -53,9 +52,11 @@ public sealed partial class OnlineStatusService(
     }
 
     [Method("GetOnlineStatus")]
-    public async ValueTask<PyValue> GetOnlineStatus(ServiceCall call) =>
-        PyValue.Of(await IsOnline(Eve.Macho.JsSemantics.ToPositiveInteger(call.Arg(0)),
+    public async ValueTask<PyValue> GetOnlineStatus(ServiceCall call)
+    {
+        return PyValue.Of(await IsOnline(Eve.Macho.JsSemantics.ToPositiveInteger(call.Arg(0)),
             call.Session.CharacterId ?? 0, call.Cancellation));
+    }
 
     [Method("GetInitialState")]
     public async ValueTask<PyValue> GetInitialState(ServiceCall call)

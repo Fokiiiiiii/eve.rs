@@ -3,7 +3,6 @@ using Eve.Services.Core;
 
 namespace Eve.Services.Core.Tests;
 
-/// <summary>The committed level tags: their fields, their counts and provenance, the owner's optional file, and the level answers.</summary>
 public sealed class MissionLevelTagsTests
 {
     private static string Tag(string rows) => "{\"schema\":\"eve.rs.mission-level-tags.v1\",\"tags\":[" + rows + "]}";
@@ -13,7 +12,7 @@ public sealed class MissionLevelTagsTests
     [Fact]
     public void The_committed_file_has_only_the_allowed_top_level_fields_and_only_the_allowed_row_fields()
     {
-        // Fails if the committed file ever gains a field the owner did not approve (names, message text, rewards, dungeon content, rule IDs, URLs).
+
         using var document = JsonDocument.Parse(MissionLevelTags.CommittedJson());
         foreach (var property in document.RootElement.EnumerateObject())
             Assert.Contains(property.Name, MissionLevelTags.AllowedTopFields);
@@ -27,17 +26,17 @@ public sealed class MissionLevelTagsTests
     }
 
     [Fact]
-    public void The_committed_tags_are_the_1429_basic_missions_with_their_provenance_classes()
+    public void The_committed_tags_are_the_1792_basic_missions_with_their_provenance_classes()
     {
         var tags = MissionLevelTags.Committed;
-        Assert.Equal(1429, tags.Count);
+        Assert.Equal(1792, tags.Count);
         Assert.Equal(1019, tags.All.Count(tag => tag.Provenance == "client"));
         Assert.Equal(13, tags.All.Count(tag => tag.Provenance == "tq-log"));
         Assert.Equal(346, tags.All.Count(tag => tag.Provenance == "wiki"));
-        Assert.Equal(51, tags.All.Count(tag => tag.Provenance == "rule"));
+        Assert.Equal(414, tags.All.Count(tag => tag.Provenance == "rule"));
         Assert.Equal(0, tags.All.Count(tag => tag.Provenance == "owner"));
         Assert.Equal(1324, tags.All.Count(tag => tag.Confidence == "high"));
-        Assert.Equal(78, tags.All.Count(tag => tag.Confidence == "medium"));
+        Assert.Equal(441, tags.All.Count(tag => tag.Confidence == "medium"));
         Assert.Equal(27, tags.All.Count(tag => tag.Confidence == "low"));
         Assert.All(tags.All, tag => Assert.InRange(tag.Level, 1, 5));
     }
@@ -117,7 +116,7 @@ public sealed class MissionLevelTagsTests
     {
         var owner = MissionLevelTags.FromJson(Tag(Good.Replace("\"wiki\"", "\"owner\"").Replace("875", "900000001")), "owner file");
         var merged = MissionLevelTags.Committed.With(owner);
-        Assert.Equal(1430, merged.Count);
+        Assert.Equal(1793, merged.Count);
         Assert.Equal("owner", merged.Answer(900000001).Provenance);
 
         var committedSample = MissionLevelTags.Committed.All.First();

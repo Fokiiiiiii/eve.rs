@@ -1,3 +1,4 @@
+use super::docking::{is_dock_body, surface_distance};
 use super::*;
 
 impl Scene {
@@ -26,7 +27,6 @@ impl Scene {
     }
 
     /// The Host's current structure-pilot record version for this controller lease.
-    /// The source of a structure burst (ST-17 d): the structure the pilot controls, or else the pilot's own ship (a ship-fitted burst projector).
     pub(crate) fn burst_source_id(&self, session: SessionId) -> Option<i64> {
         self.controlled_structure_id(session)
             .or_else(|| self.pilots.get(&session).map(|pilot| pilot.ship.spec.ship_id))
@@ -87,6 +87,7 @@ impl Scene {
             pilot.bound = observer.bound;
             pilot.sees.clone_from(&observer.sees);
             pilot.sees_wrecks.clone_from(&observer.sees_wrecks);
+            pilot.sees_abyssal_traces.clone_from(&observer.sees_abyssal_traces);
             pilot.sees_asteroids.clone_from(&observer.sees_asteroids);
             self.pilots.insert(session, pilot);
             inserted.push((session, structure_id));
@@ -218,6 +219,7 @@ impl Scene {
                 bound: false,
                 sees: BTreeSet::new(),
                 sees_wrecks: BTreeSet::new(),
+                sees_abyssal_traces: BTreeSet::new(),
                 sees_asteroids: BTreeSet::new(),
             },
         );
@@ -254,6 +256,7 @@ impl Scene {
                     pilot.bound = widow.bound;
                     pilot.sees = widow.sees;
                     pilot.sees_wrecks = widow.sees_wrecks;
+                    pilot.sees_abyssal_traces = widow.sees_abyssal_traces;
                     pilot.sees_asteroids = widow.sees_asteroids;
                 }
                 let bound = pilot.bound;
@@ -302,21 +305,31 @@ impl Scene {
         let second = self.next_stamp(now);
         let system = Arc::clone(&self.system);
         let ships = self.ships_in_view(session);
+        let traces = self.abyssal_traces_in_view(session);
+        let trace_adds: Vec<_> =
+            match traces.iter().map(|trace| payload::add_abyssal_trace(first, trace)).collect() {
+                Ok(adds) => adds,
+                Err(_) => return Vec::new(),
+            };
         let Some(pilot) = self.pilots.get(&session) else { return Vec::new() };
         let ship = &pilot.ship;
         let ship_id = id(ship.spec.ship_id);
         let heading =
             |action_stamp: u32| payload::action(action_stamp, heading_name(ship), heading_args(ship));
 
-        let added = if login_visuals_sent {
-            None
-        } else {
+        let mut added_actions = Vec::new();
+        if !login_visuals_sent {
             let Ok(ship_added) = payload::add_ships(first, &ships, now) else { return Vec::new() };
-            // the structures of the system are balls a pilot who comes in is told (placed while it was alone, they were told to nobody)
-            let mut actions = vec![ship_added];
-            actions.extend(payload::add_structures(first, &system, now));
-            Some(actions)
+            added_actions.push(ship_added);
+        }
+        let Ok(abyssal_scene_objects) = payload::add_abyssal_scene_objects(first, &system) else {
+            return Vec::new();
         };
+        // login visual priming adds ships only; structures and private scene objects still need their balls.
+        added_actions.extend(payload::add_structures(first, &system, now));
+        added_actions.extend(abyssal_scene_objects);
+        added_actions.extend(trace_adds);
+        let added = (!added_actions.is_empty()).then_some(added_actions);
         let wrecks = self.wrecks_in_view(session);
         let Ok(state) = payload::set_state_for_ego(
             second,
@@ -393,9 +406,19 @@ impl Scene {
         let system = Arc::clone(&self.system);
         let ships = self.ships_in_view(session);
         let wrecks = self.wrecks_in_view(session);
+        let traces = self.abyssal_traces_in_view(session);
+        let trace_adds: Vec<_> =
+            match traces.iter().map(|trace| payload::add_abyssal_trace(first, trace)).collect() {
+                Ok(adds) => adds,
+                Err(_) => return Vec::new(),
+            };
         let added = if needs_initial_ballpark {
-            let Ok(added) = payload::add_ships(first, &ships, now) else { return Vec::new() };
-            Some(added)
+            let Ok(ship_added) = payload::add_ships(first, &ships, now) else { return Vec::new() };
+            let mut actions = vec![ship_added];
+            actions.extend(trace_adds);
+            Some(actions)
+        } else if !trace_adds.is_empty() {
+            Some(trace_adds)
         } else {
             None
         };
@@ -421,7 +444,7 @@ impl Scene {
                 Self::notify(
                     session,
                     "DoDestinyUpdate",
-                    payload::destiny_update([added], needs_initial_ballpark),
+                    payload::destiny_update(added, needs_initial_ballpark),
                 ),
             ]);
         }
@@ -494,8 +517,25 @@ impl Scene {
         if !self.pilots.contains_key(&session) {
             return vec![Out::Refused { session, command: code, reason: "NO_SHIP_IN_SPACE" }];
         }
+        if self.abyssal.is_some()
+            && matches!(
+                command,
+                Command::WarpTo { .. }
+                    | Command::WarpToPoint { .. }
+                    | Command::Jump { .. }
+                    | Command::CynoJump { .. }
+                    | Command::OpenBridge { .. }
+                    | Command::BridgeJump { .. }
+                    | Command::ConduitJump { .. }
+            )
+        {
+            return vec![Out::Refused { session, command: code, reason: "ABYSSAL_WARP_RESTRICTED" }];
+        }
         if self.link_holds(session, &command, now) {
             return vec![Out::Refused { session, command: code, reason: "LINK_HOLD" }];
+        }
+        if !matches!(command, Command::Dock { .. }) {
+            self.pilots.get_mut(&session).expect("the caller checked").docking_approach = None;
         }
         self.settle_pilot(session, now);
         let told = match command {
@@ -512,6 +552,9 @@ impl Scene {
             Command::ScanTargets => self.scan_targets(session, now),
             Command::DirectionalScan => self.directional_targets(session, now),
             Command::Jump { gate_id, destination_gate } => self.jump(session, gate_id, destination_gate, now),
+            Command::AccelerationGateTransit { gate_id, destination } => {
+                self.acceleration_gate_transit(session, gate_id, destination, now)
+            }
             Command::CynoJump { field_id, destination_system, spool_ms, capacitor } => {
                 self.cyno_jump(session, field_id, destination_system, spool_ms, capacitor, now)
             }
@@ -680,6 +723,22 @@ impl Scene {
     pub fn poll(&mut self, now: i64) -> Vec<Out> {
         self.settle_all(now);
         let mut told = self.populate_pochven(now);
+        let arrived: Vec<(SessionId, i64)> = self
+            .pilots
+            .iter()
+            .filter_map(|(session, pilot)| {
+                let station_id = pilot.docking_approach?;
+                let station = self.system.body(station_id).filter(|body| is_dock_body(body))?;
+                (surface_distance(&pilot.ship, station.position, station.radius) <= DOCKING_RANGE)
+                    .then_some((*session, station_id))
+            })
+            .collect();
+        for (session, station_id) in arrived {
+            if let Some(pilot) = self.pilots.get_mut(&session) {
+                pilot.docking_approach = None;
+            }
+            told.extend(self.dock(session, station_id, now));
+        }
         let due: Vec<(SessionId, i64)> = self
             .pilots
             .iter()
@@ -718,7 +777,9 @@ impl Scene {
         told.extend(self.advance_drones(now));
         told.extend(self.reconcile(now));
         told.extend(self.reconcile_wrecks(now));
+        told.extend(self.reconcile_abyssal_traces(now));
         told.extend(self.reconcile_asteroids(now));
+        told.extend(self.reconcile_deployables(now));
         told.extend(self.expire_wrecks(now));
         told.extend(self.tick_tethers(now));
         self.with_backlog(told)

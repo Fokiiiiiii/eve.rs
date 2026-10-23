@@ -5,7 +5,6 @@ using static Eve.Services.Space.Effects.ModuleAttributes;
 namespace Eve.Services.Space.Effects;
 
 /// <summary>
-/// ST-17 d: the ship-fitted burst projectors (SDE group 842 "Burst Projectors", category 7: 27678, 40635, 40636, 40696-40699; 41350 stays unpublished and refused).
 /// Their effect is the structure burst engine's (<see cref="StructureBurstProjectorEffect"/>): each cycle's pulses reach the ships in range that the Host grants for
 /// that pulse, the pilot's own ship excluded. Their activation follows the ship area effects' policy (SpaceSessions.Modules): an ECM burst's family is refused in
 /// high security unless the pilot's safety is none, and the offensive area effect is recorded with the crimewatch as a smartbomb's is.

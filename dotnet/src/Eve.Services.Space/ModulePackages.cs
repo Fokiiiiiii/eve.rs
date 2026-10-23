@@ -35,6 +35,26 @@ internal static class ModulePackages
             : scriptType.EffectIds.Select(statics.Effect).FirstOrDefault(e => e is { } found && found.Name.Equals(effectName, StringComparison.OrdinalIgnoreCase));
     }
 
+    private static EffectDef? TargetAttackEffectOf(
+        ShipSnapshot snapshot, DogmaStatic statics, long moduleId, TypeDef type, string effectName, long targetId, int repeat,
+        IReadOnlyList<double>? aim, IReadOnlyList<double>? aimEnd)
+    {
+        if (!effectName.Equals("targetAttack", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        var effect = statics.Effects.FirstOrDefault(candidate =>
+            candidate.Name.Equals("targetAttack", StringComparison.OrdinalIgnoreCase) && candidate.Category == EffectDef.Target);
+        if (effect is null)
+        {
+            return null;
+        }
+
+        var context = new EffectContext<ShipSnapshot>(snapshot, snapshot.World, statics, moduleId, type, effect, targetId, repeat, aim, aimEnd);
+        return ModuleEffects.Default.Find(context) is Eve.Services.Space.Effects.TurretEffect ? effect : null;
+    }
+
     /// <summary>
     /// A gun that reloads from its hold is told to the simulation as one that does, so the simulation parks it when its rounds run out (FP-C8). A client reloads its own guns
     /// (<c>shipmodulebutton.py</c>, <c>AutoReload</c>), so for it the gun is told it does not: the simulation stops it with <c>NoCharges</c>, as it does without the reload.
@@ -53,10 +73,16 @@ internal static class ModulePackages
         var name = type.Name;
         var effect = type.EffectIds.Select(statics.Effect).FirstOrDefault(e => e is { } found && found.Name.Equals(effectName, StringComparison.OrdinalIgnoreCase))
             ?? MissileEffect.LauncherEffectFor(type, statics, effectName)   // a launcher is fired with the effect of its charge, and runs its own
-            ?? ScriptEffectOf(snapshot, statics, module, effectName);      // a focus script is loaded as a charge, and its effect is the module's to run
+            ?? ScriptEffectOf(snapshot, statics, module, effectName)      // a focus script is loaded as a charge, and its effect is the module's to run
+            ?? TargetAttackEffectOf(snapshot, statics, moduleId, type, effectName, targetId, repeat, aim, aimEnd);
         if (effect is null || effect.Category is not (EffectDef.Activation or EffectDef.Target))
         {
             return new Result(null, "UNSUPPORTED_EFFECT", module.TypeId, name);
+        }
+        var condition = snapshot.ConditionOf(moduleId);
+        if (condition.Incapacitated || condition.Damage >= 1)
+        {
+            return new Result(null, "MODULE_INCAPACITATED", module.TypeId, name);
         }
         if (snapshot.World.Item(moduleId) is not { State: >= ItemState.Online })
         {

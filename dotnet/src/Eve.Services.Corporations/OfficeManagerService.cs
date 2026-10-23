@@ -75,7 +75,7 @@ public sealed partial class OfficeManagerService(
     [Method("GetMyCorporationsOffices")]
     public async ValueTask<PyValue> GetMyCorporationsOffices(ServiceCall call)
     {
-        var corporationId = SessionCorporationId(call.Session);
+        var corporationId = await CurrentCorporationIdAsync(call);
         if (corporationId <= 0) return new PyList([]);
         var offices = await store.ForCorporationAsync(corporationId, call.Cancellation);
         return new PyList([.. offices.Select(OfficeRow)]);
@@ -131,7 +131,7 @@ public sealed partial class OfficeManagerService(
             await wallets.AdjustAsync(connection, transaction, new Eve.Wallet.WalletAccount(corporationId), -price,
                 station.OwnerId, OfficeRentReferenceType, "Corporation office rental", atStation,
                 $"office-rent:{office.OfficeId}:charge", "office_rental_fee", call.Cancellation);
-            // the rent is the station owner's income (EVE.js creditRentalOwner); the due job runs at the end of the paid cycle
+
             await wallets.EnsureAsync(connection, transaction, station.OwnerId, call.Cancellation);
             await wallets.AdjustAsync(connection, transaction, new Eve.Wallet.WalletAccount(station.OwnerId), price,
                 corporationId, OfficeRentReferenceType, "Corporation office rental", atStation,
@@ -238,7 +238,7 @@ public sealed partial class OfficeManagerService(
     public async ValueTask<PyValue> HasCorpImpoundedItems(ServiceCall call)
     {
         if (await StructureSiteAsync(call) is not null) return PyBool.False; // a structure office is never impounded (EVE.js)
-        var corporationId = SessionCorporationId(call.Session);
+        var corporationId = await CurrentCorporationIdAsync(call);
         if (corporationId <= 0) return PyBool.False;
         var corporation = await corporations.GetAsync(corporationId, call.Cancellation);
         if (corporation is null || corporation.IsNpc) return PyBool.False;
@@ -258,7 +258,7 @@ public sealed partial class OfficeManagerService(
     public async ValueTask<PyValue> GetImpoundReleasePrice(ServiceCall call)
     {
         if (await StructureSiteAsync(call) is not null) return new PyInt(0);
-        var corporationId = SessionCorporationId(call.Session);
+        var corporationId = await CurrentCorporationIdAsync(call);
         if (corporationId <= 0) return new PyInt(0);
         var corporation = await corporations.GetAsync(corporationId, call.Cancellation);
         if (corporation is null || corporation.IsNpc) return new PyInt(0);
@@ -305,6 +305,20 @@ public sealed partial class OfficeManagerService(
     [Method("PrimeOfficeItem")]
     public ValueTask<PyValue> PrimeOfficeItem(ServiceCall call) =>
         ValueTask.FromResult<PyValue>(PyNone.Instance);
+
+    private async Task<long> CurrentCorporationIdAsync(ServiceCall call)
+    {
+        var corporationId = SessionCorporationId(call.Session);
+        if (corporationId <= 0) return 0;
+        var corporation = await corporations.GetAsync(corporationId, call.Cancellation);
+        if (corporation is null) return 0;
+        if (corporation.IsNpc) return corporationId;
+        var characterId = call.Session.CharacterId.GetValueOrDefault();
+        if (characterId <= 0 || await corporations.MemberAsync(characterId, call.Cancellation) is not { } member ||
+            member.CorporationId != corporationId)
+            return 0;
+        return corporationId;
+    }
 
     private async Task<decimal> QuoteAsync(CorporationOfficeStation station, CancellationToken token) =>
         await store.WriteAsync(async (connection, transaction) =>
@@ -371,7 +385,6 @@ public sealed partial class OfficeManagerService(
 
     /// <summary>
     /// A corporation office at a structure (EVE.js RentOffice, structure branch): the Corporation Offices service and its access, the profile's rent charged to the
-    /// corporation and credited to the owner, and the due job, in one transaction. A structure has no office slots.
     /// </summary>
     private async Task<PyValue> RentStructureOfficeAsync(ServiceCall call, long actor, long corporationId, StructureOfficeSite site)
     {

@@ -31,7 +31,6 @@ public sealed record SpaceTransition(SpaceMove? Moved, string? Refusal)
     public static SpaceTransition Refused(string reason) => new(null, reason);
 }
 
-
 /// <summary>The active ship changed while its previous and next ships remain in the same hangar.</summary>
 public sealed record ShipTransitionEvent(
     string Kind,
@@ -87,7 +86,6 @@ public Func<Npgsql.NpgsqlConnection, Npgsql.NpgsqlTransaction, ShipTransitionEve
     /// <summary>The character's active ship, in space, is put in the hangar of a station of the solar system it is in, and the character is there.</summary>
     public Task<SpaceTransition> DockAsync(long characterId, long stationId, CancellationToken cancellationToken = default) =>
         DockAsync(characterId, stationId, null, cancellationToken);
-
 
     public async Task<SpaceTransition> DockAsync(
         long characterId,
@@ -192,7 +190,6 @@ public Func<Npgsql.NpgsqlConnection, Npgsql.NpgsqlTransaction, ShipTransitionEve
             character with { SolarSystemId = solarSystemId, ConstellationId = constellationId, RegionId = regionId }));
     }
 
-
     /// <summary>Prepares a capsule for leaving the docked ship; the client's following Board call switches to it.</summary>
     /// <summary>Ejects from a docked ship into the character's capsule, keeping the ship in its hangar.</summary>
     public async Task<Item?> LeaveShipAsync(long characterId, long stationId, long shipId, CancellationToken cancellationToken = default)
@@ -251,7 +248,7 @@ public Func<Npgsql.NpgsqlConnection, Npgsql.NpgsqlTransaction, ShipTransitionEve
         Func<long, CancellationToken, Task<bool>>? shouldRecover = null)
     {
         var recovered = 0;
-        // whoever owns something that is in space: a character's ship is one, the cans and wrecks of NPCs and of players are the others (only a ship of its owner is moved)
+
         foreach (var owner in await items.OwnersWithFlagAsync(InSpaceFlag, cancellationToken))
         {
             if (shouldRecover is not null && !await shouldRecover(owner, cancellationToken))
@@ -262,6 +259,37 @@ public Func<Npgsql.NpgsqlConnection, Npgsql.NpgsqlTransaction, ShipTransitionEve
             }
         }
         return recovered;
+    }
+
+    /// <summary>
+    /// A game master's relocation (<c>/tele</c>, <c>/solar</c>): the character's active ship goes into space in the solar system, from the hangar of its station
+    /// or from space, and the character is in that system. The station the character last docked at stays (it is where the ship is recovered to if the
+    /// simulation loses it). No gate, range or fuel rule applies: the relocation is the game master's.
+    /// </summary>
+    public async Task<SpaceTransition> RelocateAsync(long characterId, int solarSystemId, int constellationId, int regionId, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await LockAsync(connection, transaction, characterId, cancellationToken);
+
+        if (await characters.GetAsync(characterId, cancellationToken) is not { ShipId: { } shipId } character
+            || await items.LockAndGetAsync(connection, transaction, shipId, cancellationToken) is not { } ship || ship.OwnerId != characterId)
+        {
+            return SpaceTransition.Refused("NO_SHIP");
+        }
+        var docked = ship.Flag == ItemFlags.Hangar && ship.LocationId == character.StationId;
+        if (!docked && ship.Flag != InSpaceFlag)
+        {
+            return SpaceTransition.Refused("NOT_DOCKED_OR_IN_SPACE");
+        }
+        await items.MoveAsync(connection, transaction, ship.Id, solarSystemId, InSpaceFlag, cancellationToken);
+        await characters.SetLocationAsync(connection, transaction, characterId, solarSystemId, constellationId, regionId, cancellationToken);
+        await WriteTransitionAsync(connection, transaction,
+            new ShipTransitionEvent("gm-relocate", characterId, ship.Id, null, ship.LocationId, ship.Flag,
+                solarSystemId, InSpaceFlag), cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return SpaceTransition.Done(new SpaceMove(ship with { LocationId = solarSystemId, Flag = InSpaceFlag }, ship.LocationId, ship.Flag,
+            character with { SolarSystemId = solarSystemId, ConstellationId = constellationId, RegionId = regionId }));
     }
 
     /// <summary>

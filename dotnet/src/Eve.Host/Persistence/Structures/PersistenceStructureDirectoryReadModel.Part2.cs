@@ -43,6 +43,7 @@ public sealed partial class PersistenceStructureDirectoryReadModel
         JumpBridgeServiceId => JumpBridgeAccessSettingId,
         3 => 20,
         5 => 4,
+        Eve.Structures.StructureServiceIds.Medical => 23,
         // MOON_MINING is admitted by the control setting (EVE.js structureServiceAuthority.js SERVICE_ACCESS_SETTING_BY_ID)
         14 => 17,
         16 => 35,
@@ -61,7 +62,21 @@ public sealed partial class PersistenceStructureDirectoryReadModel
             !Truthy(structure["destroyedAt"]);
     }
 
-    private static PyValue StructureInfoPayload(long structureId, JsonObject structure)
+    private static PyValue BasicStructureInfoPayload(long structureId, PyValue fullInfo)
+{
+    var fields = fullInfo is PyObject { Name: PyStr { Value: "util.KeyVal" }, Args: PyDict keyVal }
+        ? keyVal.Entries
+        : Array.Empty<KeyValuePair<PyValue, PyValue>>();
+    PyValue Read(string name) => fields.FirstOrDefault(entry => entry.Key is PyStr key && key.Value == name).Value
+        ?? PyNone.Instance;
+    return Py.KeyVal(
+        ("structureID", new PyLong(structureId)),
+        ("typeID", Read("typeID")),
+        ("solarSystemID", Read("solarSystemID")),
+        ("ownerID", Read("ownerID")));
+}
+
+private static PyValue StructureInfoPayload(long structureId, JsonObject structure)
     {
         var ownerCorporationId = Positive(Integer(structure["ownerCorpID"] ?? structure["corporationID"]));
         var ownerId = Positive(Integer(structure["ownerID"], ownerCorporationId));
@@ -268,7 +283,7 @@ public sealed partial class PersistenceStructureDirectoryReadModel
     }
 
     /// <summary>
-    /// The rent a renewal of a structure's office takes (EVE.js processPaidOfficeRentalBill: getProfileSettingValueForStructure with no session): the group-0 value of the
+
     /// profile's Corporation Office Rent setting. Null when the id is no persistently deployed structure or the profile has no such group: the rent then stays.
     /// </summary>
     public async ValueTask<decimal?> RenewalRentAsync(long structureId, CancellationToken cancellationToken)

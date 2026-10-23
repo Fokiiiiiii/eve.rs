@@ -54,7 +54,6 @@ public static class AllianceRules
     }
 }
 
-
 public sealed record AllianceApplicationWar(long DeclaredById, long AgainstId, bool Mutual);
 public sealed record AllianceApplicationDueJob(long ApplicationId, long AllianceId, long CorporationId, long DueAtMs);
 
@@ -68,8 +67,6 @@ public delegate Task AllianceApplicationScheduleCallback(
 public delegate Task AllianceAffiliationMutationCallback(
     System.Data.Common.DbConnection connection, System.Data.Common.DbTransaction transaction,
     long corporationId, long? allianceId, CancellationToken cancellationToken);
-
-
 
 public delegate Task CorporationMemberAffiliationMutationCallback(
     System.Data.Common.DbConnection connection, System.Data.Common.DbTransaction transaction,

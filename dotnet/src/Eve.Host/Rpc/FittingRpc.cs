@@ -11,7 +11,7 @@ namespace Eve.Host;
 internal sealed partial class CharacterServicesComposition
 {
     /// <summary>
-    /// <c>ship.GetShipFittingInfo</c> for a saved fitting: its name and hull (EveJS <c>Handle_GetShipFittingInfo</c>: the name, the icon, the ship type and
+
     /// no insurance). A fitting that is not saved gets the reference's default, which the ship service gives.
     /// </summary>
     private async ValueTask<ShipFittingInfo?> ShipFittingInfoOf(long fittingId, CancellationToken cancellationToken) =>
@@ -27,10 +27,10 @@ internal sealed partial class CharacterServicesComposition
     }
 }
 
-/// <summary>The host's answers to the fitting calls: the static data, the corporation roles and the sessions that play an owner.</summary>
+
 internal sealed class FittingHost(DogmaStatic dogma, CorporationStore corporations, CharacterSessions sessions) : IFittingHost
 {
-    /// <summary>The corporation role that lets a member change the shared fittings (EveJS <c>CORP_ROLE_FITTING_MANAGER</c>, fittingStore.js:50).</summary>
+
     private const long FittingManagerRole = 1L << 59;
 
     public async Task<IReadOnlyDictionary<int, int>> CategoriesAsync(IReadOnlyCollection<int> typeIds, CancellationToken cancellationToken)
@@ -50,6 +50,27 @@ internal sealed class FittingHost(DogmaStatic dogma, CorporationStore corporatio
     public async Task<bool> HasFittingManagerRoleAsync(long characterId, CancellationToken cancellationToken) =>
         await corporations.MemberAsync(characterId, cancellationToken) is { } member
         && (member.Masks.Roles & FittingManagerRole) == FittingManagerRole;
+
+    public async Task<bool> CanAccessOwnerAsync(
+        long characterId,
+        long ownerId,
+        FittingOwnerScope scope,
+        CancellationToken cancellationToken)
+    {
+        if (characterId <= 0 || ownerId <= 0)
+            return false;
+        if (scope == FittingOwnerScope.Character)
+            return characterId == ownerId;
+
+        var member = await corporations.MemberAsync(characterId, cancellationToken);
+        if (member is null)
+            return false;
+        if (scope == FittingOwnerScope.Corporation)
+            return member.CorporationId == ownerId;
+
+        return await corporations.GetAsync(member.CorporationId, cancellationToken) is { AllianceId: { } allianceId }
+            && allianceId == ownerId;
+    }
 
     public async Task<long?> AllianceExecutorAsync(long allianceId, CancellationToken cancellationToken) =>
         (await corporations.AllianceAsync(allianceId, cancellationToken))?.ExecutorCorporationId;

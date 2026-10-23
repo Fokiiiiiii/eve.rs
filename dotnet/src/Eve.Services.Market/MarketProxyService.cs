@@ -13,11 +13,33 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
 {
     private static long Integer(PyValue v,long fallback = 0) => v switch
     {
-        PyInt n => n.Value,PyLong n => n.Value,PyReal n when double.IsFinite(n.Value) && n.Value>=long.MinValue && n.Value<=long.MaxValue => (long)n.Value,_ => fallback,
+        PyInt n => n.Value,
+        PyLong n => n.Value,
+        PyReal n when double.IsFinite(n.Value) && n.Value >= -9_223_372_036_854_775_808d &&
+            n.Value < 9_223_372_036_854_775_808d && Math.Truncate(n.Value) == n.Value => (long)n.Value,
+        _ => fallback,
     };
+
+    private static int Int32(PyValue value, long fallback = 0)
+    {
+        var numeric = value switch
+        {
+            PyInt integer => integer.Value,
+            PyLong integer => integer.Value,
+            PyReal real when double.IsFinite(real.Value) &&
+                real.Value == Math.Truncate(real.Value) &&
+                real.Value >= int.MinValue && real.Value <= int.MaxValue => (long)real.Value,
+            PyReal => throw Error(new MarketError("MARKET_ARGUMENT_OUT_OF_RANGE")),
+            _ => fallback,
+        };
+        if (numeric is < int.MinValue or > int.MaxValue)
+            throw Error(new MarketError("MARKET_ARGUMENT_OUT_OF_RANGE"));
+        return (int)numeric;
+    }
+
     private static decimal Money(PyValue v) => v switch
     {
-        PyInt n => n.Value,PyLong n => n.Value,PyReal n when double.IsFinite(n.Value) && Math.Abs(n.Value)<=(double)decimal.MaxValue =>
+        PyInt n => n.Value,PyLong n => n.Value,PyReal n when double.IsFinite(n.Value) && Math.Abs(n.Value)<=MarketRules.MaximumOrderPrice =>
             (decimal)MarketRules.RoundIsk(n.Value),_ => 0m,
     };
     private static IReadOnlyList<PyValue> Sequence(PyValue v) => v switch { PyList l => l.Items,PyTuple t => t.Items,_ => [] };
@@ -46,6 +68,9 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
     private static MachoWrappedException MarketErrorPayload(MarketError error) => error.Code switch
     {
         "MktInvalidMinVolumeCannotExceedQuantity" => MachoErrors.ThrowUserError(error.Code),
+        "MARKET_BULK_LIMIT_EXCEEDED" => MachoErrors.ThrowUserError(error.Code),
+        "MARKET_TYPE_ID_INVALID" => MachoErrors.ThrowUserError(error.Code),
+        "MARKET_BULK_ARGUMENT_INVALID" => MachoErrors.ThrowUserError(error.Code),
         "MktBrokersFeeUnexpected2" => MachoErrors.ThrowUserError(error.Code,
             [.. error.Arguments.Select(argument => (argument.Name,(PyValue)Py.Number(Convert.ToDouble(argument.Value,System.Globalization.CultureInfo.InvariantCulture))))]),
         "MARKET_MODIFY_TOO_SOON" => MachoErrors.ThrowUserError("CustomInfo",("info",new PyStr(
@@ -73,6 +98,7 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
         "MARKET_ORDER_STALE" => "That order has changed since it was shown. Reload the orders and try again.",
         "MARKET_DUPLICATE_PLACEMENT" => "An identical order was placed a moment ago, so it was not placed again.",
         "INVALID_MARKET_DURATION_OR_RANGE" => "That duration or range is not offered for a market order.",
+        "MARKET_ARGUMENT_OUT_OF_RANGE" => "One of the market values is outside the supported range.",
         _ => "The market refused the request.",
     };
     private readonly MarketNotifier notifier = new(wallets,characterSessions);
@@ -102,7 +128,10 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
             ("solarSystemID",new PyInt(order.Location.SolarSystemId)),
             ("escrow",Py.Number(MarketRules.RoundIsk((double)owned.Escrow))));
     }
-private const int PlexTypeId = 44992;
+    private const int PlexTypeId = 44992;
+    private const int MaxBuyMultipleItems = 500;
+    private const int MaxMultiSellOrderEntries = 500;
+    private const int MaxHistoryTypeIds = 500;
     /// <summary>Q14: the window in which an identical placement from the same session is refused.</summary>
     private const long DuplicateWindowMs = 5_000;
     private readonly ConcurrentDictionary<long,(MarketRequest Request,long AtMs)> _lastPlacement = new();
@@ -131,7 +160,6 @@ private const int PlexTypeId = 44992;
             group.ParentId is { } parent ? new PyInt(parent) : PyNone.Instance,new PyInt(group.Id),new PyStr(group.Name),
             new PyStr(group.Description),PyNone.Instance,group.HasTypes ? PyBool.True : PyBool.False,
             group.IconId is { } icon ? new PyInt(icon) : PyNone.Instance,new PyInt(group.Id),PyNone.Instance,PyNone.Instance)));
-
 
     /// <summary>Ask summaries are currently encoded as named KeyVal fields; the V24 tuple-consumer path remains unresolved.</summary>
     private static PyValue AskSummary(MarketOrder order,long quantity) => MarketWire.BestByOrder(order,quantity);
@@ -173,7 +201,6 @@ private const int PlexTypeId = 44992;
         return new PyDict(entries);
     }
 
-
     private async Task<int> MarketRegion(ServiceCall call)
     {
         if (call.Session.CharacterId is not { } actor) return 0;
@@ -184,31 +211,46 @@ private const int PlexTypeId = 44992;
     private Task<IReadOnlyList<MarketHistory>> HistoryForRegion(int region,int type,CancellationToken token) =>
         region>0 && type>0 ? store.HistoryAsync(region,type,0,token) : Task.FromResult<IReadOnlyList<MarketHistory>>([]);
 
-
     [Method("GetOldPriceHistory")]
     public async ValueTask<PyValue> GetOldPriceHistory(ServiceCall call)
     {
-        var type=(int)Integer(call.Arg(0));
+        var type=Int32(call.Arg(0));
         return MarketHistoryWire.Pair(now(),await HistoryForRegion(await MarketRegion(call),type,call.Cancellation)).Old;
     }
 
     [Method("GetNewPriceHistory")]
     public async ValueTask<PyValue> GetNewPriceHistory(ServiceCall call)
     {
-        var type=(int)Integer(call.Arg(0));
+        var type=Int32(call.Arg(0));
         return MarketHistoryWire.Pair(now(),await HistoryForRegion(await MarketRegion(call),type,call.Cancellation)).New;
     }
 
     [Method("GetHistoryForManyTypeIDs")]
     public async ValueTask<PyValue> GetHistoryForManyTypeIDs(ServiceCall call)
     {
-        var typeIds=Sequence(call.Arg(0)).Select(value => value switch
+        var request = call.Arg(0);
+        var requestedTypes = request switch
         {
-            PyInt n when n.Value>0 && n.Value<=int.MaxValue => (int)n.Value,
-            PyLong n when n.Value>0 && n.Value<=int.MaxValue => (int)n.Value,
-            PyReal n when double.IsFinite(n.Value) && n.Value>0 && n.Value<=int.MaxValue && n.Value==Math.Truncate(n.Value) => (int)n.Value,
-            _ => 0,
-        }).Where(id=>id>0).Distinct().ToArray();
+            PyList list => list.Items,
+            PyTuple tuple => tuple.Items,
+            PyObjectEx
+            {
+                Kind: ObjectExKind.Ex1,
+                Header: PyTuple { Items: [PyToken { Value: "__builtin__.set" }, PyTuple { Items: [PyList setItems] }] },
+                List.Count: 0,
+                Dict.Count: 0,
+            } => setItems.Items,
+            _ => throw Error(new MarketError("MARKET_TYPE_ID_INVALID")),
+        };
+        if (requestedTypes.Count > MaxHistoryTypeIds)
+            throw Error(new MarketError("MARKET_BULK_LIMIT_EXCEEDED"));
+        var typeIds = requestedTypes.Select(value => value switch
+        {
+            PyInt n when n.Value is > 0 and <= int.MaxValue => (int)n.Value,
+            PyLong n when n.Value is > 0 and <= int.MaxValue => (int)n.Value,
+            PyReal n when double.IsFinite(n.Value) && n.Value > 0 && n.Value <= int.MaxValue && n.Value == Math.Truncate(n.Value) => (int)n.Value,
+            _ => throw Error(new MarketError("MARKET_TYPE_ID_INVALID")),
+        }).Distinct().ToArray();
         if(typeIds.Length==0) return new PyDict([]);
         var region=await MarketRegion(call);
         var entries=new List<KeyValuePair<PyValue,PyValue>>(typeIds.Length);
@@ -223,14 +265,13 @@ private const int PlexTypeId = 44992;
     [Method("GetOrders")]
     public async ValueTask<PyValue> GetOrders(ServiceCall call)
     {
-        var type=(int)Integer(call.Arg(0));
+        var type=Int32(call.Arg(0));
         var c=call.Session.CharacterId is { } id ? await characters.GetAsync(id,call.Cancellation) : null;
         var viewer=c is null ? default : new MarketLocation(c.StationId,c.SolarSystemId,c.ConstellationId,c.RegionId);
         var book=c is null || type<=0 ? new MarketBook([],[]) : await store.BookAsync(c.RegionId,type,now(),call.Cancellation);
         return ObjectCaching.MethodResult(Py.Tuple(MarketWire.Orders(book.Asks,topology,viewer),MarketWire.Orders(book.Bids,topology,viewer)),
             now(),sessionInfo:"solarsystemid2");
     }
-
 
     private static PyValue OwnerOrderRowset(IReadOnlyList<MarketOwnedOrder> orders,bool? corporation)
     {
@@ -277,12 +318,18 @@ private const int PlexTypeId = 44992;
         if (call.Session.CharacterId is not { } actor) return OwnerOrderRowset([],true);
         try
         {
+            if (await characters.GetAsync(actor,call.Cancellation) is not { } character ||
+                await corporations.GetAsync(character.CorporationId,call.Cancellation) is not { Deleted:false } corporation)
+                return OwnerOrderRowset([],true);
+            if (corporation.IsNpc)
+                return OwnerOrderRowset([],true);
+            if (!await corporations.CanReadCorporationMarketOrdersAsync(actor,call.Cancellation))
+                throw new Eve.Corporations.CorporationError("CORPORATION_ACCESS_DENIED");
             var orders=await trading.OwnerOrdersAsync(actor,true,false,call.Cancellation);
             return ObjectCaching.MethodResult(OwnerOrderRowset(orders,true),now(),sessionInfo:"corpid");
         }
         catch (Exception e) when (e is MarketError or Eve.Corporations.CorporationError) { throw Error(e); }
     }
-
 
     [Method("GetCharEscrow")]
     public async ValueTask<PyValue> GetCharEscrow(ServiceCall call)
@@ -360,8 +407,8 @@ private const int PlexTypeId = 44992;
     [Method("PlaceBuyOrder")]
     public async ValueTask<PyValue> PlaceBuyOrder(ServiceCall call)
     {
-        var request=new MarketRequest(Actor(call),(int)Integer(call.Arg(1)),true,Money(call.Arg(2)),Integer(call.Arg(3)),Integer(call.Arg(0)),
-            (int)Integer(call.Arg(6)),(int)Integer(call.Arg(4),-1),Integer(call.Arg(5),1),UseCorporation:JsSemantics.Truthy(call.Arg(7)),
+        var request=new MarketRequest(Actor(call),Int32(call.Arg(1)),true,Money(call.Arg(2)),Integer(call.Arg(3)),Integer(call.Arg(0)),
+            Int32(call.Arg(6)),Int32(call.Arg(4),-1),Integer(call.Arg(5),1),UseCorporation:JsSemantics.Truthy(call.Arg(7)),
             ExpectedBrokerFee:call.Arg(8) is PyReal quote ? quote.Value : call.Arg(8) is PyInt whole ? whole.Value : null);
         try
         {
@@ -377,17 +424,35 @@ private const int PlexTypeId = 44992;
     public async ValueTask<PyValue> PlaceMultiSellOrder(ServiceCall call)
     {
         Actor(call);
+        if (call.Arg(0) is not (PyList or PyTuple))
+            throw Error(new MarketError("MARKET_BULK_ARGUMENT_INVALID"));
+        var entries = Sequence(call.Arg(0));
+        if (entries.Count > MaxMultiSellOrderEntries)
+            throw Error(new MarketError("MARKET_BULK_LIMIT_EXCEEDED"));
+        var duration = Int32(call.Arg(2));
+        var useCorporation = JsSemantics.Truthy(call.Arg(1));
+        var itemIds = new HashSet<long>();
+        foreach (var entry in entries)
+        {
+            var typeId = Int32(Field(entry, "typeID"));
+            var quantity = Integer(Field(entry, "quantity"));
+            var stationId = Integer(Field(entry, "stationID"));
+            var itemId = Integer(Field(entry, "itemID"));
+            var price = Money(Field(entry, "price"));
+            if (typeId <= 0 || quantity <= 0 || stationId <= 0 || itemId <= 0 || price <= 0 || !itemIds.Add(itemId))
+                throw Error(new MarketError("MARKET_BULK_ARGUMENT_INVALID"));
+        }
         var index = 0;
         var traded = false;
-        foreach (var entry in Sequence(call.Arg(0)))
-            traded |= await SellEntry(call, entry, JsSemantics.Truthy(call.Arg(1)), (int)Integer(call.Arg(2)), call.Arg(3), Key(call, "sell:" + index++));
+        foreach (var entry in entries)
+            traded |= await SellEntry(call, entry, useCorporation, duration, call.Arg(3), Key(call, "sell:" + index++));
         return traded ? PyBool.True : PyBool.False;
     }
 
     /// <summary>One sell line (MarketTrading.PlaceAsync): the stack moves into the order's escrow, or fills the book at once. Answers whether it traded or rests.</summary>
     private async Task<bool> SellEntry(ServiceCall call, PyValue entry, bool useCorporation, int duration, PyValue expectedFee, string key)
     {
-        var request = new MarketRequest(Actor(call), (int)Integer(Field(entry, "typeID")), false, Money(Field(entry, "price")), Integer(Field(entry, "quantity")),
+        var request = new MarketRequest(Actor(call), Int32(Field(entry, "typeID")), false, Money(Field(entry, "price")), Integer(Field(entry, "quantity")),
             Integer(Field(entry, "stationID")), duration, ItemId: Integer(Field(entry, "itemID")), UseCorporation: useCorporation,
             ExpectedBrokerFee: expectedFee is PyReal quote ? quote.Value : expectedFee is PyInt whole ? whole.Value : null);
         try
@@ -435,30 +500,46 @@ private const int PlexTypeId = 44992;
     [Method("BuyMultipleItems")]
     public async ValueTask<PyValue> BuyMultipleItems(ServiceCall call)
     {
+        if (call.Arg(1) is not (PyList or PyTuple))
+            throw Error(new MarketError("MARKET_BULK_ARGUMENT_INVALID"));
+        var entries = Sequence(call.Arg(1));
+        if (entries.Count > MaxBuyMultipleItems)
+            throw Error(new MarketError("MARKET_BULK_LIMIT_EXCEEDED"));
         var actor = Actor(call);
         var stationId = Integer(call.Arg(0));
         var useCorporation = JsSemantics.Truthy(call.Arg(2));
-        var line = 0;
-        var created = new List<MarketOwnedOrder>();
-        foreach (var entry in Sequence(call.Arg(1)))
+        var requests = new List<(MarketRequest Request,string OperationKey)>();
+        foreach (var (entry,line) in entries.Select((entry,line)=>(entry,line)))
         {
-            var key = Key(call, "buy-multi:" + line++);
-            var typeId = Integer(Field(entry, "typeID"));
+            var typeId = Int32(Field(entry, "typeID"));
             var quantity = Integer(Field(entry, "quantity"));
-            if (typeId <= 0 || quantity <= 0) continue;
-            var request = new MarketRequest(actor, (int)typeId, true, Money(Field(entry, "price")), quantity, stationId, 0,
-                MarketRules.RangeStation, Math.Max(1, Integer(Field(entry, "minVolume"), 1)), UseCorporation: useCorporation);
-            try
+            var rawMinimumVolume = Field(entry, "minVolume");
+            var minimumVolume = rawMinimumVolume is PyNone ? 1 : Integer(rawMinimumVolume, long.MinValue);
+            var price = Money(Field(entry, "price"));
+            if (typeId <= 0 || quantity < 0 || minimumVolume <= 0 || price <= 0 || quantity > 0 && minimumVolume > quantity)
+                throw Error(new MarketError("MARKET_BULK_ARGUMENT_INVALID"));
+            if (quantity == 0)
+                continue;
+            var request = new MarketRequest(actor, typeId, true, price, quantity, stationId, 0,
+                MarketRules.RangeStation, minimumVolume, UseCorporation: useCorporation);
+            RefuseRepeatedPlacement(call, request);
+            if (requests.Any(previous => previous.Request == request))
+                throw Error(new MarketError("MARKET_DUPLICATE_PLACEMENT"));
+            requests.Add((request,Key(call,"buy-multi:" + line)));
+        }
+        try
+        {
+            var receipts = await trading.PlaceBuyOrdersAsync(requests, call.Cancellation);
+            foreach (var line in requests) RecordPlacement(call, line.Request);
+            var created = new List<MarketOwnedOrder>();
+            foreach (var receipt in receipts)
             {
-                RefuseRepeatedPlacement(call, request);
-                var receipt = await trading.PlaceAsync(request, key, call.Cancellation);
-                RecordPlacement(call, request);
                 await Publish(receipt);
                 created.AddRange(receipt.ChangedOrders.Where(change => change.Reason == "Created").Select(change => change.Order));
             }
-            catch (Exception e) when (e is MarketError or MoneyLimitException or InsufficientFundsException or Eve.Corporations.CorporationError) { throw Error(e); }
+            return OwnerOrderRowset(created, null);
         }
-        return OwnerOrderRowset(created, null);
+        catch (Exception e) when (e is MarketError or MoneyLimitException or InsufficientFundsException or Eve.Corporations.CorporationError) { throw Error(e); }
     }
 
     /// <summary>A PLEX sell line (the client's SellPlex): the PLEX type only; it sells personally or for the corporation like any other item. Answers whether it traded or rests.</summary>
@@ -468,7 +549,7 @@ private const int PlexTypeId = 44992;
         var entry = call.Arg(0);
         if (Integer(Field(entry, "typeID")) != PlexTypeId)
             throw MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr("PLEX sell orders must use a PLEX inventory item.")));
-        var traded = await SellEntry(call, entry, JsSemantics.Truthy(call.Arg(1)), (int)Integer(call.Arg(2)), call.Arg(3), Key(call, "plex-sell:0"));
+        var traded = await SellEntry(call, entry, JsSemantics.Truthy(call.Arg(1)), Int32(call.Arg(2)), call.Arg(3), Key(call, "plex-sell:0"));
         return traded ? PyBool.True : PyBool.False;
     }
 
@@ -496,7 +577,7 @@ private const int PlexTypeId = 44992;
     public async ValueTask<PyValue> CorpGetTransactions(ServiceCall call)
     {
         if (call.Session.CharacterId is not { } actor) return Py.List();
-        int? accountKey = call.Arg(1) is null or PyNone ? null : (int)Integer(call.Arg(1), 1000);
+        int? accountKey = call.Arg(1) is null or PyNone ? null : Int32(call.Arg(1), 1000);
         try
         {
             if (!await corporations.CanReadWalletDivisionAsync(actor, accountKey, call.Cancellation))

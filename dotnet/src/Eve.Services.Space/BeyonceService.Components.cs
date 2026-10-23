@@ -28,7 +28,6 @@ public sealed partial class BeyonceService
         return None;
     }
 
-    /// <summary>The text of a client string: a string-table item or UTF-8 text is a PyStr, a Python <c>str</c> is PyBytes on the wire.</summary>
     private static string? TextOf(PyValue value) => value switch
     {
         PyStr text => text.Value,

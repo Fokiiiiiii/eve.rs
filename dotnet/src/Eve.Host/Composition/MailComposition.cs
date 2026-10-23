@@ -35,6 +35,47 @@ using static Eve.Host.HostConfiguration;
 
 namespace Eve.Host;
 
+public static class MailOrganizationAuthorization
+{
+    public const int MaxExpandedMailRecipients = 5_000;
+
+    public static bool TryAddRecipient(
+        List<long> recipientIds,
+        Dictionary<long, int> recipientLabelMasks,
+        long characterId,
+        int labelMask,
+        int maximum = MaxExpandedMailRecipients)
+    {
+        if (characterId <= 0)
+            return true;
+        if (recipientLabelMasks.TryGetValue(characterId, out var prior))
+        {
+            recipientLabelMasks[characterId] = prior | labelMask;
+            return true;
+        }
+        if (maximum <= 0 || recipientIds.Count >= maximum)
+            return false;
+        recipientIds.Add(characterId);
+        recipientLabelMasks.Add(characterId, labelMask);
+        return true;
+    }
+
+    public static bool CanSendOrganizationMail(
+        long recipientId,
+        Eve.Corporations.Corporation senderCorporation,
+        long? currentCorpRoleMask)
+    {
+        if (recipientId <= 0 || senderCorporation.IsNpc || senderCorporation.Deleted ||
+            currentCorpRoleMask is null)
+            return false;
+        if (recipientId == senderCorporation.Id)
+            return true;
+        return senderCorporation.AllianceId == recipientId &&
+            (currentCorpRoleMask.Value & Eve.Corporations.CorporationRoles.ChatManager) ==
+                Eve.Corporations.CorporationRoles.ChatManager;
+    }
+}
+
 internal sealed partial class CharacterServicesComposition
 {
     async Task<PersistenceMailSendRecipients?> ResolveMailSendRecipientsAsync(
@@ -48,19 +89,29 @@ internal sealed partial class CharacterServicesComposition
         if (sender is null)
             return null;
 
+        if (request.CorporationOrAllianceRecipientIds is { Count: > 0 } requestedOrganizationIds)
+        {
+            var senderMembership = await corporations.MemberAsync(request.SenderCharacterId, cancellationToken);
+            if (senderMembership is null)
+                return null;
+            var senderCorporation = await corporations.GetAsync(senderMembership.CorporationId, cancellationToken);
+            if (senderCorporation is null)
+                return null;
+            var currentCorpRoleMask = await corporations.MemberCorpRolesAsync(
+                senderCorporation.Id, request.SenderCharacterId, cancellationToken);
+            if (currentCorpRoleMask is null ||
+                requestedOrganizationIds.Distinct().Any(recipientId =>
+                    !MailOrganizationAuthorization.CanSendOrganizationMail(recipientId, senderCorporation, currentCorpRoleMask.Value)))
+                return null;
+        }
+
         var recipientIds = new List<long>();
         var recipientLabelMasks = new Dictionary<long, int>();
         void AddRecipient(long characterId, int labelMask)
         {
-            if (characterId <= 0)
-                return;
-            if (recipientLabelMasks.TryGetValue(characterId, out var prior))
-                recipientLabelMasks[characterId] = prior | labelMask;
-            else
-            {
-                recipientIds.Add(characterId);
-                recipientLabelMasks.Add(characterId, labelMask);
-            }
+            if (!MailOrganizationAuthorization.TryAddRecipient(
+                    recipientIds, recipientLabelMasks, characterId, labelMask))
+                throw Eve.Services.MachoErrors.ThrowUserError("MAIL_RECIPIENT_LIMIT_EXCEEDED");
         }
 
         var senderLabelMask = 2;
@@ -207,7 +258,7 @@ internal sealed partial class CharacterServicesComposition
         }
     }
 
-    /// <summary>The notifications mailbox, shared with the corporation office jobs (ST-16: rent due and eviction notices).</summary>
+
     private Eve.Host.Persistence.Mail.PersistenceTransactionMailbox? notificationMailbox;
 
     private void SubscribeMoonOwnerNotifications()

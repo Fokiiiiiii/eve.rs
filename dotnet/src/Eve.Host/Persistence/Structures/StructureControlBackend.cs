@@ -13,7 +13,7 @@ namespace Eve.Host;
 /// <summary>A read-only projection of the real structure record and its matching SDE type; never a physical ship or a health store.</summary>
 public sealed record StructureControlView(Item Item, TypeDef Type, int SolarSystemId);
 
-/// <summary>ST-5: the persisted owner, observer acknowledgement and client session transition.</summary>
+
 public sealed class StructureControlBackend
 {
     // V24.01 structures/settings.py SETTING_DEFENSE_CAN_CONTROL_STRUCTURE.
@@ -42,6 +42,14 @@ public sealed class StructureControlBackend
 
     public async ValueTask<long?> GetStructurePilotAsync(ServiceCall call, long structureId)
     {
+        if (structureId <= 0) return null;
+        var visibleSystem = call.Session.GetInt("solarsystemid2") ?? call.Session.GetInt("solarsystemid");
+        if (visibleSystem is null) return null;
+        var structure = await _structures.GetAsync(structureId, call.Cancellation);
+        if (structure is null || structure.Snapshot.DestroyedMs != 0 ||
+            structure.Snapshot.State is StructureState.Unanchored or StructureState.Anchoring ||
+            structure.SolarSystemId != visibleSystem.Value)
+            return null;
         await using var connection = await _source.OpenConnectionAsync(call.Cancellation);
         return (await _pilots.GetByStructureAsync(connection, null, structureId, call.Cancellation))?.CharacterId;
     }

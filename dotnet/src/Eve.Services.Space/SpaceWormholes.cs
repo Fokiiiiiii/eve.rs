@@ -19,23 +19,29 @@ using Eve.Wormholes;
 namespace Eve.Services.Space;
 
 /// <summary>
-/// The wormholes of J-space in the space service (slice 7): the host places both ends of every connection of a system when the system's scene
 /// starts or a ship arrives in it, publishes the opening and collapse of a connection, and runs a pilot's jump through a wormhole end: the mass
 /// of the ship is checked and taken from the wormhole (<see cref="WormholeWorld.TransitAsync"/>), and the simulation takes the jump as it takes a stargate's.
 /// </summary>
 public sealed partial class SpaceSessions
 {
-    /// <summary>The environment of a solar system as dogma effects (its wormhole's effect beacon); empty for a system with none (slice 7c).</summary>
+
     public Func<int, IReadOnlyList<Eve.Dogma.EffectDef>>? SystemEnvironment { get; set; }
 
     /// <summary>The environment effects of the system the ship is in, from the pilot that flies it (no pilot, no environment).</summary>
     private IReadOnlyList<Eve.Dogma.EffectDef> EnvironmentOf(long shipId)
     {
-        if (SystemEnvironment is null || _pilots.Values.FirstOrDefault(pilot => pilot.ShipId == shipId) is not { } flown)
+        var flown = _pilots.Values.FirstOrDefault(pilot => pilot.ShipId == shipId);
+        var offline = _abyssalOfflineResidents.GetValueOrDefault(shipId);
+        var scene = flown?.SimulationScene ?? offline?.Scene;
+        if (scene is null) return [];
+        if (scene.Value.InstanceId > 0)
         {
-            return [];
+            var contentId = flown?.AbyssalContentId ?? offline?.ContentId;
+            var weather = _abyssalEnvironmentByScene.TryGetValue(scene.Value, out var effects)
+                ? effects : contentId is not null ? AbyssalEnvironmentEffects?.Invoke(contentId, scene.Value.LocationId) ?? [] : [];
+            return [.. weather, .. LocalAbyssalEffects(scene.Value, shipId)];
         }
-        return SystemEnvironment(flown.SolarSystemId);
+        return SystemEnvironment?.Invoke(scene.Value.LocationId) ?? [];
     }
 
     /// <summary>
@@ -57,7 +63,6 @@ public sealed partial class SpaceSessions
         }
     }
 
-    /// <summary>The polarization of a wormhole end in one direction (wiki "Wormhole": five minutes per pilot).</summary>
     private static readonly long PolarizationMs = (long)WormholeRules.Polarization.TotalMilliseconds;
 
     /// <summary>The wormhole world, or null when the host has no client data for it (then no wormhole exists).</summary>
@@ -164,6 +169,7 @@ public sealed partial class SpaceSessions
             throw JumpRefused(reply.Reason);
         }
 
+        await CancelShipSelfDestructAsync(pilot.ShipId, cancellationToken);
         var changes = new List<WormholeChange>();
         var transit = await world.TransitAsync(connectionId, mass, now, changes.Add, cancellationToken);
         if (transit.Outcome == TransitOutcome.Refused)

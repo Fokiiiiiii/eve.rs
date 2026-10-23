@@ -4,7 +4,7 @@ use crate::world::{Body, Detail};
 
 pub(crate) const STATION: i64 = 60_000_001;
 pub(crate) const SESSION: SessionId = 7;
-/// 2026-09-29 12:00:00 UTC as a FILETIME.
+
 pub(crate) const NOON: i64 = 134_351_688_000_000_000;
 
 pub(crate) fn system() -> Arc<SolarSystem> {
@@ -1259,7 +1259,7 @@ fn a_speed_fraction_keeps_the_course_but_wakes_a_stopped_ship() {
 }
 
 #[test]
-fn a_ship_that_follows_the_station_comes_to_rest_in_docking_range_and_docks_when_asked_again() {
+fn a_dock_request_from_out_of_range_approaches_and_completes_docking_on_arrival() {
     let mut scene = scene();
     // 50 km off the station's surface, at rest
     scene.pilots.get_mut(&SESSION).unwrap().ship.position =
@@ -1267,16 +1267,17 @@ fn a_ship_that_follows_the_station_comes_to_rest_in_docking_range_and_docks_when
     scene.pilots.get_mut(&SESSION).unwrap().ship.velocity = Vec3::ZERO;
     let first = scene.command(SESSION, Command::Dock { station_id: STATION }, NOON);
     assert_eq!(first.last(), Some(&Out::Approaching { session: SESSION, command: 4, distance: 50_000.0 }));
-    assert!(scene.poll(NOON + seconds(400)).is_empty(), "it does not dock by itself");
+    let arrival = scene.poll(NOON + seconds(400));
+    assert!(arrival.iter().any(|out| matches!(out, Out::Notify { name: "OnDockingAccepted", .. })));
+    assert!(arrival.iter().any(|out| matches!(out, Out::Accepted { command: 4, .. })));
+    let ship = scene.ship(SESSION, NOON + seconds(400)).unwrap();
+    assert_eq!(ship.course, Course::Stop);
 
-    let ship = scene.ship(SESSION, NOON + seconds(400)).unwrap().clone();
-    let gap = ((ship.position.x - 1_000_000.0).powi(2) + ship.position.y.powi(2)).sqrt() - 47.0 - 1_000.0;
-    assert!((2_400.0..=2_500.0).contains(&gap), "it stands {gap} m off the surface");
-    assert!(speed(&ship) < 1.0);
-
-    let second = scene.command(SESSION, Command::Dock { station_id: STATION }, NOON + seconds(400));
-    assert_eq!(action_names(&second[1]), ["SetBallMassive", "Stop"]);
-    assert_eq!(second.last(), Some(&accepted(4, NOON + seconds(400))));
+    let completed = scene.poll(NOON + seconds(404));
+    assert!(
+        completed.iter().any(|out| matches!(out, Out::Docked { session: SESSION, station_id: STATION, .. }))
+    );
+    assert!(scene.ship(SESSION, NOON + seconds(404)).is_none());
 }
 
 #[test]
@@ -1723,6 +1724,7 @@ fn a_running_hardener_and_a_module(scene: &mut Scene) -> (i64, i64) {
         fx: "effects.AdaptiveArmorHardener".to_string(),
         duration_ms: 10_000.0,
         capacitor_need: 0.0,
+        fallback_capacitor_need: 0.0,
         repeat: 1000,
         target_id: 0,
         turret: None,
@@ -2044,6 +2046,7 @@ fn an_overheated_cycle_damages_and_burns_a_fitted_module_in_its_rack() {
         fx: "effects.Test".to_string(),
         duration_ms: 1_000.0,
         capacitor_need: 0.0,
+        fallback_capacitor_need: 0.0,
         repeat: 1,
         target_id: 0,
         turret: None,
@@ -2255,6 +2258,7 @@ fn interdiction_at(scene: &mut Scene, at: Vec3, now: i64) {
         module_id: 0,
         module_type: 0,
         watchers: std::collections::BTreeSet::new(),
+        slim_fields: std::collections::BTreeMap::new(),
     };
     scene.deployables.insert(probe.id, probe);
 }
@@ -2936,6 +2940,55 @@ fn tether_scene() -> Scene {
     near_the_structure(35_832, 27, 111)
 }
 
+#[test]
+fn a_crab_link_immediately_ends_tether_until_the_status_tail_clears() {
+    let mut scene = tether_scene();
+    let linked_ship_id = scene.pilots[&SESSION].ship.spec.ship_id;
+    let a = scene.pilots[&SESSION].ship.position;
+    let crab_id = 4_250_000_000_000_050;
+    let idle = crate::link::AnalysisBeaconState {
+        active: true,
+        activate_at: 0,
+        deployed_at: NOON,
+        activation_seconds: 20,
+        link_state: 1,
+        link_complete_at: 0,
+        linked_ship_id: 0,
+    };
+    scene.place_analysis_beacon(
+        crate::link::AnalysisBeaconPlacement {
+            deployable_id: crab_id,
+            solar_system_id: 30_000_001,
+            name: "CONCORD Rogue Analysis Beacon".to_string(),
+            type_id: 60_244,
+            group_id: 4_137,
+            position: [a.x + 1_000.0, a.y, a.z],
+            radius: 100.0,
+            owner_id: 1,
+            corporation_id: 1,
+            alliance_id: 0,
+            ship_id: linked_ship_id,
+            state: idle,
+        },
+        NOON,
+    );
+    assert_eq!(tether_changes(&grant_tether(&mut scene, NOON)), vec![(SESSION, 0, STRUCTURE, false)]);
+
+    let link_done = NOON + 240 * SECOND;
+    let changed = scene.set_analysis_beacon_state(
+        crab_id,
+        crate::link::AnalysisBeaconState {
+            link_state: 2,
+            link_complete_at: link_done,
+            linked_ship_id,
+            ..idle
+        },
+        NOON,
+    );
+    assert_eq!(tether_changes(&changed), vec![(SESSION, STRUCTURE, 0, false)]);
+    assert!(!scene.is_tethered_session(SESSION, NOON + SECOND));
+}
+
 fn tether_candidates(range: f64) -> Vec<crate::link::TetherCandidate> {
     vec![crate::link::TetherCandidate { structure_id: STRUCTURE, range }]
 }
@@ -2975,6 +3028,7 @@ fn tether_effect(action: Option<crate::modules::Action>) -> crate::modules::Effe
         fx: String::new(),
         duration_ms: 60_000.0,
         capacitor_need: 0.0,
+        fallback_capacitor_need: 0.0,
         repeat: 1,
         target_id: 0,
         turret: None,
@@ -3494,4 +3548,196 @@ fn a_wormhole_end_out_of_reach_refuses_the_jump_and_a_removed_one_is_not_found()
     scene.remove_wormhole(WORMHOLE_END, NOON);
     assert!(scene.wormhole_index(WORMHOLE_END).is_none());
     assert_eq!(refusal(&scene.command(SESSION, jump(WORMHOLE_END, FAR_END), NOON)), "STARGATE_NOT_FOUND");
+}
+
+#[test]
+fn a_relocation_puts_the_ship_at_the_station_anchor_facing_it() {
+    let mut scene = Scene::new(system());
+    scene.enter_at_anchor(SESSION, spec(), NOON).unwrap();
+    assert!(scene.pilots[&SESSION].jumped_in);
+    // the station is 1 000 m across: the ship is put past its surface by its own radius and the 5 000 m clearance, on the x axis, facing the station
+    let at = scene.ship(SESSION, NOON).unwrap();
+    assert_eq!(at.position.x, 1_000_000.0 + 1_000.0 + spec().radius + 5_000.0);
+    assert_eq!((at.position.y, at.position.z), (0.0, 0.0));
+    assert_eq!(at.direction.x, -1.0);
+}
+
+#[test]
+fn a_relocation_anchors_at_the_first_stargate_of_the_system_before_its_station() {
+    let (here, _) = gated_systems();
+    let mut scene = Scene::new(Arc::new(here));
+    scene.enter_at_anchor(SESSION, spec(), NOON).unwrap();
+    // the near gate is 6 000 m in radius: the ship is past its surface by its own radius and the clearance
+    let gate = scene.system.body(NEAR_GATE).unwrap().position;
+    let at = scene.ship(SESSION, NOON).unwrap();
+    assert_eq!(at.position.x, gate.x + 6_000.0 + spec().radius + 5_000.0);
+    assert_eq!((at.position.y, at.position.z), (gate.y, gate.z));
+}
+
+fn replay_hash(scene: &Scene, outputs: &[Out]) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325u64;
+    let mut add = |bytes: &[u8]| {
+        for byte in bytes {
+            hash ^= u64::from(*byte);
+            hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    };
+    for (session, pilot) in &scene.pilots {
+        add(&session.to_le_bytes());
+        for value in [
+            pilot.ship.position.x,
+            pilot.ship.position.y,
+            pilot.ship.position.z,
+            pilot.ship.velocity.x,
+            pilot.ship.velocity.y,
+            pilot.ship.velocity.z,
+            pilot.ship.direction.x,
+            pilot.ship.direction.y,
+            pilot.ship.direction.z,
+            pilot.ship.speed_fraction,
+        ] {
+            add(&value.to_bits().to_le_bytes());
+        }
+        add(&pilot.settled_at.to_le_bytes());
+        add(format!("{:?}{:?}", pilot.ship.course, pilot.flight).as_bytes());
+    }
+    add(&scene.next_stamp.to_le_bytes());
+    add(format!("{outputs:?}{:?}", scene.backlog).as_bytes());
+    hash
+}
+
+fn run_recorded_ticks(recording: &[(i64, Command)]) -> u64 {
+    let mut scene = scene();
+    let mut output = Vec::new();
+    for (at, command) in recording {
+        output.extend(scene.command(SESSION, *command, *at));
+        output.extend(scene.poll(*at + 2_500_000));
+    }
+    replay_hash(&scene, &output)
+}
+
+#[test]
+fn recorded_tick_inputs_replay_to_the_same_state_hash() {
+    let mut state = 0x9e37_79b9_7f4a_7c15u64;
+    let mut recording = Vec::new();
+    for tick in 0..512i64 {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        let x = ((state & 0xffff) as f64 / 32767.5) - 1.0;
+        let y = (((state >> 16) & 0xffff) as f64 / 32767.5) - 1.0;
+        let z = (((state >> 32) & 0xffff) as f64 / 32767.5) - 1.0;
+        let command = if tick % 3 == 0 {
+            Command::SetSpeedFraction(((state >> 48) as f64) / u16::MAX as f64)
+        } else {
+            Command::GotoDirection(Vec3::new(x, y, z))
+        };
+        recording.push((NOON + tick * 5_000_000, command));
+    }
+
+    assert_eq!(run_recorded_ticks(&recording), run_recorded_ticks(&recording));
+}
+
+#[test]
+fn movement_warp_and_collision_invariants_hold_over_deterministic_inputs() {
+    let mut state = 0xd1b5_4a32_d192_ed03u64;
+    for case in 0..96 {
+        state = state.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+        let components = [
+            ((state & 0xffff) as f64 / 32767.5) - 1.0,
+            (((state >> 16) & 0xffff) as f64 / 32767.5) - 1.0,
+            (((state >> 32) & 0xffff) as f64 / 32767.5) - 1.0,
+        ];
+        let mut moving = scene();
+        moving.command(
+            SESSION,
+            Command::GotoDirection(Vec3::new(components[0], components[1], components[2])),
+            NOON,
+        );
+        moving.command(SESSION, Command::SetSpeedFraction((case as f64) / 95.0), NOON);
+        moving.settle_all(NOON + seconds(30));
+        let ship = &moving.pilots[&SESSION].ship;
+        assert!(ship.position.x.is_finite() && ship.position.y.is_finite() && ship.position.z.is_finite());
+        assert!(ship.velocity.x.is_finite() && ship.velocity.y.is_finite() && ship.velocity.z.is_finite());
+        assert!((0.0..=1.0).contains(&ship.speed_fraction));
+        assert!(speed(ship) <= ship.spec.max_velocity + 1e-6);
+
+        let mut warping = scene();
+        let destination = Vec3::new(5_000_000.0 + case as f64 * 10_000.0, 2_000_000.0, -1_000_000.0);
+        let response =
+            warping.command(SESSION, Command::WarpToPoint { destination, range: case as f64 * 100.0 }, NOON);
+        assert!(matches!(response.last(), Some(Out::Accepted { command: 21, .. })));
+        assert!(matches!(
+            warping.pilots[&SESSION].ship.course,
+            Course::Warp { raw_destination, stop_distance, total_distance, .. }
+                if raw_destination == destination
+                    && stop_distance == case as f64 * 100.0
+                    && total_distance >= crate::warp::MINIMUM_WARP_DISTANCE
+        ));
+
+        let mut colliding = scene();
+        let other = add_other_ship(&mut colliding);
+        let offset = (case as f64) - 48.0;
+        colliding.pilots.get_mut(&SESSION).unwrap().ship.position = Vec3::new(offset, 0.0, 0.0);
+        colliding.pilots.get_mut(&other).unwrap().ship.position = Vec3::new(-offset, 0.0, 0.0);
+        colliding.settle_all(NOON);
+        let first = &colliding.pilots[&SESSION].ship;
+        let second = &colliding.pilots[&other].ship;
+        let separation = (second.position.x - first.position.x)
+            .hypot(second.position.y - first.position.y)
+            .hypot(second.position.z - first.position.z);
+        assert!(separation >= first.spec.radius + second.spec.radius - 1e-6, "case {case}: {separation}");
+    }
+}
+
+#[test]
+fn a_long_tick_soak_does_not_retain_per_tick_scene_state() {
+    let mut scene = scene();
+    scene.command(SESSION, Command::Stop, NOON);
+    let retained_state = |scene: &Scene| {
+        [
+            scene.pilots.len(),
+            scene.boxes.len(),
+            scene.boxes.capacity(),
+            scene.backlog.len(),
+            scene.aggressions.len(),
+            scene.missiles.len(),
+            scene.dots.len(),
+            scene.deployables.len(),
+            scene.bomb_impacts.len(),
+            scene.drones.len(),
+            scene.drone_threats.len(),
+            usize::from(scene.brains.is_some()),
+            scene.wrecks.len(),
+            scene.abyssal_traces.len(),
+            scene.asteroids.len(),
+            scene.destroyed.len(),
+            scene.widowed.len(),
+            scene.unpiloted.len(),
+            scene.controlled_structures.len(),
+            scene.control_lease_generations.len(),
+            scene.sim_damageable_entities.len(),
+            scene.structure_health.len(),
+            scene.structure_modules.len(),
+            scene.abyssal_npc_spawn_receipts.len(),
+            scene.abyssal_npc_spawn_receipts.capacity(),
+            scene.abyssal_participant_deaths.len(),
+            scene.abyssal_participant_deaths.capacity(),
+            scene.abyssal_reward_caches.len(),
+            scene.abyssal_reward_caches.capacity(),
+            scene.abyssal_loot_receipts.len(),
+            scene.abyssal_loot_receipts.capacity(),
+            scene.abyssal_environment_objects.len(),
+            scene.abyssal_field_memberships.len(),
+            usize::from(scene.abyssal_boundary_at.is_some()),
+            scene.abyssal_boundary_exposure_ms.len(),
+            scene.abyssal_boundary_exposure_ms.capacity(),
+        ]
+    };
+    let baseline = retained_state(&scene);
+    for tick in 1..=100_000i64 {
+        scene.poll(NOON + tick * 2_500_000);
+    }
+    assert_eq!(baseline, retained_state(&scene));
+    assert!(scene.pilots[&SESSION].ship.position.x.is_finite());
 }

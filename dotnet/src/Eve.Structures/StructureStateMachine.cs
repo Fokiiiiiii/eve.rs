@@ -3,7 +3,6 @@ namespace Eve.Structures;
 /// <summary>
 /// The timeline of an Upwell structure as a pure function: (snapshot, rules, event, clock) gives the next snapshot and its next deadline. It reads no database and no clock;
 /// <see cref="StructureTimers"/> loads the snapshot, applies an event, saves, announces and schedules the deadline in one transaction.
-/// Rules: EVE University wiki "Vulnerability" and "Anchoring structures"; ids and repair times: client <c>structures/const.py</c>; see DEVIATIONS "Structure timeline (ST-0)".
 /// </summary>
 public static class StructureStateMachine
 {
@@ -69,7 +68,6 @@ public static class StructureStateMachine
     }
 
     /// <summary>
-    /// The first time at or after <paramref name="baseMs"/> that falls on the owner's reinforcement hour (and weekday, unless it is every day), moved by up to the jitter and kept
     /// inside that UTC day ("never rolls over to the next day"). An exit never comes before <paramref name="baseMs"/>.
     /// </summary>
     public static long ExitTime(long baseMs, int weekday, int hour, long jitterMs, double roll)
@@ -274,7 +272,6 @@ public static class StructureStateMachine
     /// <summary>Whether a stage has a repair countdown. A FOB has none after its shield: its reinforcement is the only chance, and it does not heal.</summary>
     private static bool Repairs(StructureRules rules, int state) => rules.Size != StructureSize.Fob || state == StructureState.ShieldVulnerable;
 
-    /// <summary>When a reinforcement ends. A FOB's is 3 hours with 1 hour of variance (2 to 4 hours); any other structure's is its owner's hour.</summary>
     private static long ArmorReinforceEnd(StructureRules rules, StructureSnapshot n, long now, double roll) =>
         rules.Size == StructureSize.Fob
             ? now + rules.ArmorReinforceMs - rules.ExitJitterMs + (long)(2 * rules.ExitJitterMs * Math.Clamp(roll, 0, 0.999999))

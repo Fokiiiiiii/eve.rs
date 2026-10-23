@@ -46,46 +46,80 @@ public sealed class TargetedParityRpcTests
             Assert.True(publicQa.HasMethod(method), method));
     }
 
-
     [Fact]
-    public async Task Public_qa_slash_dispatch_preserves_the_call_and_denies_non_staff()
+    public async Task Public_qa_rpcs_require_staff_account_roles()
     {
         var staff = new ClientSession();
-        staff.Set("accountRole", new PyLong(1L << 52));
-        PublicQaRequest? observed = null;
+        staff.Set("accountRole", new PyLong(GameMasterRoles.Qa));
+        PublicQaRequest? observedSlash = null;
         var callbackCount = 0;
         var service = (IService)new PublicQaToolsServerService(new PublicQaToolsRpcCallbacks(
             IsStaff: PublicQaToolsServerService.HasStaffAccountRole,
+            MoveMeToAsync: (_, _) =>
+            {
+                callbackCount++;
+                return ValueTask.CompletedTask;
+            },
             SlashCmdAsync: (request, _) =>
             {
                 callbackCount++;
-                observed = request;
+                observedSlash = request;
                 return ValueTask.FromResult<PyValue?>(new PyStr("handled"));
+            },
+            CanGiveItemForMultifitAsync: (_, _) =>
+            {
+                callbackCount++;
+                return ValueTask.FromResult(true);
             }));
+
+        Assert.Same(PyNone.Instance, await service.CallAsync(new ServiceCall
+        {
+            Method = "MoveMeTo",
+            Args = [],
+            Session = staff,
+        }));
         var callId = new PyInt(91);
-        var result = await service.CallAsync(new ServiceCall
+        Assert.Equal(new PyStr("handled"), await service.CallAsync(new ServiceCall
         {
             Method = "SlashCmd",
             Args = [new PyStr("/heal")],
             Session = staff,
             CallId = callId,
-        });
-
-        Assert.Equal(new PyStr("handled"), result);
-        Assert.Equal(1, callbackCount);
-        Assert.Same(staff, observed!.Session);
-        Assert.Equal(callId, observed.CallId);
-        Assert.Equal([new PyStr("/heal")], observed.Arguments);
+        }));
+        Assert.Same(PyBool.True, await service.CallAsync(new ServiceCall
+        {
+            Method = "CanGiveItemForMultifit",
+            Args = [],
+            Session = staff,
+        }));
+        Assert.Equal(3, callbackCount);
+        Assert.Same(staff, observedSlash!.Session);
+        Assert.Equal(callId, observedSlash.CallId);
+        Assert.Equal([new PyStr("/heal")], observedSlash.Arguments);
 
         var ordinary = new ClientSession();
         ordinary.Set("accountRole", new PyLong(0));
+        ordinary.Set("role", new PyLong(GameMasterRoles.Staff));
+        ordinary.Set("rolesAtAll", new PyLong(GameMasterRoles.Staff));
+        Assert.Same(PyNone.Instance, await service.CallAsync(new ServiceCall
+        {
+            Method = "MoveMeTo",
+            Args = [],
+            Session = ordinary,
+        }));
         Assert.Same(PyNone.Instance, await service.CallAsync(new ServiceCall
         {
             Method = "SlashCmd",
             Args = [new PyStr("/giveitem")],
             Session = ordinary,
         }));
-        Assert.Equal(1, callbackCount);
+        Assert.Same(PyBool.False, await service.CallAsync(new ServiceCall
+        {
+            Method = "CanGiveItemForMultifit",
+            Args = [],
+            Session = ordinary,
+        }));
+        Assert.Equal(3, callbackCount);
     }
 
     private sealed class NoAccounts : IOmegaAccountStore

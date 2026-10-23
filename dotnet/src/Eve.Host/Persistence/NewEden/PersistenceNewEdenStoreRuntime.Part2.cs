@@ -37,15 +37,171 @@ namespace Eve.Host;
 
 public sealed partial class PersistenceNewEdenStoreRuntime
 {
-    public ValueTask<Eve.Services.Core.SeasonalLoginCampaignSnapshot?> GetSeasonalLoginCampaignAsync(
-        Eve.Services.Core.LoginRewardPlayer player,
-        CancellationToken cancellationToken = default) =>
-        ValueTask.FromResult<Eve.Services.Core.SeasonalLoginCampaignSnapshot?>(null);
+    private const string SeasonalCampaignTable = "seasonalLoginCampaignProgress";
+    private const string SeasonalCampaignRow = "accountsByUserID";
 
-    public ValueTask<bool> TryClaimSeasonalLoginCampaignAsync(
+    private sealed record SeasonalCampaignConfig(
+        int CampaignId, DateOnly StartDate, DateOnly EndDate, TimeOnly TurnoverTimeUtc, bool RetroClaimEnabled,
+        IReadOnlyDictionary<int, Eve.Services.Core.SeasonalLoginCampaignReward> AlphaRewards,
+        IReadOnlyDictionary<int, Eve.Services.Core.SeasonalLoginCampaignReward> OmegaRewards);
+
+    private SeasonalCampaignConfig? ReadSeasonalCampaignConfig()
+    {
+        var raw = Environment.GetEnvironmentVariable("EVE_SEASONAL_LOGIN_CAMPAIGN");
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+        var json = JsonNode.Parse(raw) as JsonObject ?? throw new InvalidOperationException("EVE_SEASONAL_LOGIN_CAMPAIGN must be a JSON object.");
+        var campaignId = Integer(json["campaignId"]);
+        if (campaignId is <= 0 or > int.MaxValue) throw new InvalidOperationException("The seasonal campaign ID must be positive.");
+        if (!DateOnly.TryParse(String(json["startDate"]), System.Globalization.CultureInfo.InvariantCulture, out var startDate) ||
+            !DateOnly.TryParse(String(json["endDate"]), System.Globalization.CultureInfo.InvariantCulture, out var endDate) || endDate < startDate)
+            throw new InvalidOperationException("The seasonal campaign requires an ordered startDate and endDate.");
+        if (!TimeOnly.TryParse(String(json["turnoverTimeUtc"]), System.Globalization.CultureInfo.InvariantCulture, out var turnover))
+            throw new InvalidOperationException("The seasonal campaign requires turnoverTimeUtc in HH:mm:ss format.");
+        static IReadOnlyDictionary<int, Eve.Services.Core.SeasonalLoginCampaignReward> Rewards(JsonNode? node, string name)
+        {
+            if (node is not JsonObject values || values.Count == 0) throw new InvalidOperationException($"The seasonal campaign requires {name} rewards.");
+            var result = new Dictionary<int, Eve.Services.Core.SeasonalLoginCampaignReward>();
+            foreach (var pair in values)
+            {
+                if (!int.TryParse(pair.Key, out var day) || day < 0 || pair.Value is not JsonObject reward ||
+                    Integer(reward["typeId"]) is not (> 0 and <= int.MaxValue) || Integer(reward["quantity"]) is not > 0)
+                    throw new InvalidOperationException($"The seasonal campaign {name} reward at index {pair.Key} is invalid.");
+                result.Add(day, new Eve.Services.Core.SeasonalLoginCampaignReward((int)Integer(reward["typeId"]), Integer(reward["quantity"])));
+            }
+            return result;
+        }
+        return new SeasonalCampaignConfig((int)campaignId, startDate, endDate, turnover,
+            json["retroClaimEnabled"]?.GetValue<bool>() ?? false,
+            Rewards(json["alphaRewards"], "alpha"), Rewards(json["omegaRewards"], "omega"));
+    }
+
+    public async ValueTask<Eve.Services.Core.SeasonalLoginCampaignSnapshot?> GetSeasonalLoginCampaignAsync(
+        Eve.Services.Core.LoginRewardPlayer player,
+        CancellationToken cancellationToken = default)
+    {
+        var config = ReadSeasonalCampaignConfig();
+        var now = DateTimeOffset.FromUnixTimeMilliseconds(nowUnixMs());
+        var rewardDate = DateOnly.FromDateTime(now.UtcDateTime - (config?.TurnoverTimeUtc ?? TimeOnly.MinValue).ToTimeSpan());
+        if (config is null || player.UserId <= 0 || rewardDate < config.StartDate || rewardDate > config.EndDate)
+            return null;
+        var accountKey = player.UserId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var table = await PersistenceReadHelpers.ReadOptionalTableAsync(store, SeasonalCampaignTable, cancellationToken);
+        var accounts = table[SeasonalCampaignRow] as JsonObject ?? new JsonObject();
+        var account = accounts[accountKey] as JsonObject;
+        var historyJson = account?["history"] as JsonObject ?? new JsonObject();
+        var history = historyJson.Select(pair => (int.TryParse(pair.Key, out var ordinal) ? ordinal : 0, Integer(pair.Value)))
+            .Where(pair => pair.Item1 > 0).Select(pair => new Eve.Services.Core.SeasonalLoginCampaignClaimedDay(pair.Item1, checked((int)pair.Item2), pair.Item2 == 1)).ToArray();
+        var expiry = player.UserId <= uint.MaxValue ? await accountDirectory.SubscriptionEndsAtAsync((uint)player.UserId, cancellationToken) : null;
+        var omega = expiry > DateTimeOffset.FromUnixTimeMilliseconds(nowUnixMs());
+        return new Eve.Services.Core.SeasonalLoginCampaignSnapshot(config.CampaignId, config.EndDate, config.TurnoverTimeUtc,
+            Math.Max(0, Math.Max(config.AlphaRewards.Count, config.OmegaRewards.Count) - history.Length), omega,
+            config.RetroClaimEnabled, config.AlphaRewards, config.OmegaRewards, history);
+    }
+
+    public async ValueTask<bool> TryClaimSeasonalLoginCampaignAsync(
         Eve.Services.Core.SeasonalLoginCampaignClaimRequest request,
-        CancellationToken cancellationToken = default) =>
-        ValueTask.FromResult(false);
+        CancellationToken cancellationToken = default)
+    {
+        var config = ReadSeasonalCampaignConfig();
+        if (config is null || request.CampaignId != config.CampaignId || request.Player.CharacterId is null ||
+            !await HasLoginRewardCharacterAsync(request.Player, cancellationToken)) return false;
+        var now = DateTimeOffset.FromUnixTimeMilliseconds(nowUnixMs());
+        var today = DateOnly.FromDateTime(now.UtcDateTime - config.TurnoverTimeUtc.ToTimeSpan());
+        var ordinal = today.DayNumber + 1;
+        if (today < config.StartDate || today > config.EndDate || request.ClaimDateOrdinal != ordinal || request.Rewards.Count == 0) return false;
+        var subscriptionEndsAt = request.Player.UserId <= uint.MaxValue
+            ? await accountDirectory.SubscriptionEndsAtAsync((uint)request.Player.UserId, cancellationToken)
+            : null;
+        var isOmega = subscriptionEndsAt > now;
+        await _gate.WaitAsync(cancellationToken);
+        try
+        {
+            await using var connection = await source.OpenConnectionAsync(cancellationToken);
+            await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+            await using (var lockCommand = new NpgsqlCommand("SELECT pg_advisory_xact_lock(882701, 1)", connection, transaction))
+                await lockCommand.ExecuteNonQueryAsync(cancellationToken);
+
+            var accountsTable = await PersistenceReadHelpers.ReadOptionalTableAsync(store, SeasonalCampaignTable, cancellationToken);
+            var accounts = accountsTable[SeasonalCampaignRow] as JsonObject ?? new JsonObject();
+            var accountKey = request.Player.UserId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var account = accounts[accountKey] as JsonObject ?? new JsonObject();
+            if (Integer(account["campaignId"]) != config.CampaignId) account = new JsonObject { ["campaignId"] = config.CampaignId, ["history"] = new JsonObject() };
+            var history = account["history"] as JsonObject ?? new JsonObject();
+            var todayKey = ordinal.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var hasToday = history.TryGetPropertyValue(todayKey, out var todayValue);
+            var todayGrade = Integer(todayValue);
+            if (hasToday && (todayGrade != 0 || !isOmega || !config.RetroClaimEnabled)) return false;
+            var priorClaims = history
+                .Select(pair => (Key: pair.Key, Ordinal: int.TryParse(pair.Key, out var date) ? date : 0, Grade: Integer(pair.Value)))
+                .Where(claim => claim.Ordinal > 0 && claim.Ordinal < ordinal)
+                .OrderBy(claim => claim.Ordinal)
+                .ToArray();
+            var latest = history.Select(pair => int.TryParse(pair.Key, out var date) ? date : 0).DefaultIfEmpty(0).Max();
+            if (ordinal < latest) return false;
+
+            var dayIndex = priorClaims.Length;
+            var expected = new List<Eve.Services.Core.SeasonalRewardGrant>();
+            void AddExpected(IReadOnlyDictionary<int, Eve.Services.Core.SeasonalLoginCampaignReward> catalog,
+                Eve.Services.Core.SeasonalLoginRewardTrack track, int index, bool retroactive)
+            {
+                if (catalog.TryGetValue(index, out var reward))
+                    expected.Add(new Eve.Services.Core.SeasonalRewardGrant(index, track, retroactive, reward.TypeId, reward.Quantity));
+            }
+            if (!hasToday)
+                AddExpected(config.AlphaRewards, Eve.Services.Core.SeasonalLoginRewardTrack.Alpha, dayIndex, retroactive: false);
+            if (isOmega)
+                AddExpected(config.OmegaRewards, Eve.Services.Core.SeasonalLoginRewardTrack.Omega, dayIndex, retroactive: false);
+            if (isOmega && config.RetroClaimEnabled)
+            {
+                for (var index = 0; index < priorClaims.Length; index++)
+                {
+                    if (priorClaims[index].Grade == 0)
+                        AddExpected(config.OmegaRewards, Eve.Services.Core.SeasonalLoginRewardTrack.Omega, index, retroactive: true);
+                }
+            }
+            if (expected.Count == 0 || !request.Rewards.SequenceEqual(expected)) return false;
+            foreach (var reward in expected)
+            {
+                if (reward.TypeId <= 0 || reward.Quantity <= 0 || await itemTypes.GetAsync(reward.TypeId, cancellationToken) is null)
+                    return false;
+            }
+
+            var redeemTable = await PersistenceReadHelpers.ReadOptionalTableAsync(store, RedeemTable, cancellationToken);
+            var redeemAccounts = redeemTable[RedeemRow] as JsonObject ?? new JsonObject();
+            var tokens = redeemAccounts[accountKey] as JsonObject ?? new JsonObject();
+            var newTokens = new JsonObject();
+            for (var i = 0; i < expected.Count; i++)
+            {
+                var reward = expected[i];
+                var claimKey = $"seasonal-login:{request.Player.UserId}:{config.CampaignId}:{ordinal}:{reward.Track}:{reward.DayIndex}:{reward.Retroactive}";
+                var tokenId = TokenId(claimKey, 0);
+                var tokenKey = tokenId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                if (tokens.ContainsKey(tokenKey)) return false;
+                newTokens[tokenKey] = new JsonObject
+                {
+                    ["tokenID"] = tokenId, ["massTokenID"] = null, ["typeID"] = reward.TypeId, ["quantity"] = reward.Quantity,
+                    ["stationID"] = 0, ["dateTime"] = Py.FileTimeFromUnixMs(now.ToUnixTimeMilliseconds()).ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    ["expireDateTime"] = "0", ["label"] = $"Seasonal Login: Day {reward.DayIndex + 1} ({reward.Track})",
+                    ["description"] = "Seasonal login campaign reward", ["available"] = true, ["addedByContext"] = 0, ["addedByExtra"] = null,
+                };
+            }
+            foreach (var pair in newTokens) tokens[pair.Key] = pair.Value?.DeepClone();
+            if (isOmega && config.RetroClaimEnabled)
+                foreach (var prior in priorClaims.Where(claim => claim.Grade == 0)) history[prior.Key] = 1;
+            history[ordinal.ToString(System.Globalization.CultureInfo.InvariantCulture)] = isOmega ? 1 : 0;
+            account["history"] = history;
+            accounts[accountKey] = account;
+            redeemAccounts[accountKey] = tokens;
+            await store.ApplyChangesAsync(connection, transaction, SeasonalCampaignTable,
+                [new RowUpsert(SeasonalCampaignRow, accounts.ToJsonString())], [], ownerFence, cancellationToken);
+            await store.ApplyChangesAsync(connection, transaction, RedeemTable,
+                [new RowUpsert(RedeemRow, redeemAccounts.ToJsonString())], [], ownerFence, cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            sessions.Of(request.Player.CharacterId.Value)?.SendNotification("OnRedeemingQueueUpdated", "clientID");
+            return true;
+        }
+        finally { _gate.Release(); }
+    }
 
     private static (int Day, string LastClaimReset) LoginCampaignProgress(JsonObject? state)
     {

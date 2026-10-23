@@ -105,7 +105,6 @@ public static class ShipNotifications
     }
 
     /// <summary>
-    /// The outcomes of one action sent as the reference batches them (EveJS <c>emitItemsChangedBatchForSession</c>, characterState.js:2728): one multi-event
     /// message for all the events, and the item rows grouped where consecutive rows have the same previous place (one <c>OnItemsChanged</c> each).
     /// </summary>
     public static void SendBatch(ClientSession session, long characterId, IReadOnlyList<ShipChanged> outcomes, Func<Eve.Inventory.Item, ItemRow> row, long fileTime)

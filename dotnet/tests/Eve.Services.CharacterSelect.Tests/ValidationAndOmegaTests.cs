@@ -6,14 +6,15 @@ namespace Eve.Services.CharacterSelect.Tests;
 /// <summary>The name-validation toggle (per session, by role) and the lapsed-Omega answer of the selection screen.</summary>
 public class ValidationAndOmegaTests
 {
-    /// <summary>The GML role bit (EveJS ROLE_GML); the toggle is open to this role.</summary>
+
     private const ulong RoleGml = 1UL << 54;
 
     [PgFact]
-    public async Task A_session_without_the_toggle_roles_keeps_name_validation_on()
+    public async Task A_session_without_toggle_account_roles_cannot_enable_validation_toggle_with_client_role()
     {
         await using var h = await Harness.CreateAsync();
         var (session, _) = await h.LoginAsync("plain");
+        session.Set("role", new PyLong(unchecked((long)RoleGml)));
 
         Assert.Equal(PyBool.True, await h.CallAsync(session, "ToggleValidation"));
         Assert.Equal(PyBool.True, await h.CallAsync(session, "ToggleValidation"));

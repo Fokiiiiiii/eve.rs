@@ -24,13 +24,13 @@ public sealed class CharacterDogmaSync(DogmaStatic statics, CharacterShips ships
     public int NextBrainVersion(long characterId) => _brainVersions.AddOrUpdate(characterId, 1, (_, version) => version + 1);
 
     /// <summary>The character's attributes as two batches of changes, then the brain: what the client is sent after it asks for the character.</summary>
-    public void SendCharacter(ClientSession session, ShipSnapshot snapshot, long fileTime, int version)
+    public void SendCharacter(ClientSession session, ShipSnapshot snapshot, long fileTime, int version, Brain? brain = null)
     {
         foreach (var events in Info.CharacterAttributeEvents(snapshot, fileTime))
         {
             session.SendNotification("OnModuleAttributeChanges", "clientID", events);
         }
-        session.SendNotification("OnServerBrainUpdated", "clientID", Info.BrainUpdate(snapshot, version));
+        session.SendNotification("OnServerBrainUpdated", "clientID", Info.BrainUpdate(snapshot, version, brain));
     }
 
     private const string FittingBootstrapShipId = "loginFittingBootstrapShipId";
@@ -132,6 +132,23 @@ public sealed class CharacterDogmaSync(DogmaStatic statics, CharacterShips ships
                 new PyList([.. changes.Select(c => ShipNotifications.AttributeChange(characterId, c.ItemId, c.AttributeId, fileTime, c.Old, c.New))]));
         }
         SendCharacter(session, snapshot, fileTime, NextBrainVersion(characterId));
+    }
+
+    public async Task ShipAttributesChangedAsync(ClientSession session, long characterId, CancellationToken cancellationToken = default)
+    {
+        if (await ships.LoadAsync(characterId, cancellationToken) is not { } snapshot) return;
+        var fileTime = Py.FileTimeFromUnixMs(nowUnixMs());
+        var changes = Info.ShipAttributes(snapshot)
+            .Where(attribute => attribute.Key != DogmaInfo.Quantity)
+            .Select(attribute => ShipNotifications.AttributeChange(characterId, new Eve.Marshal.PyLong(snapshot.Ship.Id),
+                attribute.Key, fileTime, null, attribute.Value))
+            .Concat(snapshot.Fitted.SelectMany(module => Info.ModuleAttributes(snapshot, module.Id)
+                .Where(attribute => attribute.Key != DogmaInfo.Quantity)
+                .Select(attribute => ShipNotifications.AttributeChange(characterId, new Eve.Marshal.PyLong(module.Id),
+                    attribute.Key, fileTime, null, attribute.Value))))
+            .ToArray();
+        if (changes.Length > 0)
+            session.SendNotification("OnModuleAttributeChanges", "clientID", new Eve.Marshal.PyList(changes));
     }
 
     public async Task SkillsChangedAsync(ClientSession session, long characterId, IReadOnlyList<CharacterSkill> before, CancellationToken cancellationToken = default)

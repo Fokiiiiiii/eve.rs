@@ -2,7 +2,6 @@
 //!
 //! A launcher does not hurt anything itself. Each cycle it makes a [`MissileEntity`], which keeps where it was launched from, where it is, how fast it flies, how long it has to
 //! live, who fired it (the pilot, the ship, the launcher module) and what it flies at, and which the scene moves on at every poll: it homes on its target (a missile turns at once),
-//! closes on it, and either reaches it (a swept test of the step against the target's radius, as the reference does), runs out of flight time (it stalls and falls away, or, when the
 //! client's warhead is due by then, lands all the same), or loses its target (the target warped, was destroyed, left) and is gone. The damage is done when it lands, by the numbers of
 //! the missile ([`crate::missiles::Missile::applied`]) against the signature and the speed the target has then.
 //!
@@ -13,7 +12,6 @@
 //! A missile is kept apart from the ships: it has no place among the pilots, no slim item of a ship, no lock (nothing can target it), and no shield, armor or hull; the only way
 //! to hurt it is the `hit_points` it carries, and the only things that do are the interceptors named by [`Interceptor`] (a smartbomb goes off among them; a defender missile
 //! and a point defense battery are shot at them: `Scene::intercept_missile` and `Scene::damage_missile` are what they call).
-
 use std::collections::BTreeSet;
 
 use eve_destiny::ball::LegacyMode;
@@ -55,7 +53,7 @@ pub struct Shooter {
     pub module_id: i64,
     /// The type of the launcher (what `OnDamageMessage` calls `weapon`).
     pub weapon_type_id: i32,
-    /// The character that flies the ship, or its owner.
+
     pub owner_id: i64,
     pub corporation_id: i32,
     pub alliance_id: i32,
@@ -108,7 +106,7 @@ pub struct MissileEntity {
     pub phase: Phase,
     /// What it has left of its own hit points (what an interceptor does to it; nothing a ship has is in it).
     pub hit_points: f64,
-    /// Where the target was when the missile last looked: the start of the target's step in the swept test.
+
     pub target_seen: Vec3,
     /// Where the target was when it was fired (the ball's target point).
     pub target_at_launch: Vec3,
@@ -172,7 +170,6 @@ fn time_to_cover(from: Vec3, to: Vec3, target_radius: f64, speed: f64, to_centre
     (length(sub(to, from)) - reach).max(0.0) / speed
 }
 
-/// The step of a missile against the swept volume of its target: when, within a step of `step` seconds, the centre of the missile gets within `radius` of the
 /// target's centre (the reference's `resolveMissileSweptImpact`). `None` when it does not.
 fn swept_impact(
     missile_start: Vec3,
@@ -314,8 +311,6 @@ impl MissileEntity {
         self.phase == Phase::Flying
     }
 
-    /// Moves the missile on to `now`. It homes on `target` (it turns at once and flies at its top speed) and reaches it when the step takes it within the target's radius; the
-    /// step is not longer than the flight time it has left. A missile with nothing to home on does not move.
     pub fn advance(&mut self, target: Option<&Kinematics>, now: i64) -> Motion {
         let start = self.stepped_at.max(self.launched_at);
         let step = seconds((now - start).max(0)).min(seconds((self.expires_at - start).max(0)));
@@ -396,8 +391,6 @@ impl Scene {
             .collect()
     }
 
-    /// The nearest enemy that has fired on a launcher's ship and is within `range` metres of the surface of both (EVE University wiki, auto-targeting
-    /// missiles: "the nearest enemy ship or drone that has previously fired on you"; no lock is needed). An enemy is another owner's ship, not the shooter's
     /// corporation or alliance, not in warp and not in its undock protection. The aggressions the scene has recorded name who fired on whom; a drone's shots are
     /// aggressions of its controller's ship, so the controller's position is the drone's. Ties go to the lower ship id. Returns the ship id, the launch's target.
     pub(crate) fn nearest_hostile(&self, session: SessionId, range: f64, now: i64) -> Option<i64> {
@@ -444,7 +437,7 @@ impl Scene {
         else {
             return Vec::new();
         };
-        // an F.O.F. missile goes for the nearest valid hostile in its flight range (CCP and EVE University: no lock is needed); nothing in reach, nothing fired
+
         let target_id = if effect.target_id == AUTO_TARGET_ID {
             let flight_range = spec.max_velocity * spec.flight_time_ms / 1000.0;
             let Some(hostile) = self.nearest_hostile(session, flight_range, at) else { return Vec::new() };
@@ -647,6 +640,18 @@ impl Scene {
         out
     }
 
+    /// Retires in-flight projectiles when their exact Abyssal scene is being torn down after all durable actors settle.
+    pub(crate) fn retire_abyssal_projectiles(&mut self, now: i64) -> Vec<Out> {
+        let ids: Vec<_> = self.missiles.keys().copied().collect();
+        let mut out = Vec::new();
+        for id in ids {
+            if let Some(missile) = self.missiles.remove(&id) {
+                out.extend(self.missile_gone(&missile, false, now));
+            }
+        }
+        out
+    }
+
     pub fn missiles_within(&self, centre: Vec3, range: f64) -> Vec<i64> {
         let candidates = self.missiles.values().filter(|missile| missile.is_flying()).map(|missile| {
             crate::geo::SpatialEntity {
@@ -698,7 +703,7 @@ impl Scene {
         let origin = [p.x, p.y, p.z];
         let reach = missile.max_velocity.max(0.0) * missile.flight_time_ms.max(0.0) / 1000.0;
         let by = crate::missile_entity::Interceptor::Defender { module_id: effect.module_id };
-        // the nearest hostile missile in reach that is flying (its shooter is another owner)
+
         let nearest = self
             .missiles_within(p, reach)
             .into_iter()

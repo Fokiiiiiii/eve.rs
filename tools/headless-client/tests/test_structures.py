@@ -33,8 +33,8 @@ SEEDED_STRUCTURE = 1040000000777  # the Astrahus the module seeds (its item id; 
 SEEDED_SYSTEM = 30100032  # the solar system of the station the pilots undock at
 STRUCTURE = int(os.environ.get("EVE_LIVE_STRUCTURE_ID") or SEEDED_STRUCTURE)
 # the refinery is seeded 200 000 km from Manifest's station (SDE 60015249 at x 311989870775): 5 km away, the station's sphere would push a ship out of
-# the return distance of the refinery (ST-23), and a ship is not placed inside a station's sphere
-RETURN_STRUCTURE = STRUCTURE + 1  # a second refinery, far from the station: a ship returns to it from outside the station's sphere (ST-23)
+
+RETURN_STRUCTURE = STRUCTURE + 1
 STRUCTURE_X, STRUCTURE_Y, STRUCTURE_Z = 311989870775.0 + 200_000_000.0, -13069156275.0, 156646281447.0
 SYSTEM = int(os.environ.get("EVE_LIVE_STRUCTURE_SYSTEM") or SEEDED_SYSTEM)
 UNKNOWN_STRUCTURE = 1040000000999  # no structure has this id
@@ -43,7 +43,7 @@ MOON = 40491234  # a moon of Manifest (SDE mapMoons, system 30100032): the refin
 MOON_RESOURCES = '{"45490": 0.75, "45494": 0.25}'  # the moon's ore shares: Zeolites and Cobaltite, published moon ores (SDE groups 1884, 1920)
 TRITANIUM = 34
 CARGO_FLAG = 5  # the ship's cargo hold (CharacterShips ship-hold flags)
-DELIVERIES_FLAG = 173  # ITEM_FLAGS.DELIVERIES (structureDeliveriesService.js)
+DELIVERIES_FLAG = 173
 ASTRAHUS = 35832
 # a system where Upwell structures can be anchored (its pinned SDE record does not forbid category 65 or the Astrahus group): low security, not a
 # trade hub, one station and no asteroid belt (mapSolarSystems, npcStations, mapAsteroidBelts in the pinned SDE)
@@ -58,7 +58,6 @@ MOON_DAYS = 518460  # six days and a minute: the client's extraction duration, c
 
 pytestmark = pytest.mark.skipif(not LIVE, reason="set EVE_LIVE_HOST (tools/dev/run-eve-live.sh runs this file)")
 
-# the structure's category in the client (categoryID 65, ST-1)
 STRUCTURE_CATEGORY = 65
 
 NPC_CORPORATIONS = range(1_000_000, 2_000_000)  # the NPC corporations' ids (StructureAnchorAuthority: DropNeedsPlayerCorp)
@@ -66,14 +65,13 @@ DIRECTOR = 1  # the corporation role bit a Director holds (the anchor needs Stat
 
 RACE = UNDOCK["races"][0]  # the recorded character the undock scenario creates
 
-
 @pytest.fixture(scope="module", autouse=True)
 def seeded_structure():
     """The refinery the scenarios use: an Athanor row of the structures schema (its owner is an NPC corporation, so the owner-corporation access
     rule admits the pilots of the other tests), with its docking and moon mining services online and a moon's resources, inserted once per run.
     The run drops its schema at the end."""
     if os.environ.get("EVE_LIVE_SERVER") == "evejs":
-        return  # the reference's refinery is seeded in its data root (ST-22 scratch seed), not by SQL
+        return
     if not (os.environ.get("EVE_PG_URL") and os.environ.get("EVE_STRUCTURES_SCHEMA")):
         pytest.skip("EVE_PG_URL and EVE_STRUCTURES_SCHEMA come from tools/dev/run-eve-live.sh, which seeds the structure")
     schema = dbseed.schema("STRUCTURES")
@@ -98,7 +96,6 @@ def seeded_structure():
         f"where not exists (select 1 from {schema}.structure_moon_resources where structure_id = {STRUCTURE})"
     )
 
-
 def _structure_slim(events: list, structure: int = STRUCTURE) -> dict | None:
     """The structure's slim item (its fields as `name -> value`) in the ballpark events seen so far, if the client has it: an item of an AddBalls2
     or of the ballpark's SetState, wherever the event nests it."""
@@ -108,7 +105,6 @@ def _structure_slim(events: list, structure: int = STRUCTURE) -> dict | None:
             if "itemID" in fields and number(fields["itemID"]) == structure:
                 return fields
     return None
-
 
 def _nodes(value):
     """Every dict and list inside a described value, the value itself first."""
@@ -120,12 +116,10 @@ def _nodes(value):
         for child in value:
             yield from _nodes(child)
 
-
 def _reenter(client, character: int) -> None:
     """The character logs off and selects again, so its session takes the corporation and roles the database now has."""
     client.call("userSvc", "UserLogOffCharacter")
     assert base.attempt(client, "charUnboundMgr", "SelectCharacterID", character, None, False) == ("ok", None)
-
 
 def _undock(client, ship_id: int, fitted: list, station: int = STATION, system: int = SYSTEM) -> None:
     """The pilot leaves its station with its ship and is bound to the system's ballpark."""
@@ -133,13 +127,11 @@ def _undock(client, ship_id: int, fitted: list, station: int = STATION, system: 
     client.call_bound(ship[0], "Undock", ship_id, False, onlineModules=m.List(fitted))
     client.call("beyonce", "MachoBindObject", system, None)
 
-
 def _undocked_pilot(client) -> tuple[int, int]:
     """A new character of the recorded race, undocked at its station and bound to the system's ballpark: (character id, its active ship's id)."""
     character, ship_id, fitted, _ = arrive(client, RACE, run_token())
     _undock(client, ship_id, fitted)
     return character, ship_id
-
 
 def _pilot_without_role(ceo, pilot) -> tuple[int, int, int]:
     """A member of a player corporation with no role, undocked: (its corporation, character id, its ship id). The corporation's chief executive is
@@ -154,12 +146,10 @@ def _pilot_without_role(ceo, pilot) -> tuple[int, int, int]:
     _undock(pilot, ship_id, fitted)
     return corporation, character, ship_id
 
-
 def _refusal(failure: p.MachoError) -> tuple[str, str]:
     """The label of the client's UserError the server raised (the first item of its tuple) and the whole of its payload as text."""
     payload = describe(failure.payload)["$objectex"]["$tuple"]
     return str(payload[1]["$tuple"][0]), str(describe(failure.payload))
-
 
 def _refused(call) -> tuple[str, str]:
     """(label, payload text) of the refusal the call gets; a call that is answered fails the test."""
@@ -169,11 +159,9 @@ def _refused(call) -> tuple[str, str]:
         return _refusal(failure)
     pytest.fail(f"the server answered the call instead of refusing it: {describe(answer)}")
 
-
 def _anchor(client, item_id: int):
     """structureDeployment.Anchor as the client sends it (Deploy/ConfirmDeployment: item, x, z, yaw, profile, name, bio, reinforce weekday and hour)."""
     return client.call("structureDeployment", "Anchor", item_id, 1000.0, 1000.0, 0.0, None, "Refused anchor", "", None, None, None)
-
 
 def test_a_pilot_in_the_system_sees_the_structure_with_its_state_and_timer():
     with base.connect(f"walk-structure-{run_token()}") as client:
@@ -185,7 +173,6 @@ def test_a_pilot_in_the_system_sees_the_structure_with_its_state_and_timer():
         assert number(described["categoryID"]) == STRUCTURE_CATEGORY
         assert number(described["state"]) > 0, "the slim item has a state"
         assert "timer" in described or "upkeepState" in described
-
 
 def test_a_pilot_docks_at_the_structure_and_undocks_from_it():
     """ST-3 d: the docking is finished by the simulation (OnDockingFinished) and the ship leaves the structure again.
@@ -218,7 +205,6 @@ def test_a_pilot_docks_at_the_structure_and_undocks_from_it():
         )
         assert any(_plain_name(event["name"]) == "OnItemsChanged" for event in left if "name" in event), "no item change after the undock"
 
-
 def test_an_npc_corporation_pilot_is_refused_the_anchor_by_name():
     """structureDeployment.Anchor from an NPC corporation: `DropNeedsPlayerCorp` (EVE.js sovPlayerDeployment.js; the server's
     StructureAnchorAuthority gate, which runs before the role check). The item is the ship, in space, so only the corporation gate can refuse."""
@@ -229,7 +215,6 @@ def test_an_npc_corporation_pilot_is_refused_the_anchor_by_name():
         _undock(client, ship_id, fitted)
         label, _ = _refused(lambda: _anchor(client, ship_id))
         assert label == "DropNeedsPlayerCorp"
-
 
 def test_a_pilot_without_the_station_manager_or_director_role_is_refused_the_anchor_by_name():
     """structureDeployment.Anchor by a member of a player corporation with no role: `CrpAccessDenied` with the reason `Insufficient roles`
@@ -242,13 +227,11 @@ def test_a_pilot_without_the_station_manager_or_director_role_is_refused_the_anc
         assert label == "CrpAccessDenied"
         assert "Insufficient roles" in text
 
-
 def test_a_structure_with_no_pilot_answers_none_for_its_pilot():
     """structureControl.GetStructurePilot of a structure no pilot controls: None (EVE.js structureControlService.js GetStructurePilot)."""
     with base.connect(f"walk-control-{run_token()}") as client:
         _undocked_pilot(client)
         assert client.call("structureControl", "GetStructurePilot", STRUCTURE) is None
-
 
 def test_taking_control_from_space_is_refused_until_the_pilot_is_docked_in_the_structure():
     """structureControl.TakeControl by a pilot in space: CustomNotify `You must be docked in this structure to take control.` (EVE.js
@@ -259,14 +242,12 @@ def test_taking_control_from_space_is_refused_until_the_pilot_is_docked_in_the_s
         assert label == "CustomNotify"
         assert "You must be docked in this structure to take control." in text
 
-
 def test_boarding_a_structure_that_does_not_exist_is_refused_as_a_cancelled_targeting():
     """structureControl.BoardStructure of an unknown id: `TargetingAttemptCancelled` (EVE.js structureControlService.js, STRUCTURE_NOT_FOUND)."""
     with base.connect(f"walk-control-{run_token()}") as client:
         _undocked_pilot(client)
         label, _ = _refused(lambda: client.call("structureControl", "BoardStructure", UNKNOWN_STRUCTURE))
         assert label == "TargetingAttemptCancelled"
-
 
 def test_hacking_calls_with_no_open_attempt_answer_none_and_an_ack():
     """hackingMgr.QuitHackingAttempt and ClickedOnTile with no attempt open: None (EVE.js hackingMgrService.js returns null); a tile click
@@ -278,7 +259,6 @@ def test_hacking_calls_with_no_open_attempt_answer_none_and_an_ack():
         seen = timed_events(client, 5.0, until=lambda events: any(_plain_name(e["name"]) == "OnHackingTurnComplete" for e in events if "name" in e))
         assert any(_plain_name(e["name"]) == "OnHackingTurnComplete" for e in seen if "name" in e), "the tile click with no attempt sent no ACK"
 
-
 def test_delivering_from_space_is_refused_until_the_pilot_is_inside_the_structure():
     """structureDeliveries.Deliver from outside the structure: CustomNotify `You must be inside the structure to deliver items.` (EVE.js
     structureDeliveriesService.js Handle_Deliver, checked before the recipient)."""
@@ -288,7 +268,6 @@ def test_delivering_from_space_is_refused_until_the_pilot_is_inside_the_structur
         assert label == "CustomNotify"
         assert "You must be inside the structure to deliver items." in text
 
-
 def test_a_moon_extraction_for_a_duration_that_is_not_positive_is_refused_by_name():
     """moonExtractions.StartNewExtraction with a duration of 0: `MoonminingEventTooShort` (the server's refusal, DEVIATIONS: the reference
     answers None, the client reads that as success)."""
@@ -296,7 +275,6 @@ def test_a_moon_extraction_for_a_duration_that_is_not_positive_is_refused_by_nam
         _undocked_pilot(client)
         label, _ = _refused(lambda: client.call("moonExtractions", "StartNewExtraction", STRUCTURE, 0, False))
         assert label == "MoonminingEventTooShort"
-
 
 def test_a_moon_extraction_started_from_space_is_refused_as_not_controlling():
     """moonExtractions.StartNewExtraction by a pilot who is not docked in the structure: the named notice "You must be controlling this
@@ -307,7 +285,6 @@ def test_a_moon_extraction_started_from_space_is_refused_as_not_controlling():
         label, payload = _refused(lambda: client.call("moonExtractions", "StartNewExtraction", STRUCTURE, 518460, False))
         assert label == "CustomNotify"
         assert "You must be controlling this structure." in payload
-
 
 def _docked_pilot(client, structure: int = STRUCTURE) -> tuple[int, int]:
     """A new pilot of the recorded race, undocked and then docked in a structure (the ship goes into its hangar): (character id, ship id)."""
@@ -320,7 +297,7 @@ def _docked_pilot(client, structure: int = STRUCTURE) -> tuple[int, int]:
             client.call("structureDocking", "Dock", structure, int(ship_id))
             break
         except p.MachoError as failure:
-            # out of docking range the ship flies to the structure and the pilot asks again once it is there: the docking is not done on arrival (ST-3)
+
             if _refusal(failure)[0] != "DockingApproach" or time.time() > deadline:
                 pytest.fail(f"the docking was refused: the server answered {_refusal(failure)[0]}: {describe(failure.payload)}")
         timed_events(client, 5.0)
@@ -328,14 +305,12 @@ def _docked_pilot(client, structure: int = STRUCTURE) -> tuple[int, int]:
     assert _named(finished, "OnDockingFinished"), "the docking was not finished within 60 s"
     return character, ship_id
 
-
 def called(client, service: str, method: str, *args):
     """The call's answer; a refusal fails the test with the label the server gave (the first name of its UserError)."""
     try:
         return client.call(service, method, *args)
     except p.MachoError as failure:
         pytest.fail(f"{service}.{method} was refused: {_refusal(failure)[0]}: {describe(failure.payload)}")
-
 
 def _holds(value, wanted) -> bool:
     """Whether a described value holds the number `wanted` anywhere inside it."""
@@ -345,15 +320,12 @@ def _holds(value, wanted) -> bool:
         return any(_holds(child, wanted) for child in value)
     return value == wanted
 
-
 def keyval(described) -> dict:
     """The fields of a described util.KeyVal, by name."""
     return {k: v for k, v in described["args"]["$dict"]}
 
-
 def _named(events: list, name: str) -> list:
     return [event for event in events if "name" in event and _plain_name(event["name"]) == name]
-
 
 def test_a_docked_pilot_takes_control_of_the_structure_and_the_structure_names_it():
     """structureControl.TakeControl by a pilot docked in the structure (V24.01 structureControlService.js Handle_TakeControl, which returns
@@ -368,7 +340,6 @@ def test_a_docked_pilot_takes_control_of_the_structure_and_the_structure_names_i
         assert client.call("structureControl", "ReleaseControl") is None
         assert client.call("structureControl", "GetStructurePilot", STRUCTURE) is None
 
-
 def test_a_pilot_in_space_boards_the_structure_and_ejects_into_a_capsule():
     """structureControl.BoardStructure from space (V24.01 Handle_BoardStructure, which returns None) makes the pilot the structure's pilot, and
     EjectFromStructure with no ship to return to leaves the structure with a capsule (the pilot is no longer its pilot)."""
@@ -381,7 +352,6 @@ def test_a_pilot_in_space_boards_the_structure_and_ejects_into_a_capsule():
         assert client.call("structureControl", "GetStructurePilot", STRUCTURE) == character
         assert client.call("structureControl", "EjectFromStructure", 0) is None
         assert client.call("structureControl", "GetStructurePilot", STRUCTURE) is None
-
 
 def test_a_second_pilot_taking_control_displaces_the_first_as_the_reference_does():
     """Exclusivity: one pilot controls a structure at a time. The reference's assumeStructureControl relinquishes the previous controller
@@ -396,7 +366,6 @@ def test_a_second_pilot_taking_control_displaces_the_first_as_the_reference_does
         assert second.call("structureControl", "TakeControl", STRUCTURE) is None
         assert second.call("structureControl", "GetStructurePilot", STRUCTURE) == second_character
         assert second_character != first_character
-
 
 def test_a_docked_pilot_delivers_items_from_the_structure_hangar_and_the_recipient_is_told():
     """structureDeliveries.Deliver by a pilot docked in the structure (V24.01 structureDeliveriesService.js Handle_Deliver, which returns None):
@@ -416,7 +385,6 @@ def test_a_docked_pilot_delivers_items_from_the_structure_hangar_and_the_recipie
         assert notices, "the recipient was not sent the delivery notice"
         assert _holds(notices[0]["args"], 199), f"the notice is not StructureItemsDelivered (199): {notices[0]['args']}"
 
-
 def test_a_pilot_in_space_drops_cargo_at_the_structure_and_is_answered_the_moved_ids():
     """structureCargoDelivery.DropOffItems from a ship in space within Cargo Deposit range (V24.01 Handle_DropOffItems): the cargo of the ship
     moves into the structure's deliveries bay of the pilot, and the answer is the list of the item ids that moved."""
@@ -433,7 +401,6 @@ def test_a_pilot_in_space_drops_cargo_at_the_structure_and_is_answered_the_moved
             assert dbseed.owner_of(item) == character
             assert dbseed.flag_of(item) == DELIVERIES_FLAG
             assert dbseed.location_of(item) == STRUCTURE
-
 
 def test_the_controlling_pilot_starts_a_moon_extraction_at_the_refinery_and_the_extraction_is_told():
     """moonExtractions.StartNewExtraction by the pilot in control of the refinery (V24.01 moonExtractionsService.js Handle_StartNewExtraction): the
@@ -459,7 +426,6 @@ def test_the_controlling_pilot_starts_a_moon_extraction_at_the_refinery_and_the_
         assert number(again["extractionID"]) == extraction
         assert client.call("structureControl", "ReleaseControl") is None
 
-
 def test_a_director_is_refused_the_anchor_of_an_astrahus_in_this_system_by_name():
     """structureDeployment.Anchor by a Director of a player corporation at least seven days old, in the system the recorded pilots undock in: the
     refusal `CantDeployBlocked` with the item's type (EVE.js sovPlayerDeployment.js; the wiki's Anchoring structures). The system's pinned SDE
@@ -479,14 +445,12 @@ def test_a_director_is_refused_the_anchor_of_an_astrahus_in_this_system_by_name(
         assert f"'typeID', {ASTRAHUS}" in text or f"typeID', {{'$long': {ASTRAHUS}}}" in text or f"['typeID', {ASTRAHUS}]" in text, text
         assert dbseed.sql(f"select count(*) from {dbseed.schema('INVENTORY')}.items where id = {item}") == "1", "the refused item was consumed"
 
-
 def _relocate(character: int, ship_id: int) -> None:
     """Puts the character and its ship in the legal system's station (the characters' location and the ship's hangar), as a pilot who docked
     there would be: the next selection of the character reads it."""
     dbseed.sql(f"update {dbseed.schema('CHARACTERS')}.characters set station_id = {LEGAL_STATION}, home_station_id = {LEGAL_STATION}, "
                f"solar_system_id = {LEGAL_SYSTEM}, constellation_id = {LEGAL_CONSTELLATION}, region_id = {LEGAL_REGION} where id = {character}")
     dbseed.sql(f"update {dbseed.schema('INVENTORY')}.items set location_id = {LEGAL_STATION}, flag = {dbseed.HANGAR} where id = {ship_id}")
-
 
 def test_a_director_anchors_an_astrahus_from_its_ship_in_a_legal_system_and_the_structure_is_placed_and_told():
     """structureDeployment.Anchor by a Director of a player corporation at least seven days old, in a system the pinned SDE allows (V24.01
@@ -531,13 +495,9 @@ def test_a_director_anchors_an_astrahus_from_its_ship_in_a_legal_system_and_the_
         assert called(client, "structureDeployment", "Unanchor", item) is None
         assert called(client, "structureDeployment", "CancelUnanchor", item) is None
 
-
-# ST-23: the eject back to the pilot's own ship, and the moon fracture with its completion and the owners' rows
-
 STRUCTURE_POSITION = (STRUCTURE_X, STRUCTURE_Y, STRUCTURE_Z)  # the return refinery's position (seeded above)
 RETURN_DISTANCE_METERS = 48_000.0  # from the refinery's centre: its ball is 45 000 m (SDE radius), so about 3 km of surface, inside the 6 500 m a ship may return from (V24.01 maxBoardingDistance); nearer, the simulation pushes the ship out of the ball
 FAR_FUTURE_MS = 4_000_000_000_000  # a saved place that does not expire
-
 
 def _seed_ship_place(ship_id: int, system: int = SYSTEM) -> None:
     """The ship's saved place (space.space_items): RETURN_DISTANCE_METERS from the refinery's centre, along +x. The server restores the place when the pilot
@@ -551,7 +511,6 @@ def _seed_ship_place(ship_id: int, system: int = SYSTEM) -> None:
         f"dx = excluded.dx, dy = excluded.dy, dz = excluded.dz, expires_at_ms = excluded.expires_at_ms"
     )
 
-
 def _reselect_in_space(client, character: int, system: int = SYSTEM) -> None:
     """The character logs off (its place is saved), the place is seeded, and the character is selected again into the system's ballpark."""
     client.call("userSvc", "UserLogOffCharacter")
@@ -560,10 +519,8 @@ def _reselect_in_space(client, character: int, system: int = SYSTEM) -> None:
     assert base.attempt(client, "charUnboundMgr", "SelectCharacterID", character, None, False) == ("ok", None)
     client.call("beyonce", "MachoBindObject", system, None)
 
-
 def _ship_of(character: int) -> int:
     return int(dbseed.sql(f"select ship_id from {dbseed.schema('CHARACTERS')}.characters where id = {int(character)}") or 0)
-
 
 def test_a_pilot_in_space_boards_the_structure_and_ejects_back_into_its_own_ship():
     """structureControl.BoardStructure from space (V24.01 Handle_BoardStructure), then EjectFromStructure with the pilot's own ship (V24.01 and EVE.js
@@ -583,14 +540,12 @@ def test_a_pilot_in_space_boards_the_structure_and_ejects_back_into_its_own_ship
         assert any(_holds(event.get("args"), ship_id) for event in _named(told, "OnShipCosmeticsChanged")), (
             f"the pilot was not told its ship {ship_id} is back: {_named(told, 'OnShipCosmeticsChanged')}")
 
-
 def _moon_rows(structure: int, extraction: int) -> dict:
     row = dbseed.sql(
         f"select state, completed_reason, fracture_complete_ms, chunk_available_ms from {dbseed.schema('STRUCTURES')}.structure_moon_extractions "
         f"where extraction_id = {int(extraction)}")
     state, reason, fracture_complete, chunk = (row.split("|") + ["", "", "", ""])[:4]
     return {"state": state, "reason": reason, "fractureCompleteMs": int(fracture_complete or 0), "chunkMs": int(chunk or 0)}
-
 
 def _owner_notifications(type_id: int, structure: int) -> list:
     """The owners' notification rows of a type for a structure: the notifications table of the game store, in which each box holds its rows."""
@@ -601,7 +556,6 @@ def _owner_notifications(type_id: int, structure: int) -> list:
             if isinstance(node, dict) and node.get("typeID") == type_id and node.get("data", {}).get("structureID") == structure:
                 found.append(node)
     return found
-
 
 def test_a_moon_chunk_is_refused_until_ready_then_fractured_and_completed_and_its_owners_are_told():
     """FractureChunkWithStructure (V24.01 moonExtractionsService; EVE.js Handle_FractureChunkWithStructure): a chunk that is not ready is refused by name; a ready one
@@ -621,7 +575,7 @@ def test_a_moon_chunk_is_refused_until_ready_then_fractured_and_completed_and_it
         assert called(client, "moonExtractions", "FractureChunkWithStructure") is None
         fired = _moon_rows(STRUCTURE, extraction)
         assert fired["state"] == "fracturing", fired
-        # the owners' notices are written by the event bus after the fire (a durable delivery): the laser-fired notice (205) follows within seconds
+
         deadline = time.time() + 60
         while not _owner_notifications(205, STRUCTURE) and time.time() < deadline:
             timed_events(client, 2.0)

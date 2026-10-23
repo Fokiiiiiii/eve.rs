@@ -52,11 +52,22 @@ fn a_hit_is_taken_by_the_shield_through_its_resonances() {
 
 #[test]
 fn a_damage_over_time_tick_goes_through_the_layers_whole_while_a_hit_is_resisted() {
-    // 100 thermal: the shield lets 0.8 of a hit through, but a damage-over-time tick ignores resistances (the wiki) and takes all of it
     let resisted = health().apply(0, [0.0, 100.0, 0.0, 0.0]).unwrap();
     let whole = health().apply_unresisted(0, [0.0, 100.0, 0.0, 0.0]).unwrap();
     assert!((resisted.taken.shield - 80.0).abs() < 1e-9);
     assert!((whole.taken.shield - 100.0).abs() < 1e-9);
+}
+
+#[test]
+fn a_resolved_applied_damage_depletes_layers_without_a_damage_type() {
+    let mut health = health();
+    let applied = health.apply_resolved_amount(0, 400.0).unwrap();
+
+    assert_eq!(applied.taken, Layers { shield: 220.0, armor: 137.5, structure: 42.5 });
+    assert_eq!(applied.after, Layers { shield: 0.0, armor: 0.0, structure: 158.75 });
+    assert_eq!(applied.armor_damage, (0.0, 137.5));
+    assert!(!applied.destroyed);
+    assert!(health.apply_resolved_amount(SECOND, f64::NAN).is_none());
 }
 
 #[test]

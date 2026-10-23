@@ -37,7 +37,6 @@ public class ModuleEffectsTests
         }
     }
 
-
     [Fact]
     public void A_module_carries_the_rules_the_simulation_enforces_from_its_type()
     {
@@ -63,7 +62,7 @@ public class ModuleEffectsTests
     [Fact]
     public void A_module_that_disallows_repeating_activation_has_one_cycle_whatever_repeat_is_asked()
     {
-        // disallowRepeatingActivation (1014): the server's cycle budget is one, so a module that must fire once cannot be held on by a repeat (EveJS
+
         // moduleCycleSchedule.js); a module without it keeps the repeat asked for
         foreach (var (disallows, expected) in new[] { (1.0, 1), (0.0, 3) })
         {
@@ -160,7 +159,6 @@ public class ModuleEffectsTests
         Assert.Equal(new Eve.Space.SimNumbers(1_000_000, 200, 100), package.Off);
     }
 
-
     [Fact]
     public void An_entropic_disintegrator_builds_the_existing_turret_package_for_its_first_volley()
     {
@@ -187,7 +185,6 @@ public class ModuleEffectsTests
         Assert.Equal(new[] { 8d, 32d, 24d, 16d }, turret.RawDamage);
         Assert.Equal(6000, turret.OptimalRange);
     }
-
 
     [Fact]
     public void The_ancillary_remote_armor_repairer_spends_paste_then_keeps_its_unloaded_repair()
@@ -217,7 +214,6 @@ public class ModuleEffectsTests
         Assert.Equal(new Eve.Space.SimRemote.Repair(Eve.Space.SimLayer.Armor, 30), fallback.What);
     }
 
-
     [Fact]
     public void The_ancillary_remote_shield_booster_switches_between_cap_free_charges_and_capacitor()
     {
@@ -232,6 +228,7 @@ public class ModuleEffectsTests
         Assert.Null(loadedResult.Reason);
         var loadedPackage = Assert.IsType<Eve.Space.SimEffect>(loadedResult.Effect);
         Assert.Equal(0, loadedPackage.CapacitorNeed);
+        Assert.Equal(135, loadedPackage.FallbackCapacitorNeed);
         var charged = Assert.IsType<Eve.Space.SimAction.Charged>(loadedPackage.Action);
         Assert.Equal(9, charged.Charges);
         Assert.Null(charged.Fallback);
@@ -248,6 +245,7 @@ public class ModuleEffectsTests
         Assert.Null(emptyResult.Reason);
         var emptyPackage = Assert.IsType<Eve.Space.SimEffect>(emptyResult.Effect);
         Assert.Equal(135, emptyPackage.CapacitorNeed);
+        Assert.Equal(135, emptyPackage.FallbackCapacitorNeed);
         var unchargedRemote = Assert.IsType<Eve.Space.SimAction.Remote>(emptyPackage.Action);
         Assert.Equal(new Eve.Space.SimRemote.Repair(Eve.Space.SimLayer.Shield, 125), unchargedRemote.What);
     }
@@ -392,8 +390,138 @@ public class ModuleEffectsTests
                 Assert.NotEmpty(effect.Modifiers);
             }
         }
+
+        var scanStrength = Assert.Single(statics.Effects, candidate =>
+            candidate.Name.Equals("scanStrengthBonusPercentActivate", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(4, scanStrength.Modifiers.Count);
+        Assert.All(scanStrength.Modifiers, modifier =>
+        {
+            Assert.Equal(ModifierFunc.Item, modifier.Func);
+            Assert.Equal("shipID", modifier.Domain);
+        });
+        Assert.Contains("scanStrengthBonusPercentActivate",
+            Eve.Services.Space.Effects.ModuleEffects.Default.Names, StringComparer.OrdinalIgnoreCase);
     }
 
+    [PgFact]
+    public async Task A_real_railgun_routes_targetAttack_to_the_turret_handler_without_changing_weapon_values()
+    {
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var sde = new SdeReader(source);
+        var catalogBuild = await sde.BuildAsync()
+            ?? throw new InvalidOperationException("The test SDE schema must expose its actual build number.");
+        Assert.Equal(3396210, catalogBuild);
+
+        var statics = await DogmaStatic.LoadAsync(sde);
+        await statics.EnsureTypesAsync([587, 12344, 230, 439]);
+        var moduleType = statics.Type(12344)
+            ?? throw new InvalidOperationException($"SDE build {catalogBuild} is missing type 12344.");
+        var markerNames = moduleType.EffectIds.Select(statics.Effect).Where(effect => effect is not null).Select(effect => effect!.Name);
+        Assert.Contains(markerNames, name => name.Equals("turretFitted", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(markerNames, name => name.Equals("targetAttack", StringComparison.OrdinalIgnoreCase));
+
+        var targetAttack = Assert.Single(statics.Effects, effect =>
+            effect.Name.Equals("targetAttack", StringComparison.OrdinalIgnoreCase));
+        var projectileFired = Assert.Single(statics.Effects, effect =>
+            effect.Name.Equals("projectileFired", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(EffectDef.Target, targetAttack.Category);
+        Assert.Equal(EffectDef.Target, projectileFired.Category);
+        Assert.Equal(51, targetAttack.DurationAttributeId);
+        Assert.Equal(6, targetAttack.DischargeAttributeId);
+        Assert.Equal(54, targetAttack.RangeAttributeId);
+        Assert.Equal(158, targetAttack.FalloffAttributeId);
+        Assert.Equal(projectileFired.DurationAttributeId, targetAttack.DurationAttributeId);
+        Assert.Equal(projectileFired.DischargeAttributeId, targetAttack.DischargeAttributeId);
+        Assert.Equal(projectileFired.RangeAttributeId, targetAttack.RangeAttributeId);
+        Assert.Equal(projectileFired.FalloffAttributeId, targetAttack.FalloffAttributeId);
+
+        var characterId = 72001L;
+        var shipId = 72002L;
+        var turretId = 72003L;
+        var otherModuleId = 72007L;
+        var charge = new Eve.Inventory.Item(72006, 230, characterId, shipId, 27, 1000, false, null);
+        var ship = new Eve.Inventory.Item(shipId, 587, characterId, 60003760, 0, 1, true, null);
+        var turret = new Eve.Inventory.Item(turretId, 12344, characterId, shipId, 27, 1, true, null);
+        var otherModule = new Eve.Inventory.Item(otherModuleId, 439, characterId, shipId, 11, 1, true, null);
+
+        Eve.Ships.ShipSnapshot Snapshot(Eve.Inventory.Item fitted, IReadOnlyList<Eve.Inventory.Item> charges)
+        {
+            var world = new DogmaWorld(statics, characterId, shipId);
+            world.Add(new DogmaItem(shipId, ship.TypeId, characterId, ship.LocationId, ship.Flag, ItemState.Online));
+            world.Add(new DogmaItem(fitted.Id, fitted.TypeId, characterId, fitted.LocationId, fitted.Flag, ItemState.Online));
+            world.Add(new DogmaItem(charge.Id, charge.TypeId, characterId, charge.LocationId, charge.Flag, ItemState.Online));
+            return new Eve.Ships.ShipSnapshot
+            {
+                Character = null!,
+                Ship = ship,
+                Fitted = [fitted],
+                Charges = charges,
+                Skills = [],
+                World = world,
+            };
+        }
+
+        var empty = Snapshot(turret, []);
+        var noAmmo = Eve.Services.Space.ModulePackages.Of(empty, statics, turretId, "targetAttack", 72004, 1000);
+        Assert.Equal("NO_AMMO", noAmmo.Reason);
+
+        var loaded = Snapshot(turret, [charge]);
+        var normal = Eve.Services.Space.ModulePackages.Of(loaded, statics, turretId, "projectileFired", 72004, 1000);
+        var requested = Eve.Services.Space.ModulePackages.Of(loaded, statics, turretId, "targetAttack", 72004, 1000);
+        Assert.Null(normal.Reason);
+        Assert.Null(requested.Reason);
+        var normalPackage = Assert.IsType<Eve.Space.SimEffect>(normal.Effect);
+        var requestedPackage = Assert.IsType<Eve.Space.SimEffect>(requested.Effect);
+        Assert.Equal(projectileFired.Id, normalPackage.EffectId);
+        Assert.Equal(targetAttack.Id, requestedPackage.EffectId);
+        Assert.Equal(normalPackage.Fx, requestedPackage.Fx);
+        Assert.Equal(normalPackage.DurationMs, requestedPackage.DurationMs);
+        Assert.Equal(normalPackage.CapacitorNeed, requestedPackage.CapacitorNeed);
+        Assert.Equal(normalPackage.Repeat, requestedPackage.Repeat);
+        Assert.Equal(normalPackage.TargetId, requestedPackage.TargetId);
+        var normalTurret = Assert.IsType<Eve.Space.SimTurret>(normalPackage.Turret);
+        Assert.Equal(4455d, normalPackage.DurationMs);
+        Assert.Equal(4.515d, normalPackage.CapacitorNeed);
+        Assert.Equal(2.53d, loaded.World.Get(turretId, 64));
+        Assert.Equal(14d, loaded.World.Get(charge.Id, 117));
+        Assert.Equal(10d, loaded.World.Get(charge.Id, 118));
+        Assert.Equal(new[] { 0d, 25.3d, 35.42d, 0d }, normalTurret.RawDamage);
+        Assert.Equal(8100d, normalTurret.OptimalRange);
+        Assert.Equal(9000d, normalTurret.Falloff);
+        Assert.Equal(7.2d, normalTurret.TrackingSpeed);
+        Assert.Equal(40000d, normalTurret.SignatureResolution);
+        var loadedCharge = Assert.IsType<Eve.Space.SimTurretCharge>(normalTurret.Charge);
+        Assert.Equal(230, loadedCharge.TypeId);
+        Assert.Equal(27, loadedCharge.Flag);
+        Assert.Equal(1000L, loadedCharge.Rounds);
+        Assert.Equal(1L, loadedCharge.PerCycle);
+        Assert.False(loadedCharge.Reloads);
+        var requestedTurret = Assert.IsType<Eve.Space.SimTurret>(requestedPackage.Turret);
+        Assert.Equal(normalTurret.WeaponTypeId, requestedTurret.WeaponTypeId);
+        Assert.Equal(normalTurret.Fx, requestedTurret.Fx);
+        Assert.Equal(normalTurret.RawDamage, requestedTurret.RawDamage);
+        Assert.Equal(normalTurret.OptimalRange, requestedTurret.OptimalRange);
+        Assert.Equal(normalTurret.Falloff, requestedTurret.Falloff);
+        Assert.Equal(normalTurret.TrackingSpeed, requestedTurret.TrackingSpeed);
+        Assert.Equal(normalTurret.SignatureResolution, requestedTurret.SignatureResolution);
+        Assert.Equal(normalTurret.Charge, requestedTurret.Charge);
+        Assert.Equal(normalTurret.Missile, requestedTurret.Missile);
+        Assert.Equal(normalTurret.Spool, requestedTurret.Spool);
+        Assert.Equal(normalTurret.Aoe, requestedTurret.Aoe);
+        Assert.Equal(normalTurret.Arc, requestedTurret.Arc);
+        Assert.Equal(normalTurret.RequiresGunnery, requestedTurret.RequiresGunnery);
+        Assert.Equal(normalPackage.OnChanges, requestedPackage.OnChanges);
+        Assert.Equal(normalPackage.OffChanges, requestedPackage.OffChanges);
+
+        var otherType = statics.Type(otherModule.TypeId)
+            ?? throw new InvalidOperationException($"SDE build {catalogBuild} is missing type {otherModule.TypeId}.");
+        Assert.DoesNotContain(otherType.EffectIds.Select(statics.Effect).Where(effect => effect is not null).Select(effect => effect!.Name),
+            name => name.Equals("turretFitted", StringComparison.OrdinalIgnoreCase)
+                || name.Equals("lightningWeapon", StringComparison.OrdinalIgnoreCase));
+        var unsupported = Eve.Services.Space.ModulePackages.Of(
+            Snapshot(otherModule, [charge]), statics, otherModuleId, "targetAttack", 72004, 1000);
+        Assert.Equal("UNSUPPORTED_EFFECT", unsupported.Reason);
+    }
 
     [PgFact]
     public async Task Sde_module_effect_handlers_use_actual_catalog_types_and_attributes()
@@ -580,7 +708,6 @@ public class ModuleEffectsTests
 
         }
     }
-
 
     [PgFact]
     public async Task Mutadaptive_repair_spool_uses_each_published_modules_sde_cycle_bonus_and_resets_at_boundaries()
@@ -771,7 +898,7 @@ public class ModuleEffectsTests
 
         // pending handlers (refusals) are not coverage, so their effects stay in currentSdeGaps; the built ones (the command bursts, P.A.N.I.C.,
         // the data and relic analyzers, hackOrbital, scanStrength) have left the manifest
-        // the burst projectors' families are handled on structures (StructureBurstEffects.cs) and on ships (ShipBurstProjectorEffect.cs, ST-17 d)
+
         var handledNames = Eve.Services.Space.Effects.ModuleEffects.Default.ImplementedNames
             .Concat(["missileLaunching", "torpedoLaunching"])
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -1077,7 +1204,6 @@ public class ModuleEffectsTests
     }
 
     /// <summary>
-    /// ST-9 b: an entosis link is a package of a 300 s cycle reaching 20 km (attribute 54), that burns its consumption type (713) each cycle and is aimed at the
     /// target it is given. A link with no target, or with no reach in its static data, is refused by name before any package is built.
     /// </summary>
     [Fact]

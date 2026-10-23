@@ -10,11 +10,12 @@ internal sealed record GatewayRequest(byte[] CorrelationUuid, string TypeUrl, by
     public string TypeName => TypeUrl[(TypeUrl.LastIndexOf('/') + 1)..];
 }
 
-/// <summary>The envelopes and the gRPC framing of the public gateway (EveJS publicGatewayLocal.js: createGrpcFrame and the response envelope).</summary>
+
 internal static class GatewayEnvelope
 {
     /// <summary>The type url prefix of the responses (the client's TYPE_URL, eveProto/__init__.py).</summary>
     public const string TypeUrlPrefix = "type.evetech.net/";
+    public const int MaxFrameLength = 16 << 20;
 
     /// <summary>
     /// Decodes eve_public.Request: correlation_uuid 2, payload Any 3, authoritative_context 6 whose identity 10 names the character
@@ -115,7 +116,10 @@ internal static class GatewayEnvelope
             var span = CollectionsMarshal.AsSpan(buffer);
             if (span[offset] != 0)
                 throw new FormatException("a compressed gRPC frame is not supported");
-            var length = checked((int)BinaryPrimitives.ReadUInt32BigEndian(span.Slice(offset + 1, 4)));
+            var declaredLength = BinaryPrimitives.ReadUInt32BigEndian(span.Slice(offset + 1, 4));
+            if (declaredLength > MaxFrameLength)
+                throw new FormatException($"gRPC frame length {declaredLength} exceeds {MaxFrameLength}");
+            var length = (int)declaredLength;
             if (buffer.Count - offset - 5 < length)
                 break;
             frames.Add(buffer.GetRange(offset + 5, length).ToArray());

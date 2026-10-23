@@ -5,7 +5,6 @@ using Eve.Wallet;
 namespace Eve.Market.Tests;
 
 /// <summary>
-/// M3 (market-decisions Q7): expiry as a durable job on a fake clock (TradeRig.Now). The job refunds and returns the items once and announces
 /// once; a second run or sweep does nothing; a restart resumes the expiry; a modification moves it; a cancel removes it. The minute sweep
 /// is a job too, so the assertions are on the effects (balances, items, announcements), not on how many jobs ran.
 /// </summary>

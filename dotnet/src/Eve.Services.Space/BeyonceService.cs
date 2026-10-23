@@ -21,7 +21,6 @@ public sealed partial class BeyonceService(SpaceSessions space, Func<long> nowUn
         _ => null,
     };
 
-
     /// <summary>Resolves a bookmark only when the caller may warp to it. The host supplies the persisted/access-checked lookup.</summary>
     public Func<long, long, CancellationToken, Task<WarpCoordinates?>>? BookmarkTargetForCharacter { get; set; }
 
@@ -97,8 +96,6 @@ public Func<long, long, CancellationToken, Task<int>>? SkillLevelOfCharacter { g
         return Py.Tuple(bound, result);
     }
 
-    private const long BeyonceViewRoleMask = 140667119611150336L;
-
     /// <summary>The host can provide the live bubble lookup when the simulation exposes it.</summary>
     public Func<ServiceCall, long, CancellationToken, ValueTask<long?>>? BubbleIdForItem { get; set; }
 
@@ -111,10 +108,7 @@ public Func<long, long, CancellationToken, Task<int>>? SkillLevelOfCharacter { g
             PyLong integer => integer.Value,
             _ => 0,
         };
-        var roleMask = call.Session.GetInt("role") ??
-            call.Session.GetInt("accountRole") ??
-            call.Session.GetInt("accountRoles") ?? 0;
-        if (itemId <= 0 || (roleMask & BeyonceViewRoleMask) == 0)
+        if (itemId <= 0 || !GameMasterRoles.Has(call.Session, GameMasterRoles.Staff))
             return None;
 
         var bubbleId = BubbleIdForItem is { } lookup
@@ -246,6 +240,8 @@ public Func<long, long, CancellationToken, Task<int>>? SkillLevelOfCharacter { g
             return None;
         }
 
+        if (space.IsInAbyssalRun(call.Session))
+            throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr(SpaceSessions.AbyssalWarpBlockedMessage)));
         var type = JsSemantics.PlainText(call.Arg(0));
         if (type is not ("item" or "bookmark" or "char" or "position" or "scan"))
         {
@@ -253,7 +249,7 @@ public Func<long, long, CancellationToken, Task<int>>? SkillLevelOfCharacter { g
         }
 
         var coordinate = type == "position" ? Coordinates(call.Arg(1)) : null;
-        // a cosmic site's scan result is named by its code (ABC-123), which the client sends as text; every other target is a number
+
         var scanCode = type == "scan" ? JsSemantics.StringValue(call.Arg(1)) : null;
         var requestedTarget = type == "position" || scanCode is not null ? null : Number(call.Arg(1));
         if (type == "position")
@@ -354,6 +350,8 @@ public Func<long, long, CancellationToken, Task<int>>? SkillLevelOfCharacter { g
         else if (type == "char")
         {
             var targetCharacterId = targetId;
+            if (sessionForCharacter?.Invoke(targetCharacterId) is { } abyssalTarget && space.IsInAbyssalRun(abyssalTarget))
+                throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr(SpaceSessions.AbyssalFleetWarpBlockedMessage)));
             if (fleet is null || fleet.Members.All(member => member.CharacterId != targetCharacterId)
                 || sessionForCharacter?.Invoke(targetCharacterId) is not { } targetSession
                 || targetSession.CharacterId != targetCharacterId
@@ -517,12 +515,8 @@ public Func<long, long, CancellationToken, Task<int>>? SkillLevelOfCharacter { g
         return None;
     }
 
-
     private static MachoWrappedException WarpRefusal() =>
         MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("You cannot warp there right now.")));
-
-
-
 
     /// <summary>Autopilot uses the same warp command but arrives 10 km from its destination.</summary>
     [Method("CmdWarpToStuffAutopilot")]

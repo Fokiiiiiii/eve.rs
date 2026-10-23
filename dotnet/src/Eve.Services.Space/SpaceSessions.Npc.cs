@@ -90,10 +90,10 @@ public sealed partial class SpaceSessions
         foreach (var place in HullPlaces(count, DeathTestRadiusMeters))
         {
             var shipId = HullIdBase + Interlocked.Increment(ref _hulls);
-            var spawn = new SimSpawn(
-                NextSpawnRequest(), pilot.SolarSystemId, SimShips.OfType(shipId, type), pilot.ShipId, place, [0, 0, 0], RandomDirection(), "",
+              var spawn = new SimSpawn(
+                  NextSpawnRequest(), SimSceneKey.SolarSystem(pilot.SolarSystemId), SimShips.OfType(shipId, type), pilot.ShipId, place, [0, 0, 0], RandomDirection(), "",
                 SimNpcIdentity.Default with { Hull = true });
-            if (await SpawnAsync(spawn, "deathtest", cancellationToken))
+            if (await SpawnAsync(spawn, "deathtest", cancellationToken) is not null)
             {
                 spawned.Add(shipId);
             }
@@ -116,17 +116,17 @@ public sealed partial class SpaceSessions
     private ulong NextSpawnRequest() => Interlocked.Increment(ref _spawnRequests);
 
     /// <summary>Asks the simulation to make a ship that nobody flies; false when it refused (the reason is logged), a message for the client when it cannot be reached.</summary>
-    private async Task<bool> SpawnAsync(SimSpawn spawn, string what, CancellationToken cancellationToken)
+    private async Task<ulong?> SpawnAsync(SimSpawn spawn, string what, CancellationToken cancellationToken)
     {
         try
         {
             var reply = await _sim.SpawnAsync(spawn, cancellationToken);
             if (reply.Session is not null)
             {
-                return true;
+                return reply.Session;
             }
             _log?.Invoke($"{what}: the ship was refused: {reply.Error}");
-            return false;
+            return null;
         }
         catch (SimUnavailableException error)
         {
@@ -171,7 +171,14 @@ public sealed partial class SpaceSessions
     public NpcWrecks? NpcWrecks { get; init; }
 
     /// <summary>What the host knows of an NPC it made: what it was worth, what it was and where (the simulation tells it only that the ship is gone).</summary>
-    private sealed record NpcShip(NpcProfile Profile, int TypeId, int SolarSystemId, long BeltId = 0, long Group = 0, long SiteId = 0);
+    private sealed record NpcShip(
+        NpcProfile? Profile,
+        int TypeId,
+        int SolarSystemId,
+        long BeltId = 0,
+        long Group = 0,
+        long SiteId = 0,
+        AbyssalNpcRuntime? Abyssal = null);
 
     private readonly ConcurrentDictionary<long, NpcShip> _npcShips = new();
 
@@ -180,7 +187,6 @@ public sealed partial class SpaceSessions
     private PgBountyStore? _bounties;
     private int _paying;
 
-    /// <summary>Raised for each bounty that was paid into a wallet (the wallet's owner is told of its new balance by whoever announces wallets).</summary>
     public event Action<BountyPaid>? BountyPaidOut;
 
     /// <summary>
@@ -204,7 +210,7 @@ public sealed partial class SpaceSessions
     /// The pilot of a character in a solar system as the simulation sees it, for an ESS link: its ship, whether the ship is one that may link (the SDE's type
     /// list 231), and where the ship is from the ESS ball. Null when the character is not in the system, or the simulation does not say where its ship is.
     /// </summary>
-    public async Task<EssHolder?> EssHolderAsync(int solarSystemId, long characterId, CancellationToken cancellationToken)
+    public async Task<EssHolder?> EssHolderAsync(int solarSystemId, long characterId, long essId, CancellationToken cancellationToken)
     {
         if (_pilots.Values.FirstOrDefault(pilot => pilot.CharacterId == characterId && pilot.SolarSystemId == solarSystemId) is not { } pilot)
         {
@@ -217,15 +223,29 @@ public sealed partial class SpaceSessions
         {
             return null;
         }
-        if (await PositionOfAsync(session, shipId.Value, cancellationToken) is not { } position)
+
+        CommandReply measured;
+        try
         {
+            measured = await _sim.CommandAsync(
+                (ulong)session.SessionId,
+                SimCommands.Measure,
+                [essId, shipId.Value],
+                cancellationToken);
+        }
+        catch (SimUnavailableException error)
+        {
+            _log?.Invoke($"ESS range query of session {session.SessionId}: {error.Message}");
+            throw Notify("Space is not available right now. Try again in a moment.");
+        }
+        if (!measured.Accepted || measured.Distance is not { } distance)
+        {
+            _log?.Invoke($"ESS range query refused for session {session.SessionId}: {measured.Reason ?? "no distance was returned"}.");
             return null;
         }
+
         var linkable = await _statics.TypeListNamesAsync(EssRules.LinkableShipsTypeList, typeId.Value, cancellationToken);
-        var dx = position.X - EssRules.BallX;
-        var dy = position.Y - EssRules.BallY;
-        var dz = position.Z - EssRules.BallZ;
-        return new EssHolder(true, linkable, Math.Sqrt(dx * dx + dy * dy + dz * dz), shipId.Value);
+        return new EssHolder(true, linkable, distance, shipId.Value);
     }
 
     /// <summary>Pays the bounties that are due (one payout at a time); each is raised as <see cref="BountyPaidOut"/>.</summary>
@@ -264,6 +284,26 @@ public sealed partial class SpaceSessions
     private async Task FinishNpcDeathAsync(NpcShip npc, SimDestroyed destroyed)
     {
         var killer = _pilots.Values.FirstOrDefault(pilot => pilot.ShipId == destroyed.KillerShipId);
+        if (npc.Abyssal is { } abyssal)
+        {
+            if (AbyssalNpcDestroyedAsync is { } record)
+            {
+                await record(new AbyssalNpcDestroyedNotice(
+                    abyssal.InstanceId,
+                    abyssal.ContentId,
+                    npc.SolarSystemId,
+                    abyssal.RoomIndex,
+                    destroyed.ShipId,
+                    npc.TypeId,
+                    destroyed.KillerShipId), CancellationToken.None).ConfigureAwait(false);
+            }
+            else
+            {
+                throw new InvalidOperationException("Abyssal NPC death requires the Host domain callback.");
+            }
+            return;
+        }
+        var profile = npc.Profile ?? throw new InvalidOperationException("A non-Abyssal NPC has no catalog profile.");
         await LeaveNpcWreckAsync(npc, destroyed, killer);
         try
         {
@@ -271,7 +311,7 @@ public sealed partial class SpaceSessions
         }
         finally
         {
-            var kill = new NpcKill(killer?.CharacterId ?? 0, npc.TypeId, npc.Profile, npc.SolarSystemId, destroyed.ShipId);
+            var kill = new NpcKill(killer?.CharacterId ?? 0, npc.TypeId, profile, npc.SolarSystemId, destroyed.ShipId);
             lock (_npcDestroyedGate)
             {
                 Raise(NpcDestroyed, kill, nameof(NpcDestroyed));
@@ -281,7 +321,8 @@ public sealed partial class SpaceSessions
     }
 
     private Task PayNpcBountyAsync(NpcShip npc, SimDestroyed destroyed, Pilot? killer) =>
-        PayBountyAsync(npc.SolarSystemId, npc.TypeId, destroyed.ShipId, killer, npc.Profile.Bounty);
+        PayBountyAsync(npc.SolarSystemId, npc.TypeId, destroyed.ShipId, killer,
+            (npc.Profile ?? throw new InvalidOperationException("A non-Abyssal NPC has no catalog profile.")).Bounty);
 
     /// <summary>
     /// The bounty of an NPC the simulation keeps (a Pochven sentry or fighter, a kill the host has no record of): the <c>entityKillBounty</c> of its type in the
@@ -312,6 +353,10 @@ public sealed partial class SpaceSessions
     private async Task PayBountyAsync(int solarSystemId, int typeId, long shipId, Pilot? killer, long bounty)
     {
         if (_bounties is not { } store || killer is null || NpcBounty.AmountOf(bounty) is not { } amount)
+        {
+            return;
+        }
+        if (RegionOfSystem(solarSystemId) is { } regionId && !Pochven.PochvenRules.PaysNpcBounty(regionId))
         {
             return;
         }
@@ -361,9 +406,10 @@ public sealed partial class SpaceSessions
         try
         {
             var character = killer is null ? null : await _ships.CharacterAsync(killer.CharacterId);
-            var made = await wrecks.LeaveAsync(kind.TypeId, npc.Profile.LootTableId, character?.Id ?? npc.Profile.CorporationId, npc.SolarSystemId);
+            var profile = npc.Profile ?? throw new InvalidOperationException("A non-Abyssal NPC has no catalog profile.");
+            var made = await wrecks.LeaveAsync(kind.TypeId, profile.LootTableId, character?.Id ?? profile.CorporationId, npc.SolarSystemId);
             var credit = character is null ? new SimCredit(0, 0, 0, 0) : new SimCredit(character.Id, character.CorporationId, character.AllianceId ?? 0, character.FactionId ?? 0);
-            PlaceWreck(new SimPlaceWreck(npc.SolarSystemId, made.Wreck.Id, WreckGroup, kind, destroyed.Position, destroyed.Direction, destroyed.Radius, destroyed.ShipId, credit, made.Contents.Count == 0));
+            PlaceWreck(new SimPlaceWreck(SimSceneKey.SolarSystem(npc.SolarSystemId), made.Wreck.Id, WreckGroup, kind, destroyed.Position, destroyed.Direction, destroyed.Radius, destroyed.ShipId, credit, made.Contents.Count == 0));
         }
         catch (Exception error) when (error is not OperationCanceledException)
         {
@@ -382,12 +428,10 @@ public sealed partial class SpaceSessions
 
     /// <summary>
     /// <c>buildSpawnStateForDefinition</c>: how far from the anchor the NPC of a batch comes (what its profile says, a random amount either way that grows with the
-    /// size of the batch, and a step for each one before it so they are not on top of each other), at least a kilometre.
     /// </summary>
     internal static double NpcSpawnDistance(NpcProfile profile, int index, int total, double random) =>
         NpcSpawnDistance(Math.Max(1_000, profile.SpawnDistanceMeters), Math.Min(6_000, 800 + total * 600), NpcFormationSpacing, index, random);
 
-    /// <summary>As above, from the distance, the window of chance either way and the step between ones of a batch that are given.</summary>
     internal static double NpcSpawnDistance(double baseDistance, double window, double step, int index, double random)
     {
         var jitter = (random * 2 - 1) * window;
@@ -395,7 +439,6 @@ public sealed partial class SpaceSessions
         return Math.Max(1_000, baseDistance + jitter + spacing);
     }
 
-    /// <summary>The step between the NPCs of a batch (<c>formationSpacingMeters</c> of the reference's default).</summary>
     private const double NpcFormationSpacing = 1_250;
 
     /// <summary>
@@ -426,7 +469,8 @@ public sealed partial class SpaceSessions
         CancellationToken cancellationToken,
         long hostileResponseThreshold = NpcHostileThreshold,
         double aggressionRangeOverride = 0,
-        List<long>? shipIds = null)
+        List<long>? shipIds = null,
+        bool stationary = false)
     {
         var composition = new List<(string Name, int Count)>();
         var unarmed = 0;
@@ -437,12 +481,14 @@ public sealed partial class SpaceSessions
             var shipId = NpcIdBase + Interlocked.Increment(ref _npcs);
             var weapon = NpcArmament.HullWeapon(type, shipId, _statics);
             var aggression = Math.Max(NpcArmament.AggressionRange(type, _statics), aggressionRangeOverride);
-            var identity = new SimNpcIdentity(hostileResponseThreshold, NpcFriendlyThreshold, aggression, weapon is null ? [] : [weapon], null, HostWreck: NpcWrecks is not null);
+            var identity = new SimNpcIdentity(hostileResponseThreshold, NpcFriendlyThreshold, aggression, weapon is null ? [] : [weapon], null, HostWreck: NpcWrecks is not null, SelfRepairs: NpcArmament.SelfRepairsOf(type, _statics));
             var hull = SimShips.OfType(shipId, type);
             var ship = hull with
             {
                 OwnerId = profile.CorporationId, CorporationId = (int)profile.CorporationId, AllianceId = (int)profile.AllianceId, WarFactionId = profile.FactionId,
                 SecurityStatus = profile.SecurityStatus,
+                // QA `/npc ... still`: no top speed, so it holds its place (a Pochven sentry has none either)
+                MaxVelocity = stationary ? 0 : hull.MaxVelocity,
                 // an entity type has no lock range (it has `entityAttackRange` instead) and sometimes no lock count: with 0 of either it could never lock what it
                 // attacks, so it locks as far as it attacks and holds at least one (`applyNativeNpcHullCombatOverrides` of the reference)
                 MaxTargetRange = Math.Max(hull.MaxTargetRange, aggression),
@@ -451,12 +497,13 @@ public sealed partial class SpaceSessions
             var distance = NpcSpawnDistance(anchor.BaseDistance > 0 ? anchor.BaseDistance : Math.Max(1_000, profile.SpawnDistanceMeters), anchor.Window ?? Math.Min(6_000, 800 + profiles.Count * 600), NpcFormationSpacing, index, Random.Shared.NextDouble());
             var direction = RandomUnitVector();
             double[] place = [anchor.Origin[0] + direction[0] * distance, anchor.Origin[1] + direction[1] * distance, anchor.Origin[2] + direction[2] * distance];
-            var spawn = new SimSpawn(NextSpawnRequest(), anchor.SolarSystemId, ship, anchor.ShipId, place, [0, 0, 0], RandomUnitVector(), NpcBehavior, identity);
-            if (!await SpawnAsync(spawn, "npc", cancellationToken))
+            var spawn = new SimSpawn(NextSpawnRequest(), SimSceneKey.SolarSystem(anchor.SolarSystemId), ship, anchor.ShipId, place, [0, 0, 0], RandomUnitVector(), NpcBehavior, identity);
+            if (await SpawnAsync(spawn, "npc", cancellationToken) is not { } npcSession)
             {
                 break;
             }
             _npcShips[shipId] = new NpcShip(profile, type.TypeId, anchor.SolarSystemId, anchor.BeltId, anchor.Group, anchor.SiteId);
+            _spawned[shipId] = new SpawnedNpc(npcSession, anchor.SolarSystemId, type.TypeId);
             shipIds?.Add(shipId);
             unarmed += weapon is null ? 1 : 0;
             var name = profile.Name.Length > 0 ? profile.Name : profile.Id;
@@ -569,9 +616,16 @@ public sealed partial class SpaceSessions
                 _npcShips.TryRemove(id, out _);
             }
         }
+        foreach (var (id, spawned) in _spawned)
+        {
+            if (spawned.SolarSystemId == solarSystemId)
+            {
+                _spawned.TryRemove(id, out _);
+            }
+        }
     }
 
-    public async Task<NpcSpawnReport> SpawnNpcsAsync(ClientSession session, string query, int amount, CancellationToken cancellationToken)
+    public async Task<NpcSpawnReport> SpawnNpcsAsync(ClientSession session, string query, int amount, CancellationToken cancellationToken, bool stationary = false)
     {
         if (!_pilots.TryGetValue((ulong)session.SessionId, out var pilot))
         {
@@ -593,12 +647,11 @@ public sealed partial class SpaceSessions
             return NpcSpawnReport.Failed(plan.Error!, plan.Suggestions);
         }
 
-        var (composition, unarmed) = await SpawnGroupAsync(plan.Profiles, new SpawnAnchor(pilot.SolarSystemId, pilot.ShipId, [0, 0, 0]), cancellationToken);
+        var (composition, unarmed) = await SpawnGroupAsync(plan.Profiles, new SpawnAnchor(pilot.SolarSystemId, pilot.ShipId, [0, 0, 0]), cancellationToken, stationary: stationary);
         return composition.Count == 0
             ? NpcSpawnReport.Failed(NpcSpawnReport.SpawnFailed)
             : new NpcSpawnReport(null, [], selection.Name, composition, plan.Profiles.Count, unarmed);
     }
-
 
     /// <summary>Spawns the authored response pool around an active high-sec criminal; its response timer guarantees the criminal ship is lost.</summary>
     public async Task<bool> RespondToCriminalAsync(
@@ -688,10 +741,7 @@ public sealed partial class SpaceSessions
         return Task.CompletedTask;
     }
 
-
     /// <summary>Spawns the configured CONCORD response fleet around an active criminal and schedules the ship loss after the response ships engage.</summary>
-
-
     /// <summary>One order about a pilot's modules or targets is asked of the simulation at a time (the answers are matched by what was asked); an unreachable simulation is a message the client shows.</summary>
     private async Task<CommandReply> AskSimAsync(ulong id, Func<Task<CommandReply>> ask, ClientSession session)
     {

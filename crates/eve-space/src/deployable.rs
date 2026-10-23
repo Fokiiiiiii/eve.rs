@@ -3,22 +3,25 @@
 //! (`AddBalls2` when it is released, `RemoveBalls` when it is gone, the bomb's explosion played first). Both lifetimes are the simulation's own clock (the SDE's
 //! explosion delay): nothing is persisted, so a restart drops them (ADR 0012 addendum, a stated limitation).
 //!
-//! A bomb's blast is one `Area` (ADR 0011, its addendum of 2026-10-09): the centre is where the bomb is, the radius is the charge's blast radius, and
 //! the recipients are the ships of the scene within that surface distance, but the ship that launched it (as a smartbomb spares its own).
-
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use eve_destiny::ball::LegacyMode;
 use eve_destiny::{BallEntity, IdRef, Kind, Vec3};
 use eve_marshal::Value;
 
 use crate::health::Damage;
-use crate::link::AnalysisBeaconState;
+use crate::link::{AnalysisBeaconState, SlimValue};
 use crate::missile_entity::CHARGE_CATEGORY;
 use crate::modules::Effect;
+use crate::npc::is_npc_session;
 use crate::payload;
 use crate::scene::{Command, Out, Scene, SessionId, TICKS_PER_SECOND};
-use crate::wire::{filetime, id, int, list, slim_object, text, tuple, word};
+use crate::visibility::{Presence, can_see};
+use crate::wire::{filetime, id, int, list, real, text, tuple, word};
+
+/// The CRAB link's additional resistance bonus, reducing each damage-layer resonance by ten percent.
+pub(crate) const CRAB_LINK_RESISTANCE_BONUS: f64 = 0.10;
 
 /// The id of the first deployable a scene makes (its own range, apart from the missiles and the wrecks).
 pub const DEPLOYABLE_ID_BASE: i64 = 4_250_000_000_000_000;
@@ -61,14 +64,21 @@ pub enum Role {
     /// that. The host anchors it when its activation time is over and takes it out when its record's time is up.
     CynoBeacon { active: bool },
     /// A Mobile Observatory the host keeps a record of (protocol 72): while it is anchored (`active`), its pings decloak the cloaked ships of its system (the
-    /// wiki, Mobile Observatory). The host anchors it and takes it out when its record's time is up.
     MobileObservatory { active: bool },
     /// A player control tower the host keeps a record of (protocol 73): a ball in space, anchored (`active`) when its anchoring time is over. It has no warp or cyno
     /// effect: the fuel and the modules are not modelled yet.
     ControlTower { active: bool },
     /// A deadspace pocket of a dungeon the host keeps a record of (protocol 74): a region of the scene around its origin, in no client ball. It has no effect in the
-    /// simulation yet: the warp and the observatory checks read the host's record of it (DEVIATIONS, ST-23).
     DeadspacePocket,
+    /// An acceleration gate of a dungeon room the host keeps a record of (protocol 75): a stargate-kind ball the pilots of its system see, interactive
+    /// (EVE.js `abyssalRoomEntity`: `ballInteractive`, group 366). Its transit is the scene's `AccelerationGateTransit` command.
+    AccelerationGate,
+    /// A battlefield's capture point the host keeps a record of (protocol 77): a ball the pilots of its system see, with its factions and next point time
+    /// as its dynamic slim fields. It has no effect in the simulation: the host decides who holds it.
+    CapturePoint,
+    /// A battlefield's scoreboard the host keeps a record of (protocol 78): a ball the pilots of its system see, whose score is its dynamic slim field.
+    /// It has no effect in the simulation.
+    BattlefieldScoreboard,
     /// A jump bridge a ship opened (command 28, protocol 54): it lives until its time is up, is put in no client ball, and lets the fleet ships in 2 500 metres of
     /// the ship pass through it to the field (command 31). The field is the one the bridge targets; the destination is that field's system.
     JumpBridge { field_id: i64, destination_system: i32, range_meters: f64 },
@@ -89,6 +99,12 @@ const BEACON_CATEGORY: i32 = 2;
 const CYNO_FIELD_CATEGORY: i32 = 2;
 /// The category of a deployable (EVE.js `CATEGORY_DEPLOYABLE`, 22): a mobile warp disruptor's category.
 const DEPLOYABLE_CATEGORY: i32 = 22;
+/// The category of an acceleration gate's ball (EVE.js's acceleration gate record: type 17831, group 366, category 2).
+const ACCELERATION_GATE_CATEGORY: i32 = 2;
+/// The category of a capture point's ball (the SDE group 922, "Capture Point", is category 11).
+const CAPTURE_POINT_CATEGORY: i32 = 11;
+/// The category of a battlefield scoreboard's ball (the SDE group 227 of the scoreboard types is category 2).
+const BATTLEFIELD_SCOREBOARD_CATEGORY: i32 = 2;
 
 /// How long a structure's bomb waits for the Host's authorization of its blast before it goes off with no effect (30 seconds of scene time).
 const BOMB_IMPACT_TICKS: i64 = 30 * crate::scene::TICKS_PER_SECOND;
@@ -132,6 +148,8 @@ pub struct Deployable {
     pub module_type: i32,
     /// The pilots that were told of it (they are told it is gone).
     pub watchers: BTreeSet<SessionId>,
+    /// The dynamic slim-item fields the host set (`SetSlimField`), by name.
+    pub slim_fields: BTreeMap<String, SlimValue>,
 }
 
 fn ticks(milliseconds: f64) -> i64 {
@@ -156,6 +174,8 @@ fn release_actions(stamp: u32, deployable: &Deployable) -> Result<Vec<Value>, ev
         | Role::MobileObservatory { .. }
         | Role::ControlTower { .. }
         | Role::DeadspacePocket => (Kind::Other, LegacyMode::Stop),
+        Role::AccelerationGate => (Kind::Stargate, LegacyMode::Stop),
+        Role::CapturePoint | Role::BattlefieldScoreboard => (Kind::Other, LegacyMode::Stop),
         Role::JumpBridge { .. } => (Kind::Other, LegacyMode::Stop),
         Role::AnalysisBeacon { .. } => (Kind::Container, LegacyMode::Stop),
     };
@@ -169,15 +189,40 @@ fn release_actions(stamp: u32, deployable: &Deployable) -> Result<Vec<Value>, ev
         position: deployable.position,
         target_point: Some(deployable.position),
         mass: Some(1.0),
+        destiny_force_interactive: (deployable.role == Role::AccelerationGate).then_some(true),
         corporation_id: IdRef::Valid(i64::from(deployable.corporation_id)),
         alliance_id: IdRef::Valid(i64::from(deployable.alliance_id)),
         mode_owner: IdRef::Valid(deployable.ship_id),
         ..BallEntity::default()
     };
     let buffer = payload::add_balls_buffer(stamp, &[ball])?;
-    let slim =
-        Value::Dict(slim_entries(deployable, category).into_iter().map(|(k, v)| (word(k), v)).collect());
+    let slim = slim_dict(deployable, category);
     Ok(vec![payload::action(stamp, "AddBalls2", [tuple([buffer, list([slim])])])])
+}
+
+/// The slim item of a deployable as the client reads it: the entries of its category, then the dynamic fields the host set.
+fn slim_dict(deployable: &Deployable, category: i32) -> Value {
+    let mut pairs: Vec<(Value, Value)> =
+        slim_entries(deployable, category).into_iter().map(|(k, v)| (word(k), v)).collect();
+    pairs.extend(deployable.slim_fields.iter().map(|(name, value)| (text(name.clone()), slim_value(value))));
+    Value::Dict(pairs)
+}
+
+/// The slim item of a deployable as an object (`foo.SlimItem`), the form `OnSlimItemChange` carries.
+fn slim_item(deployable: &Deployable, category: i32) -> Value {
+    Value::Object { name: Box::new(word("foo.SlimItem")), args: Box::new(slim_dict(deployable, category)) }
+}
+
+/// A dynamic slim-item field's value as the client reads it.
+fn slim_value(value: &SlimValue) -> Value {
+    match value {
+        SlimValue::None => Value::None,
+        SlimValue::Int(number) => id(*number),
+        SlimValue::Real(number) => real(*number),
+        SlimValue::Bool(flag) => Value::Bool(*flag),
+        SlimValue::Text(text_value) => text(text_value.clone()),
+        SlimValue::Tuple(items) => tuple(items.iter().map(slim_value)),
+    }
 }
 
 /// The category of a deployable's ball (EVE.js: a mobile deployable is category 22, a beacon and a field keep their own).
@@ -189,11 +234,13 @@ fn category_of(role: &Role) -> i32 {
         | Role::CynoInhibitor { .. }
         | Role::CynoBeacon { .. }
         | Role::AnalysisBeacon { .. } => DEPLOYABLE_CATEGORY,
+        Role::AccelerationGate => ACCELERATION_GATE_CATEGORY,
+        Role::CapturePoint => CAPTURE_POINT_CATEGORY,
+        Role::BattlefieldScoreboard => BATTLEFIELD_SCOREBOARD_CATEGORY,
         _ => CHARGE_CATEGORY,
     }
 }
 
-/// The slim item of a deployable: its item, type, owner, name, group, category and launcher, and for a CRAB its components (see `analysis_beacon_entries`).
 fn slim_entries(deployable: &Deployable, category: i32) -> Vec<(&'static str, Value)> {
     let mut entries = vec![
         ("itemID", id(deployable.id)),
@@ -377,6 +424,7 @@ impl Scene {
             module_id: 0,
             module_type: 0,
             watchers: BTreeSet::new(),
+            slim_fields: BTreeMap::new(),
         };
         self.deployable_sequence += 1;
         self.deployables.insert(bridge.id, bridge);
@@ -415,6 +463,7 @@ impl Scene {
             module_id: effect.module_id,
             module_type: effect.module_type,
             watchers: BTreeSet::new(),
+            slim_fields: BTreeMap::new(),
         };
         (deployable_id, self.insert_deployable(deployable, at))
     }
@@ -429,6 +478,53 @@ impl Scene {
         }
         deployable.watchers = watchers.into_iter().collect();
         self.deployables.insert(deployable.id, deployable);
+        out
+    }
+
+    /// Brings each bound pilot's view into line with the deployables it can see: a pilot that moved into a deployable's box is sent it, and a pilot that moved
+    /// out of it is told it is gone (the watchers of a deployable are the pilots that hold it, as the wrecks' and asteroids' views are kept).
+    pub(crate) fn reconcile_deployables(&mut self, now: i64) -> Vec<Out> {
+        if self.deployables.is_empty() {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        for observer in self.view_sessions() {
+            if is_npc_session(observer) {
+                continue;
+            }
+            let Some(presence) = self.presence(observer) else { continue };
+            let mut gone = Vec::new();
+            let mut coming = Vec::new();
+            for deployable in self.deployables.values() {
+                let sees = can_see(presence, Presence { position: deployable.position, warping: false });
+                match (sees, deployable.watchers.contains(&observer)) {
+                    (true, false) => coming.push(deployable.id),
+                    (false, true) => gone.push(deployable.id),
+                    _ => {}
+                }
+            }
+            if !gone.is_empty() {
+                let stamp = self.next_stamp(now);
+                out.push(Self::update(observer, vec![payload::remove_ships(stamp, gone.iter().copied())]));
+                for id in gone {
+                    if let Some(deployable) = self.deployables.get_mut(&id) {
+                        deployable.watchers.remove(&observer);
+                    }
+                }
+            }
+            for id in coming {
+                let stamp = self.next_stamp(now);
+                let Some(actions) =
+                    self.deployables.get(&id).and_then(|deployable| release_actions(stamp, deployable).ok())
+                else {
+                    continue;
+                };
+                out.push(Self::update(observer, actions));
+                if let Some(deployable) = self.deployables.get_mut(&id) {
+                    deployable.watchers.insert(observer);
+                }
+            }
+        }
         out
     }
 
@@ -481,6 +577,7 @@ impl Scene {
             module_id: 0,
             module_type: 0,
             watchers: BTreeSet::new(),
+            slim_fields: BTreeMap::new(),
         };
         self.insert_deployable(deployable, now)
     }
@@ -531,6 +628,7 @@ impl Scene {
             module_id: 0,
             module_type: 0,
             watchers: BTreeSet::new(),
+            slim_fields: BTreeMap::new(),
         };
         self.insert_deployable(deployable, now)
     }
@@ -564,6 +662,7 @@ impl Scene {
             module_id: 0,
             module_type: 0,
             watchers: BTreeSet::new(),
+            slim_fields: BTreeMap::new(),
         };
         self.insert_deployable(deployable, now)
     }
@@ -597,6 +696,7 @@ impl Scene {
             module_id: 0,
             module_type: 0,
             watchers: BTreeSet::new(),
+            slim_fields: BTreeMap::new(),
         };
         self.insert_deployable(deployable, now)
     }
@@ -630,6 +730,7 @@ impl Scene {
             module_id: 0,
             module_type: 0,
             watchers: BTreeSet::new(),
+            slim_fields: BTreeMap::new(),
         };
         self.insert_deployable(deployable, now)
     }
@@ -664,9 +765,130 @@ impl Scene {
             module_id: 0,
             module_type: 0,
             watchers: BTreeSet::new(),
+            slim_fields: BTreeMap::new(),
         };
         self.deployables.insert(pocket.id, pocket);
         Vec::new()
+    }
+
+    /// An acceleration gate of a dungeon room is put in space at the point the host gives (protocol 75). Its ball goes to the pilots that see it, as any
+    /// deployable's does. Given once; its end is the host's.
+    pub(crate) fn place_acceleration_gate(
+        &mut self,
+        placement: crate::link::DisruptorPlacement,
+        now: i64,
+    ) -> Vec<Out> {
+        if self.deployables.contains_key(&placement.deployable_id) {
+            return Vec::new();
+        }
+        let [x, y, z] = placement.position;
+        let gate = Deployable {
+            id: placement.deployable_id,
+            spec: Spec {
+                charge_type_id: placement.type_id,
+                group_id: placement.group_id,
+                name: placement.name,
+                radius: placement.radius,
+            },
+            role: Role::AccelerationGate,
+            position: Vec3::new(x, y, z),
+            ends_at: i64::MAX,
+            launcher: 0,
+            ship_id: 0,
+            owner_id: 0,
+            corporation_id: 0,
+            alliance_id: 0,
+            module_id: 0,
+            module_type: 0,
+            watchers: BTreeSet::new(),
+            slim_fields: BTreeMap::new(),
+        };
+        self.insert_deployable(gate, now)
+    }
+
+    /// A capture point of a battlefield is put in space (protocol 77). Its factions (0 is none) and its next point time (0 is none) are its dynamic slim
+    /// fields, as the client reads them. Given once; its end is the host's.
+    pub(crate) fn place_capture_point(
+        &mut self,
+        placement: crate::link::CapturePointPlacement,
+        now: i64,
+    ) -> Vec<Out> {
+        if self.deployables.contains_key(&placement.deployable_id) {
+            return Vec::new();
+        }
+        let [x, y, z] = placement.position;
+        let faction =
+            |value: i32| if value == 0 { SlimValue::None } else { SlimValue::Int(i64::from(value)) };
+        let mut slim_fields = BTreeMap::new();
+        if placement.attacker_faction != 0 || placement.occupier_faction != 0 {
+            let factions = SlimValue::Tuple(vec![
+                faction(placement.attacker_faction),
+                faction(placement.occupier_faction),
+            ]);
+            slim_fields.insert("component_fwCapturePoint_factionInfo".to_string(), factions);
+        }
+        if placement.next_point_time != 0 {
+            slim_fields.insert(
+                "component_fwCapturePoint_nextPointTime".to_string(),
+                SlimValue::Int(placement.next_point_time),
+            );
+        }
+        let deployable = Deployable {
+            id: placement.deployable_id,
+            spec: Spec {
+                charge_type_id: placement.type_id,
+                group_id: placement.group_id,
+                name: placement.name,
+                radius: placement.radius,
+            },
+            role: Role::CapturePoint,
+            position: Vec3::new(x, y, z),
+            ends_at: i64::MAX,
+            launcher: 0,
+            ship_id: 0,
+            owner_id: 0,
+            corporation_id: 0,
+            alliance_id: 0,
+            module_id: 0,
+            module_type: 0,
+            watchers: BTreeSet::new(),
+            slim_fields,
+        };
+        self.insert_deployable(deployable, now)
+    }
+
+    /// A battlefield's scoreboard is put in space (protocol 78). Its score starts at none (the client reads none as 0) and the host sets it. Given once.
+    pub(crate) fn place_battlefield_scoreboard(
+        &mut self,
+        placement: crate::link::ScoreboardPlacement,
+        now: i64,
+    ) -> Vec<Out> {
+        if self.deployables.contains_key(&placement.deployable_id) {
+            return Vec::new();
+        }
+        let [x, y, z] = placement.position;
+        let deployable = Deployable {
+            id: placement.deployable_id,
+            spec: Spec {
+                charge_type_id: placement.type_id,
+                group_id: placement.group_id,
+                name: placement.name,
+                radius: placement.radius,
+            },
+            role: Role::BattlefieldScoreboard,
+            position: Vec3::new(x, y, z),
+            ends_at: i64::MAX,
+            launcher: 0,
+            ship_id: 0,
+            owner_id: 0,
+            corporation_id: 0,
+            alliance_id: 0,
+            module_id: 0,
+            module_type: 0,
+            watchers: BTreeSet::new(),
+            slim_fields: BTreeMap::new(),
+        };
+        self.insert_deployable(deployable, now)
     }
 
     /// A Mobile Cynosural Inhibitor the host keeps a record of is put in space where it lies, anchored or not (protocol 50). Given once; its end is the host's.
@@ -698,6 +920,7 @@ impl Scene {
             module_id: 0,
             module_type: 0,
             watchers: BTreeSet::new(),
+            slim_fields: BTreeMap::new(),
         };
         self.insert_deployable(deployable, now)
     }
@@ -760,6 +983,7 @@ impl Scene {
             module_id: 0,
             module_type: 0,
             watchers: BTreeSet::new(),
+            slim_fields: BTreeMap::new(),
         };
         self.insert_deployable(deployable, now)
     }
@@ -1120,7 +1344,6 @@ impl Scene {
     }
 
     /// Whether a warp-disruption source covers `position` at `now`: a probe still in space within its range, or a bubble (a ship's running field generator, see
-    /// `Action::WarpBubble`) within its range of the ship's position. No owner is spared (the reference's check has none).
     pub(crate) fn warp_disrupted_at(&self, position: Vec3, now: i64) -> bool {
         let bubble = self.pilots.values().any(|pilot| {
             let reach = distance(position, pilot.ship.position);
@@ -1146,6 +1369,9 @@ impl Scene {
                 | Role::MobileObservatory { .. }
                 | Role::ControlTower { .. }
                 | Role::DeadspacePocket
+                | Role::AccelerationGate
+                | Role::CapturePoint
+                | Role::BattlefieldScoreboard
                 | Role::AnalysisBeacon { .. } => false,
             })
     }
@@ -1184,12 +1410,23 @@ impl Scene {
             module_id: 0,
             module_type: 0,
             watchers: BTreeSet::new(),
+            slim_fields: BTreeMap::new(),
         };
         self.insert_deployable(deployable, now)
     }
 
-    /// The host sets a CRAB's state: those who have it in view are told its slim item again (`OnSlimItemChange`, the whole slim item). A state already set is
-    /// not told again, and a deployable that is not a CRAB is left alone.
+    /// The CRAB's resistance bonus and tether/cloak restrictions apply from link start through the 60-second status tail.
+    pub(crate) fn link_effects_active(&self, session: SessionId, now: i64) -> bool {
+        let Some(pilot) = self.pilots.get(&session) else { return false };
+        let ship = pilot.ship.spec.ship_id;
+        self.deployables.values().any(|deployable| match &deployable.role {
+            Role::AnalysisBeacon { state } if state.link_state >= 2 && state.linked_ship_id == ship => {
+                now < state.link_complete_at.saturating_add(ticks(60_000.0))
+            }
+            _ => false,
+        })
+    }
+
     /// Whether a CRAB's link holds a command of a pilot (EVE.js `applyLinkRestrictionsToShip`): from the start of the link the ship is immobile until the link is
     /// complete, and it cannot warp, jump or dock until a minute after that (the status clear delay, `MOBILE_ANALYSIS_BEACON_LINK_STATUS_CLEAR_DELAY_MS`). A stop is
     /// never held.
@@ -1219,6 +1456,35 @@ impl Scene {
         }
     }
 
+    /// The host sets a dynamic slim-item field of a deployable (`SetSlimField`). Those who have it in view are told its slim item again
+    /// (`OnSlimItemChange`, the whole slim item). A value already set is not told again; a deployable not in space is left alone.
+    pub(crate) fn set_slim_field(
+        &mut self,
+        deployable_id: i64,
+        name: String,
+        value: SlimValue,
+        at: i64,
+    ) -> Vec<Out> {
+        let Some(deployable) = self.deployables.get_mut(&deployable_id) else { return Vec::new() };
+        if deployable.slim_fields.get(&name) == Some(&value) {
+            return Vec::new();
+        }
+        deployable.slim_fields.insert(name, value);
+        let changed = deployable.clone();
+        let stamp = self.next_stamp(at);
+        let change = payload::action(
+            stamp,
+            "OnSlimItemChange",
+            [id(changed.id), slim_item(&changed, category_of(&changed.role))],
+        );
+        self.missile_audience(changed.position)
+            .into_iter()
+            .map(|session| Self::update(session, vec![change.clone()]))
+            .collect()
+    }
+
+    /// The host sets a CRAB's state: those who have it in view are told its slim item again (`OnSlimItemChange`, the whole slim item). A state already set is
+    /// not told again, and a deployable that is not a CRAB is left alone.
     pub(crate) fn set_analysis_beacon_state(
         &mut self,
         deployable_id: i64,
@@ -1236,11 +1502,14 @@ impl Scene {
         let change = payload::action(
             stamp,
             "OnSlimItemChange",
-            [id(changed.id), slim_object(slim_entries(&changed, category_of(&changed.role)))],
+            [id(changed.id), slim_item(&changed, category_of(&changed.role))],
         );
-        self.missile_audience(changed.position)
+        let mut out: Vec<_> = self
+            .missile_audience(changed.position)
             .into_iter()
             .map(|session| Self::update(session, vec![change.clone()]))
-            .collect()
+            .collect();
+        out.extend(self.tick_tethers(at));
+        out
     }
 }

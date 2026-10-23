@@ -151,17 +151,18 @@ internal sealed class MarshalEncoder
 
     private void Pairs(IReadOnlyList<KeyValuePair<PyValue, PyValue>> pairs, bool valueFirst)
     {
-        foreach (var (key, value) in pairs)
+        for (var index = 0; index < pairs.Count; index++)
         {
+            var pair = pairs[index];
             if (valueFirst)
             {
-                Value(value);
-                Value(key);
+                Value(pair.Value);
+                Value(pair.Key);
             }
             else
             {
-                Value(key);
-                Value(value);
+                Value(pair.Key);
+                Value(pair.Value);
             }
         }
     }
@@ -253,9 +254,9 @@ internal sealed class MarshalEncoder
                         Size(tuple.Items.Count);
                         break;
                 }
-                foreach (var item in tuple.Items)
+                for (var index = 0; index < tuple.Items.Count; index++)
                 {
-                    Value(item);
+                    Value(tuple.Items[index]);
                 }
                 break;
             case PyList list:
@@ -271,9 +272,9 @@ internal sealed class MarshalEncoder
                     default:
                         Out.Write(Op.List);
                         Size(list.Items.Count);
-                        foreach (var item in list.Items)
+                        for (var index = 0; index < list.Items.Count; index++)
                         {
-                            Value(item);
+                            Value(list.Items[index]);
                         }
                         break;
                 }
@@ -292,9 +293,9 @@ internal sealed class MarshalEncoder
             case PyObjectEx ex:
                 Out.Write(ex.Kind == ObjectExKind.Ex1 ? Op.ObjectEx1 : Op.ObjectEx2);
                 Value(ex.Header);
-                foreach (var item in ex.List)
+                for (var index = 0; index < ex.List.Count; index++)
                 {
-                    Value(item);
+                    Value(ex.List[index]);
                 }
                 Out.Write(Op.PackedTerminator);
                 Pairs(ex.Dict, valueFirst: false);

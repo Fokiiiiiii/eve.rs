@@ -27,6 +27,9 @@ public interface IMachoNetInfo
 
     /// <summary>The number of clients connected.</summary>
     int UserCount();
+
+    /// <summary>Live system and station pilot counts, keyed by solar system ID minus 30,000,000.</summary>
+    PyValue ClusterGameStatisticsForClient();
 }
 
 /// <summary>
@@ -66,7 +69,7 @@ public sealed partial class MachoNetService(
     MachoNetGlobalConfigUpdateCallback? setGlobalConfigValue = null)
 {
     private const string ServerStatusLabel = "/Carbon/MachoNet/ServerStatus/OK";
-    private const long RoleAdmin = 1L << 56;   // ROLE_ADMIN (carbon/common/script/sys/serviceConst.py)
+    private const long RoleAdmin = 1L << 56;
     private const long RoleService = 1L << 60; // ROLE_SERVICE
 
     private PyValue ServiceInfo() => new PyDict([.. info.Services().Select(entry =>
@@ -82,6 +85,16 @@ public sealed partial class MachoNetService(
 
     [Method("GetServiceInfo")]
     public PyValue GetServiceInfo(ServiceCall call) => ServiceInfo();
+
+    /// <summary>Returns the live map counts for EVE, or the caller's default for other clusters.</summary>
+    [Method("GetClusterGameStatisticsForClient")]
+    public PyValue GetClusterGameStatisticsForClient(ServiceCall call)
+    {
+        var key = JsSemantics.StringValue(call.Arg(0));
+        return key == "EVE"
+            ? info.ClusterGameStatisticsForClient()
+            : call.Arg(1);
+    }
 
     [Method("GetGlobalConfig")]
     public PyValue GetGlobalConfig(ServiceCall call) => info.GlobalConfig();
@@ -116,8 +129,8 @@ public sealed partial class MachoNetService(
     public async ValueTask<PyValue> SetGlobalConfigValue(ServiceCall call)
     {
         call.Cancellation.ThrowIfCancellationRequested();
-        var roles = (call.Session.GetInt("accountRole") ?? 0) | (call.Session.GetInt("role") ?? 0);
-        if ((roles & (RoleAdmin | RoleService)) == 0)
+        var accountRoles = call.Session.GetInt("accountRole") ?? 0;
+        if ((accountRoles & (RoleAdmin | RoleService)) == 0)
         {
             throw new MachoWrappedException(MachoErrors.Wrapped("exceptions.RuntimeError", [
                 new PyStr("RoleNotAssigned"),

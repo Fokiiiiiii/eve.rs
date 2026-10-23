@@ -28,9 +28,10 @@ pub enum MarshalError {
     InvalidPackedRow(&'static str),
     /// A value the encoder cannot represent.
     Unencodable(&'static str),
-    /// Nesting deeper than [`crate::MAX_DEPTH`] (a hardening limit the JS
-    /// reference does not have).
+    /// Nesting deeper than [`crate::MAX_DEPTH`].
     TooDeep,
+    /// A configured input, element, string, or allocation budget was exceeded.
+    ResourceLimit(&'static str),
 }
 
 impl MarshalError {
@@ -65,6 +66,7 @@ impl fmt::Display for MarshalError {
             Self::InvalidPackedRow(what) => write!(f, "invalid packed row: {what}"),
             Self::Unencodable(what) => write!(f, "cannot marshal value: {what}"),
             Self::TooDeep => write!(f, "marshal value nested too deeply"),
+            Self::ResourceLimit(what) => write!(f, "marshal {what} limit exceeded"),
         }
     }
 }

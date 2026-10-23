@@ -47,19 +47,18 @@ public sealed class AgentMissionService(
     AgentMissionRpcCallbacks? rpcCallbacks = null,
     AgentDialogueSources? dialogue = null) : IService, IBoundObjectReleaseHandler
 {
-    /// <summary>Methods a bound agent answers: the dialogue (A4). The mission journal is read through the other methods.</summary>
+
 
     private readonly AgentDialogueMachine? _dialogue = dialogue is null ? null : new AgentDialogueMachine(dialogue);
 
-    // The agent each bound object was made for (MachoBindObject(agentID)). The moniker is Moniker('agentMgr', agentID).
+
     private readonly ConcurrentDictionary<string, long> _agentByBoundObject = new(StringComparer.Ordinal);
 
     private static readonly string[] AgentColumns =
     [
         "agentID", "agentTypeID", "divisionID", "level", "stationID", "corporationID",
         "isLocatorAgent", "isInSpace", "careerID", "importantMission", "missionKind",
-        "missionTypeLabel", "specialityID", "stationTypeID", "bloodlineID", "solarSystemID",
-        "dungeonID", "spawnPointID", "typeID",
+          "missionTypeLabel", "specialityID", "stationTypeID", "bloodlineID",
     ];
 
     public string Name => "agentMgr";
@@ -82,7 +81,7 @@ public sealed class AgentMissionService(
 
     public void OnBoundObjectReleased(string oid, ClientSession? session) => _agentByBoundObject.TryRemove(oid, out _);
 
-    /// <summary>The agent of a bound object of this session, or 0 when the call is not on a bound agent.</summary>
+
     public long BoundAgentId(ServiceCall call) =>
         call.BoundObjectId is { } oid && _agentByBoundObject.TryGetValue(oid, out var agentId) ? agentId : 0;
 
@@ -107,8 +106,8 @@ public sealed class AgentMissionService(
     };
 
     /// <summary>
-    /// <c>GetAgentLocationWrap</c> on a bound agent: where the agent is (EveJS <c>buildAgentLocationWrap</c>). A station agent is its station
-    /// (type, system and station ID); an agent in space is the system with the spawn data of its agentsInSpace row; the solar system otherwise.
+
+
     /// </summary>
     private async ValueTask<PyValue> ReadAgentLocationWrapAsync(ServiceCall call)
     {
@@ -116,7 +115,7 @@ public sealed class AgentMissionService(
         return AgentLocationWrap(agent);
     }
 
-    /// <summary>The briefing or objective of the mission the character holds with the bound agent; None when there is none (the reference's answer).</summary>
+
     private async ValueTask<PyValue> ReadHeldMissionAsync(ServiceCall call, Func<HeldMissionView, PyDict> answer)
     {
         call.Cancellation.ThrowIfCancellationRequested();
@@ -140,7 +139,7 @@ public sealed class AgentMissionService(
             ?? throw MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr("That agent is not known.")));
     }
 
-    /// <summary>The location wrap of an agent (the reference's shape: locationID, typeID, solarsystemID, and the locationType of an in-space agent).</summary>
+
     public static PyDict AgentLocationWrap(AgentMissionAgentData agent)
     {
         static KeyValuePair<PyValue, PyValue> Field(string name, PyValue value) => new(new PyStr(name), value);
@@ -178,8 +177,8 @@ public sealed class AgentMissionService(
     }
 
     /// <summary>
-    /// <c>MachoBindObject(agentID, (method, args, kwargs))</c>: binds the agent, then makes the nested call on the bound object.
-    /// An agent the catalog does not hold is refused; the bound object answers only the methods that exist for a bound agent.
+
+
     /// </summary>
     private async ValueTask<PyValue> BindAsync(ServiceCall call)
     {
@@ -232,8 +231,8 @@ public sealed class AgentMissionService(
     }
 
     /// <summary>
-    /// <c>DoAction(actionID)</c> on a bound agent: the dialogue's reply, <c>((agentSays, actions), lastActionInfo)</c>. Refused when the
-    /// agent is not known or the call is not on a bound agent (eve-logic agentDialogueWindow.py:427-428).
+
+
     /// </summary>
     private async ValueTask<PyValue> DoActionAsync(ServiceCall call)
     {
@@ -264,14 +263,14 @@ public sealed class AgentMissionService(
         });
     }
 
-    /// <summary>Raises a prompt on the client; a session that cannot take the call answers with the no-answer path (EveJS sendAgentDeclineConfirmation).</summary>
+
     private static void Ask(AgentDialoguePrompt prompt, DeferredContext context)
     {
         if (!context.Session.SendClientCall("agents", prompt.Method, prompt.Args, answer => _ = Answer(prompt, answer, context), prompt.Kwargs))
             _ = Answer(prompt, null, context);
     }
 
-    /// <summary>The client's answer goes to the prompt's continuation; a further prompt is raised, and the last step is the reply. A failure still answers.</summary>
+
     private static async Task Answer(AgentDialoguePrompt prompt, PyValue? answer, DeferredContext context)
     {
         try
@@ -470,10 +469,6 @@ public sealed class AgentMissionService(
         OptionalPositive(agent.SpecialityId),
         OptionalPositive(agent.StationTypeId),
         OptionalPositive(agent.BloodlineId),
-        OptionalPositive(agent.SolarSystemId),
-        OptionalPositive(agent.DungeonId),
-        OptionalPositive(agent.SpawnPointId),
-        OptionalPositive(agent.TypeId),
     ]);
 
     private static IEnumerable<long> PositiveIds(PyValue? value)

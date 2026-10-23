@@ -22,7 +22,7 @@ public sealed class CorpStationMgrTests
     {
         await using var rig = await Rig.CreateAsync();
         var character = await rig.CharacterAsync("Standing Pilot");
-        var session = Session(character);
+        var session = Session(character, StationId);
         var service = CreateService(rig, standing: 0.0);
         Assert.True(((IService)service).HasMethod("MachoResolveObject"));
         Assert.Equal(new PyInt(Eve.Macho.MachoMessage.ProxyNodeId), await ((IService)service).CallAsync(new ServiceCall
@@ -42,6 +42,22 @@ public sealed class CorpStationMgrTests
     }
 
     [PgFact]
+    public async Task The_standing_check_cannot_use_another_pilots_standing()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var character = await rig.CharacterAsync("Standing Pilot");
+        var otherCharacter = await rig.CharacterAsync("Other Standing Pilot");
+        var session = Session(character, StationId);
+        var service = CreateService(rig, standing: 0.0, standingForCharacter: id => id == otherCharacter ? 3.0 : 0.0);
+
+        var refused = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            Nested(service, session, "DoStandingCheckForStationService", new PyInt(5), new PyLong(otherCharacter)));
+
+        Assert.Equal("CustomNotify", refused.Error.UserErrorMessage);
+        Assert.Equal(PyNone.Instance, await Nested(service, session, "DoStandingCheckForStationService", new PyInt(13), new PyLong(character)));
+    }
+
+    [PgFact]
     public async Task A_station_without_the_bind_is_refused_and_an_unknown_station_cannot_be_bound()
     {
         await using var rig = await Rig.CreateAsync();
@@ -50,9 +66,54 @@ public sealed class CorpStationMgrTests
 
         var error = await Assert.ThrowsAsync<MachoWrappedException>(async () => await ((IService)service).CallAsync(new ServiceCall
         {
-            Method = "MachoBindObject", Args = [new PyLong(OtherStationId + 9)], Session = Session(character),
+            Method = "MachoBindObject", Args = [new PyLong(OtherStationId + 9)], Session = Session(character, StationId),
         }));
         Assert.Equal("CustomNotify", error.Error.UserErrorMessage);
+
+        var remoteStationError = await Assert.ThrowsAsync<MachoWrappedException>(async () => await ((IService)service).CallAsync(new ServiceCall
+        {
+            Method = "MachoBindObject", Args = [new PyLong(StationId)], Session = Session(character, OtherStationId),
+        }));
+        Assert.Equal("CustomNotify", remoteStationError.Error.UserErrorMessage);
+    }
+
+    [PgFact]
+    public async Task A_station_moniker_is_owned_by_the_session_that_bound_it()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var character = await rig.CharacterAsync("Bound Owner");
+        var otherCharacter = await rig.CharacterAsync("Bound Caller");
+        var service = CreateService(rig, standing: 3.0);
+        var ownerSession = Session(character, StationId);
+        var bound = Assert.IsType<PyTuple>(await ((IService)service).CallAsync(new ServiceCall
+        {
+            Method = "MachoBindObject", Args = [new PyLong(StationId), PyNone.Instance], Session = ownerSession,
+        }));
+        var stream = Assert.IsType<PySubStream>(Assert.IsType<PySubStruct>(bound.Items[0]).Value);
+        var oid = Assert.IsType<PyStr>(Assert.IsType<PyTuple>(stream.Decoded).Items[0]).Value;
+        var foreignCall = new ServiceCall
+        {
+            Method = "DoStandingCheckForStationService", Args = [new PyInt(5)],
+            Session = Session(otherCharacter, StationId), BoundObjectId = oid,
+        };
+
+        var foreignError = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await ((IService)service).CallAsync(foreignCall));
+        Assert.Equal("CustomNotify", foreignError.Error.UserErrorMessage);
+        service.OnBoundObjectReleased(oid, foreignCall.Session);
+        Assert.Equal(PyNone.Instance, await ((IService)service).CallAsync(new ServiceCall
+        {
+            Method = "DoStandingCheckForStationService", Args = [new PyInt(5)],
+            Session = ownerSession, BoundObjectId = oid,
+        }));
+
+        service.OnBoundObjectReleased(oid, ownerSession);
+        var releasedError = await Assert.ThrowsAsync<MachoWrappedException>(async () => await ((IService)service).CallAsync(new ServiceCall
+        {
+            Method = "DoStandingCheckForStationService", Args = [new PyInt(5)],
+            Session = ownerSession, BoundObjectId = oid,
+        }));
+        Assert.Equal("CustomNotify", releasedError.Error.UserErrorMessage);
     }
 
     [PgFact]
@@ -60,7 +121,7 @@ public sealed class CorpStationMgrTests
     {
         await using var rig = await Rig.CreateAsync();
         var character = await rig.CharacterAsync("Release Pilot");
-        var session = Session(character);
+        var session = Session(character, StationId);
         IService service = CreateService(rig, standing: 10.0);
         var bind = Assert.IsType<PyTuple>(await service.CallAsync(new ServiceCall
         {
@@ -152,10 +213,10 @@ public sealed class CorpStationMgrTests
         Assert.Equal(OtherStationId, (await rig.Store.GetAsync(corporation.Id))!.StationId);
     }
 
-    private static CorpStationMgrService CreateService(Rig rig, double standing) => new(
+    private static CorpStationMgrService CreateService(Rig rig, double standing, Func<long, double>? standingForCharacter = null) => new(
         rig.Store,
         null,
-        (character, owner, token) => ValueTask.FromResult(standing),
+        (character, owner, token) => ValueTask.FromResult(standingForCharacter?.Invoke(character) ?? standing),
         id => id == StationId ? new CorporationStationPlace(StationId, OwnerId, SolarSystemId) : null,
         (owner, token) => ValueTask.FromResult<IReadOnlyDictionary<long, double>>(owner == OwnerId ? Rules : new Dictionary<long, double>()),
         () => 1_000L);

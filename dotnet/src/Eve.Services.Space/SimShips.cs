@@ -75,7 +75,7 @@ public static SimHeatProfile HeatProfileOf(ShipSnapshot snapshot, DogmaStatic st
             return double.IsFinite(value) && value > 0 ? value : fallback;
         }
         int thermodynamics = snapshot.Skills.FirstOrDefault(skill => skill.TypeId == Thermodynamics)?.Level ?? 0;
-        var modules = snapshot.Fitted.Select(module => {
+        var modules = snapshot.Fitted.Where(module => Slots.FamilyOfFlag(module.Flag) is SlotFamily.High or SlotFamily.Medium or SlotFamily.Low).Select(module => {
             var type = statics.Type(module.TypeId);
             var state = snapshot.World.Item(module.Id)?.State;
             var overloadable = type?.EffectIds.Select(statics.Effect).Any(effect => effect?.Category == EffectDef.Overload) == true;
@@ -128,12 +128,10 @@ public static SimHeatProfile HeatProfileOf(ShipSnapshot snapshot, DogmaStatic st
     /// <summary>The attribute of a ship that a drone bonus or penalty writes (industrialBonusDroneDamage, SDE 2580).</summary>
     public const int IndustrialBonusDroneDamage = 2580;
 
-    /// <summary>The Drones skill (SDE 3436), which the SDE's industrialBonusDroneDamage effect (6789) requires of a drone's owner.</summary>
     public const int DronesSkill = 3436;
 
     /// <summary>
     /// The damage multiplier of the drones the ship launches (protocol 47). The SDE's effect 6789 adds the ship's industrialBonusDroneDamage (2580) to the drone's
-    /// damage multiplier (PostPercent) for an owner with the Drones skill, so a bonus needs the skill. A penalty (the wiki's P.A.N.I.C.: a protected ship cannot deal
     /// damage) applies to every pilot. Neither moves a ship with no bonus.
     /// </summary>
     public static double DroneDamageMultiplierOf(ShipSnapshot snapshot)

@@ -18,6 +18,7 @@ import pytest
 from evecli import packet
 from evecli.observe import wait_quietly
 from tests.test_fob_insystem_walk import seed_hub_pilot
+from tests.test_mission_walk import until_stopped
 
 from evecli import marshal as m
 
@@ -30,7 +31,7 @@ PLANET = 40486618  # a barren planet of the SDE (sde.mapPlanets, type 2016, radi
 PLANET_SYSTEM = 31000604  # its solar system (sde.mapPlanets; a wormhole system)
 BARREN = 2016
 COMMAND_CENTER = 2524  # Barren Command Center
-STORAGE = 2541  # Barren Storage Facility (250,000 ISK)
+STORAGE = 2541
 CONSOLIDATION = 2495  # Interplanetary Consolidation
 COMMAND_CENTER_UPGRADE = 2505
 LATITUDE, LONGITUDE = 0.5, 1.0  # a point on the planet (radians)
@@ -49,20 +50,16 @@ pytestmark = pytest.mark.skipif(
     reason="set EVE_LIVE_HOST, EVE_PG_URL and EVE_LIVE_PI_WALK=1",
 )
 
-
 def skill(character: int, type_id: int, level: int) -> None:
     psql(f"INSERT INTO {schema('EVE_SKILLS_SCHEMA')}.character_skills (character_id, type_id, level, skill_points) "
          f"VALUES ({character}, {type_id}, {level}, 0) ON CONFLICT (character_id, type_id) DO UPDATE SET level = {level}")
 
-
 def item_exists(item: int) -> bool:
     return psql(f"SELECT count(*) FROM {schema('EVE_INVENTORY_SCHEMA')}.items WHERE id = {item}") == "1"
-
 
 def colony_pins(owner: int, planet: int) -> int:
     count = psql(f"SELECT jsonb_array_length(doc->'Pins') FROM {schema('EVE_PLANETS_SCHEMA')}.colonies WHERE owner_id = {owner} AND planet_id = {planet}")
     return int(count or 0)
-
 
 def test_a_pilot_places_a_command_center_and_a_storage_facility_on_a_barren_planet():
     run = run_id()
@@ -104,7 +101,6 @@ def test_a_pilot_places_a_command_center_and_a_storage_facility_on_a_barren_plan
         colony = record(client.call_bound(handle, "GetPlanetInfo"))
         assert len(colony["pins"]) == 2
 
-
 def record(value):
     """A call's answer as plain data: a util.KeyVal (the client's record) is the dict of its fields, recursively."""
     def unwrap(item):
@@ -116,7 +112,6 @@ def record(value):
             return [unwrap(field) for field in item]
         return item
     return unwrap(m.plain(value))
-
 
 @contextmanager
 def new_pilot(tag: str, system: int | None = None):
@@ -133,16 +128,13 @@ def new_pilot(tag: str, system: int | None = None):
         client.call("charUnboundMgr", "SelectCharacterID", charID=character, secondChoiceID=None, skipTutorial=False)
         yield client, character, ship
 
-
 def colony_doc(owner: int, planet: int) -> dict:
     text = psql(f"SELECT doc::text FROM {schema('EVE_PLANETS_SCHEMA')}.colonies WHERE owner_id = {owner} AND planet_id = {planet}")
     return json.loads(text)
 
-
 def save_colony_doc(owner: int, planet: int, doc: dict) -> None:
     body = json.dumps(doc)
     psql(f"UPDATE {schema('EVE_PLANETS_SCHEMA')}.colonies SET doc = $json${body}$json$::jsonb WHERE owner_id = {owner} AND planet_id = {planet}")
-
 
 def move_colony_back(owner: int, planet: int, hours: int) -> None:
     """The colony as it was `hours` ago: every time of it moves back (the lazy simulation then runs that span to now)."""
@@ -155,7 +147,6 @@ def move_colony_back(owner: int, planet: int, hours: int) -> None:
                 pin[key] -= delta
     save_colony_doc(owner, planet, doc)
 
-
 def set_contents(owner: int, planet: int, pin: int, contents: dict) -> None:
     doc = colony_doc(owner, planet)
     for entry in doc["Pins"]:
@@ -163,14 +154,11 @@ def set_contents(owner: int, planet: int, pin: int, contents: dict) -> None:
             entry["Contents"] = {str(k): v for k, v in contents.items()}
     save_colony_doc(owner, planet, doc)
 
-
 def pin_contents(colony: dict, pin: int) -> dict:
     return {int(k): v for k, v in next(p for p in colony["pins"] if p["id"] == pin)["contents"].items()}
 
-
 def pin_of_type(colony: dict, type_id: int) -> int:
     return next(p["id"] for p in colony["pins"] if p["typeID"] == type_id)
-
 
 def ball_of(events: list, item: int, planet: int | None) -> bool:
     """Whether the events tell of the item's ball: its slim item has its id (and, for an orbital, its planet and its category). A destiny update's
@@ -181,7 +169,6 @@ def ball_of(events: list, item: int, planet: int | None) -> bool:
         return False
     return planet is None or bool(re.search(r"[\"']planetID[\"'],\s*%s%d\b" % (value, planet), text)
                                   and re.search(r"[\"']categoryID[\"'],\s*46\b", text))
-
 
 def test_a_colony_runs_in_time_launches_and_trades_at_customs():
     with new_pilot("colony", system=PLANET_SYSTEM) as (client, pilot, ship):
@@ -202,10 +189,10 @@ def test_a_colony_runs_in_time_launches_and_trades_at_customs():
             (1, ((1, 1), STORAGE, 0.5, 1.01)),
             (1, ((1, 2), ECU, 0.52, 1.0)),
             (1, ((1, 3), LAUNCHPAD, 0.5, 1.02)),
-            (3, ((1, 2), (1, 1), 0)),
+            (3, ((1, 2), (1, 3), 0)),
             (10, ((1, 2), 0, 0.52, 1.0)),
             (13, ((1, 2), AQUEOUS, 0.01)),
-            (6, ((2, 1), [(1, 2), (1, 1)], AQUEOUS, 1)),
+            (6, ((2, 1), [(1, 2), (1, 3)], AQUEOUS, 1)),
         ]))
         storage, ecu, pad = pin_of_type(colony, STORAGE), pin_of_type(colony, ECU), pin_of_type(colony, LAUNCHPAD)
         # the survey the resource list shows: four resources, each with a quality on the client's display scale (a maximum is 1.21 x 127.5)
@@ -213,11 +200,18 @@ def test_a_colony_runs_in_time_launches_and_trades_at_customs():
         assert len(survey) == 4 and all(0 < quality <= 1.21 * 127.5 for quality in survey.values()), survey
         assert colony["level"] == 5
         assert [route["commodityTypeID"] for route in colony["routes"]] == [AQUEOUS]
+        # the program was installed by this batch: a stop is refused until its install cooldown (one minute) has passed, and it keeps running
+        with pytest.raises(Exception):
+            client.call_bound(handle, "UserUpdateNetwork", [(13, (ecu, None, 0.01))])
+        running = next(p for p in colony_doc(pilot, PLANET)["Pins"] if p["Id"] == ecu)
+        assert running["ProgramType"] == AQUEOUS
 
         # the colony runs in time: the program's cycles since the install are simulated when it is read
         move_colony_back(pilot, PLANET, 3)
         colony = record(client.call_bound(handle, "GetPlanetInfo"))
-        assert pin_contents(colony, storage).get(AQUEOUS, 0) > 0, "the extractor's output reached the storage"
+        extracted = pin_contents(colony, pad).get(AQUEOUS, 0)
+        assert extracted > 0, "the extractor's output followed its route to the launchpad"
+        assert pin_contents(colony, storage).get(AQUEOUS, 0) == 0, "the route sends extractor output to the launchpad"
 
         # the pilot is in the planet's system: the customs office is a ball there (an orbital of the planet, the launchpad window reaches it through it)
         office = 1_200_000_000_000 + PLANET
@@ -238,16 +232,20 @@ def test_a_colony_runs_in_time_launches_and_trades_at_customs():
                    f"AND c.location_id = {system} AND EXISTS (SELECT 1 FROM {schema('EVE_INVENTORY_SCHEMA')}.items s WHERE s.location_id = c.id AND s.type_id = {WATER} AND s.quantity = 5)")
         assert can, "the launch container holds the launched commodities"
         assert psql(f"SELECT count(*) FROM {schema('EVE_PLANETS_SCHEMA')}.launches WHERE owner_id = {pilot} AND NOT deleted") == "1"
-        # the can is in space: its space row (the owner's, a can's group, the launch's expiry) and its ball in the pilot's scene
+
         assert psql(f"SELECT group_id || '|' || character_id FROM {schema('EVE_SPACE_SCHEMA')}.space_items WHERE item_id = {can}") == f"12|{pilot}"
         # its ball is told to the pilots who can see its place: this pilot is about 1.9e10 m from the planet (the walk's pose), so the ball is not
         # checked here; the simulation's wreck placement is checked in eve-space (the watchers of a placed wreck)
-        wait_quietly(client, 2.0)
+
+        assert "OnPILaunchesChange" in json.dumps(wait_quietly(client, 2.0), default=str), "the launch is not announced to the owner"
 
         # customs: the office is the planet's (its id). The planet is in system 31000604 (wormhole space): the NPC rate outside high-security is 17%
         registry = client.call("planetOrbitalRegistryBroker", "MachoBindObject", system, None)[0]
         rate = record(client.call_bound(registry, "GetTaxRate", office))
         assert abs(rate - 0.17) < 1e-9
+        # Customs office cargo requires the same 2,500 m in-space range check as other space inventories.
+        client.call_bound(ballpark[0], "CmdWarpToStuff", "item", office, minRange=0)
+        until_stopped(client)
         stock = dbseed.new_item(WATER, owner=pilot, location=office, flag=HANGAR, quantity=50)
         customs = client.call("invbroker", "GetInventoryFromId", office)
         before = dbseed.isk_of(pilot)
@@ -264,13 +262,61 @@ def test_a_colony_runs_in_time_launches_and_trades_at_customs():
         # export fee: 5 x 1.0 x 400 x 0.17
         assert abs((before - dbseed.isk_of(pilot)) - 340) < 0.01
 
+        # extractor output follows the route into the launchpad and can be exported through the customs office
+        extracted = pin_contents(record(client.call_bound(handle, "GetPlanetInfo")), pad)[AQUEOUS]
+        before = dbseed.isk_of(pilot)
+        client.call_bound(customs, "ImportExportWithPlanet", pad, m.Dict([]), m.Dict([(AQUEOUS, 1)]), rate)
+        assert pin_contents(record(client.call_bound(handle, "GetPlanetInfo")), pad)[AQUEOUS] == extracted - 1
+        office_stock = psql(f"SELECT coalesce(sum(quantity), 0) FROM {schema('EVE_INVENTORY_SCHEMA')}.items "
+                            f"WHERE owner_id = {pilot} AND location_id = {office} AND type_id = {AQUEOUS}")
+        assert office_stock == "1", office_stock
+        # Aqueous Liquids base value 5, export multiplier 1.0, in this system's 17% tax band.
+        assert abs((before - dbseed.isk_of(pilot)) - 0.85) < 0.01
+
         # a rate that moved since the window was opened is refused, and nothing moves
         with pytest.raises(Exception):
             client.call_bound(customs, "ImportExportWithPlanet", pad, m.Dict([]), m.Dict([(WATER, 1)]), 0.25)
         assert pin_contents(record(client.call_bound(handle, "GetPlanetInfo")), pad)[WATER] == 15
 
+        # The player-owned office credits its owner corporation in the same settlement as the PI transfer.
+        corporation = int(psql(f"SELECT corporation_id FROM {schema('EVE_CHARACTERS_SCHEMA')}.characters WHERE id = {pilot}"))
+        prior_owner = int(psql(f"SELECT owner_id FROM {schema('EVE_INVENTORY_SCHEMA')}.items WHERE id = {office}"))
+        customs_schema = schema("EVE_PLANETS_SCHEMA")
+        prior_policy = psql(f"SELECT owner_corporation_id || '|' || allow_alliance || '|' || allow_standings || '|' || standing_level || '|' || tax_rates::text || '|' || updated_ms "
+                             f"FROM {customs_schema}.customs_offices WHERE office_id = {office}")
+        assert prior_policy
+        policy_parts = prior_policy.split("|", 5)
+        wallet_schema = schema("EVE_WALLET_SCHEMA")
+        wallet_before = float(psql(f"SELECT COALESCE((SELECT isk FROM {wallet_schema}.balances WHERE owner_id = {corporation} AND account_key = 1000), 0)"))
+        journal_before = int(psql(f"SELECT count(*) FROM {wallet_schema}.journal WHERE owner_id = {corporation} AND account_key = 1000 "
+                                  "AND reason = 'planetary customs office tax'"))
+        try:
+            psql(f"UPDATE {schema('EVE_INVENTORY_SCHEMA')}.items SET owner_id = {corporation} WHERE id = {office}")
+            psql(f"UPDATE {customs_schema}.customs_offices SET owner_corporation_id = {corporation}, tax_rates = "
+                 "'{\"corporation\":0.05,\"alliance\":0.05,\"standingHigh\":0.05,\"standingGood\":0.05,\"standingNeutral\":0.05,\"standingBad\":0.05,\"standingHorrible\":0.05}'::jsonb "
+                 f"WHERE office_id = {office}")
+            poco_rate = record(client.call_bound(registry, "GetTaxRate", office))
+            assert abs(poco_rate - 0.05) < 1e-9
+            cash_before = dbseed.isk_of(pilot)
+            client.call_bound(customs, "ImportExportWithPlanet", pad, m.Dict([(stock, 1)]), m.Dict([]), poco_rate)
+            assert abs((cash_before - dbseed.isk_of(pilot)) - 10) < 0.01
+            cash_before = dbseed.isk_of(pilot)
+            client.call_bound(customs, "ImportExportWithPlanet", pad, m.Dict([]), m.Dict([(WATER, 1)]), poco_rate)
+            assert abs((cash_before - dbseed.isk_of(pilot)) - 20) < 0.01
+            wallet_after = float(psql(f"SELECT isk FROM {wallet_schema}.balances WHERE owner_id = {corporation} AND account_key = 1000"))
+            journal_after = int(psql(f"SELECT count(*) FROM {wallet_schema}.journal WHERE owner_id = {corporation} AND account_key = 1000 "
+                                     "AND reason = 'planetary customs office tax'"))
+            assert abs(wallet_after - wallet_before - 30) < 0.01
+            assert journal_after == journal_before + 2
+            assert abs(float(m.plain(client.call("account", "GetCashBalance", 0))) - dbseed.isk_of(pilot)) < 0.01
+        finally:
+            psql(f"UPDATE {schema('EVE_INVENTORY_SCHEMA')}.items SET owner_id = {prior_owner} WHERE id = {office}")
+            psql(f"UPDATE {customs_schema}.customs_offices SET owner_corporation_id = {int(policy_parts[0])}, allow_alliance = {policy_parts[1]}, "
+                 f"allow_standings = {policy_parts[2]}, standing_level = {int(policy_parts[3])}, tax_rates = $restore${policy_parts[4]}$restore$::jsonb, "
+                 f"updated_ms = {int(policy_parts[5])} WHERE office_id = {office}")
+
         # the container Add (the client's importExportUI.MoveFromInventory): a stack from the pilot's ship hold goes into the office; it keeps its
-        # owner and lands in the office hangar. Too much for the office's room is refused as NotEnoughSpace.
+
         room = record(client.call_bound(customs, "GetCapacity"))  # the window reads the office's room first
         assert room["capacity"] == 35000.0
         hold = dbseed.new_item(WATER, owner=pilot, location=ship, flag=CARGO_FLAG, quantity=10)

@@ -36,4 +36,18 @@ public sealed partial class CharacterShips
         }
         return changes;
     }
+
+    /// <summary>
+    /// the character's. shortcut: the hold's volume is not checked (EveJS refuses an item that does not fit), upgrade with the fitting volume rules.
+    /// </summary>
+    public async Task<IReadOnlyList<ItemChanged>?> CreateInShipCargoAsync(long characterId, long shipId, int typeId, long quantity, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await LockAsync(connection, transaction, characterId, cancellationToken);
+        var changes = await GrantToShipCargoAsync(connection, transaction, characterId, shipId, typeId, quantity, cancellationToken);
+        if (changes is null) return null;
+        await transaction.CommitAsync(cancellationToken);
+        return changes;
+    }
 }

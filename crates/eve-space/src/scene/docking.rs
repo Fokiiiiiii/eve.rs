@@ -64,6 +64,32 @@ impl Scene {
         Ok(self.announce_arrival(session, now))
     }
 
+    /// Puts a ship in space at the anchor of its system, where a game master's relocation brings a pilot (EVE.js `buildSolarSystemSpawnState`): off the
+    /// system's first stargate, else its first station, else its first body, on the x axis past the anchor's surface by the ship's radius and
+    /// `ANCHOR_CLEARANCE`, facing the anchor. A system with no body is entered at 1 000 000 m along x.
+    pub fn enter_at_anchor(
+        &mut self,
+        session: SessionId,
+        spec: ShipSpec,
+        now: i64,
+    ) -> Result<Vec<Out>, SceneError> {
+        let anchor = self
+            .system
+            .bodies
+            .iter()
+            .find(|body| body.kind == BodyKind::Stargate)
+            .or_else(|| self.system.bodies.iter().find(|body| is_dock_body(body)))
+            .or_else(|| self.system.bodies.first());
+        let (position, direction) = match anchor {
+            Some(body) => {
+                let offset = body.radius + spec.radius + ANCHOR_CLEARANCE;
+                ([body.position.x + offset, body.position.y, body.position.z], [-1.0, 0.0, 0.0])
+            }
+            None => ([1_000_000.0, 0.0, 0.0], [1.0, 0.0, 0.0]),
+        };
+        self.enter_in_space(session, spec, position, direction, now)
+    }
+
     pub fn leave(&mut self, session: SessionId, why: Departure, now: i64) -> Option<Vec<Out>> {
         let mut out = self.clear_tether_policy(session, now);
         if let Some(structure_id) = self.controlled_structure_id(session) {
@@ -91,6 +117,7 @@ impl Scene {
                     bound: pilot.bound,
                     sees: pilot.sees.clone(),
                     sees_wrecks: pilot.sees_wrecks.clone(),
+                    sees_abyssal_traces: pilot.sees_abyssal_traces.clone(),
                     sees_asteroids: pilot.sees_asteroids.clone(),
                 },
             );
@@ -100,6 +127,7 @@ impl Scene {
             pilot.bound = false;
             pilot.sees.clear();
             pilot.sees_wrecks.clear();
+            pilot.sees_abyssal_traces.clear();
             pilot.sees_asteroids.clear();
             self.unpiloted.insert(ship_id, fake_session);
             self.pilots.insert(fake_session, pilot);
@@ -147,7 +175,12 @@ impl Scene {
         }
         let distance = surface_distance(&pilot.ship, station.position, station.radius);
         if distance > DOCKING_RANGE {
-            return self.approach(session, station_id, distance, now);
+            let out = self.approach(session, station_id, distance, now);
+            if out.iter().any(|event| matches!(event, Out::Approaching { .. })) {
+                self.pilots.get_mut(&session).expect("the caller checked").docking_approach =
+                    Some(station_id);
+            }
+            return out;
         }
         let mut out = self.accept_docking(session, station_id, now);
         out.push(Out::Accepted { session, command: code, at: now });
@@ -234,7 +267,9 @@ pub(super) fn surface_distance(ship: &Ship, station: Vec3, station_radius: f64) 
 /// anchoring, onlining, hull reinforce and hull vulnerable, anchor and deploy vulnerable.
 const STRUCTURE_DISABLED_STATES: [i32; 8] = [0, 1, 2, 102, 113, 114, 115, 116];
 
-/// Whether a body is one a ship docks at or undocks from: a station, or an Upwell structure (ST-1 c).
+/// How far past the surface of its anchor body a ship that is put in space at the anchor is placed, metres (the clearance of EVE.js's spawn state).
+const ANCHOR_CLEARANCE: f64 = 5_000.0;
+
 pub(super) fn is_dock_body(body: &crate::world::Body) -> bool {
     matches!(body.kind, BodyKind::Station | BodyKind::Structure)
 }
@@ -249,8 +284,6 @@ fn hull_size(ship_group: i32) -> u8 {
     }
 }
 
-/// The largest hull a structure type takes in its docks (the wiki's "Max docking": Astrahus subcapitals, Fortizar capitals, Keepstar supercapitals).
-/// Other types are taken as subcapital only; their own limits are not in the sim yet (DEVIATIONS "Structure docking (ST-1 c)").
 fn largest_hull_docked(structure_type: i32) -> u8 {
     match structure_type {
         35_834 => 3,

@@ -3,7 +3,6 @@ using System.Text.Json;
 namespace Eve.Insurgency;
 
 /// <summary>
-/// A pirate warzone: the pirate faction, the pirate NPC corporation (the FOB's owner), the pirate militia corporation (the loyalty points of a pirate win),
 /// the NPC pool of its sites, the FOB its insurgencies spawn (SDE group 4644, "Pirate Forward Operating Base"), and the Empire militia the Empire side's loyalty
 /// points come from when the FOB's system names no Empire faction (<c>EmpireFallbackMilitiaId</c>). The warzone ids and their systems are the client's Faction
 /// Warfare warzone map (<c>warzonespositiondata</c>: warzone 1 Angel, 2 Guristas).

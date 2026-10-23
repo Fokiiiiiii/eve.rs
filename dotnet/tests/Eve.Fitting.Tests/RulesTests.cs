@@ -152,6 +152,16 @@ public class RulesTests
     }
 
     [Fact]
+    public void Boarding_skill_check_requires_each_hull_skill_at_its_published_level()
+    {
+        var shipAttributes = new Dictionary<int, double> { [182] = Skill, [277] = 3 };
+        var type = Statics(shipAttributes).Type(ShipType)!;
+
+        Assert.False(FittingRules.HasRequiredSkills(type, _ => 2));
+        Assert.True(FittingRules.HasRequiredSkills(type, _ => 3));
+    }
+
+    [Fact]
     public void A_module_that_fits_only_some_groups_or_types_of_ship_says_so()
     {
         var restricted = new DogmaStatic(Attributes, BuiltInEffects.Merge([]),
@@ -246,7 +256,6 @@ public class RulesTests
         Fit(world, 7002, Slots.RigFirst + 1, 3001);
         Assert.Null(Why(world, statics, Candidate(world, 7002), Slots.RigFirst + 2)); // 450 of 450
     }
-
 
     [Fact]
     public void Current_sde_rig_sizes_must_match_and_installed_rigs_share_calibration()
@@ -420,7 +429,6 @@ public class RulesTests
         Assert.Equal([3002L, 3003L, 3004L, 3005L], changes.Select(change => change.ModuleId));
     }
 
-
     [Fact]
     public void Rebased_hitpoints_keep_absolute_layer_damage_and_identify_hull_collapse()
     {
@@ -499,5 +507,15 @@ public class RulesTests
         Assert.Equal(ItemState.Online, world.Item(3004)!.State);
         Assert.Equal(ItemState.Offline, world.Item(3005)!.State);
         Assert.Equal([3002L, 3003L, 3004L, 3005L], changes.Select(change => change.ModuleId));
+    }
+
+    [Theory]
+    [InlineData(963, true)]
+    [InlineData(26, false)]
+    public void Rigs_can_be_removed_without_destruction_only_from_strategic_cruisers(int shipGroupId, bool expected)
+    {
+        var shipType = new TypeDef(1, shipGroupId, 6, new Dictionary<int, double>(), []);
+
+        Assert.Equal(expected, FittingRules.CanUnfitRigWithoutDestruction(shipType));
     }
 }

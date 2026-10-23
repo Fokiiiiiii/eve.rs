@@ -14,20 +14,16 @@ OUT = os.path.join(HERE, "..", "..", "oracle", "fixtures", "hostlink", "messages
 KINDS = {"Hello": 1, "HelloAck": 2, "AuthRequest": 3, "AuthReply": 4, "SessionOpen": 5,
          "SessionClose": 6, "Packet": 7, "Send": 8, "Disconnect": 9, "ClusterConfig": 10}
 
-
-def s(text):  # u16 length + UTF-8
+def s(text):
     data = text.encode("utf-8")
     return struct.pack("<H", len(data)) + data
-
 
 def b(data):  # u32 length + bytes
     return struct.pack("<I", len(data)) + data
 
-
 def frame(kind, body):
     payload = bytes([KINDS[kind]]) + body
     return struct.pack("<I", len(payload)) + payload
-
 
 def build(m):
     k = m["kind"]
@@ -56,7 +52,6 @@ def build(m):
     if k == "ClusterConfig":
         return frame(k, bytes.fromhex(m["payload"]))
     raise ValueError(k)
-
 
 valid = [
     {"name": "hello", "kind": "Hello", "version": 1, "nodeId": 65450},

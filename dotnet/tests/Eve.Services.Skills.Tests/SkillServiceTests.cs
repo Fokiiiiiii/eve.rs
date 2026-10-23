@@ -170,8 +170,6 @@ public Eve.Wallet.PgWalletStore WalletStore { get; }
         return balance;
     }
 
-
-
     public async Task<long> CreateItemAsync(Eve.Inventory.NewItem item)
     {
         await using var connection = await Source.OpenConnectionAsync();
@@ -346,6 +344,40 @@ public class SkillHandlerTests
         Assert.Null(catalog.ItemTypeId("Skill Injector"));
     }
 
+    [PgFact]
+    public async Task Skill_bulk_item_operations_refuse_more_than_500_raw_entries_before_mutation()
+    {
+        await using var rig = await Rig.CreateAsync(useCurrentSdeCatalog: true);
+        var characterId = rig.CharacterId;
+        const long station = 60_000_001;
+        var session = Rig.Session(characterId).Session;
+        session.Set("stationid", new PyInt(station));
+
+        var itemIds = new PyList([.. Enumerable.Range(1, 501).Select(id => (PyValue)new PyLong(id))]);
+        var injectionError = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            Rig.CallAsync(rig.Handler, session, "InjectSkillIntoBrain", itemIds));
+        Assert.Equal("SkillBulkLimitExceeded", injectionError.Error.UserErrorMessage);
+        Assert.Empty(await rig.Store.ForCharacterAsync(characterId));
+
+        var capsuleType = rig.CatalogForTest.ItemTypeId("Capsule");
+        var extractorType = rig.CatalogForTest.ItemTypeId("Skill Extractor");
+        var injectorType = rig.CatalogForTest.ItemTypeId("Large Skill Injector");
+        Assert.NotNull(capsuleType);
+        Assert.NotNull(extractorType);
+        Assert.NotNull(injectorType);
+        var capsule = await rig.CreateItemAsync(new Eve.Inventory.NewItem(capsuleType.Value, characterId, station, 4, 1, true));
+        var extractor = await rig.CreateItemAsync(new Eve.Inventory.NewItem(extractorType.Value, characterId, station, 4, 1, true));
+        session.Set("shipid", new PyLong(capsule));
+        var targets = new PyDict([.. Enumerable.Range(1, 501).Select(typeId =>
+            new KeyValuePair<PyValue, PyValue>(new PyInt(typeId), new PyLong(long.MaxValue))) ]);
+
+        var extractionError = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            Rig.CallAsync(rig.Handler, session, "ExtractSkills", new PyLong(extractor), targets));
+        Assert.Equal("SkillBulkLimitExceeded", extractionError.Error.UserErrorMessage);
+        Assert.NotNull(await rig.ItemStore.GetAsync(extractor));
+        Assert.DoesNotContain(await rig.ItemStore.InLocationAsync(station, characterId), item => item.TypeId == injectorType.Value);
+    }
+
 [PgFact]
     public async Task Injecting_a_skill_book_consumes_the_owned_book_and_adds_the_skill()
     {
@@ -377,6 +409,26 @@ public class SkillHandlerTests
         Assert.Equal(new PyInt(180_000), await Rig.CallAsync(rig.Handler, session, "GetDiminishedSpFromInjectors", new PyInt(injectorType.Value), new PyInt(2), new PyInt(0)));
         Assert.Equal(new PyInt(180_000), await Rig.CallAsync(rig.Handler, session, "InjectSkillpoints", new PyLong(injector), new PyInt(2)));
         Assert.Null(await rig.ItemStore.GetAsync(injector));
+    }
+
+
+    [PgFact]
+    public async Task Injector_diminishing_total_saturates_without_overflowing_authoritative_point_balances()
+    {
+        await using var rig = await Rig.CreateAsync(useCurrentSdeCatalog: true);
+        var characterId = rig.CharacterId;
+        var skill = rig.CatalogForTest.Skills.Single(type => type.TypeId == 3300).TypeId;
+        await rig.GrantAsync(characterId, (skill, 5, 4_950_000));
+        await rig.GrantFreeSkillPointsAsync(characterId, long.MaxValue - 50_000);
+        var injectorType = rig.CatalogForTest.ItemTypeId("Small Skill Injector");
+        Assert.NotNull(injectorType);
+        var injector = await rig.CreateItemAsync(new Eve.Inventory.NewItem(injectorType.Value, characterId, 60_000_001, 4, 2, false));
+        var session = Rig.Session(characterId).Session;
+
+        Assert.Equal(new PyInt(30_000), await Rig.CallAsync(rig.Handler, session, "GetDiminishedSpFromInjectors", new PyInt(injectorType.Value), new PyInt(1), new PyInt(0)));
+        Assert.Equal(new PyInt(30_000), await Rig.CallAsync(rig.Handler, session, "InjectSkillpoints", new PyLong(injector), new PyInt(1)));
+        Assert.Equal(long.MaxValue - 20_000, await rig.Store.FreeSkillPointsAsync(characterId));
+        Assert.Equal(1, (await rig.ItemStore.GetAsync(injector))?.Quantity);
     }
 
     [PgFact]
@@ -415,7 +467,7 @@ public class SkillHandlerTests
         await rig.GrantFreeSkillPointsAsync(character, 29_999_999);
         Assert.Equal(new PyInt(300_000), await Preview(large));
         Assert.Equal(new PyInt(60_000), await Preview(small));
-        // EveJS uses an exclusive 80M upper bound; the current CCP support table puts 80M in the final band.
+
         await rig.GrantFreeSkillPointsAsync(character, 1);
         Assert.Equal(new PyInt(150_000), await Preview(large));
         Assert.Equal(new PyInt(30_000), await Preview(small));
@@ -583,7 +635,7 @@ public class SkillHandlerTests
 
         Assert.IsType<PyNone>(await Rig.CallAsync(rig.Handler, session, "ExtractSkills",
             new PyLong(extractor),
-            new PyDict([new(new PyInt(target.TypeId), new PyLong(500_000))])));
+            new PyList([Py.Tuple(new PyInt(target.TypeId), new PyLong(long.MaxValue - 5)), Py.Tuple(new PyInt(target.TypeId), new PyLong(10))])));
         Assert.Equal(77_002, seenAlphaAccount);
 
         Assert.Null(await rig.ItemStore.GetAsync(extractor));
@@ -601,7 +653,7 @@ public class SkillHandlerTests
         var typeId = rig.CatalogForTest.ItemTypeId("Daily Alpha Injector");
         Assert.NotNull(typeId);
         const long day = 86_400_000;
-        const long midnight = 19_675 * day; // 2023-11-14 00:00 UTC
+        const long midnight = 19_675 * day;
         const long downtime = midnight + 11 * 3_600_000;
         Task<bool> Use(long at) => rig.Store.InTransactionAsync(
             (connection, transaction, token) => rig.Store.TryUseDailyAlphaSkillInjectorAsync(connection, transaction, rig.CharacterId, typeId.Value, at, token),
@@ -695,6 +747,28 @@ public class SkillHandlerTests
         Assert.Equal(PyNone.Instance, await Rig.CallAsync(rig.Handler, session, "CombineSkillInjector", new PyLong(smallStack.Id), new PyInt(3)));
         var combined = Assert.Single(await rig.ItemStore.InLocationAsync(60_000_001, characterId));
         Assert.Equal((large.Value, 1L), (combined.TypeId, combined.Quantity));
+    }
+
+[PgFact]
+    public async Task Splitting_an_oversized_skill_injector_stack_refuses_before_mutation()
+    {
+        await using var rig = await Rig.CreateAsync(useCurrentSdeCatalog: true);
+        var characterId = rig.CharacterId;
+        var large = rig.CatalogForTest.ItemTypeId("Large Skill Injector");
+        var small = rig.CatalogForTest.ItemTypeId("Small Skill Injector");
+        Assert.NotNull(large);
+        Assert.NotNull(small);
+        const long station = 60_000_001;
+        var quantity = long.MaxValue / 3 + 1;
+        var itemId = await rig.CreateItemAsync(new Eve.Inventory.NewItem(large.Value, characterId, station, 4, quantity, false));
+        var session = Rig.Session(characterId).Session;
+        session.Set("stationid", new PyInt(station));
+
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            Rig.CallAsync(rig.Handler, session, "SplitSkillInjector", new PyLong(itemId), new PyLong(quantity)));
+        Assert.Equal("CustomNotify", error.Error.UserErrorMessage);
+        Assert.Equal(quantity, (await rig.ItemStore.GetAsync(itemId))?.Quantity);
+        Assert.DoesNotContain(await rig.ItemStore.InLocationAsync(station, characterId), item => item.TypeId == small.Value);
     }
 
     [PgFact]
@@ -1110,8 +1184,6 @@ public class SkillHandlerTests
         Assert.Equal(PyBool.False, await Rig.CallAsync(rig.Handler, session, "IsSkill", new PyStr("x")));
     }
 
-    // ── reaching the handler ─────────────────────────────────────────────────
-
     [Fact]
     public async Task The_door_hands_out_a_moniker_for_the_character_and_falls_back_to_the_account()
     {
@@ -1154,8 +1226,6 @@ public class SkillHandlerTests
         var bound = (PyTuple)await Rig.CallAsync(rig.Handler, session, "MachoBindObject", new PyInt(7), new PyTuple([new PyStr("NoSuchMethod"), new PyTuple([]), PyNone.Instance]));
         Assert.Equal(PyNone.Instance, bound.Items[1]);
     }
-
-    // ── the notification after choosing a character ──────────────────────────
 
     [PgFact]
     public async Task Entering_sends_one_unchanged_skill_of_the_character()

@@ -5,7 +5,6 @@
 //! The scene has no threads and no clock of its own, so the brains are run by `Scene::poll`: the calls and timers that are due, the ball callbacks
 //! whose range has been reached, and the messages waiting for a tree are delivered every poll, and the trees are ticked once a second ([`TICK`]; the
 //! client's package does not say how often, and the reference's own NPC loop is not a behavior tree).
-
 mod ballpark;
 mod dogma;
 #[cfg(test)]
@@ -188,6 +187,34 @@ impl Brains {
     /// What an NPC's tree raised, oldest first.
     pub fn faults(&self, session: SessionId) -> &[BehaviorError] {
         self.brains.get(&session).map_or(&[], |brain| brain.faults.as_slice())
+    }
+
+    /// Whether the NPC's assigned tree delegates self-repair activation to the damage-gated ActiveTank task.
+    pub(crate) fn has_active_tank(&self, session: SessionId) -> bool {
+        self.brains.get(&session).is_some_and(|brain| {
+            (0..brain.tree.task_count()).any(|task| brain.tree.type_name_of(task) == "ActiveTank")
+        })
+    }
+
+    /// Tell an item's existing behavior subscribers that its damage state changed.
+    pub(crate) fn damage_changed(&mut self, item_id: i64) {
+        self.shared.tell_subscribers(
+            eve_behaviors::events::Subject::Item(item_id),
+            eve_behaviors::events::message::ON_DAMAGE_CHANGED,
+            &[],
+        );
+    }
+
+    /// Deliver the recurring NPC module-cycle start to behaviors that subscribed to this effect.
+    pub(crate) fn effect_started(&mut self, item_id: i64, effect_id: i64) {
+        self.shared.tell_subscribers(
+            eve_behaviors::events::Subject::Item(item_id),
+            eve_behaviors::events::EventKey::with(
+                eve_behaviors::events::message::ON_EFFECT_STARTED,
+                effect_id,
+            ),
+            &[],
+        );
     }
 
     /// The status of the root of an NPC's tree, if it has one.

@@ -4,17 +4,14 @@ using Npgsql;
 
 namespace Eve.Services.Skills;
 
-/// <summary>
-/// The end of an extra training queue (Multiple Character Training): when the account's extra slots run out, the running
-/// queues beyond the remaining slots are paused, the character with the fewest skill points first (wiki: "Multiple Character
-/// Training"). A durable job per granted slot runs at the slot's end; it is idempotent, so a late or repeated run changes nothing.
-/// </summary>
+/// <summary>Pauses over-capacity training queues when an account's extra slots expire; one durable job runs per slot.</summary>
 public sealed class MultipleTrainingSlotExpiry(
     DurableScheduler scheduler,
     CharacterTraining training,
     TrainingAnnouncer announcer,
     CharacterSessions sessions,
-    Func<long, CancellationToken, Task<IReadOnlyList<long>>> accountCharacters)
+    Func<long, CancellationToken, Task<IReadOnlyList<long>>> accountCharacters,
+    Func<CancellationToken, Task<IReadOnlyList<(long AccountId, DateTimeOffset EndsAt)>>>? savedSlotExpiries = null)
 {
     public const string JobKind = "skills.mctSlotExpiry";
 
@@ -31,6 +28,32 @@ public sealed class MultipleTrainingSlotExpiry(
             connection, transaction,
             new JobSpec(JobKind, endsMs) { Key = $"{accountId}:{endsMs}", Payload = new AccountJob(accountId) },
             cancellationToken);
+    }
+
+    /// <summary>Rebuilds missing expiry jobs for persisted slots and applies expiries that elapsed while the host was stopped.</summary>
+    public async Task ReconcileSavedSlotsAsync(CancellationToken cancellationToken)
+    {
+        if (savedSlotExpiries is null)
+            return;
+
+        var slots = await savedSlotExpiries(cancellationToken);
+        var expiredAccounts = new HashSet<long>();
+        foreach (var (accountId, endsAt) in slots)
+        {
+            var endsMs = endsAt.ToUnixTimeMilliseconds();
+            if (endsMs <= scheduler.Now)
+            {
+                expiredAccounts.Add(accountId);
+                continue;
+            }
+
+            await scheduler.ScheduleAsync(
+                new JobSpec(JobKind, endsMs) { Key = $"{accountId}:{endsMs}", Payload = new AccountJob(accountId) },
+                cancellationToken);
+        }
+
+        foreach (var accountId in expiredAccounts.Order())
+            await PauseOverLimitAsync(accountId, cancellationToken);
     }
 
     /// <summary>Pauses the running queues that the account's remaining slots no longer cover, then tells the account's clients.</summary>

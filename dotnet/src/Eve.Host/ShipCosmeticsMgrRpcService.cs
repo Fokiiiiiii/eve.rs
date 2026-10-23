@@ -13,6 +13,7 @@ namespace Eve.Host;
 
 public sealed class ShipCosmeticsMgrRpcService : IService
 {
+    private const int MaxSkinLicenseItems = 500;
     private static readonly string[] Methods = ["ActivateSkinLicense", "ApplySkinToShip", "GMExpireSkinLicense", "GetEnabledCosmetics", "GetFirstPartySkinData", "GetLicencedSkins", "GetLicencedSkinsForShipType", "GiveSkin", "RemoveSkin"];
     private readonly GameStoreCache? _store;
     private readonly GameStoreCache? _logoStore;
@@ -111,6 +112,9 @@ public sealed class ShipCosmeticsMgrRpcService : IService
 
     private PyValue GiveSkin(ServiceCall call)
     {
+        if (!GameMasterRoles.Has(call.Session, GameMasterRoles.Staff))
+            throw MachoErrors.ThrowUserError(
+                "CustomNotify", ("notify", new PyStr("ROLE_STAFF_REQUIRED")));
         var characterId = call.Session.CharacterId ?? 0;
         var skinId = Positive(call.Arg(0));
         if (characterId <= 0 || skinId <= 0 || _store is null) return PyNone.Instance;
@@ -145,6 +149,9 @@ public sealed class ShipCosmeticsMgrRpcService : IService
 
     private PyValue GMExpireSkinLicense(ServiceCall call)
     {
+        if (!GameMasterRoles.Has(call.Session, GameMasterRoles.Gml))
+            throw MachoErrors.ThrowUserError(
+                "CustomNotify", ("notify", new PyStr("ROLE_GML is required")));
         var characterId = call.Session.CharacterId ?? 0;
         var skinId = Positive(call.Arg(0));
         var path = OverridePath(characterId, skinId);
@@ -190,6 +197,14 @@ public sealed class ShipCosmeticsMgrRpcService : IService
     private async ValueTask<PyValue> ActivateSkinLicenseAsync(ServiceCall call)
     {
         var characterId = call.Session.CharacterId ?? 0;
+        var rawItemCount = call.Arg(0) switch
+        {
+            PyList list => list.Items.Count,
+            PyTuple tuple => tuple.Items.Count,
+            _ => 1,
+        };
+        if (rawItemCount > MaxSkinLicenseItems)
+            throw MachoErrors.ThrowUserError("SHIP_SKIN_LICENSE_BULK_LIMIT_EXCEEDED");
         var itemIds = ItemIds(call.Arg(0));
         if (characterId <= 0) Notify("You need an active character to activate a SKIN license.");
         if (itemIds.Count == 0) return PyNone.Instance;

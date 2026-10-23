@@ -27,7 +27,6 @@ MULTIPLE_CHARACTER_TRAINING = 63188
 LIVE = os.environ.get("EVE_LIVE_HOST", "")
 pytestmark = pytest.mark.skipif(not LIVE, reason="set EVE_LIVE_HOST=host:port to test against a running server")
 
-
 def enter_new_character(client, run: str) -> int:
     creation = next(step for step in WALK["steps"] if step["call"][1] == "CreateCharacterWithDoll" and "ok" in step)
     service, method, described = creation["call"]
@@ -35,7 +34,6 @@ def enter_new_character(client, run: str) -> int:
     client.notifications.clear()
     client.call("charUnboundMgr", "SelectCharacterID", charID=character_id, secondChoiceID=None, skipTutorial=False)
     return character_id
-
 
 def test_activating_a_missing_item_is_refused_and_no_queue_is_granted():
     run = uuid.uuid4().hex[:10]
@@ -50,7 +48,6 @@ def test_activating_a_missing_item_is_refused_and_no_queue_is_granted():
         assert arguments["info"] == "That item does not exist."
 
         assert m.plain(client.call("userSvc", "GetUpdatedMultiCharacterTraining", False)) == []
-
 
 def test_a_stack_of_certificates_gives_up_one_certificate_per_activation():
     run = uuid.uuid4().hex[:10]

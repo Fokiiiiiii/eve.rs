@@ -5,7 +5,12 @@ using Eve.Space;
 namespace Eve.Services.Space;
 
 /// <summary>Durable fleet membership and hierarchy state. The fleet schema is supplied by the host migration.</summary>
-public sealed partial class FleetStore(System.Data.Common.DbDataSource source, string schema = "fleet")
+public sealed class FleetJoinRequestLimitException : Exception
+{
+    public FleetJoinRequestLimitException() : base("The fleet join-request limit has been reached.") { }
+}
+
+public sealed partial class FleetStore(System.Data.Common.DbDataSource source, string schema = "fleet", int maxJoinRequests = 4096)
 {
     public const string DefaultSchema = "fleet";
     public const long NoUnit = -1;
@@ -15,6 +20,11 @@ public sealed partial class FleetStore(System.Data.Common.DbDataSource source, s
     public const int Member = 4;
     public const int CreatorJob = 2;
     public const int MaxMembers = 256;
+    public const int DefaultMaxJoinRequests = 4096;
+    public const int MaximumConfiguredJoinRequests = 65536;
+    private readonly int _maxJoinRequests = maxJoinRequests is >= 1 and <= MaximumConfiguredJoinRequests
+        ? maxJoinRequests
+        : throw new ArgumentOutOfRangeException(nameof(maxJoinRequests));
     public const int MaxWings = 25;
     public const int MaxSquadsPerWing = 25;
     public const int MaxNameLength = 10;
@@ -24,7 +34,6 @@ public sealed partial class FleetStore(System.Data.Common.DbDataSource source, s
     private const int InvitePublic = 8;
     private const int InvitePublicOpen = 16;
     private const int MaxAdvertEntities = 1000;
-
 
     public static readonly Eve.Data.Migration FleetFinderAllowedEntitiesMigration = new(
         "005_fleet_finder_allowed_entities",
@@ -551,6 +560,10 @@ public Task<FleetMemberSnapshot?> JoinAsync(long fleetId, long characterId,
             effectiveLimit = Math.Min(effectiveLimit,
                 Math.Max(1, Convert.ToInt32(advertLimitValue, System.Globalization.CultureInfo.InvariantCulture)));
         if (memberCount >= effectiveLimit) return false;
+        if (await CountAsync(connection, transaction,
+                $"SELECT COUNT(*) FROM {_schema}.fleet_join_requests WHERE fleet_id = $1 AND character_id <> $2",
+                cancellationToken, fleetId, characterId) >= _maxJoinRequests)
+            throw new FleetJoinRequestLimitException();
 
         await using var invitation = Command(connection, transaction,
             $"SELECT 1 FROM {_schema}.fleet_invitations WHERE fleet_id = $1 AND character_id = $2 FOR UPDATE",

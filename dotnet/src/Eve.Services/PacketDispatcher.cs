@@ -1,5 +1,6 @@
 using Eve.Macho;
 using Eve.Marshal;
+using System.Runtime.CompilerServices;
 
 namespace Eve.Services;
 
@@ -17,6 +18,7 @@ public sealed class PacketDispatcher
 
     private readonly ServiceRegistry _registry;
     private readonly Func<long> _nowUnixMs;
+    private readonly ConditionalWeakTable<ClientSession, ExpensiveRpcBudget> _expensiveBudgets = new();
 
     public PacketDispatcher(ServiceRegistry registry, Func<long>? nowUnixMs = null)
     {
@@ -36,6 +38,9 @@ public sealed class PacketDispatcher
     /// also names the failure in the error text and logs the call's arguments and the stack trace.
     /// </summary>
     public bool StrictRpc { get; init; }
+
+    /// <summary>Weighted work units available to one session during a rolling minute.</summary>
+    public int MaxExpensiveRpcUnitsPerMinute { get; init; } = 120;
 
     /// <summary>
     /// Handles one decoded packet from <paramref name="session"/>. Returns whether it was handled;
@@ -160,6 +165,17 @@ public sealed class PacketDispatcher
             return true;
         }
 
+        var cost = ExpensiveRpcCost(service.Name, call.Method);
+        if (call.Method == "MachoBindObject" && call.Args.Count > 1 &&
+            NestedBoundMethod(call.Args[1]) is { } nestedMethod)
+            cost = Math.Max(cost, ExpensiveRpcCost(service.Name, nestedMethod));
+        if (cost > 0 && !_expensiveBudgets.GetValue(session, _ => new ExpensiveRpcBudget())
+                .TryConsume(_nowUnixMs(), cost, MaxExpensiveRpcUnitsPerMinute))
+        {
+            SendError(packet, MachoErrors.UserError("SessionRpcBudgetExceeded"), session, serviceName);
+            return true;
+        }
+
         var previousBoundObjectId = session.CurrentBoundObjectId;
         try
         {
@@ -250,6 +266,155 @@ public sealed class PacketDispatcher
     /// Strict mode: answers the call with a Macho error that names the failure and a correlation id, and logs the
     /// failure with the call's arguments (and the exception's stack trace, when there is one) to stderr.
     /// </summary>
+    private static int ExpensiveRpcCost(string service, string method)
+    {
+        if (method == "GetAllInfo")
+            return 10;
+        if (service == "config" && method is
+            "GetMultiOwnersEx" or "GetMultiCorpTickerNamesEx" or
+            "GetMultiAllianceShortNamesEx" or "GetMultiLocationsEx")
+            return 10;
+        if (service == "marketProxy" && method is
+            "GetOrders" or "GetStationAsks" or "GetSystemAsks" or "GetRegionBest" or
+            "GetMarketOrderHistory" or "GetOldPriceHistory" or "GetNewPriceHistory" or
+            "GetCharOrders" or "GetCorporationOrders" or "GetCharEscrow" or
+            "GetPlexOrders" or "GetPlexBest" or "GetPlexHistory" or
+            "GetPlexOldPriceHistory" or "GetPlexNewPriceHistory" or "CharGetTransactions" or
+            "CorpGetTransactions" or "BuyMultipleItems" or "PlaceMultiSellOrder" or
+            "GetHistoryForManyTypeIDs")
+            return 10;
+        if (service == "corporationSvc" && method is "GetEmploymentRecord" or "GetEmployementRecordAndCharacterTransfers" or "GetMyCorporationInfo" or "GetMedalsReceived" or "GetAllCorpMedals" or "GetRecipientsOfMedal" or "SetMedalStatus" or "GiveMedalToCharacters")
+            return 10;
+        if (service == "corpmgr" && method is "GetPublicInfo" or "GetCorporations" or "GetCorporationIDForCharacter")
+            return 10;
+        if (service == "mutualWarInviteMgr")
+            return 10;
+        if (service == "posMgr" && method is "GetControlTowers" or "UnanchorStructure")
+            return 10;
+        if (service == "vaultManager" && method == "get_account_balance")
+            return 10;
+        if (service == "charUnboundMgr" && method is
+            "GetCharacterInfo" or "GetCharacterSelectionData" or "CreateCharacterWithDoll" or
+            "UpdateCharacterGender" or "UpdateCharacterBloodline" or "SelectCharacterID" or
+            "CancelCharacterDeletePrepare" or "PrepareCharacterForDelete" or "DeleteCharacter")
+            return 10;
+        if (service == "charUnboundMgr" && method is "GetValidRandomName" or "ValidateNameEx")
+            return 1;
+        if (service == "storeManager" && method == "buy_offer" || service == "FastCheckoutService" && method == "BuyOffer")
+            return 10;
+        if (service == "ownerGroupManager")
+            return 10;
+        if (service == "mailMgr" && method is "SyncMail" or "GetMailHeaders" or "GetBody" or "MarkAsRead" or "SendMail" or "PokePlayerAboutChatMsgGm")
+            return 10;
+        if (service == "mailingListsMgr")
+            return 10;
+        if (service == "contractProxy")
+            return 10;
+        if (service == "insuranceSvc" && method == "GetContracts")
+            return 10;
+        if (service == "planetOrbitalRegistryBroker" && method == "GetTaxRate")
+            return 2;
+        if (service == "planetOrbitalRegistryBroker" && method == "UpdateSettings")
+            return 10;
+        if (service == "corpStationMgr" && method == "MachoBindObject")
+            return 10;
+        if (service == "billMgr")
+            return 10;
+        if (service == "industryManager" && method is ("GetJobCounts" or "GetJob" or "GetJobsByOwner" or "InstallJob" or "CompleteJob" or "CompleteManyJobs" or "CancelJob"))
+            return 10;
+        if (service == "shipCosmeticsMgr" && method is ("GetLicencedSkins" or "GiveSkin" or "RemoveSkin" or "GMExpireSkinLicense" or "ApplySkinToShip" or "ActivateSkinLicense"))
+            return 10;
+        if ((service is "charFittingMgr" or "corpFittingMgr" or "allianceFittingMgr") && (method is "GetFittings" or "SaveFitting" or "UpdateFitting" or "SaveManyFittings" or "DeleteFitting" or "DeleteManyFittings" or "UpdateNameAndDescription" or "GetCommunityFittings"))
+            return 10;
+        if (service == "invbroker" && method is "MultiMerge" or "MultiAdd" or "StackAll")
+            return 10;
+        if (service == "repackagingSvc" && method == "RepackageItems")
+            return 10;
+        if (service == "invbroker" && method is "GetDamageForCrystals" or "ValidateItemListCanBeOpened" or "ListIncludingContainers" or "ListStations" or "ListStationItems" or "ImportExportWithPlanet" or "GetAssetWorth")
+            return 10;
+        if (service == "invbroker" && method is "GetInventory" or "GetInventoryFromId" or "GetContainerContents" or "GetItems" or "List" or "ListByFlags" or "GetCapacity")
+            return 2;
+        if (service == "corpMgr" && (method is "GetAssetInventory" or "GetAssetInventoryForLocation" or "SearchAssets" or "GetAggressionSettingsForCorps" or "AuditMember"))
+            return 10;
+        if (service == "itemLocking" && (method is "GetItemsByLocation" or "GetLockedItemLocations"))
+            return 10;
+        if ((service == "crimewatch" && method == "GetSecurityStatusTransactions") ||
+            (service == "killRightMgr" && method == "GetKillRights"))
+            return 10;
+        if (service == "account" && method is "GetTransactions" or "GiveCash" or "GiveCashFromCorpAccount")
+            return 10;
+        if (service == "config" && method is "GetAverageMarketPrices" or "GetMultiOwnersEx" or "GetMultiCorpTickerNamesEx" or "GetMultiAllianceShortNamesEx" or "GetMultiLocationsEx")
+            return 10;
+        if (service == "LPStoreMgr" && method is "GetAvailableOffersFromCorp" or "TakeOfferForCharacter" or "TakeOfferForCorporation")
+            return 10;
+        if (service == "corpRegistry" && method is "GetCorporation" or "GetEveOwners" or "GetMemberIDsByQuery" or "GetMemberIDsWithMoreThanAvgShares" or "GetNumberOfPotentialCEOs" or "GetMembersByIds" or "GetMembersPaged" or "GetMemberTrackingInfo" or "GetMemberTrackingInfoSimple" or "GetShareholders" or "GetSharesByShareholder" or "PayoutDividend" or "ExecuteActions" or "UpdateMembers" or "KickOutMembers" or "UpdateTitles" or "UpdateCorporation" or "UpdateLogo" or "UpdateDivisionNames" or "UpdateCorporationAbilities" or "RegisterNewAcceptStructureSettings" or "RegisterNewCorpMailRestrictionSettings" or "SetStructureReinforceDefault" or "RegisterNewAggressionSettings" or "AddCorporation" or "InsertApplication" or "InsertInvitation" or "ResignFromCEO" or "KickOutMember" or "SetAccountKey" or "CreateAlliance" or "GetSuggestedAllianceShortNames" or "GetAllianceApplications" or "UpdateTitle" or "DeleteTitle" or "AddCorporateContact" or "EditCorporateContact" or "CreateLabel" or "DeleteLabel" or "EditLabel" or "AssignLabels" or "RemoveLabels" or "AddBulletin" or "UpdateBulletin" or "DeleteBulletin" or "RemoveCorporateContacts" or "EditContactsRelationshipID" or "AssignLabels" or "RemoveLabels" or "UpdateBulletinOrder" or "GetRecentKills" or "GetRecentLosses" or "GetCorporateContacts" or "GetContactList" or "GetBulletins" or "GetBulletinEntries" or "GetApplications" or "GetOldApplications" or "GetMyApplications" or "GetMyOldApplications" or "GetMyOpenInvitations" or "UpdateApplicationOffer" or "GetRecruitmentAd" or "GetRecruitmentAdsByCorpID" or "GetRecruitmentAdsForCorporation")
+            return 10;
+        if (service == "allianceRegistry" && method is "GetAlliance" or "GetAlliancePublicInfo" or "GetAllianceSovereigntyStructuresInfo" or "GetRelationships" or "SetRelationship" or "GetCapitalSystemInfo" or "SetCapitalSystem" or "SetPrimeHour" or "CancelCapitalSystemTransition" or "UpdateAlliance" or "DeclareWarAgainst" or "PayBill" or "GetBillBalance" or "GetBills" or "GetBillsReceivable" or "GetApplications" or "GetEveOwners" or "GetRankedAlliances" or "GetAllianceMembers" or "GetMembers" or "GetEmploymentRecord" or "GetAllianceMembersOlderThan" or "GetDaysInAlliance" or "GetAllianceContacts" or "GetContactList" or "GetBulletins" or "GetBulletinEntries" or "DeclareExecutorSupport" or "AddAllianceContact" or "EditAllianceContact" or "RemoveAllianceContacts" or "EditContactsRelationshipID" or "CreateLabel" or "DeleteLabel" or "EditLabel" or "AssignLabels" or "RemoveLabels" or "UpdateBulletin" or "DeleteBulletin" or "UpdateBulletinOrder")
+            return 10;
+        if (service == "charMgr" && method is "GetPublicInfo" or "GetPublicInfo3" or "GetCharacterDescription" or "GetCharacterCreationDate" or "GetRecentShipKillsAndLosses" or "GetPrivateInfo" or "GetRecentShipKillsAndLosses" or "GetOrganizationInfoForCharacters" or "SetCharacterDescription" or "GetContactList" or "GetCharacterSettings" or "SaveCharacterSetting" or "DeleteCharacterSetting" or "GetLabels" or "GetOwnerNoteLabels" or "GetOwnerNote" or "GetNote" or "LogSettings" or "AddOwnerNote" or "EditOwnerNote" or "RemoveOwnerNote" or "SetNote" or "AddContact" or "EditContact" or "DeleteContacts" or "BlockOwners" or "UnblockOwners" or "EditContactsRelationshipID" or "AssignLabels" or "RemoveLabels" or "CreateLabel" or "DeleteLabel" or "EditLabel" or "List" or "ListStations" or "ListStationItems" or "ListIncludingContainers" or "GetAssetWorth")
+            return 10;
+        if (service == "fleetProxy")
+            return 10;
+        if (service == "fleetMgr" && method is "ForceLeaveFleet" or "BroadcastToBubble" or "BroadcastToSystem")
+            return 10;
+        if (service == "fleetObject" && method is "SendBroadcast" or "Invite" or "MassInvite" or "Init" or "GetInitState" or "GetFleetComposition" or "GetJoinRequests")
+            return 10;
+        if (service == "corpRecProxy" && method is "SearchCorpAds")
+            return 10;
+        if (service == "warRegistry" && method is "GetWars" or "SetOpenForAllies" or "RetractMutualWar")
+            return 10;
+        if (service == "structureDirectory" && method is "CheckMyDockingAccessToStructures" or "GetMyDockableStructures" or "GetMyCharacterStructures" or "GetMyCorporationStructures")
+            return 10;
+        if (service == "structureJumpBridgeMgr" && method is "GetJbStructureDestination" or "GetLinkedStructure")
+            return 10;
+        if (service == "officeManager" && method is "HasCorpImpoundedItems" or "GetImpoundReleasePrice" or "RentOffice" or "UnrentOffice" or "GetItemsFromImpound" or "TrashImpoundedOffice")
+            return 10;
+        if (service == "stationSvc" && method is ("GetCorporationsWithOffices" or "GetEmptyOfficeCount" or "HasCorpImpoundedItems" or "GetImpoundReleasePrice" or "TrashImpoundedOffice" or "PrimeOfficeItem" or "UnrentOffice"))
+            return 10;
+        if (service == "stationSvc" && method == "GetGuests")
+            return 10;
+        if (service == "skillHandler" && method is "InjectSkillIntoBrain" or "InjectSkillpoints" or "ExtractSkills" or "GetDiminishedSpFromInjectors" or "SplitSkillInjector" or "CombineSkillInjector")
+            return 10;
+        if (service == "accessGroupBookmarkMgr" && method is "GetMyActiveBookmarks" or "SearchFoldersWithAdminAccess" or "DeleteBookmarks" or "MoveBookmarksToFolderAndSubfolder" or "CopyBookmarksToFolderAndSubfolder")
+            return 10;
+        return 0;
+    }
+
+    private static string? NestedBoundMethod(PyValue value)
+    {
+        var items = value switch
+        {
+            PyTuple tuple => tuple.Items,
+            PyList list => list.Items,
+            _ => Array.Empty<PyValue>(),
+        };
+        return items.Count > 0 ? JsSemantics.StringValue(items[0]) : null;
+    }
+
+    private sealed class ExpensiveRpcBudget
+    {
+        private const long WindowMilliseconds = 60_000;
+        private readonly object _gate = new();
+        private long _windowStartedAt;
+        private int _used;
+
+        public bool TryConsume(long now, int cost, int limit)
+        {
+            lock (_gate)
+            {
+                if (_windowStartedAt == 0 || now < _windowStartedAt || now - _windowStartedAt >= WindowMilliseconds)
+                {
+                    _windowStartedAt = now;
+                    _used = 0;
+                }
+                if (limit <= 0 || cost > limit - _used)
+                    return false;
+                _used += cost;
+                return true;
+            }
+        }
+    }
+
     private void FailStrictly(MachoPacket packet, ClientSession session, string? serviceName, CallRequest call, string kind, string detail, Exception? error = null)
     {
         var correlation = RpcDiagnostics.CorrelationId();
@@ -263,7 +428,6 @@ public sealed class PacketDispatcher
     private static void SendCallResponse(MachoPacket packet, PyValue result, ClientSession session, string? serviceName) =>
         session.Send(ResponseBuilder.CallResponse(packet, result, session.Get("userid"), serviceName));
 
-    /// <summary>The provisional answer of a deferred call: an empty result with the OnAgentProvisionalResponse named payload, not wrapped (EveJS agentMgrService.js:932-946).</summary>
     private static void SendProvisional(MachoPacket packet, ClientSession session, string? serviceName) =>
         session.Send(ResponseBuilder.CallResponse(packet, new PyTuple([]), session.Get("userid"), serviceName, new CallResponseOptions
         {
@@ -271,7 +435,6 @@ public sealed class PacketDispatcher
             NamedPayloadEntries = [new(new PyStr("provisional"), Py.Tuple(new PyInt(86400), new PyStr("OnAgentProvisionalResponse"), new PyTuple([])))],
         }));
 
-    /// <summary>The client's answer to a server call: the body without its wire layers (EveJS consumeClientCallResponse, clientSession.js:1131-1144); null when cancelled.</summary>
     private static PyValue? ClientAnswer(MachoPacket packet)
     {
         var body = packet.Payload is PyTuple { Items.Count: 1 } tuple ? tuple.Items[0] : packet.Payload;

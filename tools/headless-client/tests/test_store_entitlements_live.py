@@ -24,11 +24,10 @@ pytestmark = pytest.mark.skipif(not LIVE, reason="set EVE_LIVE_HOST=host:port to
 
 FILETIME_EPOCH = 116_444_736_000_000_000  # 1601-01-01 in 100 ns ticks
 DAY = 86400
-
+NEW_ACCOUNT_END = 4_102_444_800  # 2100-01-01 00:00 UTC, the Omega end of a new account (unix seconds)
 
 def unix_of(filetime: int) -> float:
     return (filetime - FILETIME_EPOCH) / 10_000_000
-
 
 def enter_new_character(client, run: str) -> int:
     creation = next(step for step in WALK["steps"] if step["call"][1] == "CreateCharacterWithDoll" and "ok" in step)
@@ -38,14 +37,11 @@ def enter_new_character(client, run: str) -> int:
     client.call("charUnboundMgr", "SelectCharacterID", charID=character_id, secondChoiceID=None, skipTutorial=False)
     return character_id
 
-
 def plex_balance(client) -> int:
     return m.plain(client.call("vaultManager", "get_account_balance", "PLX"))
 
-
 def names(client) -> set:
     return {event["name"] for event in notifications_of(client)}
-
 
 def test_omega_and_multiple_character_training_are_bought_at_no_charge_and_granted():
     run = uuid.uuid4().hex[:10]
@@ -53,12 +49,13 @@ def test_omega_and_multiple_character_training_are_bought_at_no_charge_and_grant
         enter_new_character(client, run)
         balance = plex_balance(client)
 
-        # the Omega offer: the subscription end time moves 30 days from now (a new account is Omega until 2100)
+        # the Omega offer: a new account is Omega until 2100, and a purchase never moves that end time (SubscriptionPolicy.Extend: the purchase
+        # horizon is kept; DEVIATIONS #62)
         client.notifications.clear()
         assert m.plain(client.call("storeManager", "buy_offer", "omega_30_days", "PLX", 1)) is True
         assert plex_balance(client) == balance
         end = unix_of(m.plain(client.call("subscriptionMgr", "GetSubscriptionTime")))
-        assert time.time() + 30 * DAY - 3600 <= end <= time.time() + 30 * DAY + 3600
+        assert end == NEW_ACCOUNT_END
         assert m.plain(client.call("subscriptionMgr", "GetCloneGrade")) == 1
         assert "OnSubscriptionTimeUpdateServer" in names(client)
 

@@ -2,8 +2,6 @@ using Npgsql;
 
 namespace Eve.Corporations;
 
-// Client-visible Alliance contracts follow EveJS v0.12.9 allianceRegistryRuntime.js and allianceViewState.js (828823a75f211fdecb945b087a26c225f111491f).
-
 public sealed partial class CorporationStore
 {
     private const string AllianceColumns = "id,name,short_name,description,url,executor_corporation_id,creator_corporation_id,creator_character_id,created_ms,deleted,suspended,dictatorial";
@@ -264,7 +262,6 @@ public sealed partial class CorporationStore
     }
 
     /// <summary>Accepted applications are re-enqueued after restart from their persisted due dates.</summary>
-
     public Task<AllianceApplication> ForceAcceptAllianceApplicationAsync(long applicationId,
         AllianceApplicationScheduleCallback scheduleDue,CancellationToken token = default) =>
         RespondToAllianceCoreAsync(0,applicationId,null,2,scheduleDue,token,gameMaster:true);
@@ -282,7 +279,6 @@ public sealed partial class CorporationStore
         return jobs;
     }
 
-
     public async Task<IReadOnlyList<(long CorporationId, long AllianceId)>> CurrentAllianceAffiliationsAsync(CancellationToken token = default)
     {
         await using var connection = await _source.OpenConnectionAsync(token);
@@ -296,6 +292,23 @@ public sealed partial class CorporationStore
         return affiliations;
     }
 
+
+    /// <summary>Whether the character currently has Director authority in the active executor corporation of this alliance.</summary>
+    public async Task<bool> CanActAsAllianceExecutorDirectorAsync(long actor, long allianceId, CancellationToken token = default)
+    {
+        try
+        {
+            await using var connection = await _source.OpenConnectionAsync(token);
+            await using var transaction = await connection.BeginTransactionAsync(token);
+            await RequireAllianceExecutorAsync(connection, transaction, actor, allianceId, token);
+            await transaction.CommitAsync(token);
+            return true;
+        }
+        catch (CorporationError)
+        {
+            return false;
+        }
+    }
 
     public async Task<IReadOnlyList<(long CorporationId, long? AllianceId)>> CorporationAllianceAffiliationsAsync(
         CancellationToken token = default)
@@ -425,7 +438,6 @@ public sealed partial class CorporationStore
         return rows;
     }
 
-
     public async Task<IReadOnlyDictionary<long,long>> AllianceCharacterCountsAsync(IReadOnlyList<long> alliances,CancellationToken token = default)
     {
         if (alliances.Count == 0) return new Dictionary<long,long>();
@@ -443,11 +455,11 @@ public sealed partial class CorporationStore
         return counts;
     }
 
-    public async Task<IReadOnlyList<AllianceApplication>> AllianceApplicationsForCorporationAsync(long corporation,CancellationToken token = default)
+    public async Task<IReadOnlyList<AllianceApplication>> AllianceApplicationsForCorporationAsync(long corporation,int limit,CancellationToken token = default)
     {
         await using var connection = await _source.OpenConnectionAsync(token);
         await using var command = Command(connection,null,
-            $"SELECT {AllianceApplicationColumns} FROM {_schema}.alliance_applications WHERE corporation_id=$1 ORDER BY alliance_id,id",corporation);
+            $"SELECT {AllianceApplicationColumns} FROM {_schema}.alliance_applications WHERE corporation_id=$1 ORDER BY alliance_id,id LIMIT $2",corporation,limit);
         var rows = new List<AllianceApplication>();
         await using var reader = await command.ExecuteReaderAsync(token);
         while (await reader.ReadAsync(token)) rows.Add(ReadAllianceApplication(reader));
@@ -483,7 +495,6 @@ public sealed partial class CorporationStore
             return current with { Description=description,Url=url };
         },token);
     }
-
 
     public async Task SetAlliancePrimeHourAsync(long actor,long alliance,int hour,long validAfterFileTime,CancellationToken token = default)
     {
@@ -717,7 +728,6 @@ public async Task<(short CurrentHour, short NewHour, long ValidAfterFileTime)> A
             "SELECT EXISTS (SELECT 1 FROM sde.\"mapSolarSystems\" WHERE key=$1)", key);
         return await command.ExecuteScalarAsync(token) is true;
     }
-
 
     private async Task<Alliance> RequireAllianceExecutorAsync(NpgsqlConnection connection,NpgsqlTransaction tx,long actor,long alliance,CancellationToken token)
     {
@@ -1794,7 +1804,6 @@ public async Task<(short CurrentHour, short NewHour, long ValidAfterFileTime)> A
             return (warId, billId, false);
         }, token);
     }
-
 
     public async Task<bool> PayAllianceBillAsync(long billId,long allianceId,long payerCorporationId,
     long paidByOwnerId,int accountKey,long paidAtMs,CancellationToken token = default)

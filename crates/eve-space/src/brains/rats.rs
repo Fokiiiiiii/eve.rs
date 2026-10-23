@@ -1,7 +1,6 @@
 //! The behavior of the NPCs this server places itself (the rats of a belt): a tree of the client's package, put together the way its own trees are
 //! (`trees/miners/basicdpstree.py` is the pattern) out of the same parts. The client's package has the parts and no tree for a rat that waits until
 //! somebody comes near and then fights: the trees it does have are the drifters', the sleepers', the miners'. This is the one server-authored tree.
-
 use eve_behaviors::actions::combatnavigation::{DEFAULT_COMBAT_ATTACK_RANGE, DEFAULT_COMBAT_ORBIT_RANGE};
 use eve_behaviors::constants::behaviorroles::ROLE_DPS;
 use eve_behaviors::consts::{CATEGORY_DRONE, CATEGORY_ENTITY, CATEGORY_FIGHTER, CATEGORY_SHIP};
@@ -60,7 +59,6 @@ pub fn pochven_tree_kind(behavior: &str) -> Option<bool> {
 }
 
 /// The tree of a Pochven NPC: the rat's tree, with entities in its sensors' reports (the fleets of the other factions are entities, category 11), the
-/// owners it attacks only the ones given (`pochven_population::owners_for`), and, for a sentry, no movement.
 pub fn create_pochven_behavior_tree(stationary: bool, owners: &Owners) -> BehaviorTree {
     fighter(
         if stationary { "Pochven sentry" } else { "Pochven NPC" },
@@ -86,7 +84,6 @@ pub fn create_pochven_behavior_tree(stationary: bool, owners: &Owners) -> Behavi
     )
 }
 
-/// A list of owner ids for a sensor's filter.
 fn owner_list(owners: &[i64]) -> Value {
     Value::List(owners.iter().map(|owner| Value::Int(*owner)).collect())
 }

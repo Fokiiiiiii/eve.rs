@@ -40,21 +40,21 @@ public sealed record MissionStatic(
 /// <summary>The dungeon answer of a kill mission: its official dungeon ID, and the content (never available here) with its reason.</summary>
 public sealed record MissionDungeonAnswer(long MissionId, long? DungeonId, bool OfficialContent, string Reason);
 
-/// <summary>The availability of a mission: its epic arc (when it is a step of one), that arc's availability, or unknown with the reason.</summary>
+
 public sealed record MissionAvailabilityAnswer(long MissionId, long? ArcId, string Availability, string? Reason);
 
-/// <summary>One step of an epic arc: the mission, the agent who gives it and the steps that follow it.</summary>
+
 public sealed record EpicArcStep(long MissionId, long AgentId, IReadOnlyList<long> NextMissionIds, long? FailMissionId);
 
 /// <summary>
-/// One record of CCP's <c>epicArcs</c> table. <c>arcRestartInterval</c> is in minutes (129600 is the wiki's ninety days).
+
 /// </summary>
 public sealed record EpicArcStatic(long ArcId, string NameEn, long RestartIntervalMinutes, long? FactionId, long? IconId, IReadOnlyList<EpicArcStep> Steps);
 
 /// <summary>
 /// The official mission data (CCP SDE build 3405148, schema <c>sde_mission</c>): the mission records and the epic arcs.
 /// Every question the build cannot answer is answered with a named reason (see <see cref="MissionDataGaps"/>), and the
-/// startup log prints them, so an empty answer is never silent. Nothing here is read from the EveJS authority tables.
+
 /// </summary>
 public sealed class MissionStaticCatalog
 {
@@ -127,25 +127,25 @@ public sealed class MissionStaticCatalog
     public EpicArcStatic? EpicArc(long arcId) => _arcs.FirstOrDefault(arc => arc.ArcId == arcId);
 
     /// <summary>
-    /// The missions an agent gives as steps of an epic arc, ascending. The official build links an agent to a mission
-    /// only through <c>epicArcs</c>, so this is the whole of what can be answered for an agent. Empty for every other
-    /// agent (see <see cref="MissionDataGaps.BasicPools"/>) and for every agent when no build is loaded.
+
+
+
     /// </summary>
     public IReadOnlyList<long> PlausibleMissionIds(long agentId) =>
         !IsLoaded || !_stepsByAgent.TryGetValue(agentId, out var steps)
             ? NoIds
             : steps.Where(step => IsOfferable(step.ArcId)).Select(step => step.Step.MissionId).Distinct().Order().ToArray();
 
-    /// <summary>Whether the mission is a step of an epic arc (the official build's <c>epicArcs</c>).</summary>
+
     public bool IsEpicArcStep(long missionId) => _stepByMission.ContainsKey(missionId);
 
     /// <summary>
-    /// A talk step: an epic arc step with neither a kill nor a courier objective, completed by talking to the agent of the step that follows it.
+
     /// </summary>
     public bool IsTalkStep(long missionId) =>
         _stepByMission.ContainsKey(missionId) && Mission(missionId) is { Kill: null, Courier: null };
 
-    /// <summary>The agents of the steps that follow an arc step (the agent a talk step is completed with).</summary>
+
     public IReadOnlyList<long> NextAgentsOf(long missionId) =>
         _stepByMission.TryGetValue(missionId, out var step)
             ? step.NextMissionIds.Where(_stepByMission.ContainsKey).Select(next => _stepByMission[next].AgentId).Distinct().ToArray()
@@ -180,7 +180,7 @@ public sealed class MissionStaticCatalog
 
     /// <summary>
     /// Reads the mission build from <paramref name="reader"/> (schema <see cref="DefaultSchema"/>). Loads nothing when the
-    /// build is not there. The level tags are <paramref name="levels"/>, or the committed tags plus the owner's file.
+
     /// </summary>
     public static async Task<MissionStaticCatalog> LoadAsync(SdeReader reader, MissionLevelTags? levels = null, CancellationToken cancellationToken = default)
     {
@@ -226,8 +226,8 @@ public sealed class MissionStaticCatalog
 
     /// <summary>
     /// The switch that offers the epic arc steps whose kill sites are generic (a family rule, not client data). Off by default
-    /// (owner decision: held back until the content is complete). It is read from <c>EVE_MISSION_INCLUDE_GENERIC_ARCS</c> (<c>1</c> or <c>true</c>).
-    /// A step whose site is missing is never offered.
+
+
     /// </summary>
     public const string IncludeGenericVariable = "EVE_MISSION_INCLUDE_GENERIC_ARCS";
 
@@ -237,12 +237,12 @@ public sealed class MissionStaticCatalog
     /// <summary>True when the switch offers the arc steps with generic sites.</summary>
     public bool IncludesGenericArcs => _includeGenericArcs;
 
-    /// <summary>The site status of a step with a kill objective (<see cref="MissionSiteStatus"/>), or null when the step has none recorded.</summary>
+
     public string? SiteStatusOf(long missionId) => _siteStatus.GetValueOrDefault(missionId);
 
     /// <summary>
-    /// Whether an arc step is held back from offers: a missing site always; a generic site unless the switch is on.
-    /// A step with no recorded site status is not held back.
+
+
     /// </summary>
     public bool IsHeldBack(long missionId) => SiteStatusOf(missionId) switch
     {
@@ -254,7 +254,7 @@ public sealed class MissionStaticCatalog
     /// <summary>
     /// The epic arcs whose generic kill sites are offered by default: the arcs whose whole offer path was walked live with the client's test ship
     /// (tools/headless-client/tests/test_arc29_walk.py, DEVIATIONS "Mission execution X8"). Every other arc stays held back unless the
-    /// switch <see cref="IncludeGenericVariable"/> is set. Owner decision: an arc is added here only after its walk passes.
+
     /// </summary>
     public static readonly IReadOnlySet<long> ArcsOnByDefault = new HashSet<long>
     {
@@ -287,8 +287,8 @@ public sealed class MissionStaticCatalog
     public IReadOnlyList<EpicArcStatic> OfferableEpicArcs => _arcs.Where(arc => IsOfferable(arc.ArcId)).ToArray();
 
     /// <summary>
-    /// The availability of a mission. A mission that is a step of an epic arc takes its arc's availability. A mission that is
-    /// not a step of an epic arc has no evidence in this table and is <c>unknown</c>, with the reason.
+
+
     /// </summary>
     public MissionAvailabilityAnswer MissionAvailability(long missionId)
     {
@@ -302,7 +302,7 @@ public sealed class MissionStaticCatalog
     }
 
     /// <summary>
-    /// The level of a mission with its provenance: <c>rule</c>, <c>wiki</c> or <c>owner</c> when it has a tag, and
+
     /// <c>unknown</c> with the reason when it has none. The official build holds no level (see <see cref="MissionDataGaps.Levels"/>).
     /// </summary>
     public MissionLevelAnswer Level(long missionId) => _levels.Answer(missionId);

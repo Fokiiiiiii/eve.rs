@@ -4,7 +4,6 @@ namespace Eve.Services.Space.Tests;
 
 /// <summary>
 /// A started siege module locks its ship's speed (SDE 6582: maxVelocity 37 times zero). The simulation has the speed only from the ship it is sent, so a start
-/// must send the ship again with its new maximum velocity, as it does for the resonances (SF-10).
 /// </summary>
 public class SiegeSpeedLockTests
 {

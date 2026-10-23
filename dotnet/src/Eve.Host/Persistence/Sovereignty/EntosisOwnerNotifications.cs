@@ -8,7 +8,7 @@ using Eve.Services.Space.Entosis;
 namespace Eve.Host.Persistence.Sovereignty;
 
 /// <summary>
-/// ST-9 e: the owner's notices of an entosis capture. The capture publishes its events in its own transaction, and this subscriber writes the notices through the
+
 /// mailbox in the subscriber's transaction, so a redelivered event writes nothing twice. The types and payloads are the V24.01 client's (eve-logic
 /// notificationconst: 147 SovereigntyCaptureStarted, 160 SovereigntyStructuresReinforced) and EVE.js sovCampaignNotifications (the same keys); the recipients are
 /// every character of the defending alliance. V24.01 names no notice for a capture's progress, so none is written.

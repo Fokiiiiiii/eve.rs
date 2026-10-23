@@ -1,13 +1,14 @@
 # Structures phase completion execution (2026-10-13)
 
-Canonical root: C:/Users/yutai/eve.rs, main, initial HEAD 06abc660. Every worker is explicitly gpt-6-luna and runtime-verified before GO. Preserve unrelated dirty Corporation/Space audit patches. No new branches/worktrees, descendants, guessed values or fake success. Existing AGENTS source priority and foundations override historical handoff rules.
+Canonical root: repository root, main, initial HEAD 06abc660. Every worker is explicitly gpt-6-luna and runtime-verified before GO. Preserve unrelated dirty Corporation/Space audit patches. No new branches/worktrees, descendants, guessed values or fake success. Existing AGENTS source priority and foundations override historical handoff rules.
 
 ## Required closure checklist
 - [ ] ST-8a: complete controlled-structure module execution on Host and Sim, actual ammo/cap/targets/FX, controller revocation and retained hull preservation.
 - [ ] ST-8b: Standup doomsdays, HOG, burst projectors and chain/lightning families, common runtime lifecycle and failures.
 - [ ] ST-2: authoritative Anchor refusals/default profile/sov delay, durable unanchor hull/fittings/core/fuel/rig disposal and reinforcement-change inbox notices.
 - [ ] ST-7: real beacon service placement/list/jump with ACL/range/fuel, jammer sov rule and fuel item notifications.
-- [ ] ST-9: Sov Hub ball and Entosis owner/capture/progress/defender/restart path.
+- [x] ST-9 core: Sov Hub ball, Entosis capture/handover, reinforcement windows, command-node outcomes and capture/reinforcement-exit scheduler recreation have PostgreSQL coverage.
+- [ ] ST-9 remaining: upgrade/fuel loss drops, replacement neutral hub, real-simulation restart and graphical-client acceptance.
 - [ ] ST-10/ST-11: inventory movement event, completion only after loot empty, durable removal of emptied balls.
 - [ ] ST-E: remaining custom decloak/Mobile Observatory path where required by the phase.
 - [ ] Existing ST-0..6/C: regressions, restart/replay and Host-to-Sim/headless acceptance; no stale handoff treated as proof.

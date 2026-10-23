@@ -110,6 +110,203 @@ public class MarketRpcTests
     }
 
     [PgFact]
+    public async Task Market_history_multi_refuses_more_than_500_type_ids()
+    {
+        await using var r = await TradeRig.Create();
+        var actor = await r.Actor("Bounded History Reader");
+        var seat = await SeatAsync(r, actor);
+        var typeIds = new PyList(Enumerable.Range(1, 501).Select(id => (PyValue)new PyInt(id)).ToArray());
+
+        var refusal = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await seat.Proxy.GetHistoryForManyTypeIDs(Call(seat.Session, "GetHistoryForManyTypeIDs", 3, typeIds)));
+
+        Assert.Equal("MARKET_BULK_LIMIT_EXCEEDED", refusal.Error.UserErrorMessage);
+    }
+
+    [PgFact]
+    public async Task Market_history_multi_refuses_malformed_type_lists_before_reading()
+    {
+        await using var r = await TradeRig.Create();
+        var actor = await r.Actor("Malformed History Reader");
+        var seat = await SeatAsync(r, actor);
+        var clientSet = PyValue.PythonSet([new PyInt(Tritanium)]);
+        Assert.IsType<PyDict>(await seat.Proxy.GetHistoryForManyTypeIDs(
+            Call(seat.Session, "GetHistoryForManyTypeIDs", 2, clientSet)));
+        foreach (var input in new PyValue[]
+        {
+            new PyStr("34"),
+            new PyList([new PyInt(34), new PyInt(-1)]),
+            new PyTuple([new PyInt(34), new PyReal(double.NaN)]),
+            new PyList([new PyLong((long)int.MaxValue + 1)]),
+        })
+        {
+            var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+                seat.Proxy.GetHistoryForManyTypeIDs(Call(seat.Session, "GetHistoryForManyTypeIDs", 3, input)).AsTask());
+            Assert.Equal("MARKET_TYPE_ID_INVALID", refusal.Error.UserErrorMessage);
+        }
+    }
+
+    [PgFact]
+    public async Task Market_money_parser_refuses_decimal_boundary_values_without_overflowing()
+    {
+        await using var r = await TradeRig.Create();
+        var actor = await r.Actor("Decimal boundary buyer", 10000m);
+        var seat = await SeatAsync(r, actor);
+        var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() => seat.Proxy.PlaceBuyOrder(Call(
+            seat.Session, "PlaceBuyOrder", 1, new PyInt(r.Station.Id), new PyInt(Tritanium),
+            new PyReal((double)decimal.MaxValue), new PyInt(1), new PyInt(-1), new PyInt(1),
+            new PyInt(90), PyBool.False, PyNone.Instance)).AsTask());
+        var (label, arguments) = UserError(refusal);
+        Assert.Equal("CustomInfo", label);
+        Assert.Equal("That price is not a valid order price.", Assert.IsType<PyStr>(Field(arguments, "info")).Value);
+        Assert.Empty((await r.Book.BookAsync(r.Station.RegionId, Tritanium, r.Now)).Bids);
+    }
+
+    [PgFact]
+    public async Task Market_type_ids_outside_int32_are_refused_before_order_creation()
+    {
+        await using var r = await TradeRig.Create();
+        var actor = await r.Actor("Out of range type buyer", 10000m);
+        var seat = await SeatAsync(r, actor);
+        var invalidType = new PyLong((long)int.MaxValue + 1);
+        var invalidTypeAsReal = new PyReal(double.MaxValue);
+        var overflowingFloatType = new PyReal((double)(1L << 32) + Tritanium);
+
+        async Task AssertRefused(Task<PyValue> call)
+        {
+            var refusal = await Assert.ThrowsAsync<MachoWrappedException>(async () => await call);
+            var (label, arguments) = UserError(refusal);
+            Assert.Equal("CustomInfo", label);
+            Assert.Equal("One of the market values is outside the supported range.", Assert.IsType<PyStr>(Field(arguments, "info")).Value);
+        }
+
+        await AssertRefused(seat.Proxy.PlaceBuyOrder(Call(
+            seat.Session, "PlaceBuyOrder", 2, new PyInt(r.Station.Id), invalidType, new PyReal(5),
+            new PyInt(1), new PyInt(-1), new PyInt(1), new PyInt(90), PyBool.False, PyNone.Instance)).AsTask());
+        await AssertRefused(seat.Proxy.PlaceBuyOrder(Call(
+            seat.Session, "PlaceBuyOrder", 6, new PyInt(r.Station.Id), overflowingFloatType, new PyReal(5),
+            new PyInt(1), new PyInt(-1), new PyInt(1), new PyInt(90), PyBool.False, PyNone.Instance)).AsTask());
+        await AssertRefused(seat.Proxy.PlaceBuyOrder(Call(
+            seat.Session, "PlaceBuyOrder", 4, new PyInt(r.Station.Id), new PyReal(Tritanium + 0.5), new PyReal(5),
+            new PyInt(1), new PyInt(-1), new PyInt(1), new PyInt(90), PyBool.False, PyNone.Instance)).AsTask());
+        await AssertRefused(seat.Proxy.PlaceBuyOrder(Call(
+            seat.Session, "PlaceBuyOrder", 5, new PyInt(r.Station.Id), invalidTypeAsReal, new PyReal(5),
+            new PyInt(1), new PyInt(-1), new PyInt(1), new PyInt(90), PyBool.False, PyNone.Instance)).AsTask());
+        await AssertRefused(seat.Proxy.BuyMultipleItems(Call(
+            seat.Session, "BuyMultipleItems", 3, new PyInt(r.Station.Id),
+            new PyList([new PyDict([
+                new KeyValuePair<PyValue, PyValue>(new PyStr("typeID"), invalidType),
+                new KeyValuePair<PyValue, PyValue>(new PyStr("quantity"), new PyInt(1)),
+                new KeyValuePair<PyValue, PyValue>(new PyStr("price"), new PyReal(5)),
+            ])]), PyBool.False)).AsTask());
+        await AssertRefused(seat.Proxy.BuyMultipleItems(Call(
+            seat.Session, "BuyMultipleItems", 6, new PyInt(r.Station.Id),
+            new PyList([new PyDict([
+                new KeyValuePair<PyValue, PyValue>(new PyStr("typeID"), invalidTypeAsReal),
+                new KeyValuePair<PyValue, PyValue>(new PyStr("quantity"), new PyInt(1)),
+                new KeyValuePair<PyValue, PyValue>(new PyStr("price"), new PyReal(5)),
+            ])]), PyBool.False)).AsTask());
+        Assert.Empty((await r.Book.BookAsync(r.Station.RegionId, Tritanium, r.Now)).Bids);
+    }
+
+    [PgFact]
+    public async Task Buy_multi_refuses_more_than_500_entries()
+    {
+        await using var r = await TradeRig.Create();
+        var actor = await r.Actor("Bounded Multi Buyer");
+        var seat = await SeatAsync(r, actor);
+        var entries = new PyList(Enumerable.Repeat(Line(Tritanium, 1, 10), 501).ToArray());
+
+        var refusal = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await seat.Proxy.BuyMultipleItems(
+                Call(seat.Session, "BuyMultipleItems", 3, new PyInt(r.Station.Id), entries, PyBool.False)));
+
+        Assert.Equal("MARKET_BULK_LIMIT_EXCEEDED", refusal.Error.UserErrorMessage);
+    }
+
+    [PgFact]
+    public async Task Multi_sell_refuses_more_than_500_entries_before_work()
+    {
+        await using var r = await TradeRig.Create();
+        var actor = await r.Actor("Bounded Multi Seller");
+        var seat = await SeatAsync(r, actor);
+        var entries = new PyList(Enumerable.Repeat(Line(Tritanium, 1, 10), 501).ToArray());
+
+        var refusal = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await seat.Proxy.PlaceMultiSellOrder(
+                Call(seat.Session, "PlaceMultiSellOrder", 3, entries, PyBool.False, new PyInt(1), PyNone.Instance)));
+
+        Assert.Equal("MARKET_BULK_LIMIT_EXCEEDED", refusal.Error.UserErrorMessage);
+    }
+
+    [PgFact]
+    public async Task Buy_multi_refuses_malformed_batches_before_any_order_is_written()
+    {
+        await using var r = await TradeRig.Create();
+        var actor = await r.Actor("Malformed Multi Buyer", 10000m);
+        var seat = await SeatAsync(r, actor);
+
+        foreach (var input in new PyValue[]
+        {
+            new PyStr("not-a-list"),
+            new PyList([Line(Tritanium, 1, 10), new PyStr("not-an-order")]),
+            new PyList([Line(Tritanium, -1, 10)]),
+            new PyList([Line(Tritanium, 1, 10, minVolume: -1)]),
+        })
+        {
+            var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() => seat.Proxy.BuyMultipleItems(
+                Call(seat.Session, "BuyMultipleItems", 3, new PyInt(r.Station.Id), input, PyBool.False)).AsTask());
+            Assert.Equal("MARKET_BULK_ARGUMENT_INVALID", refusal.Error.UserErrorMessage);
+        }
+
+        Assert.Empty((await r.Book.BookAsync(r.Station.RegionId, Tritanium, r.Now)).Bids);
+    }
+
+    [PgFact]
+    public async Task Multi_sell_refuses_a_non_sequence_payload_instead_of_returning_false()
+    {
+        await using var r = await TradeRig.Create();
+        var actor = await r.Actor("Malformed Multi Seller");
+        var seat = await SeatAsync(r, actor);
+
+        var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() => seat.Proxy.PlaceMultiSellOrder(
+            Call(seat.Session, "PlaceMultiSellOrder", 3, new PyStr("not-a-list"), PyBool.False,
+                new PyInt(1), PyNone.Instance)).AsTask());
+        Assert.Equal("MARKET_BULK_ARGUMENT_INVALID", refusal.Error.UserErrorMessage);
+
+        var itemId = await r.Stock(actor, 2);
+        var validLine = Py.KeyVal(
+            ("stationID", new PyInt(r.Station.Id)), ("typeID", new PyInt(Tritanium)),
+            ("itemID", new PyLong(itemId)), ("quantity", new PyInt(1)), ("price", new PyReal(10)));
+        var mixedRefusal = await Assert.ThrowsAsync<MachoWrappedException>(() => seat.Proxy.PlaceMultiSellOrder(
+            Call(seat.Session, "PlaceMultiSellOrder", 4, new PyList([validLine, new PyStr("not-an-order")]),
+                PyBool.False, new PyInt(1), PyNone.Instance)).AsTask());
+        Assert.Equal("MARKET_BULK_ARGUMENT_INVALID", mixedRefusal.Error.UserErrorMessage);
+        Assert.Equal(r.Station.Id, (await r.Items.GetAsync(itemId))!.LocationId);
+    }
+
+    [PgFact]
+    public async Task Multi_sell_refuses_duplicate_item_ids_before_any_order_is_written()
+    {
+        await using var r = await TradeRig.Create();
+        var actor = await r.Actor("Duplicate Multi Seller");
+        var seat = await SeatAsync(r, actor);
+        var itemId = await r.Stock(actor, 2);
+        var line = Py.KeyVal(
+            ("stationID", new PyInt(r.Station.Id)), ("typeID", new PyInt(Tritanium)),
+            ("itemID", new PyLong(itemId)), ("quantity", new PyInt(2)), ("price", new PyReal(10)));
+
+        var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() => seat.Proxy.PlaceMultiSellOrder(
+            Call(seat.Session, "PlaceMultiSellOrder", 5, new PyList([line, line]), PyBool.False,
+                new PyInt(1), PyNone.Instance)).AsTask());
+
+        Assert.Equal("MARKET_BULK_ARGUMENT_INVALID", refusal.Error.UserErrorMessage);
+        Assert.Equal(r.Station.Id, (await r.Items.GetAsync(itemId))!.LocationId);
+        Assert.Empty((await r.Book.BookAsync(r.Station.RegionId, Tritanium, r.Now)).Asks);
+        Assert.Empty(seat.Sink.Packets);
+    }
+
+    [PgFact]
     public async Task Buy_multi_fills_each_line_at_its_limit_and_books_the_unfilled_rest_of_each_line()
     {
         // BuyMultipleItems (EVE.js proxy 6915): immediate buys; a line fills what matches at its limit and books the rest as a buy order; the answer is the
@@ -127,6 +324,28 @@ public class MarketRpcTests
         Assert.True((await r.WalletStore.GetAsync(actor))!.Isk <= 9950m - 36m);
         Assert.NotEmpty(seat.Sink.Packets);
         Assert.Equal(95, (await r.Book.BookAsync(r.Station.RegionId, Tritanium, r.Now)).Asks.Single().VolumeRemaining);
+    }
+
+    [PgFact]
+    public async Task Buy_multi_rolls_back_every_line_when_a_later_line_cannot_be_funded()
+    {
+        await using var r=await TradeRig.Create();
+        var actor=await r.Actor("Multi Buyer");
+        var seat=await SeatAsync(r,actor);
+
+        await Assert.ThrowsAsync<MachoWrappedException>(() => seat.Proxy.BuyMultipleItems(Call(seat.Session,"BuyMultipleItems",77,
+            new PyInt(r.Station.Id),new PyList([Line(Tritanium,10,10),Line(Tritanium,100,1000)]),PyBool.False)).AsTask());
+        Assert.Equal(10000m,(await r.WalletStore.GetAsync(actor))!.Isk);
+        Assert.Empty((await r.Book.BookAsync(r.Station.RegionId,Tritanium,r.Now)).Bids);
+        Assert.Empty(seat.Sink.Packets);
+
+        var result=await seat.Proxy.BuyMultipleItems(Call(seat.Session,"BuyMultipleItems",77,
+            new PyInt(r.Station.Id),new PyList([Line(Tritanium,10,10),Line(Tritanium,1,20)]),PyBool.False));
+        Assert.IsType<PyObject>(result);
+        Assert.Equal(9680m,(await r.WalletStore.GetAsync(actor))!.Isk);
+        var bids=(await r.Book.BookAsync(r.Station.RegionId,Tritanium,r.Now)).Bids.OrderBy(order => order.Price).ToArray();
+        Assert.Equal(2,bids.Length);
+        Assert.Equal(new[] { 10m,20m },bids.Select(order => order.Price));
     }
 
     [PgFact]
@@ -207,6 +426,35 @@ public class MarketRpcTests
         var (label, arguments) = UserError(refusal);
         Assert.Equal("MktInvalidMinVolumeCannotExceedQuantity", label);
         Assert.Empty(arguments.Entries);
+    }
+
+    [PgFact]
+    public async Task Npc_or_missing_corporation_market_orders_return_an_empty_rowset()
+    {
+        await using var r = await TradeRig.Create();
+        var actor = await r.Actor("NPC corporation market viewer");
+        var seat = await SeatAsync(r, actor);
+
+        var rows = Assert.IsType<PyObject>(Received(await seat.Proxy.GetCorporationOrders(
+            Call(seat.Session, "GetCorporationOrders", 11))));
+        Assert.Empty(Assert.IsType<PyList>(Field(Fields(rows), "lines")).Items);
+    }
+
+    [PgFact]
+    public async Task Corporation_market_orders_require_the_persisted_accountant_role()
+    {
+        await using var r = await TradeRig.Create();
+        var ceo = await r.Actor("Market orders CEO", 10000000m);
+        var corp = await r.Corporations.CreateAsync(ceo, new("Order Access", "ORDR", "", "", 0), "corporation");
+        var member = await r.Actor("Market orders member", 10000000m);
+        var invitation = await r.Corporations.CreateInvitationAsync(member, corp.Id, ceo);
+        await r.Corporations.RespondAsync(member, invitation.ApplicationId, 2, "", "");
+        var seat = await SeatAsync(r, member);
+
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await seat.Proxy.GetCorporationOrders(Call(seat.Session, "GetCorporationOrders", 11)));
+
+        Assert.Equal("CustomInfo", UserError(error).Label);
     }
 
     [PgFact]

@@ -7,7 +7,7 @@ using Npgsql;
 namespace Eve.Host.Persistence.Structures;
 
 /// <summary>
-/// E-15: a change of a system cynosural jammer is told to the pilots in that system in space (EveJS sovNotifications broadcastCynoJammerChanged): OnCynoJammerChanged
+
 /// with the system and the state GetCynoJammerState answers (the warm-up FILETIME, 0 once it runs, or None without a jammer).
 /// </summary>
 internal sealed class StructureCynoJammerNotifications(

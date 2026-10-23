@@ -6,7 +6,6 @@ namespace Eve.Services.Space;
 /// <summary>
 /// Nanite paste repair of a ship's modules in space: the start (<c>InitiateModuleRepair</c>) checks what the simulation and the pilot's state allow, the stop
 /// (<c>StopModuleRepair</c>) takes the record out, and the rules and the paste are the ship's (<see cref="CharacterShips"/>). A repair is refused while a module
-/// of the ship is overheated, and an overheat while a repair runs; a module under repair cannot run (the EVE University wiki, Overheating).
 /// </summary>
 public sealed partial class SpaceSessions
 {
@@ -59,7 +58,6 @@ public sealed partial class SpaceSessions
 
     /// <summary>
     /// The pilot leaves the ship (a jump, a dock, a board, an eject or a log off): the repairs under way end with what they mended by now, and the paste for it
-    /// is taken (the wiki: a repair cancelled by a jump keeps the part done and uses only its paste).
     /// </summary>
     private async Task CancelRepairsAsync(Pilot pilot, CancellationToken cancellationToken)
     {

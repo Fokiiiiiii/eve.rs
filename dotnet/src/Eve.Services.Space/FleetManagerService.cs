@@ -11,7 +11,7 @@ public sealed partial class FleetManagerService(
     Func<ClientSession, ClientSession, bool>? sameBubble = null)
 {
     private const string WatchlistSessionKey = "fleetWatchlist";
-    private const string DamageWatchlistSessionKey = "fleetDamageWatchlist";
+    private const int MaxWatchlistInputIds = 500;
     private static readonly System.Collections.Generic.HashSet<string> BroadcastNames = new(StringComparer.Ordinal)
     {
         "EnemySpotted", "HealArmor", "HealShield", "HealCapacitor", "InPosition", "NeedBackup",
@@ -37,42 +37,39 @@ public sealed partial class FleetManagerService(
     public async ValueTask<PyValue> AddToWatchlist(ServiceCall call)
     {
         var context = await ContextAsync(call);
-        if (context is null) return PyNone.Instance;
+        if (context is null) throw MachoErrors.ThrowUserError("FleetNotInFleet");
         var (fleetId, snapshot, _) = context.Value;
         var members = snapshot.Members.Select(member => member.CharacterId).ToHashSet();
         var added = Ids(call.Arg(0));
         var favorites = Ids(call.Arg(1));
         var watchlist = favorites.Concat(added).Where(members.Contains).Distinct().Take(100).ToArray();
         SetWatchlist(call.Session, WatchlistSessionKey, watchlist);
-        return PyNone.Instance;
+        return PyBool.True;
     }
 
     [Method("RemoveFromWatchlist")]
     public async ValueTask<PyValue> RemoveFromWatchlist(ServiceCall call)
     {
         var context = await ContextAsync(call);
-        if (context is null) return PyNone.Instance;
+        if (context is null) throw MachoErrors.ThrowUserError("FleetNotInFleet");
         var (fleetId, snapshot, _) = context.Value;
         var members = snapshot.Members.Select(member => member.CharacterId).ToHashSet();
-        var removed = Number(call.Arg(0));
+        var removed = WatchlistId(call.Arg(0));
         var remaining = Ids(call.Arg(1)).Where(id => id != removed && members.Contains(id)).Distinct().Take(100).ToArray();
         SetWatchlist(call.Session, WatchlistSessionKey, remaining);
-        var damageWatchlist = Ids(call.Session.Get(DamageWatchlistSessionKey) ?? PyNone.Instance)
-            .Where(id => id != removed && members.Contains(id)).Distinct().Take(100).ToArray();
-        SetWatchlist(call.Session, DamageWatchlistSessionKey, damageWatchlist);
-        return PyNone.Instance;
+        return PyBool.True;
     }
 
     [Method("RegisterForDamageUpdates")]
     public async ValueTask<PyValue> RegisterForDamageUpdates(ServiceCall call)
     {
         var context = await ContextAsync(call);
-        if (context is null) return PyNone.Instance;
+        if (context is null) throw MachoErrors.ThrowUserError("FleetNotInFleet");
         var (fleetId, snapshot, _) = context.Value;
         var members = snapshot.Members.Select(member => member.CharacterId).ToHashSet();
         var watchlist = Ids(call.Arg(0)).Where(members.Contains).Distinct().Take(100).ToArray();
-        SetWatchlist(call.Session, DamageWatchlistSessionKey, watchlist);
-        return PyNone.Instance;
+        SetWatchlist(call.Session, WatchlistSessionKey, watchlist);
+        return PyBool.True;
     }
 
     [Method("BroadcastToBubble")]
@@ -214,15 +211,48 @@ public sealed partial class FleetManagerService(
         return false;
     }
 
-    private static IReadOnlyList<long> Ids(PyValue value) => Sequence(value)
-        .Select(Number).Where(id => id is > 0).Select(id => id!.Value).ToArray();
-
-    private static IReadOnlyList<PyValue> Sequence(PyValue value) => value switch
+    private static IReadOnlyList<long> Ids(PyValue value)
     {
-        PyList list => list.Items,
-        PyTuple tuple => tuple.Items,
-        _ => []
+        var values = Sequence(value);
+        var pythonSet = value is PyObjectEx
+        {
+            Kind: ObjectExKind.Ex1,
+            Header: PyTuple { Items.Count: >= 2 } header
+        } && header.Items[0] is PyToken { Value: "__builtin__.set" or "builtins.set" } &&
+             header.Items[1] is PyList { Items.Count: > 0 } arguments && arguments.Items[0] is PyList;
+        if (value is not (PyList or PyTuple) && !pythonSet)
+            throw MachoErrors.ThrowUserError("FleetError");
+        if (values.Count > MaxWatchlistInputIds)
+            throw MachoErrors.ThrowUserError("FleetError");
+        return values.Select(WatchlistId).ToArray();
+    }
+
+    private static long WatchlistId(PyValue value) => value switch
+    {
+        PyInt { Value: > 0 } id => id.Value,
+        PyLong { Value: > 0 } id => id.Value,
+        _ => throw MachoErrors.ThrowUserError("FleetError"),
     };
+
+    private static IReadOnlyList<PyValue> Sequence(PyValue value)
+    {
+        if (value is PyObjectEx { Kind: ObjectExKind.Ex1, Header: PyTuple header } &&
+            header.Items.Count >= 2 &&
+            header.Items[0] is PyToken typeName &&
+            typeName.Value is "__builtin__.set" or "builtins.set" &&
+            header.Items[1] is PyList { Items.Count: > 0 } arguments &&
+            arguments.Items[0] is PyList items)
+        {
+            return items.Items;
+        }
+
+        return value switch
+        {
+            PyList list => list.Items,
+            PyTuple tuple => tuple.Items,
+            _ => []
+        };
+    }
 
     private static void SetWatchlist(ClientSession session, string key, IReadOnlyList<long> ids) =>
         session.Set(key, new PyList(ids.Select(id => (PyValue)new PyLong(id)).ToArray()));

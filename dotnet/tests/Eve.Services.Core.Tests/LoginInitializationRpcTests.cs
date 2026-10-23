@@ -45,8 +45,15 @@ public sealed class LoginInitializationRpcTests
         Assert.Equal(["eventDict", "completedDict"], result.Entries.Select(entry => Assert.IsType<PyStr>(entry.Key).Value));
         Assert.IsType<PyDict>(Value(result, "eventDict"));
         Assert.IsType<PyDict>(Value(result, "completedDict"));
-        Assert.Same(PyBool.True, await Call(service, new ClientSession(), "HasEverWarped"));
+        Assert.Same(PyBool.False, await Call(service, new ClientSession(), "HasEverWarped"));
         Assert.Same(PyNone.Instance, await Call(service, new ClientSession(), "UpdateClientAchievmentsAndCounters"));
+
+        var knownWarped = (IService)new AchievementTrackerMgrService(
+            hasEverWarped: (_, _) => ValueTask.FromResult(true));
+        Assert.Same(PyBool.True, await Call(knownWarped, Session(90000001), "HasEverWarped"));
+        var warpedSession = Session(90000002);
+        warpedSession.Set("hasEverWarped", new PyInt(1));
+        Assert.Same(PyBool.True, await Call(service, warpedSession, "HasEverWarped"));
 
         var events = new PyDict([new(new PyStr("event"), new PyInt(7))]);
         var completed = new PyDict([new(new PyInt(9), new PyLong(1234))]);
@@ -114,19 +121,32 @@ public sealed class LoginInitializationRpcTests
     [InlineData("voidSpaceMgr", "ClientIsReady")]
     [InlineData("voidSpaceMgr", "VoidSpaceEndGateActivation")]
     [InlineData("voidSpaceMgr", "VoidSpacePlayerJump")]
-
     public async Task Space_lifecycle_services_expose_evejs_routes_and_future_callbacks(string serviceName, string method)
     {
-        IService Unwired() => serviceName == "abyssalMgr" ? new AbyssalMgrService() : new VoidSpaceMgrService();
-        IService Wired(Func<ServiceCall, CancellationToken, ValueTask<PyValue?>> handler) =>
-            serviceName == "abyssalMgr"
-                ? new AbyssalMgrService(rpcHandler: handler)
-                : new VoidSpaceMgrService(rpcHandler: handler);
         var session = new ClientSession();
+        var expected = new PyInt(4);
+        if (serviceName == "abyssalMgr")
+        {
+            var calls = 0;
+            var abyssal = new AbyssalMgrService((call, _) =>
+            {
+                Assert.Equal(method, call.Method);
+                calls++;
+                return ValueTask.FromResult<PyValue>(expected);
+            });
+            Assert.True(abyssal.HasMethod(method));
+            Assert.Same(expected, await Call(abyssal, session, method));
+            Assert.Equal(1, calls);
+            return;
+        }
+
+        IService Unwired() => new VoidSpaceMgrService();
+        IService Wired(Func<ServiceCall, CancellationToken, ValueTask<PyValue?>> handler) =>
+            new VoidSpaceMgrService(rpcHandler: handler);
         var unconnected = Unwired();
         Assert.True(unconnected.HasMethod(method));
 
-        if (method is "AbyssalGateActivation" or "AbyssalEndGateActivation" or "VoidSpaceEndGateActivation")
+        if (method is "VoidSpaceEndGateActivation")
         {
             var error = await Assert.ThrowsAsync<MachoWrappedException>(() => Call(unconnected, session, method));
             Assert.Equal(MachoErrors.UserErrorPayload("DeniedTargetAttemptFailed"), error.Error.Payload);
@@ -140,7 +160,6 @@ public sealed class LoginInitializationRpcTests
             Assert.Same(PyNone.Instance, await Call(unconnected, session, method));
         }
 
-        var expected = new PyInt(4);
         Assert.Same(expected, await Call(Wired((_, _) => ValueTask.FromResult<PyValue?>(expected)), session, method));
     }
 
@@ -160,15 +179,20 @@ public sealed class LoginInitializationRpcTests
         var call = new ServiceCall { Method = method, Args = args, Kwargs = kwargs, Session = new ClientSession() };
         ServiceCall? observed = null;
         var expected = new PyInt(44);
-        ValueTask<PyValue?> Handler(ServiceCall received, CancellationToken _)
+        ValueTask<PyValue?> VoidHandler(ServiceCall received, CancellationToken _)
         {
             observed = received;
             return ValueTask.FromResult<PyValue?>(expected);
         }
+        ValueTask<PyValue> AbyssalHandler(ServiceCall received, CancellationToken _)
+        {
+            observed = received;
+            return ValueTask.FromResult<PyValue>(expected);
+        }
 
         IService service = serviceName == "abyssalMgr"
-            ? new AbyssalMgrService(rpcHandler: Handler)
-            : new VoidSpaceMgrService(rpcHandler: Handler);
+            ? new AbyssalMgrService(AbyssalHandler)
+            : new VoidSpaceMgrService(rpcHandler: VoidHandler);
 
         Assert.Same(expected, await service.CallAsync(call));
         Assert.Same(call, observed);

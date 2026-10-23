@@ -37,15 +37,43 @@ public static class ItemFlags
 
 public sealed record Item(long Id, int TypeId, long OwnerId, long LocationId, int Flag, long Quantity,
     bool Singleton, string? CustomName, bool BlueprintCopy = false, bool BlueprintLocked = false,
-    int? BlueprintRuns = null, int MaterialEfficiency = 0, int TimeEfficiency = 0, string? CustomInfo = null);
-
+    int? BlueprintRuns = null, int MaterialEfficiency = 0, int TimeEfficiency = 0, string? CustomInfo = null)
+{
+    public RunSpaceItemProvenance? RunSpaceProvenance { get; init; }
+}
 
 public sealed record ItemMergeResult(Item SourceBefore, Item DestinationBefore, Item DestinationAfter, Item? SourceAfter);
 
 public sealed record NewItem(int TypeId, long OwnerId, long LocationId, int Flag, long Quantity = 1,
     bool Singleton = false, string? CustomName = null, bool BlueprintCopy = false, bool BlueprintLocked = false,
-    int? BlueprintRuns = null, int MaterialEfficiency = 0, int TimeEfficiency = 0, string? CustomInfo = null);
+    int? BlueprintRuns = null, int MaterialEfficiency = 0, int TimeEfficiency = 0, string? CustomInfo = null)
+{
+    public RunSpaceItemProvenance? RunSpaceProvenance { get; init; }
+}
 
+/// <summary>Identifies the exact Abyssal run and recipient for a space item.</summary>
+public sealed record RunSpaceItemScope(
+    Guid ContentId,
+    long InstanceId,
+    int RoomOrdinal,
+    int SpaceLocationId,
+    long RecipientCharacterId,
+    string? SettlementKey = null);
+
+public enum RunSpaceItemRole
+{
+    Can = 0,
+    Wreck = 1,
+    Corpse = 2,
+}
+
+/// <summary>Authority-derived provenance persisted with a generated can, wreck, or corpse.</summary>
+public sealed record RunSpaceItemProvenance(
+    RunSpaceItemScope Scope,
+    RunSpaceItemRole Role,
+    long SourceCharacterId,
+    long SourceShipId,
+    long SourceItemId);
 
 public enum ShipContractInvalidationReason
 {
@@ -118,15 +146,98 @@ public sealed class PgItemStore
     public static Task<IReadOnlyList<string>> MigrateAsync(NpgsqlDataSource source, string schema = DefaultSchema, CancellationToken cancellationToken = default) =>
         Migrations.ApplyAsync(source, schema, MigrationSet(), cancellationToken);
 
-    private static Item Read(NpgsqlDataReader r) => new(
-        r.GetInt64(0), r.GetInt32(1), r.GetInt64(2), r.GetInt64(3), r.GetInt32(4), r.GetInt64(5),
-        r.GetBoolean(6), r.IsDBNull(7) ? null : r.GetString(7), r.GetBoolean(8), r.GetBoolean(9),
-        r.IsDBNull(10) ? null : r.GetInt32(10), r.GetInt32(11), r.GetInt32(12),
-        r.IsDBNull(13) ? null : r.GetString(13));
+    private const string RunSpaceItemMetadataFormat = "eve.rs.run-space-item.v1";
+    private static readonly System.Text.Json.JsonSerializerOptions RunSpaceItemJson =
+        new(System.Text.Json.JsonSerializerDefaults.Web);
+
+    private sealed record RunSpaceItemCustomInfoEnvelope(
+        string Format,
+        string? LegacyCustomInfo,
+        RunSpaceItemProvenance? Provenance);
+
+    private static string? EncodeCustomInfo(string? customInfo, RunSpaceItemProvenance? provenance)
+    {
+        if (provenance is null)
+            return customInfo;
+
+        ValidateRunSpaceItemProvenance(provenance);
+        return System.Text.Json.JsonSerializer.Serialize(
+            new RunSpaceItemCustomInfoEnvelope(RunSpaceItemMetadataFormat, customInfo, provenance),
+            RunSpaceItemJson);
+    }
+
+    private static (string? CustomInfo, RunSpaceItemProvenance? Provenance) DecodeCustomInfo(string? customInfo)
+    {
+        if (customInfo is null)
+            return (null, null);
+        try
+        {
+            if (System.Text.Json.JsonSerializer.Deserialize<RunSpaceItemCustomInfoEnvelope>(customInfo, RunSpaceItemJson)
+                is { Format: RunSpaceItemMetadataFormat, Provenance: { } provenance } envelope)
+                return (envelope.LegacyCustomInfo, provenance);
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            // Legacy CustomInfo is arbitrary text, not necessarily JSON.
+        }
+        return (customInfo, null);
+    }
+
+    private static void ValidateRunSpaceItemScope(RunSpaceItemScope scope)
+    {
+        if (scope is null || scope.ContentId == Guid.Empty || scope.InstanceId <= 0 ||
+            scope.RoomOrdinal is < 1 or > 3 || scope.SpaceLocationId <= 0 ||
+            scope.RecipientCharacterId <= 0 ||
+            (scope.SettlementKey is not null && string.IsNullOrWhiteSpace(scope.SettlementKey)))
+        {
+            throw new ArgumentException("The run-space item scope is invalid.", nameof(scope));
+        }
+    }
+
+    private static void ValidateRunSpaceItemProvenance(RunSpaceItemProvenance provenance)
+    {
+        if (provenance.Scope is null || !Enum.IsDefined(provenance.Role) ||
+            provenance.SourceCharacterId <= 0 || provenance.SourceShipId <= 0 || provenance.SourceItemId <= 0)
+        {
+            throw new ArgumentException("The run-space item provenance is invalid.", nameof(provenance));
+        }
+        ValidateRunSpaceItemScope(provenance.Scope);
+        if (provenance.Role is RunSpaceItemRole.Wreck or RunSpaceItemRole.Corpse &&
+            string.IsNullOrWhiteSpace(provenance.Scope.SettlementKey))
+        {
+            throw new ArgumentException("Death-created run-space items require a settlement key.", nameof(provenance));
+        }
+    }
+
+    private static Item Read(NpgsqlDataReader r)
+    {
+        var (customInfo, provenance) = DecodeCustomInfo(r.IsDBNull(13) ? null : r.GetString(13));
+        return new Item(
+            r.GetInt64(0), r.GetInt32(1), r.GetInt64(2), r.GetInt64(3), r.GetInt32(4), r.GetInt64(5),
+            r.GetBoolean(6), r.IsDBNull(7) ? null : r.GetString(7), r.GetBoolean(8), r.GetBoolean(9),
+            r.IsDBNull(10) ? null : r.GetInt32(10), r.GetInt32(11), r.GetInt32(12), customInfo)
+        {
+            RunSpaceProvenance = provenance,
+        };
+    }
 
     /// <summary>Creates an item inside the caller's transaction and returns its id.</summary>
     public async Task<long> CreateAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, NewItem item, CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(item);
+        var storedCustomInfo = item.CustomInfo;
+        if (item.RunSpaceProvenance is { } provenance)
+        {
+            ValidateRunSpaceItemProvenance(provenance);
+            if (item.OwnerId != provenance.Scope.RecipientCharacterId ||
+                item.LocationId != provenance.Scope.SpaceLocationId || !item.Singleton || item.Quantity != 1)
+            {
+                throw new ArgumentException(
+                    "A run-space artifact must be a singleton in its provenance owner's space location.", nameof(item));
+            }
+            storedCustomInfo = EncodeCustomInfo(item.CustomInfo, provenance);
+        }
+
         await using var command = new NpgsqlCommand(
             $"INSERT INTO {_schema}.items (type_id, owner_id, location_id, flag, quantity, singleton, custom_name, blueprint_copy, blueprint_locked, blueprint_runs, material_efficiency, time_efficiency, custom_info) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id",
             connection, transaction)
@@ -145,7 +256,7 @@ public sealed class PgItemStore
                 new() { Value = (object?)item.BlueprintRuns ?? DBNull.Value },
                 new() { Value = item.MaterialEfficiency },
                 new() { Value = item.TimeEfficiency },
-                new() { Value = (object?)item.CustomInfo ?? DBNull.Value },
+                new() { Value = (object?)storedCustomInfo ?? DBNull.Value },
             },
         };
         return (long)(await command.ExecuteScalarAsync(cancellationToken))!;
@@ -169,7 +280,6 @@ public sealed class PgItemStore
             await invalidator.InvalidateAsync(connection, transaction, id, ShipContractInvalidationReason.CorporationHangar, cancellationToken);
     }
 
-    /// <summary>Puts an item somewhere else and gives it another owner (what is taken out of a can or a wreck is the taker's), inside the caller's transaction.</summary>
     public async Task MoveToOwnerAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long id, long ownerId, long locationId, int flag, CancellationToken cancellationToken = default)
     {
         var item = await LockAndGetAsync(connection, transaction, id, cancellationToken);
@@ -190,10 +300,12 @@ public sealed class PgItemStore
     /// <summary>Sets an item's custom info (the text the host keeps on it, such as a crystal's damage), inside the caller's transaction.</summary>
     public async Task SetCustomInfoAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long id, string? customInfo, CancellationToken cancellationToken = default)
     {
+        var current = await LockAndGetAsync(connection, transaction, id, cancellationToken);
+        var storedCustomInfo = EncodeCustomInfo(customInfo, current?.RunSpaceProvenance);
         await using var command = new NpgsqlCommand(
             $"UPDATE {_schema}.items SET custom_info = $2 WHERE id = $1", connection, transaction)
         {
-            Parameters = { new() { Value = id }, new() { Value = (object?)customInfo ?? DBNull.Value } },
+            Parameters = { new() { Value = id }, new() { Value = (object?)storedCustomInfo ?? DBNull.Value } },
         };
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
@@ -227,7 +339,6 @@ public sealed class PgItemStore
         };
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
-
 
     public async Task<bool> SetCustomNameAsync(long id, string? customName, CancellationToken cancellationToken = default) =>
         await SetCustomNameCoreAsync(id, customName, null, cancellationToken) is not null;
@@ -446,7 +557,6 @@ private static void EnsureUnlocked(Item? item)
         return moved;
     }
 
-
     public async Task<ItemMergeResult?> MergeAsync(
         long sourceId, long destinationId, long quantity, long ownerId, long sourceLocationId, long destinationLocationId,
         CancellationToken cancellationToken = default)
@@ -495,7 +605,6 @@ private static void EnsureUnlocked(Item? item)
         return new ItemMergeResult(sourceItem, destinationItem, destinationItem with { Quantity = destinationItem.Quantity + moved }, sourceAfter);
     }
 
-
     public async Task<Item?> RepackageAsync(
         NpgsqlConnection connection,
         NpgsqlTransaction transaction,
@@ -536,7 +645,39 @@ private static void EnsureUnlocked(Item? item)
         return await reader.ReadAsync(cancellationToken) ? Read(reader) : null;
     }
 
-    /// <summary>The items an owner has at a location (a station), oldest first.</summary>
+    /// <summary>Finds and locks only items carrying this exact run/room/recipient scope.</summary>
+    public async Task<IReadOnlyList<Item>> FindRunSpaceItemsAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        RunSpaceItemScope scope,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateRunSpaceItemScope(scope);
+        var marker = $"""%"contentId":"{scope.ContentId:D}"%""";
+        var candidates = new List<long>();
+        await using (var command = new NpgsqlCommand(
+            $"SELECT {Columns} FROM {_schema}.items WHERE custom_info LIKE $1 ORDER BY id", connection, transaction))
+        {
+            command.Parameters.Add(new NpgsqlParameter { Value = marker });
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                var item = Read(reader);
+                if (item.RunSpaceProvenance?.Scope == scope)
+                    candidates.Add(item.Id);
+            }
+        }
+
+        var results = new List<Item>(candidates.Count);
+        foreach (var id in candidates)
+        {
+            var item = await LockAndGetAsync(connection, transaction, id, cancellationToken);
+            if (item?.RunSpaceProvenance?.Scope == scope)
+                results.Add(item);
+        }
+        return results.AsReadOnly();
+    }
+
     public async Task<IReadOnlyList<Item>> InLocationAsync(long locationId, long ownerId, CancellationToken cancellationToken = default)
     {
         await using var command = _source.CreateCommand($"SELECT {Columns} FROM {_schema}.items WHERE location_id = $1 AND owner_id = $2 ORDER BY id");
@@ -581,7 +722,6 @@ private static void EnsureUnlocked(Item? item)
         return items;
     }
 
-    /// <summary>Locks the stacks an owner holds of a type, for a consumption in the caller's transaction (ordered by id, so a second taker waits and then sees them gone).</summary>
     public async Task<IReadOnlyList<Item>> LockOwnedOfTypeAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long ownerId, int typeId, CancellationToken cancellationToken = default)
     {
         await using var command = new NpgsqlCommand(

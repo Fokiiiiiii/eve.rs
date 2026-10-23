@@ -237,10 +237,20 @@ public sealed partial class NodeGraphService(NodeGraphRpcCallback? callback = nu
 
     private ValueTask<PyValue> Dispatch(ServiceCall call, NodeGraphOperation operation, PyValue result, bool messageKeyAllowed = true)
     {
-        if (messageKeyAllowed && callback is { } handler)
+        if (!messageKeyAllowed)
+            return ValueTask.FromResult(result);
+        if (IsQaOperation(operation) && !GameMasterRoles.Has(call.Session, GameMasterRoles.Staff))
+            return ValueTask.FromResult(result);
+        if (callback is { } handler)
             return ForwardAsync(handler, new NodeGraphRequest(operation, call.Args, call.Kwargs, call.Session), result, call.Cancellation);
         return ValueTask.FromResult(result);
     }
+
+    private static bool IsQaOperation(NodeGraphOperation operation) =>
+        operation is NodeGraphOperation.QaSubscribe or NodeGraphOperation.QaUnsubscribe
+            or NodeGraphOperation.QaStartNodeGraph or NodeGraphOperation.QaStopNodeGraph
+            or NodeGraphOperation.QaStartNode or NodeGraphOperation.QaStopNode
+            or NodeGraphOperation.QaStopActiveNodes;
 
     private static async ValueTask<PyValue> ForwardAsync(
         NodeGraphRpcCallback handler,
@@ -330,20 +340,17 @@ public sealed record PublicQaToolsRpcCallbacks(
 [Service("publicQaToolsServer")]
 public sealed partial class PublicQaToolsServerService(PublicQaToolsRpcCallbacks? callbacks = null)
 {
-    private const long StaffRoleMask = 140_667_119_611_150_336L;
+    private const long StaffRoleMask = GameMasterRoles.Staff;
 
-    public static bool HasStaffAccountRole(ClientSession session)
-    {
-        var roleMask = session.GetInt("accountRole") ??
-            session.GetInt("role") ??
-            session.GetInt("rolesAtAll") ?? 0;
-        return (roleMask & StaffRoleMask) != 0;
-    }
+    public static bool HasStaffAccountRole(ClientSession session) =>
+        GameMasterRoles.Has(session, StaffRoleMask);
 
     [Method("MoveMeTo")]
     public async ValueTask<PyValue> MoveMeTo(ServiceCall call)
     {
         call.Cancellation.ThrowIfCancellationRequested();
+        if (!HasStaffAccountRole(call.Session) || callbacks?.IsStaff?.Invoke(call.Session) == false)
+            return PyNone.Instance;
         if (callbacks?.MoveMeToAsync is { } move)
             await move(Request(call, PublicQaOperation.MoveMeTo), call.Cancellation).ConfigureAwait(false);
         return PyNone.Instance;
@@ -353,7 +360,8 @@ public sealed partial class PublicQaToolsServerService(PublicQaToolsRpcCallbacks
     public async ValueTask<PyValue> SlashCmd(ServiceCall call)
     {
         call.Cancellation.ThrowIfCancellationRequested();
-        if (callbacks?.IsStaff?.Invoke(call.Session) != true || callbacks.SlashCmdAsync is not { } slash)
+        if (!HasStaffAccountRole(call.Session) || callbacks?.IsStaff?.Invoke(call.Session) == false ||
+            callbacks?.SlashCmdAsync is not { } slash)
             return PyNone.Instance;
         return await slash(Request(call, PublicQaOperation.SlashCmd), call.Cancellation).ConfigureAwait(false) ?? PyNone.Instance;
     }
@@ -362,7 +370,8 @@ public sealed partial class PublicQaToolsServerService(PublicQaToolsRpcCallbacks
     public async ValueTask<PyValue> CanGiveItemForMultifit(ServiceCall call)
     {
         call.Cancellation.ThrowIfCancellationRequested();
-        var allowed = callbacks?.CanGiveItemForMultifitAsync is { } check &&
+        var allowed = HasStaffAccountRole(call.Session) && callbacks?.IsStaff?.Invoke(call.Session) != false &&
+            callbacks?.CanGiveItemForMultifitAsync is { } check &&
             await check(Request(call, PublicQaOperation.CanGiveItemForMultifit), call.Cancellation).ConfigureAwait(false);
         return PyValue.Of(allowed);
     }

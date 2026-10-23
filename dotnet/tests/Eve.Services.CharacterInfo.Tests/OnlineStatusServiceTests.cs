@@ -135,7 +135,7 @@ public sealed class OnlineStatusServiceTests
     }
 
     [Fact]
-    public async Task Unselected_observer_gets_empty_initial_state_and_raw_presence_like_reference()
+    public async Task Unselected_observer_gets_empty_initial_state_and_reads_raw_presence()
     {
         var sessions = new CharacterSessions();
         Enter(sessions, Target);
@@ -167,6 +167,18 @@ public sealed class OnlineStatusServiceTests
         var sessions = new CharacterSessions();
         Enter(sessions, Target);
         Assert.Equal(PyBool.False, await Call(new OnlineStatusService(sessions), new ClientSession(), "GetOnlineStatus", id));
+    }
+
+    [Fact]
+    public async Task Unselected_sessions_read_raw_presence()
+    {
+        var sessions = new CharacterSessions();
+        Enter(sessions, Target);
+
+        Assert.Equal(PyBool.True, await Call(new OnlineStatusService(sessions), new ClientSession(),
+            "GetOnlineStatus", new PyInt(Target)));
+        Assert.Equal(PyBool.False, await Call(new OnlineStatusService(sessions), new ClientSession(),
+            "GetOnlineStatus", new PyInt(Target + 1)));
     }
 
     public static IEnumerable<object[]> NumericIds()

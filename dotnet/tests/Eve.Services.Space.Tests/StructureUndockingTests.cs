@@ -8,7 +8,6 @@ using Eve.Space;
 namespace Eve.Services.Space.Tests;
 
 /// <summary>
-/// ST-3 b: <c>structureDocking.Undock</c> on the host's space service (skipped without EVE_PG_URL; skipped is not passed). The pilot docks at a structure
 /// through the same finish as a station docking, then leaves it: the structure is put in the simulation first, the ship is in space in the system, and the
 /// session has no structure any more. A structure or ship the session is not in is refused.
 /// </summary>
@@ -55,7 +54,7 @@ public sealed class StructureUndockingTests
         // the structure's ball is in the scene before the ship enters the system (its undock point is the structure's)
         Assert.Equal([(int)system], placed);
         var enter = rig.Sim.Heard.OfType<SimEnter>().Last();
-        Assert.Equal(((ulong)session.SessionId, system, EnterHow.Undock, Structure), (enter.SessionId, enter.SolarSystemId, enter.How, enter.StationId));
+        Assert.Equal(((ulong)session.SessionId, system, EnterHow.Undock, Structure), (enter.SessionId, enter.Scene.LocationId, enter.How, enter.StationId));
         Assert.True(rig.Space.IsInSpace(session));
         Assert.Equal((0L, Structure, (long?)null, (long?)null), Assert.Single(locationChanges));
 

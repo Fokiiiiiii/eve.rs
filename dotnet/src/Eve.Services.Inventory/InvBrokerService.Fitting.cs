@@ -10,17 +10,14 @@ using Eve.Ships;
 namespace Eve.Services.Inventory;
 
 /// <summary>
-/// The fitting of a saved fitting onto a docked ship (EveJS <c>invBroker/fittingOperations.js</c>, <c>Handle_FitFitting</c>): the modules and rigs by slot,
-/// then the cargo, drone, ice, implant, fighter and charge legs. Each piece is one move through the move a single drag makes
 /// (<see cref="CharacterShips.MoveAsync"/>), so the rules, the notifications and the persistence are the same. A piece that cannot go is the reply.
 /// Not ported (DEVIATIONS "Track S1: fitting a docked ship"): the space-loot and structure access checks, the ship-service checks, and the in-space fitting services.
 /// </summary>
 public sealed partial class InvBrokerService
 {
-    private const long IceProductGroup = 423;   // SDE group "Ice Product" (EveJS fuelBayInventory.js ICE_PRODUCT_GROUP_ID)
+    private const long IceProductGroup = 423;
     private const int ImplantCategory = 20;     // SDE category "Implant"
 
-    /// <summary>The apply order: subsystems first, then rigs, then the rest by flag (EveJS <c>_rankFitFittingSlotApplyOrder</c>, fittingOperations.js:196).</summary>
     private static int FitRank(long flag) => Slots.FamilyOfFlag((int)flag) switch
     {
         SlotFamily.Subsystem => 0,
@@ -29,9 +26,7 @@ public sealed partial class InvBrokerService
     };
 
     /// <summary>
-    /// <c>FitFitting(shipID, shipTypeID, itemsByType, sourceLocationID, fittingKeyVal, cargoByType, fitRigs)</c> on the bound ship inventory. Answers the
-    /// (typeID, quantity) pairs of what did not fit, sorted by type (EveJS <c>buildList</c> of <c>missingByType</c>).
-    /// </summary>
+        /// </summary>
     [Method("FitFitting")]
     public async ValueTask<PyValue> FitFitting(ServiceCall call)
     {
@@ -116,8 +111,8 @@ public sealed partial class InvBrokerService
             return quantity;
         }
 
-        // the modules and rigs: one of each, into the slot it names (EveJS module loop)
-        var fitted = (await items.InLocationAsync(ship.Id, character, ct)).Select(i => ((long)i.Flag, (long)i.TypeId)).ToHashSet();
+        var fittedItems = (await items.InLocationAsync(ship.Id, character, ct)).ToDictionary(i => i.Id);
+        var fitted = fittedItems.Values.Select(i => ((long)i.Flag, (long)i.TypeId)).ToHashSet();
         foreach (var (flag, typeId) in modules)
         {
             if (!fitRigs && Slots.FamilyOfFlag((int)flag) == SlotFamily.Rig)
@@ -128,6 +123,22 @@ public sealed partial class InvBrokerService
             {
                 continue;
             }
+
+            // A saved fit replaces an occupied high, mid, or low slot. Move the old item
+            // through the same ship mutation path so dogma and item notifications stay in sync.
+            if (Slots.FamilyOfFlag((int)flag) is SlotFamily.High or SlotFamily.Medium or SlotFamily.Low)
+            {
+                foreach (var occupant in fittedItems.Values.Where(i => i.Flag == flag).ToList())
+                {
+                    if (await ships.MoveAsync(character, occupant.Id, ship.Id, station, ItemFlags.Hangar, null, ct) is ShipChanged removed)
+                    {
+                        outcomes.Add(removed);
+                        fittedItems.Remove(occupant.Id);
+                        fitted.Remove((flag, occupant.TypeId));
+                    }
+                }
+            }
+
             var placed = false;
             if (candidates.TryGetValue(typeId, out var list))
             {
@@ -149,8 +160,6 @@ public sealed partial class InvBrokerService
             }
         }
 
-        // the modules this fit put in are offline when they land: each is switched on where the grid and the CPU allow it, in slot order (EveJS
-        // _reonlineFitFittingModules, fittingOperations.js:327-395). A module the gate refuses stays offline.
         foreach (var (itemId, flag, typeId) in placedModules.OrderBy(m => m.Flag))
         {
             if (Slots.FamilyOfFlag((int)flag) is SlotFamily.Rig or SlotFamily.Subsystem)

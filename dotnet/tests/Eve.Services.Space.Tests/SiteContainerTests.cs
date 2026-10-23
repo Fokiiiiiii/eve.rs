@@ -161,7 +161,7 @@ public sealed class SiteContainerTests
         Assert.Equal("looted", (await rig.Store.GetAsync(Container))!.State);
         Assert.Empty(rig.Cleared);
         Assert.Null(await rig.Hacks().FindAsync(Container, CancellationToken.None));
-        // the relic container's loot (EveJS generic_relic_loot) is in its cargo, owned by the character who won it
+
         var loot = await new PgItemStore(rig.Source, rig.ItemsSchema).InLocationAsync(Container, Character);
         Assert.NotEmpty(loot);
         Assert.All(loot, item => Assert.True(item.Quantity >= 1 && item.Flag == ItemFlags.Hangar));

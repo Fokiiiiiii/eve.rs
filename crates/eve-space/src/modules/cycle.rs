@@ -127,8 +127,20 @@ impl Scene {
         // a refresh the host sent takes effect at this cycle's start, before what the cycle costs is worked out
         let refresh = refresh_running(&mut pilot.modules.running[index], session, owner, at);
         let run = pilot.modules.running[index].clone();
+        let cycle_capacitor_need = if run.rounds.is_some_and(|rounds| rounds <= 0) {
+            run.effect.fallback_capacitor_need
+        } else {
+            run.effect.capacitor_need
+        };
+        let npc_self_repair = pilot.ship.npc.as_ref().is_some_and(|identity| {
+            identity.self_repairs.iter().any(|repair| {
+                repair.is_valid()
+                    && repair.effect_id == run.effect.effect_id
+                    && crate::npc::npc_self_repair_module_id(repair.effect_id) == module_id
+            })
+        });
         let affordable =
-            pilot.modules.capacitor.as_ref().is_some_and(|c| c.charge_at(at) >= run.effect.capacitor_need);
+            pilot.modules.capacitor.as_ref().is_some_and(|c| c.charge_at(at) >= cycle_capacitor_need);
         let more = run.cycles < run.effect.repeat;
         if run.stopping || !more || !affordable || !target_ok {
             let ending = if target_ok { Ending::Done } else { Ending::TargetGone };
@@ -156,7 +168,7 @@ impl Scene {
         }
         out.extend(refresh);
         let (before, after) = match pilot.modules.capacitor.as_mut() {
-            Some(capacitor) => capacitor.draw(at, run.effect.capacitor_need),
+            Some(capacitor) => capacitor.draw(at, cycle_capacitor_need),
             None => (0.0, 0.0),
         };
         let next = &mut pilot.modules.running[index];
@@ -172,6 +184,9 @@ impl Scene {
         if next.effect.turret.is_none() {
             out.push(Self::effect_told(session, owner, ship_id, &next, at, true, at, None));
             out.extend(self.act(session, &next.effect, Applies::CycleStart, at));
+            if npc_self_repair && let Some(brains) = self.brains.as_mut() {
+                brains.effect_started(ship_id, i64::from(next.effect.effect_id));
+            }
             out.extend(self.jam_told(session, &next.effect, at, Jam::Refresh));
             if self.pilots.get(&session).is_some_and(|pilot| {
                 pilot.modules.running.iter().any(|run| {
@@ -385,6 +400,7 @@ impl Scene {
             target_id,
             cycle_id,
             command: WORK_PANIC,
+            charge_type_id: 0,
             mining_amount_m3: 0.0,
             waste_multiplier: 0.0,
             waste_probability: 0.0,
@@ -416,6 +432,7 @@ impl Scene {
             target_id,
             cycle_id,
             command: WORK_FUEL,
+            charge_type_id: 0,
             recipients: Vec::new(),
             mining_amount_m3: 0.0,
             waste_multiplier: 0.0,
@@ -546,10 +563,25 @@ impl Scene {
             }
             _ => return None,
         };
+        let charge_type_id = self
+            .pilots
+            .get(&session)
+            .and_then(|pilot| pilot.modules.running.iter().find(|run| run.effect.module_id == module_id))
+            .and_then(|run| run.effect.action.as_ref())
+            .and_then(|action| match action {
+                Action::Charged { charge_type_id, .. } if command == WORK_BURST => Some(*charge_type_id),
+                _ => None,
+            })
+            .unwrap_or(0);
         let recipients = match work {
             Action::CommandBurst { range_meters } => self.burst_recipients(session, *range_meters),
             _ => Vec::new(),
         };
+        if command == WORK_BURST {
+            eprintln!(
+                "eve-sim: command burst cycle ship={ship_id} module={module_id} target={target_id} recipients={recipients:?}"
+            );
+        }
         Some(Out::ModuleWorkCycle {
             session,
             character_id,
@@ -559,6 +591,7 @@ impl Scene {
             target_id,
             cycle_id: pending.cycle_id,
             command,
+            charge_type_id,
             mining_amount_m3,
             waste_multiplier,
             waste_probability,
@@ -634,7 +667,6 @@ impl Scene {
         self.effect_ended(session, run, owner, ship_id, now, Ending::TargetLost)
     }
 
-    /// Park one controlled-structure damage application until the Host returns its exact owner-corp authorization result.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn request_structure_damage_candidates(
         &mut self,
@@ -647,7 +679,7 @@ impl Scene {
         now: i64,
     ) -> Vec<Out> {
         const MAX_CANDIDATES: usize = 4_096;
-        // a structure burst's source is the structure or, for a ship-fitted projector, the pilot's ship (ST-17 d); the other operations need a structure
+
         let is_burst = matches!(operation, PendingStructureDamageOperation::StructureBurst { .. });
         let source =
             if is_burst { self.burst_source_id(session) } else { self.controlled_structure_id(session) };
@@ -750,7 +782,6 @@ impl Scene {
         }]
     }
 
-    /// Applies a Host-authorized damage step only when every field still names the live structure lease, activation, module cycle and ordinal.
     #[allow(clippy::too_many_arguments)]
     pub fn structure_damage_candidates_result(
         &mut self,
@@ -781,7 +812,6 @@ impl Scene {
         )
     }
 
-    /// Settles a correlated structure result with its complete per-step HOG disposition partition.
     #[allow(clippy::too_many_arguments)]
     pub fn structure_field_damage_candidates_result(
         &mut self,

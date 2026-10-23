@@ -5,27 +5,30 @@ using Eve.Services;
 
 namespace Eve.Services.Core;
 
-/// <summary>What the fitting managers need from the host: the categories of the types, the corporation roles, the alliance executor and the sessions of an owner.</summary>
+
 public interface IFittingHost
 {
     /// <summary>The category of each type that exists; a type that does not exist is absent.</summary>
     Task<IReadOnlyDictionary<int, int>> CategoriesAsync(IReadOnlyCollection<int> typeIds, CancellationToken cancellationToken);
 
-    /// <summary>Whether the character holds the corporation Fitting Manager role (EveJS <c>sessionHasFittingManagerRole</c>).</summary>
+
     Task<bool> HasFittingManagerRoleAsync(long characterId, CancellationToken cancellationToken);
+
+
+    Task<bool> CanAccessOwnerAsync(long characterId, long ownerId, FittingOwnerScope scope, CancellationToken cancellationToken);
 
     /// <summary>The executor corporation of an alliance, or null.</summary>
     Task<long?> AllianceExecutorAsync(long allianceId, CancellationToken cancellationToken);
 
-    /// <summary>The sessions that play the characters of an owner: the recipients of its fitting notifications.</summary>
+
     IReadOnlyList<ClientSession> SessionsOf(FittingOwnerScope scope, long ownerId);
 }
 
 /// <summary>
-/// The fitting calls of <c>charFittingMgr</c>, <c>corpFittingMgr</c> and <c>allianceFittingMgr</c> (EveJS <c>charFittingMgrService.js</c>,
+
 /// <c>corpFittingMgrService.js</c>, <c>allianceFittingMgrService.js</c> and the store in <c>fittingStore.js</c>). The three services share this: the
-/// owner is the argument or the session's own, access and mutation are checked as the reference checks them, a refusal is the client's own UserError,
-/// and each change is announced to the sessions of the owner (<c>OnFittingAdded</c>, <c>OnFittingDeleted</c>, <c>OnManyFittingsDeleted</c>).
+
+
 /// </summary>
 public sealed class FittingMgrCalls(PgSavedFittingStore store, IFittingHost host, Func<long> nowUnixMs)
 {
@@ -34,7 +37,7 @@ public sealed class FittingMgrCalls(PgSavedFittingStore store, IFittingHost host
     public async ValueTask<PyValue> GetFittings(ServiceCall call, FittingOwnerScope scope)
     {
         var owner = OwnerOf(call, scope);
-        Access(call, owner, scope);
+        await AccessAsync(call, owner, scope);
         var fittings = await store.ListAsync(scope, owner, call.Cancellation);
         var answer = new PyDict([.. fittings.Select(f => new KeyValuePair<PyValue, PyValue>(new PyLong(f.FittingId), FittingKeyVal(f)))]);
         // a corporation's list is cached by the client for 15 minutes; the changes invalidate it (Notify), as the reference does
@@ -72,12 +75,30 @@ public sealed class FittingMgrCalls(PgSavedFittingStore store, IFittingHost host
     {
         var owner = OwnerOf(call, scope);
         await MutateAccessAsync(call, owner, scope);
-        var entries = Fields(call.Arg(1)).ToList();
-        var temps = new List<long>();
-        var drafts = new List<FittingDraft>();
-        foreach (var (key, value) in entries)
+        var input = call.Arg(1);
+        var limit = LimitOf(scope);
+        var entries = input switch
         {
-            temps.Add(IdOf(key) ?? 0);
+            PyObject { Args: PyDict dict } => dict.Entries,
+            PyDict dict => dict.Entries,
+            _ => throw Refusal("FITTING_BULK_ARGUMENT_INVALID"),
+        };
+        if (entries.Count > limit)
+        {
+            throw Refusal("FITTING_TOO_MANY_BULK_ENTRIES", limit);
+        }
+
+        var temps = new List<long>(entries.Count);
+        foreach (var (key, _) in entries)
+        {
+            var tempId = IdOf(key);
+            if (tempId is null or 0)
+                throw Refusal("FITTING_BULK_ARGUMENT_INVALID");
+            temps.Add(tempId.Value);
+        }
+        var drafts = new List<FittingDraft>();
+        foreach (var (_, value) in entries)
+        {
             drafts.Add(await CheckedDraftAsync(call, value));
         }
         var ids = await SaveDraftsAsync(scope, owner, drafts);
@@ -95,7 +116,12 @@ public sealed class FittingMgrCalls(PgSavedFittingStore store, IFittingHost host
         var owner = OwnerOf(call, scope);
         await MutateAccessAsync(call, owner, scope);
         var fittingId = IdOf(call.Arg(1)) ?? 0;
-        await store.DeleteAsync(scope, owner, [fittingId], call.Cancellation);
+        if (fittingId <= 0)
+            throw Refusal("FITTING_NOT_FOUND");
+        await RequireOwnedAsync(scope, owner, fittingId);
+        var deleted = await store.DeleteAsync(scope, owner, [fittingId], call.Cancellation);
+        if (!deleted.Contains(fittingId))
+            throw Refusal("FITTING_NOT_FOUND");
         Notify(call, scope, owner, "OnFittingDeleted", new PyLong(fittingId));
         return PyNone.Instance;
     }
@@ -104,8 +130,28 @@ public sealed class FittingMgrCalls(PgSavedFittingStore store, IFittingHost host
     {
         var owner = OwnerOf(call, scope);
         await MutateAccessAsync(call, owner, scope);
-        var ids = (call.Arg(1) switch { PyTuple t => t.Items, PyList l => l.Items, _ => [] })
-            .Select(IdOf).OfType<long>().Where(id => id > 0).Distinct().ToList();
+        var input = call.Arg(1);
+        var limit = LimitOf(scope);
+        var requestedIds = input switch
+        {
+            PyTuple tuple => tuple.Items,
+            PyList list => list.Items,
+            _ => throw Refusal("FITTING_BULK_ARGUMENT_INVALID"),
+        };
+        if (requestedIds.Count > limit)
+        {
+            throw Refusal("FITTING_TOO_MANY_BULK_ENTRIES", limit);
+        }
+
+        var ids = new List<long>(requestedIds.Count);
+        foreach (var requestedId in requestedIds)
+        {
+            var id = IdOf(requestedId);
+            if (id is not > 0)
+                throw Refusal("FITTING_BULK_ARGUMENT_INVALID");
+            if (!ids.Contains(id.Value))
+                ids.Add(id.Value);
+        }
         var deleted = await store.DeleteAsync(scope, owner, ids, call.Cancellation);
         Notify(call, scope, owner, "OnManyFittingsDeleted", new PyList([.. deleted.Select(id => (PyValue)new PyLong(id))]));
         return new PyList([.. deleted.Select(id => (PyValue)new PyLong(id))]);
@@ -138,7 +184,7 @@ public sealed class FittingMgrCalls(PgSavedFittingStore store, IFittingHost host
 
     private long Filetime() => Py.FileTimeFromUnixMs(nowUnixMs());
 
-    /// <summary>The owner the call names, or the session's own when it names none (EveJS <c>resolveRequestedOwnerID</c>).</summary>
+
     private static long OwnerOf(ServiceCall call, FittingOwnerScope scope)
     {
         var requested = IdOf(call.Arg(0)) ?? 0;
@@ -152,20 +198,22 @@ public sealed class FittingMgrCalls(PgSavedFittingStore store, IFittingHost host
         _ => session.CharacterId ?? 0,
     };
 
-    /// <summary>EveJS <c>assertSessionCanAccessOwner</c>: the owner is the session's own.</summary>
-    private static void Access(ServiceCall call, long owner, FittingOwnerScope scope)
+
+    private async ValueTask AccessAsync(ServiceCall call, long owner, FittingOwnerScope scope)
     {
-        if (owner > 0 && owner == SessionOwner(call.Session, scope))
+        var characterId = call.Session.CharacterId ?? call.Session.GetInt("charid") ?? 0;
+        if (owner > 0 && owner == SessionOwner(call.Session, scope) &&
+            await host.CanAccessOwnerAsync(characterId, owner, scope, call.Cancellation))
         {
             return;
         }
         throw Refusal("OWNER_SCOPE_DENIED");
     }
 
-    /// <summary>EveJS <c>assertSessionCanMutateOwner</c>: a corporation needs the Fitting Manager role; an alliance also needs its executor corporation.</summary>
+
     private async ValueTask MutateAccessAsync(ServiceCall call, long owner, FittingOwnerScope scope)
     {
-        Access(call, owner, scope);
+        await AccessAsync(call, owner, scope);
         if (scope == FittingOwnerScope.Character)
         {
             return;
@@ -184,7 +232,7 @@ public sealed class FittingMgrCalls(PgSavedFittingStore store, IFittingHost host
         }
     }
 
-    /// <summary>The fitting exists for the owner (EveJS <c>FITTING_NOT_FOUND</c> before any other check).</summary>
+
     private async Task RequireOwnedAsync(FittingOwnerScope scope, long owner, long fittingId)
     {
         var found = fittingId > 0 ? await store.OwnerOfAsync(fittingId) : null;
@@ -194,7 +242,7 @@ public sealed class FittingMgrCalls(PgSavedFittingStore store, IFittingHost host
         }
     }
 
-    /// <summary>Reads a client fitting, normalises it and checks it (EveJS <c>normalizeIncomingFitting</c> then <c>validateFittingRecord</c>).</summary>
+
     private async Task<FittingDraft> CheckedDraftAsync(ServiceCall call, PyValue value)
     {
         var fields = Fields(value).ToDictionary(entry => JsSemantics.StringValue(entry.Key) ?? "", entry => entry.Value);
@@ -202,8 +250,12 @@ public sealed class FittingMgrCalls(PgSavedFittingStore store, IFittingHost host
             fields.TryGetValue("name", out var n) ? JsSemantics.PlainText(n) : "",
             fields.TryGetValue("description", out var d) ? JsSemantics.PlainText(d) : "");
         var items = (fields.TryGetValue("fitData", out var data) ? data : PyNone.Instance) switch { PyTuple t => t.Items, PyList l => l.Items, _ => [] };
+        if (items.Count > 500)
+        {
+            throw Refusal("FITTING_TOO_MANY_ITEMS", items.Count);
+        }
         var draft = new FittingDraft(
-            fields.TryGetValue("shipTypeID", out var ship) ? (int)(IdOf(ship) ?? 0) : 0,
+            fields.TryGetValue("shipTypeID", out var ship) ? Int32Of(ship) : 0,
             name,
             description,
             [.. items.Select(Item).OfType<FittingItem>()]);
@@ -220,15 +272,25 @@ public sealed class FittingMgrCalls(PgSavedFittingStore store, IFittingHost host
         return draft;
     }
 
+    private static int Int32Of(PyValue value)
+    {
+        var number = IdOf(value);
+        if (number is null || number < int.MinValue || number > int.MaxValue)
+        {
+            throw Refusal("FITTING_INTEGER_OUT_OF_RANGE");
+        }
+        return (int)number.Value;
+    }
+
     private static FittingItem? Item(PyValue value)
     {
         var parts = value switch { PyTuple t => t.Items, PyList l => l.Items, _ => [] };
-        return parts.Count < 3 || IdOf(parts[0]) is not { } type || IdOf(parts[1]) is not { } flag || IdOf(parts[2]) is not { } quantity
+        return parts.Count < 3
             ? null
-            : new FittingItem((int)type, (int)flag, (int)quantity);
+            : new FittingItem(Int32Of(parts[0]), Int32Of(parts[1]), Int32Of(parts[2]));
     }
 
-    /// <summary>Saves drafts for an owner, refusing when the owner would go over its limit. Returns the new ids in order.</summary>
+
     private async Task<IReadOnlyList<long>> SaveDraftsAsync(FittingOwnerScope scope, long owner, IReadOnlyList<FittingDraft> drafts)
     {
         var limit = LimitOf(scope);
@@ -237,7 +299,7 @@ public sealed class FittingMgrCalls(PgSavedFittingStore store, IFittingHost host
     }
 
     /// <summary>
-    /// Tells every session of the owner what changed, and for a corporation first drops the client's cached list (EveJS
+
     /// <c>notifyFittingMutation</c> and <c>invalidateClientFittingListCache</c>: the invalidation is in the stream before the notification).
     /// </summary>
     private void Notify(ServiceCall call, FittingOwnerScope scope, long owner, string name, PyValue payload)
@@ -277,7 +339,7 @@ public sealed class FittingMgrCalls(PgSavedFittingStore store, IFittingHost host
         _ => null,
     };
 
-    /// <summary>The refusal the client shows: the reference's UserError for the code (EveJS <c>throwFittingError</c>).</summary>
+
     public static MachoWrappedException Refusal(string code, long value = 0) => code switch
     {
         "FITTING_NAME_REQUIRED" => MachoErrors.ThrowUserError("FittingNeedsToHaveAName"),
@@ -288,6 +350,10 @@ public sealed class FittingMgrCalls(PgSavedFittingStore store, IFittingHost host
         "FITTING_DATA_EMPTY" => MachoErrors.ThrowUserError("ParseFittingFittingDataEmpty"),
         "FITTING_INVALID_FLAG" => MachoErrors.ThrowUserError("InvalidFittingDataInvalidFlag", ("type", new PyInt(value))),
         "FITTING_INVALID_QUANTITY" => MachoErrors.ThrowUserError("InvalidFittingDataInvalidQuantity", ("type", new PyInt(value))),
+        "FITTING_TOO_MANY_ITEMS" => MachoErrors.ThrowUserError(Community, ("notify", new PyStr("This fitting contains too many items."))),
+        "FITTING_TOO_MANY_BULK_ENTRIES" => MachoErrors.ThrowUserError(Community, ("notify", new PyStr($"This operation can process at most {value} fittings at once."))),
+        "FITTING_BULK_ARGUMENT_INVALID" => MachoErrors.ThrowUserError(Community, ("notify", new PyStr("This fitting batch has an invalid shape."))),
+        "FITTING_INTEGER_OUT_OF_RANGE" => MachoErrors.ThrowUserError(Community, ("notify", new PyStr("This fitting contains an out-of-range integer."))),
         "COMMUNITY_FITTINGS_READ_ONLY" => MachoErrors.ThrowUserError(Community, ("notify", new PyStr("Community fittings are read-only."))),
         "OWNER_SCOPE_DENIED" => MachoErrors.ThrowUserError(Community, ("notify", new PyStr("You do not have access to that fitting collection."))),
         "FITTING_MANAGER_ROLE_REQUIRED" => MachoErrors.ThrowUserError(Community, ("notify", new PyStr("You need the corporation Fitting Manager role to change shared fittings."))),

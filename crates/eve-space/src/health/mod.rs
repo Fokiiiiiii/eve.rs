@@ -159,7 +159,6 @@ impl Applied {
 
 /// The adaptive resonances of a reactive armor hardener that runs on the ship: the module's multipliers of the armor's resonances (`profile`, the
 /// effective armor resonance is the ship's own times these), the damage the armor took this cycle per kind, weighted by the resonance it had (`tally`),
-/// and the most a kind gives up each cycle (`step`). Owned by the simulation: nothing else writes it (see `crate::resistance_shift`).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Shift {
     pub profile: Damage,
@@ -278,6 +277,26 @@ impl Health {
         self.vitals.armor_hp.max(0.0) * self.condition.armor_damage.max(0.0)
     }
 
+    /// A hit with an additional resistance bonus: each layer takes the same fraction less damage than its current resonances allow.
+    pub(crate) fn apply_with_resistance_bonus(
+        &mut self,
+        now: i64,
+        raw: Damage,
+        bonus: f64,
+    ) -> Option<Applied> {
+        let original = self.vitals.resonances;
+        let scale = 1.0 - bonus.clamp(0.0, 1.0);
+        let boosted = |resonance: Damage| resonance.map(|remaining| (remaining * scale).clamp(0.0, 1.0));
+        self.vitals.resonances = Resonances {
+            shield: boosted(original.shield),
+            armor: boosted(original.armor),
+            structure: boosted(original.structure),
+        };
+        let applied = self.apply(now, raw);
+        self.vitals.resonances = original;
+        applied
+    }
+
     /// A hit of `raw` damage at `now`: the shield takes what it can, then the armor, then the hull. None when there is nothing to hurt.
     pub fn apply(&mut self, now: i64, raw: Damage) -> Option<Applied> {
         self.apply_through(now, raw, true)
@@ -286,6 +305,78 @@ impl Health {
     /// A hit of `raw` damage that the layers take as it is (a damage-over-time tick: the resistances do not apply to it).
     pub fn apply_unresisted(&mut self, now: i64, raw: Damage) -> Option<Applied> {
         self.apply_through(now, raw, false)
+    }
+
+    /// Applies an already-resolved damage amount across shield, armor, and structure without inventing a damage type.
+    pub fn apply_resolved_amount(&mut self, now: i64, amount: f64) -> Option<Applied> {
+        if !self.vitals.hurtable() || !amount.is_finite() || amount <= 0.0 {
+            return None;
+        }
+
+        let max = self.vitals.layers();
+        let before = self.layers_at(now);
+        let armor_before = self.armor_gone();
+        let mut after = before;
+        let mut taken = Layers { shield: 0.0, armor: 0.0, structure: 0.0 };
+        let mut remaining = amount;
+
+        for layer in 0..3 {
+            let (most, hp) = match layer {
+                0 => (max.shield, after.shield),
+                1 => (max.armor, after.armor),
+                _ => (max.structure, after.structure),
+            };
+            if most <= 0.0 || hp <= 0.0 || remaining <= 0.0 {
+                continue;
+            }
+
+            let used = hp.min(remaining);
+            remaining = (remaining - used).max(0.0);
+            match layer {
+                0 => {
+                    after.shield = (hp - used).max(0.0);
+                    taken.shield = used;
+                }
+                1 => {
+                    after.armor = (hp - used).max(0.0);
+                    taken.armor = used;
+                }
+                _ => {
+                    after.structure = (hp - used).max(0.0);
+                    taken.structure = used;
+                }
+            }
+        }
+
+        let max_structure = max.structure;
+        let armor_after = armor_before + taken.armor;
+        let unit = |left: f64, most: f64| (left / most).clamp(0.0, 1.0);
+        self.condition = Condition {
+            damage: if max_structure > 0.0 {
+                round6(1.0 - unit(after.structure, max_structure))
+            } else {
+                1.0
+            },
+            armor_damage: if max.armor > 0.0 { round6(armor_after / max.armor) } else { 0.0 },
+            shield_charge: if max.shield > 0.0 { round6(unit(after.shield, max.shield)) } else { 0.0 },
+            charge: self.condition.charge,
+        };
+        self.at = now;
+        if self.condition.shield_charge < 1.0 && max.shield > 0.0 {
+            self.next_sample.get_or_insert(now + crate::modules::TICK);
+        }
+
+        let destroyed = max_structure > 0.0 && after.structure <= 1e-9;
+        let changed = before != after;
+        Some(Applied {
+            before,
+            after,
+            taken,
+            armor_damage: (armor_before, self.armor_gone()),
+            max_structure,
+            destroyed,
+            changed,
+        })
     }
 
     /// `apply`, with the resonances of the layers when `resisted`, and with none (every kind goes through whole) when not.

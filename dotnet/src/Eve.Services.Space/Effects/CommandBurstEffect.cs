@@ -51,8 +51,15 @@ public static class CommandBurstBuffs
     public const int BuffDuration = 2535;
 
     /// <summary>The buffs of a burst module: each collection its charge names, with the value the burst gives it. An unknown collection, or a zero value, is not a buff.</summary>
-    public static IReadOnlyList<(BuffCollection Collection, double Value)> Of(DogmaWorld world, DogmaStatic statics, long moduleId)
+    public static IReadOnlyList<(BuffCollection Collection, double Value)> Of(DogmaWorld world, DogmaStatic statics, long moduleId, int chargeTypeId = 0)
     {
+        if (chargeTypeId > 0 && world.Item(moduleId) is { } module
+            && !world.Items.Any(item => item.LocationId == module.LocationId && item.FlagId == module.FlagId && item.Id != moduleId))
+        {
+            // A burst cycle can consume its final round before Host loads the settlement snapshot. Add its SDE charge in this local world so effect 6737
+            // derives the same module buff profile and existing Dogma modifiers (skills, hulls, and subsystems) still take part.
+            world.Add(new DogmaItem(-Math.Abs(moduleId), chargeTypeId, module.OwnerId, module.LocationId, module.FlagId));
+        }
         var buffs = new List<(BuffCollection, double)>();
         for (var slot = 0; slot < BuffIds.Length; slot++)
         {

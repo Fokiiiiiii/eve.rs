@@ -6,8 +6,6 @@ using Eve.Space;
 
 namespace Eve.Services.Space.Tests;
 
-
-
 public sealed class FleetLoginHookTests
 {
     [Fact]
@@ -73,13 +71,38 @@ public class SpaceServiceTests
 {
     private static long Id(PyValue value) => Events.Number(value);
 
+    [PgFact]
+    public async Task A_tengu_rig_can_be_removed_to_the_hangar_without_being_destroyed()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var character = await rig.NewCharacterAsync();
+        const int tenguTypeId = 29984;
+        const int mediumRigTypeId = 31790;
+        await rig.Statics.EnsureTypesAsync([tenguTypeId, mediumRigTypeId]);
+        Assert.Equal(963, rig.Statics.Type(tenguTypeId)!.GroupId);
+        var tengu = (await rig.Ships.GrantAsync(character.CharacterId, tenguTypeId, 1, singleton: true))!.Single().After;
+        var rigItem = (await rig.Ships.GrantAsync(character.CharacterId, mediumRigTypeId, 1, singleton: true))!.Single().After;
+
+        var fitted = await rig.Ships.MoveAsync(character.CharacterId, rigItem.Id, Rig.Station, tengu.Id, 92, null);
+        Assert.IsType<Eve.Ships.ShipChanged>(fitted);
+        var removed = await rig.Ships.MoveAsync(character.CharacterId, rigItem.Id, tengu.Id, Rig.Station, null, null);
+
+        Assert.IsType<Eve.Ships.ShipChanged>(removed);
+        var saved = await rig.Items.GetAsync(rigItem.Id);
+        Assert.NotNull(saved);
+        Assert.Equal((Rig.Station, Eve.Inventory.ItemFlags.Hangar), (saved.LocationId, saved.Flag));
+    }
+
     [Fact]
-    public async Task Admin_get_bubble_id_requires_view_role_and_uses_available_bubble_sources()
+    public async Task Admin_get_bubble_id_requires_server_staff_role_and_uses_available_bubble_sources()
     {
         await using var rig = await Rig.CreateAsync();
         var character = await rig.NewCharacterAsync();
         var session = await rig.SessionAsync(character);
 
+        session.Set("accountRole", new PyLong(0));
+        session.Set("role", new PyLong(Eve.Services.GameMasterRoles.Gml));
+        session.Set("rolesAtAll", new PyLong(Eve.Services.GameMasterRoles.Staff));
         var denied = await rig.BeyonceCallAsync(session, "AdminGetBubbleID", null, new PyLong(character.ShipId));
         Assert.Same(PyNone.Instance, denied);
 
@@ -87,7 +110,8 @@ public class SpaceServiceTests
         Assert.Same(PyNone.Instance, await rig.BeyonceCallAsync(
             session, "AdminGetBubbleID", null, new PyLong(character.ShipId)));
 
-        session.Set("role", new PyLong(18014398509481984L));
+        session.Set("accountRole", new PyLong(Eve.Services.GameMasterRoles.Gml));
+        session.Set("role", new PyLong(0));
         session.Set("shipid", new PyLong(character.ShipId));
         session.Set("ballparkid", new PyLong(987653));
         var ownShipBubble = await rig.BeyonceCallAsync(
@@ -181,17 +205,13 @@ public class SpaceServiceTests
         release.TrySetResult();
         await Rig.UntilAsync(() => !rig.Space.IsInSpace(session));
 
-        var recovered = false;
-        for (var attempt = 0; attempt < 200 && !recovered; attempt++)
-        {
-            var ship = await rig.Items.GetAsync(character.ShipId);
-            recovered = ship is not null
-                && ship.LocationId == Rig.Station
-                && ship.Flag == Eve.Inventory.ItemFlags.Hangar;
-            if (!recovered)
-                await Task.Delay(25);
-        }
-        Assert.True(recovered, "the logged-off ship should be in the station hangar");
+        await rig.Space.QuiesceAsync();
+        var ship = (await rig.Items.GetAsync(character.ShipId))!;
+        var spaceItem = await rig.SpaceItems.GetAsync(character.ShipId);
+        var system = session.GetInt("solarsystemid")!.Value;
+        Assert.Equal(system, ship.LocationId);
+        Assert.Equal(Eve.Ships.CharacterShips.InSpaceFlag, ship.Flag);
+        Assert.Equal((int)system, spaceItem?.SolarSystemId);
     }
 
     [PgFact]
@@ -303,7 +323,6 @@ public class SpaceServiceTests
             ((await rig.Items.GetAsync(capsuleId))!.LocationId, (await rig.Items.GetAsync(capsuleId))!.Flag));
     }
 
-
     [PgFact]
     public async Task Ejecting_from_a_battleship_with_a_usable_frigate_escape_bay_respawns_in_the_frigate()
     {
@@ -379,7 +398,6 @@ public class SpaceServiceTests
         Assert.Equal((await rig.Characters.GetAsync(character.CharacterId))!.ShipId, capsuleId);
         Assert.Null(await rig.Items.GetAsync(shipId));
     }
-
 
     [PgFact]
     public async Task Ejecting_that_loses_the_mechanics_hull_bonus_destroys_the_abandoned_ship_through_the_loss_path()
@@ -535,6 +553,69 @@ public class SpaceServiceTests
     }
 
     [PgFact]
+    public async Task Boarding_a_ship_is_refused_until_its_published_skill_requirements_are_trained()
+    {
+        var (rig, character, session) = await DockedAsync();
+        await using var _ = rig;
+        const int tenguTypeId = 29984;
+        await rig.Statics.EnsureTypesAsync([tenguTypeId], CancellationToken.None);
+        var shipType = rig.Statics.Type(tenguTypeId)!;
+        var required = Eve.Fitting.FittingRules.RequiredSkills(shipType).ToArray();
+        Assert.NotEmpty(required);
+
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await rig.Skills.ClearCharacterAsync(connection, transaction, character.CharacterId);
+            await transaction.CommitAsync();
+        }
+
+        var ship = (await rig.Ships.GrantAsync(character.CharacterId, tenguTypeId, 1, singleton: true))!.Single().After;
+        rig.Space.LifecycleBlockers = async (action, requestSession, shipId, token) =>
+        {
+            if (action != Eve.Services.Space.ShipLifecycleAction.Board)
+                return Array.Empty<string>();
+            if (shipId is not { } targetShipId)
+                return new[] { "missing_ship_type" };
+            var target = await rig.Items.GetAsync(targetShipId, token);
+            if (target is null)
+                return new[] { "missing_ship_type" };
+            await rig.Statics.EnsureTypesAsync([target.TypeId], token);
+            var type = rig.Statics.Type(target.TypeId);
+            if (type is null)
+                return new[] { "missing_ship_type" };
+            var levels = (await rig.Skills.ForCharacterAsync(requestSession.CharacterId!.Value, token))
+                .ToDictionary(skill => skill.TypeId, skill => (int)skill.Level);
+            return Eve.Fitting.FittingRules.HasRequiredSkills(type, skill => levels.GetValueOrDefault(skill))
+                ? Array.Empty<string>()
+                : new[] { "missing_ship_skill" };
+        };
+
+        var oid = await rig.BindShipAsync(session);
+        var denied = Assert.IsType<PyList>(await rig.ShipCallAsync(
+            session, "Board", oid, new PyLong(ship.Id), new PyLong(character.ShipId)));
+        Assert.Equal("missing_ship_skill", Assert.IsType<PyStr>(Assert.Single(denied.Items)).Value);
+        Assert.Equal(character.ShipId, session.GetInt("shipid"));
+        Assert.Equal(character.ShipId, (await rig.Characters.GetAsync(character.CharacterId))!.ShipId);
+        Assert.Equal((Rig.Station, Eve.Inventory.ItemFlags.Hangar),
+            ((await rig.Items.GetAsync(ship.Id))!.LocationId, (await rig.Items.GetAsync(ship.Id))!.Flag));
+
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await rig.Skills.GrantAsync(connection, transaction, character.CharacterId,
+                required.Select(skill => new Eve.Skills.CharacterSkill(skill.Skill, skill.Level, 0)));
+            await transaction.CommitAsync();
+        }
+
+        var boarded = Assert.IsType<PyTuple>(await rig.ShipCallAsync(
+            session, "Board", oid, new PyLong(ship.Id), new PyLong(character.ShipId)));
+        Assert.Equal(4, boarded.Items.Count);
+        Assert.Equal(ship.Id, session.GetInt("shipid"));
+        Assert.Equal(ship.Id, (await rig.Characters.GetAsync(character.CharacterId))!.ShipId);
+    }
+
+    [PgFact]
     public async Task Boarding_with_a_stale_current_ship_id_is_refused_without_changing_session_or_custody()
     {
         var (rig, character, session) = await DockedAsync();
@@ -600,7 +681,6 @@ public class SpaceServiceTests
         return (oid, answer);
     }
 
-
     private static SimEnter AssertUndockSimulationMessages(Rig rig)
     {
         var enter = Assert.Single(rig.Sim.Heard.OfType<SimEnter>());
@@ -641,8 +721,6 @@ public class SpaceServiceTests
         return undocked;
     }
 
-    // ── binding ──────────────────────────────────────────────────────────────
-
     [PgFact]
     public async Task The_ship_service_binds_to_the_station_the_character_is_at_and_to_no_other_place()
     {
@@ -664,8 +742,6 @@ public class SpaceServiceTests
         Assert.Equal(PyNone.Instance, await rig.ShipCallAsync(session, "Undock", "N=65450:999", new PyLong(1), PyBool.False));
         Assert.Empty(rig.Sim.Heard);
     }
-
-    // ── undocking ────────────────────────────────────────────────────────────
 
     [PgFact]
     public async Task Undocking_tells_the_client_in_the_reference_order_and_answers_with_the_object_and_the_time()
@@ -701,11 +777,15 @@ public class SpaceServiceTests
             [("stationid", new PyInt(Rig.Station), PyNone.Instance), ("locationid", new PyInt(Rig.Station), new PyInt(system)), ("solarsystemid", PyNone.Instance, new PyInt(system))],
             Sequence.LastChange(session));
         Assert.Null(session.GetInt("stationid"));
+<<<<<<< HEAD
         Assert.Null(session.GetInt("stationid2")); // EveJS undock clears stationid2 too, silently
+=======
+        Assert.Null(session.GetInt("stationid2")); // the reference clears the server value on undock (characterState: session.stationid2 = null)
+>>>>>>> origin/main
         Assert.Equal(system, session.GetInt("solarsystemid"));
         // the simulation
         var enter = AssertUndockSimulationMessages(rig);
-        Assert.Equal(((ulong)session.SessionId, system, EnterHow.Undock, Rig.Station), (enter.SessionId, enter.SolarSystemId, enter.How, enter.StationId));
+        Assert.Equal(((ulong)session.SessionId, system, EnterHow.Undock, Rig.Station), (enter.SessionId, enter.Scene.LocationId, enter.How, enter.StationId));
         Assert.Equal((character.ShipId, character.CharacterId, "Cockroach"), (enter.Ship.ShipId, enter.Ship.CharacterId, enter.Ship.Name));
         Assert.True(enter.Ship.Mass > 0 && enter.Ship.MaxVelocity > 0 && enter.Ship.Agility > 0 && enter.Ship.Radius > 0 && enter.Ship.ShieldRechargeMs > 0);
         Assert.Equal(3, enter.Ship.Modules.Count);
@@ -935,8 +1015,6 @@ public class SpaceServiceTests
         Assert.Equal(1, inspections);
     }
 
-    // ── in space ─────────────────────────────────────────────────────────────
-
     [PgFact]
     public async Task The_ballpark_binds_only_for_a_ship_in_space_and_once_the_answer_has_gone_the_simulation_sends_the_scene()
     {
@@ -1045,8 +1123,6 @@ public class SpaceServiceTests
         Assert.Equal(["DoDestinyUpdate"], Events.Of(session).Select(e => e.Name));
     }
 
-    // ── targets ──────────────────────────────────────────────────────────────
-
     private static string Describe(TargetingResult? result) =>
         result is null ? "none" : $"{result.Ok} {result.Pending} [{string.Join(",", result.Targets)}] {result.Reason} {result.TargetType} {result.DesiredRange} {result.ActualDistance}";
 
@@ -1147,8 +1223,6 @@ public class SpaceServiceTests
         await Task.WhenAll(first, second);
         Assert.Equal([1.0, 2.0], rig.Sim.Heard.OfType<SimCommand>().Where(c => c.Code == SimCommands.AddTarget).SelectMany(c => c.Args).ToArray());
     }
-
-    // ── modules ──────────────────────────────────────────────────────────────
 
     /// <summary>The ship a new character has, as dogma sees it, and the id of one of its modules by type.</summary>
     private static async Task<(Eve.Ships.ShipSnapshot Snapshot, long Afterburner, long Gun, long Miner)> ShipAsync(Rig rig, Eve.Characters.Created character)
@@ -1290,6 +1364,35 @@ public class SpaceServiceTests
     }
 
     [PgFact]
+    public async Task A_module_at_full_hull_damage_is_refused_before_the_simulation_starts_it()
+    {
+        var (rig, character, _) = await DockedAsync();
+        await using var _ = rig;
+        var (snapshot, afterburner, _, _) = await ShipAsync(rig, character);
+        var damaged = new Eve.Ships.ShipSnapshot
+        {
+            Character = snapshot.Character,
+            Ship = snapshot.Ship,
+            Fitted = snapshot.Fitted,
+            Charges = snapshot.Charges,
+            Stance = snapshot.Stance,
+            Skills = snapshot.Skills,
+            World = snapshot.World,
+            Condition = snapshot.Condition,
+            Neighbours = snapshot.Neighbours,
+            ModuleConditions = new Dictionary<long, Eve.Fitting.ModuleCondition>
+            {
+                [afterburner] = new(1, 0, 1, false),
+            },
+        };
+
+        var result = ModulePackages.Of(damaged, rig.Statics, afterburner, "moduleBonusAfterburner", 0, 1);
+
+        Assert.Equal("MODULE_INCAPACITATED", result.Reason);
+        Assert.Null(result.Effect);
+    }
+
+    [PgFact]
     public async Task What_cannot_be_run_is_refused_with_the_reason_and_the_module_that_the_message_names()
     {
         var (rig, character, _) = await DockedAsync();
@@ -1314,8 +1417,6 @@ public class SpaceServiceTests
         snapshot.World.SetState(afterburner, Eve.Dogma.ItemState.Offline);
         Assert.Equal("MODULE_NOT_ONLINE", Why(afterburner, "moduleBonusAfterburner"));
     }
-
-
 
     [Fact]
     public void A_cloaking_device_packages_a_non_targeted_cloak_action()
@@ -1509,6 +1610,153 @@ public class SpaceServiceTests
     }
 
     [PgFact]
+    public async Task A_target_that_disallows_offensive_modifiers_refuses_a_gun_before_the_simulation()
+    {
+        // The pinned SDE has no ship type with attribute 872; add it to the real starter hull so this host gate is exercised.
+        var rig = await Rig.CreateAsync(staticsOverride: async statics =>
+        {
+            await statics.EnsureTypesAsync([Rig.Cockroach]);
+            var targetHull = statics.Type(Rig.Cockroach)
+                ?? throw new InvalidOperationException("The starter hull must be in the pinned SDE.");
+            var attribute = statics.AttributeId("disallowOffensiveModifiers")
+                ?? throw new InvalidOperationException("The SDE must define disallowOffensiveModifiers.");
+            Assert.Equal(872, attribute);
+            var attributes = new Dictionary<int, double>(targetHull.Attributes) { [attribute] = 1 };
+            return statics.WithFixtures([targetHull with { Attributes = attributes }]);
+        });
+        await using var _ = rig;
+
+        var attacker = await rig.NewCharacterAsync("Module Attacker", account: 1);
+        var target = await rig.NewCharacterAsync("Immune Target", account: 2);
+        var attackerSession = await rig.SessionAsync(attacker, id: 1);
+        var targetSession = await rig.SessionAsync(target, id: 2);
+        var (_, _, gun, _) = await ShipAsync(rig, attacker);
+        await InSpaceAsync(rig, attackerSession);
+        await InSpaceAsync(rig, targetSession);
+        var activationsBefore = rig.Sim.Heard.OfType<SimActivate>().Count();
+
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            rig.Space.ActivateAsync(attackerSession, gun, "targetAttack", target.ShipId, 1, CancellationToken.None));
+
+        Assert.Equal("DeniedActivateTargetModuleDisallowed", error.Error.UserErrorMessage);
+        Assert.Equal(activationsBefore, rig.Sim.Heard.OfType<SimActivate>().Count());
+    }
+
+    [PgFact]
+    public async Task A_target_that_disallows_ew_immune_effects_refuses_remote_sensor_boost()
+    {
+        const int RemoteSensorBoosterI = 1963;
+        var rig = await Rig.CreateAsync(staticsOverride: async statics =>
+        {
+            await statics.EnsureTypesAsync([Rig.Cockroach, RemoteSensorBoosterI]);
+            var targetHull = statics.Type(Rig.Cockroach)
+                ?? throw new InvalidOperationException("The starter hull must be in the pinned SDE.");
+            var boosterType = statics.Type(RemoteSensorBoosterI)
+                ?? throw new InvalidOperationException("Remote Sensor Booster I must be in the pinned SDE.");
+            var offensiveAttribute = statics.AttributeId("disallowOffensiveModifiers")
+                ?? throw new InvalidOperationException("The SDE must define disallowOffensiveModifiers.");
+            var immuneTargetAttribute = statics.AttributeId("disallowAgainstEwImmuneTarget")
+                ?? throw new InvalidOperationException("The SDE must define disallowAgainstEwImmuneTarget.");
+            Assert.Equal(872, offensiveAttribute);
+            Assert.Equal(1798, immuneTargetAttribute);
+            Assert.Equal(1d, boosterType.Attributes[immuneTargetAttribute]);
+            var targetAttributes = new Dictionary<int, double>(targetHull.Attributes) { [offensiveAttribute] = 1 };
+            return statics.WithFixtures([targetHull with { Attributes = targetAttributes }]);
+        });
+        await using var _ = rig;
+
+        var (supportSession, _, module) = await RepairHostTests.InSpaceWithAsync(rig, RemoteSensorBoosterI, 19);
+        var targetCharacter = await rig.NewCharacterAsync("EW Immune Target", account: 2);
+        var targetSession = await WeaponHostTests.InSpaceAsync(rig, targetCharacter, 2);
+        var targetId = targetSession.GetInt("shipid")!.Value;
+        var activationsBefore = rig.Sim.Heard.OfType<SimActivate>().Count();
+
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            rig.Space.ActivateAsync(supportSession, module, "remoteSensorBoostFalloff", targetId, 1000, CancellationToken.None));
+
+        Assert.Equal("DeniedActivateTargetModuleDisallowed", error.Error.UserErrorMessage);
+        Assert.Equal(activationsBefore, rig.Sim.Heard.OfType<SimActivate>().Count());
+    }
+
+    [PgFact]
+    public async Task A_module_that_can_activate_in_gate_cloak_keeps_a_jump_cloak()
+    {
+        var rig = await Rig.CreateAsync(
+            jumpCloak: TimeSpan.FromMinutes(1),
+            staticsOverride: async statics =>
+            {
+                await statics.EnsureTypesAsync([3638]);
+                var gunType = statics.Type(3638)
+                    ?? throw new InvalidOperationException("The starter gun must be in the pinned SDE.");
+                var attribute = statics.AttributeId("canActivateInGateCloak")
+                    ?? throw new InvalidOperationException("The SDE must define canActivateInGateCloak.");
+                Assert.Equal(3123, attribute);
+                var attributes = new Dictionary<int, double>(gunType.Attributes) { [attribute] = 1 };
+                return statics.WithFixtures([gunType with { Attributes = attributes }]);
+            });
+        await using var _ = rig;
+
+        var character = await rig.NewCharacterAsync();
+        var session = await rig.SessionAsync(character);
+        var from = (int)session.GetInt("solarsystemid2")!.Value;
+        await InSpaceAsync(rig, session);
+        rig.Sim.Say(new SimJumped((ulong)session.SessionId, from, Gate, NextSystem, NextGate));
+        await Rig.UntilAsync(() => session.GetInt("solarsystemid") == NextSystem);
+        Events.Of(session);
+
+        var (_, _, gun, _) = await ShipAsync(rig, character);
+        var activationCount = rig.Sim.Heard.OfType<SimActivate>().Count();
+
+        await rig.Space.ActivateAsync(session, gun, "targetAttack", 1, 1, CancellationToken.None);
+
+        Assert.Equal(activationCount + 1, rig.Sim.Heard.OfType<SimActivate>().Count());
+        Assert.DoesNotContain(Events.Of(session), e => e.Name is "OnJumpCloakCancelled" or "OnInvulnCancelled");
+    }
+
+    [PgFact]
+    public async Task A_module_without_gate_cloak_permission_ends_a_jump_cloak_when_accepted()
+    {
+        var rig = await Rig.CreateAsync(jumpCloak: TimeSpan.FromMinutes(1));
+        await using var _ = rig;
+
+        var character = await rig.NewCharacterAsync();
+        var session = await rig.SessionAsync(character);
+        var from = (int)session.GetInt("solarsystemid2")!.Value;
+        await InSpaceAsync(rig, session);
+        rig.Sim.Say(new SimJumped((ulong)session.SessionId, from, Gate, NextSystem, NextGate));
+        await Rig.UntilAsync(() => session.GetInt("solarsystemid") == NextSystem);
+        Events.Of(session);
+
+        var (_, _, gun, _) = await ShipAsync(rig, character);
+
+        await rig.Space.ActivateAsync(session, gun, "targetAttack", 1, 1, CancellationToken.None);
+
+        Assert.Equal(["OnJumpCloakCancelled", "OnInvulnCancelled"], Events.Of(session).Select(e => e.Name));
+    }
+
+    [PgFact]
+    public async Task A_refused_module_activation_keeps_a_jump_cloak()
+    {
+        var rig = await Rig.CreateAsync(jumpCloak: TimeSpan.FromMinutes(1));
+        await using var _ = rig;
+        rig.Sim.ActivateAnswer = new(false, 134351527136350000, "REFUSED");
+
+        var character = await rig.NewCharacterAsync();
+        var session = await rig.SessionAsync(character);
+        var from = (int)session.GetInt("solarsystemid2")!.Value;
+        await InSpaceAsync(rig, session);
+        rig.Sim.Say(new SimJumped((ulong)session.SessionId, from, Gate, NextSystem, NextGate));
+        await Rig.UntilAsync(() => session.GetInt("solarsystemid") == NextSystem);
+        Events.Of(session);
+
+        var (_, _, gun, _) = await ShipAsync(rig, character);
+
+        await rig.Space.ActivateAsync(session, gun, "targetAttack", 1, 1, CancellationToken.None);
+
+        Assert.Empty(Events.Of(session));
+    }
+
+    [PgFact]
     public async Task A_gun_that_needs_no_charge_shoots_with_its_own_damage_after_the_skills_of_the_pilot()
     {
         var (rig, character, _) = await DockedAsync();
@@ -1671,8 +1919,6 @@ public class SpaceServiceTests
         Assert.Equal("CustomNotify", ((PyStr)arguments[0]).Value);
     }
 
-    // ── warp ─────────────────────────────────────────────────────────────────
-
     [PgFact]
     public async Task Autopilot_warp_uses_the_reference_arrival_range_and_keeps_the_warp_refusal_contract()
     {
@@ -1718,15 +1964,26 @@ public class SpaceServiceTests
         var oid = await rig.BindBeyonceAsync(session);
         Events.Of(session);
         var before = rig.Sim.Heard.Count;
+        var warpedCharacters = new List<long>();
+        var persistenceAttempts = 0;
+        rig.Space.WarpAcceptedAsync = (characterId, _) =>
+        {
+            warpedCharacters.Add(characterId);
+            if (persistenceAttempts++ == 0)
+                throw new InvalidOperationException("store unavailable");
+            return Task.CompletedTask;
+        };
 
         var answer = await rig.BeyonceCallWithAsync(session, "CmdWarpToStuff", oid, [new PyStr("item"), new PyInt(40491233)], ("minRange", new PyInt(30000)));
         Assert.Equal(PyNone.Instance, answer);
+        Assert.Equal(session.CharacterId.GetValueOrDefault(), warpedCharacters.Single());
         Assert.Equal(
             [Describe(new SimCommand((ulong)session.SessionId, SimCommands.WarpTo, [40491233, 30000]))],
             rig.Sim.Heard.Skip(before).Select(Describe));
         // no range asked for is none
         await rig.BeyonceCallAsync(session, "CmdWarpToStuff", oid, new PyStr("item"), new PyInt(40491233));
         Assert.Equal(Describe(new SimCommand((ulong)session.SessionId, SimCommands.WarpTo, [40491233, 0])), Describe(rig.Sim.Heard.Last()));
+        Assert.Equal([session.CharacterId.GetValueOrDefault(), session.CharacterId.GetValueOrDefault()], warpedCharacters);
 
         // the ship has left its protection: the client is told once, whatever the simulation said before
         var told = Events.Of(session).Where(e => e.Name == "OnInvulnCancelled").ToArray();
@@ -1743,6 +2000,12 @@ public class SpaceServiceTests
         var oid = await rig.BindBeyonceAsync(session);
         Events.Of(session);
         var before = rig.Sim.Heard.Count;
+        var recordedWarps = new List<long>();
+        rig.Space.WarpAcceptedAsync = (characterId, _) =>
+        {
+            recordedWarps.Add(characterId);
+            return Task.CompletedTask;
+        };
 
         foreach (var reason in new[] { "TARGET_NOT_FOUND", "WARP_DISTANCE_TOO_CLOSE" })
         {
@@ -1757,6 +2020,7 @@ public class SpaceServiceTests
         await Assert.ThrowsAsync<MachoWrappedException>(() => rig.BeyonceCallAsync(session, "CmdWarpToStuff", oid, new PyStr("unsupported"), new PyInt(5)));
         await Assert.ThrowsAsync<MachoWrappedException>(() => rig.BeyonceCallAsync(session, "CmdWarpToStuff", oid, new PyStr("item"), new PyStr("planet")));
         Assert.Equal(before + 2, rig.Sim.Heard.Count);
+        Assert.Empty(recordedWarps);
 
         // not from an object of this session
         Assert.Equal(PyNone.Instance, await rig.BeyonceCallAsync(session, "CmdWarpToStuff", null, new PyStr("item"), new PyInt(40491233)));
@@ -1982,7 +2246,6 @@ public class SpaceServiceTests
             rig.Sim.Heard.Skip(before).Select(Describe));
     }
 
-
     [PgFact]
     public async Task A_coordinate_warp_uses_the_supplied_position_and_range()
     {
@@ -2015,7 +2278,6 @@ public class SpaceServiceTests
             rig.Sim.Heard.Skip(before).Select(Describe));
     }
 
-
     [PgFact]
     public async Task Active_criminal_timer_blocks_warp_and_gate_jump_in_high_security_space()
     {
@@ -2035,7 +2297,6 @@ public class SpaceServiceTests
 
         Assert.Equal(before, rig.Sim.Heard.Count);
     }
-
 
     [PgFact]
     public async Task Concord_response_spawns_the_authored_fleet_and_enforces_ship_loss_after_timer()
@@ -2084,7 +2345,6 @@ public class SpaceServiceTests
         punishment.Done.TrySetResult();
         await Rig.UntilAsync(() => rig.Sim.Heard.OfType<SimDestroy>().Any(destroy => destroy.ShipId == character.ShipId));
     }
-
 
     [PgFact]
     public async Task A_ship_that_is_in_warp_is_told_so_when_it_is_asked_to_warp_or_to_stop_and_is_not_otherwise_answered()
@@ -2168,8 +2428,6 @@ public class SpaceServiceTests
         Assert.Empty(Events.Of(session));
     }
 
-    // ── jumps ────────────────────────────────────────────────────────────────
-
     private const long Gate = 50016630;
     private const long NextGate = 50016839;
     private const int NextSystem = 30100034;
@@ -2192,7 +2450,7 @@ public class SpaceServiceTests
         Assert.Equal(Py.FileTimeFromUnixMs(Rig.ClockMs + 10_000), Id(answer.Items[1]));
         Assert.Equal(
             [Describe(new SimCommand((ulong)session.SessionId, SimCommands.Jump, [Gate, NextGate]))],
-            rig.Sim.Heard.Skip(before).Select(Describe));
+            rig.Sim.Heard.Skip(before).OfType<SimCommand>().Select(Describe));
 
         var told = Events.Of(session);
         var queue = Assert.Single(told, e => e.Name == "OnJumpQueueUpdate");
@@ -2245,7 +2503,7 @@ public class SpaceServiceTests
         await InSpaceAsync(rig, session);
         var oid = await rig.BindBeyonceAsync(session);
         Events.Of(session);
-        // the gate of the rig's jump has a toll: the minimum for a small ship, 10000 ISK (client alignmentBasedToll, the wiki's "starts at 10k")
+
         var toll = new Eve.Universe.AlignmentToll(0.015, 1.1, -100_000, 10_000, 0.0, [500011, 500010]);
         rig.Space.GateRules = new Eve.Services.Space.Gates.GateRules(
             new Dictionary<long, int>(), new Dictionary<int, IReadOnlySet<int>>(), new Dictionary<long, long>(),
@@ -2279,6 +2537,29 @@ public class SpaceServiceTests
         Assert.Single(charges);
         Assert.Single(refunds);
         Assert.Equal((character.CharacterId, 10_000m, charges[0].Key + ":refund"), refunds[0]);
+    }
+
+    [PgFact]
+    public async Task A_gate_arrival_inspects_the_ship_in_the_destination_system_only_after_the_jump_succeeds()
+    {
+        var (rig, character, session) = await DockedAsync();
+        await using var _ = rig;
+        await InSpaceAsync(rig, session);
+        var oid = await rig.BindBeyonceAsync(session);
+        var inspections = new List<(long Character, long Ship, int System)>();
+        rig.Space.ApplyContrabandPenaltyAsync = (characterId, shipId, systemId, _) =>
+        {
+            inspections.Add((characterId, shipId, systemId));
+            return Task.FromResult<Eve.Services.Space.ContrabandPenalty?>(null);
+        };
+
+        rig.Sim.JumpAnswer = new CommandReply(false, 0, "TOO_FAR_FROM_STARGATE");
+        await Assert.ThrowsAsync<MachoWrappedException>(() => JumpAsync(rig, session, oid, character.ShipId));
+        Assert.Empty(inspections);
+
+        rig.Sim.JumpAnswer = new CommandReply(true, 0, null, null, NextSystem, 0);
+        Assert.IsType<PyTuple>(await JumpAsync(rig, session, oid, character.ShipId));
+        Assert.Equal([(character.CharacterId, character.ShipId, NextSystem)], inspections);
     }
 
     [PgFact]
@@ -2476,12 +2757,14 @@ public class SpaceServiceTests
         await Rig.UntilAsync(() => session.GetInt("solarsystemid") == NextSystem);
 
         session.Close();
-        await Rig.UntilAsync(() => rig.Items.GetAsync(character.ShipId).GetAwaiter().GetResult()!.Flag == ItemFlags.Hangar);
+        await rig.Space.QuiesceAsync();
 
         var ship = (await rig.Items.GetAsync(character.ShipId))!;
-        Assert.Equal(Rig.Station, ship.LocationId);
+        Assert.Equal((long)NextSystem, ship.LocationId);
+        Assert.Equal(Eve.Ships.CharacterShips.InSpaceFlag, ship.Flag);
+        Assert.Equal(NextSystem, (await rig.SpaceItems.GetAsync(character.ShipId))?.SolarSystemId);
         var record = (await rig.Characters.GetAsync(character.CharacterId))!;
-        Assert.Equal((from, Rig.Station), (record.SolarSystemId, record.StationId));
+        Assert.Equal((NextSystem, Rig.Station), (record.SolarSystemId, record.StationId));
         Assert.Contains(rig.Sim.Heard, m => m is SimLeave { Why: LeaveWhy.LoggedOff });
     }
 
@@ -2502,8 +2785,6 @@ public class SpaceServiceTests
         });
         Assert.Equal(["Diamond", "Arrow"], formations.Items.Select(f => JsSemantics.StringValue(((PyTuple)f).Items[0])));
     }
-
-    // ── what the simulation says ─────────────────────────────────────────────
 
     [PgFact]
     public async Task What_the_simulation_says_for_a_session_reaches_that_client_as_the_notification_it_named()
@@ -2591,8 +2872,6 @@ public class SpaceServiceTests
         Assert.Equal(1_000_000_000_042, Id(customArgs["itemID"]));
         Assert.Equal(new PyReal(1234.568), customArgs["distanceMeters"]);
     }
-
-    // ── docking ──────────────────────────────────────────────────────────────
 
     [PgFact]
     public async Task A_dock_is_answered_with_the_time_it_was_accepted_and_with_nothing_when_it_was_not()
@@ -2718,8 +2997,6 @@ public class SpaceServiceTests
         Assert.True(rig.Space.IsInSpace(session));
     }
 
-    // ── losing the ship ──────────────────────────────────────────────────────
-
     [PgFact]
     public async Task When_the_simulation_is_lost_the_ship_docks_at_the_station_the_character_left()
     {
@@ -2748,8 +3025,13 @@ public class SpaceServiceTests
 
         var leave = new SimLeave((ulong)session.SessionId, LeaveWhy.LoggedOff);
         await Rig.UntilAsync(() => rig.Sim.Heard.Contains(leave));
+        await rig.Space.QuiesceAsync();
         Assert.Contains(leave, rig.Sim.Heard);
-        await Rig.UntilAsync(() => rig.Items.GetAsync(character.ShipId).GetAwaiter().GetResult() is { LocationId: Rig.Station });
+        var ship = (await rig.Items.GetAsync(character.ShipId))!;
+        var system = (int)session.GetInt("solarsystemid")!.Value;
+        Assert.Equal((long)system, ship.LocationId);
+        Assert.Equal(Eve.Ships.CharacterShips.InSpaceFlag, ship.Flag);
+        Assert.Equal(system, (await rig.SpaceItems.GetAsync(character.ShipId))?.SolarSystemId);
         Assert.False(rig.Space.IsInSpace(session));
     }
 
@@ -2840,6 +3122,16 @@ public class SpaceServiceTests
     }
 
     [Fact]
+    public void Fleet_role_parser_refuses_values_that_overflow_int32()
+    {
+        Assert.Equal(Eve.Services.Space.FleetStore.SquadCommander,
+            Eve.Services.Space.FleetObjectService.FleetRole(new PyLong(Eve.Services.Space.FleetStore.SquadCommander)));
+        var error = Assert.Throws<Eve.Services.MachoWrappedException>(() =>
+            Eve.Services.Space.FleetObjectService.FleetRole(new PyLong(4_294_967_298L)));
+        Assert.Equal("FLEET_ROLE_OUT_OF_RANGE", error.Error.UserErrorMessage);
+    }
+
+    [Fact]
     public void Fleet_roles_are_limited_to_valid_hierarchy_positions()
     {
         Assert.Equal(25, Eve.Services.Space.FleetStore.MaxWings);
@@ -2856,7 +3148,6 @@ public class SpaceServiceTests
         Assert.False(Eve.Services.Space.FleetStore.IsValidAssignment(Eve.Services.Space.FleetStore.SquadCommander, 10, -1));
         Assert.False(Eve.Services.Space.FleetStore.IsValidAssignment(Eve.Services.Space.FleetStore.Leader, 10, 20));
     }
-
 
     [Fact]
     public void Fleet_warp_formations_decode_settings_and_keep_relative_fleet_positions()
@@ -2958,6 +3249,43 @@ public class SpaceServiceTests
     }
 
     [PgFact]
+    public async Task Fleet_invite_refuses_an_offline_target_before_persisting()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var leaderId = Random.Shared.NextInt64(8_000_000_000_000, 8_999_999_999_999);
+        var inviteeId = leaderId + 1;
+        var leaderSession = new ClientSession(new Sink());
+        leaderSession.Set("charid", new PyLong(leaderId));
+        var store = rig.FleetStore;
+        var fleetId = await store.CreateAsync(leaderId);
+        var wingId = await store.CreateWingAsync(fleetId, leaderId);
+        var squadId = await store.CreateSquadAsync(fleetId, leaderId, wingId);
+        var fleet = new Eve.Services.Space.FleetObjectService(
+            store, () => Rig.ClockMs,
+            sessionForCharacter: id => id == leaderId ? leaderSession : null);
+        try
+        {
+            var error = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+                FleetObjectCallAsync(fleet, fleetId, leaderSession, "Invite",
+                    [new PyLong(inviteeId), new PyLong(wingId), new PyLong(squadId),
+                     new PyInt(Eve.Services.Space.FleetStore.Member)]));
+            Assert.Equal("FleetCandidateOffline", error.Error.UserErrorMessage);
+            var header = Assert.IsType<PyTuple>(Assert.IsType<PyObjectEx>(error.Error.Payload).Header);
+            var arguments = Assert.IsType<PyTuple>(header.Items[1]);
+            var values = Assert.IsType<PyDict>(arguments.Items[1]);
+            var invitee = Assert.IsType<PyTuple>(
+                values.Entries.Single(entry => ((PyStr)entry.Key).Value == "invitee").Value);
+            Assert.Equal(new PyInt(2), invitee.Items[0]);
+            Assert.Equal(new PyLong(inviteeId), invitee.Items[1]);
+            Assert.Null(await store.JoinAsync(fleetId, inviteeId, null));
+        }
+        finally
+        {
+            if (fleetId > 0) await store.DisbandAsync(fleetId, leaderId);
+        }
+    }
+
+    [PgFact]
     public async Task Fleet_invite_join_and_leave_are_persisted_with_the_member_hierarchy()
     {
         await using var rig = await Rig.CreateAsync();
@@ -3000,7 +3328,6 @@ public class SpaceServiceTests
         }
     }
 
-
     [PgFact]
     public async Task Fleet_invites_and_membership_publish_client_notifications_and_session_changes()
     {
@@ -3015,7 +3342,8 @@ public class SpaceServiceTests
         var fleetId = await store.CreateAsync(leaderId);
         var fleet = new Eve.Services.Space.FleetObjectService(
             store, () => Rig.ClockMs,
-            sessionForCharacter: id => id == leaderId ? leaderSession : id == inviteeId ? inviteeSession : null);
+            sessionForCharacter: id => id == leaderId ? leaderSession : id == inviteeId ? inviteeSession : null,
+            memberSkillsForCharacter: (_, _) => Task.FromResult<IReadOnlyList<int>>([0, 0, 0]));
         PyValue Field(PyValue value, string name)
         {
             var dict = value is PyObject keyVal ? Assert.IsType<PyDict>(keyVal.Args) : Assert.IsType<PyDict>(value);
@@ -3049,6 +3377,7 @@ public class SpaceServiceTests
             Assert.Equal(["OnFleetRespawnPointsUpdate", "OnFleetStateChange", "OnFleetJoin"], joinFlowEvents);
             var joinedEvent = Assert.Single(joinNotifications, item => item.Name == "OnFleetJoin");
             Assert.Equal(new PyLong(603), Field(joinedEvent.Args[0], "shipTypeID"));
+            Assert.Equal([0, 0, 0], Assert.IsType<PyList>(Field(joinedEvent.Args[0], "skills")).Items.Cast<PyInt>().Select(level => level.Value));
             Assert.Contains(Events.Of(leaderSession), item => item.Name == "OnFleetJoin");
             Assert.Equal(603, (await store.MemberForCharacterAsync(inviteeId))?.ShipTypeId);
 
@@ -3062,6 +3391,50 @@ public class SpaceServiceTests
         finally
         {
             if (fleetId > 0) await store.DisbandAsync(fleetId, leaderId);
+        }
+    }
+
+    [PgFact]
+    public async Task Fleet_invites_do_not_disclose_other_fleet_membership_to_non_members()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var actorId = Random.Shared.NextInt64(8_000_000_000_000, 8_999_999_999_000);
+        var firstLeaderId = actorId + 1;
+        var secondLeaderId = actorId + 2;
+        var unrelatedId = actorId + 3;
+        var store = rig.FleetStore;
+        var fleetId = await store.CreateAsync(firstLeaderId);
+        var otherFleetId = await store.CreateAsync(secondLeaderId);
+        var actor = new ClientSession(new Sink());
+        actor.Set("charid", new PyLong(actorId));
+        var fleet = new Eve.Services.Space.FleetObjectService(store, () => Rig.ClockMs);
+
+        try
+        {
+            var fractionalFleetResolution = await ((Eve.Services.IService)fleet).CallAsync(
+                new Eve.Services.ServiceCall
+                {
+                    Method = "MachoResolveObject",
+                    Args = [new PyReal(fleetId + 0.5)],
+                    Session = actor
+                });
+            Assert.IsType<PyNone>(fractionalFleetResolution);
+            Assert.Equal(PyBool.False,
+                await FleetObjectCallAsync(fleet, fleetId, actor, "Invite", [new PyLong(secondLeaderId)]));
+            Assert.Equal(PyBool.False,
+                await FleetObjectCallAsync(fleet, fleetId, actor, "Invite", [new PyLong(unrelatedId)]));
+
+            var hiddenMember = Assert.IsType<PyList>(await FleetObjectCallAsync(
+                fleet, fleetId, actor, "MassInvite", [new PyList([new PyLong(secondLeaderId)])]));
+            var unrelated = Assert.IsType<PyList>(await FleetObjectCallAsync(
+                fleet, fleetId, actor, "MassInvite", [new PyList([new PyLong(unrelatedId)])]));
+            Assert.Empty(hiddenMember.Items);
+            Assert.Empty(unrelated.Items);
+        }
+        finally
+        {
+            if (fleetId > 0) await store.DisbandAsync(fleetId, firstLeaderId);
+            if (otherFleetId > 0) await store.DisbandAsync(otherFleetId, secondLeaderId);
         }
     }
 
@@ -3251,7 +3624,6 @@ public class SpaceServiceTests
         }
     }
 
-
     [Fact]
     public void Fleet_added_bound_manager_and_proxy_rpcs_are_registered_for_dispatch()
     {
@@ -3264,7 +3636,7 @@ public class SpaceServiceTests
         string[] boundMethods =
         [
             "SetTakesFleetWarp", "SetAcceptsConduitJumpsValue", "SetAcceptsRegroupValue", "SetOptions",
-            "GetFleetComposition", "SendBroadcast", "GetWings", "UpdateMemberInfo", "SetMotdEx", "GetMotd",
+            "GetFleetComposition", "SendBroadcast", "GetWings", "GetInitState", "UpdateMemberInfo", "SetMotdEx", "GetMotd",
             "GetFleetMaxSize", "LoadFleetSetup", "SetFleetMaxSize", "MassInvite", "Reconnect", "FinishMove"
         ];
         string[] managerMethods =
@@ -3279,7 +3651,7 @@ public class SpaceServiceTests
             "UpdateAdvertAllowedEntities"
         ];
 
-        Assert.Equal(28, boundMethods.Length + managerMethods.Length + proxyMethods.Length);
+        Assert.Equal(29, boundMethods.Length + managerMethods.Length + proxyMethods.Length);
         Assert.All(boundMethods, method => Assert.True(bound.HasMethod(method), method));
         Assert.All(managerMethods, method => Assert.True(manager.HasMethod(method), method));
         Assert.All(proxyMethods, method => Assert.True(proxy.HasMethod(method), method));
@@ -3295,7 +3667,9 @@ public class SpaceServiceTests
         var fleetId = await store.CreateAsync(leader.CharacterId);
         var memberOne = Random.Shared.NextInt64(8_000_000_000_000, 9_000_000_000_000);
         var memberTwo = memberOne + 1;
-        var fleet = new Eve.Services.Space.FleetObjectService(store, () => Rig.ClockMs);
+        var fleet = new Eve.Services.Space.FleetObjectService(
+            store, () => Rig.ClockMs,
+            memberSkillsForCharacter: (_, _) => Task.FromResult<IReadOnlyList<int>>([4, 0, 2]));
 
         try
         {
@@ -3333,6 +3707,43 @@ public class SpaceServiceTests
             Assert.Equal(2, members.Entries.Count);
             Assert.Contains(members.Entries, entry => entry.Key == new PyLong(leader.CharacterId));
             Assert.Contains(members.Entries, entry => entry.Key == new PyLong(memberOne));
+            var leaderState = Assert.IsType<PyObject>(members.Entries.Single(entry => entry.Key == new PyLong(leader.CharacterId)).Value);
+            var leaderFields = Assert.IsType<PyDict>(leaderState.Args).Entries
+                .ToDictionary(entry => JsSemantics.StringValue(entry.Key)!, entry => entry.Value);
+            Assert.Equal([4, 0, 2], Assert.IsType<PyList>(leaderFields["skills"]).Items.Cast<PyInt>().Select(level => level.Value));
+
+            Assert.Equal(PyNone.Instance, await FleetObjectCallAsync(
+                fleet, fleetId, session, "UpdateMemberInfo", [new PyInt(587)]));
+            var updatedLeader = Assert.Single((await store.SnapshotAsync(fleetId))!.Members,
+                member => member.CharacterId == leader.CharacterId);
+            Assert.Equal((long?)587, updatedLeader.ShipTypeId);
+        }
+        finally
+        {
+            if (fleetId > 0) await store.DisbandAsync(fleetId, leader.CharacterId);
+        }
+    }
+
+[PgFact]
+    public async Task Fleet_motd_is_bounded_before_store_and_notification_work()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var leader = await rig.NewCharacterAsync();
+        var session = await rig.SessionAsync(leader);
+        var store = rig.FleetStore;
+        var fleetId = await store.CreateAsync(leader.CharacterId);
+        var fleet = new Eve.Services.Space.FleetObjectService(store, () => Rig.ClockMs);
+
+        try
+        {
+            var before = await store.GetMotdAsync(fleetId);
+            var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+                FleetObjectCallAsync(fleet, fleetId, session, "SetMotdEx",
+                    [new PyWString(new string('x', 4097))]));
+            Assert.Equal(MachoErrors.UserErrorClass, refusal.Error.ClassName);
+            var errorHeader = Assert.IsType<PyTuple>(Assert.IsType<PyObjectEx>(refusal.Error.Payload).Header);
+            Assert.Equal(new PyStr("FleetError"), Assert.IsType<PyTuple>(errorHeader.Items[1]).Items[0]);
+            Assert.Equal(before, await store.GetMotdAsync(fleetId));
         }
         finally
         {
@@ -3424,7 +3835,8 @@ public class SpaceServiceTests
                 var value when value == firstId => firstSession,
                 var value when value == secondId => secondSession,
                 _ => null
-            });
+            },
+            memberSkillsForCharacter: (_, _) => Task.FromResult<IReadOnlyList<int>>([0, 0, 0]));
         try
         {
             Assert.IsType<PyDict>(await store.FleetFinderAdvertOperationAsync(
@@ -3467,11 +3879,42 @@ public class SpaceServiceTests
         var nextSquad = await store.CreateSquadAsync(fleetId, leaderId, nextWing);
         var fleet = new Eve.Services.Space.FleetObjectService(
             store, () => Rig.ClockMs,
-            sessionForCharacter: id => id == leaderId ? leaderSession : id == memberId ? memberSession : null);
+            sessionForCharacter: id => id == leaderId ? leaderSession : id == memberId ? memberSession : null,
+            memberSkillsForCharacter: (_, _) => Task.FromResult<IReadOnlyList<int>>([0, 0, 0]));
         try
         {
+            var tooManyMembers = Enumerable.Range(1, Eve.Services.Space.FleetStore.MaxMembers + 1)
+                .Select(id => (PyValue)new PyLong(leaderId + 100 + id)).ToArray();
+            await Assert.ThrowsAsync<MachoWrappedException>(() => FleetObjectCallAsync(
+                fleet, fleetId, leaderSession, "MassInvite",
+                [new PyList(tooManyMembers), new PyLong(firstWing), new PyLong(firstSquad),
+                 new PyInt(Eve.Services.Space.FleetStore.Member)]));
+            await Assert.ThrowsAsync<MachoWrappedException>(() => FleetObjectCallAsync(
+                fleet, fleetId, leaderSession, "MassMoveMembers",
+                [new PyList(tooManyMembers), new PyLong(firstWing), new PyLong(firstSquad),
+                 new PyInt(Eve.Services.Space.FleetStore.Member)]));
+            await Assert.ThrowsAsync<MachoWrappedException>(() => FleetObjectCallAsync(
+                fleet, fleetId, leaderSession, "MassInvite",
+                [new PyList([new PyLong(memberId), new PyLong(-1)]), new PyLong(firstWing),
+                 new PyLong(firstSquad), new PyInt(Eve.Services.Space.FleetStore.Member)]));
+            await Assert.ThrowsAsync<MachoWrappedException>(() => FleetObjectCallAsync(
+                fleet, fleetId, leaderSession, "MassInvite",
+                [new PyList([new PyReal(memberId + 0.5)]), new PyLong(firstWing),
+                 new PyLong(firstSquad), new PyInt(Eve.Services.Space.FleetStore.Member)]));
+            await Assert.ThrowsAsync<MachoWrappedException>(() => FleetObjectCallAsync(
+                fleet, fleetId, leaderSession, "MassInvite",
+                [new PyList([new PyStr(memberId.ToString(System.Globalization.CultureInfo.InvariantCulture))]),
+                 new PyLong(firstWing), new PyLong(firstSquad), new PyInt(Eve.Services.Space.FleetStore.Member)]));
+            Assert.Equal(PyBool.False, await FleetObjectCallAsync(
+                fleet, fleetId, leaderSession, "Invite", [new PyReal(memberId + 0.5)]));
+            await Assert.ThrowsAsync<MachoWrappedException>(() => FleetObjectCallAsync(
+                fleet, fleetId, leaderSession, "MassInvite",
+                [new PyStr("not-a-list"), new PyLong(firstWing), new PyLong(firstSquad),
+                 new PyInt(Eve.Services.Space.FleetStore.Member)]));
+            Assert.Empty(Events.Of(memberSession));
+
             var inviteResult = await FleetObjectCallAsync(fleet, fleetId, leaderSession, "MassInvite",
-                [new PyList([new PyLong(memberId), new PyLong(leaderId)]),
+                [new PyList([new PyLong(memberId), new PyLong(memberId), new PyLong(leaderId), new PyLong(memberId)]),
                  new PyLong(firstWing), new PyLong(firstSquad), new PyInt(Eve.Services.Space.FleetStore.Member)]);
             Assert.Equal(new PyList([new PyLong(memberId)]), inviteResult);
             var inviteEvent = Assert.Single(Events.Of(memberSession));
@@ -3484,6 +3927,12 @@ public class SpaceServiceTests
             Assert.Equal(firstSquad, memberSession.GetInt("squadid"));
             Events.Of(memberSession);
             Events.Of(leaderSession);
+            await Assert.ThrowsAsync<MachoWrappedException>(() => FleetObjectCallAsync(
+                fleet, fleetId, leaderSession, "MassMoveMembers",
+                [new PyList([new PyLong(memberId), new PyLong(-1)]), new PyLong(nextWing),
+                 new PyLong(nextSquad), new PyInt(Eve.Services.Space.FleetStore.Member)]));
+            Assert.Equal(firstWing, memberSession.GetInt("wingid"));
+            Assert.Equal(firstSquad, memberSession.GetInt("squadid"));
 
             await FleetObjectCallAsync(fleet, fleetId, leaderSession, "MoveMember",
                 [new PyLong(memberId), new PyLong(nextWing), new PyLong(nextSquad),
@@ -3517,7 +3966,7 @@ public class SpaceServiceTests
     [PgFact]
     public async Task Fleet_finder_joins_create_invites_or_approval_requests_with_client_notifications()
     {
-        await using var rig = await Rig.CreateAsync();
+        await using var rig = await Rig.CreateAsync(maxFleetJoinRequests: 1);
         var leaderId = Random.Shared.NextInt64(8_000_000_000_000, 8_999_999_999_999);
         var leaderSession = new ClientSession(new Sink());
         leaderSession.Set("charid", new PyLong(leaderId));
@@ -3528,14 +3977,17 @@ public class SpaceServiceTests
         leaderSession.Set("solarsystemid2", new PyLong(30000142));
         var approvedApplicantId = leaderId + 1;
         var openApplicantId = leaderId + 2;
+        var requestLimitApplicantId = leaderId + 3;
         var approvedApplicant = new ClientSession(new Sink());
         var openApplicant = new ClientSession(new Sink());
+        var requestLimitApplicant = new ClientSession(new Sink());
         approvedApplicant.Set("charid", new PyLong(approvedApplicantId));
         approvedApplicant.Set("corpid", new PyLong(980000123));
         approvedApplicant.Set("allianceid", new PyLong(990000123));
         approvedApplicant.Set("warfactionid", new PyLong(990000124));
         approvedApplicant.Set("securityStatus", new PyReal(0.75));
         openApplicant.Set("charid", new PyLong(openApplicantId));
+        requestLimitApplicant.Set("charid", new PyLong(requestLimitApplicantId));
         var store = rig.FleetStore;
         var fleetId = await store.CreateAsync(leaderId);
         var wingId = await store.CreateWingAsync(fleetId, leaderId);
@@ -3545,12 +3997,14 @@ public class SpaceServiceTests
             var value when value == leaderId => leaderSession,
             var value when value == approvedApplicantId => approvedApplicant,
             var value when value == openApplicantId => openApplicant,
+            var value when value == requestLimitApplicantId => requestLimitApplicant,
             _ => null
         };
         Eve.Services.IService proxy = new Eve.Services.Space.FleetProxyService(
             store, store.FleetFinderAdvertOperationAsync, SessionForCharacter);
         var fleet = new Eve.Services.Space.FleetObjectService(
-            store, () => Rig.ClockMs, sessionForCharacter: SessionForCharacter);
+            store, () => Rig.ClockMs, sessionForCharacter: SessionForCharacter,
+            memberSkillsForCharacter: (_, _) => Task.FromResult<IReadOnlyList<int>>([0, 0, 0]));
         var callId = 0;
         async Task<PyValue> ProxyCall(string method, ClientSession caller, params PyValue[] args) =>
             await proxy.CallAsync(new Eve.Services.ServiceCall
@@ -3605,6 +4059,8 @@ public class SpaceServiceTests
             Assert.Equal(new PyLong(990000123), Field(requestEvent.Args[0], "allianceID"));
             Assert.Equal(new PyLong(990000124), Field(requestEvent.Args[0], "warFactionID"));
             Assert.Equal(new PyReal(0.75), Field(requestEvent.Args[0], "securityStatus"));
+            await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(() =>
+                Apply(requestLimitApplicant, autoAccept: false));
 
             var requests = Assert.IsType<PyDict>(await FleetObjectCallAsync(
                 fleet, fleetId, leaderSession, "GetJoinRequests", []));
@@ -3977,6 +4433,94 @@ public class SpaceServiceTests
     }
 
     [PgFact]
+    public async Task Fleet_watchlist_updates_keep_only_members_and_clear_removed_damage_targets()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var store = rig.FleetStore;
+        var leader = await rig.NewCharacterAsync("Fleet Watch Leader", 31);
+        var member = await rig.NewCharacterAsync("Fleet Watch Member", 32);
+        var outsider = await rig.NewCharacterAsync("Fleet Watch Outsider", 33);
+        var session = await rig.SessionAsync(leader);
+        var fleetId = await store.CreateAsync(leader.CharacterId);
+        try
+        {
+            var wingId = await store.CreateWingAsync(fleetId, leader.CharacterId);
+            var squadId = await store.CreateSquadAsync(fleetId, leader.CharacterId, wingId);
+            Assert.True(await store.InviteAsync(fleetId, leader.CharacterId, member.CharacterId, wingId, squadId, Eve.Services.Space.FleetStore.Member));
+            Assert.NotNull(await store.JoinAsync(fleetId, member.CharacterId));
+
+            Eve.Services.IService manager = new Eve.Services.Space.FleetManagerService(store);
+            async ValueTask<PyValue> Call(string method, params PyValue[] args) => await manager.CallAsync(new ServiceCall
+            {
+                Method = method,
+                Args = args,
+                Session = session,
+            });
+            static PyObjectEx Set(params PyValue[] values) => new(
+                ObjectExKind.Ex1,
+                new PyTuple([new PyToken("__builtin__.set"), new PyList([new PyList(values)])]),
+                [],
+                []);
+
+            Assert.Equal(PyBool.True, await Call("AddToWatchlist",
+                new PyList([new PyLong(member.CharacterId), new PyLong(outsider.CharacterId)]),
+                Set(new PyLong(member.CharacterId))));
+            Assert.Equal([member.CharacterId], ((PyList)session.Get("fleetWatchlist")!).Items.Cast<PyLong>().Select(value => value.Value));
+
+            Assert.Equal(PyBool.True, await Call("RegisterForDamageUpdates",
+                Set(new PyLong(member.CharacterId), new PyLong(outsider.CharacterId))));
+            Assert.Equal([member.CharacterId], ((PyList)session.Get("fleetWatchlist")!).Items.Cast<PyLong>().Select(value => value.Value));
+
+            Assert.Equal(PyBool.True, await Call("RemoveFromWatchlist", new PyLong(member.CharacterId),
+                Set(new PyLong(member.CharacterId), new PyLong(outsider.CharacterId))));
+            Assert.Empty(((PyList)session.Get("fleetWatchlist")!).Items);
+
+            async Task AssertRefused(string method, params PyValue[] args)
+            {
+                var error = await Assert.ThrowsAsync<MachoWrappedException>(async () => await Call(method,args));
+                Assert.Equal("FleetError",error.Error.UserErrorMessage);
+                Assert.Empty(((PyList)session.Get("fleetWatchlist")!).Items);
+            }
+            await AssertRefused("AddToWatchlist",new PyStr("not-a-list"),new PyList([]));
+            await AssertRefused("RegisterForDamageUpdates",new PyList(
+                Enumerable.Range(1,501).Select(id => (PyValue)new PyLong(id)).ToArray()));
+            await AssertRefused("RegisterForDamageUpdates",new PyList([new PyReal(1.5)]));
+            await AssertRefused("RemoveFromWatchlist",new PyLong(-1),new PyList([]));
+            await AssertRefused("RemoveFromWatchlist",new PyStr("123"),new PyList([]));
+        }
+        finally
+        {
+            if (fleetId > 0) await store.DisbandAsync(fleetId, leader.CharacterId);
+        }
+    }
+
+    [PgFact]
+    public async Task Fleet_watchlist_mutations_reject_a_caller_without_fleet_membership()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var pilot = await rig.NewCharacterAsync("Fleetless Watchlist Pilot", 34);
+        var session = await rig.SessionAsync(pilot);
+        Eve.Services.IService manager = new Eve.Services.Space.FleetManagerService(rig.FleetStore);
+        async ValueTask<PyValue> Call(string method, params PyValue[] args) => await manager.CallAsync(new ServiceCall
+        {
+            Method = method,
+            Args = args,
+            Session = session,
+        });
+
+        foreach (var (method, args) in new (string Method, PyValue[] Args)[]
+        {
+            ("AddToWatchlist", [new PyList([]), new PyList([])]),
+            ("RemoveFromWatchlist", [new PyLong(pilot.CharacterId), new PyList([])]),
+            ("RegisterForDamageUpdates", [new PyList([])]),
+        })
+        {
+            var error = await Assert.ThrowsAsync<MachoWrappedException>(async () => await Call(method, args));
+            Assert.Equal("FleetNotInFleet", error.Error.UserErrorMessage);
+        }
+    }
+
+    [PgFact]
     public async Task Fleet_object_init_advert_callback_persists_through_fleet_store()
     {
         await using var rig = await Rig.CreateAsync();
@@ -4198,6 +4742,5 @@ public class SpaceServiceTests
             }));
         return reply.Items[1];
     }
-
 
 }

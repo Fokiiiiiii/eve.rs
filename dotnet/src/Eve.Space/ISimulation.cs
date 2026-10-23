@@ -61,6 +61,45 @@ public interface ISimulation
     /// <summary>Puts a ship in a solar system. Returns null when it was done and the reason when it was not; throws <see cref="SimUnavailableException"/> when the simulation cannot be reached.</summary>
     Task<string?> EnterAsync(SimEnter enter, CancellationToken cancellationToken = default);
 
+    /// <summary>Creates or refreshes one private, static-free Abyssal room scene from host-verified location and mechanics.</summary>
+    Task<string?> EnsureAbyssalSceneAsync(SimEnsureAbyssalScene scene, CancellationToken cancellationToken = default);
+    Task<string?> EnsureAbyssalSceneObjectAsync(SimEnsureAbyssalSceneObject sceneObject, CancellationToken cancellationToken = default);
+    Task<string?> EnsureAbyssalRewardCacheAsync(SimEnsureAbyssalRewardCache cache, CancellationToken cancellationToken = default);
+    Task<string?> EnsureAbyssalLootContainerAsync(SimEnsureAbyssalLootContainer container, CancellationToken cancellationToken = default);
+    Task<string?> EnsureAbyssalEnvironmentObjectAsync(SimEnsureAbyssalEnvironmentObject environment, CancellationToken cancellationToken = default);
+    Task<string?> RefreshAbyssalNpcAsync(SimRefreshAbyssalNpc npc, CancellationToken cancellationToken = default);
+
+    /// <summary>Moves one resident participant and its live simulation state between rooms of the same Abyssal run.</summary>
+    Task<string?> MoveAbyssalParticipantAsync(SimMoveAbyssalParticipant move, CancellationToken cancellationToken = default);
+
+    /// <summary>Moves across the Abyssal boundary and runs the client SessionChange after sim acceptance but before its movement notifications.</summary>
+    Task<string?> MoveAbyssalParticipantInOrderAsync(
+        SimMoveAbyssalParticipant move,
+        Action<SimMoveAbyssalParticipantReply> beforeFollowingMessages,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Reads the authoritative pose of a resident ship from its expected private scene.</summary>
+    Task<SimGetAbyssalParticipantPoseReply> GetAbyssalParticipantPoseAsync(
+        SimGetAbyssalParticipantPose request, CancellationToken cancellationToken = default);
+
+    /// <summary>Rebinds a reconnecting session to the already resident ship and room of its Abyssal run.</summary>
+    Task<string?> RebindAbyssalSessionAsync(SimRebindAbyssalSession rebind, CancellationToken cancellationToken = default);
+
+    /// <summary>Removes a private room after its NPCs, participants and loot containers have been settled.</summary>
+    Task<string?> RemoveAbyssalSceneAsync(SimRemoveAbyssalScene scene, CancellationToken cancellationToken = default);
+
+    /// <summary>Materializes or confirms a persisted public Abyssal trace and publishes its AddBalls2 to visible sessions.</summary>
+    Task<SimEnsureAbyssalTracePublishedReply> EnsureAbyssalTracePublishedAsync(
+        SimEnsureAbyssalTracePublished trace, CancellationToken cancellationToken = default);
+
+    /// <summary>Removes a public Abyssal trace from its solar-system scene; an already-absent item is an explicit idempotent result.</summary>
+    Task<SimRemoveAbyssalTraceReply> RemoveAbyssalTraceAsync(
+        SimRemoveAbyssalTrace trace, CancellationToken cancellationToken = default);
+
+    /// <summary>Removes a settled participant by resident ship identity, without requiring a live client session.</summary>
+    Task<SimRemoveAbyssalParticipantReply> RemoveAbyssalParticipantAsync(
+        SimRemoveAbyssalParticipant participant, CancellationToken cancellationToken = default);
+
     Task SetHeatProfileAsync(ulong sessionId, SimHeatProfile profile, CancellationToken cancellationToken = default);
 
     Task SetModuleOverheatAsync(ulong sessionId, long moduleId, bool active, CancellationToken cancellationToken = default);
@@ -128,7 +167,6 @@ public interface ISimulation
     /// <summary>Returns the host-calculated repair amount for one pending mutadaptive remote-repair cycle.</summary>
     void RemoteRepairCycleResult(SimRemoteRepairCycleResult result);
 
-    /// <summary>The host's decision for a module work cycle (ADR 0013); the module is parked until it arrives.</summary>
     void ModuleWorkResult(SimModuleWorkResult result);
 
     /// <summary>Returns the Host-authorized candidate subset for one controlled-structure point-defense cycle.</summary>
@@ -180,6 +218,8 @@ public interface ISimulation
     void PlaceAnalysisBeacon(SimPlaceAnalysisBeacon beacon);
     /// <summary>The host sets a CRAB's state (protocol 61).</summary>
     void SetAnalysisBeaconState(long deployableId, SimAnalysisBeaconState state);
+    /// <summary>The host sets a dynamic field of a deployable's slim item (protocol 76).</summary>
+    void SetSlimField(long itemId, string fieldName, SimSlimValue value);
     /// <summary>Puts a Mobile Cynosural Inhibitor in space where its pilot dropped it, anchored or not (protocol 50).</summary>
     void PlaceInhibitor(SimPlaceInhibitor inhibitor);
     /// <summary>Puts a Mobile Cynosural Beacon in space where its pilot dropped it, anchored or not (protocol 58).</summary>
@@ -191,6 +231,15 @@ public interface ISimulation
 
     /// <summary>Puts a deadspace pocket of a dungeon in its system's scene at its origin (protocol 74).</summary>
     void PlaceDeadspacePocket(SimPlaceDeadspacePocket pocket);
+
+    /// <summary>Puts an acceleration gate of a dungeon room in its system's space (protocol 75).</summary>
+    void PlaceAccelerationGate(SimPlaceAccelerationGate gate);
+
+    /// <summary>Puts a battlefield's capture point in its system's space (protocol 77).</summary>
+    void PlaceCapturePoint(SimPlaceCapturePoint point);
+
+    /// <summary>Puts a battlefield's scoreboard in its system's space (protocol 78).</summary>
+    void PlaceBattlefieldScoreboard(SimPlaceBattlefieldScoreboard scoreboard);
 
     /// <summary>Removes the structure-owned cyno beacon from a specific solar-system scene.</summary>
     void RemoveCynoBeacon(int solarSystemId, long structureBeaconId);

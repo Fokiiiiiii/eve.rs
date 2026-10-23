@@ -1,5 +1,3 @@
-//! Slim items: what the client is told a ball is (its name, type, owner, and what its kind shows).
-
 use eve_marshal::{Descriptor, PackedColumn, PackedRow, Value, dbtype};
 
 use crate::security;
@@ -120,7 +118,17 @@ pub fn body_entries(system: &SolarSystem, body: &Body) -> Entries {
         BodyKind::Stargate => stargate_fields(system, body, &mut entries),
         BodyKind::Structure => structure_fields(body, &mut entries),
         BodyKind::Wormhole => wormhole_fields(body, &mut entries),
-        BodyKind::Planet | BodyKind::Moon | BodyKind::Belt | BodyKind::Star => {}
+        BodyKind::AbyssalConduit => {
+            if let Detail::AbyssalConduit { is_open, .. } = &body.detail {
+                entries.push(("isAbyssGateOpen", Value::Bool(*is_open)));
+                entries.push(("animationState", int(if *is_open { 1 } else { 0 })));
+            }
+        }
+        BodyKind::Planet
+        | BodyKind::Moon
+        | BodyKind::Belt
+        | BodyKind::Star
+        | BodyKind::AbyssalEnvironment => {}
     }
     entries
 }
@@ -133,7 +141,6 @@ fn wormhole_fields(body: &Body, entries: &mut Entries) {
     entries.push(("otherSolarSystemClass", int(i64::from(*destination_class))));
 }
 
-/// A structure's slim fields (the client's structure bracket and `structure.py` read them): its owner, its state and upkeep, its timer
 /// `(start, end, paused)`, its unanchoring time and whether it is repaired.
 fn structure_fields(body: &Body, entries: &mut Entries) {
     let Detail::Structure { corporation_id, alliance_id, status, planet_id } = &body.detail else {
@@ -159,7 +166,6 @@ fn structure_fields(body: &Body, entries: &mut Entries) {
     entries.push(("repairing", status.repairing.map_or(Value::None, Value::Bool)));
 }
 
-/// The entries of a ship's slim item: a player's, or an NPC's (which has no name and ends with the limits of its owner's reactions).
 pub fn ship_entries(ship: &Ship) -> Entries {
     match &ship.npc {
         Some(NpcIdentity { drone: Some(link), .. }) => drone_entries(&ship.spec, link),

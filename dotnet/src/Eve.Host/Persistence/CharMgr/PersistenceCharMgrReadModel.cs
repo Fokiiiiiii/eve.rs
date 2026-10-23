@@ -44,7 +44,7 @@ public sealed class PersistenceCharMgrReadModel(
     Func<string, string, JsonNode?, WriteResult>? writePath = null,
     Func<string, string, WriteResult>? removePath = null)
 {
-    // ponytail: serialize personal-data read-modify-write, including the shared nextNoteID; split by owner plus a note-ID allocator if throughput matters.
+
     private readonly SemaphoreSlim _updateGate = new(1, 1);
     private const string DefaultFoldersLabel = "S:Folders";
     private const string DefaultFoldersNote = "1::F::0::Main|";
@@ -122,6 +122,7 @@ public sealed class PersistenceCharMgrReadModel(
         {
             NextOwnerNoteId = nextNoteId > 0 ? nextNoteId : null,
             CharacterSettings = ReadCharacterSettings(character?["characterSettings"]),
+            NextContactLabelId = Number((character?["personalContactLabelMeta"] as JsonObject)?["nextLabelID"]),
         };
     }
 
@@ -196,6 +197,37 @@ public sealed class PersistenceCharMgrReadModel(
                 ["relationshipID"] = contact.RelationshipId,
                 ["labelMask"] = contact.LabelMask,
             });
+        }
+    }
+
+    var oldLabels = before.Labels;
+    var newLabels = after.Labels;
+    foreach (var labelId in oldLabels.Keys.Union(newLabels.Keys))
+    {
+        var path = $"/{owner}/personalContactLabels/{labelId}";
+        if (!newLabels.TryGetValue(labelId, out var label))
+        {
+            RemovePath("characters", path);
+        }
+        else if (!oldLabels.TryGetValue(labelId, out var old) || old != label)
+        {
+            WritePath("characters", path, new JsonObject
+            {
+                ["name"] = label.Name,
+                ["color"] = label.Color,
+            });
+        }
+    }
+
+    if (before.NextContactLabelId != after.NextContactLabelId)
+    {
+        if (after.NextContactLabelId is > 0)
+        {
+            WritePath("characters", $"/{owner}/personalContactLabelMeta/nextLabelID", JsonValue.Create(after.NextContactLabelId.Value));
+        }
+        else
+        {
+            RemovePath("characters", $"/{owner}/personalContactLabelMeta/nextLabelID");
         }
     }
 

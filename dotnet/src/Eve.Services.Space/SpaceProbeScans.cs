@@ -371,7 +371,6 @@ public sealed class SpaceProbeScans
     private static bool SamePlace(double[] a, double[] b) =>
         Math.Abs(a[0] - b[0]) < 0.001 && Math.Abs(a[1] - b[1]) < 0.001 && Math.Abs(a[2] - b[2]) < 0.001;
 
-    /// <summary>The probes a request names, with the position and range step the client gives (its <c>util.KeyVal</c> of probe fields).</summary>
     private static Dictionary<long, ProbeRequest> ReadProbeRequests(PyValue? value)
     {
         var asked = new Dictionary<long, ProbeRequest>();

@@ -2,7 +2,11 @@
 //!
 //! The scene has no clock of its own. Every call says what time it is (a FILETIME) and a ship's motion is worked out
 //! from the time it was last settled to that time, so the same calls at the same times give the same bytes.
+mod abyssal;
+mod abyssal_deployment;
+mod abyssal_environment;
 mod bridge;
+mod gate_transit;
 
 /// The most passengers one conduit jump takes (the Black Ops limit is 30; the array leaves room for the carriers).
 pub const MAX_CONDUIT_PASSENGERS: usize = 64;
@@ -42,6 +46,8 @@ use crate::flight::{Flight, Milestone};
 use crate::gate;
 
 use crate::health::Condition;
+
+use crate::link::AbyssalSceneSpec;
 
 use crate::modules::Modules;
 
@@ -190,6 +196,13 @@ pub enum Command {
         passenger_count: u8,
         passengers: [i64; MAX_CONDUIT_PASSENGERS],
     },
+    /// Walk through an acceleration gate of a dungeon room into another room of the same site (code 34, protocol 75): the ship must be within the gate's
+    /// interaction reach; it warps to `destination`, the entry point of the room, with its modules stopped and its locks cleared (EVE.js
+    /// `activateAccelerationGateForSession`).
+    AccelerationGateTransit {
+        gate_id: i64,
+        destination: Vec3,
+    },
 }
 
 impl Command {
@@ -209,6 +222,7 @@ impl Command {
             Self::OpenBridge { .. } => 30,
             Self::BridgeJump { .. } => 31,
             Self::ConduitJump { .. } => 32,
+            Self::AccelerationGateTransit { .. } => 34,
             Self::WarpToPoint { .. } => 21,
             Self::ResolveWarpTarget { .. } => 22,
             Self::PositionOf { .. } => 23,
@@ -232,6 +246,13 @@ pub enum Departure {
 /// What the scene has to tell the host.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Out {
+    AbyssalFieldMembership {
+        scene: crate::link::SceneKey,
+        source_item_id: i64,
+        ship_id: i64,
+        session_id: u64,
+        inside: bool,
+    },
     /// A notification for the player's client; the host numbers it and sends it.
     Notify { session: SessionId, name: &'static str, id_type: &'static str, args: Vec<Value> },
     /// A command was accepted, after the update it made (a `Dock` is answered with the time it was accepted at).
@@ -335,7 +356,7 @@ pub enum Out {
         bonus_per_cycle: f64,
         bonus_max: f64,
     },
-    /// Fresh candidates for one controlled-structure damage pulse or chain hop; Host returns an owner-corp-approved subset using the complete correlation tuple.
+
     StructureDamageCandidatesRequest {
         session: SessionId,
         structure_id: i64,
@@ -369,6 +390,7 @@ pub enum Out {
         target_id: i64,
         cycle_id: u64,
         command: u8,
+        charge_type_id: i32,
         mining_amount_m3: f64,
         waste_multiplier: f64,
         waste_probability: f64,
@@ -434,7 +456,8 @@ impl Out {
             // a structure's notice is for the host, not a pilot: no pilot has this session
             Out::StructureDamaged { .. }
             | Out::SimDamageableEntityUpserted { .. }
-            | Out::SimDamageableEntityRemoved { .. } => 0,
+            | Out::SimDamageableEntityRemoved { .. }
+            | Out::AbyssalFieldMembership { .. } => 0,
         }
     }
 }
@@ -559,6 +582,7 @@ pub(crate) struct Pilot {
     /// The moment the ship's position and velocity are those of.
     settled_at: i64,
     docking: Option<PendingDock>,
+    docking_approach: Option<i64>,
     /// The warp the ship is in, from the command until it is at rest again.
     pub(crate) flight: Option<Flight>,
     /// What the ship's last warp was to (the body), kept until the next warp: where it came to rest is judged against it.
@@ -577,6 +601,7 @@ pub(crate) struct Pilot {
     pub(crate) sees: BTreeSet<SessionId>,
     /// The wrecks this pilot has been told of and not told to forget.
     pub(crate) sees_wrecks: BTreeSet<i64>,
+    pub(crate) sees_abyssal_traces: BTreeSet<i64>,
     pub(crate) sees_asteroids: BTreeSet<i64>,
     /// What the ship has locked and is locking.
     pub(crate) targeting: Targeting,
@@ -614,6 +639,7 @@ impl Pilot {
             ship,
             settled_at: now,
             docking: None,
+            docking_approach: None,
             flight: None,
             warp_target: None,
             jump: None,
@@ -623,6 +649,7 @@ impl Pilot {
             entered,
             sees: BTreeSet::new(),
             sees_wrecks: BTreeSet::new(),
+            sees_abyssal_traces: BTreeSet::new(),
             sees_asteroids: BTreeSet::new(),
             targeting: Targeting::default(),
             modules,
@@ -686,6 +713,7 @@ pub(crate) struct ControlledStructureObserver {
     pub(crate) bound: bool,
     pub(crate) sees: BTreeSet<SessionId>,
     pub(crate) sees_wrecks: BTreeSet<i64>,
+    pub(crate) sees_abyssal_traces: BTreeSet<i64>,
     pub(crate) sees_asteroids: BTreeSet<i64>,
 }
 
@@ -695,6 +723,20 @@ pub(crate) struct ControlledStructureModules {
     pub(crate) spec: crate::ship::ShipSpec,
     pub(crate) modules: crate::modules::Modules,
     pub(crate) targeting: crate::targeting::Targeting,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct AbyssalNpcSpawnReceipt {
+    pub(crate) content_id: String,
+    pub(crate) type_id: i32,
+    pub(crate) owner_id: i64,
+    pub(crate) destroyed: bool,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct AbyssalRewardCacheReceipt {
+    pub(crate) placement: crate::link::AbyssalRewardCachePlacement,
+    pub(crate) destruction: Option<Out>,
 }
 
 /// One solar system with the ships in it.
@@ -741,6 +783,8 @@ pub struct Scene {
     pub(crate) brains: Option<crate::brains::Brains>,
     /// The wrecks in the scene, by item id (`crate::wreck`).
     pub(crate) wrecks: BTreeMap<i64, Wreck>,
+    /// Public Abyssal trace items, separate from private-run entities and from wrecks.
+    pub(crate) abyssal_traces: BTreeMap<i64, crate::link::AbyssalTrace>,
     /// Mineable asteroid rocks in this system; their remaining stock is authoritative in the host inventory.
     pub(crate) asteroids: BTreeMap<i64, crate::wreck::Asteroid>,
     /// How many wrecks of ships that died in this scene have been given an id by it (`crate::wreck::TRANSIENT_ID_BASE`).
@@ -765,6 +809,19 @@ pub struct Scene {
     pub(crate) structure_health: BTreeMap<i64, crate::health::StructureHealth>,
     /// Module capacitor and targeting state keyed by physical structure id.
     pub(crate) structure_modules: BTreeMap<i64, ControlledStructureModules>,
+    /// Host-authoritative mechanics for a private Abyssal room scene.
+    pub(crate) abyssal: Option<AbyssalSceneSpec>,
+    /// NPCs materialized by stable content/run/ship identity, retained as tombstones after destruction.
+    pub(crate) abyssal_npc_spawn_receipts: HashMap<i64, AbyssalNpcSpawnReceipt>,
+    pub(crate) abyssal_participant_deaths: HashMap<i64, SessionId>,
+    pub(crate) abyssal_reward_caches: HashMap<i64, AbyssalRewardCacheReceipt>,
+    pub(crate) abyssal_loot_receipts: HashMap<i64, (String, crate::link::WreckPlacement)>,
+    pub(crate) abyssal_environment_objects: BTreeMap<i64, abyssal_environment::EnvironmentalRuntime>,
+    pub(crate) abyssal_field_memberships: BTreeMap<(i64, i64), SessionId>,
+    /// Next boundary tick in FILETIME units; the profile itself supplies its cadence.
+    pub(crate) abyssal_boundary_at: Option<i64>,
+    /// Continuous time outside the Abyssal border, by ship ID.
+    pub(crate) abyssal_boundary_exposure_ms: HashMap<i64, i64>,
     /// The Pochven population of the system (`crate::pochven_population`).
     pub(crate) pochven: crate::pochven_population::Population,
 }
@@ -775,6 +832,7 @@ pub(crate) struct Widow {
     pub(crate) bound: bool,
     pub(crate) sees: BTreeSet<SessionId>,
     pub(crate) sees_wrecks: BTreeSet<i64>,
+    pub(crate) sees_abyssal_traces: BTreeSet<i64>,
     pub(crate) sees_asteroids: BTreeSet<i64>,
 }
 
@@ -809,6 +867,7 @@ impl Scene {
             drone_threats: BTreeMap::new(),
             brains: None,
             wrecks: BTreeMap::new(),
+            abyssal_traces: BTreeMap::new(),
             asteroids: BTreeMap::new(),
             wreck_sequence: 0,
             destroyed: Vec::new(),
@@ -819,6 +878,15 @@ impl Scene {
             sim_damageable_entities: BTreeSet::new(),
             structure_health: BTreeMap::new(),
             structure_modules: BTreeMap::new(),
+            abyssal: None,
+            abyssal_npc_spawn_receipts: HashMap::new(),
+            abyssal_participant_deaths: HashMap::new(),
+            abyssal_reward_caches: HashMap::new(),
+            abyssal_loot_receipts: HashMap::new(),
+            abyssal_environment_objects: BTreeMap::new(),
+            abyssal_field_memberships: BTreeMap::new(),
+            abyssal_boundary_at: None,
+            abyssal_boundary_exposure_ms: HashMap::new(),
             pochven: Default::default(),
             wreck_catalog: None,
             field_capital_size_by_type: None,
@@ -885,10 +953,12 @@ impl Scene {
     /// Whether no player or persistent structure state keeps this scene; NPCs alone do not.
     pub fn is_empty(&self) -> bool {
         // a scene with a wormhole end in it is kept: the host placed the end for a ship that is coming (the poll drops empty scenes)
-        self.widowed.is_empty()
+        self.abyssal.is_none()
+            && self.widowed.is_empty()
             && self.controlled_structures.is_empty()
             && self.structure_health.is_empty()
             && self.pilots.keys().all(|session| crate::npc::is_npc_session(*session))
+            && self.abyssal_traces.is_empty()
             && !self.system.bodies.iter().any(|body| body.kind == BodyKind::Wormhole)
     }
 

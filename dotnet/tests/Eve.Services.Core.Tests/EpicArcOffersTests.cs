@@ -4,10 +4,9 @@ using Eve.Services.Core;
 
 namespace Eve.Services.Core.Tests;
 
-/// <summary>The offer rule of the epic arcs, from a synthetic arc shaped like CCP's <c>epicArcs</c> record (a fork, a branch of another agent, a terminal).</summary>
 public sealed class EpicArcOffersTests
 {
-    // 9101 (agent 5001, a kill) forks to 9102 (agent 5001) and 9103 (agent 5002); both lead to the terminal 9104 (agent 5001).
+
     private const string Arc = """
         {"_key": 9001, "name": {"en": "Fixture Arc"}, "arcRestartInterval": 129600,
          "missions": [
@@ -18,7 +17,6 @@ public sealed class EpicArcOffersTests
          ]}
         """;
 
-    // A second arc of the same agent, with a lower mission ID than the first: the lowest offerable ID wins.
     private const string OtherArc = """
         {"_key": 9002, "name": {"en": "Other Fixture Arc"}, "arcRestartInterval": 129600,
          "missions": [{"_key": 9050, "agentID": 5001, "nextMissions": []}]}
@@ -107,7 +105,8 @@ public sealed class EpicArcOffersTests
     public void The_committed_site_statuses_hold_back_the_generic_arc_29_site_and_the_missing_arc_132_sites()
     {
         Assert.Equal(MissionSiteStatus.Generic, MissionSiteStatus.Committed[14117]);
-        Assert.Equal(MissionSiteStatus.Missing, MissionSiteStatus.Committed[17183]);
+        foreach (var missionId in new long[] { 17183, 17184, 17185, 17186 })
+            Assert.Equal(MissionSiteStatus.Missing, MissionSiteStatus.Committed[missionId]);
         Assert.Equal(182, MissionSiteStatus.Committed.Count);
         Assert.Equal(0, MissionSiteStatus.Committed.Count(pair => pair.Value == MissionSiteStatus.Specific));
     }

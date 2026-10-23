@@ -2,6 +2,7 @@ using Eve.Characters;
 using Eve.Inventory;
 using Eve.Macho;
 using Eve.Marshal;
+using Eve.Planets;
 using Eve.Space;
 
 namespace Eve.Services.Space.Tests;
@@ -26,7 +27,6 @@ public class SpaceContainerTests
         Events.Of(session);
         return new Flying(rig, session, character, stack.Id);
     }
-
 
     private static async Task<long> DroneInSpaceAsync(Rig rig, long characterId, int system, int droneTypeId)
     {
@@ -162,6 +162,31 @@ public class SpaceContainerTests
     }
 
     [PgFact]
+    public async Task A_customs_office_is_opened_through_the_same_in_space_range_check_as_other_containers()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var flying = await FlyingWithCargoAsync(rig);
+        long officeId;
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            officeId = await rig.Items.CreateAsync(connection, transaction,
+                new NewItem(Customs.OfficeTypeId, 1_000_125, flying.Session.GetInt("solarsystemid")!.Value, 0, 1, true));
+            await transaction.CommitAsync();
+        }
+
+        var shipId = flying.Session.GetInt("shipid")!.Value;
+        rig.Sim.MeasureAnswer = 2500;
+        Assert.Equal(officeId, (await rig.Containers.OpenAsync(flying.Session, officeId, CancellationToken.None))!.Id);
+        Assert.Contains(rig.Sim.Heard.OfType<SimCommand>(), command =>
+            command.Code == SimCommands.Measure &&
+            command.Args.SequenceEqual(new[] { (double)officeId, (double)shipId }));
+        rig.Sim.MeasureAnswer = 2501;
+        Assert.Equal("TargetTooFar", UserError(await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await rig.Containers.OpenAsync(flying.Session, officeId, CancellationToken.None))).Name);
+    }
+
+    [PgFact]
     public async Task What_is_taken_out_of_a_can_splits_into_the_hold_and_the_client_is_told_in_the_reference_order()
     {
         await using var rig = await Rig.CreateAsync();
@@ -193,7 +218,7 @@ public class SpaceContainerTests
         await using var rig = await Rig.CreateAsync();
         var (flying, can) = await WithACanAsync(rig, 40);
         var other = await rig.NewCharacterAsync("Other Pilot", 2);
-        // a pilot that is in another corporation takes nothing from the can (a new character is in the corporation of its school: they are the same here, so the owner is changed)
+
         await rig.Ships.GrantAsync(other.CharacterId, Tritanium, 1, singleton: false);
 
         var moved = await rig.Containers.MoveAsync(flying.Session, flying.Stack, can, flying.Character.ShipId, 40, CancellationToken.None);
@@ -272,17 +297,17 @@ public class SpaceContainerTests
         // the simulation is lost and a scene is made again
         rig.Sim.Lose();
         await rig.Containers.RestoreAsync(system);
-        var placed = Assert.IsType<SimPlaceWreck>(Assert.Single(rig.Sim.Heard.Skip(heard)));
-        Assert.Equal((system, can, 12, kept.LauncherId, false), (placed.SolarSystemId, placed.WreckId, placed.GroupId, placed.LauncherId, placed.IsEmpty));
+        var placed = Assert.IsType<SimPlaceWreck>(Assert.Single(rig.Sim.Heard.Skip(heard).OfType<SimPlaceWreck>()));
+        Assert.Equal((system, can, 12, kept.LauncherId, false), (placed.Scene.LocationId, placed.WreckId, placed.GroupId, placed.LauncherId, placed.IsEmpty));
         Assert.Equal(new SimWreckKind(23, "Cargo Container", 1176), placed.Kind);
         Assert.Equal([1000.0, 2000.0, 3000.0], placed.Position);
         Assert.Equal(14.0, placed.Radius);
         Assert.Equal(new SimCredit(flying.Character.CharacterId, kept.CorporationId, kept.AllianceId, 0), placed.Credit);
         await rig.Containers.RestoreAsync(system);
-        Assert.Single(rig.Sim.Heard.Skip(heard));
+        Assert.Single(rig.Sim.Heard.Skip(heard).OfType<SimPlaceWreck>());
         // another system has nothing to put back
         await rig.Containers.RestoreAsync(system + 1);
-        Assert.Single(rig.Sim.Heard.Skip(heard));
+        Assert.Single(rig.Sim.Heard.Skip(heard).OfType<SimPlaceWreck>());
     }
 
     [PgFact]
@@ -291,7 +316,7 @@ public class SpaceContainerTests
         await using var rig = await Rig.CreateAsync();
         var (flying, can) = await WithACanAsync(rig);
         var system = (int)flying.Session.GetInt("solarsystemid")!.Value;
-        // a record of an item that is not there any more, and the can's contents taken out by the owner outside the host
+
         await rig.SpaceItems.SaveAsync(new Eve.Ships.SpaceItem(777_000_001, system, [0, 0, 0], [1, 0, 0], 14, 12, 0, 0, 0, 0, 0, Rig.ClockMs + 1_000_000));
         await using (var connection = await rig.Source.OpenConnectionAsync())
         await using (var transaction = await connection.BeginTransactionAsync())
@@ -304,14 +329,14 @@ public class SpaceContainerTests
 
         await rig.Containers.RestoreAsync(system);
 
-        var placed = Assert.IsType<SimPlaceWreck>(Assert.Single(rig.Sim.Heard.Skip(heard)));
+        var placed = Assert.IsType<SimPlaceWreck>(Assert.Single(rig.Sim.Heard.Skip(heard).OfType<SimPlaceWreck>()));
         Assert.Equal((can, true), (placed.WreckId, placed.IsEmpty));
         Assert.Null(await rig.SpaceItems.GetAsync(777_000_001));
         // time runs out while the simulation does not have it: it goes instead of being put back
         rig.Sim.Lose();
         rig.Now = Rig.ClockMs + (long)SpaceContainers.CanLifetime.TotalMilliseconds + 1;
         await rig.Containers.RestoreAsync(system);
-        Assert.Single(rig.Sim.Heard.Skip(heard));
+        Assert.Single(rig.Sim.Heard.Skip(heard).OfType<SimPlaceWreck>());
         Assert.Null(await rig.Items.GetAsync(can));
         Assert.Null(await rig.SpaceItems.GetAsync(can));
     }
@@ -326,7 +351,6 @@ public class SpaceContainerTests
 
         Assert.Null(await rig.SpaceItems.GetAsync(can));
     }
-
 
     [PgFact]
     public async Task Saved_asteroid_items_are_restored_to_the_simulation_once()
@@ -343,13 +367,12 @@ public class SpaceContainerTests
 
         await rig.Containers.RestoreAsync(system);
 
-        var placed = Assert.IsType<Eve.Space.SimPlaceAsteroid>(Assert.Single(rig.Sim.Heard.Skip(heard)));
+        var placed = Assert.IsType<Eve.Space.SimPlaceAsteroid>(Assert.Single(rig.Sim.Heard.Skip(heard).OfType<Eve.Space.SimPlaceAsteroid>()));
         Assert.Equal((system, asteroid.Id, asteroid.TypeId, type.GroupId, type.CategoryId, type.Name, type.GraphicId, asteroid.Quantity),
             (placed.SolarSystemId, placed.AsteroidId, placed.TypeId, placed.GroupId, placed.CategoryId, placed.Name, placed.GraphicId, placed.UnitsRemaining));
         await rig.Containers.RestoreAsync(system);
-        Assert.Single(rig.Sim.Heard.Skip(heard));
+        Assert.Single(rig.Sim.Heard.Skip(heard).OfType<Eve.Space.SimPlaceAsteroid>());
     }
-
 
     [PgFact]
     public async Task A_belt_arrival_seeds_each_ore_its_system_security_holds_as_a_persisted_sde_asteroid()
@@ -424,7 +447,6 @@ public class SpaceContainerTests
         var item = (await rig.Items.GetAsync(saved.ItemId))!;
         Assert.Equal("Harvestable Cloud", rig.Statics.GroupName(rig.Statics.Type(item.TypeId)!.GroupId));
     }
-
 
     [PgFact]
     public async Task Mine_cycles_check_drone_ownership_and_range_then_persist_ore_and_notify_the_pilot()

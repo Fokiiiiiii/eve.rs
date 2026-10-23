@@ -28,14 +28,11 @@ MILESTONE = 1
 REWARD_ISK = 500_000
 DURATION_MS = 2 * 60 * 60 * 1000
 
-
 def isk_of(character: int) -> int:
     return int(float(psql(f"SELECT isk FROM {schema('EVE_WALLET_SCHEMA')}.balances WHERE owner_id = {character} AND account_key = 1000")))
 
-
 def named(events: list[dict], name: str) -> list[dict]:
     return [event for event in events if event["name"] == name]
-
 
 def integers_in(value) -> list[int]:
     """Every integer of a plain marshal value, in order (the notification's arguments are the last two of its tuples)."""
@@ -48,7 +45,6 @@ def integers_in(value) -> list[int]:
     if isinstance(value, (list, tuple)):
         return [number for item in value for number in integers_in(item)]
     return []
-
 
 def test_the_login_milestone_is_reached_claimed_once_and_stays_claimed_after_a_relogin():
     run = uuid.uuid4().hex[:10]

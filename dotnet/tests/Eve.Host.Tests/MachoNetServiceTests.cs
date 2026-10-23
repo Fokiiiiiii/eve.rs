@@ -11,12 +11,15 @@ public class MachoNetServiceTests
 
     private sealed class Info(params (string Name, string? Location)[] services) : IMachoNetInfo
     {
+        public PyValue Statistics { get; set; } = Py.Tuple(new PyDict([]), new PyDict([]), new PyInt(1));
         public IReadOnlyList<KeyValuePair<string, string?>> Services() =>
             [.. services.Select(s => new KeyValuePair<string, string?>(s.Name, s.Location))];
 
         public PyDict GlobalConfig() => Py.Dict(("imageserverurl", new PyStr("http://x/")), ("defaultPortraitSaveSize", new PyInt(1024)), ("flag", new PyInt(0)));
 
         public int UserCount() => 0;
+
+        public PyValue ClusterGameStatisticsForClient() => Statistics;
     }
 
     private static async Task<PyValue> Call(string method, PyValue[]? args = null, PyValue? kwargs = null, IMachoNetInfo? info = null)
@@ -114,6 +117,20 @@ public class MachoNetServiceTests
     }
 
     [Fact]
+    public async Task GetClusterGameStatisticsForClient_returns_eve_counts_and_other_cluster_default()
+    {
+        var systemCounts = new PyDict([new KeyValuePair<PyValue, PyValue>(new PyInt(123), new PyInt(2))]);
+        var stationCounts = new PyDict([new KeyValuePair<PyValue, PyValue>(new PyInt(123), new PyInt(1))]);
+        var statistics = Py.Tuple(systemCounts, stationCounts, new PyInt(1));
+        var info = new Info(("machoNet", null)) { Statistics = statistics };
+        var actual = await Call("GetClusterGameStatisticsForClient", [new PyStr("EVE"), PyNone.Instance], info: info);
+        Assert.Equal(statistics, actual);
+
+        var fallback = Py.Dict(("fallback", new PyInt(1)));
+        Assert.Same(fallback, await Call("GetClusterGameStatisticsForClient", [new PyStr("OTHER"), fallback], info: info));
+    }
+
+    [Fact]
     public async Task GetNodeID_is_the_proxy_node()
     {
         Assert.Equal(new PyInt(0xFFAA), await Call("GetNodeID"));
@@ -196,6 +213,7 @@ public class MachoNetServiceTests
 
         var player = new ClientSession();
         player.Set("accountRole", new PyLong(1L << 61)); // ROLE_PLAYER: an ordinary account, no admin or service bit
+        player.Set("role", new PyLong((1L << 56) | (1L << 60))); // forged ROLE_ADMIN and ROLE_SERVICE
         var refused = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(new ServiceCall
         {
             Method = "SetGlobalConfigValue",
@@ -212,6 +230,16 @@ public class MachoNetServiceTests
             Session = AdminSession(),
         }));
         Assert.Single(updates);
+
+        var serviceAccount = new ClientSession();
+        serviceAccount.Set("accountRole", new PyLong(1L << 60)); // ROLE_SERVICE
+        Assert.Same(PyNone.Instance, await service.CallAsync(new ServiceCall
+        {
+            Method = "SetGlobalConfigValue",
+            Args = [new PyStr("imageserverurl"), new PyStr("http://service/")],
+            Session = serviceAccount,
+        }));
+        Assert.Equal(2, updates.Count);
     }
 
     [Fact]

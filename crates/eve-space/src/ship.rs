@@ -1,5 +1,4 @@
 //! A ship in space: what the host says about it (`ShipSpec`, ADR 0007) and where it is and how it is moving.
-
 use eve_destiny::ball::{LegacyMode, WarpState};
 use eve_destiny::{BallEntity, IdRef, Kind, Vec3};
 
@@ -66,9 +65,8 @@ pub struct ShipSpec {
     /// A neutraliser's amount is multiplied by it; the reference applies the same multiplier to a doomsday's neutralising wave (`doomsdayEnergyNeutResistanceID`).
     pub energy_warfare_resistance: f64,
     /// The damage multiplier of the drones this ship launches (1 for none, 0 for a ship whose drones cannot deal damage): the drone's damage multiplier
-    /// (attribute 64) times this (protocol 47). The host sets it from industrialBonusDroneDamage (2580) and the wiki's P.A.N.I.C. penalty.
     pub drone_damage_multiplier: f64,
-    /// The ship's stance (a Tactical Destroyer's mode, SF-6): the slim item carries it as `(old, switchedAt, new)` (`shipStance`), and the switch time is a FILETIME.
+
     /// `None` for a ship that has no stance (the client reads a missing one as none).
     pub stance: Option<ShipStance>,
 }
@@ -117,6 +115,33 @@ pub struct NpcCombat {
     pub aggression_range: f64,
 }
 
+/// One of an NPC hull's local SDE effects that repairs its own health each cycle.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct NpcSelfRepair {
+    pub effect_id: i32,
+    pub amount: f64,
+    pub cycle_ms: f64,
+    pub capacitor_cost: f64,
+    pub delay_chance: f64,
+}
+
+impl NpcSelfRepair {
+    pub fn is_valid(&self) -> bool {
+        matches!(
+            i64::from(self.effect_id),
+            eve_behaviors::consts::EFFECT_NPC_BEHAVIOR_ARMOR_REPAIRER
+                | eve_behaviors::consts::EFFECT_NPC_BEHAVIOR_SHIELD_BOOSTER
+        ) && self.amount.is_finite()
+            && self.amount > 0.0
+            && self.cycle_ms.is_finite()
+            && self.cycle_ms >= 1.0
+            && self.capacitor_cost.is_finite()
+            && self.capacitor_cost >= 0.0
+            && self.delay_chance.is_finite()
+            && (0.0..=1.0).contains(&self.delay_chance)
+    }
+}
+
 /// What makes an NPC's ship a drone: it is a companion of the ship that controls it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DroneLink {
@@ -158,13 +183,15 @@ pub enum CompanionKind {
 }
 
 /// What sets an NPC's ship apart from a player's: nobody flies it (its ball has no session and is not interactive), its slim item has no name and
-/// carries the limits the NPC's owner reacts to (`hostile_response_threshold`, `friendly_response_threshold`: the standings at which it treats others
+///
 /// as enemies or friends), and it fights with what `combat` says.
 #[derive(Debug, Clone, PartialEq)]
 pub struct NpcIdentity {
     pub hostile_response_threshold: i64,
     pub friendly_response_threshold: i64,
     pub combat: NpcCombat,
+    /// SDE-derived local hull effects that repair its own health. Empty for NPCs without such effects.
+    pub self_repairs: Vec<NpcSelfRepair>,
     /// What the ship leaves when it is destroyed (`None`: what the rules give its type, when the scene has them).
     pub wreck: Option<crate::wreck::WreckKind>,
     /// A hull nobody flies rather than an NPC (`/deathtest`): its slim item is a player's ship's, with the ship's name.
@@ -184,6 +211,7 @@ impl Default for NpcIdentity {
             hostile_response_threshold: -11,
             friendly_response_threshold: 11,
             combat: NpcCombat::default(),
+            self_repairs: Vec::new(),
             wreck: None,
             hull: false,
             host_wreck: false,

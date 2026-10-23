@@ -37,7 +37,7 @@ namespace Eve.Host;
 
 internal sealed partial class CharacterServicesComposition
 {
-    /// <summary>Agent missions, alliances, the public QA slash service and the ship and beyonce services.</summary>
+
     private IReadOnlyList<IService> AgentRpc()
     {
         // the cynosural field generator's lighting needs a fleet: the fleet store answers it for the space sessions
@@ -66,10 +66,34 @@ internal sealed partial class CharacterServicesComposition
     private IReadOnlyList<IService> AgentRpcServices() =>
     [
             agentMissionService,
-            new LoyaltyPointsService(loyaltyPoints),
+            new LoyaltyPointsService(loyaltyPoints, async (characterId, token) =>
+                (await characters.GetAsync(characterId, token))?.CorporationId),
             new Eve.Services.Wallet.LpStoreMgrService(lpStoreCache, lpStorePurchases, IsCorporationDirectorAsync),
             allianceRegistry,
-            publicQaSlashService = new SlashService(new ShipHealthCommands(ships, dogma, now, spaceSessions), spaceSessions is null ? null : new DeathTestCommands(spaceSessions, new ShipTypeNames(sde)), spaceSessions is null ? null : new SuicideCommands(spaceSessions), spaceSessions is null ? null : new NpcCommands(spaceSessions), new ItemCommands(new ItemTypeNames(sde), ships, dogma, now), new SkillCommands(skillCatalog, skills, source, dogmaSync, now)),
+            publicQaSlashService = new SlashService(new ShipHealthCommands(ships, dogma, now, spaceSessions), spaceSessions is null ? null : new DeathTestCommands(spaceSessions, new ShipTypeNames(sde)), spaceSessions is null ? null : new SuicideCommands(spaceSessions), spaceSessions is null ? null : new NpcCommands(spaceSessions), new ItemCommands(new ItemTypeNames(sde), ships, dogma, now, spaceSessions), new SkillCommands(skillCatalog, skills, source, dogmaSync, now), new IskCommands(economyWallets, source, now, wallets, loyaltyPoints),
+                new LoyaltyCommands(loyaltyPoints, new HostStandingDirectory(dogma, corporations, agentMissionAgentById, characters), now),
+                new StandingCommands(new HostStandingDirectory(dogma, corporations, agentMissionAgentById, characters), foundations.Relations,
+                    (character, owner, standing) => characterSessions.Of(character)?.SendNotification("OnStandingSet", "clientID", new PyList(
+                    [new PyInt(owner), new PyLong(character), new PyReal(standing)]))),
+                spaceSessions is null ? null : new TeleportCommands(new HostGmRelocation(spaceSessions, solarSystems, new HostStandingDirectory(dogma, corporations, agentMissionAgentById, characters), characterSessions)),
+                missionDungeons is null ? null : new AgentCommands(new HostAgentControl(agentMissionStore, agentId => agentMissionAgentById.GetValueOrDefault(agentId), PickOfferAsync, missionDungeons, () => DateTimeOffset.UtcNow)),
+                new FwCommands(new HostFwControl(factionWarfare, new HostStandingDirectory(dogma, corporations, agentMissionAgentById, characters), () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())),
+                planetMgr is null ? null : new PiCommands(new HostPiControl(planetMgr)),
+                new IndustryCommands(new ItemTypeNames(sde), sde, new HostGmIndustry(ReadOwnedBlueprintsAsync, industryJobOperations.ReadJobsAsync)),
+                spaceSessions is null ? null : new SpawnCommands(new ItemTypeNames(sde), spaceSessions),
+                new SkillBulkCommands(skillCatalog, skills, source, characters, dogmaSync, now, characterSessions.Of),
+                new DogmaUpdateCommands(dogma, (session, character, token) => dogmaSync!.ShipAttributesChangedAsync(session, character, token)),
+                new KillRightCommands(characters, (owner, target, system, when, token) => crimewatchRuntime.GrantKillRightAsync(owner, target, system, when, token), now),
+                spaceSessions is null || spaceContainers is null ? null : new AsteroidCommands(async (session, token) => spaceSessions.SolarSystemOf(session) is { } system
+                    ? (await spaceContainers.RocksInSystemAsync(system, token)).Select(rock => (rock.ItemId, rock.TypeId, rock.Name, rock.Units)).ToList()
+                    : null),
+                new SkyhookCommands(new PersistenceSkyhookStateWriter(
+                    table => mailCache.Read(table).Data as JsonObject ?? new JsonObject(),
+                    (table, path, data) => mailCache.Write(table, path, data),
+                    (table, token) => mailCache.FlushTableAsync(table, token),
+                    () => sovereigntyWriteGate).SetStateAsync),
+                spaceSessions is null ? null : new EntityCommands(new ItemTypeNames(sde), spaceSessions),
+                spaceSessions is null ? null : new EssCommands(new ShipTypeNames(sde), dogma, ships, (session, token) => EssMgr.AttemptLinkToMainBank(new ServiceCall { Method = "AttemptLinkToMainBank", Args = [], Session = session, Cancellation = token }))),
             .. spaceSessions is null ? [] : new IService[] { new ShipService(spaceSessions, now, spaceContainers, spaceDrones, getShipFittingInfo: ShipFittingInfoOf, ships: ships,
                 rowOf: item => new Eve.Services.ItemRow(item.Id, item.TypeId, item.OwnerId, item.LocationId, item.Flag, item.Singleton ? -1 : item.Quantity,
                     dogma.Type(item.TypeId)?.GroupId ?? 0, dogma.Type(item.TypeId)?.CategoryId ?? 0)), new BeyonceService(spaceSessions, now, fleetStore, FleetSessionForCharacter) { CynoJammerOnlineSimTimeForSystem = CynoJammerOnlineSimTimeAsync, InitiateBeaconLink = AnalysisBeaconLink }, new StructureTravelRpcService("structureCynoBeaconMgr", new StructureBeaconTravel(StructureBeaconAsync, CynoJammedAsync, structureDirectoryReadModel.CharacterHasServiceAsync, JumpToStructureBeaconAsync).TravelAsync), new ShipcasterRpcService("shipCasterLandingPadMgr", solarSystems), new ShipcasterRpcService("shipCasterLauncherMgr", solarSystems), new ShipcasterRpcService("shipcasterTravelMgr", solarSystems), new ShipcasterRpcService("starterShipcasterTravelMgr", solarSystems), new EntityService(spaceDrones!, now, spaceContainers) },

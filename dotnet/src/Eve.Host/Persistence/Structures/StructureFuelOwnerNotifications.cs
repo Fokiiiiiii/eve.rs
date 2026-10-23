@@ -10,7 +10,7 @@ using Eve.Structures;
 namespace Eve.Host.Persistence.Structures;
 
 /// <summary>
-/// The owner corporation hears of a structure fuel burn (EveJS createStructureFuelAlertNotifications: type 181, group Structures, to every character of the
+
 /// corporation). A corporation member with a session gets OnItemChange for the burnt fuel blocks; when none is online, the burn is written to the notifications
 /// mailbox in the burn transaction with the fuel left in the bay. Members already in the structure get the change from StructureFuelBayNotifications.
 /// </summary>
@@ -24,7 +24,7 @@ internal sealed class StructureFuelOwnerNotifications(
     internal const int FuelAlertTypeId = 181;
     private const int StructuresGroupId = 7;
 
-    /// <summary>The alert written as a notification of the owner corporation through the notifications mailbox.</summary>
+
     public static Func<long, long[], string, JsonObject, EventContext, CancellationToken, Task> ToMailbox(PersistenceTransactionMailbox mailbox) =>
         async (corporationId, recipients, key, data, context, token) =>
         {

@@ -19,6 +19,22 @@ internal sealed class Capture : IPacketSink
 
     public List<PyValue> Sent { get; } = [];
 
+    public int CountOf<T>() where T : PyValue
+    {
+        lock (_gate)
+            return Sent.OfType<T>().Count();
+    }
+
+    public PyValue[] Drain()
+    {
+        lock (_gate)
+        {
+            var packets = Sent.ToArray();
+            Sent.Clear();
+            return packets;
+        }
+    }
+
     public void Send(PyValue packet)
     {
         lock (_gate)
@@ -56,7 +72,7 @@ internal static class Notes
     public static IReadOnlyList<Note> Of(Capture sink)
     {
         var notes = new List<Note>();
-        foreach (var packet in sink.Sent.OfType<PyObject>())
+        foreach (var packet in sink.Drain().OfType<PyObject>())
         {
             var state = ((PyTuple)packet.Args).Items;
             if (state[0] is not PyInt { Value: MachoMessage.Notification })
@@ -69,14 +85,12 @@ internal static class Notes
             var args = ((PyTuple)((PyTuple)inner.Items[1]).Items[1]).Items;
             notes.Add(new Note(JsSemantics.StringValue(address[1])!, JsSemantics.StringValue(address[3])!, [.. args]));
         }
-        sink.Sent.Clear();
         return notes;
     }
 }
 
 /// <summary>
 /// A wait the test finishes by hand. <see cref="Reached"/> completes when the number of waits made reaches a count: the timers make their next wait
-/// after they have told the clients what changed, so a test that waits for that wait knows the notifications of the step are sent.
 /// </summary>
 internal sealed class Waits
 {
@@ -235,7 +249,6 @@ public class RuntimeTests : IAsyncLifetime
         Assert.Empty(Told(4));
     }
 
-
     [PgFact]
     public async Task Criminal_aggression_grants_a_persisted_kill_right_and_schedules_one_concord_response()
     {
@@ -278,7 +291,6 @@ public class RuntimeTests : IAsyncLifetime
         Assert.Equal((1L, System, 0.7), (response.AttackerCharacterId, response.SolarSystemId, response.Security));
         Assert.Equal(Start, response.CrimeAtUnixMs);
     }
-
 
     [PgFact]
     public async Task Low_security_grants_a_kill_right_only_for_a_criminal_capsule_attack_without_concord()
@@ -355,7 +367,6 @@ public class RuntimeTests : IAsyncLifetime
         Told(2);
         Assert.Equal(TimeSpan.FromMilliseconds(60_005), _waits.Made[^1].After);   // the first end, a moment after
 
-        // the end is told, then the next end is waited for: the step's notifications are sent by then (the timers tell before they make their next wait)
         _now = Start + 60_005;
         var made = _waits.Made.Count;
         _waits.Made[^1].Done.SetResult();
@@ -496,6 +507,31 @@ public class RuntimeTests : IAsyncLifetime
     }
 
     [PgFact]
+    public async Task A_war_check_with_one_thousand_unrelated_wars_has_bounded_latency()
+    {
+        await using var relations = await RelationsRig.Create(_source!, () => _now);
+        await using (var connection = await _source!.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            for (var index = 0; index < 1_000; index++)
+            {
+                await relations.Relations.SetAsync(connection, transaction, Eve.Relations.RelationKinds.War.Name,
+                    100_000_000 + index, 200_000_000 + index, 1, "performance fixture", cancellationToken: default);
+            }
+            await transaction.CommitAsync();
+        }
+
+        var wars = new RelationWars(relations.Relations);
+        var timer = global::System.Diagnostics.Stopwatch.StartNew();
+        Assert.False(await wars.AreAtWarAsync(1, 2, _now));
+        timer.Stop();
+        Assert.True(timer.Elapsed < TimeSpan.FromSeconds(2), $"war lookup across 1,000 unrelated wars took {timer.Elapsed}");
+
+        await relations.Set(Eve.Relations.RelationKinds.War.Name, 1, 2);
+        Assert.True(await wars.AreAtWarAsync(1, 2, _now));
+    }
+
+    [PgFact]
     public async Task A_process_that_starts_takes_up_the_wait_for_what_still_runs()
     {
         Pilot(1, System);
@@ -515,7 +551,6 @@ public class RuntimeTests : IAsyncLifetime
         Assert.Contains(_waits.Made, wait => wait.After == TimeSpan.FromMilliseconds(40_005));
         Assert.Contains("OnWeaponsTimerUpdate", Told(1).Select(n => n.Name));
     }
-
 
     [PgFact]
     public async Task An_active_criminal_timer_replays_the_concord_response_after_restart()
@@ -638,6 +673,24 @@ public class RuntimeTests : IAsyncLifetime
         Assert.Empty(Assert.IsType<PyList>(result).Items);
     }
 
+    [Fact]
+    public async Task GetKillRights_refuses_more_than_500_raw_target_ids()
+    {
+        Pilot(1, System);
+        var service = new KillRightMgrService(Store);
+        var targets = new PyList([.. Enumerable.Range(1, 501).Select(id => (PyValue)new PyInt(id))]);
+
+        var error = await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(async () =>
+            await ((IService)service).CallAsync(new ServiceCall
+            {
+                Method = "GetKillRights",
+                Args = [targets],
+                Session = _sessions.Of(1)!,
+            }));
+
+        Assert.Equal("CRIMEWATCH_BULK_LIMIT_EXCEEDED", error.Error.UserErrorMessage);
+    }
+
     [PgFact]
     public async Task GetKillRights_returns_only_the_callers_active_rights_for_requested_targets()
     {
@@ -704,7 +757,7 @@ public class RuntimeTests : IAsyncLifetime
         using var runtime = Runtime();
         runtime.Legal = (_, _, _, _) => Task.FromResult(true);
         var first = await runtime.RecordAggressionAsync(Attack(1, 2, SecurityClass.HighSec, System, false));
-        // EveJS resolves an already-suspect target before the ordinary war check.
+
         Assert.Equal(AggressionReason.TargetFlagged, first.Outcome.Reason);
         Assert.Equal(Start + CrimewatchRuntime.LimitedEngagementDurationMs, _persistence.Engagements[(1, 2)]);
         Assert.Contains(Told(1), note => note.Name == "OnCrimewatchEngagementCreated");
@@ -752,6 +805,14 @@ public class RuntimeTests : IAsyncLifetime
         challenger.Set("allianceid", new PyLong(99_000_001));
         using var runtime = Runtime();
         var service = new CrimewatchService(Store, runtime, () => _now);
+
+        await ((IService)service).CallAsync(new ServiceCall
+        {
+            Method = "StartDuelChallenge",
+            Args = [new PyReal(2.5)],
+            Session = challenger,
+        });
+        Assert.Empty(_persistence.ChallengesStarted);
 
         Assert.Equal(PyNone.Instance, await ((IService)service).CallAsync(new ServiceCall
         {
@@ -815,14 +876,13 @@ public class RuntimeTests : IAsyncLifetime
 
         _now = Start + 310_005;
         _waits.Made[^1].Done.SetResult();
-        await Settle(() => _sinks[1].Sent.OfType<PyObject>().Count() >= 2);
+        await _sinks[1].Arrived(2);
 
         var ended = Told(1);
         Assert.Equal(["OnNpcTimerUpdate", "OnDisapprovalTimerUpdate"], ended.Select(note => note.Name));
         Assert.Equal([new PyInt(400), PyNone.Instance], ended[0].Args);
         Assert.Equal([new PyInt(500), PyNone.Instance], ended[1].Args);
     }
-
 
     [Fact]
     public void Kill_right_manager_exposes_activation_and_purchase_rpcs()
@@ -832,7 +892,6 @@ public class RuntimeTests : IAsyncLifetime
         Assert.True(service.HasMethod("ActivateKillRight"));
         Assert.True(service.HasMethod("BuyKillRight"));
     }
-
 
     [PgFact]
     public async Task GetKillRights_returns_sale_price_and_owner_restriction()
@@ -858,8 +917,6 @@ public class RuntimeTests : IAsyncLifetime
         Assert.Equal(InventoryWire.Id(9000001), fields["restrictedTo"]);
     }
 
-
-
     [PgFact]
     public async Task Bounty_proxy_read_rpcs_match_the_reference_routes_and_sale_access()
     {
@@ -882,7 +939,10 @@ public class RuntimeTests : IAsyncLifetime
         Assert.True(await Store.SetKillRightSaleAsync(6, allianceSale!.Value, 300m, 700, _now));
         Assert.True(await Store.SetKillRightSaleAsync(7, restrictedSale!.Value, 400m, 900, _now));
 
-        var service = (IService)new BountyProxyKillRightService(store: Store, nowUnixMs: () => _now);
+        var service = (IService)new BountyProxyKillRightService(
+            store: Store,
+            nowUnixMs: () => _now,
+            resolveOrganization: (_, _) => Task.FromResult((500L, 700L)));
         Assert.True(service.HasMethod("GetMyKillRights"));
         Assert.True(service.HasMethod("GetKillRightsOnCharacters"));
         Assert.True(service.HasMethod("GetBountiesAndKillRights"));
@@ -905,6 +965,16 @@ public class RuntimeTests : IAsyncLifetime
             Session = session,
         }));
         Assert.Equal([publicSale!.Value, corpSale!.Value, allianceSale!.Value], available.Items
+            .Select(row => (long)((PyLong)Assert.IsType<PyDict>(Assert.IsType<PyObject>(row).Args)
+                .Entries.Single(entry => entry.Key == new PyStr("killRightID")).Value).Value));
+        var staleSessionService = (IService)new BountyProxyKillRightService(store: Store, nowUnixMs: () => _now);
+        var staleSessionAvailable = Assert.IsType<PyList>(await staleSessionService.CallAsync(new ServiceCall
+        {
+            Method = "GetKillRightsOnCharacters",
+            Args = [new PyList([new PyLong(2)])],
+            Session = session,
+        }));
+        Assert.Equal([publicSale.Value], staleSessionAvailable.Items
             .Select(row => (long)((PyLong)Assert.IsType<PyDict>(Assert.IsType<PyObject>(row).Args)
                 .Entries.Single(entry => entry.Key == new PyStr("killRightID")).Value).Value));
         var myPayload = Assert.IsType<PyDict>(Assert.IsType<PyObject>(myRights.Items[0]).Args);
@@ -991,7 +1061,6 @@ public class RuntimeTests : IAsyncLifetime
         Assert.Equal(KillRightNotificationTypes.UnavailableOpen, notifications[3].Type);
     }
 
-
     [PgFact]
     public async Task Killmail_hook_selects_the_final_attackers_activation_and_consumes_the_right_once()
     {
@@ -1012,7 +1081,6 @@ public class RuntimeTests : IAsyncLifetime
         Assert.Empty(await store.KillRightsOfAsync(1));
         Assert.Null(await store.ConsumeKillRightAfterKillAsync(2, 3, _now + 3));
     }
-
 
     [PgFact]
     public async Task Activating_an_owned_kill_right_persists_a_fifteen_minute_suspect_flag()

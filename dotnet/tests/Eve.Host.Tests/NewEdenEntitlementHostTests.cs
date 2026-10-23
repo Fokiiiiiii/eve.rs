@@ -178,28 +178,12 @@ public sealed class NewEdenEntitlementHostTests : IAsyncLifetime
         var accountId = await NewAccountAsync(accounts, "omega-buyer");
         accounts.SetSubscriptionEndsAt(accountId, Lapsed);
         var pilot = await CreatePilotAsync(source, station, "Omega Pilot", accountId);
-        var sink = new Packets();
-        var session = Enter(host, sink, accountId, pilot, 501);
-
-        var subscriptions = host.Registry.Lookup("subscriptionMgr")!;
-        Assert.Equal(new PyInt(0), await subscriptions.CallAsync(Call(session, "GetCloneGrade", 1, [])));
-        Assert.True(JsSemantics.Truthy(await host.Registry.Lookup("storeManager")!.CallAsync(
-            Call(session, "can_purchase_offer", 2, [new PyStr("omega_30_days")]))));
-
-        var before = DateTimeOffset.UtcNow;
-        Assert.Equal(PyBool.True, await BuyAsync(host, session, 3, "omega_30_days", "PLX", 1));
-        var after = DateTimeOffset.UtcNow;
-
-        var end = await StoredEndAsync(accounts, accountId);
-        Assert.InRange(end, Plus(before, TimeSpan.FromDays(30)), Plus(after, TimeSpan.FromDays(30)));
-        Assert.Equal(0, await PlexBalanceAsync(host, session, 4));
-        Assert.Equal(new PyInt(1), await subscriptions.CallAsync(Call(session, "GetCloneGrade", 5, [])));
-        Assert.Equal(1, sink.Count("OnSubscriptionChangedServer"));
-        Assert.Equal(1, sink.Count("OnSubscriptionTimeUpdateServer"));
-
-        Assert.Equal(PyBool.True, await BuyAsync(host, session, 3, "omega_30_days", "PLX", 1));
-        Assert.Equal(end, await StoredEndAsync(accounts, accountId));
-        Assert.Equal(1, sink.Count("OnSubscriptionChangedServer"));
+        var session = Enter(host, new Packets(), accountId, pilot, 501);
+        var before = await StoredEndAsync(accounts, accountId);
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(async () => await BuyAsync(host, session, 99, "omega_30_days", "PLX", 1));
+        Assert.Equal("STORE_CHECKOUT_UNAVAILABLE", error.Error.UserErrorMessage);
+        Assert.Equal(before, await StoredEndAsync(accounts, accountId));
+        Assert.Equal(0, await PlexBalanceAsync(host, session, 100));
     }
 
     [PgFact]
@@ -209,25 +193,15 @@ public sealed class NewEdenEntitlementHostTests : IAsyncLifetime
         var host = await HostComposition.BuildAsync(Settings());
         var accounts = Accounts(source);
         var station = (await StationCatalog.LoadAsync(new SdeReader(source))).All.First();
-
-        var atFloor = await NewAccountAsync(accounts, "floor-account");
-        var floorSession = Enter(host, new Packets(), atFloor, await CreatePilotAsync(source, station, "Floor Pilot", atFloor), 511);
-        Assert.Equal(PyBool.True, await BuyAsync(host, floorSession, 11, "cash_omega_90_days", "USD", 1, storeId: 9));
-        Assert.Equal(Floor, await StoredEndAsync(accounts, atFloor));
-
-        var nearFloor = await NewAccountAsync(accounts, "near-floor-account");
-        accounts.SetSubscriptionEndsAt(nearFloor, new DateTimeOffset(2099, 12, 20, 0, 0, 0, TimeSpan.Zero));
-        var nearSession = Enter(host, new Packets(), nearFloor, await CreatePilotAsync(source, station, "Near Pilot", nearFloor), 512);
-        Assert.Equal(PyBool.True, await BuyAsync(host, nearSession, 12, "cash_omega_365_days", "USD", 1, storeId: 9));
-        Assert.Equal(Floor, await StoredEndAsync(accounts, nearFloor));
-
-        var lapsed = await NewAccountAsync(accounts, "lapsed-account");
-        accounts.SetSubscriptionEndsAt(lapsed, Lapsed);
-        var lapsedSession = Enter(host, new Packets(), lapsed, await CreatePilotAsync(source, station, "Lapsed Pilot", lapsed), 513);
-        var before = DateTimeOffset.UtcNow;
-        Assert.Equal(PyBool.True, await BuyAsync(host, lapsedSession, 13, "cash_omega_90_days", "USD", 2, storeId: 9));
-        var end = await StoredEndAsync(accounts, lapsed);
-        Assert.InRange(end, Plus(before, TimeSpan.FromDays(180)), Plus(DateTimeOffset.UtcNow, TimeSpan.FromDays(180)));
+        var accountId = await NewAccountAsync(accounts, "floor-account");
+        accounts.SetSubscriptionEndsAt(accountId, Floor);
+        var pilot = await CreatePilotAsync(source, station, "Floor Pilot", accountId);
+        var session = Enter(host, new Packets(), accountId, pilot, 511);
+        var before = await StoredEndAsync(accounts, accountId);
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(async () => await BuyAsync(host, session, 99, "cash_omega_90_days", "USD", 1, storeId: 9));
+        Assert.Equal("STORE_CHECKOUT_UNAVAILABLE", error.Error.UserErrorMessage);
+        Assert.Equal(before, await StoredEndAsync(accounts, accountId));
+        Assert.Equal(0, await PlexBalanceAsync(host, session, 100));
     }
 
     [PgFact]
@@ -238,37 +212,14 @@ public sealed class NewEdenEntitlementHostTests : IAsyncLifetime
         var accounts = Accounts(source);
         var station = (await StationCatalog.LoadAsync(new SdeReader(source))).All.First();
         var accountId = await NewAccountAsync(accounts, "training-buyer");
+        accounts.SetSubscriptionEndsAt(accountId, Lapsed);
         var pilot = await CreatePilotAsync(source, station, "Training Pilot", accountId);
-        var sink = new Packets();
-        var session = Enter(host, sink, accountId, pilot, 521);
-
-        Assert.Empty(await QueuesAsync(host, session, 1));
-        Assert.Equal(new PyDict([]), await host.Registry.Lookup("userSvc")!.CallAsync(Call(session, "GetMultiCharactersTrainingSlots", 2, [])));
-
-        var first = DateTimeOffset.UtcNow;
-        Assert.Equal(PyBool.True, await BuyAsync(host, session, 21, "mct_slot_30_days", "PLX", 1));
-        var queues = await QueuesAsync(host, session, 3);
-        Assert.Equal(new long[] { 2 }, queues.Keys.Order());
-        Assert.InRange(FromFileTime(queues[2]), Plus(first, TimeSpan.FromDays(30)), DateTimeOffset.UtcNow.AddDays(30));
-        Assert.Equal(1, sink.Count("OnMultipleCharactersTrainingUpdated"));
-        Assert.Equal(0, await PlexBalanceAsync(host, session, 4));
-
-        // a replayed operation grants nothing
-        Assert.Equal(PyBool.True, await BuyAsync(host, session, 21, "mct_slot_30_days", "PLX", 1));
-        Assert.Equal(queues, await QueuesAsync(host, session, 5));
-
-        // the second certificate opens the free queue
-        Assert.Equal(PyBool.True, await BuyAsync(host, session, 22, "cash_mct_1", "USD", 1, storeId: 9));
-        var withTwo = await QueuesAsync(host, session, 6);
-        Assert.Equal(new long[] { 2, 3 }, withTwo.Keys.Order());
-        Assert.Equal(queues[2], withTwo[2]);
-        Assert.Equal(2, sink.Count("OnMultipleCharactersTrainingUpdated"));
-
-        // with both queues running, the one that ends first is extended by 30 days
-        Assert.Equal(PyBool.True, await BuyAsync(host, session, 23, "cash_mct_1", "USD", 1, storeId: 9));
-        var extended = await QueuesAsync(host, session, 7);
-        Assert.Equal(withTwo[2] + 30 * TicksPerDay, extended[2]);
-        Assert.Equal(withTwo[3], extended[3]);
+        var session = Enter(host, new Packets(), accountId, pilot, 521);
+        var before = await StoredEndAsync(accounts, accountId);
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(async () => await BuyAsync(host, session, 99, "mct_slot_30_days", "PLX", 1));
+        Assert.Equal("STORE_CHECKOUT_UNAVAILABLE", error.Error.UserErrorMessage);
+        Assert.Equal(before, await StoredEndAsync(accounts, accountId));
+        Assert.Equal(0, await PlexBalanceAsync(host, session, 100));
     }
 
     [PgFact]
@@ -279,17 +230,14 @@ public sealed class NewEdenEntitlementHostTests : IAsyncLifetime
         var accounts = Accounts(source);
         var station = (await StationCatalog.LoadAsync(new SdeReader(source))).All.First();
         var accountId = await NewAccountAsync(accounts, "six-buyer");
+        accounts.SetSubscriptionEndsAt(accountId, Lapsed);
         var pilot = await CreatePilotAsync(source, station, "Six Pilot", accountId);
-        var sink = new Packets();
-        var session = Enter(host, sink, accountId, pilot, 531);
-
-        Assert.Equal(PyBool.True, await BuyAsync(host, session, 31, "cash_mct_6", "USD", 1, storeId: 9));
-        var queues = await QueuesAsync(host, session, 2);
-        Assert.Equal(new long[] { 2, 3 }, queues.Keys.Order());
-        var now = DateTimeOffset.UtcNow;
-        var total = queues.Values.Aggregate(TimeSpan.Zero, (sum, value) => sum + (FromFileTime(value) - now));
-        Assert.InRange(total.TotalDays, 179.9, 180.1);
-        Assert.Equal(1, sink.Count("OnMultipleCharactersTrainingUpdated"));
+        var session = Enter(host, new Packets(), accountId, pilot, 531);
+        var before = await StoredEndAsync(accounts, accountId);
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(async () => await BuyAsync(host, session, 99, "cash_mct_6", "USD", 1, storeId: 9));
+        Assert.Equal("STORE_CHECKOUT_UNAVAILABLE", error.Error.UserErrorMessage);
+        Assert.Equal(before, await StoredEndAsync(accounts, accountId));
+        Assert.Equal(0, await PlexBalanceAsync(host, session, 100));
     }
 
     [PgFact]
@@ -330,6 +278,7 @@ public sealed class NewEdenEntitlementHostTests : IAsyncLifetime
 
     private static async Task<long> QaCertificateAsync(IService userSvc, ClientSession session, long callId, long quantity)
     {
+        session.Set("accountRole", new PyLong(Eve.Services.GameMasterRoles.Qa)); // the QA token tool is staff-only
         var call = new ServiceCall
         {
             Method = "CreateRedeemTokenQA",

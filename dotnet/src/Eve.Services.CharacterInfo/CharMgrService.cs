@@ -30,10 +30,10 @@ public sealed record CharMgrPersonalData(
         new Dictionary<long, string>());
 
     public long? NextOwnerNoteId { get; init; }
+    public long? NextContactLabelId { get; init; }
     public IReadOnlyDictionary<string, PyValue> CharacterSettings { get; init; } =
         new Dictionary<string, PyValue>(StringComparer.Ordinal);
 }
-
 
 public sealed record CharMgrOrganizationInfo(long CorporationId, long AllianceId, long WarFactionId);
 [Service("charMgr")]
@@ -51,8 +51,22 @@ public sealed partial class CharMgrService(
     Func<long, PyValue, CancellationToken, ValueTask>? writeLogSettings = null,
     Func<long, CancellationToken, ValueTask<long?>>? readCorporationMemberStartedMs = null,
     Func<IReadOnlyList<Character>, CancellationToken, ValueTask<IReadOnlyDictionary<long, CharMgrOrganizationInfo>>>? readOrganizationInfo = null,
-    Func<long, CancellationToken, ValueTask<int?>>? readRecustomizationState = null)
+    Func<long, CancellationToken, ValueTask<int?>>? readRecustomizationState = null,
+    Func<ServiceCall, ValueTask<PyValue>>? globalAssetsInventoryCall = null,
+    Func<long, CancellationToken, ValueTask<decimal?>>? readBalance = null,
+    Func<long, long, CancellationToken, ValueTask<bool>>? canReadPrivateCorporationMemberInfo = null)
 {
+    private const int MaxOrganizationInfoCharacterIds = 500;
+    private const int MaxBulkContactOwnerIds = 500;
+
+    /// <summary>Blocked owner identifiers used by client chat filtering.</summary>
+    public async ValueTask<IReadOnlyList<long>> ReadBlockedOwnersAsync(long characterId, CancellationToken cancellationToken = default)
+    {
+        var data = readPersonalData is null
+            ? CharMgrPersonalData.Empty
+            : await readPersonalData(characterId, cancellationToken) ?? CharMgrPersonalData.Empty;
+        return data.BlockedSenders;
+    }
 
     /// <summary>
     /// The empire a corporation's members are shown under. The reference names four of the starting corporations and
@@ -130,6 +144,19 @@ public sealed partial class CharMgrService(
             ("medal1GraphicID", Nullable(medal1GraphicId)));
     }
 
+    private async ValueTask<bool> CanReadPrivateCorporationMemberInfoAsync(ServiceCall call, long targetCorporationId)
+    {
+        var callerCorporationId = call.Session.GetInt("corporationID") ?? call.Session.GetInt("corpid") ?? 0;
+        var roles = call.Session.GetInt("rolesAtAll") ?? call.Session.GetInt("corprole") ?? 0;
+        var permittedRoles = Eve.Corporations.CorporationRoles.Director | Eve.Corporations.CorporationRoles.PersonnelManager;
+        if (targetCorporationId <= 0 || callerCorporationId != targetCorporationId || (roles & permittedRoles) == 0)
+            return false;
+        if (canReadPrivateCorporationMemberInfo is null)
+            return true;
+        var actorId = call.Session.CharacterId ?? 0;
+        return actorId > 0 && await canReadPrivateCorporationMemberInfo(actorId, targetCorporationId, call.Cancellation);
+    }
+
     private async ValueTask<Character?> CharacterAsync(ServiceCall call)
     {
         var id = IdOf(call.Arg(0));
@@ -171,6 +198,7 @@ public sealed partial class CharMgrService(
     [Method("SetCharacterDescription")]
     public async ValueTask<PyValue> SetCharacterDescription(ServiceCall call)
     {
+        const int maxDescriptionLength = 2500;
         if (call.Session.CharacterId is not { } characterId || characterId <= 0 ||
             call.Args.Count == 0 ||
             await characters.GetAsync(characterId, call.Cancellation) is null)
@@ -183,6 +211,10 @@ public sealed partial class CharMgrService(
         {
             return None;
         }
+        if (description.Length > maxDescriptionLength)
+        {
+            throw MachoErrors.ThrowUserError("CHARMGR_DESCRIPTION_LIMIT_EXCEEDED");
+        }
 
         await writeCharacterDescription(characterId, description, call.Cancellation);
         return None;
@@ -191,6 +223,24 @@ public sealed partial class CharMgrService(
     [Method("GetCharacterCreationDate")]
     public async ValueTask<PyValue> GetCharacterCreationDate(ServiceCall call) =>
         await CharacterAsync(call) is { } character ? FileTime(character.CreatedAt) : None;
+
+    /// <summary>The private character row used by the corporation member editor.</summary>
+    [Method("GetPrivateInfo")]
+    public async ValueTask<PyValue> GetPrivateInfo(ServiceCall call)
+    {
+        if (await CharacterAsync(call) is not { } character ||
+            !await CanReadPrivateCorporationMemberInfoAsync(call, character.CorporationId))
+            return None;
+        var balance = readBalance is null ? 0m : (await readBalance(character.Id, call.Cancellation)) ?? 0m;
+        var security = await readCharacterSecurityStatus(character.Id, call.Cancellation);
+        var fields = new[] { "characterID", "gender", "createDateTime", "raceID", "bloodlineID", "ancestryID", "balance", "securityRating" };
+        var row = new PyList([
+            new PyInt(character.Id), new PyInt(character.Gender), FileTime(character.CreatedAt),
+            new PyInt(character.RaceId), new PyInt(character.BloodlineId), new PyInt(character.AncestryId),
+            Py.Number((double)balance), Py.Number(security),
+        ]);
+        return Py.Rowset(fields, [row]);
+    }
 
     /// <summary>The station the character's clone is at, in every spelling the client has asked for it in.</summary>
     [Method("GetHomeStationRow")]
@@ -218,7 +268,6 @@ public sealed partial class CharMgrService(
     [Method("GetHomeStation")]
     public ValueTask<PyValue> GetHomeStation(ServiceCall call) => GetHomeStationRow(call);
 
-
     [Method("MachoResolveObject")]
     public PyValue MachoResolveObject(ServiceCall call)
     {
@@ -230,14 +279,40 @@ public sealed partial class CharMgrService(
             _ => [],
         };
         var sessionCharacterId = call.Session.CharacterId.GetValueOrDefault();
-        var characterId = parameters.Count > 0
-            ? IdOf(parameters[0]) ?? sessionCharacterId
-            : sessionCharacterId;
-        var containerId = parameters.Count > 1 ? IdOf(parameters[1]) : null;
-        return characterId > 0 && containerId == globalAssetsContainerId
-            ? new PyInt(Eve.Macho.MachoMessage.ProxyNodeId)
-            : None;
+        if (sessionCharacterId <= 0 || parameters.Count < 2 ||
+            IdOf(parameters[0]) != sessionCharacterId ||
+            IdOf(parameters[1]) != globalAssetsContainerId)
+        {
+            return None;
+        }
+
+        return new PyInt(Eve.Macho.MachoMessage.ProxyNodeId);
     }
+
+    private ValueTask<PyValue> CallGlobalAssetsInventory(ServiceCall call)
+    {
+        if (globalAssetsInventoryCall is null)
+            throw new InvalidOperationException("The global assets inventory provider is not configured.");
+        return globalAssetsInventoryCall(call);
+    }
+
+    [Method("MachoBindObject")]
+    public ValueTask<PyValue> MachoBindObject(ServiceCall call) => CallGlobalAssetsInventory(call);
+
+    [Method("ListStations")]
+    public ValueTask<PyValue> ListGlobalAssetStations(ServiceCall call) => CallGlobalAssetsInventory(call);
+
+    [Method("ListStationItems")]
+    public ValueTask<PyValue> ListGlobalAssetStationItems(ServiceCall call) => CallGlobalAssetsInventory(call);
+
+    [Method("List")]
+    public ValueTask<PyValue> ListGlobalAssets(ServiceCall call) => CallGlobalAssetsInventory(call);
+
+    [Method("ListIncludingContainers")]
+    public ValueTask<PyValue> ListGlobalAssetsIncludingContainers(ServiceCall call) => CallGlobalAssetsInventory(call);
+
+    [Method("GetAssetWorth")]
+    public ValueTask<PyValue> GetGlobalAssetWorth(ServiceCall call) => CallGlobalAssetsInventory(call);
 
     /// <summary>
     /// The recustomization state (the reference's <c>Paperdoll.State</c>): the state a re-sculpt certificate set (1 resculpting, 3 full, ended by the
@@ -247,7 +322,7 @@ public sealed partial class CharMgrService(
     [Method("GetPaperdollState")]
     public async ValueTask<PyValue> GetPaperdollState(ServiceCall call)
     {
-        var characterId = call.Arg(0) is PyInt { Value: > 0 } given ? given.Value : call.Session.CharacterId ?? 0;
+        var characterId = call.Session.CharacterId ?? 0;
         if (characterId <= 0)
             return new PyInt(NoExistingCustomization);
         if (readRecustomizationState is not null && await readRecustomizationState(characterId, call.Cancellation) is { } recustomizing)
@@ -274,17 +349,102 @@ public sealed partial class CharMgrService(
             .Select(entry => new KeyValuePair<PyValue, PyValue>(new PyStr(entry.Key), entry.Value))]);
     }
 
+    private static bool IsBoundedCharacterSettingsValue(PyValue root)
+    {
+        const int maximumDepth = 64;
+        const int maximumNodes = 20000;
+        const int maximumPayloadUnits = 102400;
+        var pending = new Stack<(PyValue Value, int Depth)>();
+        var seen = new HashSet<PyValue>(ReferenceEqualityComparer.Instance);
+        pending.Push((root, 0));
+        var nodes = 0;
+        long payloadUnits = 0;
+
+        while (pending.TryPop(out var entry))
+        {
+            if (++nodes > maximumNodes || entry.Depth > maximumDepth)
+                return false;
+            var value = entry.Value;
+            switch (value)
+            {
+                case PyStr text:
+                    payloadUnits += text.Value.Length;
+                    break;
+                case PyWString text:
+                    payloadUnits += text.Value.Length;
+                    break;
+                case PyToken text:
+                    payloadUnits += text.Value.Length;
+                    break;
+                case PyBytes bytes:
+                    payloadUnits += bytes.Value.Length;
+                    break;
+                case PyBuffer buffer:
+                    payloadUnits += buffer.Value.Length;
+                    break;
+                case PyList list when seen.Add(value):
+                    if ((long)nodes + pending.Count + list.Items.Count > maximumNodes)
+                        return false;
+                    foreach (var child in list.Items)
+                        pending.Push((child, entry.Depth + 1));
+                    break;
+                case PyTuple tuple when seen.Add(value):
+                    if ((long)nodes + pending.Count + tuple.Items.Count > maximumNodes)
+                        return false;
+                    foreach (var child in tuple.Items)
+                        pending.Push((child, entry.Depth + 1));
+                    break;
+                case PyDict dict when seen.Add(value):
+                    if ((long)nodes + pending.Count + 2L * dict.Entries.Count > maximumNodes)
+                        return false;
+                    foreach (var (key, child) in dict.Entries)
+                    {
+                        pending.Push((key, entry.Depth + 1));
+                        pending.Push((child, entry.Depth + 1));
+                    }
+                    break;
+                case PyObject obj when seen.Add(value):
+                    if ((long)nodes + pending.Count + 2 > maximumNodes)
+                        return false;
+                    pending.Push((obj.Name, entry.Depth + 1));
+                    pending.Push((obj.Args, entry.Depth + 1));
+                    break;
+                case PyObjectEx objEx when seen.Add(value):
+                    if ((long)nodes + pending.Count + 1L + objEx.List.Count + 2L * objEx.Dict.Count > maximumNodes)
+                        return false;
+                    pending.Push((objEx.Header, entry.Depth + 1));
+                    foreach (var child in objEx.List)
+                        pending.Push((child, entry.Depth + 1));
+                    foreach (var (key, child) in objEx.Dict)
+                    {
+                        pending.Push((key, entry.Depth + 1));
+                        pending.Push((child, entry.Depth + 1));
+                    }
+                    break;
+            }
+
+            if (payloadUnits > maximumPayloadUnits)
+                return false;
+        }
+
+        return true;
+    }
+
     [Method("SaveCharacterSetting")]
     public async ValueTask<PyValue> SaveCharacterSetting(ServiceCall call)
     {
-        var key = OptionalText(call.Arg(0))?.Trim();
+        var rawKey = call.Arg(0);
+        if (rawKey is not (PyStr or PyWString or PyToken or PyInt or PyLong or PyBool or PyReal or PyNone))
+            throw MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr("Character setting keys must be scalar values.")));
+        var key = OptionalText(rawKey)?.Trim();
         if (string.IsNullOrEmpty(key))
             return None;
+        if (key.Length > 102400)
+            throw MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr("Character setting keys are limited to 100 KB.")));
 
         var value = call.Arg(1);
-        if (value is PyStr text && text.Value.Length > 102400 ||
-            value is PyWString wideText && wideText.Value.Length > 102400)
-            throw MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr("Character settings are limited to 100 KB.")));
+        if (!IsBoundedCharacterSettingsValue(value))
+            throw MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr("Character settings are limited to 100 KB, 20,000 values, and 64 nesting levels.")));
 
         await UpdatePersonalDataAsync(call, data =>
         {
@@ -406,6 +566,24 @@ public sealed partial class CharMgrService(
         _ => [],
     };
 
+    private static HashSet<long> BoundedContactOwnerIds(PyValue value)
+    {
+        var items = value switch
+        {
+            PyList list => list.Items,
+            PyTuple tuple => tuple.Items,
+            _ => throw MachoErrors.ThrowUserError("CHARMGR_CONTACT_IDS_INVALID"),
+        };
+        if (items.Count > MaxBulkContactOwnerIds)
+            throw MachoErrors.ThrowUserError("CHARMGR_BULK_LIMIT_EXCEEDED");
+        return items.Select(item => item switch
+        {
+            PyInt { Value: > 0 } id => id.Value,
+            PyLong { Value: > 0 } id => id.Value,
+            _ => throw MachoErrors.ThrowUserError("CHARMGR_CONTACT_ID_INVALID"),
+        }).ToHashSet();
+    }
+
     private static string? OptionalText(PyValue? value)
     {
         if (value is null or PyNone)
@@ -461,8 +639,6 @@ public sealed partial class CharMgrService(
             ("blocked", Py.Rowset(["senderID"], blocked)));
     }
 
-
-
     [Method("GetLabels")]
 
     public async ValueTask<PyValue> GetLabels(ServiceCall call)
@@ -481,7 +657,119 @@ public sealed partial class CharMgrService(
         return new PyDict(entries);
     }
 
+    [Method("CreateLabel")]
+    public async ValueTask<PyValue> CreateLabel(ServiceCall call)
+    {
+        var rawName = call.Args.Count > 0 ? Eve.Macho.JsSemantics.StringValue(call.Arg(0)) ?? "" : "";
+        if (rawName.Length > 40)
+            throw MachoErrors.ThrowUserError("CHARMGR_CONTACT_LABEL_NAME_LIMIT_EXCEEDED");
+        var name = rawName.Trim();
+        var color = call.Args.Count > 1 ? NormalizeInteger(call.Arg(1)) : 0;
+        long labelId = 0;
+        var updated = await UpdatePersonalDataAsync(call, data =>
+        {
+            var hint = data.NextContactLabelId is > 0 ? data.NextContactLabelId.Value : 1;
+            labelId = 1;
+            while (labelId < hint && labelId <= long.MaxValue / 2)
+                labelId <<= 1;
+            if (labelId < hint)
+            {
+                labelId = 0;
+                return data;
+            }
+            while (labelId > 0 && data.Labels.ContainsKey(labelId))
+            {
+                if (labelId > long.MaxValue / 2)
+                {
+                    labelId = 0;
+                    return data;
+                }
+                labelId <<= 1;
+            }
+            if (labelId <= 0)
+                return data;
+            var labels = new Dictionary<long, CharMgrContactLabel>(data.Labels);
+            labels[labelId] = new CharMgrContactLabel(name, color);
+            return data with { Labels = labels, NextContactLabelId = labelId <= (1L << 61) ? labelId << 1 : null };
+        });
+        return updated is not null && labelId > 0 ? new PyInt(labelId) : None;
+    }
 
+    [Method("DeleteLabel")]
+    public async ValueTask<PyValue> DeleteLabel(ServiceCall call)
+    {
+        var labelId = call.Args.Count > 0 ? NormalizeInteger(call.Arg(0)) : 0;
+        if (labelId <= 0)
+            return None;
+        await UpdatePersonalDataAsync(call, data =>
+        {
+            var labels = data.Labels.Where(entry => entry.Key != labelId).ToDictionary();
+            var contacts = data.Contacts.Select(contact => contact with { LabelMask = contact.LabelMask & ~labelId }).ToArray();
+            return data with { Labels = labels, Contacts = contacts };
+        });
+        return None;
+    }
+
+    [Method("EditLabel")]
+    public async ValueTask<PyValue> EditLabel(ServiceCall call)
+    {
+        if (call.Args.Count == 0)
+            return None;
+        var labelId = NormalizeInteger(call.Arg(0));
+        if (labelId <= 0)
+            return None;
+        var hasName = call.Args.Count > 1 && call.Arg(1) is not PyNone;
+        var hasColor = call.Args.Count > 2 && call.Arg(2) is not PyNone;
+        var name = hasName ? Eve.Macho.JsSemantics.StringValue(call.Arg(1)) ?? "" : "";
+        if (hasName && name.Length > 40)
+            throw MachoErrors.ThrowUserError("CHARMGR_CONTACT_LABEL_NAME_LIMIT_EXCEEDED");
+        var color = hasColor ? NormalizeInteger(call.Arg(2)) : 0;
+        await UpdatePersonalDataAsync(call, data =>
+        {
+            var old = data.Labels.GetValueOrDefault(labelId) ?? new CharMgrContactLabel("", 0);
+            var labels = new Dictionary<long, CharMgrContactLabel>(data.Labels);
+            labels[labelId] = new CharMgrContactLabel(hasName ? name : old.Name, hasColor ? color : old.Color);
+            return data with { Labels = labels };
+        });
+        return None;
+    }
+
+    [Method("AssignLabels")]
+    public async ValueTask<PyValue> AssignLabels(ServiceCall call)
+    {
+        var contactIds = call.Args.Count > 0 ? BoundedContactOwnerIds(call.Arg(0)) : new HashSet<long>();
+        var labelMask = call.Args.Count > 1 ? NormalizeInteger(call.Arg(1)) : 0;
+        if (labelMask <= 0 || contactIds.Count == 0)
+            return None;
+        await UpdatePersonalDataAsync(call, data =>
+        {
+            var contacts = data.Contacts.ToDictionary(contact => contact.ContactId);
+            foreach (var contactId in contactIds)
+            {
+                var existing = contacts.GetValueOrDefault(contactId);
+                contacts[contactId] = new CharMgrContact(contactId, existing?.InWatchlist ?? false,
+                    existing?.RelationshipId ?? 0, (existing?.LabelMask ?? 0) | labelMask);
+            }
+            return data with { Contacts = contacts.Values.OrderBy(contact => contact.ContactId).ToArray() };
+        });
+        return None;
+    }
+
+    [Method("RemoveLabels")]
+    public async ValueTask<PyValue> RemoveLabels(ServiceCall call)
+    {
+        var contactIds = call.Args.Count > 0 ? BoundedContactOwnerIds(call.Arg(0)) : new HashSet<long>();
+        var labelMask = call.Args.Count > 1 ? NormalizeInteger(call.Arg(1)) : 0;
+        if (labelMask <= 0 || contactIds.Count == 0)
+            return None;
+        await UpdatePersonalDataAsync(call, data => data with
+        {
+            Contacts = data.Contacts.Select(contact => contactIds.Contains(contact.ContactId)
+                ? contact with { LabelMask = contact.LabelMask & ~labelMask }
+                : contact).ToArray(),
+        });
+        return None;
+    }
 
     /// <summary>The reference exposes its default notes folder for a bound character.</summary>
     private static CharMgrOwnerNote? DefaultFoldersNote(CharMgrPersonalData data)
@@ -524,7 +812,6 @@ public sealed partial class CharMgrService(
         return Py.Rowset(["noteID", "label"], rows);
     }
 
-    /// <summary>An absent note is returned in the one-row KeyVal list expected by the client.</summary>
     [Method("GetOwnerNote")]
 
     public async ValueTask<PyValue> GetOwnerNote(ServiceCall call)
@@ -553,13 +840,10 @@ public sealed partial class CharMgrService(
         return new PyStr(data.ItemNotes.GetValueOrDefault(itemId, ""));
     }
 
-
     [Method("GetPrivateInfoOnCorpChange")]
     public async ValueTask<PyValue> GetPrivateInfoOnCorpChange(ServiceCall call)
     {
-        var characterId = call.Args.Count == 0
-            ? call.Session.CharacterId ?? 0
-            : NormalizeInteger(call.Arg(0));
+        var characterId = call.Session.CharacterId ?? 0;
         var character = characterId > 0
             ? await characters.GetAsync(characterId, call.Cancellation)
             : null;
@@ -579,11 +863,16 @@ public sealed partial class CharMgrService(
             ("corporationDateTime", corporationDateTime));
     }
 
-
     [Method("GetOrganizationInfoForCharacters")]
     public async ValueTask<PyValue> GetOrganizationInfoForCharacters(ServiceCall call)
     {
-        var characterIds = ListItems(call.Arg(0))
+        var requestedIds = ListItems(call.Arg(0));
+        if (requestedIds.Count > MaxOrganizationInfoCharacterIds)
+        {
+            throw MachoErrors.ThrowUserError("CHARMGR_BULK_LIMIT_EXCEEDED");
+        }
+
+        var characterIds = requestedIds
             .Select(value => NormalizeInteger(value))
             .Where(id => id > 0)
             .Distinct()
@@ -627,6 +916,9 @@ public sealed partial class CharMgrService(
         return new PyDict(entries);
     }
 
+    [Method("EditContact")]
+    public ValueTask<PyValue> EditContact(ServiceCall call) => AddContact(call);
+
     [Method("AddContact")]
     public async ValueTask<PyValue> AddContact(ServiceCall call)
     {
@@ -656,6 +948,10 @@ public sealed partial class CharMgrService(
     {
         var label = OptionalText(call.Args.Count > 0 ? call.Arg(0) : new PyStr("")) ?? "";
         var noteText = OptionalText(call.Args.Count > 1 ? call.Arg(1) : new PyStr("")) ?? "";
+        if (label.Length > 82)
+            throw MachoErrors.ThrowUserError("CHARMGR_NOTE_LABEL_LIMIT_EXCEEDED");
+        if (noteText.Length > 3900)
+            throw MachoErrors.ThrowUserError("CHARMGR_NOTE_LIMIT_EXCEEDED");
         var noteId = 0L;
         await UpdatePersonalDataAsync(call, data =>
         {
@@ -678,7 +974,7 @@ public sealed partial class CharMgrService(
     [Method("BlockOwners")]
     public async ValueTask<PyValue> BlockOwners(ServiceCall call)
     {
-        var ownerIds = ListItems(call.Arg(0)).Select(item => NormalizeInteger(item)).Where(id => id > 0).ToHashSet();
+        var ownerIds = BoundedContactOwnerIds(call.Arg(0));
         await UpdatePersonalDataAsync(call, data => data with
         {
             BlockedSenders = data.BlockedSenders.Concat(ownerIds).Distinct().Order().ToArray(),
@@ -689,7 +985,7 @@ public sealed partial class CharMgrService(
     [Method("DeleteContacts")]
     public async ValueTask<PyValue> DeleteContacts(ServiceCall call)
     {
-        var contactIds = ListItems(call.Arg(0)).Select(item => NormalizeInteger(item)).ToHashSet();
+        var contactIds = BoundedContactOwnerIds(call.Arg(0));
         await UpdatePersonalDataAsync(call, data => data with
         {
             Contacts = data.Contacts.Where(contact => !contactIds.Contains(contact.ContactId)).ToArray(),
@@ -700,7 +996,7 @@ public sealed partial class CharMgrService(
     [Method("EditContactsRelationshipID")]
     public async ValueTask<PyValue> EditContactsRelationshipID(ServiceCall call)
     {
-        var contactIds = ListItems(call.Arg(0)).Select(item => NormalizeInteger(item)).Where(id => id > 0).ToHashSet();
+        var contactIds = BoundedContactOwnerIds(call.Arg(0));
         var relationshipId = NormalizeInteger(call.Arg(1));
         await UpdatePersonalDataAsync(call, data =>
         {
@@ -725,6 +1021,10 @@ public sealed partial class CharMgrService(
         var noteId = call.Args.Count > 0 ? NormalizeInteger(call.Arg(0)) : 0;
         var label = call.Args.Count > 1 ? OptionalText(call.Arg(1)) : null;
         var noteText = call.Args.Count > 2 ? OptionalText(call.Arg(2)) : null;
+        if (label is { Length: > 82 })
+            throw MachoErrors.ThrowUserError("CHARMGR_NOTE_LABEL_LIMIT_EXCEEDED");
+        if (noteText is { Length: > 3900 })
+            throw MachoErrors.ThrowUserError("CHARMGR_NOTE_LIMIT_EXCEEDED");
         await UpdatePersonalDataAsync(call, data =>
         {
             var notes = data.OwnerNotes.ToList();
@@ -762,8 +1062,6 @@ public sealed partial class CharMgrService(
         return None;
     }
 
-
-
     [Method("LogSettings")]
     public async ValueTask<PyValue> LogSettings(ServiceCall call)
     {
@@ -776,6 +1074,8 @@ public sealed partial class CharMgrService(
             {
                 settings = new PyDict([]);
             }
+            if (!IsBoundedCharacterSettingsValue(settings))
+                throw MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr("Character settings are limited to 100 KB, 20,000 values, and 64 nesting levels.")));
             await writeLogSettings(characterId, settings, call.Cancellation);
         }
         return None;
@@ -830,8 +1130,10 @@ public sealed partial class CharMgrService(
             await characters.GetAsync(characterId, call.Cancellation) is not null)
         {
             var status = NormalizeInteger(call.Kwarg("status") ?? call.Arg(0));
-            var extraInfo = call.Kwarg("extraInfo") ?? call.Arg(1);
-            await writeActivityStatus(characterId, status, OptionalText(extraInfo), call.Cancellation);
+            var extraInfo = OptionalText(call.Kwarg("extraInfo") ?? call.Arg(1));
+            if (extraInfo is { Length: > 32 })
+                throw MachoErrors.ThrowUserError("CHARMGR_ACTIVITY_INFO_LIMIT_EXCEEDED");
+            await writeActivityStatus(characterId, status, extraInfo, call.Cancellation);
         }
         return None;
     }
@@ -841,6 +1143,8 @@ public sealed partial class CharMgrService(
     {
         var itemId = call.Args.Count > 0 ? NormalizeInteger(call.Arg(0)) : 0;
         var noteText = OptionalText(call.Args.Count > 1 ? call.Arg(1) : new PyStr("")) ?? "";
+        if (noteText.Length > 5000)
+            throw MachoErrors.ThrowUserError("CHARMGR_ITEM_NOTE_LIMIT_EXCEEDED");
         await UpdatePersonalDataAsync(call, data =>
         {
             if (itemId <= 0)
@@ -865,7 +1169,7 @@ public sealed partial class CharMgrService(
     [Method("UnblockOwners")]
     public async ValueTask<PyValue> UnblockOwners(ServiceCall call)
     {
-        var ownerIds = ListItems(call.Arg(0)).Select(item => NormalizeInteger(item)).ToHashSet();
+        var ownerIds = BoundedContactOwnerIds(call.Arg(0));
         await UpdatePersonalDataAsync(call, data => data with
         {
             BlockedSenders = data.BlockedSenders.Where(id => !ownerIds.Contains(id)).ToArray(),
@@ -890,10 +1194,10 @@ public sealed partial class CharMgrService(
             return new PyList([]);
         }
 
-        return new PyList(await readRecentShipKillmailPage(characterId, num, startIndex, call.Cancellation));
+        return new PyList(await readRecentShipKillmailPage(
+            characterId, Math.Min(num, 25), startIndex, call.Cancellation));
     }
 }
-
 
 /// <summary>The station data shared by the homeStation and charMgr read paths.</summary>
 public sealed record HomeStationLocation(
@@ -1113,6 +1417,8 @@ public sealed partial class HomeStationService(
     [Method("reset_remote_change_time")]
     public async ValueTask<PyValue> ResetRemoteChangeTime(ServiceCall call)
     {
+        if (!GameMasterRoles.Has(call.Session, GameMasterRoles.Staff | GameMasterRoles.Programmer))
+            throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("QA account role required")));
         if (call.Session.CharacterId is { } characterId)
         {
             if (resetRemoteChangeTimeAsync is null)

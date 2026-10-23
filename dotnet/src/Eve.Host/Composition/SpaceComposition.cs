@@ -61,7 +61,7 @@ internal sealed partial class CharacterServicesComposition
     }
 
     /// <summary>
-    /// The customs penalty (ST-18) and its settlement job, registered with the shared scheduler whether or not the simulation runs: a process runs the kinds it has
+
     /// a handler for, so a penalty scheduled by one process is settled by any process that has the handler.
     /// </summary>
     private UndockContraband customs = default!;
@@ -173,7 +173,7 @@ internal sealed partial class CharacterServicesComposition
             {
                 foundations.Content.Define(definition);
             }
-            // the cosmic sites of the systems: content of the shared runtime, kept filled by a recurring job per system (docs/design/FOUNDATIONS.md, an anomaly end to end)
+
             // the containers of the sites: their rows are kept in the sites schema. The type of a container is the static data's type of its name in the
             // container groups (306 Spawn, 314, 1207 Scatter); a name the static data does not have falls back to the lowest type id of the kind's group
             var siteContainers = new Eve.Services.Space.SiteContainerStore(source);
@@ -217,11 +217,18 @@ internal sealed partial class CharacterServicesComposition
                     return Task.CompletedTask;
                 });
             var npcWrecks = new NpcWrecks(npcAuthority, () => NpcLoot.LoadAsync(sde), ships);
-            spaceSessions = new SpaceSessions(sim, ships, dogma, stations, solarSystems, now, message => Console.Error.WriteLine($"eve-host: space: {message}"), localTimers: foundations.LocalTimers, spaceItems: spaceItemStore) { RookieShipOfRace = race => catalog.Race(race)?.ShipTypeId, Npcs = new NpcSelector(npcAuthority), NpcWrecks = npcWrecks, BeltRats = new BeltRats(npcAuthority, BeltRatConfig.FromEnvironment(Environment.GetEnvironmentVariable), type => NpcHull.HasHitPoints(dogma.Type(type))), AutoReloadUsers = AutoReloadUserIds(Env("EVE_AUTO_RELOAD_ACCOUNTS", "")) };
+            spaceSessions = new SpaceSessions(sim, ships, dogma, stations, solarSystems, now, message => Console.Error.WriteLine($"eve-host: space: {message}"), localTimers: foundations.LocalTimers, spaceItems: spaceItemStore) { RookieShipOfRace = race => catalog.Race(race)?.ShipTypeId, Npcs = new NpcSelector(npcAuthority), NpcWrecks = npcWrecks, BeltRats = new BeltRats(npcAuthority, BeltRatConfig.FromEnvironment(Environment.GetEnvironmentVariable), type => NpcHull.HasHitPoints(dogma.Type(type))), AutoReloadUsers = AutoReloadUserIds(Env("EVE_AUTO_RELOAD_ACCOUNTS", "")), WarpAcceptedAsync = (characterId, token) => AchievementTracker.RecordWarpAsync(characterId, now(), token) };
+            spaceSessions.TimedActions = foundations.Scheduler;
+            foundations.Scheduler.Register(Eve.Services.Space.SpaceSessions.ShipSelfDestructJobKind, async (context, token) =>
+            {
+                var countdown = context.Payload<Eve.Services.ShipSelfDestructCountdown>()
+                    ?? throw new InvalidDataException("A ship self-destruct deadline has no payload.");
+                await spaceSessions.CompleteShipSelfDestructAsync(countdown, token);
+            });
             // the stargate lists and tolls: the embedded client data, or the export named by EVE_CLIENT_SDE_DIR where it holds the file
             var clientDirectory = Env(Eve.Universe.ClientStaticData.DirectoryVariable, "");
             spaceSessions.GateRules = await Eve.Services.Space.Gates.GateRules.LoadAsync(sde, clientDirectory);
-            // the environment of the J-space systems (slice 7c): each system's effect beacon (SDE group 920) as dogma effects on the ships in it
+
             var beaconEffects = await Eve.Universe.WormholeEffects.LoadAsync(sde);
             var environments = new Dictionary<int, IReadOnlyList<Eve.Dogma.EffectDef>>();
             foreach (var system in Eve.Universe.JSpaceSystems.Load())
@@ -234,7 +241,7 @@ internal sealed partial class CharacterServicesComposition
                 }
             }
             spaceSessions.SystemEnvironment = id => environments.GetValueOrDefault(id) ?? [];
-            // the wormholes of J-space (slice 7): the world is generated once from the seed (EVE_WORMHOLE_SEED) out of the SDE and the client's system classes
+
             // (embedded; EVE_WORMHOLES=off turns the wormholes off). The ends of a system are placed with its scene (SpaceSessions); a collapse or an opening is published to it
             if (Env("EVE_WORMHOLES", "on") is not ("off" or "0" or "false"))
             {
@@ -249,7 +256,7 @@ internal sealed partial class CharacterServicesComposition
                 spaceSessions.Wormholes = wormholes;
                 wormholes.Changed += spaceSessions.PublishWormholeChange;
             }
-            // the gate toll is journaled as a sink: no source names a payee, so no wallet is credited (DEVIATIONS, slice 3)
+
             var tollWallets = new Eve.Wallet.WalletTransactions(source, walletSchema);
             spaceSessions.ChargeGateToll = async (character, amount, key, token) =>
             {
@@ -279,7 +286,13 @@ internal sealed partial class CharacterServicesComposition
             spaceSessions.ApplyContrabandPenaltyAsync = customs.ApplyAsync;
             npcWrecks.Warm();
             // the periodic work of the space features is jobs of the shared scheduler, not timers of their own
-            spaceSessions.UseBounties(new PgBountyStore(source, new WalletTransactions(source, walletSchema), npcSchema, message => Console.Error.WriteLine($"eve-host: bounty: {message}")));
+            spaceSessions.UseBounties(new PgBountyStore(source, new WalletTransactions(source, walletSchema), npcSchema, message => Console.Error.WriteLine($"eve-host: bounty: {message}"),
+                async (characterId, token) =>   // the member's corporation and its ISK tax rate, read when the bounty is paid
+                {
+                    var member = await corporations.MemberAsync(characterId, token);
+                    var corporation = member is null ? null : await corporations.GetAsync(member.CorporationId, token);
+                    return corporation is null ? null : new BountyTaxTerms(corporation.Id, corporation.IsNpc, corporation.TaxRate);
+                }));
             spaceSessions.Ess = Ess;   // the Main Bank share of a bounty earned in an ESS system
             await PlaceEssBallsAsync(sim);   // each ESS is a ball in space, so a pilot in its system can link to it
             spaceSessions.Events = foundations.Events;   // what happens in space is announced on the bus as well
@@ -290,13 +303,24 @@ internal sealed partial class CharacterServicesComposition
             spaceSessions.SecurityStatusOf = securityStatusOf;   // the ship in space shows it
             spaceSessions.CrimewatchStateOf = crimewatchRuntime.StateOfAsync;
             spaceSessions.CriminalEnteredSystem = crimewatchRuntime.RespondToCriminalEntryAsync;
-            spaceSessions.LifecycleBlockers = async (action, session, _, token) =>
+            spaceSessions.LifecycleBlockers = async (action, session, shipId, token) =>
             {
                 if (session.CharacterId is not { } characterId || characterId <= 0)
                     return Array.Empty<string>();
+                var blockers = new List<string>();
+                if (action == Eve.Services.Space.ShipLifecycleAction.Board && shipId is { } boardShipId &&
+                    await items.GetAsync(boardShipId, token) is { } ship)
+                {
+                    await dogma.EnsureTypesAsync([ship.TypeId], token);
+                    if (dogma.Type(ship.TypeId) is { } shipType)
+                    {
+                        var trained = (await skills.ForCharacterAsync(characterId, token)).ToDictionary(skill => skill.TypeId, skill => (int)skill.Level);
+                        if (!Eve.Fitting.FittingRules.HasRequiredSkills(shipType, skillTypeId => trained.GetValueOrDefault(skillTypeId)))
+                            blockers.Add("missing_ship_skill");
+                    }
+                }
                 var state = await crimewatchRuntime.StateOfAsync(characterId, token);
                 var currentTime = now();
-                var blockers = new List<string>();
                 if (state.HasWeaponsTimer(currentTime))
                     blockers.Add("weapon_timer");
                 if (action == Eve.Services.Space.ShipLifecycleAction.SafeLogoff &&
@@ -339,7 +363,7 @@ internal sealed partial class CharacterServicesComposition
                     return;
                 try
                 {
-                    // the fleet of the killer shares the bounty (EVE University wiki: "the entire fleet shares the bounty")
+
                     var sharers = FleetSharersAsync(loss.KillerCharacterId).GetAwaiter().GetResult();
                     playerBountyKills!.ClaimShipLossAsync(loss.CharacterId, loss.ShipId, loss.ShipTypeId,
                         [.. (loss.Contents ?? []).Select(item => (item.TypeId, item.Quantity))], loss.KillerCharacterId, now(),
@@ -356,7 +380,7 @@ internal sealed partial class CharacterServicesComposition
                     Console.Error.WriteLine($"eve-host: player bounty of ship {loss.ShipId} could not be claimed: {error}");
                 }
             };
-            // the capsule is a loss of its own: a pilot that shoots a pod dead claims the pod's value (the capsule's base price; the wiki's implant value is not tracked yet)
+
             spaceSessions.PodLost += loss =>
             {
                 if (loss.Cause != Eve.Services.Space.ShipLossCause.Player || loss.KillerCharacterId <= 0)
@@ -378,15 +402,16 @@ internal sealed partial class CharacterServicesComposition
                     Console.Error.WriteLine($"eve-host: player bounty of pod {loss.CapsuleId} could not be claimed: {error}");
                 }
             };
-            // a pilot that destroys a faction's NPC loses standing with the faction (EveJS factionKillStandingRuntime; the debounce is in memory)
+
             var npcFactionStanding = new Eve.Services.Space.NpcFactionStanding(foundations.Relations, now);
+            spaceSessions.NpcDestroyed += RecordFactionWarfareNpcKill;
             spaceSessions.NpcDestroyed += kill =>
             {
                 if (kill.FinalBlowCharacterId <= 0 || kill.Profile.FactionId <= 0)
                     return;
                 try
                 {
-                    // the pilot is told the new standing as the reference tells it (EveJS notifyStandingSet: OnStandingSet(faction, pilot, standing))
+
                     var standing = npcFactionStanding.ApplyAsync(kill.FinalBlowCharacterId, kill.Profile.FactionId, kill.SolarSystemId, CancellationToken.None).GetAwaiter().GetResult();
                     if (standing is { } changed && characterSessions?.Of(kill.FinalBlowCharacterId) is { } pilot)
                     {
@@ -475,7 +500,7 @@ internal sealed partial class CharacterServicesComposition
                 typeId => dogma.Type(typeId)?.GroupId ?? 0);
             spaceContainers.ReadObservatoryLandmarks = observatoryLandmarks.ReadAsync;
             spaceContainers.ReadControlTowers = observatoryLandmarks.ReadControlTowersAsync;
-            // the cosmic sites are deadspace anchors; a dungeon's pocket is its own record (ST-23, SpaceContainers.Pockets)
+
             spaceContainers.ReadDeadspaceAnchors = async (system, token) => cosmicSites is { } sites
                 ? (IReadOnlyList<double[]>)(await sites.ActiveAsync(system, token)).Select(site => site.Position).ToArray()
                 : [];
@@ -495,8 +520,8 @@ internal sealed partial class CharacterServicesComposition
             spaceSessions.ControlTowerUnanchor = spaceContainers.UnanchorControlTowerAsync;
             foundations.Scheduler.Register(Eve.Services.Space.SpaceContainers.AnchorJob, async (context, token) =>
                 await spaceContainers.AnchorAsync(context.Payload<Eve.Services.Space.SpaceContainers.DisruptorAnchorDue>()!.DeployableId, token));
-foundations.Scheduler.Register(Eve.Services.Space.SpaceContainers.ObservatoryPingJob, async (context, token) =>
-await spaceContainers.PingObservatoryAsync(context.Payload<Eve.Services.Space.SpaceContainers.ObservatoryPingDue>()!.DeployableId, token));
+            foundations.Scheduler.Register(Eve.Services.Space.SpaceContainers.ObservatoryPingJob, async (context, token) =>
+            await spaceContainers.PingObservatoryAsync(context.Payload<Eve.Services.Space.SpaceContainers.ObservatoryPingDue>()!.DeployableId, token));
             var containers = spaceContainers;
             var probes = new Eve.Services.Space.SpaceProbes(ships, dogma, new Eve.Ships.PgProbeStore(source, spaceSchema), spaceSessions, sim, now, message => Console.Error.WriteLine($"eve-host: probes: {message}"));
             spaceSessions.Probes = probes;
@@ -514,8 +539,43 @@ await spaceContainers.PingObservatoryAsync(context.Payload<Eve.Services.Space.Sp
             var dungeonWaves = new Eve.Services.Space.Waves.DungeonWaveDirector(source, foundations.Content, foundations.Scheduler, foundations.Events,
                 Eve.Dungeons.DungeonCatalog.LoadEmbedded(), Eve.Dungeons.WaveRules.LoadEmbedded(), new NpcSelector(npcAuthority),
                 new Eve.Services.Space.SpaceDungeonNpcs(spaceSessions), spaceSchema, message => Console.Error.WriteLine($"eve-host: space: {message}"));
+
+            dungeonWaves.GateRadii = (await sde.ReadAsync("types", [17831L, 35776L])).ToDictionary(row => row.Key, row => row.Doc.GetProperty("radius").GetDouble());
             await dungeonWaves.AttachAsync();
             dungeonWavesDirector = dungeonWaves;
+            // the acceleration gates of the dungeon rooms (keeper.ActivateAccelerationGate): a pilot walks the gate of its room into the room it leads to
+            accelerationGates = new Eve.Services.Space.Gates.SpaceAccelerationGates(dungeonWaves.ActivePocketsAsync,
+                async (session, token) =>
+                {
+                    // the mission dungeon the pilot is in, else the complex it is inside (the current-dungeon answer has no instance when it has none)
+                    if (await CurrentDungeonInstanceAsync(session, token) is > 0 and var mission)
+                        return mission;
+                    return complexInstanceOfPilot is { } complexOf ? await complexOf(session, token) : null;
+                },
+                dungeonWaves.ClearedRoomKeysAsync,
+                async (session, token) =>
+                {
+                    if (spaceSessions.ShipTypeIdOf(session) is not { } typeId)
+                    {
+                        return null;
+                    }
+                    await dogma.EnsureTypesAsync([typeId], token);
+                    if (dogma.Type(typeId) is not { } type)
+                        return null;
+                    var staticType = (await sde.ReadAsync("types", [typeId], cancellationToken: token)).SingleOrDefault();
+                    if (staticType is null)
+                        return null;
+                    int? metaGroupId = staticType.Doc.TryGetProperty("metaGroupID", out var metaGroup) && metaGroup.ValueKind == System.Text.Json.JsonValueKind.Number
+                        ? metaGroup.GetInt32()
+                        : null;
+                    long? factionId = staticType.Doc.TryGetProperty("factionID", out var faction) && faction.ValueKind == System.Text.Json.JsonValueKind.Number
+                        ? faction.GetInt64()
+                        : null;
+                    bool battlefieldAllowed = Eve.Services.Space.Gates.SpaceAccelerationGates.IsBattlefieldAllowed(type.CategoryId, metaGroupId, factionId);
+                    return new Eve.Services.Space.Gates.ShipClass(type.GroupId, type.RaceId) { BattlefieldAllowed = battlefieldAllowed };
+                },
+                (session, gateId, point, token) => spaceSessions.AccelerationGateTransitAsync(session, gateId, point, token),
+                WriteCurrentRoomAsync);
             // the CONCORD Rogue Analysis Beacon (CRAB, D-L1 and D-S1): deployed from the hold, linked, scanned, expired by its own record kind
             await Eve.Services.Space.Beacons.AnalysisBeaconDirector.MigrateAsync(source, spaceSchema);
             var beacons = new Eve.Services.Space.Beacons.AnalysisBeaconDirector(

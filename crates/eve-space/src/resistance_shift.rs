@@ -4,13 +4,9 @@
 //! The state is the module's resonance multiplier for each kind of damage (`profile`, seeded from the module's own values, 0.85 each for a 4403; the
 //! ship's armor resonance is its base times this), in the order a damage vector is written: em, thermal, kinetic, explosive. The tally is the damage
 //! the armor took in the cycle per kind, weighted by the resonance it had. Each cycle the kinds the armor took least are the donors (at least two): each
-//! rises by `step` of its multiplier (less what it cannot rise, past one), and the other kinds fall, shared equally, by what the donors rose. So the
 //! resistance moves from the kinds the armor was hit by to the kinds it was not. A tie is settled in the order the reference declares the kinds (em,
 //! explosive, kinetic, thermal). When the armor took nothing in any kind there is no change.
 //!
-//! This is the redistribution of the EVE University and pyfa models of the reference (`reactiveArmorHardenerRuntime.js`), not a CCP formula: CCP gives
-//! the six percent a cycle and the zero-sum total only (see `docs/reference/compat/DEVIATIONS.md`).
-
 /// The four kinds of damage, in the order a damage vector is written: em, thermal, kinetic, explosive.
 pub type Kinds = [f64; 4];
 
@@ -23,7 +19,7 @@ fn round6(value: f64) -> f64 {
 }
 
 /// The resonances after one cycle, given the damage the armor took per kind in it (`tally`, already weighted by the resonance it had) and the most
-/// one kind can give up in a cycle (`step`, a fraction, 0.06 for the reference's 6). None when nothing changes (no damage, or every kind would be
+///
 /// the same to the millionth): the armor is then told nothing.
 pub fn next_profile(profile: Kinds, tally: Kinds, step: f64) -> Option<Kinds> {
     if !step.is_finite() || step <= 0.0 {
@@ -198,7 +194,6 @@ mod tests {
 
     #[test]
     fn the_donation_is_capped_by_what_the_donor_has_left() {
-        // thermal has 0.03 left to give (it is at 0.97): it gives that, not the step, and the hit kind takes what the donors gave
         let profile = [0.49, 0.97, 0.97, 0.97];
         let next = next_profile(profile, [1000.0, 0.0, 0.0, 0.0].map(|d: f64| d * 0.49), 0.06).unwrap();
         assert!((next[0] - 0.40).abs() < 1e-9, "{next:?}");

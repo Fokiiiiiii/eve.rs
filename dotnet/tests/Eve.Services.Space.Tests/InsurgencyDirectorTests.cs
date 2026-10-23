@@ -16,7 +16,6 @@ using Ins = Eve.Insurgency;
 namespace Eve.Services.Space.Tests;
 
 /// <summary>
-/// The pirate insurgencies on the space runtime (slice 2): a campaign starts in each warzone, its sites start when it becomes active, a site scores its system once,
 /// a kill in a covered system contributes, and a pirate win pays the contributors and ends the sites. The clock is the test's and the NPCs are the test's fake spawner's.
 /// </summary>
 public sealed class InsurgencyDirectorTests
@@ -143,7 +142,6 @@ public sealed class InsurgencyDirectorTests
         Assert.True((await rig.FobAsync(campaign.StructureId)).Snapshot.DestroyedMs > 0); // the FOB leaves space with the pirates' win
     }
 
-    /// <summary>The campaign site templates of the owner catalog: archetypes 72 to 79 (the sites the start driver may use).</summary>
     private static IEnumerable<long> InsurgencyTemplates() =>
         DungeonCatalog.LoadEmbedded().Dungeons.Where(d => d.ArchetypeID is >= 72 and <= 79).Select(d => d.DungeonID).ToList();
 

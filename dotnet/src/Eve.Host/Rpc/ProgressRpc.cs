@@ -38,7 +38,7 @@ namespace Eve.Host;
 internal sealed partial class CharacterServicesComposition
 {
     /// <summary>Achievements, milestones, operations, missions, abyssal, void space and the new-player experience.</summary>
-    /// <summary>The achievement tracker record as the client's two maps (EveJS <c>legacyTracker</c>): completions by achievement id, counts by event name.</summary>
+
     private static AchievementTrackerPersistedState ToPersisted(AchievementTrackerRecord record) => new(
         new PyDict([.. record.EventCounts.Select(e => new KeyValuePair<PyValue, PyValue>(new PyStr(e.Name), new PyLong(e.Count)))]),
         new PyDict([.. record.Completed.Select(c => new KeyValuePair<PyValue, PyValue>(new PyInt(c.AchievementId), new PyLong(c.CompletedFileTime)))]));
@@ -73,8 +73,9 @@ internal sealed partial class CharacterServicesComposition
                         : LoginInitializationGameStoreProjection.ReadAchievementState(
                             await ReadCharacterGameStoreRowAsync(characterId, ct)),
                 hasEverWarped: async (characterId, ct) =>
-                    LoginInitializationGameStoreProjection.ReadHasEverWarped(
-                        await ReadCharacterGameStoreRowAsync(characterId, ct)) ?? true,
+                    await AchievementTracker.HasEverWarpedAsync(characterId, ct)
+                    || LoginInitializationGameStoreProjection.ReadHasEverWarped(
+                        await ReadCharacterGameStoreRowAsync(characterId, ct)) == true,
                 writeState: (characterId, completed, eventCounts, ct) =>
                 {
                     var (done, counts) = FromClient(completed, eventCounts);
@@ -102,7 +103,7 @@ internal sealed partial class CharacterServicesComposition
                     if (characterId <= 0 || agentId <= 0) return false;
                     return (await ReadMissionTrackerContextAsync(characterId, agentId, call.Session, ct)).InActiveDungeon;
                 }),
-            new AbyssalMgrService(),
+            new AbyssalMgrService(HandleAbyssalRpcAsync),
             new VoidSpaceMgrService(),
             new AirNpeService(
                 () => newCharacterExperienceMode,

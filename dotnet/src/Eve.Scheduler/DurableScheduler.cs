@@ -22,7 +22,6 @@ public sealed record SchedulerOptions
     /// <summary>The longest the runner sleeps when nothing is due (it wakes sooner for anything scheduled in this process).</summary>
     public int MaxPollMs { get; init; } = 1000;
 
-    /// <summary>A failing job is tried again after <c>BackoffBaseMs * 2^(attempt-1)</c>, at most <see cref="BackoffMaxMs"/>.</summary>
     public long BackoffBaseMs { get; init; } = 1_000;
 
     public long BackoffMaxMs { get; init; } = 300_000;
@@ -33,7 +32,6 @@ public sealed record SchedulerOptions
 /// they do not own timers. A job is a row, so it survives restarts, and it can be scheduled in the same transaction as the state change it belongs to (the job exists exactly
 /// when the change does). A runner claims due jobs with <c>FOR UPDATE SKIP LOCKED</c> and a lease, runs the handler in a transaction that also completes the job, retries a
 /// failing handler with a back-off and parks a job that ran out of attempts as <c>failed</c>. A job may recur, be replaced or cancelled by its key, and may ask to run again.
-/// See <c>docs/design/FOUNDATIONS.md</c>.
 /// </summary>
 public sealed class DurableScheduler : IAsyncDisposable
 {
@@ -72,8 +70,6 @@ public sealed class DurableScheduler : IAsyncDisposable
 
     private string Q(string text) => Sql.In(_schema, text);
 
-    // ---- handlers ----------------------------------------------------------------------------------------------------------------------------------
-
     /// <summary>Registers the handler of a kind. A kind has one handler; a process only runs the kinds it has a handler for.</summary>
     public void Register(string kind, JobHandler handler)
     {
@@ -98,8 +94,6 @@ public sealed class DurableScheduler : IAsyncDisposable
             }
         }
     }
-
-    // ---- scheduling --------------------------------------------------------------------------------------------------------------------------------
 
     /// <summary>Schedules a job in its own transaction. Returns the id of the job (the existing one when the policy keeps it).</summary>
     public async Task<long> ScheduleAsync(JobSpec spec, CancellationToken cancellationToken = default)
@@ -168,8 +162,6 @@ public sealed class DurableScheduler : IAsyncDisposable
     /// <summary>Cancels in the caller's transaction (the cancel and the change it belongs to stand or fall together).</summary>
     public async Task<bool> CancelAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, string kind, string key, CancellationToken cancellationToken = default) =>
         await Sql.ExecuteAsync(connection, transaction, Q("DELETE FROM {schema}.jobs WHERE kind = $1 AND key = $2 AND state = 'pending'"), cancellationToken, kind, key) > 0;
-
-    // ---- looking ------------------------------------------------------------------------------------------------------------------------------------
 
     private const string Columns = "id, kind, key, payload::text, run_at_ms, state, attempts, max_attempts, every_ms, last_error";
 
@@ -249,8 +241,6 @@ public sealed class DurableScheduler : IAsyncDisposable
         await ExecuteAsync(job, cancellationToken);
         return true;
     }
-
-    // ---- running -----------------------------------------------------------------------------------------------------------------------------------
 
     /// <summary>
     /// Runs every job that is due now (and every job those jobs make due) until nothing is, at most <paramref name="maxJobs"/>. Returns how many ran. The runner loop calls this;
@@ -415,8 +405,6 @@ public sealed class DurableScheduler : IAsyncDisposable
             await Sql.ExecuteAsync(connection, transaction, Q("DELETE FROM {schema}.jobs WHERE id = $1 AND lease_owner = $2 AND state = 'running'"), CancellationToken.None, job.Id, _owner);
         }
     }
-
-    // ---- the runner loop ---------------------------------------------------------------------------------------------------------------------------
 
     /// <summary>Lets the runner look for work now instead of at its next poll. Cheap; safe to call from anywhere.</summary>
     public void Wake() => _wake.TrySetResult();

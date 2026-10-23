@@ -44,7 +44,7 @@ loaded from the cached pinned build 3396210 (`.cache/sde`) with `cargo run -p ev
 
 - `dotnet build` of Eve.Host.Tests, Eve.Structures.Tests, Eve.Characters.Tests, Eve.Corporations.Tests (0 errors after the reference fix).
 - `EVE_PG_URL='Host=127.0.0.1;Port=5432;Username=postgres;Database=eve_p4' tools/dev/db-lock.sh dotnet test ... --no-build` as listed above.
-- No Rust change; `cargo fmt` and clippy not run for this package.
+- No Rust change; `cargo fmt` and clippy not exercised for this package.
 
 ## Open
 

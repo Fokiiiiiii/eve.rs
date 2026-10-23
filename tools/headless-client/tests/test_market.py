@@ -10,8 +10,6 @@ Skipped unless EVE_LIVE_HOST is set. tools/dev/run-eve-live.sh runs it.
 
 from __future__ import annotations
 
-import os
-import time
 import uuid
 
 import pytest
@@ -19,13 +17,13 @@ import pytest
 from evecli import marshal as m
 from evecli import packet as p
 from evecli.describe import describe
+from tests import dbseed
 from tests import test_login_to_character as base
 
 pytestmark = pytest.mark.skipif(not base.LIVE, reason="set EVE_LIVE_HOST=host:port to test against a running server")
 
 TRITANIUM = 34
 ASK_ROW_NAMES = {"typeID", "stationID", "price", "volRemaining"}  # marketsvc.py:297-300; quote.py:97-100 reads .typeID
-
 
 def _new_character(client, run: str) -> int:
     creation = next(step for step in base.WALK["steps"] if step["call"][1] == "CreateCharacterWithDoll" and "ok" in step)
@@ -34,9 +32,7 @@ def _new_character(client, run: str) -> int:
     assert client.call("charUnboundMgr", "SelectCharacterID", charID=character_id, secondChoiceID=None, skipTutorial=False) is None
     return character_id
 
-
 CACHED_RESULT = "carbon.common.script.net.objectCaching.CachedMethodCallResult"
-
 
 def _payload(value):
     """A cached answer (objectCaching.CachedMethodCallResult: the cache info, the payload, the version) as its payload."""
@@ -44,18 +40,15 @@ def _payload(value):
         return value[1][1]
     return value
 
-
 def _number(described):
     """A number as the describe form gives it (a long is wrapped)."""
     return described["$long"] if isinstance(described, dict) else described
-
 
 def _label_and_arguments(error: p.MachoError):
     """The client's UserError label and its dict of arguments, from the wrapped exception object (eveexceptions.UserError)."""
     payload = describe(error.payload)["$objectex"]["$tuple"]
     label, arguments = payload[1]["$tuple"][0], payload[1]["$tuple"][1]
     return label, dict(arguments.get("$dict", []))
-
 
 def test_a_docked_character_reads_the_market_as_the_client_does():
     run = uuid.uuid4().hex[:10]
@@ -99,7 +92,6 @@ def test_a_docked_character_reads_the_market_as_the_client_does():
         label, arguments = _label_and_arguments(refused.value)
         assert label == "MktInvalidMinVolumeCannotExceedQuantity" and arguments == {}
 
-        # a price of five significant figures is off the ticks (M2, decision Q12): the client's CustomInfo carries the sentence the
         # server writes, and nothing is escrowed (the check runs before any funds move)
         with pytest.raises(p.MachoError) as refused:
             client.call("marketProxy", "PlaceBuyOrder", station_id, TRITANIUM, 12345.0, 1, -1, 1, 90, False, None)
@@ -107,17 +99,13 @@ def test_a_docked_character_reads_the_market_as_the_client_does():
         assert label == "CustomInfo"
         assert arguments == {"info": "Order prices have at most four significant figures."}
 
-
 # ---- M9: a trade through the market, as the client makes it ------------------------------------------------------------------------
 #
 # A seller takes stock from the station hangar (the game master's /giveitem), offers it (PlaceMultiSellOrder, quote.py), a buyer buys
 # part of it at once (PlaceBuyOrder with no duration), both read their transactions (CharGetTransactions, marketsvc.py:20-26), the seller
 # cancels the rest (CancelCharOrder) and sees its escrow come back. A change inside the five-minute modification delay is refused with
-# the labelled sentence; the change after the delay is checked when EVE_LIVE_SLOW=1 (it waits five minutes). Expiry is not live: it is
-# covered by the fake-clock tests (ExpiryTests, MarketCoherenceTests in dotnet/tests/Eve.Market.Tests).
-
-SLOW = os.environ.get("EVE_LIVE_SLOW") == "1"
-
+# the client sentence. Expiry and the modification deadline use controlled-clock tests (ExpiryTests, MarketCoherenceTests,
+# ModificationRulesTests in dotnet/tests/Eve.Market.Tests), keeping the live walk below the five-minute timeout.
 
 def _plain_rows(value):
     """The rows of a rowset or a list, as dicts keyed by the column names (a cached answer is unwrapped first)."""
@@ -134,7 +122,6 @@ def _plain_rows(value):
             return [dict(zip(names, line)) for line in lines]
     raise AssertionError(f"not a rowset or a list of rows: {type(plain).__name__} {str(plain)[:600]}")
 
-
 def _named(row):
     """A KeyVal (util.KeyVal of the wire, plain: (name, arguments)) as its dict of names."""
     if isinstance(row, dict):
@@ -143,7 +130,6 @@ def _named(row):
         return row[1]
     raise AssertionError(f"not a named row: {type(row).__name__} {str(row)[:400]}")
 
-
 def _field(row, *names):
     """The first of the names a row carries (a row of a rowset is read by its column names)."""
     for name in names:
@@ -151,14 +137,23 @@ def _field(row, *names):
             return row[name]
     raise AssertionError(f"no column {names} in row {row!r}")
 
-
 def _station_hangar_items(client, station_id):
     return _plain_rows(client.call("invbroker", "ListStationItems", station_id))
-
 
 def _own_orders(client):
     return _plain_rows(client.call("marketProxy", "GetCharOrders"))
 
+def _journal_checkpoint(owner_id: int) -> int:
+    wallet = dbseed.schema("WALLET")
+    return int(dbseed.sql(f"SELECT COALESCE(MAX(id), 0) FROM {wallet}.journal WHERE owner_id = {owner_id}") or 0)
+
+def _journal_since(owner_id: int, checkpoint: int) -> list[tuple[int, float]]:
+    wallet = dbseed.schema("WALLET")
+    rows = dbseed.sql(
+        f"SELECT ref_type_id || ' ' || amount::text FROM {wallet}.journal "
+        f"WHERE owner_id = {owner_id} AND id > {checkpoint} ORDER BY id"
+    )
+    return [(int(ref_type), float(amount)) for ref_type, amount in (line.split() for line in rows.splitlines())]
 
 def test_a_seller_and_a_buyer_trade_through_the_market():
     seller_run = uuid.uuid4().hex[:10]
@@ -168,6 +163,10 @@ def test_a_seller_and_a_buyer_trade_through_the_market():
         _new_character(buyer, buyer_run)
         station_id = seller.session.session_init.get("stationid")
         assert isinstance(station_id, int) and buyer.session.session_init.get("stationid") == station_id
+        seller_isk = dbseed.isk_of(seller.session.session_init.get("charid"))
+        buyer_isk = dbseed.isk_of(buyer.session.session_init.get("charid"))
+        seller_journal_at = _journal_checkpoint(seller.session.session_init.get("charid"))
+        buyer_journal_at = _journal_checkpoint(buyer.session.session_init.get("charid"))
 
         # stock: the game master's command puts the items in the station hangar and says so
         message = seller.call("slash", "SlashCmd", "/giveitem Tritanium 100")
@@ -197,17 +196,23 @@ def test_a_seller_and_a_buyer_trade_through_the_market():
         assert sold and sum(_field(row, "quantity") for row in sold) == 15, sold
         assert _field(next(row for row in _own_orders(seller) if _field(row, "orderID") == ask_id), "volRemaining") == 25
 
+        # Each account's balance delta is represented by its persisted trade and fee journal entries.
+        seller_journal = _journal_since(seller.session.session_init.get("charid"), seller_journal_at)
+        buyer_journal = _journal_since(buyer.session.session_init.get("charid"), buyer_journal_at)
+        assert any(ref == 2 and amount == 750 for ref, amount in seller_journal), seller_journal
+        assert any(ref == 54 and amount < 0 for ref, amount in seller_journal), seller_journal
+        assert any(ref == 46 and amount == -100 for ref, amount in seller_journal), seller_journal
+        assert not any(ref == 149 for ref, _ in seller_journal), seller_journal
+        assert buyer_journal == [(2, -750.0)], buyer_journal
+        assert dbseed.isk_of(seller.session.session_init.get("charid")) - seller_isk == sum(amount for _, amount in seller_journal)
+        assert dbseed.isk_of(buyer.session.session_init.get("charid")) - buyer_isk == sum(amount for _, amount in buyer_journal)
+
         # modify inside the five-minute delay: refused with the client's sentence, the price unchanged
         with pytest.raises(p.MachoError) as refused:
             seller.call("marketProxy", "ModifyCharOrder", ask_id, 55.0, 50.0, 25, None, None)
         label, arguments = _label_and_arguments(refused.value)
         assert label == "CustomInfo" and "seconds" in arguments["info"], arguments
         assert _field(next(row for row in _own_orders(seller) if _field(row, "orderID") == ask_id), "price") == 50.0
-
-        if SLOW:
-            time.sleep(300)  # the five-minute delay (market-decisions Q3)
-            seller.call("marketProxy", "ModifyCharOrder", ask_id, 55.0, 50.0, 25, None, None)
-            assert _field(next(row for row in _own_orders(seller) if _field(row, "orderID") == ask_id), "price") == 55.0
 
         # cancel: the rest of the ask leaves the book, its item returns to the hangar, and the escrow reads zero
         assert seller.call("marketProxy", "CancelCharOrder", ask_id) is None

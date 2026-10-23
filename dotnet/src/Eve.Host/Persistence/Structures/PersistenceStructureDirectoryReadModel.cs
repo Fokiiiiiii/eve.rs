@@ -40,7 +40,9 @@ public sealed partial class PersistenceStructureDirectoryReadModel(
     Func<long, CancellationToken, Task<Eve.Relations.Affiliation>> affiliationOf,
     Eve.Sde.SdeReader sde,
     Func<long, string, CancellationToken, Task>? setDescriptionAsync,
-    Func<long, CancellationToken, ValueTask<bool>>? cynoJammedAsync = null) :
+    Func<long, CancellationToken, ValueTask<bool>>? cynoJammedAsync = null,
+    Func<long, long, CancellationToken, Task<bool>>? stationManagerOfAsync = null,
+    Func<long, long, CancellationToken, Task<bool>>? corporationStructureDirectoryAccessAsync = null) :
     Eve.Services.Core.IStructureDirectoryReadCallbacks,
     Eve.Services.Core.IStructureSettingsReadCallbacks
 {
@@ -165,7 +167,27 @@ public async ValueTask<Eve.Services.Core.PersistedStructureInfo?> GetStructureIn
             StructureInfoPayload(structureId, structure));
     }
 
-    public async ValueTask<IReadOnlyList<Eve.Services.Core.StructureDockingAccessSnapshot>> GetDockingAccessSnapshotsAsync(
+    public async ValueTask<Eve.Services.Core.PersistedStructureInfo?> GetStructureInfoForCharacterAsync(
+    long characterId,
+    long structureId,
+    CancellationToken cancellationToken)
+{
+    var persisted = await GetStructureInfoAsync(structureId, cancellationToken);
+    if (persisted is not { PersistentlyDeployed: true } || characterId <= 0)
+        return persisted is null ? null : persisted with { Info = BasicStructureInfoPayload(structureId, persisted.Info) };
+
+    var affiliation = await affiliationOf(characterId, cancellationToken);
+    var state = await readTable("structures", cancellationToken);
+    var key = structureId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+    var ownerCorporationId = state[key] is JsonObject row
+        ? Positive(Integer(row["ownerCorpID"] ?? row["corporationID"]))
+        : 0;
+    return affiliation.Corporation == ownerCorporationId
+        ? persisted
+        : persisted with { Info = BasicStructureInfoPayload(structureId, persisted.Info) };
+}
+
+public async ValueTask<IReadOnlyList<Eve.Services.Core.StructureDockingAccessSnapshot>> GetDockingAccessSnapshotsAsync(
         long characterId,
         long corporationId,
         long allianceId,
@@ -217,9 +239,28 @@ public async ValueTask<Eve.Services.Core.PersistedStructureInfo?> GetStructureIn
             return new PyDict([]);
         var affiliation = await affiliationOf(characterId, cancellationToken);
         var corporationId = affiliation.Corporation ?? 0;
-        return corporationId > 0
-            ? await ReadStructuresForCorporationAsync(corporationId, cancellationToken)
-            : new PyDict([]);
+        var allianceId = affiliation.Alliance ?? 0;
+        if (corporationId <= 0)
+            return new PyDict([]);
+
+        var state = await readTable("structures", cancellationToken);
+        var candidateIds = state
+            .Where(entry => entry.Value is JsonObject structure &&
+                long.TryParse(entry.Key, System.Globalization.NumberStyles.Integer,
+                    System.Globalization.CultureInfo.InvariantCulture, out var structureId) &&
+                IsPersistentlyDeployedStructure(structure, structureId) &&
+                Positive(Integer(structure["ownerCorpID"] ?? structure["corporationID"])) == corporationId)
+            .Select(entry => long.Parse(entry.Key, System.Globalization.CultureInfo.InvariantCulture))
+            .OrderBy(id => id)
+            .ToArray();
+        var snapshots = await GetDockingAccessSnapshotsAsync(
+            characterId, corporationId, allianceId, candidateIds, cancellationToken);
+        var dockableIds = snapshots
+            .Where(snapshot => Eve.Services.Core.StructureDirectoryService.CanDock(
+                snapshot, snapshot.StructureId, characterId, corporationId, allianceId))
+            .Select(snapshot => snapshot.StructureId)
+            .ToHashSet();
+        return await ReadStructuresForCorporationAsync(corporationId, cancellationToken, dockableIds);
     }
 
     public async ValueTask<PyDict> GetMyCorporationStructuresAsync(
@@ -230,14 +271,26 @@ public async ValueTask<Eve.Services.Core.PersistedStructureInfo?> GetStructureIn
         if (characterId <= 0 || corporationId <= 0)
             return new PyDict([]);
         var affiliation = await affiliationOf(characterId, cancellationToken);
-        return affiliation.Corporation == corporationId
-            ? await ReadStructuresForCorporationAsync(corporationId, cancellationToken)
-            : new PyDict([]);
+        if (affiliation.Corporation != corporationId)
+            return new PyDict([]);
+        if (corporationStructureDirectoryAccessAsync is null ||
+            !await corporationStructureDirectoryAccessAsync(characterId, corporationId, cancellationToken))
+            throw CorporationStructureDirectoryDenied();
+        return await ReadStructuresForCorporationAsync(corporationId, cancellationToken);
     }
+
+    private static Eve.Services.MachoWrappedException CorporationStructureDirectoryDenied() =>
+        Eve.Services.MachoErrors.ThrowUserError(
+            "CrpAccessDenied",
+            ("reason", new PyList([
+                new PyInt(101),
+                new PyStr("UI/Corporations/AccessRestrictions/InsufficientRoles"),
+            ])));
 
     private async ValueTask<PyDict> ReadStructuresForCorporationAsync(
         long corporationId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IReadOnlySet<long>? structureIds = null)
     {
         var state = await readTable("structures", cancellationToken);
         var entries = new List<KeyValuePair<PyValue, PyValue>>();
@@ -247,6 +300,7 @@ public async ValueTask<Eve.Services.Core.PersistedStructureInfo?> GetStructureIn
                 !long.TryParse(key, System.Globalization.NumberStyles.Integer,
                     System.Globalization.CultureInfo.InvariantCulture, out var structureId) ||
                 !IsPersistentlyDeployedStructure(structure, structureId) ||
+                (structureIds is not null && !structureIds.Contains(structureId)) ||
                 Positive(Integer(structure["ownerCorpID"] ?? structure["corporationID"])) != corporationId)
                 continue;
 
@@ -438,6 +492,24 @@ public async ValueTask<Eve.Services.Core.PersistedStructureInfo?> GetStructureIn
         return new PyList(systems.Select(id => (PyValue)new PyInt(id)).ToArray());
     }
 
+public async ValueTask<bool> IsValidWarHQAsync(
+        ServiceCall call,
+        long ownerId,
+        long structureId,
+        CancellationToken cancellationToken)
+    {
+        if (ownerId <= 0 || structureId <= 0) return false;
+        var warHqs = await GetValidWarHQsAsync(call, ownerId, cancellationToken);
+        return warHqs is PyList { Items: var items } && items.Any(item =>
+            item is PyObject { Name: PyStr { Value: "util.KeyVal" }, Args: PyDict fields } &&
+            fields.Entries.Any(entry =>
+                entry.Key is PyStr { Value: "structureID" } &&
+                entry.Value is PyInt id &&
+                id.Value == structureId));
+    }
+
+
+
     public async ValueTask<PyValue> GetValidWarHQsAsync(
         ServiceCall call,
         long ownerId,
@@ -519,19 +591,18 @@ public async ValueTask<Eve.Services.Core.PersistedStructureInfo?> GetStructureIn
             return false;
         var characterId = call.Session?.CharacterId ?? 0;
         var corporationId = call.Session?.GetInt("corpid") ?? 0;
-        var corporationRoles = call.Session?.GetInt("corprole") ?? 0;
         var structureId = call.Arg(0) switch
         {
             PyInt id when id.Value > 0 => id.Value,
             PyLong id when id.Value > 0 => id.Value,
             _ => 0,
         };
-        if (characterId <= 0 || corporationId <= 0 || structureId <= 0 ||
-            (corporationRoles & 2048) != 2048)
+        if (characterId <= 0 || corporationId <= 0 || structureId <= 0 || stationManagerOfAsync is null)
             return false;
 
         var affiliation = await affiliationOf(characterId, call.Cancellation);
-        if (affiliation.Corporation != corporationId)
+        if (affiliation.Corporation != corporationId ||
+            !await stationManagerOfAsync(characterId, corporationId, call.Cancellation))
             return false;
 
         var state = await readTable("structures", call.Cancellation);
@@ -552,7 +623,7 @@ public async ValueTask<Eve.Services.Core.PersistedStructureInfo?> GetStructureIn
             _ => string.Empty,
         };
         var description = text[..Math.Min(1000, text.Length)];
-        // the structures schema owns the description (ST-0); the game store's table is no longer written
+
         await setDescriptionAsync(structureId, description, call.Cancellation);
         return true;
     }

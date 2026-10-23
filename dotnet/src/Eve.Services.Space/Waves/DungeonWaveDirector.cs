@@ -36,7 +36,7 @@ public sealed record DungeonWaveData(int WaveIndex, string SpawnQuery, int Amoun
 public sealed record DungeonStart(bool Started, long? InstanceId, string? Refusal);
 
 /// <summary>An active dungeon as a deadspace pocket: its instance, its system and its origin in the scene (metres).</summary>
-public sealed record DungeonPocket(long InstanceId, int SolarSystemId, double[] Origin);
+public sealed record DungeonPocket(long InstanceId, int SolarSystemId, double[] Origin, Eve.Dungeons.DungeonLayout? Layout = null, long? ArchetypeId = null);
 
 /// <summary>
 /// Runs the NPC waves of a dungeon in order, on the shared content runtime (<c>Eve.Content</c>): one definition per dungeon, one sequential objective per wave whose target is the
@@ -58,6 +58,9 @@ public sealed class DungeonWaveDirector
 
     /// <summary>How long a dungeon lasts when it is not finished (its content expires then, and its NPCs are taken out by the sweep).</summary>
     public static readonly TimeSpan Lifetime = TimeSpan.FromMinutes(30);
+
+    /// <summary>How long a wave waits before it looks again for its pilot in the system.</summary>
+    private const long WaveRetryMs = 15_000;
 
     /// <summary>How often the sweep looks at the pilots and the NPCs of the dungeons.</summary>
     public static readonly TimeSpan Sweep = TimeSpan.FromSeconds(10);
@@ -166,10 +169,38 @@ public sealed class DungeonWaveDirector
         return new DungeonStart(started.Created, started.Id, started.Created ? null : "the pilot already has this dungeon running");
     }
 
+    /// <summary>
+    /// The rooms of a running site whose waves are all done (a room with no wave in the run is cleared). An acceleration gate out of a room is locked until
+    /// </summary>
+    public async Task<IReadOnlySet<string>> ClearedRoomKeysAsync(long instanceId, CancellationToken cancellationToken = default)
+    {
+        var instance = (await _content.ActiveByKindAsync(Kind, cancellationToken)).FirstOrDefault(i => i.Id == instanceId);
+        if (instance?.Data<DungeonInstanceData>() is not { } data || _catalog.GetDungeon(data.DungeonID) is not DungeonFound found)
+        {
+            return new HashSet<string>(StringComparer.Ordinal);
+        }
+        var layout = Eve.Dungeons.DungeonRoomLayout.Build(found.Dungeon, data.Origin, GateRadii);
+        var objectives = await _content.ObjectivesOfAsync(instanceId, cancellationToken);
+        var planned = objectives.Where(o => o.Type == WaveObjectiveName).Select(o => o.Id).ToHashSet(StringComparer.Ordinal);
+        var done = objectives.Where(o => o.Type == WaveObjectiveName && o.State == "done").Select(o => o.Id).ToHashSet(StringComparer.Ordinal);
+        var cleared = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var room in layout.Rooms)
+        {
+            var waves = found.Dungeon.Waves.Where(wave => wave.WaveIndex is { } index && planned.Contains(ObjectiveOf(index))
+                && (wave.RoomKey ?? layout.Rooms[0].Key) == room.Key);
+            if (waves.All(wave => done.Contains(ObjectiveOf(wave.WaveIndex!.Value))))
+            {
+                cleared.Add(room.Key);
+            }
+        }
+        return cleared;
+    }
+
+    /// <summary>The radius of each gate type, from the SDE (type id to metres): the gates of a type not here are not placed.</summary>
+    public IReadOnlyDictionary<long, double> GateRadii { get; set; } = new Dictionary<long, double>();
 
     /// <summary>
     /// The active dungeons: a mission pocket (its origin is 20 km ahead of the pilot) or an incursion site. Each is a deadspace pocket in the scene at its origin
-    /// (ST-23; EveJS takes every dungeon instance as a pocket, see DEVIATIONS), kept by the host's pocket job.
     /// </summary>
     public async Task<IReadOnlyList<DungeonPocket>> ActivePocketsAsync(CancellationToken cancellationToken = default)
     {
@@ -178,13 +209,14 @@ public sealed class DungeonWaveDirector
         {
             if (instance.Data<DungeonInstanceData>() is { } data)
             {
-                pockets.Add(new DungeonPocket(instance.Id, data.SolarSystemId, data.Origin));
+                var dungeon = _catalog.GetDungeon(data.DungeonID) is DungeonFound found ? found.Dungeon : null;
+                var layout = dungeon is null ? null : Eve.Dungeons.DungeonRoomLayout.Build(dungeon, data.Origin, GateRadii);
+                pockets.Add(new DungeonPocket(instance.Id, data.SolarSystemId, data.Origin, layout, dungeon?.ArchetypeID));
             }
         }
         return pockets;
     }
 
-    /// <summary>The owner of a dungeon that belongs to no pilot (an incursion's staging site): the global owner, which no character has.</summary>
     public const long NoPilotOwner = 0;
 
     /// <summary>
@@ -310,6 +342,12 @@ public sealed class DungeonWaveDirector
         if (selection is null)
         {
             await _content.FailAsync(context.Connection, context.Transaction, instance.Id, $"wave {due.WaveIndex}: {refusal}", cancellationToken);
+            return;
+        }
+        // the simulation keeps a system's scene only while a pilot is in it: a wave that comes due with its pilot away waits for it (it is not refused and failed)
+        if (instance.Owner != NoPilotOwner && !_spawner.IsPilotInSystem(instance.Owner, data.SolarSystemId))
+        {
+            context.RunAgainAt(context.NowMs + WaveRetryMs);
             return;
         }
         DungeonSpawnResult result = await _spawner.SpawnAsync(data.SolarSystemId, data.Origin, selection, wave.Amount, cancellationToken);

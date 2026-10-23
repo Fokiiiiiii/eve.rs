@@ -707,3 +707,5 @@ Security finding for `securityMgr.get_modified_systems` input validation and rea
 Post-push handoff: security manager read finding `2ae88e4d` is on `main`; method-by-method security classification remains open across the 1,374-pair registry.
 
 Security finding for `pingService.Ping` argument validation and liveness budget was pushed to `main` on 2026-10-23. On `eve_p3`, the focused refusal test passed (1), `Eve.Services.Core.Tests` passed (890), and `Eve.Services.Tests` passed (252), with no skips. The 1,374-pair registry inventory remains incomplete.
+
+Post-push handoff: ping service finding `db05a53c` is on `main`, merged at `0d2a7312`; 1,374 registered service/method pairs remain to be fully classified.

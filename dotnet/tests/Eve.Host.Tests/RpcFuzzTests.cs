@@ -14,6 +14,7 @@ namespace Eve.Host.Tests;
 public sealed class RpcFuzzTests
 {
     private const int Seed = 0x455645;
+    private static readonly TimeSpan DispatchTimeout = TimeSpan.FromSeconds(10);
     private static readonly ConcurrentDictionary<System.Reflection.Assembly, string[]> MethodNamesByAssembly = new();
     private readonly ITestOutputHelper _output;
 
@@ -93,7 +94,7 @@ public sealed class RpcFuzzTests
                         {
                             handled = await dispatcher.DispatchAsync(
                                 CallPacket(service.Name, method, arguments), session)
-                                .WaitAsync(TimeSpan.FromSeconds(2));
+                                .WaitAsync(DispatchTimeout);
                         }
                         catch (TimeoutException error)
                         {

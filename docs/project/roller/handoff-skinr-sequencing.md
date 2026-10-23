@@ -18,8 +18,7 @@
 
 ## Checks and continuation
 
-- Host project build passed with no warnings or errors.
-- Eve.Host.Tests project build passed with no warnings or errors.
-- Focused test `FullyQualifiedName~V24_skinr_routes_expose` passed (one test, zero skipped).
+- After merging `origin/main`, the Host project and Eve.Host.Tests project builds both passed with no warnings or errors.
+- Focused test `FullyQualifiedName~V24_skinr_routes_expose` passed before the merge (one test, zero skipped).
 - The live headless walk and graphical-client verification still need GitHub Actions/graphical execution. No PostgreSQL database was used locally.
 - After pushing, dispatch `Eve.Host.Tests` with filter `FullyQualifiedName~ShipSkinrDispatchTests`, wait for the run, and inspect the push-triggered CI failures. Fix red checks at their root, then update this note after each push.

@@ -181,3 +181,9 @@ Use lane `eve_p4` only and run database work through `tools/dev/db-lock.sh`. The
 - V24.01's generated descriptors and client messenger define `ConsumeRequest.item` as field 1 containing `ItemIdentifier.item` at field 1, whose `InventoryItemIdentifier.sequential` is varint field 1. The live test encoder added one extra field-1 message wrapper, so the Host read item ID 0 and correctly returned `INVALID_COMPONENT_LICENSE_ITEM` before license lookup.
 - Corrected `_item_consume_payload` to encode the two nested messages and quantity 1 from the client schema. The SDE `-1` unlimited-license sentinel handling remains in place.
 - The push gate on the parent head is still running; its .NET build passed. No PostgreSQL database or graphical client was used locally.
+
+## 2026-10-23 SKINR wire fixture correction pushed
+
+- Commit `8610990c` corrects the headless `ConsumeRequest` fixture to the V24.01 two-message nesting. The source is the client's `ConsumeRequest.item` descriptor, `ItemIdentifier.item`, and generic inventory `Identifier.sequential` field. This fixes the test's zero item ID and leaves Host validation aligned with the client.
+- The push-triggered CI run is `40014207144` (run 683), queued at this handoff update. The merged-parent run `40014191246` (run 682) is still running. The full CI gate covers the live flow; no separate database-backed agent test was dispatched because this task requires no PostgreSQL use.
+- No local PostgreSQL or graphical-client verification was performed.

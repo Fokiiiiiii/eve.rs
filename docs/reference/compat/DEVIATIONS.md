@@ -5512,3 +5512,5 @@ The fleetObject Init RPC costs 10 weighted per-session units because it updates 
 `allianceRegistry.GetAlliance` and its `GetAlliancePublicInfo` alias consume 10 weighted per-session units because they read member counts and combine sovereignty, prime-time, and capital-system state. `DispatchGoldenTests.Alliance_full_list_reads_use_a_named_per_session_budget` verifies both public aliases. Responses remain unchanged.
 
 `allianceRegistry.GetAllianceSovereigntyStructuresInfo` consumes 10 weighted per-session units because it projects rows from the alliance sovereignty snapshot. The alliance-scoped response is unchanged. `DispatchGoldenTests.Alliance_full_list_reads_use_a_named_per_session_budget` covers the cost.
+
+`allianceRegistry.GetRelationships` and `SetRelationship` consume 10 weighted per-session units because the former returns the alliance standing collection and the latter fans updates out to alliance corporations. Their authorization, response, and notification behavior remain unchanged. `DispatchGoldenTests.Alliance_full_list_reads_use_a_named_per_session_budget` covers both methods.

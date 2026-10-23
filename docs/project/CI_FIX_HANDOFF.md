@@ -174,3 +174,8 @@ Use lane `eve_p4` only and run database work through `tools/dev/db-lock.sh`. The
 - Updated the restart-read `level` expectation to `PyInt(-10)`. The direct notification packet retains its own observed wire type.
 - Run 678 on current main `737ba657` is checking the upstream contact type updates and still reports the structure-market sell failure at the same line despite the location fixture change. The market error code is not present in the wrapped test failure, so the next step is to expose that code in the focused regression and fix its actual cause.
 - Agent checks 142/147 for the contact regression failed without printing a per-test summary; the main CI run supplied the precise persisted-data mismatch. Focused Actions verification will be dispatched for the corrected contact test after this push.
+
+## 2026-10-23 structure market refusal detail
+
+- CI run 678 on `737ba657` still failed the first structure sell after the character location fixture was aligned with the structure; the test exception only reported `Wrapped remote exception`.
+- The regression now includes the returned Macho error label or CustomInfo text in its failure message. The focused Actions run after this push will identify the refusing market rule so it can be fixed at the source.

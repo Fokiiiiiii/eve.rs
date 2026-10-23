@@ -329,10 +329,18 @@ public sealed class MarketHostTests : IAsyncLifetime
                 new NewItem(Tritanium,seller,structureId,ItemFlags.Hangar,4));
             await transaction.CommitAsync();
         }
-        await market.CallAsync(Call(sellerSession,"PlaceMultiSellOrder",3,
-            new PyList([Py.KeyVal(("typeID",new PyInt(Tritanium)),("itemID",new PyLong(itemId)),
-                ("price",new PyReal(10)),("quantity",new PyInt(4)),("stationID",new PyLong(structureId)))]),
-            PyBool.False,new PyInt(90),new PyReal(0.01)));
+        try
+        {
+            await market.CallAsync(Call(sellerSession,"PlaceMultiSellOrder",3,
+                new PyList([Py.KeyVal(("typeID",new PyInt(Tritanium)),("itemID",new PyLong(itemId)),
+                    ("price",new PyReal(10)),("quantity",new PyInt(4)),("stationID",new PyLong(structureId)))]),
+                PyBool.False,new PyInt(90),new PyReal(0.01)));
+        }
+        catch (MachoWrappedException error)
+        {
+            var detail=error.Error.UserErrorMessage=="CustomInfo" ? InfoText(error) : error.Error.UserErrorMessage;
+            Assert.Fail($"The first structure sell order was rejected: {detail}");
+        }
 
         await new MarketStore(source,Schema("EVE_MARKET_SCHEMA")).SeedNpcAsync(
             [new MarketNpcSeed("public-tritanium",Tritanium,false,12,10,MarketRules.RangeRegion,

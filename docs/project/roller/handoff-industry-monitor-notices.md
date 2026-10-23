@@ -19,10 +19,11 @@
 - PASS: `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/src/Eve.Host/Eve.Host.csproj --no-restore -m:1 -p:UseSharedCompilation=false` (0 warnings, 0 errors; about 54 minutes under shared machine load).
 - PASS: local no-DB focused test `Host_inventory_dispatch_publishes_changed_materials_once_after_item_change_and_isolates_sessions` (1 passed, 0 skipped).
 - PASS on Actions for commit `9cec6507`: selected `Eve.Host.Tests` (2 passed, 0 failed, 0 skipped).
-- Earlier Actions live tests failed at Host startup because the initial decorator replaced the concrete `InvBrokerService` before `RepackagingService`'s lookup. The current composition unwraps the decorated broker for that lookup; current Actions checks are pending push.
+- Earlier Actions live tests failed at Host startup because the initial decorator replaced the concrete `InvBrokerService` before `RepackagingService`'s lookup. The current composition unwraps the decorated broker for that lookup.
+- Current composition was pushed to `main` at `885429d7`. Selected Actions tests and push-triggered CI are still pending.
 - The headless test index has no existing end-to-end industry job walk. No live industry walk or graphical-client session has been performed.
 - Nine unrelated Rust deletions were present at initial inspection and remain unstaged.
 
 ## Remaining
 
-Push the current composition, run selected Host tests on Actions and inspect push-triggered CI. Report headless and graphical-client verification separately.
+Run selected Host tests on Actions, inspect push-triggered CI and fix any regression. Report headless and graphical-client verification separately.

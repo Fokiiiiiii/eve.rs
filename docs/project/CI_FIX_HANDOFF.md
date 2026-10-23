@@ -66,3 +66,8 @@ Use lane `eve_p4` only and run database work through `tools/dev/db-lock.sh`. The
 - Main commit `cc6067b0` now contains the ship cargo-capacity refusal correction and its live test adjustment. Run 615 predates that change; run 616 was on `731e8df2`, before `cc6067b0`.
 - This push updates the character migration expectation. The fast E2E market failure still needs its own root-cause fix. Run 616 was active when checked.
 
+## 2026-10-23 run 617 cargo-capacity test setup
+
+- Run 617 on `912cce53` still failed the offline-capacity assertion after the server check was added. The test inserted `Rig.FixtureAsteroidOre` but constructed `Rig` without `Rig.WithShipFixtures`; that synthetic type was absent from `DogmaStatic`, so `VolumeOfAsync` ignored its volume and measured the cargo as zero.
+- The rig fixture defines that ore with a volume of 1. The test now loads the fixture and derives the required stack quantity from the SDE-backed hold capacity and the type's volume, ensuring cargo exceeds the capacity computed by dogma for the test ship.
+- Run 618 is checking commit `ecf46055` and still has the previous test setup. The updated regression will run in the push-triggered gate after this fix.

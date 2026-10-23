@@ -29,3 +29,13 @@
 ## Remaining
 
 Resolve the CI failures, confirm the Host dispatch and live industry walk on Actions, and exercise saved monitor metadata across restart if a no-database test path is available. Report headless and graphical-client verification separately.
+
+
+## Facility manager read-path update (2026-10-23)
+
+Added Host reads for `facilityManager.GetMaxActivityModifiers` from the shared cost-index source and `GetFacilityTaxes` from the pinned NPC corporation SDE data or deployed structure state. `FacilityManagerService` now returns a client notification error for `SetFacilityTaxes` when no authoritative writer is available, instead of returning a false success. The TODO still records the broader provider row as partial: structure locations/discovery and tax mutation with role checks, persistence and notifications remain open.
+
+- `dotnet build dotnet/src/Eve.Services.Core/Eve.Services.Core.csproj -p:UseSharedCompilation=false --no-restore`: passed, 0 warnings/errors.
+- `dotnet build dotnet/src/Eve.Host/Eve.Host.csproj -p:UseSharedCompilation=false --no-restore`: passed, 0 warnings/errors.
+- Focused Host test `IndustryFacilityManagerTests.Max_activity_modifiers_include_each_client_activity_with_its_cost_index`: passed, 1/1, 0 skipped.
+- No PostgreSQL or graphical-client checks were performed. GitHub Actions verification is pending the push.

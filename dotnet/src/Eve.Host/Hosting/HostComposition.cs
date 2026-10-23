@@ -280,7 +280,7 @@ internal static class HostComposition
         var dispatcher = new PacketDispatcher(registry, now)
         {
             StrictRpc = settings.StrictRpc,
-            MaxExpensiveRpcUnitsPerMinute = int.Parse(HostConfiguration.Env("EVE_MAX_EXPENSIVE_RPC_UNITS_PER_MINUTE", "120"), System.Globalization.CultureInfo.InvariantCulture),
+            MaxExpensiveRpcUnitsPerMinute = int.Parse(HostConfiguration.Env("EVE_MAX_EXPENSIVE_RPC_UNITS_PER_MINUTE", "160"), System.Globalization.CultureInfo.InvariantCulture),
         };
         dispatcher.OnProblem = (message, error) =>
         {

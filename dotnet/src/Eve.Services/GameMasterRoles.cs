@@ -9,6 +9,7 @@ namespace Eve.Services;
 public static class GameMasterRoles
 {
     public const long PinkChat = 1L << 6;      // ROLE_PINKCHAT
+    public const long ChatAdministrator = 1L << 21; // ROLE_CHTADMINISTRATOR
     public const long Centurion = 1L << 11;    // ROLE_CENTURION
     public const long ChtInvisible = 1L << 20; // ROLE_CHTINVISIBLE
     public const long Legioneer = 1L << 18;    // ROLE_LEGIONEER
@@ -29,7 +30,7 @@ public static class GameMasterRoles
 
     private static readonly Dictionary<string, long> RoleNames = new(StringComparer.OrdinalIgnoreCase)
     {
-        ["GML"] = Gml, ["GMH"] = Gmh, ["QA"] = Qa, ["PROGRAMMER"] = Programmer, ["CONTENT"] = Content, ["ADMIN"] = Admin,
+        ["CHTADMINISTRATOR"] = ChatAdministrator, ["GML"] = Gml, ["GMH"] = Gmh, ["QA"] = Qa, ["PROGRAMMER"] = Programmer, ["CONTENT"] = Content, ["ADMIN"] = Admin,
         ["EXT_GM1"] = ExtGm1, ["EXT_GM2"] = ExtGm2, ["EXT_GM3"] = ExtGm3, ["EXT_GM4"] = ExtGm4,
     };
 

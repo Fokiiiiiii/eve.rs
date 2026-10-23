@@ -76,7 +76,8 @@ public sealed partial class ContractProxyService(
     IContractWriteModel? writeModel = null,
     Func<long, int, CancellationToken, ValueTask<int>>? readSkillLevel = null,
     Func<long, long, CancellationToken, ValueTask<decimal>>? readBrokerFeeAdjustment = null,
-    Func<long, long, CancellationToken, ValueTask<bool>>? hasContractManagerRole = null)
+    Func<long, long, CancellationToken, ValueTask<bool>>? hasContractManagerRole = null,
+    Func<long, CancellationToken, ValueTask<(long CorporationId, long AllianceId)>>? readCurrentOrganizationIds = null)
 {
     private const long CorpRoleContractManager = 72057594037927936L; // appConst.corpRoleContractManager
     private const int ContractingSkill = 25235;
@@ -95,8 +96,7 @@ public sealed partial class ContractProxyService(
         var writer = writeModel ?? throw new InvalidOperationException("contract writer is not wired");
         var skillLevel = readSkillLevel ?? throw new InvalidOperationException("contract skill reads are not wired");
         var issuerId = call.Session.CharacterId ?? throw new InvalidOperationException("contract creation requires a character session");
-        var corporationId = call.Session.GetInt("corpid") ?? 0;
-        var allianceId = call.Session.GetInt("allianceid") ?? 0;
+        var (corporationId, allianceId) = await ReadCurrentOrganizationIdsAsync(call);
         var info = ParseCreationInfo(call.Arg(0));
 
         if (info.ContractType is < 1 or > 3)
@@ -223,8 +223,7 @@ public sealed partial class ContractProxyService(
         var writer = writeModel ?? throw new InvalidOperationException("contract writer is not wired");
         var characterId = call.Session.CharacterId
             ?? throw new InvalidOperationException("contract bidding requires a character session");
-        var corporationId = call.Session.GetInt("corpid") ?? 0;
-        var allianceId = call.Session.GetInt("allianceid") ?? 0;
+        var (corporationId, allianceId) = await ReadCurrentOrganizationIdsAsync(call);
         var contractId = call.Arg(0) switch
         {
             PyInt value => value.Value,
@@ -266,8 +265,7 @@ public sealed partial class ContractProxyService(
         var writer = writeModel ?? throw new InvalidOperationException("contract writer is not wired");
         var characterId = call.Session.CharacterId
             ?? throw new InvalidOperationException("contract acceptance requires a character session");
-        var corporationId = call.Session.GetInt("corpid") ?? 0;
-        var allianceId = call.Session.GetInt("allianceid") ?? 0;
+        var (corporationId, allianceId) = await ReadCurrentOrganizationIdsAsync(call);
         var contractId = call.Arg(0) switch
         {
             PyInt value => value.Value,
@@ -320,7 +318,7 @@ public sealed partial class ContractProxyService(
         var writer = writeModel ?? throw new InvalidOperationException("contract writer is not wired");
         var characterId = call.Session.CharacterId
             ?? throw new InvalidOperationException("contract completion requires a character session");
-        var corporationId = call.Session.GetInt("corpid") ?? 0;
+        var (corporationId, _) = await ReadCurrentOrganizationIdsAsync(call);
         var contractId = call.Arg(0) switch
         {
             PyInt value => value.Value,
@@ -351,7 +349,7 @@ public sealed partial class ContractProxyService(
         var writer = writeModel ?? throw new InvalidOperationException("contract writer is not wired");
         var characterId = call.Session.CharacterId
             ?? throw new InvalidOperationException("contract deletion requires a character session");
-        var corporationId = call.Session.GetInt("corpid") ?? 0;
+        var (corporationId, _) = await ReadCurrentOrganizationIdsAsync(call);
         var contractId = call.Arg(0) switch
         {
             PyInt value => value.Value,
@@ -376,8 +374,7 @@ public sealed partial class ContractProxyService(
         var store = readModel ?? throw new InvalidOperationException("contract read model is not wired");
         var characterId = call.Session.CharacterId
             ?? throw new InvalidOperationException("contract login reads require a character session");
-        var corporationId = call.Session.GetInt("corpid") ?? 0;
-        var allianceId = call.Session.GetInt("allianceid") ?? 0;
+        var (corporationId, allianceId) = await ReadCurrentOrganizationIdsAsync(call);
         var now = Eve.Services.Py.FileTimeFromUnixMs(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
         var info = await store.GetLoginInfoAsync(characterId, corporationId, allianceId, now, call.Cancellation);
         return Eve.Services.Py.KeyVal(
@@ -399,7 +396,7 @@ public sealed partial class ContractProxyService(
         var store = readModel ?? throw new InvalidOperationException("contract read model is not wired");
         var characterId = call.Session.CharacterId
             ?? throw new InvalidOperationException("contract escrow reads require a character session");
-        var corporationId = call.Session.GetInt("corpid") ?? 0;
+        var (corporationId, _) = await ReadCurrentOrganizationIdsAsync(call);
         var escrow = await store.GetMyContractEscrowAsync(characterId, corporationId, call.Cancellation);
         return Eve.Services.Py.KeyVal(
             ("iskEscrow", Eve.Services.Py.Number((double)escrow.IskEscrow)),
@@ -413,7 +410,7 @@ public sealed partial class ContractProxyService(
         var store = readModel ?? throw new InvalidOperationException("contract read model is not wired");
         var characterId = call.Session.CharacterId
             ?? throw new InvalidOperationException("contract bid reads require a character session");
-        var corporationId = call.Session.GetInt("corpid") ?? 0;
+        var (corporationId, _) = await ReadCurrentOrganizationIdsAsync(call);
         var forCorporation = call.Arg(0) switch
         {
             PyBool value => value.Value,
@@ -436,7 +433,7 @@ public sealed partial class ContractProxyService(
         var store = readModel ?? throw new InvalidOperationException("contract read model is not wired");
         var characterId = call.Session.CharacterId
             ?? throw new InvalidOperationException("contract list reads require a character session");
-        var corporationId = call.Session.GetInt("corpid") ?? 0;
+        var (corporationId, _) = await ReadCurrentOrganizationIdsAsync(call);
         var ownerId = ContractLong(call.Arg(0));
         if (ownerId != characterId && ownerId != corporationId)
             throw MachoErrors.ThrowUserError("ConContractNotFound");
@@ -467,7 +464,7 @@ public sealed partial class ContractProxyService(
         var store = readModel ?? throw new InvalidOperationException("contract read model is not wired");
         var characterId = call.Session.CharacterId
             ?? throw new InvalidOperationException("contract list reads require a character session");
-        var corporationId = call.Session.GetInt("corpid") ?? 0;
+        var (corporationId, _) = await ReadCurrentOrganizationIdsAsync(call);
         var isAccepted = call.Arg(0) switch
         {
             PyBool value => value.Value,
@@ -497,7 +494,7 @@ public sealed partial class ContractProxyService(
         var store = readModel ?? throw new InvalidOperationException("contract read model is not wired");
         var characterId = call.Session.CharacterId
             ?? throw new InvalidOperationException("contract list reads require a character session");
-        var corporationId = call.Session.GetInt("corpid") ?? 0;
+        var (corporationId, _) = await ReadCurrentOrganizationIdsAsync(call);
         var forCorporation = call.Arg(0) switch
         {
             PyBool value => value.Value,
@@ -512,6 +509,14 @@ public sealed partial class ContractProxyService(
         var bundle = await store.GetMyExpiredContractListAsync(
             characterId, corporationId, forCorporation, nowFileTime, call.Cancellation);
         return BuildContractBundle(bundle);
+    }
+
+    private async ValueTask<(long CorporationId, long AllianceId)> ReadCurrentOrganizationIdsAsync(ServiceCall call)
+    {
+        var characterId = call.Session.CharacterId ?? call.Session.GetInt("charid") ?? 0;
+        if (characterId > 0 && readCurrentOrganizationIds is not null)
+            return await readCurrentOrganizationIds(characterId, call.Cancellation);
+        return (call.Session.GetInt("corpid") ?? 0, call.Session.GetInt("allianceid") ?? 0);
     }
 
     private async ValueTask<bool> HasContractManagerRoleAsync(ServiceCall call, long characterId, long corporationId)

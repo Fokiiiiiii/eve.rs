@@ -3889,6 +3889,15 @@ public class SpaceServiceTests
                 fleet, fleetId, leaderSession, "MassMoveMembers",
                 [new PyList(tooManyMembers), new PyLong(firstWing), new PyLong(firstSquad),
                  new PyInt(Eve.Services.Space.FleetStore.Member)]));
+            await Assert.ThrowsAsync<MachoWrappedException>(() => FleetObjectCallAsync(
+                fleet, fleetId, leaderSession, "MassInvite",
+                [new PyList([new PyLong(memberId), new PyLong(-1)]), new PyLong(firstWing),
+                 new PyLong(firstSquad), new PyInt(Eve.Services.Space.FleetStore.Member)]));
+            await Assert.ThrowsAsync<MachoWrappedException>(() => FleetObjectCallAsync(
+                fleet, fleetId, leaderSession, "MassInvite",
+                [new PyStr("not-a-list"), new PyLong(firstWing), new PyLong(firstSquad),
+                 new PyInt(Eve.Services.Space.FleetStore.Member)]));
+            Assert.Empty(Events.Of(memberSession));
 
             var inviteResult = await FleetObjectCallAsync(fleet, fleetId, leaderSession, "MassInvite",
                 [new PyList([new PyLong(memberId), new PyLong(memberId), new PyLong(leaderId), new PyLong(memberId)]),
@@ -3904,6 +3913,12 @@ public class SpaceServiceTests
             Assert.Equal(firstSquad, memberSession.GetInt("squadid"));
             Events.Of(memberSession);
             Events.Of(leaderSession);
+            await Assert.ThrowsAsync<MachoWrappedException>(() => FleetObjectCallAsync(
+                fleet, fleetId, leaderSession, "MassMoveMembers",
+                [new PyList([new PyLong(memberId), new PyLong(-1)]), new PyLong(nextWing),
+                 new PyLong(nextSquad), new PyInt(Eve.Services.Space.FleetStore.Member)]));
+            Assert.Equal(firstWing, memberSession.GetInt("wingid"));
+            Assert.Equal(firstSquad, memberSession.GetInt("squadid"));
 
             await FleetObjectCallAsync(fleet, fleetId, leaderSession, "MoveMember",
                 [new PyLong(memberId), new PyLong(nextWing), new PyLong(nextSquad),

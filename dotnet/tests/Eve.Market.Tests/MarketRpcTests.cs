@@ -124,6 +124,29 @@ public class MarketRpcTests
     }
 
     [PgFact]
+    public async Task Market_history_multi_refuses_malformed_type_lists_before_reading()
+    {
+        await using var r = await TradeRig.Create();
+        var actor = await r.Actor("Malformed History Reader");
+        var seat = await SeatAsync(r, actor);
+        var clientSet = PyValue.PythonSet([new PyInt(Tritanium)]);
+        Assert.IsType<PyDict>(await seat.Proxy.GetHistoryForManyTypeIDs(
+            Call(seat.Session, "GetHistoryForManyTypeIDs", 2, clientSet)));
+        foreach (var input in new PyValue[]
+        {
+            new PyStr("34"),
+            new PyList([new PyInt(34), new PyInt(-1)]),
+            new PyTuple([new PyInt(34), new PyReal(double.NaN)]),
+            new PyList([new PyLong((long)int.MaxValue + 1)]),
+        })
+        {
+            var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+                seat.Proxy.GetHistoryForManyTypeIDs(Call(seat.Session, "GetHistoryForManyTypeIDs", 3, input)).AsTask());
+            Assert.Equal("MARKET_TYPE_ID_INVALID", refusal.Error.UserErrorMessage);
+        }
+    }
+
+    [PgFact]
     public async Task Market_money_parser_refuses_decimal_boundary_values_without_overflowing()
     {
         await using var r = await TradeRig.Create();
@@ -214,6 +237,52 @@ public class MarketRpcTests
                 Call(seat.Session, "PlaceMultiSellOrder", 3, entries, PyBool.False, new PyInt(1), PyNone.Instance)));
 
         Assert.Equal("MARKET_BULK_LIMIT_EXCEEDED", refusal.Error.UserErrorMessage);
+    }
+
+    [PgFact]
+    public async Task Buy_multi_refuses_malformed_batches_before_any_order_is_written()
+    {
+        await using var r = await TradeRig.Create();
+        var actor = await r.Actor("Malformed Multi Buyer", 10000m);
+        var seat = await SeatAsync(r, actor);
+
+        foreach (var input in new PyValue[]
+        {
+            new PyStr("not-a-list"),
+            new PyList([Line(Tritanium, 1, 10), new PyStr("not-an-order")]),
+            new PyList([Line(Tritanium, -1, 10)]),
+            new PyList([Line(Tritanium, 1, 10, minVolume: -1)]),
+        })
+        {
+            var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() => seat.Proxy.BuyMultipleItems(
+                Call(seat.Session, "BuyMultipleItems", 3, new PyInt(r.Station.Id), input, PyBool.False)).AsTask());
+            Assert.Equal("MARKET_BULK_ARGUMENT_INVALID", refusal.Error.UserErrorMessage);
+        }
+
+        Assert.Empty((await r.Book.BookAsync(r.Station.RegionId, Tritanium, r.Now)).Bids);
+    }
+
+    [PgFact]
+    public async Task Multi_sell_refuses_a_non_sequence_payload_instead_of_returning_false()
+    {
+        await using var r = await TradeRig.Create();
+        var actor = await r.Actor("Malformed Multi Seller");
+        var seat = await SeatAsync(r, actor);
+
+        var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() => seat.Proxy.PlaceMultiSellOrder(
+            Call(seat.Session, "PlaceMultiSellOrder", 3, new PyStr("not-a-list"), PyBool.False,
+                new PyInt(1), PyNone.Instance)).AsTask());
+        Assert.Equal("MARKET_BULK_ARGUMENT_INVALID", refusal.Error.UserErrorMessage);
+
+        var itemId = await r.Stock(actor, 2);
+        var validLine = Py.KeyVal(
+            ("stationID", new PyInt(r.Station.Id)), ("typeID", new PyInt(Tritanium)),
+            ("itemID", new PyLong(itemId)), ("quantity", new PyInt(1)), ("price", new PyReal(10)));
+        var mixedRefusal = await Assert.ThrowsAsync<MachoWrappedException>(() => seat.Proxy.PlaceMultiSellOrder(
+            Call(seat.Session, "PlaceMultiSellOrder", 4, new PyList([validLine, new PyStr("not-an-order")]),
+                PyBool.False, new PyInt(1), PyNone.Instance)).AsTask());
+        Assert.Equal("MARKET_BULK_ARGUMENT_INVALID", mixedRefusal.Error.UserErrorMessage);
+        Assert.Equal(r.Station.Id, (await r.Items.GetAsync(itemId))!.LocationId);
     }
 
     [PgFact]

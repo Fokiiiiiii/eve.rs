@@ -39,12 +39,34 @@ public sealed class XmppTransportTests
     [Theory]
     [InlineData("<!DOCTYPE x [<!ENTITY e 'expanded'>]><x>&e;</x>")]
     [InlineData("<x><y></x>")]
+    [InlineData("<x><y/></z>")]
+    [InlineData("<x a='one' a='two'/>")]
     public void Parser_rejects_restricted_or_malformed_xml(string stanza)
     {
         var parser = new XmppStreamParser();
         parser.Feed(Encoding.UTF8.GetBytes("<stream:stream xmlns='jabber:client' xmlns:stream='http://etherx.jabber.org/streams'>"));
 
         Assert.Throws<XmppStreamException>(() => parser.Feed(Encoding.UTF8.GetBytes(stanza)));
+    }
+
+    [Fact]
+    public void Parser_rejects_a_stanza_over_the_character_limit()
+    {
+        var parser = new XmppStreamParser();
+        parser.Feed(Encoding.UTF8.GetBytes("<stream:stream xmlns='jabber:client' xmlns:stream='http://etherx.jabber.org/streams'>"));
+        var stanza = "<message><body>" + new string('x', XmppStreamParser.MaxStanzaChars) + "</body></message>";
+
+        Assert.Throws<XmppStreamException>(() => parser.Feed(Encoding.UTF8.GetBytes(stanza)));
+    }
+
+    [Fact]
+    public void Parser_rejects_an_oversized_incomplete_tag_buffer()
+    {
+        var parser = new XmppStreamParser();
+        parser.Feed(Encoding.UTF8.GetBytes("<stream:stream xmlns='jabber:client' xmlns:stream='http://etherx.jabber.org/streams'>"));
+        var partialTag = "<message" + new string(' ', XmppStreamParser.MaxBufferedChars + 1);
+
+        Assert.Throws<XmppStreamException>(() => parser.Feed(Encoding.UTF8.GetBytes(partialTag)));
     }
 
     [Fact]

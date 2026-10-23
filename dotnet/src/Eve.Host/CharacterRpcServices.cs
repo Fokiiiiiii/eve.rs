@@ -22,6 +22,8 @@ public sealed class CharacterEnergyMgrRpcService : IService
     {
         if (!HasMethod(call.Method)) return ValueTask.FromResult<PyValue>(PyNone.Instance);
         call.Cancellation.ThrowIfCancellationRequested();
+        if (call.Args.Count != 0 || call.Kwargs is not PyNone)
+            throw MachoErrors.ThrowUserError("CHARACTER_ENERGY_ARGUMENTS_INVALID");
         var characterId = call.Session.CharacterId ?? call.Session.UserId ?? 0;
         var raw = characterId > 0
             ? _store?.Read("characterEnergyState", $"/characters/{characterId}").Data as System.Text.Json.Nodes.JsonObject

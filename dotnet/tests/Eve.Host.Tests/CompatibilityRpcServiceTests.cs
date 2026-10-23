@@ -95,6 +95,20 @@ public sealed class CompatibilityRpcServiceTests
     }
 
     [Fact]
+    public async Task Character_energy_read_refuses_client_selected_targets()
+    {
+        var service = new CharacterEnergyMgrRpcService(nowUnixMs: () => 1_700_000_000_000L);
+        var session = Session(20);
+        var valid = await service.CallAsync(Call("GetMyEnergyState", session));
+        Assert.IsType<PyObjectEx>(valid);
+
+        var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(
+            Call("GetMyEnergyState", session, new PyLong(21))).AsTask());
+        Assert.Equal(MachoErrors.UserErrorClass, refusal.Error.ClassName);
+        Assert.Equal("CHARACTER_ENERGY_ARGUMENTS_INVALID", refusal.Error.UserErrorMessage);
+    }
+
+    [Fact]
     public async Task Handlers_return_reference_shapes()
     {
         var cosmetics = new ShipCosmeticsMgrRpcService();

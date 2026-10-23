@@ -35,7 +35,7 @@ The owner’s captures and process logs were read through `tools/mitm show` and 
 - Root cause: `PacketDispatcher` charged all expensive RPCs against one per-session bucket. Before the first failed hangar bind, the graphical capture had only four `invbroker` calls; unrelated setup RPCs consumed the shared bucket.
 - Fix: expensive `invbroker` calls now use their own bounded per-session bucket. Inventory reads and writes still share that limit.
 - Fix commit: `Give inventory RPCs a dedicated per-session budget`.
-- Regression: `DispatchGoldenTests.Inventory_calls_keep_a_bounded_budget_separate_from_other_expensive_services` (1/1) and the full `DispatchGoldenTests` class (148/148), zero skips.
+- Regression: `DispatchGoldenTests.Inventory_calls_keep_a_bounded_budget_separate_from_other_expensive_services` (1/1) and the full `DispatchGoldenTests` class on the merged tree (157/157), zero skips.
 - Reference: EveJS returns the requested bound substruct for the matching station-hangar call; V24.01 client callsite is `neocomInventoryBadging.py:GetItemsInCurrentStationShipHangar`.
 
 ## (e) goals/campaign GetUpdateRequest timeout
@@ -80,7 +80,7 @@ The owner’s captures and process logs were read through `tools/mitm show` and 
 
 ## (j) EveJS session comparison
 
-- Symptom: `tools/mitm diff` reports the first call-order divergence at event 4: EveJS calls `invbroker.GetItemDescriptor`, while eve.rs calls `machoNet.GetTime`.
-- Root cause / decision: open; compare corresponding request and response flows before classifying this ordering difference.
-- Fix commit: pending.
-- Regression test: pending.
+- Symptom: `tools/mitm diff --ignore-volatile` reports the first client-call-order divergence at event 4: EveJS calls `invbroker.GetItemDescriptor`, while eve.rs calls another `machoNet.GetTime`.
+- Decision: both captures later contain `invbroker.GetItemDescriptor`, and both responses carry the same `blue.DBRowDescriptor` field layout. This first divergence is a difference in concurrent startup-call scheduling, not a missing service response. The captures then stop being the same scenario: EveJS creates a character before selecting it, while eve.rs selects an existing character. The EveJS login-campaign call also returns configured campaign data while eve.rs returns `None`; eve.rs only serves a campaign when `EVE_SEASONAL_LOGIN_CAMPAIGN` is configured. No current-build graphical capture with matched character state and campaign configuration is available, so later event-order or state differences are not classified as parity defects from these two sessions.
+- Fix commit: none for the first divergence. The separately observed ServiceNotFound and inventory-budget failures are covered by (a) and (d).
+- Regression test: none for concurrent call ordering. To close remaining parity questions, the owner needs a paired capture with the same starting character state and campaign configuration; the headless tests do not count as a graphical client comparison.

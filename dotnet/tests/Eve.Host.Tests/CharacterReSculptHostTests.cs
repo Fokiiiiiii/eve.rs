@@ -125,6 +125,9 @@ public sealed class CharacterReSculptHostTests : IAsyncLifetime
     public async Task Character_selection_dispatch_projects_paperdoll_state_and_a_saved_avatar_can_enter()
     {
         await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Url));
+        var bootstrap = await HostComposition.BuildAsync(Settings());
+        await bootstrap.ShutdownAsync();
+
         var characters = new PgCharacterStore(source, Schema("EVE_CHARACTERS_SCHEMA"));
         var noAppearance = await InsertPilotAsync(source, characters, "No Doll Pilot");
         var savedAppearance = await InsertPilotAsync(source, characters, "Saved Doll Pilot");

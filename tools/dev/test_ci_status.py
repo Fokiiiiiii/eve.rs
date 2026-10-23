@@ -2,9 +2,12 @@
 import importlib.util
 from pathlib import Path
 import shutil
+import subprocess
+import sys
 import tempfile
 import unittest
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
 MODULE = Path(__file__).with_name("ci-status.py")
 SPEC = importlib.util.spec_from_file_location("ci_status", MODULE)
 ci_status = importlib.util.module_from_spec(SPEC)
@@ -17,6 +20,48 @@ MODE_MODULE = Path(__file__).with_name("ci-mode.py")
 MODE_SPEC = importlib.util.spec_from_file_location("ci_mode", MODE_MODULE)
 ci_mode = importlib.util.module_from_spec(MODE_SPEC)
 MODE_SPEC.loader.exec_module(ci_mode)
+
+
+class AgentTestRefResolutionTests(unittest.TestCase):
+    def test_short_commit_and_branch_refs_check_out_as_detached_commits(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory)
+            subprocess.run(["git", "init", "--quiet", "-b", "main"], cwd=repo, check=True)
+            subprocess.run(["git", "config", "user.name", "CI test"], cwd=repo, check=True)
+            subprocess.run(["git", "config", "user.email", "ci@example.invalid"], cwd=repo, check=True)
+            (repo / "marker").write_text("requested commit\n", encoding="utf-8")
+            subprocess.run(["git", "add", "marker"], cwd=repo, check=True)
+            subprocess.run(["git", "commit", "--quiet", "-m", "requested commit"], cwd=repo, check=True)
+            full_sha = subprocess.run(
+                ["git", "rev-parse", "HEAD"], cwd=repo, check=True, capture_output=True, text=True
+            ).stdout.strip()
+            subprocess.run(["git", "branch", "requested"], cwd=repo, check=True)
+
+            for ref in (full_sha[:10], "requested"):
+                with self.subTest(ref=ref):
+                    result = subprocess.run(
+                        [sys.executable, str(Path(__file__).with_name("resolve-agent-test-ref.py")), ref],
+                        cwd=repo,
+                        check=False,
+                        capture_output=True,
+                        text=True,
+                    )
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    actual = subprocess.run(
+                        ["git", "rev-parse", "HEAD"], cwd=repo, check=True, capture_output=True, text=True
+                    ).stdout.strip()
+                    self.assertEqual(actual, full_sha)
+                    self.assertEqual(
+                        subprocess.run(
+                            ["git", "symbolic-ref", "-q", "HEAD"], cwd=repo, check=False, capture_output=True
+                        ).returncode,
+                        1,
+                        "the requested commit must be checked out detached",
+                    )
+
+        workflow = (REPO_ROOT / ".github/workflows/agent-test.yml").read_text(encoding="utf-8")
+        self.assertIn("fetch-depth: 0", workflow)
+        self.assertIn('python3 tools/dev/resolve-agent-test-ref.py "$TEST_REF"', workflow)
 
 
 class FailureParsingTests(unittest.TestCase):

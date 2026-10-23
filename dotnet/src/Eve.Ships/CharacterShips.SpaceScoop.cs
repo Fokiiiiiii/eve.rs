@@ -11,7 +11,7 @@ public sealed partial class CharacterShips
     /// </summary>
     public async Task<ShipOutcome> ScoopSpaceArtifactAsync(
         long characterId,
-        int corporationId,
+        long corporationId,
         long expectedShipId,
         int solarSystemId,
         long itemId,

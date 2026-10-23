@@ -5672,4 +5672,7 @@ Corporation registry batch RPCs `ExecuteActions`, `GetMembersByIds`, `GetMemberI
 `warRegistry.GetWars`, `SetOpenForAllies`, and `RetractMutualWar` now consume 10 weighted per-session work units because each reads the full war relation set before filtering or changing a war. Exhausted budgets return `SessionRpcBudgetExceeded`; valid results and mutation behavior are unchanged. `Expensive_market_calls_have_a_named_per_session_budget` covers repeated `GetWars` calls.
 
 
-Alliance contact bulk mutations now reject non-integer ID elements before persistence, while preserving accepted list and tuple batches and the 500-entry limit. `AllianceTests` verifies fractional-ID refusal leaves contact state unchanged.
+Alliance contact mutations now reject non-integer scalar and batch ID elements and non-integer relationship values before persistence, while preserving accepted list and tuple batches and the 500-entry limit. `AllianceTests` verifies fractional-ID refusal leaves contact state unchanged.
+
+
+`fleetObjectHandler.Invite` and `MassInvite` now accept only positive integer character IDs, rejecting fractional and numeric-string coercions before session lookup or persistence. The fleet mass-invite regression covers malformed IDs and verifies no invite notification is produced.

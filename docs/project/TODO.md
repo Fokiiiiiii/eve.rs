@@ -2761,4 +2761,6 @@ Security review follow-up: `corpRegistry.CanBeKickedOut` now gates cross-member 
 
 Security review follow-up: `warRegistry` full-war reads and mutations now consume 10 weighted per-session units to bound repeated scans of the persisted war relation set.
 
-Security review follow-up: alliance contact bulk mutations accept only positive integer IDs; fractional, string, nested, and nonpositive entries refuse before storage access.
+Security review follow-up: alliance contact mutations accept only positive integer target IDs and integer relationship values; fractional, string, nested, and nonpositive entries refuse before storage access.
+
+Security review follow-up: fleet invitation RPCs accept positive integer character IDs only; fractional or numeric-string targets cannot be coerced into invitations.

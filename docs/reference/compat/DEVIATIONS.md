@@ -5658,3 +5658,6 @@ Corporation registry batch RPCs `ExecuteActions`, `GetMembersByIds`, `GetMemberI
 
 
 `corpMgr.GetAggressionSettingsForCorps` now requires list, tuple, or dictionary input containing positive integer corporation IDs. Malformed shapes or entries receive `CORPMGR_BULK_ARGUMENT_INVALID` or `CORPMGR_CORPORATION_ID_INVALID` before reads; the 500 raw-entry ceiling remains. Valid dictionary keys and duplicate collapse remain supported. `CorporationProtocolTests.Corp_mgr_aggression_reads_refuse_more_than_500_corporations_before_storage_access` covers malformed shapes and IDs.
+
+
+`fleetMgr.AddToWatchlist`, `RemoveFromWatchlist`, and `RegisterForDamageUpdates` now reject malformed containers, nonpositive/non-integer IDs, and raw batches above 500 with `FleetError` before changing session watchlist state. Valid batches still include only current fleet members and store at most 100 distinct IDs. `Fleet_watchlist_updates_keep_only_members_and_clear_removed_damage_targets` covers the refusal cases and unchanged state.

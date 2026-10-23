@@ -275,7 +275,7 @@ public class DispatchGoldenTests
             Assert.Equal(7, CommandOf(capture.Sent[^1]));
         }
 
-        await dispatcher.DispatchAsync(CallRequestPacket("marketProxy", "PlaceBuyOrder"), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("marketProxy", "PlaceMultiSellOrder"), session);
 
         Assert.Equal(46, service.Calls);
         Assert.Equal(47, capture.Sent.Count);
@@ -397,7 +397,6 @@ public class DispatchGoldenTests
         Assert.Equal(1, fleetService.Calls);
         Assert.Equal(ErrorResponseCommand, CommandOf(fleetCapture.Sent[1]));
         Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(fleetCapture.Sent[1])));
-
         Assert.Equal(1, service.Calls);
         Assert.Equal(3, capture.Sent.Count);
         Assert.Equal(ErrorResponseCommand, CommandOf(capture.Sent[1]));
@@ -1797,7 +1796,6 @@ public class DispatchGoldenTests
         var service = new ExpensiveService("epicArcStatus");
         registry.Register(service);
         var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 1 };
-
         await dispatcher.DispatchAsync(CallRequestPacket("epicArcStatus", "AgentHasEpicMissionsForCharacter"), session);
         await dispatcher.DispatchAsync(CallRequestPacket("epicArcStatus", "AgentHasEpicMissionsForCharacter"), session);
 
@@ -2956,12 +2954,12 @@ public class DispatchGoldenTests
         public bool HasMethod(string method) => method is
             "GetRegionBest" or "GetOrders" or "GetMarketOrderHistory" or
             "GetOldPriceHistory" or "GetNewPriceHistory" or "GetPlexOrders" or
-            "GetPlexBest" or "GetPlexHistory" or "PlaceBuyOrder";
+            "GetPlexBest" or "GetPlexHistory" or "PlaceMultiSellOrder";
 
         public ValueTask<PyValue> CallAsync(ServiceCall call)
         {
             Calls++;
-            if (call.Method == "PlaceBuyOrder")
+            if (call.Method == "PlaceMultiSellOrder")
             {
                 WalletWrites++;
                 InventoryWrites++;

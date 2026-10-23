@@ -5508,3 +5508,5 @@ The fleetObject Init RPC costs 10 weighted per-session units because it updates 
 `ownerGroupManager` reads and mutations consume 10 weighted per-session units to bound repeated access-group enumeration and notification fanout. `DispatchGoldenTests.Owner_group_reads_and_mutations_use_a_named_per_session_budget` checks every registered service method. Responses and authorization remain unchanged.
 
 `corpRegistry.GetCorporation` consumes 10 weighted per-session units because its profile response includes a full corporation member count. The client response is unchanged. `DispatchGoldenTests.Corporation_contact_and_bulletin_lists_use_a_named_per_session_budget` verifies the named refusal.
+
+`allianceRegistry.GetAlliance` and its `GetAlliancePublicInfo` alias consume 10 weighted per-session units because they read member counts and combine sovereignty, prime-time, and capital-system state. `DispatchGoldenTests.Alliance_full_list_reads_use_a_named_per_session_budget` verifies both public aliases. Responses remain unchanged.

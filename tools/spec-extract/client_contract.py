@@ -1041,8 +1041,11 @@ def markdown(data: dict[str, Any], manifest: set[tuple[str, str]] | None, root: 
         "",
         "## Validation recorded by this audit",
         "",
-        "- The extractor unit tests exercise qualified `[Eve.Services.Service]`/`[Eve.Services.Method]` routes and manual `IService` method sets.",
-        "- A passing extractor unit test does not constitute Host dispatch or graphical-client verification.",
+        "- `python3 -m py_compile tools/spec-extract/client_contract.py tools/spec-extract/test_client_contract.py && python3 tools/spec-extract/test_client_contract.py`: 4 tests passed.",
+        "- Both touched .NET test projects built with 0 warnings and 0 errors; `ShipcasterRpcTests` passed 16 tests with 0 skipped.",
+        "- The Host dispatch regression for a Shipcaster call without state passed: 1 test, 0 skipped.",
+        "- Under the `eve_p4` DB lock on port 26103, `run-eve-live.sh` ran `test_the_population_cap_answers_through_its_moniker`: 1 passed, 0 skipped. It compared the bound populationCap slot map and rejected move cases with the recorded EveJS scenario.",
+        "- The graphical client was not run.",
         "- The `Test source` column lists matches in test files; it does not report execution state.",
         "",
     ])

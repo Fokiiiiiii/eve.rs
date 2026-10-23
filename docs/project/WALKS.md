@@ -21,6 +21,20 @@ This matrix records the live-client walks available for the cross-system play-th
 | Wormhole jump | `tests/test_wormhole_live.py` | Undock, warp/fly to both ends, jump out and return | 64.17 s | One connected travel workflow |
 | Fleet | `tests/test_command_burst_live.py` | Two-pilot fleet creation, invitation, acceptance and burst delivery | 229.95 s; passed with contracts, corporation, industry, PI and wormhole walks in the eve_p3 grouped run | No fleet-to-combat walk |
 
+## Login and session matrix
+
+| Path | Existing coverage | Recorded check | Remaining scope |
+|---|---|---|---|
+| New account, repeat login, correct password, wrong password | `HostServerTests.Logins_create_accounts_on_first_use_and_then_need_the_same_password_hash`; Python baseline `tests/test_login_to_character.py` | Focused Host test passed on 2026-10-23; the Python login walk is recorded at 1.26 s | The account credential variants are Host-level; a combined Python walk asserting each path is open |
+| Character creation and selection | `tests/test_login_to_character.py`; Host character/session tests | Baseline login walk recorded at 1.26 s | A walk that creates and selects a character in one connection is open |
+| Delete request, five-day wait, cancel, delete after timer, unavailable selection | `CharacterHostTests.Character_deletion_queues_waits_cancels_and_deletes_and_the_deleted_character_is_refused` | PostgreSQL-backed Host test passed on eve_p2 on 2026-10-23; covers restart persistence, early rejection, cancellation and deletion | Python client walk across the timer is open |
+| Same-account multi-login | `HostServerTests.A_second_front_login_disconnects_the_previous_session_of_the_same_account`; `ConnectedSessionsTests` | Focused Host replacement-session test passed on 2026-10-23 | Python two-client walk remains open |
+| Reconnect after process kill | No recorded walk | — | Open |
+| Handshake variants and refused login | `crates/eve-net/tests/handshake.rs`; `crates/eve-net/tests/front.rs` | 16 handshake and 10 front tests passed on 2026-10-23, including accepted/refused login, malformed/unsupported input, frame boundaries, queue checks and session IDs | Captured V24.01 placebo variants are open |
+| Wrong credentials and login rate limits | `HostServerTests.Logins_create_accounts_on_first_use_and_then_need_the_same_password_hash`; `HostServerTests.Repeated_bad_logins_are_bounded_per_account_and_source_address` | Both focused Host tests passed on 2026-10-23 | A Python walk for bad credentials followed by rate-limit refusal and recovery is open |
+
+These checks cover existing service and transport behavior; they do not constitute the requested end-to-end Python session matrix. The graphical client was not used for these checks.
+
 ## Current work
 
 The focused eve_p3 live run passed 13 contract, corporation, industry, PI, wormhole and fleet cases. A second grouped run covered login/character, skills, fitting-list reads, module activation, undock, warp, NPC combat, loot and belt arrivals; it surfaced a fitting cache-wrapper assertion mismatch and Destiny updates crossing adjacent action windows. Both corrected checks passed in a focused live rerun. The two-pilot chat/mail flow covers composition, recipient delivery, body read, persisted read status and reply delivery.

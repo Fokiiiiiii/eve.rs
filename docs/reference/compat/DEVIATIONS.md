@@ -5606,3 +5606,8 @@ The overview now points to the config, crimewatch, station, and map method-level
 ## Contract list RPC classification (2026-10-23)
 
 The security inventory now records `contractProxy.GetMyBids`, `GetContractListForOwner`, `GetMyCurrentContractList`, and `GetMyExpiredContractList` individually. Character owners are derived from the selected session; corporate views require current persisted Contract Manager authority. Owner list status/type/page arguments are bounded, and the contract service's 10-unit per-session budget covers these reads.
+
+
+## Inventory root and contents RPC classification (2026-10-23)
+
+`invbroker.GetInventory` binds only the caller's current docked station hangar and consumes 2 weighted per-session units. `GetContainerContents` reads only a server-held session binding and consumes 2 units. `GetItemDescriptor` returns the fixed row descriptor without an identifier or state lookup.

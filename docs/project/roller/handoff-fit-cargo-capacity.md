@@ -24,4 +24,4 @@ Actions run 39962433299 passed the batch `MultiAdd` regression (1 passed, 0 fail
 
 Keep the worktree's pre-existing deletions under crates/eve-net, crates/eve-sde, crates/eve-sim, and crates/eve-space out of the commit.
 
-Implementation pushes: 80d07d8c and 55f2dd87. Cargo implementation commit: 64bdd41c (merged to main). Commit be2c316f contains the offline guard adjustment and the type-ID headless setup correction; live run 39972764975 is pending.
+Implementation pushes: 80d07d8c and 55f2dd87. Cargo implementation commit: 64bdd41c (merged to main); headless setup diagnostic is pending push. Commit be2c316f contains the offline guard adjustment and the type-ID headless setup correction; live run 39972764975 is pending.

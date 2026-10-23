@@ -747,7 +747,7 @@ public sealed class CharacterHostTests
         row = Assert.Single(notifications.Items);
         Assert.Equal(new PyInt(89), Field(row, "typeID"));
         var persistedData = Assert.IsType<PyDict>(Field(row, "data"));
-        Assert.Equal(new PyLong(-10), Field(persistedData, "level"));
+        Assert.Equal(new PyInt(-10), Field(persistedData, "level"));
         Assert.Equal(new PyStr("Hello"), Field(persistedData, "message"));
     }
 

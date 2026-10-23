@@ -50,7 +50,7 @@ The token can list runs and jobs (`GET /actions/runs` and `GET /actions/runs/{ru
 
 ## Dependency audit
 
-`dependency-audit.yml` runs `cargo audit --file Cargo.lock` (cargo-audit 0.22.2), `dotnet list dotnet/EveRs.slnx package --vulnerable --include-transitive` (failing when NuGet reports a vulnerable package) and `pip-audit` 2.10.1 on both headless-client requirement files. It runs weekly, on manual dispatch, and on pushes to `main` that change a Cargo, NuGet, or Python dependency file. A finding fails the job. The workflow has no `pull_request` trigger, so dependency changes in pull requests, including pull requests from forks, are checked only after a matching change reaches `main`; weekly and manual runs also audit the default branch.
+`dependency-audit.yml` runs `cargo audit --file Cargo.lock` (cargo-audit 0.22.2), `dotnet list dotnet/EveRs.slnx package --vulnerable --include-transitive` (failing when NuGet reports a vulnerable package) and `pip-audit` 2.10.1 on both headless-client requirement files. It runs weekly, on manual dispatch, and on pushes to `main` that change a Cargo, NuGet, or Python dependency file. A finding fails the job. The workflow has no `pull_request` trigger; dependency changes are audited after a matching change is pushed to `main`, while weekly and manual runs audit the default branch.
 
 ## Minutes budget
 

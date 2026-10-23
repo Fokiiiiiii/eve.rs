@@ -2756,3 +2756,9 @@ Security review follow-up: corporation recruitment ad list/search RPCs now cap r
 Security review follow-up: `corpMgr.GetAggressionSettingsForCorps` rejects malformed container shapes and nonpositive or non-integer IDs before storage reads, while retaining the 500-entry cap.
 
 Security review follow-up: fleet manager watchlist inputs now validate list/tuple/Python-set shape and positive integer IDs and cap raw batches at 500 before member filtering; session watchlists retain at most 100 members.
+
+Security review follow-up: `corpRegistry.CanBeKickedOut` now gates cross-member eligibility reads on current persisted Director authority while preserving the V24.01 self-check flow.
+
+Security review follow-up: `warRegistry` full-war reads and mutations now consume 10 weighted per-session units to bound repeated scans of the persisted war relation set.
+
+Security review follow-up: alliance contact bulk mutations accept only positive integer IDs; fractional, string, nested, and nonpositive entries refuse before storage access.

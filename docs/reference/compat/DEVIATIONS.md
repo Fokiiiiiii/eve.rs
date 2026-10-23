@@ -5664,3 +5664,12 @@ Corporation registry batch RPCs `ExecuteActions`, `GetMembersByIds`, `GetMemberI
 
 
 `mutualWarInviteMgr.GetPendingInvitesForSession` and `IsCorpInvitesBlockedPlayer` now return the same explicit `CustomNotify` unavailable response as the four mutation methods when Host persistence callbacks are absent. This removes empty/false success values from routes whose authoritative provider is not connected; configured callback results and valid RPC output shapes remain unchanged. `Mutual_war_invite_mgr_exposes_reference_routes_and_callback_shapes` covers all six refusal routes and the configured callback path.
+
+
+`corpRegistry.CanBeKickedOut` now requires current persisted Director authority before disclosing whether another member of the caller's corporation is kickable; a member can still query their own eligibility as required by the V24.01 `CanKickOut` wrapper. `Corporation_core_and_role_rpcs_preserve_public_fields_and_role_contracts` covers the Director path, self-query, and ordinary-member refusal for a different member.
+
+
+`warRegistry.GetWars`, `SetOpenForAllies`, and `RetractMutualWar` now consume 10 weighted per-session work units because each reads the full war relation set before filtering or changing a war. Exhausted budgets return `SessionRpcBudgetExceeded`; valid results and mutation behavior are unchanged. `Expensive_market_calls_have_a_named_per_session_budget` covers repeated `GetWars` calls.
+
+
+Alliance contact bulk mutations now reject non-integer ID elements before persistence, while preserving accepted list and tuple batches and the 500-entry limit. `AllianceTests` verifies fractional-ID refusal leaves contact state unchanged.

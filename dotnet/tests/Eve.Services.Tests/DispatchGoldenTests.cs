@@ -1871,6 +1871,37 @@ public class DispatchGoldenTests
         Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[1])));
     }
 
+    [Fact]
+    public async Task Paper_doll_batch_reads_use_a_named_per_session_budget()
+    {
+        var capture = new Capture();
+        var session = new ClientSession(capture) { SessionId = 917 };
+        var registry = new ServiceRegistry();
+        var service = new PaperDollBatchBudgetService();
+        registry.Register(service);
+        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 10 };
+
+        await dispatcher.DispatchAsync(CallRequestPacket("paperDollServer", "GetPaperDollDataBatch"), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("paperDollServer", "GetPaperDollDataBatch"), session);
+
+        Assert.Equal(1, service.Calls);
+        Assert.Equal(2, capture.Sent.Count);
+        Assert.Equal(ErrorResponseCommand, CommandOf(capture.Sent[1]));
+        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[1])));
+    }
+
+    private sealed class PaperDollBatchBudgetService : IService
+    {
+        public int Calls { get; private set; }
+        public string Name => "paperDollServer";
+        public bool HasMethod(string method) => method == "GetPaperDollDataBatch";
+        public ValueTask<PyValue> CallAsync(ServiceCall call)
+        {
+            Calls++;
+            return ValueTask.FromResult<PyValue>(PyNone.Instance);
+        }
+    }
+
     private sealed class CharacterEnergyBudgetService : IService
     {
         public int Calls { get; private set; }

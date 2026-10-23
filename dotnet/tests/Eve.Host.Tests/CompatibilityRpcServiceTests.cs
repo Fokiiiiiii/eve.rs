@@ -109,6 +109,35 @@ public sealed class CompatibilityRpcServiceTests
     }
 
     [Fact]
+    public async Task Paper_doll_batch_reads_require_bounded_positive_integral_character_ids()
+    {
+        var service = new PaperDollServerRpcService();
+        var session = Session(20);
+        var valid = Assert.IsType<PyDict>(await service.CallAsync(Call("GetPaperDollDataBatch", session,
+            new PyList([new PyInt(20), new PyLong(21), new PyLong(20)]))));
+        Assert.Equal(2, valid.Entries.Count);
+
+        var oversized = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(Call(
+            "GetPaperDollDataBatch", session, new PyList(Enumerable.Repeat<PyValue>(new PyLong(20), 501).ToArray()))).AsTask());
+        Assert.Equal("PAPERDOLL_BATCH_LIMIT_EXCEEDED", oversized.Error.UserErrorMessage);
+
+        var wrongShape = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(
+            Call("GetPaperDollDataBatch", session, new PyStr("20"))).AsTask());
+        Assert.Equal("PAPERDOLL_BATCH_ARGUMENT_INVALID", wrongShape.Error.UserErrorMessage);
+
+        foreach (var invalidIdValue in new PyValue[]
+        {
+            new PyLong(-20),
+            new PyReal(20.5),
+        })
+        {
+            var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(
+                Call("GetPaperDollDataBatch", session, new PyList([invalidIdValue]))).AsTask());
+            Assert.Equal("PAPERDOLL_CHARACTER_ID_INVALID", refusal.Error.UserErrorMessage);
+        }
+    }
+
+    [Fact]
     public async Task Handlers_return_reference_shapes()
     {
         var cosmetics = new ShipCosmeticsMgrRpcService();

@@ -56,6 +56,7 @@ public sealed class CharacterEnergyMgrRpcService : IService
 
 public sealed class PaperDollServerRpcService : IService
 {
+    private const int MaxBatchCharacters = 500;
     private static readonly string[] Methods = ["GetMyPaperDollData", "GetPaperDollData", "GetPaperDollDataBatch", "GetPaperDollPortraitDataFor", "UpdateExistingCharacterFull", "UpdateExistingCharacterLimited"];
     private static readonly string[] PortraitColumns = [
         "cameraX", "cameraY", "cameraZ", "cameraFieldOfView", "cameraPoiX", "cameraPoiY", "cameraPoiZ", "backgroundID", "lightID", "lightColorID", "lightIntensity", "portraitPoseNumber", "headLookTargetX", "headLookTargetY", "headLookTargetZ", "headTilt", "orientChar", "browLeftCurl", "browLeftTighten", "browLeftUpDown", "browRightCurl", "browRightTighten", "browRightUpDown", "eyeClose", "eyesLookVertical", "eyesLookHorizontal", "squintLeft", "squintRight", "jawSideways", "jawUp", "puckerLips", "frownLeft", "frownRight", "smileLeft", "smileRight", "renderStatus", "paperdollState"];
@@ -103,7 +104,9 @@ public sealed class PaperDollServerRpcService : IService
 
     private async ValueTask<PyValue> GetPaperDollDataBatchAsync(ServiceCall call)
     {
-        var ids = Ids(call.Arg(0));
+        if (call.Args.Count != 1 || call.Kwargs is not PyNone)
+            throw MachoErrors.ThrowUserError("PAPERDOLL_BATCH_ARGUMENT_INVALID");
+        var ids = RequireIds(call.Arg(0));
         if (ids.Count == 0) return new PyDict([]);
         var appearances = _characters is null
             ? new Dictionary<long, (byte[]? Doll, byte[]? Portrait)>()
@@ -286,12 +289,30 @@ public sealed class PaperDollServerRpcService : IService
         number = value switch { PyInt i => i.Value, PyLong l => l.Value, PyReal r => r.Value, _ => double.NaN };
         return double.IsFinite(number);
     }
-    private static List<long> Ids(PyValue value) => value switch
+    private static List<long> RequireIds(PyValue value)
     {
-        PyList list => list.Items.Select(Long).Where(id => id > 0).Distinct().ToList(),
-        PyTuple tuple => tuple.Items.Select(Long).Where(id => id > 0).Distinct().ToList(),
-        _ => [],
-    };
+        var raw = value switch
+        {
+            PyList list => list.Items,
+            PyTuple tuple => tuple.Items,
+            _ => throw MachoErrors.ThrowUserError("PAPERDOLL_BATCH_ARGUMENT_INVALID"),
+        };
+        if (raw.Count > MaxBatchCharacters)
+            throw MachoErrors.ThrowUserError("PAPERDOLL_BATCH_LIMIT_EXCEEDED");
+        var ids = new List<long>(raw.Count);
+        var seen = new HashSet<long>();
+        foreach (var valueItem in raw)
+        {
+            var id = valueItem switch
+            {
+                PyInt integer when integer.Value > 0 => integer.Value,
+                PyLong integer when integer.Value > 0 => integer.Value,
+                _ => throw MachoErrors.ThrowUserError("PAPERDOLL_CHARACTER_ID_INVALID"),
+            };
+            if (seen.Add(id)) ids.Add(id);
+        }
+        return ids;
+    }
     private static long Long(PyValue? value) => value switch { PyInt i => i.Value, PyLong l => l.Value, PyReal r when double.IsFinite(r.Value) => (long)r.Value, _ => 0 };
     private static bool BooleanOrDefault(PyValue value, bool fallback) => value is PyNone ? fallback : value switch { PyBool b => b == PyBool.True, PyInt i => i.Value != 0, PyLong l => l.Value != 0, _ => fallback };
 }

@@ -351,7 +351,9 @@ public sealed class MarketHostTests : IAsyncLifetime
         }
         catch (MachoWrappedException error)
         {
-            throw new Xunit.Sdk.XunitException($"Unexpected structure sell refusal: {error.Error.UserErrorMessage}");
+           var detail=error.Error.UserErrorMessage=="CustomInfo" ? InfoText(error) : error.Error.UserErrorMessage;
+            Assert.Fail($"The first structure sell order was rejected: {detail}");
+
         }
 
         await new MarketStore(source,Schema("EVE_MARKET_SCHEMA")).SeedNpcAsync(
@@ -365,7 +367,7 @@ public sealed class MarketHostTests : IAsyncLifetime
 
         var askResult=await market.CallAsync(Call(buyerSession,"GetStationAsks",4));
         var askDetails=Assert.IsType<PyDict>(Assert.IsType<PyTuple>(Assert.IsType<PyObject>(askResult).Args).Items[0]);
-        Assert.Equal(new PyBytes(System.Text.Encoding.ASCII.GetBytes("stationid")),Field(askDetails,"sessionInfo"));
+        Assert.Equal(new PyBytes("stationid"u8.ToArray()),Field(askDetails,"sessionInfo"));
         var asks=Assert.IsType<PyDict>(Received(askResult));
         Assert.Contains(asks.Entries,entry=>entry.Key==new PyInt(Tritanium));
         var askSummary=Assert.IsType<PyObject>(asks.Entries.Single(entry=>entry.Key==new PyInt(Tritanium)).Value);

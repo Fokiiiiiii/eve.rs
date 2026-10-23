@@ -42,6 +42,11 @@
 - Push-triggered CI run 683 (`40014207144`) was queued when checked; run 682 on parent `d7f45242` was still running. The full CI E2E job will exercise the corrected consume/retry flow. No PostgreSQL database was accessed locally and no graphical-client result is claimed.
 - The industry budget focused Actions regression passed on run `40010004814`; the structure-market scenario's corrected location fixture is included in the current gate.
 
+
+## 2026-10-23 CI run 678 follow-up
+
+- Run 678 (`737ba657`) failed the first structure sell even after the test persisted seller, buyer and structure owner at the same structure as their sessions. That disproves the location-only cause recorded above.
+- The Host test now includes the returned Macho label or CustomInfo text when the first sell fails. The exact refusal and its root fix are still pending the next focused Actions check; the corrected location fixture alone is not a verified fix.
 ## 2026-10-23 run 683 affiliation follow-up
 - Run 683 on `8610990c` reported `StructureMarketDenied` in the structure sell regression after the location fix. The production read model resolves affiliation from persisted `CorporationMember` relations. The fixture helper had created a character with a corporation ID but skipped the relation mutation performed by normal character creation.
 - Added the active corporation membership relation to every market test trader in the scratch relation schema; the denied trader remains affiliated with the different corporation. This makes the fixture's stored state match its intended character setup without changing access logic.

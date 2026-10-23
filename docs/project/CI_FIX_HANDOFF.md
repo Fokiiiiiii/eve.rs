@@ -160,7 +160,7 @@ Use lane `eve_p4` only and run database work through `tools/dev/db-lock.sh`. The
 
 ## 2026-10-23 structure market Host fixture location
 
-- CI run 672 on `1669e6dc` failed the structure market Host test because the fixture set each session's `structureid` to the Upwell structure but persisted the characters at the SDE station.
+CI run 672 on `1669e6dc` failed the structure market Host test because the fixture set each session's `structureid` to the Upwell structure but persisted the characters at the SDE station.
 - The feature's market rules require the seller to be at the structure when the character has no Marketing skill. Main now places test characters at the structure. The new sell failure on run 675 occurs after that fixture correction; the local test now includes the wrapped user-facing refusal in its assertion output. The market feature handoff owns that separate issue.
 
 ## 2026-10-23 run 675 follow-up
@@ -170,6 +170,29 @@ Use lane `eve_p4` only and run database work through `tools/dev/db-lock.sh`. The
 - Run 675's Windows job later completed successfully in 14.4 minutes, including the Windows PowerShell 5.1 entry point, production TCP readiness, UTF-8 fixture decode and live login-to-character walk. TODO 14 records this result; the owner's Ctrl+C/console behavior and `global.json` path remain open.
 - The current worktree reports the market sell refusal in the failing test message. The Release build of `Eve.Host.Tests` passed with zero warnings and errors; no local database tests were run.
 
+
+## 2026-10-23 SKINR live fixture catalog eligibility
+
+- Run 675 and Agent run 146 reported `INVALID_COMPONENT_LICENSE_ITEM` for the unlimited license item. The live fixture query previously selected any published compatible component with a license item and binder, while `ShipSkinrCatalog.LoadAsync` only registers a component when its category and rarity have an authoritative point value.
+- The SKINR live fixture now requires a matching `skinrComponentPointValues` entry, including both supported object-map and `_key`/`_value` array shapes, so it selects an item the runtime catalog can resolve. The Python file passed `python3 -m py_compile`; the live Actions check is pending.
+
+## 2026-10-23 contact notification persisted numeric values
+
+- Runs 675 and 676 reported the final restart-read mismatch: `data.level=-10` came back as `PyInt`, while the assertion expected `PyLong`. `NotificationMgrService.Payload` maps the persisted JSON number to `PyInt`.
+- Contact notification assertions now use the observed `PyInt` values for the sender, receiver, and persisted relationship level. The local Host.Tests project build passed with zero warnings and errors; no local database test was run.
+- The next focused Actions check will cover `Contact_add_persists_and_routes_the_recipient_notification` on the merged main head.
+
+## 2026-10-23 structure market sell refusal
+
+- Run 678 on `737ba657` still failed the first structure sell after the persisted character location was changed to the same structure as the session. That disproved the location-only diagnosis.
+- `MarketHostTests` now includes the returned Macho label or CustomInfo text in the failed sell assertion. The next focused Actions run will expose the exact remaining refusal for a root fix.
+
+
+## 2026-10-23 merged-head verification update
+
+- Merged origin/main `d7f45242` after fetching; that update only added contact-notification handoff notes. The merged `Eve.Host.Tests` project build completed successfully with 0 warnings and 0 errors. No local PostgreSQL test was run.
+- CI run 681 on `04a43486` is still running. Rust format/clippy, Rust tests, Python tests, fixture validation and .NET build have passed; the end-to-end, Windows and .NET test jobs are still in progress. Check its completed result before treating the SKINR live fixture change as resolved.
+- The persisted contact assertions now expect `PyInt` for stored sender/receiver IDs and restart-read relationship level. The market test only adds the returned Macho refusal text to the failing assertion; the actual sell refusal is not yet identified. Both focused Actions checks must run on the next pushed head.
 ## 2026-10-23 SKINR consume request fixture shape
 
 - Artifact for Agent run 154 (`40013656378`) on `04a43486` shows its test failed before reaching the Host: my temporary point-value filter compared the text SDE key column with bigint. I removed that unnecessary filter; the query returned to the prior fixture selection.
@@ -183,6 +206,20 @@ Use lane `eve_p4` only and run database work through `tools/dev/db-lock.sh`. The
 - No local PostgreSQL or graphical-client verification was performed.
 
 
+## 2026-10-23 CI 647/648 root-cause review
+
+- The E2E and Host logs report `42P01` for `sde.skinrComponentPointValues`. These records are in the mission SDE. The failing Host composition passed the regular SDE reader to the SKINR catalog, and the live harness loaded only the regular SDE build. Main commit `a00e62c9` now reads the catalog through `sde_mission`, verifies mission tables when reusing the loaded build, and has the live harness ensure the mission build. The cache key update in `86c11a0c` is separate from this schema mismatch.
+- Run 648 also reports `ShipSkinrDispatchTests.Draft_save_and_read_responses_keep_the_v24_row_shape` failing its decoded skin string assertion. Main commit `bb6029d1` corrects the test's nested response decoding.
+- Run 647/648 predate these changes. Run 683 on `8610990c` is checking the corrected SKINR live fixture shape; run 684 on the later head `253597a9` is now the newest push gate. Check both completed results before closing these causes.
+
+## 2026-10-23 Agent-test selection review
+
+- Agent run 104 on `8b3c8e04` selected `Eve.Host.Tests` with `FullyQualifiedName~IndustryMonitorNoticeTests`; the failed Release build reported CS1593 because the fixture supplied a two-argument lambda to `Action<long>`. Main commit `ed01d2d8` changes the callback fixture to the actual one-argument delegate. The selection did not match the handoff/harness files changed by the tested merge.
+- Agent run 108 on `951a8744` selected `Eve.Services.Inventory.Tests,Eve.Ships.Tests` with filter `FullyQualifiedName~Capacity` plus live `test_cargo_capacity_module.py`; that commit changed only `docs/project/roller/handoff-fit-cargo-capacity.md`. Its selected-test failure does not validate the documentation-only commit. For future handoff-only commits, do not dispatch tests; source commits should use a filter from the changed source test and its owning project.
+
+## 2026-10-23 local focused checks
+
+- The merged `Eve.Host.Tests` project build passed with 0 warnings and 0 errors. The in-memory regression `ShipSkinrDispatchTests.Draft_save_and_read_responses_keep_the_v24_row_shape` passed 1/1 with 0 skips; `python3 -m py_compile tools/headless-client/tests/test_skinr_live.py` also passed. No local PostgreSQL test was run.
 ## 2026-10-23 SKINR live sequence after the wire fix
 
 - Agent run 158 (`40014734291`) on `253597a9` passed component-item consumption, same-request retry, item deletion, unlimited license persistence and refusal of a hull item. It then received HTTP 400 at `draft.api.SaveRequest`; the test assertion did not include the gateway error string.
@@ -198,6 +235,43 @@ Use lane `eve_p4` only and run database work through `tools/dev/db-lock.sh`. The
 
 ## 2026-10-23 SKINR draft-save live failure
 
+## 2026-10-23 SKINR layout oneof encoding
+
+- The focused run on `253597a9` passed consumption but got HTTP 400 when saving the design. V24.01's `component_instance.build_config_proto_from_component_instance` selects outer `SlotConfiguration.coating` or `.pattern` by category; both inner messages store their identifier in field 1. The headless fixture incorrectly used the category as the inner identifier field, making category-2 component IDs unreadable by `ShipSkinrCatalog.ReadSlot`.
+- `_component_kind` now uses the category only for the outer oneof and always emits the component identifier at inner field 1. The existing SaveRequest assertion prints the gateway error if this remains invalid. Python syntax compilation passed; a focused live Actions check is pending.
+## 2026-10-23 latest main follow-up
+
+- Current origin/main is `d8f4dab4`, which includes the market trader-membership fixture update and the SKINR slot-identifier oneof correction. Run 683 on `8610990c` failed the market Host scenario with `StructureMarketDenied`; the updated fixture is in the new gate. Agent run 158 on `253597a9` passed component consumption and retry but failed at design save; run 687 added the SaveRequest refusal detail, and `d8f4dab4` corrects the inner component identifier field.
+- The merged `Eve.Host.Tests` project build passed with 0 warnings and 0 errors. The in-memory SKINR response-shape test passed 1/1 with 0 skips. Python syntax compilation passed on the previous merged head; rerun it after this merge.
+- CI runs 686 (`4484ec9c`) and 687 (`fe051fc3`) were still active at the latest check. Check run 688 for `d8f4dab4` after it starts; do not treat the main gate as green until the newest head completes all required jobs.
+
+- Agent run 159 (`40014735391`) on `253597a9` completed successfully with no failed tests or jobs; the handoff maps it to the focused contact-notification check. The newer CI run 688 and Agent run 163 on `d8f4dab4` are still in progress.
 - Agent run 158 on `253597a9` passed the component `ConsumeRequest` after the two-level wire fix, then received HTTP 400 for `Draft.SaveRequest`. V24's client sends a `SlotLayout` with the selected coating/pattern oneof and repeated editor configurations; the empty repeated editor list is accepted by the gateway.
 - Client source encodes `SlotConfiguration.coating` or `.pattern` as the outer field selected by category, then wraps that variant's component identifier in inner field 1. The headless `_layout` helper omitted that inner wrapper, so `ShipSkinrCatalog.ReadSlot` could not resolve the component ID and `TryValidateLayout` rejected the draft. The helper now matches that structure. `_component_kind` also follows the V24 category-selected oneof.
 - The fixture selector now excludes SDE `disallowedSlots`, another catalog condition it must respect, and the SaveRequest assertion includes the gateway response message. Run 686 on `4484ec9c` checks the earlier selector and market affiliation fixture; Actions for the corrected layout are pending. No PostgreSQL test was run locally.
+
+## 2026-10-23 current main SKINR layout correction
+
+- Origin/main is now `1a9e73e9`. The run 158 failure on `253597a9` went past component consumption but returned HTTP 400 at Draft.SaveRequest. The follow-up found two fixture errors: selected components could disallow the slot, and `_layout` omitted the inner field-1 component ID in the selected coating/pattern oneof. Main commit `67753d67` corrects both.
+- Agent run 163 on `d8f4dab4` failed the focused live SKINR check before this layout correction. CI run 688 on `d8f4dab4` is still active; run 689 on `1a9e73e9` is queued for the corrected head. The latest gate is not yet green.
+- The Host.Tests build on the merged market-affiliation fixture passed with 0 warnings and 0 errors. The in-memory SKINR response-shape regression passed 1/1 with 0 skips, and Python syntax compilation passed after the current layout changes.
+
+## 2026-10-23 latest main gate follow-up
+
+- Origin/main is `1a9e73e9`, with commit `67753d67` correcting the SKINR live draft fixture's inner component-ID field and excluding SDE components disallowed for the chosen slot. The prior focused Agent run on `d8f4dab4` failed before that fix; run 688 is still active, while the corrected full gate run 689 and focused run 165 are now active on `1a9e73e9`.
+- Local Python syntax compilation passed after merging the layout changes. The latest local Host.Tests build and no-database SKINR response-shape test passed on the market affiliation fixture. No local PostgreSQL test was run.
+
+## 2026-10-23 handoff before current push
+
+- Origin/main `bcc231a9` adds documentation updates only and is included in the local merge `3980b75a`. The latest code gate remains run 689 on `1a9e73e9`; .NET build, Rust tests, E2E and Windows are still active. The local branch carries the persisted-contact type assertions and market refusal detail alongside the latest main fixes.
+
+## 2026-10-23 push 5bcb27c5 verification
+
+- Push `5bcb27c5` is on main. CI run 690 (`40016706205`) is checking that exact head; Python, fixtures, Rust formatting/clippy and advisory Rust already passed, while .NET build, Rust tests, E2E and Windows remain active. Agent run 166 (`40016728738`) is also active on the pushed head.
+- Run 689 on parent `1a9e73e9` remains active. Run 688 on `d8f4dab4` has a failed Host test shard; its completed log will be inspected separately from run 690, which includes later market and SKINR fixes.
+
+## 2026-10-23 market Host sessionInfo wire type
+
+- CI run 686 (`40015069193`) failed `MarketHostTests.The_host_dispatches_accessible_structure_market_orders_and_recovers_partial_settlement_after_restart`: the test expected `PyStr("stationid")`, but the method result contains `PyBytes`.
+- `ObjectCaching.Raw` intentionally encodes `sessionInfo` as ASCII bytes, and the V24.01 client passes that value to `getattr(session, details['sessionInfo'], None)` when invalidating cached calls. The Host wire value is correct; the test expectation now matches that Python 2 `str` representation.
+- The focused Agent test and push-triggered CI run will verify the correction.

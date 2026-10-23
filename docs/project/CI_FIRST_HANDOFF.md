@@ -2,22 +2,20 @@
 
 ## Current state
 
-- Remote `main` is `df08707e`. The pending worktree merges that commit and adds the test-input and short-SHA fixes.
+- Commit `42e9783d` is on `main`; required push CI run 562 (`39925475745`) is in progress.
 - Agent-test run `39923041081` succeeded for `main`: the focused paper-doll RPC test, fast live files, and Rust workspace tests passed. Artifact `agent-test-logs-39923041081` exists (52,187 bytes).
-- Push CI run 556 (`39922996473`, SHA `e8d7ed04`) completed with one failure in `.NET (host tests 4/4)`: `Handlers_return_reference_shapes` called `GetPaperDollData` without its required character ID. All other Linux jobs and Windows passed; run 556 stayed active after later main pushes.
-- The missing ID is corrected in the pending worktree. The earlier `GetMyPaperDollData` test typo was corrected in `e8d7ed04`.
-- Main push CI uses a SHA-specific group with cancellation disabled. The reusable Windows workflow has a per-caller run ID group, so pending Windows jobs are not replaced by later pushes.
-- `ci-status.py failures` handles full SHA values and prefixes; it returned run 556's failure name and log tail for `e8d7ed046b20`.
+- Previous push CI run 556 (`39922996473`, SHA `e8d7ed04`) failed only because `Handlers_return_reference_shapes` omitted the required character ID. The input correction is in `42e9783d`; all other Linux jobs and Windows passed in run 556.
+- `wait` originally missed the test name because Actions prefixes each log line with a timestamp and ANSI codes. The pending change normalizes those prefixes and adds matching parser tests. Re-running `wait 39922996473` now prints the failing test name and its exception tail.
+- Main push CI uses a SHA-specific group with cancellation disabled; run 556 stayed active after later pushes and its Windows job completed successfully. The reusable Windows workflow has a per-caller run ID group.
 
 ## Verification
 
-- `python3 tools/dev/test_ci_status.py`: 8 focused tests passed.
-- `MSBUILDDISABLENODEREUSE=1 dotnet test dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -c Release -nologo --verbosity minimal -nodeReuse:false -p:UseSharedCompilation=false --filter 'FullyQualifiedName~Handlers_return_reference_shapes'`: 1 passed, 0 failed, 0 skipped. This test did not use PostgreSQL.
-- The selected agent-test workflow completed end to end and uploaded its full logs.
-- MSBuild and compiler servers were shut down after the local focused test. No broad local suite or database was used.
+- `python3 tools/dev/test_ci_status.py`: 8 focused tests passed, including timestamped/ANSI .NET and timestamped agent-test logs.
+- The DB-free .NET focused test for the corrected input passed: 1 passed, 0 failed, 0 skipped. MSBuild/compiler servers were shut down afterward.
+- The selected agent-test workflow completed end to end and uploaded its full logs. No broad local suite or database was used.
 
 ## Next steps
 
-1. Push the pending worktree, then inspect the new push CI and confirm the required gate succeeds.
-2. Dispatch the focused agent test again only if the new push run exposes another issue.
+1. Commit the log-prefix parser fix and this note, fetch/merge the latest `origin/main`, then push.
+2. Monitor run 562 and the new push run, inspect any red checks, and fix their root causes.
 3. Record final run IDs and outcomes here before the final handoff.

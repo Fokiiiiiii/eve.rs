@@ -2743,3 +2743,4 @@ The market multi-buy validator preserves the client's zero-quantity no-op rows w
 Security review follow-up: inventory `GetAssetWorth` now costs 10 weighted per-session units because it scans all owned items; the bounded ordinary inventory read paths remain at 2 units.
 Security review follow-up: `invbroker.ListByFlags` now rejects more than 500 raw flag entries with `INVENTORY_BULK_LIMIT_EXCEEDED` before inventory reads.
 Security review follow-up: `invbroker.GetDamageForCrystals` now refuses unrecognized request shapes and nonpositive/noninteger item IDs before reading inventory state; its raw batch cap remains 500.
+Security review follow-up: inventory asset-root and station-content enumerations `ListStations` and `ListStationItems` now cost 10 weighted per-session units alongside `GetAssetWorth`.

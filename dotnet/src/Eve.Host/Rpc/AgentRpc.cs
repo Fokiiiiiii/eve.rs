@@ -66,7 +66,8 @@ internal sealed partial class CharacterServicesComposition
     private IReadOnlyList<IService> AgentRpcServices() =>
     [
             agentMissionService,
-            new LoyaltyPointsService(loyaltyPoints),
+            new LoyaltyPointsService(loyaltyPoints, async (characterId, token) =>
+                (await characters.GetAsync(characterId, token))?.CorporationId),
             new Eve.Services.Wallet.LpStoreMgrService(lpStoreCache, lpStorePurchases, IsCorporationDirectorAsync),
             allianceRegistry,
             publicQaSlashService = new SlashService(new ShipHealthCommands(ships, dogma, now, spaceSessions), spaceSessions is null ? null : new DeathTestCommands(spaceSessions, new ShipTypeNames(sde)), spaceSessions is null ? null : new SuicideCommands(spaceSessions), spaceSessions is null ? null : new NpcCommands(spaceSessions), new ItemCommands(new ItemTypeNames(sde), ships, dogma, now, spaceSessions), new SkillCommands(skillCatalog, skills, source, dogmaSync, now), new IskCommands(economyWallets, source, now, wallets, loyaltyPoints),

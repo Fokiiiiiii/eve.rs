@@ -1117,7 +1117,7 @@ Open after M1:
 
 ## Agents slice AG-1: LP wallet, access rule and bound agentMgr (2026-10-10)
 
-Done (DEVIATIONS.md, "Agents slice AG-1"): LPSvc (balances, notifications, PostgreSQL journal), the client's agent access
+Done (DEVIATIONS.md, "Agents slice AG-1"): LPSvc (balances, notifications, PostgreSQL journal, persisted corporation ownership check), the client's agent access
 rule (`AgentAccessRule`), the bound agentMgr (`MachoBindObject`, release). Design slices of `ess-insurgency-agents-missions-design.md`
 section 4.7: A8 done for balances and notifications; A2 done as a rule; A3 done as a binding; A1 partly; A4 to A7 and A9 open.
 

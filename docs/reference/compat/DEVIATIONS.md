@@ -1951,8 +1951,9 @@ Faction lists: `eve/common/lib/appConst.py:618-632`.
 - **LPSvc is registered by the Host.** It was missing (eve.rs routed the name to the station node and had no class). It is
   built on the wallet store and answers `GetAllMyCharacterWalletLPBalances` and `GetAllMyCorporationWalletLPBalances` with a
   `Rowset` of `(issuerCorpID, loyaltyPoints)`, the shape EveJS answers (`lpService.js:32-44`). The character is the session's
-  `charid`; the corporation is `corporationID`, then `corpid` (EveJS `lpService.js:105-107`). A session with no character or
-  corporation gets an empty rowset. Status: decided (AG-1); tests `LoyaltyPointsServiceTests`.
+  `charid`; the Host now resolves corporation ownership from the persisted character record instead of cached `corporationID` or
+  `corpid` session fields, preventing a former corporation's balance from being read after affiliation changes. A session with no
+  current persisted corporation gets an empty rowset. Status: decided (AG-1); tests `LoyaltyPointsServiceTests`, including stale affiliation refusal.
 - **Balances persist in PostgreSQL, in the wallet schema.** Tables `lp_balances` (one row per holder and issuing corporation)
   and `lp_journal` (one row per applied change), migration `006_loyalty_points.sql`. The reference keeps them in its JSON
   `lpWallets` table; eve.rs does not use the JSON game store for new state, so the reference's table name is not reused. A

@@ -5458,6 +5458,10 @@ Organization and mailing-list delivery now stops at 5,000 distinct recipients be
 `structureJumpBridgeMgr.GetJbStructureDestination` and `GetLinkedStructure` validate the requested ID against persisted jump-bridge rows and each query costs 10 weighted per-session units because the provider reads the structure catalog. `Jump_bridge_structure_reads_use_the_named_per_session_budget` covers the dispatcher refusal.
 
 
+## Station guest enumeration budget (2026-10-23)
+
+`stationSvc.GetGuests` enumerates active guests at the caller's current station. The V24.01 station service caches this list until the character changes stations (`eve/client/script/ui/station/base.py:99-109`), so one 10-unit call at first use leaves the client flow within the default 120-unit allowance while bounding repeated session enumeration. `DispatchGoldenTests.Station_guest_enumeration_uses_a_named_per_session_budget` covers the refusal after the configured test allowance.
+
 ## Corporation office impound reads use current membership (2026-10-22)
 `officeManager.HasCorpImpoundedItems` and `GetImpoundReleasePrice` previously trusted the session corporation ID when reading impounded inventory. They now use the current persisted corporation membership check, so a removed member cannot continue querying former-corporation impound status or fee data. Impound status, release-price reads, office rent/unrent, item release, and impound trash cost 10 weighted per-session units because they scan or mutate station inventory. `Impound_status_and_release_price_require_current_corporation_membership` covers role revocation, `Corporation_office_impound_reads_use_the_named_per_session_budget` covers read budgets, and `Corporation_office_item_mutations_use_the_named_per_session_budget` covers mutation budgets. The corresponding `stationSvc` office wrappers now consume the same 10-unit cost under their registered service name; `DispatchGoldenTests.Station_service_office_calls_share_the_office_rpc_budget` covers the refusal.
 

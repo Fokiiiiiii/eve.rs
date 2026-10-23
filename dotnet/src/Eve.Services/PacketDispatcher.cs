@@ -335,6 +335,8 @@ public sealed class PacketDispatcher
             return 10;
         if (service == "stationSvc" && method is ("GetCorporationsWithOffices" or "GetEmptyOfficeCount" or "HasCorpImpoundedItems" or "GetImpoundReleasePrice" or "TrashImpoundedOffice" or "PrimeOfficeItem" or "UnrentOffice"))
             return 10;
+        if (service == "stationSvc" && method == "GetGuests")
+            return 10;
         if (service == "skillHandler" && method is "InjectSkillIntoBrain" or "InjectSkillpoints" or "ExtractSkills" or "GetDiminishedSpFromInjectors" or "SplitSkillInjector" or "CombineSkillInjector")
             return 10;
         if (service == "accessGroupBookmarkMgr" && method is "GetMyActiveBookmarks" or "SearchFoldersWithAdminAccess" or "DeleteBookmarks" or "MoveBookmarksToFolderAndSubfolder" or "CopyBookmarksToFolderAndSubfolder")

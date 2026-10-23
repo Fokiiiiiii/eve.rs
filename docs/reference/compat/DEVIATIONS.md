@@ -1573,8 +1573,8 @@ Sources. The wiki: "Pochven" (https://wiki.eveuniversity.org/Pochven, fetched 20
   word is refused. Status: open (a configured list is the owner's decision).
 - **Alpha injection, offers, localization and community tracks.** `alphaInjectorMgr.GetNextAvailableInjection` answers 0
   (the next alpha injection is available now): the reference computes it from the account's injections
-  (`skillTradingRuntime.js`), which eve.rs does not record. `contextualOfferMgr.Track*` keeps its events in memory; no
-  offer is served by eve.rs, so no tracking call is made. `localizationServer.UpdateLocalizationQAWrap` and
+  (`skillTradingRuntime.js`), which eve.rs does not record. `contextualOfferMgr.Track*` keeps only the latest 1,024 bounded diagnostic events in memory; no
+  contextual offer is served by eve.rs. Calls require a positive integer offer ID and consume one dispatch budget unit. `localizationServer.UpdateLocalizationQAWrap` and
   `ReloadFSDPickle` change only in-process state. `communityTrackMgr` keeps its instances in memory (the community track
   state is not persisted). Status: open, each with its owner in TODO section 41.
 - **Loyalty point store (historical status, superseded by A9 below).** At this point `LPStoreMgr` answered no offers and refused every take. The current ESI-backed offer and purchase behavior is recorded in Agents slices AG-2/A9 and AG-3/A9.

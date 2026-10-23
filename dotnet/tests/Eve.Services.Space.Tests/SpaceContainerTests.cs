@@ -591,7 +591,7 @@ public class SpaceContainerTests
         var messages = rig.Sim.Heard.ToArray();
         var spawn = Array.FindIndex(messages, message =>
             message is SimSpawn spawned && spawned.Ship.ShipId == launched.Id);
-        var sourceRefresh = Array.FindIndex(messages, message =>
+        var sourceRefresh = Array.FindLastIndex(messages, message =>
             message.Equals(new SimChangeWreck((ulong)flying.Session.SessionId, can, false)));
         Assert.True(spawn >= 0 && sourceRefresh > spawn, string.Join(Environment.NewLine, messages));
 
@@ -718,7 +718,7 @@ public class SpaceContainerTests
         {
             await rig.Items.MoveAsync(connection, transaction, launchable.Id, can, 0);
             await rig.Items.MoveToOwnerAsync(
-                connection, transaction, can, long.MaxValue, can, Eve.Ships.CharacterShips.InSpaceFlag);
+                connection, transaction, can, long.MaxValue, flying.Session.GetInt("solarsystemid")!.Value, Eve.Ships.CharacterShips.InSpaceFlag);
             await transaction.CommitAsync();
         }
         var rights = (await rig.SpaceItems.GetAsync(can))!;

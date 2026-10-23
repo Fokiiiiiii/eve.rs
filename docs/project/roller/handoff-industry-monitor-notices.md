@@ -16,14 +16,15 @@
 
 ## Checks
 
-- PASS: `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/src/Eve.Host/Eve.Host.csproj --no-restore -m:1 -p:UseSharedCompilation=false` (0 warnings, 0 errors; about 54 minutes under shared machine load).
-- PASS: local no-DB focused test `Host_inventory_dispatch_publishes_changed_materials_once_after_item_change_and_isolates_sessions` (1 passed, 0 skipped).
-- PASS on Actions at run `39975595679`, ref `d573f9e9`: agent-test completed successfully; no failed tests or jobs.
-- Earlier Actions live tests failed at Host startup because the initial decorator replaced the concrete `InvBrokerService` before `RepackagingService`'s lookup. The current composition unwraps the decorated broker for that lookup.
-- `ci-status.py failures d573f9e98867a8672523170522c9e396099bc8c3` reports no push-triggered `ci.yml` run found (checked twice).
-- The headless test index has no existing end-to-end industry job walk. No live industry walk or graphical-client session has been performed.
+- PASS: Host project build (0 warnings, 0 errors) before the latest upstream Host changes.
+- PASS: previous direct-service focused test (1 passed, 0 skipped); it was replaced because it did not exercise the packet dispatcher.
+- PASS on Actions for prior source at run `39975595679`, ref `d573f9e9`; this was before the packet-dispatch test correction.
+- Latest RPC packet dispatch test uses `PacketDispatcher.DispatchAsync` with Macho CallReqs for ConnectJob, DisconnectJob and inventory mutation. It checks notification order, changed and unchanged material quantities, target, monitor ID, payload, and session isolation.
+- The latest local test build attempt exited with code 137. A reduced-reference build then exposed stale Host test dependency outputs and test analyzer findings; the analyzer findings in the new test were corrected. A fresh successful focused run for the corrected test is pending.
+- `ci-status.py failures` found no push-triggered `ci.yml` run for the previous main SHA.
+- No existing headless end-to-end industry job walk was found. No live industry walk or graphical-client session has been performed.
 - Nine unrelated Rust deletions were present at initial inspection and remain unstaged.
 
 ## Remaining
 
-Push this handoff update and check whether `ci.yml` appears for the main push. Report headless and graphical-client verification separately.
+Commit and push the packet-dispatch test correction, confirm it on Actions, and report headless and graphical-client verification separately.

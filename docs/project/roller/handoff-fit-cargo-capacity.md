@@ -20,8 +20,8 @@ EveJS 261018.1 checks this before changing state and returns a CustomNotify carr
 
 No database was used locally. The focused no-database capacity predicate test passed. Ship and Inventory test projects both built successfully with zero warnings and errors.
 
-The first Actions dispatch supplied an empty live-test input, but GitHub selected the workflow default fast set and started 12 live test files. That run failed during the live-test step; the returned log tail did not include the underlying case details. The new focused headless walk is added and should be dispatched by filename to avoid the default set. Database-backed ship and inventory cases still need Actions verification. No graphical-client check was made.
+The first Actions dispatch supplied an empty live-test input, but GitHub selected the workflow default fast set and started 12 live test files. A later focused dispatch ran the selected .NET projects and one live file, but failed during the live-test step; its returned step log ended before the summary. A second empty-live dispatch again received the fast default. The workflow default is now empty so the documented skip input will work for a .NET-only run. The focused headless walk and database tests need a fresh run with that workflow correction. No graphical-client check was made.
 
 Keep the worktree's pre-existing deletions under crates/eve-net, crates/eve-sde, crates/eve-sim, and crates/eve-space out of the commit.
 
-Implementation pushes: 80d07d8c and 55f2dd87. Main merge: 1a0c608d. Focused headless and database regressions: pending.
+Implementation pushes: 80d07d8c and 55f2dd87. Main merge: 1a0c608d. Workflow correction and clean Actions results: pending.

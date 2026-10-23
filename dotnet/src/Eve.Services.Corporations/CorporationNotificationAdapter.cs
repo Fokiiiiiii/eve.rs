@@ -7,6 +7,28 @@ namespace Eve.Services.Corporations;
 
 internal static class CorporationNotificationAdapter
 {
+    public static void OrganizationContactsUpdated(CharacterSessions? sessions,ServiceCall call,long ownerId,
+        bool allianceOwner,IReadOnlyList<(long ContactId,long? RelationshipId,long? LabelMask)> updates)
+    {
+        if (sessions is null || updates.Count == 0) return;
+        var rows = new PyList([.. updates.Select(update => (PyValue)Py.Tuple(
+            CorporationWire.Id(update.ContactId),
+            update.RelationshipId is { } relationship ? CorporationWire.Id(relationship) : PyNone.Instance,
+            update.LabelMask is { } labelMask ? CorporationWire.Id(labelMask) : PyNone.Instance))]);
+        call.Session.AfterResponse(() =>
+        {
+            foreach (var session in sessions.All())
+            {
+                var corporationId = session.GetInt("corporationID") ?? session.GetInt("corpid");
+                var sessionAllianceId = session.GetInt("allianceID") ?? session.GetInt("allianceid");
+                var matches = allianceOwner ? sessionAllianceId == ownerId : corporationId == ownerId;
+                if (!matches) continue;
+                var idType = allianceOwner ? "allianceid" : "corpid";
+                Send(session,"OnOrganizationContactsUpdated",idType,CorporationWire.Id(ownerId),rows);
+            }
+        });
+    }
+
     public static void MemberChanged(CharacterSessions? sessions,ServiceCall call,long corporationId,long characterId,
         Member? before,Member? after)
     {

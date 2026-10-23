@@ -683,4 +683,39 @@ public class SpaceContainerTests
         Assert.Single(await rig.Items.InContainerAsync(can), item => item.TypeId == Tritanium);
     }
 
+    [PgFact]
+    public async Task A_launch_refuses_a_distant_missing_or_inaccessible_source_without_moving_its_item()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (flying, can) = await WithACanAsync(rig);
+        var stack = Assert.Single(await rig.Items.InContainerAsync(can));
+
+        rig.Sim.MeasureAnswer = 2501;
+        var distant = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await rig.Containers.LaunchShipOrContainerFromWreckOrContainerAsync(
+                flying.Session, can, stack.Id, CancellationToken.None));
+        Assert.Equal("TargetTooFar", UserError(distant).Name);
+
+        rig.Sim.MeasureAnswer = 100;
+        var absentItem = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await rig.Containers.LaunchShipOrContainerFromWreckOrContainerAsync(
+                flying.Session, can, long.MaxValue, CancellationToken.None));
+        Assert.Equal("FakeItemNotFound", UserError(absentItem).Name);
+
+        var absentSource = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await rig.Containers.LaunchShipOrContainerFromWreckOrContainerAsync(
+                flying.Session, long.MaxValue, stack.Id, CancellationToken.None));
+        Assert.Equal("FakeItemNotFound", UserError(absentSource).Name);
+
+        var other = await rig.NewCharacterAsync("Other Loot Owner", account: 2);
+        var rights = (await rig.SpaceItems.GetAsync(can))!;
+        await rig.SpaceItems.SaveAsync(rights with { CharacterId = other.CharacterId, CorporationId = 0 });
+        var inaccessible = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await rig.Containers.LaunchShipOrContainerFromWreckOrContainerAsync(
+                flying.Session, can, stack.Id, CancellationToken.None));
+        Assert.Equal("SafetyActivated", UserError(inaccessible).Name);
+        Assert.Equal(can, (await rig.Items.GetAsync(stack.Id))!.LocationId);
+        Assert.Null(await rig.SpaceItems.GetAsync(stack.Id));
+    }
+
 }

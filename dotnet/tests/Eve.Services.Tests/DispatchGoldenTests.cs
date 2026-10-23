@@ -1890,6 +1890,75 @@ public class DispatchGoldenTests
         Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[1])));
     }
 
+    [Fact]
+    public async Task Banned_words_routes_use_named_per_session_budgets()
+    {
+        var capture = new Capture();
+        var registry = new ServiceRegistry();
+        var service = new BannedWordsBudgetService();
+        registry.Register(service);
+        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 10 };
+        string[] methods = ["fetch_regexes", "check_words_allowed", "check_search_words_allowed"];
+
+        foreach (var (method, index) in methods.Select((method, index) => (method, index)))
+        {
+            var session = new ClientSession(capture) { SessionId = 940 + index };
+            var previousCalls = service.Calls;
+            var allowedCalls = method == "fetch_regexes" ? 10 : 1;
+            for (var callIndex = 0; callIndex <= allowedCalls; callIndex++)
+                await dispatcher.DispatchAsync(CallRequestPacket("bannedwords", method), session);
+            Assert.Equal(previousCalls + allowedCalls, service.Calls);
+            Assert.Equal(ErrorResponseCommand, CommandOf(capture.Sent[^1]));
+            Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[^1])));
+        }
+    }
+
+    private sealed class BannedWordsBudgetService : IService
+    {
+        public int Calls { get; private set; }
+        public string Name => "bannedwords";
+        public bool HasMethod(string method) => method is "fetch_regexes" or "check_words_allowed" or "check_search_words_allowed";
+        public ValueTask<PyValue> CallAsync(ServiceCall call)
+        {
+            Calls++;
+            return ValueTask.FromResult<PyValue>(PyNone.Instance);
+        }
+    }
+
+    [Fact]
+    public async Task Resource_wars_reads_use_named_per_session_budgets()
+    {
+        var capture = new Capture();
+        var registry = new ServiceRegistry();
+        var service = new ResourceWarsBudgetService();
+        registry.Register(service);
+        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 1 };
+        string[] methods = ["get_closest_rw_stations", "solarsystem_contains_rw_instances"];
+
+        foreach (var (method, index) in methods.Select((method, index) => (method, index)))
+        {
+            var session = new ClientSession(capture) { SessionId = 923 + index };
+            var previousCalls = service.Calls;
+            await dispatcher.DispatchAsync(CallRequestPacket("RWManager", method), session);
+            await dispatcher.DispatchAsync(CallRequestPacket("RWManager", method), session);
+            Assert.Equal(previousCalls + 1, service.Calls);
+            Assert.Equal(ErrorResponseCommand, CommandOf(capture.Sent[^1]));
+            Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[^1])));
+        }
+    }
+
+    private sealed class ResourceWarsBudgetService : IService
+    {
+        public int Calls { get; private set; }
+        public string Name => "RWManager";
+        public bool HasMethod(string method) => method is "get_closest_rw_stations" or "solarsystem_contains_rw_instances";
+        public ValueTask<PyValue> CallAsync(ServiceCall call)
+        {
+            Calls++;
+            return ValueTask.FromResult<PyValue>(PyNone.Instance);
+        }
+    }
+
     private sealed class ProjectDiscoveryBudgetService : IService
     {
         public int Calls { get; private set; }

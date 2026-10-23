@@ -35,3 +35,17 @@ The headless venv is /home/user/eve.rs/tools/headless-client/.venv (grpcio and p
 
 - c6ca79ec booster lapse test (and S9 handoff)
 - later pushes: see git log of ch-s9
+- 693c67cc (Host composition: no EVE_SDE_SCHEMA env read; Characters migration list 0013), 7b011e25 (Space undock test: stationid2 cleared), merge of origin/main 00c01a0f plus fix commit; Characters, Host and Space green on the merged tree
+
+## State at wind-down (owner stopped Claude agents)
+
+Verified green on the S9 tree before the last origin/main merge: Eve.Characters.Tests, Eve.Services.Space.Tests, Eve.Host.Tests (rc=0 each); full serial suite earlier: 44 projects, 6195 passed, 0 failed, 2 skipped.
+
+Not verified: the 10 commits of origin/main merged last (touch dotnet/src/Eve.Services.Inventory/InvBrokerService.Fitting.cs, dotnet/src/Eve.Services.Station/RepairService.cs, dotnet/src/Eve.Services/PacketDispatcher.cs and their tests). Rebuild and rerun Inventory, Station, Services.Tests before trusting this tip.
+
+Red on origin/main CI (run 523, ea7e4813), open:
+- .NET other tests 3/3: Eve.Services.Core.Tests NewEdenStoreCatalogTests.The_store_lists_the_catalog_offers_and_answers_can_purchase_from_it fails (expected True, got False, NewEdenStoreCatalogTests.cs:91). Passes locally in the serial run; CI is Release with EVE_MARKET_SEED=skip, so suspect environment or build config. Not reproduced yet.
+- End to end (server stack + headless client): evecli MachoError 2 in the fast live tests (Run the server stack and the fast live tests). Test name not identified from the log tail. Not reproduced yet.
+
+Open S9 items: live death walk on the merged tree (hull walk still open, suicide walk passed earlier); gateway leftovers: reward grants and GrantedNotice/RevokedNotice not implemented; JWT signature not verified (claims read with verify=False); TLS not served (documented in DEVIATIONS).
+

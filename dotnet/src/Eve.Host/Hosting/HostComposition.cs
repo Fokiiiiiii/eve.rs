@@ -131,11 +131,11 @@ internal static class HostComposition
                 new Eve.Host.Persistence.ContractNotifications(characterSessions).Subscribe(foundations.Events);
             // the public gateway's skill plans: the tables are the skills module's (migration 0009, applied with its store)
             var gateway = new Dictionary<string, PublicGateway.GatewayHandler>(StringComparer.Ordinal);
-            var skillCatalog = await Eve.Skills.SkillCatalog.LoadAsync(new Eve.Sde.SdeReader(source, Env("EVE_SDE_SCHEMA", Eve.Sde.SdeReader.DefaultSchema)));
+            var skillCatalog = await Eve.Skills.SkillCatalog.LoadAsync(new Eve.Sde.SdeReader(source));
             foreach (var (name, handler) in PublicGateway.SkillPlanGateway.Handlers(new Eve.Skills.PgSkillPlanStore(source, Env("EVE_SKILLS_SCHEMA", Eve.Skills.PgSkillStore.DefaultSchema)), skillCatalog))
                 gateway[name] = handler;
             // the character titles: the SDE's title ids, and the owned and worn titles of the characters schema
-            var titles = await LoadCharacterTitleIdsAsync(source, Env("EVE_SDE_SCHEMA", Eve.Sde.SdeReader.DefaultSchema));
+            var titles = await LoadCharacterTitleIdsAsync(source, Eve.Sde.SdeReader.DefaultSchema);
             var titleStore = new Eve.Characters.CharacterTitleStore(source, Env("EVE_CHARACTERS_SCHEMA", Eve.Characters.PgCharacterStore.DefaultSchema));
             var notices = new PublicGateway.NoticeHub();
             foreach (var (name, handler) in PublicGateway.TitleGateway.Handlers(titleStore, titles, notices))
@@ -252,23 +252,24 @@ internal static class HostComposition
         HostServer? server = null;
         var info = new HostMachoNetInfo(registry, config.Current, characterSessions);
         registry.Register(new MachoNetService(info, now, GlobalConfigWrites.Create(config, connected, () => server?.PublishClusterConfig())));
+        registry.Register(new EventLogRpcService());
+        var charMgr = characterServices.OfType<Eve.Services.CharacterInfo.CharMgrService>().FirstOrDefault();
+        Func<long, CancellationToken, ValueTask<IReadOnlyList<long>>>? readBlockedOwners =
+            charMgr is null ? null : charMgr.ReadBlockedOwnersAsync;
+        if (xmppSettings.Enabled && dataSource is { } xmppDataSource)
+        {
+            var xmppSchema = Env("EVE_XMPP_SCHEMA", "eve_xmpp");
+            xmppMotdStore = await Eve.Host.Xmpp.XmppMotdStore.OpenAsync(xmppDataSource, xmppSchema);
+            xmppPlayerChannelStore = await Eve.Host.Xmpp.XmppPlayerChannelStore.OpenAsync(xmppDataSource, xmppSchema);
+        }
+        var xmppHub = new Eve.Host.Xmpp.XmppChatHub(connected,
+            new Eve.Host.Xmpp.XmppChatSettings(xmppSettings.Domain, xmppSettings.ConnectHost),
+            xmppMotdStore,
+            readBlockedOwners,
+            xmppPlayerChannelStore);
+        registry.Register(new Eve.Host.Xmpp.XmppChatMgrService(xmppHub));
         if (xmppSettings.Enabled)
         {
-            var charMgr = characterServices.OfType<Eve.Services.CharacterInfo.CharMgrService>().FirstOrDefault();
-            Func<long, CancellationToken, ValueTask<IReadOnlyList<long>>>? readBlockedOwners =
-                charMgr is null ? null : charMgr.ReadBlockedOwnersAsync;
-            if (dataSource is { } xmppDataSource)
-            {
-                var xmppSchema = Env("EVE_XMPP_SCHEMA", "eve_xmpp");
-                xmppMotdStore = await Eve.Host.Xmpp.XmppMotdStore.OpenAsync(xmppDataSource, xmppSchema);
-                xmppPlayerChannelStore = await Eve.Host.Xmpp.XmppPlayerChannelStore.OpenAsync(xmppDataSource, xmppSchema);
-            }
-            var xmppHub = new Eve.Host.Xmpp.XmppChatHub(connected,
-                new Eve.Host.Xmpp.XmppChatSettings(xmppSettings.Domain, xmppSettings.ConnectHost),
-                xmppMotdStore,
-                readBlockedOwners,
-                xmppPlayerChannelStore);
-            registry.Register(new Eve.Host.Xmpp.XmppChatMgrService(xmppHub));
             if (xmppSettings.CertificatePath is { } certificatePath)
                 xmppCertificate = System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadPkcs12FromFile(
                     certificatePath, xmppSettings.CertificatePassword);
@@ -280,7 +281,7 @@ internal static class HostComposition
         var dispatcher = new PacketDispatcher(registry, now)
         {
             StrictRpc = settings.StrictRpc,
-            MaxExpensiveRpcUnitsPerMinute = int.Parse(HostConfiguration.Env("EVE_MAX_EXPENSIVE_RPC_UNITS_PER_MINUTE", "120"), System.Globalization.CultureInfo.InvariantCulture),
+            MaxExpensiveRpcUnitsPerMinute = int.Parse(HostConfiguration.Env("EVE_MAX_EXPENSIVE_RPC_UNITS_PER_MINUTE", "160"), System.Globalization.CultureInfo.InvariantCulture),
         };
         dispatcher.OnProblem = (message, error) =>
         {

@@ -8,13 +8,15 @@ namespace Eve.Services.Core.Tests;
 public sealed class PosMgrServiceTests
 {
     [Fact]
-    public async Task GetControlTowers_returns_an_empty_list_without_a_provider()
+    public async Task GetControlTowers_refuses_without_a_provider()
     {
         var service = (IService)new PosMgrService();
 
         Assert.Equal("posMgr", service.Name);
         Assert.True(service.HasMethod("GetControlTowers"));
-        Assert.Empty(Assert.IsType<PyList>(await service.CallAsync(Call("GetControlTowers"))).Items);
+        var refusal = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await service.CallAsync(Call("GetControlTowers")));
+        Assert.Equal("CustomNotify", refusal.Error.UserErrorMessage);
     }
 
     [Fact]
@@ -113,17 +115,27 @@ public sealed class PosMgrServiceTests
     }
 
     [Fact]
-    public async Task UnanchorStructure_without_a_provider_or_an_item_does_nothing()
+    public async Task UnanchorStructure_refuses_without_a_provider_or_valid_item()
     {
         var service = (IService)new PosMgrService();
         using var cancellation = new CancellationTokenSource();
 
-        Assert.IsType<PyNone>(await service.CallAsync(new ServiceCall
+        var unavailable = await Assert.ThrowsAsync<MachoWrappedException>(async () => await service.CallAsync(new ServiceCall
         {
             Method = "UnanchorStructure",
             Args = [new PyInt(5)],
             Session = new ClientSession(),
             Cancellation = cancellation.Token,
         }));
+        Assert.Equal("CustomNotify", unavailable.Error.UserErrorMessage);
+
+        var invalidId = await Assert.ThrowsAsync<MachoWrappedException>(async () => await service.CallAsync(new ServiceCall
+        {
+            Method = "UnanchorStructure",
+            Args = [new PyStr("invalid")],
+            Session = new ClientSession(),
+            Cancellation = cancellation.Token,
+        }));
+        Assert.Equal("POS_STRUCTURE_ID_INVALID", invalidId.Error.UserErrorMessage);
     }
 }

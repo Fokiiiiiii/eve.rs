@@ -289,6 +289,8 @@ public sealed class PacketDispatcher
             return 10;
         if (service == "mutualWarInviteMgr")
             return 10;
+        if (service == "posMgr" && method is "GetControlTowers" or "UnanchorStructure")
+            return 10;
         if (service == "ownerGroupManager")
             return 10;
         if (service == "mailMgr" && method is "SyncMail" or "GetMailHeaders" or "GetBody" or "MarkAsRead" or "SendMail" or "PokePlayerAboutChatMsgGm")

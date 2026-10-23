@@ -5685,3 +5685,8 @@ corpmgr.GetPublicInfo, GetCorporations, and GetCorporationIDForCharacter now con
 ## Mutual war invitation provider refusal and budgets (2026-10-23)
 
 The Host does not configure mutual-war invitation persistence. All six mutualWarInviteMgr RPCs now consume 10 weighted per-session units, and the two reads return the same named unavailable refusal as writes instead of empty or false success values. `SendInviteByPlayer` also refuses when its blocking-state reader is absent. `CorporationProtocolTests.Mutual_war_invite_mgr_exposes_reference_routes_and_callback_shapes` and `DispatchGoldenTests.Mutual_war_invite_methods_use_a_named_per_session_budget` cover these behaviors.
+
+
+## POS manager provider refusals and budgets (2026-10-23)
+
+posMgr.GetControlTowers and UnanchorStructure now cost 10 weighted per-session units. Both return a named refusal when their provider is absent; UnanchorStructure also refuses malformed or nonpositive tower IDs before the Host callback. The Host callback rechecks corporation, system, deployment, and tower state. PosMgrServiceTests and the dispatcher regression cover the behavior.

@@ -16,16 +16,15 @@
 
 ## Checks
 
-- PASS: Host project build (0 warnings, 0 errors) before the latest upstream Host changes.
-- PASS: direct-service focused test (1 passed, 0 skipped); replaced because it did not exercise packet dispatch.
-- PASS on Actions at run `39975595679`, ref `d573f9e9`; this was before packet-dispatch coverage.
-- The current tests use `PacketDispatcher.DispatchAsync` with Macho CallReqs for ConnectJob, DisconnectJob and inventory mutation. They verify changed/unchanged quantities, notice order/name/target/monitor ID/material payload, reconnect replacement and session isolation.
-- Actions run `39986027701` found the reconnect test counting both `OnItemChange` and `OnIndustryMaterials` as a single expected notification. The assertion now selects only `OnIndustryMaterials`; a rerun is pending.
-- The latest local focused test attempt exited with code 137. The reduced-reference compile used stale Host test dependencies and reported unrelated API mismatches; no successful local run of the packet-dispatch revision yet.
-- Push-triggered CI run `39986003895` was still in progress at last check; Host test shard 4/4 failed at the same reconnect assertion. Other Host shards and the .NET build passed.
-- No existing headless end-to-end industry job walk was found. No live industry walk or graphical-client session has been performed.
+- PASS: Host project build (0 warnings, 0 errors) before recent upstream Host changes.
+- PASS: current RPC-dispatch focused tests on Actions, run `39987623229`, ref `be113558`.
+- PASS: current push CI Host shards 1–3; Host shard 4 also passed after the reconnect assertion was corrected.
+- The headless suite already had `test_walk_industry.py`; a new live test `test_industry_monitor_live.py` now opens a monitor and moves a seeded material stack from ship cargo into the watched station hangar. It checks the updated material map and OnItemChange-before-OnIndustryMaterials order.
+- Actions CI for `be113558` failed in an unrelated market walk: `GetMarketOrderHistory` exceeded the session RPC budget. The failure appeared on two consecutive runs. This needs a root-cause check.
+- The latest local focused test build exited with code 137. A reduced-reference compile used stale Host test dependency outputs; no successful local run of the current RPC-dispatch test yet.
+- No graphical-client session has been performed.
 - Nine unrelated Rust deletions were present at initial inspection and remain unstaged.
 
 ## Remaining
 
-Push the assertion correction, confirm on Actions, inspect push-triggered CI, and report headless and graphical-client verification separately.
+Push the new live industry monitor test, confirm it in Actions, investigate and resolve the repeated market budget failure, then report headless and graphical-client verification separately. Persistence of the saved monitor metadata across a process restart is supported by the GameStoreCache paths but was not exercised with a restart test.

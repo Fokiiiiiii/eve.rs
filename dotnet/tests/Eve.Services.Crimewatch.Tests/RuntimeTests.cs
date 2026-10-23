@@ -861,7 +861,7 @@ public class RuntimeTests : IAsyncLifetime
 
         _now = Start + 310_005;
         _waits.Made[^1].Done.SetResult();
-        await Settle(() => _sinks[1].Sent.OfType<PyObject>().Count() >= 2);
+        await _sinks[1].Arrived(2);
 
         var ended = Told(1);
         Assert.Equal(["OnNpcTimerUpdate", "OnDisapprovalTimerUpdate"], ended.Select(note => note.Name));

@@ -150,7 +150,7 @@
   {
    "name": "string longer than the frame",
    "reason": "truncated",
-   "hex": "070000000300000000f401"
+   "hex": "08000000030000000000f401"
   },
   {
    "name": "invalid UTF-8",

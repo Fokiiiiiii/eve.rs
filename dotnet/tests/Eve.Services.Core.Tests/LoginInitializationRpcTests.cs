@@ -135,7 +135,19 @@ public sealed class LoginInitializationRpcTests
                 return ValueTask.FromResult<PyValue>(expected);
             });
             Assert.True(abyssal.HasMethod(method));
-            Assert.Same(expected, await Call(abyssal, session, method));
+            var args = method switch
+            {
+                "AbyssalEntranceDeployment" => new PyValue[] { new PyLong(900001), new PyInt(1) },
+                "AbyssalEntranceGateActivation" or "AbyssalGateActivation" or "AbyssalEndGateActivation" => [new PyLong(900002)],
+                _ => [],
+            };
+            PyValue kwargs = method == "AbyssalGateActivation"
+                ? new PyDict([new(new PyStr("violateSafetyTimer"), PyBool.True)])
+                : PyNone.Instance;
+            Assert.Same(expected, await abyssal.CallAsync(new ServiceCall
+            {
+                Method = method, Args = args, Kwargs = kwargs, Session = session,
+            }));
             Assert.Equal(1, calls);
             return;
         }

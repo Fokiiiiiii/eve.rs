@@ -330,6 +330,9 @@ public sealed class PacketDispatcher
             return 1;
         if (service == "achievementTrackerMgr" && method == "UpdateClientAchievmentsAndCounters")
             return 10;
+        if (service == "abyssalMgr" && method is "ClientIsReady" or "AbyssalEntranceDeployment" or
+            "AbyssalEntranceGateActivation" or "AbyssalGateActivation" or "AbyssalEndGateActivation")
+            return 10;
         if (service == "paperDollServer" && method == "GetPaperDollDataBatch")
             return 10;
         if (service == "paperDollServer" && method is "GetMyPaperDollData" or "GetPaperDollData" or "GetPaperDollPortraitDataFor")

@@ -118,6 +118,37 @@ public sealed class MiningAndAbyssalRpcTests
         Assert.Equal(0, received.Repetitions);
     }
 
+    [Fact]
+    public async Task Abyssal_lifecycle_rpc_refuses_malformed_client_targets_before_the_host_callback()
+    {
+        var callbacks = 0;
+        var service = new AbyssalMgrService((_, _) =>
+        {
+            callbacks++;
+            return ValueTask.FromResult<PyValue>(PyNone.Instance);
+        });
+        var session = new ClientSession { CharacterId = 42 };
+
+        foreach (var call in new[]
+        {
+            Call("ClientIsReady", session, new PyInt(42)),
+            Call("AbyssalEntranceDeployment", session, new PyReal(12.5), new PyInt(1)),
+            Call("AbyssalEntranceDeployment", session, new PyLong(12), new PyInt(4)),
+            Call("AbyssalEntranceGateActivation", session, new PyInt(0)),
+            new ServiceCall
+            {
+                Method = "AbyssalGateActivation", Session = session, Args = [new PyInt(10)],
+                Kwargs = new PyDict([new(new PyStr("otherFlag"), PyBool.True)]),
+            },
+        })
+        {
+            var error = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(call).AsTask());
+            Assert.Equal("ABYSSAL_ARGUMENTS_INVALID", error.Error.UserErrorMessage);
+        }
+
+        Assert.Equal(0, callbacks);
+    }
+
     private static ServiceCall Call(string method, params PyValue[] args) => Call(method, new ClientSession(), args);
 
     private static ServiceCall Call(string method, ClientSession session, params PyValue[] args) => new()

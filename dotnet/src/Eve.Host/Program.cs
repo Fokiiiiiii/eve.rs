@@ -7,11 +7,13 @@ var runtime = await HostComposition.BuildAsync(settings);
 try
 {
     using var listener = HostListener.Listen(settings.Endpoint);
-    await using var gateway = HostConfiguration.PublicGatewayListen() is { } gatewayListen
-        ? await PublicGatewayServer.StartAsync(gatewayListen.Address, gatewayListen.Port, runtime.PublicGateway)
+    var gatewayListen = HostConfiguration.PublicGatewayListen();
+    using var gatewayCertificate = gatewayListen is null ? null : HostConfiguration.PublicGatewayCertificate();
+    await using var gateway = gatewayListen is { } address
+        ? await PublicGatewayServer.StartAsync(address.Address, address.Port, runtime.PublicGateway, certificate: gatewayCertificate)
         : null;
     if (gateway is not null)
-        Console.Error.WriteLine($"eve-host: public gateway listening on port {gateway.Port} (HTTP/2, cleartext)");
+        Console.Error.WriteLine($"eve-host: public gateway listening on port {gateway.Port} ({(gatewayCertificate is null ? "h2c" : "HTTP/2 TLS")})");
     using var cancel = new CancellationTokenSource();
     Console.CancelKeyPress += (_, args) =>
     {

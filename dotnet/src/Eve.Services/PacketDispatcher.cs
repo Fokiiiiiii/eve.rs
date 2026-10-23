@@ -41,7 +41,7 @@ public sealed class PacketDispatcher
     public bool StrictRpc { get; init; }
 
     /// <summary>Weighted work units available to one session during a rolling minute.</summary>
-    public int MaxExpensiveRpcUnitsPerMinute { get; init; } = 160;
+    public int MaxExpensiveRpcUnitsPerMinute { get; init; } = 460;
 
     /// <summary>
     /// Handles one decoded packet from <paramref name="session"/>. Returns whether it was handled;

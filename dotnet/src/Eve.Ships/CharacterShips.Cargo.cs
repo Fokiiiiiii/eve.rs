@@ -214,6 +214,32 @@ private sealed record ShipHoldRule(
             ? type.Attributes.GetValueOrDefault(attribute, 0)
             : 0;
 
+    private async Task<ShipRefused?> RefuseCargoCapacityLossAsync(
+        ShipSnapshot snapshot,
+        double capacityBefore,
+        double capacityAfter,
+        double addedCargoVolume,
+        CancellationToken cancellationToken)
+    {
+        if (capacityAfter >= capacityBefore - RoomTolerance)
+            return null;
+
+        var cargo = (await items.InContainerAsync(snapshot.Ship.Id, cancellationToken))
+            .Where(item => item.Flag == CargoFlag)
+            .ToArray();
+        var used = await VolumeOfAsync(cargo, cancellationToken) + Math.Max(0, addedCargoVolume);
+        return CargoCapacityLossRefusal(used, capacityBefore, capacityAfter, snapshot.Ship.TypeId);
+    }
+
+    internal static ShipRefused? CargoCapacityLossRefusal(double used, double capacityBefore, double capacityAfter, int shipTypeId) =>
+        capacityAfter >= capacityBefore - RoomTolerance || used <= capacityAfter + RoomTolerance
+            ? null
+            : new ShipRefused(
+                ShipRefusal.CargoWouldOverflow,
+                ShipTypeId: shipTypeId,
+                Used: used,
+                CapacityAfter: capacityAfter);
+
     /// <summary>The volume of what these items take.</summary>
     public async Task<double> VolumeOfAsync(IEnumerable<Item> contents, CancellationToken cancellationToken = default)
     {

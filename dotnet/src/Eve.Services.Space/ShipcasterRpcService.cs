@@ -19,7 +19,7 @@ public sealed class ShipcasterRpcService : IService
     private static readonly int[] KnownFactionIds = [500001, 500002, 500003, 500004, 500010, 500011];
 
     private readonly SolarSystemCatalog _solarSystems;
-    private readonly Func<IReadOnlyList<ShipcasterLandingPad>> _readLandingPads;
+    private readonly Func<IReadOnlyList<ShipcasterLandingPad>>? _readLandingPads;
     private readonly Func<IReadOnlyList<int>>? _readFactionsWithShipcaster;
     private readonly Func<ServiceCall, ValueTask<PyValue>>? _travel;
     private readonly Func<ServiceCall, bool>? _canCharacterJump;
@@ -37,7 +37,7 @@ public sealed class ShipcasterRpcService : IService
 
         Name = name;
         _solarSystems = solarSystems;
-        _readLandingPads = readLandingPads ?? (static () => Array.Empty<ShipcasterLandingPad>());
+        _readLandingPads = readLandingPads;
         _readFactionsWithShipcaster = readFactionsWithShipcaster;
         _travel = travel;
         _canCharacterJump = canCharacterJump;
@@ -67,8 +67,11 @@ public sealed class ShipcasterRpcService : IService
 
         if (call.Method == "GetFactionsWithShipcaster")
         {
-            var factions = _readFactionsWithShipcaster?.Invoke()
-                ?? LandingPads(null).Select(pad => pad.FactionId).ToArray();
+            var factions = _readFactionsWithShipcaster is { } readFactions
+                ? readFactions()
+                : _readLandingPads is not null
+                    ? LandingPads(null).Select(pad => pad.FactionId).ToArray()
+                    : throw MissingBackend("Shipcaster faction data");
             return new PyList(factions
                 .Where(KnownFactionIds.Contains)
                 .Distinct()
@@ -78,7 +81,11 @@ public sealed class ShipcasterRpcService : IService
         }
 
         if (call.Method == "CanCharacterJump")
-            return _canCharacterJump?.Invoke(call) == true ? PyBool.True : PyBool.False;
+        {
+            if (_canCharacterJump is not { } canCharacterJump)
+                throw MissingBackend("Starter shipcaster eligibility");
+            return canCharacterJump(call) ? PyBool.True : PyBool.False;
+        }
 
         if (_travel is not null)
             return await _travel(call).ConfigureAwait(false);
@@ -89,7 +96,8 @@ public sealed class ShipcasterRpcService : IService
         throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr(notify)));
     }
 
-    private IReadOnlyList<ShipcasterLandingPad> LandingPads(int? factionId) => _readLandingPads()
+    private IReadOnlyList<ShipcasterLandingPad> LandingPads(int? factionId) =>
+        (_readLandingPads ?? throw MissingBackend("Shipcaster landing-pad data"))()
         .Where(pad => pad.ItemId > 0 &&
             _solarSystems.Get(pad.SolarSystemId) is not null &&
             KnownFactionIds.Contains(pad.FactionId) &&
@@ -98,6 +106,10 @@ public sealed class ShipcasterRpcService : IService
         .ThenBy(pad => pad.SolarSystemId)
         .ThenBy(pad => pad.ItemId)
         .ToArray();
+
+    private static MachoWrappedException MissingBackend(string backend) => MachoErrors.ThrowUserError(
+        "CustomNotify",
+        ("notify", new PyStr($"{backend} is not available on this server.")));
 
     private static PyObjectEx ToWire(ShipcasterLandingPad pad) => new(
         ObjectExKind.Ex1,

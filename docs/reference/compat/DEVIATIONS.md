@@ -5748,3 +5748,5 @@ The security inventory now lists each active `charUnboundMgr` RPC by caller scop
 `mailMgr.GetMailHeaders`, `GetBody`, and `MarkAsRead` now accept only positive integral message IDs. Fractional IDs no longer truncate to another recipient's message identifier; invalid IDs yield no read result or mutation. `MailServiceTests.Mail_message_ids_must_be_positive_integral_wire_values` covers fractional, zero, and valid integral inputs.
 
 `allianceRegistry.GMForceAcceptApplication` retains its GML-only authorization and refuses non-integer corporation targets before reading or scheduling the application; the regression covers fractional input and the authorized path.
+
+`marketProxy.PlaceMultiSellOrder` now refuses duplicate item IDs in the raw batch before placing any order line; the regression confirms the item remains in its original station location and produces no ask order or notification.

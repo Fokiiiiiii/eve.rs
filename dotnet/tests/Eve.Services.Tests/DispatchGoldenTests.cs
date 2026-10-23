@@ -878,7 +878,7 @@ public class DispatchGoldenTests
     }
 
     [Fact]
-    public async Task Alliance_full_list_reads_use_a_named_per_session_budget()
+    public async Task Alliance_expensive_methods_use_a_named_per_session_budget()
     {
         long sessionId = 913;
         foreach (var method in new[] { "GetAlliance", "GetAlliancePublicInfo", "GetAllianceSovereigntyStructuresInfo", "GetRelationships", "SetRelationship", "GetCapitalSystemInfo", "SetCapitalSystem", "SetPrimeHour", "CancelCapitalSystemTransition", "UpdateAlliance", "GetBills", "GetBillsReceivable", "GetApplications", "GetDaysInAlliance" })

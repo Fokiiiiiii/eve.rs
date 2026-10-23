@@ -5484,7 +5484,7 @@ The fleetObject Init RPC costs 10 weighted per-session units because it updates 
 
 ## Alliance bill-list work budget (2026-10-22)
 
-`allianceRegistry.GetBills` and `GetBillsReceivable` return complete bill collections for the authenticated alliance accountant, and `GetApplications` returns the full application collection to the executor director. Each call costs 10 weighted per-session units to bound repeated full-list reads. The wire results and persisted role checks are unchanged. `DispatchGoldenTests.Alliance_full_list_reads_use_a_named_per_session_budget` verifies the next full-list call is refused after the session allowance is consumed.
+`allianceRegistry.GetBills` and `GetBillsReceivable` return complete bill collections for the authenticated alliance accountant, and `GetApplications` returns the full application collection to the executor director. Each call costs 10 weighted per-session units to bound repeated full-list reads. The wire results and persisted role checks are unchanged. `DispatchGoldenTests.Alliance_expensive_methods_use_a_named_per_session_budget` verifies the next full-list call is refused after the session allowance is consumed.
 
 
 ## Corporation application-list work budget (2026-10-23)
@@ -5501,7 +5501,7 @@ The fleetObject Init RPC costs 10 weighted per-session units because it updates 
 
 `corpRegistry.AddBulletin` and `UpdateBulletin` enforce the V24.01 editor limits of 100 UTF-16 code units for titles and 4,000 for bodies before persistence. Larger text returns `CORPORATION_BULLETIN_LIMIT_EXCEEDED`; accepted response shapes and role checks are unchanged. `CorporationProtocolTests.Corp_registry_contacts_labels_and_bulletins_persist_and_enforce_roles` checks refusals before storage, both exact boundaries, and persisted values.
 
-`allianceRegistry.GetDaysInAlliance` also consumes 10 weighted per-session units because it reads the full alliance member collection to resolve one corporation. The response and public lookup behavior are unchanged. `DispatchGoldenTests.Alliance_full_list_reads_use_a_named_per_session_budget` covers the call budget.
+`allianceRegistry.GetDaysInAlliance` also consumes 10 weighted per-session units because it reads the full alliance member collection to resolve one corporation. The response and public lookup behavior are unchanged. `DispatchGoldenTests.Alliance_expensive_methods_use_a_named_per_session_budget` covers the call budget.
 
 `corpRegistry.GetRecruitmentAd` consumes 10 weighted per-session units because its public response includes the selected corporation member count, and both `GetRecruitmentAdsByCorpID` and `GetRecruitmentAdsForCorporation` consume 10 units because they return complete corporation ad lists. Both responses remain unchanged. `DispatchGoldenTests.Corporation_contact_and_bulletin_lists_use_a_named_per_session_budget` verifies the named refusal for both calls.
 
@@ -5509,12 +5509,12 @@ The fleetObject Init RPC costs 10 weighted per-session units because it updates 
 
 `corpRegistry.GetCorporation` consumes 10 weighted per-session units because its profile response includes a full corporation member count. The client response is unchanged. `DispatchGoldenTests.Corporation_contact_and_bulletin_lists_use_a_named_per_session_budget` verifies the named refusal.
 
-`allianceRegistry.GetAlliance` and its `GetAlliancePublicInfo` alias consume 10 weighted per-session units because they read member counts and combine sovereignty, prime-time, and capital-system state. `DispatchGoldenTests.Alliance_full_list_reads_use_a_named_per_session_budget` verifies both public aliases. Responses remain unchanged.
+`allianceRegistry.GetAlliance` and its `GetAlliancePublicInfo` alias consume 10 weighted per-session units because they read member counts and combine sovereignty, prime-time, and capital-system state. `DispatchGoldenTests.Alliance_expensive_methods_use_a_named_per_session_budget` verifies both public aliases. Responses remain unchanged.
 
-`allianceRegistry.GetAllianceSovereigntyStructuresInfo` consumes 10 weighted per-session units because it projects rows from the alliance sovereignty snapshot. The alliance-scoped response is unchanged. `DispatchGoldenTests.Alliance_full_list_reads_use_a_named_per_session_budget` covers the cost.
+`allianceRegistry.GetAllianceSovereigntyStructuresInfo` consumes 10 weighted per-session units because it projects rows from the alliance sovereignty snapshot. The alliance-scoped response is unchanged. `DispatchGoldenTests.Alliance_expensive_methods_use_a_named_per_session_budget` covers the cost.
 
-`allianceRegistry.GetRelationships` and `SetRelationship` consume 10 weighted per-session units because the former returns the alliance standing collection and the latter fans updates out to alliance corporations. Their authorization, response, and notification behavior remain unchanged. `DispatchGoldenTests.Alliance_full_list_reads_use_a_named_per_session_budget` covers both methods.
+`allianceRegistry.GetRelationships` and `SetRelationship` consume 10 weighted per-session units because the former returns the alliance standing collection and the latter fans updates out to alliance corporations. Their authorization, response, and notification behavior remain unchanged. `DispatchGoldenTests.Alliance_expensive_methods_use_a_named_per_session_budget` covers both methods.
 
-`allianceRegistry.GetCapitalSystemInfo` and `SetCapitalSystem` consume 10 weighted per-session units because they scan the alliance sovereignty snapshot. The capital-system values and role checks are unchanged. `DispatchGoldenTests.Alliance_full_list_reads_use_a_named_per_session_budget` covers both calls.
+`allianceRegistry.GetCapitalSystemInfo` and `SetCapitalSystem` consume 10 weighted per-session units because they scan the alliance sovereignty snapshot. The capital-system values and role checks are unchanged. `DispatchGoldenTests.Alliance_expensive_methods_use_a_named_per_session_budget` covers both calls.
 
-`allianceRegistry.UpdateAlliance`, `SetPrimeHour`, and `CancelCapitalSystemTransition` consume 10 weighted per-session units because each computes alliance-wide notification state; prime-time and capital-transition operations also read sovereignty snapshots. Authorization and notifications remain unchanged. `DispatchGoldenTests.Alliance_full_list_reads_use_a_named_per_session_budget` covers these methods.
+`allianceRegistry.UpdateAlliance`, `SetPrimeHour`, and `CancelCapitalSystemTransition` consume 10 weighted per-session units because each computes alliance-wide notification state; prime-time and capital-transition operations also read sovereignty snapshots. Authorization and notifications remain unchanged. `DispatchGoldenTests.Alliance_expensive_methods_use_a_named_per_session_budget` covers these methods.

@@ -2,9 +2,11 @@
 
 ## Scope
 
-charUnboundMgr.GetCharacterSelectionData now projects the client-facing paperdoll state from the same PostgreSQL character row that owns appearance and recustomization. The selection tuple remains four elements, and each character row remains a util.KeyVal.
+charUnboundMgr.GetCharacterSelectionData projects the client-facing paperdoll state from the same PostgreSQL character row that owns appearance and recustomization. The selection tuple remains four elements, and each character row remains a util.KeyVal.
 
 PgCharacterStore.ResolvedPaperdollStateAsync reads paperdoll_state, doll_info, and portrait_info together. A persisted state is returned as stored; otherwise an appearance payload yields 0 and missing appearance yields 2. CharMgrService.GetPaperdollState uses this reader when the optional recustomization reader has no value. The paperdoll save RPC persists the appearance through SetAppearanceAsync, which clears the persisted forced state in the same update.
+
+Host composition now resolves the InvBrokerService through IndustryInventoryChangePublisher when wiring RepackagingService. The preexisting direct lookup stopped finding the wrapped broker and prevented Host startup. This correction was merged with origin/main and pushed in commit e39ef443a0f135a235ab7a9ba7a5c8b0cec2ec9d.
 
 ## Evidence
 
@@ -21,4 +23,4 @@ CharacterReSculptHostTests.Character_selection_dispatch_projects_paperdoll_state
 
 ## Verification
 
-The Host test is database-backed and must run through the selected GitHub Actions job. The graphical-client route has not been exercised; record that check separately from the headless/Host result.
+The selected Host dispatch test and headless walk are being run through GitHub Actions for e39ef443a0f135a235ab7a9ba7a5c8b0cec2ec9d; the run ids/results will be recorded here. The earlier push-triggered run for e896953 failed because Host composition could not find the wrapped inventory broker, and unrelated failures also appeared in market dispatch and cargo-capacity tests. The graphical-client route has not been exercised; record that check separately from the headless/Host result.

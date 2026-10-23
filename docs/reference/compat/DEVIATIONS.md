@@ -5621,3 +5621,8 @@ charMgr.SetCharacterDescription now consumes 10 weighted per-session units becau
 ## Corporation settings RPC budget (2026-10-23)
 
 Corporation profile, logo, division-name, abilities, acceptance, mail-restriction, aggression, and reinforce-hour writes now consume 10 weighted per-session units. The underlying store still rechecks persisted Director authority; reinforce-hour values remain limited to 0–23. The dispatcher regression covers all eight settings write methods.
+
+
+## Alliance administration RPC budgets (2026-10-23)
+
+Executor selection, alliance contact and label writes, and bulletin writes now consume 10 weighted per-session units each. They retain persisted executor/director checks, the bound-alliance check, 500-ID collection caps, client-derived label and bulletin text bounds, and existing notifications. The dispatcher regression covers all 13 write methods.

@@ -29,3 +29,18 @@
 ## Remaining
 
 Resolve the CI failures, confirm the Host dispatch and live industry walk on Actions, and exercise saved monitor metadata across restart if a no-database test path is available. Report headless and graphical-client verification separately.
+
+
+## Facility manager read-path update (2026-10-23)
+
+Added Host reads for `facilityManager.GetMaxActivityModifiers` from the shared cost-index source and `GetFacilityTaxes` from the pinned NPC corporation SDE data or deployed structure state. `FacilityManagerService` now returns a client notification error for `SetFacilityTaxes` when no authoritative writer is available, instead of returning a false success. The TODO still records the broader provider row as partial: structure locations/discovery and tax mutation with role checks, persistence and notifications remain open.
+
+- `dotnet build dotnet/src/Eve.Services.Core/Eve.Services.Core.csproj -p:UseSharedCompilation=false --no-restore`: passed, 0 warnings/errors.
+- `dotnet build dotnet/src/Eve.Host/Eve.Host.csproj -p:UseSharedCompilation=false --no-restore`: passed, 0 warnings/errors.
+- Focused Host test `IndustryFacilityManagerTests.Max_activity_modifiers_include_each_client_activity_with_its_cost_index`: passed, 1/1, 0 skipped.
+- No PostgreSQL or graphical-client checks were performed. GitHub Actions focused tests completed after the push: Host run `40001886886` and Core run `40002916849` passed with no failed tests or jobs. Push CI run `40001866034` failed; details follow.
+
+
+## CI follow-up for `da6d90a8`
+
+Focused Host and Core checks passed on Actions. Push CI's .NET build, all .NET test shards, and Rust format/clippy passed. The overall run failed in three jobs: Windows SDE/Rust workspace, Linux Rust workspace, and the fast live client at `tests/test_skinr_live.py:389` (`ConsumeRequest` returned HTTP 401 instead of 200). The run also reported eight skipped headless tests (skill training speed and slow movement/warp/jump/others/target/module/health cases); these are not passes. The failures concern Rust and SKINR paths untouched by this industry change; run `40001866034` remains red.

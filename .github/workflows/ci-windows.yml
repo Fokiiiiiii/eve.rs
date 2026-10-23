@@ -20,7 +20,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 30
     env:
-      RUST_TOOLCHAIN: "1.99.0"
+      RUST_TOOLCHAIN: "1.94.1"
       CARGO_TERM_COLOR: always
       CARGO_INCREMENTAL: "0"
       DOTNET_NOLOGO: "1"
@@ -57,6 +57,12 @@ jobs:
           path: ~\.nuget\packages
           key: nuget-windows-${{ hashFiles('dotnet/Directory.Packages.props', 'dotnet/**/*.csproj', 'dotnet/**/*.props', 'dotnet/**/*.targets') }}
           restore-keys: nuget-windows-
+      - name: Verify global.json SDK selection
+        shell: pwsh
+        run: |
+          $version = dotnet --version
+          if ($LASTEXITCODE -ne 0 -or $version -notmatch '^10\.') { throw "global.json selected unexpected .NET SDK '$version'." }
+          Write-Host "global.json selected .NET SDK $version"
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"

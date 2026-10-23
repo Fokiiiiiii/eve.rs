@@ -855,7 +855,7 @@ public class DispatchGoldenTests
     }
 
     [Fact]
-    public async Task Character_public_profile_reads_use_a_named_per_session_budget()
+    public async Task Character_profile_reads_use_a_named_per_session_budget()
     {
         long sessionId = 978;
         foreach (var method in new[] { "GetPublicInfo", "GetPublicInfo3", "GetCharacterDescription", "GetCharacterCreationDate", "GetPrivateInfo" })

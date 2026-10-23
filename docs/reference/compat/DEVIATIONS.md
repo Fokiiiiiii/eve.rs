@@ -5525,6 +5525,6 @@ The fleetObject Init RPC costs 10 weighted per-session units because it updates 
 
 `corporationSvc` employment-history and medal-list reads, medal-status batches, and medal-award batches consume 10 weighted per-session units. Existing privacy filtering, persisted role checks, and response shapes remain unchanged. `DispatchGoldenTests.Corporation_service_list_and_bulk_methods_use_a_named_per_session_budget` covers each bounded route.
 
-`charMgr.GetPublicInfo`, `GetPublicInfo3`, `GetCharacterDescription`, and `GetCharacterCreationDate` each consume 10 weighted per-session units to bound repeated public-character profile reads. Client-visible fields and shapes remain unchanged. `DispatchGoldenTests.Character_public_profile_reads_use_a_named_per_session_budget` verifies all four methods.
+`charMgr.GetPublicInfo`, `GetPublicInfo3`, `GetCharacterDescription`, and `GetCharacterCreationDate` each consume 10 weighted per-session units to bound repeated public-character profile reads. Client-visible fields and shapes remain unchanged. `DispatchGoldenTests.Character_profile_reads_use_a_named_per_session_budget` verifies all four methods.
 
 `charMgr.GetPrivateInfo` consumes 10 weighted per-session units because it joins character, corporation-role, wallet, and security-status data for the corporation member editor. Its persisted role gate and response are unchanged; the character profile budget regression verifies the named refusal.

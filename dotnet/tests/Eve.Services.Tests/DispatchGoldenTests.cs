@@ -742,6 +742,26 @@ public class DispatchGoldenTests
         Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[1])));
     }
 
+    [Theory]
+    [InlineData("GetRepairQuotes")]
+    [InlineData("RepairItemsInStation")]
+    public async Task Repair_calls_use_the_named_per_session_budget(string method)
+    {
+        var capture = new Capture();
+        var session = new ClientSession(capture) { SessionId = 918 };
+        var registry = new ServiceRegistry();
+        var service = new ExpensiveService("repairSvc");
+        registry.Register(service);
+        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 10 };
+
+        await dispatcher.DispatchAsync(CallRequestPacket("repairSvc", method), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("repairSvc", method), session);
+
+        Assert.Equal(1, service.Calls);
+        Assert.Equal(2, capture.Sent.Count);
+        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[1])));
+    }
+
     [Fact]
     public async Task Corporation_member_actions_use_the_named_per_session_budget()
     {
@@ -797,6 +817,7 @@ public class DispatchGoldenTests
     }
 
     [Theory]
+    [InlineData("FitFitting")]
     [InlineData("ListStations")]
     [InlineData("ListStationItems")]
     public async Task Inventory_asset_locations_use_the_expensive_rpc_budget(string method)
@@ -1100,7 +1121,7 @@ public class DispatchGoldenTests
         registry.Register(service);
         var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 10 };
 
-        await dispatcher.DispatchAsync(CallRequestPacket("officeManager", "HasCorpImpoundedItems"), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("officeManager", "GetMyCorporationsOffices"), session);
         await dispatcher.DispatchAsync(CallRequestPacket("officeManager", "GetImpoundReleasePrice"), session);
 
         Assert.Equal(1, service.Calls);
@@ -1885,7 +1906,7 @@ public class DispatchGoldenTests
 
         public string Name => name;
 
-        public bool HasMethod(string method) => method is "ActivateSkinLicense" or "AddAllianceContact" or "AddBulletin" or "AddCorporateContact" or "AddCorporation" or "AddFleetFinderAdvert" or "AddMembers" or "ApplySkinToShip" or "ApplyToJoinFleet" or "AssignLabels" or "AuditMember" or "BroadcastToBubble" or "BroadcastToSystem" or "BuyMultipleItems" or "BuyOffer" or "CancelCapitalSystemTransition" or "CancelCharacterDeletePrepare" or "CancelJob" or "CharGetTransactions" or "CharPayBill" or "CheckMyDockingAccessToStructures" or "CombineSkillInjector" or "CompleteJob" or "CompleteManyJobs" or "CorpGetTransactions" or "Create" or "CreateAlliance" or "CreateCharacterWithDoll" or "CreateLabel" or "DeclareExecutorSupport" or "DeclareWarAgainst" or "Delete" or "DeleteBulletin" or "DeleteCharacter" or "DeleteLabel" or "DeleteMembers" or "DeleteTitle" or "EditAllianceContact" or "EditContactsRelationshipID" or "EditCorporateContact" or "EditLabel" or "ExecuteActions" or "ExtractSkills" or "ForceLeaveFleet" or "GMExpireSkinLicense" or "GetAggressionSettingsForCorps" or "GetAllCorpMedals" or "GetAlliance" or "GetAllianceApplications" or "GetAllianceContacts" or "GetAllianceMembers" or "GetAllianceMembersOlderThan" or "GetAlliancePublicInfo" or "GetAllianceSovereigntyStructuresInfo" or "GetApplications" or "GetAssetInventory" or "GetAssetInventoryForLocation" or "GetAutomaticPaySettings" or "GetAvailableFleetAds" or "GetAverageMarketPrices" or "GetBillBalance" or "GetBills" or "GetBillsReceivable" or "GetBulletinEntries" or "GetBulletins" or "GetCapitalSystemInfo" or "GetCharEscrow" or "GetCharOrders" or "GetCharacterCreationDate" or "GetCharacterDescription" or "GetCharacterInfo" or "GetCharacterSelectionData" or "GetContactList" or "GetContractListForOwner" or "GetControlTowers" or "GetCorporateContacts" or "GetCorporation" or "GetCorporationBills" or "GetCorporationBillsReceivable" or "GetCorporationIDForCharacter" or "GetCorporationOrders" or "GetCorporations" or "GetCorporationsWithOffices" or "GetDaysInAlliance" or "GetDiminishedSpFromInjectors" or "GetEmployementRecordAndCharacterTransfers" or "GetEmploymentRecord" or "GetEmptyOfficeCount" or "GetEveOwners" or "GetFittings" or "GetGroup" or "GetGroupLogs" or "GetGroupsMany" or "GetGuests" or "GetHistoryForManyTypeIDs" or "GetImpoundReleasePrice" or "GetJob" or "GetJobCounts" or "GetJobsByOwner" or "GetKillRights" or "GetLicencedSkins" or "GetMarketOrderHistory" or "GetMedalsReceived" or "GetMembers" or "GetMembersForMultipleGroups" or "GetMultiAllianceShortNamesEx" or "GetMultiCorpTickerNamesEx" or "GetMultiLocationsEx" or "GetMultiOwnersEx" or "GetMyApplications" or "GetMyCharacterStructures" or "GetMyCorporationInfo" or "GetMyCorporationStructures" or "GetMyDockableStructures" or "GetMyFleetFinderAdvert" or "GetMyGroups" or "GetMyOldApplications" or "GetMyOpenInvitations" or "GetNewPriceHistory" or "GetNumberOfPotentialCEOs" or "GetOldApplications" or "GetOldPriceHistory" or "GetOrders" or "GetOrganizationInfoForCharacters" or "GetPendingInvitesForSession" or "GetPlexBest" or "GetPlexHistory" or "GetPlexNewPriceHistory" or "GetPlexOldPriceHistory" or "GetPlexOrders" or "GetPrivateInfo" or "GetPublicInfo" or "GetPublicInfo3" or "GetRankedAlliances" or "GetRecentShipKillsAndLosses" or "GetRecipientsOfMedal" or "GetRecruitmentAd" or "GetRecruitmentAdsByCorpID" or "GetRecruitmentAdsForCorporation" or "GetRelationships" or "GetSecurityStatusTransactions" or "GetSuggestedAllianceShortNames" or "GetTaxRate" or "GetValidRandomName" or "GetWars" or "GiveMedalToCharacters" or "GiveSkin" or "HasCorpImpoundedItems" or "Init" or "InjectSkillIntoBrain" or "InjectSkillpoints" or "InsertApplication" or "InsertInvitation" or "InstallJob" or "Invite" or "IsCorpInvitesBlockedPlayer" or "KickOutMember" or "MassInvite" or "PayBill" or "PayCorporationBill" or "PlaceMultiSellOrder" or "PrepareCharacterForDelete" or "PrimeOfficeItem" or "RegisterNewAcceptStructureSettings" or "RegisterNewAggressionSettings" or "RegisterNewCorpMailRestrictionSettings" or "RemoveAllianceContacts" or "RemoveFleetFinderAdvert" or "RemoveLabels" or "RemoveSkin" or "RepackageItems" or "ResignFromCEO" or "RespondToInviteByPlayer" or "SearchAssets" or "SelectCharacterID" or "SendAutomaticPaySettings" or "SendBroadcast" or "SendInviteByPlayer" or "SetAccountKey" or "SetCapitalSystem" or "SetCharacterDescription" or "SetInvitesBlockedByPlayer" or "SetMedalStatus" or "SetPrimeHour" or "SetRelationship" or "SetStructureReinforceDefault" or "SplitSkillInjector" or "TrashImpoundedOffice" or "UnanchorStructure" or "UnrentOffice" or "UpdateAdvertAllowedEntities" or "UpdateAdvertInfo" or "UpdateAlliance" or "UpdateBulletin" or "UpdateBulletinOrder" or "UpdateCharacterBloodline" or "UpdateCharacterGender" or "UpdateCorporation" or "UpdateCorporationAbilities" or "UpdateDescription" or "UpdateDivisionNames" or "UpdateFleetAdvertWithNewLeader" or "UpdateLogo" or "UpdateMembershipTypes" or "UpdateName" or "UpdateSettings" or "UpdateTitle" or "ValidateNameEx" or "WithdrawInviteByPlayer" or "buy_offer" or "get_account_balance";
+        public bool HasMethod(string method) => method is "ActivateSkinLicense" or "AddAllianceContact" or "AddBulletin" or "AddCorporateContact" or "AddCorporation" or "AddFleetFinderAdvert" or "AddMembers" or "ApplySkinToShip" or "ApplyToJoinFleet" or "AssignLabels" or "AuditMember" or "BroadcastToBubble" or "BroadcastToSystem" or "BuyMultipleItems" or "BuyOffer" or "CancelCapitalSystemTransition" or "CancelCharacterDeletePrepare" or "CancelJob" or "CharGetTransactions" or "CharPayBill" or "CheckMyDockingAccessToStructures" or "CombineSkillInjector" or "CompleteJob" or "CompleteManyJobs" or "CorpGetTransactions" or "Create" or "CreateAlliance" or "CreateCharacterWithDoll" or "CreateLabel" or "DeclareExecutorSupport" or "DeclareWarAgainst" or "Delete" or "DeleteBulletin" or "DeleteCharacter" or "DeleteLabel" or "DeleteMembers" or "DeleteTitle" or "EditAllianceContact" or "EditContactsRelationshipID" or "EditCorporateContact" or "EditLabel" or "ExecuteActions" or "ExtractSkills" or "ForceLeaveFleet" or "GMExpireSkinLicense" or "GetAggressionSettingsForCorps" or "GetAllCorpMedals" or "GetAlliance" or "GetAllianceApplications" or "GetAllianceContacts" or "GetAllianceMembers" or "GetAllianceMembersOlderThan" or "GetAlliancePublicInfo" or "GetAllianceSovereigntyStructuresInfo" or "GetApplications" or "GetAssetInventory" or "GetAssetInventoryForLocation" or "GetAutomaticPaySettings" or "GetAvailableFleetAds" or "GetAverageMarketPrices" or "GetBillBalance" or "GetBills" or "GetBillsReceivable" or "GetBulletinEntries" or "GetBulletins" or "GetCapitalSystemInfo" or "GetCharEscrow" or "GetCharOrders" or "GetCharacterCreationDate" or "GetCharacterDescription" or "GetCharacterInfo" or "GetCharacterSelectionData" or "GetContactList" or "GetContractListForOwner" or "GetControlTowers" or "GetCorporateContacts" or "GetCorporation" or "GetCorporationBills" or "GetCorporationBillsReceivable" or "GetCorporationIDForCharacter" or "GetCorporationOrders" or "GetCorporations" or "GetCorporationsWithOffices" or "GetDaysInAlliance" or "GetDiminishedSpFromInjectors" or "GetEmployementRecordAndCharacterTransfers" or "GetEmploymentRecord" or "GetEmptyOfficeCount" or "GetEveOwners" or "GetFittings" or "GetGroup" or "GetGroupLogs" or "GetGroupsMany" or "GetGuests" or "GetHistoryForManyTypeIDs" or "GetImpoundReleasePrice" or "GetJob" or "GetJobCounts" or "GetJobsByOwner" or "GetKillRights" or "GetLicencedSkins" or "GetMarketOrderHistory" or "GetMedalsReceived" or "GetMembers" or "GetMembersForMultipleGroups" or "GetMultiAllianceShortNamesEx" or "GetMultiCorpTickerNamesEx" or "GetMultiLocationsEx" or "GetMultiOwnersEx" or "GetMyApplications" or "GetMyCharacterStructures" or "GetMyCorporationInfo" or "GetMyCorporationStructures" or "GetMyDockableStructures" or "GetMyFleetFinderAdvert" or "GetMyGroups" or "GetMyOldApplications" or "GetMyOpenInvitations" or "GetNewPriceHistory" or "GetNumberOfPotentialCEOs" or "GetOldApplications" or "GetOldPriceHistory" or "GetOrders" or "GetOrganizationInfoForCharacters" or "GetPendingInvitesForSession" or "GetPlexBest" or "GetPlexHistory" or "GetPlexNewPriceHistory" or "GetPlexOldPriceHistory" or "GetPlexOrders" or "GetPrivateInfo" or "GetPublicInfo" or "GetPublicInfo3" or "GetRankedAlliances" or "GetRecentShipKillsAndLosses" or "GetRecipientsOfMedal" or "GetRecruitmentAd" or "GetRecruitmentAdsByCorpID" or "GetRecruitmentAdsForCorporation" or "GetRepairQuotes" or "RepairItemsInStation" or "GetRelationships" or "GetSecurityStatusTransactions" or "GetSuggestedAllianceShortNames" or "GetTaxRate" or "GetValidRandomName" or "GetWars" or "GiveMedalToCharacters" or "GiveSkin" or "HasCorpImpoundedItems" or "Init" or "InjectSkillIntoBrain" or "InjectSkillpoints" or "InsertApplication" or "InsertInvitation" or "InstallJob" or "Invite" or "IsCorpInvitesBlockedPlayer" or "KickOutMember" or "MassInvite" or "PayBill" or "PayCorporationBill" or "PlaceMultiSellOrder" or "PrepareCharacterForDelete" or "PrimeOfficeItem" or "RegisterNewAcceptStructureSettings" or "RegisterNewAggressionSettings" or "RegisterNewCorpMailRestrictionSettings" or "RemoveAllianceContacts" or "RemoveFleetFinderAdvert" or "RemoveLabels" or "RemoveSkin" or "RepackageItems" or "ResignFromCEO" or "RespondToInviteByPlayer" or "SearchAssets" or "SelectCharacterID" or "SendAutomaticPaySettings" or "SendBroadcast" or "SendInviteByPlayer" or "SetAccountKey" or "SetCapitalSystem" or "SetCharacterDescription" or "SetInvitesBlockedByPlayer" or "SetMedalStatus" or "SetPrimeHour" or "SetRelationship" or "SetStructureReinforceDefault" or "SplitSkillInjector" or "TrashImpoundedOffice" or "UnanchorStructure" or "UnrentOffice" or "UpdateAdvertAllowedEntities" or "UpdateAdvertInfo" or "UpdateAlliance" or "UpdateBulletin" or "UpdateBulletinOrder" or "UpdateCharacterBloodline" or "UpdateCharacterGender" or "UpdateCorporation" or "UpdateCorporationAbilities" or "UpdateDescription" or "UpdateDivisionNames" or "UpdateFleetAdvertWithNewLeader" or "UpdateLogo" or "UpdateMembershipTypes" or "UpdateName" or "UpdateSettings" or "UpdateTitle" or "ValidateNameEx" or "WithdrawInviteByPlayer" or "buy_offer" or "get_account_balance";
         public ValueTask<PyValue> CallAsync(ServiceCall call)
         {
             Calls++;
@@ -1961,7 +1982,7 @@ public class DispatchGoldenTests
 
         public string Name => "officeManager";
 
-        public bool HasMethod(string method) => method is "HasCorpImpoundedItems" or "GetImpoundReleasePrice" or "RentOffice" or "UnrentOffice" or "GetItemsFromImpound" or "TrashImpoundedOffice";
+        public bool HasMethod(string method) => method is "GetMyCorporationsOffices" or "HasCorpImpoundedItems" or "GetImpoundReleasePrice" or "RentOffice" or "UnrentOffice" or "GetItemsFromImpound" or "TrashImpoundedOffice";
 
         public ValueTask<PyValue> CallAsync(ServiceCall call)
         {
@@ -2021,7 +2042,7 @@ public class DispatchGoldenTests
 
         public string Name => "invbroker";
 
-        public bool HasMethod(string method) => method is "GetInventoryFromId" or "ListIncludingContainers" or "GetAssetWorth" or "ListStations" or "ListStationItems" or "GetCapacity" or "MultiAdd" or "MultiMerge";
+        public bool HasMethod(string method) => method is "GetInventoryFromId" or "ListIncludingContainers" or "GetAssetWorth" or "ListStations" or "ListStationItems" or "GetCapacity" or "MultiAdd" or "MultiMerge" or "FitFitting";
 
         public ValueTask<PyValue> CallAsync(ServiceCall call)
         {

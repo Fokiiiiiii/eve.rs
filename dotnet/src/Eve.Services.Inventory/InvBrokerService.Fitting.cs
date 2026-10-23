@@ -15,6 +15,7 @@ namespace Eve.Services.Inventory;
 /// </summary>
 public sealed partial class InvBrokerService
 {
+    private const int MaxFittingPayloadItems = 500;
     private const long IceProductGroup = 423;
     private const int ImplantCategory = 20;     // SDE category "Implant"
 
@@ -31,6 +32,26 @@ public sealed partial class InvBrokerService
     public async ValueTask<PyValue> FitFitting(ServiceCall call)
     {
         RequireMutableInventory(call);
+        if (!IsMap(call.Arg(2)) || !IsMap(call.Arg(4)) || !IsMap(call.Arg(5)))
+            throw MachoErrors.ThrowUserError("INVENTORY_OPERATION_INVALID");
+        var itemEntries = Entries(call.Arg(2));
+        var keyVal = Entries(call.Arg(4));
+        var rawItems = 0;
+        void AddRawItems(int count)
+        {
+            if (count > MaxFittingPayloadItems || rawItems > MaxFittingPayloadItems - count)
+                throw MachoErrors.ThrowUserError("INVENTORY_BULK_LIMIT_EXCEEDED");
+            rawItems += count;
+        }
+
+        AddRawItems(itemEntries.Count);
+        foreach (var entry in itemEntries)
+            AddRawItems(SequenceItems(entry.Value).Count);
+        AddRawItems(keyVal.Count);
+        foreach (var key in new[] { "modulesByFlag", "chargesByType", "dronesByType", "fightersByTypeID", "iceByType", "implantsByTypeID" })
+            AddRawItems(Entries(Named(keyVal, key)).Count);
+        AddRawItems(Entries(call.Arg(5)).Count);
+
         if (ContextOf(call) is not { Kind: Kind.Ship } context || call.Session.CharacterId is not { } character)
         {
             return new PyList([]);
@@ -57,14 +78,14 @@ public sealed partial class InvBrokerService
 
         // the hangar items of each type the fitting needs, in the order the client gave them
         var candidates = new Dictionary<long, List<long>>();
-        foreach (var (key, value) in Entries(call.Arg(2)))
+        foreach (var (key, value) in itemEntries)
         {
             if (IdOf(key) is not { } typeId || typeId <= 0)
             {
                 continue;
             }
             var list = candidates.TryGetValue(typeId, out var existing) ? existing : candidates[typeId] = [];
-            foreach (var itemId in value switch { PyTuple t => t.Items, PyList l => l.Items, _ => [value] })
+            foreach (var itemId in SequenceItems(value))
             {
                 if (IdOf(itemId) is { } id && id > 0 && !list.Contains(id))
                 {
@@ -73,7 +94,6 @@ public sealed partial class InvBrokerService
             }
         }
 
-        var keyVal = Entries(call.Arg(4)).ToList();
         var modules = Pairs(Named(keyVal, "modulesByFlag"));
         modules = [.. modules.OrderBy(m => FitRank(m.Key)).ThenBy(m => m.Key)];
         var charges = Pairs(Named(keyVal, "chargesByType"));
@@ -212,15 +232,31 @@ public sealed partial class InvBrokerService
     }
 
     /// <summary>The entries of a dict, or of a KeyVal whose state is one (the client's <c>KeyVal</c> arguments).</summary>
-    private static IEnumerable<KeyValuePair<PyValue, PyValue>> Entries(PyValue value) => value switch
+    private static IReadOnlyList<KeyValuePair<PyValue, PyValue>> Entries(PyValue value) => value switch
     {
         PyObject { Args: PyDict dict } => dict.Entries,
         PyDict dict => dict.Entries,
         _ => [],
     };
 
+    private static bool IsMap(PyValue value) => value is PyDict or PyObject { Args: PyDict };
+
+    private static IReadOnlyList<PyValue> SequenceItems(PyValue value) => value switch
+    {
+        PyList list => list.Items,
+        PyTuple tuple => tuple.Items,
+        PyObjectEx
+        {
+            Kind: ObjectExKind.Ex1,
+            Header: PyTuple { Items: [PyToken { Value: "__builtin__.set" }, PyTuple { Items: [PyList setItems] }] },
+            List.Count: 0,
+            Dict.Count: 0,
+        } => setItems.Items,
+        _ => [value],
+    };
+
     /// <summary>The value of a named entry of a KeyVal, or an empty dict when there is none.</summary>
-    private static PyValue Named(List<KeyValuePair<PyValue, PyValue>> keyVal, string name) =>
+    private static PyValue Named(IReadOnlyList<KeyValuePair<PyValue, PyValue>> keyVal, string name) =>
         keyVal.FirstOrDefault(e => JsSemantics.StringValue(e.Key) == name).Value ?? PyNone.Instance;
 
     /// <summary>The integer pairs of a dict (typeID or flag to a number), in the order given.</summary>

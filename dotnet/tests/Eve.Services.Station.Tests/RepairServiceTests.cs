@@ -168,6 +168,43 @@ public sealed class RepairServiceTests
     }
 
     [RepairPgFact]
+    public async Task Oversized_repair_item_lists_are_refused_before_wallet_or_damage_changes()
+    {
+        await using var rig = await RepairRig.CreateAsync();
+        await rig.OpenWalletAsync(RepairRig.Character, 100m);
+        var ship = await rig.CreateAsync(RepairRig.Character, RepairRig.Rifter);
+        await rig.SetShipAsync(ship, Damaged);
+        var tooMany = Ids(Enumerable.Repeat(ship, 501).ToArray());
+
+        var refused = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            CallShop(rig.Service(), Session(RepairRig.Character, RepairRig.Station), RepairRig.Station, "RepairItemsInStation", tooMany, PyNone.Instance));
+
+        Assert.Equal("REPAIR_BULK_LIMIT_EXCEEDED", refused.Error.UserErrorMessage);
+        Assert.Equal(Damaged, await rig.Modules.ShipConditionAsync(ship));
+        Assert.Equal(100m, await rig.IskAsync(RepairRig.Character));
+        Assert.Equal(0, await rig.JournalCountAsync(RepairService.RepairBillRefType, RepairRig.Character));
+    }
+
+    [RepairPgFact]
+    public async Task Repair_item_ids_must_be_positive_integer_wire_values()
+    {
+        await using var rig = await RepairRig.CreateAsync();
+        var service = rig.Service();
+        var session = Session(RepairRig.Character, RepairRig.Station);
+
+        foreach (var invalid in new PyValue[] { new PyReal(1.5), new PyInt(0), new PyInt(-1), new PyStr("123") })
+        {
+            var refused = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+                CallShop(service, session, RepairRig.Station, "GetRepairQuotes", new PyList([invalid])));
+            Assert.Equal("REPAIR_ITEM_ID_INVALID", refused.Error.UserErrorMessage);
+        }
+
+        var badShape = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            CallShop(service, session, RepairRig.Station, "GetRepairQuotes", new PyStr("not a sequence")));
+        Assert.Equal("REPAIR_ITEM_LIST_INVALID", badShape.Error.UserErrorMessage);
+    }
+
+    [RepairPgFact]
     public async Task A_full_payment_charges_the_quote_and_repairs_the_ship_in_one_transaction()
     {
         await using var rig = await RepairRig.CreateAsync();

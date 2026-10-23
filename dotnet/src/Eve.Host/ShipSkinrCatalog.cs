@@ -76,13 +76,7 @@ internal sealed class ShipSkinrCatalog
             if (row.Key <= 0 || row.Key > int.MaxValue) continue;
             var categoryId = Int(Property(row.Doc, "category"));
             var rarityId = Int(Property(row.Doc, "rarity"));
-            var usesByType = new Dictionary<int, int>();
-            foreach (var associated in Array(Property(row.Doc, "associatedTypeIDs", "associatedTypeIds")))
-            {
-                var typeId = Int(Property(associated, "typeID", "typeId"));
-                var uses = Int(Property(associated, "licenseUsesGranted", "license_uses_granted"));
-                if (typeId > 0 && uses >= 0) usesByType[typeId] = uses;
-            }
+            var usesByType = ReadLicenseUsesByType(Property(row.Doc, "associatedTypeIDs", "associatedTypeIds"));
             var binder = Property(row.Doc, "sequenceBinder", "sequence_binder");
             var binderTypeId = Int(Property(binder, "itemTypeID", "itemTypeId"));
             var binderCount = Int(Property(binder, "count"));
@@ -180,6 +174,19 @@ internal sealed class ShipSkinrCatalog
                     entries[key] = mappedValue;
         }
         return entries;
+    }
+
+    internal static Dictionary<int, int> ReadLicenseUsesByType(JsonElement associatedTypes)
+    {
+        var usesByType = new Dictionary<int, int>();
+        foreach (var associated in Array(associatedTypes))
+        {
+            var typeId = Int(Property(associated, "typeID", "typeId"));
+            var uses = Int(Property(associated, "licenseUsesGranted", "license_uses_granted"));
+            // The SDE uses -1 for unlimited; the runtime uses zero as its unlimited sentinel.
+            if (typeId > 0 && uses >= -1) usesByType[typeId] = Math.Max(0, uses);
+        }
+        return usesByType;
     }
 
     internal static IReadOnlyDictionary<int, IReadOnlySet<int>> BuildSlotsByShipType(

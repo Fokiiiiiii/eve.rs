@@ -134,3 +134,9 @@ Use lane `eve_p4` only and run database work through `tools/dev/db-lock.sh`. The
 - The local `Eve.Services.Dogma.Tests` project build passed with zero warnings and errors. The focused database-backed regression is dispatched to Agent Actions after this commit.
 - Agent run 123 on `e0cb832e` passed the two `Eve.Host.Tests` matches, then failed because the same `FullyQualifiedName~SignalTracker` filter selected zero tests in `Eve.Services.Core.Tests`. This was a test-selection mismatch; dispatch that filter to the Host project only.
 
+## 2026-10-23 SKINR unlimited component licenses
+
+- CI run 660 returned HTTP 400 during the live persisted-license walk. Its fixture selects official SDE component types whose `licenseUsesGranted` is `-1` (unlimited), but the Host catalog discarded every negative count. The item was then absent from the catalog and the valid design request was refused.
+- `ShipSkinrCatalog` now maps the SDE unlimited sentinel `-1` to the runtime unlimited value `0`, while excluding invalid values below `-1`; positive finite uses are unchanged. Added `Unlimited_license_types_use_the_runtime_unlimited_sentinel` for all three cases.
+- `Eve.Host.Tests` Release build passed with zero warnings and errors, and the focused regression passed 1/1 with no skips. No database was used. Agent run 128 for the market budget regression passed 2/2; push CI run 40005488739 for `94e37e82` is still in progress.
+

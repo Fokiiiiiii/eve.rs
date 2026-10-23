@@ -212,6 +212,26 @@ fn distances_and_angles_are_measured_between_surfaces_and_centres() {
 }
 
 #[test]
+fn equal_speed_pilots_at_the_live_undock_separation_are_beyond_small_turret_falloff() {
+    let velocity = [0.0, 2.123_705_862_224_755_3, 339.243_352_732_829_2];
+    let attacker = ship([0.0; 3], velocity, 47.0, 52.0);
+    let target = ship([0.0, 0.0, 10_398.858], velocity, 47.0, 52.0);
+    let gun = turret([0.0, 2.5, 3.75, 0.0], 550.0, 40_000.0, 5_280.0, 2_100.0);
+
+    let distance = surface_distance(&attacker, &target);
+    assert!((distance - 10_304.858).abs() < 1e-6, "{distance}");
+    assert!(angular_velocity(&attacker, &target).abs() < 1e-12);
+    let expected = 0.5_f64.powf(((distance - gun.optimal_range) / gun.falloff).powi(2));
+    let chance = chance_to_hit(&gun, &attacker, &target);
+    assert!((chance - expected).abs() < 1e-12, "{chance} != {expected}");
+    assert!((chance - 0.018_900_37).abs() < 1e-7, "{chance}");
+    assert!(!resolve_shot(&gun, &attacker, &target, 0.02).hit);
+
+    let inside_falloff = ship([0.0, 0.0, 6_000.0], velocity, 47.0, 52.0);
+    assert!(chance_to_hit(&gun, &attacker, &inside_falloff) > 0.9);
+}
+
+#[test]
 fn a_target_without_a_signature_is_as_big_as_its_radius() {
     let attacker = ship([0.0; 3], [0.0; 3], 10.0, 0.0);
     let gun = turret([1.0; 4], 0.4, 40.0, 5_000.0, 1_000.0);

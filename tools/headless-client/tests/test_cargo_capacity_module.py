@@ -37,7 +37,7 @@ def test_a_cargo_module_cannot_be_offlined_or_unfitted_above_the_resulting_capac
     with base.connect(f"walk-cargo-capacity-{run}") as who:
         _, ship, _, _ = arrive(who, plain_race({"pilot": race}, "pilot"), run)
         who.call("slash", "SlashCmd", "/giveskill me Hull Upgrades 1")
-        who.call("slash", "SlashCmd", "/giveitem Expanded Cargohold I 1")
+        who.call("slash", "SlashCmd", f"/giveitem {EXPANDED_CARGOHOLD_I} 1")
 
         manager = who.call("invbroker", "MachoBindObject", (STATION, 15), None)[0]
         hangar = who.call_bound(manager, "GetInventory", 10004)
@@ -45,7 +45,8 @@ def test_a_cargo_module_cannot_be_offlined_or_unfitted_above_the_resulting_capac
         module = next(int(item["itemID"]) for item in rows(who, hangar) if int(item["typeID"]) == EXPANDED_CARGOHOLD_I)
         dogma = who.call("dogmaIM", "MachoBindObject", (STATION, 5), None)[0]
 
-        who.call_bound(docked, "Add", module, STATION, flag=LOW_SLOT_FIRST)
+        _, fit_error = outcome(lambda: who.call_bound(docked, "Add", module, STATION, flag=LOW_SLOT_FIRST))
+        assert fit_error is None, fit_error
         who.call_bound(dogma, "SetModuleOnline", ship, module)
 
         who.call("slash", "SlashCmd", "/giveitem Tritanium 100000")

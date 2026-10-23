@@ -88,6 +88,9 @@ internal static class HostConfiguration
     //   EVE_PG_URL             PostgreSQL for accounts (postgres://... or an Npgsql string); without it accounts
     //                          live in memory and are lost when the host stops
     //   EVE_IDENTITY_SCHEMA    the schema of the accounts module                                  (default identity)
+    //   EVE_SSO_AUDIENCES      comma-separated EVE SSO audiences: "EVE Online" and this application's client ID (unset disables SSO)
+    //   EVE_SSO_ISSUER         configured identity issuer                                          (default https://login.eveonline.com/)
+    //   EVE_SSO_METADATA_URL   OAuth discovery document URL                                        (default CCP discovery; loopback HTTP allowed for local issuer tests)
     //   EVE_CHARACTERS_SCHEMA  the schema of the characters module                                (default characters)
     //   EVE_INVENTORY_SCHEMA   the schema of the inventory module                                 (default inventory)
     //   EVE_SKILLS_SCHEMA      the schema of the skills module                                    (default skills)

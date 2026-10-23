@@ -34,7 +34,7 @@ public class ShipTests
     [PgFact]
     public async Task Cargo_capacity_modules_cannot_be_offlined_or_unfitted_past_the_hold_limit()
     {
-        await using var rig = await Rig.CreateAsync();
+        await using var rig = await Rig.CreateAsync(staticFixtures: Rig.WithShipFixtures);
         var c = await rig.NewCharacterAsync();
 
         const int expandedCargoholdI = 1319;
@@ -54,7 +54,12 @@ public class ShipTests
         var capacityAfter = predicted.World.Get(c.ShipId, capacityAttribute);
         Assert.True(capacityAfter < capacityBefore);
 
-        var cargoQuantity = (long)Math.Floor(capacityAfter) + 1;
+        var ore = Assert.IsType<TypeDef>(rig.Statics.Type(Rig.FixtureAsteroidOre));
+        var volumeAttribute = Assert.IsType<int>(rig.Statics.AttributeId("volume"));
+        var oreVolume = ItemVolumes.Unit(
+            Rig.FixtureAsteroidOre, ore.GroupId, singleton: false, ore.Attributes[volumeAttribute]);
+        Assert.True(oreVolume > 0);
+        var cargoQuantity = (long)Math.Floor(capacityAfter / oreVolume) + 1;
         var cargo = await rig.GiveAsync(
             c.CharacterId,
             Rig.FixtureAsteroidOre,
@@ -62,6 +67,15 @@ public class ShipTests
             quantity: cargoQuantity,
             location: c.ShipId,
             flag: CharacterShips.CargoFlag);
+
+        var storedCargo = (await rig.Items.InContainerAsync(c.ShipId))
+            .Where(item => item.Flag == CharacterShips.CargoFlag)
+            .ToArray();
+        var usedCargo = await rig.Ships.VolumeOfAsync(storedCargo);
+        Assert.True(usedCargo > capacityAfter, $"cargo fixture used {usedCargo} m3; offline capacity is {capacityAfter} m3");
+        Assert.Equal(ItemState.Online, (await rig.Modules.StatesAsync([module]))[module]);
+        var currentSnapshot = (await rig.Ships.LoadShipAsync(c.CharacterId, c.ShipId))!;
+        Assert.Equal(capacityBefore, currentSnapshot.World.Get(c.ShipId, capacityAttribute), 6);
 
         var offlineRefusal = Assert.IsType<ShipRefused>(
             await rig.Ships.SetOnlineAsync(c.CharacterId, c.ShipId, module, online: false));

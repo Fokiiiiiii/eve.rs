@@ -50,13 +50,15 @@ public sealed partial class EjectRpcService(
     {
         var sourceId = OperationalRpcIds.Of(call.Arg(0));
         var itemId = OperationalRpcIds.Of(call.Arg(1));
-        if (launch is not null &&
-            call.Session.GetInt("charid") is > 0 &&
-            sourceId is > 0 &&
-            itemId is > 0)
+        if (call.Session.GetInt("charid") is not > 0 || sourceId is not > 0 || itemId is not > 0)
         {
-            await launch(call, sourceId.Value, itemId.Value, call.Cancellation);
+            throw MachoErrors.ThrowUserError("FakeItemNotFound");
         }
+        if (launch is null)
+        {
+            throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Space is not available right now. Try again in a moment.")));
+        }
+        await launch(call, sourceId.Value, itemId.Value, call.Cancellation);
         return PyNone.Instance;
     }
 }

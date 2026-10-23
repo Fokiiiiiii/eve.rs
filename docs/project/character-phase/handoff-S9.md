@@ -35,3 +35,4 @@ The headless venv is /home/user/eve.rs/tools/headless-client/.venv (grpcio and p
 
 - c6ca79ec booster lapse test (and S9 handoff)
 - later pushes: see git log of ch-s9
+- 693c67cc (Host composition: no EVE_SDE_SCHEMA env read; Characters migration list 0013), 7b011e25 (Space undock test: stationid2 cleared), merge of origin/main 00c01a0f plus fix commit; Characters, Host and Space green on the merged tree

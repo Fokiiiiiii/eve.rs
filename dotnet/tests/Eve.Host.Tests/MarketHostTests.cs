@@ -338,8 +338,9 @@ public sealed class MarketHostTests : IAsyncLifetime
         }
         catch (MachoWrappedException error)
         {
-            var detail=error.Error.UserErrorMessage=="CustomInfo" ? InfoText(error) : error.Error.UserErrorMessage;
+           var detail=error.Error.UserErrorMessage=="CustomInfo" ? InfoText(error) : error.Error.UserErrorMessage;
             Assert.Fail($"The first structure sell order was rejected: {detail}");
+
         }
 
         await new MarketStore(source,Schema("EVE_MARKET_SCHEMA")).SeedNpcAsync(

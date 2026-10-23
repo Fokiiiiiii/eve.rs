@@ -299,6 +299,18 @@ CI run 672 on `1669e6dc` failed the structure market Host test because the fixtu
 - Commit d9d806d1 unwraps `SavedDraft.attributes.skin.hex`; CI run 693 (40020293319) confirmed license persistence and `GetRequest` now work, then exposed the saved-skin `Attributes` field mismatch. The V24.01 descriptor defines `name=1`, `line_name=2`, `creator=3`, `layout=4`, `tier=5`, `not_sequenced=6`, and `first_sequenced=7`; the Host encoder still used its shifted field layout.
 - The subsequent test-only adjustment matched the old Host response. The follow-up below corrects the Host encoder and restores assertions against the client descriptor. Python syntax compilation passed; no local database test was run.
 - Current main is f2d0d09f. CI run 698 and Agent runs 178/179 are active; Agent run 176 passed the station-undock client test.
+
+## 2026-10-23 market escrow and concurrent immediate-buy check
+
+- Agent run 180 (`40022642650`) and CI run 699 (`40022633872`) reached the escrow remainder assertion, then failed the contender wallet sum: expected 19,980 ISK, actual 19,835 ISK.
+- The existing immediate-buy compatibility entry records that unfilled volume becomes a 90-day bid. In this race one buyer fills two units for 20 ISK; the other creates a two-unit bid, reserves 20 ISK, and pays the 100 ISK broker and 25 ISK SCC minimums. The Host regression now checks both balances and the one open bid's quantity and escrow.
+- Host.Tests compiled locally with 0 warnings and 0 errors; the focused Host Agent test on the corrected head is pending. No local database test was run.
+- CI 699 also failed the SKINR live test because its restart helper sent SIGTERM, which did not activate the Host's Console.CancelKeyPress shutdown path. Main commit d86a5ef5 changes the helper to send SIGINT; Agent run 183 and CI 701 are checking that fix.
+
+## 2026-10-23 Agent test selection notes
+
+- Agent run 106 on 8b3c8e04 matched a Host composition change and failed to compile the test fixture delegate (CS1593); ed01d2d8 fixes the delegate invocation.
+- Agent run 108 on 951a8744 used the unrelated Capacity filter and cargo-capacity live test even though that commit changed only the handoff note. Host startup then failed because the regular SDE lane lacked `sde.skinrComponentPointValues`; the selected test failure did not validate the handoff-only change. The Host now reads that mission table from the mission SDE lane (a00e62c9). For handoff-only commits, do not dispatch an unrelated selected-test run; for code commits, choose the test owning the changed behavior.
 ## 2026-10-23 follow-up: market escrow assertion and SKINR wire shape
 
 - CI run 695 (`c068f252`) failed `MarketHostTests.The_host_dispatches_accessible_structure_market_orders_and_recovers_partial_settlement_after_restart`: the old assertion expected two seller hangar units, although partial sell-order remainder stays at the order's escrow item. The test now joins the active order to `escrow_item_id` and checks the order volume, escrow owner/location/flag/quantity, and single matching row.

@@ -69,6 +69,7 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
     {
         "MktInvalidMinVolumeCannotExceedQuantity" => MachoErrors.ThrowUserError(error.Code),
         "MARKET_BULK_LIMIT_EXCEEDED" => MachoErrors.ThrowUserError(error.Code),
+        "MARKET_TYPE_ID_INVALID" => MachoErrors.ThrowUserError(error.Code),
         "MktBrokersFeeUnexpected2" => MachoErrors.ThrowUserError(error.Code,
             [.. error.Arguments.Select(argument => (argument.Name,(PyValue)Py.Number(Convert.ToDouble(argument.Value,System.Globalization.CultureInfo.InvariantCulture))))]),
         "MARKET_MODIFY_TOO_SOON" => MachoErrors.ThrowUserError("CustomInfo",("info",new PyStr(
@@ -226,16 +227,18 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
     [Method("GetHistoryForManyTypeIDs")]
     public async ValueTask<PyValue> GetHistoryForManyTypeIDs(ServiceCall call)
     {
+        if (call.Arg(0) is not (PyList or PyTuple))
+            throw Error(new MarketError("MARKET_TYPE_ID_INVALID"));
         var requestedTypes = Sequence(call.Arg(0));
         if (requestedTypes.Count > MaxHistoryTypeIds)
             throw Error(new MarketError("MARKET_BULK_LIMIT_EXCEEDED"));
-        var typeIds=requestedTypes.Select(value => value switch
+        var typeIds = requestedTypes.Select(value => value switch
         {
-            PyInt n when n.Value>0 && n.Value<=int.MaxValue => (int)n.Value,
-            PyLong n when n.Value>0 && n.Value<=int.MaxValue => (int)n.Value,
-            PyReal n when double.IsFinite(n.Value) && n.Value>0 && n.Value<=int.MaxValue && n.Value==Math.Truncate(n.Value) => (int)n.Value,
-            _ => 0,
-        }).Where(id=>id>0).Distinct().ToArray();
+            PyInt n when n.Value is > 0 and <= int.MaxValue => (int)n.Value,
+            PyLong n when n.Value is > 0 and <= int.MaxValue => (int)n.Value,
+            PyReal n when double.IsFinite(n.Value) && n.Value > 0 && n.Value <= int.MaxValue && n.Value == Math.Truncate(n.Value) => (int)n.Value,
+            _ => throw Error(new MarketError("MARKET_TYPE_ID_INVALID")),
+        }).Distinct().ToArray();
         if(typeIds.Length==0) return new PyDict([]);
         var region=await MarketRegion(call);
         var entries=new List<KeyValuePair<PyValue,PyValue>>(typeIds.Length);

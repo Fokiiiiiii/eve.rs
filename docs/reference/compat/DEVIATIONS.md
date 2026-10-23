@@ -5530,3 +5530,8 @@ The fleetObject Init RPC costs 10 weighted per-session units because it updates 
 `charMgr.GetPrivateInfo` consumes 10 weighted per-session units because it joins character, corporation-role, wallet, and security-status data for the corporation member editor. Its persisted role gate and response are unchanged; the character profile budget regression verifies the named refusal.
 
 `mailMgr.SendMail` now refuses a nonpositive or non-integer character recipient ID with `MAIL_RECIPIENT_INVALID` before invoking persistence, rather than dropping malformed IDs from a mixed recipient list. Valid integer IDs and duplicate suppression keep their existing behavior. `MailServiceTests.SendMail_refuses_malformed_recipient_ids_before_sending` covers negative, textual, and non-finite recipients without a send callback.
+
+
+## Market multi-history input validation (2026-10-23)
+
+`marketProxy.GetHistoryForManyTypeIDs` now requires a list or tuple containing only positive Int32 type IDs. It refuses malformed shapes, negative IDs, fractional or non-finite numbers, and values above Int32 before issuing history reads; the existing 500-entry limit and duplicate suppression remain. The V24.01 client caller supplies a list of type IDs from history panel rows, and EveJS accepts the client list shape. `MarketRpcTests.Market_history_multi_refuses_malformed_type_lists_before_reading` covers these refusals.

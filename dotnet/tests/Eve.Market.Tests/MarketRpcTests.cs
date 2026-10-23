@@ -124,6 +124,26 @@ public class MarketRpcTests
     }
 
     [PgFact]
+    public async Task Market_history_multi_refuses_malformed_type_lists_before_reading()
+    {
+        await using var r = await TradeRig.Create();
+        var actor = await r.Actor("Malformed History Reader");
+        var seat = await SeatAsync(r, actor);
+        foreach (var input in new PyValue[]
+        {
+            new PyStr("34"),
+            new PyList([new PyInt(34), new PyInt(-1)]),
+            new PyTuple([new PyInt(34), new PyReal(double.NaN)]),
+            new PyList([new PyLong((long)int.MaxValue + 1)]),
+        })
+        {
+            var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+                seat.Proxy.GetHistoryForManyTypeIDs(Call(seat.Session, "GetHistoryForManyTypeIDs", 3, input)).AsTask());
+            Assert.Equal("MARKET_TYPE_ID_INVALID", refusal.Error.UserErrorMessage);
+        }
+    }
+
+    [PgFact]
     public async Task Market_money_parser_refuses_decimal_boundary_values_without_overflowing()
     {
         await using var r = await TradeRig.Create();

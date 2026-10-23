@@ -32,8 +32,9 @@ Reject inbound marshal streams whose values or count-driven collections exceed a
 - No PostgreSQL database was used.
 - No separate live headless malformed-packet walk was added: existing live cases use high-level calls and have no malformed-payload injection case. The Host socket test covers refusal and retry.
 - Selected Actions run 39971341433 for `Eve.Marshal.Tests` and `Eve.Host.Tests`: success, with no reported skips.
-- Push-triggered CI run 39971311558 for commit `99696f0d9b3e`: failed in the fast live E2E market-history request (`MachoError 2`) and `Eve.Ships.Tests.ShipTests.Cargo_capacity_modules_cannot_be_offlined_or_unfitted_past_the_hold_limit` (expected `ShipRefused`, received `ShipChanged`). Both failures are outside the marshal changes; the market-history issue is already tracked in `docs/project/CI_FIX_HANDOFF.md`, and no Ship files changed in this task. The required CI gate consequently failed.
-- The failed push-triggered run skipped 8 fast live cases (skill-training-speed and slow live scenarios) and 1 Universe static-data test. Skips are not counted as passes.
+- Follow-up selected Actions run 39975271743 on SHA `97743562`, after merged Host updates: both targeted marshal and Host regression tests passed; no failed tests or jobs.
+- Push-triggered CI run 39971311558 for commit `99696f0d9b3e`: failed in the fast live E2E market-history request (`MachoError 2`) and `Eve.Ships.Tests.ShipTests.Cargo_capacity_modules_cannot_be_offlined_or_unfitted_past_the_hold_limit` (expected `ShipRefused`, received `ShipChanged`). Both failures were outside the marshal changes; the market-history issue was already tracked in `docs/project/CI_FIX_HANDOFF.md`, and no Ship files changed in this task. The required CI gate failed.
+- The later push-triggered CI run 39973533394 for merged main commit `556f3ccd` also failed: E2E market history returned `SessionRpcBudgetExceeded`, and two `SpaceContainerTests` failed. Marshal and Host changes compile in this run; their selected Action run above passed. The fast E2E log reported 8 skipped cases (skill-training-speed and slow live cases). Skips are not counted as passes.
 
 ## Worktree
 

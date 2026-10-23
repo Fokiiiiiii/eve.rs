@@ -88,6 +88,18 @@ public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStor
              PyValue.Of(l.Status), new PyLong(l.LaunchTime), new PyReal(l.X), new PyReal(l.Y), new PyReal(l.Z)]))]);
     }
 
+    /// <summary>Resolves a warp destination only from the calling character's live launch record in the current system.</summary>
+    public async Task<PlanetLaunchWarpTarget?> ResolveLaunchWarpTargetAsync(
+        long ownerId, long launchId, int currentSystemId, CancellationToken cancellationToken = default)
+    {
+        if (ownerId <= 0 || launchId <= 0 || currentSystemId <= 0)
+            return null;
+
+        var now = Ticks();
+        var launch = await store.LaunchOfAsync(ownerId, launchId, now, cancellationToken);
+        return PlanetLaunchWarpTarget.Resolve(launch, ownerId, launchId, currentSystemId, now);
+    }
+
     [Method("DeleteLaunch")]
     public async ValueTask<PyValue> DeleteLaunch(ServiceCall call)
     {

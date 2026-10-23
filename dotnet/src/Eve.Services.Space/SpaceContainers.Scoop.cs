@@ -74,7 +74,7 @@ public sealed partial class SpaceContainers
         }
 
         var outcome = await _ships.ScoopSpaceArtifactAsync(
-            characterId, shipId, systemId, itemId, item.CustomInfo!, _spaceItems, cancellationToken);
+            characterId, (int)(session.GetInt("corpid") ?? 0), shipId, systemId, itemId, item.CustomInfo!, _spaceItems, cancellationToken);
         switch (outcome)
         {
             case ShipRefused refused:

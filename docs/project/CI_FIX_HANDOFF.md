@@ -168,4 +168,4 @@ Use lane `eve_p4` only and run database work through `tools/dev/db-lock.sh`. The
 - Push CI run 675 (`40011062817`) on `ebf1ec87` reports the live SKINR request as `INVALID_COMPONENT_LICENSE_ITEM`; the unlimited-license parser unit check passed earlier, but live consume still does not resolve the seeded item type. Agent run 146 (`40011418764`) also failed this live scenario. Component license type resolution remains open.
 - Run 675's Host tests found the persisted contact `senderID` type mismatch; the local expectation now matches the returned `PyInt`. The project build and focused Actions rerun are pending.
 - Run 675's Windows job remains in progress at this handoff update. Update TODO 14 after checking its completed result; keep the owner-machine console checks open unless they run on that machine.
-- The current worktree reports the market sell refusal in the failing test message. A Release build of `Eve.Host.Tests` is running; no local database tests were run.
+- The current worktree reports the market sell refusal in the failing test message. The Release build of `Eve.Host.Tests` passed with zero warnings and errors; no local database tests were run.

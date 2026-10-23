@@ -791,10 +791,13 @@ public sealed partial class InvBrokerService(
 
         var owned = await items.OwnedByAsync(characterId, call.Cancellation);
         var roots = await GlobalAssetRootsAsync(owned, call.Cancellation);
+        var itemCounts = owned.Where(item => item.Quantity != 0)
+            .GroupBy(item => item.LocationId)
+            .ToDictionary(group => group.Key, group => group.Count());
         var rows = new List<(long SolarSystemId, long LocationId, PyValue Row)>();
         foreach (var locationId in roots.LocationIds)
         {
-            var itemCount = owned.Count(item => item.Quantity != 0 && item.LocationId == locationId);
+            var itemCount = itemCounts.GetValueOrDefault(locationId);
             if (stations.Get(locationId) is { } station)
             {
                 rows.Add((station.SolarSystemId, station.Id, Py.Tuple([

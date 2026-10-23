@@ -1634,7 +1634,11 @@ private static int MemberFieldInteger(PyValue value)
           var createFiletime = Number(CorporationWire.Time(now()));
           var editFiletime = editTime is PyNone ? createFiletime : Number(editTime);
           if (editFiletime <= 0) editFiletime = createFiletime;
-          var id = await store.AddCorporationBulletinAsync(corporation.Id,actor,Text(title),Text(body),bulletinId,
+          var titleText = Text(title);
+          var bodyText = Text(body);
+          if (titleText.Length > 100 || bodyText.Length > 4_000)
+              throw new CorporationError("CORPORATION_BULLETIN_LIMIT_EXCEEDED");
+          var id = await store.AddCorporationBulletinAsync(corporation.Id,actor,titleText,bodyText,bulletinId,
               createFiletime,editFiletime,call.Cancellation);
           return CorporationMaskValue(id);
       }

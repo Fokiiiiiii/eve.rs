@@ -3573,3 +3573,171 @@ fn a_relocation_anchors_at_the_first_stargate_of_the_system_before_its_station()
     assert_eq!(at.position.x, gate.x + 6_000.0 + spec().radius + 5_000.0);
     assert_eq!((at.position.y, at.position.z), (gate.y, gate.z));
 }
+
+fn replay_hash(scene: &Scene, outputs: &[Out]) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325u64;
+    let mut add = |bytes: &[u8]| {
+        for byte in bytes {
+            hash ^= u64::from(*byte);
+            hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    };
+    for (session, pilot) in &scene.pilots {
+        add(&session.to_le_bytes());
+        for value in [
+            pilot.ship.position.x,
+            pilot.ship.position.y,
+            pilot.ship.position.z,
+            pilot.ship.velocity.x,
+            pilot.ship.velocity.y,
+            pilot.ship.velocity.z,
+            pilot.ship.direction.x,
+            pilot.ship.direction.y,
+            pilot.ship.direction.z,
+            pilot.ship.speed_fraction,
+        ] {
+            add(&value.to_bits().to_le_bytes());
+        }
+        add(&pilot.settled_at.to_le_bytes());
+        add(format!("{:?}{:?}", pilot.ship.course, pilot.flight).as_bytes());
+    }
+    add(&scene.next_stamp.to_le_bytes());
+    add(format!("{outputs:?}{:?}", scene.backlog).as_bytes());
+    hash
+}
+
+fn run_recorded_ticks(recording: &[(i64, Command)]) -> u64 {
+    let mut scene = scene();
+    let mut output = Vec::new();
+    for (at, command) in recording {
+        output.extend(scene.command(SESSION, *command, *at));
+        output.extend(scene.poll(*at + 2_500_000));
+    }
+    replay_hash(&scene, &output)
+}
+
+#[test]
+fn recorded_tick_inputs_replay_to_the_same_state_hash() {
+    let mut state = 0x9e37_79b9_7f4a_7c15u64;
+    let mut recording = Vec::new();
+    for tick in 0..512i64 {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        let x = ((state & 0xffff) as f64 / 32767.5) - 1.0;
+        let y = (((state >> 16) & 0xffff) as f64 / 32767.5) - 1.0;
+        let z = (((state >> 32) & 0xffff) as f64 / 32767.5) - 1.0;
+        let command = if tick % 3 == 0 {
+            Command::SetSpeedFraction(((state >> 48) as f64) / u16::MAX as f64)
+        } else {
+            Command::GotoDirection(Vec3::new(x, y, z))
+        };
+        recording.push((NOON + tick * 5_000_000, command));
+    }
+
+    assert_eq!(run_recorded_ticks(&recording), run_recorded_ticks(&recording));
+}
+
+#[test]
+fn movement_warp_and_collision_invariants_hold_over_deterministic_inputs() {
+    let mut state = 0xd1b5_4a32_d192_ed03u64;
+    for case in 0..96 {
+        state = state.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+        let components = [
+            ((state & 0xffff) as f64 / 32767.5) - 1.0,
+            (((state >> 16) & 0xffff) as f64 / 32767.5) - 1.0,
+            (((state >> 32) & 0xffff) as f64 / 32767.5) - 1.0,
+        ];
+        let mut moving = scene();
+        moving.command(
+            SESSION,
+            Command::GotoDirection(Vec3::new(components[0], components[1], components[2])),
+            NOON,
+        );
+        moving.command(SESSION, Command::SetSpeedFraction((case as f64) / 95.0), NOON);
+        moving.settle_all(NOON + seconds(30));
+        let ship = &moving.pilots[&SESSION].ship;
+        assert!(ship.position.x.is_finite() && ship.position.y.is_finite() && ship.position.z.is_finite());
+        assert!(ship.velocity.x.is_finite() && ship.velocity.y.is_finite() && ship.velocity.z.is_finite());
+        assert!((0.0..=1.0).contains(&ship.speed_fraction));
+        assert!(speed(ship) <= ship.spec.max_velocity + 1e-6);
+
+        let mut warping = scene();
+        let destination = Vec3::new(5_000_000.0 + case as f64 * 10_000.0, 2_000_000.0, -1_000_000.0);
+        let response =
+            warping.command(SESSION, Command::WarpToPoint { destination, range: case as f64 * 100.0 }, NOON);
+        assert!(matches!(response.last(), Some(Out::Accepted { command: 21, .. })));
+        assert!(matches!(
+            warping.pilots[&SESSION].ship.course,
+            Course::Warp { raw_destination, stop_distance, total_distance, .. }
+                if raw_destination == destination
+                    && stop_distance == case as f64 * 100.0
+                    && total_distance >= crate::warp::MINIMUM_WARP_DISTANCE
+        ));
+
+        let mut colliding = scene();
+        let other = add_other_ship(&mut colliding);
+        let offset = (case as f64) - 48.0;
+        colliding.pilots.get_mut(&SESSION).unwrap().ship.position = Vec3::new(offset, 0.0, 0.0);
+        colliding.pilots.get_mut(&other).unwrap().ship.position = Vec3::new(-offset, 0.0, 0.0);
+        colliding.settle_all(NOON);
+        let first = &colliding.pilots[&SESSION].ship;
+        let second = &colliding.pilots[&other].ship;
+        let separation = (second.position.x - first.position.x)
+            .hypot(second.position.y - first.position.y)
+            .hypot(second.position.z - first.position.z);
+        assert!(separation >= first.spec.radius + second.spec.radius - 1e-6, "case {case}: {separation}");
+    }
+}
+
+#[test]
+fn a_long_tick_soak_does_not_retain_per_tick_scene_state() {
+    let mut scene = scene();
+    scene.command(SESSION, Command::Stop, NOON);
+    let retained_state = |scene: &Scene| {
+        [
+            scene.pilots.len(),
+            scene.boxes.len(),
+            scene.boxes.capacity(),
+            scene.backlog.len(),
+            scene.aggressions.len(),
+            scene.missiles.len(),
+            scene.dots.len(),
+            scene.deployables.len(),
+            scene.bomb_impacts.len(),
+            scene.drones.len(),
+            scene.drone_threats.len(),
+            usize::from(scene.brains.is_some()),
+            scene.wrecks.len(),
+            scene.abyssal_traces.len(),
+            scene.asteroids.len(),
+            scene.destroyed.len(),
+            scene.widowed.len(),
+            scene.unpiloted.len(),
+            scene.controlled_structures.len(),
+            scene.control_lease_generations.len(),
+            scene.sim_damageable_entities.len(),
+            scene.structure_health.len(),
+            scene.structure_modules.len(),
+            scene.abyssal_npc_spawn_receipts.len(),
+            scene.abyssal_npc_spawn_receipts.capacity(),
+            scene.abyssal_participant_deaths.len(),
+            scene.abyssal_participant_deaths.capacity(),
+            scene.abyssal_reward_caches.len(),
+            scene.abyssal_reward_caches.capacity(),
+            scene.abyssal_loot_receipts.len(),
+            scene.abyssal_loot_receipts.capacity(),
+            scene.abyssal_environment_objects.len(),
+            scene.abyssal_field_memberships.len(),
+            usize::from(scene.abyssal_boundary_at.is_some()),
+            scene.abyssal_boundary_exposure_ms.len(),
+            scene.abyssal_boundary_exposure_ms.capacity(),
+        ]
+    };
+    let baseline = retained_state(&scene);
+    for tick in 1..=100_000i64 {
+        scene.poll(NOON + tick * 2_500_000);
+    }
+    assert_eq!(baseline, retained_state(&scene));
+    assert!(scene.pilots[&SESSION].ship.position.x.is_finite());
+}

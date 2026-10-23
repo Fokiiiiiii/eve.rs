@@ -44,3 +44,8 @@ The Host test distinguishes the event payload type from the persisted row type: 
 The corrected focused run 40013613450 for commit 48163285 passed: Eve.Services.CharacterInfo.Tests 1/1 and Eve.Host.Tests 1/1, with no skips. The local Host.Tests build also passed with 0 warnings and 0 errors. Push-triggered CI for 48163285 and the latest documentation push d7f45242 were still in progress at this update.
 
 The earlier push CI for 737ba657 failed in two unrelated checks: the live SkinR consume test returned INVALID_COMPONENT_LICENSE_ITEM, and MarketHostTests.The_host_dispatches_accessible_structure_market_orders_and_recovers_partial_settlement_after_restart threw a wrapped exception. These failures need triage in their owning areas. No graphical-client verification has been done.
+
+
+## Push CI follow-up (2026-10-23)
+
+CI run 40014207144 for 8610990c is still active. Its .NET build, Rust checks, Rust tests, fixtures and completed Host test shards passed. The E2E job failed in the unrelated SKINR fixture query (text = bigint), and Host shard 1 failed in the unrelated structure market sell case (StructureMarketDenied). Other slow live tests were skipped by their documented settings; those are not passes. The corrected focused contact run 40013613450 remains green (2/2, 0 skipped). No notification-related failure appeared in the focused run. The Windows job has not completed yet.

@@ -233,6 +233,7 @@ CI run 672 on `1669e6dc` failed the structure market Host test because the fixtu
 - The `MarketHostTests.CreateTraderAsync` fixture now inserts that relation in its scratch relations schema in the same transaction as the character and wallet. The denied trader receives its different corporation relation, preserving the denial case.
 - The local `Eve.Host.Tests` project build passed with zero warnings and errors. Run 683 is still active; the new fixture needs its Actions check after push. No PostgreSQL test was run locally.
 
+## 2026-10-23 SKINR draft-save live failure
 
 ## 2026-10-23 SKINR layout oneof encoding
 
@@ -245,3 +246,17 @@ CI run 672 on `1669e6dc` failed the structure market Host test because the fixtu
 - CI runs 686 (`4484ec9c`) and 687 (`fe051fc3`) were still active at the latest check. Check run 688 for `d8f4dab4` after it starts; do not treat the main gate as green until the newest head completes all required jobs.
 
 - Agent run 159 (`40014735391`) on `253597a9` completed successfully with no failed tests or jobs; the handoff maps it to the focused contact-notification check. The newer CI run 688 and Agent run 163 on `d8f4dab4` are still in progress.
+- Agent run 158 on `253597a9` passed the component `ConsumeRequest` after the two-level wire fix, then received HTTP 400 for `Draft.SaveRequest`. V24's client sends a `SlotLayout` with the selected coating/pattern oneof and repeated editor configurations; the empty repeated editor list is accepted by the gateway.
+- Client source encodes `SlotConfiguration.coating` or `.pattern` as the outer field selected by category, then wraps that variant's component identifier in inner field 1. The headless `_layout` helper omitted that inner wrapper, so `ShipSkinrCatalog.ReadSlot` could not resolve the component ID and `TryValidateLayout` rejected the draft. The helper now matches that structure. `_component_kind` also follows the V24 category-selected oneof.
+- The fixture selector now excludes SDE `disallowedSlots`, another catalog condition it must respect, and the SaveRequest assertion includes the gateway response message. Run 686 on `4484ec9c` checks the earlier selector and market affiliation fixture; Actions for the corrected layout are pending. No PostgreSQL test was run locally.
+
+## 2026-10-23 current main SKINR layout correction
+
+- Origin/main is now `1a9e73e9`. The run 158 failure on `253597a9` went past component consumption but returned HTTP 400 at Draft.SaveRequest. The follow-up found two fixture errors: selected components could disallow the slot, and `_layout` omitted the inner field-1 component ID in the selected coating/pattern oneof. Main commit `67753d67` corrects both.
+- Agent run 163 on `d8f4dab4` failed the focused live SKINR check before this layout correction. CI run 688 on `d8f4dab4` is still active; run 689 on `1a9e73e9` is queued for the corrected head. The latest gate is not yet green.
+- The Host.Tests build on the merged market-affiliation fixture passed with 0 warnings and 0 errors. The in-memory SKINR response-shape regression passed 1/1 with 0 skips, and Python syntax compilation passed after the current layout changes.
+
+## 2026-10-23 latest main gate follow-up
+
+- Origin/main is `1a9e73e9`, with commit `67753d67` correcting the SKINR live draft fixture's inner component-ID field and excluding SDE components disallowed for the chosen slot. The prior focused Agent run on `d8f4dab4` failed before that fix; run 688 is still active, while the corrected full gate run 689 and focused run 165 are now active on `1a9e73e9`.
+- Local Python syntax compilation passed after merging the layout changes. The latest local Host.Tests build and no-database SKINR response-shape test passed on the market affiliation fixture. No local PostgreSQL test was run.

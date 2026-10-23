@@ -152,6 +152,13 @@ CROSS JOIN LATERAL jsonb_array_elements_text(
 WHERE component.doc->>'published' = 'true'
   AND component.doc->>'category' IN ('1', '2')
   AND allowed.category::int = (component.doc->>'category')::int
+  AND NOT EXISTS (
+      SELECT 1
+      FROM jsonb_array_elements_text(
+          COALESCE(component.doc->'disallowedSlots', component.doc->'disallowed_slots', '[]'::jsonb)
+      ) AS disallowed(slot_id)
+      WHERE disallowed.slot_id::int = hull_slots.slot_id
+  )
   AND COALESCE(
         NULLIF(associated.value->>'licenseUsesGranted', '')::int,
         NULLIF(associated.value->>'license_uses_granted', '')::int,
@@ -178,13 +185,13 @@ def _skinr_fixture() -> tuple[int, int, int, int, int, int, int, int]:
 
 def _layout(ship_type_id: int, slot_id: int, component_id: int, category: int) -> bytes:
     configuration = field(1, type_identifier(slot_id)) + field(
-        2, field(category, type_identifier(component_id))
+        2, field(category, field(1, type_identifier(component_id)))
     )
     return field(1, configuration) + field(2, type_identifier(ship_type_id))
 
 
 def _component_kind(component_id: int, category: int, *, infinite: bool) -> bytes:
-    identifier_field = field(1, type_identifier(component_id))
+    identifier_field = field(category, type_identifier(component_id))
     kind = field(1, identifier_field)
     return kind + (number_field(3, 1) if infinite else number_field(2, 1))
 

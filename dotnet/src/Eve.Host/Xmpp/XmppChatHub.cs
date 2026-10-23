@@ -16,16 +16,18 @@ public sealed class XmppLink
     private readonly Action<string> _send;
     private readonly Action _close;
 
-    internal XmppLink(long characterId, string resource, string domain, Action<string> send, Action close)
+    internal XmppLink(long characterId, string resource, string domain, long accountRole, Action<string> send, Action close)
     {
         CharacterId = characterId;
         Resource = resource;
         Domain = domain;
+        AccountRole = accountRole;
         _send = send;
         _close = close;
     }
 
     public long CharacterId { get; }
+    public long AccountRole { get; }
     public string Resource { get; }
     public string Domain { get; }
 
@@ -62,12 +64,14 @@ public sealed partial class XmppChatHub
         ConnectedSessions sessions,
         XmppChatSettings settings,
         XmppMotdStore? motdStore,
-        Func<long, CancellationToken, ValueTask<IReadOnlyList<long>>>? readBlockedOwners = null)
+        Func<long, CancellationToken, ValueTask<IReadOnlyList<long>>>? readBlockedOwners = null,
+        XmppPlayerChannelStore? playerChannelStore = null)
     {
         _sessions = sessions;
         Settings = settings;
         _readBlockedOwners = readBlockedOwners;
         _motdStore = motdStore;
+        PlayerChannels = playerChannelStore;
         if (motdStore is not null)
         {
             foreach (var (room, motd) in motdStore.RoomMotds)
@@ -76,6 +80,7 @@ public sealed partial class XmppChatHub
     }
 
     public XmppChatSettings Settings { get; }
+    internal XmppPlayerChannelStore? PlayerChannels { get; }
 
     /// <summary>True only when a connected session of the character holds the token the chat service issued for it.</summary>
     public bool Authenticate(long characterId, string token)
@@ -94,9 +99,9 @@ public sealed partial class XmppChatHub
     {
         lock (_gate)
         {
-            if (SessionOf(characterId) is null)
+            if (SessionOf(characterId) is not { } session)
                 return null;
-            var link = new XmppLink(characterId, resource, Settings.Domain, send, close);
+            var link = new XmppLink(characterId, resource, Settings.Domain, session.GetInt("accountRole") ?? 0, send, close);
             if (_linkByCharacter.Remove(characterId, out var previous))
             {
                 previous.Send($"<stream:error><conflict xmlns='{XmppXml.StreamsNamespace}'/></stream:error>");

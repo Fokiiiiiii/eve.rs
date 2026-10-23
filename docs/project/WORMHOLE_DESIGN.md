@@ -150,6 +150,6 @@ The rules, catalog, planner, lifecycle, simulation ends and travel, Thera connec
 
 - Wandering K-space connections remain cut because the project has no published spawn rate to use. Thera's selected connections are implemented separately.
 - Region-adjacency exclusion for static connections is not applied; the reviewed source does not establish that rule.
-- Wormhole Local uses delayed speaker membership. Persisted MOTD, staff presence, and the two-character Local walk remain open.
+- Wormhole Local uses delayed speaker membership in both the Host protobuf gateway and XMPP room roster: silent occupants are hidden until they speak. Corporation MOTDs persist across store/Host reopen, and XMPP staff/invisible presence is covered by Host tests. The live-slow two-character Local, corporation, and private-room walk covers the headless path; graphical-client verification remains open.
 - The ice belt for a Shattered system is not planned. Live checks of gas and ore sites and graphical-client acceptance remain open.
 - Site compositions and other values without published data follow the explicit project rules recorded in `docs/reference/compat/DEVIATIONS.md`.

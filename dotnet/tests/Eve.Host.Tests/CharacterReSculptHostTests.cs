@@ -121,6 +121,142 @@ public sealed class CharacterReSculptHostTests : IAsyncLifetime
         }
     }
 
+    [PgFact]
+    public async Task Character_selection_dispatch_projects_paperdoll_state_and_a_saved_avatar_can_enter()
+    {
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Url));
+        var bootstrap = await HostComposition.BuildAsync(Settings());
+        await bootstrap.ShutdownAsync();
+
+        var characters = new PgCharacterStore(source, Schema("EVE_CHARACTERS_SCHEMA"));
+        var noAppearance = await InsertPilotAsync(source, characters, "No Doll Pilot");
+        var savedAppearance = await InsertPilotAsync(source, characters, "Saved Doll Pilot");
+        var forced = await InsertPilotAsync(source, characters, "Forced Doll Pilot");
+        var doll = MarshalCodec.Encode(new PyList([]));
+        await characters.SetAppearanceAsync(savedAppearance, doll, true, null, true);
+        await using (var connection = await source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await characters.SetPaperdollStateAsync(connection, transaction, forced, 4);
+            await transaction.CommitAsync();
+        }
+
+        var host = await HostComposition.BuildAsync(Settings());
+        try
+        {
+            var session = new ClientSession { UserId = 1 };
+            var select = host.Registry.Lookup("charUnboundMgr")!;
+            async Task<Dictionary<long, PyValue>> ReadStatesAsync()
+            {
+                var result = Assert.IsType<PyTuple>(await select.CallAsync(new ServiceCall
+                {
+                    Args = [],
+                    Method = "GetCharacterSelectionData",
+                    Session = session,
+                }));
+                Assert.Equal(4, result.Items.Count);
+                Assert.Equal(new PyTuple([PyNone.Instance, PyNone.Instance]), result.Items[1]);
+                Assert.IsType<PyList>(result.Items[3]);
+
+                var states = new Dictionary<long, PyValue>();
+                foreach (var row in Assert.IsType<PyList>(result.Items[2]).Items)
+                {
+                    var keyVal = Assert.IsType<PyObject>(row);
+                    Assert.Equal(new PyStr("util.KeyVal"), keyVal.Name);
+                    var fields = Assert.IsType<PyDict>(keyVal.Args).Entries.ToDictionary(
+                        entry => Assert.IsType<PyStr>(entry.Key).Value,
+                        entry => entry.Value,
+                        StringComparer.Ordinal);
+                    var id = Assert.IsType<PyInt>(fields["characterID"]).Value;
+                    Assert.IsType<PyInt>(fields["paperdollState"]);
+                    states.Add(id, fields["paperdollState"]);
+                }
+                return states;
+            }
+
+            var states = await ReadStatesAsync();
+            Assert.Equal(new PyInt(2), states[noAppearance]);
+            Assert.Equal(new PyInt(0), states[savedAppearance]);
+            Assert.Equal(new PyInt(4), states[forced]);
+
+            // Re-reading the row after a retry preserves the persisted state.
+            Assert.Equal(new PyInt(4), (await ReadStatesAsync())[forced]);
+
+            var enter = await select.CallAsync(new ServiceCall
+            {
+                Args = [new PyInt(savedAppearance)],
+                Method = "SelectCharacterID",
+                Session = session,
+            });
+            Assert.Same(PyNone.Instance, enter);
+            Assert.Equal(savedAppearance, session.CharacterId);
+        }
+        finally
+        {
+            await host.ShutdownAsync();
+        }
+
+        // The forced state survives Host restart and a successful appearance save clears it.
+        var restarted = await HostComposition.BuildAsync(Settings());
+        try
+        {
+            var session = new ClientSession { UserId = 1 };
+            var select = restarted.Registry.Lookup("charUnboundMgr")!;
+            var data = Assert.IsType<PyTuple>(await select.CallAsync(new ServiceCall
+            {
+                Args = [],
+                Method = "GetCharacterSelectionData",
+                Session = session,
+            }));
+            var forcedRow = Assert.IsType<PyObject>(Assert.Single(
+                Assert.IsType<PyList>(data.Items[2]).Items,
+                row =>
+                {
+                    var fields = Assert.IsType<PyDict>(Assert.IsType<PyObject>(row).Args).Entries;
+                    return fields.Any(entry => entry.Key == new PyStr("characterID") && entry.Value == new PyInt(forced));
+                }));
+            var forcedFields = Assert.IsType<PyDict>(forcedRow.Args).Entries.ToDictionary(
+                entry => Assert.IsType<PyStr>(entry.Key).Value,
+                entry => entry.Value,
+                StringComparer.Ordinal);
+            Assert.Equal(new PyInt(4), forcedFields["paperdollState"]);
+
+            await restarted.Registry.Lookup("paperDollServer")!.CallAsync(new ServiceCall
+            {
+                Args = [new PyInt(forced), new PyList([]), PyNone.Instance, PyBool.True],
+                Method = "UpdateExistingCharacterFull",
+                Session = new ClientSession { UserId = 1 },
+            });
+            var saved = Assert.IsType<PyTuple>(await select.CallAsync(new ServiceCall
+            {
+                Args = [],
+                Method = "GetCharacterSelectionData",
+                Session = new ClientSession { UserId = 1 },
+            }));
+            var savedRow = Assert.IsType<PyObject>(Assert.Single(
+                Assert.IsType<PyList>(saved.Items[2]).Items,
+                row => Assert.IsType<PyDict>(Assert.IsType<PyObject>(row).Args).Entries.Any(entry =>
+                    entry.Key == new PyStr("characterID") && entry.Value == new PyInt(forced))));
+            var savedFields = Assert.IsType<PyDict>(savedRow.Args).Entries.ToDictionary(
+                entry => Assert.IsType<PyStr>(entry.Key).Value,
+                entry => entry.Value,
+                StringComparer.Ordinal);
+            Assert.Equal(new PyInt(0), savedFields["paperdollState"]);
+            var entered = new ClientSession { UserId = 1 };
+            await select.CallAsync(new ServiceCall
+            {
+                Args = [new PyInt(forced)],
+                Method = "SelectCharacterID",
+                Session = entered,
+            });
+            Assert.Equal(forced, entered.CharacterId);
+        }
+        finally
+        {
+            await restarted.ShutdownAsync();
+        }
+    }
+
     private static async Task<long> InsertPilotAsync(NpgsqlDataSource source, PgCharacterStore characters, string name)
     {
         var pilot = new NewCharacter(1, name, Gender: 1, RaceId: 1, BloodlineId: 1, AncestryId: 10, SchoolId: 35, TypeId: 1373,

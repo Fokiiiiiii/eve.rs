@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
+using Microsoft.AspNetCore.Server.Kestrel.Https;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Eve.Host.PublicGateway;
@@ -16,20 +17,21 @@ internal sealed record GatewayAnswer(uint StatusCode, string StatusMessage, stri
 internal delegate Task<GatewayAnswer> GatewayHandler(GatewayRequest request, CancellationToken cancellationToken);
 
 /// <summary>What the listener serves: the answers by request type, the notices of the open Notices.Consume streams, and who a request is for.</summary>
-internal sealed record PublicGatewayRoutes(IReadOnlyDictionary<string, GatewayHandler> Handlers, NoticeHub Notices, GatewayAuthority Authority);
+internal sealed record PublicGatewayRoutes(IReadOnlyDictionary<string, GatewayHandler> Handlers, NoticeHub Notices, GatewayAuthority Authority)
+{
+    public CharacterTitleRewardService? CharacterTitleRewards { get; init; }
+}
 
 /// <summary>
-/// The public protobuf gateway of the V24.01 client, served on an HTTP/2 listener without TLS (h2c; the client reaches it through
-
-/// frame, in order; the Ping calls answer an empty frame; Events/Publish is acknowledged and not stored (the reference keeps no events either).
-/// Notices/Consume is a stream the client keeps open: the request frames name the active character, and the notices routed to it (or to the
-/// token's account) are written to it. A request's character is trusted only when the account of the request's bearer token owns it
-/// (<see cref="GatewayAuthority"/>); without a token the request is refused with 401.
+/// The V24.01 public protobuf gateway. Its HTTP/2 listener uses TLS when a certificate is configured and h2c for the client's local address
+/// override. Requests are answered by their type; Notices/Consume stays open for notices routed to the authenticated account and active
+/// character. Request characters are checked against the verified bearer-token identity and persisted account ownership.
 /// </summary>
 internal sealed class PublicGatewayServer : IAsyncDisposable
 {
     private const string GrpcContentType = "application/grpc+proto";
     private const int StatusUnimplemented = 12;
+    private const int StatusUnauthenticated = 16;
 
     private readonly WebApplication _app;
 
@@ -42,11 +44,21 @@ internal sealed class PublicGatewayServer : IAsyncDisposable
     /// <summary>The port the listener is bound to (the one asked for, or the one the system chose for 0).</summary>
     public int Port { get; }
 
-    public static async Task<PublicGatewayServer> StartAsync(IPAddress address, int port, PublicGatewayRoutes routes, CancellationToken cancellationToken = default)
+    public static async Task<PublicGatewayServer> StartAsync(
+        IPAddress address,
+        int port,
+        PublicGatewayRoutes routes,
+        CancellationToken cancellationToken = default,
+        System.Security.Cryptography.X509Certificates.X509Certificate2? certificate = null)
     {
         var builder = WebApplication.CreateEmptyBuilder(new WebApplicationOptions());
         builder.WebHost.UseKestrelCore();
-        builder.WebHost.ConfigureKestrel(options => options.Listen(address, port, listen => listen.Protocols = HttpProtocols.Http2));
+        builder.WebHost.ConfigureKestrel(options => options.Listen(address, port, listen =>
+        {
+            listen.Protocols = HttpProtocols.Http2;
+            if (certificate is not null)
+                listen.UseHttps(certificate);
+        }));
         var app = builder.Build();
         app.Run(context => Route(context, routes));
         await app.StartAsync(cancellationToken);
@@ -65,7 +77,7 @@ internal sealed class PublicGatewayServer : IAsyncDisposable
         "/eve_public.gateway.Requests/Ping" or "/eve_public.gateway.Notices/Ping" or "/eve_public.gateway.Events/Ping" => Guard(context, () => AnswerEmpty(context, false)),
         "/eve_public.gateway.Requests/Send" => Guard(context, () => Send(context, routes)),
         "/eve_public.gateway.Notices/Consume" => Guard(context, () => Consume(context, routes)),
-        "/eve_public.gateway.Events/Publish" => Guard(context, () => AnswerEmpty(context, true)),
+        "/eve_public.gateway.Events/Publish" => Guard(context, () => PublishEvents(context, routes)),
         _ => Unimplemented(context),
     };
 
@@ -86,7 +98,7 @@ internal sealed class PublicGatewayServer : IAsyncDisposable
     private static async Task Send(HttpContext context, PublicGatewayRoutes routes)
     {
         await StartGrpc(context);
-        var account = routes.Authority.AccountOf(context.Request.Headers["authorization"]);
+        var identity = routes.Authority.IdentityOf(context.Request.Headers["authorization"]);
         var pending = new List<byte>();
         var reader = context.Request.BodyReader;
         while (true)
@@ -97,7 +109,7 @@ internal sealed class PublicGatewayServer : IAsyncDisposable
             reader.AdvanceTo(read.Buffer.End);
             foreach (var frame in GatewayEnvelope.TakeFrames(pending))
             {
-                var response = await Answer(frame, routes, account, context.RequestAborted);
+                var response = await Answer(frame, routes, identity, context.RequestAborted);
                 await context.Response.BodyWriter.WriteAsync(GatewayEnvelope.Frame(response), context.RequestAborted);
             }
             if (read.IsCompleted)
@@ -131,6 +143,25 @@ internal sealed class PublicGatewayServer : IAsyncDisposable
         await FinishGrpc(context, 0);
     }
 
+
+    private static async Task PublishEvents(HttpContext context, PublicGatewayRoutes routes)
+    {
+        if (routes.Authority.IdentityOf(context.Request.Headers["authorization"]) is null)
+        {
+            await RefuseGrpc(context, StatusUnauthenticated);
+            return;
+        }
+        await AnswerEmpty(context, true);
+    }
+
+    private static async Task RefuseGrpc(HttpContext context, int status)
+    {
+        context.Response.StatusCode = StatusCodes.Status200OK;
+        context.Response.ContentType = GrpcContentType;
+        context.Response.Headers["grpc-status"] = status.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        await context.Response.CompleteAsync();
+    }
+
     /// <summary>A trailers-only gRPC answer with the status UNIMPLEMENTED.</summary>
     private static Task Unimplemented(HttpContext context)
     {
@@ -146,11 +177,18 @@ internal sealed class PublicGatewayServer : IAsyncDisposable
     /// </summary>
     private static async Task Consume(HttpContext context, PublicGatewayRoutes routes)
     {
+        var identity = routes.Authority.IdentityOf(context.Request.Headers["authorization"]);
+        if (identity is not { } verified)
+        {
+            await RefuseGrpc(context, StatusUnauthenticated);
+            return;
+        }
+
         await StartGrpc(context);
-        // StartAsync leaves the headers of a stream that has no body yet unflushed; the client waits for them before it reads a notice
+        // The client waits for these headers before consuming notices, so flush the open stream immediately.
         await context.Response.BodyWriter.FlushAsync(context.RequestAborted);
-        var subscriber = routes.Notices.Subscribe(routes.Authority.AccountOf(context.Request.Headers["authorization"]));
-        var identifying = IdentifyAsync(context, subscriber, routes.Authority);
+        var subscriber = routes.Notices.Subscribe(verified.AccountId);
+        var identifying = IdentifyAsync(context, subscriber, routes.Authority, verified);
         try
         {
             await foreach (var frame in subscriber.Frames.Reader.ReadAllAsync(context.RequestAborted))
@@ -166,7 +204,7 @@ internal sealed class PublicGatewayServer : IAsyncDisposable
         await identifying.ContinueWith(_ => { }, TaskScheduler.Default);
     }
 
-    private static async Task IdentifyAsync(HttpContext context, NoticeSubscriber subscriber, GatewayAuthority authority)
+    private static async Task IdentifyAsync(HttpContext context, NoticeSubscriber subscriber, GatewayAuthority authority, GatewayTokenIdentity identity)
     {
         var reader = context.Request.BodyReader;
         var pending = new List<byte>();
@@ -179,8 +217,8 @@ internal sealed class PublicGatewayServer : IAsyncDisposable
             foreach (var frame in GatewayEnvelope.TakeFrames(pending))
             {
                 var request = GatewayEnvelope.DecodeRequest(frame);
-                subscriber.Character = request.CharacterId is { } character && subscriber.Account is { } account
-                    && await authority.OwnsAsync(account, character, context.RequestAborted)
+                subscriber.Character = request.CharacterId is { } character
+                    && await authority.OwnsAsync(identity, character, context.RequestAborted)
                     ? character
                     : null;
             }
@@ -189,7 +227,7 @@ internal sealed class PublicGatewayServer : IAsyncDisposable
         }
     }
 
-    private static async Task<byte[]> Answer(byte[] frame, PublicGatewayRoutes routes, long? account, CancellationToken cancellationToken)
+    private static async Task<byte[]> Answer(byte[] frame, PublicGatewayRoutes routes, GatewayTokenIdentity? identity, CancellationToken cancellationToken)
     {
         GatewayRequest request;
         try
@@ -202,13 +240,13 @@ internal sealed class PublicGatewayServer : IAsyncDisposable
             throw;
         }
         GatewayAnswer answer;
-        if (!routes.Handlers.TryGetValue(request.TypeName, out var handler))
-        {
-            answer = new GatewayAnswer(404, $"no public gateway answer for {request.TypeName}", "", []);
-        }
-        else if (await routes.Authority.RefusalAsync(account, request.CharacterId, cancellationToken) is { } refusal)
+        if (await routes.Authority.RefusalAsync(identity, request.CharacterId, cancellationToken) is { } refusal)
         {
             answer = refusal;
+        }
+        else if (!routes.Handlers.TryGetValue(request.TypeName, out var handler))
+        {
+            answer = new GatewayAnswer(404, $"no public gateway answer for {request.TypeName}", "", []);
         }
         else
         {
@@ -218,7 +256,7 @@ internal sealed class PublicGatewayServer : IAsyncDisposable
             }
             catch (Exception error) when (error is not OperationCanceledException)
             {
-                // The response is generic; keep exception details and request data out of logs.
+                // Keep exception details and request data out of logs.
                 Console.Error.WriteLine("eve-host: public gateway handler failed");
                 answer = new GatewayAnswer(500, "internal error", "", []);
             }

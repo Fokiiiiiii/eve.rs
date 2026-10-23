@@ -647,6 +647,7 @@ public sealed partial class CharUnboundMgrService(
             : trainingView.Skills.FirstOrDefault(skill => skill.TypeId == currentTraining.TypeId)?.SkillPoints;
         var finishedSkills = FinishedSkillsCount(await training.HistoryAsync(c.Id, ct));
         var securityStatus = securityStatusOf is null ? 0d : await securityStatusOf(c.Id, ct);
+        var paperdollState = await characters.ResolvedPaperdollStateAsync(c.Id, ct);
         var logoff = c.LastLogoffAt ?? c.CreatedAt;
         return Py.KeyVal(
             ("characterID", new PyInt(c.Id)),
@@ -677,7 +678,7 @@ public sealed partial class CharUnboundMgrService(
             ("securityStatus", Py.Number(securityStatus)),
             ("title", new PyStr("")),
             ("unreadMailCount", new PyInt(Math.Max(0, unreadMailCount?.Invoke(c.Id) ?? 0))),
-            ("paperdollState", new PyInt(0)),
+            ("paperdollState", new PyInt(paperdollState)),
             ("lockTypeID", None),
             ("logoffDate", new PyLong(FileTime(logoff))),
             ("skillTypeID", currentTraining is null ? None : new PyInt(currentTraining.TypeId)),

@@ -212,6 +212,90 @@ public class DispatchGoldenTests
     }
 
     [Fact]
+    public async Task Market_region_and_plex_browse_calls_keep_native_rows_through_a_mixed_session()
+    {
+        var capture = new Capture();
+        var session = new ClientSession(capture) { SessionId = 913 };
+        var registry = new ServiceRegistry();
+        var service = new MarketBrowseBudgetService();
+        registry.Register(service);
+        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs);
+
+        (string Method, PyValue[] Args)[] browseCycle =
+        [
+            ("GetRegionBest", []),
+            ("GetOrders", [new PyInt(34)]),
+            ("GetMarketOrderHistory", []),
+            ("GetOldPriceHistory", [new PyInt(34)]),
+            ("GetNewPriceHistory", [new PyInt(34)]),
+            ("GetPlexOrders", []),
+            ("GetPlexBest", []),
+            ("GetPlexHistory", []),
+        ];
+
+        for (var cycle = 0; cycle < 5; cycle++)
+        foreach (var method in browseCycle)
+        {
+            await dispatcher.DispatchAsync(CallRequestPacket("marketProxy", method.Method, method.Args), session);
+
+            Assert.Equal(7, CommandOf(capture.Sent[^1]));
+            if (method.Method == "GetRegionBest")
+            {
+                var best = Assert.IsType<PyDict>(ResultOf(capture.Sent[^1]));
+                Assert.Equal(2, best.Entries.Count);
+                foreach (var entry in best.Entries)
+                {
+                    var typeId = Assert.IsType<PyInt>(entry.Key);
+                    var fields = Assert.IsType<PyDict>(Assert.IsType<PyObject>(entry.Value).Args);
+                    Assert.Contains(fields.Entries, field => field.Key is PyStr { Value: "price" });
+                    Assert.Contains(fields.Entries, field => field.Key is PyStr { Value: "volRemaining" });
+                    Assert.Contains(fields.Entries, field => field.Key is PyStr { Value: "typeID" });
+                    Assert.Contains(fields.Entries, field => field.Key is PyStr { Value: "stationID" });
+                    Assert.Equal(typeId, fields.Entries.Single(field => field.Key is PyStr { Value: "typeID" }).Value);
+                }
+            }
+        }
+
+        Assert.Equal(40, service.Calls);
+    }
+
+    [Fact]
+    public async Task Excess_market_traffic_is_refused_before_any_trade_side_effects()
+    {
+        var capture = new Capture();
+        var session = new ClientSession(capture) { SessionId = 914 };
+        var registry = new ServiceRegistry();
+        var service = new MarketBrowseBudgetService();
+        registry.Register(service);
+        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs);
+
+        for (var index = 0; index < 46; index++)
+        {
+            await dispatcher.DispatchAsync(CallRequestPacket("marketProxy", "GetRegionBest"), session);
+            Assert.Equal(7, CommandOf(capture.Sent[^1]));
+        }
+
+        await dispatcher.DispatchAsync(CallRequestPacket("marketProxy", "PlaceMultiSellOrder"), session);
+
+        Assert.Equal(46, service.Calls);
+        Assert.Equal(47, capture.Sent.Count);
+        Assert.All(capture.Sent.Take(46), packet => Assert.Equal(7, CommandOf(packet)));
+        Assert.Equal(ErrorResponseCommand, CommandOf(capture.Sent[^1]));
+        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[^1])));
+        Assert.Equal(0, service.WalletWrites);
+        Assert.Equal(0, service.InventoryWrites);
+        Assert.Equal(0, service.OrderWrites);
+        Assert.Equal(0, service.SuccessNotifications);
+    }
+
+    private static PyValue ResultOf(string responseHex)
+    {
+        var packet = MachoPacket.Decode(MarshalCodec.Decode(Convert.FromHexString(responseHex)))!;
+        var result = Assert.IsType<PySubStream>(Assert.IsType<PyTuple>(packet.Payload).Items[0]);
+        return result.Decoded ?? MarshalCodec.Decode(result.Raw);
+    }
+
+    [Fact]
     public async Task Character_global_asset_calls_have_a_named_per_session_budget()
     {
         var capture = new Capture();
@@ -313,7 +397,6 @@ public class DispatchGoldenTests
         Assert.Equal(1, fleetService.Calls);
         Assert.Equal(ErrorResponseCommand, CommandOf(fleetCapture.Sent[1]));
         Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(fleetCapture.Sent[1])));
-
         Assert.Equal(1, service.Calls);
         Assert.Equal(3, capture.Sent.Count);
         Assert.Equal(ErrorResponseCommand, CommandOf(capture.Sent[1]));
@@ -1713,7 +1796,6 @@ public class DispatchGoldenTests
         var service = new ExpensiveService("epicArcStatus");
         registry.Register(service);
         var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 1 };
-
         await dispatcher.DispatchAsync(CallRequestPacket("epicArcStatus", "AgentHasEpicMissionsForCharacter"), session);
         await dispatcher.DispatchAsync(CallRequestPacket("epicArcStatus", "AgentHasEpicMissionsForCharacter"), session);
 
@@ -2857,6 +2939,52 @@ public class DispatchGoldenTests
         public bool HasMethod(string method) => true;
 
         public ValueTask<PyValue> CallAsync(ServiceCall call) => ValueTask.FromResult<PyValue>(PyNone.Instance);
+    }
+
+    private sealed class MarketBrowseBudgetService : IService
+    {
+        public string Name => "marketProxy";
+
+        public int Calls { get; private set; }
+        public int WalletWrites { get; private set; }
+        public int InventoryWrites { get; private set; }
+        public int OrderWrites { get; private set; }
+        public int SuccessNotifications { get; private set; }
+
+        public bool HasMethod(string method) => method is
+            "GetRegionBest" or "GetOrders" or "GetMarketOrderHistory" or
+            "GetOldPriceHistory" or "GetNewPriceHistory" or "GetPlexOrders" or
+            "GetPlexBest" or "GetPlexHistory" or "PlaceMultiSellOrder";
+
+        public ValueTask<PyValue> CallAsync(ServiceCall call)
+        {
+            Calls++;
+            if (call.Method == "PlaceMultiSellOrder")
+            {
+                WalletWrites++;
+                InventoryWrites++;
+                OrderWrites++;
+                SuccessNotifications++;
+                return ValueTask.FromResult<PyValue>(PyBool.True);
+            }
+            if (call.Method != "GetRegionBest")
+                return ValueTask.FromResult<PyValue>(PyNone.Instance);
+
+            static PyValue BestOrder(int typeId, double price, int quantity, int stationId) =>
+                Py.KeyVal(new KeyValuePair<PyValue, PyValue>[]
+                {
+                    new(new PyStr("price"), new PyReal(price)),
+                    new(new PyStr("volRemaining"), new PyInt(quantity)),
+                    new(new PyStr("typeID"), new PyInt(typeId)),
+                    new(new PyStr("stationID"), new PyInt(stationId)),
+                });
+
+            PyValue result = new PyDict([
+                new(new PyInt(34), BestOrder(34, 12.5, 120, 60003760)),
+                new(new PyInt(44992), BestOrder(44992, 1_250_000, 4, 60003760)),
+            ]);
+            return ValueTask.FromResult(result);
+        }
     }
 
     private sealed class ExpensiveService(string name = "marketProxy") : IService

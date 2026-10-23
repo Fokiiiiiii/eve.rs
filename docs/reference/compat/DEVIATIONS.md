@@ -5746,3 +5746,5 @@ The security inventory now lists each active `charUnboundMgr` RPC by caller scop
 ## Mail message ID input validation (2026-10-23)
 
 `mailMgr.GetMailHeaders`, `GetBody`, and `MarkAsRead` now accept only positive integral message IDs. Fractional IDs no longer truncate to another recipient's message identifier; invalid IDs yield no read result or mutation. `MailServiceTests.Mail_message_ids_must_be_positive_integral_wire_values` covers fractional, zero, and valid integral inputs.
+
+`allianceRegistry.GMForceAcceptApplication` retains its GML-only authorization and refuses non-integer corporation targets before reading or scheduling the application; the regression covers fractional input and the authorized path.

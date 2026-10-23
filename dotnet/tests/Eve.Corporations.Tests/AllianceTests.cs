@@ -2443,7 +2443,10 @@ public class AllianceTests
         };
         var service = (Eve.Services.IService)new Eve.Services.Corporations.AllianceRegistryService(
             rig.Store, rig.Characters, () => rig.Now, scheduleAllianceApplication: schedule);
-        Eve.Services.ServiceCall Call(long accountRole, long sessionRole = 0)
+        Eve.Services.ServiceCall Call(
+            long accountRole,
+            long sessionRole = 0,
+            Eve.Marshal.PyValue? target = null)
         {
             var session = new Eve.Services.ClientSession { SessionId = applicant, CharacterId = applicant };
             session.Set("allianceid", new Eve.Marshal.PyInt(alliance.Id));
@@ -2453,12 +2456,15 @@ public class AllianceTests
             {
                 Session = session,
                 Method = "GMForceAcceptApplication",
-                Args = [new Eve.Marshal.PyInt(applicantCorp.Id)]
+                Args = [target ?? new Eve.Marshal.PyInt(applicantCorp.Id)]
             };
         }
 
         await Assert.ThrowsAnyAsync<Exception>(() =>
             service.CallAsync(Call(0, Eve.Services.GameMasterRoles.Gml)).AsTask());
+        await Assert.ThrowsAnyAsync<Exception>(() => service.CallAsync(Call(
+            Eve.Services.GameMasterRoles.Gml,
+            target: new Eve.Marshal.PyReal(applicantCorp.Id + 0.5))).AsTask());
         Assert.Empty(scheduled);
         Assert.Equal(1, (await rig.Store.AllianceApplicationsAsync(alliance.Id)).Single().Status);
         Assert.IsType<Eve.Marshal.PyNone>(await service.CallAsync(

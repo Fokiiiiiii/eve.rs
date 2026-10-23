@@ -2768,3 +2768,4 @@ Security review follow-up: fleet invitation RPCs accept positive integer charact
 Security review follow-up: alliance bulletin RPCs now validate scalar bulletin IDs as positive integers, while creation retains its optional absent ID form.
 
 Security review follow-up: alliance bill payment and war declaration now require positive integer bill and target IDs; malformed fractional targets refuse before financial or relation writes.
+Security review follow-up: `allianceRegistry.GMForceAcceptApplication` now requires a positive integral corporation ID after its server-set GML gate, so malformed targets cannot be truncated to another applicant before scheduling.

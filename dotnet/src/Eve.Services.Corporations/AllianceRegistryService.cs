@@ -786,7 +786,7 @@ private static double RelationshipValue(PyValue value)
         RequireBoundAlliance(call,allianceId);
         if (scheduleAllianceApplication is null)
             throw new CorporationError("ALLIANCE_DUE_SCHEDULER_UNAVAILABLE");
-        var corporationId = Number(call.Arg(0));
+        var corporationId = PositiveIntegerId(call.Arg(0));
         var application = (await store.AllianceApplicationsAsync(allianceId,call.Cancellation))
             .LastOrDefault(item => item.CorporationId == corporationId);
         if (application is null) throw new CorporationError("ALLIANCE_APPLICATION_NOT_FOUND");

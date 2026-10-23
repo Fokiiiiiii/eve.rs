@@ -44,3 +44,8 @@ Worktree `wt-st23` (removed at the end of the session). Database `eve_p4` (live 
 Added `ShipService.Drop` for the V24 client call, connected to the existing deployable provider with the item-keyed result list and CustomNotify error row the client helper consumes. A deterministic scenario in `tools/headless-client/tests/test_structures.py` uses a player corporation in the legal low-security system, places an Amarr Control Tower through `ship.Drop`, checks that an online tower is refused by `posMgr.UnanchorStructure`, changes the seeded tower to offline, then follows the unanchoring job through hull drop and `ship.Scoop`. The assertion checks ownership, location, cargo flag, the item-change notice, and removal of the space row. It moves only this scratch-schema job's due time forward so the Action does not wait for the SDE unanchoring delay.
 
 The existing `live-slow.yml` selection already includes `test_structures.py`. The focused Action result will be recorded here after the push.
+
+## 7. GitHub Actions verification (2026-10-23)
+
+- Commit `01053a2e290731e0ea551abb2b855e6dbaf7c0b9`, Agent test run [40041270573](https://github.com/Fokiiiiiii/eve.rs/actions/runs/40041270573): `Eve.Services.Space.Tests` focused scoop test 1 passed, 0 failed, 0 skipped; `tools/headless-client/tests/test_structures.py` 22 passed, 0 failed, 0 skipped.
+- This confirms the headless `ship.Drop` -> offline unanchor -> hull drop -> `ship.Scoop` flow, including `OnItemChange` and cargo state. No graphical V24 client run was part of this check.

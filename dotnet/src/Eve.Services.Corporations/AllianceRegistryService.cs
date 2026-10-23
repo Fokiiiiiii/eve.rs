@@ -1406,6 +1406,7 @@ public sealed class AllianceApplicationDueWorker(
 
 public sealed partial class CorpRegistryService
 {
+    private const int MaxAllianceApplications = 5000;
     private static readonly Descriptor AllianceApplicationDescriptor = CorporationWire.DescriptorOf(
         ("allianceID",3),("corporationID",3),("applicationText",130),("state",3),("applicationDateTime",64));
 
@@ -1463,7 +1464,10 @@ public sealed partial class CorpRegistryService
     public async ValueTask<PyValue> GetAllianceApplications(ServiceCall call)
     {
         var corporationId = await RequireAllianceApplicationDirector(call);
-        var applications = await store.AllianceApplicationsForCorporationAsync(corporationId,call.Cancellation);
+        var applications = await store.AllianceApplicationsForCorporationAsync(
+            corporationId, MaxAllianceApplications + 1, call.Cancellation);
+        if (applications.Count > MaxAllianceApplications)
+            throw new CorporationError("ALLIANCE_APPLICATION_LIMIT_EXCEEDED");
         return new PyObjectEx(ObjectExKind.Ex2,
             Py.Tuple(Py.Tuple(new PyToken("carbon.common.script.sys.crowset.CIndexedRowset")),
                 Py.Dict(("header",AllianceApplicationDescriptor.Header),("idName",new PyStr("allianceID")),
@@ -1477,7 +1481,10 @@ public sealed partial class CorpRegistryService
     [Method("GetSuggestedAllianceShortNames")]
     public ValueTask<PyValue> GetSuggestedAllianceShortNames(ServiceCall call)
     {
-        var normalized = new string((JsSemantics.StringValue(call.Arg(0)) ?? "")
+        var allianceName = JsSemantics.StringValue(call.Arg(0)) ?? "";
+        if (allianceName.Length > 50)
+            throw new CorporationError("ALLIANCE_NAME_LIMIT_EXCEEDED");
+        var normalized = new string(allianceName
             .Where(char.IsAsciiLetterOrDigit).Select(char.ToUpperInvariant).Take(5).ToArray());
         var basis = normalized.Length == 0 ? "ALLY" : normalized;
         var suggestions = new[] { basis,basis[..Math.Min(4,basis.Length)],basis[..Math.Min(3,basis.Length)] + "X" }

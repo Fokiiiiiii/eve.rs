@@ -455,11 +455,11 @@ public sealed partial class CorporationStore
         return counts;
     }
 
-    public async Task<IReadOnlyList<AllianceApplication>> AllianceApplicationsForCorporationAsync(long corporation,CancellationToken token = default)
+    public async Task<IReadOnlyList<AllianceApplication>> AllianceApplicationsForCorporationAsync(long corporation,int limit,CancellationToken token = default)
     {
         await using var connection = await _source.OpenConnectionAsync(token);
         await using var command = Command(connection,null,
-            $"SELECT {AllianceApplicationColumns} FROM {_schema}.alliance_applications WHERE corporation_id=$1 ORDER BY alliance_id,id",corporation);
+            $"SELECT {AllianceApplicationColumns} FROM {_schema}.alliance_applications WHERE corporation_id=$1 ORDER BY alliance_id,id LIMIT $2",corporation,limit);
         var rows = new List<AllianceApplication>();
         await using var reader = await command.ExecuteReaderAsync(token);
         while (await reader.ReadAsync(token)) rows.Add(ReadAllianceApplication(reader));

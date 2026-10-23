@@ -1239,18 +1239,9 @@ Sources, in the order of the rule. SDE (sde.types and sde."typeDogma", the build
   (`objectCaching.py:222-225`). Building the remote service would answer calls nobody makes. The reference's proxy cache
   (`proxyCache: true` in `beyonceService.js:2482`, `mapService.js:755`, `corpService.js:590`, `agentMgrService.js:901`)
   would need it; a slice that returns such a reference must implement `GetCachableObject` first. Status: tolerated (A).
-- **Global-config store keys: given from the store catalog (done).** The seven keys of EVE.js `storeState.js:503-527` are in the base entries (`GlobalConfig.Build`), with values from `Data/new-eden-store.v1.json`: `fake_vgs_enabled` 1 (store enabled and has offers), `fake_fast_checkout_enabled` 1, `fake_fast_checkout_plex_offers`, `fake_fast_checkout_response` "OK", `fake_china_funnel_enabled` 0, `fake_buy_plex_offer_url` "", `use_shell_execute_to_buy_plex_offer` 1. Their consumers: `globalConfig/getFunctions.py:233-258`, `vgsService.py:51,101`, `fastCheckoutClientService.py:76`. The flags are 0/1 integers because `GetGlobalConfigBooleanValue` reads `bool(int(value))` (`getFunctions.py`). Tests: `NewEdenStoreHostTests.The_client_global_config_carries_the_store_keys...`.
-- **New Eden Store: real-money offers are granted free (owner policy).** Every offer purchasable with real money is free and really granted. The in-game ISK market is not touched. What this means in eve.rs:
-  - **Charge.** A purchase charges nothing, in PLX, AUR, or a fiat currency (CNY, JPY, EUR, GBP, USD, RUB). The listed price is display data. There is no balance gate. EVE.js charges PLEX for PLX offers (`storeFulfillment.js` `purchasePlexVaultOffer`); eve.rs does not.
-  - **Grants.** PLEX packs are credited to the recipient's vault. Items are created in the recipient's hangar at the station or structure the character is docked at, else its home station (EVE.js `storeFulfillment.js:490-528` grants items into the hangar; eve.rs no longer uses redeem tokens for purchases). Bundles grant each part. A quantity of 1 to 100 per purchase is a limit of this server.
-  - **Idempotency.** The receipt is keyed `account:operationId` (the call id), written in the same transaction as the grant. A repeated call answers True and grants nothing. FastCheckout keys its receipts `account:fast-checkout:<call id>`. The receipt row grows with every purchase (a known cost; EVE.js caps its log).
-  - **Notifications.** After commit, each new item is sent to the recipient's live session as `OnItemChange` (CrateService.cs:192 pattern; the client handles it at `eve/client/script/ui/shared/container.py:123`). The PLEX balance change reaches the client through the message bus, which eve.rs does not serve (TODO).
-  - **Granted.** Omega (`omega_30_days`, `cash_omega_*`) extends the account's stored subscription end time (`identity.accounts.subscription_end_at`), in the purchase's own transaction with its receipt: counted from the later of the stored end and now, by days times quantity, and capped at the policy horizon 2100-01-01T00:00:00Z. A stored end at or past the horizon is left unchanged, and a purchase never shortens it. EVE.js (`grantOmegaDaysToAccount`) counts the same way but has no cap. MCT (`mct_slot_30_days`, `cash_mct_*`) adds `slotCount` units of 30 days each, one unit per training slot. Slot choice: a free slot is opened from now (slot 2, then 3); with both running, the slot that ends first is extended. EVE.js extends only the existing slot keys (slot 3 is never opened by a purchase), so this is a deviation chosen to match the EVE University description ("opens up an additional queue"). Bundles with skill points (`cash_*_bundle`, `cash_level_*_mastery_pack`) remain left out of the catalog (no skill-point grant yet).
-  - **Catalog.** The seed is EVE.js `tools/DatabaseCreator/staticTables/newEdenStore/data.json` (sha256 in the catalog meta), the owner-approved data source. Product type ids were checked against the pinned SDE build 3396210 (zip sha256 matches `sde/lock.json`): Omega 29143 "Clone Grade Omega", MCT 63188 "Multiple Pilot Training", PLEX 44992 "PLEX". The real-money cash offers have no price in the seed, so they carry no `offerPricings`.
-  - **FastCheckout.** `BuyOffer` does not check the account password (EVE.js does not either; the session is already authenticated). `ClearFastCheckoutCacheForUser` answers True because the server keeps no per-user cache.
-  - **Multiple Character Training (slots).** An account has two extra training queues, slots 2 and 3 (the numbers the client uses). A slot runs until its end time; an expired slot is free. Activation of a soulbound certificate (type 34133 or 63188) needs an Omega clone (the EVE University wiki: only Omega accounts may activate it); a certificate is consumed once. The skills service allows one trainer per account plus one per running extra slot (`CharacterTraining`, EVE.js `skillQueueRuntime`: one). Notifications: `OnMultipleCharactersTrainingUpdated` to the account's sessions after commit. `InvalidateMultiCharacterTrainingCache` answers None: the server keeps no queue cache, so there is nothing to clear.
-  - **Omega and MCT notifications.** `OnSubscriptionChangedServer` (grade) and `OnSubscriptionTimeUpdateServer` (end time) go to the account's sessions after the end time is committed (`SubscriptionTransitions.Announce`).
-  - **Status.** Tests: `NewEdenStoreCatalogTests`, `StoreOffersServiceTests`, `FastCheckoutServiceTests`, `NewEdenStoreHostTests` and `NewEdenEntitlementHostTests` (PostgreSQL), `EntitlementRulesTests` (PostgreSQL), `CharacterTrainingTests` (training limit). The live walk `tools/headless-client/tests/test_store_entitlements_live.py` buys the Omega, MCT and PLEX offers (it has run only where noted in the report).
+- **Store checkout remains disabled until settlement exists.** `GlobalConfig.Build` advertises `fake_vgs_enabled=0`, `fake_fast_checkout_enabled=0`, `fake_fast_checkout_response=FAST_CHECKOUT_UNAVAILABLE`, and an empty PLEX offer list. `storeManager.can_purchase_offer` reports `payment_unavailable` when catalog offers exist but no settlement provider is connected; `storeManager.buy_offer` and `FastCheckoutService.BuyOffer` return named unavailable errors before persistence. The Host no longer grants products, PLEX, Omega time, or training slots from store purchase calls. This intentionally leaves those purchase flows unavailable rather than applying a charge-free grant. `ClearFastCheckoutCacheForUser` acknowledges that no per-user cache exists. The `StoreOffersService` settlement callback remains a provider boundary; Host composition does not configure one.
+  - Redeem-token activation of an already-owned Multiple Character Training certificate remains available and persists queue state. Store-based Omega, MCT, item, and PLEX purchases remain open until an atomic settlement provider exists.
+  - Tests: `StoreOffersServiceTests`, `FastCheckoutServiceTests`, `NewEdenStoreHostTests` and `NewEdenEntitlementHostTests` (PostgreSQL). No graphical-client purchase flow is claimed.
 - **`machoNet.SetGlobalConfigValue` is saved, and its write is observed.** The reference keeps a runtime override in
   memory (`server/src/services/machoNet/globalConfig.js:99-117`, and `machoNetService.js:357-400`), so a restart drops it.
   eve.rs saves it in PostgreSQL (schema `zsystem`, table `global_config`, as the reference's own `zsystem.GlobalConfig`)
@@ -5635,6 +5626,70 @@ charMgr.SetCharacterDescription now consumes 10 weighted per-session units becau
 
 Corporation profile, logo, division-name, abilities, acceptance, mail-restriction, aggression, and reinforce-hour writes now consume 10 weighted per-session units. The underlying store still rechecks persisted Director authority; reinforce-hour values remain limited to 0–23. The dispatcher regression covers all eight settings write methods.
 
+
+## Alliance administration RPC budgets (2026-10-23)
+
+Executor selection, alliance contact and label writes, and bulletin writes now consume 10 weighted per-session units each. They retain persisted executor/director checks, the bound-alliance check, 500-ID collection caps, client-derived label and bulletin text bounds, and existing notifications. The dispatcher regression covers all 13 write methods.
+
+
+## Corporation content write budgets (2026-10-23)
+
+Title, corporate contact, contact-label, and bulletin writes now consume 10 weighted per-session units each. CorporationStore still applies the persisted Director, Diplomat, or Chat Manager gate for each operation; existing title, label, bulk-contact, and bulletin bounds remain in force. A focused dispatcher regression covers the 12 individual methods.
+
+
+## Corporation membership RPC budgets (2026-10-23)
+
+Corporation creation, application submission, invitations, CEO succession, member removal, and account-key changes now consume 10 weighted per-session units. The store retains its transactional founder, application, Personnel Manager, membership, kickability, and division checks. The focused dispatcher regression covers the six methods.
+
+
+## Corporation reinforce-hour numeric validation (2026-10-23)
+
+SetStructureReinforceDefault now accepts only integral wire values from 0 through 23. Fractional or other numeric payloads are refused instead of being converted to hour zero. The PostgreSQL corporation settings regression verifies refusal and confirms the persisted hour remains unchanged.
+
+
+## Alliance creation RPC budget (2026-10-23)
+
+corpRegistry.CreateAlliance now consumes 10 weighted per-session units. Its persisted corporation-CEO check, transaction validation, maintenance billing and affiliation notifications are unchanged. The alliance-admin dispatcher regression includes repeated alliance creation calls.
+
+
+## Alliance short-name suggestion input bound (2026-10-23)
+
+corpRegistry.GetSuggestedAllianceShortNames now refuses alliance names above the V24.01 Tranquility field maximum of 50 UTF-16 code units before normalization and consumes 10 weighted per-session units. A PostgreSQL-backed service regression accepts 50 and refuses 51.
+
+
+## Alliance and character data RPC classification (2026-10-23)
+
+The inventory now records allianceRegistry.CancelCapitalSystemTransition, GetPrimeTimeInfo, and IsAllianceLocal with their bound/current alliance scopes, plus corpRegistry.GetAllianceApplications with its current-corporation scope and cost. GetAllianceApplications is corporation-scoped, costs 10 units, and refuses above 5,000 matching rows after a bounded 5,001-row query. corpRegistry.GetPendingAutoKicks is recorded as an empty result with no client-selected target. charMgr.SetNote is documented as active-character scoped with a 5,000-character bound and 10-unit cost.
+
+
+## Fleet proxy and manager budgets (2026-10-23)
+
+Fleet proxy join and advert operations now consume 10 weighted per-session units. Fleet manager leave and broadcast fanout calls also consume 10 units; watchlist mutations remain capped at 100 current fleet members. Focused dispatcher regressions cover all 11 methods.
+
+
+## Alliance application read cap (2026-10-23)
+
+corpRegistry.GetAllianceApplications now queries at most 5,001 rows and refuses collections above 5,000 before building the wire response. The caller must be the current corporation CEO or Director. The PostgreSQL regression creates 5,001 applications and verifies the named refusal.
+
+
+## Corporation manager RPC budgets (2026-10-23)
+
+corpmgr.GetPublicInfo, GetCorporations, and GetCorporationIDForCharacter now consume 10 weighted per-session units. The two corporation info calls include member counts, while the character lookup resolves one public corporation affiliation. `DispatchGoldenTests.Corporation_manager_public_reads_use_a_named_per_session_budget` covers all three calls.
+
+
+## Mutual war invitation provider refusal and budgets (2026-10-23)
+
+The Host does not configure mutual-war invitation persistence. All six mutualWarInviteMgr RPCs now consume 10 weighted per-session units, and the two reads return the same named unavailable refusal as writes instead of empty or false success values. `SendInviteByPlayer` also refuses when its blocking-state reader is absent. `CorporationProtocolTests.Mutual_war_invite_mgr_exposes_reference_routes_and_callback_shapes` and `DispatchGoldenTests.Mutual_war_invite_methods_use_a_named_per_session_budget` cover these behaviors.
+
+
+## POS manager provider refusals and budgets (2026-10-23)
+
+posMgr.GetControlTowers and UnanchorStructure now cost 10 weighted per-session units. Both return a named refusal when their provider is absent; UnanchorStructure also refuses malformed or nonpositive tower IDs before the Host callback. The Host callback rechecks corporation, system, deployment, and tower state. PosMgrServiceTests and the dispatcher regression cover the behavior.
+
+
+## Vault manager PLEX balance budget (2026-10-23)
+
+vaultManager.get_account_balance now costs 10 weighted per-session units. The RPC accepts only PLEX and the callback receives the authenticated account ID from the session, never a client-selected owner. `DispatchGoldenTests.Vault_manager_balance_reads_use_a_named_per_session_budget` covers repeated reads.
 `invbroker.GetAssetWorth` now costs 10 weighted per-session units because it traverses the character's full owned-item set; ordinary inventory reads remain at 2 units. The dispatcher regression verifies the asset valuation call exhausts the configured budget.
 
 `invbroker.ListByFlags` now refuses more than 500 raw flags with `INVENTORY_BULK_LIMIT_EXCEEDED` before reading inventory contents; the client supplies a small sequence of inventory flags. `InventoryRpcFixTests.ListByFlags_refuses_more_than_500_requested_flags` covers the refusal.
@@ -5661,3 +5716,13 @@ Corporation registry batch RPCs `ExecuteActions`, `GetMembersByIds`, `GetMemberI
 
 
 `fleetMgr.AddToWatchlist`, `RemoveFromWatchlist`, and `RegisterForDamageUpdates` now reject malformed containers, nonpositive/non-integer IDs, and raw batches above 500 with `FleetError` before changing session watchlist state. Valid batches still include only current fleet members and store at most 100 distinct IDs. `Fleet_watchlist_updates_keep_only_members_and_clear_removed_damage_targets` covers the refusal cases and unchanged state.
+
+
+## Character selection RPC scope and work bounds (2026-10-23)
+
+The security inventory now lists each active `charUnboundMgr` RPC by caller scope, target ownership, input constraints, and weighted work cost. Character creation and gender/bloodline changes refuse nonintegral, non-finite, or out-of-range integer inputs; bloodline changes also require a catalog entry before writing. Character enumeration is limited by the three account slots, selection and mutation endpoints charge 10 units, and the public random-name and validation queries charge one unit each. `ValidateNameEx` returns the existing too-long code before Unicode normalization when the raw name exceeds the 37 UTF-16 code-unit maximum. The actual client uses these name calls during the creation flow (`chooseNameSection.py`) and creates characters through `CreateCharacterWithDoll` (`characterCreationContainer.py`); no graphical-client acceptance is claimed by this classification.
+
+
+## Mail message ID input validation (2026-10-23)
+
+`mailMgr.GetMailHeaders`, `GetBody`, and `MarkAsRead` now accept only positive integral message IDs. Fractional IDs no longer truncate to another recipient's message identifier; invalid IDs yield no read result or mutation. `MailServiceTests.Mail_message_ids_must_be_positive_integral_wire_values` covers fractional, zero, and valid integral inputs.

@@ -184,7 +184,9 @@ public sealed partial class CharUnboundMgrService(
     public async ValueTask<PyValue> ValidateNameEx(ServiceCall call)
     {
         var name = JsSemantics.StringValue(call.Arg(0));
-        var check = CharacterNames.Validate(name);
+        var check = name is { Length: > CharacterNames.MaxLength }
+            ? NameCheck.TooLong
+            : CharacterNames.Validate(name);
         if (check == NameCheck.Valid && await characters.NameTakenAsync(name!, Token(call)))
         {
             check = NameCheck.Unavailable;
@@ -206,7 +208,10 @@ public sealed partial class CharUnboundMgrService(
             throw Info("That character is not available on this account.");
         }
 
-        var requestedGender = IntOrDefault(call.Arg(1), 1);
+        var requestedGenderValue = call.Arg(1);
+        if (requestedGenderValue is not PyNone && !TryWireInt(requestedGenderValue, out _))
+            throw Info("That gender is invalid.");
+        var requestedGender = requestedGenderValue is PyNone ? 1 : IntOrDefault(requestedGenderValue, 1);
         var gender = requestedGender is >= 0 and <= 2 ? requestedGender : 1;
         await characters.SetGenderAsync(characterId, gender, Token(call));
         if (IsCurrentCharacter(call, characterId))
@@ -231,11 +236,16 @@ public sealed partial class CharUnboundMgrService(
             throw Info("That character is not available on this account.");
         }
 
-        var requestedBloodlineId = IntOrDefault(call.Arg(1), 1);
-        var bloodline = catalog.Bloodline(requestedBloodlineId);
+        var requestedBloodlineValue = call.Arg(1);
+        if (requestedBloodlineValue is not PyNone && !TryWireInt(requestedBloodlineValue, out _))
+            throw Info("That bloodline is invalid.");
+        var requestedBloodlineId = requestedBloodlineValue is PyNone ? 1 : IntOrDefault(requestedBloodlineValue, 1);
         var bloodlineId = requestedBloodlineId != 0 ? requestedBloodlineId : character.BloodlineId;
-        var raceId = bloodline?.RaceId ?? character.RaceId;
-        var typeId = CreationCatalog.CharacterTypeId(requestedBloodlineId, character.TypeId);
+        var bloodline = catalog.Bloodline(bloodlineId);
+        if (bloodline is null)
+            throw Info("That bloodline is invalid.");
+        var raceId = bloodline.RaceId;
+        var typeId = CreationCatalog.CharacterTypeId(bloodlineId, character.TypeId);
         await characters.SetBloodlineAsync(characterId, bloodlineId, raceId, typeId, Token(call));
         if (IsCurrentCharacter(call, characterId))
         {
@@ -256,14 +266,23 @@ public sealed partial class CharUnboundMgrService(
         {
             throw MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr("Log in before creating a character.")));
         }
+        var name = JsSemantics.StringValue(call.Arg(0)) ?? "";
+        if (name.Length > CharacterNames.MaxLength)
+            throw MachoErrors.ThrowUserError("CharNameInvalid");
+        if (!TryWireInt(call.Arg(1), out var raceId) ||
+            !TryWireInt(call.Arg(2), out var bloodlineId) ||
+            !TryWireInt(call.Arg(3), out var gender) ||
+            !TryWireInt(call.Arg(4), out var ancestryId) ||
+            !TryWireInt(call.Arg(7), out var schoolId))
+            throw Info("That character cannot be created.");
         var request = new CreationRequest(
             account,
-            JsSemantics.StringValue(call.Arg(0)) ?? "",
-            Int(call.Arg(1)),
-            Int(call.Arg(2)),
-            Int(call.Arg(3)),
-            Int(call.Arg(4)),
-            Int(call.Arg(7)),
+            name,
+            raceId,
+            bloodlineId,
+            gender,
+            ancestryId,
+            schoolId,
             Appearance(call.Arg(5)),
             Appearance(call.Arg(6)));
         var outcome = await creation.CreateAsync(request, Token(call));
@@ -581,6 +600,24 @@ public sealed partial class CharUnboundMgrService(
     };
 
     private static int IntOrDefault(PyValue value, int fallback) => value is PyInt or PyLong or PyReal ? Int(value) : fallback;
+
+    private static bool TryWireInt(PyValue value, out int result)
+    {
+        var number = value switch
+        {
+            PyInt integer => (double)integer.Value,
+            PyLong integer => integer.Value,
+            PyReal real => real.Value,
+            _ => double.NaN,
+        };
+        if (!double.IsFinite(number) || number != Math.Truncate(number) || number < int.MinValue || number > int.MaxValue)
+        {
+            result = 0;
+            return false;
+        }
+        result = (int)number;
+        return true;
+    }
 
     /// <summary>The paper doll or portrait the client sent, kept as it was sent.</summary>
     private static byte[]? Appearance(PyValue value) => value is PyNone ? null : MarshalCodec.Encode(value);

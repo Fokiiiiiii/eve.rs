@@ -1567,6 +1567,61 @@ public class AllianceTests
     }
 
     [PgFact]
+    public async Task Suggested_alliance_short_names_bound_the_client_alliance_name()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var service = new Eve.Services.Corporations.CorpRegistryService(
+            rig.Store, rig.Characters, () => rig.Now);
+        var session = new Eve.Services.ClientSession();
+        Eve.Services.ServiceCall Call(Eve.Marshal.PyValue name) => new()
+        {
+            Session = session, Method = "GetSuggestedAllianceShortNames", Args = [name]
+        };
+        var valid = Assert.IsType<Eve.Marshal.PyList>(await service.GetSuggestedAllianceShortNames(Call(
+            new Eve.Marshal.PyWString(new string('A', 50)))));
+        Assert.NotEmpty(valid.Items);
+        await Assert.ThrowsAsync<Eve.Corporations.CorporationError>(() => service.GetSuggestedAllianceShortNames(
+            Call(new Eve.Marshal.PyWString(new string('A', 51)))).AsTask());
+    }
+
+    [PgFact]
+    public async Task Alliance_application_read_is_bounded_for_the_current_corporation()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (actor, corporation) = await Founder(rig, "Alliance Applications Owner", "AAPPS");
+        await using (var command = rig.Source.CreateCommand($"""
+            WITH new_owners AS (
+                INSERT INTO {rig.CorporationSchema}.owner_names(owner_id,name_key,ticker_key)
+                SELECT 990000000000 + n, 'bulk alliance ' || n, 'BA' || n
+                FROM generate_series(1,5001) AS n
+                RETURNING owner_id
+            ), new_alliances AS (
+                INSERT INTO {rig.CorporationSchema}.alliances(
+                    id,name,short_name,description,url,executor_corporation_id,creator_corporation_id,
+                    creator_character_id,created_ms,founding_key)
+                SELECT owner_id, 'Bulk alliance ' || owner_id, 'B' || owner_id, '', '',
+                    $1,$1,$2,0,'bulk-alliance:' || owner_id
+                FROM new_owners
+                RETURNING id
+            )
+            INSERT INTO {rig.CorporationSchema}.alliance_applications(
+                alliance_id,corporation_id,text,status,created_ms,updated_ms)
+            SELECT id,$1,'',1,0,0 FROM new_alliances
+            """))
+        {
+            command.Parameters.AddWithValue(corporation.Id);
+            command.Parameters.AddWithValue(actor);
+            Assert.Equal(5001, await command.ExecuteNonQueryAsync());
+        }
+
+        var service = new Eve.Services.Corporations.CorpRegistryService(rig.Store,rig.Characters,() => rig.Now);
+        var session = new Eve.Services.ClientSession { CharacterId = actor };
+        var call = new Eve.Services.ServiceCall { Session = session, Method = "GetAllianceApplications", Args = [] };
+        await Assert.ThrowsAsync<Eve.Corporations.CorporationError>(
+            () => service.GetAllianceApplications(call).AsTask());
+    }
+
+    [PgFact]
     public async Task Alliance_executor_support_from_member_directors_is_persisted_and_elects_the_executor()
     {
         await using var rig = await Rig.CreateAsync();

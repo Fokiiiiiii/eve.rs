@@ -114,7 +114,7 @@ Host CoreServices.CreateはRpcHandlerを渡さずBannedWordsService/AlphaInjecto
 
 GetNextAvailableInjectionはHostがLong(0)を返す (CoreCompatibilityServiceAdapters.cs:29-31)、EveJSはcharacter stateから次のAlpha injection Filetimeを計算する (alphaInjectorMgrService.js:15-20; skillTradingRuntime.js:665-667)。client callsiteはskillsvc.py:1004。GetKiringConfiguration等はlocal safe defaults、PlaceKiringOrderは時刻付きIDを使う。ActivateRedeemingCodeはEveJS Trueに対しHost False (CoreCompatibilityServiceAdapters.cs:263-265; kiringMgrService.js:167-169); no redeeming storeを理由とする明示的な差で、DEVIATIONS.md:1384に記載。
 
-FastCheckoutのBuyOfferはEveJSがpurchaseTraceID/journeyID kwargsをcallbackに渡すが、Hostはoffer/offerIDを読みCallIdをidempotency keyとして使う (FastCheckoutService.cs:50-77; FastCheckoutService.js:159-188)。現行方針としてreal-money offersを無料で本当に付与し、after commitで通知する差はDEVIATIONS.md:1079-1090に記載済み。これは互換差分として記録し、テスト/実購入は実行していない。
+FastCheckoutのBuyOfferとstoreManager.buy_offerは、決済settlement providerがHostに接続されていない間、named unavailable errorで拒否する。GlobalConfigは両store flagsを0にし、FastCheckoutのoffersは空である。購入による商品、PLEX、Omega時間、またはMCT slotの付与は行わない。既存のredeem certificate activationは別経路で引き続き有効。
 
 ### Faction data services
 

@@ -145,7 +145,7 @@ Use lane `eve_p4` only and run database work through `tools/dev/db-lock.sh`. The
 - Added `Unlimited_license_types_use_the_runtime_unlimited_sentinel` for unlimited, invalid and finite values. `Eve.Host.Tests` Release build passed with zero warnings and errors, and the focused test passed 1/1 with no skips. No database was used.
 - CI run 662 (`40005488739`) completed on `94e37e82`; Windows and all other selected jobs passed, while the E2E job reproduced the pre-fix HTTP 400 at `ConsumeRequest`. Its regression is the reason for this catalog fix.
 - After merging current main, `Eve.Host.Tests` Release build passed with zero warnings and errors and the focused regression passed 1/1 with no skips. No database was used.
-- Pushed the catalog fix as `4b3cd33b`. Selected Agent Actions run `40007743442` is in progress; push-triggered CI run `40007726336` is queued. Windows TODO rows are closed based on run 662; this push's Windows job will check the combined head.
+- Pushed the catalog fix as `4b3cd33b`. Agent run 135 (`40007743442`) passed the focused SKINR regression 1/1 with no skips. Push CI run 668 (`40007726336`) is still in progress; its Host shard exposed a separate Character notification test-helper key cast, fixed in the next commit. Windows TODO rows are closed based on the successful Windows job in run 662.
 
 ## 2026-10-23 Character notification test helper
 

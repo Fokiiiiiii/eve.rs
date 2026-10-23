@@ -3,5 +3,5 @@
 # does not need.
 pycryptodome>=3.24.1
 # the public gateway live walk (tests/test_skill_plan_live.py) speaks gRPC
-grpcio>=1.66
+grpcio>=1.84.0
 protobuf>=5.28

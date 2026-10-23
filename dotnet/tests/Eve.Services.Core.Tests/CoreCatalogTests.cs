@@ -75,6 +75,44 @@ public sealed class LookupSvcTests
     }
 
     [Fact]
+    public async Task Empty_corporation_search_returns_empty_without_loading_the_corporation_directory()
+    {
+        var directory = new TestDirectory { FailOnCorporationRead = true };
+        var service = CoreServices.CreateLookupService(directory);
+
+        var result = Assert.IsType<Eve.Marshal.PyList>(await service.CallAsync(Request("LookupCorporations")));
+
+        Assert.Empty(result.Items);
+        Assert.Equal(0, directory.CorporationReadCount);
+    }
+
+    [Fact]
+    public async Task Empty_warable_search_returns_empty_without_loading_corporations_or_alliances()
+    {
+        var directory = new TestDirectory { FailOnCorporationRead = true, FailOnAllianceRead = true };
+        var service = CoreServices.CreateLookupService(directory);
+
+        var result = Assert.IsType<Eve.Marshal.PyList>(await service.CallAsync(Request("LookupWarableCorporationsOrAlliances")));
+
+        Assert.Empty(result.Items);
+        Assert.Equal(0, directory.CorporationReadCount);
+        Assert.Equal(0, directory.AllianceReadCount);
+    }
+
+    [Fact]
+    public async Task Oversized_corporation_search_is_refused_before_loading_the_directory()
+    {
+        var directory = new TestDirectory { FailOnCorporationRead = true };
+        var service = CoreServices.CreateLookupService(directory);
+
+        var error = await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(async () =>
+            await service.CallAsync(Request("LookupCorporations", new Eve.Marshal.PyStr(new string('x', 65_536)))));
+
+        Assert.True(error.Error.IsUserError);
+        Assert.Equal(0, directory.CorporationReadCount);
+    }
+
+    [Fact]
     public async Task Owner_search_variants_include_the_expected_character_corporation_alliance_and_faction_rows()
     {
         var service = CoreServices.CreateLookupService(new TestDirectory
@@ -239,10 +277,24 @@ public sealed class LookupSvcTests
         public IReadOnlyList<LookupAlliance> Alliances { get; init; } = [];
         public IReadOnlyList<LookupFaction> Factions { get; init; } = [];
         public IReadOnlyList<LookupLocation> Locations { get; init; } = [];
+        public bool FailOnCorporationRead { get; init; }
+        public bool FailOnAllianceRead { get; init; }
+        public int CorporationReadCount { get; private set; }
+        public int AllianceReadCount { get; private set; }
 
         public ValueTask<IReadOnlyList<LookupCharacter>> CharactersAsync(CancellationToken cancellationToken) => ValueTask.FromResult(Characters);
-        public ValueTask<IReadOnlyList<LookupCorporation>> CorporationsAsync(CancellationToken cancellationToken) => ValueTask.FromResult(Corporations);
-        public ValueTask<IReadOnlyList<LookupAlliance>> AlliancesAsync(CancellationToken cancellationToken) => ValueTask.FromResult(Alliances);
+        public ValueTask<IReadOnlyList<LookupCorporation>> CorporationsAsync(CancellationToken cancellationToken)
+        {
+            CorporationReadCount++;
+            if (FailOnCorporationRead) throw new InvalidOperationException("empty search must not load the corporation directory");
+            return ValueTask.FromResult(Corporations);
+        }
+        public ValueTask<IReadOnlyList<LookupAlliance>> AlliancesAsync(CancellationToken cancellationToken)
+        {
+            AllianceReadCount++;
+            if (FailOnAllianceRead) throw new InvalidOperationException("empty search must not load the alliance directory");
+            return ValueTask.FromResult(Alliances);
+        }
         public ValueTask<IReadOnlyList<LookupFaction>> FactionsAsync(CancellationToken cancellationToken) => ValueTask.FromResult(Factions);
         public ValueTask<IReadOnlyList<LookupLocation>> LocationsByGroupAsync(int groupId, CancellationToken cancellationToken) =>
             ValueTask.FromResult<IReadOnlyList<LookupLocation>>([.. Locations.Where(location => location.GroupId == groupId)]);

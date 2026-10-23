@@ -3,6 +3,7 @@
 ## Project status
 
 Cross-system headless walk coverage and remaining integration gaps are tracked in [WALKS.md](WALKS.md).
+RPC malformed-argument fuzz coverage and its execution record are tracked in [RPC_FUZZING.md](RPC_FUZZING.md).
 
 Built from the sections below, as of 2026-10-23. **Status** is what the area does today. **Project rule** is the rule it is built under (the client, the SDE, CCP or the EVE University wiki, or an owner decision). **Cut or open** lists what is not built; the section named holds the evidence. Every cut or open item in this file has a row in the table or a line in its section, and a cut that changes what the client sees also has an entry in `docs/reference/compat/DEVIATIONS.md`.
 

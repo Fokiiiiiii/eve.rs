@@ -1,5 +1,9 @@
 # Deviations from the reference server
 
+## Lookup search resource bound (2026-10-23)
+
+`lookupSvc` returns an empty list for blank searches in its character, corporation, faction, owner, and location search handlers; eve.rs now returns that same result before loading directory rows. Search strings longer than 256 UTF-16 code units receive the named `CustomInfo` refusal before any directory read. EveJS 261018.1 (`server/src/services/corporation/lookupSvcService.js`, `Handle_LookupCharacters`, `Handle_LookupCorporations`, `Handle_LookupFactions`, and `Handle_LookupOwners`) has no corresponding input-length bound. The V24.01 callsites found in `eve-logic/eve/devtools/script/svc_slash.py:104,1117`, `eve/devtools/script/svc_trainer.py:50`, and `eve/client/script/ui/services/wars/war_cso.py:338` pass searched names; none defines an accepted maximum length. The 256-unit ceiling is an eve.rs resource bound for malformed or hostile calls; ordinary client-sized names retain the existing row and error shapes. `LookupSvcTests.Oversized_corporation_search_is_refused_before_loading_the_directory` verifies refusal occurs before provider access.
+
 ## Front connection admission limit (2026-10-22)
 
 The Host admits at most 1,024 active front connections by default (`EVE_MAX_FRONT_CONNECTIONS`) and closes accepted sockets above that capacity before dispatch. This resource policy does not change packets for admitted clients; overload clients receive a closed connection. `HostServerTests.Front_connections_above_the_server_limit_are_closed_before_dispatch` verifies the refusal and confirms the admitted connection remains active.

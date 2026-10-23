@@ -26,6 +26,7 @@ public sealed partial class ConfigService(
 
     private const long CorporationTypeId = 2;
     private const long AllianceTypeId = 16159;
+    private const int MaximumRequestedIds = 500;
 
     [Method("GetStationSolarSystemsByOwner")]
     public PyValue GetStationSolarSystemsByOwner(ServiceCall call)
@@ -228,19 +229,25 @@ public sealed partial class ConfigService(
         {
             PyList list => list.Items,
             PyTuple tuple => tuple.Items,
-            _ => [],
+            _ => throw MachoErrors.ThrowUserError("CONFIG_IDENTIFIER_LIST_INVALID"),
         };
-        if (items.Count > 500)
+        if (items.Count > MaximumRequestedIds)
             throw MachoErrors.ThrowUserError("CONFIG_BULK_LIMIT_EXCEEDED");
-        return items.Select(item => item switch
+
+        var ids = new long[items.Count];
+        for (var index = 0; index < items.Count; index++)
+        {
+            var id = items[index] switch
             {
                 PyInt number => number.Value,
                 PyLong number => number.Value,
-                _ => 0,
-            })
-            .Where(id => id > 0 || includeZero && id == 0)
-            .Distinct()
-            .ToArray();
+                _ => throw MachoErrors.ThrowUserError("CONFIG_IDENTIFIER_INVALID"),
+            };
+            if (id < 0 || id == 0 && !includeZero)
+                throw MachoErrors.ThrowUserError("CONFIG_IDENTIFIER_INVALID");
+            ids[index] = id;
+        }
+        return ids.Distinct().ToArray();
     }
 
     private static PyTuple LocationRow(long id, string name, int? solarSystemId, double x = 0, double y = 0, double z = 0, string? nameId = null) =>

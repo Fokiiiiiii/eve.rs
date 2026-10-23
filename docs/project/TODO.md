@@ -2742,3 +2742,6 @@ A scheduled online timer settles one completed queue line at a time and reschedu
 
 - The eve_p3 PI live walk now routes extractor output into the launchpad, then exports produced material through the customs office. It also checks the launched container, customs tax settlement, and rejection of a changed tax rate.
 - The eve_p3 industry walk completes ME and TE research jobs, then manufactures and delivers the researched blueprint's product. The walk uses persisted job completion times to keep the live sequence within CI-sized time.
+Security review follow-up: config multi-ID lookups now validate list/tuple shape and identifiers and cap raw batches at 500 before database or item reads. The complete RPC ownership and resource-bound inventory remains open.
+Config multi-ID owner, corporation ticker, alliance short-name, and location RPCs now cost 10 weighted per-session units as well as capping each request at 500 IDs; the service-by-service RPC inventory is still in progress.
+The market multi-buy validator preserves the client's zero-quantity no-op rows while refusing negative quantity and invalid minimum-volume values before any order write.

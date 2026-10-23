@@ -189,8 +189,9 @@ public class ReloadServiceTests
 
         // when the time has run the rounds are asked of the simulation (the gun takes what fits) and the hold gives them
         f.Rig.Delay.Release();
-        await WaitForAsync(() => f.Rig.Rounds.Asked.Count > 0);
+        await f.Rig.Rounds.AdjustmentCompleted.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Contains(f.Rig.Rounds.Asked, asked => asked.StartsWith($"{f.Gun} {Antimatter} Add"));
+        Assert.Equal((80L, 120L), (await InGunAsync(f) ?? 0, await HoldAsync(f)));
     }
 
     [PgFact]
@@ -201,7 +202,7 @@ public class ReloadServiceTests
         // a module that is not fitted has nothing to load: the simulation is answered with none, and never waits on the host
         const long NotFitted = 999;
         f.Rig.Rounds.RunDry(new SpentGun(f.Session, f.Character.CharacterId, f.Character.ShipId, NotFitted, Antimatter));
-        await WaitForAsync(() => f.Rig.Rounds.Asked.Count > 0);
+        await f.Rig.Rounds.AdjustmentCompleted.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Equal([$"{NotFitted} 0 Add {{ Capacity = 0, Available = 0 }}"], f.Rig.Rounds.Asked);
         Assert.False(f.Rig.Timers.IsSet($"dogma.reload:{NotFitted}"));
     }

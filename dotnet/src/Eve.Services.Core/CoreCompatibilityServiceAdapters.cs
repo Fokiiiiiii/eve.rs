@@ -7,19 +7,73 @@ namespace Eve.Services.Core;
 [Service("bannedwords")]
 public sealed partial class BannedWordsService
 {
+    private const int MaximumWordArguments = 32;
+    private const int MaximumWordBytes = 4096;
+    private const int MaximumTotalWordBytes = 16384;
+    private const int MaximumErrorMessageBytes = 128;
+
     public Func<ServiceCall, ValueTask<PyValue?>>? RpcHandler { get; set; }
 
     [Method("fetch_regexes")]
-    public ValueTask<PyValue> FetchRegexes(ServiceCall call) =>
-        CompatibilityRpc.Invoke(call, RpcHandler, static () => new PyList([]));
+    public ValueTask<PyValue> FetchRegexes(ServiceCall call)
+    {
+        ValidateFetchRegexes(call);
+        return CompatibilityRpc.Invoke(call, RpcHandler, static () => new PyList([]));
+    }
 
     [Method("check_words_allowed")]
-    public ValueTask<PyValue> CheckWordsAllowed(ServiceCall call) =>
-        CompatibilityRpc.Invoke(call, RpcHandler, static () => PyNone.Instance);
+    public ValueTask<PyValue> CheckWordsAllowed(ServiceCall call)
+    {
+        ValidateWords(call);
+        return CompatibilityRpc.Invoke(call, RpcHandler, static () => PyNone.Instance);
+    }
 
     [Method("check_search_words_allowed")]
-    public ValueTask<PyValue> CheckSearchWordsAllowed(ServiceCall call) =>
-        CompatibilityRpc.Invoke(call, RpcHandler, static () => PyNone.Instance);
+    public ValueTask<PyValue> CheckSearchWordsAllowed(ServiceCall call)
+    {
+        ValidateWords(call);
+        return CompatibilityRpc.Invoke(call, RpcHandler, static () => PyNone.Instance);
+    }
+
+    private static void ValidateFetchRegexes(ServiceCall call)
+    {
+        if (call.Args.Count != 1 || call.Kwargs is not PyNone)
+            throw MachoErrors.ThrowUserError("BANNED_WORDS_ARGUMENTS_INVALID");
+        if (call.Arg(0) is not PyStr and not PyWString)
+            throw MachoErrors.ThrowUserError("BANNED_WORDS_REGEX_TYPE_INVALID");
+        var type = Text(call.Arg(0));
+        if (type is not ("blocked" or "intercepted"))
+            throw MachoErrors.ThrowUserError("BANNED_WORDS_REGEX_TYPE_INVALID");
+    }
+
+    private static void ValidateWords(ServiceCall call)
+    {
+        if (call.Args.Count is < 1 or > MaximumWordArguments)
+            throw MachoErrors.ThrowUserError("BANNED_WORDS_ARGUMENTS_INVALID");
+        var totalBytes = 0;
+        foreach (var value in call.Args)
+        {
+            if (value is not PyStr and not PyWString)
+                throw MachoErrors.ThrowUserError("BANNED_WORDS_TEXT_INVALID");
+            var length = System.Text.Encoding.UTF8.GetByteCount(Text(value));
+            if (length > MaximumWordBytes || (totalBytes = checked(totalBytes + length)) > MaximumTotalWordBytes)
+                throw MachoErrors.ThrowUserError("BANNED_WORDS_TEXT_TOO_LONG");
+        }
+
+        if (call.Kwargs is PyNone) return;
+        if (call.Kwargs is not PyDict kwargs || kwargs.Entries.Count > 1 ||
+            kwargs.Entries.Any(pair => pair.Key is not PyStr { Value: "err_message" } ||
+                pair.Value is not PyStr and not PyWString ||
+                System.Text.Encoding.UTF8.GetByteCount(Text(pair.Value)) > MaximumErrorMessageBytes))
+            throw MachoErrors.ThrowUserError("BANNED_WORDS_ARGUMENTS_INVALID");
+    }
+
+    private static string Text(PyValue value) => value switch
+    {
+        PyStr text => text.Value,
+        PyWString text => text.Value,
+        _ => string.Empty,
+    };
 }
 
 [Service("cache")]

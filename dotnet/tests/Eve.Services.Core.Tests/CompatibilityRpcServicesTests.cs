@@ -56,6 +56,42 @@ public sealed class CompatibilityRpcServicesTests
     }
 
     [Fact]
+    public async Task Banned_words_rpcs_refuse_malformed_and_unbounded_input_before_callbacks()
+    {
+        var callbackCalls = 0;
+        var service = (IService)new BannedWordsService
+        {
+            RpcHandler = _ =>
+            {
+                callbackCalls++;
+                return ValueTask.FromResult<PyValue?>(PyNone.Instance);
+            },
+        };
+        var oversized = new PyStr(new string('x', 4097));
+        var calls = new[]
+        {
+            Call("fetch_regexes"),
+            Call("fetch_regexes", new PyStr("other")),
+            Call("fetch_regexes", new PyStr("blocked"), new PyDict([])),
+            Call("check_words_allowed"),
+            Call("check_words_allowed", new PyInt(7)),
+            new ServiceCall { Method = "check_words_allowed", Args = Enumerable.Repeat<PyValue>(new PyStr("x"), 33).ToArray(), Session = new ClientSession() },
+            Call("check_search_words_allowed", oversized),
+            Call("check_words_allowed", new PyStr("word"), new PyDict([new(new PyStr("unexpected"), new PyStr("x"))])),
+            Call("check_words_allowed", new PyStr("word"), new PyDict([new(new PyStr("err_message"), oversized)])),
+        };
+
+        foreach (var call in calls)
+        {
+            var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(call).AsTask());
+            Assert.Equal(MachoErrors.UserErrorClass, refusal.Error.ClassName);
+            Assert.StartsWith("BANNED_WORDS_", refusal.Error.UserErrorMessage);
+        }
+
+        Assert.Equal(0, callbackCalls);
+    }
+
+    [Fact]
     public async Task Kiring_initialization_rpcs_keep_the_reference_shapes()
     {
         var rpc = (IService)new KiringMgrService();
@@ -167,7 +203,15 @@ public sealed class CompatibilityRpcServicesTests
 
         foreach (var (service, method) in services)
         {
-            var request = StaffCall(method, new PyInt(42), kwargs: new PyDict([new(new PyStr("source"), new PyStr("test"))]));
+            var request = service is BannedWordsService
+                ? new ServiceCall
+                {
+                    Method = method,
+                    Args = [new PyStr("name")],
+                    Kwargs = new PyDict([new(new PyStr("err_message"), new PyStr("custom error"))]),
+                    Session = new ClientSession { CharacterId = 42 },
+                }
+                : StaffCall(method, new PyInt(42), kwargs: new PyDict([new(new PyStr("source"), new PyStr("test"))]));
             Assert.Same(expected, await service.CallAsync(request));
             Assert.Same(request, received);
         }

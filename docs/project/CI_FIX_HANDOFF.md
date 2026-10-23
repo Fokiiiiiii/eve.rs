@@ -167,3 +167,10 @@ Use lane `eve_p4` only and run database work through `tools/dev/db-lock.sh`. The
 - `MarketTrading` checks the persisted character location against the order venue. With no Marketing skill the sell range is `-1`; a station-to-structure distance of 0 is outside that range, so the test was trying a remote order without the required skill.
 - The test characters now start at the structure ID, matching the session and the intended in-structure trade. This also covers the immediate-buy participants in the same scenario. The focused database-backed Actions check will run after push; no local PostgreSQL test was run.
 - CI run 672's SKINR HTTP 400 still needs the error detail added in main's `b5ecf895` test diagnostic on the next E2E run.
+
+## 2026-10-23 contact notification payload normalization follow-up
+
+- Run 675 on `ebf1ec87` and run 676 on `f97d1131` exposed the next persisted-data assertion after sender and receiver IDs were corrected: JSON `data.level=-10` is returned as `PyInt`, while the restart-read assertion expected `PyLong`. The DTO's generic `Payload` path normalizes that integer to the client's `PyInt`.
+- Updated the restart-read `level` expectation to `PyInt(-10)`. The direct notification packet retains its own observed wire type.
+- Run 678 on current main `737ba657` is checking the upstream contact type updates and still reports the structure-market sell failure at the same line despite the location fixture change. The market error code is not present in the wrapped test failure, so the next step is to expose that code in the focused regression and fix its actual cause.
+- Agent checks 142/147 for the contact regression failed without printing a per-test summary; the main CI run supplied the precise persisted-data mismatch. Focused Actions verification will be dispatched for the corrected contact test after this push.

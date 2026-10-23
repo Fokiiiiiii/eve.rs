@@ -5546,3 +5546,8 @@ The fleetObject Init RPC costs 10 weighted per-session units because it updates 
 ## PLEX market RPC classification (2026-10-23)
 
 The security inventory now records each PLEX market route separately: the order book and four best/history reads derive region from the selected character, return public PLEX market data, and consume 10 weighted per-session units. `StartupCheck` returns its fixed response and takes no owner or market input. `DispatchGoldenTests.Expensive_market_calls_have_a_named_per_session_budget` checks market RPC budget refusal.
+
+
+## Character killmail page budget (2026-10-23)
+
+`charMgr.GetRecentShipKillsAndLosses` derives its owner from the active session, caps each page at 25 rows, and now consumes 10 weighted per-session units to bound repeated reads. `DispatchGoldenTests.Character_profile_reads_use_a_named_per_session_budget` covers its budget refusal alongside the public and private profile reads.

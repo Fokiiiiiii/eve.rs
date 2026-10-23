@@ -1,5 +1,10 @@
 # Deviations from the reference server
 
+## SKINR batch sequencing duration (2026-10-23)
+
+Ship SKINR charges PLEX per license, while the sequencing duration is the tier base time once for a multi-license batch. EVE University’s [Ship SKINR mechanics](https://wiki.eveuniversity.org/Ship_SKINR) explicitly says multiple skins multiply PLEX cost but not sequencing time. EveJS 261018.1 `shipSkinSequencingRuntime.initiate` multiplies the tier duration by quantity, which conflicts with that mechanics reference; eve.rs follows the documented mechanic. `ShipSkinrDispatchTests.V24_skinr_routes_expose_the_called_methods_and_tier_rows` checks the published tier time table, and `ShipSkinrDispatchTests.Batch_quantity_multiplies_plex_cost_but_keeps_tier_time` covers quantity-independent duration.
+
+
 ## Lookup search resource bound (2026-10-23)
 
 `lookupSvc` returns an empty list for blank searches in its character, corporation, faction, owner, and location search handlers; eve.rs now returns that same result before loading directory rows. Search strings longer than 256 UTF-16 code units receive the named `CustomInfo` refusal before any directory read. EveJS 261018.1 (`server/src/services/corporation/lookupSvcService.js`, `Handle_LookupCharacters`, `Handle_LookupCorporations`, `Handle_LookupFactions`, and `Handle_LookupOwners`) has no corresponding input-length bound. The V24.01 callsites found in `eve-logic/eve/devtools/script/svc_slash.py:104,1117`, `eve/devtools/script/svc_trainer.py:50`, and `eve/client/script/ui/services/wars/war_cso.py:338` pass searched names; none defines an accepted maximum length. The 256-unit ceiling is an eve.rs resource bound for malformed or hostile calls; ordinary client-sized names retain the existing row and error shapes. `LookupSvcTests.Oversized_corporation_search_is_refused_before_loading_the_directory` verifies refusal occurs before provider access.

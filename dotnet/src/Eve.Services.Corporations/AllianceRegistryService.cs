@@ -882,7 +882,11 @@ private static double RelationshipValue(PyValue value)
     {
         var (actor,alliance) = await RequireAllianceExecutorDirector(call);
         RequireBoundAlliance(call,alliance);
-        await store.AddAllianceContactAsync(actor,alliance,PositiveIntegerId(call.Arg(0)),IntegerValue(call.Arg(1)),call.Cancellation);
+        var contactId = PositiveIntegerId(call.Arg(0));
+        var relationship = IntegerValue(call.Arg(1));
+        await store.AddAllianceContactAsync(actor,alliance,contactId,relationship,call.Cancellation);
+        CorporationNotificationAdapter.OrganizationContactsUpdated(characterSessions,call,alliance,true,
+            [(contactId,(long?)relationship,(long?)null)]);
         return PyNone.Instance;
     }
 
@@ -891,7 +895,11 @@ private static double RelationshipValue(PyValue value)
     {
         var (actor,alliance) = await RequireAllianceExecutorDirector(call);
         RequireBoundAlliance(call,alliance);
-        await store.EditAllianceContactAsync(actor,alliance,PositiveIntegerId(call.Arg(0)),IntegerValue(call.Arg(1)),call.Cancellation);
+        var contactId = PositiveIntegerId(call.Arg(0));
+        var relationship = IntegerValue(call.Arg(1));
+        await store.EditAllianceContactAsync(actor,alliance,contactId,relationship,call.Cancellation);
+        CorporationNotificationAdapter.OrganizationContactsUpdated(characterSessions,call,alliance,true,
+            [(contactId,(long?)relationship,(long?)null)]);
         return PyNone.Instance;
     }
 
@@ -900,7 +908,10 @@ private static double RelationshipValue(PyValue value)
     {
         var (actor,alliance) = await RequireAllianceExecutorDirector(call);
         RequireBoundAlliance(call,alliance);
-        await store.RemoveAllianceContactsAsync(actor,alliance,ContactIds(call.Arg(0)),call.Cancellation);
+        var contactIds = ContactIds(call.Arg(0));
+        await store.RemoveAllianceContactsAsync(actor,alliance,contactIds,call.Cancellation);
+        CorporationNotificationAdapter.OrganizationContactsUpdated(characterSessions,call,alliance,true,
+            [.. contactIds.Select(contactId => (contactId,(long?)null,(long?)null))]);
         return PyNone.Instance;
     }
 
@@ -909,7 +920,11 @@ private static double RelationshipValue(PyValue value)
     {
         var (actor,alliance) = await RequireAllianceExecutorDirector(call);
         RequireBoundAlliance(call,alliance);
-        await store.EditAllianceContactsRelationshipAsync(actor,alliance,ContactIds(call.Arg(0)),IntegerValue(call.Arg(1)),call.Cancellation);
+        var contactIds = ContactIds(call.Arg(0));
+        var relationship = IntegerValue(call.Arg(1));
+        await store.EditAllianceContactsRelationshipAsync(actor,alliance,contactIds,relationship,call.Cancellation);
+        CorporationNotificationAdapter.OrganizationContactsUpdated(characterSessions,call,alliance,true,
+            [.. contactIds.Select(contactId => (contactId,(long?)relationship,(long?)null))]);
         return PyNone.Instance;
     }
 

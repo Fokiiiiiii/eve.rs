@@ -11,6 +11,44 @@ public abstract record LoginResult;
 /// <summary>The login was accepted, as this account.</summary>
 public sealed record LoggedIn(uint AccountId, ulong Role, string CountryCode) : LoginResult;
 
+/// <summary>A CCP identity whose JWT signature and claims have already been verified.</summary>
+public sealed record VerifiedSsoIdentity(string Issuer, string Subject);
+
+/// <summary>Verifies a client-provided CCP SSO access token. Invalid tokens return null; provider failures throw.</summary>
+public interface ISsoTokenVerifier
+{
+    ValueTask<VerifiedSsoIdentity?> VerifyAsync(string token, CancellationToken cancellationToken);
+}
+
+/// <summary>Resolves a verified CCP identity through an explicitly linked eve.rs account.</summary>
+public interface ISsoAccountDirectory
+{
+    ValueTask<LoginResult> LoginSsoAsync(VerifiedSsoIdentity identity, CancellationToken cancellationToken);
+}
+
+/// <summary>Creates an explicit issuer/subject to account mapping for provisioning and tests.</summary>
+public interface ISsoIdentityLinker
+{
+    ValueTask<bool> LinkSsoIdentityAsync(uint accountId, VerifiedSsoIdentity identity, CancellationToken cancellationToken);
+}
+
+internal static class SsoIdentityRules
+{
+    public static bool IsAcceptable(VerifiedSsoIdentity identity)
+    {
+        if (string.IsNullOrWhiteSpace(identity.Issuer) || identity.Issuer.Length > 512 ||
+            identity.Issuer.Contains('\0'))
+            return false;
+        const string prefix = "CHARACTER:EVE:";
+        if (!identity.Subject.StartsWith(prefix, StringComparison.Ordinal) ||
+            identity.Subject.Length > 128 ||
+            !ulong.TryParse(identity.Subject.AsSpan(prefix.Length), System.Globalization.NumberStyles.None,
+                System.Globalization.CultureInfo.InvariantCulture, out var characterId))
+            return false;
+        return characterId > 0;
+    }
+}
+
 /// <summary>The login was refused; <see cref="Reason"/> is the code the client is shown.</summary>
 public sealed record LoginRefused(string Reason) : LoginResult
 {
@@ -104,13 +142,13 @@ public static class AccountNames
 
     /// <summary>A name with something in it, of sensible length, without a NUL (PostgreSQL text cannot hold one).</summary>
     public static bool IsAcceptable(string name) =>
-        !string.IsNullOrWhiteSpace(name) && name.Length <= MaxLength && !name.Contains('\0', StringComparison.Ordinal);
+        !string.IsNullOrWhiteSpace(name) && name.Length <= MaxLength && !name.Contains('\0');
 }
 
 /// <summary>
 /// Accounts kept in memory: for tests and for running without a database. Nothing survives a restart.
 /// </summary>
-public sealed class InMemoryAccountDirectory : IAccountDirectory, IAccountLookup, IAccountSubscriptions
+public sealed class InMemoryAccountDirectory : IAccountDirectory, IAccountLookup, IAccountSubscriptions, ISsoAccountDirectory, ISsoIdentityLinker
 {
     private sealed class Account(uint id, string userName, byte[] passwordHash, ulong role, DateTimeOffset createdAt)
     {
@@ -133,6 +171,8 @@ public sealed class InMemoryAccountDirectory : IAccountDirectory, IAccountLookup
     private sealed class Store
     {
         public ConcurrentDictionary<string, Account> Accounts { get; } = new(StringComparer.Ordinal);
+
+        public ConcurrentDictionary<(string Issuer, string Subject), uint> SsoLinks { get; } = new();
 
         public Lock Create { get; } = new();
 
@@ -178,6 +218,31 @@ public sealed class InMemoryAccountDirectory : IAccountDirectory, IAccountLookup
         {
             account.SubscriptionEndsAt = endsAt;
         }
+    }
+
+    public ValueTask<bool> LinkSsoIdentityAsync(uint accountId, VerifiedSsoIdentity identity, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!SsoIdentityRules.IsAcceptable(identity) || !_store.Accounts.Values.Any(account => account.Id == accountId))
+            return ValueTask.FromResult(false);
+        var key = (identity.Issuer, identity.Subject);
+        if (_store.SsoLinks.TryAdd(key, accountId))
+            return ValueTask.FromResult(true);
+        return ValueTask.FromResult(_store.SsoLinks.TryGetValue(key, out var linkedAccount) && linkedAccount == accountId);
+    }
+
+    public ValueTask<LoginResult> LoginSsoAsync(VerifiedSsoIdentity identity, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!SsoIdentityRules.IsAcceptable(identity) ||
+            !_store.SsoLinks.TryGetValue((identity.Issuer, identity.Subject), out var accountId))
+            return ValueTask.FromResult<LoginResult>(new LoginRefused(LoginRefused.BadCredentials));
+        var account = _store.Accounts.Values.FirstOrDefault(candidate => candidate.Id == accountId);
+        if (account is null)
+            return ValueTask.FromResult<LoginResult>(new LoginRefused(LoginRefused.BadCredentials));
+        return ValueTask.FromResult<LoginResult>(account.Banned
+            ? new LoginRefused(LoginRefused.Banned)
+            : new LoggedIn(account.Id, account.Role, _options.CountryCode));
     }
 
     public ValueTask<LoginResult> LoginAsync(LoginAttempt attempt, CancellationToken cancellationToken)

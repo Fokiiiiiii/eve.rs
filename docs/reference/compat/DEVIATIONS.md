@@ -1260,12 +1260,22 @@ Sources, in the order of the rule. SDE (sde.types and sde."typeDogma", the build
   `ROLE_SERVICE` (or `ROLE_ADMIN` for the value) (`machoNet.py:293-298`). eve.rs answers any session. The values are read
   only, and the same dictionary reaches every client in the handshake's `config_vals` (`handshake.rs:340`), so nothing
   secret is exposed. Status: tolerated (A).
-- **Single sign-on login (`connection.LoginSso`).** The acknowledgement carries `access_token` and `computer_hash`, which
-  the client reads after an SSO login (`carbon/client/script/remote/connectionService.py:139-140`). The reference's
-  authentication returns both (`machoNet.py:3445`). eve.rs sends both as None (the reference's answer when the client sends
-  no computer hash, `authenticationService.js:288-292`). The SSO token itself is not read: the reference only records it
-  (`authenticationService.js:281`), and no token-to-account rule exists in either implementation. A real SSO token therefore
-  does not sign a pilot in; the login is the ordinary account check. Status: open (FUTURE, see TODO.md).
+- **Single sign-on login (`connection.LoginSso`).** The V24.01 client sends `user_sso_token` with the
+  `EVE-SSO-CONNECTION` username and `fakePW` (`carbon/client/script/remote/connectionService.py:81-94,128-145);
+  `GPS.py:498-615` carries the token through the authentication challenge. CCP's SSO guidance requires RS256 signature
+  verification from discovery/JWKS, an accepted issuer, both the application client ID and static `EVE Online` audiences,
+  and expiration validation (`developers.eveonline.com/docs/services/sso/`). The checked V24 client callsites contain no
+  application client ID; eve.rs therefore requires the operator to configure the actual client ID in
+  `EVE_SSO_AUDIENCES` rather than selecting an audience value by assumption. CCP's `sub` is a selected character identity
+  (`CHARACTER:EVE:<id>`); local account binding is an explicit persisted `issuer + subject -> account id` mapping.
+  Unknown or unlinked identities receive `LoginAuthFailed`. This intentionally adds token verification and local mapping
+  where EveJS v0.12.9 only records the token (`authenticationService.js:268-293`) and did not define an account-binding
+  rule. HostLink v2 carries the SSO credential kind and inbound token to the host; the CCP token is not used as a gateway
+  access token. The client acknowledgement still carries `access_token=None` and `computer_hash=None`; the separate
+  `multiLoginBlocker.Login` computer-hash gate is not reached by this flow. Coverage: `SsoIdentityTests`, `PgAccountTests.Sso_identity_links_survive_a_new_directory_over_the_same_database`,
+  `HostServerTests.Sso_host_dispatch_resolves_the_verified_account_and_sends_its_session_state`,
+  `HostServerTests.An_unlinked_sso_identity_is_refused_without_opening_a_session`, and
+  `tools/headless-client/tests/test_sso_login_live.py`. Status: implementation and checks recorded in the task handoff.
 
 ## Login session shape and the service table (parity pass, 2026-10-11)
 

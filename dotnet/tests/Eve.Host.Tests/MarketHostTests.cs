@@ -428,16 +428,23 @@ public sealed class MarketHostTests : IAsyncLifetime
         Assert.Equal(new PyLong(structureId),location);
 
         await using (var command=source.CreateCommand($"""
-            SELECT COALESCE(sum(i.quantity),0)::bigint
+            SELECT o.vol_remaining,i.owner_id,i.location_id,i.flag,i.quantity
             FROM {Schema("EVE_MARKET_SCHEMA")}.orders o
             JOIN {Schema("EVE_INVENTORY_SCHEMA")}.items i ON i.id=o.escrow_item_id
-            WHERE o.actor_id=$1 AND o.station_id=$2 AND o.type_id=$3 AND o.bid=false AND o.state=0
+            WHERE o.actor_id=$1 AND o.station_id=$2 AND o.type_id=$3 AND NOT o.bid AND o.state=0
             """))
         {
             command.Parameters.AddWithValue(seller);
             command.Parameters.AddWithValue(structureId);
             command.Parameters.AddWithValue(Tritanium);
-            Assert.Equal(2L,(long)(await command.ExecuteScalarAsync())!);
+            await using var reader=await command.ExecuteReaderAsync();
+            Assert.True(await reader.ReadAsync());
+            Assert.Equal(2L,reader.GetInt64(0));
+            Assert.Equal(seller,reader.GetInt64(1));
+            Assert.NotEqual(structureId,reader.GetInt64(2));
+            Assert.Equal(ItemFlags.Hangar,reader.GetInt32(3));
+            Assert.Equal(2L,reader.GetInt64(4));
+            Assert.False(await reader.ReadAsync());
         }
         book=Assert.IsType<PyTuple>(Received(await market.CallAsync(Call(buyerSession,"GetOrders",8,new PyInt(Tritanium)))));
         var partialLine=Assert.IsType<PyTuple>(Assert.Single(Lines(book.Items[0]),

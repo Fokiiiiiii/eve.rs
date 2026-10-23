@@ -2,20 +2,22 @@
 
 ## Current state
 
-- Current `origin/main` is `e1628eae`, following the already-pushed SHA-specific concurrency fix.
-- Required CI run 550 (`39920654219`, SHA `e7c06a86`) failed only in `.NET (host tests 4/4)`: `Paper_doll_Rpcs_round_trip_character_state_and_emit_portrait_dbrows` passed `characterId + 1` to `GetMyPaperDollData`, which correctly requires the session character ID. The pending increment corrects the test input.
-- Recent CI runs also showed canceled nested Windows jobs while parent main runs continued. The reusable Windows workflow's shared ref group could replace a pending call; the pending increment makes its concurrency group unique per caller run.
-- The pending increment contains the selected-test workflow and runner, status commands and parser tests, nightly extended coverage, and local/Actions testing protocol.
+- Commit `e8d7ed04` is on `main`; `origin/main` has since advanced to `df08707e` through other pushes.
+- Agent-test run `39923041081` succeeded for `main`: the focused paper-doll RPC test, fast live files, and Rust workspace tests passed. Artifact `agent-test-logs-39923041081` exists (52,187 bytes).
+- Push CI run 556 (`39922996473`, SHA `e8d7ed04`) completed with one failure in `.NET (host tests 4/4)`: `Handlers_return_reference_shapes` called `GetPaperDollData` without its required character ID. All other Linux jobs and Windows passed; run 556 stayed active after later main pushes.
+- The missing ID is corrected in the current worktree. The earlier `GetMyPaperDollData` test typo was corrected in `e8d7ed04`.
+- Main push CI uses a SHA-specific group with cancellation disabled. The reusable Windows workflow has a per-caller run ID group, so pending Windows jobs are not replaced by later pushes.
+- `ci-status.py failures` now handles both full SHA values and prefixes; run 556's failure name and log tail were returned for `e8d7ed046b20`.
 
 ## Verification
 
 - `python3 tools/dev/test_ci_status.py`: 8 focused tests passed.
-- No database or broad local suite was used.
-- The agent-test workflow still needs an Actions dispatch. The push run and its concurrent-run behavior also need confirmation after the increment is pushed.
+- `MSBUILDDISABLENODEREUSE=1 dotnet test dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -c Release -nologo --verbosity minimal -nodeReuse:false -p:UseSharedCompilation=false --filter 'FullyQualifiedName~Handlers_return_reference_shapes'`: 1 passed, 0 failed, 0 skipped. This test did not use PostgreSQL.
+- The selected agent-test workflow completed end to end and uploaded its full logs.
+- MSBuild and compiler servers were shut down after the local focused test. No broad local suite or database was used.
 
 ## Next steps
 
-1. Commit the reviewed increment, fetch and merge the current `origin/main`, then push `HEAD:main`.
-2. Confirm earlier main CI runs remain active/completed and inspect the new required gate.
-3. Dispatch `agent-test.yml` against `main` with the focused paper-doll test, fast live files, and Rust tests; inspect completion and artifacts, then fix any failures at their root.
-4. Update this note before every push with the latest run IDs and outcomes.
+1. Commit the corrected test argument, SHA-prefix lookup, and this note; fetch and merge the latest `origin/main`, then push.
+2. Inspect the new push CI and verify the required gate succeeds.
+3. Record final run IDs and outcomes here before the final handoff.

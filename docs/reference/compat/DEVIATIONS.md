@@ -5494,7 +5494,7 @@ The fleetObject Init RPC costs 10 weighted per-session units because it updates 
 
 ## Corporation contact and bulletin-list work budget (2026-10-23)
 
-`corpRegistry.GetCorporateContacts` and its `GetContactList` alias return the current corporation’s complete contact list; `GetBulletins` and `GetBulletinEntries` return the complete bulletin list. Each call costs 10 weighted per-session units to bound repeated full-list reads. The corporation scope and response shapes stay unchanged. `DispatchGoldenTests.Corporation_contact_and_bulletin_lists_use_a_named_per_session_budget` covers all four RPC names.
+`corpRegistry.GetCorporateContacts` and its `GetContactList` alias return the current corporation’s complete contact list; `GetBulletins` and `GetBulletinEntries` return the complete bulletin list. Each call costs 10 weighted per-session units to bound repeated full-list reads. The corporation scope and response shapes stay unchanged. `DispatchGoldenTests.Corporation_registry_reads_use_a_named_per_session_budget` covers all four RPC names.
 
 
 ## Corporation bulletin text bounds (2026-10-23)
@@ -5503,11 +5503,11 @@ The fleetObject Init RPC costs 10 weighted per-session units because it updates 
 
 `allianceRegistry.GetDaysInAlliance` also consumes 10 weighted per-session units because it reads the full alliance member collection to resolve one corporation. The response and public lookup behavior are unchanged. `DispatchGoldenTests.Alliance_expensive_methods_use_a_named_per_session_budget` covers the call budget.
 
-`corpRegistry.GetRecruitmentAd` consumes 10 weighted per-session units because its public response includes the selected corporation member count, and both `GetRecruitmentAdsByCorpID` and `GetRecruitmentAdsForCorporation` consume 10 units because they return complete corporation ad lists. Both responses remain unchanged. `DispatchGoldenTests.Corporation_contact_and_bulletin_lists_use_a_named_per_session_budget` verifies the named refusal for both calls.
+`corpRegistry.GetRecruitmentAd` consumes 10 weighted per-session units because its public response includes the selected corporation member count, and both `GetRecruitmentAdsByCorpID` and `GetRecruitmentAdsForCorporation` consume 10 units because they return complete corporation ad lists. Both responses remain unchanged. `DispatchGoldenTests.Corporation_registry_reads_use_a_named_per_session_budget` verifies the named refusal for both calls.
 
 `ownerGroupManager` reads and mutations consume 10 weighted per-session units to bound repeated access-group enumeration and notification fanout. `DispatchGoldenTests.Owner_group_reads_and_mutations_use_a_named_per_session_budget` checks every registered service method. Responses and authorization remain unchanged.
 
-`corpRegistry.GetCorporation` consumes 10 weighted per-session units because its profile response includes a full corporation member count. The client response is unchanged. `DispatchGoldenTests.Corporation_contact_and_bulletin_lists_use_a_named_per_session_budget` verifies the named refusal.
+`corpRegistry.GetCorporation` consumes 10 weighted per-session units because its profile response includes a full corporation member count. The client response is unchanged. `DispatchGoldenTests.Corporation_registry_reads_use_a_named_per_session_budget` verifies the named refusal.
 
 `allianceRegistry.GetAlliance` and its `GetAlliancePublicInfo` alias consume 10 weighted per-session units because they read member counts and combine sovereignty, prime-time, and capital-system state. `DispatchGoldenTests.Alliance_expensive_methods_use_a_named_per_session_budget` covers both public aliases and all other weighted alliance RPC routes. Responses remain unchanged.
 

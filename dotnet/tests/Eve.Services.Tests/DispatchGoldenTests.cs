@@ -832,7 +832,7 @@ public class DispatchGoldenTests
     }
 
     [Fact]
-    public async Task Corporation_contact_and_bulletin_lists_use_a_named_per_session_budget()
+    public async Task Corporation_registry_reads_use_a_named_per_session_budget()
     {
         long sessionId = 919;
         foreach (var method in new[] { "GetCorporation", "GetCorporateContacts", "GetContactList", "GetBulletins", "GetBulletinEntries", "GetRecruitmentAd", "GetRecruitmentAdsByCorpID", "GetRecruitmentAdsForCorporation" })

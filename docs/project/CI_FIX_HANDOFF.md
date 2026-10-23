@@ -294,3 +294,17 @@ CI run 672 on `1669e6dc` failed the structure market Host test because the fixtu
 - Main commit d9d806d1 unwraps `SavedDraft.attributes.skin.hex` before checking `skinr_ship_licenses`; this corrects the test's key and follows the Host response encoding. The market settlement test remains a separate CI failure.
 - Python syntax compilation and a focused SKINR live Actions run will check the fixture correction. No local database was used.
 
+
+## 2026-10-23 partial sell-order escrow assertion
+
+- Focused Agent run 175 (40020585589) on 0d9ecbb8 passed the new pre-failure wallet comparisons, then failed at the later partial-settlement check: the test expected two Tritanium in the seller's structure hangar, but found zero.
+- `MarketTrading.PlaceWithinTransactionAsync` moves the unfilled sell stack to `EscrowBase + orderId` and links it through `orders.escrow_item_id`. A partial buy transfers only its filled quantity to the buyer and keeps the remainder in order escrow. EveJS v0.12.9 follows the same `MARKET_ESCROW_PLACE` / `MARKET_ESCROW_DELIVER` flow.
+- The test now checks the two remaining units by joining the active sell order's `escrow_item_id` to inventory instead of querying the seller's hangar. The Host.Tests build and focused Actions regression check are pending; no local database test was run.
+- Current main `c068f252` has CI runs 695 and 696 plus Agent run 176 in progress. CI run 694 for parent `0d9ecbb8` is also still active.
+
+## 2026-10-23 market escrow remainder correction
+
+- Agent run 175 (40020585589) on 0d9ecbb8 passed the pre-failure wallet comparisons, then exposed a second test assumption: it expected the two unfilled units in the seller's hangar, while the order correctly keeps them in escrow.
+- The regression assertion now joins the active sell order through `orders.escrow_item_id` to inventory, checking the two units remain attached to the order. The Host.Tests build passed with 0 warnings and 0 errors.
+- CI runs 694 (0d9ecbb8), 695 and 696 (c068f252) failed the old Host assertion. Runs 695 and 696 also exposed a separate live-test field-number mistake in the saved SKIN response; main commit fa667e96 corrects the test to read the name and line-name fields separately.
+- Current main is f2d0d09f. CI run 698 and Agent runs 178/179 are checking that head; Agent run 176 passed the station-undock client test. The corrected focused market check is pending push. No local database test was run.

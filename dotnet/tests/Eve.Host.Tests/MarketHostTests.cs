@@ -427,11 +427,15 @@ public sealed class MarketHostTests : IAsyncLifetime
         var location=Assert.IsType<PyDict>(fill.Args).Entries.Single(entry=>JsSemantics.PlainText(entry.Key)=="locationID").Value;
         Assert.Equal(new PyLong(structureId),location);
 
-        await using (var command=source.CreateCommand($"SELECT COALESCE(sum(quantity),0)::bigint FROM {Schema("EVE_INVENTORY_SCHEMA")}.items WHERE owner_id=$1 AND location_id=$2 AND flag=$3 AND type_id=$4"))
+        await using (var command=source.CreateCommand($"""
+            SELECT COALESCE(sum(i.quantity),0)::bigint
+            FROM {Schema("EVE_MARKET_SCHEMA")}.orders o
+            JOIN {Schema("EVE_INVENTORY_SCHEMA")}.items i ON i.id=o.escrow_item_id
+            WHERE o.actor_id=$1 AND o.station_id=$2 AND o.type_id=$3 AND o.bid=false AND o.state=0
+            """))
         {
             command.Parameters.AddWithValue(seller);
             command.Parameters.AddWithValue(structureId);
-            command.Parameters.AddWithValue(ItemFlags.Hangar);
             command.Parameters.AddWithValue(Tritanium);
             Assert.Equal(2L,(long)(await command.ExecuteScalarAsync())!);
         }

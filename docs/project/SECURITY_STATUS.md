@@ -501,6 +501,7 @@ The update path ignores cached `corprole`/`rolesAtAll` fields and checks current
 | `FastCheckoutService.IsFastCheckoutEnabledForUser`, `GetOffersForUser` | Authenticated caller; service-wide configuration and public offers | No positional or keyword arguments; offers list is empty while checkout is disabled | One unit each; fixed-size reads |
 | `FastCheckoutService.BuyOffer` | Any connected caller reaches the route; no owner or recipient is inspected while checkout is disabled | Purchase payload is not processed; returns `FAST_CHECKOUT_UNAVAILABLE` before mutation | 10 units |
 | `FastCheckoutService.ClearFastCheckoutCacheForUser`, `GetTestingConfiguration` | Authenticated caller; fixed service configuration | No positional or keyword arguments | One unit each; fixed-size response |
+| `shipKillCounter.GetItemKillCountPlayer` | Public player-killmark count for one client-selected item ID | Exactly one positive integral Int64 item ID; no keywords | One unit. Invalid shapes and IDs refuse before the GameStore callback; an unwired provider fails closed. Missing item records remain zero counts. `ClientStartupServicesTests.Ship_kill_counter_refuses_malformed_wire_shapes_before_provider_access`, `Ship_kill_counter_refuses_nonpositive_item_ids_before_provider_access`, and `Missing_ship_kill_counter_provider_fails_closed` cover the refusal paths; `DispatchGoldenTests.Ship_kill_counter_reads_use_a_named_per_session_budget` checks cost. On `eve_p3`, the focused Core tests passed (7), `Eve.Services.Core.Tests` passed (888), `Eve.Services.Tests` passed (250), and the PostgreSQL `ShipKillCounterPersistenceTests` passed (1), all with no skips. |
 
 Host composition does not connect a payment settlement provider. Therefore valid catalog offers report `payment_unavailable`, the global VGS/FastCheckout flags are disabled, and purchase methods fail closed without changing wallet, inventory, subscription, or training state. `StoreOffersServiceTests.Valid_catalog_offer_is_not_advertised_as_purchasable_without_settlement_provider`, `NewEdenStoreHostTests`, `NewEdenEntitlementHostTests`, `FastCheckoutServiceTests`, and `DispatchGoldenTests.Store_checkout_methods_use_a_named_per_session_budget` cover those outcomes. Redeem-token activation of already-owned training certificates is a separate service path.
 
@@ -667,6 +668,14 @@ V24.01 calls deployment with `(item_id, game_mode_id)`, entrance activation with
 
 Security finding `c6a4c688` was pushed to `main` on 2026-10-23; the 20 non-skipped Abyssal Host flow tests passed on `eve_p3`.
 
+### Client security startup RPC
+
+| RPC | Caller and target scope | Input bounds | Per-session cost |
+|---|---|---|---|
+| `securityMgr.get_modified_systems` | Public static modified-security-system snapshot | No positional or keyword arguments | One unit; fixed-size read. On `eve_p3`, the focused Core tests passed (2), all `Eve.Services.Core.Tests` passed (889), and all `Eve.Services.Tests` passed (251), with no skips. |
+
+V24.01 calls this read with no arguments (`security/client/securitySvc.py:41`). `ClientStartupServicesTests.Security_manager_refuses_client_arguments` checks malformed positional and keyword inputs; `DispatchGoldenTests.Security_manager_read_uses_a_named_per_session_budget` checks cost.
+
 
 ### Contextual Offer Manager RPC detail
 
@@ -687,3 +696,11 @@ Post-push handoff: alpha injector read finding `77850e01` is on `main`; the acti
 Security finding for FastCheckout fixed-read argument validation and budgets was pushed to `main` on 2026-10-23. On `eve_p3`, the focused Core refusal tests passed (4), all `Eve.Services.Core.Tests` passed (887), and all `Eve.Services.Tests` passed (249), with no skips. The Host registry contains 1,374 registered service/method pairs; the method-by-method inventory remains open.
 
 Post-push handoff: FastCheckout fixed-read finding `be2f9493` is on `main`; the Host registry inventory remains open at 1,374 pairs.
+
+Security finding for `shipKillCounter.GetItemKillCountPlayer` wire validation and provider failure behavior was pushed to `main` on 2026-10-23. On `eve_p3`, the focused Core tests passed (7), `Eve.Services.Core.Tests` passed (888), `Eve.Services.Tests` passed (250), and `ShipKillCounterPersistenceTests` passed (1), with no skips. The registry has 1,374 service/method pairs and method-by-method classification remains open.
+
+Post-push handoff: ship kill counter finding `6f681a14` is on `main`, merged at `fe730510`. Registry enumeration remains 1,374 pairs; the full security inventory is unfinished.
+
+Security finding for `securityMgr.get_modified_systems` input validation and read budgeting was pushed to `main` on 2026-10-23. On `eve_p3`, its focused Core tests passed (2), `Eve.Services.Core.Tests` passed (889), and `Eve.Services.Tests` passed (251), with no skips. The Host registry contains 1,374 service/method pairs; classification is still in progress.
+
+Post-push handoff: security manager read finding `2ae88e4d` is on `main`; method-by-method security classification remains open across the 1,374-pair registry.

@@ -295,9 +295,11 @@ internal static class PackedRowCodec
         var columns = descriptor.Columns;
         var layout = descriptor.Layout;
 
+        decoder.ChargeAllocation(layout.DataBytes + (long)layout.BitmapBytes);
         var packed = new byte[layout.DataBytes + layout.BitmapBytes];
         DecompressRleInto(rle.Span, packed);
         var bitmap = packed.AsSpan(layout.DataBytes);
+        decoder.ChargeAllocation(columns.Count);
         var values = new PyValue[columns.Count];
         Array.Fill(values, PyNone.Instance);
 

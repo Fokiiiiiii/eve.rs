@@ -63,6 +63,18 @@ internal sealed partial class CharacterServicesComposition
         return (roles.AtAll & Eve.Corporations.CorporationRoles.Director) != 0;
     }
 
+    private async Task<WarpCoordinates?> LaunchWarpTargetForCharacterAsync(
+        long characterId, long launchId, int currentSystemId, CancellationToken cancellationToken)
+    {
+        if (planetMgr is null)
+            return null;
+
+        var target = await planetMgr.ResolveLaunchWarpTargetAsync(characterId, launchId, currentSystemId, cancellationToken);
+        return target is { } point
+            ? new WarpCoordinates(point.SolarSystemId, point.X, point.Y, point.Z)
+            : null;
+    }
+
     private IReadOnlyList<IService> AgentRpcServices() =>
     [
             agentMissionService,
@@ -96,6 +108,6 @@ internal sealed partial class CharacterServicesComposition
                 spaceSessions is null ? null : new EssCommands(new ShipTypeNames(sde), dogma, ships, (session, token) => EssMgr.AttemptLinkToMainBank(new ServiceCall { Method = "AttemptLinkToMainBank", Args = [], Session = session, Cancellation = token }))),
             .. spaceSessions is null ? [] : new IService[] { new ShipService(spaceSessions, now, spaceContainers, spaceDrones, getShipFittingInfo: ShipFittingInfoOf, ships: ships,
                 rowOf: item => new Eve.Services.ItemRow(item.Id, item.TypeId, item.OwnerId, item.LocationId, item.Flag, item.Singleton ? -1 : item.Quantity,
-                    dogma.Type(item.TypeId)?.GroupId ?? 0, dogma.Type(item.TypeId)?.CategoryId ?? 0)), new BeyonceService(spaceSessions, now, fleetStore, FleetSessionForCharacter) { CynoJammerOnlineSimTimeForSystem = CynoJammerOnlineSimTimeAsync, InitiateBeaconLink = AnalysisBeaconLink }, new StructureTravelRpcService("structureCynoBeaconMgr", new StructureBeaconTravel(StructureBeaconAsync, CynoJammedAsync, structureDirectoryReadModel.CharacterHasServiceAsync, JumpToStructureBeaconAsync).TravelAsync), new ShipcasterRpcService("shipCasterLandingPadMgr", solarSystems), new ShipcasterRpcService("shipCasterLauncherMgr", solarSystems), new ShipcasterRpcService("shipcasterTravelMgr", solarSystems), new ShipcasterRpcService("starterShipcasterTravelMgr", solarSystems), new EntityService(spaceDrones!, now, spaceContainers) },
+                    dogma.Type(item.TypeId)?.GroupId ?? 0, dogma.Type(item.TypeId)?.CategoryId ?? 0)), new BeyonceService(spaceSessions, now, fleetStore, FleetSessionForCharacter) { CynoJammerOnlineSimTimeForSystem = CynoJammerOnlineSimTimeAsync, InitiateBeaconLink = AnalysisBeaconLink, LaunchTargetForCharacter = LaunchWarpTargetForCharacterAsync }, new StructureTravelRpcService("structureCynoBeaconMgr", new StructureBeaconTravel(StructureBeaconAsync, CynoJammedAsync, structureDirectoryReadModel.CharacterHasServiceAsync, JumpToStructureBeaconAsync).TravelAsync), new ShipcasterRpcService("shipCasterLandingPadMgr", solarSystems), new ShipcasterRpcService("shipCasterLauncherMgr", solarSystems), new ShipcasterRpcService("shipcasterTravelMgr", solarSystems), new ShipcasterRpcService("starterShipcasterTravelMgr", solarSystems), new EntityService(spaceDrones!, now, spaceContainers) },
     ];
 }

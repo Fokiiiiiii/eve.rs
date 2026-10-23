@@ -1,7 +1,9 @@
 using System.Globalization;
 using System.Text;
 using System.Text.Json.Nodes;
+using Eve.Macho;
 using Eve.Marshal;
+using Eve.Services;
 
 namespace Eve.Services.Core;
 
@@ -22,7 +24,12 @@ public sealed partial class SecurityMgrService
     }
 
     [Method("get_modified_systems")]
-    public PyValue GetModifiedSystems(ServiceCall call) => EmptyModifiedSystems();
+    public PyValue GetModifiedSystems(ServiceCall call)
+    {
+        if (call.Args.Count != 0 || call.Kwargs is not PyNone)
+            throw MachoErrors.ThrowUserError("SECURITY_MANAGER_ARGUMENTS_INVALID");
+        return EmptyModifiedSystems();
+    }
 }
 
 [Service("alert")]
@@ -215,16 +222,21 @@ public sealed partial class ShipKillCounterService(
     [Method("GetItemKillCountPlayer")]
     public async ValueTask<PyValue> GetItemKillCountPlayer(ServiceCall call)
     {
+        call.Cancellation.ThrowIfCancellationRequested();
+        if (call.Args.Count != 1 || call.Kwargs is not PyNone)
+            throw MachoErrors.ThrowUserError("SHIP_KILL_COUNTER_ARGUMENTS_INVALID");
         var itemId = call.Arg(0) switch
         {
-            PyInt value => value.Value,
-            PyLong value => value.Value,
+            PyInt value when value.Value > 0 => value.Value,
+            PyLong value when value.Value > 0 => value.Value,
             _ => 0,
         };
-        if (itemId <= 0 || readShipKillCounters is null)
-            return new PyInt(0);
+        if (itemId <= 0)
+            throw MachoErrors.ThrowUserError("SHIP_KILL_COUNTER_ITEM_ID_INVALID");
+        if (readShipKillCounters is not { } readCounters)
+            throw MachoErrors.ThrowUserError("SHIP_KILL_COUNTER_UNAVAILABLE");
 
-        var table = await readShipKillCounters(call.Cancellation).ConfigureAwait(false);
+        var table = await readCounters(call.Cancellation).ConfigureAwait(false);
         var record = (table["ships"] as JsonObject)?
             [itemId.ToString(CultureInfo.InvariantCulture)] as JsonObject;
         if (record?["playerKills"] is not { } storedCount ||

@@ -4,6 +4,7 @@ Scope checked against the current TODO text in this worktree. The existing unrel
 
 ## Closed rows
 
+- Mission completion atomicity: a failed standing write rolls completion back and leaves the mission accepted; `MissionCompletionTransactionTests.A_standing_write_that_fails_rolls_the_completion_back_and_the_mission_stays_accepted` and `AgentMissionStoreTests.A_completion_rolled_back_with_its_standing_write_leaves_the_mission_accepted_and_announces_nothing`.
 - Wormhole connection generator, static connections, and durable lifetime/mass lifecycle jobs: the later consolidated status records seeded generation, expiry, static replacement, transit collapse, and restart in `Eve.Wormholes.Tests`.
 - Wormhole effects as dogma modifiers: `SystemEnvironmentTests`; `A_jump_into_a_system_with_an_environment_gives_the_simulation_the_ship_again_with_that_environment`.
 - Far-end wormhole body in its own scene and return path: `A_jump_is_taken_by_the_simulation_places_the_destination_end_and_polarizes_the_pilot_so_the_second_try_is_refused`; `An_emptied_connection_collapses_and_both_its_ends_are_taken_out_of_the_simulation`; live `test_wormhole_live.py`.
@@ -20,7 +21,6 @@ These were stale OPEN entries: later TODO evidence, source code, and named regre
 - Dungeon enemy owner and location: the current TODO records faction shortcut and zero location placeholders.
 - Live kill/completion/ISK walk: the recorded live run stops after the first shot with `UnMachoDestination`; completion has unit coverage only.
 - Arc 29 live walk: the documented route was not exercised.
-- Completion transaction rollback: no test rolls back the completion transaction.
 
 ### Zarzakh
 
@@ -54,4 +54,4 @@ These were stale OPEN entries: later TODO evidence, source code, and named regre
 
 ## Checks in this handoff
 
-No PostgreSQL command was used. The wormhole service tests named above are `PgFact` tests and require the CI database lane; this worktree run did not execute them. A focused CI run is required before treating the documentation update as green.
+No PostgreSQL command was used. CI agent-test run `39940268962` passed the focused `Eve.Services.Space.Tests` filter `FullyQualifiedName~A_jump_into_a_system_with_an_environment_gives_the_simulation_the_ship_again_with_that_environment` on pushed commit `3309464f573e587109f5debb6b96770b22309e38`. An earlier dispatch with the abbreviated SHA failed at checkout because Actions treated it as a branch name; the full-SHA retry passed. `ci-status.py failures` found no push-triggered `ci.yml` run for this commit. Other `PgFact` cases cited above were not part of the focused filter.

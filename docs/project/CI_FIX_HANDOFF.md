@@ -275,3 +275,9 @@ CI run 672 on `1669e6dc` failed the structure market Host test because the fixtu
 - CI run 686 (`40015069193`) failed `MarketHostTests.The_host_dispatches_accessible_structure_market_orders_and_recovers_partial_settlement_after_restart`: the test expected `PyStr("stationid")`, but the method result contains `PyBytes`.
 - `ObjectCaching.Raw` intentionally encodes `sessionInfo` as ASCII bytes, and the V24.01 client passes that value to `getattr(session, details['sessionInfo'], None)` when invalidating cached calls. The Host wire value is correct; the test expectation now matches that Python 2 `str` representation.
 - The focused Agent test and push-triggered CI run will verify the correction.
+
+## 2026-10-23 SKINR sequencing UUID fixture decode
+
+- Push CI run 690 (`40016706205`) on `5bcb27c5` reached the active sequencing-job walk, then the live test passed a serialized `Identifier` message to `uuid.UUID(bytes=...)` instead of its raw UUID field.
+- V24 declares `GetAllActiveResponse.Job.id` and `CompletedNotice.id` as `sequencing.job.Identifier`, whose field 1 is the 16-byte UUID. The Host responses already use this wrapper; the live test now unwraps `Identifier.uuid` for the active-job and completion-notice assertions.
+- Python syntax check, focused live Agent run, and push-triggered CI verification are pending.

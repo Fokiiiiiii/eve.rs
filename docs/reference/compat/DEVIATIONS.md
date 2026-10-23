@@ -5536,3 +5536,8 @@ The fleetObject Init RPC costs 10 weighted per-session units because it updates 
 `charMgr.GetPrivateInfo` consumes 10 weighted per-session units because it joins character, corporation-role, wallet, and security-status data for the corporation member editor. Its persisted role gate and response are unchanged; the character profile budget regression verifies the named refusal.
 
 `mailMgr.SendMail` now refuses a nonpositive or non-integer character recipient ID with `MAIL_RECIPIENT_INVALID` before invoking persistence, rather than dropping malformed IDs from a mixed recipient list. Valid integer IDs and duplicate suppression keep their existing behavior. `MailServiceTests.SendMail_refuses_malformed_recipient_ids_before_sending` covers negative, textual, and non-finite recipients without a send callback.
+
+
+## Config RPC bounds (2026-10-23)
+
+`config.GetMultiOwnersEx`, `GetMultiCorpTickerNamesEx`, `GetMultiAllianceShortNamesEx`, and `GetMultiLocationsEx` now refuse more than 500 raw IDs before provider or item lookups with `CONFIG_BULK_LIMIT_EXCEEDED`; each consumes 10 weighted per-session units. `GetAverageMarketPrices` also consumes 10 units for its market read. The 120-unit default leaves room for a normal initial lookup sequence. Focused service and dispatcher regressions cover the cap and named budget.

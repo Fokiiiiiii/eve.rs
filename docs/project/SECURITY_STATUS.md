@@ -330,6 +330,17 @@ The reviewed identifier-bearing methods classify as follows:
 
 `map.GetStationInfo` and `GetStationCount` use cached static read-side rows. The remaining map methods return public world projections or typed empty defaults; none accepts a client-selected character or corporation owner. `GetMyExtraMapInfo` is limited to the session corporation ID and does not accept a target corporation parameter.
 
+### Config service RPC detail
+
+| RPC | Caller and target scope | Input bounds | Per-session cost |
+|---|---|---|---|
+| `config.GetStationSolarSystemsByOwner` | Any authenticated caller; requested station owner is public | One integral owner ID; nonpositive or invalid values return an empty list | None; scans the fixed station catalog |
+| `config.GetBlackListedPlanets`, `GetOldStationData` | Any authenticated caller; fixed empty result | No caller-supplied data | None; constant result |
+| `config.GetAverageMarketPrices` | Any authenticated caller; public market averages | No caller-supplied IDs; result includes sold types from the latest daily market average | 10 units; one market read |
+| `config.GetMultiOwnersEx`, `GetMultiCorpTickerNamesEx`, `GetMultiAllianceShortNamesEx`, `GetMultiLocationsEx` | Any authenticated caller; public character, corporation, alliance and location records | Each raw ID list is capped at 500 before lookups; invalid IDs are dropped and duplicates collapse; dynamic inventory location names are returned only for items owned by the session character | 10 units per RPC; `CONFIG_BULK_LIMIT_EXCEEDED` refuses oversized batches |
+
+`GetMultiLocationsEx` resolves public stations and systems from static catalogs. Dynamic item names require a matching item owner and selected character. The bulk cap applies before deduplication so repeated IDs cannot create unbounded parsing work. `ConfigServiceTests.Batched_config_lookups_refuse_more_than_500_raw_ids` and `DispatchGoldenTests.Config_bulk_lookups_use_a_named_per_session_budget` cover the input and work bounds.
+
 ### Wallet RPC detail
 
 | RPC | Caller and target scope | Input bounds | Per-session cost |

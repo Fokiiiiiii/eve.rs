@@ -315,6 +315,8 @@ public sealed class PacketDispatcher
             return 10;
         if (service == "account" && method is "GetTransactions" or "GiveCash" or "GiveCashFromCorpAccount")
             return 10;
+        if (service == "config" && method is "GetAverageMarketPrices" or "GetMultiOwnersEx" or "GetMultiCorpTickerNamesEx" or "GetMultiAllianceShortNamesEx" or "GetMultiLocationsEx")
+            return 10;
         if (service == "LPStoreMgr" && method is "GetAvailableOffersFromCorp" or "TakeOfferForCharacter" or "TakeOfferForCorporation")
             return 10;
         if (service == "corpRegistry" && method is "GetCorporation" or "GetEveOwners" or "GetMemberIDsByQuery" or "GetMemberIDsWithMoreThanAvgShares" or "GetNumberOfPotentialCEOs" or "GetMembersByIds" or "GetMembersPaged" or "GetMemberTrackingInfo" or "GetMemberTrackingInfoSimple" or "GetShareholders" or "GetSharesByShareholder" or "PayoutDividend" or "ExecuteActions" or "UpdateMembers" or "KickOutMembers" or "UpdateTitles" or "RemoveCorporateContacts" or "EditContactsRelationshipID" or "AssignLabels" or "RemoveLabels" or "UpdateBulletinOrder" or "GetRecentKills" or "GetRecentLosses" or "GetCorporateContacts" or "GetContactList" or "GetBulletins" or "GetBulletinEntries" or "GetApplications" or "GetOldApplications" or "GetMyApplications" or "GetMyOldApplications" or "GetMyOpenInvitations" or "UpdateApplicationOffer" or "GetRecruitmentAd" or "GetRecruitmentAdsByCorpID" or "GetRecruitmentAdsForCorporation")

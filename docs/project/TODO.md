@@ -2764,3 +2764,5 @@ Security review follow-up: `warRegistry` full-war reads and mutations now consum
 Security review follow-up: alliance contact mutations accept only positive integer target IDs and integer relationship values; fractional, string, nested, and nonpositive entries refuse before storage access.
 
 Security review follow-up: fleet invitation RPCs accept positive integer character IDs only; fractional or numeric-string targets cannot be coerced into invitations.
+
+Security review follow-up: alliance bulletin RPCs now validate scalar bulletin IDs as positive integers, while creation retains its optional absent ID form.

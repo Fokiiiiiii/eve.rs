@@ -5676,3 +5676,6 @@ Alliance contact mutations now reject non-integer scalar and batch ID elements a
 
 
 `fleetObjectHandler.Invite` and `MassInvite` now accept only positive integer character IDs, rejecting fractional and numeric-string coercions before session lookup or persistence. The fleet mass-invite regression covers malformed IDs and verifies no invite notification is produced.
+
+
+Alliance bulletin reads and mutations now reject fractional or non-integer bulletin IDs before storage access; bulletin creation retains the client’s optional ID form. `Alliance_bulletins_use_persistent_alliance_rows_and_require_member_directors` checks fractional ID refusal leaves bulletin contents unchanged.

@@ -5651,3 +5651,8 @@ corpRegistry.CreateAlliance now consumes 10 weighted per-session units. Its pers
 ## Alliance short-name suggestion input bound (2026-10-23)
 
 corpRegistry.GetSuggestedAllianceShortNames now refuses alliance names above the V24.01 Tranquility field maximum of 50 UTF-16 code units before normalization and consumes 10 weighted per-session units. A PostgreSQL-backed service regression accepts 50 and refuses 51.
+
+
+## Alliance and character data RPC classification (2026-10-23)
+
+The inventory now records allianceRegistry.CancelCapitalSystemTransition, GetAllianceApplications, GetPrimeTimeInfo, and IsAllianceLocal with their bound/current alliance or corporation scope and costs. GetAllianceApplications returns its full caller-corporation collection under a 10-unit call charge. corpRegistry.GetPendingAutoKicks is recorded as an empty result with no client-selected target. charMgr.SetNote is documented as active-character scoped with a 5,000-character bound and 10-unit cost.

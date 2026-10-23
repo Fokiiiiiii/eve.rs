@@ -41,8 +41,10 @@ internal sealed partial class CharacterServicesComposition
     private IReadOnlyList<IService> InventoryRpc()
     {
         var industryMonitor = new IndustryMonitorRpcService(mailCache, items, nowUnixMs: now, itemTypes: itemTypes);
-        var inventoryBroker = WithCustoms(HostInventoryServiceFactory.CreateInvBroker(items, itemTypes, stations, ships, dogma, now, spaceContainers, spaceDrones, corporations, characterEntryHooks,
-            controlledStructureInventory: structureControlReadModel.InventoryAsync));
+        var inventoryBroker = new IndustryInventoryChangePublisher(
+            WithCustoms(HostInventoryServiceFactory.CreateInvBroker(items, itemTypes, stations, ships, dogma, now, spaceContainers, spaceDrones, corporations, characterEntryHooks,
+                controlledStructureInventory: structureControlReadModel.InventoryAsync)),
+            industryMonitor);
 
         return
         [

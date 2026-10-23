@@ -587,10 +587,13 @@ public class SpaceContainerTests
         Assert.Equal(can, spaceItem.SourceContainerId);
         Assert.Contains(rig.Sim.Heard.OfType<SimSpawn>(), spawn => spawn.Ship.ShipId == launched.Id);
         Assert.Single(rig.Sim.Heard.OfType<SimSpawn>(), spawn => spawn.Ship.ShipId == launched.Id);
-        var names = Events.Of(flying.Session).Select(e => e.Name).ToArray();
-        var itemChange = Array.IndexOf(names, "OnItemChange");
-        var sourceChange = Array.IndexOf(names, "OnItemsChanged");
-        Assert.True(itemChange >= 0 && sourceChange > itemChange, string.Join(", ", names));
+        Assert.Contains(Events.Of(flying.Session), e => e.Name == "OnItemChange");
+        var messages = rig.Sim.Heard.ToArray();
+        var spawn = Array.FindIndex(messages, message =>
+            message is SimSpawn spawned && spawned.Ship.ShipId == launched.Id);
+        var sourceRefresh = Array.FindIndex(messages, message =>
+            message.Equals(new SimChangeWreck((ulong)flying.Session.SessionId, can, false)));
+        Assert.True(spawn >= 0 && sourceRefresh > spawn, string.Join(Environment.NewLine, messages));
 
         var spawnCount = rig.Sim.Heard.OfType<SimSpawn>().Count(spawn => spawn.Ship.ShipId == launched.Id);
         using var restarted = new SpaceContainers(
@@ -629,7 +632,7 @@ public class SpaceContainerTests
         var system = flying.Session.GetInt("solarsystemid")!.Value;
         var cargoContainerType = Assert.Single(
             await new Eve.Sde.SdeReader(rig.Source).ReadTypeSummariesAsync(),
-            type => type.Published && type.Name == "Cargo Container").TypeId;
+            type => type.Name == "Cargo Container").TypeId;
         var nested = (await rig.Ships.GrantAsync(flying.Character.CharacterId, cargoContainerType, 1, singleton: true))!
             .Single().After;
         await using (var connection = await rig.Source.OpenConnectionAsync())

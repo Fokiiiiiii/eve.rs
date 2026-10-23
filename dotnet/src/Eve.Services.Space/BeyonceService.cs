@@ -24,7 +24,10 @@ public sealed partial class BeyonceService(SpaceSessions space, Func<long> nowUn
     /// <summary>Resolves a bookmark only when the caller may warp to it. The host supplies the persisted/access-checked lookup.</summary>
     public Func<long, long, CancellationToken, Task<WarpCoordinates?>>? BookmarkTargetForCharacter { get; set; }
 
-public Func<long, long, CancellationToken, Task<int>>? SkillLevelOfCharacter { get; set; }
+    /// <summary>The persisted, owner-scoped launch point. The caller system is passed so the owner can reject remote launches.</summary>
+    public Func<long, long, int, CancellationToken, Task<WarpCoordinates?>>? LaunchTargetForCharacter { get; set; }
+
+    public Func<long, long, CancellationToken, Task<int>>? SkillLevelOfCharacter { get; set; }
 
     private static WarpCoordinates? Coordinates(PyValue value)
     {
@@ -229,8 +232,8 @@ public Func<long, long, CancellationToken, Task<int>>? SkillLevelOfCharacter { g
     }
 
     /// <summary>
-    /// <c>CmdWarpToStuff(type, target, minRange=)</c>: warp to a system body (<c>"item"</c>) or bookmark (<c>"bookmark"</c>). Other destination types,
-    /// scanned sites and the like are told as a warp that cannot be done).
+    /// <c>CmdWarpToStuff(type, target, minRange=)</c>: resolves system bodies, bookmarks, authorized fleet characters, in-system positions,
+    /// scan results, and a live current-system launch owned by the caller. Unsupported or stale destinations produce the client's warp refusal.
     /// </summary>
     [Method("CmdWarpToStuff")]
     public async ValueTask<PyValue> CmdWarpToStuff(ServiceCall call)
@@ -243,7 +246,7 @@ public Func<long, long, CancellationToken, Task<int>>? SkillLevelOfCharacter { g
         if (space.IsInAbyssalRun(call.Session))
             throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr(SpaceSessions.AbyssalWarpBlockedMessage)));
         var type = JsSemantics.PlainText(call.Arg(0));
-        if (type is not ("item" or "bookmark" or "char" or "position" or "scan"))
+        if (type is not ("item" or "bookmark" or "char" or "position" or "scan" or "launch"))
         {
             throw WarpRefusal();
         }
@@ -336,6 +339,20 @@ public Func<long, long, CancellationToken, Task<int>>? SkillLevelOfCharacter { g
                 throw WarpRefusal();
             }
             coordinate = bookmark;
+        }
+        else if (type == "launch")
+        {
+            if (characterId <= 0 || callerSystem is not { } launchSystem
+                || LaunchTargetForCharacter is not { } resolveLaunch
+                || await resolveLaunch(characterId, targetId, launchSystem, call.Cancellation) is not { } launch
+                || launch.SolarSystemId != launchSystem
+                || !double.IsFinite(launch.X)
+                || !double.IsFinite(launch.Y)
+                || !double.IsFinite(launch.Z))
+            {
+                throw WarpRefusal();
+            }
+            coordinate = launch;
         }
         else if (type == "scan")
         {

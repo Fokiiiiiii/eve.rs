@@ -114,6 +114,31 @@ public class HostServerTests : IAsyncLifetime
         }
     }
 
+    private sealed class BoundWarpSubjectContractService : IService
+    {
+        public const string BoundOid = "N=ProxyNode:warp-subject-contract";
+        public List<ServiceCall> WarpCalls { get; } = [];
+        public string Name => "beyonce";
+        public bool HasMethod(string method) => method is "MachoBindObject" or "CmdWarpToStuff";
+
+        public ValueTask<PyValue> CallAsync(ServiceCall call)
+        {
+            if (call.Method == "MachoBindObject")
+            {
+                var bound = new PySubStruct(new PySubStream(Py.Tuple(new PyStr(BoundOid), new PyLong(7))));
+                return ValueTask.FromResult<PyValue>(Py.Tuple(bound, PyNone.Instance));
+            }
+
+            WarpCalls.Add(call);
+            if (JsSemantics.StringValue(call.Arg(0)) == "externalDungeon")
+                throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("You cannot warp there right now.")));
+
+            call.Session.AfterResponse(() =>
+                call.Session.SendNotification("OnInvulnCancelled", "shipid", new PyList([])));
+            return ValueTask.FromResult<PyValue>(PyNone.Instance);
+        }
+    }
+
     private sealed class NoAccounts : IOmegaAccountStore
     {
         public string? GetOmegaExpiry(long accountId) => OmegaLicenses.DefaultOmegaExpiryText;
@@ -535,6 +560,66 @@ public class HostServerTests : IAsyncLifetime
         var reply = Assert.IsType<Send>(await front.ReceiveAsync());
         var time = Assert.IsType<PyLong>(Result(MarshalCodec.Decode(reply.Payload)));
         Assert.Equal(Py.FileTimeFromUnixMs(FixedNowMs), time.Value);
+    }
+
+    [Fact]
+    public async Task A_bound_beyonce_warp_call_preserves_subject_arguments_kwargs_and_response_order()
+    {
+        var handler = new BoundWarpSubjectContractService();
+        Start(configure: registry => registry.Register(handler));
+        var front = await Handshaken(await ConnectAsync());
+        var open = Open();
+        await front.SendAsync(open);
+        await front.ReceiveAsync();
+
+        await front.SendAsync(new Packet(open.SessionId,
+            MarshalCodec.Encode(Packets.Call(open, 1, "beyonce", "MachoBindObject"))));
+        _ = Assert.IsType<Send>(await front.ReceiveAsync());
+
+        var args = new PyTuple([new PyStr("launch"), new PyLong(7123)]);
+        var kwargs = new PyDict([
+            new KeyValuePair<PyValue, PyValue>(new PyStr("minRange"), new PyInt(30_000)),
+            new KeyValuePair<PyValue, PyValue>(new PyStr("fleet"), PyBool.True),
+        ]);
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(
+            Packets.BoundCall(open, 2, BoundWarpSubjectContractService.BoundOid, "CmdWarpToStuff", args, kwargs))));
+
+        static MachoPacket Decoded(Send send) =>
+            Assert.IsType<MachoPacket>(MachoPacket.Decode(MarshalCodec.Decode(send.Payload)));
+
+        static int Message(Send send) => Decoded(send).Type;
+
+        var successResponse = Assert.IsType<Send>(await front.ReceiveAsync());
+        Assert.Equal(MachoMessage.CallRsp, Message(successResponse));
+        Assert.Equal(PyNone.Instance, Result(MarshalCodec.Decode(successResponse.Payload)));
+        var successNotification = Assert.IsType<Send>(await front.ReceiveAsync());
+        Assert.Equal(MachoMessage.Notification, Message(successNotification));
+        Assert.Equal("OnInvulnCancelled", Decoded(successNotification).Dest.BroadcastId);
+        Assert.Equal("shipid", Decoded(successNotification).Dest.IdType);
+
+        var dispatched = Assert.Single(handler.WarpCalls);
+        Assert.Equal(2, dispatched.Args.Count);
+        Assert.Equal("launch", JsSemantics.StringValue(dispatched.Arg(0)));
+        Assert.Equal(new PyLong(7123), dispatched.Arg(1));
+        Assert.Equal(new PyInt(30_000), dispatched.Kwarg("minRange"));
+        Assert.Equal(PyBool.True, dispatched.Kwarg("fleet"));
+        Assert.Equal(BoundWarpSubjectContractService.BoundOid, dispatched.BoundObjectId);
+
+        var refusalArgs = new PyTuple([new PyStr("externalDungeon"), new PyLong(7123)]);
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(
+            Packets.BoundCall(open, 3, BoundWarpSubjectContractService.BoundOid, "CmdWarpToStuff", refusalArgs, kwargs))));
+        var refusal = Assert.IsType<Send>(await front.ReceiveAsync());
+        Assert.Equal(MachoMessage.ErrorResponse, Message(refusal));
+
+        // A refusal emits no Destiny notification; the next accepted call still returns before its notification.
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(
+            Packets.BoundCall(open, 4, BoundWarpSubjectContractService.BoundOid, "CmdWarpToStuff", args, kwargs))));
+        var retryResponse = Assert.IsType<Send>(await front.ReceiveAsync());
+        Assert.Equal(MachoMessage.CallRsp, Message(retryResponse));
+        Assert.Equal(PyNone.Instance, Result(MarshalCodec.Decode(retryResponse.Payload)));
+        var retryNotification = Assert.IsType<Send>(await front.ReceiveAsync());
+        Assert.Equal(MachoMessage.Notification, Message(retryNotification));
+        Assert.Equal("OnInvulnCancelled", Decoded(retryNotification).Dest.BroadcastId);
     }
 
     [Fact]

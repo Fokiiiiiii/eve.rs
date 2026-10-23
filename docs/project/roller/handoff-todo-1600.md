@@ -73,7 +73,8 @@ No PostgreSQL command was used. CI agent-test run `39940268962` passed the focus
 ## 2026-10-23 verified live follow-up
 
 - Mission slow-live run `40026903022` completed successfully on `623e21803171574c04690d703b8fcb5cf31f2fa3`; the basic, kill/reward, and Arc 29 client walks all completed. The timeout now covers the full 270-second Arc travel step.
-- SKINR run `40028889495` on `1bfd22e4e98ee61add508a7e3632c0845bd35e1d` passed `ShipSkinrDispatchTests` (4/4) and applied the persisted license after restart. Its live test failed only while reading notices: it inspected the headless client's raw packet list without pinging/decoding it. The check now uses `notifications_of`, which drains and decodes named notifications; a fresh Actions run is required.
-- Push CI run `40028876361` was still in progress when this handoff was updated.
+- SKINR run `40028889495` on `1bfd22e4e98ee61add508a7e3632c0845bd35e1d` passed `ShipSkinrDispatchTests` (4/4) and applied the persisted license after restart. The assertion failed because it read the headless client's raw packet list without pinging/decoding it.
+- `test_skinr_live.py` now uses `notifications_of`, which pings the client, drains packets, and decodes names. Focused run `40030150836` on `1c15eb702dc4ae4ed3c94a6a44cf0cf87f386c2c` passed `Eve.Host.Tests` 4/4 and the SKINR live walk 1/1, with 0 skips.
+- Push CI run `40028876361` failed on the old SKINR notice assertion and a concurrent `MarketHostTests` expected-value mismatch (expected 2, actual 4). The latest push CI run `40030137837` is checking the merged market test update and remains in progress.
 - The CI mission artifact confirms the Host build completed with 0 warnings and 0 errors. No PostgreSQL command was run locally; no graphical-client check was performed.
 

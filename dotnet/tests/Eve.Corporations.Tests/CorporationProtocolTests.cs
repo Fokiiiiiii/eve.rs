@@ -3035,6 +3035,33 @@ private static PyValue RowField(PyValue value,string key)
     }
 
     [PgFact]
+    public async Task Corporation_recruitment_ad_enumeration_refuses_more_than_5000_rows()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var founder = await rig.CharacterAsync("Recruit Limit Founder");
+        var corp = await rig.Store.CreateAsync(founder,new("Recruit Limit Works","RLW","","",0.05m),"recruit-limit-corp");
+        await using (var command = rig.Source.CreateCommand($"""
+            INSERT INTO {rig.CorporationSchema}.corporation_recruitment_ads
+                (corporation_id,create_filetime,expiry_filetime)
+            SELECT $1,1,2 FROM generate_series(1,5001)
+            """))
+        {
+            command.Parameters.AddWithValue(corp.Id);
+            await command.ExecuteNonQueryAsync();
+        }
+
+        var error = await Assert.ThrowsAsync<CorporationError>(async () =>
+            await rig.Store.RecruitmentAdsAsync(token:CancellationToken.None));
+        Assert.Equal("CORPORATION_RECRUITMENT_AD_LIMIT_EXCEEDED",error.Code);
+
+        var service = (IService)new CorpRecruitmentProxyService(rig.Store,rig.Characters,() => rig.Now);
+        var session = new ClientSession { CharacterId = founder };
+        var searchError = await Assert.ThrowsAsync<CorporationError>(async () =>
+            await service.CallAsync(Call(session,"SearchCorpAds")));
+        Assert.Equal("CORPORATION_RECRUITMENT_AD_LIMIT_EXCEEDED",searchError.Code);
+    }
+
+    [PgFact]
     public async Task Corp_registry_contacts_labels_and_bulletins_persist_and_enforce_roles()
     {
         await using var rig = await Rig.CreateAsync();

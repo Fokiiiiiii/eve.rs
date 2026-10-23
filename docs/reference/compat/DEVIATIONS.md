@@ -5648,3 +5648,6 @@ Corporation profile, logo, division-name, abilities, acceptance, mail-restrictio
 
 
 Corporation registry batch RPCs `ExecuteActions`, `GetMembersByIds`, `GetMemberIDsByQuery`, `KickOutMembers`, `UpdateMembers`, and `UpdateTitles` now require list/tuple outer values. Malformed batch shapes return `CORPORATION_BULK_ARGUMENT_INVALID` before member reads or mutations instead of being treated as empty batches. Valid list/tuple requests keep the existing response behavior. `CorporationProtocolTests.Corporation_core_and_role_rpcs_preserve_public_fields_and_role_contracts` covers malformed member lookup and action batches.
+
+
+`corpRecProxy` recruitment list/search methods now refuse collections above 5,000 rows with `CORPORATION_RECRUITMENT_AD_LIMIT_EXCEEDED` instead of materializing and returning an unbounded result. The query reads at most one row beyond the supported result ceiling and never returns a partial successful list. `Corporation_recruitment_ad_enumeration_refuses_more_than_5000_rows` covers the store and search RPC.

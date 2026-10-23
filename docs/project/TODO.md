@@ -2750,3 +2750,5 @@ Security review follow-up: `invbroker.GetDamageForCrystals` now refuses unrecogn
 Security review follow-up: inventory asset-root and station-content enumerations `ListStations` and `ListStationItems` now cost 10 weighted per-session units alongside `GetAssetWorth`.
 Security review follow-up: fitting bulk save/delete RPCs now refuse wrong outer payload shapes and malformed keys or delete IDs with a named notification before validating fitting data or deleting rows; valid V24.01 dictionary/list shapes remain supported.
 Security review follow-up: single fitting deletes now require a positive fitting ID in the selected owner scope and confirm deletion before announcing the change.
+
+Security review follow-up: corporation recruitment ad list/search RPCs now cap reads at 5,000 rows and fail with a named refusal above that ceiling; they do not truncate a larger result into a success response.

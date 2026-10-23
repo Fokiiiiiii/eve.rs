@@ -31,10 +31,12 @@ The owner’s captures and process logs were read through `tools/mitm show` and 
 
 ## (d) UnavailableInventoryLocation in space
 
-- Symptom: the client log says `UnavailableInventoryLocation: Failed to retrieve items; character is not located in a station` during `NeocomInventoryBadging.OnSessionChanged`. The client callsite is `GetItemsInCurrentStationShipHangar`; the capture shows a station-bound `GetInventory(containerHangar=10004)` request receiving `SessionRpcBudgetExceeded` during the transition to space.
-- Root cause: `PacketDispatcher` charges station inventory reads against the same per-session expensive-RPC budget as unrelated setup and market calls. After that shared bucket is consumed, the client's guarded station hangar read is refused and translated to `UnavailableInventoryLocation`.
-- Fix commit: pending.
-- Regression test: pending.
+- Symptom: the client log says `UnavailableInventoryLocation: Failed to retrieve items; character is not located in a station` during `NeocomInventoryBadging.OnSessionChanged`. The request binds the prior station's hangar with `containerHangar=10004`. EveJS returns the bound inventory; eve.rs returned `SessionRpcBudgetExceeded` for the same request during the transition to space.
+- Root cause: `PacketDispatcher` charged all expensive RPCs against one per-session bucket. Before the first failed hangar bind, the graphical capture had only four `invbroker` calls; unrelated setup RPCs consumed the shared bucket.
+- Fix: expensive `invbroker` calls now use their own bounded per-session bucket. Inventory reads and writes still share that limit.
+- Fix commit: `Give inventory RPCs a dedicated per-session budget`.
+- Regression: `DispatchGoldenTests.Inventory_calls_keep_a_bounded_budget_separate_from_other_expensive_services` (1/1) and the full `DispatchGoldenTests` class (148/148), zero skips.
+- Reference: EveJS returns the requested bound substruct for the matching station-hangar call; V24.01 client callsite is `neocomInventoryBadging.py:GetItemsInCurrentStationShipHangar`.
 
 ## (e) goals/campaign GetUpdateRequest timeout
 

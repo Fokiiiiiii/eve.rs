@@ -19,6 +19,7 @@ public sealed class PacketDispatcher
     private readonly ServiceRegistry _registry;
     private readonly Func<long> _nowUnixMs;
     private readonly ConditionalWeakTable<ClientSession, ExpensiveRpcBudget> _expensiveBudgets = new();
+    private readonly ConditionalWeakTable<ClientSession, ExpensiveRpcBudget> _inventoryBudgets = new();
 
     public PacketDispatcher(ServiceRegistry registry, Func<long>? nowUnixMs = null)
     {
@@ -169,7 +170,10 @@ public sealed class PacketDispatcher
         if (call.Method == "MachoBindObject" && call.Args.Count > 1 &&
             NestedBoundMethod(call.Args[1]) is { } nestedMethod)
             cost = Math.Max(cost, ExpensiveRpcCost(service.Name, nestedMethod));
-        if (cost > 0 && !_expensiveBudgets.GetValue(session, _ => new ExpensiveRpcBudget())
+        var budget = service.Name == "invbroker"
+            ? _inventoryBudgets
+            : _expensiveBudgets;
+        if (cost > 0 && !budget.GetValue(session, _ => new ExpensiveRpcBudget())
                 .TryConsume(_nowUnixMs(), cost, MaxExpensiveRpcUnitsPerMinute))
         {
             SendError(packet, MachoErrors.UserError("SessionRpcBudgetExceeded"), session, serviceName);

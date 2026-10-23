@@ -3094,6 +3094,18 @@ private static PyValue RowField(PyValue value,string key)
         Assert.Equal(3,Integer(Field(Assert.IsType<PyDict>(await Rpc(session,"GetCorporateContacts"))
             .Entries.Single().Value,"labelMask")));
 
+        var longBulletinTitle = await Assert.ThrowsAsync<CorporationError>(async () =>
+            await Rpc(session,"AddBulletin",new PyWString(new string('T',101)),new PyWString("Body")));
+        Assert.Equal("CORPORATION_BULLETIN_LIMIT_EXCEEDED",longBulletinTitle.Code);
+        var longBulletinBody = await Assert.ThrowsAsync<CorporationError>(async () =>
+            await Rpc(session,"AddBulletin",new PyWString("Title"),new PyWString(new string('B',4_001))));
+        Assert.Equal("CORPORATION_BULLETIN_LIMIT_EXCEEDED",longBulletinBody.Code);
+        Assert.Empty(await rig.Store.CorporationBulletinsAsync(corp.Id));
+        var maxBulletinId = Assert.IsType<PyInt>(await Rpc(session,"AddBulletin",new PyWString(new string('T',100)),new PyWString(new string('B',4_000))));
+        var maxBulletin = Assert.Single(await rig.Store.CorporationBulletinsAsync(corp.Id));
+        Assert.Equal(new string('T',100),maxBulletin.Title);
+        Assert.Equal(new string('B',4_000),maxBulletin.Body);
+        Assert.IsType<PyNone>(await Rpc(session,"DeleteBulletin",maxBulletinId));
         var bulletinId = Assert.IsType<PyInt>(await Rpc(session,"AddBulletin",new PyWString("Ops"),new PyWString("Docking window")));
         var bulletinRows = Assert.IsType<PyObject>(await Rpc(session,"GetBulletins"));
         Assert.NotEmpty(MarshalCodec.Encode(bulletinRows));

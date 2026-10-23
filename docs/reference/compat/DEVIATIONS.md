@@ -5495,3 +5495,8 @@ The fleetObject Init RPC costs 10 weighted per-session units because it updates 
 ## Corporation contact and bulletin-list work budget (2026-10-23)
 
 `corpRegistry.GetCorporateContacts` and its `GetContactList` alias return the current corporation’s complete contact list; `GetBulletins` and `GetBulletinEntries` return the complete bulletin list. Each call costs 10 weighted per-session units to bound repeated full-list reads. The corporation scope and response shapes stay unchanged. `DispatchGoldenTests.Corporation_contact_and_bulletin_lists_use_a_named_per_session_budget` covers all four RPC names.
+
+
+## Corporation bulletin text bounds (2026-10-23)
+
+`corpRegistry.AddBulletin` and `UpdateBulletin` enforce the V24.01 editor limits of 100 UTF-16 code units for titles and 4,000 for bodies before persistence. Larger text returns `CORPORATION_BULLETIN_LIMIT_EXCEEDED`; accepted response shapes and role checks are unchanged. `CorporationProtocolTests.Corp_registry_contacts_labels_and_bulletins_persist_and_enforce_roles` checks refusals before storage, both exact boundaries, and persisted values.

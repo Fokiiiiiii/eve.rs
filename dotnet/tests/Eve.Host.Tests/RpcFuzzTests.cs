@@ -1,5 +1,6 @@
 using System.Reflection;
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using Eve.Marshal;
 using Eve.Macho;
 using Eve.Identity;
@@ -36,6 +37,10 @@ public sealed class RpcFuzzTests
     {
         var longMode = string.Equals(Environment.GetEnvironmentVariable("EVE_RPC_FUZZ_LONG"), "1", StringComparison.Ordinal);
             var casesPerMethod = longMode ? 64 : 1;
+        var elapsed = Stopwatch.StartNew();
+        long compositionElapsed = 0;
+        long snapshotBeforeElapsed = 0;
+        long dispatchElapsed = 0;
         var saved = new Dictionary<string, string?>();
         var schemas = new List<string>();
         HostRuntime? runtime = null;
@@ -62,6 +67,7 @@ public sealed class RpcFuzzTests
             runtime = await HostComposition.BuildAsync(new HostSettings("", "disabled",
                 new ClusterOptions { NewCharacterExperienceEnabled = false, NewCharacterExperienceMode = "disabled" },
                 new AccountOptions { AutoCreate = true }, StrictRpc: true));
+            compositionElapsed = elapsed.ElapsedMilliseconds;
             var registry = runtime.Registry;
             var services = registry.RegisteredServices;
 
@@ -72,6 +78,8 @@ public sealed class RpcFuzzTests
             var overviewPresetWriteAccepted = false;
             snapshotSource = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
             var databaseBefore = await SnapshotAsync(snapshotSource, schemas);
+            snapshotBeforeElapsed = elapsed.ElapsedMilliseconds - compositionElapsed;
+            var dispatchStarted = elapsed.ElapsedMilliseconds;
             foreach (var service in services)
             {
                 var methods = RegisteredMethods(service);
@@ -123,9 +131,10 @@ public sealed class RpcFuzzTests
                     }
                 }
             }
+            dispatchElapsed = elapsed.ElapsedMilliseconds - dispatchStarted;
 
             Assert.True(total > 0);
-            _output.WriteLine($"seed={Seed}; services={services.Count}; methods={methodCount}; dispatches={total}; long={longMode}");
+            _output.WriteLine($"seed={Seed}; services={services.Count}; methods={methodCount}; dispatches={total}; long={longMode}; compositionMs={compositionElapsed}; snapshotBeforeMs={snapshotBeforeElapsed}; dispatchMs={dispatchElapsed}");
             var databaseAfter = await SnapshotAsync(snapshotSource, schemas);
             var changedTables = ChangedTables(databaseBefore, databaseAfter);
             var unexpectedChanges = changedTables.Where(table =>

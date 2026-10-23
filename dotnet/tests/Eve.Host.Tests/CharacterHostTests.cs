@@ -738,8 +738,8 @@ public sealed class CharacterHostTests
         var notifications = Assert.IsType<PyList>(await CallAsync(notificationMgr, "GetAllNotifications", recipientSession));
         var row = Assert.Single(notifications.Items);
         Assert.Equal(new PyInt(89), Field(row, "typeID"));
-        Assert.Equal(new PyLong(senderId), Field(row, "senderID"));
-        Assert.Equal(new PyLong(recipientId), Field(row, "receiverID"));
+        Assert.Equal(new PyInt(senderId), Field(row, "senderID"));
+        Assert.Equal(new PyInt(recipientId), Field(row, "receiverID"));
 
         await rig.RestartAsync();
         notificationMgr = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("notificationMgr"));

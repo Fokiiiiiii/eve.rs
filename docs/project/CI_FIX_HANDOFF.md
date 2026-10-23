@@ -153,3 +153,11 @@ Use lane `eve_p4` only and run database work through `tools/dev/db-lock.sh`. The
 - Worktree merge commit `93859c6a` combines the contact-key test helper update with `origin/main` `287c530d`. The nine pre-existing Rust source deletions remain outside the merge.
 - Agent run 138 (`40008851484`) is checking the selected live regression on `287c530d`; CI run 671 (`40008838460`) is queued for that same head. CI runs on the next pushed head will verify this merged worktree.
 - After pushing, dispatch `Eve.Host.Tests` with filter `FullyQualifiedName~Contact_add` and record that result plus the push-triggered gate below.
+
+
+## 2026-10-23 contact notification persisted ID wire types
+
+- CI run 671 on `287c530d` and Agent run 138 reported the contact notification regression failing after the test dictionary lookup was made tolerant of `PyBytes`: `NotificationMgrService.Dto` returns persisted `senderID` and `receiverID` as `PyInt`, while the assertions expected `PyLong`.
+- Updated the persisted `GetAllNotifications` assertions to match the service wire values. The direct `OnNotificationReceived` packet assertions remain as before.
+- The touched `Eve.Host.Tests` project is compiling locally; run 139 on `1669e6dc` ended failure without a per-test summary in the step log. A focused Actions check will verify the corrected assertions after push.
+- Run 672 on `1669e6dc` also exposed two independent failures still being investigated: SKINR `ConsumeRequest` returns HTTP 400, and the structure-market Host test fails while placing its first sell order.

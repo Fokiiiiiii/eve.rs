@@ -761,6 +761,19 @@ public sealed class CorporationOfficeTests
         return decimal.Round((decimal)Assert.IsType<Eve.Marshal.PyReal>(result).Value, 2);
     }
 
+    [PgFact]
+    public async Task Office_price_quotes_refuse_a_client_selected_foreign_corporation()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (actor, corporation) = await CreateCorporationAsync(rig);
+        var service = CreateService(rig);
+
+        var error = await Assert.ThrowsAsync<CorporationError>(() => service.GetPriceQuote(
+            Call("GetPriceQuote", actor, corporation.Id, new Eve.Marshal.PyLong(corporation.Id + 1))).AsTask());
+
+        Assert.Equal("CORPORATION_ACCESS_DENIED", error.Code);
+    }
+
     private static async Task<(long Actor, Corporation Corporation)> CreateCorporationAsync(Rig rig)
     {
         var actor = await rig.CharacterAsync("Office Manager CEO");

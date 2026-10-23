@@ -37,8 +37,11 @@ def test_a_pilot_launches_an_assembled_ship_from_a_space_container():
             ("GetInventoryFromId", (ship, 0), None),
         )[1]
 
-        who.call("slash", "SlashCmd", "/giveitem Kestrel 1")
-        who.call("slash", "SlashCmd", "/giveitem Tritanium 1")
+        ship_grant = m.plain(who.call("slash", "SlashCmd", f"/giveitem {KESTREL} 1"))
+        ore_grant = m.plain(who.call("slash", "SlashCmd", f"/giveitem {TRITANIUM} 1"))
+        assert "was added to your station hangar." in ship_grant, ship_grant
+        assert "was added to your station hangar." in ore_grant, ore_grant
+        hangar = who.call_bound(station, "GetInventory", 10004)
         rows = who.call_bound(hangar, "List")
         kestrel = next(int(row.fields()["itemID"]) for row in rows if int(row.fields()["typeID"]) == KESTREL)
         tritanium = next(int(row.fields()["itemID"]) for row in rows if int(row.fields()["typeID"]) == TRITANIUM)

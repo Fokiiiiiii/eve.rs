@@ -32,10 +32,18 @@ The hull-death mismatch came from two timestamp domains. Destiny stamps use FILE
 
 Verified locally: the focused Rust regression passed (1/1), cargo check -p eve-space passed, cargo fmt --all -- --check passed, and workspace clippy passed. The two-pilot CH-18 Actions run is in progress. The live hull-death walk will be dispatched after this commit.
 
+## CX11 acceptance continuation (2026-10-23)
+
+The requested `wip-ch18-live` ref was inspected with `git log` and targeted `git diff`. The current branch already contains the completed CH-18 regression and live-walk commits (`7e077adb`, `59996e73`, `c03a1e81`) from `origin/main`, so no cherry-pick was needed. The worktree at `/home/user/wt-ch-s6` is currently on `ch-s6`; the WIP ref is separate.
+
+CH-1's live deletion test now exercises the success path through `charUnboundMgr.DeleteCharacter`: after checking queue idempotence, premature refusal, cancellation and no-queue refusal, it advances the persisted deadline in the isolated test database and checks the real RPC marks the character row deleted and clears the queue. The test still uses the normal ten-hour production wait. Focused Actions validation is pending.
+
+CH-23 reconciled the season source findings and public-gateway boundaries in TODO and DEVIATIONS. The plan's package table retains partial outcomes where an authoritative data source or publisher is absent, and its verification record will be completed after current-tree Actions runs.
+
 ## Next work
 
-1. Re-run the CH-18 payout and CH-15 clone-install walks on the current tree, then verify the hull-death walk on eve_p2.
-2. Reconcile CH-19 status with the newly identified Gallente Election SDE assets and absent exact challenge protocol data; finish the current public-gateway gap audit.
-3. Complete CH-23 documentation and the selected character test and live-walk checks.
+1. Push the current acceptance candidate and run the focused CH-1 live deletion test on `eve_p2`.
+2. Run the selected character test projects and live character walks on the current tree, including the hull-death check.
+3. Record the Actions results and final package outcomes in the plan, then push the final acceptance update.
 
 The worktree retains the capsule-implant destruction, loss-value wiring and live two-pilot bounty extension described above.

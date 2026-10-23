@@ -17,14 +17,15 @@
 ## Checks
 
 - PASS: Host project build (0 warnings, 0 errors) before the latest upstream Host changes.
-- PASS: previous direct-service focused test (1 passed, 0 skipped); it was replaced because it did not exercise the packet dispatcher.
-- PASS on Actions for prior source at run `39975595679`, ref `d573f9e9`; this was before the packet-dispatch test correction.
-- Latest RPC packet dispatch test uses `PacketDispatcher.DispatchAsync` with Macho CallReqs for ConnectJob, DisconnectJob and inventory mutation. It checks notification order, changed and unchanged material quantities, target, monitor ID, payload, and session isolation.
-- The latest local test build attempt exited with code 137. A reduced-reference build then exposed stale Host test dependency outputs and test analyzer findings; the analyzer findings in the new test were corrected. A fresh successful focused run for the corrected test is pending.
-- `ci-status.py failures` found no push-triggered `ci.yml` run for the previous main SHA.
+- PASS: direct-service focused test (1 passed, 0 skipped); replaced because it did not exercise packet dispatch.
+- PASS on Actions at run `39975595679`, ref `d573f9e9`; this was before packet-dispatch coverage.
+- The current tests use `PacketDispatcher.DispatchAsync` with Macho CallReqs for ConnectJob, DisconnectJob and inventory mutation. They verify changed/unchanged quantities, notice order/name/target/monitor ID/material payload, reconnect replacement and session isolation.
+- Actions run `39986027701` found the reconnect test counting both `OnItemChange` and `OnIndustryMaterials` as a single expected notification. The assertion now selects only `OnIndustryMaterials`; a rerun is pending.
+- The latest local focused test attempt exited with code 137. The reduced-reference compile used stale Host test dependencies and reported unrelated API mismatches; no successful local run of the packet-dispatch revision yet.
+- Push-triggered CI run `39986003895` was still in progress at last check; Host test shard 4/4 failed at the same reconnect assertion. Other Host shards and the .NET build passed.
 - No existing headless end-to-end industry job walk was found. No live industry walk or graphical-client session has been performed.
 - Nine unrelated Rust deletions were present at initial inspection and remain unstaged.
 
 ## Remaining
 
-Commit and push the packet-dispatch test correction, confirm it on Actions, and report headless and graphical-client verification separately.
+Push the assertion correction, confirm on Actions, inspect push-triggered CI, and report headless and graphical-client verification separately.

@@ -431,6 +431,7 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
             throw Error(new MarketError("MARKET_BULK_LIMIT_EXCEEDED"));
         var duration = Int32(call.Arg(2));
         var useCorporation = JsSemantics.Truthy(call.Arg(1));
+        var itemIds = new HashSet<long>();
         foreach (var entry in entries)
         {
             var typeId = Int32(Field(entry, "typeID"));
@@ -438,7 +439,7 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
             var stationId = Integer(Field(entry, "stationID"));
             var itemId = Integer(Field(entry, "itemID"));
             var price = Money(Field(entry, "price"));
-            if (typeId <= 0 || quantity <= 0 || stationId <= 0 || itemId <= 0 || price <= 0)
+            if (typeId <= 0 || quantity <= 0 || stationId <= 0 || itemId <= 0 || price <= 0 || !itemIds.Add(itemId))
                 throw Error(new MarketError("MARKET_BULK_ARGUMENT_INVALID"));
         }
         var index = 0;

@@ -5718,6 +5718,26 @@ Corporation registry batch RPCs `ExecuteActions`, `GetMembersByIds`, `GetMemberI
 `fleetMgr.AddToWatchlist`, `RemoveFromWatchlist`, and `RegisterForDamageUpdates` now reject malformed containers, nonpositive/non-integer IDs, and raw batches above 500 with `FleetError` before changing session watchlist state. Valid batches still include only current fleet members and store at most 100 distinct IDs. `Fleet_watchlist_updates_keep_only_members_and_clear_removed_damage_targets` covers the refusal cases and unchanged state.
 
 
+`mutualWarInviteMgr.GetPendingInvitesForSession` and `IsCorpInvitesBlockedPlayer` now return the same explicit `CustomNotify` unavailable response as the four mutation methods when Host persistence callbacks are absent. This removes empty/false success values from routes whose authoritative provider is not connected; configured callback results and valid RPC output shapes remain unchanged. `Mutual_war_invite_mgr_exposes_reference_routes_and_callback_shapes` covers all six refusal routes and the configured callback path.
+
+
+`corpRegistry.CanBeKickedOut` now requires current persisted Director authority before disclosing whether another member of the caller's corporation is kickable; a member can still query their own eligibility as required by the V24.01 `CanKickOut` wrapper. `Corporation_core_and_role_rpcs_preserve_public_fields_and_role_contracts` covers the Director path, self-query, and ordinary-member refusal for a different member.
+
+
+`warRegistry.GetWars`, `SetOpenForAllies`, and `RetractMutualWar` now consume 10 weighted per-session work units because each reads the full war relation set before filtering or changing a war. Exhausted budgets return `SessionRpcBudgetExceeded`; valid results and mutation behavior are unchanged. `Expensive_market_calls_have_a_named_per_session_budget` covers repeated `GetWars` calls.
+
+
+Alliance contact mutations now reject non-integer scalar and batch ID elements and non-integer relationship values before persistence, while preserving accepted list and tuple batches and the 500-entry limit. `AllianceTests` verifies fractional-ID refusal leaves contact state unchanged.
+
+
+`fleetObjectHandler.Invite` and `MassInvite` now accept only positive integer character IDs, rejecting fractional and numeric-string coercions before session lookup or persistence. The fleet mass-invite regression covers malformed IDs and verifies no invite notification is produced.
+
+
+Alliance bulletin reads and mutations now reject fractional or non-integer bulletin IDs before storage access; bulletin creation retains the client’s optional ID form. `Alliance_bulletins_use_persistent_alliance_rows_and_require_member_directors` checks fractional ID refusal leaves bulletin contents unchanged.
+
+
+`allianceRegistry.PayBill` and `DeclareWarAgainst` now require positive integer bill and target IDs, refusing fractional values before wallet settlement or war relation writes. `Alliance_war_declaration_bills_are_replay_safe_and_pay_from_the_executor_wallet` verifies both malformed-ID refusals preserve bills, wallet balances, and war relations.
+
 ## Character selection RPC scope and work bounds (2026-10-23)
 
 The security inventory now lists each active `charUnboundMgr` RPC by caller scope, target ownership, input constraints, and weighted work cost. Character creation and gender/bloodline changes refuse nonintegral, non-finite, or out-of-range integer inputs; bloodline changes also require a catalog entry before writing. Character enumeration is limited by the three account slots, selection and mutation endpoints charge 10 units, and the public random-name and validation queries charge one unit each. `ValidateNameEx` returns the existing too-long code before Unicode normalization when the raw name exceeds the 37 UTF-16 code-unit maximum. The actual client uses these name calls during the creation flow (`chooseNameSection.py`) and creates characters through `CreateCharacterWithDoll` (`characterCreationContainer.py`); no graphical-client acceptance is claimed by this classification.
@@ -5726,3 +5746,7 @@ The security inventory now lists each active `charUnboundMgr` RPC by caller scop
 ## Mail message ID input validation (2026-10-23)
 
 `mailMgr.GetMailHeaders`, `GetBody`, and `MarkAsRead` now accept only positive integral message IDs. Fractional IDs no longer truncate to another recipient's message identifier; invalid IDs yield no read result or mutation. `MailServiceTests.Mail_message_ids_must_be_positive_integral_wire_values` covers fractional, zero, and valid integral inputs.
+
+`allianceRegistry.GMForceAcceptApplication` retains its GML-only authorization and refuses non-integer corporation targets before reading or scheduling the application; the regression covers fractional input and the authorized path.
+
+`marketProxy.PlaceMultiSellOrder` now refuses duplicate item IDs in the raw batch before placing any order line; the regression confirms the item remains in its original station location and produces no ask order or notification.

@@ -69,5 +69,11 @@ Use lane `eve_p4` only and run database work through `tools/dev/db-lock.sh`. The
 ## 2026-10-23 run 617 cargo-capacity test setup
 
 - Run 617 on `912cce53` still failed the offline-capacity assertion after the server check was added. The test inserted `Rig.FixtureAsteroidOre` but constructed `Rig` without `Rig.WithShipFixtures`; that synthetic type was absent from `DogmaStatic`, so `VolumeOfAsync` ignored its volume and measured the cargo as zero.
-- The rig fixture defines that ore with a volume of 1. The test now loads the fixture and derives the required stack quantity from the SDE-backed hold capacity and the type's volume, ensuring cargo exceeds the capacity computed by dogma for the test ship.
+- The rig fixture defines that ore with a volume of 1. The test now loads the fixture and derives the required stack quantity from the hold capacity and the fixture type's volume, ensuring cargo exceeds the capacity computed by dogma for the test ship.
 - Run 618 is checking commit `ecf46055` and still has the previous test setup. The updated regression will run in the push-triggered gate after this fix.
+
+## Push ecf46055
+
+- Commit `3229ba6f` updated the locked `ctutils` release to `0.4.4` for `RUSTSEC-2026-0385`. The advisory names `ctutils` and patches releases before `0.4.4`; it does not identify Tokio. Local Rust 1.94.1 format, workspace check, and workspace Clippy checks passed. The local environment does not have `cargo-audit` installed.
+- Merged current `origin/main` and pushed the advisory fix as `ecf46055`. This head also includes the current character-migration expectation and ship cargo-capacity fix.
+- CI run 618 and dependency-audit run 8 are checking `ecf46055`. The standalone Python client job passed; Rust advisory, Windows, E2E, and other gate jobs were still running at this status check.

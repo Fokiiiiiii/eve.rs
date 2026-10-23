@@ -354,7 +354,8 @@ CI run 672 on `1669e6dc` failed the structure market Host test because the fixtu
 - Focused run 189 (`40028383063`) reached the restarted gateway but the pre-restart bearer token received 401. The live walk now logs in again through the restarted front and reselects the character before checking persistence and applying the license.
 - Focused run 192 (`40029216605`) passed persistence reads and license application, then found no queued front notifications because the headless client drains them while awaiting a client RPC response. A harmless `GetUserToken` call now drains the queue.
 - Focused run 194 (`40030110928`) reached notification inspection and showed `Client.notifications` contains raw `Packet` values. The check now uses the `notifications_of` decoder from `evecli.observe`.
-- Focused run 196 (`40030950151`) passed on `e8538586`: 1 live test passed, 0 failed, 0 skipped. The Host Release build passed locally with 0 warnings and 0 errors. No local PostgreSQL test was run; push CI status is still being checked.
+- Focused run 196 (`40030950151`) passed on `e8538586`: 1 live test passed, 0 failed, 0 skipped. Main then added a MACHO `GetServiceInfo` call to flush the client event queue after application.
+- Focused run 198 (`40031794618`) passed that merged flow on `b43c0240`: 1 live test passed, 0 failed, 0 skipped. The Host Release build passed locally with 0 warnings and 0 errors. No local PostgreSQL test was run. Push gates `40031652832` and `40032068845` are still being checked.
 
 ## 2026-10-23 pre-push update on 1bf92f6f
 

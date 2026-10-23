@@ -22,3 +22,58 @@ Check the newest `origin/main` workflow with `python3 tools/dev/ci-status.py sta
 ## Commands
 
 Use lane `eve_p4` only and run database work through `tools/dev/db-lock.sh`. The live port is 26103. For .NET, set `MSBUILDDISABLENODEREUSE=1` and pass `-p:UseSharedCompilation=false`.
+
+
+## 2026-10-23 dependency-bump gate investigation
+
+- CI run 608 on `c2ff6220` reported RustSec `RUSTSEC-2026-0385` for locked `ctutils 0.4.2`. The advisory was issued on 2026-10-23 and its patched range is `>=0.4.4`; the locked dependency is in the RustCrypto digest chain, not Tokio.
+- The Python client job runs on Python 3.12.15. Its failure was `test_selection_routes_missing_appearance_through_avatar_save_before_game_entry`: the new live scenario called `connect()` without the `EVE_LIVE_HOST` guard used by the other live tests, so the standalone job attempted `127.0.0.1:26000` and received `ConnectionRefusedError`. The Windows log also showed successful installation of grpcio 1.84.1, protobuf 7.36.2, and pycryptodome 4.1.0 before pytest began.
+- Added the same `EVE_LIVE_HOST` skip condition to the paperdoll scenario and added the file to the explicit live-test list in `tools/dev/run-eve-live.sh`, so the scenario runs only with the server stack.
+- Run 608 also showed independent live and .NET failures; check the newest main gate after the dependency and Python-test fixes to determine which remain.
+
+
+## Push 9f8612b0
+
+- Pushed the paperdoll live-test guard and live-harness test-list update on main as `9f8612b0`.
+- Push-triggered CI run 611 (`39963051154`) was in progress at this handoff update. Run 610 on the previous head `ab356e0f` had failed its Python client and Windows Python jobs; run 611 checks the guard and server-backed scenario.
+
+
+## 2026-10-23 selected-agent SHA checkout
+
+- Runs 60 and 61 failed in `actions/checkout` when the selected-agent dispatch supplied abbreviated commit IDs. The workflow passed that prefix directly to checkout, which tried to resolve it as a remote branch or tag.
+- The workflow now fetches full history from the dispatch branch, resolves a requested commit prefix or branch locally, and checks out the resolved commit in detached mode.
+- Focused regression `AgentTestRefResolutionTests.test_short_commit_and_branch_refs_check_out_as_detached_commits` passed locally.
+- Push-triggered CI is still running; this entry will be updated with the run result after Actions completes.
+
+## 2026-10-23 Python and Rust dependency fixes
+
+- Run 611 on `9f8612b0` completed with the standalone Python client job successful after the live-only paperdoll test received its `EVE_LIVE_HOST` guard. Windows package installation had already shown grpcio 1.84.1, protobuf 7.36.2, and pycryptodome 4.1.0 install on Python 3.12.15; no generated-code or API incompatibility appeared.
+- Run 608 identified active RustSec advisory `RUSTSEC-2026-0385` in `ctutils 0.4.2`, a transitive RustCrypto digest dependency. The official advisory fixes it in `ctutils >=0.4.4`; `Cargo.lock` now selects 0.4.4 with the official registry checksum.
+- Local `cargo +1.94.1 fmt --all -- --check` and `CARGO_TARGET_DIR=target-cx CARGO_BUILD_JOBS=2 CARGO_INCREMENTAL=0 cargo +1.94.1 check --workspace --locked` passed. Local `cargo +1.94.1 clippy --workspace --all-targets -- -D warnings` passed. `cargo audit` is not installed locally; the push-triggered advisory job must confirm the locked version.
+- Runs 611 and 614 also failed independent CI paths on their older heads: run 611 reported the cargo-capacity and paperdoll-state .NET assertions; run 614 failed Host startup because `CharacterServicesComposition.CharacterServiceList` found no entry. Current main includes follow-up changes in those areas. Check the newest main push gate before treating those paths as resolved.
+- The newest observed push gate was run 614 on `690991ea`; its Rust advisory job passed before the fixed lockfile was pushed, while E2E failed at Host startup. A fresh push-triggered gate is required to verify the lockfile and current main together.
+
+
+## 2026-10-23 run 615 character migration expectation
+
+- Run 615 on `1f08f9cb` failed `StoreTests.Home_station_cooldown_migration_preserves_existing_rows`: the test's expected migration list stopped at `0014_achievement_has_ever_warped`, while the current set also applies `0015_forced_paperdoll_state`.
+- Updated the migration expectation. The existing regression creates a schema at migration 0003, applies all later migrations, verifies the legacy home-station values, and checks that no migration remains pending.
+- Actions will verify this database-backed test. Run 615 also has a separate ship cargo-capacity failure; that root cause is being tracked independently. The E2E and Windows jobs were still active when this entry was added.
+
+## 2026-10-23 follow-up after run 615
+
+- Run 615 completed with three failures: the fast E2E market history RPC returned Macho error 2; `Eve.Ships.Tests.ShipTests.Cargo_capacity_modules_cannot_be_offlined_or_unfitted_past_the_hold_limit` expected `ShipRefused` but received `ShipChanged`; and the character migration expectation omitted `0015_forced_paperdoll_state`.
+- Main commit `cc6067b0` now contains the ship cargo-capacity refusal correction and its live test adjustment. Run 615 predates that change; run 616 was on `731e8df2`, before `cc6067b0`.
+- This push updates the character migration expectation. The fast E2E market failure still needs its own root-cause fix. Run 616 was active when checked.
+
+## 2026-10-23 run 617 cargo-capacity test setup
+
+- Run 617 on `912cce53` still failed the offline-capacity assertion after the server check was added. The test inserted `Rig.FixtureAsteroidOre` but constructed `Rig` without `Rig.WithShipFixtures`; that synthetic type was absent from `DogmaStatic`, so `VolumeOfAsync` ignored its volume and measured the cargo as zero.
+- The rig fixture defines that ore with a volume of 1. The test now loads the fixture and derives the required stack quantity from the hold capacity and the fixture type's volume, ensuring cargo exceeds the capacity computed by dogma for the test ship.
+- Run 618 is checking commit `ecf46055` and still has the previous test setup. The updated regression will run in the push-triggered gate after this fix.
+
+## Push ecf46055
+
+- Commit `3229ba6f` updated the locked `ctutils` release to `0.4.4` for `RUSTSEC-2026-0385`. The advisory names `ctutils` and patches releases before `0.4.4`; it does not identify Tokio. Local Rust 1.94.1 format, workspace check, and workspace Clippy checks passed. The local environment does not have `cargo-audit` installed.
+- Merged current `origin/main` and pushed the advisory fix as `ecf46055`. This head also includes the current character-migration expectation and ship cargo-capacity fix.
+- CI run 618 and dependency-audit run 8 are checking `ecf46055`. The standalone Python client job passed; Rust advisory, Windows, E2E, and other gate jobs were still running at this status check.

@@ -513,7 +513,7 @@ public sealed partial class PgCharacterStore
         return result;
     }
 
-    /// <summary>The recustomization state of the character (1 or 3), or null when it has none.</summary>
+    /// <summary>The recustomization state of the character (1, 3 or 4), or null when it has none.</summary>
     public async Task<int?> PaperdollStateAsync(long id, CancellationToken cancellationToken = default)
     {
         await using var command = _source.CreateCommand($"SELECT paperdoll_state FROM {_schema}.characters WHERE id = $1");
@@ -521,7 +521,23 @@ public sealed partial class PgCharacterStore
         return await command.ExecuteScalarAsync(cancellationToken) is short state ? state : null;
     }
 
-    /// <summary>Sets the recustomization state (1 or 3) in the caller's transaction.</summary>
+    /// <summary>The client-facing paperdoll state, resolved from the character's persisted appearance and recustomization.</summary>
+    public async Task<int> ResolvedPaperdollStateAsync(long id, CancellationToken cancellationToken = default)
+    {
+        await using var command = _source.CreateCommand(
+            $"SELECT paperdoll_state, doll_info, portrait_info FROM {_schema}.characters WHERE id = $1");
+        command.Parameters.Add(new NpgsqlParameter { Value = id });
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+            return 2;
+
+        if (!reader.IsDBNull(0))
+            return reader.GetInt16(0);
+
+        return !reader.IsDBNull(1) || !reader.IsDBNull(2) ? 0 : 2;
+    }
+
+    /// <summary>Sets a persisted paperdoll recustomization state (1, 3, or forced recustomization 4) in the caller's transaction.</summary>
     public async Task SetPaperdollStateAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long id, short state, CancellationToken cancellationToken = default)
     {
         await using var command = new NpgsqlCommand($"UPDATE {_schema}.characters SET paperdoll_state = $2 WHERE id = $1", connection, transaction);

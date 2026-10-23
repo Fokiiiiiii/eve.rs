@@ -25,10 +25,25 @@ internal sealed class MarshalDecoder
     private int _depth;
     private int _savedRefs;
     private CachedDescriptor? _descriptor;
+    private readonly AllocationBudget _budget;
 
     private sealed record CachedDescriptor(int Start, int End, Descriptor Descriptor);
 
-    private MarshalDecoder(ReadOnlyMemory<byte> input, int depth)
+    private sealed class AllocationBudget
+    {
+        private int _remaining = MarshalCodec.MaxDecodedAllocationUnits;
+
+        public void Charge(long amount)
+        {
+            if (amount < 0 || amount > _remaining)
+            {
+                throw MarshalException.AllocationBudgetExceeded();
+            }
+            _remaining -= (int)amount;
+        }
+    }
+
+    private MarshalDecoder(ReadOnlyMemory<byte> input, int depth, AllocationBudget budget)
     {
         if (MemoryMarshal.TryGetArray(input, out var segment) && segment.Array is not null)
         {
@@ -45,6 +60,7 @@ internal sealed class MarshalDecoder
             _input = _buf;
         }
         _depth = depth;
+        _budget = budget;
     }
 
     /// <summary>
@@ -52,9 +68,12 @@ internal sealed class MarshalDecoder
     /// PySubStream continues the count, so a chain of substreams cannot get around
     /// <see cref="MarshalCodec.MaxDepth"/> and exhaust the stack.
     /// </summary>
-    public static PyValue DecodeStream(ReadOnlyMemory<byte> input, bool requireExactEnd, int depth)
+    public static PyValue DecodeStream(ReadOnlyMemory<byte> input, bool requireExactEnd, int depth) =>
+        DecodeStream(input, requireExactEnd, depth, new AllocationBudget());
+
+    private static PyValue DecodeStream(ReadOnlyMemory<byte> input, bool requireExactEnd, int depth, AllocationBudget budget)
     {
-        var decoder = new MarshalDecoder(input, depth);
+        var decoder = new MarshalDecoder(input, depth, budget);
         var header = decoder.U8();
         if (header != Wire.Header)
         {
@@ -70,6 +89,7 @@ internal sealed class MarshalDecoder
             {
                 throw MarshalException.SaveTable("save table larger than the stream");
             }
+            decoder._budget.Charge(saveCount);
             decoder._stored = new PyValue[saveCount];
             Array.Fill(decoder._stored, PyNone.Instance);
             decoder._savePos = decoder._len - tableBytes;
@@ -167,10 +187,21 @@ internal sealed class MarshalDecoder
     }
 
     /// <summary>A count read from the wire, bounded before it is used to size an allocation: every element takes at least one byte.</summary>
-    private int Capacity(long count) => (int)Math.Min(count, Math.Max(0, _len - _pos));
-
-    public PyValue Value()
+    private int Capacity(long count, int valuesPerEntry = 1)
     {
+        var capacity = (int)Math.Min(count, Math.Max(0, _len - _pos));
+        _budget.Charge((long)capacity * (valuesPerEntry + 1));
+        return capacity;
+    }
+
+    internal void ChargeAllocation(long count) => _budget.Charge(count);
+
+    public PyValue Value(bool precharged = false)
+    {
+        if (!precharged)
+        {
+            _budget.Charge(1);
+        }
         if (_depth >= MarshalCodec.MaxDepth)
         {
             throw MarshalException.TooDeep();
@@ -217,14 +248,13 @@ internal sealed class MarshalDecoder
         switch (opcode)
         {
             case Op.OneTuple:
-                return new PyTuple([Value()]);
+                return new PyTuple(Items(1));
             case Op.TwoTuple:
-                var first = Value();
-                return new PyTuple([first, Value()]);
+                return new PyTuple(Items(2));
             case Op.Tuple:
                 return new PyTuple(Items(Size()));
             case Op.OneList:
-                return new PyList([Value()]);
+                return new PyList(Items(1));
             default:
                 return new PyList(Items(Size()));
         }
@@ -256,12 +286,12 @@ internal sealed class MarshalDecoder
     private PyValue ReadDict()
     {
         var count = Size();
-        var entries = new List<KeyValuePair<PyValue, PyValue>>(Capacity(count));
+        var entries = new List<KeyValuePair<PyValue, PyValue>>(Capacity(count, valuesPerEntry: 2));
         for (long i = 0; i < count; i++)
         {
             // The wire stores each pair value first, then key.
-            var value = Value();
-            var key = Value();
+            var value = Value(precharged: true);
+            var key = Value(precharged: true);
             entries.Add(new(key, value));
         }
         return new PyDict(entries);
@@ -274,9 +304,9 @@ internal sealed class MarshalDecoder
         // A nested stream that does not decode is kept as raw bytes.
         try
         {
-            return new PySubStream(DecodeStream(data, false, _depth));
+            return new PySubStream(DecodeStream(data, false, _depth, _budget));
         }
-        catch (MarshalException)
+        catch (MarshalException error) when (error.Kind != MarshalErrorKind.AllocationBudgetExceeded)
         {
             return new PySubStream(data);
         }
@@ -314,6 +344,10 @@ internal sealed class MarshalDecoder
         var start = (int)_pos;
         var (saveBefore, refsBefore) = (_savePos, _savedRefs);
         var header = Value();
+        if (Descriptor.DescriptorColumns(header) is { } columns)
+        {
+            _budget.Charge(columns.Count * 3L);
+        }
         var descriptor = Descriptor.FromHeader(header);
         if (_savePos == saveBefore && _savedRefs == refsBefore)
         {
@@ -399,7 +433,7 @@ internal sealed class MarshalDecoder
         var items = new List<PyValue>(Capacity(count));
         for (long i = 0; i < count; i++)
         {
-            items.Add(Value());
+            items.Add(Value(precharged: true));
         }
         return items;
     }
@@ -449,6 +483,7 @@ internal sealed class MarshalDecoder
                 _pos++;
                 break;
             }
+            _budget.Charge(1);
             list.Add(Value());
         }
 
@@ -462,6 +497,7 @@ internal sealed class MarshalDecoder
             }
             var key = Value();
             var value = Value();
+            _budget.Charge(1);
             dict.Add(new(key, value));
         }
         return new PyObjectEx(opcode == Op.ObjectEx1 ? ObjectExKind.Ex1 : ObjectExKind.Ex2, header, list, dict);

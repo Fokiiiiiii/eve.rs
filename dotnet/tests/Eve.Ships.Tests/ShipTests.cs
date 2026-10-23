@@ -17,6 +17,109 @@ public class ShipTests
         _ => e.ToString()!,
     });
 
+    [Fact]
+    public void Cargo_capacity_loss_refuses_only_when_used_exceeds_resulting_capacity()
+    {
+        Assert.Null(CharacterShips.CargoCapacityLossRefusal(99.5, 120, 100, Rig.Cockroach));
+        Assert.Null(CharacterShips.CargoCapacityLossRefusal(100, 120, 100, Rig.Cockroach));
+        Assert.Null(CharacterShips.CargoCapacityLossRefusal(120, 120, 130, Rig.Cockroach));
+
+        var refused = CharacterShips.CargoCapacityLossRefusal(100.01, 120, 100, Rig.Cockroach);
+        Assert.NotNull(refused);
+        Assert.Equal(ShipRefusal.CargoWouldOverflow, refused.Reason);
+        Assert.Equal(100.01, refused.Used);
+        Assert.Equal(100, refused.CapacityAfter);
+    }
+
+    [PgFact]
+    public async Task Cargo_capacity_modules_cannot_be_offlined_or_unfitted_past_the_hold_limit()
+    {
+        await using var rig = await Rig.CreateAsync(staticFixtures: Rig.WithShipFixtures);
+        var c = await rig.NewCharacterAsync();
+
+        const int expandedCargoholdI = 1319;
+        await rig.Statics.EnsureTypesAsync([expandedCargoholdI, Rig.FixtureAsteroidOre]);
+        var moduleType = Assert.IsType<TypeDef>(rig.Statics.Type(expandedCargoholdI));
+        foreach (var (skill, level) in FittingRules.RequiredSkills(moduleType))
+            await rig.SetSkillAsync(c.CharacterId, skill, level);
+
+        var module = await rig.GiveAsync(c.CharacterId, expandedCargoholdI);
+        Changed(await rig.Ships.MoveAsync(c.CharacterId, module, Rig.Station, c.ShipId, null, null));
+        Changed(await rig.Ships.SetOnlineAsync(c.CharacterId, c.ShipId, module, online: true));
+
+        var capacityAttribute = Assert.IsType<int>(rig.Statics.AttributeId("capacity"));
+        var predicted = (await rig.Ships.LoadAsync(c.CharacterId))!;
+        var capacityBefore = predicted.World.Get(c.ShipId, capacityAttribute);
+        predicted.World.SetState(module, ItemState.Offline);
+        var capacityAfter = predicted.World.Get(c.ShipId, capacityAttribute);
+        Assert.True(capacityAfter < capacityBefore);
+
+        var ore = Assert.IsType<TypeDef>(rig.Statics.Type(Rig.FixtureAsteroidOre));
+        var volumeAttribute = Assert.IsType<int>(rig.Statics.AttributeId("volume"));
+        var oreVolume = ItemVolumes.Unit(
+            Rig.FixtureAsteroidOre, ore.GroupId, singleton: false, ore.Attributes[volumeAttribute]);
+        Assert.True(oreVolume > 0);
+        var cargoQuantity = (long)Math.Floor(capacityAfter / oreVolume) + 1;
+        var cargo = await rig.GiveAsync(
+            c.CharacterId,
+            Rig.FixtureAsteroidOre,
+            singleton: false,
+            quantity: cargoQuantity,
+            location: c.ShipId,
+            flag: CharacterShips.CargoFlag);
+
+        var storedCargo = (await rig.Items.InContainerAsync(c.ShipId))
+            .Where(item => item.Flag == CharacterShips.CargoFlag)
+            .ToArray();
+        var usedCargo = await rig.Ships.VolumeOfAsync(storedCargo);
+        Assert.True(usedCargo > capacityAfter, $"cargo fixture used {usedCargo} m3; offline capacity is {capacityAfter} m3");
+        Assert.Equal(ItemState.Online, (await rig.Modules.StatesAsync([module]))[module]);
+        var currentSnapshot = (await rig.Ships.LoadShipAsync(c.CharacterId, c.ShipId))!;
+        Assert.Equal(capacityBefore, currentSnapshot.World.Get(c.ShipId, capacityAttribute), 6);
+
+        var offlineRefusal = Assert.IsType<ShipRefused>(
+            await rig.Ships.SetOnlineAsync(c.CharacterId, c.ShipId, module, online: false));
+        Assert.Equal(ShipRefusal.CargoWouldOverflow, offlineRefusal.Reason);
+        Assert.Equal(ItemState.Online, (await rig.Modules.StatesAsync([module]))[module]);
+
+        var batchRefusal = await rig.Ships.CheckBatchUnfitCargoCapacityAsync(
+            c.CharacterId, c.ShipId, [module], toCargo: false);
+        Assert.Equal(ShipRefusal.CargoWouldOverflow, batchRefusal?.Reason);
+        Assert.Equal(c.ShipId, (await rig.Items.GetAsync(module))!.LocationId);
+
+        var cargoMove = await rig.Ships.MoveAsync(
+            c.CharacterId, cargo, c.ShipId, c.ShipId, CharacterShips.CargoFlag, null);
+        Assert.False(cargoMove is ShipRefused { Reason: ShipRefusal.CargoWouldOverflow });
+
+        var unfitRefusal = Assert.IsType<ShipRefused>(
+            await rig.Ships.MoveAsync(c.CharacterId, module, c.ShipId, Rig.Station, ItemFlags.Hangar, null));
+        Assert.Equal(ShipRefusal.CargoWouldOverflow, unfitRefusal.Reason);
+        Assert.Equal(ItemState.Online, (await rig.Modules.StatesAsync([module]))[module]);
+        Assert.Equal(c.ShipId, (await rig.Items.GetAsync(module))!.LocationId);
+
+        Changed(await rig.Ships.MoveAsync(
+            c.CharacterId, cargo, c.ShipId, Rig.Station, ItemFlags.Hangar, null));
+        Changed(await rig.Ships.SetOnlineAsync(c.CharacterId, c.ShipId, module, online: false));
+        Assert.Equal(ItemState.Offline, (await rig.Modules.StatesAsync([module]))[module]);
+
+        Changed(await rig.Ships.SetOnlineAsync(c.CharacterId, c.ShipId, module, online: true));
+        var retryCargo = await rig.GiveAsync(
+            c.CharacterId,
+            Rig.FixtureAsteroidOre,
+            singleton: false,
+            quantity: cargoQuantity,
+            location: c.ShipId,
+            flag: CharacterShips.CargoFlag);
+        Assert.IsType<ShipRefused>(
+            await rig.Ships.MoveAsync(c.CharacterId, module, c.ShipId, Rig.Station, ItemFlags.Hangar, null));
+
+        Changed(await rig.Ships.MoveAsync(
+            c.CharacterId, retryCargo, c.ShipId, Rig.Station, ItemFlags.Hangar, null));
+        Changed(await rig.Ships.MoveAsync(
+            c.CharacterId, module, c.ShipId, Rig.Station, ItemFlags.Hangar, null));
+        Assert.Equal(ItemState.Offline, (await rig.Modules.StatesAsync([module]))[module]);
+    }
+
     [PgFact]
     public async Task A_new_character_has_its_starter_modules_online_in_their_slots()
     {

@@ -22,6 +22,7 @@ public sealed class MiningAndAbyssalRpcTests
     public async Task Core_factory_wires_mining_and_abyssal_callbacks()
     {
         var session = new ClientSession { CharacterId = 42 };
+        session.Set("accountRole", new PyLong(GameMasterRoles.Staff));
         AbyssalSpawnReportRequest? receivedReport = null;
         var report = new PyDict([Field("from_backend", PyBool.True)]);
         var callbacks = new GameRpcCallbacks(
@@ -40,10 +41,10 @@ public sealed class MiningAndAbyssalRpcTests
         Assert.Equal(new PyList([new PyList([new PyInt(700), new PyInt(123), new PyInt(44)])]),
             await mining.CallAsync(Call("perform_scan", session)));
         Assert.Same(report, await abyssal.CallAsync(Call("generate_abyss_npc_spawn_report", session,
-            new PyInt(3), new PyInt(77), new PyInt(2))));
+            new PyInt(172), new PyInt(77), new PyInt(2))));
         Assert.NotNull(receivedReport);
         Assert.Same(session, receivedReport.Session);
-        Assert.Equal((3, 77, 2), (receivedReport.DifficultyTier, receivedReport.SpawnTableId, receivedReport.Repetitions));
+        Assert.Equal((172, 77, 2), (receivedReport.DifficultyTier, receivedReport.SpawnTableId, receivedReport.Repetitions));
     }
 
     [Fact]
@@ -74,31 +75,20 @@ public sealed class MiningAndAbyssalRpcTests
     }
 
     [Fact]
-    public async Task Abyssal_report_clamps_repetitions_and_keeps_the_EveJS_empty_report_shape()
+    public async Task Abyssal_report_without_a_provider_refuses_instead_of_returning_a_fabricated_report()
     {
         var service = (IService)new AbyssalContentManagerService();
+        var session = StaffSession();
 
-        var report = Assert.IsType<PyDict>(await service.CallAsync(Call(
-            "generate_abyss_npc_spawn_report", new PyInt(5), new PyInt(777), new PyInt(1001))));
-
-        Assert.Equal(new PyDict([
-            Field("difficulty_tier", new PyInt(5)),
-            Field("spawn_table_id", new PyInt(777)),
-            Field("repetitions", new PyInt(1000)),
-            Field("average_spawn_points", new PyInt(0)),
-            Field("average_spent_points", new PyInt(0)),
-            Field("average_remaining_points", new PyInt(0)),
-            Field("average_number_of_npcs", new PyInt(0)),
-            Field("unsupported_tag_names", new PyList([])),
-            Field("unsupported_tags", new PyList([])),
-            Field("spawns", new PyList([])),
-        ]), report);
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(Call(
+            "generate_abyss_npc_spawn_report", session, new PyInt(172), new PyInt(777), new PyInt(1000))).AsTask());
+        Assert.Equal("ABYSSAL_SPAWN_REPORT_UNAVAILABLE", error.Error.UserErrorMessage);
     }
 
     [Fact]
     public async Task Abyssal_report_callback_receives_normalized_arguments_and_session()
     {
-        var session = new ClientSession { CharacterId = 77 };
+        var session = StaffSession();
         AbyssalSpawnReportRequest? received = null;
         var payload = new PyDict([Field("provider", PyBool.True)]);
         var service = (IService)new AbyssalContentManagerService((request, _) =>
@@ -108,14 +98,21 @@ public sealed class MiningAndAbyssalRpcTests
         });
 
         var result = await service.CallAsync(Call("generate_abyss_npc_spawn_report", session,
-            new PyReal(4.9), new PyLong(9876543210), new PyInt(-2)));
+            new PyInt(178), new PyLong(987654321), new PyInt(0)));
 
         Assert.Same(payload, result);
         Assert.NotNull(received);
         Assert.Same(session, received.Session);
-        Assert.Equal(4, received.DifficultyTier);
-        Assert.Equal(int.MaxValue, received.SpawnTableId);
+        Assert.Equal(178, received.DifficultyTier);
+        Assert.Equal(987654321, received.SpawnTableId);
         Assert.Equal(0, received.Repetitions);
+    }
+
+    private static ClientSession StaffSession()
+    {
+        var session = new ClientSession { CharacterId = 77 };
+        session.Set("accountRole", new PyLong(GameMasterRoles.Staff));
+        return session;
     }
 
     [Fact]

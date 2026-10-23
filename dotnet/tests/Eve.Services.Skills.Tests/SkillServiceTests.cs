@@ -3,6 +3,7 @@ using Eve.Data;
 using Eve.Macho;
 using Eve.Marshal;
 using Eve.Skills;
+using Eve.Services;
 using Npgsql;
 
 namespace Eve.Services.Skills.Tests;
@@ -695,6 +696,23 @@ public class SkillHandlerTests
 
         var restarted = new AlphaInjectorMgrService(new PgSkillStore(rig.Source, rig.SchemaForTest), rig.CatalogForTest);
         Assert.Equal(next, await Rig.CallAsync(restarted, session, "GetNextAvailableInjection"));
+    }
+
+    [Fact]
+    public async Task Daily_alpha_clock_refuses_client_arguments_before_store_or_catalog_access()
+    {
+        var service = (IService)new AlphaInjectorMgrService(null!, null!);
+        var session = new ClientSession { CharacterId = 42 };
+        foreach (var call in new[]
+        {
+            new ServiceCall { Method = "GetNextAvailableInjection", Args = [new PyInt(42)], Session = session },
+            new ServiceCall { Method = "GetNextAvailableInjection", Args = [],
+                Kwargs = Py.Dict(("characterID", new PyInt(42))), Session = session },
+        })
+        {
+            var error = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(call).AsTask());
+            Assert.Equal("ALPHA_INJECTOR_ARGUMENTS_INVALID", error.Error.UserErrorMessage);
+        }
     }
 
     [PgFact]

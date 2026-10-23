@@ -382,6 +382,8 @@ Security finding `0350c910` for AIR NPE session ownership and budgets was pushed
 
 Security finding `3d15270c` for authentication input bounds and budgets was pushed to `main` on 2026-10-23, with concurrent upstream updates merged at `e2b5d2bf`. On `eve_p3`, the focused refusal test passed (1), `Eve.Services.Core.Tests` passed (875), and `Eve.Services.Tests` passed (236), with no skips. Method-by-method inventory classification remains open.
 
+Security finding `28946b42` for Info Gathering telemetry bounds and budgets was pushed to `main` on 2026-10-23. On `eve_p3`, the focused refusal test passed (1), `Eve.Services.Core.Tests` passed (876), and `Eve.Services.Tests` passed (237), with no skips. Method-by-method inventory classification remains open.
+
 Security finding `3a7f0843` for Resource Wars reads was pushed to `main` on 2026-10-23. On `eve_p3`, the focused refusal test passed (1), `Eve.Services.Core.Tests` passed (872), and `Eve.Services.Tests` passed (233), with no skips. Method-by-method inventory classification remains open.
 
 Security finding `509c10c8` was pushed to `main` on 2026-10-23; it was merged with concurrent `main` commit `1c997e37` in `ce6d6d87`. At the merged revision, the live Host registry audit passed with 1,374 service/method pairs, and `RpcFuzzTests` passed on `eve_p3` (2 tests, no skips). Method-by-method inventory classification remains open.

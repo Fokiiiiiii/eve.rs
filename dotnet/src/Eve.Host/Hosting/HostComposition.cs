@@ -252,6 +252,7 @@ internal static class HostComposition
         HostServer? server = null;
         var info = new HostMachoNetInfo(registry, config.Current, characterSessions);
         registry.Register(new MachoNetService(info, now, GlobalConfigWrites.Create(config, connected, () => server?.PublishClusterConfig())));
+        registry.Register(new EventLogRpcService());
         var charMgr = characterServices.OfType<Eve.Services.CharacterInfo.CharMgrService>().FirstOrDefault();
         Func<long, CancellationToken, ValueTask<IReadOnlyList<long>>>? readBlockedOwners =
             charMgr is null ? null : charMgr.ReadBlockedOwnersAsync;

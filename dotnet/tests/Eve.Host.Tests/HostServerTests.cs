@@ -449,6 +449,26 @@ public class HostServerTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task A_shipcaster_call_without_state_returns_a_host_error_instead_of_an_empty_success()
+    {
+        Start(configure: registry => registry.Register(new Eve.Services.Space.ShipcasterRpcService(
+            "shipCasterLandingPadMgr",
+            new Eve.Universe.SolarSystemCatalog([]))));
+        var front = await Handshaken(await ConnectAsync());
+        var open = Open();
+        await front.SendAsync(open);
+        await front.ReceiveAsync();
+
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(Packets.Call(
+            open, 1, "shipCasterLandingPadMgr", "GetAllLandingPads"))));
+        var reply = Assert.IsType<Send>(await front.ReceiveAsync());
+        var response = Assert.IsType<PyObject>(MarshalCodec.Decode(reply.Payload));
+        var state = Assert.IsType<PyTuple>(response.Args).Items;
+
+        Assert.Equal((int)MachoMessage.ErrorResponse, Assert.IsType<PyInt>(state[0]).Value);
+    }
+
+    [Fact]
     public async Task GetInitVals_lists_the_services_and_the_global_configuration()
     {
         Start();

@@ -73,9 +73,10 @@ The owner’s captures and process logs were read through `tools/mitm show` and 
 ## (i) eve-net handshake timeout / eve-sim exits before hello
 
 - Symptom: `eve-net: ... the handshake did not finish in 30s`; `eve-sim: the host connection ended: the host closed before it said hello`.
-- Root cause: open; reproduce startup ordering and a delayed simulation handshake.
-- Fix commit: pending.
-- Regression test: pending; it must prove Host survival during a slow sim start.
+- Root cause: the diagnostic sim log shows an accepted connection ending before the first Hello, followed by another accepted connection. `eve-sim` logs a per-connection error and returns to its accept loop; this line does not mean the simulation process exited. Host composition starts `SimClient` in the background; it retries failed connects and does not await the simulator before serving the game. The Host log later records a connected simulation and a pilot entering space. The separate `eve-net` timeout means a client socket did not finish the Macho login handshake within its 30-second bound. The logs provide no shared session or connection identifier to establish whether that socket is the graphical pilot or an abandoned/retried connection.
+- Decision: delayed simulation startup is already handled by the Host's retrying background link. A regression now proves that the Host simulation client reconnects when its listener starts late. The `eve-net` timeout remains owner-needed: correlate its connection with the graphical client's launch and retry timeline before changing the login handshake timeout or protocol.
+- Fix commit: none; no protocol defect is established. Regression coverage is in `The_host_simulation_client_retries_until_a_slow_listener_starts`.
+- Regression test: the delayed-listener case passed (1/1), and the full `SimClientTests` class passed (19/19), zero skips. This verifies the simulation client retry path; no current graphical-client retest was run.
 
 ## (j) EveJS session comparison
 

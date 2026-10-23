@@ -36,6 +36,22 @@ public class SimClientTests
     }
 
     [Fact]
+    public async Task The_host_simulation_client_retries_until_a_slow_listener_starts()
+    {
+        await using var sim = new FakeSimulation();
+        await using var client = SimClient.ToUnixSocket(sim.Path);
+        client.RetryAfter = TimeSpan.FromMilliseconds(20);
+
+        client.Start();
+        await Task.Delay(100);
+        Assert.False(client.IsConnected);
+
+        sim.Listen();
+        await Until(() => client.IsConnected);
+        Assert.Contains(sim.HeardNow(), message => message is SimHello { Version: SimCodec.ProtocolVersion });
+    }
+
+    [Fact]
     public async Task It_says_hello_and_is_connected_once_the_simulation_answers()
     {
         var (sim, client) = await ConnectedAsync();

@@ -2737,11 +2737,22 @@ The war and move audit found no global in-process inventory or war lock. Direct 
 
 A scheduled online timer settles one completed queue line at a time and reschedules the next due line after its notifications finish. Per-character settlement and announcement work is serialized so concurrent timer and request paths cannot interleave level events. Ordinary view and mutation requests and offline catch-up retain full overdue settlement. `TrainingTests.A_timer_settlement_finishes_only_one_overdue_queue_line` covers bounded settlement; the accelerated live walk in `WALKS.md` checks the notification sequence.
 
-
 ## Live walk coverage: PI and industry (2026-10-23)
 
 - The eve_p3 PI live walk now routes extractor output into the launchpad, then exports produced material through the customs office. It also checks the launched container, customs tax settlement, and rejection of a changed tax rate.
 - The eve_p3 industry walk completes ME and TE research jobs, then manufactures and delivers the researched blueprint's product. The walk uses persisted job completion times to keep the live sequence within CI-sized time.
-Security review follow-up: config multi-ID lookups now validate list/tuple shape and identifiers and cap raw batches at 500 before database or item reads. The complete RPC ownership and resource-bound inventory remains open.
+Security review follow-up: config multi-ID lookups validate list/tuple shape and identifiers and cap raw batches at 500 before database or item reads. `allianceRegistry.GetEveOwners`, personal contact batch mutations, and corporation registry batch RPCs refuse malformed outer shapes before lookups or writes. The complete RPC ownership and resource-bound inventory remains open.
 Config multi-ID owner, corporation ticker, alliance short-name, and location RPCs now cost 10 weighted per-session units as well as capping each request at 500 IDs; the service-by-service RPC inventory is still in progress.
 The market multi-buy validator preserves the client's zero-quantity no-op rows while refusing negative quantity and invalid minimum-volume values before any order write.
+Security review follow-up: inventory `GetAssetWorth` now costs 10 weighted per-session units because it scans all owned items; the bounded ordinary inventory read paths remain at 2 units.
+Security review follow-up: `invbroker.ListByFlags` now rejects more than 500 raw flag entries with `INVENTORY_BULK_LIMIT_EXCEEDED` before inventory reads.
+Security review follow-up: `invbroker.GetDamageForCrystals` now refuses unrecognized request shapes and nonpositive/noninteger item IDs before reading inventory state; its raw batch cap remains 500.
+Security review follow-up: inventory asset-root and station-content enumerations `ListStations` and `ListStationItems` now cost 10 weighted per-session units alongside `GetAssetWorth`.
+Security review follow-up: fitting bulk save/delete RPCs now refuse wrong outer payload shapes and malformed keys or delete IDs with a named notification before validating fitting data or deleting rows; valid V24.01 dictionary/list shapes remain supported.
+Security review follow-up: single fitting deletes now require a positive fitting ID in the selected owner scope and confirm deletion before announcing the change.
+
+Security review follow-up: corporation recruitment ad list/search RPCs now cap reads at 5,000 rows and fail with a named refusal above that ceiling; they do not truncate a larger result into a success response.
+
+Security review follow-up: `corpMgr.GetAggressionSettingsForCorps` rejects malformed container shapes and nonpositive or non-integer IDs before storage reads, while retaining the 500-entry cap.
+
+Security review follow-up: fleet manager watchlist inputs now validate list/tuple/Python-set shape and positive integer IDs and cap raw batches at 500 before member filtering; session watchlists retain at most 100 members.

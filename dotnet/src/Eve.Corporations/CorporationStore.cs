@@ -11,6 +11,7 @@ namespace Eve.Corporations;
 
 public sealed partial class CorporationStore
 {
+    private const int MaxRecruitmentAdRows = 5_000;
     public const string DefaultSchema = "corporations";
     public const decimal CorporationFoundingCost = 1599800m;
     public const decimal AllianceFoundingCost = 1000000000m;
@@ -679,11 +680,16 @@ private readonly Func<NpgsqlConnection,NpgsqlTransaction,long,long,long,long,boo
         if (corporationId is <= 0) throw new CorporationError("CORPORATION_NOT_FOUND");
         await using var connection = await _source.OpenConnectionAsync(token);
         await using var command = corporationId is { } corpId
-            ? Command(connection,null,$"SELECT {RecruitmentAdColumns} FROM {_schema}.corporation_recruitment_ads WHERE corporation_id=$1 ORDER BY ad_id",corpId)
-            : Command(connection,null,$"SELECT {RecruitmentAdColumns} FROM {_schema}.corporation_recruitment_ads ORDER BY corporation_id,ad_id");
+            ? Command(connection,null,$"SELECT {RecruitmentAdColumns} FROM {_schema}.corporation_recruitment_ads WHERE corporation_id=$1 ORDER BY ad_id LIMIT {MaxRecruitmentAdRows + 1}",corpId)
+            : Command(connection,null,$"SELECT {RecruitmentAdColumns} FROM {_schema}.corporation_recruitment_ads ORDER BY corporation_id,ad_id LIMIT {MaxRecruitmentAdRows + 1}");
         await using var reader = await command.ExecuteReaderAsync(token);
         var ads = new List<CorporationRecruitmentAd>();
-        while (await reader.ReadAsync(token)) ads.Add(ReadRecruitmentAd(reader));
+        while (await reader.ReadAsync(token))
+        {
+            if (ads.Count == MaxRecruitmentAdRows)
+                throw new CorporationError("CORPORATION_RECRUITMENT_AD_LIMIT_EXCEEDED");
+            ads.Add(ReadRecruitmentAd(reader));
+        }
         return ads;
     }
 

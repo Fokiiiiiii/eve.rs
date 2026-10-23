@@ -1853,6 +1853,37 @@ public class DispatchGoldenTests
     }
 
     [Fact]
+    public async Task Client_stacktrace_reports_use_a_named_per_session_budget()
+    {
+        var capture = new Capture();
+        var session = new ClientSession(capture) { SessionId = 921 };
+        var registry = new ServiceRegistry();
+        var service = new AlertBudgetService();
+        registry.Register(service);
+        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 1 };
+
+        await dispatcher.DispatchAsync(CallRequestPacket("alert", "SendClientStackTraceAlert"), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("alert", "SendClientStackTraceAlert"), session);
+
+        Assert.Equal(1, service.Calls);
+        Assert.Equal(2, capture.Sent.Count);
+        Assert.Equal(ErrorResponseCommand, CommandOf(capture.Sent[1]));
+        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[1])));
+    }
+
+    private sealed class AlertBudgetService : IService
+    {
+        public int Calls { get; private set; }
+        public string Name => "alert";
+        public bool HasMethod(string method) => method == "SendClientStackTraceAlert";
+        public ValueTask<PyValue> CallAsync(ServiceCall call)
+        {
+            Calls++;
+            return ValueTask.FromResult<PyValue>(PyNone.Instance);
+        }
+    }
+
+    [Fact]
     public async Task Character_energy_reads_use_a_named_per_session_budget()
     {
         var capture = new Capture();

@@ -565,6 +565,16 @@ The client sends jump and ballpark diagnostics (`eve/client/script/util/jumpMoni
 Security finding `0da0dd98` was pushed to `main` on 2026-10-23.
 
 
+### Client alert RPC detail
+
+| RPC | Caller and target scope | Input bounds | Per-session cost |
+|---|---|---|---|
+| `alert.BeanCount` | Any authenticated client; fixed crash-report negotiation response | Exactly one integral stack hash; no keyword arguments | None |
+| `alert.SendClientStackTraceAlert` | Any authenticated client; diagnostic is keyed to the supplied stack ID and carries no target owner | Three or four positional arguments; stack ID is a two-value tuple/list with bounded key parts; trace max 16,384 UTF-8 bytes; mode max 32 bytes; optional next key is a bounded scalar; no keyword arguments | 1 unit |
+
+V24.01 sends `BeanCount(stackID[0])` and `SendClientStackTraceAlert(stackID, stackTrace, mode, nextErrorKeyHash)` (`carbon/common/script/sys/alert.py:233,495,512-516`). Host now validates the wire types and sizes before decoding or logging, and charges the trace report route. `ClientStartupServicesTests.Alert_stacktrace_rpc_refuses_malformed_and_oversized_inputs` covers shape, count, and size refusals; `DispatchGoldenTests.Client_stacktrace_reports_use_a_named_per_session_budget` checks cost. On `eve_p3`, the focused Core test passed (1), all `Eve.Services.Core.Tests` passed (867), and all `Eve.Services.Tests` passed (231), with no skips.
+
+
 ### Character energy RPC detail
 
 | RPC | Caller and target scope | Input bounds | Per-session cost |

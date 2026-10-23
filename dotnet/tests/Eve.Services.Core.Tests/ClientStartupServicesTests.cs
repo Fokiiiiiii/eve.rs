@@ -28,7 +28,10 @@ public sealed class ClientStartupServicesTests
     public void Alert_beancount_requests_a_stack_trace_with_a_pair()
     {
         var service = new AlertService();
-        var result = service.BeanCount(null!);
+        var result = service.BeanCount(new ServiceCall
+        {
+            Method = "BeanCount", Args = [new PyInt(123)], Session = new ClientSession(),
+        });
 
         Assert.Equal(new PyTuple([PyNone.Instance, PyNone.Instance]), result);
     }
@@ -51,6 +54,41 @@ public sealed class ClientStartupServicesTests
         Assert.Equal(first.Items[0], repeated.Items[0]);
         Assert.NotEqual(first.Items[0], distinct.Items[0]);
         Assert.Equal(new PyStr("D"), first.Items[1]);
+    }
+
+    [Fact]
+    public async Task Alert_stacktrace_rpc_refuses_malformed_and_oversized_inputs()
+    {
+        var service = (IService)new AlertService();
+        var session = new ClientSession();
+        async Task Refused(ServiceCall call)
+        {
+            var error = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(call).AsTask());
+            Assert.Equal("ALERT_ARGUMENTS_INVALID", error.Error.UserErrorMessage);
+        }
+
+        await Refused(new ServiceCall { Method = "BeanCount", Args = [], Session = session });
+        await Refused(new ServiceCall
+        {
+            Method = "SendClientStackTraceAlert", Session = session,
+            Args = [new PyTuple([new PyInt(1), new PyStr("key")]), new PyStr("trace"), new PyStr("Error"), new PyInt(2), new PyInt(3)],
+        });
+        await Refused(new ServiceCall
+        {
+            Method = "SendClientStackTraceAlert", Session = session,
+            Args = [new PyList(Enumerable.Repeat((PyValue)new PyInt(1), 1_000).ToArray()), new PyStr("trace"), new PyStr("Error")],
+        });
+        await Refused(new ServiceCall
+        {
+            Method = "SendClientStackTraceAlert", Session = session,
+            Args = [new PyTuple([new PyInt(1), new PyStr("key")]), new PyBytes(new byte[16_385]), new PyStr("Error")],
+        });
+        await Refused(new ServiceCall
+        {
+            Method = "SendClientStackTraceAlert", Session = session,
+            Args = [new PyTuple([new PyInt(1), new PyStr("key")]), new PyStr("trace"), new PyStr("Error")],
+            Kwargs = new PyDict([]),
+        });
     }
 
     [Fact]

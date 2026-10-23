@@ -574,6 +574,8 @@ Security finding `0da0dd98` was pushed to `main` on 2026-10-23.
 
 V24.01 sends `BeanCount(stackID[0])` and `SendClientStackTraceAlert(stackID, stackTrace, mode, nextErrorKeyHash)` (`carbon/common/script/sys/alert.py:233,495,512-516`). Host now validates the wire types and sizes before decoding or logging, and charges the trace report route. `ClientStartupServicesTests.Alert_stacktrace_rpc_refuses_malformed_and_oversized_inputs` covers shape, count, and size refusals; `DispatchGoldenTests.Client_stacktrace_reports_use_a_named_per_session_budget` checks cost. On `eve_p3`, the focused Core test passed (1), all `Eve.Services.Core.Tests` passed (867), and all `Eve.Services.Tests` passed (231), with no skips.
 
+Security finding `0c47ea43` was pushed to `main` on 2026-10-23.
+
 
 ### Character energy RPC detail
 

@@ -158,6 +158,7 @@ public class CharUnboundMgrTests
         // an invalid name is reported as invalid, not as taken
         Assert.Equal(new PyInt(-1), await h.CallAsync(session, "ValidateNameEx", new PyStr("ab")));
         Assert.Equal(new PyInt(-1), await h.CallAsync(session, "ValidateNameEx", PyNone.Instance));
+        Assert.Equal(new PyInt(-2), await h.CallAsync(session, "ValidateNameEx", new PyStr(new string('x', 1_000_000))));
     }
 
     [PgFact]
@@ -238,8 +239,10 @@ public class CharUnboundMgrTests
             new PyStr("a"), new PyInt(1), new PyInt(1), new PyInt(1), new PyInt(10), Doll, Portrait, new PyInt(35), PyNone.Instance, PyNone.Instance));
         var taken = await ErrorOfAsync(() => h.CallAsync(session, "CreateCharacterWithDoll",
             new PyStr("recorded pilot"), new PyInt(1), new PyInt(1), new PyInt(1), new PyInt(10), Doll, Portrait, new PyInt(35), PyNone.Instance, PyNone.Instance));
+        var tooLong = await ErrorOfAsync(() => h.CallAsync(session, "CreateCharacterWithDoll",
+            new PyStr(new string('x', 1_000_000)), new PyInt(1), new PyInt(1), new PyInt(1), new PyInt(10), Doll, Portrait, new PyInt(35), PyNone.Instance, PyNone.Instance));
 
-        foreach (var error in new[] { tooShort, taken })
+        foreach (var error in new[] { tooShort, taken, tooLong })
         {
             Assert.Equal(2, error.ErrorCode);
             Assert.True(error.IsUserError);
@@ -253,6 +256,9 @@ public class CharUnboundMgrTests
             Assert.Equal(2, step["error"]!["code"]!.GetValue<int>());
             Assert.Equal("CharNameInvalid", step["error"]!["payload"]!["$objectex"]!["$tuple"]![1]!["$tuple"]![0]!.GetValue<string>());
         });
+        var fractionalRace = await ErrorOfAsync(() => h.CallAsync(session, "CreateCharacterWithDoll",
+            new PyStr("Fractional Pilot"), new PyReal(1.5), new PyInt(1), new PyInt(1), new PyInt(10), Doll, Portrait, new PyInt(35), PyNone.Instance, PyNone.Instance));
+        Assert.Equal("CustomInfo", fractionalRace.UserErrorMessage);
         Assert.Equal(new PyInt(1), await h.CallAsync(session, "GetNumCharacters"));
     }
 
@@ -722,6 +728,9 @@ public class CharUnboundMgrTests
 
         await h.CallAsync(session, "UpdateCharacterGender", new PyLong(id), new PyInt(3));
         Assert.Equal(1, (await h.Characters.GetAsync(id))!.Gender);
+        var fractionalGender = await ErrorOfAsync(() => h.CallAsync(session, "UpdateCharacterGender", new PyLong(id), new PyReal(1.5)));
+        Assert.Equal("CustomInfo", fractionalGender.UserErrorMessage);
+        Assert.Equal(1, (await h.Characters.GetAsync(id))!.Gender);
         await h.CallAsync(session, "UpdateCharacterGender", new PyLong(id));
         Assert.Equal(1, (await h.Characters.GetAsync(id))!.Gender);
     }
@@ -743,6 +752,14 @@ public class CharUnboundMgrTests
         Assert.Equal(new PyInt(2), session.Get("raceID"));
         Assert.Equal(new PyInt(2), session.Get("raceid"));
         Assert.Equal(new PyInt(1375), session.Get("characterTypeID"));
+
+        var invalidBloodline = await ErrorOfAsync(() => h.CallAsync(session, "UpdateCharacterBloodline", new PyLong(id), new PyInt(999999)));
+        Assert.Equal("CustomInfo", invalidBloodline.UserErrorMessage);
+        var fractionalBloodline = await ErrorOfAsync(() => h.CallAsync(session, "UpdateCharacterBloodline", new PyLong(id), new PyReal(3.5)));
+        Assert.Equal("CustomInfo", fractionalBloodline.UserErrorMessage);
+        var unchanged = (await h.Characters.GetAsync(id))!;
+        Assert.Equal((3, 2, 1375), (unchanged.BloodlineId, unchanged.RaceId, unchanged.TypeId));
+        Assert.Equal(new PyInt(3), session.Get("bloodlineID"));
     }
 
     [PgFact]

@@ -293,6 +293,13 @@ public sealed class PacketDispatcher
             return 10;
         if (service == "vaultManager" && method == "get_account_balance")
             return 10;
+        if (service == "charUnboundMgr" && method is
+            "GetCharacterInfo" or "GetCharacterSelectionData" or "CreateCharacterWithDoll" or
+            "UpdateCharacterGender" or "UpdateCharacterBloodline" or "SelectCharacterID" or
+            "CancelCharacterDeletePrepare" or "PrepareCharacterForDelete" or "DeleteCharacter")
+            return 10;
+        if (service == "charUnboundMgr" && method is "GetValidRandomName" or "ValidateNameEx")
+            return 1;
         if (service == "storeManager" && method == "buy_offer" || service == "FastCheckoutService" && method == "BuyOffer")
             return 10;
         if (service == "ownerGroupManager")

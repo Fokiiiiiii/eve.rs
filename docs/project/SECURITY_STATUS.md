@@ -428,6 +428,22 @@ The reset method follows EveJS v261018.1's `ROLE_QA | ROLE_PROGRAMMER | ROLEMASK
 
 The update path ignores cached `corprole`/`rolesAtAll` fields and checks current corporation membership and Director role through `CorporationStore`. `Customs_office_rates_are_written_through_the_host_and_survive_restart` checks that a non-director with a forged Director bit is refused and the persisted CEO can update the owner rates.
 
+### Character selection RPC detail
+
+| RPC | Caller and target scope | Input bounds | Per-session cost |
+|---|---|---|---|
+| `charUnboundMgr.GetNumCharacters`, `GetCharactersToSelect`, `GetCharacterSelectionData` | Authenticated account from the session; only its characters are returned | Character count is bounded by the account's three slots; selection rows are fixed-shape | `GetCharacterSelectionData` costs 10 units because it reads wallet, training, history, ship and character state for each slot |
+| `charUnboundMgr.GetCharacterInfo` | Authenticated account; a supplied character ID must belong to that account | One integral character ID; absent/nonpositive IDs select the caller's own list | 10 units |
+| `charUnboundMgr.GetCharOmegaDowngradeStatus` | Authenticated account from the session; no caller-selected account | No variable-sized input; one subscription lookup | None |
+| `charUnboundMgr.GetValidRandomName`, `ValidateNameEx` | Public name validation/generation; race selects static name flavor, and name-availability checks are public | Name validation rejects input over 37 UTF-16 code units before Unicode normalization; generated-name lookup is capped at 20 attempts | 1 unit each |
+| `charUnboundMgr.UpdateCharacterGender`, `UpdateCharacterBloodline` | Selected account's character only | One integral character ID and one integral choice; nonintegral, non-finite, and out-of-range integer payloads are refused before mutation; gender accepts 0–2 and invalid bloodlines are refused through the static catalog | 10 units each |
+| `charUnboundMgr.CreateCharacterWithDoll` | Authenticated account only; no client-selected account owner | Name follows the 37-unit name policy; race, bloodline, gender, ancestry, and school must be finite integral Int32 values and resolve against the creation catalog; creation is serialized per account and capped at three characters | 10 units |
+| `charUnboundMgr.SelectCharacterID` | Authenticated account's character only; target must not be deleted, queued for deletion, or already online | One character ID, optional alternative system ID, and tutorial boolean; population reservation and online claim are atomic | 10 units |
+| `charUnboundMgr.PrepareCharacterForDelete`, `CancelCharacterDeletePrepare`, `DeleteCharacter` | Authenticated account's own character, which must be offline | One character ID; queued deletion waits 600 minutes; final deletion requires the deadline to have passed | 10 units each |
+| `charUnboundMgr.GetCohortsForUser`, `GetCharacterLockType`, `GetQAStarterSystemIDs`, `ToggleValidation` | Fixed/public protocol data; validation toggle is session-local and role-gated | No client-selected target; starter systems are deduplicated; toggle checks server-set content, QA, programmer, or GML role | None; fixed-size/session-local work |
+
+`CharUnboundMgrTests` covers account ownership, the creation name boundary and deletion lifecycle. `DispatchGoldenTests.Character_selection_reads_and_mutations_use_a_named_per_session_budget` covers stateful lookups and mutations; `Character_name_queries_use_a_named_per_session_budget` covers the lower-cost name calls. `CharacterNames` returns the too-long result before normalization, avoiding work proportional to arbitrarily large name strings.
+
 ### New Eden Store and FastCheckout RPC detail
 
 | RPC | Caller and target scope | Input bounds | Per-session cost |

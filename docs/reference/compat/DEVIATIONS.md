@@ -5716,3 +5716,8 @@ Corporation registry batch RPCs `ExecuteActions`, `GetMembersByIds`, `GetMemberI
 
 
 `fleetMgr.AddToWatchlist`, `RemoveFromWatchlist`, and `RegisterForDamageUpdates` now reject malformed containers, nonpositive/non-integer IDs, and raw batches above 500 with `FleetError` before changing session watchlist state. Valid batches still include only current fleet members and store at most 100 distinct IDs. `Fleet_watchlist_updates_keep_only_members_and_clear_removed_damage_targets` covers the refusal cases and unchanged state.
+
+
+## Character selection RPC scope and work bounds (2026-10-23)
+
+The security inventory now lists each active `charUnboundMgr` RPC by caller scope, target ownership, input constraints, and weighted work cost. Character creation and gender/bloodline changes refuse nonintegral, non-finite, or out-of-range integer inputs; bloodline changes also require a catalog entry before writing. Character enumeration is limited by the three account slots, selection and mutation endpoints charge 10 units, and the public random-name and validation queries charge one unit each. `ValidateNameEx` returns the existing too-long code before Unicode normalization when the raw name exceeds the 37 UTF-16 code-unit maximum. The actual client uses these name calls during the creation flow (`chooseNameSection.py`) and creates characters through `CreateCharacterWithDoll` (`characterCreationContainer.py`); no graphical-client acceptance is claimed by this classification.

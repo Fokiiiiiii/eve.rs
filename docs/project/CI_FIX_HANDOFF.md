@@ -146,18 +146,17 @@ Use lane `eve_p4` only and run database work through `tools/dev/db-lock.sh`. The
 
 ### Contact notification dictionary keys
 
-- CI runs 664 (`774b7a18`) and 666 (`40110cc0`) failed `CharacterHostTests.Contact_add_persists_and_routes_the_recipient_notification`: the test treated a Python `str` dictionary key as `PyStr`, while the decoded packet exposes it as `PyBytes`.
-- Main commit `d2b2821d` reads notification keys through `JsSemantics.StringValue`; this worktree's `dfe630d1` also makes the shared `Field` helper compare both Marshal string forms. The `Eve.Host.Tests` project compiled locally with zero warnings and errors before merging current main. CI 671 will cover the Host shard; dispatch a focused Actions check if that shard does not finish the contact regression.
-## 2026-10-23 merged recovery state
+<<### Contact notification dictionary keys and persisted values
 
-- Worktree merge commit `93859c6a` combines the contact-key test helper update with `origin/main` `287c530d`. The nine pre-existing Rust source deletions remain outside the merge.
-- Agent run 138 (`40008851484`) is checking the selected live regression on `287c530d`; CI run 671 (`40008838460`) is queued for that same head. CI runs on the next pushed head will verify this merged worktree.
-- After pushing, dispatch `Eve.Host.Tests` with filter `FullyQualifiedName~Contact_add` and record that result plus the push-triggered gate below.
+- CI runs 664 (`774b7a18`), 666 (`40110cc0`) and 668 (`4b3cd33b`) exposed the contact notification test's assumption that wire-decoded Python string keys are always `PyStr`; the actual keys are `PyBytes`. Main's `d2b2821d` adds key-aware notification assertions. The test helper now handles both marshal string forms.
+- Agent run 138 (`40008851484`) on `287c530d` failed, but its downloaded log tail included only the test invocation, not the test result details. The persisted notification assertion now checks `level` and `message` through the same field reader rather than comparing the full dictionary's concrete key encoding. The updated Host.Tests Release build passed with zero warnings and errors; the focused database-backed check will be repeated.
+- CI run 668 also still returned HTTP 400 at SKINR `ConsumeRequest` after the SDE unlimited-license sentinel fix. `test_skinr_live.py` now includes the gateway error string in its assertion so the next E2E run identifies the refusing validation branch. The catalog fix is not yet verified end to end.
+- Commit `b5ecf895` contains these assertion changes and the live error diagnostic. Merge-result commit `b2025a73` preserves the latest main contact notification checks. The merged `Eve.Host.Tests` Release build passed with zero warnings and errors; no local PostgreSQL test was run.
+- Current worktree has merged the notification checks and the latest main changes; after push, dispatch the exact contact regression and use the next E2E log to inspect the new SKINR error detail.
 
+## 2026-10-23 persisted contact ID wire types
 
-## 2026-10-23 contact notification persisted ID wire types
-
-- CI run 671 on `287c530d` and Agent run 138 reported the contact notification regression failing after the test dictionary lookup was made tolerant of `PyBytes`: `NotificationMgrService.Dto` returns persisted `senderID` and `receiverID` as `PyInt`, while the assertions expected `PyLong`.
-- Updated the persisted `GetAllNotifications` assertions to match the service wire values. The direct `OnNotificationReceived` packet assertions remain as before.
-- The touched `Eve.Host.Tests` project is compiling locally; run 139 on `1669e6dc` ended failure without a per-test summary in the step log. A focused Actions check will verify the corrected assertions after push.
-- Run 672 on `1669e6dc` also exposed two independent failures still being investigated: SKINR `ConsumeRequest` returns HTTP 400, and the structure-market Host test fails while placing its first sell order.
+- CI run 671 on `287c530d` and Agent run 138 reported the contact notification test expected `PyLong` for persisted `senderID`, but `NotificationMgrService.Dto` emits persisted `senderID` and `receiverID` as `PyInt`.
+- Updated those two persisted-read assertions to `PyInt`; kept the direct `OnNotificationReceived` packet assertions unchanged. The `Eve.Host.Tests` project build passed locally with zero warnings and errors.
+- The focused database-backed Actions check will run after this merge is pushed. No local PostgreSQL test was run.
+- CI run 672 on `1669e6dc` still showed the earlier SKINR HTTP 400 without the new diagnostic and a structure-market sell-order Host failure. These independent failures remain open for the next recovery commits.

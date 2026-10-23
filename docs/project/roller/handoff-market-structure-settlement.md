@@ -1,7 +1,7 @@
 # Market structure settlement handoff
 
 ## Current state
-- Worktree: `/home/user/wt-cx14`, branch `cx14`. Feature commit: `ff909b54`; latest `origin/main` merge: `77e5720b`. Final push to `main` is pending.
+- Worktree: `/home/user/wt-cx14`, branch `cx14`. Market feature, handoff and service-access regression commits were pushed to `origin/main` at `5877066d` after merging the latest main snapshot.
 - Nine unrelated Rust deletions from the interrupted checkout remain saved in stash `Preserve pre-existing cx14 unrelated deletions before syncing main`. Do not apply or drop that stash without reviewing it.
 - No PostgreSQL database has been used. This task explicitly forbids local database use.
 
@@ -18,12 +18,16 @@
 - EveJS external book paths read persistent rows and invalidate scope caches after writes/fills. Its server was compared from source, not executed.
 
 ## Checks and next steps
-- After the latest main merge, `Eve.Host`, `Eve.Host.Tests`, and `Eve.Market.Tests` compile with 0 warnings/errors.
+- After the latest main merge, `Eve.Host.Tests` builds successfully with 0 warnings/errors. Earlier, `Eve.Market.Tests` compiled with 0 warnings/errors.
 - The focused no-database `MarketStructureWireTests` run passed: 2 passed, 0 skipped. Python syntax compilation of `test_market.py` passed. `git diff --check` passed after the main merge.
 - Host.Tests compilation needed small test-only repairs: missing required `ServiceCall.Args` members and analyzer-approved filtered `Assert.Single` forms in `CharacterReSculptHostTests.cs`; market filters use the same form.
-- No database-backed test or live headless walk has completed. Next: commit this handoff update, fetch/merge current main, push `HEAD:main`, dispatch the selected Host/Market Actions checks and live-slow `test_market.py`, inspect the push-triggered CI run, and keep this note current. No graphical-client result is claimed.
+- No database-backed test or live headless walk has completed. The focused Market Actions check passed (run `40008539837`); push-triggered `ci.yml` run `40008500517` remains in progress. Next: finish that run, then push the industry budget fix and dispatch its focused Services check. No graphical-client result is claimed.
 
 ## 2026-10-23 continuation
 - Fresh origin/main changes were merged into this worktree; `Eve.Host.Tests` now builds successfully with 0 warnings and 0 errors. The earlier focused no-database `MarketStructureWireTests` run passed 2/2 with 0 skips.
-- Market work remains unpushed. Before the next push, fetch and merge `origin/main`, push with `git push origin HEAD:main`, then run the selected Market Actions check and inspect the push-triggered CI result.
+- Push `5877066d` is complete. The selected Market Actions check passed; push-triggered `ci.yml` is still running. No database lane was used.
 - No PostgreSQL or graphical client was used for this continuation; graphical-client acceptance and the live structure-market walk remain outstanding.
+
+## 2026-10-23 industry diagnostic follow-up
+- The retry capture's two `industryManager.GetJobCounts` budget refusals were traced through the V24 slot-refresh caller, EveJS handler and registered eve.rs `IndustryJobsService`. The dispatcher had shared the general 160-unit budget; industry now has an independent 160-unit session bucket and a regression for cross-service starvation.
+- `Eve.Services.Tests` builds with 0 warnings and 0 errors. The focused regression is scheduled for Actions after push. No local focused test beyond the market wire test was run; no PostgreSQL or graphical client was used.

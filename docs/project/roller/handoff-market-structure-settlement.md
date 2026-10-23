@@ -115,3 +115,13 @@
 - Main CI 713 (40029399172) is active on 1bf92f6f; CI 712 on 1bfd22e4 is still active. The ask summary mismatch is now fixed in main commit 3cf0d3e0, and the post-restart front reconnection is fixed by aa8030a4.
 - Market correction commit 8944925f is ready on the merged worktree: immediate buys leave no unfilled bid, unmatched direct duration-zero buys refuse, and the Upwell minimum is applied once to owner plus SCC fees. Market.Tests and Host.Tests compile-checks passed with 0 warnings and 0 errors.
 - No local PostgreSQL database or live graphical client was used. Actions verification for the market correction is pending.
+
+
+## 2026-10-23 market Host wallet baseline correction
+- Push gate run `40029399172` on `1bf92f6f` reached the final wallet check after the partial fill, standing-bid placement, relist, cancellation, and Host restart: expected 9,980 ISK, actual 9,730 ISK. The earlier 9,980 ISK assertion immediately after the partial purchase passed.
+- The later order pays a 100 ISK minimum broker fee and 25 ISK minimum SCC fee at creation and again at modification; cancellation refunds the 4 ISK escrow but not these fees. EVE University describes the order and relist fees and cancellation behavior ([Market](https://wiki.eveuniversity.org/Market)); EveJS `computeBrokerFeeInfo`/`computeSccSurchargeInfo` and eve.rs `MarketRules` apply the same minima. Updated the final expected balance to 9,730 ISK with a short explanation; production behavior is unchanged.
+- The corrected `Eve.Host.Tests` Release build passed with 0 warnings and 0 errors. A new focused Actions check is pending after push. Agent run `40029411502` ended after starting `Eve.Market.Tests` without a test summary; push run `40029399172` identifies the Host balance failure. Its E2E job also exposed the adjacent SKINR notification-read issue in `handoff-skinr-sequencing.md`, now corrected in the live-test harness. No local PostgreSQL database or graphical-client test was used.
+
+## 2026-10-23 merged-main wallet correction check
+- Merged `origin/main` at `f5d1a85b`; the Host regression still checks 9,730 ISK after order placement, relisting and cancellation, while the production fee rules remain unchanged.
+- The current `Eve.Host.Tests` Release build passed with 0 warnings and 0 errors. `git diff --check` passed. The focused Host Actions check and push gate are pending. No local PostgreSQL database or graphical client was used.

@@ -540,7 +540,8 @@ public sealed class MarketHostTests : IAsyncLifetime
         book=Assert.IsType<PyTuple>(Received(await recovered.CallAsync(Call(buyerSession,"GetOrders",16,new PyInt(Tritanium)))));
         Assert.DoesNotContain(Lines(book.Items[0]),row=>
             Assert.IsType<PyTuple>(row).Items[10]==new PyLong(structureId));
-        Assert.Equal(9980m,(await new PgWalletStore(source,Schema("EVE_WALLET_SCHEMA")).GetAsync(buyer))!.Isk);
+        // Canceling the bid refunds escrow, but not the minimum broker and SCC fees from placing and modifying it.
+        Assert.Equal(9_730m,(await new PgWalletStore(source,Schema("EVE_WALLET_SCHEMA")).GetAsync(buyer))!.Isk);
         Assert.Single(Assert.IsType<PyList>(await recovered.CallAsync(Call(buyerSession,"CharGetTransactions",10,PyNone.Instance))).Items);
         await restarted.ShutdownAsync();
         _shutdownHost=null;

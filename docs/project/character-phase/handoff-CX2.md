@@ -14,10 +14,16 @@ The first live attempt timed out because station type 92885 has SDE small- and c
 
 Verified: `JumpCloneShipInstallTests` 4 passed; all `Eve.Services.Core.Tests` 862 passed with none skipped on `eve_p2`; Python compile and `git diff --check` passed; the two-pilot live walk passed. Host tests still cover station and structure installation, fees, settlement, refusal and restart. The graphical client was not used.
 
+## CH-19 completed for the inactive-season client surface
+
+The live no-season walk passed on `eve_p2` / port 26101. It checks `get_season_data_for_character`, `select_season`, the current FILETIME season end, all client challenge reads and claims, and the exact empty `util.KeyVal` progress record. The source audit found no season/challenge definitions in the pinned SDE, EveJS data directories or checked-out V24.01 resource payloads/indexes. The client source names `seasonSelection.fsdbinary`, but that binary is absent. EveJS's only challenge ID is a placeholder with a fabricated notification, which eve.rs does not send. Active-season progress and rewards remain unsupported because the checked sources provide no definition or reward data.
+
+Verified: live `test_project_discovery_live.py` passed with no skipped test. The graphical client was not used.
+
 ## Next work
 
-1. CH-19: finish the source audit for season data, verify the exact inactive-season reads live, and record the available client/SDE/EveJS evidence.
+1. Close CH-13 placement notification live coverage and recheck CH-14's standing rowset alongside its kill notification.
 2. Audit each remaining S3-S9 handoff item against current code; close it with a test or record a concrete root cause and status.
 3. CH-23: update section 4.1 and stale status rows, run character test projects and live walks on this lane, and write any remaining limitations.
 
-The worktree has uncommitted CH-19 assertions in `tools/headless-client/tests/test_project_discovery_live.py`; keep those separate from the CH-15 increment.
+The worktree currently has CH-19 test assertions plus CH-13 and CH-14 live test assertions; the latter are not yet run.

@@ -2,18 +2,23 @@
 
 ## Current state
 
-- Main CI runs 523–525 failed in the New Eden Store availability test and the live fitting walk. Runs 519–525 show repeated live failures at `test_switching_and_moving_modules_is_what_the_reference_does[race-1]`; runs 519, 522, 524, and 525 include the same Store regression failure. Runs 519, 520, and 522 include an `Alliance_expensive_methods_use_a_named_per_session_budget` failure.
-- The Store availability fix is present as commit `7c316f1c` on origin/main and as an equivalent earlier local commit; it aligns the Store availability test with its required settlement provider. The Release focused test passed on lane `eve_p4` with `EVE_MARKET_SEED=skip`.
-- The live fitting failure is `SessionRpcBudgetExceeded` during the inventory `List` after a module move. RPC tracing counted 132 weighted units for character setup and the six inventory/Dogma re-reads; the server default was 120.
-- The working tree raises the weighted RPC allowance to 160 and adds a dispatcher regression for that fitting read sequence. The strict single-race live regression passed with this allowance (1/1), and the full fast live suite passed on `eve_p4` (8 slow cases and one skill-training-speed case skipped by suite conditions). The focused dispatcher regression passed 147/147; the post-merge Release suites passed `Eve.Services.Core.Tests` 862/862 and `Eve.Services.Tests` 208/208.
-- Runs 519, 520, and 522 reported an alliance budget assertion failure because `GetAllianceApplications` was in an `allianceRegistry` budget test even though the active service route is `corpRegistry`. Commit `f2384b0f` moved the coverage to the corporation route; the current full `Eve.Services.Tests` Release run passed 205/205.
-- The pinned SDE build 3396210 is loaded in `eve_p4`; its local JSONL copy is in `.cache/sde/eve-online-static-data-3396210-jsonl`.
+- The original failures on main were the New Eden Store catalog availability assertion and the live fitting walk. The Store test now provides the settlement callback required to report offers as purchasable; its purchase path remains untouched by the catalog read. The focused Release test passed on `eve_p4` with `EVE_MARKET_SEED=skip`.
+- The fitting failure was `SessionRpcBudgetExceeded` during the inventory `List` after a module move. Tracing counted 132 weighted units for setup plus six inventory/Dogma re-reads against the old 120-unit default. The default is now 160, and `DispatchGoldenTests.The_fitting_inventory_rereads_fit_the_default_session_budget` protects that sequence.
+- On `eve_p4`, the skip-free live fitting regression passed both race variants. The full fast live suite passed; its eight slow cases and one skill-training-speed case were skipped by suite conditions. The focused dispatcher suite passed 147/147. After merging, `Eve.Services.Core.Tests` passed 862/862 and `Eve.Services.Tests` passed 208/208.
+- Runs 519, 520, and 522 also exposed an alliance RPC budget assertion using `allianceRegistry` for a route served by `corpRegistry`; commit `f2384b0f` corrected the test target. The pre-merge Release suite passed 205/205, and the post-merge count is 208/208 above.
+- The pinned SDE build 3396210 is loaded in `eve_p4`; the local JSONL copy is `.cache/sde/eve-online-static-data-3396210-jsonl`.
+
+## CI status at this handoff
+
+- Run 529 passed all jobs, including the required CI gate, on `37b521d0`.
+- Run 531 passed all jobs, including the required CI gate and Windows job, on `e3053512`.
+- Run 533 for `7db4c9ed` had passed E2E, Rust, build, and all .NET shards; its Windows job was still running at the last status check.
+- Run 539 for `d5b946b4` was active at the last status check. The checked-out `origin/main` tip is now `38decf14`; no workflow for that tip was listed in the latest `ci-status.py` output.
 
 ## Continue
 
-1. Store test fix `7c316f1c` and the 160-unit budget change are on main at `37b521d0`; `SECURITY_STATUS.md` retains upstream repairSvc/FitFitting coverage and documents the new default.
-2. CI status after pushing `37b521d0`: run 529 queued, run 528 pending, and run 527 in progress. Check the newest run and record its result.
+Check the newest `origin/main` workflow with `python3 tools/dev/ci-status.py status`. If any job turns red, inspect its step tail and retrieve the full job log through GitHub REST without forwarding the Authorization header across the log redirect. Reproduce only on `eve_p4`, through `tools/dev/db-lock.sh`, and add a focused regression for each root fix.
 
 ## Commands
 
-Use lane `eve_p4` only and run database work through `tools/dev/db-lock.sh`. The live port is 26103. For .NET, set `MSBUILDDISABLENODEREUSE=1` and `UseSharedCompilation=false`, and pass `-p:UseSharedCompilation=false`.
+Use lane `eve_p4` only and run database work through `tools/dev/db-lock.sh`. The live port is 26103. For .NET, set `MSBUILDDISABLENODEREUSE=1` and pass `-p:UseSharedCompilation=false`.

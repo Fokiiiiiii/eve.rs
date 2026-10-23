@@ -35,7 +35,7 @@ The owner’s captures and process logs were read through `tools/mitm show` and 
 - Root cause: `PacketDispatcher` charged all expensive RPCs against one per-session bucket. Before the first failed hangar bind, the graphical capture had only four `invbroker` calls; unrelated setup RPCs consumed the shared bucket.
 - Fix: expensive `invbroker` calls now use their own bounded per-session bucket. Inventory reads and writes still share that limit.
 - Fix commit: `Give inventory RPCs a dedicated per-session budget`.
-- Regression: `DispatchGoldenTests.Inventory_calls_keep_a_bounded_budget_separate_from_other_expensive_services` (1/1) and the full `DispatchGoldenTests` class (148/148), zero skips.
+- Regression: `DispatchGoldenTests.Inventory_calls_keep_a_bounded_budget_separate_from_other_expensive_services` (1/1) and the full `DispatchGoldenTests` class on the merged tree (157/157), zero skips.
 - Reference: EveJS returns the requested bound substruct for the matching station-hangar call; V24.01 client callsite is `neocomInventoryBadging.py:GetItemsInCurrentStationShipHangar`.
 
 ## (e) goals/campaign GetUpdateRequest timeout
@@ -65,20 +65,22 @@ The owner’s captures and process logs were read through `tools/mitm show` and 
 ## (h) missing href and Japanese UnicodeEncodeError
 
 - Symptom: the client logs `KeyError: 'href'` in `aurumStoreView.SetupStoreData` while processing store offers. It separately logs a CP1252 `UnicodeEncodeError` while formatting a Japanese localized module name in `_DetectAndFixMissingHudModules`.
-- Root cause: open; inspect the store response for the missing field. The Unicode exception is raised by client traceback encoding; identify whether a server payload contributes before deciding a server-side change.
-- Fix commit: pending.
-- Regression test: pending.
+- Root cause: the `href` exception is in the client `storeManager.get_offers(4)` path. The server's `NewEdenStoreCatalog` came from the approved EveJS seed, which has valid offer hrefs, but `gen-new-eden-store-catalog.py` explicitly removed each store 4 offer's href before generating the response. The separate Unicode exception is raised by the client's CP1252 traceback encoder while it logs Japanese localized names from the HUD repair diagnostic; it is not a server request failure and the names are valid localized client data.
+- Fix: preserve the seed's store 4 offer hrefs in the generated catalog and test the Host service response for the Omega offer. The CP1252 exception is raised while formatting a client traceback, outside the RPC path; the Japanese names are not altered server-side.
+- Fix commit: `Preserve New Eden Store offer links from the seed`.
+- Regression test: `NewEdenStoreCatalogTests.The_store_4_offers_are_the_15_seeded_offers_with_real_type_ids_for_every_product` and `NewEdenStoreCatalogTests.The_store_lists_the_catalog_offers_and_answers_can_purchase_from_it` (6 focused tests passed); related catalog and store service tests passed 18/18; `NewEdenStoreHostTests` passed 7/7 through the `eve_p3` DB lock. Zero skips.
 
 ## (i) eve-net handshake timeout / eve-sim exits before hello
 
 - Symptom: `eve-net: ... the handshake did not finish in 30s`; `eve-sim: the host connection ended: the host closed before it said hello`.
-- Root cause: open; reproduce startup ordering and a delayed simulation handshake.
-- Fix commit: pending.
-- Regression test: pending; it must prove Host survival during a slow sim start.
+- Root cause: the diagnostic sim log shows an accepted connection ending before the first Hello, followed by another accepted connection. `eve-sim` logs a per-connection error and returns to its accept loop; this line does not mean the simulation process exited. Host composition starts `SimClient` in the background; it retries failed connects and does not await the simulator before serving the game. The Host log later records a connected simulation and a pilot entering space. The separate `eve-net` timeout means a client socket did not finish the Macho login handshake within its 30-second bound. The logs provide no shared session or connection identifier to establish whether that socket is the graphical pilot or an abandoned/retried connection.
+- Decision: delayed simulation startup is already handled by the Host's retrying background link. A regression now proves that the Host simulation client reconnects when its listener starts late. The `eve-net` timeout remains owner-needed: correlate its connection with the graphical client's launch and retry timeline before changing the login handshake timeout or protocol.
+- Fix commit: none; no protocol defect is established. Regression coverage is in `The_host_simulation_client_retries_until_a_slow_listener_starts`.
+- Regression test: the delayed-listener case passed (1/1), and the full `SimClientTests` class passed (19/19), zero skips. This verifies the simulation client retry path; no current graphical-client retest was run.
 
 ## (j) EveJS session comparison
 
-- Symptom: `tools/mitm diff` reports the first call-order divergence at event 4: EveJS calls `invbroker.GetItemDescriptor`, while eve.rs calls `machoNet.GetTime`.
-- Root cause / decision: open; compare corresponding request and response flows before classifying this ordering difference.
-- Fix commit: pending.
-- Regression test: pending.
+- Symptom: `tools/mitm diff --ignore-volatile` reports the first client-call-order divergence at event 4: EveJS calls `invbroker.GetItemDescriptor`, while eve.rs calls another `machoNet.GetTime`.
+- Decision: both captures later contain `invbroker.GetItemDescriptor`, and both responses carry the same `blue.DBRowDescriptor` field layout. This first divergence is a difference in concurrent startup-call scheduling, not a missing service response. The captures then stop being the same scenario: EveJS creates a character before selecting it, while eve.rs selects an existing character. The EveJS login-campaign call also returns configured campaign data while eve.rs returns `None`; eve.rs only serves a campaign when `EVE_SEASONAL_LOGIN_CAMPAIGN` is configured. No current-build graphical capture with matched character state and campaign configuration is available, so later event-order or state differences are not classified as parity defects from these two sessions.
+- Fix commit: none for the first divergence. The separately observed ServiceNotFound and inventory-budget failures are covered by (a) and (d).
+- Regression test: none for concurrent call ordering. To close remaining parity questions, the owner needs a paired capture with the same starting character state and campaign configuration; the headless tests do not count as a graphical client comparison.

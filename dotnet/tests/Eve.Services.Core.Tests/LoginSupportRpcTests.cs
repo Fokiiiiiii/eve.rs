@@ -64,6 +64,44 @@ public sealed class LoginSupportRpcTests
     }
 
     [Fact]
+    public async Task Authentication_rpcs_refuse_malformed_inputs_before_callbacks_or_session_changes()
+    {
+        var callbackCalls = 0;
+        var service = new AuthenticationRpcService(
+            accruedTime: (_, _) =>
+            {
+                callbackCalls++;
+                return ValueTask.FromResult<PyValue>(new PyList([]));
+            },
+            amUnderage: (_, _) =>
+            {
+                callbackCalls++;
+                return ValueTask.FromResult(false);
+            });
+        var session = new ClientSession();
+        var calls = new[]
+        {
+            Call("AccruedTime", session, new PyInt(1)),
+            Call("AmUnderage", session),
+            Call("AmUnderage", session, new PyInt(1)),
+            Call("AmUnderage", session, new PyStr(new string('x', 8193))),
+            Call("SetLanguageID", session, new PyInt(1)),
+            Call("SetLanguageID", session, new PyStr(new string('x', 33))),
+            new ServiceCall { Method = "AccruedTime", Args = [], Kwargs = new PyDict([]), Session = session },
+        };
+
+        foreach (var call in calls)
+        {
+            var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() => ((IService)service).CallAsync(call).AsTask());
+            Assert.Equal(MachoErrors.UserErrorClass, refusal.Error.ClassName);
+            Assert.StartsWith("AUTHENTICATION_", refusal.Error.UserErrorMessage);
+        }
+
+        Assert.Equal(0, callbackCalls);
+        Assert.Null(session.Get("languageID"));
+    }
+
+    [Fact]
     public async Task Info_gathering_matches_keyval_and_status_dictionary_shapes_and_allows_backend_wiring()
     {
         var session = new ClientSession();

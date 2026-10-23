@@ -9,20 +9,37 @@ public sealed partial class AuthenticationRpcService(
     Func<ServiceCall, CancellationToken, ValueTask<PyValue>>? accruedTime = null,
     Func<ServiceCall, CancellationToken, ValueTask<bool>>? amUnderage = null)
 {
+    private const int MaximumLanguageIdBytes = 32;
+    private const int MaximumJwtBytes = 8192;
+
     private readonly Func<ServiceCall, CancellationToken, ValueTask<PyValue>> _accruedTime = accruedTime ?? EmptyAccruedTime;
     private readonly Func<ServiceCall, CancellationToken, ValueTask<bool>> _amUnderage = amUnderage ?? NotUnderage;
 
     [Method("AccruedTime")]
-    public ValueTask<PyValue> AccruedTime(ServiceCall call) => _accruedTime(call, call.Cancellation);
+    public ValueTask<PyValue> AccruedTime(ServiceCall call)
+    {
+        RequireShape(call, 0);
+        return _accruedTime(call, call.Cancellation);
+    }
 
     [Method("AmUnderage")]
-    public async ValueTask<PyValue> AmUnderage(ServiceCall call) =>
-        await _amUnderage(call, call.Cancellation).ConfigureAwait(false) ? PyBool.True : PyBool.False;
+    public async ValueTask<PyValue> AmUnderage(ServiceCall call)
+    {
+        RequireShape(call, 1);
+        if (Text(call.Arg(0)) is not { Length: > 0 } token ||
+            System.Text.Encoding.UTF8.GetByteCount(token) > MaximumJwtBytes)
+            throw MachoErrors.ThrowUserError("AUTHENTICATION_TOKEN_INVALID");
+        return await _amUnderage(call, call.Cancellation).ConfigureAwait(false) ? PyBool.True : PyBool.False;
+    }
 
     [Method("SetLanguageID")]
     public PyValue SetLanguageID(ServiceCall call)
     {
-        var languageId = Eve.Macho.JsSemantics.StringValue(call.Arg(0))?.Trim();
+        RequireShape(call, 1);
+        var text = Text(call.Arg(0));
+        if (text is null || System.Text.Encoding.UTF8.GetByteCount(text) > MaximumLanguageIdBytes)
+            throw MachoErrors.ThrowUserError("AUTHENTICATION_LANGUAGE_ID_INVALID");
+        var languageId = text.Trim();
         if (string.IsNullOrEmpty(languageId))
             languageId = "EN";
 
@@ -33,6 +50,20 @@ public sealed partial class AuthenticationRpcService(
         call.Session.Set("userLanguageID", value);
         return PyNone.Instance;
     }
+
+    private static void RequireShape(ServiceCall call, int argumentCount)
+    {
+        call.Cancellation.ThrowIfCancellationRequested();
+        if (call.Args.Count != argumentCount || call.Kwargs is not PyNone)
+            throw MachoErrors.ThrowUserError("AUTHENTICATION_ARGUMENTS_INVALID");
+    }
+
+    private static string? Text(PyValue value) => value switch
+    {
+        PyStr text => text.Value,
+        PyWString text => text.Value,
+        _ => null,
+    };
 
     private static ValueTask<PyValue> EmptyAccruedTime(ServiceCall _, CancellationToken __) =>
         ValueTask.FromResult<PyValue>(new PyList([]));

@@ -688,6 +688,12 @@ Security finding `c6a4c688` was pushed to `main` on 2026-10-23; the 20 non-skipp
 |---|---|---|---|
 | `epicArcStatus.AgentHasEpicMissionsForCharacter` | Current session character and one agent ID | Exactly one positive integral agent ID; no keywords | One unit. Invalid shapes and IDs refuse before the provider callback; character identity comes only from the session. V24.01 passes `agent.agentID` (`eve/client/script/ui/station/agents/agentUtil.py:40,65`). `UnportedFeatureRpcServicesTests.Epic_arc_status_refuses_malformed_agent_ids_before_callback` checks boundaries and session scope; `DispatchGoldenTests.Epic_arc_status_reads_use_a_named_per_session_budget` checks cost. On `eve_p3`, the focused refusal test passed (1), `Eve.Services.Core.Tests` passed (893), and `Eve.Services.Tests` passed (255), with no skips. |
 
+### Dynamic bounty disabled-state read
+
+| RPC | Caller and target scope | Input bounds | Per-session cost |
+|---|---|---|---|
+| `dynamicBountyMgr.GetOutputForClientSolarSystem` | Current session solar system only | No positional or keyword arguments | One unit. Reads only the session's solar-system ID; malformed client-selected IDs refuse before the callback. V24.01 calls it without arguments (`eve/client/script/ui/shared/dynamicResource/dynamicResourceSvc.py:64`). `SessionStartupRpcServicesTests.Dynamic_bounty_read_refuses_client_arguments_before_callback` checks both malformed forms; `DispatchGoldenTests.Dynamic_bounty_reads_use_a_named_per_session_budget` checks cost. On `eve_p3`, the focused refusal test passed (1), `Eve.Services.Core.Tests` passed (894), and `Eve.Services.Tests` passed (256), with no skips. |
+
 V24.01 calls this read with no arguments (`security/client/securitySvc.py:41`). `ClientStartupServicesTests.Security_manager_refuses_client_arguments` checks malformed positional and keyword inputs; `DispatchGoldenTests.Security_manager_read_uses_a_named_per_session_budget` checks cost.
 
 
@@ -734,3 +740,9 @@ Post-push handoff: jump timer finding `8baa4ba6` is on `main`; method-by-method 
 Security finding for `epicArcStatus.AgentHasEpicMissionsForCharacter` input validation and budgeting was pushed to `main` on 2026-10-23. On `eve_p3`, the focused refusal test passed (1), `Eve.Services.Core.Tests` passed (893), and `Eve.Services.Tests` passed (255), with no skips. The 1,374-method registry inventory remains in progress.
 
 Post-push handoff: epic arc RPC finding `f7646151` is on `main`; the 1,374-method registry inventory remains incomplete.
+
+Security finding for `dynamicBountyMgr.GetOutputForClientSolarSystem` argument validation and budgeting was pushed to `main` on 2026-10-23. On `eve_p3`, the focused refusal test passed (1), `Eve.Services.Core.Tests` passed (894), and `Eve.Services.Tests` passed (256), with no skips. The full 1,374-pair inventory remains incomplete.
+
+Post-push handoff: dynamic bounty read finding `55aff570` is on `main`, merged at `0c062d6d`; inventory remains open at 1,374 registered methods.
+
+Final handoff check on 2026-10-23: the live Host registry audit `RpcSecurityInventoryTests.Real_host_registry_methods_are_enumerable` passed on `eve_p3` and asserted 1,374 registered service/method pairs with no registered service omitted. This confirms enumeration only; method-by-method security classification remains incomplete.

@@ -104,6 +104,8 @@ public sealed partial class DynamicBountyMgrService(ReadDynamicBountyCallback? r
     public async ValueTask<PyValue> GetOutputForClientSolarSystem(ServiceCall call)
     {
         call.Cancellation.ThrowIfCancellationRequested();
+        if (call.Args.Count != 0 || call.Kwargs is not PyNone)
+            throw MachoErrors.ThrowUserError("DYNAMIC_BOUNTY_ARGUMENTS_INVALID");
         var systemId = call.Session.GetInt("solarsystemid");
         var result = readOutput is { } read
             ? await read(systemId, call.Cancellation)

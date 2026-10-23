@@ -374,6 +374,8 @@ public sealed class PacketDispatcher
             return 1;
         if (service == "epicArcStatus" && method == "AgentHasEpicMissionsForCharacter")
             return 1;
+        if (service == "dynamicBountyMgr" && method == "GetOutputForClientSolarSystem")
+            return 1;
         if (service == "RWManager" && method is "get_closest_rw_stations" or "solarsystem_contains_rw_instances")
             return 1;
         if (service == "clientStatLogger" && method == "LogString")

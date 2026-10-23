@@ -76,5 +76,12 @@ CBM and Serena source/test declarations were inspected; external mechanics claim
 
 - The reward interval is minutes: the EVE University mission timer page describes minute-scale bonus windows, and EveJS v0.12.9 converts `bonusTimeIntervalMinutes` to ticks. The previous static reward property name implied seconds and was inconsistent with that path; the model now calls it `BonusIntervalMinutes`.
 - On mission completion, SDE-authored ISK bonus rewards are credited only when `AcceptedAt + BonusIntervalMinutes > completion time`. The bonus uses wallet reference type 34 and a separate idempotent operation key; the base reward remains reference type 33. Non-ISK bonus item settlement remains open.
-- `MissionDungeonRuntimeTests.A_mission_time_bonus_is_paid_only_when_completed_before_its_deadline` covers an early completion and the exact deadline (excluded), with both missions completing. Focused Actions verification is pending.
+- `MissionDungeonRuntimeTests.A_mission_time_bonus_is_paid_only_when_completed_before_its_deadline` covers an early completion and the exact deadline (excluded), with both missions completing. Focused Actions run 40034144378 passed on `dc70777c`.
 - `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/tests/Eve.Services.Core.Tests/Eve.Services.Core.Tests.csproj -p:UseSharedCompilation=false --no-restore` passed with 0 warnings and 0 errors. The selected local no-database check passed 1 test; no PostgreSQL database was used.
+
+
+## Follow-up after push CI run 720
+
+- Push-triggered CI run 720 on `dc70777c` failed its fast live job and market/Host tests. The live log identified the Fortizar market walk, seller/buyer market walk, structure board/eject walk (`RETURN_SHIP_NOT_BOARDABLE`), and control-tower scoop walk. Upstream main then added corporation scoop custody fixes in `2e186db1` and `eb66fe06`; the latter resolves the tower-scoop refusal. The remaining fast-live cases have not yet been rerun on the updated main.
+- Market tests also had two test setup errors: multi-buy sent a zero-quantity line even though the RPC validates positive order quantities, and the structure Host expectation was 9730 ISK although the observed post-cancel balance is 9780 ISK after the two 100 ISK minimum Upwell fees. The local test fixture now uses only positive lines and expects the observed balance.
+- Main commit `1e44d4aa` fixed the rollback test to use posted orders. No database was used locally. Selected Actions verification for the remaining changed tests is pending.

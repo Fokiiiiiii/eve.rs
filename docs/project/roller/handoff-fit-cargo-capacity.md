@@ -24,4 +24,4 @@ The first Actions dispatch supplied an empty live-test input, but GitHub selecte
 
 Keep the worktree's pre-existing deletions under crates/eve-net, crates/eve-sde, crates/eve-sim, and crates/eve-space out of the commit.
 
-Implementation push: 80d07d8c. Latest Actions run: 39950881618 (default fast live set). Current headless regression and final CI run: pending.
+Implementation pushes: 80d07d8c and 55f2dd87. Main merge: 1a0c608d. Focused headless and database regressions: pending.

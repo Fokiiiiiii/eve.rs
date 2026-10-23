@@ -31,7 +31,7 @@ else:
     f = dict(re.findall(r'(?i)([A-Za-z ]+)=([^;]*)', url))
     f = {k.strip().lower(): v.strip() for k, v in f.items()}
     user = urllib.parse.quote(f.get('username', 'postgres'))
-    print(f'postgres://{user}@{f.get(\"host\", \"127.0.0.1\")}:{f.get(\"port\", \"5432\")}/{f.get(\"database\", \"eve\")}')
+    print(f'postgres://{user}@{f.get("host", "127.0.0.1")}:{f.get("port", "5432")}/{f.get("database", "eve")}')
 " "$EVE_PG_URL")"
 fi
 # the simulation reads the static data's JSONL export: the copy `eve-sde ensure` keeps under .cache/sde, unless EVE_SDE_DIR names one
@@ -63,6 +63,8 @@ if (exec 3<>"/dev/tcp/127.0.0.1/$GATEWAY_PORT") 2>/dev/null; then
 fi
 if (exec 3<>"/dev/tcp/127.0.0.1/$SSO_TEST_PORT") 2>/dev/null; then
   echo "eve-live: 127.0.0.1:$SSO_TEST_PORT is reserved for the deterministic SSO test issuer" >&2
+  exit 1
+fi
 if (exec 3<>"/dev/tcp/127.0.0.1/$PORT") 2>/dev/null; then
   echo "eve-live: 127.0.0.1:$PORT already accepts connections (another live run?); set EVE_LIVE_PORT to a free port" >&2
   exit 1
@@ -83,7 +85,7 @@ if [ -n "${EVE_PG_URL:-}" ]; then
   SCRATCH="live_$$"
   export EVE_LOGIN_SCHEMA="${SCRATCH}_login" EVE_IDENTITY_SCHEMA="${SCRATCH}_identity" EVE_CHARACTERS_SCHEMA="${SCRATCH}_characters" EVE_INVENTORY_SCHEMA="${SCRATCH}_inventory" EVE_SKILLS_SCHEMA="${SCRATCH}_skills" EVE_WALLET_SCHEMA="${SCRATCH}_wallet" EVE_FITTING_SCHEMA="${SCRATCH}_fitting" EVE_NPC_SCHEMA="${SCRATCH}_npc" EVE_SPACE_SCHEMA="${SCRATCH}_space"
   export EVE_SKINR_SCHEMA="${SCRATCH}_skinr" EVE_GAMESTORE_SCHEMA="${SCRATCH}_gamestore" EVE_ASSET_SAFETY_SCHEMA="${SCRATCH}_asset_safety" EVE_CORPORATIONS_SCHEMA="${SCRATCH}_corporations" EVE_FLEET_SCHEMA="${SCRATCH}_fleet" EVE_INDUSTRY_SCHEMA="${SCRATCH}_industry" EVE_MARKET_SCHEMA="${SCRATCH}_market"
-  export EVE_SCHEDULER_SCHEMA="${SCRATCH}_scheduler" EVE_EVENTS_SCHEMA="${SCRATCH}_events" EVE_RELATIONS_SCHEMA="${SCRATCH}_relations" EVE_CONTENT_SCHEMA="${SCRATCH}_content" EVE_CRIMEWATCH_SCHEMA="${SCRATCH}_crimewatch" EVE_GLOBAL_CONFIG_SCHEMA="${SCRATCH}_global_config" EVE_STRUCTURES_SCHEMA="${SCRATCH}_structures" EVE_AGENTS_SCHEMA="${SCRATCH}_agents" EVE_INSURGENCY_SCHEMA="${SCRATCH}_insurgency" EVE_ESS_SCHEMA="${SCRATCH}_ess" EVE_TRADE_SCHEMA="${SCRATCH}_trade" EVE_BOOKMARKS_SCHEMA="${SCRATCH}_bookmarks" EVE_ACCESS_GROUPS_SCHEMA="${SCRATCH}_access_groups" EVE_WORMHOLE_SCHEMA="${SCRATCH}_wormhole" EVE_PLANETS_SCHEMA="${SCRATCH}_planets" EVE_CONTRABAND_SCHEMA="${SCRATCH}_contraband" EVE_FACTIONWARFARE_SCHEMA="${SCRATCH}_factionwarfare" EVE_CONTRACTS_SCHEMA="${SCRATCH}_contracts" EVE_XMPP_SCHEMA="${SCRATCH}_xmpp"
+  export EVE_SCHEDULER_SCHEMA="${SCRATCH}_scheduler" EVE_EVENTS_SCHEMA="${SCRATCH}_events" EVE_RELATIONS_SCHEMA="${SCRATCH}_relations" EVE_CONTENT_SCHEMA="${SCRATCH}_content" EVE_CRIMEWATCH_SCHEMA="${SCRATCH}_crimewatch" EVE_GLOBAL_CONFIG_SCHEMA="${SCRATCH}_global_config" EVE_STRUCTURES_SCHEMA="${SCRATCH}_structures" EVE_AGENTS_SCHEMA="${SCRATCH}_agents" EVE_INSURGENCY_SCHEMA="${SCRATCH}_insurgency" EVE_ESS_SCHEMA="${SCRATCH}_ess" EVE_TRADE_SCHEMA="${SCRATCH}_trade" EVE_MARKET_SCHEMA="${SCRATCH}_market" EVE_BOOKMARKS_SCHEMA="${SCRATCH}_bookmarks" EVE_ACCESS_GROUPS_SCHEMA="${SCRATCH}_access_groups" EVE_WORMHOLE_SCHEMA="${SCRATCH}_wormhole" EVE_PLANETS_SCHEMA="${SCRATCH}_planets" EVE_CONTRABAND_SCHEMA="${SCRATCH}_contraband" EVE_FACTIONWARFARE_SCHEMA="${SCRATCH}_factionwarfare" EVE_CONTRACTS_SCHEMA="${SCRATCH}_contracts" EVE_XMPP_SCHEMA="${SCRATCH}_xmpp"
 fi
 
 cleanup() {

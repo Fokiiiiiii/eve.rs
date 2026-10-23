@@ -568,10 +568,20 @@ public sealed partial class CharMgrService(
 
     private static HashSet<long> BoundedContactOwnerIds(PyValue value)
     {
-        var items = ListItems(value);
+        var items = value switch
+        {
+            PyList list => list.Items,
+            PyTuple tuple => tuple.Items,
+            _ => throw MachoErrors.ThrowUserError("CHARMGR_CONTACT_IDS_INVALID"),
+        };
         if (items.Count > MaxBulkContactOwnerIds)
             throw MachoErrors.ThrowUserError("CHARMGR_BULK_LIMIT_EXCEEDED");
-        return items.Select(item => NormalizeInteger(item)).Where(id => id > 0).ToHashSet();
+        return items.Select(item => item switch
+        {
+            PyInt { Value: > 0 } id => id.Value,
+            PyLong { Value: > 0 } id => id.Value,
+            _ => throw MachoErrors.ThrowUserError("CHARMGR_CONTACT_ID_INVALID"),
+        }).ToHashSet();
     }
 
     private static string? OptionalText(PyValue? value)

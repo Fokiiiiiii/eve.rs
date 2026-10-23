@@ -5637,3 +5637,6 @@ Corporation profile, logo, division-name, abilities, acceptance, mail-restrictio
 `SaveManyFittings` now requires the client dictionary/KeyVal shape, and `DeleteManyFittings` requires a list or tuple. Wrong outer shapes, malformed save keys, and nonpositive delete IDs return a named `CustomNotify` refusal before processing rather than looking like a successful empty batch or partially mutating the collection. The fitting bulk regression covers those cases.
 
 `DeleteFitting` now verifies that a positive fitting ID belongs to the selected owner scope and confirms the delete before sending `OnFittingDeleted`; missing or foreign IDs return the same named refusal without a false notification. `FittingMgrServicesTests.Delete_fitting_refuses_missing_or_foreign_ids_without_a_false_notification` covers the boundary.
+
+
+`charMgr.BlockOwners`, `UnblockOwners`, `DeleteContacts`, and `EditContactsRelationshipID` now require a list/tuple of positive integer owner IDs. Malformed outer values and invalid entries receive named refusals before changing the authenticated character's personal data, instead of being treated as an empty or partially filtered batch. Duplicate IDs remain collapsed; valid response shapes are unchanged. `CharacterInfoTests.Personal_contact_labels_can_be_created_edited_assigned_removed_and_deleted` covers the refusal cases and retained state.

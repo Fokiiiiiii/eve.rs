@@ -24,6 +24,7 @@ from evecli import marshal as m
 from tests import dbseed
 from tests.gateway_wire import (
     REQUEST_SEND,
+    Authorized,
     as_user,
     answer,
     field,
@@ -207,7 +208,7 @@ def _item_consume_payload(item_id: int) -> bytes:
 def _skin_hex_from_draft(draft: bytes) -> str:
     fields = read_fields(draft)
     attributes = fields[2][0] if 2 in fields else fields[1][0]
-    return read_fields(attributes)[1][0].decode()
+    return read_fields(read_fields(attributes)[1][0])[1][0].decode()
 
 
 def _send(channel, request_name: str, character: int, payload: bytes, request_id=None):
@@ -475,7 +476,23 @@ def test_v24_skinr_design_sequences_and_applies_a_persisted_license():
                 channel, DRAFT + "UpdateRequest", character, update_payload
             )
             assert (status, response_type) == (200, DRAFT + "UpdateResponse")
-            assert _skin_hex_from_draft(updated)
+            skin_hex = _skin_hex_from_draft(updated)
+            status, response_type, draft_skin_data = _send(
+                channel,
+                "eve_public.cosmetic.ship.skin.thirdparty.api.GetRequest",
+                character,
+                field(1, skin_hex.encode()),
+            )
+            assert (status, response_type) == (
+                200,
+                "eve_public.cosmetic.ship.skin.thirdparty.api.GetResponse",
+            )
+            draft_fields = read_fields(read_fields(draft_skin_data)[1][0])
+            assert draft_fields[1][0] == name.encode()
+            assert draft_fields[2][0] == updated_line.encode()
+            assert draft_fields[4][0] == layout
+            assert draft_fields[6]
+            assert 7 not in draft_fields
 
             sequence_components = _component_kind(component_id, category, infinite=True)
             invalid_component = _component_kind(component_id + 1, category, infinite=True)
@@ -589,7 +606,6 @@ def test_v24_skinr_design_sequences_and_applies_a_persisted_license():
             assert len(job_ids) == 1
             job_id = next(iter(job_ids))
             job_key = job_id.hex
-            skin_hex = _skin_hex_from_draft(updated)
             skinr = dbseed.schema("SKINR")
             stored_cost = int(dbseed.sql(
                 f"select plex_cost from {skinr}.skinr_sequencing_jobs where job_id = '{job_id}'"
@@ -678,8 +694,14 @@ def test_v24_skinr_design_sequences_and_applies_a_persisted_license():
                 "eve_public.cosmetic.ship.skin.thirdparty.api.GetResponse",
             )
             saved_skin = read_fields(skin_data)[1][0]
-            assert read_fields(saved_skin)[2][0] == updated_line.encode()
-            assert read_fields(saved_skin)[4][0] == layout
+            skin_fields = read_fields(saved_skin)
+            assert skin_fields[1][0] == name.encode()
+            assert skin_fields[2][0] == updated_line.encode()
+            assert skin_fields[3]
+            assert skin_fields[4][0] == layout
+            assert skin_fields[5]
+            assert 6 not in skin_fields
+            assert read_fields(skin_fields[7][0])[1][0] > 0
 
             license_id = _skin_identifier(character, skin_hex)
             status, response_type, owned = _send(
@@ -715,63 +737,61 @@ def test_v24_skinr_design_sequences_and_applies_a_persisted_license():
             notices.cancel()
 
             # Restart the Host after completion and activation, then read and apply the persisted license.
+            restart_token = m.plain(client.call("userSvc", "GetUserToken"))
+            assert isinstance(restart_token, str)
             restarted_host = _restart_host()
             assert restarted_host.poll() is None
-            with connect(f"skinr-{run}") as restarted_client:
-                restarted_client.call(
-                    "charUnboundMgr",
-                    "SelectCharacterID",
-                    charID=character,
-                    secondChoiceID=None,
-                    skipTutorial=False,
+            with grpc.insecure_channel(GATEWAY) as restarted_raw:
+                restarted_channel = Authorized(restarted_raw, restart_token)
+                restarted_notices = restarted_channel.stream_stream(NOTICES_CONSUME)(
+                    iter([request("eve_public.gateway.Notices.Consume", character, b"")]),
+                    timeout=45.0,
                 )
-                restarted_client.notifications.clear()
-                with grpc.insecure_channel(GATEWAY) as restarted_raw:
-                    restarted_channel = as_user(restarted_raw, restarted_client)
-                    status, response_type, persisted_job = _send(
-                        restarted_channel,
-                        JOB + "GetRequest",
-                        character,
-                        field(1, identifier(job_id)),
-                    )
-                    assert (status, response_type) == (200, JOB + "GetResponse")
-                    assert read_fields(read_fields(persisted_job)[1][0]).get(7)
+                status, response_type, persisted_job = _send(
+                    restarted_channel,
+                    JOB + "GetRequest",
+                    character,
+                    field(1, identifier(job_id)),
+                )
+                assert (status, response_type) == (200, JOB + "GetResponse")
+                assert read_fields(read_fields(persisted_job)[1][0]).get(7)
 
-                    status, response_type, persisted_license = _send(
-                        restarted_channel,
-                        LICENSE + "GetRequest",
-                        character,
-                        field(1, license_id),
-                    )
-                    assert (status, response_type) == (200, LICENSE + "GetResponse")
-                    persisted_attributes = read_fields(persisted_license)[1][0]
-                    assert read_fields(persisted_attributes).get(1, [0])[0] == 1
-                    assert read_fields(persisted_attributes).get(2, [0])[0] == 0
+                status, response_type, persisted_license = _send(
+                    restarted_channel,
+                    LICENSE + "GetRequest",
+                    character,
+                    field(1, license_id),
+                )
+                assert (status, response_type) == (200, LICENSE + "GetResponse")
+                persisted_attributes = read_fields(persisted_license)[1][0]
+                assert read_fields(persisted_attributes).get(1, [0])[0] == 1
+                assert read_fields(persisted_attributes).get(2, [0])[0] == 0
 
-                    # The selected ship receives the skin presentation from the existing cosmetic owner.
-                    application_payload = field(1, license_id) + field(
-                        2, field(1, type_identifier(ship))
-                    )
-                    apply_request_id = uuid.uuid4()
-                    status, response_type, _ = _send(
-                        restarted_channel,
-                        LICENSE + "ApplyRequest",
-                        character,
-                        application_payload,
-                        apply_request_id,
-                    )
-                    assert (status, response_type) == (200, LICENSE + "ApplyResponse")
-                    assert _send(
-                        restarted_channel,
-                        LICENSE + "ApplyRequest",
-                        character,
-                        application_payload,
-                        apply_request_id,
-                    )[:2] == (200, LICENSE + "ApplyResponse")
-                    names = [event["name"] for event in restarted_client.notifications]
-                    assert names.count("OnShipCosmeticsChanged") == 1
-                    assert names.count("OnCurrentShipSkinChange") == 1
-                    assert dbseed.sql(
-                        f"select activated::text || '|' || unactivated from {skinr}.skinr_ship_licenses "
-                        f"where character_id = {character} and skin_hex = '{skin_hex}'"
-                    ) == "true|0"
+                # Apply through the public gateway after Host restart; eve-net closes with its Host link.
+                application_payload = field(1, license_id) + field(
+                    2, field(1, type_identifier(ship))
+                )
+                apply_request_id = uuid.uuid4()
+                status, response_type, _ = _send(
+                    restarted_channel,
+                    LICENSE + "ApplyRequest",
+                    character,
+                    application_payload,
+                    apply_request_id,
+                )
+                assert (status, response_type) == (200, LICENSE + "ApplyResponse")
+                assert _send(
+                    restarted_channel,
+                    LICENSE + "ApplyRequest",
+                    character,
+                    application_payload,
+                    apply_request_id,
+                )[:2] == (200, LICENSE + "ApplyResponse")
+                names = [_notice(next(restarted_notices))[0] for _ in range(2)]
+                assert names.count("OnShipCosmeticsChanged") == 1
+                assert names.count("OnCurrentShipSkinChange") == 1
+                restarted_notices.cancel()
+                assert dbseed.sql(
+                    f"select activated::text || '|' || unactivated from {skinr}.skinr_ship_licenses "
+                    f"where character_id = {character} and skin_hex = '{skin_hex}'"
+                ) == "true|0"

@@ -1089,7 +1089,7 @@ DEVIATIONS.md ("Market slice M1" and the M2/M3 sections when written).
 Done in M1 (DEVIATIONS.md, "Market slice M1"):
 - The five missing marketProxy RPCs: BuyMultipleItems, PlacePlexSellOrder, ModifyPlexCharOrder, CharGetTransactions, CorpGetTransactions.
   All 27 client-called methods are registered (`MarketHostTests`).
-- The order's division in keyID (G1); the station and system ask summaries as KeyVal rows (Q13, G10).
+- The order's division in keyID (G1); station/system ask summaries as four-value tuples for V24 range conversion, with regional best orders remaining named KeyVals (Q13, G10).
 - Client labels for MktBrokersFeeUnexpected2 and MktInvalidMinVolumeCannotExceedQuantity; other refusals are sentences, not codes (G6).
 - The fabricated immediate-fill notification is removed (G8); the cache invalidation that replaces it is M4.
 - Tests: `MarketRpcTests` (9), `ProtocolTests` (updated), `MarketHostTests` (the real composition, restart), live `test_market.py`.
@@ -1601,8 +1601,8 @@ follow a completed step, with forks, the 90-day restart and the held-back sites 
 |---|---|---|
 | DONE (tests) | Loader of the client's mission text IDs (embedded copy `client-missions.jsonl.gz`, build 3396210, IDs only) into schema `client_sde` (replaced at each start); `EVE_CLIENT_SDE_DIR` overrides | `Eve.Services.Core/ClientMissionMessages.cs`; `MissionComposition.LoadClientMissionMessagesAsync`; `MissionViewsTests` (synthetic, and the real export when configured: 2,886 rows with messages, 6 without) |
 | DONE (tests) | `GetMissionBriefingInfo` and `GetMissionObjectiveInfo` on the bound agent for a held (offered, accepted or completed) mission: the briefing and title IDs; the kill dungeon objective and the ISK reward; None when no mission is held | `Eve.Services.Core/MissionViews.cs`; `AgentMissionService.ReadHeldMissionAsync`; host `ReadHeldMissionAsync` |
-| OPEN | Fetch and courier objective payloads | The held-mission view currently returns empty objective/location lists for fetch and courier missions. EveJS `buildMissionObjectivePayload` uses item and destination fields, but the current mission read model does not supply an authoritative cargo-item/destination mapping; implement those fields and the cargo-to-agent completion transition with replay tests. |
-| OPEN | Mission dungeon owner and location fields | The current payload uses a placeholder owner and zero coordinates; it has no authoritative mapping from each mission template to its faction owner and dungeon placement. Resolve owner from the mission's source data and location from the active instance/agent-system state, then assert both in the mission view and live walk. |
+| PARTIAL (tests) | Fetch and courier objective payloads | `MissionViews.Objective` exposes cargo and pickup/drop-off rows from Host item/station state; `MissionDungeonRuntime` transfers/consumes tagged courier cargo and completes fetch turn-ins idempotently (`MissionViewsTests`, `MissionDungeonRuntimeTests`). The full live arc courier steps remain held; see section 43b/55. |
+| PARTIAL (tests) | Mission dungeon owner and location fields | `MissionViews.Objective` derives owner from the mission static row and the solar-system location from persisted `missionRuntimeState`, falling back to the issuer's pinned SDE system. Coordinates are emitted only when the runtime store has all three; the headless kill-mission walk now reads the bound objective. `MissionViewsTests`; graphical marker/warp acceptance and a persisted-position scenario remain open. |
 | NOT FOUND | LP and text are the client's: the server sends IDs, and the client resolves the text in its own localization | none needed |
 
 ## 55. Mission execution X4: live walk, completion transaction (2026-10-11)

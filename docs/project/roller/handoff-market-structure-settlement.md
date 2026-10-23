@@ -10,10 +10,10 @@
 - Extended `MarketProxyService` visibility, mutation checks and cached-method scope keys for structure orders. Preserved 64-bit structure IDs on market wire rows and summaries.
 - Added Host dispatch coverage for permitted and denied structures, order reads and writes, partial and competing fills, rollback and retry, wallet/item state, persistence and restart. Added topology and wire-shape focused tests.
 - Added a protocol-level live structure market walk in `tools/headless-client/tests/test_market.py`; it discovers an eligible structure from SDE and checks both order sides, fills, visible book, wallet, item custody and notification sequence.
-- Updated `docs/project/TODO.md` and `docs/reference/compat/DEVIATIONS.md` with implementation status, mechanics sources, EveJS market-server cache paths, cached-method scopes, the 1.0% fallback/11.5% cap, and the named-KeyVal ask-row divergence.
+- Updated `docs/project/TODO.md` and `docs/reference/compat/DEVIATIONS.md` with implementation status, mechanics sources, EveJS market-server cache paths, cached-method scopes, the 1.0% fallback/11.5% cap, and the station/system tuple wire contract.
 
 ## Source checks
-- V24 asks callsite and buy consumer were traced. The caller reads `ask.typeID`; both EveJS snapshots request tuple summaries in `GetStationAsks`, so eve.rs uses the named KeyVal form covered by tests.
+- V24 `PopulateAsksForMyRange` expands station/system mapping values through `ConvertTuplesToBestByOrders` into `BestByOrder(price, volRemaining, typeID, stationID)`. Both EveJS snapshots return four-value tuples for these ranges; eve.rs now does the same. Region best orders remain named KeyVals. The direct buy helper's `ask.typeID` read does not define the browse shape.
 - Eve University says the Market Hub is limited to Large/Extra Large non-refinery structures and required for market access. Structure fees combine 0.5% SCC with owner-set rate; Broker Relations does not affect structure fees; sales tax starts at 7.5% before Accounting reduction. Both EveJS snapshots use a 1.0% `MARKET_TAX` fallback (max 11.5%) if no group value resolves. Runtime structure type/fuel values come from pinned SDE; configured rates come from persisted settings.
 - EveJS external book paths read persistent rows and invalidate scope caches after writes/fills. Its server was compared from source, not executed.
 
@@ -64,5 +64,25 @@
 
 ## 2026-10-23 push 1a9e73e9
 - Merged the latest `origin/main` into `cx14` and pushed the SKINR SaveRequest layout correction, test-side `disallowedSlots` filtering, and market trader affiliation fixture repair in commit `1a9e73e9`.
-- Push-triggered `ci.yml` run 689 (`40016219712`) was queued at the latest check. Run 686 (`40015069193`) for parent `4484ec9c` remains in progress; run 683 was queued when checked. Recheck current-head Actions before considering these flows verified.
+- Push-triggered `ci.yml` run 689 (`40016219712`) completed with failures in the SKINR live test and `MarketHostTests`. The market failure was the test's `PyStr` expectation for raw `PyBytes`; the SKINR failure was a UUID-length error in the live parser. Both test-side corrections are now in the worktree and need verification on the next pushed SHA. The fast-live step also skipped eight tests: one training-speed check and seven slow tests.
 - No PostgreSQL database or graphical client was used locally. Python syntax compilation passed; the latest CI gate has not completed yet.
+
+## 2026-10-23 focused MarketHost Actions follow-up
+- Focused Actions run `40016728738` failed in `MarketHostTests` at the test's `CachedMethodCallResult.details.sessionInfo` assertion: it expected `PyStr`, while `ObjectCaching.MethodResult` intentionally writes `PyBytes` through `Raw`. The V24 client's `CachedMethodCalled` checks only for the key's presence. Production wire behavior is unchanged; the regression now asserts the exact ASCII byte value.
+- The corrected `Eve.Host.Tests` project builds with 0 warnings and 0 errors. Focused run `40016728738` predates the assertion correction; a new focused Actions run must verify the current test; no local PostgreSQL database or graphical client was used.
+
+## 2026-10-23 SKINR nested UUID follow-up
+- The push gate exposed a Python `uuid.UUID` length error in the SKINR live walk. V24 descriptors define `GetAllActiveResponse.Job.id` and `CompletedNotice.id` as an `Identifier` message whose `uuid` field contains the 16-byte value; the test read that message as the UUID bytes directly. Added the missing nested field read in both assertions; production response encoding is unchanged.
+- Focused live run `40018639989` on the earlier SHA remains in progress. The fix is pushed as `0f0cef8f`; current focused runs `40019674482` (`MarketHostTests`) and `40019703405` (`test_skinr_live.py`) are in progress. No local PostgreSQL or graphical client was used.
+
+## 2026-10-23 push 0f0cef8f
+- Pushed the SKINR nested UUID test parser fix and the market cached-result test expectation correction after merging latest `origin/main`.
+- `Eve.Host.Tests` builds with 0 warnings and 0 errors; `test_skinr_live.py` passes Python syntax compilation. Focused Actions runs `40019674482` and `40019703405` are in progress. Initial `ci-status.py failures 0f0cef8f` check found no push-triggered `ci.yml` run yet; recheck it.
+- No PostgreSQL database or graphical client was used locally.
+
+
+## 2026-10-23 station/system ask wire correction
+- V24 `MarketBase.PopulateAsksForMyRange` applies `ConvertTuplesToBestByOrders` to station/system ask values, expanding each value as `BestByOrder(price, volRemaining, typeID, stationID)`. EveJS v0.12.9 and 261018.1 return that four-value tuple; region best results keep their named KeyVal shape. The direct-buy helper's `ask.typeID` path did not establish the browse shape.
+- eve.rs now serializes station/system summaries as tuples and retains named KeyVals for region best. `MarketRpcTests`, `ProtocolTests`, the real Host structure dispatch test and the live walk assert the correct tuple order.
+- Local Release builds of `Eve.Market.Tests` and `Eve.Host.Tests` passed with 0 warnings/errors. The focused no-database `MarketStructureWireTests.Station_and_system_ask_summaries_are_tuples_for_the_client_range_converter` passed 1/1 with 0 skips. Python syntax compilation and `git diff --check` passed.
+- The parent gate on `d86a5ef5` exposed the remaining structure settlement fixture assertion: expected total wallet balance 19,980 ISK, actual 19,835 ISK. This reflects one two-unit immediate fill and one losing immediate buy resting at 10 ISK/unit with 20 ISK escrow plus the 100 ISK broker minimum and 25 ISK SCC minimum. The Host regression now checks 19,835 total and the 9,980/9,855 balances. Current focused Actions checks are pending after push. No local PostgreSQL database or graphical client was used.

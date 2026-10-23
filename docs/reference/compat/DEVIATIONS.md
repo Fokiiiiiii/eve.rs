@@ -1652,11 +1652,12 @@ observable behaviour of the five RPCs it implements (not its bugs). Design: `mar
   OnOwnOrdersChanged rows carry the order's wallet division (`accountKey`, 1000 to 1006), not 1000. The reference keeps the order's account
   key (`marketProxyService.js:579-582`), and the client names the division from it (`quote.py:442-443`). Test:
   `MarketRpcTests.A_corporation_order_row_carries_its_wallet_division_as_keyID`. Status: done (M1).
-- **GetStationAsks and GetSystemAsks answer KeyVal rows (Q13, G10).** The client reads `.typeID` on each ask and passes the row to Buy
-  (`quote.py:97-100`; reached through the evelink endpoint `endpoints.py:160`). A positional tuple has no `.typeID`. eve.rs answers the
-  BestByOrder rows the regional best answers (price, volRemaining, typeID, stationID). The reference answers tuples
-  (`marketProxyService.js:6241`): the same defect in the reference is not copied. Tests: `MarketRpcTests.Station_and_system_asks...`,
-  `ProtocolTests.Ask_summary_rpcs...`. Status: done (M1).
+- **GetStationAsks and GetSystemAsks use four-value ask tuples (Q13, G10).** V24 `MarketBase.PopulateAsksForMyRange` passes station/system
+  mapping values through `ConvertTuplesToBestByOrders`, which expands each `(price, volRemaining, typeID, stationID)` tuple into a
+  `BestByOrder` namedtuple; `quote.py:97-100` reads its fields after that conversion. EveJS v0.12.9 and 261018.1 return the same tuple
+  shape. eve.rs now does too. `GetRegionBest` remains named KeyVals because the client does not run that conversion on region results.
+  Tests: `MarketRpcTests.Station_and_system_ask_rows_match_the_client_tuple_contract`, `ProtocolTests.Ask_summary_rpcs...`, and
+  `MarketHostTests.The_host_dispatches_accessible_structure_market_orders_and_recovers_partial_settlement_after_restart`. Status: done (M1).
 - **Client labels for market refusals (G6).** A MarketError is sent as the client's UserError label with its arguments where the client
   source raises that label: `MktBrokersFeeUnexpected2` with `actualBrokerFeePerc` (100 x the server's rate) and
   `expectedBrokerFeePercentage` (the client's quote as sent: the client itself passes the raw fraction here, `sellMulti.py:456`), and

@@ -90,22 +90,20 @@ public class MarketRpcTests
     }
 
     [PgFact]
-    public async Task Station_and_system_asks_are_key_value_rows_read_by_name()
+    public async Task Station_and_system_ask_rows_match_the_client_tuple_contract()
     {
-        // This checks server-side fields only; it does not exercise MarketBase tuple conversion or V24 unmarshalling.
         await using var r = await TradeRig.Create();
         var actor = await r.Actor("Ask Reader");
         var seat = await SeatAsync(r, actor);
         await r.Book.SeedNpcAsync([new("ask", Tritanium, false, 10, 100, 32767, MarketLocation.From(r.Station), r.Now)]);
         foreach (var asks in new[] { await seat.Proxy.GetStationAsks(Call(seat.Session, "GetStationAsks", 1)), await seat.Proxy.GetSystemAsks(Call(seat.Session, "GetSystemAsks", 2)) })
         {
-            var row = Assert.IsType<PyObject>(Assert.Single(Assert.IsType<PyDict>(Received(asks)).Entries).Value);
-            Assert.Equal("util.KeyVal", JsSemantics.PlainText(row.Name));
-            var fields = Assert.IsType<PyDict>(row.Args);
-            Assert.Equal((double)(Tritanium), Num(Field(fields, "typeID")));
-            Assert.Equal((double)(r.Station.Id), Num(Field(fields, "stationID")));
-            Assert.Equal(10, Num(Field(fields, "price")));
-            Assert.Equal(100, Num(Field(fields, "volRemaining")));
+            var row = Assert.IsType<PyTuple>(Assert.Single(Assert.IsType<PyDict>(Received(asks)).Entries).Value);
+            Assert.Equal(4, row.Items.Count);
+            Assert.Equal(10, Num(row.Items[0]));
+            Assert.Equal(100, Num(row.Items[1]));
+            Assert.Equal(Tritanium, Num(row.Items[2]));
+            Assert.Equal(r.Station.Id, Num(row.Items[3]));
         }
     }
 

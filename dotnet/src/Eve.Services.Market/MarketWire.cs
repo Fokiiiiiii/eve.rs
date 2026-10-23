@@ -25,6 +25,12 @@ public static class MarketWire
         ("volRemaining",Py.Number(quantity)),
         ("typeID",new PyInt(order.TypeId)),
         ("stationID",new PyLong(order.Location.StationId)));
+
+    public static PyValue BestByOrderTuple(MarketOrder order,long quantity) => Py.Tuple(
+        Py.Number(MarketRules.RoundIsk((double)order.Price)),
+        Py.Number(quantity),
+        new PyInt(order.TypeId),
+        new PyLong(order.Location.StationId));
 }
 
 internal static class MarketHistoryWire

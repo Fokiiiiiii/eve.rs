@@ -19,21 +19,19 @@ Authenticate the V24.01 `ConnectionService.LoginSso` path from the inbound `user
 - Missing verifier, invalid token, unknown subject, or absent link refuses with `LoginAuthFailed`. Session opening remains after accepted authentication.
 - PostgreSQL migration `0005_sso_identity_links.sql` persists a unique issuer/subject link. Identity coverage includes signature, issuer, audience, expiry, subject, repeated login, and cross-account isolation. PostgreSQL coverage checks resolution through a newly created directory.
 - Host socket coverage checks the SSO credential/token, verified account id, role, country, and resulting `userid`/role/language initial state; it also checks an unlinked refusal before session-open.
-- `tools/headless-client/tests/test_sso_login_live.py` uses a local RSA test issuer, provisions a persisted link in the live-run scratch schema, and reaches character selection and `SelectCharacterID`. The runner configures the matching local issuer and audience.
+- `tools/headless-client/tests/test_sso_login_live.py` uses a local RSA test issuer, provisions a persisted link in the live-run scratch schema, and reaches character selection and `SelectCharacterID`. The runner configures the matching local issuer and audience and retains the merged paperdoll live test.
 
 ## Checkpoint
 
-- Rust `cargo +1.94.1 check -p eve-net`: passed.
-- Rust `cargo +1.94.1 fmt --package eve-net -- --check`: passed.
-- Rust `cargo +1.94.1 clippy -p eve-net --all-targets -- -D warnings`: passed.
+- Rust `cargo +1.94.1 check -p eve-net`, package fmt, and targeted all-target Clippy: passed.
 - Python compile checks and HostLink fixture generation (14 valid, 10 invalid cases): passed.
-- Host Release, Host.Tests Release, and Identity.Tests Release builds: passed with zero warnings and errors.
-- No-database identity verifier test: 5 passed, 0 failed, 0 skipped. PostgreSQL-backed and live headless scenarios are assigned to Actions.
-- Workspace `cargo +1.94.1 fmt --all -- --check` and workspace clippy cannot complete because this worktree already lacks `crates/eve-space/src/targeting/*`; the deletions predate this task and remain untouched.
-- No PostgreSQL database was used locally. GitHub Actions verification is pending. The graphical V24 client exercise remains outstanding.
+- Host Release, Host.Tests Release, and Identity.Tests Release builds: passed before the main merge. No-database identity verifier theory: 5 passed, 0 failed, 0 skipped.
+- Agent test for feature merge `fafa7948`: Identity.Tests SSO cases passed (8/8); Host.Tests found one fixture setup error because the linked account used default `AutoCreate=false`. The fixture now enables account creation; a follow-up validation is pending.
+- Workspace Rust fmt and Clippy cannot complete in this worktree because it already lacks `crates/eve-space/src/targeting/*`; those pre-existing deletions remain untouched. Targeted eve-net checks pass.
+- No PostgreSQL database was used locally. Push-triggered `ci.yml` and the follow-up Actions run are pending. The graphical V24 client exercise remains outstanding.
 
 ## Next steps
 
-1. Commit only the SSO task files, fetch and merge `origin/main`, then push `HEAD:main`.
-2. Dispatch Host/Identity SSO tests and inspect the push-triggered CI run, including the live headless scenario; update this note with the tested feature SHA and results.
+1. Commit the Host fixture correction and this checkpoint, fetch and merge `origin/main`, then push `HEAD:main`.
+2. Dispatch Host/Identity SSO tests for the new feature SHA and inspect the push-triggered CI run, including the live headless scenario; update this note with results.
 3. Keep the TODO row open until Actions verification is recorded.

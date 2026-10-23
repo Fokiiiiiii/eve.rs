@@ -93,6 +93,13 @@ internal static class Packets
         return Packet("CallReq", [new PyInt(6), Source(open, callId), new PyTuple([new PyInt(8), new PyStr(service), PyNone.Instance]), new PyInt(open.UserId), payload, PyNone.Instance]);
     }
 
+    public static PyValue BoundCall(SessionOpen open, long callId, string oid, string method, PyValue args, PyValue kwargs)
+    {
+        var body = new PyTuple([new PyStr(oid), new PyStr(method), args, kwargs]);
+        var payload = new PyTuple([new PyTuple([new PyInt(0), new PySubStream(body)])]);
+        return Packet("CallReq", [new PyInt(6), Source(open, callId), new PyTuple([new PyInt(8), PyNone.Instance, PyNone.Instance]), new PyInt(open.UserId), payload, PyNone.Instance]);
+    }
+
     public static PyValue Ping(SessionOpen open, long callId) =>
         Packet("PingReq", [new PyInt(20), Source(open, callId), new PyTuple([new PyInt(8), PyNone.Instance, PyNone.Instance]), new PyInt(open.UserId), new PyTuple([]), PyNone.Instance]);
 }

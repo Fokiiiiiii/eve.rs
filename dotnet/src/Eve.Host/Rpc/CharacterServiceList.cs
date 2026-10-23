@@ -73,11 +73,6 @@ internal sealed partial class CharacterServicesComposition
         UpkeepSharedFolders(sharedNotifier);
         services = [.. services, new Eve.Services.Core.OwnerGroupRefusals(new Eve.Services.Core.OwnerGroupManagerService(accessGroups, OwnerKind, characterSessions, sharedNotifier))];
         services = [.. services, new Eve.Services.Core.BookmarkRefusals(new Eve.Services.Core.AccessGroupBookmarkMgrService(bookmarks, StaticBookmarkTarget, MemberLists, characterSessions, sharedNotifier))];
-
-        var industryMonitor = services.OfType<IndustryMonitorRpcService>().Single();
-        services = [.. services.Select(service => service is InvBrokerService
-            ? new IndustryInventoryChangePublisher(service, industryMonitor)
-            : service)];
         return Task.CompletedTask;
     }
 }

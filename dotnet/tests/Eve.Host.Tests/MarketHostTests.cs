@@ -453,8 +453,25 @@ public sealed class MarketHostTests : IAsyncLifetime
         var modifiedBidRows=Assert.IsType<PyObject>(Received(await market.CallAsync(Call(buyerSession,"GetCharOrders",22))));
         var modifiedBid=Assert.IsType<PyTuple>(Assert.Single(Lines(modifiedBidRows)));
         Assert.Equal(new PyLong(structureId),modifiedBid.Items[4]);
+        async Task SetMarketServiceAsync(int state)
+        {
+            await using var connection=await source.OpenConnectionAsync();
+            await using var transaction=await connection.BeginTransactionAsync();
+            await structures.SetServiceAsync(connection,transaction,structureId,StructureServiceIds.Market,state,
+                DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+            await transaction.CommitAsync();
+        }
+        var balanceBeforeDeniedCancel=(await new PgWalletStore(source,Schema("EVE_WALLET_SCHEMA")).GetAsync(buyer))!.Isk;
+        await SetMarketServiceAsync(ServiceState.Offline);
+        var deniedCancel=await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            market.CallAsync(Call(buyerSession,"CancelCharOrder",23,new PyLong(structureBidId))).AsTask());
+        Assert.Equal("StructureMarketDenied",deniedCancel.Error.UserErrorMessage);
+        var stillOpenBidRows=Assert.IsType<PyObject>(Received(await market.CallAsync(Call(buyerSession,"GetCharOrders",24))));
+        Assert.Equal(structureBidId,Assert.IsType<PyLong>(Assert.IsType<PyTuple>(Assert.Single(Lines(stillOpenBidRows))).Items[0]).Value);
+        Assert.Equal(balanceBeforeDeniedCancel,(await new PgWalletStore(source,Schema("EVE_WALLET_SCHEMA")).GetAsync(buyer))!.Isk);
+        await SetMarketServiceAsync(ServiceState.Online);
         await market.CallAsync(Call(buyerSession,"CancelCharOrder",23,new PyLong(structureBidId)));
-        var cancelledBids=Assert.IsType<PyObject>(Received(await market.CallAsync(Call(buyerSession,"GetCharOrders",24))));
+        var cancelledBids=Assert.IsType<PyObject>(Received(await market.CallAsync(Call(buyerSession,"GetCharOrders",25))));
         Assert.Empty(Lines(cancelledBids));
 
         await host.ShutdownAsync();

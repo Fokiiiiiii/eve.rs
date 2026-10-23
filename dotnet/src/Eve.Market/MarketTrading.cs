@@ -753,7 +753,7 @@ public Task<MarketReceipt> ModifyAsync(long actorId,long orderId,decimal newPric
             var current=await GetOrder(c,tx,orderId,true,token) ?? throw new MarketError("MARKET_ORDER_NOT_FOUND");
             var order=current.Order;
             if (order.Row.IsNpc || current.State != 0) throw new MarketError("MARKET_ORDER_NOT_ACTIVE");
-            var station=await ResolveVenueAsync(expired ? 0 : actorId,order.Row.Location.StationId,false,token);
+            var station=await ResolveVenueAsync(expired ? 0 : actorId,order.Row.Location.StationId,!expired,token);
             if (!expired && order.Wallet.OwnerId == order.Actor && actor!.Id != order.Actor)
                 throw new MarketError("MARKET_ORDER_ACCESS_DENIED");
             var nowMs=now();

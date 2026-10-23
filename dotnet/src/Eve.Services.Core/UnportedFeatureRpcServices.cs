@@ -397,8 +397,10 @@ public sealed partial class CustomAgencyProviderService(CustomAgencyProviderRpcC
     public async ValueTask<PyValue> GetContentData(ServiceCall call)
     {
         call.Cancellation.ThrowIfCancellationRequested();
+        if (call.Args.Count != 0 || call.Kwargs is not PyNone)
+            throw Eve.Services.MachoErrors.ThrowUserError("CUSTOM_AGENCY_ARGUMENTS_INVALID");
         var items = callbacks?.ReadContentAsync is { } read
-            ? await read(new CustomAgencyContentRequest(call.Session, call.Args), call.Cancellation).ConfigureAwait(false)
+            ? await read(new CustomAgencyContentRequest(call.Session, Array.Empty<PyValue>()), call.Cancellation).ConfigureAwait(false)
             : [];
         return new PyList([.. items]);
     }
@@ -407,17 +409,20 @@ public sealed partial class CustomAgencyProviderService(CustomAgencyProviderRpcC
     public async ValueTask<PyValue> WarpToContent(ServiceCall call)
     {
         call.Cancellation.ThrowIfCancellationRequested();
-        var contentId = Positive(call.Arg(0));
-        if (contentId > 0 && callbacks?.WarpToContentAsync is { } warp)
+        if (call.Args.Count != 1 || call.Kwargs is not PyNone)
+            throw Eve.Services.MachoErrors.ThrowUserError("CUSTOM_AGENCY_ARGUMENTS_INVALID");
+        var contentId = PositiveIntegral(call.Arg(0));
+        if (contentId <= 0)
+            throw Eve.Services.MachoErrors.ThrowUserError("CUSTOM_AGENCY_CONTENT_ID_INVALID");
+        if (callbacks?.WarpToContentAsync is { } warp)
             await warp(contentId, call.Session, call.Cancellation).ConfigureAwait(false);
         return PyNone.Instance;
     }
 
-    private static long Positive(PyValue value) => value switch
+    private static long PositiveIntegral(PyValue value) => value switch
     {
-        PyInt number => Math.Max(0, number.Value),
-        PyLong number => Math.Max(0, number.Value),
-        PyReal number when double.IsFinite(number.Value) => Math.Max(0, (long)number.Value),
+        PyInt number when number.Value > 0 => number.Value,
+        PyLong number when number.Value > 0 => number.Value,
         _ => 0,
     };
 }

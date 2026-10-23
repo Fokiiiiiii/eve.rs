@@ -340,6 +340,14 @@ public sealed class PacketDispatcher
             return 1;
         if (service == "infoGatheringMgr" && method == "LogInfoEventsFromClient")
             return 10;
+        if (service == "browserLockdownSvc")
+            return 1;
+        if (service == "cache" && method == "GetServerVersionAndBuild")
+            return 1;
+        if (service == "custom_agency_provider" && method == "get_content_data")
+            return 1;
+        if (service == "custom_agency_provider" && method == "warp_to_content")
+            return 10;
         if (service == "RWManager" && method is "get_closest_rw_stations" or "solarsystem_contains_rw_instances")
             return 1;
         if (service == "clientStatLogger" && method == "LogString")

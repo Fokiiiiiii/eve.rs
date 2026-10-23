@@ -178,7 +178,7 @@ public sealed class CompatibilityRpcServiceTests
 
         var state = Assert.IsType<PyObjectEx>(await energy.CallAsync(Call("GetMyEnergyState", Session(20))));
         Assert.Equal(ObjectExKind.Ex1, state.Kind);
-        Assert.IsType<PyNone>(await paperDoll.CallAsync(Call("GetPaperDollData", Session(20))));
+        Assert.IsType<PyNone>(await paperDoll.CallAsync(Call("GetPaperDollData", Session(20), new PyInt(20))));
         Assert.IsType<PyNone>(await paperDoll.CallAsync(Call("GetMyPaperDollData", Session(20), new PyInt(20))));
         Assert.IsType<PyDict>(await paperDoll.CallAsync(Call("GetPaperDollDataBatch", args: [new PyList([new PyInt(20)])])));
         Assert.IsType<PyTuple>(await paperDoll.CallAsync(Call("GetPaperDollPortraitDataFor", Session(20), new PyInt(20))));

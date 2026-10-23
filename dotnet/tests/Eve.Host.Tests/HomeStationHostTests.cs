@@ -73,6 +73,12 @@ public sealed class HomeStationHostTests
         Assert.Equal(new PyInt(rig.RemoteOfficeStation.Id), session.Get("homeStationID"));
         Assert.Equal(new PyInt(rig.RemoteOfficeStation.Id), session.Get("cloneStationID"));
         Assert.Equal(2, Notifications(sink).Count);
+        var playerReset = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            CallAsync(service, "reset_remote_change_time", session));
+        Assert.Equal("CustomNotify", playerReset.Error.UserErrorMessage);
+        Assert.Equal(afterRemote.NextRemoteHomeStationChangeFileTime,
+            (await rig.Characters.GetAsync(character.Id))!.NextRemoteHomeStationChangeFileTime);
+        session.Set("accountRole", new PyLong(Eve.Services.GameMasterRoles.Qa));
         Assert.IsType<PyNone>(await CallAsync(service, "reset_remote_change_time", session));
         Assert.Equal(0, (await rig.Characters.GetAsync(character.Id))!.NextRemoteHomeStationChangeFileTime);
         Assert.IsType<PyNone>(await CallAsync(service, "get_next_remote_change_time", session));

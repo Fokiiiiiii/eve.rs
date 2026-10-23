@@ -1048,7 +1048,7 @@ Open after slice C:
 
 
 
-The RPC security inventory now classifies each `stationSvc` method by caller, target scope, bounds, and cost; `station` resolves to the same service instance. See `SECURITY_STATUS.md`, “Station service RPC detail.”
+The RPC security inventory now classifies each `stationSvc` method by caller, target scope, bounds, and cost; `station` resolves to the same service instance. See `SECURITY_STATUS.md`, “Station service RPC detail.” The adjacent `map` service methods now have the same method-level classification in “Map RPC detail.”
 ## 41. Station entry, init services and account requests (slice D, 2026-10-10)
 
 Done in slice D (DEVIATIONS.md, "Station entry, account requests and the live suite (slice D, 2026-10-10)"; the ranked table is in the scratchpad `work/sliceD-status.md`):

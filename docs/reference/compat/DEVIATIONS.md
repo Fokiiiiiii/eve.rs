@@ -5460,7 +5460,7 @@ Organization and mailing-list delivery now stops at 5,000 distinct recipients be
 
 ## Station guest enumeration budget (2026-10-23)
 
-The security review records caller and target scope, input bounds, and cost for each `stationSvc` RPC in `SECURITY_STATUS.md`. The registered `station` alias uses the same service instance, so the same station-derived/public data scope and office checks apply.
+The security review records caller and target scope, input bounds, and cost for each `stationSvc` RPC in `SECURITY_STATUS.md`. The registered `station` alias uses the same service instance, so the same station-derived/public data scope and office checks apply. The adjacent `map` service review records the public map projections, session-corporation location view, and their static or provider bounds.
 
 `stationSvc.GetGuests` enumerates active guests at the caller's current station. The V24.01 station service caches this list until the character changes stations (`eve/client/script/ui/station/base.py:99-109`), so one 10-unit call at first use leaves the client flow within the default 120-unit allowance while bounding repeated session enumeration. `DispatchGoldenTests.Station_guest_enumeration_uses_a_named_per_session_budget` covers the refusal after the configured test allowance.
 

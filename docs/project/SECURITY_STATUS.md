@@ -318,6 +318,18 @@ The reviewed identifier-bearing methods classify as follows:
 
 `stationSvc` is also registered under the client-facing `station` alias. The dispatcher resolves aliases to the same registered service object before applying named-service costs, so the same target checks and budget apply to both names. `GetStation` and `GetStationItemBits` have no independent authorization decision because their results are public catalog records or session-derived station state. `GetGuests` uses active station sessions and character persistence; its rate bound limits repeated enumeration.
 
+### Map RPC detail
+
+| RPC | Caller and target scope | Input bounds | Per-session cost |
+|---|---|---|---|
+| `map.GetStationInfo`, `GetStationCount`, `GetSecurityModifiedSystems` | Any authenticated caller; fixed SDE station and system data | No caller-supplied identifiers; station info and count queries use cached read-side rows | None; cached SDE projections |
+| `map.GetBeaconCount`, `GetConstellationLPData`, `GetCurrentSovData`, `GetDeadspaceAgentsMap`, `GetDeadspaceComplexMap`, `GetEdencomFortressSystems`, `GetEdencomMinorVictorySystems`, `GetIndustryCostModifier`, `GetIndustryJobsOverLast24Hours`, `GetMyExtraMapInfoAgents`, `GetRecentSovActivity`, `GetSolarSystemVisits`, `GetTriglavianMinorVictorySystems`, `GetAllRoamingWeatherSystems` | Any authenticated caller; world map data | No caller-selected owner; provider responses are fixed map projections, with empty typed fallbacks when no provider data is configured | None; provider/static projections |
+| `map.GetHistory` | Any authenticated caller; public map history projection | No caller-supplied identifiers; one-minute result cache | None; cached projection |
+| `map.GetFacWarZoneInfo` | Any authenticated caller; faction warfare zone data | Optional faction ID accepts positive integral numeric or integer-string values; other values use the no-faction response | None; one provider projection |
+| `map.GetMyExtraMapInfo` | Session corporation scope; when configured, returns member character and location pairs for the session corporation | Corporation ID derives from session; invalid or missing IDs return the typed empty rowset; output filters nonpositive IDs and deduplicates pairs | None; one current-corporation projection |
+
+`map.GetStationInfo` and `GetStationCount` use cached static read-side rows. The remaining map methods return public world projections or typed empty defaults; none accepts a client-selected character or corporation owner. `GetMyExtraMapInfo` is limited to the session corporation ID and does not accept a target corporation parameter.
+
 ### Wallet RPC detail
 
 | RPC | Caller and target scope | Input bounds | Per-session cost |

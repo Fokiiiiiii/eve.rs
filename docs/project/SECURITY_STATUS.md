@@ -552,3 +552,14 @@ The Host logs only the location and bounded row count. `EventLogHostTests` check
 Security slice `c7b0c185` was pushed to `main` on 2026-10-23. Verification on `eve_p3`: `EventLogHostTests` and `RpcSecurityInventoryTests.Real_host_registry_methods_are_enumerable` passed (2 total); `Eve.Services.Tests` passed (217, no skips). The corrected registry audit includes generated handlers and manually implemented `IService` routes and asserts that each registered service contributes callable methods. It passed with 1,374 pairs; full security classification remains open.
 
 Registry audit correction `7c6ebab4` was pushed to `main` on 2026-10-23. Its focused Host test passed on `eve_p3` with 1,374 registered service/method pairs and no registered service omitted from the enumeration.
+
+
+### Contextual Offer Manager RPC detail
+
+| RPC | Caller and target scope | Input bounds | Per-session cost |
+|---|---|---|---|
+| `contextualOfferMgr.TrackOfferDelivered`, `TrackOfferSeen`, `TrackOfferBuyPress`, `TrackOfferClosed`, `TrackOfferPurchased`, `TrackOfferPurchasedSeen` | The event actor is derived from the authenticated session; no caller-selected character or account is stored | One positive integral offer ID; the in-memory diagnostic history retains the latest 1,024 events under a lock | 1 unit each |
+
+`CompatibilityRpcServicesTests.Contextual_offer_tracking_keeps_a_bounded_event_history` verifies eviction, and `Contextual_offer_tracking_refuses_invalid_offer_ids_without_recording` checks malformed and nonpositive IDs before any configured callback. `DispatchGoldenTests.Contextual_offer_tracking_uses_a_named_per_session_budget` checks all six routes. On `eve_p3`, both focused Core tests, all six dispatcher cases, and `Eve.Services.Tests` (224) passed with no skips.
+
+Security finding `e0d6d376` was pushed to `main` on 2026-10-23.

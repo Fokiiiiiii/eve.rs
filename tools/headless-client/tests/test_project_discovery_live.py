@@ -5,7 +5,8 @@
 A new pilot has no stored Project Discovery tutorial, so the client's startup call `ProjectDiscovery.initialize_tutorial_status` answers False.
 The test stores a finished tutorial in the run's scratch characters schema, and the same call then answers True. No season is active, so
 `seasonManager.get_season_data_for_character` answers None and `get_season_end_time` answers a filetime. With no challenge definitions the
-challenge reads answer none (no active challenge, empty challenge dict) and the character's season progress is the empty no-season record.
+client reads a zero challenge limit, empty challenge and loot maps, dormant/nonexistent challenge values, refused reward claims, and the
+character's empty no-season progress record.
 """
 
 from __future__ import annotations
@@ -37,12 +38,29 @@ def test_the_tutorial_status_follows_the_stored_tutorial_and_no_season_is_active
         assert status() is True, "the stored finished tutorial is what the client reads at startup"
 
         assert m.plain(client.call("seasonManager", "get_season_data_for_character")) is None
+        assert m.plain(client.call("seasonManager", "select_season", 1)) is None
         end = m.plain(client.call("seasonManager", "get_season_end_time"))
         assert isinstance(end, int) and end > 0
 
         assert m.plain(client.call("seasonManager", "get_max_active_challenges")) == 0
         assert m.plain(client.call("seasonManager", "fill_up_and_return_challenges_for_character")) == {}
+        challenge_id = 1
+        assert m.plain(client.call("seasonManager", "get_challenge", challenge_id)) is None
+        assert m.plain(client.call("seasonManager", "challenge_is_dormant", challenge_id)) is True
+        assert m.plain(client.call("seasonManager", "get_challenge_expiration_date", challenge_id)) is None
+        assert m.plain(client.call("seasonManager", "claim_challenge_rewards", challenge_id, "live-test")) is False
+        assert m.plain(client.call("seasonManager", "claim_goal_reward", 0)) is False
+        assert m.plain(client.call("seasonManager", "get_loot_table_by_typeID", 34)) == []
         name, args = m.plain(client.call("seasonManager", "get_character_progress_by_character_id"))  # util.KeyVal
         assert name == "util.KeyVal"
         progress = dict(args)
-        assert progress["character_id"] == character and progress["seasonal_points"] == 0 and progress["challenges"] == {}
+        assert progress == {
+            "character_id": character,
+            "season_id": None,
+            "seasonal_points": 0,
+            "max_seasonal_points": 1,
+            "seasonal_goals": {},
+            "next_seasonal_goal": None,
+            "last_seasonal_goal": None,
+            "challenges": {},
+        }

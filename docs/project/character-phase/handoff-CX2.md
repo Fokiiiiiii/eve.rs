@@ -6,11 +6,24 @@ The pilot-vs-pilot bounty walk passes on `eve_p2` / live port 26101. It creates 
 
 Verified: focused `eve-space` test passed; all 888 `eve-space` library tests passed; pinned Rust fmt and workspace clippy passed; `PlayerBountyKillsTests` passed (2) and `PlayerBountyHostTests` passed (4) on `eve_p2`; the live walk passed on `eve_p2`.
 
+## CH-15 completed
+
+The two-pilot ship clone walk passes on `eve_p2` / port 26101. The offering pilot had a fitted SDE Clone Vat Bay I on a Rorqual; the target accepted the offer and the live test checked Offered and Done payloads, both completion notifications, cache invalidation order, the installed ship clone, one `character_jump_clone_settlements` row, the recipient debit and the type-55 journal counterparty. The target canceled the next offer; each participant received one Canceled payload, and no second settlement or debit was written. The service fix covers cancellation by either participant; EveJS sends a duplicate to the target and none to the offering pilot when the target cancels, so eve.rs sends exactly once to each connected participant.
+
+The first live attempt timed out because station type 92885 has SDE small- and capital-ship undock points 12,878 m apart, while the Rorqual's SDE top speed is 60 m/s. The fixture now uses NPC station 60015252 (type 1531), where both ship classes share one undock locator. No sim change was needed. The live target's rank-1 Infomorph Psychology II seed is 1,414 points, matching `SkillPoints.At(1, 2)`.
+
+Verified: `JumpCloneShipInstallTests` 4 passed; all `Eve.Services.Core.Tests` 862 passed with none skipped on `eve_p2`; Python compile and `git diff --check` passed; the two-pilot live walk passed. Host tests still cover station and structure installation, fees, settlement, refusal and restart. The graphical client was not used.
+
+## CH-19 completed for the inactive-season client surface
+
+The live no-season walk passed on `eve_p2` / port 26101. It checks `get_season_data_for_character`, `select_season`, the current FILETIME season end, all client challenge reads and claims, and the exact empty `util.KeyVal` progress record. The source audit found no season/challenge definitions in the pinned SDE, EveJS data directories or checked-out V24.01 resource payloads/indexes. The client source names `seasonSelection.fsdbinary`, but that binary is absent. EveJS's only challenge ID is a placeholder with a fabricated notification, which eve.rs does not send. Active-season progress and rewards remain unsupported because the checked sources provide no definition or reward data.
+
+Verified: live `test_project_discovery_live.py` passed with no skipped test. The graphical client was not used.
+
 ## Next work
 
-1. CH-15: finish the ship clone installation live walk, including the accepting pilot's cancel path, notifications and settlement row. `JumpCloneService.cs`, its focused C# regression and `test_clone_ship_install_live.py` are currently dirty worktree changes; run the focused C# test and live walk before committing them.
-2. CH-19: complete the source search for season data, then verify the exact inactive-season read shapes with the live test and record the source evidence.
-3. Audit each remaining S3-S9 handoff item against current code and close it with a test or a recorded root cause.
-4. CH-23: update section 4.1 and stale status rows, run character test projects and live walks on this lane, and record remaining gaps.
+1. Close CH-13 placement notification live coverage and recheck CH-14's standing rowset alongside its kill notification.
+2. Audit each remaining S3-S9 handoff item against current code; close it with a test or record a concrete root cause and status.
+3. CH-23: update section 4.1 and stale status rows, run character test projects and live walks on this lane, and write any remaining limitations.
 
-The current worktree also contains uncommitted CH-19 live assertions. Do not discard those along with the CH-15 changes.
+The worktree currently has CH-19 test assertions plus CH-13 and CH-14 live test assertions; the latter are not yet run.

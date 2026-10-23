@@ -92,11 +92,20 @@ public sealed partial class CommunityTrackMgrService
 [Service("contextualOfferMgr")]
 public sealed partial class ContextualOfferMgrService
 {
+    private const int MaxRetainedEvents = 1024;
     public Func<ServiceCall, ValueTask<PyValue?>>? RpcHandler { get; set; }
 
-    private readonly ConcurrentQueue<ContextualOfferEvent> _events = new();
+    private readonly object _eventsGate = new();
+    private readonly Queue<ContextualOfferEvent> _events = new();
     private long _nextEventId;
-    public IReadOnlyList<ContextualOfferEvent> Events => _events.ToArray();
+    public IReadOnlyList<ContextualOfferEvent> Events
+    {
+        get
+        {
+            lock (_eventsGate)
+                return _events.ToArray();
+        }
+    }
 
     [Method("TrackOfferDelivered")]
     public ValueTask<PyValue> TrackOfferDelivered(ServiceCall call) => Track(call);
@@ -116,19 +125,29 @@ public sealed partial class ContextualOfferMgrService
     [Method("TrackOfferPurchasedSeen")]
     public ValueTask<PyValue> TrackOfferPurchasedSeen(ServiceCall call) => Track(call);
 
-    private ValueTask<PyValue> Track(ServiceCall call) => CompatibilityRpc.Invoke(call, RpcHandler, () =>
+    private ValueTask<PyValue> Track(ServiceCall call)
     {
-        _events.Enqueue(new ContextualOfferEvent(
-            Interlocked.Increment(ref _nextEventId), call.Method, Positive(call.Arg(0)),
-            call.Session.CharacterId ?? 0, call.Session.UserId ?? 0, DateTimeOffset.UtcNow));
-        return PyNone.Instance;
-    });
+        var offerId = RequireOfferId(call.Arg(0));
+        return CompatibilityRpc.Invoke(call, RpcHandler, () =>
+        {
+            var entry = new ContextualOfferEvent(
+                Interlocked.Increment(ref _nextEventId), call.Method, offerId,
+                call.Session.CharacterId ?? 0, call.Session.UserId ?? 0, DateTimeOffset.UtcNow);
+            lock (_eventsGate)
+            {
+                _events.Enqueue(entry);
+                while (_events.Count > MaxRetainedEvents)
+                    _events.Dequeue();
+            }
+            return PyNone.Instance;
+        });
+    }
 
-    private static long Positive(PyValue value) => value switch
+    private static long RequireOfferId(PyValue value) => value switch
     {
-        PyInt number => Math.Max(0, number.Value),
-        PyLong number => Math.Max(0, number.Value),
-        _ => 0,
+        PyInt number when number.Value > 0 => number.Value,
+        PyLong number when number.Value > 0 => number.Value,
+        _ => throw MachoErrors.ThrowUserError("CONTEXTUAL_OFFER_ID_INVALID"),
     };
 }
 

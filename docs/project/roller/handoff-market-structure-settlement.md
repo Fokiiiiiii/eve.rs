@@ -22,3 +22,8 @@
 - The focused no-database `MarketStructureWireTests` run passed: 2 passed, 0 skipped. Python syntax compilation of `test_market.py` passed. `git diff --check` passed after the main merge.
 - Host.Tests compilation needed small test-only repairs: missing required `ServiceCall.Args` members and analyzer-approved filtered `Assert.Single` forms in `CharacterReSculptHostTests.cs`; market filters use the same form.
 - No database-backed test or live headless walk has completed. Next: commit this handoff update, fetch/merge current main, push `HEAD:main`, dispatch the selected Host/Market Actions checks and live-slow `test_market.py`, inspect the push-triggered CI run, and keep this note current. No graphical-client result is claimed.
+
+## 2026-10-23 continuation
+- Fresh origin/main changes were merged into this worktree; `Eve.Host.Tests` now builds successfully with 0 warnings and 0 errors. The earlier focused no-database `MarketStructureWireTests` run passed 2/2 with 0 skips.
+- Market work remains unpushed. Before the next push, fetch and merge `origin/main`, push with `git push origin HEAD:main`, then run the selected Market Actions check and inspect the push-triggered CI result.
+- No PostgreSQL or graphical client was used for this continuation; graphical-client acceptance and the live structure-market walk remain outstanding.

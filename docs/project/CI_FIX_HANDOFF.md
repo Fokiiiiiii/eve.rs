@@ -107,6 +107,12 @@ Use lane `eve_p4` only and run database work through `tools/dev/db-lock.sh`. The
 - Agent run 106 selected an unrelated .NET notice test for a commit that changed the live client harness; its project build still caught an `Action<long>` delegate mismatch, already corrected by `ed01d2d8`. Agent run 108 targeted capacity tests for a documentation-only handoff commit, so its failure does not describe that commit. Future dispatches should select tests from the changed source paths; docs-only handoffs need no test dispatch.
 - Recovery fixes through the SSO row assertion are pushed separately. The nine pre-existing Rust source deletions in this worktree are being preserved; they prevent the local workspace-wide fmt and Clippy commands from resolving `eve-space::targeting`. The touched `eve-sde` package check, package fmt, focused test and Clippy passed. Push-triggered Actions run the complete checks against a clean checkout.
 
+## 2026-10-23 Windows entry and pre-push toolchain
+
+- The required Linux and Windows CI jobs and `tools/dev/check-all.sh` now select Rust 1.94.1 by default. The Windows job checks the .NET SDK selected from `global.json`.
+- The Windows job runs the UTF-8 marshal fixture test under Windows PowerShell 5.1, starts the production PowerShell server, waits for the TCP front, then performs the live login-to-character walk and stops the stack.
+- Focused regression `WindowsAndPrePushCoverageTests.test_required_ci_pre_push_toolchain_and_windows_character_entry` passed locally.
+- Push-triggered Actions will determine the current Windows and full-gate result; update the Windows TODO rows after that run completes.
 
 ### Public Gateway test tokens
 

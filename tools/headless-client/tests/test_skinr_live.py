@@ -21,6 +21,8 @@ import grpc
 import pytest
 
 from evecli import marshal as m
+from evecli import packet
+from evecli.observe import _notification_event
 from tests import dbseed
 from tests.gateway_wire import (
     REQUEST_SEND,
@@ -820,7 +822,11 @@ def test_v24_skinr_design_sequences_and_applies_a_persisted_license():
                     assert isinstance(
                         m.plain(restarted_client.call("userSvc", "GetUserToken")), str
                     )
-                    names = [event["name"] for event in restarted_client.notifications]
+                    names = [
+                        _notification_event(event)["name"]
+                        for event in restarted_client.notifications
+                        if event.command == packet.NOTIFICATION
+                    ]
                     assert names.count("OnShipCosmeticsChanged") == 1
                     assert names.count("OnCurrentShipSkinChange") == 1
                     assert dbseed.sql(

@@ -5596,3 +5596,8 @@ The overview now points to the config, crimewatch, station, and map method-level
 ## Market multi-buy batch validation (2026-10-23)
 
 `marketProxy.BuyMultipleItems` now requires a list or tuple and validates every line's type ID, quantity, minimum volume, and price before passing any line to the writer. Malformed outer shapes and bad lines return `MARKET_BULK_ARGUMENT_INVALID`; the client’s `marketsvc.BuyMulti` supplies a list of complete order rows. `MarketRpcTests.Buy_multi_refuses_malformed_batches_before_any_order_is_written` verifies malformed mixed batches do not create orders.
+
+
+## Mail label read scope (2026-10-23)
+
+`mailMgr.GetLabels` returns the selected character's mailbox labels and accepts no caller-selected owner or label ID. It uses the authenticated session character's mailbox state; other mail reads and mutations retain their per-message membership and batch checks.

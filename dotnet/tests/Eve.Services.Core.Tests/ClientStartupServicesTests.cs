@@ -172,21 +172,21 @@ public sealed class ClientStartupServicesTests
     }
 
     [Fact]
-    public async Task Missing_ship_kill_counter_returns_zero_for_hangar_rendering()
+    public async Task Missing_ship_kill_counter_provider_fails_closed()
     {
         IService service = new ShipKillCounterService();
-        var result = await service.CallAsync(new ServiceCall
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(new ServiceCall
         {
             Method = "GetItemKillCountPlayer",
-            Args = [PyNone.Instance],
+            Args = [new PyInt(74000001)],
             Session = new ClientSession(),
-        });
+        }).AsTask());
 
-        Assert.Equal(new PyInt(0), result);
+        Assert.Equal("SHIP_KILL_COUNTER_UNAVAILABLE", error.Error.UserErrorMessage);
     }
 
     [Fact]
-    public async Task Ship_kill_counter_does_not_query_nonpositive_item_ids()
+    public async Task Ship_kill_counter_refuses_nonpositive_item_ids_before_provider_access()
     {
         var queried = false;
         IService service = new ShipKillCounterService(_ =>
@@ -194,14 +194,46 @@ public sealed class ClientStartupServicesTests
             queried = true;
             return Task.FromResult(new System.Text.Json.Nodes.JsonObject());
         });
-        var result = await service.CallAsync(new ServiceCall
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(new ServiceCall
         {
             Method = "GetItemKillCountPlayer",
             Args = [new PyInt(0)],
             Session = new ClientSession(),
-        });
+        }).AsTask());
 
-        Assert.Equal(new PyInt(0), result);
+        Assert.Equal("SHIP_KILL_COUNTER_ITEM_ID_INVALID", error.Error.UserErrorMessage);
+        Assert.False(queried);
+    }
+
+    [Fact]
+    public async Task Ship_kill_counter_refuses_malformed_wire_shapes_before_provider_access()
+    {
+        var queried = false;
+        IService service = new ShipKillCounterService(_ =>
+        {
+            queried = true;
+            return Task.FromResult(new JsonObject());
+        });
+        var session = new ClientSession();
+        foreach (var call in new[]
+        {
+            new ServiceCall { Method = "GetItemKillCountPlayer", Args = [], Session = session },
+            new ServiceCall { Method = "GetItemKillCountPlayer", Args = [new PyInt(42), new PyInt(43)], Session = session },
+            new ServiceCall { Method = "GetItemKillCountPlayer", Args = [new PyInt(42)], Kwargs = Py.Dict(("itemID", new PyInt(42))), Session = session },
+        })
+        {
+            var error = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(call).AsTask());
+            Assert.Equal("SHIP_KILL_COUNTER_ARGUMENTS_INVALID", error.Error.UserErrorMessage);
+        }
+
+        var wrongType = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(new ServiceCall
+        {
+            Method = "GetItemKillCountPlayer",
+            Args = [new PyReal(42)],
+            Session = session,
+        }).AsTask());
+        Assert.Equal("SHIP_KILL_COUNTER_ITEM_ID_INVALID", wrongType.Error.UserErrorMessage);
+
         Assert.False(queried);
     }
 

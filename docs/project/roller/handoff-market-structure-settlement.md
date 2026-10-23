@@ -49,3 +49,9 @@
 - Run 683 on `8610990c` reported `StructureMarketDenied` in the structure sell regression after the location fix. The production read model resolves affiliation from persisted `CorporationMember` relations. The fixture helper had created a character with a corporation ID but skipped the relation mutation performed by normal character creation.
 - Added the active corporation membership relation to every market test trader in the scratch relation schema; the denied trader remains affiliated with the different corporation. This makes the fixture's stored state match its intended character setup without changing access logic.
 - The updated `Eve.Host.Tests` project builds locally with 0 warnings and 0 errors. No database-backed test was run locally; Actions must verify the fixture after push.
+
+## 2026-10-23 SKINR draft-save follow-up
+
+- Agent run 158 on `253597a9` advanced through component consumption and failed at Draft.SaveRequest with HTTP 400. The V24 client messenger builds the slot layout and sends editor configurations; Host catalog validation also rejects SDE components marked disallowed for the selected slot.
+- Updated the live test's SDE selector to exclude `disallowedSlots` for its chosen slot, matching the same catalog condition used by the Host. The save assertion now prints the gateway response on failure. The current full push gate run 686 (`40015069193`) is checking the parent fixture and market affiliation update; the new selector needs Actions verification after push.
+- No local PostgreSQL test or graphical-client check was run.

@@ -187,3 +187,9 @@ Use lane `eve_p4` only and run database work through `tools/dev/db-lock.sh`. The
 - Run 683 on `8610990c` moved past the sell-range issue and failed with `StructureMarketDenied`. Structure service access reads the character's `CorporationMember` relation through `RelationStore`; the Host test helper set only the character row's corporation ID and omitted the authoritative relation that `CharacterCreation` writes.
 - The `MarketHostTests.CreateTraderAsync` fixture now inserts that relation in its scratch relations schema in the same transaction as the character and wallet. The denied trader receives its different corporation relation, preserving the denial case.
 - The local `Eve.Host.Tests` project build passed with zero warnings and errors. Run 683 is still active; the new fixture needs its Actions check after push. No PostgreSQL test was run locally.
+
+## 2026-10-23 SKINR draft-save live failure
+
+- Agent run 158 on `253597a9` passed the component `ConsumeRequest` after the two-level wire fix, then received HTTP 400 for `Draft.SaveRequest`. V24's messenger sends name, line name, a `SlotLayout`, and repeated editor configurations. The headless payload already carries the first three; the gateway accepts an empty repeated editor list.
+- `ShipSkinrCatalog.TryValidateLayout` rejects a component when its SDE `disallowedSlots` contains the chosen slot. The live fixture selector checked slot category compatibility but omitted that SDE restriction. Added the missing `disallowedSlots` filter and included the gateway response message in the save assertion.
+- Run 686 on `4484ec9c` is checking the prior selector and the corporation affiliation fixture. The corrected selector and market fixture need the next push gate; no PostgreSQL test was run locally.

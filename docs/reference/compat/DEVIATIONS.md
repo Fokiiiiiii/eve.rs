@@ -5459,8 +5459,14 @@ Organization and mailing-list delivery now stops at 5,000 distinct recipients be
 `structureJumpBridgeMgr.GetJbStructureDestination` and `GetLinkedStructure` validate the requested ID against persisted jump-bridge rows and each query costs 10 weighted per-session units because the provider reads the structure catalog. `Jump_bridge_structure_reads_use_the_named_per_session_budget` covers the dispatcher refusal.
 
 
+## Station guest enumeration budget (2026-10-23)
+
+The security review records caller and target scope, input bounds, and cost for each `stationSvc` RPC in `SECURITY_STATUS.md`. The registered `station` alias uses the same service instance, so the same station-derived/public data scope and office checks apply. The adjacent `map` service review records the public map projections, session-corporation location view, and their static or provider bounds.
+
+`stationSvc.GetGuests` enumerates active guests at the caller's current station. The V24.01 station service caches this list until the character changes stations (`eve/client/script/ui/station/base.py:99-109`), so one 10-unit call at first use leaves the client flow within the default 120-unit allowance while bounding repeated session enumeration. `DispatchGoldenTests.Station_guest_enumeration_uses_a_named_per_session_budget` covers the refusal after the configured test allowance.
+
 ## Corporation office impound reads use current membership (2026-10-22)
-`officeManager.HasCorpImpoundedItems` and `GetImpoundReleasePrice` previously trusted the session corporation ID when reading impounded inventory. They now use the current persisted corporation membership check, so a removed member cannot continue querying former-corporation impound status or fee data. Impound status, release-price reads, office rent/unrent, item release, and impound trash cost 10 weighted per-session units because they scan or mutate station inventory. `Impound_status_and_release_price_require_current_corporation_membership` covers role revocation, `Corporation_office_impound_reads_use_the_named_per_session_budget` covers read budgets, and `Corporation_office_item_mutations_use_the_named_per_session_budget` covers mutation budgets.
+`officeManager.HasCorpImpoundedItems` and `GetImpoundReleasePrice` previously trusted the session corporation ID when reading impounded inventory. They now use the current persisted corporation membership check, so a removed member cannot continue querying former-corporation impound status or fee data. Impound status, release-price reads, office rent/unrent, item release, and impound trash cost 10 weighted per-session units because they scan or mutate station inventory. `Impound_status_and_release_price_require_current_corporation_membership` covers role revocation, `Corporation_office_impound_reads_use_the_named_per_session_budget` covers read budgets, and `Corporation_office_item_mutations_use_the_named_per_session_budget` covers mutation budgets. The corresponding `stationSvc` office wrappers now consume the same 10-unit cost under their registered service name; `DispatchGoldenTests.Station_service_office_calls_share_the_office_rpc_budget` covers the refusal.
 
 
 ## Insurance contract scan budget (2026-10-22)
@@ -5533,6 +5539,45 @@ The fleetObject Init RPC costs 10 weighted per-session units because it updates 
 `mailMgr.SendMail` now refuses a nonpositive or non-integer character recipient ID with `MAIL_RECIPIENT_INVALID` before invoking persistence, rather than dropping malformed IDs from a mixed recipient list. Valid integer IDs and duplicate suppression keep their existing behavior. `MailServiceTests.SendMail_refuses_malformed_recipient_ids_before_sending` covers negative, textual, and non-finite recipients without a send callback.
 
 
+## Config RPC bounds (2026-10-23)
+
+`config.GetMultiOwnersEx`, `GetMultiCorpTickerNamesEx`, `GetMultiAllianceShortNamesEx`, and `GetMultiLocationsEx` now refuse more than 500 raw IDs before provider or item lookups with `CONFIG_BULK_LIMIT_EXCEEDED`; each consumes 10 weighted per-session units. `GetAverageMarketPrices` also consumes 10 units for its market read. The 120-unit default leaves room for a normal initial lookup sequence. Focused service and dispatcher regressions cover the cap and named budget.
+
+
+## PLEX market RPC classification (2026-10-23)
+
+The security inventory now records each PLEX market route separately: the order book and four best/history reads derive region from the selected character, return public PLEX market data, and consume 10 weighted per-session units. `StartupCheck` returns its fixed response and takes no owner or market input. `DispatchGoldenTests.Plex_market_history_uses_a_named_per_session_budget` checks the PLEX route refusal, and the existing expensive market regression checks the broader market budget.
+
+
+## Character killmail page budget (2026-10-23)
+
+`charMgr.GetRecentShipKillsAndLosses` derives its owner from the active session, caps each page at 25 rows, and now consumes 10 weighted per-session units to bound repeated reads. `DispatchGoldenTests.Character_profile_reads_use_a_named_per_session_budget` covers its budget refusal alongside the public and private profile reads.
+
+
+## Crimewatch history and kill-right RPC bounds (2026-10-23)
+
+`crimewatch.GetSecurityStatusTransactions` is session-character scoped and consumes 10 weighted per-session units; `GetClientStates` reads current session combat timers, engagements and system flags, while scalar safety/status reads and duel state transitions remain unbudgeted. `killRightMgr.GetKillRights` consumes 10 weighted per-session units. Kill-right target batches refuse more than 500 raw IDs before store access with `CRIMEWATCH_BULK_LIMIT_EXCEEDED`; returned rights remain scoped to the session character as owner. `Crimewatch_history_and_kill_right_lists_use_named_per_session_budgets` and `GetKillRights_refuses_more_than_500_raw_target_ids` cover the limits.
+
+
+## Crimewatch numeric identifier parsing (2026-10-23)
+
+`crimewatch` numeric character, duel-peer, and challenge-expiry fields now reject fractional, non-finite, and out-of-range floating identifiers rather than narrowing them to a different integer. The duel lifecycle regression confirms a fractional target does not create a challenge.
+
+
+## Security inventory status summary (2026-10-23)
+
+The overview now points to the config, crimewatch, station, and map method-level RPC classifications and their verified budgets or public/session-derived scopes. The broader identifier inventory remains in progress.
+
+
+## Home station cooldown reset authorization (2026-10-23)
+
+`home_station.reset_remote_change_time` now requires a server-set QA, Programmer, or staff account role, matching EveJS v261018.1. A player session with a forged generic `role` value is refused before the cooldown changes; a QA account role is allowed. The existing PostgreSQL home-station lifecycle regression covers both paths.
+
+
+## Customs office settings authorization (2026-10-23)
+
+`planetOrbitalRegistryBroker.UpdateSettings` now requires a current persisted corporation Director whose corporation owns the customs office. Cached session corporation-role fields no longer authorize the write. Tax standing levels are checked before narrowing to Int32. The Host customs-office PostgreSQL regression verifies that a non-director with a forged cached Director bit is refused without changing rates and the persisted CEO can update them.
+
 ## Market multi-history input validation (2026-10-23)
 
 `marketProxy.GetHistoryForManyTypeIDs` now accepts the V24.01 client’s Python set marshal shape as well as list/tuple inputs, and requires positive Int32 type IDs. It refuses malformed shapes, negative IDs, fractional or non-finite numbers, and values above Int32 before issuing history reads; the existing 500-entry limit and duplicate suppression remain. The V24.01 `marketsvc.PopulatePriceHistoryCacheForManyTypeIDs` call passes its deduplicated `missingTypeIDs` Python set; `PyValue.PythonSet` encodes the `__builtin__.set` PyObjectEx1 shape accepted here and by EveJS. `MarketRpcTests.Market_history_multi_refuses_malformed_type_lists_before_reading` covers these refusals.
@@ -5551,3 +5596,28 @@ The fleetObject Init RPC costs 10 weighted per-session units because it updates 
 ## Market multi-buy batch validation (2026-10-23)
 
 `marketProxy.BuyMultipleItems` now requires a list or tuple and validates every line's type ID, quantity, minimum volume, and price before passing any line to the writer. Malformed outer shapes and bad lines return `MARKET_BULK_ARGUMENT_INVALID`; the client’s `marketsvc.BuyMulti` supplies a list of complete order rows. `MarketRpcTests.Buy_multi_refuses_malformed_batches_before_any_order_is_written` verifies malformed mixed batches do not create orders.
+
+
+## Mail label read scope (2026-10-23)
+
+`mailMgr.GetLabels` returns the selected character's mailbox labels and accepts no caller-selected owner or label ID. It uses the authenticated session character's mailbox state; other mail reads and mutations retain their per-message membership and batch checks.
+
+
+## Contract list RPC classification (2026-10-23)
+
+The security inventory now records `contractProxy.GetMyBids`, `GetContractListForOwner`, `GetMyCurrentContractList`, and `GetMyExpiredContractList` individually. Character owners are derived from the selected session; corporate views require current persisted Contract Manager authority. Owner list status/type/page arguments are bounded, and the contract service's 10-unit per-session budget covers these reads.
+
+
+## Inventory root and contents RPC classification (2026-10-23)
+
+`invbroker.GetInventory` binds only the caller's current docked station hangar and consumes 2 weighted per-session units. `GetContainerContents` reads only a server-held session binding and consumes 2 units. `GetItemDescriptor` returns the fixed row descriptor without an identifier or state lookup.
+
+
+## Character description write budget (2026-10-23)
+
+charMgr.SetCharacterDescription now consumes 10 weighted per-session units because it persists user text. Its active-character scope and 2,500-character client-derived text bound are unchanged. The named dispatcher regression verifies the refusal after the allowance is consumed.
+
+
+## Corporation settings RPC budget (2026-10-23)
+
+Corporation profile, logo, division-name, abilities, acceptance, mail-restriction, aggression, and reinforce-hour writes now consume 10 weighted per-session units. The underlying store still rechecks persisted Director authority; reinforce-hour values remain limited to 0–23. The dispatcher regression covers all eight settings write methods.

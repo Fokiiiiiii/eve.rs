@@ -82,8 +82,8 @@ public sealed partial class PlanetMgrService
         if (Customs.PlanetOf(officeId) is not { } planetId || standingLevel is < -10 or > 10)
             throw MachoErrors.ThrowUserError("CustomsOfficeNotFound");
         var corporationId = session.GetInt("corpid") ?? 0;
-        var roles = session.GetInt("corprole") ?? session.GetInt("rolesAtAll") ?? session.GetInt("corpRole") ?? 0;
-        if (corporationId <= 0 || (roles & 1) == 0)
+        if (corporationId <= 0 || canManageCustomsOffice is null ||
+            !await canManageCustomsOffice(session.CharacterId ?? 0, corporationId, cancellationToken))
             throw MachoErrors.ThrowUserError("CustomsOfficeAccessDenied");
         if (new[] { rates.Corporation, rates.Alliance, rates.Excellent, rates.Good, rates.Neutral, rates.Bad, rates.Terrible }
             .Any(rate => !double.IsFinite(rate) || rate is < 0 or > 1))

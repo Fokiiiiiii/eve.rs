@@ -1188,6 +1188,13 @@ public class CharMgrTests
             rig.Characters.ResetRemoteHomeStationChangeTimeAsync, () => expectedNext + 1);
         Assert.Equal(PyNone.Instance, await Rig.CallAsync(expiredService, session, "get_next_remote_change_time"));
 
+        session.Set("role", new PyLong(Eve.Services.GameMasterRoles.Staff));
+        await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(async () =>
+            await Rig.CallAsync(service, session, "reset_remote_change_time"));
+        persisted = Assert.IsType<Character>(await rig.Characters.GetAsync(id, CancellationToken.None));
+        Assert.Equal(expectedNext, persisted.NextRemoteHomeStationChangeFileTime);
+
+        session.Set("accountRole", new PyLong(Eve.Services.GameMasterRoles.Qa));
         Assert.Equal(PyNone.Instance, await Rig.CallAsync(service, session, "reset_remote_change_time"));
         persisted = Assert.IsType<Character>(await rig.Characters.GetAsync(id, CancellationToken.None));
         Assert.Equal(0, persisted.NextRemoteHomeStationChangeFileTime);

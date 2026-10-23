@@ -286,4 +286,11 @@ CI run 672 on `1669e6dc` failed the structure market Host test because the fixtu
 
 - Agent run 167 (40017357430) on a769d686 failed the focused Host market test after placing a structure sell order: the test expected the seller's wallet to be 9900 ISK, but the wallet held 9875 ISK before the deliberately rejected buy. The structure order's 40 ISK value incurs the 100 ISK minimum broker fee and 25 ISK minimum SCC surcharge; the failed buy is not the cause.
 - The rollback check now captures both participants' balances immediately before the failing transaction and asserts they remain unchanged, while retaining the item, transaction-history, retry, and partial-settlement assertions. This tests transaction atomicity without assuming a station fee schedule.
-- The Host.Tests project build and focused Actions regression check are pending. No local database test was run. CI run 692 and Agent runs 168/169 on 1d96ae32 were active at the last status check.
+- The Host.Tests project build passed with 0 warnings and 0 errors. The focused Actions check is pending. No local database test was run.
+
+## 2026-10-23 SKINR sequence license lookup fixture
+
+- CI run 692 (40018629614) on 1d96ae32 passed the Windows job, then the live SKINR sequence completed and published both notices. Its post-completion license query failed because `_skin_hex_from_draft` decoded the nested `Skin.hex` protobuf message as if it were the string itself.
+- Main commit d9d806d1 unwraps `SavedDraft.attributes.skin.hex` before checking `skinr_ship_licenses`; this corrects the test's key and follows the Host response encoding. The market settlement test remains a separate CI failure.
+- Python syntax compilation and a focused SKINR live Actions run will check the fixture correction. No local database was used.
+

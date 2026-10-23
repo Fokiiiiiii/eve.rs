@@ -64,5 +64,18 @@
 
 ## 2026-10-23 push 1a9e73e9
 - Merged the latest `origin/main` into `cx14` and pushed the SKINR SaveRequest layout correction, test-side `disallowedSlots` filtering, and market trader affiliation fixture repair in commit `1a9e73e9`.
-- Push-triggered `ci.yml` run 689 (`40016219712`) was queued at the latest check. Run 686 (`40015069193`) for parent `4484ec9c` remains in progress; run 683 was queued when checked. Recheck current-head Actions before considering these flows verified.
+- Push-triggered `ci.yml` run 689 (`40016219712`) completed with failures in the SKINR live test and `MarketHostTests`. The market failure was the test's `PyStr` expectation for raw `PyBytes`; the SKINR failure was a UUID-length error in the live parser. Both test-side corrections are now in the worktree and need verification on the next pushed SHA. The fast-live step also skipped eight tests: one training-speed check and seven slow tests.
 - No PostgreSQL database or graphical client was used locally. Python syntax compilation passed; the latest CI gate has not completed yet.
+
+## 2026-10-23 focused MarketHost Actions follow-up
+- Focused Actions run `40016728738` failed in `MarketHostTests` at the test's `CachedMethodCallResult.details.sessionInfo` assertion: it expected `PyStr`, while `ObjectCaching.MethodResult` intentionally writes `PyBytes` through `Raw`. The V24 client's `CachedMethodCalled` checks only for the key's presence. Production wire behavior is unchanged; the regression now asserts the exact ASCII byte value.
+- The corrected `Eve.Host.Tests` project builds with 0 warnings and 0 errors. Focused run `40016728738` predates the assertion correction; a new focused Actions run must verify the current test; no local PostgreSQL database or graphical client was used.
+
+## 2026-10-23 SKINR nested UUID follow-up
+- The push gate exposed a Python `uuid.UUID` length error in the SKINR live walk. V24 descriptors define `GetAllActiveResponse.Job.id` and `CompletedNotice.id` as an `Identifier` message whose `uuid` field contains the 16-byte value; the test read that message as the UUID bytes directly. Added the missing nested field read in both assertions; production response encoding is unchanged.
+- Focused live run `40018639989` on the earlier SHA remains in progress. The fix is pushed as `0f0cef8f`; current focused runs `40019674482` (`MarketHostTests`) and `40019703405` (`test_skinr_live.py`) are in progress. No local PostgreSQL or graphical client was used.
+
+## 2026-10-23 push 0f0cef8f
+- Pushed the SKINR nested UUID test parser fix and the market cached-result test expectation correction after merging latest `origin/main`.
+- `Eve.Host.Tests` builds with 0 warnings and 0 errors; `test_skinr_live.py` passes Python syntax compilation. Focused Actions runs `40019674482` and `40019703405` are in progress. Initial `ci-status.py failures 0f0cef8f` check found no push-triggered `ci.yml` run yet; recheck it.
+- No PostgreSQL database or graphical client was used locally.

@@ -207,7 +207,7 @@ def _item_consume_payload(item_id: int) -> bytes:
 def _skin_hex_from_draft(draft: bytes) -> str:
     fields = read_fields(draft)
     attributes = fields[2][0] if 2 in fields else fields[1][0]
-    return read_fields(attributes)[1][0].decode()
+    return read_fields(read_fields(attributes)[1][0])[1][0].decode()
 
 
 def _send(channel, request_name: str, character: int, payload: bytes, request_id=None):

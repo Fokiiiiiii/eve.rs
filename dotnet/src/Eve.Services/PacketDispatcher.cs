@@ -326,6 +326,10 @@ public sealed class PacketDispatcher
             return 1;
         if (service == "characterEnergyMgr" && method == "GetMyEnergyState")
             return 1;
+        if (service == "achievementTrackerMgr" && method is "HasEverWarped" or "GetCompletedAchievementsAndClientEventCount")
+            return 1;
+        if (service == "achievementTrackerMgr" && method == "UpdateClientAchievmentsAndCounters")
+            return 10;
         if (service == "paperDollServer" && method == "GetPaperDollDataBatch")
             return 10;
         if (service == "paperDollServer" && method is "GetMyPaperDollData" or "GetPaperDollData" or "GetPaperDollPortraitDataFor")

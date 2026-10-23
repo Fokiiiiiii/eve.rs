@@ -121,6 +121,42 @@ public sealed class LoginInitializationRpcServicesTests
     }
 
     [Fact]
+    public async Task Air_npe_rpcs_refuse_client_selected_characters_and_keywords()
+    {
+        var reads = 0;
+        var writes = 0;
+        var service = new AirNpeService(
+            () => "tutorial",
+            (_, _) =>
+            {
+                reads++;
+                return Task.FromResult<AirNpeCharacterState?>(new AirNpeCharacterState("tutorial", 1));
+            },
+            (_, _, _) =>
+            {
+                writes++;
+                return Task.FromResult<int?>(3);
+            });
+        var session = new ClientSession { CharacterId = 42 };
+        var calls = new[]
+        {
+            Call("get_air_npe_state", session, new PyLong(9001)),
+            Call("skip_air_npe", session, new PyLong(9001)),
+            new ServiceCall { Method = "is_air_npe_enabled", Args = [], Kwargs = new PyDict([]), Session = session },
+        };
+
+        foreach (var call in calls)
+        {
+            var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(call).AsTask());
+            Assert.Equal(MachoErrors.UserErrorClass, refusal.Error.ClassName);
+            Assert.Equal("AIR_NPE_ARGUMENTS_INVALID", refusal.Error.UserErrorMessage);
+        }
+
+        Assert.Equal(0, reads);
+        Assert.Equal(0, writes);
+    }
+
+    [Fact]
     public async Task Operations_tutorial_methods_reflect_shared_air_npe_state()
     {
         var mode = "tutorial";

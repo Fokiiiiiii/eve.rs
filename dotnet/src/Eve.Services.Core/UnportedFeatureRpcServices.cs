@@ -60,6 +60,8 @@ public sealed partial class DungeonExplorationMgrService(
     public async ValueTask<PyValue> GetMyEscalatingPathDetails(ServiceCall call)
     {
         call.Cancellation.ThrowIfCancellationRequested();
+        if (call.Args.Count != 0 || call.Kwargs is not PyNone)
+            throw MachoErrors.ThrowUserError("DUNGEON_EXPLORATION_ARGUMENTS_INVALID");
         var details = readDetails is { } read
             ? await read(call.Session, call.Cancellation).ConfigureAwait(false)
             : null;

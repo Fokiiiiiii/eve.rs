@@ -106,6 +106,30 @@ public sealed class UnportedFeatureRpcServicesTests
     }
 
     [Fact]
+    public async Task Escalation_details_read_refuses_client_arguments_before_the_callback()
+    {
+        var callbackCalls = 0;
+        var service = (IService)new DungeonExplorationMgrService(
+            readDetails: (_, _) =>
+            {
+                callbackCalls++;
+                return ValueTask.FromResult<PyValue?>(PyNone.Instance);
+            });
+        foreach (var call in new[]
+        {
+            Call("GetMyEscalatingPathDetails", args: [new PyInt(1)]),
+            new ServiceCall { Method = "GetMyEscalatingPathDetails", Args = [], Kwargs = new PyDict([]), Session = new ClientSession() },
+        })
+        {
+            var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(call).AsTask());
+            Assert.Equal(MachoErrors.UserErrorClass, refusal.Error.ClassName);
+            Assert.Equal("DUNGEON_EXPLORATION_ARGUMENTS_INVALID", refusal.Error.UserErrorMessage);
+        }
+
+        Assert.Equal(0, callbackCalls);
+    }
+
+    [Fact]
     public async Task Additional_services_are_registered_and_forward_typed_callback_data()
     {
         var session = new ClientSession();

@@ -690,3 +690,5 @@ Security finding for FastCheckout fixed-read argument validation and budgets was
 Post-push handoff: FastCheckout fixed-read finding `be2f9493` is on `main`; the Host registry inventory remains open at 1,374 pairs.
 
 Security finding for `shipKillCounter.GetItemKillCountPlayer` wire validation and provider failure behavior was pushed to `main` on 2026-10-23. On `eve_p3`, the focused Core tests passed (7), `Eve.Services.Core.Tests` passed (888), `Eve.Services.Tests` passed (250), and `ShipKillCounterPersistenceTests` passed (1), with no skips. The registry has 1,374 service/method pairs and method-by-method classification remains open.
+
+Post-push handoff: ship kill counter finding `6f681a14` is on `main`, merged at `fe730510`. Registry enumeration remains 1,374 pairs; the full security inventory is unfinished.

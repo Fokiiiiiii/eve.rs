@@ -92,6 +92,11 @@ def failing_step_text(payload: bytes, content_type: str, job_id: int, step: dict
             return "\n".join(window)
     return "\n".join(lines)
 
+def normalize_log_line(line: str) -> str:
+    line = re.sub(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\s+", "", line, count=1)
+    return re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", line)
+
+
 def parse_test_failures(text: str) -> list[str]:
     patterns = (
         re.compile(r"^\[agent-test failure\]\s+(.+?)\s*$"),
@@ -102,7 +107,8 @@ def parse_test_failures(text: str) -> list[str]:
         re.compile(r"^\s*FAIL:\s*(.+?)\s*$"),
     )
     names = []
-    for line in text.splitlines():
+    for raw_line in text.splitlines():
+        line = normalize_log_line(raw_line)
         for pattern in patterns:
             match = pattern.match(line)
             if match:
@@ -112,37 +118,40 @@ def parse_test_failures(text: str) -> list[str]:
                 break
     return names
 
+
 def failure_log_tail(text: str, test_name: str) -> list[str]:
     lines = text.splitlines()
+    normalized = [normalize_log_line(line) for line in lines]
     custom = f"[agent-test failure] {test_name}"
-    start = next((index for index, line in enumerate(lines) if line.strip() == custom), None)
+    start = next((index for index, line in enumerate(normalized) if line.strip() == custom), None)
     if start is not None:
-        end = next((index for index in range(start + 1, len(lines)) if lines[index].startswith("[agent-test failure] ")), len(lines))
+        end = next((index for index in range(start + 1, len(lines)) if normalized[index].startswith("[agent-test failure] ")), len(lines))
         return lines[start + 1:end][-40:]
 
     rust = f"---- {test_name} stdout ----"
-    start = next((index for index, line in enumerate(lines) if line.strip() == rust), None)
+    start = next((index for index, line in enumerate(normalized) if line.strip() == rust), None)
     if start is not None:
-        end = next((index for index in range(start + 1, len(lines)) if lines[index].startswith("---- ") or lines[index].startswith("failures:")), len(lines))
+        end = next((index for index in range(start + 1, len(lines)) if normalized[index].startswith("---- ") or normalized[index].startswith("failures:")), len(lines))
         return lines[start:end][-40:]
 
     short_name = test_name.rsplit("::", 1)[-1]
-    headings = [index for index, line in enumerate(lines)
+    headings = [index for index, line in enumerate(normalized)
                 if re.match(r"^_{3,}.*_{3,}\s*$", line) and short_name in line]
     if headings:
         start = headings[0]
         end = next((index for index in range(start + 1, len(lines))
-                    if re.match(r"^_{3,}.*_{3,}\s*$", lines[index]) or "short test summary" in lines[index]), len(lines))
+                    if re.match(r"^_{3,}.*_{3,}\s*$", normalized[index]) or "short test summary" in normalized[index]), len(lines))
         return lines[start:end][-40:]
 
-    starts = [index for index, line in enumerate(lines)
+    starts = [index for index, line in enumerate(normalized)
               if re.match(r"^\s*Failed\s+", line) and test_name in line]
     if starts:
         start = starts[0]
         end = next((index for index in range(start + 1, len(lines))
-                    if re.match(r"^\s*Failed\s+", lines[index]) or "Test Run Failed" in lines[index]), len(lines))
+                    if re.match(r"^\s*Failed\s+", normalized[index]) or "Test Run Failed" in normalized[index]), len(lines))
         return lines[start:end][-40:]
     return lines[-40:]
+
 
 def print_compact_summary(run: dict, token: str) -> None:
     print(f"Run {run['run_number']} {run['name']} {run['conclusion'] or run['status']} sha={run['head_sha'][:12]}")

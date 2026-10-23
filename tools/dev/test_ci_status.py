@@ -32,9 +32,14 @@ FAILED tests/test_walk.py::test_character_walk - AssertionError
         self.assertEqual(ci_status.parse_test_failures(log), [name])
         self.assertIn("AssertionError", "\n".join(ci_status.failure_log_tail(log, name)))
 
-    def test_dotnet_failure_name(self):
-        log = "Failed Eve.Host.Tests.RpcFuzzTests.Hostile_method_is_refused [27 ms]\n"
-        self.assertEqual(ci_status.parse_test_failures(log), ["Eve.Host.Tests.RpcFuzzTests.Hostile_method_is_refused"])
+    def test_dotnet_failure_name_and_timestamped_tail(self):
+        log = """2026-10-23T08:18:12.0707975Z \x1b[36;1m  Failed Eve.Host.Tests.RpcFuzzTests.Hostile_method_is_refused [27 ms]\x1b[0m
+2026-10-23T08:18:12.0708907Z Error Message:
+2026-10-23T08:18:12.0709557Z PAPERDOLL_ARGUMENT_INVALID
+"""
+        name = "Eve.Host.Tests.RpcFuzzTests.Hostile_method_is_refused"
+        self.assertEqual(ci_status.parse_test_failures(log), [name])
+        self.assertIn("PAPERDOLL_ARGUMENT_INVALID", "\n".join(ci_status.failure_log_tail(log, name)))
 
     def test_rust_failure_name_and_output_tail(self):
         log = """test eve_marshal::decoder_rejects_bad_tag ... FAILED
@@ -49,17 +54,17 @@ failures:
         self.assertEqual(ci_status.parse_test_failures(log), [name])
         self.assertIn("bad tag 99", "\n".join(ci_status.failure_log_tail(log, name)))
 
-    def test_agent_report_name_and_tail(self):
-        log = """Agent test summary
-[agent-test failure] Skills.Training_speed
-Expected 1200000, received 20.
-  at TrainingSpeedTest.cs:42
+    def test_agent_report_name_and_timestamped_tail(self):
+        log = """2026-10-23T08:18:12.0707975Z Agent test summary
+2026-10-23T08:18:12.0708907Z [agent-test failure] Skills.Training_speed
+2026-10-23T08:18:12.0709557Z Expected 1200000, received 20.
+2026-10-23T08:18:12.0710168Z   at TrainingSpeedTest.cs:42
 """
         name = "Skills.Training_speed"
         self.assertEqual(ci_status.parse_test_failures(log), [name])
-        self.assertEqual(ci_status.failure_log_tail(log, name), [
-            "Expected 1200000, received 20.", "  at TrainingSpeedTest.cs:42"
-        ])
+        tail = "\n".join(ci_status.failure_log_tail(log, name))
+        self.assertIn("Expected 1200000, received 20.", tail)
+        self.assertIn("TrainingSpeedTest.cs:42", tail)
 
     def test_success_log_has_no_failure_names(self):
         self.assertEqual(ci_status.parse_test_failures("test ok ... ok\nPassed! 1, Failed: 0"), [])

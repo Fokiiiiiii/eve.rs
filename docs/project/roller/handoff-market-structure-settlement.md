@@ -110,3 +110,8 @@
 - Focused Actions run `40027503647` and parent gate `40027466387` caught the same Host test assertion: the station ask is read before the subsequent partial fill, so `volRemaining = 4`; the test expected 2. Updated the regression to expect 4 at that point; production tuple serialization is unchanged.
 - `Eve.Host.Tests` Release build passed with 0 warnings and 0 errors, and `git diff --check` passed. The earlier focused no-database `MarketStructureWireTests.Station_and_system_ask_summaries_are_tuples_for_the_client_range_converter` passed 1/1 with 0 skips.
 - Parent CI run `40027466387` completed with the old Host assertion failure and an End-to-end failure ending in `ConnectionRefusedError` during a client connection. The connection failure has not been tied to the ask summary change. Eight fast-live tests were skipped (one skill-training-speed gate and seven slow tests). A new focused Actions check will follow this test correction; no local PostgreSQL database or graphical client was used.
+## 2026-10-23 pre-push update on 1bf92f6f
+
+- Main CI 713 (40029399172) is active on 1bf92f6f; CI 712 on 1bfd22e4 is still active. The ask summary mismatch is now fixed in main commit 3cf0d3e0, and the post-restart front reconnection is fixed by aa8030a4.
+- Market correction commit 8944925f is ready on the merged worktree: immediate buys leave no unfilled bid, unmatched direct duration-zero buys refuse, and the Upwell minimum is applied once to owner plus SCC fees. Market.Tests and Host.Tests compile-checks passed with 0 warnings and 0 errors.
+- No local PostgreSQL database or live graphical client was used. Actions verification for the market correction is pending.

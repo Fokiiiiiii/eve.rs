@@ -88,7 +88,7 @@ invalid = [
     {"name": "hello truncated", "reason": "truncated", "hex": (le32(3) + bytes([1, 1, 0])).hex()},
     {"name": "hello trailing bytes", "reason": "trailing", "hex": (le32(8) + bytes([1, 1, 0]) + le32(1) + bytes([0])).hex()},
     {"name": "string longer than the frame", "reason": "truncated",
-     "hex": (le32(1 + 4 + 2) + bytes([3]) + le32(0) + struct.pack("<H", 500)).hex()},
+     "hex": (le32(1 + 4 + 1 + 2) + bytes([3]) + le32(0) + bytes([0]) + struct.pack("<H", 500)).hex()},
     {"name": "invalid UTF-8", "reason": "utf8",
      "hex": (le32(1 + 4 + 1 + 2 + 2 + 4 + 2 + 2 + 2) + bytes([3]) + le32(1) + bytes([0])
              + struct.pack("<H", 2) + b"\xff\xfe" + le32(0) + struct.pack("<H", 0)

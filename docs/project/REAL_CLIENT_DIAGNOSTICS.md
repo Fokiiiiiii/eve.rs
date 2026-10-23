@@ -56,10 +56,11 @@ The owner’s captures and process logs were read through `tools/mitm show` and 
 
 ## (g) chat objects are None after an XMPP failure
 
-- Symptom: owner reports chat objects become `None` after XMPP failure. The capture shows the preceding `XmppChatMgr.Hostname()` `ServiceNotFound` response.
-- Root cause: open; trace the XMPP failure transition and the chat manager’s resulting state.
-- Fix commit: pending.
-- Regression test: pending.
+- Symptom: after the old build's `XmppChatMgr.Hostname()` `ServiceNotFound`, the client logs `AttributeError: 'NoneType' object has no attribute 'LeaveRoom'` in its XMPP channel cleanup. Its room name uses the configured domain (`conference.None`), so the failed manager lookup leaves no usable XMPP room/connection state.
+- Root cause: the old build's Host service was absent (fixed by (a)). The current Host also starts its XMPP listener only when `EVE_XMPP_ENABLED` is true; the diagnostic Host log has no XMPP listener startup line. With the default disabled listener, the current service can return the configured domain and fallback host, but no XMPP transport accepts the client's connection. The server-side chat state is then unavailable because no authenticated XMPP connection was established.
+- Owner action: for a graphical run that uses XMPP, enable `EVE_XMPP_ENABLED` and configure a client-reachable `EVE_XMPP_BIND_ADDRESS`, `EVE_XMPP_CONNECT_HOST`, `EVE_XMPP_DOMAIN`, and port. Capture again against the current Host to verify the client no longer derives `conference.None` and can authenticate its XMPP connection.
+- Fix commit: the registration repair is `6f3d37df`; no additional code change is justified by the old-build capture.
+- Regression: `Xmpp_chat_manager_is_registered_when_the_listener_is_disabled` proves the Host RPC remains available independently of transport startup (1 passed). `XmppHostConfigurationTests.XMPP_listener_and_client_endpoint_are_configured_from_environment` covers the listener and advertised endpoint settings. No current graphical-client retry has been run.
 
 ## (h) missing href and Japanese UnicodeEncodeError
 

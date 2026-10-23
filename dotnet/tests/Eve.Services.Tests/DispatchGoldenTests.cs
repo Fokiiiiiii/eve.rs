@@ -384,7 +384,11 @@ public class DispatchGoldenTests
         registry.Register(recruitmentService);
         registry.Register(warService);
         var now = FixedNowMs;
-        var dispatcher = new PacketDispatcher(registry, () => now) { MaxExpensiveRpcUnitsPerMinute = 10 };
+        var dispatcher = new PacketDispatcher(registry, () => now)
+        {
+            MaxExpensiveRpcUnitsPerMinute = 10,
+            MaxMarketRpcUnitsPerMinute = 10,
+        };
 
         await dispatcher.DispatchAsync(CallRequestPacket("marketProxy", "GetOrders"), session);
         await dispatcher.DispatchAsync(CallRequestPacket("marketProxy", "BuyMultipleItems"), session);

@@ -31,8 +31,15 @@ else:
     f = dict(re.findall(r'(?i)([A-Za-z ]+)=([^;]*)', url))
     f = {k.strip().lower(): v.strip() for k, v in f.items()}
     user = urllib.parse.quote(f.get('username', 'postgres'))
-    print(f'postgres://{user}@{f.get("host", "127.0.0.1")}:{f.get("port", "5432")}/{f.get("database", "eve")}')
+    host = f.get('host', '127.0.0.1')
+    port = f.get('port', '5432')
+    database = f.get('database', 'eve')
+    print('postgres://{}@{}:{}/{}'.format(user, host, port, database))
 " "$EVE_PG_URL")"
+  if [ -z "$EVE_PSQL_URL" ]; then
+    echo "eve-live: EVE_PG_URL did not produce a psql URL" >&2
+    exit 1
+  fi
 fi
 # the simulation reads the static data's JSONL export: the copy `eve-sde ensure` keeps under .cache/sde, unless EVE_SDE_DIR names one
 if [ -z "${EVE_SDE_DIR:-}" ]; then

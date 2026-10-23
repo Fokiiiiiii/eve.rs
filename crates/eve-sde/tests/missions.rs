@@ -1,4 +1,4 @@
-//! The mission build: its pin, and the loading of its `missions` and `epicArcs` tables only.
+//! The mission build: its pin and all mission and SKINR tables the server reads.
 //!
 //!   EVE_PG_URL=postgres://postgres@127.0.0.1:5432/eve cargo test -p eve-sde --test missions
 //!   EVE_SDE_MISSION_DIR=<extracted build 3405148> ... (opt-in: loads the real tables into a scratch schema)
@@ -47,7 +47,7 @@ fn table_exists(client: &mut Client, schema: &str, table: &str) -> bool {
         .get(0)
 }
 
-/// An archive of `build` with a mission table pair and two tables the server must not load.
+/// An archive with one tiny row in each server mission table.
 fn mission_archive(path: &std::path::Path, build: u64) -> String {
     make_zip(
         path,
@@ -61,7 +61,14 @@ fn mission_archive(path: &std::path::Path, build: u64) -> String {
                 "epicArcs.jsonl",
                 "{\"_key\":132,\"missions\":[{\"_key\":17183,\"agentID\":3020234,\"nextMissions\":[17189]}]}\n",
             ),
+            ("categories.jsonl", "{\"_key\":6}\n"),
+            ("groups.jsonl", "{\"_key\":25,\"categoryID\":6}\n"),
             ("types.jsonl", "{\"_key\":587,\"groupID\":25}\n"),
+            ("skinrComponentPointValues.jsonl", "{\"_key\":1}\n"),
+            ("skinrComponents.jsonl", "{\"_key\":1}\n"),
+            ("skinrSlotConfigurations.jsonl", "{\"_key\":1}\n"),
+            ("skinrSlots.jsonl", "{\"_key\":1}\n"),
+            ("skinrTierThresholds.jsonl", "{\"_key\":1}\n"),
         ],
     );
     fetch::sha256_hex(path).unwrap()
@@ -92,8 +99,22 @@ fn the_mission_pin_is_a_second_build_and_the_pinned_build_is_unchanged() {
 }
 
 #[test]
-fn the_mission_tables_are_the_two_the_server_reads() {
-    assert_eq!(MISSION_TABLES, &["missions", "epicArcs"]);
+fn the_mission_tables_match_the_server_authority() {
+    assert_eq!(
+        MISSION_TABLES,
+        &[
+            "missions",
+            "epicArcs",
+            "categories",
+            "groups",
+            "types",
+            "skinrComponentPointValues",
+            "skinrComponents",
+            "skinrSlotConfigurations",
+            "skinrSlots",
+            "skinrTierThresholds"
+        ]
+    );
     assert_eq!(ensure::MISSION_SCHEMA, "sde_mission");
 }
 
@@ -109,11 +130,11 @@ fn only_the_named_tables_are_loaded_and_the_build_records_them() {
     wanted.archive = Some(archive);
 
     let outcome = ensure::ensure_tables_into(&mut client, &wanted, &schema, MISSION_TABLES).unwrap();
-    assert!(matches!(outcome, Outcome::Loaded { tables: 2, records: 3, .. }), "{outcome:?}");
+    assert!(matches!(outcome, Outcome::Loaded { tables: 10, records: 11, .. }), "{outcome:?}");
     assert_eq!(count(&mut client, &schema, "missions"), 2);
     assert_eq!(count(&mut client, &schema, "epicArcs"), 1);
-    assert!(!table_exists(&mut client, &schema, "types"), "a table that was not named must not be loaded");
-    assert_eq!(ensure::loaded_tables(&mut client, &schema).unwrap().len(), 2);
+    assert!(table_exists(&mut client, &schema, "types"), "the server reads the mission-build type catalog");
+    assert_eq!(ensure::loaded_tables(&mut client, &schema).unwrap().len(), MISSION_TABLES.len());
 
     let key: String = client
         .query_one(&format!("SELECT key FROM {schema}.\"missions\" ORDER BY ord LIMIT 1"), &[])
@@ -162,8 +183,8 @@ fn a_schema_with_only_some_of_the_tables_is_loaded_again() {
     let mut wanted = options(&scratch, MISSION_BUILD, vec![], Expect::Sha256(hash));
     wanted.archive = Some(archive);
     let outcome = ensure::ensure_tables_into(&mut client, &wanted, &schema, MISSION_TABLES).unwrap();
-    assert!(matches!(outcome, Outcome::Loaded { tables: 2, .. }), "{outcome:?}");
-    assert_eq!(ensure::loaded_tables(&mut client, &schema).unwrap().len(), 2);
+    assert!(matches!(outcome, Outcome::Loaded { tables: 10, .. }), "{outcome:?}");
+    assert_eq!(ensure::loaded_tables(&mut client, &schema).unwrap().len(), MISSION_TABLES.len());
 
     let fresh = Scratch::new("missions-again");
     let again = options(&fresh, MISSION_BUILD, vec![file_url(&fresh.path("missing.zip"))], Expect::Unchecked);
@@ -206,7 +227,7 @@ fn a_missing_mission_archive_is_a_fetch_error_and_loads_nothing() {
 }
 
 /// Opt-in: the real build 3405148, extracted (`eve-sde ensure --missions` writes it under the cache).
-/// Loads the two tables into a scratch schema and checks the counts this code was written against.
+/// Loads the server mission and SKINR tables into a scratch schema and checks mission counts.
 #[test]
 fn the_real_mission_build_has_the_tables_and_ids_the_server_reads() {
     let Ok(dir) = std::env::var("EVE_SDE_MISSION_DIR") else {
@@ -219,7 +240,7 @@ fn the_real_mission_build_has_the_tables_and_ids_the_server_reads() {
     let manifest = SdeManifest::read(std::path::Path::new(&dir)).unwrap();
     assert_eq!(manifest.build_number, Some(MISSION_BUILD as i64), "{dir} is not build {MISSION_BUILD}");
     let report = load::load_tables_into(&mut client, &manifest, &schema, MISSION_TABLES).unwrap();
-    assert_eq!(report.tables.len(), 2);
+    assert_eq!(report.tables.len(), MISSION_TABLES.len());
     assert_eq!(count(&mut client, &schema, "missions"), 2892);
     assert_eq!(count(&mut client, &schema, "epicArcs"), 21);
     for id in 17179..=17190 {
@@ -248,7 +269,14 @@ fn fake_full_build(path: &std::path::Path, build: u64) -> String {
             ("_sde.jsonl", &sde_meta(build)),
             ("missions.jsonl", "{\"_key\":17179,\"name\":{\"en\":\"Fixture A\"}}\n"),
             ("epicArcs.jsonl", "{\"_key\":132,\"missions\":[]}\n"),
+            ("categories.jsonl", "{\"_key\":6}\n"),
+            ("groups.jsonl", "{\"_key\":25,\"categoryID\":6}\n"),
             ("types.jsonl", "{\"_key\":587,\"groupID\":25}\n"),
+            ("skinrComponentPointValues.jsonl", "{\"_key\":1}\n"),
+            ("skinrComponents.jsonl", "{\"_key\":1}\n"),
+            ("skinrSlotConfigurations.jsonl", "{\"_key\":1}\n"),
+            ("skinrSlots.jsonl", "{\"_key\":1}\n"),
+            ("skinrTierThresholds.jsonl", "{\"_key\":1}\n"),
             ("npcCharacters.jsonl", "{\"_key\":3020234}\n"),
         ],
     );
@@ -271,12 +299,12 @@ fn the_loader_keeps_only_the_named_tables_and_leaves_no_copy_of_the_build_on_dis
     let wanted = options(&scratch, MISSION_BUILD, vec![file_url(&source)], Expect::Sha256(hash));
     let outcome = ensure::ensure_tables_into(&mut client, &wanted, &schema, MISSION_TABLES).unwrap();
     assert!(
-        matches!(outcome, Outcome::Loaded { origin: Origin::Downloaded(_), tables: 2, records: 2 }),
+        matches!(outcome, Outcome::Loaded { origin: Origin::Downloaded(_), tables: 10, records: 10 }),
         "{outcome:?}"
     );
     assert_eq!(count(&mut client, &schema, "missions"), 1);
     assert_eq!(count(&mut client, &schema, "epicArcs"), 1);
-    assert!(!table_exists(&mut client, &schema, "types"), "an unnamed table must not be loaded");
+    assert!(table_exists(&mut client, &schema, "types"), "the server reads the mission-build type catalog");
     assert!(!table_exists(&mut client, &schema, "npcCharacters"), "an unnamed table must not be loaded");
     assert_eq!(names_in(&cache), Vec::<String>::new(), "nothing of the build may remain under the cache");
     drop_schema(&mut client, &schema);

@@ -176,8 +176,13 @@ public sealed partial class FleetObjectService(FleetStore store, Func<long> nowU
     [Method("MassInvite")]
     public async ValueTask<PyValue> MassInvite(ServiceCall call)
     {
+        if (call.Arg(0) is not (PyList or PyTuple))
+            throw MachoErrors.ThrowUserError("FleetError");
         var invitees = Sequence(call.Arg(0));
         if (invitees.Count > FleetStore.MaxMembers)
+            throw MachoErrors.ThrowUserError("FleetError");
+        var inviteeIds = invitees.Select(Number).ToArray();
+        if (inviteeIds.Any(id => id is not > 0))
             throw MachoErrors.ThrowUserError("FleetError");
         if (FleetId(call) is not { } fleetId) return None;
         var inviterId = CharacterId(call.Session);
@@ -189,7 +194,7 @@ public sealed partial class FleetObjectService(FleetStore store, Func<long> nowU
         var squadId = Number(call.Arg(2)) ?? FleetStore.NoUnit;
         var role = FleetRole(call.Arg(3));
         List<PyValue> invited = [];
-        foreach (var inviteeId in invitees.Select(Number).Where(id => id is > 0).Select(id => id!.Value).Distinct())
+        foreach (var inviteeId in inviteeIds.Select(id => id!.Value).Distinct())
         {
             if (inviteeId == inviterId) continue;
             if (await store.FleetIdForCharacterAsync(inviteeId, call.Cancellation) is not null)
@@ -347,8 +352,13 @@ public sealed partial class FleetObjectService(FleetStore store, Func<long> nowU
     [Method("MassMoveMembers")]
     public async ValueTask<PyValue> MassMoveMembers(ServiceCall call)
     {
+        if (call.Arg(0) is not (PyList or PyTuple))
+            throw MachoErrors.ThrowUserError("FleetError");
         var memberIds = Sequence(call.Arg(0));
         if (memberIds.Count > FleetStore.MaxMembers)
+            throw MachoErrors.ThrowUserError("FleetError");
+        var requestedMemberIds = memberIds.Select(Number).ToArray();
+        if (requestedMemberIds.Any(id => id is not > 0))
             throw MachoErrors.ThrowUserError("FleetError");
         if (FleetId(call) is not { } fleetId) return None;
         var before = await store.SnapshotAsync(fleetId, call.Cancellation);
@@ -356,7 +366,7 @@ public sealed partial class FleetObjectService(FleetStore store, Func<long> nowU
         var wingId = Number(call.Arg(1)) ?? FleetStore.NoUnit;
         var squadId = Number(call.Arg(2)) ?? FleetStore.NoUnit;
         var role = FleetRole(call.Arg(3));
-        var ids = memberIds.Select(value => Number(value) ?? 0).ToArray();
+        var ids = requestedMemberIds.Select(id => id!.Value).Distinct().ToArray();
         if (!await store.MassMoveMembersAsync(fleetId, CharacterId(call.Session), ids, wingId, squadId, role, call.Cancellation))
             return None;
         var after = await store.SnapshotAsync(fleetId, call.Cancellation);

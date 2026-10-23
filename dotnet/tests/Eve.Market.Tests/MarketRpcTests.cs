@@ -251,6 +251,7 @@ public class MarketRpcTests
             new PyStr("not-a-list"),
             new PyList([Line(Tritanium, 1, 10), new PyStr("not-an-order")]),
             new PyList([Line(Tritanium, -1, 10)]),
+            new PyList([Line(Tritanium, 1, 10, minVolume: -1)]),
         })
         {
             var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() => seat.Proxy.BuyMultipleItems(

@@ -5550,4 +5550,4 @@ The fleetObject Init RPC costs 10 weighted per-session units because it updates 
 
 ## Market multi-buy batch validation (2026-10-23)
 
-`marketProxy.BuyMultipleItems` now requires a list or tuple and validates every line's type ID, quantity, and price before passing any line to the writer. Malformed outer shapes and bad lines return `MARKET_BULK_ARGUMENT_INVALID`; the client’s `marketsvc.BuyMulti` supplies a list of complete order rows. `MarketRpcTests.Buy_multi_refuses_malformed_batches_before_any_order_is_written` verifies malformed mixed batches do not create orders.
+`marketProxy.BuyMultipleItems` now requires a list or tuple and validates every line's type ID, quantity, minimum volume, and price before passing any line to the writer. Malformed outer shapes and bad lines return `MARKET_BULK_ARGUMENT_INVALID`; the client’s `marketsvc.BuyMulti` supplies a list of complete order rows. `MarketRpcTests.Buy_multi_refuses_malformed_batches_before_any_order_is_written` verifies malformed mixed batches do not create orders.

@@ -70,3 +70,18 @@ def test_wrong_password_is_rejected():
     with _client() as client:
         with pytest.raises(handshake.LoginRejected):
             client.login("evecli-strict", "wrong")
+
+
+def test_login_rate_limit_rejects_the_correct_password_after_ten_failures():
+    account = f"evecli-rl-{os.urandom(6).hex()}"
+    with _client() as client:
+        client.login(account, "right")
+
+    for _ in range(10):
+        with _client() as client:
+            with pytest.raises(handshake.LoginRejected):
+                client.login(account, "wrong")
+
+    with _client() as client:
+        with pytest.raises(handshake.LoginRejected):
+            client.login(account, "right")

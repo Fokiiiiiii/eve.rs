@@ -189,3 +189,9 @@ Use lane `eve_p4` only and run database work through `tools/dev/db-lock.sh`. The
 - The live test now captures and prints the SaveRequest gateway message on failure. Python syntax compilation passed. A new focused live run will check the precise validation branch.
 - Agent run 159 (`40014735391`) is checking `Contact_add_persists_and_routes_the_recipient_notification`; run 685 (`40014722525`) is the push-triggered gate for `253597a9` and was pending at this update.
 - The latest completed Windows evidence is run 675 (`ebf1ec87`), whose Windows job passed in 14.4 minutes and covered PowerShell 5.1 startup, TCP readiness, the UTF-8 fixture, and live login-to-character entry. Run 681 on older `04a43486` has unrelated market `StructureMarketDenied` and the pre-wire-fix E2E failure; run 675 also had earlier Host failures recorded above.
+
+## 2026-10-23 structure market affiliation fixture
+
+- Run 683 on `8610990c` moved past the sell-range issue and failed with `StructureMarketDenied`. Structure service access reads the character's `CorporationMember` relation through `RelationStore`; the Host test helper set only the character row's corporation ID and omitted the authoritative relation that `CharacterCreation` writes.
+- The `MarketHostTests.CreateTraderAsync` fixture now inserts that relation in its scratch relations schema in the same transaction as the character and wallet. The denied trader receives its different corporation relation, preserving the denial case.
+- The local `Eve.Host.Tests` project build passed with zero warnings and errors. Run 683 is still active; the new fixture needs its Actions check after push. No PostgreSQL test was run locally.

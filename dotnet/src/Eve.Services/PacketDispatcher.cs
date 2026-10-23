@@ -340,6 +340,8 @@ public sealed class PacketDispatcher
             return 10;
         if (service == "corpRecProxy" && method is "SearchCorpAds")
             return 10;
+        if (service == "warRegistry" && method is "GetWars" or "SetOpenForAllies" or "RetractMutualWar")
+            return 10;
         if (service == "structureDirectory" && method is "CheckMyDockingAccessToStructures" or "GetMyDockableStructures" or "GetMyCharacterStructures" or "GetMyCorporationStructures")
             return 10;
         if (service == "structureJumpBridgeMgr" && method is "GetJbStructureDestination" or "GetLinkedStructure")

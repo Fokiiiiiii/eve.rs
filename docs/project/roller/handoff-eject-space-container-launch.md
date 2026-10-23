@@ -23,4 +23,5 @@ Implement the V24.01 eject.LaunchShipOrContainerFromWreckOrContainer action from
 - Successful local compile checks: Eve.Ships, Eve.Services.Space, Eve.Host, Eve.Services.Space.Tests, and Eve.Host.Tests. Resource pressure required RunAnalyzers=false and BuildProjectReferences=false for the final direct compiles; dependencies were built separately. The regular Space build hit memory pressure. The updated Space test project also compiled successfully.
 - Passed locally: the focused Host missing-backend test, 1 passed, 0 skipped.
 - No PostgreSQL test or local headless live test has run.
-- GitHub Actions DB-backed container tests and live headless walk are pending. Keep the TODO row open until they pass.
+- The first Actions run reported 21 Space tests passed, 2 failed, and 0 skipped. One test incorrectly required Cargo Container to be published; the SDE row is unpublished. Another expected an OnItemsChanged packet for a nonempty source; the authoritative source refresh is SimChangeWreck. Both test expectations are corrected in the current worktree.
+- The live headless walk is still running on the same implementation commit. Re-run the DB-backed tests on the corrected commit and record the live result. Keep the TODO row open until both pass.

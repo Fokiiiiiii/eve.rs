@@ -30,7 +30,15 @@ public class HostCodecTests
         {
             "Hello" => new Hello((ushort)U32("version"), U32("nodeId")),
             "HelloAck" => new HelloAck((ushort)U32("version")),
-            "AuthRequest" => new AuthRequest(U32("corr"), Text("userName"), Hex(Text("passwordHash")), Text("language"), Text("address")),
+            "AuthRequest" => new AuthRequest(U32("corr"),
+                Text("credentialKind") switch
+                {
+                    "Password" => AuthCredentialKind.Password,
+                    "Sso" => AuthCredentialKind.Sso,
+                    var other => throw new InvalidOperationException(other),
+                },
+                Text("userName"), Hex(Text("passwordHash")), Text("ssoToken") is { Length: > 0 } token ? token : null,
+                Text("language"), Text("address")),
             "AuthReply" => new AuthReply(U32("corr"), c["ok"]!.GetValue<bool>()
                 ? new Accepted(U32("userId"), U64("role"), Text("countryCode"))
                 : new Rejected(Text("reason"))),
@@ -86,6 +94,7 @@ public class HostCodecTests
             "trailing" => HostLinkError.Trailing,
             "utf8" => HostLinkError.Utf8,
             "bad-status" => HostLinkError.BadStatus,
+            "bad-credential-kind" => HostLinkError.BadCredentialKind,
             var other => throw new InvalidOperationException(other),
         };
         Assert.Equal(expected, error.Error);

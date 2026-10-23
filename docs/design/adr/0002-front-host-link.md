@@ -35,13 +35,13 @@ because every later slice adds to it.
    at a time and different sessions in parallel. A request and its reply are matched by `corr` (only auth
    has one today).
 
-### Messages (version 1)
+### Messages (version 2)
 
 | Kind | Code | Direction | Body |
 |---|---|---|---|
 | `Hello` | 1 | front -> host | `u16 version`, `u32 nodeId` |
 | `HelloAck` | 2 | host -> front | `u16 version` |
-| `AuthRequest` | 3 | front -> host | `u32 corr`, text `userName`, bytes `passwordHash`, text `language`, text `address` |
+| `AuthRequest` | 3 | front -> host | `u32 corr`, `u8 credentialKind` (`0` password, `1` SSO), text `userName`, bytes `passwordHash`, text `ssoToken` (empty for password), text `language`, text `address` |
 | `AuthReply` | 4 | host -> front | `u32 corr`, `u8 status` (0 ok, 1 rejected); ok: `u32 userId`, `u64 role`, text `countryCode`; rejected: text `reason` |
 | `SessionOpen` | 5 | front -> host | `u64 sessionId`, `u64 clientId`, `u32 userId`, `u64 role`, text `address`, text `language`, text `countryCode` |
 | `SessionClose` | 6 | front -> host | `u64 sessionId` |
@@ -50,7 +50,7 @@ because every later slice adds to it.
 | `Disconnect` | 9 | host -> front | `u64 sessionId`, text `reason` |
 | `ClusterConfig` | 10 | host -> front | raw marshal bytes to the end of the frame: the global-config dict the handshake hands the client (`config_vals`); sent after `HelloAck` and again whenever it changes |
 
-`role` and the ids are what the handshake acknowledgement shows the client. The front picks `clientId`
+The SSO token crosses this private link only for host-side verification; it is never a gateway access token. The host resolves a verified issuer/subject through the explicit account link before returning the account id.\n\n`role` and the ids are what the handshake acknowledgement shows the client. The front picks `clientId`
 (`1_000_000 * userId + nodeId`) and `sessionId` (`unix ms * 15 + clientId % 15`), as the client expects.
 
 ## Consequences

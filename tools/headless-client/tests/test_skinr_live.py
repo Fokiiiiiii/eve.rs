@@ -184,7 +184,7 @@ def _layout(ship_type_id: int, slot_id: int, component_id: int, category: int) -
 
 
 def _component_kind(component_id: int, category: int, *, infinite: bool) -> bytes:
-    identifier_field = field(category, type_identifier(component_id))
+    identifier_field = field(1, type_identifier(component_id))
     kind = field(1, identifier_field)
     return kind + (number_field(3, 1) if infinite else number_field(2, 1))
 
@@ -417,14 +417,14 @@ def test_v24_skinr_design_sequences_and_applies_a_persisted_license():
             line_name = "Live design"
             draft_id = uuid.uuid4()
             save_payload = field(1, name.encode()) + field(2, line_name.encode()) + field(3, layout)
-            status, response_type, saved = _send(
+            status, response_type, saved, message = _send_detail(
                 channel,
                 DRAFT + "SaveRequest",
                 character,
                 save_payload,
                 draft_id,
             )
-            assert (status, response_type) == (200, DRAFT + "SaveResponse")
+            assert (status, response_type) == (200, DRAFT + "SaveResponse"), message
             assert uuid.UUID(bytes=read_fields(read_fields(saved)[1][0])[1][0]) == draft_id
             assert _skin_hex_from_draft(saved)
 

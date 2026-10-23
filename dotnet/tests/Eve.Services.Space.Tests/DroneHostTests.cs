@@ -143,9 +143,16 @@ public class DroneHostTests
         Assert.NotNull(launch.Weapon);
         Assert.Equal(((ulong)flying.Session.SessionId, Hobgoblin, 1099, 700.0, 2800.0), (launch.SessionId, launch.Ship.TypeId, launch.GraphicId, launch.OrbitDistance, launch.AttackRange));
         Assert.Equal(10, launch.Weapon.EffectId);
-        // the client is told what dogma has of the drone, then that the item moved
-        var told = Events.Of(flying.Session).Select(e => e.Name).ToArray();
-        Assert.Equal(["OnGodmaPrimeItem", "OnItemChange"], told.Take(2));
+
+        // the dogma prime is immediate; both item updates follow the simulation's launch actions
+        var told = Events.Of(flying.Session, clear: false).Select(e => e.Name).ToArray();
+        Assert.Equal(["OnGodmaPrimeItem"], told);
+        for (var attempt = 0; attempt < 20 && told.Length < 3; attempt++)
+        {
+            await Task.Delay(100);
+            told = Events.Of(flying.Session, clear: false).Select(e => e.Name).ToArray();
+        }
+        Assert.Equal(["OnGodmaPrimeItem", "OnItemChange", "OnItemChange"], told.Take(3));
     }
 
     [PgFact]

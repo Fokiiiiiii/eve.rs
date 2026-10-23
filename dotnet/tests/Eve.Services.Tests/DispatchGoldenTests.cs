@@ -517,6 +517,24 @@ public class DispatchGoldenTests
     }
 
     [Fact]
+    public async Task Repackaging_service_calls_use_a_named_per_session_budget()
+    {
+        var capture = new Capture();
+        var session = new ClientSession(capture) { SessionId = 919 };
+        var registry = new ServiceRegistry();
+        var service = new ExpensiveService("repackagingSvc");
+        registry.Register(service);
+        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 10 };
+
+        await dispatcher.DispatchAsync(CallRequestPacket("repackagingSvc", "RepackageItems"), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("repackagingSvc", "RepackageItems"), session);
+
+        Assert.Equal(1, service.Calls);
+        Assert.Equal(2, capture.Sent.Count);
+        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[1])));
+    }
+
+    [Fact]
     public async Task Fitting_manager_calls_use_the_named_per_session_budget()
     {
         var capture = new Capture();
@@ -832,10 +850,10 @@ public class DispatchGoldenTests
     }
 
     [Fact]
-    public async Task Corporation_contact_and_bulletin_lists_use_a_named_per_session_budget()
+    public async Task Corporation_registry_reads_use_a_named_per_session_budget()
     {
         long sessionId = 919;
-        foreach (var method in new[] { "GetCorporateContacts", "GetContactList", "GetBulletins", "GetBulletinEntries", "GetRecruitmentAd", "GetRecruitmentAdsByCorpID", "GetRecruitmentAdsForCorporation" })
+        foreach (var method in new[] { "GetCorporation", "GetCorporateContacts", "GetContactList", "GetBulletins", "GetBulletinEntries", "GetRecruitmentAd", "GetRecruitmentAdsByCorpID", "GetRecruitmentAdsForCorporation" })
         {
             var capture = new Capture();
             var session = new ClientSession(capture) { SessionId = sessionId++ };
@@ -855,10 +873,79 @@ public class DispatchGoldenTests
     }
 
     [Fact]
-    public async Task Alliance_full_list_reads_use_a_named_per_session_budget()
+    public async Task Character_profile_reads_use_a_named_per_session_budget()
+    {
+        long sessionId = 978;
+        foreach (var method in new[] { "GetPublicInfo", "GetPublicInfo3", "GetCharacterDescription", "GetCharacterCreationDate", "GetPrivateInfo" })
+        {
+            var capture = new Capture();
+            var session = new ClientSession(capture) { SessionId = sessionId++ };
+            var registry = new ServiceRegistry();
+            var service = new ExpensiveService("charMgr");
+            registry.Register(service);
+            var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 10 };
+
+            await dispatcher.DispatchAsync(CallRequestPacket("charMgr", method), session);
+            await dispatcher.DispatchAsync(CallRequestPacket("charMgr", method), session);
+
+            Assert.Equal(1, service.Calls);
+            Assert.Equal(2, capture.Sent.Count);
+            Assert.Equal(ErrorResponseCommand, CommandOf(capture.Sent[1]));
+            Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[1])));
+        }
+    }
+
+    [Fact]
+    public async Task Corporation_service_list_and_bulk_methods_use_a_named_per_session_budget()
+    {
+        long sessionId = 969;
+        foreach (var method in new[] { "GetEmploymentRecord", "GetEmployementRecordAndCharacterTransfers", "GetMyCorporationInfo", "GetMedalsReceived", "GetAllCorpMedals", "GetRecipientsOfMedal", "SetMedalStatus", "GiveMedalToCharacters" })
+        {
+            var capture = new Capture();
+            var session = new ClientSession(capture) { SessionId = sessionId++ };
+            var registry = new ServiceRegistry();
+            var service = new ExpensiveService("corporationSvc");
+            registry.Register(service);
+            var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 10 };
+
+            await dispatcher.DispatchAsync(CallRequestPacket("corporationSvc", method), session);
+            await dispatcher.DispatchAsync(CallRequestPacket("corporationSvc", method), session);
+
+            Assert.Equal(1, service.Calls);
+            Assert.Equal(2, capture.Sent.Count);
+            Assert.Equal(ErrorResponseCommand, CommandOf(capture.Sent[1]));
+            Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[1])));
+        }
+    }
+
+    [Fact]
+    public async Task Owner_group_reads_and_mutations_use_a_named_per_session_budget()
+    {
+        long sessionId = 951;
+        foreach (var method in new[] { "GetMyGroups", "GetGroup", "GetGroupsMany", "GetMembers", "GetMembersForMultipleGroups", "Create", "Delete", "UpdateName", "UpdateDescription", "AddMembers", "DeleteMembers", "UpdateMembershipTypes", "GetGroupLogs" })
+        {
+            var capture = new Capture();
+            var session = new ClientSession(capture) { SessionId = sessionId++ };
+            var registry = new ServiceRegistry();
+            var service = new ExpensiveService("ownerGroupManager");
+            registry.Register(service);
+            var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 10 };
+
+            await dispatcher.DispatchAsync(CallRequestPacket("ownerGroupManager", method), session);
+            await dispatcher.DispatchAsync(CallRequestPacket("ownerGroupManager", method), session);
+
+            Assert.Equal(1, service.Calls);
+            Assert.Equal(2, capture.Sent.Count);
+            Assert.Equal(ErrorResponseCommand, CommandOf(capture.Sent[1]));
+            Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[1])));
+        }
+    }
+
+    [Fact]
+    public async Task Alliance_expensive_methods_use_a_named_per_session_budget()
     {
         long sessionId = 913;
-        foreach (var method in new[] { "GetBills", "GetBillsReceivable", "GetApplications", "GetDaysInAlliance" })
+        foreach (var method in new[] { "GetAlliance", "GetAlliancePublicInfo", "GetAllianceSovereigntyStructuresInfo", "GetRelationships", "SetRelationship", "GetCapitalSystemInfo", "SetCapitalSystem", "SetPrimeHour", "CancelCapitalSystemTransition", "UpdateAlliance", "DeclareWarAgainst", "PayBill", "GetBillBalance", "GetBills", "GetBillsReceivable", "GetApplications", "GetEveOwners", "GetRankedAlliances", "GetAllianceMembers", "GetMembers", "GetEmploymentRecord", "GetAllianceMembersOlderThan", "GetDaysInAlliance", "GetAllianceApplications", "GetAllianceContacts", "GetContactList", "GetBulletins", "GetBulletinEntries" })
         {
             var capture = new Capture();
             var session = new ClientSession(capture) { SessionId = sessionId++ };
@@ -1221,7 +1308,7 @@ public class DispatchGoldenTests
 
         public string Name => name;
 
-        public bool HasMethod(string method) => method is "GetOrders" or "GetCharOrders" or "GetCorporationOrders" or "GetCharEscrow" or "GetMarketOrderHistory" or "GetOldPriceHistory" or "GetNewPriceHistory" or "GetPlexOrders" or "GetPlexBest" or "GetPlexHistory" or "GetPlexOldPriceHistory" or "GetPlexNewPriceHistory" or "CharGetTransactions" or "CorpGetTransactions" or "BuyMultipleItems" or "PlaceMultiSellOrder" or "GetHistoryForManyTypeIDs" or "GetJobCounts" or "GetJob" or "GetJobsByOwner" or "InstallJob" or "CompleteJob" or "CompleteManyJobs" or "CancelJob" or "ActivateSkinLicense" or "ApplySkinToShip" or "GetLicencedSkins" or "GiveSkin" or "RemoveSkin" or "GMExpireSkinLicense" or "GetBills" or "GetBillsReceivable" or "GetApplications" or "GetAllianceMembers" or "GetDaysInAlliance" or "GetRankedAlliances" or "GetOrganizationInfoForCharacters" or "SendBroadcast" or "Invite" or "MassInvite" or "Init" or "ExecuteActions" or "GetNumberOfPotentialCEOs" or "GetFittings" or "GetAssetInventory" or "GetAssetInventoryForLocation" or "SearchAssets" or "GetAggressionSettingsForCorps" or "AuditMember" or "CheckMyDockingAccessToStructures" or "GetMyDockableStructures" or "GetMyCharacterStructures" or "GetMyCorporationStructures" or "InjectSkillIntoBrain" or "InjectSkillpoints" or "ExtractSkills" or "GetDiminishedSpFromInjectors" or "SplitSkillInjector" or "CombineSkillInjector" or "GetContractListForOwner" or "GetApplications" or "GetOldApplications" or "GetCorporateContacts" or "GetContactList" or "GetBulletins" or "GetBulletinEntries" or "GetRecruitmentAd" or "GetRecruitmentAdsByCorpID" or "GetRecruitmentAdsForCorporation" or "GetMyApplications" or "GetMyOldApplications" or "GetMyOpenInvitations" or "CharPayBill" or "GetAutomaticPaySettings" or "GetCorporationBills" or "GetCorporationBillsReceivable" or "PayCorporationBill" or "SendAutomaticPaySettings";
+        public bool HasMethod(string method) => method is "GetOrders" or "GetCharOrders" or "GetCorporationOrders" or "GetCharEscrow" or "GetMarketOrderHistory" or "GetOldPriceHistory" or "GetNewPriceHistory" or "GetPlexOrders" or "GetPlexBest" or "GetPlexHistory" or "GetPlexOldPriceHistory" or "GetPlexNewPriceHistory" or "CharGetTransactions" or "CorpGetTransactions" or "BuyMultipleItems" or "PlaceMultiSellOrder" or "GetHistoryForManyTypeIDs" or "GetJobCounts" or "GetJob" or "GetJobsByOwner" or "InstallJob" or "CompleteJob" or "CompleteManyJobs" or "CancelJob" or "ActivateSkinLicense" or "ApplySkinToShip" or "GetLicencedSkins" or "GiveSkin" or "RemoveSkin" or "GMExpireSkinLicense" or "GetAlliance" or "GetAlliancePublicInfo" or "GetAllianceSovereigntyStructuresInfo" or "GetCapitalSystemInfo" or "SetCapitalSystem" or "SetPrimeHour" or "CancelCapitalSystemTransition" or "UpdateAlliance" or "DeclareWarAgainst" or "RepackageItems" or "PayBill" or "GetBillBalance" or "GetRelationships" or "SetRelationship" or "GetBillBalance" or "GetBills" or "GetBillsReceivable" or "GetApplications" or "GetEveOwners" or "GetEmploymentRecord" or "GetAllianceMembersOlderThan" or "GetAllianceApplications" or "GetAllianceContacts" or "GetAllianceMembers" or "GetDaysInAlliance" or "GetMyGroups" or "GetGroup" or "GetGroupsMany" or "GetMembers" or "GetMembersForMultipleGroups" or "Create" or "Delete" or "UpdateName" or "UpdateDescription" or "AddMembers" or "DeleteMembers" or "UpdateMembershipTypes" or "GetGroupLogs" or "GetRankedAlliances" or "GetOrganizationInfoForCharacters" or "SendBroadcast" or "Invite" or "MassInvite" or "Init" or "ExecuteActions" or "GetNumberOfPotentialCEOs" or "GetFittings" or "GetAssetInventory" or "GetAssetInventoryForLocation" or "SearchAssets" or "GetAggressionSettingsForCorps" or "AuditMember" or "CheckMyDockingAccessToStructures" or "GetMyDockableStructures" or "GetMyCharacterStructures" or "GetMyCorporationStructures" or "InjectSkillIntoBrain" or "InjectSkillpoints" or "ExtractSkills" or "GetDiminishedSpFromInjectors" or "SplitSkillInjector" or "CombineSkillInjector" or "GetContractListForOwner" or "GetApplications" or "GetOldApplications" or "GetCorporateContacts" or "GetContactList" or "GetBulletins" or "GetBulletinEntries" or "GetCorporation" or "GetRecruitmentAd" or "GetRecruitmentAdsByCorpID" or "GetRecruitmentAdsForCorporation" or "GetPublicInfo" or "GetPublicInfo3" or "GetCharacterDescription" or "GetCharacterCreationDate" or "GetPrivateInfo" or "GetEmploymentRecord" or "GetEmployementRecordAndCharacterTransfers" or "GetMyCorporationInfo" or "GetMedalsReceived" or "GetAllCorpMedals" or "GetRecipientsOfMedal" or "SetMedalStatus" or "GiveMedalToCharacters" or "GetMyApplications" or "GetMyOldApplications" or "GetMyOpenInvitations" or "CharPayBill" or "GetAutomaticPaySettings" or "GetCorporationBills" or "GetCorporationBillsReceivable" or "PayCorporationBill" or "SendAutomaticPaySettings";
 
         public ValueTask<PyValue> CallAsync(ServiceCall call)
         {

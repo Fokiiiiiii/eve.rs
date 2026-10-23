@@ -229,3 +229,48 @@ def test_a_seller_and_a_buyer_trade_through_the_market():
             buyer.call("marketProxy", "PlaceBuyOrder", station_id, TRITANIUM, 40.0, 5, -1, 1, 90, True, None)
         label, arguments = _label_and_arguments(refused.value)
         assert label == "CustomInfo" and arguments == {"info": "Your character does not hold the market rights of that corporation."}, arguments
+
+
+
+def test_market_browse_and_history_refresh_fit_one_session():
+    run = uuid.uuid4().hex[:10]
+    with base.connect(f"walk-market-budget-{run}") as client:
+        _new_character(client, run)
+
+        # Market groups are loaded before the selected Minerals group is browsed.
+        groups = _plain_rows(client.call("marketProxy", "GetMarketGroups"))
+        assert any(_field(row, "marketGroupID") == 4 for row in groups)
+
+        for _ in range(3):
+            # MarketBase._GetAsksForRange uses GetRegionBest in region view. The result is a typeID map
+            # whose best-order values provide the fields consumed by the market panel.
+            best = _payload(m.plain(client.call("marketProxy", "GetRegionBest")))
+            assert isinstance(best, dict)
+            for type_id, row in best.items():
+                fields = _named(row)
+                assert {"price", "volRemaining", "typeID", "stationID"} <= set(fields)
+                assert fields["typeID"] == type_id
+
+            # Refresh the selected type's asks/bids, own orders, and price history.
+            orders = _payload(m.plain(client.call("marketProxy", "GetOrders", TRITANIUM)))
+            assert isinstance(orders, (list, tuple)) and len(orders) == 2
+            _plain_rows(client.call("marketProxy", "GetCharOrders"))
+            _plain_rows(client.call("marketProxy", "GetMarketOrderHistory"))
+            _plain_rows(client.call("marketProxy", "GetOldPriceHistory", TRITANIUM))
+            _plain_rows(client.call("marketProxy", "GetNewPriceHistory", TRITANIUM))
+
+            # Refresh PLEX orders, best price and history within this same client session.
+            plex_orders = _payload(m.plain(client.call("marketProxy", "GetPlexOrders")))
+            assert isinstance(plex_orders, (list, tuple)) and len(plex_orders) == 2
+            plex_best = _payload(m.plain(client.call("marketProxy", "GetPlexBest")))
+            assert isinstance(plex_best, dict)
+            for type_id, row in plex_best.items():
+                fields = _named(row)
+                assert {"price", "volRemaining", "typeID", "stationID"} <= set(fields)
+                assert fields["typeID"] == type_id
+
+            plex_history = m.plain(client.call("marketProxy", "GetPlexHistory"))
+            assert isinstance(plex_history, dict) and 44992 in plex_history
+            assert len(plex_history[44992]) == 2
+            _plain_rows(client.call("marketProxy", "GetPlexOldPriceHistory"))
+            _plain_rows(client.call("marketProxy", "GetPlexNewPriceHistory"))

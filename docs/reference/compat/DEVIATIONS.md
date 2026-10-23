@@ -5561,3 +5561,8 @@ The security inventory now records each PLEX market route separately: the order 
 ## Crimewatch numeric identifier parsing (2026-10-23)
 
 `crimewatch` numeric character, duel-peer, and challenge-expiry fields now reject fractional, non-finite, and out-of-range floating identifiers rather than narrowing them to a different integer. The duel lifecycle regression confirms a fractional target does not create a challenge.
+
+
+## Security inventory status summary (2026-10-23)
+
+The overview now points to the config, crimewatch, station, and map method-level RPC classifications and their verified budgets or public/session-derived scopes. The broader identifier inventory remains in progress.

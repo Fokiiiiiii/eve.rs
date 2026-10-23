@@ -5631,3 +5631,8 @@ Executor selection, alliance contact and label writes, and bulletin writes now c
 ## Corporation content write budgets (2026-10-23)
 
 Title, corporate contact, contact-label, and bulletin writes now consume 10 weighted per-session units each. CorporationStore still applies the persisted Director, Diplomat, or Chat Manager gate for each operation; existing title, label, bulk-contact, and bulletin bounds remain in force. A focused dispatcher regression covers the 12 individual methods.
+
+
+## Corporation membership RPC budgets (2026-10-23)
+
+Corporation creation, application submission, invitations, CEO succession, member removal, and account-key changes now consume 10 weighted per-session units. The store retains its transactional founder, application, Personnel Manager, membership, kickability, and division checks. The focused dispatcher regression covers the six methods.

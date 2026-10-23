@@ -1996,6 +1996,20 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
     }
 
     [Fact]
+    public async Task Empty_personal_asset_safety_read_skips_the_static_catalog()
+    {
+        await using var rig = await AssetSafetyPgRig.CreateAsync();
+        const long characterId = 900009;
+        var allocatedBefore = GC.GetTotalAllocatedBytes(precise: false);
+
+        var result = await rig.Store.GetItemsInSafetyForCharacterAsync(characterId, CancellationToken.None);
+
+        var allocated = GC.GetTotalAllocatedBytes(precise: false) - allocatedBefore;
+        Assert.Empty(result.Items);
+        Assert.InRange(allocated, 0, 64L * 1024 * 1024);
+    }
+
+    [Fact]
     public async Task Asset_safety_manual_personal_delivery_enforces_five_days_half_percent_and_call_replay()
     {
         await using var rig = await AssetSafetyPgRig.CreateAsync();

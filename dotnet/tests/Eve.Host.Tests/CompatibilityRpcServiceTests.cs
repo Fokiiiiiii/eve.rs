@@ -76,6 +76,36 @@ public sealed class CompatibilityRpcServiceTests
 
         Assert.IsType<PyNone>(response);
         Assert.Equal(["ballpark startup failed"], messages);
+
+        var refusals = new (ServiceCall Call, string Error)[]
+        {
+            (Call("LogString", args: []), "CLIENT_LOG_ARGUMENTS_INVALID"),
+            (Call("LogString", args: [new PyInt(7)]), "CLIENT_LOG_MESSAGE_INVALID"),
+            (Call("LogString", args: [new PyStr(new string('あ', 1366))]), "CLIENT_LOG_MESSAGE_LIMIT_EXCEEDED"),
+            (Call("LogString", args: [new PyStr("ok"), new PyStr("extra")]), "CLIENT_LOG_ARGUMENTS_INVALID"),
+            (new ServiceCall { Method = "LogString", Args = [new PyStr("ok")], Kwargs = new PyDict([]), Session = Session() }, "CLIENT_LOG_ARGUMENTS_INVALID"),
+        };
+        foreach (var (call, error) in refusals)
+        {
+            var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(call).AsTask());
+            Assert.Equal(MachoErrors.UserErrorClass, refusal.Error.ClassName);
+            Assert.Equal(error, refusal.Error.UserErrorMessage);
+        }
+        Assert.Equal(["ballpark startup failed"], messages);
+    }
+
+    [Fact]
+    public async Task Character_energy_read_refuses_client_selected_targets()
+    {
+        var service = new CharacterEnergyMgrRpcService(nowUnixMs: () => 1_700_000_000_000L);
+        var session = Session(20);
+        var valid = await service.CallAsync(Call("GetMyEnergyState", session));
+        Assert.IsType<PyObjectEx>(valid);
+
+        var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(
+            Call("GetMyEnergyState", session, new PyLong(21))).AsTask());
+        Assert.Equal(MachoErrors.UserErrorClass, refusal.Error.ClassName);
+        Assert.Equal("CHARACTER_ENERGY_ARGUMENTS_INVALID", refusal.Error.UserErrorMessage);
     }
 
     [Fact]

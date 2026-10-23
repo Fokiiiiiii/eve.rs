@@ -202,6 +202,7 @@
      "storeOfferID": "omega_30_days",
      "name": "Omega Clone State",
      "description": "Activate Omega clone state access for 30 days.",
+     "href": "/store/4/offers/omega-30-days",
      "offerPricings": [
       {
        "currency": "PLX",
@@ -247,6 +248,7 @@
      "storeOfferID": "mct_slot_30_days",
      "name": "Multiple Character Training",
      "description": "Unlock an additional training slot for 30 days.",
+     "href": "/store/4/offers/mct-slot-30-days",
      "offerPricings": [
       {
        "currency": "PLX",
@@ -293,6 +295,7 @@
      "storeOfferID": "pilot_resculpt_certificate",
      "name": "Pilot's Body Resculpt Certificate",
      "description": "Change your capsuleer appearance with a body resculpt certificate.",
+     "href": "/store/4/offers/pilot-resculpt-certificate",
      "offerPricings": [
       {
        "currency": "PLX",
@@ -339,6 +342,7 @@
      "storeOfferID": "skill_extractor_single",
      "name": "Skill Extractor",
      "description": "Extract 500,000 skill points from an eligible character.",
+     "href": "/store/4/offers/skill-extractor-single",
      "offerPricings": [
       {
        "currency": "PLX",
@@ -385,6 +389,7 @@
      "storeOfferID": "daily_alpha_injector_single",
      "name": "Daily Alpha Injector",
      "description": "Add 50,000 skill points for an Alpha clone character.",
+     "href": "/store/4/offers/daily-alpha-injector-single",
      "offerPricings": [
       {
        "currency": "PLX",
@@ -431,6 +436,7 @@
      "storeOfferID": "historic_soe_skins_crate",
      "name": "Historic SOE SKINs Crate",
      "description": "Grant a historic Sisters of EVE themed SKIN crate.",
+     "href": "/store/4/offers/historic-soe-skins-crate",
      "offerPricings": [
       {
        "currency": "PLX",
@@ -477,6 +483,7 @@
      "storeOfferID": "historic_gallente_skins_crate",
      "name": "Historic Gallente SKINs Crate",
      "description": "Grant a historic Gallente themed SKIN crate.",
+     "href": "/store/4/offers/historic-gallente-skins-crate",
      "offerPricings": [
       {
        "currency": "PLX",
@@ -523,6 +530,7 @@
      "storeOfferID": "sunesis_capsuleer_day_xxi_skin",
      "name": "Sunesis Capsuleer Day XXI SKIN",
      "description": "Redeem a limited Sunesis SKIN.",
+     "href": "/store/4/offers/sunesis-capsuleer-day-xxi-skin",
      "offerPricings": [
       {
        "currency": "PLX",
@@ -568,6 +576,7 @@
      "storeOfferID": "pacifier_aurora_universalis_skin",
      "name": "Pacifier Aurora Universalis SKIN",
      "description": "Redeem a Pacifier Aurora Universalis SKIN.",
+     "href": "/store/4/offers/pacifier-aurora-universalis-skin",
      "offerPricings": [
       {
        "currency": "PLX",
@@ -613,6 +622,7 @@
      "storeOfferID": "frostline_exploration_suit",
      "name": "Men's & Women's Frostline Exploration Suit",
      "description": "Add a Frostline Exploration Suit to your apparel collection.",
+     "href": "/store/4/offers/frostline-exploration-suit",
      "offerPricings": [
       {
        "currency": "PLX",
@@ -658,6 +668,7 @@
      "storeOfferID": "mens_ascend_boots_white_gold",
      "name": "Men's 'Ascend' Boots (white/gold)",
      "description": "Add a high-contrast pair of Ascend boots.",
+     "href": "/store/4/offers/mens-ascend-boots-white-gold",
      "offerPricings": [
       {
        "currency": "PLX",
@@ -703,6 +714,7 @@
      "storeOfferID": "womens_avenue_shirt_black",
      "name": "Women's 'Avenue' Shirt (black)",
      "description": "Add a black Avenue shirt to your apparel collection.",
+     "href": "/store/4/offers/womens-avenue-shirt-black",
      "offerPricings": [
       {
        "currency": "PLX",
@@ -748,6 +760,7 @@
      "storeOfferID": "sunesis_hull",
      "name": "Sunesis",
      "description": "Deliver a Sunesis hull to the active character.",
+     "href": "/store/4/offers/sunesis-hull",
      "offerPricings": [
       {
        "currency": "PLX",
@@ -794,6 +807,7 @@
      "storeOfferID": "drake_hull",
      "name": "Drake",
      "description": "Deliver a Drake hull to the active character.",
+     "href": "/store/4/offers/drake-hull",
      "offerPricings": [
       {
        "currency": "PLX",
@@ -840,6 +854,7 @@
      "storeOfferID": "explorer_career_crate",
      "name": "Explorer Career Crate",
      "description": "Deliver an Explorer Career Crate to the active character.",
+     "href": "/store/4/offers/explorer-career-crate",
      "offerPricings": [
       {
        "currency": "PLX",

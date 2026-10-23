@@ -584,6 +584,8 @@ Security finding `423063a5` was pushed to `main` on 2026-10-23.
 
 V24.01's scene portrait queue calls this method with `missingIDs` from a worker batch capped at five (`evephotosvc/scenePortraitQueue.py`). Host now bounds the raw request independently and refuses malformed shapes or IDs before appearance lookup. `CompatibilityRpcServiceTests.Paper_doll_batch_reads_require_bounded_positive_integral_character_ids` and `DispatchGoldenTests.Paper_doll_batch_reads_use_a_named_per_session_budget` cover the boundary and budget. On `eve_p3`, the focused Host test passed (1), and all `Eve.Services.Tests` passed (227, no skips).
 
+Security finding `6ccafe8c` was pushed to `main` on 2026-10-23.
+
 
 ### Contextual Offer Manager RPC detail
 

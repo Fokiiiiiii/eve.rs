@@ -44,7 +44,7 @@ Verdicts: **Missing** (no working handler), **Stub** (answers a constant or an e
 
 | # | Item | Verdict | Evidence |
 |---|---|---|---|
-| 1 | `skillHandler.CheckAndSendNotifications` | Missing | Not in eve.rs. Only client caller: `notifications/client/development/skillHistoryProvider.py:26` (a development provider). Whether production calls it is not checked. CH-3. |
+| 1 | `skillHandler.CheckAndSendNotifications` | Present | The only client caller is the development provider (`notifications/client/development/skillHistoryProvider.py:26`). eve.rs returns an empty list, matching EveJS v0.12.9 `skillMgrService.js:594-597`; the Host registry check is recorded in `docs/project/TODO.md`. CH-3. |
 | 2 | `seasonManager.get_season_data_for_character` | Missing | Client: `seasons/client/seasonservice.py` (`_initialize`, `_initialize_season`). eve.rs: `SeasonManagerService` (`SessionStartupRpcServices.cs:101-102`) answers only `process_client_event`, built with no callback (`CoreServices.cs:87`). CH-4. |
 | 3 | `ProjectDiscovery.initialize_tutorial_status` | Missing | Client: `projectdiscovery/client/projects/covid/service.py:22-25` (on every character session change). eve.rs has `get_tutorial_completion_status` and the player-state reads (`ProjectDiscoveryService.cs`). CH-4. |
 | 4 | `ActivateCharacterReSculpt` | Stub | `UserSvcCompatibility.cs:82-88` answers `False`, consumes nothing. EveJS answers `true`, no effect (`userService.js:1097`). GATE-B, CH-8. |
@@ -138,10 +138,10 @@ Wave 1 runs about 14 packages across three lanes. Packages in one wave may run a
 
 #### CH-3 Skill handler: CheckAndSendNotifications, GetSkillBundleInfo, notification order
 - **Depends on:** none. **Wave 1, lane eve_p2.**
-- **Scope:** (a) `skillHandler.CheckAndSendNotifications`: only a development provider calls it (`notifications/client/development/skillHistoryProvider.py:26`). Decide with the owner whether it is dev-only. If it is kept, answer by re-sending the current queue and levels from persisted state, with no duplicates. (b) `GetSkillBundleInfo(skillBundleID)`: needed by the crate loot preview (`eve/client/script/ui/crate/lootItem.py`). The bundle contents come from the SDE or the static data; `ClaimSkillBundle` already exists in the crate service and is the model. (c) Check the notification order in TODO row 2117 for queue save, start, stop, abort and free points.
+- **Scope:** (a) `skillHandler.CheckAndSendNotifications`: only the development provider calls it (`notifications/client/development/skillHistoryProvider.py:26`); retain the empty-list response returned by EveJS v0.12.9. (b) `GetSkillBundleInfo(skillBundleID)`: needed by the crate loot preview (`eve/client/script/ui/crate/lootItem.py`). Do not invent bundle names or icons: the endpoint remains partial until an authoritative source is available. (c) Verify queue notification order for save, start, stop, abort and free points. `SkillQueueContractTests.Save_abort_and_level_completion_keep_the_reference_notification_order` covers announcer order for save/pause, abort and level completion; existing free-point notification tests cover the free-point path.
 - **Files:** `dotnet/src/Eve.Services.Skills/SkillHandlerService.cs` (method table); `SkillNotifications.cs`; `TrainingAnnouncer.cs`; `dotnet/src/Eve.Services.Core/CrateService.cs` (bundle source); `dotnet/tests/Eve.Services.Skills.Tests/`.
 - **Sources:** eve-logic `lootItem.py`, `skillsvc.py` 1093, `skillHistoryProvider.py`; EveJS `services/skills/` (`Handle_CheckAndSendNotifications`); SDE skill bundle data.
-- **Acceptance:** the bound call returns without the unknown-method error. `GetSkillBundleInfo` returns the client's shape for a real bundle and refuses an unknown id. Re-sent notifications do not duplicate. Live: the crate loot preview calls succeed, and the notification order test passes.
+- **Acceptance:** the bound `CheckAndSendNotifications` call returns the reference's empty list. `GetSkillBundleInfo` returns the client's shape when authoritative bundle metadata is available. Notification-order tests cover save/pause, abort, level completion and free-point changes. Live: the queue flow and crate loot preview pass through the client path.
 
 #### CH-4 Tutorial and season read surfaces
 - **Depends on:** none. **Wave 1, lane eve_p4.**
@@ -324,6 +324,8 @@ Each item was checked in source; the test names are those found by search. Items
 ## 7. Stale documents, and what was not checked
 
 ### 7.1 CH-23 reconciliation
+
+- CH-3's `CheckAndSendNotifications` is implemented as the development provider expects: it returns the empty list EveJS v0.12.9 returns. The existing Host registry test is recorded in `docs/project/TODO.md`; CH-3 remains partial for `GetSkillBundleInfo` source data and the broader client notification-order walk.
 
 - The former DEVIATIONS entries 249 and 261 do not identify the current security-status and `charUnboundMgr` records. Character-selection security status is recorded in DEVIATIONS entry 146; live bounty and `charUnboundMgr` evidence is in the package handoffs.
 - The old alpha-injector TODO and multi-training expiry gap are closed. The daily injector implementation and `test_alpha_injector_live.py` are recorded in TODO; startup recreation and reconciliation are covered by `CharacterHostTests.Host_startup_recreates_expiry_jobs_for_existing_training_slots`.

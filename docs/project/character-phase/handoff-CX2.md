@@ -47,3 +47,10 @@ CH-23 reconciled the season source findings and public-gateway boundaries in TOD
 3. Record the Actions results and final package outcomes in the plan, then push the final acceptance update.
 
 The worktree retains the capsule-implant destruction, loss-value wiring and live two-pilot bounty extension described above.
+
+## CX9 skill queue contract checks (2026-10-23)
+
+- Reconciled the plan's stale `CheckAndSendNotifications` verdict against the existing Host registry test recorded in `docs/project/TODO.md`: V24.01's only caller is `notifications/client/development/skillHistoryProvider.py`, and EveJS v0.12.9 `server/src/services/skills/skillMgrService.js:594-597` returns the empty list eve.rs returns.
+- Added a database-free `TrainingAnnouncer` notification-order regression for queue save/pause, abort, and level completion.
+- Verified locally: `dotnet build dotnet/tests/Eve.Services.Skills.Tests/Eve.Services.Skills.Tests.csproj -p:UseSharedCompilation=false` passed; `Save_abort_and_level_completion_keep_the_reference_notification_order` passed (1/1). No PostgreSQL database was used.
+$1\n

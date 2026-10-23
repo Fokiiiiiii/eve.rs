@@ -17,7 +17,7 @@ Database lane: `eve_p3` (`127.0.0.1:5432`), live port `26102`
 - Focused `PublicGatewayTests` passed: 11 passed, 0 skipped, on the `eve_p3` lane. The test checks signature/expiry/character refusal, no token logging, h2c/TLS transport, persistent title changes, notice payloads and order.
 - The TLS test now pins its individual `HttpRequestMessage` to HTTP/2 exact. The earlier client test used the default HTTP/1.1 request version, so Kestrel correctly refused it on the HTTP/2-only TLS endpoint.
 - The local death hull run stopped during `cargo build` before starting services: this checkout has deleted all five `crates/eve-space/src/targeting/` source files that exist in `origin/main`, causing the missing-module and follow-on compile errors. No live scenario or database operation started. Run the walk on Actions' clean checkout after pushing.
-- The serialized full .NET suite on Actions remains to be dispatched and checked after push.
+- The serialized full .NET Actions suite was dispatched for `269a91ea` (run `39946389313`). A preceding CI run on `9cec6507` exposed a stale RPC registry inventory baseline (expected 1374, actual 1378); the exact count assertion is updated to 1378. Run the focused inventory test and full suite against the follow-up commit.
 - S8/S9 handoffs and repository instructions were reviewed. CBM was used before Serena reads/edits; the Serena manual tool was not available in the deferred tool set.
 
 ## Existing worktree state

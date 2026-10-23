@@ -201,6 +201,13 @@ def test_a_pilot_that_shoots_a_pilot_dead_in_low_security_has_the_kill_claimed_a
             dbseed.set_isk(placer, 5_000_000)
             name, bounty = m.plain(placer_client.call("bountyProxy", "AddToBounty", victim, PLACED))
             assert name == "util.KeyVal" and bounty["bounty"] == PLACED
+        notification_rows = m.plain(victim_client.call("notificationMgr", "GetAllNotifications"))
+        placed_notifications = [row[1] for row in notification_rows if row[1]["typeID"] == 112]
+        assert len(placed_notifications) == 1, placed_notifications
+        placed_notification = placed_notifications[0]
+        assert placed_notification["senderID"] == placer and placed_notification["receiverID"] == victim
+        assert placed_notification["data"]["bountyPlacerID"] == placer
+        assert placed_notification["data"]["bounty"] == PLACED
         pool_before = pool(victim)
         assert pool_before == PLACED, pool_before
         isk_before = wallet(hunter)

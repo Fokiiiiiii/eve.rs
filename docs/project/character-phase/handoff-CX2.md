@@ -20,10 +20,15 @@ The live no-season walk passed on `eve_p2` / port 26101. It checks `get_season_d
 
 Verified: live `test_project_discovery_live.py` passed with no skipped test. The graphical client was not used.
 
+## CH-13 and CH-14 live checks completed
+
+`test_player_kill_live.py` now also reads the target's notification mailbox immediately after placement and asserts one type-112 notice with the placer as sender, the target as receiver, and the exact placer ID and 2,000,000 ISK amount. This test passed together with the CH-18 PvP kill, claim and payout assertions. `test_faction_standing_live.py` passed on the same run; it asserts the `OnStandingSet` fields and confirms the `standingMgr.GetCharStandings` row equals the value in the notification. That closes the old live-notification and rowset gaps in S3/S6.
+
+Verified: both live tests passed on `eve_p2` / port 26101 on 2026-10-23, with no skipped test. The graphical client was not used.
+
 ## Next work
 
-1. Close CH-13 placement notification live coverage and recheck CH-14's standing rowset alongside its kill notification.
-2. Audit each remaining S3-S9 handoff item against current code; close it with a test or record a concrete root cause and status.
-3. CH-23: update section 4.1 and stale status rows, run character test projects and live walks on this lane, and write any remaining limitations.
+1. Audit the remaining S3-S9 gaps, especially the capsule implant value, hull-death live comparison, gateway target scopes, and title reward path; close each or document the concrete missing source/input and package status.
+2. CH-23: update section 4.1 and stale status rows, run character test projects and the lane's character live walks, and record remaining limitations.
 
-The worktree currently has CH-19 test assertions plus CH-13 and CH-14 live test assertions; the latter are not yet run.
+The worktree currently has CH-13/CH-14 live assertion changes and acceptance-document edits; those two live walks now pass, while the final phase sweep remains open.

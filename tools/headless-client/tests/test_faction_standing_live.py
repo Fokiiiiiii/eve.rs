@@ -14,6 +14,7 @@ import uuid
 
 import pytest
 
+from evecli import marshal as m
 from tests import test_login_to_character as base
 from tests.npc_kill import kill_with_gun, rat_of
 from tests.test_death import DEATH
@@ -33,7 +34,7 @@ def test_a_pilot_that_shoots_a_faction_npc_dead_is_told_its_new_standing_with_th
     race = plain_race(DEATH["races"][0], "victim")
     run = uuid.uuid4().hex[:10]
     with base.connect(f"walk-faction-standing-{run}") as who:
-        _, ship_id, modules, _ = arrive(who, race, run)
+        character, ship_id, modules, _ = arrive(who, race, run)
         gun = modules[1]
         service = who.call("ship", "MachoBindObject", (STATION, 15), None)
         who.call_bound(service[0], "Undock", ship_id, False)
@@ -59,3 +60,8 @@ def test_a_pilot_that_shoots_a_faction_npc_dead_is_told_its_new_standing_with_th
         assert str(GURISTAS) in payload, payload
         new_standing = float(re.findall(r"-?\d+\.\d+(?:e-?\d+)?", payload)[-1])
         assert new_standing < 0, payload
+        _, result = m.plain(who.call("standingMgr", "GetCharStandings"))
+        columns = [str(column) for column in result["header"]]
+        rows = [dict(zip(columns, row)) for row in result["lines"]]
+        stored = next(row for row in rows if row["fromID"] == GURISTAS)
+        assert stored["standing"] == pytest.approx(new_standing), (stored, new_standing, character)

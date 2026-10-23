@@ -160,7 +160,7 @@ WHERE component.doc->>'published' = 'true'
   AND EXISTS (
         SELECT 1
         FROM sde_mission."skinrComponentPointValues" AS point_values
-        WHERE point_values.key = (component.doc->>'category')::bigint
+        WHERE point_values.key::bigint = (component.doc->>'category')::bigint
           AND (
               COALESCE(point_values.doc->'values', point_values.doc->'_value', '{}'::jsonb)
                   ? (component.doc->>'rarity')

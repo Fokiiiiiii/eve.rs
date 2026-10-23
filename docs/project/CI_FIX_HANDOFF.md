@@ -174,4 +174,4 @@ Use lane `eve_p4` only and run database work through `tools/dev/db-lock.sh`. The
 ## 2026-10-23 SKINR live fixture catalog eligibility
 
 - Run 675 and Agent run 146 reported `INVALID_COMPONENT_LICENSE_ITEM` for the unlimited license item. The live fixture query previously selected any published compatible component with a license item and binder, while `ShipSkinrCatalog.LoadAsync` only registers a component when its category and rarity have an authoritative point value.
-- The SKINR live fixture now requires a matching `skinrComponentPointValues` entry, including both supported object-map and `_key`/`_value` array shapes, so it selects an item the runtime catalog can resolve. The Python file passed `python3 -m py_compile`; the live Actions check is pending.
+- The SKINR live fixture now requires a matching `skinrComponentPointValues` entry, including both supported object-map and `_key`/`_value` array shapes, so it selects an item the runtime catalog can resolve. The first Action rerun exposed that the SDE table `key` is text; the comparison now casts both sides to bigint. Python syntax compilation passed; a corrected live Action run is pending.

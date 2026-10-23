@@ -613,6 +613,8 @@ Security finding `50c8c200` for achievement tracker boundaries and budgets was p
 
 V24.01 calls deployment with `(item_id, game_mode_id)`, entrance activation with the trace item, gate activation with `itemID` plus `violateSafetyTimer=True`, and end-gate activation with `itemID` (`abyss/client/abyssal_service.py:53,58`; `eve/client/script/ui/services/menuSvcExtras/movementFunctions.py:569,579`). Host derives the actor, ship and active participant from the session and validates the item or gate against authoritative inventory, run and spatial state. `MiningAndAbyssalRpcTests.Abyssal_lifecycle_rpc_refuses_malformed_client_targets_before_the_host_callback` covers malformed shape, types and values; `DispatchGoldenTests.Abyssal_lifecycle_rpcs_use_named_per_session_budgets` checks each route's cost. The end-to-end Abyssal Host flow suite checks valid deployment, entry, gate and reconnect transitions. On `eve_p3`, the focused refusal test passed (1), all `Eve.Services.Core.Tests` passed (866), all `Eve.Services.Tests` passed (230), and the 20 non-skipped Abyssal Host flow tests passed with no failures or skips; two other Host flow cases are marked skip and excluded from that pass count.
 
+Security finding `c6a4c688` was pushed to `main` on 2026-10-23; the 20 non-skipped Abyssal Host flow tests passed on `eve_p3`.
+
 
 ### Contextual Offer Manager RPC detail
 

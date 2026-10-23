@@ -81,7 +81,14 @@ public sealed class NewEdenStoreCatalogTests
     [Fact]
     public async Task The_store_lists_the_catalog_offers_and_answers_can_purchase_from_it()
     {
-        var service = new StoreOffersService(_ => ValueTask.FromResult<JsonObject?>(NewEdenStoreCatalog.Default.Root));
+        var purchaseCalls = 0;
+        var service = new StoreOffersService(
+            _ => ValueTask.FromResult<JsonObject?>(NewEdenStoreCatalog.Default.Root),
+            (_, _) =>
+            {
+                purchaseCalls++;
+                throw new InvalidOperationException("Availability reads must not start a purchase.");
+            });
 
         Assert.Equal(15, Assert.IsType<PyList>(await service.CallAsync(Call("get_offers", new PyInt(4)))).Items.Count);
         Assert.Equal(21, Assert.IsType<PyList>(await service.CallAsync(Call("get_offers", new PyInt(9)))).Items.Count);
@@ -91,6 +98,7 @@ public sealed class NewEdenStoreCatalogTests
         Assert.Equal(PyBool.True, Field(available, "canPurchase"));
         var unknown = Assert.IsType<PyDict>(await service.CallAsync(Call("can_purchase_offer", new PyStr("no_such_offer"))));
         Assert.Equal(PyBool.False, Field(unknown, "canPurchase"));
+        Assert.Equal(0, purchaseCalls);
     }
 
     private static List<JsonObject> StoreOffers(JsonObject root, string storeId) =>

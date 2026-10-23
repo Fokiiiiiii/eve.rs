@@ -681,3 +681,5 @@ Security finding `e0d6d376` was pushed to `main` on 2026-10-23.
 Security finding `d3fac208` for `abyssal_content_manager.generate_abyss_npc_spawn_report` was pushed to `main` on 2026-10-23. On `eve_p3`, its focused refusal regression passed (1), all `Eve.Services.Core.Tests` passed (883), and all `Eve.Services.Tests` passed (244), with no skips. The Host registry contains 1,374 registered service/method pairs; the method-by-method inventory remains open.
 
 Security finding for `alphaInjectorMgr.GetNextAvailableInjection` input validation and budget was pushed to `main` on 2026-10-23. On `eve_p3`, the focused refusal test passed (1), `Eve.Services.Skills.Tests` passed (74), and `Eve.Services.Tests` passed (245), with no skips. The Host registry contains 1,374 registered service/method pairs; the method-by-method inventory remains open.
+
+Post-push handoff: alpha injector read finding `77850e01` is on `main`; the active registry audit still has 1,374 pairs and remains incomplete.

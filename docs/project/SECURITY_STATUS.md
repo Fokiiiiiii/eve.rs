@@ -363,6 +363,15 @@ PLEX order and history reads use the same authoritative selected-character marke
 
 The reset method follows EveJS v261018.1's `ROLE_QA | ROLE_PROGRAMMER | ROLEMASK_VIEW` account-role gate. `Home_station_remote_change_persists_notifies_serializes_datetime_and_resets` checks that a player with a forged generic role leaves the cooldown intact and a server-set QA account role can reset it.
 
+### Customs office RPC detail
+
+| RPC | Caller and target scope | Input bounds | Per-session cost |
+|---|---|---|---|
+| `planetOrbitalRegistryBroker.GetTaxRate` | Active character derives corporation, alliance, and standings from persisted character state; requested office is resolved from server inventory | One integral office ID; nonexistent or inaccessible office returns no rate | 2 units per session minute; one office and character lookup |
+| `planetOrbitalRegistryBroker.UpdateSettings` | Session corporation must own the office and the caller must hold persisted Director authority | Office ID is integral; standing level is -10 through 10; seven named tax rates are finite and in [0,1]; alliance/standing switches are boolean values | 10 units per session minute; one transactional office update |
+
+The update path ignores cached `corprole`/`rolesAtAll` fields and checks current corporation membership and Director role through `CorporationStore`. `Customs_office_rates_are_written_through_the_host_and_survive_restart` checks that a non-director with a forged Director bit is refused and the persisted CEO can update the owner rates.
+
 ### Wallet RPC detail
 
 | RPC | Caller and target scope | Input bounds | Per-session cost |

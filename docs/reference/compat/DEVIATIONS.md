@@ -5571,3 +5571,8 @@ The overview now points to the config, crimewatch, station, and map method-level
 ## Home station cooldown reset authorization (2026-10-23)
 
 `home_station.reset_remote_change_time` now requires a server-set QA, Programmer, or staff account role, matching EveJS v261018.1. A player session with a forged generic `role` value is refused before the cooldown changes; a QA account role is allowed. The existing PostgreSQL home-station lifecycle regression covers both paths.
+
+
+## Customs office settings authorization (2026-10-23)
+
+`planetOrbitalRegistryBroker.UpdateSettings` now requires a current persisted corporation Director whose corporation owns the customs office. Cached session corporation-role fields no longer authorize the write. Tax standing levels are checked before narrowing to Int32. The Host customs-office PostgreSQL regression verifies that a non-director with a forged cached Director bit is refused without changing rates and the persisted CEO can update them.

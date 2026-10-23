@@ -291,6 +291,10 @@ public sealed class PacketDispatcher
             return 10;
         if (service == "insuranceSvc" && method == "GetContracts")
             return 10;
+        if (service == "planetOrbitalRegistryBroker" && method == "GetTaxRate")
+            return 2;
+        if (service == "planetOrbitalRegistryBroker" && method == "UpdateSettings")
+            return 10;
         if (service == "corpStationMgr" && method == "MachoBindObject")
             return 10;
         if (service == "billMgr")

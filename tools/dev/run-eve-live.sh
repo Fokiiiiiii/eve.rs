@@ -112,6 +112,9 @@ if [ "${EVE_LIVE_SKIP_DOTNET_BUILD:-0}" != "1" ]; then
   (cd "$HERE/dotnet" && dotnet build -c Release src/Eve.Host -nologo -v q -nodeReuse:false >"$LOG/host-build.out" 2>&1 || { tail -n 80 "$LOG/host-build.out"; exit 1; } && dotnet build-server shutdown)
 fi
 (cd "$HERE" && cargo build -q --release -p eve-net -p eve-sim)
+if [ -n "${EVE_PG_URL:-}" ]; then
+  (cd "$HERE" && cargo run -q -p eve-sde -- ensure --missions --pg "$EVE_PG_URL")
+fi
 
 # the simulation reads the static data itself (EVE_SDE_DIR, or the copy `eve-sde ensure` keeps under .cache/sde)
 (cd "$HERE" && exec env EVE_SIM_SOCKET="$SIMSOCK" "$TARGET/release/eve-sim" >"$LOG/sim.out" 2>&1) &

@@ -135,7 +135,8 @@ internal static class HostComposition
             await Eve.Host.Persistence.PgShipSkinrStore.MigrateAsync(source, skinrSchema);
             var skinrStore = new Eve.Host.Persistence.PgShipSkinrStore(source, skinrSchema);
             var sde = new Eve.Sde.SdeReader(source);
-            var skinrCatalog = await ShipSkinrCatalog.LoadAsync(sde);
+            var missionSde = new Eve.Sde.SdeReader(source, Eve.Sde.SdeReader.MissionSchema);
+            var skinrCatalog = await ShipSkinrCatalog.LoadAsync(missionSde);
             var skinrSkillTypeIds = (await sde.ReadTypeSummariesAsync())
                 .Where(type => type.Name is "Studio Management" or "Advanced Studio Management" or
                     "Batch Sequencing" or "Mass Sequencing" or "Industrial Sequencing" or

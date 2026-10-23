@@ -11,12 +11,13 @@ public sealed record SdeRow(long Key, JsonElement Doc);
 public sealed record SdeTypeSummary(int TypeId, int GroupId, string Name, bool Published);
 
 /// <summary>
-/// Read access to the static data export as <c>eve-sde</c> loads it: one table per file in the <c>sde</c>
-/// schema, <c>(ord, key, doc jsonb)</c>. The export is loaded once and never written by the server.
+/// Read access to a static data export as <c>eve-sde</c> loads it: one table per file in the selected schema,
+/// <c>(ord, key, doc jsonb)</c>. The default schema is the client-pinned <c>sde</c> export.
 /// </summary>
 public sealed partial class SdeReader
 {
     public const string DefaultSchema = "sde";
+    public const string MissionSchema = "sde_mission";
 
     [GeneratedRegex("^[a-z_][a-z0-9_]{0,62}$")]
     private static partial Regex SchemaName();

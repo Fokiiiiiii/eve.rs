@@ -5,7 +5,7 @@ using Eve.Host.PublicGateway;
 
 namespace Eve.Host;
 
-/// <summary>SKINR slot, component, rarity, binder, hull and tier authority from the pinned SDE.</summary>
+/// <summary>SKINR slot, component, rarity, binder, hull and tier authority from the mission SDE build.</summary>
 internal sealed class ShipSkinrCatalog
 {
     internal sealed record Component(

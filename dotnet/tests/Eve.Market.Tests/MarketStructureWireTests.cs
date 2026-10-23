@@ -30,7 +30,7 @@ public sealed class MarketStructureWireTests
     }
 
     [Fact]
-    public void Ask_summaries_preserve_structure_ids_as_longs_in_the_client_keyval_shape()
+    public void Region_best_order_summaries_preserve_structure_ids_as_longs_in_the_keyval_shape()
     {
         const long structureId=9_000_000_001_001;
         var order=new MarketOrder(7,34,false,10m,2,2,1,MarketRules.RangeStation,
@@ -42,4 +42,20 @@ public sealed class MarketStructureWireTests
         Assert.Equal(new PyInt(34),Field("typeID"));
         Assert.Equal(new PyLong(structureId),Field("stationID"));
     }
+
+    [Fact]
+    public void Station_and_system_ask_summaries_are_tuples_for_the_client_range_converter()
+    {
+        const long structureId=9_000_000_001_001;
+        var order=new MarketOrder(7,34,false,10m,2,2,1,MarketRules.RangeStation,
+            new MarketLocation(structureId,30_000_001,20_000_001,10_000_001),123,90);
+        var summary=Assert.IsType<PyTuple>(MarketWire.BestByOrderTuple(order,2));
+
+        Assert.Equal(4,summary.Items.Count);
+        Assert.Equal(new PyInt(10),summary.Items[0]);
+        Assert.Equal(new PyInt(2),summary.Items[1]);
+        Assert.Equal(new PyInt(34),summary.Items[2]);
+        Assert.Equal(new PyLong(structureId),summary.Items[3]);
+    }
+
 }

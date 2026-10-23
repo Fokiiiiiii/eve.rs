@@ -48,3 +48,10 @@ Scope: the rows that were in `docs/project/TODO.md` lines 1200–1600 at the ori
 ## Verification in this run
 
 CBM and Serena source/test declarations were inspected; external mechanics claims were checked against EVE University and EveJS. No PostgreSQL database was used and no tests were executed locally. Selected GitHub Actions run 39939081849 passed for the site, structure, and mission test filters. Run 39940442097 passed `Eve.Services.Space.Tests` (4/4) and `Eve.Insurgency.Tests` (7/7), with no failures or skips in either .NET project. Its generic fast live set reported 101 passed and 8 skipped; the skipped cases are recorded separately and do not count as passes. Neither run verifies the outstanding graphical client walks. The docs/evidence follow-up was pushed in merge commit `0eedb3cf5a37e215a9d7b997ec1594fc46bee532`; `ci-status.py failures` found no `ci.yml` run for that SHA at the time of this check.
+
+
+## 2026-10-23 mission-walk timeout fix
+
+- Slow-live run 70 on `c52c10f7` timed out in `test_arc_29_steps_1_and_2_are_completed_in_space` while the test waited 270 seconds for the ship to travel 260 km. The file-level pytest timeout is 300 seconds; the complete route also includes five gate hops, a combat loop bounded at 900 seconds, and the second mission's travel and dialogue.
+- Commit `aaa9a4ec` adds an 1800-second timeout only to the two full dungeon-clear scenarios (`test_the_pilot_clears_the_dungeon_and_is_paid` and the Arc 29 walk). The short basic mission/dungeon-arrival check keeps the normal limit. This changes test allowance only; game timing and server behavior are untouched.
+- Python syntax compilation and `git diff --check` passed locally. No PostgreSQL database was used. Slow-live run 72 (`40027652151`) was dispatched on the pushed main merge `5b44bf50` and is pending; its result must verify the Arc 29 offer, dungeon completion/payout, in-space talk-step completion, and next offer before updating TODO evidence.

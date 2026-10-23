@@ -1089,7 +1089,7 @@ DEVIATIONS.md ("Market slice M1" and the M2/M3 sections when written).
 Done in M1 (DEVIATIONS.md, "Market slice M1"):
 - The five missing marketProxy RPCs: BuyMultipleItems, PlacePlexSellOrder, ModifyPlexCharOrder, CharGetTransactions, CorpGetTransactions.
   All 27 client-called methods are registered (`MarketHostTests`).
-- The order's division in keyID (G1); the station and system ask summaries as KeyVal rows (Q13, G10).
+- The order's division in keyID (G1); station/system ask summaries as four-value tuples for V24 range conversion, with regional best orders remaining named KeyVals (Q13, G10).
 - Client labels for MktBrokersFeeUnexpected2 and MktInvalidMinVolumeCannotExceedQuantity; other refusals are sentences, not codes (G6).
 - The fabricated immediate-fill notification is removed (G8); the cache invalidation that replaces it is M4.
 - Tests: `MarketRpcTests` (9), `ProtocolTests` (updated), `MarketHostTests` (the real composition, restart), live `test_market.py`.

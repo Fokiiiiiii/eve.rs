@@ -207,6 +207,7 @@ def test_a_basic_level_4_kill_mission_is_offered_accepted_and_its_dungeon_comes_
     with base.connect(f"walk-mission-{run}") as who:
         walk_into_dungeon(who, race, run)
 
+@pytest.mark.timeout(1800)
 def test_the_pilot_clears_the_dungeon_and_is_paid():
     """The owner's standard test ship (the Cockroach, effectively invulnerable) with the QA Smartbomb clears the dungeon: each cycle hits every NPC
     of the dungeon in its 250 km field, until the last NPC is gone; the mission is then complete and paid."""
@@ -235,6 +236,7 @@ def test_the_pilot_clears_the_dungeon_and_is_paid():
         watch({"events": who}, 10.0)
         assert cash(who) > cash_before, (cash_before, cash(who), actions, ledger_of(ship_id))
 
+@pytest.mark.timeout(1800)
 def test_arc_29_steps_1_and_2_are_completed_in_space():
     """Arc 29 (The Blood-Stained Stars), steps 1 and 2 on the owner's test ship: the entry agent at Arnon offers the arc's first mission (14117,
     a kill in dungeon 3509), the pilot accepts it and clears the dungeon with the QA Smartbomb; then it flies to Tar, where step 2 (14118) is

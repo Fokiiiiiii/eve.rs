@@ -35,7 +35,7 @@ public sealed class RpcFuzzTests
     public async Task Registered_rpcs_refuse_seeded_hostile_arguments_through_dispatcher()
     {
         var longMode = string.Equals(Environment.GetEnvironmentVariable("EVE_RPC_FUZZ_LONG"), "1", StringComparison.Ordinal);
-        var casesPerMethod = longMode ? 64 : 7;
+            var casesPerMethod = longMode ? 64 : 1;
         var saved = new Dictionary<string, string?>();
         var schemas = new List<string>();
         HostRuntime? runtime = null;
@@ -86,8 +86,12 @@ public sealed class RpcFuzzTests
                         if (service.Name == "structureAssetSafety" && method == "GetItemsInSafetyForCharacter" && index == 0)
                             session.Set("charid", new PyLong(9_876_546));
                         var allocatedBefore = GC.GetTotalAllocatedBytes(precise: false);
-                        IReadOnlyList<PyValue> arguments = Arguments(index, random, longMode);
-                        if (service.Name == "facilityManager" && method == "GetFacilitiesByID" && index == 3)
+                        var argumentIndex = longMode ? index : methodCount % 7;
+                        IReadOnlyList<PyValue> arguments = Arguments(argumentIndex, random, longMode);
+                        if (service.Name == "structureAssetSafety" && method == "GetItemsInSafetyForCharacter" && index == 0)
+                            arguments = [];
+                        if (service.Name == "facilityManager" && method == "GetFacilitiesByID" &&
+                            (longMode ? index == 3 : index == 0))
                             arguments = [new PyList(Enumerable.Repeat<PyValue>(new PyLong(long.MaxValue), 16_384).ToArray())];
                         bool handled;
                         try

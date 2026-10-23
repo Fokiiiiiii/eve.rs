@@ -305,7 +305,7 @@ def _restart_host() -> subprocess.Popen:
     simulation_socket = os.environ["EVE_SIM_SOCKET"]
     host_dll = os.environ["EVE_HOST_DLL"]
     old_pid = int(os.environ["EVE_HOST_PID"])
-    os.kill(old_pid, signal.SIGTERM)
+    os.kill(old_pid, signal.SIGINT)
 
     deadline = time.monotonic() + 45
     while _unix_listener_open(socket_path):
@@ -475,7 +475,23 @@ def test_v24_skinr_design_sequences_and_applies_a_persisted_license():
                 channel, DRAFT + "UpdateRequest", character, update_payload
             )
             assert (status, response_type) == (200, DRAFT + "UpdateResponse")
-            assert _skin_hex_from_draft(updated)
+            skin_hex = _skin_hex_from_draft(updated)
+            status, response_type, draft_skin_data = _send(
+                channel,
+                "eve_public.cosmetic.ship.skin.thirdparty.api.GetRequest",
+                character,
+                field(1, skin_hex.encode()),
+            )
+            assert (status, response_type) == (
+                200,
+                "eve_public.cosmetic.ship.skin.thirdparty.api.GetResponse",
+            )
+            draft_fields = read_fields(read_fields(draft_skin_data)[1][0])
+            assert draft_fields[1][0] == name.encode()
+            assert draft_fields[2][0] == updated_line.encode()
+            assert draft_fields[4][0] == layout
+            assert draft_fields[6]
+            assert 7 not in draft_fields
 
             sequence_components = _component_kind(component_id, category, infinite=True)
             invalid_component = _component_kind(component_id + 1, category, infinite=True)
@@ -589,7 +605,6 @@ def test_v24_skinr_design_sequences_and_applies_a_persisted_license():
             assert len(job_ids) == 1
             job_id = next(iter(job_ids))
             job_key = job_id.hex
-            skin_hex = _skin_hex_from_draft(updated)
             skinr = dbseed.schema("SKINR")
             stored_cost = int(dbseed.sql(
                 f"select plex_cost from {skinr}.skinr_sequencing_jobs where job_id = '{job_id}'"
@@ -678,10 +693,14 @@ def test_v24_skinr_design_sequences_and_applies_a_persisted_license():
                 "eve_public.cosmetic.ship.skin.thirdparty.api.GetResponse",
             )
             saved_skin = read_fields(skin_data)[1][0]
-            saved_fields = read_fields(saved_skin)
-            assert saved_fields[2][0] == name.encode()
-            assert saved_fields[3][0] == updated_line.encode()
-            assert saved_fields[4][0] == layout
+            skin_fields = read_fields(saved_skin)
+            assert skin_fields[1][0] == name.encode()
+            assert skin_fields[2][0] == updated_line.encode()
+            assert skin_fields[3]
+            assert skin_fields[4][0] == layout
+            assert skin_fields[5]
+            assert 6 not in skin_fields
+            assert read_fields(skin_fields[7][0])[1][0] > 0
 
             license_id = _skin_identifier(character, skin_hex)
             status, response_type, owned = _send(

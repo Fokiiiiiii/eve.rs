@@ -36,8 +36,6 @@ Use lane `eve_p4` only and run database work through `tools/dev/db-lock.sh`. The
 
 - Pushed the paperdoll live-test guard and live-harness test-list update on main as `9f8612b0`.
 - Push-triggered CI run 611 (`39963051154`) was in progress at this handoff update. Run 610 on the previous head `ab356e0f` had failed its Python client and Windows Python jobs; run 611 checks the guard and server-backed scenario.
-
-
 ## 2026-10-23 selected-agent SHA checkout
 
 - Runs 60 and 61 failed in `actions/checkout` when the selected-agent dispatch supplied abbreviated commit IDs. The workflow passed that prefix directly to checkout, which tried to resolve it as a remote branch or tag.
@@ -59,7 +57,6 @@ Use lane `eve_p4` only and run database work through `tools/dev/db-lock.sh`. The
 - Run 615 on `1f08f9cb` failed `StoreTests.Home_station_cooldown_migration_preserves_existing_rows`: the test's expected migration list stopped at `0014_achievement_has_ever_warped`, while the current set also applies `0015_forced_paperdoll_state`.
 - Updated the migration expectation. The existing regression creates a schema at migration 0003, applies all later migrations, verifies the legacy home-station values, and checks that no migration remains pending.
 - Actions will verify this database-backed test. Run 615 also has a separate ship cargo-capacity failure; that root cause is being tracked independently. The E2E and Windows jobs were still active when this entry was added.
-
 ## 2026-10-23 follow-up after run 615
 
 - Run 615 completed with three failures: the fast E2E market history RPC returned Macho error 2; `Eve.Ships.Tests.ShipTests.Cargo_capacity_modules_cannot_be_offlined_or_unfitted_past_the_hold_limit` expected `ShipRefused` but received `ShipChanged`; and the character migration expectation omitted `0015_forced_paperdoll_state`.
@@ -77,7 +74,6 @@ Use lane `eve_p4` only and run database work through `tools/dev/db-lock.sh`. The
 - Commit `3229ba6f` updated the locked `ctutils` release to `0.4.4` for `RUSTSEC-2026-0385`. The advisory names `ctutils` and patches releases before `0.4.4`; it does not identify Tokio. Local Rust 1.94.1 format, workspace check, and workspace Clippy checks passed. The local environment does not have `cargo-audit` installed.
 - Merged current `origin/main` and pushed the advisory fix as `ecf46055`. This head also includes the current character-migration expectation and ship cargo-capacity fix.
 - CI run 618 and dependency-audit run 8 are checking `ecf46055`. The standalone Python client job passed; Rust advisory, Windows, E2E, and other gate jobs were still running at this status check.
-
 
 ## 2026-10-23 main-gate failures after the cargo-capacity fix
 
@@ -121,7 +117,6 @@ Use lane `eve_p4` only and run database work through `tools/dev/db-lock.sh`. The
 - The local focused helper test passed after installing the headless-client requirements into a temporary environment. The focused live SKINR Action check will run on the pushed commit.
 
 ## 2026-10-23 market budget test configuration
-
 - CI run 660 on `4f38c72f` exposed two dispatcher assertions that expected the market-specific budget to reject a second read, but their test dispatchers only lowered the general RPC budget.
 - The market service has a separate `MaxMarketRpcUnitsPerMinute` limit. The two tests now set that value to 10, matching the intended per-session refusal scenario.
 - `Eve.Services.Tests` builds locally, and the focused market-owner and PLEX-history tests passed 2/2 without a database. The next push gate will verify the fix.
@@ -157,7 +152,6 @@ Use lane `eve_p4` only and run database work through `tools/dev/db-lock.sh`. The
 
 - CI run 671 on `287c530d` and Agent run 138 reported the contact notification test expected `PyLong` for persisted `senderID`, but `NotificationMgrService.Dto` emits persisted `senderID` and `receiverID` as `PyInt`.
 - Updated persisted sender and receiver assertions to `PyInt`; kept the direct `OnNotificationReceived` packet assertions unchanged. The current Eve.Host.Tests Release build is still running; no local PostgreSQL test was run.
-
 ## 2026-10-23 structure market Host fixture location
 
 CI run 672 on `1669e6dc` failed the structure market Host test because the fixture set each session's `structureid` to the Upwell structure but persisted the characters at the SDE station.
@@ -181,9 +175,7 @@ CI run 672 on `1669e6dc` failed the structure market Host test because the fixtu
 - Runs 675 and 676 reported the final restart-read mismatch: `data.level=-10` came back as `PyInt`, while the assertion expected `PyLong`. `NotificationMgrService.Payload` maps the persisted JSON number to `PyInt`.
 - Contact notification assertions now use the observed `PyInt` values for the sender, receiver, and persisted relationship level. The local Host.Tests project build passed with zero warnings and errors; no local database test was run.
 - The next focused Actions check will cover `Contact_add_persists_and_routes_the_recipient_notification` on the merged main head.
-
 ## 2026-10-23 structure market sell refusal
-
 - Run 678 on `737ba657` still failed the first structure sell after the persisted character location was changed to the same structure as the session. That disproved the location-only diagnosis.
 - `MarketHostTests` now includes the returned Macho label or CustomInfo text in the failed sell assertion. The next focused Actions run will expose the exact remaining refusal for a root fix.
 
@@ -277,7 +269,6 @@ CI run 672 on `1669e6dc` failed the structure market Host test because the fixtu
 - The focused Agent test and push-triggered CI run will verify the correction.
 
 ## 2026-10-23 SKINR sequencing UUID fixture decode
-
 - Push CI run 690 (`40016706205`) on `5bcb27c5` reached the active sequencing-job walk, then the live test passed a serialized `Identifier` message to `uuid.UUID(bytes=...)` instead of its raw UUID field.
 - V24 declares `GetAllActiveResponse.Job.id` and `CompletedNotice.id` as `sequencing.job.Identifier`, whose field 1 is the 16-byte UUID. The Host responses already use this wrapper; the live test now unwraps `Identifier.uuid` for the active-job and completion-notice assertions.
 - Python syntax check, focused live Agent run, and push-triggered CI verification are pending.
@@ -300,19 +291,30 @@ CI run 672 on `1669e6dc` failed the structure market Host test because the fixtu
 ## 2026-10-23 market escrow remainder correction
 
 - Agent run 175 on 0d9ecbb8 failed the old hangar assertion (expected 2, actual 0). The replacement checks two remaining units through the active order's escrow item reference.
-- CI runs 694 (0d9ecbb8), 695 and 696 (c068f252) also failed that old Host assertion. The current market fix is committed locally as c0857c18 and awaits its focused Actions check.
-- CI runs 695 and 696 exposed a separate live-test field-number mistake. Main commit fa667e96 fixes it: `SkinDesign.name` is field 2 and `line_name` is field 3.
+- CI runs 694 (0d9ecbb8), 695 and 696 (c068f252) also failed that old Host assertion. Main commit c0857c18 replaced the hangar lookup with an escrow-item quantity check; this follow-up verifies the active-order remainder state as well.
+- CI runs 695 and 696 exposed a live-test `Attributes` field mismatch. Commit fa667e96 changed the assertion to match the Host response (`name` field 2, `line_name` field 3); later review of the V24.01 descriptor showed the Host encoder still had those fields shifted.
 
 ## 2026-10-23 SKINR sequence and skin data fixture fields
-
 - CI run 692 (40018629614) on 1d96ae32 completed the sequence and published both expected notices, then failed to find the license by the test's `skin_hex` key. The live helper had decoded the nested `SavedDraft.attributes.skin.hex` message as direct text.
-- Commit d9d806d1 unwraps `SavedDraft.attributes.skin.hex`; CI run 693 (40020293319) confirmed license persistence and `GetRequest` now work, then showed the test reading `SkinDesign.name` field 2 as `line_name`. V24 and `ShipSkinrSequencingGateway.EncodeSkinDesign` put `name` in field 2 and `line_name` in field 3.
-- The assertion now reads field 3. Python syntax compilation passed; focused live Agent run and push CI verification are pending. No local database test was run.
+- Commit d9d806d1 unwraps `SavedDraft.attributes.skin.hex`; CI run 693 (40020293319) confirmed license persistence and `GetRequest` now work, then exposed the saved-skin `Attributes` field mismatch. The V24.01 descriptor defines `name=1`, `line_name=2`, `creator=3`, `layout=4`, `tier=5`, `not_sequenced=6`, and `first_sequenced=7`; the Host encoder still used its shifted field layout.
+- The subsequent test-only adjustment matched the old Host response. The follow-up below corrects the Host encoder and restores assertions against the client descriptor. Python syntax compilation passed; no local database test was run.
 - Current main is f2d0d09f. CI run 698 and Agent runs 178/179 are active; Agent run 176 passed the station-undock client test.
 
 ## 2026-10-23 market escrow and concurrent immediate-buy check
 
-- Agent run 180 (`40022642650`) and CI run 699 (`40022633872`) both reached the escrow remainder assertion successfully, then failed the contender wallet sum: the test expected 19,980 ISK and got 19,835 ISK.
-- The existing immediate-buy compatibility entry records that any unfilled remainder is booked as a 90-day bid. In this race one buyer fills two units for 20 ISK; the other creates a two-unit bid, reserves 20 ISK and pays the 100 ISK broker and 25 ISK SCC minimums. The Host regression now checks both balances and the single open bid's quantity and escrow.
-- The focused Host action check and CI on the corrected head remain pending. Host.Tests compiled locally with 0 warnings and 0 errors. No local database test was run.
-- CI 699 also failed the SKINR live test when SIGTERM did not release the existing Host socket within 45 seconds. This is a separate shutdown root cause, still under investigation.
+- Agent run 180 (`40022642650`) and CI run 699 (`40022633872`) reached the escrow remainder assertion, then failed the contender wallet sum: expected 19,980 ISK, actual 19,835 ISK.
+- The existing immediate-buy compatibility entry records that unfilled volume becomes a 90-day bid. In this race one buyer fills two units for 20 ISK; the other creates a two-unit bid, reserves 20 ISK, and pays the 100 ISK broker and 25 ISK SCC minimums. The Host regression now checks both balances and the one open bid's quantity and escrow.
+- Host.Tests compiled locally with 0 warnings and 0 errors; the focused Host Agent test on the corrected head is pending. No local database test was run.
+- CI 699 also failed the SKINR live test because its restart helper sent SIGTERM, which did not activate the Host's Console.CancelKeyPress shutdown path. Main commit d86a5ef5 changes the helper to send SIGINT; Agent run 183 and CI 701 are checking that fix.
+
+## 2026-10-23 Agent test selection notes
+
+- Agent run 106 on 8b3c8e04 matched a Host composition change and failed to compile the test fixture delegate (CS1593); ed01d2d8 fixes the delegate invocation.
+- Agent run 108 on 951a8744 used the unrelated Capacity filter and cargo-capacity live test even though that commit changed only the handoff note. Host startup then failed because the regular SDE lane lacked `sde.skinrComponentPointValues`; the selected test failure did not validate the handoff-only change. The Host now reads that mission table from the mission SDE lane (a00e62c9). For handoff-only commits, do not dispatch an unrelated selected-test run; for code commits, choose the test owning the changed behavior.
+## 2026-10-23 follow-up: market escrow assertion and SKINR wire shape
+
+- CI run 695 (`c068f252`) failed `MarketHostTests.The_host_dispatches_accessible_structure_market_orders_and_recovers_partial_settlement_after_restart`: the old assertion expected two seller hangar units, although partial sell-order remainder stays at the order's escrow item. The test now joins the active order to `escrow_item_id` and checks the order volume, escrow owner/location/flag/quantity, and single matching row.
+- The same run failed `test_v24_skinr_design_sequences_and_applies_a_persisted_license` because the Host serialized the client `Attributes` fields at the wrong numbers. The V24.01 client defines `name=1`, `line_name=2`, `creator=3`, `layout=4`, `tier=5`, `not_sequenced=6`, and `first_sequenced=7`. `EncodeSkinDesign` now emits those fields and distinguishes saved drafts from completed licenses.
+- Origin/main advanced to `1f1e23a0` and included `c0857c18`'s escrow quantity check and `fa667e96`'s test-only adjustment to the old Host field layout. This follow-up strengthens the escrow assertion and restores the live test to the V24.01 schema while correcting the Host response.
+- The live SKINR test now checks the saved-draft response (`not_sequenced`) and the completed-license response (`first_sequenced`). The Host.Tests Release build passed with 0 warnings and 0 errors, and `python3 -m py_compile tools/headless-client/tests/test_skinr_live.py` passed. No local database or live-client test was run.
+- Focused Actions verification for the market Host test and full CI on the corrected source are pending.

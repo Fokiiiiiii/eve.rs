@@ -62,3 +62,8 @@ No PostgreSQL command was used. CI agent-test run `39940268962` passed the focus
 - Fetch/courier objective payload and turn-in code are present in `MissionViews`, `MissionComposition`, and `MissionDungeonRuntime`; the section 54 row now distinguishes those tests from the still-held full arc courier walk.
 - Local `dotnet build` of `Eve.Host` succeeded (0 warnings/errors), and the focused `MissionViewsTests` case passed (1 passed, 0 skipped). No local PostgreSQL database was used.
 - Actions run `40020393673` exercised SKINR, mission, and station live files on main. The Host SKINR dispatch tests passed 4/4. Live tests reported 1 passed, 1 failed, 3 skipped: the SKINR live assertion checked the design name field as if it were the line name. The assertion now checks name field 2 and line name field 3; this correction and the added mission objective call need a fresh run from the pushed commit. SKINR graphical-client verification remains open.
+
+## 2026-10-23 CI follow-up: Host restart signal
+
+- Push CI and the focused SKINR agent-test reached the Host restart check, then timed out waiting for its Unix socket to close after SIGTERM. `dotnet/src/Eve.Host/Program.cs` handles `Console.CancelKeyPress` to cancel serving and run `HostRuntime.ShutdownAsync`; the live test now sends SIGINT so it follows that graceful shutdown path.
+- This correction was pushed as `d86a5ef5`. The fresh focused SKINR Actions run is `40024357782`; the mission slow-live run `40023178005` is still running on commit `1f1e23a09501d69b6dcb146474bb5e45097333c7`. Results will be added after those runs complete.

@@ -271,8 +271,17 @@ public class MarketRpcTests
         var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() => seat.Proxy.PlaceMultiSellOrder(
             Call(seat.Session, "PlaceMultiSellOrder", 3, new PyStr("not-a-list"), PyBool.False,
                 new PyInt(1), PyNone.Instance)).AsTask());
-
         Assert.Equal("MARKET_BULK_ARGUMENT_INVALID", refusal.Error.UserErrorMessage);
+
+        var itemId = await r.Stock(actor, 2);
+        var validLine = Py.KeyVal(
+            ("stationID", new PyInt(r.Station.Id)), ("typeID", new PyInt(Tritanium)),
+            ("itemID", new PyLong(itemId)), ("quantity", new PyInt(1)), ("price", new PyReal(10)));
+        var mixedRefusal = await Assert.ThrowsAsync<MachoWrappedException>(() => seat.Proxy.PlaceMultiSellOrder(
+            Call(seat.Session, "PlaceMultiSellOrder", 4, new PyList([validLine, new PyStr("not-an-order")]),
+                PyBool.False, new PyInt(1), PyNone.Instance)).AsTask());
+        Assert.Equal("MARKET_BULK_ARGUMENT_INVALID", mixedRefusal.Error.UserErrorMessage);
+        Assert.Equal(r.Station.Id, (await r.Items.GetAsync(itemId))!.LocationId);
     }
 
     [PgFact]

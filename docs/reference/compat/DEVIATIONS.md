@@ -5545,7 +5545,7 @@ The fleetObject Init RPC costs 10 weighted per-session units because it updates 
 
 ## Market multi-sell payload shape (2026-10-23)
 
-`marketProxy.PlaceMultiSellOrder` requires the client batch argument to be a list or tuple before iterating. Other shapes now return the named `MARKET_BULK_ARGUMENT_INVALID` refusal instead of a false result with no work. The V24.01 market UI submits a list of sell rows; `MarketRpcTests.Multi_sell_refuses_a_non_sequence_payload_instead_of_returning_false` covers the malformed call.
+`marketProxy.PlaceMultiSellOrder` requires the client batch argument to be a list or tuple and validates every row’s type, quantity, station, item, and price before processing the first order. Malformed shapes return the named `MARKET_BULK_ARGUMENT_INVALID` refusal instead of a false result with no work; malformed later rows cannot leave earlier rows processed. The V24.01 market UI submits a list of sell rows; `MarketRpcTests.Multi_sell_refuses_a_non_sequence_payload_instead_of_returning_false` covers the malformed call.
 
 
 ## Market multi-buy batch validation (2026-10-23)

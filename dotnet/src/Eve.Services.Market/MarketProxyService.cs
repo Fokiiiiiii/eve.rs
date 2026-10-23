@@ -429,10 +429,22 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
         var entries = Sequence(call.Arg(0));
         if (entries.Count > MaxMultiSellOrderEntries)
             throw Error(new MarketError("MARKET_BULK_LIMIT_EXCEEDED"));
+        var duration = Int32(call.Arg(2));
+        var useCorporation = JsSemantics.Truthy(call.Arg(1));
+        foreach (var entry in entries)
+        {
+            var typeId = Int32(Field(entry, "typeID"));
+            var quantity = Integer(Field(entry, "quantity"));
+            var stationId = Integer(Field(entry, "stationID"));
+            var itemId = Integer(Field(entry, "itemID"));
+            var price = Money(Field(entry, "price"));
+            if (typeId <= 0 || quantity <= 0 || stationId <= 0 || itemId <= 0 || price <= 0)
+                throw Error(new MarketError("MARKET_BULK_ARGUMENT_INVALID"));
+        }
         var index = 0;
         var traded = false;
         foreach (var entry in entries)
-            traded |= await SellEntry(call, entry, JsSemantics.Truthy(call.Arg(1)), Int32(call.Arg(2)), call.Arg(3), Key(call, "sell:" + index++));
+            traded |= await SellEntry(call, entry, useCorporation, duration, call.Arg(3), Key(call, "sell:" + index++));
         return traded ? PyBool.True : PyBool.False;
     }
 

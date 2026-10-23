@@ -49,3 +49,14 @@ The earlier push CI for 737ba657 failed in two unrelated checks: the live SkinR 
 ## Push CI follow-up (2026-10-23)
 
 CI run 40014207144 for 8610990c is still active. Its .NET build, Rust checks, Rust tests, fixtures and completed Host test shards passed. The E2E job failed in the unrelated SKINR fixture query (text = bigint), and Host shard 1 failed in the unrelated structure market sell case (StructureMarketDenied). Other slow live tests were skipped by their documented settings; those are not passes. The corrected focused contact run 40013613450 remains green (2/2, 0 skipped). No notification-related failure appeared in the focused run. The Windows job has not completed yet.
+
+
+## Chat, mail, contacts, notes, and bookmarks slice (2026-10-23)
+
+The V24.01 chat inventory in `docs/reference/compat/DEVIATIONS.md` identifies XMPP as the client transport; the native LSC response methods do not have a V24.01 Macho callsite. Mail reads, send and mark-as-read are implemented; the remaining client-used mailbox mutations need individual wire and durable-state review. Personal notes, contacts and bookmark read/write paths use their existing owner-scoped stores.
+
+- Added `ExpiredBookmarkPrimeTests.Priming_removes_expired_shared_bookmarks_and_notifies_other_active_viewers_after_the_reply`: covers `GetMyActiveBookmarks` three-list reply, expiry removal, exact shared-folder update, after-response ordering and no duplicate notice to the reader.
+- Added `ContactEditHostWireTests.EditContact_persists_type_90_and_routes_the_client_notification_to_the_recipient`: dispatches the Host `charMgr.EditContact` RPC and checks persisted notification fields and the recipient event.
+- Local compile-checks passed: `Eve.Bookmarks.Tests` and `Eve.Host.Tests`, each with 0 warnings and 0 errors. No PostgreSQL tests were run locally.
+- Focused Actions run 40039315645 for `fd4828ca` and push CI run 40039308083 were in progress at this update.
+- Remaining gaps include mail mutations, XMPP offline invites/room deletion/configuration/history/alliance MOTD, in-space `BookmarkLocation`, broader organization contact mutation coverage, and graphical-client validation.

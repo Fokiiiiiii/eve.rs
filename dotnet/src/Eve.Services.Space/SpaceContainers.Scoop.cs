@@ -53,9 +53,8 @@ public sealed partial class SpaceContainers
             throw MachoErrors.ThrowUserError("SafetyActivated");
         }
         var pilot = await _ships.CharacterAsync(characterId, cancellationToken);
-        if (pilot is null ||
-            (spaceItem.CorporationId != item.OwnerId &&
-             (spaceItem.CorporationId != pilot.CorporationId || item.OwnerId != spaceItem.CharacterId)))
+        if (pilot is null || (!isFittings && item.OwnerId != characterId &&
+            (item.OwnerId != pilot.CorporationId || spaceItem.CorporationId != pilot.CorporationId)))
         {
             throw MachoErrors.ThrowUserError("FakeItemNotFound");
         }
@@ -81,7 +80,7 @@ public sealed partial class SpaceContainers
         }
 
         var outcome = await _ships.ScoopSpaceArtifactAsync(
-            characterId, pilot.CorporationId, shipId, systemId, itemId, item.CustomInfo!, _spaceItems, cancellationToken);
+            characterId, pilot.CorporationId, isFittings, shipId, systemId, itemId, item.CustomInfo!, _spaceItems, cancellationToken);
         switch (outcome)
         {
             case ShipRefused refused:

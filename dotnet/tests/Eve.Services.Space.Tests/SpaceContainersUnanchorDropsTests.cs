@@ -105,7 +105,7 @@ public sealed class SpaceContainersUnanchorDropsTests
 
         var hullType = rig.Statics.Type(Astrahus)!;
         var hullId = await AddDropAsync(rig, system, StructureId, Astrahus,
-            StructureUnanchorDrop.HullMarker(StructureId), "Unanchored Astrahus", hullType.GroupId, hullType);
+            StructureUnanchorDrop.HullMarker(StructureId), "Unanchored Astrahus", hullType.GroupId, hullType, character.CharacterId);
         var hullBall = BallOf(rig, system, hullId, Astrahus, hullType.GroupId,
             StructureUnanchorDrop.HullMarker(StructureId), StructureId, empty: true);
         rig.Sim.PlaceWreck(hullBall);
@@ -151,14 +151,14 @@ public sealed class SpaceContainersUnanchorDropsTests
         return new Drops(hullId, fittingsId);
     }
 
-    private static async Task<long> AddDropAsync(Rig rig, int system, long structureId, int typeId, string marker, string name, int groupId, TypeDef type)
+    private static async Task<long> AddDropAsync(Rig rig, int system, long structureId, int typeId, string marker, string name, int groupId, TypeDef type, long? ownerId = null)
     {
         var position = new[] { 1.25, 2.5, -3.75 };
         var direction = new[] { 0d, 0d, 0d };
         await using var connection = await rig.Source.OpenConnectionAsync();
         await using var transaction = await connection.BeginTransactionAsync();
         var itemId = await rig.Items.CreateAsync(connection, transaction,
-            new NewItem(typeId, CorporationId, system, CharacterShips.InSpaceFlag, Quantity: 1, Singleton: true,
+            new NewItem(typeId, ownerId ?? CorporationId, system, CharacterShips.InSpaceFlag, Quantity: 1, Singleton: true,
                 CustomName: name, CustomInfo: marker));
         await rig.SpaceItems.SaveAsync(connection, transaction,
             new SpaceItem(itemId, system, position, direction, type.Attributes[162], groupId,

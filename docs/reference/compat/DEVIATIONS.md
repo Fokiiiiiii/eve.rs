@@ -5634,4 +5634,4 @@ Corporation profile, logo, division-name, abilities, acceptance, mail-restrictio
 
 `invbroker.ListStations` and `ListStationItems` now cost 10 weighted per-session units because each traverses owned inventory and asset locations. `DispatchGoldenTests.Inventory_asset_locations_use_the_expensive_rpc_budget` checks both calls.
 
-`SaveManyFittings` now requires the client dictionary/KeyVal shape, and `DeleteManyFittings` requires a list or tuple. Wrong outer shapes return a named `CustomNotify` refusal before processing rather than looking like a successful empty batch. The existing fitting bulk regression now covers both malformed shapes.
+`SaveManyFittings` now requires the client dictionary/KeyVal shape, and `DeleteManyFittings` requires a list or tuple. Wrong outer shapes, malformed save keys, and nonpositive delete IDs return a named `CustomNotify` refusal before processing rather than looking like a successful empty batch or partially mutating the collection. The fitting bulk regression covers those cases.

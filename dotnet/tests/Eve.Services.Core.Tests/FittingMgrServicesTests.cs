@@ -257,6 +257,10 @@ public sealed class FittingMgrServicesTests : IAsyncLifetime
         var malformedSave = await Assert.ThrowsAsync<MachoWrappedException>(() =>
             service.CallAsync(Call("SaveManyFittings", session, new PyInt(Character), new PyStr("not-a-dictionary"))).AsTask());
         Assert.Equal("CustomNotify", malformedSave.Error.UserErrorMessage);
+        var malformedSaveKey = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            service.CallAsync(Call("SaveManyFittings", session, new PyInt(Character), new PyDict([
+                new KeyValuePair<PyValue, PyValue>(new PyStr("not-a-temp-id"), Fitting())]))).AsTask());
+        Assert.Equal("CustomNotify", malformedSaveKey.Error.UserErrorMessage);
         Assert.Equal(0, host.CategoryReads);
 
         var saved = (PyLong)await service.CallAsync(Call("SaveFitting", session, new PyInt(Character), Fitting()));
@@ -267,6 +271,10 @@ public sealed class FittingMgrServicesTests : IAsyncLifetime
         var malformedDelete = await Assert.ThrowsAsync<MachoWrappedException>(() =>
             service.CallAsync(Call("DeleteManyFittings", session, new PyInt(Character), PyNone.Instance)).AsTask());
         Assert.Equal("CustomNotify", malformedDelete.Error.UserErrorMessage);
+        var mixedDelete = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            service.CallAsync(Call("DeleteManyFittings", session, new PyInt(Character), new PyList([
+                new PyLong(saved.Value), new PyInt(-1)]))).AsTask());
+        Assert.Equal("CustomNotify", mixedDelete.Error.UserErrorMessage);
         Assert.Single(Assert.IsType<PyDict>(await service.CallAsync(Call("GetFittings", session, new PyInt(Character)))).Entries);
     }
 

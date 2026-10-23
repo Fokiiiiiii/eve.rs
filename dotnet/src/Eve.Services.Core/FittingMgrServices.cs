@@ -88,11 +88,17 @@ public sealed class FittingMgrCalls(PgSavedFittingStore store, IFittingHost host
             throw Refusal("FITTING_TOO_MANY_BULK_ENTRIES", limit);
         }
 
-        var temps = new List<long>();
-        var drafts = new List<FittingDraft>();
-        foreach (var (key, value) in entries)
+        var temps = new List<long>(entries.Count);
+        foreach (var (key, _) in entries)
         {
-            temps.Add(IdOf(key) ?? 0);
+            var tempId = IdOf(key);
+            if (tempId is null or 0)
+                throw Refusal("FITTING_BULK_ARGUMENT_INVALID");
+            temps.Add(tempId.Value);
+        }
+        var drafts = new List<FittingDraft>();
+        foreach (var (_, value) in entries)
+        {
             drafts.Add(await CheckedDraftAsync(call, value));
         }
         var ids = await SaveDraftsAsync(scope, owner, drafts);
@@ -132,8 +138,15 @@ public sealed class FittingMgrCalls(PgSavedFittingStore store, IFittingHost host
             throw Refusal("FITTING_TOO_MANY_BULK_ENTRIES", limit);
         }
 
-        var ids = requestedIds
-            .Select(IdOf).OfType<long>().Where(id => id > 0).Distinct().ToList();
+        var ids = new List<long>(requestedIds.Count);
+        foreach (var requestedId in requestedIds)
+        {
+            var id = IdOf(requestedId);
+            if (id is not > 0)
+                throw Refusal("FITTING_BULK_ARGUMENT_INVALID");
+            if (!ids.Contains(id.Value))
+                ids.Add(id.Value);
+        }
         var deleted = await store.DeleteAsync(scope, owner, ids, call.Cancellation);
         Notify(call, scope, owner, "OnManyFittingsDeleted", new PyList([.. deleted.Select(id => (PyValue)new PyLong(id))]));
         return new PyList([.. deleted.Select(id => (PyValue)new PyLong(id))]);

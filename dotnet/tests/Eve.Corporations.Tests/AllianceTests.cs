@@ -1198,7 +1198,7 @@ public class AllianceTests
         var (applicant, applicantCorp) = await Founder(rig, "Response Applicant", "RSPAP");
         var alliance = await rig.Store.CreateAllianceAsync(executor, Request, "response-limit");
         var applicationId = await rig.Store.ApplyToAllianceAsync(applicant, alliance.Id, "Initial text");
-        var service = (Eve.Services.IService)new Eve.Services.Corporations.CorpRegistryService(
+        var service = (Eve.Services.IService)new Eve.Services.Corporations.AllianceRegistryService(
             rig.Store, rig.Characters, () => rig.Now);
         Eve.Services.ClientSession Session(long actor)
         {

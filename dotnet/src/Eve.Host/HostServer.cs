@@ -700,6 +700,12 @@ internal sealed class SessionActor
                 var value = MarshalCodec.DecodeInbound(payload);
                 await _dispatcher.DispatchAsync(value, _session, _ct);
             }
+            catch (MarshalException error) when (error.Kind == MarshalErrorKind.AllocationBudgetExceeded)
+            {
+                _options.Log?.Invoke($"session {_session.SessionId}: refused an over-budget marshal packet");
+                _disconnect("InvalidPacket");
+                return;
+            }
             catch (MarshalException error)
             {
                 _options.Log?.Invoke($"session {_session.SessionId}: dropped an undecodable packet: {error.Message}");

@@ -5528,3 +5528,5 @@ The fleetObject Init RPC costs 10 weighted per-session units because it updates 
 `charMgr.GetPublicInfo`, `GetPublicInfo3`, `GetCharacterDescription`, and `GetCharacterCreationDate` each consume 10 weighted per-session units to bound repeated public-character profile reads. Client-visible fields and shapes remain unchanged. `DispatchGoldenTests.Character_profile_reads_use_a_named_per_session_budget` verifies all four methods.
 
 `charMgr.GetPrivateInfo` consumes 10 weighted per-session units because it joins character, corporation-role, wallet, and security-status data for the corporation member editor. Its persisted role gate and response are unchanged; the character profile budget regression verifies the named refusal.
+
+`mailMgr.SendMail` now refuses a nonpositive or non-integer character recipient ID with `MAIL_RECIPIENT_INVALID` before invoking persistence, rather than dropping malformed IDs from a mixed recipient list. Valid integer IDs and duplicate suppression keep their existing behavior. `MailServiceTests.SendMail_refuses_malformed_recipient_ids_before_sending` covers negative, textual, and non-finite recipients without a send callback.

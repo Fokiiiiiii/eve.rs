@@ -811,6 +811,8 @@ def test_v24_skinr_design_sequences_and_applies_a_persisted_license():
                         apply_request_id,
                     )
                     assert (status, response_type) == (200, LICENSE + "ApplyResponse")
+                    # Read the MACHO session so its queued cosmetic notices enter the client event list.
+                    restarted_client.call("machoNet", "GetServiceInfo")
                     assert _send(
                         restarted_channel,
                         LICENSE + "ApplyRequest",

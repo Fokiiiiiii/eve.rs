@@ -18,12 +18,12 @@
 
 - PASS: `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/src/Eve.Host/Eve.Host.csproj --no-restore -m:1 -p:UseSharedCompilation=false` (0 warnings, 0 errors; about 54 minutes under shared machine load).
 - PASS: local no-DB focused test `Host_inventory_dispatch_publishes_changed_materials_once_after_item_change_and_isolates_sessions` (1 passed, 0 skipped).
-- PASS on Actions for commit `9cec6507`: selected `Eve.Host.Tests` (2 passed, 0 failed, 0 skipped).
+- PASS on Actions at run `39975595679`, ref `d573f9e9`: agent-test completed successfully; no failed tests or jobs.
 - Earlier Actions live tests failed at Host startup because the initial decorator replaced the concrete `InvBrokerService` before `RepackagingService`'s lookup. The current composition unwraps the decorated broker for that lookup.
-- Current composition was pushed to `main` at `885429d7`. Selected Actions tests and push-triggered CI are still pending.
+- `ci-status.py failures d573f9e98867a8672523170522c9e396099bc8c3` reports no push-triggered `ci.yml` run found (checked twice).
 - The headless test index has no existing end-to-end industry job walk. No live industry walk or graphical-client session has been performed.
 - Nine unrelated Rust deletions were present at initial inspection and remain unstaged.
 
 ## Remaining
 
-Run selected Host tests on Actions, inspect push-triggered CI and fix any regression. Report headless and graphical-client verification separately.
+Push this handoff update and check whether `ci.yml` appears for the main push. Report headless and graphical-client verification separately.

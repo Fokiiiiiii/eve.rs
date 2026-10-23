@@ -64,7 +64,14 @@ def test_a_pilot_launches_an_assembled_ship_from_a_space_container():
             ("GetInventoryFromId", (can, 0), None),
         )[1]
         who.call_bound(opened, "Add", kestrel, ship, qty=1, flag=0)
-        answer = who.call("eject", "LaunchShipOrContainerFromWreckOrContainer", can, kestrel)
+        try:
+            answer = who.call("eject", "LaunchShipOrContainerFromWreckOrContainer", can, kestrel)
+        except Exception as error:
+            pytest.fail(
+                f"eject RPC failed: code={getattr(error, 'code', None)!r}, "
+                f"payload={getattr(error, 'payload', None)!r}",
+                pytrace=True,
+            )
         assert m.plain(answer) is None
 
         visible = watch(

@@ -33,13 +33,11 @@
 - `Eve.Services.Tests` builds with 0 warnings and 0 errors. The focused regression is scheduled for Actions after push. No local focused test beyond the market wire test was run; no PostgreSQL or graphical client was used.
 
 ## 2026-10-23 diagnostics and CI follow-up
-
 - The structure market Host regression used sessions at an Upwell structure while persisting their characters at an SDE NPC station. With no Marketing skill, that placed the seller outside the one-jump sell range. Main now starts those fixture characters at the structure; the current push gate is checking the scenario.
 - The live SKINR failure was in the headless test encoder. V24.01 wire descriptors show two nested messages before the sequential item ID; the test emitted three. The helper now matches the client shape, and the push gate will verify the live consume/retry flow.
 - The separate real-client `industryManager.GetJobCounts` budget fix is on main with its dispatcher regression. Its focused Services Actions check passed. No local PostgreSQL or graphical-client verification was performed.
 
 ## 2026-10-23 push 8610990c
-
 - Corrected the SKINR live test's ConsumeRequest encoder using the V24.01 generated descriptors: two nested messages lead to the sequential item ID. The prior helper added a third nested message, so the gateway received ID 0 and returned its correct invalid-item response.
 - Push-triggered CI run 683 (`40014207144`) was queued when checked; run 682 on parent `d7f45242` was still running. The full CI E2E job will exercise the corrected consume/retry flow. No PostgreSQL database was accessed locally and no graphical-client result is claimed.
 - The industry budget focused Actions regression passed on run `40010004814`; the structure-market scenario's corrected location fixture is included in the current gate.
@@ -50,19 +48,21 @@
 - Run 678 (`737ba657`) failed the first structure sell even after the test persisted seller, buyer and structure owner at the same structure as their sessions. That disproves the location-only cause recorded above.
 - The Host test now includes the returned Macho label or CustomInfo text when the first sell fails. The exact refusal and its root fix are still pending the next focused Actions check; the corrected location fixture alone is not a verified fix.
 ## 2026-10-23 run 683 affiliation follow-up
-
 - Run 683 on `8610990c` reported `StructureMarketDenied` in the structure sell regression after the location fix. The production read model resolves affiliation from persisted `CorporationMember` relations. The fixture helper had created a character with a corporation ID but skipped the relation mutation performed by normal character creation.
 - Added the active corporation membership relation to every market test trader in the scratch relation schema; the denied trader remains affiliated with the different corporation. This makes the fixture's stored state match its intended character setup without changing access logic.
 - The updated `Eve.Host.Tests` project builds locally with 0 warnings and 0 errors. No database-backed test was run locally; Actions must verify the fixture after push.
 
 ## 2026-10-23 SKINR draft-save follow-up
-
 - Agent run 158 on `253597a9` advanced through component consumption and failed at Draft.SaveRequest with HTTP 400. The V24 client messenger builds the slot layout and sends editor configurations; Host catalog validation also rejects SDE components marked disallowed for the selected slot.
 - Updated the live test's SDE selector to exclude `disallowedSlots` for its chosen slot, matching the same catalog condition used by the Host. The save assertion now prints the gateway response on failure. The current full push gate run 686 (`40015069193`) is checking the parent fixture and market affiliation update; the new selector needs Actions verification after push.
 - No local PostgreSQL test or graphical-client check was run.
 
 ## 2026-10-23 SKINR draft layout wire correction
-
 - Agent run 158 (`253597a9`) passed component consumption and failed the next `Draft.SaveRequest`. The V24 client encodes a slot as `Slot.id` plus `Slot.configuration`; `SlotConfiguration` selects coating/pattern by category, and the selected variant wraps its identifier in inner field 1. `_layout` omitted that inner wrapper, so `ReadSlot` could not read the component ID.
 - Added the missing nested field in `_layout`, kept `_component_kind` category-selected per the V24 `ComponentLicense` builder, excluded SDE `disallowedSlots` in the fixture selector, and surfaced the SaveRequest response message.
-- The current full gate on `4484ec9c` predates these wire changes. The updated Python live test and correct MarketHost affiliation fixture require the next Actions gate. No PostgreSQL or graphical-client test was run locally.
+- The current full gate on `4484ec9c` predates these wire changes. The updated Python live test and correct MarketHost affiliation fixture require the next Actions gate. No PostgreSQL or graphical-client test was run.
+
+## 2026-10-23 push 1a9e73e9
+- Merged the latest `origin/main` into `cx14` and pushed the SKINR SaveRequest layout correction, test-side `disallowedSlots` filtering, and market trader affiliation fixture repair in commit `1a9e73e9`.
+- Push-triggered `ci.yml` run 689 (`40016219712`) was queued at the latest check. Run 686 (`40015069193`) for parent `4484ec9c` remains in progress; run 683 was queued when checked. Recheck current-head Actions before considering these flows verified.
+- No PostgreSQL database or graphical client was used locally. Python syntax compilation passed; the latest CI gate has not completed yet.

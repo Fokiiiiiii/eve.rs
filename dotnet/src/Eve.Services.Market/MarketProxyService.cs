@@ -227,9 +227,20 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
     [Method("GetHistoryForManyTypeIDs")]
     public async ValueTask<PyValue> GetHistoryForManyTypeIDs(ServiceCall call)
     {
-        if (call.Arg(0) is not (PyList or PyTuple))
-            throw Error(new MarketError("MARKET_TYPE_ID_INVALID"));
-        var requestedTypes = Sequence(call.Arg(0));
+        var request = call.Arg(0);
+        var requestedTypes = request switch
+        {
+            PyList list => list.Items,
+            PyTuple tuple => tuple.Items,
+            PyObjectEx
+            {
+                Kind: ObjectExKind.Ex1,
+                Header: PyTuple { Items: [PyToken { Value: "__builtin__.set" }, PyTuple { Items: [PyList setItems] }] },
+                List.Count: 0,
+                Dict.Count: 0,
+            } => setItems.Items,
+            _ => throw Error(new MarketError("MARKET_TYPE_ID_INVALID")),
+        };
         if (requestedTypes.Count > MaxHistoryTypeIds)
             throw Error(new MarketError("MARKET_BULK_LIMIT_EXCEEDED"));
         var typeIds = requestedTypes.Select(value => value switch

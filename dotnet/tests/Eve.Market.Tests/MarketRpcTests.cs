@@ -129,6 +129,9 @@ public class MarketRpcTests
         await using var r = await TradeRig.Create();
         var actor = await r.Actor("Malformed History Reader");
         var seat = await SeatAsync(r, actor);
+        var clientSet = PyValue.PythonSet([new PyInt(Tritanium)]);
+        Assert.IsType<PyDict>(await seat.Proxy.GetHistoryForManyTypeIDs(
+            Call(seat.Session, "GetHistoryForManyTypeIDs", 2, clientSet)));
         foreach (var input in new PyValue[]
         {
             new PyStr("34"),

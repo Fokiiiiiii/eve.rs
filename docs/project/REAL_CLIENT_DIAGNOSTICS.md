@@ -23,9 +23,10 @@ The owner’s captures and process logs were read through `tools/mitm show` and 
 ## (c) structureDirectory.GetStructureMapData errors
 
 - Symptom: the capture calls `GetStructureMapData([30100032])` and `GetStructureMapData([30100041])`; each receives an unhandled `RuntimeError`. The Host log records PostgreSQL `42P01` for `sde.invTypes`.
-- Root cause: the persistent structure map read model queries the missing `sde.invTypes` table while loading type names.
-- Fix commit: pending.
-- Regression test: pending.
+- Root cause: the read model queried `sde.invTypes`, but the pinned SDE stores type rows in `sde.types`. The same invalid table name was used by the corporation structure listing.
+- Fix: both reads now use the pinned `types` table and retain the SDE group ID in the map row.
+- Fix commit: `Serve structure map data from the pinned SDE table`.
+- Regression: `StructureMapDataTests.Structure_map_data_uses_the_pinned_type_table_and_returns_deployed_rows` passed on the merged tree (1/1); `StructureDirectoryServiceTests` passed (25/25); the Host directory persistence subset passed (4/4), all with zero skips.
 - Reference: EveJS builds its map rows from the structures in the requested solar system; V24.01 calls this RPC from `structureDirectory.py:GetStructureMapData`.
 
 ## (d) UnavailableInventoryLocation in space

@@ -676,3 +676,5 @@ Security finding `c6a4c688` was pushed to `main` on 2026-10-23; the 20 non-skipp
 `CompatibilityRpcServicesTests.Contextual_offer_tracking_keeps_a_bounded_event_history` verifies eviction, and `Contextual_offer_tracking_refuses_invalid_offer_ids_without_recording` checks malformed and nonpositive IDs before any configured callback. `DispatchGoldenTests.Contextual_offer_tracking_uses_a_named_per_session_budget` checks all six routes. On `eve_p3`, both focused Core tests, all six dispatcher cases, and `Eve.Services.Tests` (224) passed with no skips.
 
 Security finding `e0d6d376` was pushed to `main` on 2026-10-23.
+
+Security finding `d3fac208` for `abyssal_content_manager.generate_abyss_npc_spawn_report` was pushed to `main` on 2026-10-23. On `eve_p3`, its focused refusal regression passed (1), all `Eve.Services.Core.Tests` passed (883), and all `Eve.Services.Tests` passed (244), with no skips. The Host registry contains 1,374 registered service/method pairs; the method-by-method inventory remains open.

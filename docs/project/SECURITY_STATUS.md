@@ -312,7 +312,7 @@ The reviewed identifier-bearing methods classify as follows:
 |---|---|---|---|
 | `marketProxy.StartupCheck` | Any authenticated caller; fixed protocol response | No caller-supplied data | None; constant response |
 | `marketProxy.GetPlexOrders` | Any authenticated caller; public PLEX order book is scoped to the selected character's current region | No caller-supplied owner, type, station, or region IDs | 10 units |
-| `marketProxy.GetPlexBest`, `GetPlexHistory`, `GetPlexOldPriceHistory`, `GetPlexNewPriceHistory` | Any authenticated caller; public PLEX market data in the selected character's current region | Type is fixed to PLEX; region is derived from the selected character | 10 units each; covered by `DispatchGoldenTests.Expensive_market_calls_have_a_named_per_session_budget` |
+| `marketProxy.GetPlexBest`, `GetPlexHistory`, `GetPlexOldPriceHistory`, `GetPlexNewPriceHistory` | Any authenticated caller; public PLEX market data in the selected character's current region | Type is fixed to PLEX; region is derived from the selected character | 10 units each; `DispatchGoldenTests.Plex_market_history_uses_a_named_per_session_budget` covers history reads |
 
 PLEX order and history reads use the same authoritative selected-character market location rules as ordinary market queries; no client-supplied owner selects private order data.
 

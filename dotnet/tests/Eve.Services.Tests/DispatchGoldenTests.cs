@@ -407,6 +407,24 @@ public class DispatchGoldenTests
     }
 
     [Fact]
+    public async Task Plex_market_history_uses_a_named_per_session_budget()
+    {
+        var capture = new Capture();
+        var session = new ClientSession(capture) { SessionId = 924 };
+        var registry = new ServiceRegistry();
+        var service = new ExpensiveService("marketProxy");
+        registry.Register(service);
+        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 10 };
+
+        await dispatcher.DispatchAsync(CallRequestPacket("marketProxy", "GetPlexHistory"), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("marketProxy", "GetPlexHistory"), session);
+
+        Assert.Equal(1, service.Calls);
+        Assert.Equal(2, capture.Sent.Count);
+        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[1])));
+    }
+
+    [Fact]
     public async Task Market_owner_history_reads_have_a_named_per_session_budget()
     {
         var captureRegistry = new ServiceRegistry();

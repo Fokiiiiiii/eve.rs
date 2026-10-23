@@ -55,3 +55,9 @@ CBM and Serena source/test declarations were inspected; external mechanics claim
 - Slow-live run 70 on `c52c10f7` timed out in `test_arc_29_steps_1_and_2_are_completed_in_space` while the test waited 270 seconds for the ship to travel 260 km. The file-level pytest timeout is 300 seconds; the complete route also includes five gate hops, a combat loop bounded at 900 seconds, and the second mission's travel and dialogue.
 - Commit `aaa9a4ec` adds an 1800-second timeout only to the two full dungeon-clear scenarios (`test_the_pilot_clears_the_dungeon_and_is_paid` and the Arc 29 walk). The short basic mission/dungeon-arrival check keeps the normal limit. This changes test allowance only; game timing and server behavior are untouched.
 - Python syntax compilation and `git diff --check` passed locally. No PostgreSQL database was used. Slow-live run 72 (`40027652151`) was dispatched on the pushed main merge `5b44bf50` and is pending; its result must verify the Arc 29 offer, dungeon completion/payout, in-space talk-step completion, and next offer before updating TODO evidence.
+
+
+## Follow-up after slow-live run 72
+
+- Run 72 (commit `5b44bf50`) passed the 300-second boundary and reached the Arc 29 combat loop, then failed because a second `Activate` returned `EffectAlreadyActive2` while the smartbomb cycle was still active. This is a normal cycle state already handled by the live `test_arc29_walk.py` helper; the mission walk's `in_range` helper now waits through it while continuing to fail other activation errors.
+- The mission walk file passes Python syntax compilation and `git diff --check`. A new slow-live run is required to check step 1 payout and the step 2 talk transition with this retry behavior.

@@ -87,7 +87,6 @@ public sealed class MarketHostTests : IAsyncLifetime
         }
         foreach (var (name, value) in _saved) Environment.SetEnvironmentVariable(name, value);
     }
-
     private sealed class Sink : IPacketSink
     {
         public List<PyValue> Packets { get; } = [];
@@ -363,6 +362,9 @@ public sealed class MarketHostTests : IAsyncLifetime
 
         }
 
+        // A 40 ISK Upwell order pays the combined 100 ISK broker minimum.
+        Assert.Equal(9900m, (await new PgWalletStore(source, Schema("EVE_WALLET_SCHEMA")).GetAsync(seller))!.Isk);
+
         await new MarketStore(source,Schema("EVE_MARKET_SCHEMA")).SeedNpcAsync(
             [new MarketNpcSeed("public-tritanium",Tritanium,false,12,10,MarketRules.RangeRegion,
                 MarketLocation.From(station),DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())]);
@@ -385,7 +387,7 @@ public sealed class MarketHostTests : IAsyncLifetime
         var askSummary=Assert.IsType<PyTuple>(asks.Entries.Single(entry=>entry.Key==new PyInt(Tritanium)).Value);
         Assert.Equal(4,askSummary.Items.Count);
         Assert.Equal(new PyInt(10),askSummary.Items[0]);
-        Assert.Equal(new PyInt(2),askSummary.Items[1]);
+        Assert.Equal(new PyInt(4),askSummary.Items[1]);
         Assert.Equal(new PyInt(Tritanium),askSummary.Items[2]);
         Assert.Equal(new PyLong(structureId),askSummary.Items[3]);
         static IReadOnlyList<PyValue> Lines(PyValue value)
@@ -471,25 +473,14 @@ public sealed class MarketHostTests : IAsyncLifetime
         Assert.Equal(1,contenderATransactions.Items.Count+contenderBTransactions.Items.Count);
         var contenderABalance=(await new PgWalletStore(source,Schema("EVE_WALLET_SCHEMA")).GetAsync(contenderA))!.Isk;
         var contenderBBalance=(await new PgWalletStore(source,Schema("EVE_WALLET_SCHEMA")).GetAsync(contenderB))!.Isk;
-        // The losing immediate buy rests at 10 ISK per unit and pays the structure minimum broker fee and SCC surcharge.
-        Assert.Equal(19_835m,contenderABalance+contenderBBalance);
+        // Only the winner's two-unit immediate fill changes balances; no remainder order is posted.
+        Assert.Equal(19_980m,contenderABalance+contenderBBalance);
         Assert.Contains(new[]{contenderABalance,contenderBBalance},balance=>balance==9_980m);
-        Assert.Contains(new[]{contenderABalance,contenderBBalance},balance=>balance==9_855m);
-        await using (var command=source.CreateCommand($"""
-            SELECT count(*)::bigint,COALESCE(sum(vol_remaining),0)::bigint,COALESCE(sum(escrow_isk),0)::numeric
-            FROM {Schema("EVE_MARKET_SCHEMA")}.orders
-            WHERE actor_id=ANY($1) AND station_id=$2 AND type_id=$3 AND bid=true AND state=0
-            """))
-        {
-            command.Parameters.AddWithValue(new[]{contenderA,contenderB});
-            command.Parameters.AddWithValue(structureId);
-            command.Parameters.AddWithValue(Tritanium);
-            await using var reader=await command.ExecuteReaderAsync();
-            Assert.True(await reader.ReadAsync());
-            Assert.Equal(1L,reader.GetInt64(0));
-            Assert.Equal(2L,reader.GetInt64(1));
-            Assert.Equal(20m,reader.GetDecimal(2));
-        }
+        Assert.Contains(new[]{contenderABalance,contenderBBalance},balance=>balance==10_000m);
+        var contenderAOrders=Assert.IsType<PyObject>(Received(await market.CallAsync(Call(contenderASession,"GetCharOrders",21))));
+        var contenderBOrders=Assert.IsType<PyObject>(Received(await market.CallAsync(Call(contenderBSession,"GetCharOrders",22))));
+        Assert.Empty(Lines(contenderAOrders));
+        Assert.Empty(Lines(contenderBOrders));
         await using (var command=source.CreateCommand($"SELECT COALESCE(sum(quantity),0)::bigint FROM {Schema("EVE_INVENTORY_SCHEMA")}.items WHERE owner_id=ANY($1) AND location_id=$2 AND flag=$3 AND type_id=$4"))
         {
             command.Parameters.AddWithValue(new[]{buyer,contenderA,contenderB});

@@ -141,7 +141,7 @@ def in_range(who, call, what: str, limit: int = 60):
             return call()
         except packet.MachoError as error:
             # a lock takes a moment to land (AddTarget answers pending): until then the shot is refused as not locked
-            if not any(text in repr(error.payload) for text in ("TargetNotWithinRange", "That target is not locked")):
+            if not any(text in repr(error.payload) for text in ("TargetNotWithinRange", "That target is not locked", "EffectAlreadyActive2")):
                 raise AssertionError(f"{what}: {base.brief(error.payload)}") from error
             watch({"events": who}, 5.0)
     raise AssertionError(f"{what}: still out of range after {limit * 5} s")

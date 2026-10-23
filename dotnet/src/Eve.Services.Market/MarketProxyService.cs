@@ -476,6 +476,8 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
         {
             RefuseRepeatedPlacement(call,request);
             var receipt=await trading.PlaceAsync(request,Key(call,"buy"),call.Cancellation);
+            if(receipt.OrderId is null && receipt.FilledQuantity == 0)
+                throw MachoErrors.ThrowUserError("CustomInfo",("info",new PyStr("No matching sell orders were available at the requested price.")));
             RecordPlacement(call,request);
             await Publish(receipt);
             return PyNone.Instance;
@@ -555,10 +557,7 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
         catch (Exception e) when (e is MarketError or MoneyLimitException or InsufficientFundsException or Eve.Corporations.CorporationError) { throw Error(e); }
     }
 
-    /// <summary>
-    /// One immediate buy per line (EVE.js proxy 6915): the line's price is the limit, the range is the station. What a line does not fill is booked as a
-    /// buy order; the answer is the list of the orders created, which the client announces (marketsvc BuyMulti).
-    /// </summary>
+    /// <summary>One immediate purchase per line (EVE.js proxy 6915): only matching volume is bought; the unfilled quantity is not posted.</summary>
     [Method("BuyMultipleItems")]
     public async ValueTask<PyValue> BuyMultipleItems(ServiceCall call)
     {

@@ -1487,7 +1487,7 @@ public class DispatchGoldenTests
     public async Task Alliance_expensive_methods_use_a_named_per_session_budget()
     {
         long sessionId = 913;
-        foreach (var method in new[] { "GetAlliance", "GetAlliancePublicInfo", "GetAllianceSovereigntyStructuresInfo", "GetRelationships", "SetRelationship", "GetCapitalSystemInfo", "SetCapitalSystem", "SetPrimeHour", "CancelCapitalSystemTransition", "UpdateAlliance", "DeclareWarAgainst", "PayBill", "GetBillBalance", "GetBills", "GetBillsReceivable", "GetApplications", "GetEveOwners", "GetRankedAlliances", "GetAllianceMembers", "GetMembers", "GetEmploymentRecord", "GetAllianceMembersOlderThan", "GetDaysInAlliance", "GetAllianceApplications", "GetAllianceContacts", "GetContactList", "GetBulletins", "GetBulletinEntries" })
+        foreach (var method in new[] { "GetAlliance", "GetAlliancePublicInfo", "GetAllianceSovereigntyStructuresInfo", "GetRelationships", "SetRelationship", "GetCapitalSystemInfo", "SetCapitalSystem", "SetPrimeHour", "CancelCapitalSystemTransition", "UpdateAlliance", "DeclareWarAgainst", "PayBill", "GetBillBalance", "GetBills", "GetBillsReceivable", "GetApplications", "GetEveOwners", "GetRankedAlliances", "GetAllianceMembers", "GetMembers", "GetEmploymentRecord", "GetAllianceMembersOlderThan", "GetDaysInAlliance", "GetAllianceContacts", "GetContactList", "GetBulletins", "GetBulletinEntries" })
         {
             var capture = new Capture();
             var session = new ClientSession(capture) { SessionId = sessionId++ };

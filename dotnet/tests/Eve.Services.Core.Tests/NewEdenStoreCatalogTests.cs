@@ -59,15 +59,14 @@ public sealed class NewEdenStoreCatalogTests
         var catalog = NewEdenStoreCatalog.Default;
 
         Assert.True(catalog.StoreEnabled);
-        Assert.True(catalog.FastCheckoutEnabled);
-        Assert.True(catalog.FakeVgsEnabled);
+        Assert.False(catalog.FastCheckoutEnabled);
+        Assert.False(catalog.FakeVgsEnabled);
         Assert.False(catalog.ChinaFunnelEnabled);
         Assert.Equal("", catalog.FakeBuyPlexOfferUrl);
         Assert.True(catalog.UseShellExecuteToBuyPlexOffer);
-        Assert.Equal("OK", catalog.FakeFastCheckoutResponse);
+        Assert.Equal("FAST_CHECKOUT_UNAVAILABLE", catalog.FakeFastCheckoutResponse);
         var packs = JsonNode.Parse(catalog.FastCheckoutPlexOffers)!.AsArray();
-        Assert.Equal(9, packs.Count);
-        Assert.Equal("[100,\"USD\",5]", packs[0]!.ToJsonString());
+        Assert.Empty(packs);
     }
 
     [Fact]

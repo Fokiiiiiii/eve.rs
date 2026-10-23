@@ -269,3 +269,9 @@ CI run 672 on `1669e6dc` failed the structure market Host test because the fixtu
 
 - Push `5bcb27c5` is on main. CI run 690 (`40016706205`) is checking that exact head; Python, fixtures, Rust formatting/clippy and advisory Rust already passed, while .NET build, Rust tests, E2E and Windows remain active. Agent run 166 (`40016728738`) is also active on the pushed head.
 - Run 689 on parent `1a9e73e9` remains active. Run 688 on `d8f4dab4` has a failed Host test shard; its completed log will be inspected separately from run 690, which includes later market and SKINR fixes.
+
+## 2026-10-23 market Host sessionInfo wire type
+
+- CI run 686 (`40015069193`) failed `MarketHostTests.The_host_dispatches_accessible_structure_market_orders_and_recovers_partial_settlement_after_restart`: the test expected `PyStr("stationid")`, but the method result contains `PyBytes`.
+- `ObjectCaching.Raw` intentionally encodes `sessionInfo` as ASCII bytes, and the V24.01 client passes that value to `getattr(session, details['sessionInfo'], None)` when invalidating cached calls. The Host wire value is correct; the test expectation now matches that Python 2 `str` representation.
+- The focused Agent test and push-triggered CI run will verify the correction.

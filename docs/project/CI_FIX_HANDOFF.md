@@ -148,3 +148,8 @@ Use lane `eve_p4` only and run database work through `tools/dev/db-lock.sh`. The
 
 - CI runs 664 (`774b7a18`) and 666 (`40110cc0`) failed `CharacterHostTests.Contact_add_persists_and_routes_the_recipient_notification`: the test treated a Python `str` dictionary key as `PyStr`, while the decoded packet exposes it as `PyBytes`.
 - Main commit `d2b2821d` reads notification keys through `JsSemantics.StringValue`; this worktree's `dfe630d1` also makes the shared `Field` helper compare both Marshal string forms. The `Eve.Host.Tests` project compiled locally with zero warnings and errors before merging current main. CI 671 will cover the Host shard; dispatch a focused Actions check if that shard does not finish the contact regression.
+## 2026-10-23 merged recovery state
+
+- Worktree merge commit `93859c6a` combines the contact-key test helper update with `origin/main` `287c530d`. The nine pre-existing Rust source deletions remain outside the merge.
+- Agent run 138 (`40008851484`) is checking the selected live regression on `287c530d`; CI run 671 (`40008838460`) is queued for that same head. CI runs on the next pushed head will verify this merged worktree.
+- After pushing, dispatch `Eve.Host.Tests` with filter `FullyQualifiedName~Contact_add` and record that result plus the push-triggered gate below.

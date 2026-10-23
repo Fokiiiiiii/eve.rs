@@ -305,7 +305,7 @@ def _restart_host() -> subprocess.Popen:
     simulation_socket = os.environ["EVE_SIM_SOCKET"]
     host_dll = os.environ["EVE_HOST_DLL"]
     old_pid = int(os.environ["EVE_HOST_PID"])
-    os.kill(old_pid, signal.SIGTERM)
+    os.kill(old_pid, signal.SIGINT)
 
     deadline = time.monotonic() + 45
     while _unix_listener_open(socket_path):

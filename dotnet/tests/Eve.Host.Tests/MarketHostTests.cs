@@ -457,8 +457,24 @@ public sealed class MarketHostTests : IAsyncLifetime
         Assert.Equal(1,contenderATransactions.Items.Count+contenderBTransactions.Items.Count);
         var contenderABalance=(await new PgWalletStore(source,Schema("EVE_WALLET_SCHEMA")).GetAsync(contenderA))!.Isk;
         var contenderBBalance=(await new PgWalletStore(source,Schema("EVE_WALLET_SCHEMA")).GetAsync(contenderB))!.Isk;
-        Assert.Equal(19_980m,contenderABalance+contenderBBalance);
+        Assert.Equal(19_835m,contenderABalance+contenderBBalance);
         Assert.Contains(new[]{contenderABalance,contenderBBalance},balance=>balance==9_980m);
+        Assert.Contains(new[]{contenderABalance,contenderBBalance},balance=>balance==9_855m);
+        await using (var command=source.CreateCommand($"""
+            SELECT count(*)::bigint,COALESCE(sum(vol_remaining),0)::bigint,COALESCE(sum(escrow_isk),0)::numeric
+            FROM {Schema("EVE_MARKET_SCHEMA")}.orders
+            WHERE actor_id=ANY($1) AND station_id=$2 AND type_id=$3 AND bid=true AND state=0
+            """))
+        {
+            command.Parameters.AddWithValue(new[]{contenderA,contenderB});
+            command.Parameters.AddWithValue(structureId);
+            command.Parameters.AddWithValue(Tritanium);
+            await using var reader=await command.ExecuteReaderAsync();
+            Assert.True(await reader.ReadAsync());
+            Assert.Equal(1L,reader.GetInt64(0));
+            Assert.Equal(2L,reader.GetInt64(1));
+            Assert.Equal(20m,reader.GetDecimal(2));
+        }
         await using (var command=source.CreateCommand($"SELECT COALESCE(sum(quantity),0)::bigint FROM {Schema("EVE_INVENTORY_SCHEMA")}.items WHERE owner_id=ANY($1) AND location_id=$2 AND flag=$3 AND type_id=$4"))
         {
             command.Parameters.AddWithValue(new[]{buyer,contenderA,contenderB});

@@ -309,3 +309,10 @@ CI run 672 on `1669e6dc` failed the structure market Host test because the fixtu
 - Commit d9d806d1 unwraps `SavedDraft.attributes.skin.hex`; CI run 693 (40020293319) confirmed license persistence and `GetRequest` now work, then showed the test reading `SkinDesign.name` field 2 as `line_name`. V24 and `ShipSkinrSequencingGateway.EncodeSkinDesign` put `name` in field 2 and `line_name` in field 3.
 - The assertion now reads field 3. Python syntax compilation passed; focused live Agent run and push CI verification are pending. No local database test was run.
 - Current main is f2d0d09f. CI run 698 and Agent runs 178/179 are active; Agent run 176 passed the station-undock client test.
+
+## 2026-10-23 market escrow and concurrent immediate-buy check
+
+- Agent run 180 (`40022642650`) and CI run 699 (`40022633872`) both reached the escrow remainder assertion successfully, then failed the contender wallet sum: the test expected 19,980 ISK and got 19,835 ISK.
+- The existing immediate-buy compatibility entry records that any unfilled remainder is booked as a 90-day bid. In this race one buyer fills two units for 20 ISK; the other creates a two-unit bid, reserves 20 ISK and pays the 100 ISK broker and 25 ISK SCC minimums. The Host regression now checks both balances and the single open bid's quantity and escrow.
+- The focused Host action check and CI on the corrected head remain pending. Host.Tests compiled locally with 0 warnings and 0 errors. No local database test was run.
+- CI 699 also failed the SKINR live test when SIGTERM did not release the existing Host socket within 45 seconds. This is a separate shutdown root cause, still under investigation.

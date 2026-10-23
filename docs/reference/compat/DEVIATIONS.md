@@ -5539,6 +5539,11 @@ The fleetObject Init RPC costs 10 weighted per-session units because it updates 
 `mailMgr.SendMail` now refuses a nonpositive or non-integer character recipient ID with `MAIL_RECIPIENT_INVALID` before invoking persistence, rather than dropping malformed IDs from a mixed recipient list. Valid integer IDs and duplicate suppression keep their existing behavior. `MailServiceTests.SendMail_refuses_malformed_recipient_ids_before_sending` covers negative, textual, and non-finite recipients without a send callback.
 
 
+## PI and industry walk time controls (2026-10-23)
+
+The PI and industry test harnesses advance colony and job timestamps to fit production and delivery into live test time. `tools/headless-client/tests/test_planet_walk.py` and `test_walk_industry.py` exercise the client RPCs, state changes, persistence and delivery paths. EveJS 261018.1 routes extractor output and settles customs transfers in `server/src/services/planet/planetRuntimeStore.js` and `server/src/services/inventory/invBroker/planetaryImportExport.js`; its `industryManagerService.js` sends `CompleteJob` through `deliverIndustryJob`. This records test-time control only; it does not change runtime timing or client-visible rules.
+
+
 ## Config RPC bounds (2026-10-23)
 
 `config.GetMultiOwnersEx`, `GetMultiCorpTickerNamesEx`, `GetMultiAllianceShortNamesEx`, and `GetMultiLocationsEx` now refuse more than 500 raw IDs before provider or item lookups with `CONFIG_BULK_LIMIT_EXCEEDED`; each consumes 10 weighted per-session units. `GetAverageMarketPrices` also consumes 10 units for its market read. The 120-unit default leaves room for a normal initial lookup sequence. Focused service and dispatcher regressions cover the cap and named budget.

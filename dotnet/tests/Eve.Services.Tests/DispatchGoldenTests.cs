@@ -1890,6 +1890,38 @@ public class DispatchGoldenTests
         Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[1])));
     }
 
+    [Fact]
+    public async Task Paper_doll_single_reads_use_a_named_per_session_budget()
+    {
+        var capture = new Capture();
+        var session = new ClientSession(capture) { SessionId = 918 };
+        var registry = new ServiceRegistry();
+        var service = new PaperDollSingleBudgetService();
+        registry.Register(service);
+        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 2 };
+
+        await dispatcher.DispatchAsync(CallRequestPacket("paperDollServer", "GetMyPaperDollData"), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("paperDollServer", "GetPaperDollData"), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("paperDollServer", "GetPaperDollPortraitDataFor"), session);
+
+        Assert.Equal(2, service.Calls);
+        Assert.Equal(3, capture.Sent.Count);
+        Assert.Equal(ErrorResponseCommand, CommandOf(capture.Sent[2]));
+        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[2])));
+    }
+
+    private sealed class PaperDollSingleBudgetService : IService
+    {
+        public int Calls { get; private set; }
+        public string Name => "paperDollServer";
+        public bool HasMethod(string method) => method is "GetMyPaperDollData" or "GetPaperDollData" or "GetPaperDollPortraitDataFor";
+        public ValueTask<PyValue> CallAsync(ServiceCall call)
+        {
+            Calls++;
+            return ValueTask.FromResult<PyValue>(PyNone.Instance);
+        }
+    }
+
     private sealed class PaperDollBatchBudgetService : IService
     {
         public int Calls { get; private set; }

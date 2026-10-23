@@ -138,6 +138,31 @@ public sealed class CompatibilityRpcServiceTests
     }
 
     [Fact]
+    public async Task Paper_doll_single_reads_validate_target_ids_and_session_scope()
+    {
+        var service = new PaperDollServerRpcService();
+        var session = Session(20);
+        Assert.IsType<PyNone>(await service.CallAsync(Call("GetPaperDollData", session, new PyInt(21))));
+        Assert.IsType<PyTuple>(await service.CallAsync(Call("GetPaperDollPortraitDataFor", session, new PyLong(21))));
+        Assert.IsType<PyNone>(await service.CallAsync(Call("GetMyPaperDollData", session, new PyInt(20))));
+
+        foreach (var (method, badId) in new (string Method, PyValue BadId)[]
+        {
+            ("GetPaperDollData", PyNone.Instance),
+            ("GetPaperDollData", new PyReal(20.5)),
+            ("GetPaperDollPortraitDataFor", new PyInt(-20)),
+        })
+        {
+            var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(Call(method, session, badId)).AsTask());
+            Assert.Equal("PAPERDOLL_CHARACTER_ID_INVALID", refusal.Error.UserErrorMessage);
+        }
+
+        var forgedSessionTarget = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(
+            Call("GetMyPaperDollData", session, new PyInt(21))).AsTask());
+        Assert.Equal("PAPERDOLL_SESSION_CHARACTER_INVALID", forgedSessionTarget.Error.UserErrorMessage);
+    }
+
+    [Fact]
     public async Task Handlers_return_reference_shapes()
     {
         var cosmetics = new ShipCosmeticsMgrRpcService();

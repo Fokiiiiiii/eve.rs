@@ -87,7 +87,11 @@ public sealed class PaperDollServerRpcService : IService
 
     private async ValueTask<PyValue> GetMyPaperDollDataAsync(ServiceCall call)
     {
-        var id = call.Session.CharacterId ?? 0;
+        if (call.Args.Count != 1 || call.Kwargs is not PyNone)
+            throw MachoErrors.ThrowUserError("PAPERDOLL_ARGUMENT_INVALID");
+        var id = RequireCharacterId(call.Arg(0));
+        if (call.Session.CharacterId is not { } characterId || characterId <= 0 || id != characterId)
+            throw MachoErrors.ThrowUserError("PAPERDOLL_SESSION_CHARACTER_INVALID");
         if (id <= 0 || _characters is null) return PyNone.Instance;
         var (doll, _) = await _characters.AppearanceAsync(id, call.Cancellation);
         return Decode(doll);
@@ -95,9 +99,10 @@ public sealed class PaperDollServerRpcService : IService
 
     private async ValueTask<PyValue> GetPaperDollDataAsync(ServiceCall call)
     {
+        if (call.Args.Count != 1 || call.Kwargs is not PyNone)
+            throw MachoErrors.ThrowUserError("PAPERDOLL_ARGUMENT_INVALID");
+        var id = RequireCharacterId(call.Arg(0));
         if (_characters is null) return PyNone.Instance;
-        var id = Long(call.Arg(0));
-        if (id <= 0) id = call.Session.CharacterId ?? 0;
         var (doll, _) = await _characters.AppearanceAsync(id, call.Cancellation);
         return Decode(doll);
     }
@@ -118,9 +123,10 @@ public sealed class PaperDollServerRpcService : IService
 
     private async ValueTask<PyValue> GetPaperDollPortraitDataForAsync(ServiceCall call)
     {
+        if (call.Args.Count != 1 || call.Kwargs is not PyNone)
+            throw MachoErrors.ThrowUserError("PAPERDOLL_ARGUMENT_INVALID");
+        var id = RequireCharacterId(call.Arg(0));
         if (_characters is null) return Py.Tuple(Py.List(), PyNone.Instance);
-        var id = Long(call.Arg(0));
-        if (id <= 0) id = call.Session.CharacterId ?? 0;
         var (_, portrait) = await _characters.AppearanceAsync(id, call.Cancellation);
         if (portrait is null) return Py.Tuple(Py.List(), PyNone.Instance);
         var decoded = Decode(portrait);
@@ -314,6 +320,12 @@ public sealed class PaperDollServerRpcService : IService
         return ids;
     }
     private static long Long(PyValue? value) => value switch { PyInt i => i.Value, PyLong l => l.Value, PyReal r when double.IsFinite(r.Value) => (long)r.Value, _ => 0 };
+    private static long RequireCharacterId(PyValue value) => value switch
+    {
+        PyInt integer when integer.Value > 0 => integer.Value,
+        PyLong integer when integer.Value > 0 => integer.Value,
+        _ => throw MachoErrors.ThrowUserError("PAPERDOLL_CHARACTER_ID_INVALID"),
+    };
     private static bool BooleanOrDefault(PyValue value, bool fallback) => value is PyNone ? fallback : value switch { PyBool b => b == PyBool.True, PyInt i => i.Value != 0, PyLong l => l.Value != 0, _ => fallback };
 }
 

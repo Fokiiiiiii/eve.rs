@@ -5536,3 +5536,8 @@ The fleetObject Init RPC costs 10 weighted per-session units because it updates 
 ## Market multi-history input validation (2026-10-23)
 
 `marketProxy.GetHistoryForManyTypeIDs` now accepts the V24.01 client’s Python set marshal shape as well as list/tuple inputs, and requires positive Int32 type IDs. It refuses malformed shapes, negative IDs, fractional or non-finite numbers, and values above Int32 before issuing history reads; the existing 500-entry limit and duplicate suppression remain. The V24.01 `marketsvc.PopulatePriceHistoryCacheForManyTypeIDs` call passes its deduplicated `missingTypeIDs` Python set; `PyValue.PythonSet` encodes the `__builtin__.set` PyObjectEx1 shape accepted here and by EveJS. `MarketRpcTests.Market_history_multi_refuses_malformed_type_lists_before_reading` covers these refusals.
+
+
+## Contract RPCs use persisted affiliation (2026-10-23)
+
+`contractProxy` now supplies the current corporation and alliance from the persisted character record to contract readers and writers, ignoring stale session organization fields. EveJS and the V24.01 client use session organization values; this Host policy prevents old corporation contract lists and escrow summaries from remaining visible after affiliation changes. `ContractProxyServiceTests.Login_info_uses_the_three_client_rowsets_and_session_scope` and `Escrow_read_uses_the_persisted_summary` cover the authoritative IDs.

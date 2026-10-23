@@ -11,7 +11,8 @@ public sealed class ContractProxyServiceTests
     public async Task Login_info_uses_the_three_client_rowsets_and_session_scope()
     {
         var model = new RecordingReadModel();
-        var service = new ContractProxyService(model);
+        var service = new ContractProxyService(model,
+            readCurrentOrganizationIds: (_, _) => ValueTask.FromResult((500L, 600L)));
         var session = new ClientSession { CharacterId = 42 };
         session.Set("corpid", new PyInt(84));
         session.Set("allianceid", new PyInt(126));
@@ -22,7 +23,7 @@ public sealed class ContractProxyServiceTests
             Session = session,
         });
 
-        Assert.Equal((42L, 84L, 126L), (model.CharacterId, model.CorporationId, model.AllianceId));
+        Assert.Equal((42L, 500L, 600L), (model.CharacterId, model.CorporationId, model.AllianceId));
         var keyVal = Assert.IsType<PyObject>(response);
         var attention = Rowset(keyVal, "needsAttention");
         var progress = Rowset(keyVal, "inProgress");
@@ -40,7 +41,9 @@ public sealed class ContractProxyServiceTests
     [Fact]
     public async Task Escrow_read_uses_the_persisted_summary()
     {
-        var service = new ContractProxyService(new RecordingReadModel());
+        var model = new RecordingReadModel();
+        var service = new ContractProxyService(model,
+            readCurrentOrganizationIds: (_, _) => ValueTask.FromResult((500L, 600L)));
         var response = Assert.IsType<PyObject>(await service.GetMyContractEscrow(new ServiceCall
         {
             Method = "GetMyContractEscrow",
@@ -50,6 +53,7 @@ public sealed class ContractProxyServiceTests
 
         Assert.Equal(new PyInt(1250), Value(response, "iskEscrow"));
         Assert.Equal(new PyInt(3), Value(response, "itemsEscrow"));
+        Assert.Equal((42L, 500L), (model.CharacterId, model.CorporationId));
     }
 
 
@@ -562,8 +566,12 @@ public sealed class ContractProxyServiceTests
         }
 
         public ValueTask<ContractEscrowSummary> GetMyContractEscrowAsync(
-            long characterId, long corporationId, CancellationToken cancellationToken) =>
-            ValueTask.FromResult(new ContractEscrowSummary(1250m, 3));
+            long characterId, long corporationId, CancellationToken cancellationToken)
+        {
+            CharacterId = characterId;
+            CorporationId = corporationId;
+            return ValueTask.FromResult(new ContractEscrowSummary(1250m, 3));
+        }
 
         public ValueTask<ContractReadBundle> GetMyBidsAsync(
             long characterId, long corporationId, bool forCorporation, long nowFileTime, CancellationToken cancellationToken)

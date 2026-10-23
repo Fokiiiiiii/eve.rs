@@ -316,6 +316,8 @@ public sealed class PacketDispatcher
             return 10;
         if (service == "kiringMgr" && method is "PerformKiringServerSideAuthenticationFromCode" or "GetSAuthAid" or "PlaceKiringOrder")
             return 10;
+        if (service == "XmppChatMgr" && method is "SetMotd" or "CreatePlayerOwnedChannel" or "AddCharacterToChannel" or "GrantChannelOwnership" or "ResyncSystemChannelAccess")
+            return 10;
         if (service == "planetOrbitalRegistryBroker" && method == "GetTaxRate")
             return 2;
         if (service == "planetOrbitalRegistryBroker" && method == "UpdateSettings")

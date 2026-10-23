@@ -255,7 +255,13 @@ def test_market_browse_and_history_refresh_fit_one_session():
             orders = _payload(m.plain(client.call("marketProxy", "GetOrders", TRITANIUM)))
             assert isinstance(orders, (list, tuple)) and len(orders) == 2
             _plain_rows(client.call("marketProxy", "GetCharOrders"))
-            _plain_rows(client.call("marketProxy", "GetMarketOrderHistory"))
+            try:
+                _plain_rows(client.call("marketProxy", "GetMarketOrderHistory"))
+            except p.MachoError as error:
+                pytest.fail(
+                    f"GetMarketOrderHistory failed: code={error.code!r}, payload={error.payload!r}",
+                    pytrace=True,
+                )
             _plain_rows(client.call("marketProxy", "GetOldPriceHistory", TRITANIUM))
             _plain_rows(client.call("marketProxy", "GetNewPriceHistory", TRITANIUM))
 

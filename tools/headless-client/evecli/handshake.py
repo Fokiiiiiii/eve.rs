@@ -159,7 +159,7 @@ def _rejection_reason(value) -> Optional[str]:
         return text.decode("utf-8", "replace") if len(text) == length else "transport closed"
     return None
 
-def login(conn: Connection, user: str, password: str, *, language: str = "EN") -> SessionInfo:
+def login(conn: Connection, user: str, password: str, *, language: str = "EN", sso_token: str | None = None) -> SessionInfo:
     """Run the handshake on `conn` and return the session it opened."""
     first = conn.recv()
     if not isinstance(first, tuple) or len(first) < 6:
@@ -189,7 +189,7 @@ def login(conn: Connection, user: str, password: str, *, language: str = "EN") -
         ("user_password_hash", m.Buffer(password_hash(user, password))),
         ("user_languageid", language),
         ("user_affiliateid", ""),
-        ("user_sso_token", None),
+        ("user_sso_token", sso_token),
     ])
     conn.send((m.Buffer(os.urandom(64)), login_dict))
 
@@ -232,6 +232,11 @@ def login(conn: Connection, user: str, password: str, *, language: str = "EN") -
         handshake=_as_dict(handshake),
         signed_func=signed_func,
     )
+
+def login_sso(conn: Connection, token: str, *, language: str = "EN") -> SessionInfo:
+    """Run the V24 EVE-SSO-CONNECTION handshake with its inbound SSO access token."""
+    return login(conn, "EVE-SSO-CONNECTION", "fakePW", language=language, sso_token=token)
+
 
 def connect(host: str, port: int, timeout: float = 10.0) -> Connection:
     return Connection(socket.create_connection((host, port), timeout=timeout), timeout)

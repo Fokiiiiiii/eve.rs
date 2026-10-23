@@ -1,5 +1,5 @@
 use bytes::{Bytes, BytesMut};
-use eve_net::hostlink::{AuthOutcome, DecodeError, Message, SessionOpen};
+use eve_net::hostlink::{AuthCredentialKind, AuthOutcome, DecodeError, Message, SessionOpen, SsoToken};
 use serde_json::Value;
 
 fn fixtures() -> Value {
@@ -26,8 +26,17 @@ fn message_of(case: &Value) -> Message {
         "HelloAck" => Message::HelloAck { version: number("version") as u16 },
         "AuthRequest" => Message::AuthRequest {
             corr: number("corr") as u32,
+            credential_kind: match case["credentialKind"].as_str().unwrap() {
+                "Password" => AuthCredentialKind::Password,
+                "Sso" => AuthCredentialKind::Sso,
+                other => panic!("unknown credential kind {other}"),
+            },
             user_name: text(case, "userName"),
             password_hash: Bytes::from(hex(case["passwordHash"].as_str().unwrap())),
+            sso_token: match text(case, "ssoToken").as_str() {
+                "" => None,
+                token => Some(SsoToken::new(token.to_owned())),
+            },
             language: text(case, "language"),
             address: text(case, "address"),
         },
@@ -108,6 +117,7 @@ fn every_invalid_frame_is_refused_for_its_reason() {
             DecodeError::Trailing => expected == "trailing",
             DecodeError::Utf8 => expected == "utf8",
             DecodeError::BadStatus(_) => expected == "bad-status",
+            DecodeError::BadCredentialKind(_) => expected == "bad-credential-kind",
         };
         assert!(matches, "{name}: refused as {error:?}, expected {expected}");
     }

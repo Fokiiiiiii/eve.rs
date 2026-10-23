@@ -189,8 +189,10 @@ impl Authenticator for HostLink {
         self.shared.pending.lock().unwrap().insert(corr, reply);
         let message = Message::AuthRequest {
             corr,
+            credential_kind: request.credential_kind,
             user_name: request.user_name,
             password_hash: request.password_hash,
+            sso_token: request.sso_token,
             language: request.language,
             address: request.address,
         };

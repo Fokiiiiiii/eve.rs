@@ -62,6 +62,21 @@ async fn run<A: Authenticator + 'static>(
     auth: A,
     user: &str,
 ) -> (Result<Login, HandshakeError>, Result<client::ClientSession, HandshakeError>) {
+    run_with_token(auth, user, None).await
+}
+
+async fn run_sso<A: Authenticator + 'static>(
+    auth: A,
+    token: &str,
+) -> (Result<Login, HandshakeError>, Result<client::ClientSession, HandshakeError>) {
+    run_with_token(auth, "EVE-SSO-CONNECTION", Some(token)).await
+}
+
+async fn run_with_token<A: Authenticator + 'static>(
+    auth: A,
+    user: &str,
+    sso_token: Option<&str>,
+) -> (Result<Login, HandshakeError>, Result<client::ClientSession, HandshakeError>) {
     let (client_end, server_end) = duplex(1 << 16);
     let server = tokio::spawn(async move {
         let (read, mut write) = split(server_end);
@@ -71,8 +86,10 @@ async fn run<A: Authenticator + 'static>(
     });
     let (read, mut write) = split(client_end);
     let mut reader = FrameReader::new(read, MAX_FRAME);
-    let session = client::login(&mut reader, &mut write, user, &[0xAB; 20], "EN").await;
-    // Hang up before waiting for the server, so a client that gave up cannot leave it waiting.
+    let session = match sso_token {
+        Some(token) => client::login_sso(&mut reader, &mut write, token, "EN").await,
+        None => client::login(&mut reader, &mut write, user, &[0xAB; 20], "EN").await,
+    };
     drop(reader);
     drop(write);
     (server.await.unwrap(), session)
@@ -212,11 +229,49 @@ async fn the_authenticator_gets_what_the_client_sent() {
 }
 
 #[tokio::test]
+async fn the_v24_sso_token_reaches_the_authenticator_as_a_redacted_sso_credential() {
+    const TOKEN: &str = "deterministic-test-token-value";
+    let recording = Arc::new(Recording(Mutex::new(Vec::new())));
+    struct Shared(Arc<Recording>);
+    impl Authenticator for Shared {
+        async fn authenticate(&self, request: AuthRequest) -> Result<AuthOutcome, AuthError> {
+            self.0.authenticate(request).await
+        }
+    }
+
+    let (login, session) = run_sso(Shared(recording.clone()), TOKEN).await;
+    let login = login.unwrap();
+    let session = session.unwrap();
+    assert_eq!(login.user_id, 9);
+    assert_eq!(session.user_id, 9);
+
+    let requests = recording.0.lock().unwrap();
+    assert_eq!(requests.len(), 1);
+    let request = &requests[0];
+    assert_eq!(request.credential_kind, eve_net::hostlink::AuthCredentialKind::Sso);
+    assert_eq!(request.user_name, handshake::SSO_CONNECTION_USER);
+    assert!(request.sso_token.as_ref().is_some_and(|token| token.as_str() == TOKEN));
+    assert!(!format!("{request:?}").contains(TOKEN), "authentication diagnostics redact token contents");
+}
+
+#[tokio::test]
 async fn a_refused_login_is_answered_with_a_transport_closed_pickle() {
     let (login, session) = run(Reject("LoginAuthFailed"), "pilot").await;
     assert!(matches!(login, Err(HandshakeError::Rejected(reason)) if reason == "LoginAuthFailed"));
     let Err(HandshakeError::Rejected(pickle)) = session else { panic!("the client should see a refusal") };
     assert!(pickle.contains("GPSTransportClosed") && pickle.contains("LoginAuthFailed"), "{pickle:?}");
+}
+
+#[tokio::test]
+async fn a_refused_sso_login_is_closed_before_a_session_is_opened() {
+    const TOKEN: &str = "deterministic-test-token-value";
+    let (login, session) = run_sso(Reject("LoginAuthFailed"), TOKEN).await;
+    assert!(matches!(login, Err(HandshakeError::Rejected(reason)) if reason == "LoginAuthFailed"));
+    let Err(HandshakeError::Rejected(refusal)) = session else {
+        panic!("the SSO client should see a refusal")
+    };
+    assert!(refusal.contains("GPSTransportClosed") && refusal.contains("LoginAuthFailed"));
+    assert!(!refusal.contains(TOKEN), "the refusal never echoes the inbound token");
 }
 
 #[tokio::test]

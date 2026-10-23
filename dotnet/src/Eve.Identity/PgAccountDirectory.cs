@@ -6,7 +6,7 @@ using Npgsql;
 namespace Eve.Identity;
 
 /// <summary>Accounts in PostgreSQL, in the module's own schema (<c>identity</c> unless told otherwise).</summary>
-public sealed partial class PgAccountDirectory : IAccountDirectory, IAccountLookup, IAccountSubscriptions
+public sealed partial class PgAccountDirectory : IAccountDirectory, IAccountLookup, IAccountSubscriptions, ISsoAccountDirectory, ISsoIdentityLinker
 {
     public const string DefaultSchema = "identity";
 
@@ -277,5 +277,89 @@ public sealed partial class PgAccountDirectory : IAccountDirectory, IAccountLook
             await touch.ExecuteNonQueryAsync(cancellationToken);
         }
         return result;
+    }
+
+    public async ValueTask<bool> LinkSsoIdentityAsync(
+        uint accountId, VerifiedSsoIdentity identity, CancellationToken cancellationToken)
+    {
+        if (!SsoIdentityRules.IsAcceptable(identity))
+            return false;
+
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await using (var insert = new NpgsqlCommand(
+            $"INSERT INTO {Schema}.external_identity_links (issuer, subject, account_id) " +
+            $"SELECT $1, $2, id FROM {Schema}.accounts WHERE id = $3 " +
+            "ON CONFLICT (issuer, subject) DO NOTHING RETURNING account_id",
+            connection, transaction))
+        {
+            insert.Parameters.Add(new NpgsqlParameter { Value = identity.Issuer });
+            insert.Parameters.Add(new NpgsqlParameter { Value = identity.Subject });
+            insert.Parameters.Add(new NpgsqlParameter { Value = checked((int)accountId) });
+            if (await insert.ExecuteScalarAsync(cancellationToken) is int insertedAccountId)
+            {
+                await transaction.CommitAsync(cancellationToken);
+                return insertedAccountId == checked((int)accountId);
+            }
+        }
+
+        await using var existing = new NpgsqlCommand(
+            $"SELECT account_id FROM {Schema}.external_identity_links WHERE issuer = $1 AND subject = $2",
+            connection, transaction);
+        existing.Parameters.Add(new NpgsqlParameter { Value = identity.Issuer });
+        existing.Parameters.Add(new NpgsqlParameter { Value = identity.Subject });
+        var linkedAccountId = await existing.ExecuteScalarAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return linkedAccountId is int account && account == checked((int)accountId);
+    }
+
+    public async ValueTask<LoginResult> LoginSsoAsync(VerifiedSsoIdentity identity, CancellationToken cancellationToken)
+    {
+        if (!SsoIdentityRules.IsAcceptable(identity))
+            return new LoginRefused(LoginRefused.BadCredentials);
+
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        int? accountId = null;
+        long role = 0;
+        bool banned = false;
+        string? countryCode = null;
+        await using (var find = new NpgsqlCommand(
+            $"SELECT a.id, a.role, a.banned, a.country_code " +
+            $"FROM {Schema}.external_identity_links l JOIN {Schema}.accounts a ON a.id = l.account_id " +
+            "WHERE l.issuer = $1 AND l.subject = $2 FOR UPDATE OF a",
+            connection, transaction))
+        {
+            find.Parameters.Add(new NpgsqlParameter { Value = identity.Issuer });
+            find.Parameters.Add(new NpgsqlParameter { Value = identity.Subject });
+            await using var reader = await find.ExecuteReaderAsync(cancellationToken);
+            if (await reader.ReadAsync(cancellationToken))
+            {
+                accountId = reader.GetInt32(0);
+                role = reader.GetInt64(1);
+                banned = reader.GetBoolean(2);
+                countryCode = reader.GetString(3);
+            }
+        }
+
+        if (accountId is null)
+        {
+            await transaction.CommitAsync(cancellationToken);
+            return new LoginRefused(LoginRefused.BadCredentials);
+        }
+
+        if (banned)
+        {
+            await transaction.CommitAsync(cancellationToken);
+            return new LoginRefused(LoginRefused.Banned);
+        }
+
+        await using (var touch = new NpgsqlCommand($"UPDATE {Schema}.accounts SET last_login_at = now() WHERE id = $1", connection, transaction))
+        {
+            touch.Parameters.Add(new NpgsqlParameter { Value = accountId.Value });
+            await touch.ExecuteNonQueryAsync(cancellationToken);
+        }
+        await transaction.CommitAsync(cancellationToken);
+        return new LoggedIn((uint)accountId.Value, unchecked((ulong)role), countryCode!);
     }
 }

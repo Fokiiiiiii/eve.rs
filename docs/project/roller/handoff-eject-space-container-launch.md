@@ -17,10 +17,10 @@ Implement the V24.01 eject.LaunchShipOrContainerFromWreckOrContainer action from
 - A per-target gate serializes retries; persisted source identity prevents replay from a different source.
 - A simulation placement failure leaves durable state available for retry. A retry completes placement and sends the item and source-container notifications.
 - Launched ships are restored from their durable pose after a simulation restart.
-- Tests cover Host forwarding and missing-backend errors, ship and container launch, unsupported stacks, concurrent requests, retry after placement failure, notification order, and restore. The live headless walk is tools/headless-client/tests/test_eject_live.py.
+- Tests cover Host forwarding and missing-backend errors; ship and container launch; unsupported stacks; distant, absent, and inaccessible requests; concurrent requests; retry after placement failure; notification order; and restore. The live headless walk is tools/headless-client/tests/test_eject_live.py.
 
 ## Verification
-- Successful local compile checks: Eve.Ships, Eve.Services.Space, Eve.Host, Eve.Services.Space.Tests, and Eve.Host.Tests. Resource pressure required RunAnalyzers=false and BuildProjectReferences=false for the final direct compiles; dependencies were built separately. The regular Space build hit memory pressure.
+- Successful local compile checks: Eve.Ships, Eve.Services.Space, Eve.Host, Eve.Services.Space.Tests, and Eve.Host.Tests. Resource pressure required RunAnalyzers=false and BuildProjectReferences=false for the final direct compiles; dependencies were built separately. The regular Space build hit memory pressure. The updated Space test project also compiled successfully.
 - Passed locally: the focused Host missing-backend test, 1 passed, 0 skipped.
 - No PostgreSQL test or local headless live test has run.
 - GitHub Actions DB-backed container tests and live headless walk are pending. Keep the TODO row open until they pass.

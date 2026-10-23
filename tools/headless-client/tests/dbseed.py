@@ -200,3 +200,20 @@ def lock_item(item: int, *, corporation: int, type_id: int, location: int) -> No
     """A corporation's item lock (corporations.item_locks), as a director's vote to lock a blueprint writes it."""
     sql(f"insert into {schema('CORPORATIONS')}.item_locks (item_id, corporation_id, type_id, location_id, locked_filetime) "
         f"values ({int(item)}, {int(corporation)}, {int(type_id)}, {int(location)}, 133000000000000000)")
+
+def link_sso_identity(account_id: int, issuer: str, subject: str) -> None:
+    """Persist the test issuer's verified character identity on an existing account."""
+    escaped_issuer = issuer.replace("'", "''")
+    escaped_subject = subject.replace("'", "''")
+    identity_schema = schema("IDENTITY")
+    sql(
+        f"insert into {identity_schema}.external_identity_links (issuer, subject, account_id) "
+        f"values ('{escaped_issuer}', '{escaped_subject}', {int(account_id)}) "
+        "on conflict (issuer, subject) do nothing"
+    )
+    linked = sql(
+        f"select account_id from {identity_schema}.external_identity_links "
+        f"where issuer = '{escaped_issuer}' and subject = '{escaped_subject}'"
+    )
+    if linked != str(int(account_id)):
+        raise SeedError("the test SSO identity is already linked to another account")

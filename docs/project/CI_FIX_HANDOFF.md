@@ -141,15 +141,23 @@ Use lane `eve_p4` only and run database work through `tools/dev/db-lock.sh`. The
 ### SKINR unlimited component license sentinel
 
 - Runs 661 and 666 reached the live consume request and returned HTTP 400 for a published compatible mission-SDE component whose `associatedTypeIDs.licenseUsesGranted` is `-1`. On `40110cc0`, allowing the negative value through the catalog did not resolve the failure.
-- Commit `4b3cd33b` maps the SDE `-1` unlimited marker to the gateway's runtime `0` sentinel, rejects values below -1 and keeps positive finite grants. `ShipSkinrCatalogDataTests.Unlimited_license_types_use_the_runtime_unlimited_sentinel` covers those cases. Agent run 135 (`40007743442`) passed the focused live SKINR walk 1/1 with no skips.
+- Commit `4b3cd33b` maps the SDE `-1` unlimited marker to the gateway's runtime `0` sentinel, rejects values below -1 and keeps positive finite grants. `ShipSkinrCatalogDataTests.Unlimited_license_types_use_the_runtime_unlimited_sentinel` covers those cases. Agent run 135 (`40007743442`) passed that focused `Eve.Host.Tests` unit test 1/1 with no skips; it did not run the live SKINR walk.
 - CI run 666 predates that parser fix and still returned 400. Agent run 138 and CI run 671 are checking current main `287c530d`; CI 668 is checking the preceding head `4b3cd33b`.
 
-### Contact notification dictionary keys
-
-<<### Contact notification dictionary keys and persisted values
+### Contact notification compatibility checks
 
 - CI runs 664 (`774b7a18`), 666 (`40110cc0`) and 668 (`4b3cd33b`) exposed the contact notification test's assumption that wire-decoded Python string keys are always `PyStr`; the actual keys are `PyBytes`. Main's `d2b2821d` adds key-aware notification assertions. The test helper now handles both marshal string forms.
 - Agent run 138 (`40008851484`) on `287c530d` failed, but its downloaded log tail included only the test invocation, not the test result details. The persisted notification assertion now checks `level` and `message` through the same field reader rather than comparing the full dictionary's concrete key encoding. The updated Host.Tests Release build passed with zero warnings and errors; the focused database-backed check will be repeated.
-- CI run 668 also still returned HTTP 400 at SKINR `ConsumeRequest` after the SDE unlimited-license sentinel fix. `test_skinr_live.py` now includes the gateway error string in its assertion so the next E2E run identifies the refusing validation branch. The catalog fix is not yet verified end to end.
+- CI runs 668 (`4b3cd33b`) and 671 (`287c530d`) still returned HTTP 400 at SKINR `ConsumeRequest` after the SDE unlimited-license sentinel fix. Their assertion did not include the gateway message; the `ebf1ec87` test now prints it to identify the refusing validation branch. The catalog fix is not yet verified end to end.
+- CI run 671 also failed the contact test's persisted-data assertion. Commit `ebf1ec87` changes that check to compare semantic field values through `Field`; its focused Agent test and push CI are checking the updated version.
 - Commit `b5ecf895` contains these assertion changes and the live error diagnostic. Merge-result commit `b2025a73` preserves the latest main contact notification checks. The merged `Eve.Host.Tests` Release build passed with zero warnings and errors; no local PostgreSQL test was run.
-- Next: fetch and merge current main, push `b2025a73`, dispatch the contact test, and inspect the live SKINR error from that push's E2E run.
+- Pushed the merged assertion and live diagnostic as `ebf1ec87` after fetching/merging current main. Focused contact test run `40011081153` and selected live `test_skinr_live.py` run `40011418764` are in progress; push CI run `40011062817` is in progress and will report the SKINR gateway error string.
+
+
+## 2026-10-23 run 675 follow-up
+
+- Push CI run 675 (`40011062817`) on `ebf1ec87` reports the live SKINR request as `INVALID_COMPONENT_LICENSE_ITEM`; the unlimited-license parser unit check passed earlier, but the live consume path still does not resolve the seeded item type. Agent run 146 (`40011418764`) also failed this live scenario. The failure is in component license type resolution or its fixture selection and remains open.
+- Run 675's Host tests found `Contact_add_persists_and_routes_the_recipient_notification` expected a persisted `senderID` as `PyLong`; the database read returns `PyInt`. The assertion now matches the returned persisted type. Build and a focused Actions rerun are pending.
+- Run 675 also failed `MarketHostTests.The_host_dispatches_accessible_structure_market_orders_and_recovers_partial_settlement_after_restart` during `PlaceMultiSellOrder`. The test now reports the wrapped user-facing refusal in its failure message; the root cause is still pending. This market settlement path is tracked by the neighboring market feature handoff.
+- Run 675's E2E, Windows and remaining .NET jobs were still active at the last status poll. Windows entry and production start are not yet marked complete for this head.
+- The current worktree adds the persisted sender ID assertion correction and market failure detail. A Release build of `Eve.Host.Tests` is running; no local database tests were run.

@@ -43,4 +43,34 @@ public sealed class XmppHostConfigurationTests
                 Environment.SetEnvironmentVariable(name, value);
         }
     }
+    [Fact]
+    public async Task Xmpp_chat_manager_is_registered_when_the_listener_is_disabled()
+    {
+        var names = new[] { "EVE_PG_URL", "EVE_XMPP_ENABLED", "EVE_SIM" };
+        var previous = names.ToDictionary(name => name, Environment.GetEnvironmentVariable, StringComparer.Ordinal);
+        try
+        {
+            Environment.SetEnvironmentVariable("EVE_PG_URL", null);
+            Environment.SetEnvironmentVariable("EVE_XMPP_ENABLED", "false");
+            Environment.SetEnvironmentVariable("EVE_SIM", "off");
+
+            var host = await HostComposition.BuildAsync(HostConfiguration.Read());
+            try
+            {
+                var chat = host.Registry.Lookup("XmppChatMgr");
+                Assert.NotNull(chat);
+                Assert.True(chat!.HasMethod("Hostname"));
+            }
+            finally
+            {
+                await host.ShutdownAsync();
+            }
+        }
+        finally
+        {
+            foreach (var (name, value) in previous)
+                Environment.SetEnvironmentVariable(name, value);
+        }
+    }
+
 }

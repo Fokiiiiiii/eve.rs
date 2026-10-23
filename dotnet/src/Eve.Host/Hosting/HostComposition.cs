@@ -252,23 +252,23 @@ internal static class HostComposition
         HostServer? server = null;
         var info = new HostMachoNetInfo(registry, config.Current, characterSessions);
         registry.Register(new MachoNetService(info, now, GlobalConfigWrites.Create(config, connected, () => server?.PublishClusterConfig())));
+        var charMgr = characterServices.OfType<Eve.Services.CharacterInfo.CharMgrService>().FirstOrDefault();
+        Func<long, CancellationToken, ValueTask<IReadOnlyList<long>>>? readBlockedOwners =
+            charMgr is null ? null : charMgr.ReadBlockedOwnersAsync;
+        if (xmppSettings.Enabled && dataSource is { } xmppDataSource)
+        {
+            var xmppSchema = Env("EVE_XMPP_SCHEMA", "eve_xmpp");
+            xmppMotdStore = await Eve.Host.Xmpp.XmppMotdStore.OpenAsync(xmppDataSource, xmppSchema);
+            xmppPlayerChannelStore = await Eve.Host.Xmpp.XmppPlayerChannelStore.OpenAsync(xmppDataSource, xmppSchema);
+        }
+        var xmppHub = new Eve.Host.Xmpp.XmppChatHub(connected,
+            new Eve.Host.Xmpp.XmppChatSettings(xmppSettings.Domain, xmppSettings.ConnectHost),
+            xmppMotdStore,
+            readBlockedOwners,
+            xmppPlayerChannelStore);
+        registry.Register(new Eve.Host.Xmpp.XmppChatMgrService(xmppHub));
         if (xmppSettings.Enabled)
         {
-            var charMgr = characterServices.OfType<Eve.Services.CharacterInfo.CharMgrService>().FirstOrDefault();
-            Func<long, CancellationToken, ValueTask<IReadOnlyList<long>>>? readBlockedOwners =
-                charMgr is null ? null : charMgr.ReadBlockedOwnersAsync;
-            if (dataSource is { } xmppDataSource)
-            {
-                var xmppSchema = Env("EVE_XMPP_SCHEMA", "eve_xmpp");
-                xmppMotdStore = await Eve.Host.Xmpp.XmppMotdStore.OpenAsync(xmppDataSource, xmppSchema);
-                xmppPlayerChannelStore = await Eve.Host.Xmpp.XmppPlayerChannelStore.OpenAsync(xmppDataSource, xmppSchema);
-            }
-            var xmppHub = new Eve.Host.Xmpp.XmppChatHub(connected,
-                new Eve.Host.Xmpp.XmppChatSettings(xmppSettings.Domain, xmppSettings.ConnectHost),
-                xmppMotdStore,
-                readBlockedOwners,
-                xmppPlayerChannelStore);
-            registry.Register(new Eve.Host.Xmpp.XmppChatMgrService(xmppHub));
             if (xmppSettings.CertificatePath is { } certificatePath)
                 xmppCertificate = System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadPkcs12FromFile(
                     certificatePath, xmppSettings.CertificatePassword);

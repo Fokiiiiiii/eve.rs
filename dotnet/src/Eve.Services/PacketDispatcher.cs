@@ -293,6 +293,8 @@ public sealed class PacketDispatcher
             return 10;
         if (service == "vaultManager" && method == "get_account_balance")
             return 10;
+        if (service == "storeManager" && method == "buy_offer" || service == "FastCheckoutService" && method == "BuyOffer")
+            return 10;
         if (service == "ownerGroupManager")
             return 10;
         if (service == "mailMgr" && method is "SyncMail" or "GetMailHeaders" or "GetBody" or "MarkAsRead" or "SendMail" or "PokePlayerAboutChatMsgGm")

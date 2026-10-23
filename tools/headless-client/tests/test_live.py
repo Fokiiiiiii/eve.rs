@@ -110,3 +110,15 @@ def test_reconnect_after_client_process_exits_abruptly():
 
     with _client() as client:
         client.login(account, "right")
+
+
+def test_a_second_login_of_the_same_account_disconnects_the_previous_client():
+    account = f"evecli-ml-{os.urandom(6).hex()}"
+    with _client() as first, _client() as second:
+        first.login(account, "right")
+        first_user_id = first.session.user_id
+        second.login(account, "right")
+        assert second.session.user_id == first_user_id
+        with pytest.raises(handshake.TransportClosed) as closed:
+            first.call("machoNet", "GetServiceInfo")
+        assert closed.value.reason == "Another client logged in to this account."

@@ -31,6 +31,14 @@ from . import marshal as m
 class HandshakeError(Exception):
     pass
 
+class TransportClosed(HandshakeError):
+    """The server closed an established transport with a reason."""
+
+    def __init__(self, reason: str):
+        super().__init__(f"transport closed: {reason}")
+        self.reason = reason
+
+
 class LoginRejected(HandshakeError):
     """The server refused the login and closed the transport."""
 
@@ -136,13 +144,19 @@ def _text(value) -> str:
 def _as_dict(value) -> dict:
     return value.as_dict() if isinstance(value, m.Dict) else {}
 
-_REASON = re.compile(rb"(LoginAuthFailed|ACCOUNTBANNED|[A-Z][A-Za-z_]{6,})")
+_PICKLED_UNICODE = re.compile(rb"X(.{4})", re.DOTALL)
 
 def _rejection_reason(value) -> Optional[str]:
     """The reason of a GPSTransportClosed pickle sent instead of a reply."""
     if isinstance(value, m.CPickled):
-        found = _REASON.search(bytes(value).split(b"GPSTransportClosed", 1)[-1])
-        return found.group(1).decode() if found else "transport closed"
+        payload = bytes(value).split(b"GPSTransportClosed", 1)[-1]
+        found = _PICKLED_UNICODE.search(payload)
+        if found is None:
+            return "transport closed"
+        length = int.from_bytes(found.group(1), "little")
+        start = found.end()
+        text = payload[start:start + length]
+        return text.decode("utf-8", "replace") if len(text) == length else "transport closed"
     return None
 
 def login(conn: Connection, user: str, password: str, *, language: str = "EN") -> SessionInfo:

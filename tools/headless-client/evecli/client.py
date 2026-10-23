@@ -130,7 +130,11 @@ class Client:
         while True:
             if time.monotonic() > deadline:
                 raise TimeoutError(f"no response to call {call_id}")
-            received = packet.Packet.parse(self.conn.recv())
+            value = self.conn.recv()
+            reason = handshake._rejection_reason(value)
+            if reason:
+                raise handshake.TransportClosed(reason)
+            received = packet.Packet.parse(value)
             if received.command == packet.CALL_REQ:
                 self._answer_server_call(received)
                 continue

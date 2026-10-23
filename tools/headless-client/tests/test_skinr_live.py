@@ -305,11 +305,13 @@ def _restart_host() -> subprocess.Popen:
     simulation_socket = os.environ["EVE_SIM_SOCKET"]
     host_dll = os.environ["EVE_HOST_DLL"]
     old_pid = int(os.environ["EVE_HOST_PID"])
+    front_port = os.environ["EVE_LIVE_PORT"]
+    net_binary = os.environ["EVE_NET_BINARY"]
     os.kill(old_pid, signal.SIGTERM)
 
     deadline = time.monotonic() + 45
-    while _unix_listener_open(socket_path):
-        assert time.monotonic() < deadline, "the existing host did not close its socket"
+    while _unix_listener_open(socket_path) or _tcp_listener_open(f"127.0.0.1:{front_port}"):
+        assert time.monotonic() < deadline, "the existing host and front did not close their listeners"
         time.sleep(0.1)
 
     log_path = os.path.join(
@@ -332,53 +334,43 @@ def _restart_host() -> subprocess.Popen:
     atexit.register(_stop_restarted_process, process)
 
     deadline = time.monotonic() + 120
-    gateway_ready = False
     while time.monotonic() < deadline:
         if process.poll() is not None:
             with open(log_path, encoding="utf-8", errors="replace") as log:
                 details = "".join(log.readlines()[-80:])
             raise AssertionError(f"the restarted host exited early:\n{details}")
         if _unix_listener_open(socket_path) and _tcp_listener_open(GATEWAY):
-            gateway_ready = True
             break
         time.sleep(0.2)
-    assert gateway_ready, f"the restarted host did not reopen its listeners; see {log_path}"
-    _restart_front()
-    return process
+    else:
+        raise AssertionError(f"the restarted host did not reopen its listeners; see {log_path}")
 
-
-def _restart_front() -> subprocess.Popen:
-    address = os.environ["EVE_NET_LISTEN"]
-    deadline = time.monotonic() + 30
-    while _tcp_listener_open(address):
-        assert time.monotonic() < deadline, "the old front did not close its listener"
-        time.sleep(0.1)
-
-    log_path = os.path.join(
+    net_log_path = os.path.join(
         os.environ.get("EVE_LIVE_LOG_DIR", "/tmp"),
         f"net-skinr-restart-{os.getpid()}.out",
     )
     net_env = os.environ.copy()
-    net_env.update(EVE_HOST=os.environ["EVE_HOST_SOCKET"], EVE_NET_LISTEN=address)
-    with open(log_path, "ab") as log:
-        process = subprocess.Popen(
-            [os.environ["EVE_NET_BINARY"]],
+    net_env.update(EVE_HOST=socket_path, EVE_NET_LISTEN=f"127.0.0.1:{front_port}")
+    with open(net_log_path, "ab") as log:
+        net_process = subprocess.Popen(
+            [net_binary],
             env=net_env,
             stdout=log,
             stderr=subprocess.STDOUT,
         )
-    atexit.register(_stop_restarted_process, process)
+    atexit.register(_stop_restarted_process, net_process)
 
-    deadline = time.monotonic() + 30
+    deadline = time.monotonic() + 10
     while time.monotonic() < deadline:
-        if process.poll() is not None:
-            with open(log_path, encoding="utf-8", errors="replace") as log:
+        if net_process.poll() is not None:
+            with open(net_log_path, encoding="utf-8", errors="replace") as log:
                 details = "".join(log.readlines()[-80:])
             raise AssertionError(f"the restarted front exited early:\n{details}")
-        if _tcp_listener_open(address):
+        if _tcp_listener_open(f"127.0.0.1:{front_port}"):
             break
         time.sleep(0.1)
-    assert _tcp_listener_open(address), f"the restarted front did not reopen its listener; see {log_path}"
+    else:
+        raise AssertionError(f"the restarted front did not reopen its listener; see {net_log_path}")
     return process
 
 

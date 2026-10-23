@@ -36,3 +36,11 @@ Use lane `eve_p4` only and run database work through `tools/dev/db-lock.sh`. The
 
 - Pushed the paperdoll live-test guard and live-harness test-list update on main as `9f8612b0`.
 - Push-triggered CI run 611 (`39963051154`) was in progress at this handoff update. Run 610 on the previous head `ab356e0f` had failed its Python client and Windows Python jobs; run 611 checks the guard and server-backed scenario.
+
+
+## 2026-10-23 selected-agent SHA checkout
+
+- Runs 60 and 61 failed in `actions/checkout` when the selected-agent dispatch supplied abbreviated commit IDs. The workflow passed that prefix directly to checkout, which tried to resolve it as a remote branch or tag.
+- The workflow now fetches full history from the dispatch branch, resolves a requested commit prefix or branch locally, and checks out the resolved commit in detached mode.
+- Focused regression `AgentTestRefResolutionTests.test_short_commit_and_branch_refs_check_out_as_detached_commits` passed locally.
+- Push-triggered CI is still running; this entry will be updated with the run result after Actions completes.

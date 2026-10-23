@@ -817,6 +817,9 @@ def test_v24_skinr_design_sequences_and_applies_a_persisted_license():
                         application_payload,
                         apply_request_id,
                     )[:2] == (200, LICENSE + "ApplyResponse")
+                    assert isinstance(
+                        m.plain(restarted_client.call("userSvc", "GetUserToken")), str
+                    )
                     names = [event["name"] for event in restarted_client.notifications]
                     assert names.count("OnShipCosmeticsChanged") == 1
                     assert names.count("OnCurrentShipSkinChange") == 1

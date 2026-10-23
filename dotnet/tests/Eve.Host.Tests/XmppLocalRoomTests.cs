@@ -8,6 +8,22 @@ namespace Eve.Host.Tests;
 
 public sealed class XmppLocalRoomTests
 {
+[Fact]
+    public void Public_help_rooms_accept_group_messages()
+    {
+        var sessions = new ConnectedSessions();
+        sessions.Add(Character(42, "pilot-token", 30_000_142));
+        var hub = new XmppChatHub(sessions, new XmppChatSettings("chat.example", "127.0.0.1"));
+        var output = new List<string>();
+        var client = Connect(hub, 42, "pilot-token", output);
+        const string room = "system_263238_263262";
+
+        client.OnStanza(Parse($"<presence to='{room}@conference.chat.example/Pilot'><x xmlns='http://jabber.org/protocol/muc'/></presence>"));
+        client.OnStanza(Parse($"<message type='groupchat' to='{room}@conference.chat.example'><body>help room check</body></message>"));
+
+        Assert.Contains(output, item => item.Contains("help room check", StringComparison.Ordinal));
+    }
+
     [Fact]
     public void Active_characters_in_one_system_discover_join_and_exchange_local_messages()
     {
@@ -98,6 +114,60 @@ public sealed class XmppLocalRoomTests
         Assert.Contains(secondOutput, item => item.Contains("wormhole_31000142@conference.chat.example/Alpha", StringComparison.Ordinal)
             && item.Contains("<presence", StringComparison.Ordinal));
         Assert.Contains(secondOutput, item => item.Contains("<body>Present</body>", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Staff_and_invisible_presence_uses_server_account_roles()
+    {
+        const long systemId = 30_000_142;
+        var sessions = new ConnectedSessions();
+        sessions.Add(Character(42, "pilot-token", systemId));
+        var staffSession = Character(43, "staff-token", systemId);
+        staffSession.Set("accountRole", new PyLong(Eve.Services.GameMasterRoles.ChatAdministrator));
+        sessions.Add(staffSession);
+        var hiddenSession = Character(44, "hidden-token", systemId);
+        hiddenSession.Set("accountRole", new PyLong(Eve.Services.GameMasterRoles.Gml | Eve.Services.GameMasterRoles.ChtInvisible));
+        sessions.Add(hiddenSession);
+        var hub = new XmppChatHub(sessions, new XmppChatSettings("chat.example", "127.0.0.1"));
+        var pilotOutput = new List<string>();
+        var staffOutput = new List<string>();
+        var hiddenOutput = new List<string>();
+        var pilot = Connect(hub, 42, "pilot-token", pilotOutput);
+        var staff = Connect(hub, 43, "staff-token", staffOutput);
+        var hidden = Connect(hub, 44, "hidden-token", hiddenOutput);
+        pilot.OnStanza(Parse(" <presence to='local_30000142@conference.chat.example/Pilot'><x xmlns='http://jabber.org/protocol/muc'/></presence>"));
+        staff.OnStanza(Parse("<presence to='local_30000142@conference.chat.example/Staff'><x xmlns='http://jabber.org/protocol/muc'/></presence>"));
+        hidden.OnStanza(Parse("<presence to='local_30000142@conference.chat.example/Hidden'><x xmlns='http://jabber.org/protocol/muc'/></presence>"));
+
+        Assert.Contains(pilotOutput, item => item.Contains("local_30000142@conference.chat.example/Staff", StringComparison.Ordinal)
+            && item.Contains("affiliation='admin'", StringComparison.Ordinal) && item.Contains("role='moderator'", StringComparison.Ordinal));
+        Assert.DoesNotContain(pilotOutput, item => item.Contains("local_30000142@conference.chat.example/Hidden", StringComparison.Ordinal));
+        Assert.Contains(hiddenOutput, item => item.Contains("local_30000142@conference.chat.example/Hidden", StringComparison.Ordinal)
+            && item.Contains("status code='110'", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void A_connection_cannot_join_more_than_thirty_two_rooms()
+    {
+        var sessions = new ConnectedSessions();
+        var session = Character(45, "many-rooms-token", 10_000);
+        sessions.Add(session);
+        var hub = new XmppChatHub(sessions, new XmppChatSettings("chat.example", "127.0.0.1"));
+        var output = new List<string>();
+        var client = Connect(hub, 45, "many-rooms-token", output);
+
+        for (var index = 0; index < 32; index++)
+        {
+            var systemId = 10_000 + index;
+            session.Set("solarsystemid2", new PyInt(systemId));
+            client.OnStanza(Parse($"<presence to='local_{systemId}@conference.chat.example/Pilot'><x xmlns='http://jabber.org/protocol/muc'/></presence>"));
+            Assert.Contains(output, item => item.Contains($"local_{systemId}@conference.chat.example/Pilot", StringComparison.Ordinal));
+        }
+
+        const long excessSystem = 20_000;
+        session.Set("solarsystemid2", new PyInt(excessSystem));
+        client.OnStanza(Parse($"<presence to='local_{excessSystem}@conference.chat.example/Pilot'><x xmlns='http://jabber.org/protocol/muc'/></presence>"));
+        Assert.DoesNotContain(output, item => item.Contains($"local_{excessSystem}@conference.chat.example/Pilot", StringComparison.Ordinal));
     }
 
     private static ClientSession Character(long characterId, string token, long systemId)

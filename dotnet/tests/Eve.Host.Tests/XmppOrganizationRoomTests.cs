@@ -95,6 +95,92 @@ public sealed class XmppOrganizationRoomTests
     }
 
     [Fact]
+    public async Task Player_channel_rpc_creates_invites_and_transfers_ownership_across_store_reopen()
+    {
+        var url = Environment.GetEnvironmentVariable("EVE_PG_URL")
+            ?? throw new InvalidOperationException("EVE_PG_URL is required for the player channel persistence regression");
+        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(url));
+        var schema = "xmpp_player_" + Guid.NewGuid().ToString("N")[..12];
+        try
+        {
+            var store = await XmppPlayerChannelStore.OpenAsync(source, schema);
+            var sessions = new ConnectedSessions();
+            var creatorSession = Character(42, "creator-token", 100, 200, 300);
+            var staffSession = Character(43, "staff-token", 100, 200, 300);
+            staffSession.Set("accountRole", new PyLong(Eve.Services.GameMasterRoles.ChatAdministrator));
+            var invitedSession = Character(77, "invited-token", 100, 200, 301);
+            sessions.Add(creatorSession);
+            sessions.Add(staffSession);
+            sessions.Add(invitedSession);
+            var hub = new XmppChatHub(sessions, new XmppChatSettings("chat.example", "127.0.0.1"),
+                motdStore: null, readBlockedOwners: null, playerChannelStore: store);
+            var service = new XmppChatMgrService(hub);
+            var created = await service.CreatePlayerOwnedChannel(new ServiceCall
+            {
+                Method = "CreatePlayerOwnedChannel",
+                Args = [new PyStr("Pilot room")],
+                Session = creatorSession,
+            });
+            var room = Assert.IsType<PyStr>(created).Value;
+            Assert.StartsWith("player_", room, StringComparison.Ordinal);
+            var invalidName = await service.CreatePlayerOwnedChannel(new ServiceCall
+            {
+                Method = "CreatePlayerOwnedChannel",
+                Args = [new PyStr(new string('x', XmppPlayerChannelStore.MaxDisplayNameBytes + 1))],
+                Session = creatorSession,
+            });
+            Assert.Same(PyNone.Instance, invalidName);
+
+            var staffOutput = new List<string>();
+            var invitedOutput = new List<string>();
+            var staff = Connect(hub, 43, "staff-token", staffOutput);
+            var invited = Connect(hub, 77, "invited-token", invitedOutput);
+            Assert.Same(PyBool.True, await service.GrantChannelOwnership(new ServiceCall
+            {
+                Method = "GrantChannelOwnership",
+                Args = [new PyStr(room)],
+                Session = staffSession,
+            }));
+            Assert.Same(PyBool.True, await service.AddCharacterToChannel(new ServiceCall
+            {
+                Method = "AddCharacterToChannel",
+                Args = [new PyStr(room), new PyLong(77), new PyStr("Welcome")],
+                Session = staffSession,
+            }));
+            Assert.Same(PyBool.False, await service.AddCharacterToChannel(new ServiceCall
+            {
+                Method = "AddCharacterToChannel",
+                Args = [new PyStr(room), new PyLong(99), new PyStr("Denied")],
+                Session = creatorSession,
+            }));
+            Assert.Same(PyBool.False, await service.GrantChannelOwnership(new ServiceCall
+            {
+                Method = "GrantChannelOwnership",
+                Args = [new PyStr(room)],
+                Session = creatorSession,
+            }));
+            Assert.Contains(invitedOutput, item => item.Contains("<invite", StringComparison.Ordinal)
+                && item.Contains("Welcome", StringComparison.Ordinal));
+
+            staff.OnStanza(Parse($"<presence to='{room}@conference.chat.example/Staff'><x xmlns='http://jabber.org/protocol/muc'/></presence>"));
+            invited.OnStanza(Parse($"<presence to='{room}@conference.chat.example/Invited'><x xmlns='http://jabber.org/protocol/muc'/></presence>"));
+            await staff.OnStanzaAsync(Parse($"<message type='groupchat' to='{room}@conference.chat.example'><body>Joined room</body></message>"), default);
+            Assert.Contains(invitedOutput, item => item.Contains("<body>Joined room</body>", StringComparison.Ordinal));
+
+            var reopened = await XmppPlayerChannelStore.OpenAsync(source, schema);
+            Assert.True(reopened.CanJoin(room, 43));
+            Assert.True(reopened.CanJoin(room, 77));
+            Assert.False(reopened.CanJoin(room, 99));
+            Assert.Equal("Pilot room", reopened.Get(room)?.DisplayName);
+        }
+        finally
+        {
+            await using var command = source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
+            await command.ExecuteNonQueryAsync();
+        }
+    }
+
+    [Fact]
     public void Groupchat_delivery_respects_the_persisted_block_list_of_each_recipient()
     {
         var sessions = new ConnectedSessions();

@@ -64,7 +64,10 @@ public sealed partial class PlanetOrbitalRegistryService(PlanetMgrService planet
             Rate("standingNeutral"), Rate("standingBad"), Rate("standingHorrible"));
         long Integer(PyValue value) => value switch { PyInt integer => integer.Value, PyLong integer => integer.Value, _ => 0 };
         bool Boolean(PyValue value) => value switch { PyBool flag => flag.Value, PyInt integer => integer.Value != 0, _ => false };
-        await planets.UpdateOfficeSettingsAsync(call.Session, Integer(call.Arg(0)), rates, (int)Integer(call.Arg(3)),
+        var standingLevel = Integer(call.Arg(3));
+        if (standingLevel is < -10 or > 10)
+            throw MachoErrors.ThrowUserError("CustomsOfficeNotFound");
+        await planets.UpdateOfficeSettingsAsync(call.Session, Integer(call.Arg(0)), rates, (int)standingLevel,
             Boolean(call.Arg(4)), Boolean(call.Arg(5)), call.Cancellation);
         return PyNone.Instance;
     }

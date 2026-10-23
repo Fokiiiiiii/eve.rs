@@ -295,6 +295,10 @@ public sealed class PacketDispatcher
             return 10;
         if (service == "insuranceSvc" && method == "GetContracts")
             return 10;
+        if (service == "planetOrbitalRegistryBroker" && method == "GetTaxRate")
+            return 2;
+        if (service == "planetOrbitalRegistryBroker" && method == "UpdateSettings")
+            return 10;
         if (service == "corpStationMgr" && method == "MachoBindObject")
             return 10;
         if (service == "billMgr")
@@ -317,15 +321,20 @@ public sealed class PacketDispatcher
             return 10;
         if (service == "itemLocking" && (method is "GetItemsByLocation" or "GetLockedItemLocations"))
             return 10;
+        if ((service == "crimewatch" && method == "GetSecurityStatusTransactions") ||
+            (service == "killRightMgr" && method == "GetKillRights"))
+            return 10;
         if (service == "account" && method is "GetTransactions" or "GiveCash" or "GiveCashFromCorpAccount")
+            return 10;
+        if (service == "config" && method is "GetAverageMarketPrices" or "GetMultiOwnersEx" or "GetMultiCorpTickerNamesEx" or "GetMultiAllianceShortNamesEx" or "GetMultiLocationsEx")
             return 10;
         if (service == "LPStoreMgr" && method is "GetAvailableOffersFromCorp" or "TakeOfferForCharacter" or "TakeOfferForCorporation")
             return 10;
-        if (service == "corpRegistry" && method is "GetCorporation" or "GetEveOwners" or "GetMemberIDsByQuery" or "GetMemberIDsWithMoreThanAvgShares" or "GetNumberOfPotentialCEOs" or "GetMembersByIds" or "GetMembersPaged" or "GetMemberTrackingInfo" or "GetMemberTrackingInfoSimple" or "GetShareholders" or "GetSharesByShareholder" or "PayoutDividend" or "ExecuteActions" or "UpdateMembers" or "KickOutMembers" or "UpdateTitles" or "RemoveCorporateContacts" or "EditContactsRelationshipID" or "AssignLabels" or "RemoveLabels" or "UpdateBulletinOrder" or "GetRecentKills" or "GetRecentLosses" or "GetCorporateContacts" or "GetContactList" or "GetBulletins" or "GetBulletinEntries" or "GetApplications" or "GetOldApplications" or "GetMyApplications" or "GetMyOldApplications" or "GetMyOpenInvitations" or "UpdateApplicationOffer" or "GetRecruitmentAd" or "GetRecruitmentAdsByCorpID" or "GetRecruitmentAdsForCorporation")
+        if (service == "corpRegistry" && method is "GetCorporation" or "GetEveOwners" or "GetMemberIDsByQuery" or "GetMemberIDsWithMoreThanAvgShares" or "GetNumberOfPotentialCEOs" or "GetMembersByIds" or "GetMembersPaged" or "GetMemberTrackingInfo" or "GetMemberTrackingInfoSimple" or "GetShareholders" or "GetSharesByShareholder" or "PayoutDividend" or "ExecuteActions" or "UpdateMembers" or "KickOutMembers" or "UpdateTitles" or "UpdateCorporation" or "UpdateLogo" or "UpdateDivisionNames" or "UpdateCorporationAbilities" or "RegisterNewAcceptStructureSettings" or "RegisterNewCorpMailRestrictionSettings" or "SetStructureReinforceDefault" or "RegisterNewAggressionSettings" or "RemoveCorporateContacts" or "EditContactsRelationshipID" or "AssignLabels" or "RemoveLabels" or "UpdateBulletinOrder" or "GetRecentKills" or "GetRecentLosses" or "GetCorporateContacts" or "GetContactList" or "GetBulletins" or "GetBulletinEntries" or "GetApplications" or "GetOldApplications" or "GetMyApplications" or "GetMyOldApplications" or "GetMyOpenInvitations" or "UpdateApplicationOffer" or "GetRecruitmentAd" or "GetRecruitmentAdsByCorpID" or "GetRecruitmentAdsForCorporation")
             return 10;
         if (service == "allianceRegistry" && method is "GetAlliance" or "GetAlliancePublicInfo" or "GetAllianceSovereigntyStructuresInfo" or "GetRelationships" or "SetRelationship" or "GetCapitalSystemInfo" or "SetCapitalSystem" or "SetPrimeHour" or "CancelCapitalSystemTransition" or "UpdateAlliance" or "DeclareWarAgainst" or "PayBill" or "GetBillBalance" or "GetBills" or "GetBillsReceivable" or "GetApplications" or "GetEveOwners" or "GetRankedAlliances" or "GetAllianceMembers" or "GetMembers" or "GetEmploymentRecord" or "GetAllianceMembersOlderThan" or "GetDaysInAlliance" or "GetAllianceApplications" or "GetAllianceContacts" or "GetContactList" or "GetBulletins" or "GetBulletinEntries")
             return 10;
-        if (service == "charMgr" && method is "GetPublicInfo" or "GetPublicInfo3" or "GetCharacterDescription" or "GetCharacterCreationDate" or "GetPrivateInfo" or "GetRecentShipKillsAndLosses" or "GetOrganizationInfoForCharacters" or "GetContactList" or "GetCharacterSettings" or "SaveCharacterSetting" or "DeleteCharacterSetting" or "GetLabels" or "GetOwnerNoteLabels" or "GetOwnerNote" or "GetNote" or "LogSettings" or "AddOwnerNote" or "EditOwnerNote" or "RemoveOwnerNote" or "SetNote" or "AddContact" or "EditContact" or "DeleteContacts" or "BlockOwners" or "UnblockOwners" or "EditContactsRelationshipID" or "AssignLabels" or "RemoveLabels" or "CreateLabel" or "DeleteLabel" or "EditLabel" or "List" or "ListStations" or "ListStationItems" or "ListIncludingContainers" or "GetAssetWorth")
+        if (service == "charMgr" && method is "GetPublicInfo" or "GetPublicInfo3" or "GetCharacterDescription" or "GetCharacterCreationDate" or "GetRecentShipKillsAndLosses" or "GetPrivateInfo" or "GetRecentShipKillsAndLosses" or "GetOrganizationInfoForCharacters" or "SetCharacterDescription" or "GetContactList" or "GetCharacterSettings" or "SaveCharacterSetting" or "DeleteCharacterSetting" or "GetLabels" or "GetOwnerNoteLabels" or "GetOwnerNote" or "GetNote" or "LogSettings" or "AddOwnerNote" or "EditOwnerNote" or "RemoveOwnerNote" or "SetNote" or "AddContact" or "EditContact" or "DeleteContacts" or "BlockOwners" or "UnblockOwners" or "EditContactsRelationshipID" or "AssignLabels" or "RemoveLabels" or "CreateLabel" or "DeleteLabel" or "EditLabel" or "List" or "ListStations" or "ListStationItems" or "ListIncludingContainers" or "GetAssetWorth")
             return 10;
         if (service == "fleetObject" && method is "SendBroadcast" or "Invite" or "MassInvite" or "Init" or "GetInitState" or "GetFleetComposition" or "GetJoinRequests")
             return 10;
@@ -336,6 +345,10 @@ public sealed class PacketDispatcher
         if (service == "structureJumpBridgeMgr" && method is "GetJbStructureDestination" or "GetLinkedStructure")
             return 10;
         if (service == "officeManager" && method is "HasCorpImpoundedItems" or "GetImpoundReleasePrice" or "RentOffice" or "UnrentOffice" or "GetItemsFromImpound" or "TrashImpoundedOffice")
+            return 10;
+        if (service == "stationSvc" && method is ("GetCorporationsWithOffices" or "GetEmptyOfficeCount" or "HasCorpImpoundedItems" or "GetImpoundReleasePrice" or "TrashImpoundedOffice" or "PrimeOfficeItem" or "UnrentOffice"))
+            return 10;
+        if (service == "stationSvc" && method == "GetGuests")
             return 10;
         if (service == "skillHandler" && method is "InjectSkillIntoBrain" or "InjectSkillpoints" or "ExtractSkills" or "GetDiminishedSpFromInjectors" or "SplitSkillInjector" or "CombineSkillInjector")
             return 10;

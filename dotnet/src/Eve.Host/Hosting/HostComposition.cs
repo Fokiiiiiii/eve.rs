@@ -83,6 +83,7 @@ internal static class HostComposition
         NpgsqlDataSource? dataSource = null; // owned by the runtime: shut down with it, so its pooled connections return to the server
         Eve.Host.Persistence.PgAccruedTimeStore? accruedTimeStore = null;
         Eve.Host.Xmpp.XmppMotdStore? xmppMotdStore = null;
+        Eve.Host.Xmpp.XmppPlayerChannelStore? xmppPlayerChannelStore = null;
         if (Env("EVE_PG_URL", "") is { Length: > 0 } pgUrl)
         {
             var schema = Env("EVE_IDENTITY_SCHEMA", PgAccountDirectory.DefaultSchema);
@@ -257,11 +258,16 @@ internal static class HostComposition
             Func<long, CancellationToken, ValueTask<IReadOnlyList<long>>>? readBlockedOwners =
                 charMgr is null ? null : charMgr.ReadBlockedOwnersAsync;
             if (dataSource is { } xmppDataSource)
-                xmppMotdStore = await Eve.Host.Xmpp.XmppMotdStore.OpenAsync(xmppDataSource, Env("EVE_XMPP_SCHEMA", "eve_xmpp"));
+            {
+                var xmppSchema = Env("EVE_XMPP_SCHEMA", "eve_xmpp");
+                xmppMotdStore = await Eve.Host.Xmpp.XmppMotdStore.OpenAsync(xmppDataSource, xmppSchema);
+                xmppPlayerChannelStore = await Eve.Host.Xmpp.XmppPlayerChannelStore.OpenAsync(xmppDataSource, xmppSchema);
+            }
             var xmppHub = new Eve.Host.Xmpp.XmppChatHub(connected,
                 new Eve.Host.Xmpp.XmppChatSettings(xmppSettings.Domain, xmppSettings.ConnectHost),
                 xmppMotdStore,
-                readBlockedOwners);
+                readBlockedOwners,
+                xmppPlayerChannelStore);
             registry.Register(new Eve.Host.Xmpp.XmppChatMgrService(xmppHub));
             if (xmppSettings.CertificatePath is { } certificatePath)
                 xmppCertificate = System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadPkcs12FromFile(

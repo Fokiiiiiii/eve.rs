@@ -17,6 +17,16 @@ public sealed class XmppChatMgrServiceTests
         Assert.Equal(new PyStr("192.0.2.10"), service.GetDeprecatedPrefsFallback(null!));
     }
 
+    [Fact]
+    public void Help_channel_routes_return_the_client_contract_rooms()
+    {
+        var session = new ClientSession();
+        var service = new XmppChatMgrService(new XmppChatHub(new ConnectedSessions(), new XmppChatSettings("chat.example", "127.0.0.1")));
+        Assert.Equal("system_263238_263259", Assert.IsType<PyStr>(service.GetRookieChannel(new ServiceCall { Method = "GetRookieChannel", Args = [], Session = session })).Value);
+        Assert.Equal("system_263238_263262", Assert.IsType<PyStr>(service.GetHelpChannel(new ServiceCall { Method = "GetHelpChannel", Args = [], Session = session })).Value);
+        Assert.Equal("system_263238_263302", Assert.IsType<PyStr>(service.GetHelpChannel(new ServiceCall { Method = "GetHelpChannel", Args = [new PyStr("ja-JP")], Session = session })).Value);
+    }
+
 [Fact]
     public void Private_channel_uses_a_stable_sorted_pair_and_rejects_self_invites()
     {

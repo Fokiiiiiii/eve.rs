@@ -1407,6 +1407,8 @@ public sealed partial class HomeStationService(
     [Method("reset_remote_change_time")]
     public async ValueTask<PyValue> ResetRemoteChangeTime(ServiceCall call)
     {
+        if (!GameMasterRoles.Has(call.Session, GameMasterRoles.Staff | GameMasterRoles.Programmer))
+            throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("QA account role required")));
         if (call.Session.CharacterId is { } characterId)
         {
             if (resetRemoteChangeTimeAsync is null)

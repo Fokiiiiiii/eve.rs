@@ -189,6 +189,18 @@ public sealed class ConfigServiceTests
     }
 
     [Fact]
+    public async Task Batched_config_lookups_refuse_more_than_500_raw_ids()
+    {
+        var service = new ConfigService(null!, null!, null!, null!);
+        var requested = Enumerable.Range(1, 501).Select(id => (long)id).ToArray();
+
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await service.GetMultiOwnersEx(Call("GetMultiOwnersEx", requested, new ClientSession())));
+
+        Assert.Equal("CONFIG_BULK_LIMIT_EXCEEDED", error.Error.UserErrorMessage);
+    }
+
+    [Fact]
     public void Old_station_data_is_the_empty_list_the_client_skips()
     {
         var service = new ConfigService(null!, null!, null!, null!);

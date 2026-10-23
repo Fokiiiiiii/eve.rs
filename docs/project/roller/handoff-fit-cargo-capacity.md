@@ -18,10 +18,10 @@ EveJS 261018.1 checks this before changing state and returns a CustomNotify carr
 
 ## Verification and handoff
 
-No database was used locally. `Eve.Ships` built successfully with zero warnings and errors, and the focused no-database capacity predicate test passed.
+No database was used locally. `Eve.Ships` and `Eve.Ships.Tests` built successfully with zero warnings and errors, and the focused no-database capacity predicate test passed.
 
 Actions run 39962433299 passed the batch `MultiAdd` regression (1 passed, 0 failed, 0 skipped). Run 39969323136 compiled the solution; the inventory batch regression passed, but the ship offline regression still returned `ShipChanged`. The merge at 5ba7acea updates that test to derive the stack unit volume from `ItemVolumes.Unit` and use the static ship fixtures, alongside assertions for stored cargo volume, persisted module state, and loaded capacity. The corrected scenario needs an Actions rerun. The first headless run failed during setup because the module was not found in the hangar after using its multiword name; the walk now grants verified type ID 1319 and needs a fresh run. No graphical-client check was made.
 
 Keep the worktree's pre-existing deletions under crates/eve-net, crates/eve-sde, crates/eve-sim, and crates/eve-space out of the commit.
 
-Implementation pushes: 80d07d8c and 55f2dd87. Latest main: 5ba7acea. Commit be2c316f contains the offline guard adjustment and the type-ID headless setup correction; rerun the corrected ship scenario and live walk.
+Implementation pushes: 80d07d8c and 55f2dd87. Cargo implementation commit: 64bdd41c (merged to main). Commit be2c316f contains the offline guard adjustment and the type-ID headless setup correction; live run 39972764975 is pending.

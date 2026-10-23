@@ -31,7 +31,9 @@ Reject inbound marshal streams whose values or count-driven collections exceed a
 - An earlier all-reference Host.Tests build had `csc` killed with exit 137. The serialized Host build and test-project build completed afterward.
 - No PostgreSQL database was used.
 - No separate live headless malformed-packet walk was added: existing live cases use high-level calls and have no malformed-payload injection case. The Host socket test covers refusal and retry.
-- Selected Actions checks and the push-triggered CI gate are pending.
+- Selected Actions run 39971341433 for `Eve.Marshal.Tests` and `Eve.Host.Tests`: success, with no reported skips.
+- Push-triggered CI run 39971311558 for commit `99696f0d9b3e`: failed in the fast live E2E market-history request (`MachoError 2`) and `Eve.Ships.Tests.ShipTests.Cargo_capacity_modules_cannot_be_offlined_or_unfitted_past_the_hold_limit` (expected `ShipRefused`, received `ShipChanged`). Both failures are outside the marshal changes; the market-history issue is already tracked in `docs/project/CI_FIX_HANDOFF.md`, and no Ship files changed in this task. The required CI gate consequently failed.
+- The failed push-triggered run skipped 8 fast live cases (skill-training-speed and slow live scenarios) and 1 Universe static-data test. Skips are not counted as passes.
 
 ## Worktree
 

@@ -882,7 +882,7 @@ private static double RelationshipValue(PyValue value)
     {
         var (actor,alliance) = await RequireAllianceExecutorDirector(call);
         RequireBoundAlliance(call,alliance);
-        await store.AddAllianceContactAsync(actor,alliance,Number(call.Arg(0)),Number(call.Arg(1)),call.Cancellation);
+        await store.AddAllianceContactAsync(actor,alliance,PositiveIntegerId(call.Arg(0)),IntegerValue(call.Arg(1)),call.Cancellation);
         return PyNone.Instance;
     }
 
@@ -891,7 +891,7 @@ private static double RelationshipValue(PyValue value)
     {
         var (actor,alliance) = await RequireAllianceExecutorDirector(call);
         RequireBoundAlliance(call,alliance);
-        await store.EditAllianceContactAsync(actor,alliance,Number(call.Arg(0)),Number(call.Arg(1)),call.Cancellation);
+        await store.EditAllianceContactAsync(actor,alliance,PositiveIntegerId(call.Arg(0)),IntegerValue(call.Arg(1)),call.Cancellation);
         return PyNone.Instance;
     }
 
@@ -909,7 +909,7 @@ private static double RelationshipValue(PyValue value)
     {
         var (actor,alliance) = await RequireAllianceExecutorDirector(call);
         RequireBoundAlliance(call,alliance);
-        await store.EditAllianceContactsRelationshipAsync(actor,alliance,ContactIds(call.Arg(0)),Number(call.Arg(1)),call.Cancellation);
+        await store.EditAllianceContactsRelationshipAsync(actor,alliance,ContactIds(call.Arg(0)),IntegerValue(call.Arg(1)),call.Cancellation);
         return PyNone.Instance;
     }
 
@@ -1005,6 +1005,20 @@ private static double RelationshipValue(PyValue value)
         if (!_alliancesByObject.TryGetValue(oid,out var bound) || bound != alliance)
             throw AllianceAccessDenied();
     }
+
+    private static long PositiveIntegerId(PyValue value) => value switch
+    {
+        PyInt { Value: > 0 } id => id.Value,
+        PyLong { Value: > 0 } id => id.Value,
+        _ => throw AllianceAccessDenied(),
+    };
+
+    private static long IntegerValue(PyValue value) => value switch
+    {
+        PyInt id => id.Value,
+        PyLong id => id.Value,
+        _ => throw AllianceAccessDenied(),
+    };
 
     private static long[] ContactIds(PyValue value)
     {

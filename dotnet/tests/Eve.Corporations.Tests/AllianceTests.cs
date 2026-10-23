@@ -502,6 +502,11 @@ public class AllianceTests
             Assert.Null(await relations.GetAsync(Eve.Relations.RelationKinds.Standing.Name,alliance.Id,outsiderCorp.Id));
 
             await service.CallAsync(Call(executor,"AddAllianceContact",new Eve.Marshal.PyInt(outsiderCorp.Id),new Eve.Marshal.PyInt(5)));
+            var malformedAllianceContactId = await Assert.ThrowsAnyAsync<Exception>(() =>
+                service.CallAsync(Call(executor,"AddAllianceContact",
+                    new Eve.Marshal.PyReal(outsiderCorp.Id + 0.5),new Eve.Marshal.PyInt(5))).AsTask());
+            Assert.NotNull(malformedAllianceContactId);
+            Assert.Single(await store.AllianceContactsAsync(alliance.Id));
             var malformedAllianceContactIds = await Assert.ThrowsAnyAsync<Exception>(() =>
                 service.CallAsync(Call(executor,"RemoveAllianceContacts",
                     new Eve.Marshal.PyList([new Eve.Marshal.PyReal(outsiderCorp.Id + 0.5)]))).AsTask());

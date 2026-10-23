@@ -279,6 +279,8 @@ public sealed class PacketDispatcher
             "CorpGetTransactions" or "BuyMultipleItems" or "PlaceMultiSellOrder" or
             "GetHistoryForManyTypeIDs")
             return 10;
+        if (service == "ownerGroupManager")
+            return 10;
         if (service == "mailMgr" && method is "SyncMail" or "GetMailHeaders" or "GetBody" or "MarkAsRead" or "SendMail" or "PokePlayerAboutChatMsgGm")
             return 10;
         if (service == "mailingListsMgr")

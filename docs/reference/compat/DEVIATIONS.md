@@ -5690,3 +5690,8 @@ The Host does not configure mutual-war invitation persistence. All six mutualWar
 ## POS manager provider refusals and budgets (2026-10-23)
 
 posMgr.GetControlTowers and UnanchorStructure now cost 10 weighted per-session units. Both return a named refusal when their provider is absent; UnanchorStructure also refuses malformed or nonpositive tower IDs before the Host callback. The Host callback rechecks corporation, system, deployment, and tower state. PosMgrServiceTests and the dispatcher regression cover the behavior.
+
+
+## Vault manager PLEX balance budget (2026-10-23)
+
+vaultManager.get_account_balance now costs 10 weighted per-session units. The RPC accepts only PLEX and the callback receives the authenticated account ID from the session, never a client-selected owner. `DispatchGoldenTests.Vault_manager_balance_reads_use_a_named_per_session_budget` covers repeated reads.

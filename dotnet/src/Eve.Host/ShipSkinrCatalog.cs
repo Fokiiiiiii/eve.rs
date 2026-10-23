@@ -81,7 +81,7 @@ internal sealed class ShipSkinrCatalog
             {
                 var typeId = Int(Property(associated, "typeID", "typeId"));
                 var uses = Int(Property(associated, "licenseUsesGranted", "license_uses_granted"));
-                if (typeId > 0 && uses >= 0) usesByType[typeId] = uses;
+                if (typeId > 0 && uses >= -1) usesByType[typeId] = uses;
             }
             var binder = Property(row.Doc, "sequenceBinder", "sequence_binder");
             var binderTypeId = Int(Property(binder, "itemTypeID", "itemTypeId"));

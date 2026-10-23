@@ -742,3 +742,5 @@ Security finding for `epicArcStatus.AgentHasEpicMissionsForCharacter` input vali
 Post-push handoff: epic arc RPC finding `f7646151` is on `main`; the 1,374-method registry inventory remains incomplete.
 
 Security finding for `dynamicBountyMgr.GetOutputForClientSolarSystem` argument validation and budgeting was pushed to `main` on 2026-10-23. On `eve_p3`, the focused refusal test passed (1), `Eve.Services.Core.Tests` passed (894), and `Eve.Services.Tests` passed (256), with no skips. The full 1,374-pair inventory remains incomplete.
+
+Post-push handoff: dynamic bounty read finding `55aff570` is on `main`, merged at `0c062d6d`; inventory remains open at 1,374 registered methods.

@@ -668,7 +668,7 @@ def test_a_corporation_unanchors_and_scoops_its_control_tower():
         item = dbseed.sql(
             f"select owner_id, location_id, flag, custom_info from {dbseed.schema('INVENTORY')}.items where id = {tower}"
         )
-        assert item.startswith(f"{character}|{SYSTEM}|") and "unanchor" in item.lower(), item
+        assert item.startswith(f"{character}|{LEGAL_SYSTEM}|") and "unanchor" in item.lower(), item
 
         assert client.call_bound(ship[0], "Scoop", tower, None) is None
         changes = timed_events(client, 15.0, until=lambda events: _named(events, "OnItemChange") != [])

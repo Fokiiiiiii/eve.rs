@@ -61,3 +61,7 @@
 - Merged the latest `origin/main` into `cx14` and pushed the SKINR SaveRequest layout correction, test-side `disallowedSlots` filtering, and market trader affiliation fixture repair in commit `1a9e73e9`.
 - Push-triggered `ci.yml` run 689 (`40016219712`) was queued at the latest check. Run 686 (`40015069193`) for parent `4484ec9c` remains in progress; run 683 was queued when checked. Recheck current-head Actions before considering these flows verified.
 - No PostgreSQL database or graphical client was used locally. Python syntax compilation passed; the latest CI gate has not completed yet.
+
+## 2026-10-23 focused MarketHost Actions follow-up
+- Focused Actions run `40016728738` failed in `MarketHostTests` at the test's `CachedMethodCallResult.details.sessionInfo` assertion: it expected `PyStr`, while `ObjectCaching.MethodResult` intentionally writes `PyBytes` through `Raw`. The V24 client's `CachedMethodCalled` checks only for the key's presence. Production wire behavior is unchanged; the regression now asserts the exact ASCII byte value.
+- The corrected `Eve.Host.Tests` project builds with 0 warnings and 0 errors. The focused test is being retried after the assertion correction; no local PostgreSQL database or graphical client was used.

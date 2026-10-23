@@ -175,3 +175,9 @@ Use lane `eve_p4` only and run database work through `tools/dev/db-lock.sh`. The
 
 - Run 675 and Agent run 146 reported `INVALID_COMPONENT_LICENSE_ITEM` for the unlimited license item. The live fixture query previously selected any published compatible component with a license item and binder, while `ShipSkinrCatalog.LoadAsync` only registers a component when its category and rarity have an authoritative point value.
 - The SKINR live fixture now requires a matching `skinrComponentPointValues` entry, including both supported object-map and `_key`/`_value` array shapes, so it selects an item the runtime catalog can resolve. The Python file passed `python3 -m py_compile`; the live Actions check is pending.
+
+## 2026-10-23 SKINR consume request fixture shape
+
+- V24.01's generated descriptors and client messenger define `ConsumeRequest.item` as field 1 containing `ItemIdentifier.item` at field 1, whose `InventoryItemIdentifier.sequential` is varint field 1. The live test encoder added one extra field-1 message wrapper, so the Host read item ID 0 and correctly returned `INVALID_COMPONENT_LICENSE_ITEM` before license lookup.
+- Corrected `_item_consume_payload` to encode the two nested messages and quantity 1 from the client schema. The SDE `-1` unlimited-license sentinel handling remains in place.
+- The push gate on the parent head is still running; its .NET build passed. No PostgreSQL database or graphical client was used locally.

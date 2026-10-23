@@ -208,8 +208,7 @@ def _skin_identifier(character: int, skin_hex: str) -> bytes:
 
 
 def _item_consume_payload(item_id: int) -> bytes:
-    item_identifier = field(1, field(1, number_field(1, item_id)))
-    return field(1, item_identifier) + number_field(2, 1)
+    return field(1, field(1, number_field(1, item_id))) + number_field(2, 1)
 
 
 def _skin_hex_from_draft(draft: bytes) -> str:

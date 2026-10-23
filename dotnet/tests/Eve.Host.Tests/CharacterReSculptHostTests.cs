@@ -147,6 +147,7 @@ public sealed class CharacterReSculptHostTests : IAsyncLifetime
             {
                 var result = Assert.IsType<PyTuple>(await select.CallAsync(new ServiceCall
                 {
+                    Args = [],
                     Method = "GetCharacterSelectionData",
                     Session = session,
                 }));
@@ -200,15 +201,17 @@ public sealed class CharacterReSculptHostTests : IAsyncLifetime
             var select = restarted.Registry.Lookup("charUnboundMgr")!;
             var data = Assert.IsType<PyTuple>(await select.CallAsync(new ServiceCall
             {
+                Args = [],
                 Method = "GetCharacterSelectionData",
                 Session = session,
             }));
             var forcedRow = Assert.IsType<PyObject>(Assert.Single(
-                Assert.IsType<PyList>(data.Items[2]).Items.Where(row =>
+                Assert.IsType<PyList>(data.Items[2]).Items,
+                row =>
                 {
                     var fields = Assert.IsType<PyDict>(Assert.IsType<PyObject>(row).Args).Entries;
                     return fields.Any(entry => entry.Key == new PyStr("characterID") && entry.Value == new PyInt(forced));
-                })));
+                }));
             var forcedFields = Assert.IsType<PyDict>(forcedRow.Args).Entries.ToDictionary(
                 entry => Assert.IsType<PyStr>(entry.Key).Value,
                 entry => entry.Value,
@@ -223,13 +226,14 @@ public sealed class CharacterReSculptHostTests : IAsyncLifetime
             });
             var saved = Assert.IsType<PyTuple>(await select.CallAsync(new ServiceCall
             {
+                Args = [],
                 Method = "GetCharacterSelectionData",
                 Session = new ClientSession { UserId = 1 },
             }));
             var savedRow = Assert.IsType<PyObject>(Assert.Single(
-                Assert.IsType<PyList>(saved.Items[2]).Items.Where(row =>
-                    Assert.IsType<PyDict>(Assert.IsType<PyObject>(row).Args).Entries.Any(entry =>
-                        entry.Key == new PyStr("characterID") && entry.Value == new PyInt(forced)))));
+                Assert.IsType<PyList>(saved.Items[2]).Items,
+                row => Assert.IsType<PyDict>(Assert.IsType<PyObject>(row).Args).Entries.Any(entry =>
+                    entry.Key == new PyStr("characterID") && entry.Value == new PyInt(forced))));
             var savedFields = Assert.IsType<PyDict>(savedRow.Args).Entries.ToDictionary(
                 entry => Assert.IsType<PyStr>(entry.Key).Value,
                 entry => entry.Value,

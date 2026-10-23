@@ -5509,7 +5509,7 @@ The fleetObject Init RPC costs 10 weighted per-session units because it updates 
 
 `corpRegistry.GetCorporation` consumes 10 weighted per-session units because its profile response includes a full corporation member count. The client response is unchanged. `DispatchGoldenTests.Corporation_contact_and_bulletin_lists_use_a_named_per_session_budget` verifies the named refusal.
 
-`allianceRegistry.GetAlliance` and its `GetAlliancePublicInfo` alias consume 10 weighted per-session units because they read member counts and combine sovereignty, prime-time, and capital-system state. `DispatchGoldenTests.Alliance_expensive_methods_use_a_named_per_session_budget` verifies both public aliases. Responses remain unchanged.
+`allianceRegistry.GetAlliance` and its `GetAlliancePublicInfo` alias consume 10 weighted per-session units because they read member counts and combine sovereignty, prime-time, and capital-system state. `DispatchGoldenTests.Alliance_expensive_methods_use_a_named_per_session_budget` covers both public aliases and all other weighted alliance RPC routes. Responses remain unchanged.
 
 `allianceRegistry.GetAllianceSovereigntyStructuresInfo` consumes 10 weighted per-session units because it projects rows from the alliance sovereignty snapshot. The alliance-scoped response is unchanged. `DispatchGoldenTests.Alliance_expensive_methods_use_a_named_per_session_budget` covers the cost.
 

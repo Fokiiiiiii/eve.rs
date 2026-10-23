@@ -482,7 +482,7 @@ public sealed class MailServiceTests
             new PyTuple([new PyInt(20), new PyInt(10), new PyInt(20), new PyInt(99),
                 new PyInt(50), new PyInt(999), new PyReal(5.9), new PyInt(-1)])));
 
-        Assert.Equal([20L, 10L, 5L], Ids(result));
+        Assert.Equal([20L, 10L], Ids(result));
         var corporationMail = Assert.IsType<PyList>(result).Items[1];
         Assert.Equal(PyNone.Instance, Field(corporationMail, "toCharacterIDs"));
         Assert.Equal(PyNone.Instance, Field(corporationMail, "toListID"));

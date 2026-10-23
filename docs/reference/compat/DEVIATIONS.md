@@ -5522,3 +5522,5 @@ The fleetObject Init RPC costs 10 weighted per-session units because it updates 
 `allianceRegistry.DeclareWarAgainst` and `PayBill` consume 10 weighted per-session units because each performs a bill-backed durable transaction and war declaration also emits alliance notifications. Existing role checks and transaction results remain unchanged. `DispatchGoldenTests.Alliance_expensive_methods_use_a_named_per_session_budget` covers both routes.
 
 `allianceRegistry.GetBillBalance` consumes 10 weighted per-session units because it reads the active corporation wallet division for an alliance accountant. Existing role checks and balance response remain unchanged. `DispatchGoldenTests.Alliance_expensive_methods_use_a_named_per_session_budget` covers the call.
+
+`corporationSvc` employment-history and medal-list reads, medal-status batches, and medal-award batches consume 10 weighted per-session units. Existing privacy filtering, persisted role checks, and response shapes remain unchanged. `DispatchGoldenTests.Corporation_service_list_and_bulk_methods_use_a_named_per_session_budget` covers each bounded route.

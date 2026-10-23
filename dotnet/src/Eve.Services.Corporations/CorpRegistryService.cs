@@ -1525,6 +1525,8 @@ private static int MemberFieldInteger(PyValue value)
           if (contactId is null || relationship is < -10 or > 10)
               return PyNone.Instance;
           await store.AddCorporationContactAsync(corporation.Id,contactId.Value,(int)relationship,call.Cancellation);
+          CorporationNotificationAdapter.OrganizationContactsUpdated(characterSessions,call,corporation.Id,false,
+              [(contactId.Value,(long?)relationship,(long?)null)]);
           return PyNone.Instance;
       }
 
@@ -1535,7 +1537,10 @@ private static int MemberFieldInteger(PyValue value)
       public async ValueTask<PyValue> RemoveCorporateContacts(ServiceCall call)
       {
           var corporation = await RequireCorporationSocialRole(call,CorporationRoles.Diplomat);
-          await store.RemoveCorporationContactsAsync(corporation.Id,CorporationBulkIds(call.Arg(0)),call.Cancellation);
+          var contactIds = CorporationBulkIds(call.Arg(0));
+          await store.RemoveCorporationContactsAsync(corporation.Id,contactIds,call.Cancellation);
+          CorporationNotificationAdapter.OrganizationContactsUpdated(characterSessions,call,corporation.Id,false,
+              [.. contactIds.Select(contactId => (contactId,(long?)null,(long?)null))]);
           return PyNone.Instance;
       }
 
@@ -1546,8 +1551,11 @@ private static int MemberFieldInteger(PyValue value)
           var relationship = Number(call.Arg(1));
           if (relationship is < -10 or > 10)
               return PyNone.Instance;
+          var contactIds = CorporationBulkIds(call.Arg(0));
           await store.EditCorporationContactRelationshipsAsync(corporation.Id,
-              CorporationBulkIds(call.Arg(0)),(int)relationship,call.Cancellation);
+              contactIds,(int)relationship,call.Cancellation);
+          CorporationNotificationAdapter.OrganizationContactsUpdated(characterSessions,call,corporation.Id,false,
+              [.. contactIds.Select(contactId => (contactId,(long?)relationship,(long?)null))]);
           return PyNone.Instance;
       }
 

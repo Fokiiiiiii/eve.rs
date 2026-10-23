@@ -5661,3 +5661,6 @@ Corporation registry batch RPCs `ExecuteActions`, `GetMembersByIds`, `GetMemberI
 
 
 `fleetMgr.AddToWatchlist`, `RemoveFromWatchlist`, and `RegisterForDamageUpdates` now reject malformed containers, nonpositive/non-integer IDs, and raw batches above 500 with `FleetError` before changing session watchlist state. Valid batches still include only current fleet members and store at most 100 distinct IDs. `Fleet_watchlist_updates_keep_only_members_and_clear_removed_damage_targets` covers the refusal cases and unchanged state.
+
+
+`mutualWarInviteMgr.GetPendingInvitesForSession` and `IsCorpInvitesBlockedPlayer` now return the same explicit `CustomNotify` unavailable response as the four mutation methods when Host persistence callbacks are absent. This removes empty/false success values from routes whose authoritative provider is not connected; configured callback results and valid RPC output shapes remain unchanged. `Mutual_war_invite_mgr_exposes_reference_routes_and_callback_shapes` covers all six refusal routes and the configured callback path.

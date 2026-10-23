@@ -629,8 +629,9 @@ public sealed partial class MutualWarInviteMgrService(
     [Method("GetPendingInvitesForSession")]
     public async ValueTask<PyValue> GetPendingInvitesForSession(ServiceCall call)
     {
+        if (readPendingInvites is null) throw NotAvailable();
         var ownerId = OwnerId(call.Session);
-        IReadOnlyList<MutualWarInvite> invites = ownerId <= 0 || readPendingInvites is null
+        IReadOnlyList<MutualWarInvite> invites = ownerId <= 0
             ? Array.Empty<MutualWarInvite>()
             : await readPendingInvites(ownerId, call.Cancellation);
         return new PyList([.. invites
@@ -645,8 +646,9 @@ public sealed partial class MutualWarInviteMgrService(
     [Method("IsCorpInvitesBlockedPlayer")]
     public async ValueTask<PyValue> IsCorpInvitesBlockedPlayer(ServiceCall call)
     {
+        if (readInvitesBlocked is null) throw NotAvailable();
         var ownerId = OwnerId(call.Session);
-        var blocked = ownerId > 0 && readInvitesBlocked is not null &&
+        var blocked = ownerId > 0 &&
             await readInvitesBlocked(ownerId, call.Cancellation);
         return new PyInt(blocked ? 1 : 0);
     }

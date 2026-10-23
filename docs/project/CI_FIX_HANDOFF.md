@@ -151,13 +151,21 @@ Use lane `eve_p4` only and run database work through `tools/dev/db-lock.sh`. The
 - CI runs 668 (`4b3cd33b`) and 671 (`287c530d`) still returned HTTP 400 at SKINR `ConsumeRequest` after the SDE unlimited-license sentinel fix. Their assertion did not include the gateway message; the `ebf1ec87` test now prints it to identify the refusing validation branch. The catalog fix is not yet verified end to end.
 - CI run 671 also failed the contact test's persisted-data assertion. Commit `ebf1ec87` changes that check to compare semantic field values through `Field`; its focused Agent test and push CI are checking the updated version.
 - Commit `b5ecf895` contains these assertion changes and the live error diagnostic. Merge-result commit `b2025a73` preserves the latest main contact notification checks. The merged `Eve.Host.Tests` Release build passed with zero warnings and errors; no local PostgreSQL test was run.
-- Pushed the merged assertion and live diagnostic as `ebf1ec87` after fetching/merging current main. Focused contact test run `40011081153` and selected live `test_skinr_live.py` run `40011418764` are in progress; push CI run `40011062817` is in progress and will report the SKINR gateway error string.
+<<- Pushed the merged assertion and live diagnostic as `ebf1ec87` after fetching/merging current main. Focused contact test run `40011081153` and selected live `test_skinr_live.py` run `40011418764` failed as described below; push CI run `40011062817` identified `INVALID_COMPONENT_LICENSE_ITEM`.
 
+## 2026-10-23 persisted contact ID wire types
+
+- CI run 671 on `287c530d` and Agent run 138 reported the contact notification test expected `PyLong` for persisted `senderID`, but `NotificationMgrService.Dto` emits persisted `senderID` and `receiverID` as `PyInt`.
+- Updated persisted sender and receiver assertions to `PyInt`; kept the direct `OnNotificationReceived` packet assertions unchanged. The current Eve.Host.Tests Release build is still running; no local PostgreSQL test was run.
+
+## 2026-10-23 structure market Host fixture location
+
+- CI run 672 on `1669e6dc` failed the structure market Host test because the fixture set each session's `structureid` to the Upwell structure but persisted the characters at the SDE station.
+- The feature's market rules require the seller to be at the structure when the character has no Marketing skill. Main now places test characters at the structure. The new sell failure on run 675 occurs after that fixture correction; the local test now includes the wrapped user-facing refusal in its assertion output. The market feature handoff owns that separate issue.
 
 ## 2026-10-23 run 675 follow-up
 
-- Push CI run 675 (`40011062817`) on `ebf1ec87` reports the live SKINR request as `INVALID_COMPONENT_LICENSE_ITEM`; the unlimited-license parser unit check passed earlier, but the live consume path still does not resolve the seeded item type. Agent run 146 (`40011418764`) also failed this live scenario. The failure is in component license type resolution or its fixture selection and remains open.
-- Run 675's Host tests found `Contact_add_persists_and_routes_the_recipient_notification` expected a persisted `senderID` as `PyLong`; the database read returns `PyInt`. The assertion now matches the returned persisted type. Build and a focused Actions rerun are pending.
-- Run 675 also failed `MarketHostTests.The_host_dispatches_accessible_structure_market_orders_and_recovers_partial_settlement_after_restart` during `PlaceMultiSellOrder`. The test now reports the wrapped user-facing refusal in its failure message; the root cause is still pending. This market settlement path is tracked by the neighboring market feature handoff.
-- Run 675's E2E, Windows and remaining .NET jobs were still active at the last status poll. Windows entry and production start are not yet marked complete for this head.
-- The current worktree adds the persisted sender ID assertion correction and market failure detail. A Release build of `Eve.Host.Tests` is running; no local database tests were run.
+- Push CI run 675 (`40011062817`) on `ebf1ec87` reports the live SKINR request as `INVALID_COMPONENT_LICENSE_ITEM`; the unlimited-license parser unit check passed earlier, but live consume still does not resolve the seeded item type. Agent run 146 (`40011418764`) also failed this live scenario. Component license type resolution remains open.
+- Run 675's Host tests found the persisted contact `senderID` type mismatch; the local expectation now matches the returned `PyInt`. The project build and focused Actions rerun are pending.
+- Run 675's Windows job remains in progress at this handoff update. Update TODO 14 after checking its completed result; keep the owner-machine console checks open unless they run on that machine.
+- The current worktree reports the market sell refusal in the failing test message. A Release build of `Eve.Host.Tests` is running; no local database tests were run.

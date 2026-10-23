@@ -729,7 +729,7 @@ public sealed class CharacterHostTests
         Assert.Equal(5, args.Length);
         Assert.True(((PyLong)args[0]).Value > 0);
         Assert.Equal(new PyInt(89), args[1]);
-        Assert.Equal(new PyLong(senderId), args[2]);
+        Assert.Equal(new PyInt(senderId), args[2]);
         var data = Assert.IsType<PyDict>(args[4]);
         Assert.Equal(new PyLong(-10), NotificationValue(data, "level"));
         Assert.Equal("Hello", Eve.Macho.JsSemantics.StringValue(NotificationValue(data, "message")));

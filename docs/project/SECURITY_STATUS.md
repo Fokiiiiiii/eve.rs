@@ -591,6 +591,18 @@ Security finding `6ccafe8c` was pushed to `main` on 2026-10-23.
 Security finding for the three single paper-doll reads was pushed to `main` on 2026-10-23.
 
 
+### Achievement tracker RPC detail
+
+| RPC | Caller and target scope | Input bounds | Per-session cost |
+|---|---|---|---|
+| `achievementTrackerMgr.HasEverWarped`, `GetCompletedAchievementsAndClientEventCount` | Authenticated session character; no caller-selected target | No positional or keyword arguments | 1 unit each |
+| `achievementTrackerMgr.UpdateClientAchievmentsAndCounters` | Authenticated session character only | Exactly two dictionaries and no keyword arguments; each map has at most 5,000 entries; achievement IDs are positive Int32 values with nonnegative integral filetimes; event names are nonblank strings up to 256 UTF-8 bytes with nonnegative integral counts | 10 units |
+
+The V24.01 caller reads with no arguments and writes its full completion and event-count maps (`achievements/client/achievementSvc.py:129,229`). EveJS derives the character from the session and forwards the two maps to its tracker. Host now rejects malformed or oversized updates before storage and charges all three routes; `AchievementTrackerWriteTests.Achievement_tracker_refuses_malformed_or_oversized_state_before_storage` covers argument, type, range, and count refusals, `CharacterHostTests.Achievement_tracker_updates_are_validated_before_persisting_and_survive_host_restart` checks persistence through the real registry, and `DispatchGoldenTests.Achievement_state_updates_use_a_named_per_session_budget` covers the write cost. On `eve_p3`, the focused Host regression passed (1), all `Eve.Services.Core.Tests` passed (865), and all `Eve.Services.Tests` passed (229), with no skips.
+
+Security finding `50c8c200` for achievement tracker boundaries and budgets was pushed to `main` on 2026-10-23. Its focused Host regression passed on `eve_p3` (1); `Eve.Services.Core.Tests` passed (865) and `Eve.Services.Tests` passed (229), with no skips.
+
+
 ### Contextual Offer Manager RPC detail
 
 | RPC | Caller and target scope | Input bounds | Per-session cost |

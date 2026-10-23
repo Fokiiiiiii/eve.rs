@@ -131,6 +131,9 @@ public sealed class AchievementTrackerMgrService(
     Func<ServiceCall, CancellationToken, ValueTask<PyValue?>>? rpcHandler = null,
     Func<long, PyDict, PyDict, CancellationToken, ValueTask>? writeState = null) : IService
 {
+    private const int MaxStateEntries = 5_000;
+    private const int MaxEventNameBytes = 256;
+
     public AchievementTrackerMgrService(Func<ServiceCall, ValueTask<PyValue?>> stateHandler)
         : this(rpcHandler: (call, _) => stateHandler(call))
     {
@@ -147,6 +150,22 @@ public sealed class AchievementTrackerMgrService(
     {
         if (!HasMethod(call.Method)) return PyNone.Instance;
         call.Cancellation.ThrowIfCancellationRequested();
+        if (call.Kwargs is not PyNone)
+            throw MachoErrors.ThrowUserError("ACHIEVEMENT_ARGUMENTS_INVALID");
+        switch (call.Method)
+        {
+            case "HasEverWarped":
+            case "GetCompletedAchievementsAndClientEventCount":
+                if (call.Args.Count != 0)
+                    throw MachoErrors.ThrowUserError("ACHIEVEMENT_ARGUMENTS_INVALID");
+                break;
+            case "UpdateClientAchievmentsAndCounters":
+                if (call.Args.Count != 2 || call.Arg(0) is not PyDict completed || call.Arg(1) is not PyDict eventCounts)
+                    throw MachoErrors.ThrowUserError("ACHIEVEMENT_STATE_INVALID");
+                ValidateState(completed, eventCounts);
+                break;
+        }
+
         if (rpcHandler is not null && await rpcHandler(call, call.Cancellation) is { } handled)
             return handled;
 
@@ -185,6 +204,28 @@ public sealed class AchievementTrackerMgrService(
         new(new PyStr(key), value);
 
     private static KeyValuePair<PyValue, PyValue> Entry(PyValue key, PyValue value) => new(key, value);
+
+    private static void ValidateState(PyDict completed, PyDict eventCounts)
+    {
+        if (completed.Entries.Count > MaxStateEntries || eventCounts.Entries.Count > MaxStateEntries)
+            throw MachoErrors.ThrowUserError("ACHIEVEMENT_STATE_TOO_LARGE");
+
+        foreach (var (key, value) in completed.Entries)
+        {
+            var achievementId = key switch { PyInt i => i.Value, PyLong l => l.Value, _ => 0 };
+            var completedAt = value switch { PyInt i => i.Value, PyLong l => l.Value, _ => -1 };
+            if (achievementId is <= 0 or > int.MaxValue || completedAt < 0)
+                throw MachoErrors.ThrowUserError("ACHIEVEMENT_STATE_INVALID");
+        }
+
+        foreach (var (key, value) in eventCounts.Entries)
+        {
+            var count = value switch { PyInt i => i.Value, PyLong l => l.Value, _ => -1 };
+            if (key is not PyStr name || string.IsNullOrWhiteSpace(name.Value)
+                || System.Text.Encoding.UTF8.GetByteCount(name.Value) > MaxEventNameBytes || count < 0)
+                throw MachoErrors.ThrowUserError("ACHIEVEMENT_STATE_INVALID");
+        }
+    }
 }
 
 public sealed class OperationsManagerService(

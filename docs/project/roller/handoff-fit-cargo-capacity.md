@@ -18,10 +18,10 @@ EveJS 261018.1 checks this before changing state and returns a CustomNotify carr
 
 ## Verification and handoff
 
-No database was used locally. `Eve.Ships` and `Eve.Ships.Tests` built successfully with zero warnings and errors, and the focused no-database capacity predicate test passed.
+No database was used locally. `Eve.Ships` and `Eve.Ships.Tests` built successfully with zero warnings and errors, and the focused no-database capacity predicate test passed. `Eve.Host` built successfully with zero warnings and errors using `BuildProjectReferences=false` and analyzers disabled after its initial full build was killed while compiling Host under local memory pressure.
 
-Actions run 39962433299 passed the batch `MultiAdd` regression (1 passed, 0 failed, 0 skipped). Run 39969323136 compiled the solution; the inventory batch regression passed, but the ship offline regression still returned `ShipChanged`. The merge at 5ba7acea updates that test to derive the stack unit volume from `ItemVolumes.Unit` and use the static ship fixtures, alongside assertions for stored cargo volume, persisted module state, and loaded capacity. The corrected scenario needs an Actions rerun. The first headless run failed during setup because the module was not found in the hangar after using its multiword name; the walk now grants verified type ID 1319 and needs a fresh run. No graphical-client check was made.
+Actions run 39971814620 passed selected capacity predicate, offline refusal, and batch inventory regressions (1 passed, 0 failed, 0 skipped). Run 39976024171 failed before the live client walk: Host startup threw at CharacterServiceList because the inventory service is wrapped in IndustryInventoryChangePublisher and RepackagingService searched for the now absent bare InvBrokerService. The same startup exception stopped dedicated live run 39976041289 before the capacity scenario. The current worktree fixes the lookup by extracting the publisher's inner broker. Push this startup correction with the handoff, then rerun focused Actions and the live walk. No graphical-client check was made.
 
 Keep the worktree's pre-existing deletions under crates/eve-net, crates/eve-sde, crates/eve-sim, and crates/eve-space out of the commit.
 
-Implementation pushes: 80d07d8c and 55f2dd87. Cargo implementation commit: 64bdd41c (merged to main); headless error-reporting adjustment is in 30f338d7. Commit be2c316f contains the offline guard adjustment and the type-ID headless setup correction; live run 39972764975 is pending.
+Implementation pushes: 80d07d8c and 55f2dd87. Cargo implementation commit: 64bdd41c (merged to main); headless setup/error reporting changes are in 30f338d7 and 5398d1ca. The latest main merge is cea5dc5d.

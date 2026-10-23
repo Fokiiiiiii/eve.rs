@@ -388,6 +388,8 @@ Security finding `28946b42` for Info Gathering telemetry bounds and budgets was 
 
 Security finding `6afdbde6` for browser lockdown fixed-read bounds and budgets was pushed to `main` on 2026-10-23, with concurrent upstream updates merged at `c8b961d0`. On `eve_p3`, the focused refusal test passed (1), `Eve.Services.Core.Tests` passed (877), and `Eve.Services.Tests` passed (238), with no skips. Method-by-method inventory classification remains open.
 
+Security finding `7ae17e22` for the cache build-info read boundary and budget was pushed to `main` on 2026-10-23. On `eve_p3`, the focused refusal test passed (1), `Eve.Services.Core.Tests` passed (878), and `Eve.Services.Tests` passed (239), with no skips. Method-by-method inventory classification remains open.
+
 Security finding `3a7f0843` for Resource Wars reads was pushed to `main` on 2026-10-23. On `eve_p3`, the focused refusal test passed (1), `Eve.Services.Core.Tests` passed (872), and `Eve.Services.Tests` passed (233), with no skips. Method-by-method inventory classification remains open.
 
 Security finding `509c10c8` was pushed to `main` on 2026-10-23; it was merged with concurrent `main` commit `1c997e37` in `ce6d6d87`. At the merged revision, the live Host registry audit passed with 1,374 service/method pairs, and `RpcFuzzTests` passed on `eve_p3` (2 tests, no skips). Method-by-method inventory classification remains open.

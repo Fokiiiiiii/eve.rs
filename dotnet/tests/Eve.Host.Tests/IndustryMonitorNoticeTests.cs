@@ -151,7 +151,7 @@ public sealed class IndustryMonitorNoticeTests
     [Fact]
     public void Composition_resolves_the_inner_inventory_broker_through_the_monitor_publisher()
     {
-        var inventory = new InventoryMutationService((_, _) => { });
+        var inventory = new InventoryMutationService(_ => { });
         var monitors = new IndustryMonitorRpcService(availableMaterials: (_, _) =>
             ValueTask.FromResult<IReadOnlyDictionary<int, long>>(new Dictionary<int, long>()));
         var publishedInventory = new IndustryInventoryChangePublisher(inventory, monitors);

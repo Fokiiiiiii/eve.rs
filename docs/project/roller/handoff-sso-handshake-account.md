@@ -27,13 +27,14 @@ Authenticate the V24.01 `ConnectionService.LoginSso` path from the inbound `user
 - Python compile checks and HostLink fixture generation (14 valid, 10 invalid cases): passed.
 - Host, Host.Tests, and Identity.Tests Release builds: passed. No-database identity verifier theory: 5 passed, 0 failed, 0 skipped.
 - Agent test `39975779919` for feature commit `7b8ae52a`: Host.Tests SSO cases 5/5 and Identity.Tests SSO cases 8/8 passed; zero skips.
-- Push-triggered CI `39975764343` compiled the solution and passed Rust tests, Rust format/Clippy, .NET build, and Python tests. Its host startup failed because `InventoryRpc` now wraps `InvBrokerService`, while character composition still searched only for the inner type. A focused wrapper-unwrapping fix and composition test are in the worktree and Host.Tests Release build passes.
-- That CI run also found separate space-container tests failing after the concurrent main merge; their results are outside the SSO paths and remain open for review.
+- Push-triggered CI `39975764343` found Host startup composition failing because `InventoryRpc` wraps `InvBrokerService`, while character composition searched only for the inner type. The wrapper-unwrapping fix and focused composition test were pushed in `0cc56f79`.
+- Agent test `39989413962` and CI `39989400403` both failed at .NET test compilation because the composition fixture still supplied a two-argument lambda to `Action<long>`. The fixture is now corrected, and the full dependency-including Host.Tests Release build passes with zero warnings and errors. The live workflow step also failed in that CI run; its captured failure tail contains no diagnostic beyond the step start.
+- The concurrent main merge also surfaced separate space-container test failures in CI `39975764343`; they are outside this SSO path. No PostgreSQL test was run locally.
 - Workspace Rust fmt and Clippy cannot complete in this worktree because it already lacks `crates/eve-space/src/targeting/*`; those pre-existing deletions remain untouched. Targeted eve-net checks pass.
-- No PostgreSQL database was used locally. The live SSO scenario and graphical V24 client exercise remain to be confirmed.
+- No PostgreSQL database was used locally. The live SSO scenario still needs a passing Actions run; the graphical V24 client was not exercised.
 
 ## Next steps
 
-1. Commit the composition startup fix and this checkpoint, fetch and merge `origin/main`, then push `HEAD:main`.
+1. Commit the corrected composition fixture and this checkpoint, fetch and merge `origin/main`, then push `HEAD:main`.
 2. Run focused Host/Identity agent tests and inspect the new push-triggered CI run, including the live headless SSO scenario.
 3. Keep the TODO row open until Actions verification is recorded.

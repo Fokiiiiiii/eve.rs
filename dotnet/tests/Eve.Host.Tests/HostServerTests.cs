@@ -311,7 +311,7 @@ public class HostServerTests : IAsyncLifetime
         const string subject = "CHARACTER:EVE:90000001";
         const string token = "opaque-test-token";
         const ulong role = 0x0100_0000_0000_0001;
-        var accounts = new InMemoryAccountDirectory(new AccountOptions { CountryCode = "JP", NewAccountRole = role });
+        var accounts = new InMemoryAccountDirectory(new AccountOptions { AutoCreate = true, CountryCode = "JP", NewAccountRole = role });
         var created = Assert.IsType<LoggedIn>(await accounts.LoginAsync(
             new LoginAttempt("linked-account", new byte[] { 1 }, "EN", "127.0.0.1"), CancellationToken.None));
         Assert.True(await accounts.LinkSsoIdentityAsync(

@@ -313,6 +313,9 @@ public sealed class PacketDispatcher
             return 10;
         if (service == "itemLocking" && (method is "GetItemsByLocation" or "GetLockedItemLocations"))
             return 10;
+        if ((service == "crimewatch" && method == "GetSecurityStatusTransactions") ||
+            (service == "killRightMgr" && method == "GetKillRights"))
+            return 10;
         if (service == "account" && method is "GetTransactions" or "GiveCash" or "GiveCashFromCorpAccount")
             return 10;
         if (service == "config" && method is "GetAverageMarketPrices" or "GetMultiOwnersEx" or "GetMultiCorpTickerNamesEx" or "GetMultiAllianceShortNamesEx" or "GetMultiLocationsEx")

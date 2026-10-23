@@ -658,6 +658,24 @@ public class RuntimeTests : IAsyncLifetime
         Assert.Empty(Assert.IsType<PyList>(result).Items);
     }
 
+    [Fact]
+    public async Task GetKillRights_refuses_more_than_500_raw_target_ids()
+    {
+        Pilot(1, System);
+        var service = new KillRightMgrService(Store);
+        var targets = new PyList([.. Enumerable.Range(1, 501).Select(id => (PyValue)new PyInt(id))]);
+
+        var error = await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(async () =>
+            await ((IService)service).CallAsync(new ServiceCall
+            {
+                Method = "GetKillRights",
+                Args = [targets],
+                Session = _sessions.Of(1)!,
+            }));
+
+        Assert.Equal("CRIMEWATCH_BULK_LIMIT_EXCEEDED", error.Error.UserErrorMessage);
+    }
+
     [PgFact]
     public async Task GetKillRights_returns_only_the_callers_active_rights_for_requested_targets()
     {

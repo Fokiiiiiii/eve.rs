@@ -234,6 +234,8 @@ public sealed partial class KillRightMgrService(
             PyTuple tuple => tuple.Items,
             _ => [],
         };
+        if (targetIds.Count > 500)
+            throw Eve.Services.MachoErrors.ThrowUserError("CRIMEWATCH_BULK_LIMIT_EXCEEDED");
         var requestedTargets = targetIds
             .Select(Number)
             .Where(id => id is > 0)

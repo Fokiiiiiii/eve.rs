@@ -5551,3 +5551,8 @@ The security inventory now records each PLEX market route separately: the order 
 ## Character killmail page budget (2026-10-23)
 
 `charMgr.GetRecentShipKillsAndLosses` derives its owner from the active session, caps each page at 25 rows, and now consumes 10 weighted per-session units to bound repeated reads. `DispatchGoldenTests.Character_profile_reads_use_a_named_per_session_budget` covers its budget refusal alongside the public and private profile reads.
+
+
+## Crimewatch history and kill-right RPC bounds (2026-10-23)
+
+`crimewatch.GetSecurityStatusTransactions` and `killRightMgr.GetKillRights` consume 10 weighted per-session units. Kill-right target batches refuse more than 500 raw IDs before store access with `CRIMEWATCH_BULK_LIMIT_EXCEEDED`; returned rights remain scoped to the session character as owner. `Crimewatch_history_and_kill_right_lists_use_named_per_session_budgets` and `GetKillRights_refuses_more_than_500_raw_target_ids` cover the limits.

@@ -5752,3 +5752,8 @@ The security inventory now lists each active `charUnboundMgr` RPC by caller scop
 `marketProxy.PlaceMultiSellOrder` now refuses duplicate item IDs in the raw batch before placing any order line; the regression confirms the item remains in its original station location and produces no ask order or notification.
 
 `invbroker.FitFitting` accepts the `__builtin__.set` shape emitted by V24.01 for candidate item IDs, refuses malformed outer maps, and caps combined fit dictionaries and item lists at 500 raw entries before mutation. This also bounds the docked ship refit path and its per-session weighted cost.
+
+
+## Repair RPC work bounds (2026-10-23)
+
+`repairSvc.GetRepairQuotes` and `RepairItemsInStation` validate list, tuple, or V24 Python-set item IDs as positive integers, cap raw entries at 500 before database reads or writes, and use 10 weighted per-session work units. `RepairServiceTests.Oversized_repair_item_lists_are_refused_before_wallet_or_damage_changes` and `Repair_item_ids_must_be_positive_integer_wire_values` cover input bounds and validation; `DispatchGoldenTests.Repair_calls_use_the_named_per_session_budget` covers weighted work. The repair shop continues to require a bound NPC station where the caller is docked and items accessible to that character.

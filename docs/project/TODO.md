@@ -2771,3 +2771,5 @@ Security review follow-up: alliance bill payment and war declaration now require
 Security review follow-up: `allianceRegistry.GMForceAcceptApplication` now requires a positive integral corporation ID after its server-set GML gate, so malformed targets cannot be truncated to another applicant before scheduling.
 Security review follow-up: `marketProxy.PlaceMultiSellOrder` now rejects repeated item IDs across a batch before processing any line, preventing a duplicated stack from partially placing orders.
 Security review follow-up: `invbroker.FitFitting` accepts the client's Python set shape for candidate item IDs, refuses more than 500 combined raw fit entries before moving items, and consumes 10 weighted per-session units.
+
+Security review follow-up: `repairSvc.GetRepairQuotes` and `RepairItemsInStation` now accept only list, tuple, or V24 Python-set item IDs, require positive integers, refuse raw batches above 500 before database work, and cost 10 per-session weighted units. Focused service tests cover oversized lists and malformed IDs; dispatcher regressions cover the weighted budget. The complete RPC ownership inventory remains open.

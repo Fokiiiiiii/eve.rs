@@ -558,6 +558,29 @@ public class DispatchGoldenTests
         Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[1])));
     }
 
+    [Theory]
+    [InlineData("TrackOfferDelivered")]
+    [InlineData("TrackOfferSeen")]
+    [InlineData("TrackOfferBuyPress")]
+    [InlineData("TrackOfferClosed")]
+    [InlineData("TrackOfferPurchased")]
+    [InlineData("TrackOfferPurchasedSeen")]
+    public async Task Contextual_offer_tracking_uses_a_named_per_session_budget(string method)
+    {
+        var capture = new Capture();
+        var session = new ClientSession(capture) { SessionId = 931 };
+        var registry = new ServiceRegistry();
+        var service = new ExpensiveService("contextualOfferMgr");
+        registry.Register(service);
+        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 1 };
+
+        await dispatcher.DispatchAsync(CallRequestPacket("contextualOfferMgr", method), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("contextualOfferMgr", method), session);
+
+        Assert.Equal(1, service.Calls);
+        Assert.Equal(2, capture.Sent.Count);
+        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[1])));
+    }
 
     [Theory]
     [InlineData("SetMotd")]
@@ -581,6 +604,7 @@ public class DispatchGoldenTests
         Assert.Equal(2, capture.Sent.Count);
         Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[1])));
     }
+
     [Fact]
     public async Task Character_description_writes_use_a_named_per_session_budget()
     {

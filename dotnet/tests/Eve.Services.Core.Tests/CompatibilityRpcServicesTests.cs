@@ -107,6 +107,45 @@ public sealed class CompatibilityRpcServicesTests
     }
 
     [Fact]
+    public async Task Contextual_offer_tracking_keeps_a_bounded_event_history()
+    {
+        var service = new ContextualOfferMgrService();
+        var rpc = (IService)service;
+
+        for (var id = 1; id <= 1100; id++)
+            await rpc.CallAsync(Call("TrackOfferSeen", new PyLong(id)));
+
+        Assert.Equal(1024, service.Events.Count);
+        Assert.Equal(77, service.Events[0].EventId);
+        Assert.Equal(1100, service.Events[^1].EventId);
+        Assert.Equal(1100, service.Events[^1].OfferId);
+    }
+
+    [Fact]
+    public async Task Contextual_offer_tracking_refuses_invalid_offer_ids_without_recording()
+    {
+        var callbackCalled = false;
+        var service = new ContextualOfferMgrService
+        {
+            RpcHandler = _ =>
+            {
+                callbackCalled = true;
+                return ValueTask.FromResult<PyValue?>(PyNone.Instance);
+            },
+        };
+        var rpc = (IService)service;
+
+        foreach (var value in new PyValue[] { PyNone.Instance, new PyStr("17"), new PyLong(0), new PyLong(-1) })
+        {
+            var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() => rpc.CallAsync(Call("TrackOfferSeen", value)).AsTask());
+            Assert.Equal(MachoErrors.UserErrorClass, refusal.Error.ClassName);
+            Assert.Equal("CONTEXTUAL_OFFER_ID_INVALID", refusal.Error.UserErrorMessage);
+            Assert.Empty(service.Events);
+            Assert.False(callbackCalled);
+        }
+    }
+
+    [Fact]
     public async Task Missing_backends_can_be_injected_without_rebuilding_service_calls()
     {
         ServiceCall? received = null;

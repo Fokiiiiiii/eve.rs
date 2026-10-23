@@ -324,6 +324,8 @@ public sealed class PacketDispatcher
             return 10;
         if (service == "alert" && method == "SendClientStackTraceAlert")
             return 1;
+        if (service == "ProjectDiscovery")
+            return 1;
         if (service == "clientStatLogger" && method == "LogString")
             return 1;
         if (service == "characterEnergyMgr" && method == "GetMyEnergyState")

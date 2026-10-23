@@ -1871,6 +1871,37 @@ public class DispatchGoldenTests
         Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[1])));
     }
 
+    [Fact]
+    public async Task Project_discovery_calls_use_a_named_per_session_budget()
+    {
+        var capture = new Capture();
+        var session = new ClientSession(capture) { SessionId = 922 };
+        var registry = new ServiceRegistry();
+        var service = new ProjectDiscoveryBudgetService();
+        registry.Register(service);
+        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 1 };
+
+        await dispatcher.DispatchAsync(CallRequestPacket("ProjectDiscovery", "get_player_state"), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("ProjectDiscovery", "get_player_state"), session);
+
+        Assert.Equal(1, service.Calls);
+        Assert.Equal(2, capture.Sent.Count);
+        Assert.Equal(ErrorResponseCommand, CommandOf(capture.Sent[1]));
+        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[1])));
+    }
+
+    private sealed class ProjectDiscoveryBudgetService : IService
+    {
+        public int Calls { get; private set; }
+        public string Name => "ProjectDiscovery";
+        public bool HasMethod(string method) => method == "get_player_state";
+        public ValueTask<PyValue> CallAsync(ServiceCall call)
+        {
+            Calls++;
+            return ValueTask.FromResult<PyValue>(PyNone.Instance);
+        }
+    }
+
     private sealed class AlertBudgetService : IService
     {
         public int Calls { get; private set; }

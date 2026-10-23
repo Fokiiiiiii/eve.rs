@@ -17,8 +17,8 @@ These were stale OPEN entries: later TODO evidence, source code, and named regre
 
 ### Mission execution
 
-- Fetch/courier objectives: the objective payload still has empty lists; the TODO identifies EveJS `buildMissionObjectivePayload` at `agentMissionRuntime.js:5885`, but item-in-cargo/turn-in state is absent.
-- Dungeon enemy owner and location: the current TODO records faction shortcut and zero location placeholders.
+- Fetch/courier objectives: `MissionViews`, `MissionComposition`, and `MissionDungeonRuntime` now provide objective payload and turn-in state, with serializer coverage; the full live courier pickup/turn-in walk remains open.
+- Dungeon enemy owner and location: the kill objective uses the SDE mission faction and runtime system/coordinates, with the issuer's SDE system as fallback when no runtime position exists. Serialization is tested; saved-position and graphical marker/warp checks remain open.
 - Live kill/completion/ISK walk: the recorded live run stops after the first shot with `UnMachoDestination`; completion has unit coverage only.
 - Arc 29 live walk: the documented route was not exercised.
 

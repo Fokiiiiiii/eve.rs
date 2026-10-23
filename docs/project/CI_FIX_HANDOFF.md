@@ -11,9 +11,8 @@
 
 ## Continue
 
-1. `origin/main` was merged; the sole conflict in `SECURITY_STATUS.md` retains upstream repairSvc/FitFitting coverage and the 160-unit default.
-2. Finish merging the concurrently pushed Store test fix and push the budget correction with this handoff.
-3. Check the newest CI status after push and record its result here.
+1. Store test fix `7c316f1c` and the 160-unit budget change are on main at `37b521d0`; `SECURITY_STATUS.md` retains upstream repairSvc/FitFitting coverage and documents the new default.
+2. CI status after pushing `37b521d0`: run 529 queued, run 528 pending, and run 527 in progress. Check the newest run and record its result.
 
 ## Commands
 

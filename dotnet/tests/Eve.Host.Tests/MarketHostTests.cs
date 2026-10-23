@@ -402,13 +402,16 @@ public sealed class MarketHostTests : IAsyncLifetime
         Assert.Equal(new PyInt(4),initialLine.Items[1]);
 
         var itemBeforeFailure=await ItemState(source,Schema("EVE_INVENTORY_SCHEMA"),itemId);
+        var wallet=new PgWalletStore(source,Schema("EVE_WALLET_SCHEMA"));
+        var buyerBalanceBeforeFailure=(await wallet.GetAsync(buyer))!.Isk;
+        var sellerBalanceBeforeFailure=(await wallet.GetAsync(seller))!.Isk;
         await using (var reject=source.CreateCommand(
             $"ALTER TABLE {Schema("EVE_MARKET_SCHEMA")}.fills ADD CONSTRAINT reject_structure_fill CHECK(quantity=0)"))
             await reject.ExecuteNonQueryAsync();
         await Assert.ThrowsAsync<PostgresException>(() => market.CallAsync(Call(buyerSession,"BuyMultipleItems",6,new PyLong(structureId),
             new PyList([Line(Tritanium,2,10)]),PyBool.False)).AsTask());
-        Assert.Equal(10000m,(await new PgWalletStore(source,Schema("EVE_WALLET_SCHEMA")).GetAsync(buyer))!.Isk);
-        Assert.Equal(9900m,(await new PgWalletStore(source,Schema("EVE_WALLET_SCHEMA")).GetAsync(seller))!.Isk);
+        Assert.Equal(buyerBalanceBeforeFailure,(await wallet.GetAsync(buyer))!.Isk);
+        Assert.Equal(sellerBalanceBeforeFailure,(await wallet.GetAsync(seller))!.Isk);
         Assert.Equal(itemBeforeFailure,await ItemState(source,Schema("EVE_INVENTORY_SCHEMA"),itemId));
         Assert.Empty(Assert.IsType<PyList>(await market.CallAsync(Call(buyerSession,"CharGetTransactions",17,PyNone.Instance))).Items);
         await using (var allow=source.CreateCommand(

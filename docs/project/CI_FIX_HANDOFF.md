@@ -281,3 +281,9 @@ CI run 672 on `1669e6dc` failed the structure market Host test because the fixtu
 - Push CI run 690 (`40016706205`) on `5bcb27c5` reached the active sequencing-job walk, then the live test passed a serialized `Identifier` message to `uuid.UUID(bytes=...)` instead of its raw UUID field.
 - V24 declares `GetAllActiveResponse.Job.id` and `CompletedNotice.id` as `sequencing.job.Identifier`, whose field 1 is the 16-byte UUID. The Host responses already use this wrapper; the live test now unwraps `Identifier.uuid` for the active-job and completion-notice assertions.
 - Python syntax check, focused live Agent run, and push-triggered CI verification are pending.
+
+## 2026-10-23 structure market rollback assertion
+
+- Agent run 167 (40017357430) on a769d686 failed the focused Host market test after placing a structure sell order: the test expected the seller's wallet to be 9900 ISK, but the wallet held 9875 ISK before the deliberately rejected buy. The structure order's 40 ISK value incurs the 100 ISK minimum broker fee and 25 ISK minimum SCC surcharge; the failed buy is not the cause.
+- The rollback check now captures both participants' balances immediately before the failing transaction and asserts they remain unchanged, while retaining the item, transaction-history, retry, and partial-settlement assertions. This tests transaction atomicity without assuming a station fee schedule.
+- The Host.Tests project build and focused Actions regression check are pending. No local database test was run. CI run 692 and Agent runs 168/169 on 1d96ae32 were active at the last status check.

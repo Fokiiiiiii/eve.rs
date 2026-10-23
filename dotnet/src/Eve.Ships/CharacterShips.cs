@@ -174,6 +174,8 @@ public sealed partial class CharacterShips(
         var state = wasInSlot ? world.Item(item.Id)?.State ?? ItemState.Offline : ItemState.Offline;
         var shipBefore = world.Attributes(ship.Id);
         var moduleBefore = wasInSlot ? world.Get(item.Id, IsOnline) : 0d;
+        var cargoCapacityAttribute = CapacityAttributeOf(CargoFlag);
+        var cargoCapacityBefore = cargoCapacityAttribute is { } cargoAttribute ? world.Get(ship.Id, cargoAttribute) : 0d;
 
         // the item is held in the hangar, out of any slot, while it is worked out where it goes
         world.Remove(item.Id);
@@ -259,6 +261,21 @@ public sealed partial class CharacterShips(
         if (landsInSlot)
         {
             world.Add(ItemDogma.Of(item, characterId, ship.Id, destinationFlag, newState, provenance));
+        }
+        if (wasInSlot && cargoCapacityAttribute is { } cargoAttributeAfter)
+        {
+            var addedCargoVolume = landsInSlot && destinationFlag == CargoFlag
+                ? await VolumeOfAsync([item], cancellationToken)
+                : 0d;
+            if (await RefuseCargoCapacityLossAsync(
+                    snapshot,
+                    cargoCapacityBefore,
+                    world.Get(ship.Id, cargoAttributeAfter),
+                    addedCargoVolume,
+                    cancellationToken) is { } cargoRefusal)
+            {
+                return cargoRefusal;
+            }
         }
         var shipAfter = world.Attributes(ship.Id);
 
@@ -498,6 +515,45 @@ public sealed partial class CharacterShips(
             [new ItemChanged(packagedShip, item.LocationId, item.Flag, item.Quantity)]), false);
     }
 
+    /// <summary>Checks a batch that takes fitted modules out of the active ship before its per-item moves begin.</summary>
+    public async Task<ShipRefused?> CheckBatchUnfitCargoCapacityAsync(
+        long characterId,
+        long shipId,
+        IReadOnlyCollection<long> itemIds,
+        bool toCargo,
+        CancellationToken cancellationToken = default)
+    {
+        if (itemIds.Count == 0)
+            return null;
+
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await LockAsync(connection, transaction, characterId, cancellationToken);
+        if (await LoadShipAsync(characterId, shipId, cancellationToken) is not { } snapshot
+            || CapacityAttributeOf(CargoFlag) is not { } capacityAttribute)
+            return null;
+
+        var leaving = snapshot.Fitted
+            .Where(item => itemIds.Contains(item.Id)
+                && Slots.IsSlotFlag(item.Flag)
+                && statics.Type(item.TypeId)?.CategoryId != ChargeCategory)
+            .ToArray();
+        if (leaving.Length == 0)
+            return null;
+
+        var world = snapshot.World;
+        var capacityBefore = world.Get(shipId, capacityAttribute);
+        foreach (var item in leaving)
+            world.Remove(item.Id);
+        var addedCargoVolume = toCargo ? await VolumeOfAsync(leaving, cancellationToken) : 0d;
+        return await RefuseCargoCapacityLossAsync(
+            snapshot,
+            capacityBefore,
+            world.Get(shipId, capacityAttribute),
+            addedCargoVolume,
+            cancellationToken);
+    }
+
     /// <summary>The attribute that caps how many modules of one group may be online at once (the SDE's <c>maxGroupOnline</c>).</summary>
     private const int MaxGroupOnlineAttribute = 978;
 
@@ -544,6 +600,8 @@ public sealed partial class CharacterShips(
         }
         var events = new List<DogmaEvent>();
         var wasOnline = fitted.State >= ItemState.Online;
+        var cargoCapacityAttribute = CapacityAttributeOf(CargoFlag);
+        var cargoCapacityBefore = cargoCapacityAttribute is { } capacityAttribute ? world.Get(shipId, capacityAttribute) : 0d;
         if (online && !wasOnline)
         {
             if (Slots.FamilyOfFlag(module.Flag) == SlotFamily.Rig)
@@ -578,6 +636,16 @@ public sealed partial class CharacterShips(
         var shipBefore = world.Attributes(shipId);
         var moduleBefore = world.Get(moduleId, IsOnline);
         world.SetState(moduleId, online ? ItemState.Online : ItemState.Offline);
+        if (!online && wasOnline && cargoCapacityAttribute is { } capacityAttributeAfter
+            && await RefuseCargoCapacityLossAsync(
+                snapshot,
+                cargoCapacityBefore,
+                world.Get(shipId, capacityAttributeAfter),
+                addedCargoVolume: 0,
+                cancellationToken) is { } cargoRefusal)
+        {
+            return cargoRefusal;
+        }
         var shipAfter = world.Attributes(shipId);
         await modules.SetAsync(connection, transaction, moduleId, online ? ItemState.Online : ItemState.Offline, cancellationToken);
         await transaction.CommitAsync(cancellationToken);

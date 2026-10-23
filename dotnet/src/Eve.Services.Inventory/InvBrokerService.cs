@@ -1369,6 +1369,17 @@ private async ValueTask<bool> IsDockedShipContextAsync(ClientSession session, lo
         }
 
         var destinationId = context.Kind == Kind.Hangar ? station : context.ItemId;
+        if (call.Session.GetInt("shipid") == source
+            && context.Kind is Kind.Hangar or Kind.Ship
+            && await ships.CheckBatchUnfitCargoCapacityAsync(
+                character,
+                source,
+                ids,
+                toCargo: context.Kind == Kind.Ship && context.ItemId == source && flag == CharacterShips.CargoFlag,
+                call.Cancellation) is { } cargoRefusal)
+        {
+            throw ShipErrors.Of(cargoRefusal, statics);
+        }
         var moved = false;
         foreach (var itemId in ids)
         {

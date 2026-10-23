@@ -6,7 +6,7 @@ charUnboundMgr.GetCharacterSelectionData projects the client-facing paperdoll st
 
 PgCharacterStore.ResolvedPaperdollStateAsync reads paperdoll_state, doll_info, and portrait_info together. A persisted state is returned as stored; otherwise an appearance payload yields 0 and missing appearance yields 2. CharMgrService.GetPaperdollState uses this reader when the optional recustomization reader has no value. The paperdoll save RPC persists the appearance through SetAppearanceAsync, which clears the persisted forced state in the same update.
 
-Host composition now resolves the InvBrokerService through IndustryInventoryChangePublisher when wiring RepackagingService. The preexisting direct lookup stopped finding the wrapped broker and prevented Host startup. This correction was merged with origin/main and pushed in commit e39ef443a0f135a235ab7a9ba7a5c8b0cec2ec9d.
+Host composition resolves the InvBrokerService through IndustryInventoryChangePublisher when wiring RepackagingService. The previous direct lookup could not see the wrapped broker and prevented Host startup.
 
 ## Evidence
 
@@ -23,4 +23,4 @@ CharacterReSculptHostTests.Character_selection_dispatch_projects_paperdoll_state
 
 ## Verification
 
-The selected Host dispatch test and headless walk are being run through GitHub Actions for e39ef443a0f135a235ab7a9ba7a5c8b0cec2ec9d; the run ids/results will be recorded here. The earlier push-triggered run for e896953 failed because Host composition could not find the wrapped inventory broker, and unrelated failures also appeared in market dispatch and cargo-capacity tests. The graphical-client route has not been exercised; record that check separately from the headless/Host result.
+Full-SHA GitHub Actions runs are in progress for commit e450db445b12ab676f8ca8bfa2f92b7efffbb6e6: Host dispatch test 39960126401 and headless walk 39960167925. Two earlier selected runs used an abbreviated SHA and failed during checkout, before tests ran. A separate push-triggered CI run for earlier commit e896953 failed at Host startup because composition could not find the wrapped inventory broker; that wiring is fixed here. The graphical-client route has not been exercised.

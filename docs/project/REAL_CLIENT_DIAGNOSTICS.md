@@ -31,31 +31,36 @@ The owner’s captures and process logs were read through `tools/mitm show` and 
 
 ## (d) UnavailableInventoryLocation in space
 
-- Symptom: the client log says `UnavailableInventoryLocation: Failed to retrieve items; character is not located in a station` during `NeocomInventoryBadging.OnSessionChanged`. The client callsite is `GetItemsInCurrentStationShipHangar`; the capture shows a station-bound `GetInventory(containerHangar=10004)` request receiving `SessionRpcBudgetExceeded` during the transition to space.
-- Root cause: `PacketDispatcher` charges station inventory reads against the same per-session expensive-RPC budget as unrelated setup and market calls. After that shared bucket is consumed, the client's guarded station hangar read is refused and translated to `UnavailableInventoryLocation`.
-- Fix commit: pending.
-- Regression test: pending.
+- Symptom: the client log says `UnavailableInventoryLocation: Failed to retrieve items; character is not located in a station` during `NeocomInventoryBadging.OnSessionChanged`. The request binds the prior station's hangar with `containerHangar=10004`. EveJS returns the bound inventory; eve.rs returned `SessionRpcBudgetExceeded` for the same request during the transition to space.
+- Root cause: `PacketDispatcher` charged all expensive RPCs against one per-session bucket. Before the first failed hangar bind, the graphical capture had only four `invbroker` calls; unrelated setup RPCs consumed the shared bucket.
+- Fix: expensive `invbroker` calls now use their own bounded per-session bucket. Inventory reads and writes still share that limit.
+- Fix commit: `Give inventory RPCs a dedicated per-session budget`.
+- Regression: `DispatchGoldenTests.Inventory_calls_keep_a_bounded_budget_separate_from_other_expensive_services` (1/1) and the full `DispatchGoldenTests` class (148/148), zero skips.
+- Reference: EveJS returns the requested bound substruct for the matching station-hangar call; V24.01 client callsite is `neocomInventoryBadging.py:GetItemsInCurrentStationShipHangar`.
 
 ## (e) goals/campaign GetUpdateRequest timeout
 
-- Symptom: the client log says `ServiceUnavailableError: ERROR: TimeoutException, Failed to receive response from GetUpdateRequest`; the call originates in the map-tag flatbuffer repository update task.
-- Root cause: open; this capture identifies the map-tags public gateway request, separate from the goals/campaign requests reported by the owner.
-- Fix commit: pending.
-- Regression test: pending.
+- Symptom: client errors include `Failed to receive response from GetUpdateRequest`, `GetAllWithRewardsRequest returning with status code 408`, and `Campaigns: GetAllRequest: ERROR: TimeoutException`; the career-goal definitions request also times out. The first call is the map-tag flatbuffer repository's public-gateway request.
+- Root cause: the graphical run's Host log contains only the MachoNet listener startup line and no public-gateway startup line. In this build `EVE_PUBLIC_GATEWAY` is unset by default, so `Program` does not start the local gateway. V24.01's `publicGateway.grpc.connectionConfig` uses `EVE_PUBLIC_GATEWAY_ADDRESS` when provided, otherwise it discovers CCP's `*-public-gateway.evetech.net` endpoint. EveJS has handlers for the map-tag, campaign, career-goal and daily-goal requests; the graphical run did not route those requests to an eve.rs listener. This is a run-configuration gap, not an unhandled MachoNet RPC. The local Host still lacks those gateway handlers; if the owner intends to route these APIs locally, their provider data and behavior must be implemented before changing the client endpoint.
+- Owner action: launch Host with `EVE_PUBLIC_GATEWAY=<reachable-host>:<port>` and launch the client with `EVE_PUBLIC_GATEWAY_ADDRESS=<same-host>:<port>` for a local run, then capture the gateway requests. No server-side success payload is substituted for unavailable goal or campaign state.
+- Fix commit: none; the evidence points to the external launch configuration, and implementing empty/stub goal or campaign responses would fabricate state.
+- Regression test: none; no code fix was made. The current run has no gateway startup entry, and V24.01's public-gateway connection discovery contract was checked in the client's `publicGateway.grpc.connectionConfig` module.
 
 ## (f) TypeListNotFound / None errors
 
 - Symptom: the client log reports `TypeListNotFoundException: 'NoneType' object is not subscriptable`; its stack resolves `GetTypeList(140)` while fitting the ship HUD charge icon.
-- Root cause: open; determine the client type-list source and the missing list’s actual contents.
-- Fix commit: pending.
-- Regression test: pending.
+- Root cause: the exception is raised in the client's `evetypes.GetTypeList`, which indexes the local `TypeListLoader.GetData()` loaded from `res:/staticdata/typeList.fsdbinary`. The receiver-side MachoNet capture has no type-list request or response, and eve.rs has no provider for this client-local static resource. The `NoneType` text indicates the local loader returned `None` before indexing list 140; it does not demonstrate a missing eve.rs RPC payload.
+- Owner action: verify the installed V24.01 client's local `typeList.fsdbinary` resource loads. The server cannot repair a missing client-local static-data loader.
+- Fix commit: none; no server defect is established by this evidence.
+- Regression test: none; the failing operation is client-local and no server change was made.
 
 ## (g) chat objects are None after an XMPP failure
 
-- Symptom: owner reports chat objects become `None` after XMPP failure. The capture shows the preceding `XmppChatMgr.Hostname()` `ServiceNotFound` response.
-- Root cause: open; trace the XMPP failure transition and the chat manager’s resulting state.
-- Fix commit: pending.
-- Regression test: pending.
+- Symptom: after the old build's `XmppChatMgr.Hostname()` `ServiceNotFound`, the client logs `AttributeError: 'NoneType' object has no attribute 'LeaveRoom'` in its XMPP channel cleanup. Its room name uses the configured domain (`conference.None`), so the failed manager lookup leaves no usable XMPP room/connection state.
+- Root cause: the old build's Host service was absent (fixed by (a)). The current Host also starts its XMPP listener only when `EVE_XMPP_ENABLED` is true; the diagnostic Host log has no XMPP listener startup line. With the default disabled listener, the current service can return the configured domain and fallback host, but no XMPP transport accepts the client's connection. The server-side chat state is then unavailable because no authenticated XMPP connection was established.
+- Owner action: for a graphical run that uses XMPP, enable `EVE_XMPP_ENABLED` and configure a client-reachable `EVE_XMPP_BIND_ADDRESS`, `EVE_XMPP_CONNECT_HOST`, `EVE_XMPP_DOMAIN`, and port. Capture again against the current Host to verify the client no longer derives `conference.None` and can authenticate its XMPP connection.
+- Fix commit: the registration repair is `6f3d37df`; no additional code change is justified by the old-build capture.
+- Regression: `Xmpp_chat_manager_is_registered_when_the_listener_is_disabled` proves the Host RPC remains available independently of transport startup (1 passed). `XmppHostConfigurationTests.XMPP_listener_and_client_endpoint_are_configured_from_environment` covers the listener and advertised endpoint settings. No current graphical-client retry has been run.
 
 ## (h) missing href and Japanese UnicodeEncodeError
 

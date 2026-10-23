@@ -25,6 +25,12 @@ public sealed class XmppChatMgrServiceTests
         Assert.Equal("system_263238_263259", Assert.IsType<PyStr>(service.GetRookieChannel(new ServiceCall { Method = "GetRookieChannel", Args = [], Session = session })).Value);
         Assert.Equal("system_263238_263262", Assert.IsType<PyStr>(service.GetHelpChannel(new ServiceCall { Method = "GetHelpChannel", Args = [], Session = session })).Value);
         Assert.Equal("system_263238_263302", Assert.IsType<PyStr>(service.GetHelpChannel(new ServiceCall { Method = "GetHelpChannel", Args = [new PyStr("ja-JP")], Session = session })).Value);
+        Assert.Equal("system_263238_263262", Assert.IsType<PyStr>(service.GetHelpChannel(new ServiceCall
+        {
+            Method = "GetHelpChannel",
+            Args = [new PyStr(new string('a', 17))],
+            Session = session,
+        })).Value);
     }
 
 [Fact]

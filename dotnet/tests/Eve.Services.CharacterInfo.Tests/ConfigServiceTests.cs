@@ -23,6 +23,37 @@ public sealed class ConfigServicePgFactAttribute : FactAttribute
 public sealed class ConfigServiceTests
 {
     [Fact]
+    public async Task Config_bulk_lookups_refuse_wrong_shapes_invalid_ids_and_oversized_raw_lists()
+    {
+        var service = new ConfigService(null!, null!, null!, null!);
+        var session = new ClientSession();
+        foreach (var method in new Func<PyValue, ValueTask<PyValue>>[]
+        {
+            value => service.GetMultiOwnersEx(new ServiceCall { Method = "GetMultiOwnersEx", Args = [value], Session = session }),
+            value => service.GetMultiCorpTickerNamesEx(new ServiceCall { Method = "GetMultiCorpTickerNamesEx", Args = [value], Session = session }),
+            value => service.GetMultiAllianceShortNamesEx(new ServiceCall { Method = "GetMultiAllianceShortNamesEx", Args = [value], Session = session }),
+            value => service.GetMultiLocationsEx(new ServiceCall { Method = "GetMultiLocationsEx", Args = [value], Session = session }),
+        })
+        {
+            await Assert.ThrowsAsync<MachoWrappedException>(async () => await method(PyNone.Instance));
+        }
+        await Assert.ThrowsAsync<MachoWrappedException>(async () => await service.GetMultiOwnersEx(new ServiceCall
+        {
+            Method = "GetMultiOwnersEx", Args = [new PyList([new PyStr("bad")])], Session = session,
+        }));
+        await Assert.ThrowsAsync<MachoWrappedException>(async () => await service.GetMultiOwnersEx(new ServiceCall
+        {
+            Method = "GetMultiOwnersEx", Args = [new PyList([new PyInt(-1)])], Session = session,
+        }));
+        await Assert.ThrowsAsync<MachoWrappedException>(async () => await service.GetMultiCorpTickerNamesEx(new ServiceCall
+        {
+            Method = "GetMultiCorpTickerNamesEx",
+            Args = [new PyList(Enumerable.Repeat<PyValue>(new PyInt(1), 501).ToArray())],
+            Session = session,
+        }));
+    }
+
+    [Fact]
     public void Station_solar_systems_by_owner_returns_sorted_owner_keyvals()
     {
         const long ownerId = 1001;

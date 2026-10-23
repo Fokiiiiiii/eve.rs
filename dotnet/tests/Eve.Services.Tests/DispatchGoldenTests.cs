@@ -1125,7 +1125,7 @@ public class DispatchGoldenTests
     public async Task Corporation_application_lists_and_history_use_a_named_per_session_budget()
     {
         long sessionId = 914;
-        foreach (var method in new[] { "GetApplications", "GetOldApplications", "GetMyApplications", "GetMyOldApplications", "GetMyOpenInvitations" })
+        foreach (var method in new[] { "GetApplications", "GetOldApplications", "GetAllianceApplications", "GetMyApplications", "GetMyOldApplications", "GetMyOpenInvitations" })
         {
             var capture = new Capture();
             var session = new ClientSession(capture) { SessionId = sessionId++ };

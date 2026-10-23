@@ -1400,6 +1400,7 @@ public sealed class AllianceApplicationDueWorker(
 
 public sealed partial class CorpRegistryService
 {
+    private const int MaxAllianceApplications = 5000;
     private static readonly Descriptor AllianceApplicationDescriptor = CorporationWire.DescriptorOf(
         ("allianceID",3),("corporationID",3),("applicationText",130),("state",3),("applicationDateTime",64));
 
@@ -1457,7 +1458,10 @@ public sealed partial class CorpRegistryService
     public async ValueTask<PyValue> GetAllianceApplications(ServiceCall call)
     {
         var corporationId = await RequireAllianceApplicationDirector(call);
-        var applications = await store.AllianceApplicationsForCorporationAsync(corporationId,call.Cancellation);
+        var applications = await store.AllianceApplicationsForCorporationAsync(
+            corporationId, MaxAllianceApplications + 1, call.Cancellation);
+        if (applications.Count > MaxAllianceApplications)
+            throw new CorporationError("ALLIANCE_APPLICATION_LIMIT_EXCEEDED");
         return new PyObjectEx(ObjectExKind.Ex2,
             Py.Tuple(Py.Tuple(new PyToken("carbon.common.script.sys.crowset.CIndexedRowset")),
                 Py.Dict(("header",AllianceApplicationDescriptor.Header),("idName",new PyStr("allianceID")),

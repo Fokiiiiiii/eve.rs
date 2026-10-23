@@ -298,12 +298,14 @@ private static PyValue OptionalIds(JsonNode? value) => value is JsonArray ids
 
     private static string Key(long id) => id.ToString(CultureInfo.InvariantCulture);
 
-    private static long PositiveId(PyValue value)
+    private static long PositiveId(PyValue value) => value switch
     {
-        var number = JsSemantics.ToNumber(value);
-        return double.IsFinite(number) && number >= 1 && number < long.MaxValue
-            ? (long)Math.Truncate(number) : 0;
-    }
+        PyInt integer when integer.Value > 0 => integer.Value,
+        PyLong integer when integer.Value is > 0 and < long.MaxValue => integer.Value,
+        PyReal real when double.IsFinite(real.Value) && real.Value >= 1 && real.Value < long.MaxValue
+            && real.Value == Math.Truncate(real.Value) => (long)real.Value,
+        _ => 0,
+    };
 
     private static long Integer(JsonNode? value)
     {

@@ -482,7 +482,7 @@ public sealed class MailServiceTests
             new PyTuple([new PyInt(20), new PyInt(10), new PyInt(20), new PyInt(99),
                 new PyInt(50), new PyInt(999), new PyReal(5.9), new PyInt(-1)])));
 
-        Assert.Equal([20L, 10L, 5L], Ids(result));
+        Assert.Equal([20L, 10L], Ids(result));
         var corporationMail = Assert.IsType<PyList>(result).Items[1];
         Assert.Equal(PyNone.Instance, Field(corporationMail, "toCharacterIDs"));
         Assert.Equal(PyNone.Instance, Field(corporationMail, "toListID"));
@@ -613,6 +613,19 @@ public sealed class MailServiceTests
         Assert.Equal(new PyInt(16), Field(label, "labelID"));
         Assert.Equal(new PyStr("Fleet"), Field(label, "name"));
         Assert.Equal(new PyInt(3), Field(label, "color"));
+    }
+
+    [Fact]
+    public async Task Mail_message_ids_must_be_positive_integral_wire_values()
+    {
+        var service = Service(State());
+        Assert.Empty(Ids(await service.CallAsync(Request("GetMailHeaders", new PyList([new PyReal(20.5)])))));
+        Assert.IsType<PyNone>(await service.CallAsync(Request("GetBody", new PyReal(20.5), PyBool.True)));
+        var marked = new List<long>();
+        var writer = new MailService(_ => Task.FromResult(new JsonObject()),
+            (characterId, messageId, _, _) => { marked.Add(messageId); return Task.CompletedTask; });
+        await writer.CallAsync(Request("MarkAsRead", new PyList([new PyReal(20.5), new PyInt(0), new PyInt(20)])));
+        Assert.Equal([20L], marked);
     }
 
     [Fact]

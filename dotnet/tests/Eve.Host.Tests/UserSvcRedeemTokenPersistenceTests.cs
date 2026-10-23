@@ -28,7 +28,6 @@ public sealed class UserSvcRedeemTokenPersistenceTests
             var runtime = new PersistenceNewEdenStoreRuntime(
                 source, store, ownerFence, null!, null!, null!, null!, null!,
                 () => 1_700_000_000_123,
-                _ => Task.FromResult(new JsonObject()),
                 null!);
             var service = (IService)(object)new RedeemService(
                 runtime,

@@ -318,7 +318,7 @@ public class MarketRpcTests
         Assert.Empty(Assert.IsType<PyList>(Field(Fields(rows),"lines")).Items);
         Assert.Empty((await r.Book.BookAsync(r.Station.RegionId,Tritanium,r.Now)).Bids);
         Assert.Equal(9950m,(await r.WalletStore.GetAsync(actor))!.Isk);
-        Assert.NotEmpty(seat.Sink.Packets);
+        Assert.Empty(seat.Sink.Packets);
         Assert.Equal(95,(await r.Book.BookAsync(r.Station.RegionId,Tritanium,r.Now)).Asks.Single().VolumeRemaining);
     }
 

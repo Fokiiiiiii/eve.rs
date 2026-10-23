@@ -24,6 +24,21 @@ fn drop_schema(client: &mut Client, schema: &str) {
 }
 
 #[test]
+fn mission_build_includes_the_host_skinr_catalog_tables() {
+    for table in [
+        "groups",
+        "types",
+        "skinrComponentPointValues",
+        "skinrComponents",
+        "skinrSlotConfigurations",
+        "skinrSlots",
+        "skinrTierThresholds",
+    ] {
+        assert!(ensure::MISSION_TABLES.contains(&table), "mission build omits {table}");
+    }
+}
+
+#[test]
 fn nothing_is_loaded_before_the_first_start() {
     let Some(mut client) = connect() else { return };
     assert_eq!(ensure::loaded_build(&mut client, &scratch_schema("never")).unwrap(), None);

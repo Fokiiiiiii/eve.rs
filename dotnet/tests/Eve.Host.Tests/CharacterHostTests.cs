@@ -706,6 +706,52 @@ public sealed class CharacterHostTests
     }
 
     [PgFact]
+    public async Task Contact_add_persists_and_routes_the_recipient_notification()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync();
+        var senderId = await rig.CreateCharacterAsync();
+        var recipientId = await rig.CreateCharacterAsync();
+        var sink = new RecordingPacketSink();
+        var recipientSession = new ClientSession { CharacterId = recipientId, UserId = 1, Sink = sink };
+        rig.Sessions.Enter(recipientId, recipientSession);
+        var charMgr = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("charMgr"));
+
+        Assert.IsType<PyNone>(await CallAsync(charMgr, "AddContact",
+            new ClientSession { CharacterId = senderId, UserId = 1 },
+            new PyLong(recipientId), new PyInt(-10), PyBool.True, PyBool.True, new PyStr("Hello")));
+
+        var (name, args) = Assert.Single(Notifications(sink));
+        Assert.Equal("OnNotificationReceived", name);
+        var packet = Assert.Single(sink.Sent.OfType<PyObject>());
+        var address = MachoAddress.Decode(((PyTuple)packet.Args).Items[2]);
+        Assert.Equal("OnNotificationReceived", address.BroadcastId);
+        Assert.Equal("clientID", address.IdType);
+        Assert.Equal(5, args.Length);
+        Assert.True(((PyLong)args[0]).Value > 0);
+        Assert.Equal(new PyInt(89), args[1]);
+        Assert.Equal(new PyLong(senderId), args[2]);
+        var data = Assert.IsType<PyDict>(args[4]);
+        Assert.Equal(new PyLong(-10), NotificationValue(data, "level"));
+        Assert.Equal("Hello", Eve.Macho.JsSemantics.StringValue(NotificationValue(data, "message")));
+
+        var notificationMgr = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("notificationMgr"));
+        var notifications = Assert.IsType<PyList>(await CallAsync(notificationMgr, "GetAllNotifications", recipientSession));
+        var row = Assert.Single(notifications.Items);
+        Assert.Equal(new PyInt(89), Field(row, "typeID"));
+        Assert.Equal(new PyInt(senderId), Field(row, "senderID"));
+        Assert.Equal(new PyInt(recipientId), Field(row, "receiverID"));
+
+        await rig.RestartAsync();
+        notificationMgr = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("notificationMgr"));
+        notifications = Assert.IsType<PyList>(await CallAsync(notificationMgr, "GetAllNotifications", recipientSession));
+        row = Assert.Single(notifications.Items);
+        Assert.Equal(new PyInt(89), Field(row, "typeID"));
+        var persistedData = Assert.IsType<PyDict>(Field(row, "data"));
+        Assert.Equal(new PyInt(-10), Field(persistedData, "level"));
+        Assert.Equal(new PyStr("Hello"), Field(persistedData, "message"));
+    }
+
+    [PgFact]
 public async Task Notification_manager_mutations_persist_and_notify_after_the_commit()
 {
     var pgUrl = Environment.GetEnvironmentVariable("EVE_PG_URL");
@@ -1206,8 +1252,16 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
             PyDict dict => dict.Entries,
             _ => throw new Xunit.Sdk.XunitException($"Expected a dictionary, got {keyVal.GetType().Name}"),
         };
-        return entries.Single(entry => ((PyStr)entry.Key).Value == key).Value;
+        return entries.Single(entry => entry.Key switch
+        {
+            PyStr text => text.Value == key,
+            PyBytes bytes => bytes.Value.Span.SequenceEqual(System.Text.Encoding.UTF8.GetBytes(key)),
+            _ => false,
+        }).Value;
     }
+
+    private static PyValue NotificationValue(PyDict data, string name) =>
+        data.Entries.Single(entry => Eve.Macho.JsSemantics.StringValue(entry.Key) == name).Value;
 
     private static List<PyList> Rows(PyValue rowset) => Assert.IsType<PyList>(Field(rowset, "lines")).Items
         .Select(line => Assert.IsType<PyList>(line)).ToList();

@@ -40,6 +40,8 @@ public sealed class FacilityManagerService(
                 ("taxStandingsGood", PyNone.Instance),
                 ("taxStandingsHigh", PyNone.Instance)),
             "GetMaxActivityModifiers" => new PyDict([]),
+            "SetFacilityTaxes" => throw MachoErrors.ThrowUserError(
+                "CustomNotify", ("notify", new PyStr("Facility tax settings are not available here."))),
             _ => PyNone.Instance,
         };
     }

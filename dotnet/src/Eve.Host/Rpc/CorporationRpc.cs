@@ -38,8 +38,12 @@ namespace Eve.Host;
 internal sealed partial class CharacterServicesComposition
 {
     /// <summary>Corporations: management, registry, standings, wars and votes.</summary>
-    private IReadOnlyList<IService> CorporationRpc() =>
-    [
+    private IReadOnlyList<IService> CorporationRpc()
+    {
+        var mutualWarInvites = new Eve.Services.Corporations.MutualWarInviteRuntimeState(
+            source, foundations.Relations, characterSessions, now, CanManageWarAsync);
+        return
+        [
             new Eve.Services.Corporations.CorpMgrService(
                 corporations, characters, items, itemTypes, corporationOfficeStore,
                 resolveAssetLocation: id => stations.Get(id) is { } station
@@ -47,7 +51,13 @@ internal sealed partial class CharacterServicesComposition
                     : id is >= 0 and <= int.MaxValue && solarSystems.Get((int)id) is { } system
                         ? ((long)system.Id, (int?)null)
                         : null),
-            new Eve.Services.Corporations.MutualWarInviteMgrService(),
+            new Eve.Services.Corporations.MutualWarInviteMgrService(
+                mutualWarInvites.ReadPendingInvitesAsync,
+                mutualWarInvites.ReadInvitesBlockedAsync,
+                mutualWarInvites.SendInviteByPlayerAsync,
+                mutualWarInvites.WithdrawInviteByPlayerAsync,
+                mutualWarInvites.RespondToInviteByPlayerAsync,
+                mutualWarInvites.SetInvitesBlockedByPlayerAsync),
             new Eve.Services.Corporations.CorporationService(corporations, characters, characterSessions),
             new Eve.Services.Corporations.CorpRegistryService(corporations, characters, now, characterSessions, items,
                   readRecentCorporationKillmails: ReadRecentCorporationKillmailPageAsync,
@@ -68,7 +78,8 @@ internal sealed partial class CharacterServicesComposition
                 StationStandingRulesAsync, now),
             new Eve.Services.Corporations.WarRegistryService(
                 source, foundations.Relations, characterSessions, now, CanManageWarAsync),
-    ];
+        ];
+    }
 
     private async Task<bool> CanManageWarAsync(long characterId, long ownerId, CancellationToken token)
     {
@@ -92,46 +103,45 @@ internal sealed partial class CharacterServicesComposition
         return isCeo || isDirector;
     }
 
-      private async ValueTask<Eve.Services.Corporations.CorpWarDeclarationResult> CreateWarDeclarationAsync(
-          Eve.Services.Corporations.CorpWarDeclarationRequest request,CancellationToken cancellationToken)
-      {
-          var created = await corporations.CreateWarDeclarationAsync(
-              request.CorporationId,request.DeclaredByCharacterId,request.AgainstId,request.WarHQId,
-              request.TimeDeclaredFiletime,request.TimeStartedFiletime,request.DueFiletime,request.BillTypeId,
-              request.BillAmount,request.CreditorId,request.OperationKey,
-              async (connection,transaction,billId,token) =>
-              {
-                  if (await foundations.Relations.GetAsync("war",request.CorporationId,request.AgainstId,
-                          connection,transaction,token,forUpdate:true) is not null)
-                      throw new Eve.Corporations.CorporationError("WAR_ALREADY_DECLARED");
-                  var attrs = new
-                  {
-                      declaredByCharacterID=request.DeclaredByCharacterId,
-                      timeDeclared=request.TimeDeclaredFiletime.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                      timeStarted=request.TimeStartedFiletime.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                      timeFinished=(string?)null,
-                      retracted=(string?)null,
-                      retractedBy=(long?)null,
-                      billID=billId,
-                      mutual=0,
-                      fightingLegalNotified=0,
-                      openForAllies=0,
-                      createdFromWarID=(long?)null,
-                      warHQID=request.WarHQId,
-                      warHQ=request.WarHQId,
-                      reasonEnded=0,
-                      reasonStarted=0,
-                      reward=0
-                  };
-                  var change = await foundations.Relations.SetAsync(connection,transaction,"war",
-                      request.CorporationId,request.AgainstId,1.0,"declared",attrs,cancellationToken:token);
-                  if (change is not null)
-                      return change.RelationId;
-                  return (await foundations.Relations.GetAsync("war",request.CorporationId,request.AgainstId,
-                      connection,transaction,token,forUpdate:true))?.Id ?? 0;
-              },
-              cancellationToken);
-          return new Eve.Services.Corporations.CorpWarDeclarationResult(created.WarId,created.BillId);
-      }
-
+    private async ValueTask<Eve.Services.Corporations.CorpWarDeclarationResult> CreateWarDeclarationAsync(
+        Eve.Services.Corporations.CorpWarDeclarationRequest request, CancellationToken cancellationToken)
+    {
+        var created = await corporations.CreateWarDeclarationAsync(
+            request.CorporationId, request.DeclaredByCharacterId, request.AgainstId, request.WarHQId,
+            request.TimeDeclaredFiletime, request.TimeStartedFiletime, request.DueFiletime, request.BillTypeId,
+            request.BillAmount, request.CreditorId, request.OperationKey,
+            async (connection, transaction, billId, token) =>
+            {
+                if (await foundations.Relations.GetAsync("war", request.CorporationId, request.AgainstId,
+                        connection, transaction, token, forUpdate: true) is not null)
+                    throw new Eve.Corporations.CorporationError("WAR_ALREADY_DECLARED");
+                var attrs = new
+                {
+                    declaredByCharacterID = request.DeclaredByCharacterId,
+                    timeDeclared = request.TimeDeclaredFiletime.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    timeStarted = request.TimeStartedFiletime.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    timeFinished = (string?)null,
+                    retracted = (string?)null,
+                    retractedBy = (long?)null,
+                    billID = billId,
+                    mutual = 0,
+                    fightingLegalNotified = 0,
+                    openForAllies = 0,
+                    createdFromWarID = (long?)null,
+                    warHQID = request.WarHQId,
+                    warHQ = request.WarHQId,
+                    reasonEnded = 0,
+                    reasonStarted = 0,
+                    reward = 0
+                };
+                var change = await foundations.Relations.SetAsync(connection, transaction, "war",
+                    request.CorporationId, request.AgainstId, 1.0, "declared", attrs, cancellationToken: token);
+                if (change is not null)
+                    return change.RelationId;
+                return (await foundations.Relations.GetAsync("war", request.CorporationId, request.AgainstId,
+                    connection, transaction, token, forUpdate: true))?.Id ?? 0;
+            },
+            cancellationToken);
+        return new Eve.Services.Corporations.CorpWarDeclarationResult(created.WarId, created.BillId);
+    }
 }

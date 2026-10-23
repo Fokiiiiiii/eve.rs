@@ -76,7 +76,8 @@ public sealed class LoginInitializationRpcTests
         Assert.Equal(new PyList([]), await Call(service, session, "GetFacilityLocations", new PyInt(1), new PyInt(2)));
         Assert.IsType<PyDict>(await Call(service, session, "GetMaxActivityModifiers"));
         Assert.IsType<PyObject>(await Call(service, session, "GetFacilityTaxes", new PyInt(1)));
-        Assert.Same(PyNone.Instance, await Call(service, session, "SetFacilityTaxes", new PyInt(1), new PyInt(2), new PyDict([])));
+        await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await Call(service, session, "SetFacilityTaxes", new PyInt(1), new PyInt(2), new PyDict([])));
         await Assert.ThrowsAsync<MachoWrappedException>(async () => await Call(service, session, "GetFacility", new PyInt(999)));
 
         var facility = new PyObject(new PyStr("util.KeyVal"), new PyDict([]));

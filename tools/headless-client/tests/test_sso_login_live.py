@@ -55,7 +55,9 @@ def test_v24_sso_handshake_reaches_and_selects_a_character():
 
             selection = m.plain(client.call("charUnboundMgr", "GetCharacterSelectionData"))
             assert len(selection[2]) == 1
-            assert int(selection[2][0][0]) == character_id
+            character = selection[2][0]
+            assert character[0] == "util.KeyVal"
+            assert int(character[1]["characterID"]) == character_id
 
             client.notifications.clear()
             result = client.call(

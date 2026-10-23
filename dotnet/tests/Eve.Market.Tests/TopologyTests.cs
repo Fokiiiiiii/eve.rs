@@ -45,4 +45,16 @@ public class TopologyTests
         Assert.False(topology.BidInRange(origin,MarketRules.RangeEsiFourJumps,fiveJumps));
         Assert.Equal(4,MarketRules.RangeForClient(MarketRules.RangeEsiFourJumps));
     }
+
+    [Fact]
+    public void Structure_location_resolves_region_and_constellation_from_the_pinned_system_map()
+    {
+        var topology=new MarketTopology(
+            [(10,11)],
+            [(10,100,1000),(11,101,1000)]);
+
+        Assert.Equal(new MarketLocation(9_000_000_001,10,100,1000),
+            topology.StructureLocation(9_000_000_001,10));
+        Assert.Null(topology.StructureLocation(9_000_000_001,12));
+    }
 }

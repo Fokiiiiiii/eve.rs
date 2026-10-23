@@ -17,8 +17,8 @@ These were stale OPEN entries: later TODO evidence, source code, and named regre
 
 ### Mission execution
 
-- Fetch/courier objectives: the objective payload still has empty lists; the TODO identifies EveJS `buildMissionObjectivePayload` at `agentMissionRuntime.js:5885`, but item-in-cargo/turn-in state is absent.
-- Dungeon enemy owner and location: the current TODO records faction shortcut and zero location placeholders.
+- Fetch/courier objectives: `MissionViews`, `MissionComposition`, and `MissionDungeonRuntime` now provide objective payload and turn-in state, with serializer coverage; the full live courier pickup/turn-in walk remains open.
+- Dungeon enemy owner and location: the kill objective uses the SDE mission faction and runtime system/coordinates, with the issuer's SDE system as fallback when no runtime position exists. Serialization is tested; saved-position and graphical marker/warp checks remain open.
 - Live kill/completion/ISK walk: the recorded live run stops after the first shot with `UnMachoDestination`; completion has unit coverage only.
 - Arc 29 live walk: the documented route was not exercised.
 
@@ -55,3 +55,31 @@ These were stale OPEN entries: later TODO evidence, source code, and named regre
 ## Checks in this handoff
 
 No PostgreSQL command was used. CI agent-test run `39940268962` passed the focused `Eve.Services.Space.Tests` filter `FullyQualifiedName~A_jump_into_a_system_with_an_environment_gives_the_simulation_the_ship_again_with_that_environment` on pushed commit `3309464f573e587109f5debb6b96770b22309e38`. An earlier dispatch with the abbreviated SHA failed at checkout because Actions treated it as a branch name; the full-SHA retry passed. `ci-status.py failures` found no push-triggered `ci.yml` run for this commit. Other `PgFact` cases cited above were not part of the focused filter. CI agent-test run `39941712144` also passed the `Eve.Host.Tests` filter `FullyQualifiedName~A_standing_write_that_fails_rolls_the_completion_back_and_the_mission_stays_accepted` on commit `8449830e310b9f5b0ac66de6499867f7caa56765`. `ci-status.py failures` found no push-triggered `ci.yml` run for that commit.
+
+## 2026-10-23 mission objective and client walk
+
+- `GetMissionObjectiveInfo` now projects the mission's owner and solar-system location from the mission static catalog and runtime mission state. The issuer's SDE solar system supplies the location when a mission instance position has not been persisted; coordinates are included only when the runtime record contains all three axes. `MissionViewsTests` covers the encoded location and `test_mission_walk.py` now calls the bound RPC after accepting the mission.
+- Fetch/courier objective payload and turn-in code are present in `MissionViews`, `MissionComposition`, and `MissionDungeonRuntime`; the section 54 row now distinguishes those tests from the still-held full arc courier walk.
+- Local `dotnet build` of `Eve.Host` succeeded (0 warnings/errors), and the focused `MissionViewsTests` case passed (1 passed, 0 skipped). No local PostgreSQL database was used.
+- Actions run `40020393673` exercised SKINR, mission, and station live files on main. The Host SKINR dispatch tests passed 4/4. Live tests reported 1 passed, 1 failed, 3 skipped: the SKINR live assertion checked the design name field as if it were the line name. The assertion now checks name field 2 and line name field 3; this correction and the added mission objective call need a fresh run from the pushed commit. SKINR graphical-client verification remains open.
+
+## 2026-10-23 CI follow-up: Host restart signal
+
+- Push CI and focused SKINR runs showed the Host did not close its socket after SIGTERM; an attempted SIGINT was also ineffective because the shell-started background process does not deliver it through `Console.CancelKeyPress`. `Program.cs` now registers POSIX SIGTERM directly and cancels the server token so `HostRuntime.ShutdownAsync` runs; the live test again sends SIGTERM.
+- The POSIX SIGTERM handler is pushed as `0649fc34`. Focused run `40026475792` passed Host tests (4/4) and confirmed the Host restarted; `eve-net` then closed with its Host link, so the test could not reconnect through port 26100. Run `40027629354` confirmed a fresh process also rejects the old bearer token (401). The live harness now exports the front binary/listen address and restarts `eve-net` before logging in again, preserving the persisted job/license and notice checks.
+- Mission slow-live run `40024793065` passed the basic mission and kill/reward walks, then reached Arc 29 and hit pytest's default 300-second timeout at its 270-second travel wait. All three mission walks now use a 1200-second timeout; a fresh slow-live run will verify Arc 29.
+- The current `Eve.Host` build succeeded with 0 warnings and 0 errors; Python compile checks and `git diff --check` passed after the test updates.
+
+## 2026-10-23 verified live follow-up
+
+- Mission slow-live run `40026903022` completed successfully on `623e21803171574c04690d703b8fcb5cf31f2fa3`; the basic, kill/reward, and Arc 29 client walks all completed. The timeout now covers the full 270-second Arc travel step.
+- SKINR run `40028889495` on `1bfd22e4e98ee61add508a7e3632c0845bd35e1d` passed `ShipSkinrDispatchTests` (4/4) and applied the persisted license after restart. The assertion failed because it read the headless client's raw packet list without pinging/decoding it.
+- `test_skinr_live.py` now uses `notifications_of`, which pings the client, drains packets, and decodes names. Focused run `40030150836` on `1c15eb702dc4ae4ed3c94a6a44cf0cf87f386c2c` passed `Eve.Host.Tests` 4/4 and the SKINR live walk 1/1, with 0 skips.
+- Push CI run `40028876361` failed on the old SKINR notice assertion and a concurrent market test expectation. Run `40030137837` passed the SKINR and Rust jobs but failed the unanchor live assertion and two multi-buy market tests; its exact failures are recorded below. A subsequent market commit is under CI run `40031652832`.
+- The CI mission artifact confirms the Host build completed with 0 warnings and 0 errors. No PostgreSQL command was run locally; no graphical-client check was performed.
+
+## 2026-10-23 push CI follow-up
+
+- Push run `40030137837` failed `test_a_corporation_unanchors_and_scoops_its_control_tower`: its tower was seeded at `LEGAL_SYSTEM` (`30000903`), but the assertion compared the returned inventory location to the unrelated default `SYSTEM` (`30100032`). `StructureUnanchorDropAuthority` persists the structure record's `SolarSystemId`, matching the actual row and space item. The assertion now checks `LEGAL_SYSTEM`; the focused live check is pending.
+- The same run reported `MarketHostTests.The_host_dispatches_accessible_structure_market_orders_and_recovers_partial_settlement_after_restart` and two `Eve.Market.Tests` multi-buy failures. Market changes are being checked by newer CI run `40031652832`; no market code was changed in this task.
+

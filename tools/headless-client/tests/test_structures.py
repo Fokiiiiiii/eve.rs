@@ -599,3 +599,82 @@ def test_a_moon_chunk_is_refused_until_ready_then_fractured_and_completed_and_it
         assert fields > 0, "the fractured chunk left no ore field in the system"
         assert _owner_notifications(205, STRUCTURE), "the laser-fired notice of the fire is not in the owners' rows any more"
         assert client.call("structureControl", "ReleaseControl") is None
+
+def test_a_corporation_unanchors_and_scoops_its_control_tower():
+    """V24 ship.Drop, posMgr.UnanchorStructure and ship.Scoop walk: reject an online tower, then unanchor, drop and recover its hull."""
+    run = uuid.uuid4().hex[:10]
+    with base.connect(f"walk-tower-{run}") as client:
+        character, ship_id, fitted, _ = arrive(client, RACE, run)
+        corporation = dbseed.found_corporation(LEGAL_STATION, LEGAL_SYSTEM, character, run)
+        dbseed.join_corporation(character, corporation, DIRECTOR)
+        dbseed.sql(
+            f"update {dbseed.schema('CORPORATIONS')}.corporations set created_ms = {int(time.time() * 1000) - 8 * 86_400_000} "
+            f"where id = {corporation}"
+        )
+        dbseed.sql(
+            f"insert into {dbseed.schema('SKILLS')}.character_skills (character_id, type_id, level, skill_points) "
+            f"values ({character}, 11584, 3, 0) on conflict (character_id, type_id) do update set level = 3, skill_points = 0"
+        )
+        _relocate(character, ship_id)
+        dbseed.sql(f"update {dbseed.schema('INVENTORY')}.items set type_id = 1944 where id = {ship_id}")
+        _reenter(client, character)
+        _undock(client, ship_id, fitted, LEGAL_STATION, LEGAL_SYSTEM)
+
+        ship = client.call("ship", "MachoBindObject", (LEGAL_SYSTEM, 15), None)
+        ballpark = client.call("beyonce", "MachoBindObject", LEGAL_SYSTEM, None)
+        x, y, z = LEGAL_STATION_POSITION
+        client.call_bound(ballpark[0], "CmdWarpToStuff", "position", (x + WARP_OFF, y, z), minRange=0)
+        tower = dbseed.new_item(12235, owner=character, location=ship_id, flag=CARGO_FLAG, singleton=True)
+        deadline = time.time() + 300
+        while True:
+            try:
+                client.call_bound(ship[0], "Drop", [(tower, 1)], None, False)
+                break
+            except p.MachoError as failure:
+                if _refusal(failure)[0] != "ShipInWarp" or time.time() > deadline:
+                    pytest.fail(f"the tower drop was refused: {_refusal(failure)[0]}: {describe(failure.payload)}")
+            client.call_bound(ballpark[0], "CmdStop")
+            client.call_bound(ballpark[0], "UpdateStateRequest")
+            timed_events(client, 3.0)
+
+        assert dbseed.sql(
+            f"select count(*) from {dbseed.schema('SPACE')}.deployed "
+            f"where deployable_id = {tower} and kind = 'control_tower' and corporation_id = {corporation}"
+        ) == "1", "ship.Drop did not place the corporation's control tower"
+        dbseed.sql(
+            f"update {dbseed.schema('SPACE')}.deployed set activate_at_ms = {int(time.time() * 1000) - 1}, tower_state = 'online' "
+            f"where deployable_id = {tower}"
+        )
+        label, text = _refused(lambda: client.call("posMgr", "UnanchorStructure", tower))
+        assert label == "CustomNotify" and "offline" in text, (label, text)
+
+        dbseed.sql(f"update {dbseed.schema('SPACE')}.deployed set tower_state = 'offline' where deployable_id = {tower}")
+        assert client.call("posMgr", "UnanchorStructure", tower) is None
+        assert dbseed.sql(
+            f"select tower_state from {dbseed.schema('SPACE')}.deployed where deployable_id = {tower}"
+        ) == "unanchoring"
+
+        dbseed.sql(
+            f"update {dbseed.schema('SCHEDULER')}.jobs set run_at_ms = {int(time.time() * 1000)} "
+            f"where kind = 'space.control_tower.unanchor' and key = 'tower:{tower}' and state = 'pending'"
+        )
+        deadline = time.time() + 90
+        while time.time() < deadline and dbseed.sql(
+            f"select count(*) from {dbseed.schema('SPACE')}.deployed where deployable_id = {tower}"
+        ) != "0":
+            timed_events(client, 2.0)
+        assert dbseed.sql(f"select count(*) from {dbseed.schema('SPACE')}.deployed where deployable_id = {tower}") == "0"
+        assert dbseed.sql(f"select count(*) from {dbseed.schema('SPACE')}.space_items where item_id = {tower}") == "1"
+        item = dbseed.sql(
+            f"select owner_id, location_id, flag, custom_info from {dbseed.schema('INVENTORY')}.items where id = {tower}"
+        )
+        assert item.startswith(f"{character}|{LEGAL_SYSTEM}|") and "unanchor" in item.lower(), item
+
+        assert client.call_bound(ship[0], "Scoop", tower, None) is None
+        changes = timed_events(client, 15.0, until=lambda events: _named(events, "OnItemChange") != [])
+        assert _named(changes, "OnItemChange"), "scooping the hull sent no item-change notification"
+        scooped = dbseed.sql(
+            f"select owner_id, location_id, flag from {dbseed.schema('INVENTORY')}.items where id = {tower}"
+        )
+        assert scooped == f"{character}|{ship_id}|{CARGO_FLAG}", scooped
+        assert dbseed.sql(f"select count(*) from {dbseed.schema('SPACE')}.space_items where item_id = {tower}") == "0"

@@ -242,10 +242,10 @@ Wave 1 runs about 14 packages across three lanes. Packages in one wave may run a
 
 #### CH-18 Player bounty claims and payout (GATE-D)
 - **Depends on:** CH-13 and GATE-D. **Wave 2, lane eve_p4.**
-- **Scope:** a kill of a pilot with a placed bounty, by a claimant with the right GATE-D names, claims the bounty. The payout falls due after the reference's delay. Pending payouts are kept in PostgreSQL (pattern: `dotnet/src/Eve.Npc/PgBountyStore.cs`). The victim's bounty is reset.
+- **Scope:** a pilot kill claims the victim's pilot, corporation and alliance pools up to 20% of the ship and contents base-price loss. The final-blow pilot and its fleet sharers receive equal pending payouts; a scheduled job credits each payout once. Capsule losses use the same claim path, but implant values are not included yet. The victim's pool is drawn down in owner order.
 - **Files:** the kill hook in `dotnet/src/Eve.Services.Space/` (pattern: `SpaceSessions.Npc.cs`); the scheduler job in `dotnet/src/Eve.Host/Composition/SpaceComposition.cs` (`space.bounty.pay`, line 369); `dotnet/src/Eve.Services.Crimewatch/`.
 - **Sources:** EveJS `services/bounty/bountyRuntime.js`, `bounty/playerBountyState.js`, `bounty/killRightState.js`; wiki (bounties, kill rights).
-- **Acceptance:** a kill of a bountied pilot creates one pending payout. It pays once when due. Retries and a restart create no duplicate. Notifications are sent. Live: kill a test pilot, with the existing live kill helper if one exists (not checked).
+- **Acceptance:** `PlayerBountyKillsTests` cover claim idempotency, pool order and fleet sharing. Live `tools/headless-client/tests/test_player_kill_live.py` passed on `eve_p2` (2026-10-23): two pilots fought in Futzchag, the hunter killed a bountied Rifter with a loaded 125mm Railgun, and the test asserted the paid `kill:<ship>` row, one type-17 wallet journal entry, exact wallet change and victim-pool reduction. A priced Rifter is required because rookie Ibis type 601 has no SDE base price. The pod live walk and graphical-client check remain open; EveJS sends no player-bounty claim notification.
 
 #### CH-19 Challenges and season rewards
 - **Depends on:** CH-4. **Wave 2, lane eve_p2.**

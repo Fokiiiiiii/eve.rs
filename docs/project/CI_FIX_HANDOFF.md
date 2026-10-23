@@ -355,7 +355,8 @@ CI run 672 on `1669e6dc` failed the structure market Host test because the fixtu
 - Focused run 192 (`40029216605`) passed persistence reads and license application, then found no queued front notifications because the headless client drains them while awaiting a client RPC response. A harmless `GetUserToken` call now drains the queue.
 - Focused run 194 (`40030110928`) reached notification inspection and showed `Client.notifications` contains raw `Packet` values. The check now uses the `notifications_of` decoder from `evecli.observe`.
 - Focused run 196 (`40030950151`) passed on `e8538586`: 1 live test passed, 0 failed, 0 skipped. Main then added a MACHO `GetServiceInfo` call to flush the client event queue after application.
-- Focused run 198 (`40031794618`) passed that merged flow on `b43c0240`: 1 live test passed, 0 failed, 0 skipped. The Host Release build passed locally with 0 warnings and 0 errors. No local PostgreSQL test was run. Push gates `40031652832` and `40032068845` are still being checked.
+- Focused run 198 (`40031794618`) passed that merged flow on `b43c0240`: 1 live test passed, 0 failed, 0 skipped. The Host Release build passed locally with 0 warnings and 0 errors. No local PostgreSQL test was run.
+- CI 718 (`40031652832`) failed only the E2E `test_mission_walk.py` unanchor location assertion: its expected system did not match the legal system used by the structure fixture. Main commit `42d5ccce` corrects that expectation. Push gate `40032068845` on the corrected main head is still running.
 
 ## 2026-10-23 pre-push update on 1bf92f6f
 

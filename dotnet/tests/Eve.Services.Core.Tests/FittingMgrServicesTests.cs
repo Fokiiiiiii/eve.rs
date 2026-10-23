@@ -150,6 +150,27 @@ public sealed class FittingMgrServicesTests : IAsyncLifetime
     }
 
     [FittingPgFact]
+    public async Task Delete_fitting_refuses_missing_or_foreign_ids_without_a_false_notification()
+    {
+        var (_, host, calls) = await SetUpAsync();
+        var sink = new Sink();
+        var session = SessionOf(sink, Character);
+        IService service = new CharFittingMgrService(calls);
+        var fittingId = ((PyLong)await service.CallAsync(Call("SaveFitting", session, new PyInt(Character), Fitting()))).Value;
+        var packetCount = sink.Packets.Count;
+
+        var missing = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            service.CallAsync(Call("DeleteFitting", session, new PyInt(Character), new PyInt(-1))).AsTask());
+        var foreign = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            service.CallAsync(Call("DeleteFitting", session, new PyInt(Character), new PyLong(fittingId + 1))).AsTask());
+
+        Assert.Equal("CustomNotify", missing.Error.UserErrorMessage);
+        Assert.Equal("CustomNotify", foreign.Error.UserErrorMessage);
+        Assert.Equal(packetCount, sink.Packets.Count);
+        Assert.Single(Assert.IsType<PyDict>(await service.CallAsync(Call("GetFittings", session, new PyInt(Character)))).Entries);
+    }
+
+    [FittingPgFact]
     public async Task A_character_cannot_read_or_change_another_characters_fittings()
     {
         var (_, _, calls) = await SetUpAsync();

@@ -5635,3 +5635,5 @@ Corporation profile, logo, division-name, abilities, acceptance, mail-restrictio
 `invbroker.ListStations` and `ListStationItems` now cost 10 weighted per-session units because each traverses owned inventory and asset locations. `DispatchGoldenTests.Inventory_asset_locations_use_the_expensive_rpc_budget` checks both calls.
 
 `SaveManyFittings` now requires the client dictionary/KeyVal shape, and `DeleteManyFittings` requires a list or tuple. Wrong outer shapes, malformed save keys, and nonpositive delete IDs return a named `CustomNotify` refusal before processing rather than looking like a successful empty batch or partially mutating the collection. The fitting bulk regression covers those cases.
+
+`DeleteFitting` now verifies that a positive fitting ID belongs to the selected owner scope and confirms the delete before sending `OnFittingDeleted`; missing or foreign IDs return the same named refusal without a false notification. `FittingMgrServicesTests.Delete_fitting_refuses_missing_or_foreign_ids_without_a_false_notification` covers the boundary.

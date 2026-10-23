@@ -116,7 +116,12 @@ public sealed class FittingMgrCalls(PgSavedFittingStore store, IFittingHost host
         var owner = OwnerOf(call, scope);
         await MutateAccessAsync(call, owner, scope);
         var fittingId = IdOf(call.Arg(1)) ?? 0;
-        await store.DeleteAsync(scope, owner, [fittingId], call.Cancellation);
+        if (fittingId <= 0)
+            throw Refusal("FITTING_NOT_FOUND");
+        await RequireOwnedAsync(scope, owner, fittingId);
+        var deleted = await store.DeleteAsync(scope, owner, [fittingId], call.Cancellation);
+        if (!deleted.Contains(fittingId))
+            throw Refusal("FITTING_NOT_FOUND");
         Notify(call, scope, owner, "OnFittingDeleted", new PyLong(fittingId));
         return PyNone.Instance;
     }

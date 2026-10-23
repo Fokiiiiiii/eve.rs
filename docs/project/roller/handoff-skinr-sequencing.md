@@ -22,3 +22,9 @@
 - Focused test `FullyQualifiedName~V24_skinr_routes_expose` passed before the merge (one test, zero skipped).
 - The live headless walk and graphical-client verification still need GitHub Actions/graphical execution. No PostgreSQL database was used locally.
 - After pushing, dispatch `Eve.Host.Tests` with filter `FullyQualifiedName~ShipSkinrDispatchTests`, wait for the run, and inspect the push-triggered CI failures. Fix red checks at their root, then update this note after each push.
+
+## 2026-10-23 nested sequencing UUID assertion
+
+- Push CI run 690 (`40016706205`) failed in the live walk after design save when `uuid.UUID(bytes=...)` received the serialized `sequencing.job.Identifier` wrapper.
+- The V24 descriptors define both `GetAllActiveResponse.Job.id` and `CompletedNotice.id` as an `Identifier` message, with raw UUID bytes in its field 1. The Host encoders match that wire shape; the headless test now unwraps the nested identifier before decoding the UUID.
+- Python syntax compilation and the focused live Actions check are pending. No local PostgreSQL or graphical-client check was run.

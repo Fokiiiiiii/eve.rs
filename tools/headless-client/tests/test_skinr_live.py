@@ -611,7 +611,7 @@ def test_v24_skinr_design_sequences_and_applies_a_persisted_license():
             assert (status, response_type) == (200, JOB + "GetAllActiveResponse")
             active_rows = read_fields(active).get(1, [])
             assert len(active_rows) == 1
-            assert uuid.UUID(bytes=read_fields(active_rows[0])[1][0]) == job_id
+            assert uuid.UUID(bytes=read_fields(read_fields(active_rows[0])[1][0])[1][0]) == job_id
 
             # The saved design can be deleted after start: the durable job carries its authoritative layout.
             status, response_type, _ = _send(
@@ -639,7 +639,7 @@ def test_v24_skinr_design_sequences_and_applies_a_persisted_license():
             while len(event_names) < 2:
                 notice_name, payload = _notice(next(notices))
                 if notice_name.endswith("CompletedNotice"):
-                    assert uuid.UUID(bytes=read_fields(payload)[1][0]) == job_id
+                    assert uuid.UUID(bytes=read_fields(read_fields(payload)[1][0])[1][0]) == job_id
                     event_names.append(notice_name)
                 elif notice_name.endswith("UpdatedNotice"):
                     assert read_fields(payload).get(1)

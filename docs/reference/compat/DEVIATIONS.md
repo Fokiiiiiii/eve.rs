@@ -5506,3 +5506,5 @@ The fleetObject Init RPC costs 10 weighted per-session units because it updates 
 `corpRegistry.GetRecruitmentAd` consumes 10 weighted per-session units because its public response includes the selected corporation member count, and both `GetRecruitmentAdsByCorpID` and `GetRecruitmentAdsForCorporation` consume 10 units because they return complete corporation ad lists. Both responses remain unchanged. `DispatchGoldenTests.Corporation_contact_and_bulletin_lists_use_a_named_per_session_budget` verifies the named refusal for both calls.
 
 `ownerGroupManager` reads and mutations consume 10 weighted per-session units to bound repeated access-group enumeration and notification fanout. `DispatchGoldenTests.Owner_group_reads_and_mutations_use_a_named_per_session_budget` checks every registered service method. Responses and authorization remain unchanged.
+
+`corpRegistry.GetCorporation` consumes 10 weighted per-session units because its profile response includes a full corporation member count. The client response is unchanged. `DispatchGoldenTests.Corporation_contact_and_bulletin_lists_use_a_named_per_session_budget` verifies the named refusal.

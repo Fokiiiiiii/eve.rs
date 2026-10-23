@@ -16,15 +16,16 @@
 
 ## Checks
 
-- PASS: Host project build (0 warnings, 0 errors) before recent upstream Host changes.
-- PASS: current RPC-dispatch focused tests on Actions, run `39987623229`, ref `be113558`.
-- PASS: current push CI Host shards 1–3; Host shard 4 also passed after the reconnect assertion was corrected.
-- The headless suite already had `test_walk_industry.py`; a new live test `test_industry_monitor_live.py` now opens a monitor and moves a seeded material stack from ship cargo into the watched station hangar. It checks the updated material map and OnItemChange-before-OnIndustryMaterials order.
-- Actions CI for `be113558` failed in an unrelated market walk: `GetMarketOrderHistory` exceeded the session RPC budget. The failure appeared on two consecutive runs. This needs a root-cause check.
-- The latest local focused test build exited with code 137. A reduced-reference compile used stale Host test dependency outputs; no successful local run of the current RPC-dispatch test yet.
+- PASS: Host project build (0 warnings, 0 errors) before the latest upstream Host changes.
+- PASS: focused Host dispatch tests on Actions, run `39987623229`, ref `be113558`.
+- PASS: Host CI shards 1–4 passed on the prior push after correcting the reconnect assertion.
+- PUSHED: live headless industry monitor walk in commit `8b3c8e04`; it seeds materials at two locations and checks monitor payload 8 plus OnItemChange-before-OnIndustryMaterials ordering.
+- FAIL: push CI run `39990672521` on `8b3c8e04`; Host startup reads missing `sde.skinrComponentPointValues` in `ShipSkinrCatalog.LoadAsync`, preventing live walks from reaching their calls. The market walk also exceeds the current session RPC budget.
+- FAIL: focused agent-test runs `39990690564` and `39991587566` both failed during the one-time .NET solution build before test output. The second run was dispatched after the first failure; neither returned a test result.
 - No graphical-client session has been performed.
+- Monitor metadata persistence across process restart has not been exercised; no PostgreSQL database was used locally.
 - Nine unrelated Rust deletions were present at initial inspection and remain unstaged.
 
 ## Remaining
 
-Push the new live industry monitor test, confirm it in Actions, investigate and resolve the repeated market budget failure, then report headless and graphical-client verification separately. Persistence of the saved monitor metadata across a process restart is supported by the GameStoreCache paths but was not exercised with a restart test.
+Resolve the CI failures, confirm the Host dispatch and live industry walk on Actions, and exercise saved monitor metadata across restart if a no-database test path is available. Report headless and graphical-client verification separately.

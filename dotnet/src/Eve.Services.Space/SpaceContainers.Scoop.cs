@@ -53,8 +53,9 @@ public sealed partial class SpaceContainers
             throw MachoErrors.ThrowUserError("SafetyActivated");
         }
         var pilot = await _ships.CharacterAsync(characterId, cancellationToken);
-        if (pilot is null || spaceItem.CorporationId != pilot.CorporationId ||
-            item.OwnerId != characterId && item.OwnerId != pilot.CorporationId)
+        if (pilot is null ||
+            (spaceItem.CorporationId != item.OwnerId &&
+             (spaceItem.CorporationId != pilot.CorporationId || item.OwnerId != spaceItem.CharacterId)))
         {
             throw MachoErrors.ThrowUserError("FakeItemNotFound");
         }

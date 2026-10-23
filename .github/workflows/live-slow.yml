@@ -1,12 +1,18 @@
 name: Live (slow)
 
-# The end-to-end tests that take minutes (a pilot undocks, fights a rat, dies, jumps): every test file of the headless
-# client against the whole server stack, each on its own.
+# Slow end-to-end tests run selected headless-client files against the whole server stack, each on its own.
 # Trigger mode is set by tools/dev/ci-mode.py (automatic by default; manual-only for private-repository operation).
-# This workflow is dispatch-only; the fast ones run on pushes (ci.yml).
+# The nightly workflow calls this matrix; manual dispatch can still select one file or all files.
 
-# The nightly schedule is switched off (2026-10-04, the owner's request). Dispatch one file or all files from the Actions tab or helper.
+# The nightly schedule lives in ci-nightly.yml. This workflow can also be dispatched for one file or all files.
 'on':
+  workflow_call:
+    inputs:
+      test_file:
+        description: One test filename, or all
+        required: false
+        default: all
+        type: string
   workflow_dispatch:
     inputs:
       test_file:
@@ -25,9 +31,11 @@ name: Live (slow)
           - test_arc29_walk.py
           - test_belt_rats.py
           - test_cargo.py
+          - test_character_contact_labels_live.py
           - test_character_delete.py
           - test_command_burst_live.py
           - test_clone_install_live.py
+          - test_clone_ship_install_live.py
           - test_clone_jump_live.py
           - test_crab_walk.py
           - test_crimewatch.py
@@ -38,6 +46,8 @@ name: Live (slow)
           - test_ess.py
           - test_expert_system_live.py
           - test_faction_standing_live.py
+          - test_fitting_lists_live.py
+          - test_fleet_watchlist_live.py
           - test_fob_insystem_walk.py
           - test_fob_walk.py
           - test_fw_battlefield_walk.py
@@ -68,6 +78,7 @@ name: Live (slow)
           - test_others.py
           - test_planet_walk.py
           - test_player_bounty_live.py
+          - test_player_kill_live.py
           - test_pochven_live.py
           - test_population_cap_live.py
           - test_project_discovery_live.py
@@ -102,8 +113,8 @@ name: Live (slow)
           - test_zarzakh_jump.py
 
 concurrency:
-  group: live-slow-${{ github.ref }}
-  cancel-in-progress: true
+  group: live-slow-${{ github.workflow }}-${{ github.run_id }}-${{ inputs.test_file }}
+  cancel-in-progress: false
 
 permissions:
   contents: read

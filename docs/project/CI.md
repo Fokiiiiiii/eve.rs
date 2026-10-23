@@ -48,6 +48,21 @@ python3 tools/dev/ci-status.py dispatch live-slow.yml --ref main --test-file all
 
 The token can list runs and jobs (`GET /actions/runs` and `GET /actions/runs/{run_id}/jobs`, HTTP 200), dispatch both workflows (HTTP 204), and download a current failed job log (`GET /actions/jobs/{job_id}/logs`, HTTP 200). A request for an older job log returned HTTP 401. The helper reports log-download errors while retaining run, job, and failed-step information. If dispatch is denied elsewhere, it prints the HTTP status and API response.
 
+## Selected agent tests and nightly coverage
+
+Use `agent-test.yml` for a focused set of .NET test projects, headless-client files, and Rust checks. Its `ref` input is checked out by the job; the workflow itself is dispatched from `main`. The selected .NET tests share one Release solution build and use `--no-build`. Full command logs, TRX/JUnit reports, and live-stack logs are uploaded as seven-day artifacts.
+
+```sh
+python3 tools/dev/ci-status.py dispatch-agent-test --ref main --projects Eve.Host.Tests --filter 'FullyQualifiedName~Hostile_method_is_refused' --live '' --rust none
+python3 tools/dev/ci-status.py dispatch-agent-test --ref main --projects '' --filter '' --live fast --rust tests
+python3 tools/dev/ci-status.py wait <run-id>
+python3 tools/dev/ci-status.py failures <commit-sha>
+```
+
+`ci-nightly.yml` runs the slow live-client matrix and additional recent walk files, the fast skill-training walk on its own Host configured at 60,000x speed, the `eve-bench` benchmark against its recorded baseline, the complete `ci-windows.yml` workflow, and the extended `EVE_RPC_FUZZ_LONG=1` Host test. Its summary names each job result and its logs remain available as artifacts. This workflow runs nightly and by manual dispatch, and is separate from the required push gate.
+
+Use `python3 tools/dev/test_ci_status.py` for the focused standard-library tests covering failure-name parsing and log-tail extraction.
+
 ## Dependency audit
 
 `dependency-audit.yml` runs `cargo audit --file Cargo.lock` (cargo-audit 0.22.2), `dotnet list dotnet/EveRs.slnx package --vulnerable --include-transitive` (failing when NuGet reports a vulnerable package) and `pip-audit` 2.10.1 on both headless-client requirement files. It runs weekly, on manual dispatch, and on pushes to `main` that change a Cargo, NuGet, or Python dependency file. A finding fails the job. The workflow has no `pull_request` trigger; dependency changes are audited after a matching change is pushed to `main`, while weekly and manual runs audit the default branch.

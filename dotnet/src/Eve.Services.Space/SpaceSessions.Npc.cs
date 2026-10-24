@@ -568,11 +568,12 @@ public sealed partial class SpaceSessions
             await EnsureNpcTypesAsync(plan.Profiles.Select(profile => profile.ShipTypeId), cancellationToken).ConfigureAwait(false);
             var anchor = new SpawnAnchor(system.SolarSystemId, 0, [.. beltPosition], rats.Config.SpawnDistanceMeters, BeltRatSpreadMeters, beltId, Interlocked.Increment(ref _beltGroups));
             var (composition, _) = await SpawnGroupAsync(plan.Profiles, anchor, cancellationToken).ConfigureAwait(false);
-            if (composition.Count > 0)
+            if (composition.Count == 0)
             {
-                rats.Spawned(system.SolarSystemId, beltId, now);
-                _log?.Invoke($"belt {beltId} of system {system.SolarSystemId}: {plan.Faction} rats ({plan.Band}): {string.Join(", ", composition.Select(part => $"{part.Count} {part.Name}"))}");
+                return decision with { Outcome = BeltOutcome.SpawnFailed };
             }
+            rats.Spawned(system.SolarSystemId, beltId, now);
+            _log?.Invoke($"belt {beltId} of system {system.SolarSystemId}: {plan.Faction} rats ({plan.Band}): {string.Join(", ", composition.Select(part => $"{part.Count} {part.Name}"))}");
             return decision;
         }
         finally

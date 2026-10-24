@@ -807,7 +807,7 @@ impl Sim {
         }
     }
 
-    /// The host asks for an NPC: it comes into the requested scene if the scene has been created.
+    /// The host asks for an NPC: a public solar-system scene is created on demand.
     pub(super) fn spawn(&mut self, spawn: Spawn, now: i64) -> Vec<Message> {
         let Spawn {
             request_id,
@@ -822,6 +822,16 @@ impl Sim {
             identity,
         } = spawn;
         let reply = |outcome| Message::SpawnReply { request_id, outcome };
+        if !scene_key.is_valid() {
+            return vec![reply(Err("BAD_SCENE_KEY".to_string()))];
+        }
+        if scene_key.instance_id == 0 && !self.scenes.contains_key(&scene_key) {
+            let system = match self.universe.system(scene_key.location_id) {
+                Ok(system) => system,
+                Err(reason) => return vec![reply(Err(reason))],
+            };
+            self.scenes.insert(scene_key, self.universe.scene_of(system));
+        }
         let Some(target_scene) = self.scenes.get(&scene_key) else {
             return vec![reply(Err(format!(
                 "NO_SCENE {}:{}:{}",

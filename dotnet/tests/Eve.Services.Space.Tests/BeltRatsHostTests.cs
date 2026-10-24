@@ -111,6 +111,20 @@ public class BeltRatsHostTests
     }
 
     [PgFact]
+    public async Task A_refused_belt_spawn_is_reported_as_a_failure()
+    {
+        var (rig, session) = await InSpaceAsync(Always);
+        await using var _ = rig;
+        rig.Sim.SpawnAnswer = new SimSpawnReply(0, null, "NO_SCENE 30000142:0:0");
+
+        var decision = await rig.Space.BeltArrivalAsync((ulong)session.SessionId, Belt, BeltPosition);
+
+        Assert.Equal(BeltOutcome.SpawnFailed, decision!.Outcome);
+        Assert.Single(rig.Sim.Heard.OfType<SimSpawn>());
+        Assert.Contains(rig.Log, line => line.Contains("NO_SCENE 30000142:0:0"));
+    }
+
+    [PgFact]
     public async Task What_the_simulation_says_of_an_arrival_is_dealt_with()
     {
         var (rig, session) = await InSpaceAsync(Always);

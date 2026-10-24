@@ -139,6 +139,46 @@ public class HostServerTests : IAsyncLifetime
         }
     }
 
+    private sealed class SessionSceneTransitionService : IService
+    {
+        public const int DestinationSystem = 30_000_142;
+        public const string BoundOid = "N=ProxyNode:system-scene-transition";
+
+        public string Name => "beyonce";
+        public bool HasMethod(string method) => method is "JumpToSystem" or "MachoBindObject";
+
+        public ValueTask<PyValue> CallAsync(ServiceCall call)
+        {
+            if (call.Method == "JumpToSystem")
+            {
+                call.Session.Set("stationid", new PyInt(60_000_001));
+                call.Session.Set("stationid2", new PyInt(60_000_001));
+                call.Session.Set("structureid", PyNone.Instance);
+                call.Session.Set("solarsystemid", new PyInt(30_000_141));
+                call.Session.Set("solarsystemid2", new PyInt(30_000_141));
+                call.Session.Set("locationid", new PyInt(60_000_001));
+                call.Session.AfterResponse(() => call.Session.Change(
+                    ("stationid", PyNone.Instance),
+                    ("stationid2", PyNone.Instance),
+                    ("structureid", PyNone.Instance),
+                    ("solarsystemid", new PyInt(DestinationSystem)),
+                    ("solarsystemid2", new PyInt(DestinationSystem)),
+                    ("locationid", new PyInt(DestinationSystem))));
+                return ValueTask.FromResult<PyValue>(Py.Tuple(
+                    new PyStr(BoundOid),
+                    new PyLong(Py.FileTimeFromUnixMs(FixedNowMs + 10_000))));
+            }
+
+            var bound = new PySubStruct(new PySubStream(Py.Tuple(new PyStr(BoundOid), new PyLong(7))));
+            call.Session.AfterResponse(() =>
+            {
+                call.Session.SendNotification("DoDestinyUpdate", "clientID", new PyList([new PyStr("AddBalls2")]));
+                call.Session.SendNotification("DoDestinyUpdate", "clientID", new PyList([new PyStr("SetState")]));
+            });
+            return ValueTask.FromResult<PyValue>(Py.Tuple(bound, PyNone.Instance));
+        }
+    }
+
     private sealed class NoAccounts : IOmegaAccountStore
     {
         public string? GetOmegaExpiry(long accountId) => OmegaLicenses.DefaultOmegaExpiryText;
@@ -620,6 +660,58 @@ public class HostServerTests : IAsyncLifetime
         var retryNotification = Assert.IsType<Send>(await front.ReceiveAsync());
         Assert.Equal(MachoMessage.Notification, Message(retryNotification));
         Assert.Equal("OnInvulnCancelled", Decoded(retryNotification).Dest.BroadcastId);
+    }
+
+    [Fact]
+    public async Task A_session_change_then_beyonce_rebind_sends_the_destination_scene_and_state_in_order()
+    {
+        var service = new SessionSceneTransitionService();
+        ClientSession? session = null;
+        Start(configure: registry => registry.Register(service), sessionOpened: opened => session = opened);
+        var front = await Handshaken(await ConnectAsync());
+        var open = Open();
+        await front.SendAsync(open);
+        await front.ReceiveAsync();
+
+        await front.SendAsync(new Packet(open.SessionId,
+            MarshalCodec.Encode(Packets.Call(open, 1, "beyonce", "JumpToSystem"))));
+        var jumpResponse = Assert.IsType<Send>(await front.ReceiveAsync());
+        Assert.Equal(MachoMessage.CallRsp, Assert.IsType<MachoPacket>(MachoPacket.Decode(MarshalCodec.Decode(jumpResponse.Payload))).Type);
+        var jumpResult = Assert.IsType<PyTuple>(Result(MarshalCodec.Decode(jumpResponse.Payload)));
+        Assert.Equal(SessionSceneTransitionService.BoundOid, T(jumpResult.Items[0]));
+
+        var sessionChangeSend = Assert.IsType<Send>(await front.ReceiveAsync());
+        var sessionChange = Assert.IsType<MachoPacket>(MachoPacket.Decode(MarshalCodec.Decode(sessionChangeSend.Payload)));
+        Assert.Equal(MachoMessage.SessionChangeNotification, sessionChange.Type);
+        var fields = ((PyDict)((PyTuple)((PyTuple)sessionChange.Payload).Items[1]).Items[1]).Entries;
+        Assert.Equal(
+            ["stationid", "stationid2", "solarsystemid", "solarsystemid2", "locationid"],
+            fields.Select(entry => T(entry.Key)));
+        Assert.Equal(SessionSceneTransitionService.DestinationSystem, session!.GetInt("solarsystemid"));
+        Assert.Equal(SessionSceneTransitionService.DestinationSystem, session.GetInt("solarsystemid2"));
+        Assert.Equal(SessionSceneTransitionService.DestinationSystem, session.GetInt("locationid"));
+        Assert.Equal(PyNone.Instance, session.Get("stationid"));
+        Assert.Equal(PyNone.Instance, session.Get("stationid2"));
+        Assert.Equal(PyNone.Instance, session.Get("structureid"));
+
+        await front.SendAsync(new Packet(open.SessionId,
+            MarshalCodec.Encode(Packets.Call(
+                open, 2, "beyonce", "MachoBindObject",
+                new PyTuple([new PyInt(SessionSceneTransitionService.DestinationSystem), new PyInt(5)]),
+                PyNone.Instance))));
+        var bindResponse = Assert.IsType<Send>(await front.ReceiveAsync());
+        Assert.Equal(MachoMessage.CallRsp, Assert.IsType<MachoPacket>(MachoPacket.Decode(MarshalCodec.Decode(bindResponse.Payload))).Type);
+        var bindResult = Assert.IsType<PyTuple>(Result(MarshalCodec.Decode(bindResponse.Payload)));
+        Assert.Equal(2, bindResult.Items.Count);
+        Assert.IsType<PySubStruct>(bindResult.Items[0]);
+        Assert.Equal(PyNone.Instance, bindResult.Items[1]);
+
+        var scene = Assert.IsType<Send>(await front.ReceiveAsync());
+        var state = Assert.IsType<Send>(await front.ReceiveAsync());
+        Assert.Equal(MachoMessage.Notification, Assert.IsType<MachoPacket>(MachoPacket.Decode(MarshalCodec.Decode(scene.Payload))).Type);
+        Assert.Equal(MachoMessage.Notification, Assert.IsType<MachoPacket>(MachoPacket.Decode(MarshalCodec.Decode(state.Payload))).Type);
+        Assert.Equal("DoDestinyUpdate", Assert.IsType<MachoPacket>(MachoPacket.Decode(MarshalCodec.Decode(scene.Payload))).Dest.BroadcastId);
+        Assert.Equal("DoDestinyUpdate", Assert.IsType<MachoPacket>(MachoPacket.Decode(MarshalCodec.Decode(state.Payload))).Dest.BroadcastId);
     }
 
     [Fact]

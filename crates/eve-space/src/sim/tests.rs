@@ -1215,15 +1215,52 @@ fn an_npc_the_host_places_from_a_ship_comes_that_far_from_where_the_ship_is_and_
 }
 
 #[test]
-fn an_npc_is_refused_in_a_system_where_nobody_is_and_a_scripted_behavior_that_is_not_there_makes_none() {
-    let mut sim = sim();
-    let none = sim.handle(spawn(6, SYSTEM, 980_050_000_002, [0.0; 3]), NOON).unwrap();
-    assert_eq!(none, [Message::SpawnReply { request_id: 6, outcome: Err(format!("NO_SCENE {SYSTEM}:0:0")) }]);
+fn an_npc_spawn_creates_a_normal_system_scene_and_rejects_missing_or_invalid_scenes() {
     let mut sim = undocked();
-    let Message::Spawn(mut request) = spawn(7, SYSTEM, 980_050_000_003, [0.0; 3]) else { unreachable!() };
-    request.behavior = "there is no such tree".to_string();
-    let refused = sim.handle(Message::Spawn(request), NOON).unwrap();
-    assert!(matches!(&refused[..], [Message::SpawnReply { request_id: 7, outcome: Err(_) }]), "{refused:?}");
+    let scene = SceneKey::solar_system(SYSTEM);
+    let player_position = sim.scenes[&scene].pilots[&SESSION].ship.position;
+    assert!(sim.handle(Message::Leave { session_id: SESSION, why: 1 }, NOON).unwrap().is_empty());
+    assert!(sim.scenes.is_empty());
+
+    let npc_id = 980_050_000_002;
+    let at = [player_position.x, player_position.y, player_position.z];
+    let spawned = sim.handle(spawn(6, SYSTEM, npc_id, at), NOON).unwrap();
+    let npc_session = match spawned.as_slice() {
+        [Message::SpawnReply { request_id: 6, outcome: Ok(session) }] => *session,
+        other => panic!("unexpected NPC spawn result: {other:?}"),
+    };
+    assert!(is_npc_session(npc_session));
+    assert!(sim.scenes[&scene].session_of(npc_id).is_some());
+
+    let entered = sim.handle(enter(SESSION, STATION, SYSTEM), NOON + SECOND).unwrap();
+    assert!(
+        entered
+            .iter()
+            .any(|message| matches!(message, Message::EnterReply { session_id: SESSION, outcome: Ok(()) }))
+    );
+    let bound = sim.handle(Message::Bind { session_id: SESSION }, NOON + SECOND).unwrap();
+    assert!(names(&bound).iter().any(|name| name == "DoDestinyUpdate"));
+    assert!(sim.scenes[&scene].ships_in_view(SESSION).iter().any(|ship| ship.spec.ship_id == npc_id));
+
+    let unknown_system = sim.handle(spawn(7, SYSTEM + 1_000_000, npc_id + 1, [0.0; 3]), NOON).unwrap();
+    assert!(
+        matches!(&unknown_system[..], [Message::SpawnReply { request_id: 7, outcome: Err(reason) }] if reason.starts_with("UNKNOWN_SYSTEM")),
+        "{unknown_system:?}"
+    );
+
+    let Message::Spawn(mut missing_private) = spawn(8, SYSTEM, npc_id + 2, [0.0; 3]) else { unreachable!() };
+    missing_private.scene = SceneKey { location_id: SYSTEM, instance_id: 99, room_index: 1 };
+    assert_eq!(
+        sim.handle(Message::Spawn(missing_private), NOON).unwrap(),
+        [Message::SpawnReply { request_id: 8, outcome: Err(format!("NO_SCENE {SYSTEM}:99:1")) }]
+    );
+
+    let Message::Spawn(mut invalid) = spawn(9, SYSTEM, npc_id + 3, [0.0; 3]) else { unreachable!() };
+    invalid.scene = SceneKey { location_id: 0, instance_id: 0, room_index: 0 };
+    assert_eq!(
+        sim.handle(Message::Spawn(invalid), NOON).unwrap(),
+        [Message::SpawnReply { request_id: 9, outcome: Err("BAD_SCENE_KEY".to_string()) }]
+    );
 }
 
 #[test]

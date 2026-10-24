@@ -236,8 +236,16 @@ def test_docked_corporation_members_trade_at_an_eligible_upwell_structure():
         assert all(_number(_field(row, "locationID")) == structure_id for row in bought + sold)
 
         assert dbseed.quantity_at(buyer_character, structure_id, TRITANIUM) == 2
-        # The unfilled seller quantity remains in order escrow until cancellation returns it.
+        # The open order holds its unfilled stock in market escrow until cancellation.
         assert dbseed.quantity_at(seller_character, structure_id, TRITANIUM) == 0
+        escrow_quantity = dbseed.sql(
+            f"select coalesce(sum(i.quantity), 0) "
+            f"from {dbseed.schema('MARKET')}.orders o "
+            f"join {dbseed.schema('INVENTORY')}.items i on i.id = o.escrow_item_id "
+            f"where o.id = {int(ask_id)} and o.state = 0 "
+            f"and i.owner_id = {int(seller_character)} and i.type_id = {TRITANIUM}"
+        )
+        assert int(escrow_quantity) == 2
         buyer_hangar = [row for row in _station_hangar_items(buyer, structure_id) if _field(row, "typeID") == TRITANIUM]
         seller_hangar = [row for row in _station_hangar_items(seller, structure_id) if _field(row, "typeID") == TRITANIUM]
         assert sum(_field(row, "quantity") for row in buyer_hangar) == 2, buyer_hangar

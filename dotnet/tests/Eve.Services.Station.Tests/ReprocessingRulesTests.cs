@@ -24,6 +24,15 @@ public sealed class ReprocessingRulesTests
     }
 
     [Theory]
+    [InlineData(60000001, 60000001, true)]
+    [InlineData(60000001, 60000002, false)]
+    [InlineData(0, 60000002, true)]
+    public void A_reprocess_call_is_scoped_to_its_source_location(long requestedLocation, long actualLocation, bool expected)
+    {
+        Assert.Equal(expected, ReprocessingRules.MatchesSourceLocation(requestedLocation, actualLocation));
+    }
+
+    [Theory]
     [InlineData(5, 3.0, 1.15)]
     [InlineData(0, 3.0, 1.0)]
     [InlineData(4, 2.0, 1.08)]

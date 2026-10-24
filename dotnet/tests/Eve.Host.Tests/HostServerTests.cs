@@ -601,6 +601,35 @@ public partial class HostServerTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Achievement_tracker_HasEverWarped_returns_a_boolean_through_host_wire()
+    {
+        var requestedCharacters = new List<long>();
+        var service = new AchievementTrackerMgrService(hasEverWarped: (characterId, _) =>
+        {
+            requestedCharacters.Add(characterId);
+            return ValueTask.FromResult(characterId == 90000001);
+        });
+        Start(
+            configure: registry => registry.Register(service),
+            sessionOpened: session => session.Set("charid", new PyInt(session.SessionId == 101 ? 90000001 : 90000002)));
+        var front = await Handshaken(await ConnectAsync());
+
+        async Task<PyValue?> CallHasEverWarped(SessionOpen open, uint correlationId)
+        {
+            await front.SendAsync(open);
+            await front.ReceiveAsync(); // the initial state
+            await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(
+                Packets.Call(open, correlationId, "achievementTrackerMgr", "HasEverWarped"))));
+            var reply = Assert.IsType<Send>(await front.ReceiveAsync());
+            return Result(MarshalCodec.Decode(reply.Payload));
+        }
+
+        Assert.Same(PyBool.True, await CallHasEverWarped(Open(101), 1));
+        Assert.Same(PyBool.False, await CallHasEverWarped(Open(102), 2));
+        Assert.Equal([90000001L, 90000002L], requestedCharacters);
+    }
+
+    [Fact]
     public async Task A_call_is_answered_through_the_dispatcher()
     {
         Start();

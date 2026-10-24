@@ -88,3 +88,10 @@ Run 745 failed two `Eve.Market.Tests.ProtocolTests` cases because immediate fill
 - Push CI run 757 (40050603403, 676f26f6) passed Rust checks/tests, Python client tests, the .NET build and shards, fixtures, and the Windows matrix. Its live Upwell market walk failed because it expected the seller's two unfilled units in the structure hangar before cancelling the open ask.
 - The order retains the unfilled quantity in escrow until cancellation. The walk now checks buyer delivery after the fill and seller return after cancellation; it does not count escrowed stock as hangar inventory before cancel.
 - The structure inventory client path was subsequently added via the V24 global-assets charMgr moniker, and persisted inventory checks remain. Focused Actions runs against the pre-escrow-assertion fix do not establish the corrected walk. No local PostgreSQL or graphical-client run was used.
+
+
+## 2026-10-24 CI run 762 wallet journal and RPC inventory follow-up
+
+- Push CI run 762 (40052033248, b5850087) passed Rust checks/tests, Python client tests, .NET build and most .NET shards, plus the Windows matrix. Its fast live Upwell walk showed a buyer journal of `(46, -99.5), (149, -0.5), (42, -100.0)` after filling a standing bid; the buyer's 100 ISK had already been paid into escrow, so the fill uses journal ref 42 rather than a second ordinary purchase ref 2. The client test now asserts the escrow settlement row.
+- The same push exposed the RPC inventory snapshot count changing from 1382 to 1383 after the concurrent host registration change. The registry test's expected count is updated to 1383.
+- Focused Actions validation for the journal assertion and registry count is pending. The local Host test-project build was cancelled after it remained silent while compiling its dependency graph; no local database or graphical client was used.

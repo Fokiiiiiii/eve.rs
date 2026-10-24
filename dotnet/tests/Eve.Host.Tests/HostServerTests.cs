@@ -25,7 +25,7 @@ public sealed class PgFactAttribute : Xunit.FactAttribute
     }
 }
 
-public class HostServerTests : IAsyncLifetime
+public partial class HostServerTests : IAsyncLifetime
 {
     private const long FixedNowMs = 1_790_646_377_000;
 
@@ -94,6 +94,19 @@ public class HostServerTests : IAsyncLifetime
         {
             Mutations++;
             return ValueTask.FromResult<PyValue>(new PyStr("accepted"));
+        }
+    }
+
+    private sealed class BillManagerBudgetService : IService
+    {
+        public string Name => "billMgr";
+        public int Calls { get; private set; }
+        public bool HasMethod(string method) => method == "GetCorporationBills";
+
+        public ValueTask<PyValue> CallAsync(ServiceCall call)
+        {
+            Calls++;
+            return ValueTask.FromResult<PyValue>(PyNone.Instance);
         }
     }
 
@@ -600,6 +613,63 @@ public class HostServerTests : IAsyncLifetime
         var reply = Assert.IsType<Send>(await front.ReceiveAsync());
         var time = Assert.IsType<PyLong>(Result(MarshalCodec.Decode(reply.Payload)));
         Assert.Equal(Py.FileTimeFromUnixMs(FixedNowMs), time.Value);
+    }
+
+    [Fact]
+    public async Task Corporation_application_bootstrap_bound_call_survives_an_exhausted_shared_budget()
+    {
+        using var source = Npgsql.NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest("Host=localhost"));
+        var characters = new Eve.Characters.PgCharacterStore(source);
+        var registryService = new Eve.Services.Corporations.CorpRegistryService(
+            new Eve.Corporations.CorporationStore(
+                source,
+                characters,
+                new Eve.Wallet.PgWalletStore(source),
+                new Eve.Wallet.WalletTransactions(source),
+                new Eve.Skills.PgSkillStore(source),
+                () => FixedNowMs),
+            characters,
+            () => FixedNowMs);
+        var billMgr = new BillManagerBudgetService();
+        const string boundObjectId = "N=ProxyNode:corp-registry-neocom-bootstrap";
+        Start(configure: registry =>
+        {
+            registry.Register(billMgr);
+            registry.Register(registryService);
+            registry.RegisterBoundObject(boundObjectId, registryService);
+        });
+        var front = await Handshaken(await ConnectAsync());
+        var open = Open();
+        await front.SendAsync(open);
+        _ = await front.ReceiveAsync();
+
+        static int Message(Send send) =>
+            Assert.IsType<MachoPacket>(MachoPacket.Decode(MarshalCodec.Decode(send.Payload))).Type;
+        for (long callId = 1; callId <= 16; callId++)
+        {
+            await front.SendAsync(new Packet(open.SessionId,
+                MarshalCodec.Encode(Packets.Call(open, callId, "billMgr", "GetCorporationBills"))));
+            var accepted = Assert.IsType<Send>(await front.ReceiveAsync());
+            Assert.Equal(MachoMessage.CallRsp, Message(accepted));
+            Assert.Equal(PyNone.Instance, Result(MarshalCodec.Decode(accepted.Payload)));
+        }
+
+        await front.SendAsync(new Packet(open.SessionId,
+            MarshalCodec.Encode(Packets.Call(open, 17, "billMgr", "GetCorporationBills"))));
+        var refused = Assert.IsType<Send>(await front.ReceiveAsync());
+        Assert.Equal(MachoMessage.ErrorResponse, Message(refused));
+        Assert.Contains("SessionRpcBudgetExceeded", Encoding.Latin1.GetString(refused.Payload.Span));
+        Assert.Equal(16, billMgr.Calls);
+
+        // No character is selected; the production handler returns its empty map before storage access.
+        var kwargs = new PyDict([
+            new KeyValuePair<PyValue, PyValue>(new PyStr("machoVersion"), new PyInt(1)),
+        ]);
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(
+            Packets.BoundCall(open, 18, boundObjectId, "GetMyApplications", new PyTuple([]), kwargs))));
+        var bootstrap = Assert.IsType<Send>(await front.ReceiveAsync());
+        Assert.Equal(MachoMessage.CallRsp, Message(bootstrap));
+        Assert.Empty(Assert.IsType<PyDict>(Result(MarshalCodec.Decode(bootstrap.Payload))).Entries);
     }
 
     [Fact]

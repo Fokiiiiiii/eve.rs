@@ -72,7 +72,7 @@ fn hold_tick_aligned(messages: Vec<Message>, held: &mut Vec<Message>) -> Vec<Mes
             held.push(message);
             preserve_notification_order = true;
         } else if jump_follows_held_update
-            || preserve_notification_order && matches!(&message, Message::Notify { .. })
+            || (preserve_notification_order && matches!(&message, Message::Notify { .. }))
         {
             held.push(message);
         } else {

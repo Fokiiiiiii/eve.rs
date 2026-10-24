@@ -63,7 +63,7 @@ The first push gate (run 737 on `486812c1`) also showed that the focused Host te
 ## 10. CI 737 test corrections (2026-10-24)
 
 - CI 737 on `486812c1` failed the distant-ship Host test because it still expected the old range refusal. The test now verifies ship restoration and pilot release at 155,000 m surface distance.
-- Agent test run 231 on the same commit passed all 22 selected live structure tests. Its Space test filter passed 2 and failed 2 because the new fixture names exceeded the two-space limit; the names are now valid and the focused rerun is pending.
+- Agent test run 231 on the same commit passed all 22 selected live structure tests. Its Space test filter passed 2 and failed 2 because the new fixture names exceeded the two-space limit; those names were shortened before run 238 exposed the missing session corporation id.
 
 
-Run 238 on `4930fd25` passed the far-ship Host regression 1/1. The same run's Space test set passed 3/4; the remaining custody test setup read a missing session `corpid`, so it now obtains that value from the pilot record. Focused rerun pending.
+Run 238 on `4930fd25` passed the far-ship Host regression 1/1. The same run's Space test set passed 3/4; the remaining custody test setup read a missing session `corpid`, so it now obtains the value from the persisted pilot. Run 249 on `90898a6783bf` passed the far-ship Host test (1/1) and both focused Space scoop tests (2/2), with 0 skips.

@@ -197,11 +197,7 @@ CI run 672 on `1669e6dc` failed the structure market Host test because the fixtu
 - Push-triggered CI run 683 (`40014207144`) and merged-parent run 682 (`40014191246`) were still running in the neighboring worktree at its last update. Current CI and Agent checks on the merged head remain pending.
 - No local PostgreSQL or graphical-client verification was performed.
 
-## 2026-10-23 CI 647/648 root-cause review
-
-- The E2E and Host logs report `42P01` for `sde.skinrComponentPointValues`. These records are in the mission SDE. The failing Host composition passed the regular SDE reader to the SKINR catalog, and the live harness loaded only the regular SDE build. Main commit `a00e62c9` now reads the catalog through `sde_mission`, verifies mission tables when reusing the loaded build, and has the live harness ensure the mission build. The cache key update in `86c11a0c` is separate from this schema mismatch.
-- Run 648 also reports `ShipSkinrDispatchTests.Draft_save_and_read_responses_keep_the_v24_row_shape` failing its decoded skin string assertion. Main commit `bb6029d1` corrects the test's nested response decoding.
-- Run 647/648 predate these changes. Run 683 on `8610990c` is checking the corrected SKINR live fixture shape; run 684 on the later head `253597a9` is now the newest push gate. Check both completed results before closing these causes.
+## 2026-10-23 CI 647/648 root-cause review- The E2E and Host logs report `42P01` for `sde.skinrComponentPointValues`. These records are in the mission SDE. The failing Host composition passed the regular SDE reader to the SKINR catalog, and the live harness loaded only the regular SDE build. Main commit `a00e62c9` now reads the catalog through `sde_mission`, verifies mission tables when reusing the loaded build, and has the live harness ensure the mission build. The cache key update in `86c11a0c` is separate from this schema mismatch.- Run 648 also reports `ShipSkinrDispatchTests.Draft_save_and_read_responses_keep_the_v24_row_shape` failing its decoded skin string assertion. Main commit `bb6029d1` corrects the test's nested response decoding.- Run 647/648 predate these changes. Run 683 on `8610990c` is checking the corrected SKINR live fixture shape; run 684 on the later head `253597a9` is now the newest push gate. Check both completed results before closing these causes.
 
 ## 2026-10-23 Agent-test selection review
 
@@ -397,13 +393,9 @@ CI run 672 on `1669e6dc` failed the structure market Host test because the fixtu
 - The Space fixture names are shortened to valid names in the current worktree. Host.Tests and Space.Tests Release builds passed locally with 0 warnings and 0 errors. Main CI run 740 on 56e0d37d remained active at this update. Run 738 skipped eight speed-gated/slow headless cases.
 - No local database-backed tests were run.
 ## 2026-10-24 structure ejection follow-up
-
 - V24.01 EjectFromStructure forwards the shipID as a session change; EveJS v0.12.9 restores restoreShipID without checking position or distance. The Host backend still requires the requested ship to match the stored original ship and validates its owner, type, system location, and space flag.
-- The unused CanReturnToStructureShipAsync helper encoded a distance check that the eject path does not call. It is removed. The Host regression now verifies that the original ship restores from 155 km surface distance after scene positions stop being available.
-- Host.Tests and Space.Tests Release builds passed locally with 0 warnings and 0 errors. The focused Actions run for the far-distance Host regression, Space scoop regressions, and next push gate are pending. No local database-backed tests or graphical-client verification were performed.
-
+- The unused CanReturnToStructureShipAsync helper encoded a distance check that the eject path does not call. It is removed. The Host regression now verifies that the original ship restores from 155 km surface distance after scene positions stop being available.- Host.Tests and Space.Tests Release builds passed locally with 0 warnings and 0 errors. The focused Actions run for the far-distance Host regression, Space scoop regressions, and next push gate are pending. No local database-backed tests or graphical-client verification were performed.
 ## 2026-10-24 CI 737 follow-up
-
 - Push gate run 737 (`486812c1`) confirmed the Eject live flow and all 22 selected structure scenarios passed. The Host test still asserted the old distance refusal, and the new Space tests failed before reaching scoop logic because their character names exceeded the two-space name rule; both test expectations are corrected locally, with focused Action reruns pending.
 - The same gate's E2E failure was `test_market.py` expecting named `KeyVal` rows from `GetStationAsks`. Main's later `56e0d37d` merge includes the market wire-shape correction. The follow-up gate on the current head will verify the tuple correction.
 - The RPC inventory count discrepancy (expected 1,378, actual 1,382) was corrected on main by `35964099` and recorded by `284dfe95`; that path is outside this structure follow-up.
@@ -597,19 +589,51 @@ Regression tests added: `DungeonWaveTests.A_system_owned_wave_waits_until_a_pilo
 - The E2E summary also recorded 8 skipped cases: the skill-speed check and seven slow-live checks. They did not count as passed. Local Space compilation initially ended with Roslyn exit 137 under contention; a single-node retry is running. No database was used locally.
 
 ## 2026-10-24 CORE FIX 1 local and CI follow-up
-
 - The Host fixture now supplies DogmaStatic with the test ship type and an empty StationCatalog. This lets the registered Host jump request pass the gate-rule checks that previously failed on a null static source, then exercise the expected simulation notification and wire reply.
 - CI run 788 on 84b49946 predates the fixture repair and the next main merge. Its clippy error came from identical message-holding branches in hold_tick_aligned and is now one combined condition. The same run's structure-control and Trade errors have follow-up changes in main commit a40423f1 (Fix remaining CI trade and jump regressions), so run 788 is historical evidence rather than a result for the merged head.
-- Local verification: after the merge, Rust 1.94.1 format check, cargo check -p eve-space -p eve-sim, and workspace all-target clippy passed with private target-cx; the focused simulation test passed earlier. Before merging main's added ship TypeDef fixture, Eve.Services.Space.Tests compiled with prebuilt references (0 warnings, 0 errors). The full dependency build and the post-merge test-project rebuild both ended when Roslyn exited 137 under shared memory pressure. No database was used.
-- The focused Host wire test and updated push gate are pending on the next pushed head. Run 788 skipped the skill-speed case and seven slow-live cases; these were not counted as passing. No graphical client or EveJS end-to-end run was used.
+- Local verification: after the merge, Rust 1.94.1 format check, cargo check -p eve-space -p eve-sim, and workspace all-target clippy passed with private target-cx; the focused simulation test passed earlier. Before merging main's added ship TypeDef fixture, Eve.Services.Space.Tests compiled with prebuilt references (0 warnings, 0 errors). The full dependency build and the post-merge test-project rebuild both ended when Roslyn exited 137 under shared memory pressure. No database was used.- The focused Host wire test and updated push gate are pending on the next pushed head. Run 788 skipped the skill-speed case and seven slow-live cases; these were not counted as passing. No graphical client or EveJS end-to-end run was used.
 
 ## 2026-10-24 CORE FIX 1 latest-main gate before push
-
 - The worktree now includes origin/main through ab5acba6, merged before the planned push. The preceding main gate, run 807, is still active at this check: the Python client and fixture-generator jobs passed, while .NET build, Rust format/clippy, Windows, selected tests, and the server-stack E2E are active or queued.
 - After that merge, Rust 1.94.1 format, eve-space/eve-sim check, and workspace all-target clippy passed. The updated Space test-project rebuild exited 137 because the shared host had less than 1 GiB available memory; the earlier pre-merge build of that project passed. The focused Host test will be checked on Actions after push. No local database or graphical client was used.
-
 ## 2026-10-24 push 1629f575 stargate jump
 
 - Pushed the merged stargate jump work as 1629f575858c after fetching and merging origin/main through f9d453be. This head includes the coast-only jump acceptance, accepted-jump warp-state cleanup, simulation regression, Host wire regression, the required DogmaStatic ship fixture, and the clippy cleanup.
 - Focused Agent run 40085311194 is checking Eve.Services.Space.Tests with FullyQualifiedName~StargateJumpWireTests; push-triggered CI run 809 is Actions run 40085296182. Both were queued at this note update.
 - Rust 1.94.1 format, eve-space/eve-sim check, and workspace all-target clippy passed locally. The post-merge C# test-project compile ended with Roslyn exit 137 while under shared memory pressure; the earlier build before the main fixture update passed. The focused simulation regression had passed in the prior local run. No database or graphical client was used.
+
+## 2026-10-24 CORE FIX 5 docking arrival follow-up
+
+- The slow-live run `40087865729` had one pass and one failure: `test_movement::test_a_dock_from_beyond_the_range_sends_the_ship_to_the_station_and_a_second_asks_docks_it` received `MachoError: macho error 2` while polling the ballpark. In `Scene::poll`, arrival at docking range called `dock()`, which sent `OnDockingAccepted` and began the station transition before the client’s second `CmdDock`.
+- The change now clears the approach marker on arrival and leaves the ship in space. The next `CmdDock` accepts docking and emits the existing notification and session transition. This matches EveJS v0.12.9 `Handle_CmdDock` (`server/src/services/ship/beyonceService.js:4133-4194`): out of range it starts `followBall` and returns `DockingApproach`; it calls `acceptDocking` only when already in range. The reference movement command is `followBall` (`server/src/space/runtime/scene/pilotCommands.js:282-302`).
+- Whole-tree V24.01 cross-check: the only `CmdDock` RPC caller is `RealDock`, which sends `itemID` and `session.shipid` in `movementFunctions.py:505-516`; selected-item actions route through `selectedItemConst.py:200-213`. All `OnDockingAccepted` consumers found are `spaceMgr.py:510-514` (HUD travel state and client event), `tacticalNavigationService.py:486-489` (travel state), and `dockingHeroNotificationService.py:22,33-34` (hero notification). The argument remains the station ID; reply, notification and session shapes are unchanged.
+- Updated the existing `scene::tests::a_dock_request_from_out_of_range_approaches_and_completes_docking_on_arrival` regression to match the client sequence: the approach stops in range, the first poll emits no acceptance, and the client's second `CmdDock` accepts it. The focused test passed. On push SHA `8c299486`, Rust CI caught the stale arrival-acceptance assertion on Linux and Windows; this update fixes that root cause. Corrected live run `40090893730` is checking movement, undock, celestial warp and gate-jump walks.
+
+## 2026-10-24 CORE FIX 5 docking and scene-refusal correction
+
+- A system with no simulation scene can refuse a transient NPC spawn with `NO_SCENE`. `SpawnAsync` now suppresses that expected refusal even for spawn paths without a callback; dungeon-wave callers still receive their existing scene-unavailable signal and can retry. The host checks for pilots before each ship in a batch, so a wave stops if its system scene closes while the batch is being made.
+- The Rust scene now stops a docking approach inside docking range and waits for the client's second `CmdDock` before accepting the dock. This matches the V24.01 caller in `eve/client/script/ui/services/menuSvcExtras/movementFunctions.py:505-516`, which sends `CmdDock` again after the approach, and the headless sequence in `tools/headless-client/tests/test_movement.py:100-159`.
+- The complete client search found the `OnDockingAccepted` consumers in `eve/client/script/parklife/spaceMgr.py:510-514`, `eve/client/script/ui/inflight/tacticalNavigation/tacticalNavigationService.py:486-489`, and `eve/client/script/ui/view/dockingHeroNotificationService.py:22,33-34`. They consume the notification after docking acceptance; no reply or notification payload was changed.
+- Local checks: the focused Rust station-approach test passed (1 passed); `cargo +1.94.1 check -p eve-space`, workspace clippy with warnings denied, and `cargo +1.94.1 fmt --all -- --check` passed. The touched .NET test project built with 0 warnings and 0 errors. Database-backed tests were not run locally.
+- Selected Actions verification for the slow movement, undock, celestial warp and gate-jump walks is pending for the next pushed revision.
+
+## 2026-10-24 CORE FIX 1 verification after latest main sync
+
+- Re-fetched and merged `origin/main` through `507d3890` after the stargate code push. The post-warp coast handling, Host cleanup, and both regression tests remain present on main.
+- Focused Agent run 399 (`40089540739`) on `ad55c2de` completed successfully with the `Eve.Services.Space.Tests` filter `FullyQualifiedName~StargateJumpWireTests` and Rust tests enabled; the Actions report found no failed tests or jobs. This directly checks the Host wire sequence and the simulation regression on the merged code.
+- Push-gate run 827 on `72a87fb9` has passed Rust tests, Rust format/clippy, .NET build, fixture checks, and the Rust advisory job. End-to-end, Windows, and the remaining .NET shards were still running when this note was written; the current `origin/main` is `0b512602`; the intervening main changes did not touch stargate files.
+- The original push gate 809 (`1629f575`) failed the structure-anchor walk while warping to the anchor point: the client received `MachoError: macho error 2`, and the simulation log reported `frame of 2294286943 bytes exceeds 1048576`. The same gate failed `BeltRatsHostTests.A_refused_belt_spawn_is_reported_as_a_failure` because its expected failure collection was empty. Neither failure came from the stargate jump request. Main later changed the anchor walk to wait for ship placement (`532287ea`); run 827 is the pending CI check for that test change.
+- The standard gate skips `tests/test_jump.py` because it is slow-live. A manual nightly dispatch (run `40089713766`) was canceled before any test steps because that workflow starts database-backed checks; no database connection or query was made. No graphical client or EveJS end-to-end session was used. EveJS v0.12.9 comparison remains source-traced at `server/src/services/ship/beyonceService.js:4196-4233` and `server/src/space/transitions.js:4124-4321`.
+## 2026-10-24 CORE FIX 5 push 8c299486
+
+- Pushed the NPC scene-refusal and docking-approach fixes as `8c2994862f3de21450615c3b032fe5b473e916ab`, after fetching and merging `origin/main` through `014e0b85`.
+- Selected Actions run `40090624287` is checking `BeltRatsHostTests.A_scene_unavailable_belt_spawn_is_reported_without_log_spam` and the slow live movement, undock, celestial warp and gate-jump walks. Results will be added after the run completes.
+- Local checks on the changed projects: the focused Rust station-approach test passed (1 passed); `cargo +1.94.1 check -p eve-space`, workspace clippy with warnings denied, and `cargo +1.94.1 fmt --all -- --check` passed. The .NET Space test project built with 0 warnings and 0 errors. No local PostgreSQL database was used.
+## 2026-10-24 CORE FIX 5 selected-run argument correction
+
+- Agent run `40090624287` ended before tests started: the live selection repeated the `slow:` prefix for each comma-separated filename, while `agent-test.py` accepts it once for the whole list. No test result was produced by that run.
+- Corrected dispatch `40090893730` uses `slow:test_movement.py,test_undock.py,test_warp.py,test_jump.py` and is in progress. Do not count the earlier run as a pass.
+## 2026-10-24 CORE FIX 5 updated simulation regression push
+
+- Pushed `bd6ab6ef00c1c5667aef7c1ead3fba408f0281e0` after fetching and merging origin/main. It updates the stale auto-accept simulation test to assert the V24.01 second-`CmdDock` sequence, removes the duplicate test, and records the intentional difference from EveJS 261018.1 in favor of V24.01 and EveJS v0.12.9.
+- The focused Rust regression passed locally, as did Rust 1.94.1 formatting and workspace clippy. Push-triggered CI for this revision is being checked. Selected live run `40090893730` is still checking the production code for movement, undock, celestial warp and stargate jump.

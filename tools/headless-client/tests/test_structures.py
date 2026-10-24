@@ -468,9 +468,12 @@ def test_a_director_anchors_an_astrahus_from_its_ship_in_a_legal_system_and_the_
         _relocate(character, ship_id)
         _reenter(client, character)
         _undock(client, ship_id, fitted, LEGAL_STATION, LEGAL_SYSTEM)
+        timed_events(client, 2.5)
         ballpark = client.call("beyonce", "MachoBindObject", LEGAL_SYSTEM, None)
+        timed_events(client, 2.5)
         x, y, z = LEGAL_STATION_POSITION
         client.call_bound(ballpark[0], "CmdWarpToStuff", "position", (x + WARP_OFF, y, z), minRange=0)
+        timed_events(client, 1.0)
         item = dbseed.new_item(ASTRAHUS, owner=character, location=ship_id, flag=CARGO_FLAG, singleton=True)
         deadline = time.time() + 300
         while True:

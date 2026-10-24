@@ -16,13 +16,15 @@ The RPC counts active personal and corporation issued contracts through `IContra
 
 ### RPC-01208: CollectMyPageInfo
 
-The Host RPC reads owner-scoped outstanding and attention lists plus existing current-contract and bid read models. It returns EveJS's fields: personal/corporate open counts, personal/corporate in-progress and bid counts, attention counts, and the four-column outstanding assignment tuples. Eve-logic `ContractsSvc.CollectMyPageInfo` calls the proxy and derives skill-based remaining limits from `numOutstandingContractsNonCorp` and `numOutstandingContractsForCorp` at `contracts.py:729-740`. `StartPagePanel.Init` consumes outstanding assignments, attention, bid and in-progress counts at `contractPanels.py:66-162`. EveJS aggregation is `contractRuntimeState.js:3960-4036`; it returns the same raw statistics and assignment columns. The exact reply field set and sampled counts are checked through the registered Host route by the focused wire test.
+The Host RPC reads paged owner-scoped outstanding lists plus existing current-contract and bid read models. It reads attention state and assignment details from the existing `GetLoginInfoAsync` query, whose assignment selection includes character, corporation, and alliance assignees. The login DTO carries issuer corporation, assignee, and type for the overview tuple while the `GetLoginInfo` wire rowset remains two columns. It returns EveJS's fields: personal/corporate open counts, personal/corporate in-progress and bid counts, attention counts, and the four-column outstanding assignment tuples. Eve-logic `ContractsSvc.CollectMyPageInfo` calls the proxy and derives skill-based remaining limits from `numOutstandingContractsNonCorp` and `numOutstandingContractsForCorp` at `contracts.py:729-740`. `StartPagePanel.Init` consumes outstanding assignments, attention, bid and in-progress counts at `contractPanels.py:66-162`. EveJS aggregation is `contractRuntimeState.js:3960-4036`; it returns the same raw statistics and assignment columns. The exact reply field set and sampled counts are checked through the registered Host route by the focused wire test.
 
 ## Verification
 
 The Host regression is `Contract_reads_and_mutations_are_dispatched_through_the_host_with_client_shapes` in `dotnet/tests/Eve.Host.Tests/ContractProxyBatchWireTests.cs`. It calls RPCs over a socket-backed Host with real CoreServices registration. It checks batch mutation results; counts including a 100-row page boundary; login rowsets; escrow fields; contract list bundles; current/expired rows; accepted row; completion/deletion booleans; and CollectMyPageInfo fields.
 
-- Core build after CollectMyPageInfo: passed, zero warnings/errors.
+- Core build after CollectMyPageInfo and assignment correction: passed, zero warnings/errors.
+- Host build after assignment correction: passed, zero warnings/errors.
+- Latest code commit d0db3ff3 was pushed with origin/main merged at 5273c3dc; focused Agent test dispatch for that push is pending.
 - Focused Host test after CollectMyPageInfo: passed (1 passed, 0 skipped).
 - No PostgreSQL connection was used.
 - Agent test run 40098916457 for push 755a38a2 passed; Agent test run 40099756130 for push 23db167f passed.

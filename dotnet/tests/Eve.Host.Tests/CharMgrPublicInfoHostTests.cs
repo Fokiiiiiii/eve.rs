@@ -1,6 +1,7 @@
 using Eve.Characters;
 using Eve.Macho;
 using Eve.Marshal;
+using Eve.Services;
 using Eve.Services.CharacterInfo;
 using Eve.Universe;
 

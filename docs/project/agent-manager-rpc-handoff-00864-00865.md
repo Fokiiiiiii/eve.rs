@@ -29,8 +29,8 @@ Regression test: `dotnet/tests/Eve.Host.Tests/AgentCatalogHostWireTests.cs` comp
 
 ## Verification
 
-- Passed: `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -m:2 -p:UseSharedCompilation=false` (0 warnings, 0 errors on final build).
-- Passed: focused `AgentCatalogHostWireTests.Agent_rowset_and_epic_arc_message_mapping_are_returned_through_registered_host_wire` (1 passed, 0 skipped).
-- Passed: GitHub Actions run 40085965152 on 2593e5fa (368 Agent test); focused test passed, no failed tests/jobs.
-- Passed: GitHub Actions run 40086504639 on e8c3981b (376 Agent test); focused test passed, no failed tests/jobs.
-- `python3 tools/dev/ci-status.py failures e8c3981b` reported no `ci.yml` run found for that sha.
+- Passed: `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -m:2 -p:UseSharedCompilation=false` (0 warnings, 0 errors on final build before the latest upstream merge).
+- Passed: focused test locally (1 passed, 0 skipped).
+- Passed: GitHub Actions runs 40085965152 on 2593e5fa (368 Agent test) and 40086504639 on e8c3981b (376 Agent test).
+- Latest run 40087040633 on f0ff6758 failed while compiling Host.Tests: `CharMgrPublicInfoHostTests.cs:77-78` used `Py.Number` without importing `Eve.Services`. Added the missing import in that upstream-merged test; re-run on the fix is pending.
+- `python3 tools/dev/ci-status.py failures f0ff6758` reported no push-triggered `ci.yml` run.

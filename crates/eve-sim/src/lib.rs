@@ -71,9 +71,9 @@ fn hold_tick_aligned(messages: Vec<Message>, held: &mut Vec<Message>) -> Vec<Mes
         if matches!(&message, Message::Notify { name, .. } if name == "DoDestinyUpdate") {
             held.push(message);
             preserve_notification_order = true;
-        } else if jump_follows_held_update {
-            held.push(message);
-        } else if preserve_notification_order && matches!(&message, Message::Notify { .. }) {
+        } else if jump_follows_held_update
+            || preserve_notification_order && matches!(&message, Message::Notify { .. })
+        {
             held.push(message);
         } else {
             immediate.push(message);

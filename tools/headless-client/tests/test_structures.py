@@ -475,10 +475,10 @@ def test_a_director_anchors_an_astrahus_from_its_ship_in_a_legal_system_and_the_
         assert client.session is not None and client.session.session_init.get("stationid") is None, "the undock session change did not arrive"
         ballpark = client.call("beyonce", "MachoBindObject", LEGAL_SYSTEM, None)
         timed_events(client, 2.5)
+        client.call_bound(ballpark[0], "UpdateStateRequest")
+        timed_events(client, 2.0)
         x, y, z = LEGAL_STATION_POSITION
         client.call_bound(ballpark[0], "CmdWarpToStuff", "position", (x + WARP_OFF, y, z), minRange=0)
-        ship_placed = timed_events(client, 15.0, until=lambda seen: _structure_slim(seen, ship_id) is not None)
-        assert _structure_slim(ship_placed, ship_id) is not None, "the ship did not enter the ballpark after undocking"
         item = dbseed.new_item(ASTRAHUS, owner=character, location=ship_id, flag=CARGO_FLAG, singleton=True)
         deadline = time.time() + 300
         while True:

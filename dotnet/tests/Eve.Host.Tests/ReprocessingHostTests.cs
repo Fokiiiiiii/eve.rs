@@ -106,7 +106,7 @@ public sealed class ReprocessingHostTests : IAsyncLifetime
             host = await HostComposition.BuildAsync(Settings());
 
             Assert.Null(await items.GetAsync(input));
-            var yields = await items.InLocationAsync(character, StationId, default);
+            var yields = await items.InLocationAsync(StationId, character, default);
             Assert.Contains(yields, item => item.TypeId == Tritanium && item.Flag == ItemFlags.Hangar);
             Assert.NotNull(await balances.GetAsync(character));
         }

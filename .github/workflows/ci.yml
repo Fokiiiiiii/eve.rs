@@ -372,6 +372,7 @@ jobs:
         with:
           name: live-logs
           path: .live-logs
+          include-hidden-files: true
           if-no-files-found: ignore
 
   windows:

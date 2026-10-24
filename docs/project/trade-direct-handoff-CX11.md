@@ -29,6 +29,7 @@ The task-mentioned `jobs/461-trade-item-eligibility.txt`, `462-trade-container-d
 ## Verification
 
 - Local compile checks passed for `Eve.Host.Tests` and `Eve.Trade.Tests` with .NET 10, `UseSharedCompilation=false`, and node reuse disabled. No PostgreSQL tests were run locally.
-- Actions run `40073577535` passed on `859cf2c4b67c`: `Eve.Host.Tests` 3 passed, `Eve.Trade.Tests` 2 passed, and `test_walk_trade.py` 1 passed; all three groups had 0 failed and 0 skipped.
-- Push-triggered `ci.yml` run `40073571150` on `859cf2c4b67c` was still in progress at the last check. Check it with `python3 tools/dev/ci-status.py failures <final-sha>`.
+- Focused Actions run `40073577535` passed on `859cf2c4b67c`: `Eve.Host.Tests` 3 passed, `Eve.Trade.Tests` 2 passed, and `test_walk_trade.py` 1 passed; all three groups had 0 failed and 0 skipped.
+- Push gate `40073571150` completed with failures in three checks: an old Trade authority test expected non-hangar refusal (fixed to check inaccessible ancestry), the Stargate wire test expected a single warp packet (fixed to accept the observed Notification followed by CallRsp), and the structure headless walk did not wait for undock/ballpark/warp notifications (waits added to match the existing warp walk). The fast run also skipped eight slow live cases and one training-speed case; those skips are not counted as passes.
+- A local Space.Tests dependency build was killed with csc exit 137 under shared-machine pressure; the project-only retry was canceled after it made no progress. Verify its compilation and all three corrective cases through Actions.
 - Graphical-client execution was not performed.

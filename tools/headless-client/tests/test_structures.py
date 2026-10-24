@@ -125,7 +125,7 @@ def _reenter(client, character: int) -> None:
 def _undock(client, ship_id: int, fitted: list, station: int = STATION, system: int = SYSTEM) -> None:
     """The pilot leaves its station with its ship and is bound to the system's ballpark."""
     ship = client.call("ship", "MachoBindObject", (station, 15), None)
-    client.call_bound(ship[0], "Undock", ship_id, False, onlineModules=m.List(fitted))
+    assert client.call_bound(ship[0], "Undock", ship_id, False, onlineModules=m.List(fitted)) is not None, "the ship did not undock"
     client.call("beyonce", "MachoBindObject", system, None)
 
 def _undocked_pilot(client) -> tuple[int, int]:
@@ -467,6 +467,7 @@ def test_a_director_anchors_an_astrahus_from_its_ship_in_a_legal_system_and_the_
         dbseed.sql(f"update {dbseed.schema('CORPORATIONS')}.corporations set created_ms = {int(time.time() * 1000) - 8 * 86_400_000} where id = {corporation}")
         _relocate(character, ship_id)
         _reenter(client, character)
+        timed_events(client, 0.5)
         _undock(client, ship_id, fitted, LEGAL_STATION, LEGAL_SYSTEM)
         timed_events(client, 2.5)
         ballpark = client.call("beyonce", "MachoBindObject", LEGAL_SYSTEM, None)

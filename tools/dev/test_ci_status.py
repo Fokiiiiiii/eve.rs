@@ -93,6 +93,15 @@ FAILED tests/test_walk.py::test_character_walk - AssertionError
         self.assertEqual(ci_status.parse_test_failures(log), [name])
         self.assertIn("AssertionError", "\n".join(ci_status.failure_log_tail(log, name)))
 
+    def test_pytest_failure_heading_without_summary_name(self):
+        log = """=================================== FAILURES ===================================
+________________ test_character_walk _________________
+E AssertionError: state differs
+"""
+        name = "test_character_walk"
+        self.assertEqual(ci_status.parse_test_failures(log), [name])
+        self.assertIn("AssertionError", "\n".join(ci_status.failure_log_tail(log, name)))
+
     def test_dotnet_failure_name_and_timestamped_tail(self):
         log = """2026-10-23T08:18:12.0707975Z \x1b[36;1m  Failed Eve.Host.Tests.RpcFuzzTests.Hostile_method_is_refused [27 ms]\x1b[0m
 2026-10-23T08:18:12.0708907Z Error Message:

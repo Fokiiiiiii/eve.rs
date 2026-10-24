@@ -37,7 +37,9 @@ Production construction is dotnet/src/Eve.Host/Composition/CharacterComposition.
 
 Tests:
 - SkillMgr2HostWireTests.Skill_mgr2_returns_its_bound_skill_handler_moniker_over_the_host_route: socket Host route and machoVersion.
-- SkillHandlerRpcHostTests.Skill_manager_reads_and_injector_mutations_use_the_composed_host_routes: socket calls against the production-composed services; checks read shapes, 50-result history argument, two-injector preview and mutation, notification order, persisted free SP/item changes, and valid split output.
+- SkillHandlerRpcHostTests.Skill_manager_reads_and_injector_mutations_use_the_composed_host_routes: socket calls against the production-composed services; checks read shapes, 50-result history argument, two-injector preview and mutation, notification order before the CALL_RSP, persisted free SP/item changes, and valid split output.
 - Existing CharacterHostTests.Skill_injector_applies_sequential_awards_and_persists_points_and_inventory_through_host additionally checks notification order and restart persistence through the composed registry.
 
-The test project builds locally and the no-database focused socket test passed. The first Actions run exposed that injector notifications arrive before the RPC reply; the socket reader now consumes and checks that wire order. The updated composed-host regression is queued for Actions. No graphical-client run was performed.
+No handler change was needed because the current source already had these real Host routes and the composed socket regression. Whole-tree V24.01 inspection confirms rows RPC-02541 through RPC-02543 are local dictionary get/iteritems operations on GetSkills: it is keyed by type ID, returns skill entries, and callers handle missing entries as None (skillsvc.py:243-251,713); skill maps are iterated at :282 and :731, while the attribute map is iterated into godma at :225-228.
+
+Focused Actions verification passed on the current pushed source: run 40098961742 and run 40099326231 each reported `Skill_manager_reads_and_injector_mutations_use_the_composed_host_routes` — 1 passed, 0 failed, 0 skipped. The earlier run on f3a971e782c9603a3343f3a3260ce4eb4d1f96c5 passed as well. The workflow uses an isolated PostgreSQL 18 service; no local database was used. No `ci.yml` run was listed for the pushed revisions when checked. No graphical-client run was performed.

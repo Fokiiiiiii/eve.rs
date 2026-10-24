@@ -28,4 +28,6 @@ The client-visible destiny wire shape is unchanged. V24.01 `Michelle.DoDestinyUp
 
 ## Actions
 
-Selected Actions checks and the push-triggered CI gate are pending for the commit.
+- Required agent-test dispatch on `2ec772626fd2`: run 303 passed for `Eve.Host.Tests,Eve.Npc.Tests`, Spawn filter; no test failures or skips were reported.
+- Focused Host refusal dispatch: run 304 passed for `Eve.Services.Space.Tests`; no test failures or skips were reported.
+- Push-triggered CI run 778 for `2ec772626fd2` completed with failures. The end-to-end live suite failed at `tests/test_structures.py:482`: the Astrahus anchor attempt was refused with “You must be in space to deploy a structure.” The `.NET (space tests 2/2)` shard was cancelled after 30.3 minutes. Rust tests, format/clippy, build, Windows, and the other .NET shards passed. Eight unrelated slow-live/skill-speed cases were skipped by their configured gates. These results do not indicate a failure in the NPC spawn regressions, which both selected agent-test runs passed; the remaining CI failures were not changed because they are outside this NPC scene fix.

@@ -109,7 +109,7 @@ public sealed partial class HostServerTests
 
     private static PyValue Field(PyObject keyVal, string name) =>
         Assert.IsType<PyDict>(keyVal.Args).Entries.Single(entry =>
-            Assert.IsType<PyStr>(entry.Key).Value == name).Value;
+            JsSemantics.StringValue(entry.Key) == name).Value;
 
     private sealed class SearchContractReadModel : IContractReadModel
     {

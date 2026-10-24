@@ -31,11 +31,12 @@ This batch covers RPC-02523 through RPC-02543 in the skill manager list. Source 
 
 In `/home/user/evejs-v0.12.9/server/src/services/skills/skillMgrService.js`, EveJS handles attributes (`:314-317`), skills (`:319-322`), skill points (`:304-307`), history (`:282-297`), ISIS deltas (`:299-302`), respec (`:423-442`), queue/free points (`:444-448`), boosters and implants (`:450-469`), free points (`:471-474`), injection (`:533-541`), diminished points (`:554-562`), and splitting (`:574-582`). `skillMgr2Service.js:10-21` returns the four-part skillHandler moniker. eve.rs reads and mutates the existing character, training, skill, inventory, and SDE owners for these operations. EveJS has no `GetSkillBundleInfo` handler; the client consumes a two-value name/icon tuple and accepts an absent icon. eve.rs preserves that wire shape with an empty name and None icon, as recorded in `docs/reference/compat/DEVIATIONS.md`.
 
-The C# wire regression asserts no-character fallbacks and a value derived from injected TrainingSettings. It does not exercise valid-character PostgreSQL state, persistence, inventory notifications, injector transactions, or graphical-client acceptance. Existing skill service tests own the data-backed rules. Actions verification is listed below.
+The C# wire regression asserts no-character fallbacks and a value derived from injected TrainingSettings. It does not exercise valid-character PostgreSQL state, persistence, inventory notifications, injector transactions, or graphical-client acceptance. Existing skill service tests own the data-backed rules.
 
 ## Verification
 
 - Local `dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -p:UseSharedCompilation=false`: passed, 0 errors; one transient MSBuild copy retry occurred while another build process held CharacterInfo output.
 - Local focused test `Skill_bootstrap_and_character_reads_use_the_registered_wire_routes`: passed, 1 passed, 0 failed, 0 skipped.
+- GitHub Actions `agent-test.yml`, run [40096872023](https://github.com/Fokiiiiiii/eve.rs/actions/runs/40096872023) on commit `a92b1956`: succeeded, no failed tests/jobs.
+- GitHub Actions `ci.yml` run 40096867278 for `a92b1956` is queued as of the last poll.
 - No PostgreSQL database was used.
-- Actions result: pending.

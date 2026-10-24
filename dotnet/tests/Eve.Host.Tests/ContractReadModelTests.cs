@@ -1,6 +1,7 @@
 using Eve.Data;
 using Eve.Host.Persistence;
 using Eve.Inventory;
+using Eve.Services.Core;
 using Eve.Wallet;
 using Npgsql;
 using Xunit;
@@ -571,6 +572,120 @@ public sealed class ContractReadModelTests
                 await using var cleanup = source.CreateCommand($"DROP SCHEMA IF EXISTS \"{schema}\" CASCADE");
                 await cleanup.ExecuteNonQueryAsync();
             }
+        }
+    }
+
+    [Fact]
+    public async Task Contract_search_filters_persisted_public_rows_and_attaches_sde_item_and_location_data()
+    {
+        var connectionString = Environment.GetEnvironmentVariable("EVE_PG_URL")
+            ?? throw new InvalidOperationException("EVE_PG_URL must name the assigned PostgreSQL lane");
+        var schema = $"contract_search_{Guid.NewGuid():N}";
+        var sdeSchema = $"sde_contract_search_{Guid.NewGuid():N}";
+        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(connectionString));
+        await PersistenceContractReadModel.MigrateAsync(source, schema);
+        await using (var createSde = source.CreateCommand($"""
+            CREATE SCHEMA "{sdeSchema}";
+            CREATE TABLE "{sdeSchema}".npcStations (ord integer NOT NULL, key bigint PRIMARY KEY, doc jsonb NOT NULL);
+            CREATE TABLE "{sdeSchema}".mapSolarSystems (ord integer NOT NULL, key bigint PRIMARY KEY, doc jsonb NOT NULL);
+            CREATE TABLE "{sdeSchema}".types (ord integer NOT NULL, key bigint PRIMARY KEY, doc jsonb NOT NULL);
+            CREATE TABLE "{sdeSchema}".groups (ord integer NOT NULL, key bigint PRIMARY KEY, doc jsonb NOT NULL);
+            """))
+        {
+            await createSde.ExecuteNonQueryAsync();
+        }
+
+        try
+        {
+            const long now = 134_000_000_000_000_000L;
+            await using (var seed = source.CreateCommand($"""
+                INSERT INTO "{schema}".contract_records
+                    (contract_id, issuer_id, issuer_corporation_id, is_corporation_issued, acceptor_id, assignee_id,
+                     contract_type, status, availability, start_station_id, end_station_id, date_accepted_filetime,
+                     date_expired_filetime, num_days, reward_escrow, created_at_filetime, price_isk, reward_isk,
+                     collateral_isk, title, description)
+                VALUES
+                    (10, 100, 200, false, 0, 0, 1, 0, 0, 6001, 0, 0, $1, 0, 0, $2, 100, 0, 0, 'Rifter', 'blueprint package'),
+                    (11, 101, 200, false, 0, 0, 1, 0, 0, 6002, 0, 0, $1, 0, 0, $2, 100, 0, 0, 'Other', 'different system'),
+                    (12, 102, 200, false, 0, 999, 1, 0, 1, 6001, 0, 0, $1, 0, 0, $2, 100, 0, 0, 'Private', 'not assigned to caller')
+                """))
+            {
+                seed.Parameters.AddWithValue(now + 864_000_000_000L);
+                seed.Parameters.AddWithValue(now);
+                await seed.ExecuteNonQueryAsync();
+            }
+            await using (var items = source.CreateCommand($"""
+                INSERT INTO "{schema}".contract_items (contract_id, item_id, type_id, quantity, in_crate, is_package)
+                VALUES (10, 7001, 34, 2, true, false), (11, 7002, 35, 1, true, false)
+                """))
+            {
+                await items.ExecuteNonQueryAsync();
+            }
+            await using (var seedSde = source.CreateCommand($$$"""
+                INSERT INTO "{{{sdeSchema}}}".npcStations (ord, key, doc)
+                VALUES (0, 6001, '{"solarSystemID":30000001}'::jsonb),
+                       (1, 6002, '{"solarSystemID":30000002}'::jsonb);
+                INSERT INTO "{{{sdeSchema}}}".mapSolarSystems (ord, key, doc)
+                VALUES (0, 30000001, '{"constellationID":20000001,"regionID":10000001,"securityStatus":0.8,"name":{"en":"Solar System"}}'::jsonb),
+                       (1, 30000002, '{"constellationID":20000002,"regionID":10000002,"securityStatus":0.2,"name":{"en":"Other System"}}'::jsonb);
+                INSERT INTO "{{{sdeSchema}}}".types (ord, key, doc)
+                VALUES (0, 34, '{"groupID":300,"volume":5,"name":{"en":"Rifter"}}'::jsonb),
+                       (1, 35, '{"groupID":301,"volume":10,"name":{"en":"Other"}}'::jsonb);
+                INSERT INTO "{{{sdeSchema}}}".groups (ord, key, doc)
+                VALUES (0, 300, '{"categoryID":6}'::jsonb),
+                       (1, 301, '{"categoryID":6}'::jsonb);
+                """))
+            {
+                await seedSde.ExecuteNonQueryAsync();
+            }
+
+            var store = new PersistenceContractReadModel(source, schema, sdeSchema);
+            var result = await store.SearchContractsAsync(new ContractSearchQuery(
+                CharacterId: 42,
+                CorporationId: 200,
+                AllianceId: 300,
+                Availability: 0,
+                ContractType: 10,
+                LocationId: 30000001,
+                EndLocationId: 0,
+                IssuerId: 0,
+                MinPrice: 100,
+                MaxPrice: null,
+                MinReward: null,
+                MaxReward: null,
+                MinCollateral: null,
+                MaxCollateral: null,
+                MinVolume: 10,
+                MaxVolume: 10,
+                ExcludeTrade: true,
+                ExcludeMultiple: true,
+                ExcludeNoBuyout: false,
+                Description: "blueprint",
+                ItemTypeIds: [34],
+                ItemCategoryId: 6,
+                ItemGroupId: 300,
+                ItemTypeName: "Rifter",
+                SecurityClasses: [2],
+                SearchHint: 0,
+                SortBy: 1,
+                SortDirection: 1,
+                HasExplicitSortBy: true,
+                StartNum: 0), now, CancellationToken.None);
+
+            var entry = Assert.Single(result.Contracts);
+            Assert.Equal(1, result.NumFound);
+            Assert.Equal(10, entry.Contract.ContractId);
+            Assert.Equal((30000001L, 20000001L, 10000001L), (entry.StartSolarSystemId, entry.StartConstellationId, entry.StartRegionId));
+            Assert.Equal("Solar System", entry.StartSolarSystemName);
+            Assert.Equal(10, entry.Volume);
+            Assert.Equal(new[] { 34 }, entry.ItemTypeIds);
+            Assert.Equal(new[] { 300 }, entry.ItemGroupIds);
+            Assert.Equal(new[] { 6 }, entry.ItemCategoryIds);
+        }
+        finally
+        {
+            await using var cleanup = source.CreateCommand($"DROP SCHEMA IF EXISTS \"{schema}\" CASCADE; DROP SCHEMA IF EXISTS \"{sdeSchema}\" CASCADE");
+            await cleanup.ExecuteNonQueryAsync();
         }
     }
 

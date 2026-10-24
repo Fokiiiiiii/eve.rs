@@ -288,6 +288,9 @@ jobs:
       - run: pip install -r requirements-dev.txt
       - name: Test CI status output parsing
         run: python3 ../dev/test_ci_status.py
+      - name: Test service audit extraction
+        working-directory: .
+        run: python3 -m unittest discover -s tools/spec-extract -p 'test_service_audit*.py'
       # the live tests skip without a server; what is left runs on its own (the marshal golden frames, the mock server)
       - run: python -m pytest -q -rs
 

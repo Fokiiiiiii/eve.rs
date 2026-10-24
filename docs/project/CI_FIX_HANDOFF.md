@@ -421,10 +421,21 @@ CI run 672 on `1669e6dc` failed the structure market Host test because the fixtu
 
 - The Host distant-ship regression passed 1/1. Space tests passed 3/4; the remaining test failed in setup when it read an absent `session.corpid` field instead of the authoritative pilot record. The test now uses `CharacterAsync(...).CorporationId` and is queued for another focused run.
 
-## 2026-10-24 Upwell market docking follow-up
+## 2026-10-24 CI run 745 market notification follow-up
 
-- CI runs 746 (`2d2b11ea`) and 747 (`0fd2ca16`) both failed the E2E test `test_docked_corporation_members_trade_at_an_eligible_upwell_structure`; all other jobs passed. The test seeds its Fortizar 200,000 km from the station, then called `structureDocking.Dock` directly and retried `DockingApproach`.
-- V24.01's `StructureDocking.Dock` first invokes `AutoPilot.NavigateSystemTo(structureID, 2500, RequestDocking)`; the autopilot warps and approaches before sending the Dock RPC. The test had skipped that movement transition. The simulation already follows the structure when Dock returns `DockingApproach`.
-- The headless helper now uses the client-facing `CmdWarpToStuff("item", structureID, minRange=0)`, waits for the warp's `Stop` update, then sends Dock and waits for `OnDockingFinished`. The server implementation is unchanged.
-- Agent run 245 on `0fd2ca16` failed its selected market run; its step log did not include a per-test summary. The CI log parser now recognizes pytest failure headings even when the short summary is absent; its focused local regression passed 1/1.
-- The focused Actions rerun and push-triggered gate for this helper correction are pending. No local PostgreSQL database was used.
+- Run 745 on `fecd1a3e` failed `Native_market_rpc_reads_descriptor_rows_buys_sells_and_cancels_without_node` and `Market_client_plex_history_escrow_and_order_history_reads_are_native`. Both tests expected the old order-notification count after an immediate fill. `MarketNotifier.PublishAsync` now sends EveJS-compatible `OnOwnOrdersChanged` with reason `Filled` for an immediate fill with no resting order; the tests now include that notification in their expected counts.
+- The `Eve.Market.Tests` Release build passed locally with 0 warnings and 0 errors. Focused Actions checks are pending; these database-backed tests were not run locally.
+- Run 745 also failed the End-to-end job with `MachoError: macho error 2` at call ID 523. The CI log tail did not identify its pytest case; root-cause investigation is ongoing. Skips in that run included one Market test and the skill-speed plus seven slow live tests.
+
+## 2026-10-24 headless Upwell docking setup follow-up
+
+- The fast live E2E gate on run 747 (40046843651, 0fd2ca16) ended with MachoError: macho error 2 at call ID 525. The available CI log tail does not name the pytest case. Focused test_market.py Actions run 252 (40048337454) is still running against the earlier helper.
+- V24.01 eve/client/script/ui/services/structure/structureDocking.py:64-81 routes Dock through autoPilot.NavigateSystemTo(structureID, 2500, RequestDocking). The autopilot warps to an in-range item using CmdWarpToStuff before it calls Dock. EveJS server/src/services/structure/structureDockingService.js:134-179 follows a distant target and returns the approach refusal; the headless helper was repeating that RPC from 200,000 km away without the client warp.
+- The helper now issues the client-shaped beyonce.CmdWarpToStuff("item", structure_id, minRange=0), waits for the warp's Stop destiny action, then requests structureDocking.Dock and verifies completion. No production service behavior changed.
+- python3 -m py_compile tools/headless-client/tests/test_market.py passed. The post-change focused Actions check and push-triggered CI are pending. No local PostgreSQL test or graphical-client run was performed.
+
+## 2026-10-24 Upwell market docking and CI diagnostics follow-up
+
+- Runs 746 (`2d2b11ea`) and 747 (`0fd2ca16`) failed the E2E test `test_docked_corporation_members_trade_at_an_eligible_upwell_structure`; run 747 failed at call 525 with `MachoError: macho error 2`. The Fortizar fixture is 200,000 km from the station, and the client navigates to within 2.5 km before its Dock RPC. The headless helper now follows that client movement flow; the same correction is present in the fetched main head.
+- The CI log parser now extracts pytest's `FAILED path::test_name` heading when a summary table is missing. Focused regression `FailureParsingTests.test_pytest_failure_heading_without_summary_name` passed locally.
+- The focused Actions rerun and push-triggered gate for the merged helper and log parser are pending. No local PostgreSQL database was used.

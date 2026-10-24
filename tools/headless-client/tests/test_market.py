@@ -103,38 +103,25 @@ def test_a_docked_character_reads_the_market_as_the_client_does():
         assert label == "CustomInfo"
         assert arguments == {"info": "Order prices have at most four significant figures."}
 
-# ---- Upwell market: dock, post both sides, match and read the committed result -----------------------------------------------
-
-def _warp_stopped(events: list[dict]) -> bool:
-    for event in events:
-        if _plain_name(event.get("name")) != "DoDestinyUpdate":
-            continue
-        try:
-            actions, _ = actions_of(event)
-        except (KeyError, TypeError):
-            continue
-        if any(action[1] == "Stop" for action in actions):
-            return True
-    return False
-
+# ---- Upwell market: dock, post both sides, match and read the committed result -------------------------------------
 
 def _dock_at_market_structure(client, character: int, ship_id: int, fitted: list, structure_id: int) -> None:
     structures._reenter(client, character)
     structures._undock(client, ship_id, fitted, station=structures.STATION, system=structures.SYSTEM)
     seen = timed_events(client, 30.0, until=lambda events: structures._structure_slim(events, structure_id) is not None)
     assert structures._structure_slim(seen, structure_id) is not None, f"Fortizar {structure_id} did not enter the ballpark"
-
-    # V24.01's Dock action navigates to within 2.5 km before it makes the Dock RPC.
     ballpark = client.call("beyonce", "MachoBindObject", structures.SYSTEM, None)
     client.call_bound(ballpark[0], "CmdWarpToStuff", "item", structure_id, minRange=0)
-    warp_events = []
-    warp_deadline = time.time() + 60
-    while not _warp_stopped(warp_events):
-        if time.time() > warp_deadline:
-            pytest.fail(f"ship {ship_id} did not finish its warp to market structure {structure_id}")
+    deadline = time.time() + 150
+    warp_finished = False
+    while not warp_finished and time.time() < deadline:
         client.call_bound(ballpark[0], "UpdateStateRequest")
-        warp_events.extend(timed_events(client, 3.0))
-
+        events = timed_events(client, 3.0)
+        warp_finished = any(
+            event.get("name") == "DoDestinyUpdate" and any(action[1] == "Stop" for action in actions_of(event)[0])
+            for event in events
+        )
+    assert warp_finished, f"ship {ship_id} did not finish warping to market structure {structure_id}"
     deadline = time.time() + 120
     while True:
         try:

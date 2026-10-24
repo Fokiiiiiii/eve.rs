@@ -55,3 +55,14 @@ The two new contract cases in this handoff are the docked station read/refusal t
 ### Verification boundary
 
 The service-level and Host tests listed in this handoff prove their named assertions only. The two new client walks require the live headless workflow and scratch schemas; their pass status is recorded after Actions completes. These tests do not establish native graphical-client acceptance or EveJS differential parity.
+
+## 2026-10-24 CI run 745 notification-count follow-up
+
+Run 745 failed two `Eve.Market.Tests.ProtocolTests` cases because immediate fills now emit the EveJS-compatible `OnOwnOrdersChanged` refresh with reason `Filled`. The native market protocol test now expects two notifications after its immediate buy and later sell order, and three after cancel. The PLEX history case expects three after its resting bid, sell order, and immediate fill. `Eve.Market.Tests` Release build passed locally with 0 warnings and 0 errors. Focused Actions results are pending; no local PostgreSQL test was run.
+
+## 2026-10-24 headless Upwell docking setup follow-up
+
+- The fast live E2E gate on run 747 (40046843651, 0fd2ca16) ended with MachoError: macho error 2 at call ID 525. The available CI log tail does not name the pytest case. Focused test_market.py Actions run 252 (40048337454) is still running against the earlier helper.
+- V24.01 eve/client/script/ui/services/structure/structureDocking.py:64-81 routes Dock through autoPilot.NavigateSystemTo(structureID, 2500, RequestDocking). The autopilot warps to an in-range item using CmdWarpToStuff before it calls Dock. EveJS server/src/services/structure/structureDockingService.js:134-179 follows a distant target and returns the approach refusal; the headless helper was repeating that RPC from 200,000 km away without the client warp.
+- The helper now issues the client-shaped beyonce.CmdWarpToStuff("item", structure_id, minRange=0), waits for the warp's Stop destiny action, then requests structureDocking.Dock and verifies completion. No production service behavior changed.
+- python3 -m py_compile tools/headless-client/tests/test_market.py passed. The post-change focused Actions check and push-triggered CI are pending. No local PostgreSQL test or graphical-client run was performed.

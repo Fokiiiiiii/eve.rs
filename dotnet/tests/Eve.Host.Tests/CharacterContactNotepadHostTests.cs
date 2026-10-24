@@ -95,6 +95,7 @@ public sealed class CharacterContactNotepadHostTests
 
         var session = new ClientSession { CharacterId = characterId, UserId = 1 };
         session.Set("stationid", new PyLong(rig.Station));
+        session.Set("shipid", new PyLong(shipId));
         var invBroker = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("invbroker"));
         Assert.True(invBroker.HasMethod("MachoBindObject"));
         var boundCall = await invBroker.CallAsync(new ServiceCall

@@ -28,7 +28,7 @@ Remaining gap: EveJS routes additional mobile-deployable and orbital item famili
 
 The full EveJS expired-impound path was compared. EJS excludes impounded offices from `GetMyCorporationsOffices`; eve.rs removes that office row at impound time and sends the same cache invalidation. The later EJS `TrashImpoundedOffice` notice has no second office-state transition in eve.rs. The timing difference is recorded in `DEVIATIONS.md`.
 
-Local checks: Corporation services, Host and Corporation tests projects built cleanly; `CorporationOfficeNotificationTests` passed 3/3. One initial Host compile found a missing `Eve.Services` import; the corrected Host rebuild passed. No PostgreSQL database was used. GitHub Actions will be checked after the code push.
+Local checks: Corporation services, Host and Corporation tests projects built cleanly; `CorporationOfficeNotificationTests` passed 3/3 with no skips. One initial Host compile found a missing `Eve.Services` import; the corrected Host rebuild passed. No PostgreSQL database or graphical client was used. Focused Actions run 40054161420 and push CI run 40054154565 completed successfully with no failed tests or jobs.
 
 ## Bootstrap config owners and structures (2026-10-24)
 

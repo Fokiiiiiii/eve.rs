@@ -4,18 +4,22 @@ using Eve.Services.Space;
 namespace Eve.Services.Space.Tests;
 
 /// <summary>
-/// The <c>ship</c> calls the client makes for fitting and hulls (invItemFunctions.py:189-197 for AssembleShip, the fitting window and the undock and
-/// drone calls). Each must be answered by a method of the service, or be listed as open. An open call is answered with None by the generator's
+/// The client calls these ship methods from eveMisc.py, shipConfigSvc.py, menusvc.py and cleanShipButton.py.
+/// Every method must be answered or explicitly listed as open.
 /// </summary>
 public class ShipCoverageTests
 {
     private static readonly string[] ClientCalls =
     [
-        "AssembleShip", "GetShipFittingInfo", "Undock", "Board", "LeaveShip", "SafeLogoff", "AbortSafeLogoff", "Eject", "Jettison", "LaunchDrones",
-        "LaunchFromShip", "ScoopDrone", "GetDirtTimestamp",
+        "AbortSafeLogoff", "AssembleShip", "Board", "ConfigureShip", "Drop", "Eject", "GetDirtTimestamp",
+        "GetShipConfiguration", "GetShipFittingInfo", "Jettison", "LaunchDrones", "LaunchFromContainer",
+        "LaunchFromShip", "LeaveShip", "ResetDirtTimestamp", "SafeLogoff", "ScoopDrone", "Undock",
     ];
 
-    private static readonly string[] Open = [];
+    private static readonly string[] Open =
+    [
+        "ConfigureShip", "GetShipConfiguration", "LaunchFromContainer", "ResetDirtTimestamp",
+    ];
 
     [Fact]
     public void Every_ship_call_is_answered_or_listed_as_open()

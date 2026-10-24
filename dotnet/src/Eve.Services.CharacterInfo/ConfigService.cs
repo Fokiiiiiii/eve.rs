@@ -8,6 +8,8 @@ using Eve.Universe;
 
 namespace Eve.Services.CharacterInfo;
 
+public sealed record AgentOwnerInfo(string Name, long Gender);
+
 [Service("config")]
 public sealed partial class ConfigService(
     PgCharacterStore characters,
@@ -16,7 +18,9 @@ public sealed partial class ConfigService(
     SolarSystemCatalog solarSystems,
     Func<CancellationToken, Task<IReadOnlyDictionary<long, decimal>>>? latestAverageSales = null,
     PgItemStore? items = null,
-    DogmaStatic? dogma = null)
+    DogmaStatic? dogma = null,
+    IReadOnlyDictionary<long, AgentOwnerInfo>? agentOwners = null,
+    Func<IReadOnlyList<long>, CancellationToken, Task<IReadOnlyDictionary<long, string>>>? readStructureNames = null)
 {
     private static readonly string[] OwnerColumns = ["ownerID", "ownerName", "typeID", "gender", "ownerNameID"];
     private static readonly string[] CorporationColumns =
@@ -26,6 +30,7 @@ public sealed partial class ConfigService(
 
     private const long CorporationTypeId = 2;
     private const long AllianceTypeId = 16159;
+    private const long CharacterTypeId = 1373;
     private const int MaximumRequestedIds = 500;
 
     [Method("GetStationSolarSystemsByOwner")]
@@ -85,25 +90,34 @@ public sealed partial class ConfigService(
         return new PyDict(entries);
     }
 
-    /// <summary>
-    /// of these has no row. The client's Prime logs the miss, and a later Get raises RecordNotFound (cfg.py:600-602, 643-645);
-    /// no placeholder name is made up for it.
-    /// </summary>
+    /// <summary>Agent owners use their pinned SDE name, character type and gender; unknown IDs have no row.</summary>
     [Method("GetMultiOwnersEx")]
     public async ValueTask<PyValue> GetMultiOwnersEx(ServiceCall call)
     {
         var ids = RequestedIds(call.Arg(0));
-        var corporationById = ids.Length == 0
+        var nonAgentIds = agentOwners is null ? ids : ids.Where(id => !agentOwners.ContainsKey(id)).ToArray();
+        var corporationById = nonAgentIds.Length == 0
             ? new Dictionary<long, Corporation>()
-            : (await corporations.GetManyAsync(ids, call.Cancellation)).ToDictionary(c => c.Id);
-        var allianceById = ids.Length == 0
+            : (await corporations.GetManyAsync(nonAgentIds, call.Cancellation)).ToDictionary(c => c.Id);
+        var allianceById = nonAgentIds.Length == 0
             ? new Dictionary<long, Alliance>()
-            : (await corporations.AlliancesByIdsAsync(ids, call.Cancellation))
+            : (await corporations.AlliancesByIdsAsync(nonAgentIds, call.Cancellation))
                 .Where(alliance => !alliance.Deleted)
                 .ToDictionary(alliance => alliance.Id);
         var rows = new List<PyTuple>(ids.Length);
         foreach (var id in ids)
         {
+            if (agentOwners is not null && agentOwners.TryGetValue(id, out var agent))
+            {
+                rows.Add(Row(
+                    PyValue.Of(id),
+                    PyValue.Of(agent.Name),
+                    PyValue.Of(CharacterTypeId),
+                    PyValue.Of(agent.Gender),
+                    PyNone.Instance));
+                continue;
+            }
+
             var character = await characters.GetAsync(id, call.Cancellation);
             if (character is not null)
             {
@@ -184,13 +198,19 @@ public sealed partial class ConfigService(
     }
 
     /// <summary>
-    /// The locations asked for: the NPC stations and solar systems of the static data, with the station's position. Location 0
-    /// is the client's "none" row. Owned inventory items also expose their stored label or SDE type name; unknown and foreign items have no row.
+    /// The locations asked for: NPC stations and solar systems from static data, deployed structures from persistent state,
+    /// and owned inventory items. Structure rows carry the stored name, no solar system, zero coordinates and an ID label.
+    /// Unknown and foreign items have no row.
     /// </summary>
     [Method("GetMultiLocationsEx")]
     public async ValueTask<PyValue> GetMultiLocationsEx(ServiceCall call)
     {
         var ids = RequestedIds(call.Arg(0), includeZero: true);
+        var structureIds = ids.Where(id => id > 0 && stations.Get(id) is null &&
+            (id > int.MaxValue || solarSystems.Get((int)id) is null)).ToArray();
+        var structureNames = readStructureNames is null || structureIds.Length == 0
+            ? new Dictionary<long, string>()
+            : await readStructureNames(structureIds, call.Cancellation);
         var rows = new List<PyTuple>(ids.Length);
         foreach (var id in ids)
         {
@@ -205,6 +225,10 @@ public sealed partial class ConfigService(
             else if (id <= int.MaxValue && solarSystems.Get((int)id) is { } system)
             {
                 rows.Add(LocationRow(id, system.Name, system.Id));
+            }
+            else if (structureNames.TryGetValue(id, out var structureName) && !string.IsNullOrWhiteSpace(structureName))
+            {
+                rows.Add(LocationRow(id, structureName, null, nameId: $"Structure {id}"));
             }
             else if (items is not null && dogma is not null && call.Session.CharacterId is { } characterId
                 && await items.GetAsync(id, call.Cancellation) is { } item && item.OwnerId == characterId)

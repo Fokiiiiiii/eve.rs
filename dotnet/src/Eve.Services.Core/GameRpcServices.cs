@@ -368,6 +368,57 @@ public sealed partial class ContractProxyService(
         }
     }
 
+    [Method("SearchContracts")]
+    public async Task<PyValue> SearchContracts(ServiceCall call)
+    {
+        var store = readModel ?? throw new InvalidOperationException("contract read model is not wired");
+        var characterId = call.Session.CharacterId
+            ?? throw new InvalidOperationException("contract searches require a character session");
+        var (corporationId, allianceId) = await ReadCurrentOrganizationIdsAsync(call);
+        var availability = ContractSearchOptionalInt(call.Kwarg("availability"));
+        var sortByValue = call.Kwarg("sortBy");
+        var sortDirection = ContractSearchOptionalInt(call.Kwarg("sortDir"));
+        var searchHint = ContractInt(call.Kwarg("searchHint") ?? PyNone.Instance);
+        if (searchHint != 0)
+            throw MachoErrors.ThrowUserError("ConContractNotAvailable");
+
+        var query = new ContractSearchQuery(
+            characterId,
+            corporationId,
+            allianceId,
+            availability,
+            ContractSearchInt(call.Kwarg("contractType"), 0),
+            ContractSearchLong(call.Kwarg("locationID")),
+            ContractSearchLong(call.Kwarg("endLocationID")),
+            ContractSearchLong(call.Kwarg("issuerID")),
+            ContractSearchOptionalDecimal(call.Kwarg("minPrice")),
+            ContractSearchOptionalDecimal(call.Kwarg("maxPrice")),
+            ContractSearchOptionalDecimal(call.Kwarg("minReward")),
+            ContractSearchOptionalDecimal(call.Kwarg("maxReward")),
+            ContractSearchOptionalDecimal(call.Kwarg("minCollateral")),
+            ContractSearchOptionalDecimal(call.Kwarg("maxCollateral")),
+            ContractSearchOptionalDecimal(call.Kwarg("minVolume")),
+            ContractSearchOptionalDecimal(call.Kwarg("maxVolume")),
+            ContractSearchBool(call.Kwarg("excludeTrade")),
+            ContractSearchBool(call.Kwarg("excludeMultiple")),
+            ContractSearchBool(call.Kwarg("excludeNoBuyout")),
+            ContractSearchText(call.Kwarg("description")),
+            ContractSearchIntSet(call.Kwarg("itemTypes")),
+            ContractSearchInt(call.Kwarg("itemCategoryID"), 0),
+            ContractSearchInt(call.Kwarg("itemGroupID"), 0),
+            ContractSearchText(call.Kwarg("itemTypeName")),
+            ContractSearchIntSet(call.Kwarg("securityClasses"), allowZero: true),
+            searchHint,
+            ContractSearchInt(sortByValue, 0),
+            sortDirection,
+            sortByValue is not null and not PyNone,
+            ContractSearchInt(call.Kwarg("startNum"), 0));
+
+        var nowFileTime = Eve.Services.Py.FileTimeFromUnixMs(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        var result = await store.SearchContractsAsync(query, nowFileTime, call.Cancellation);
+        return BuildContractSearchResult(result);
+    }
+
     [Method("GetLoginInfo")]
     public async Task<PyValue> GetLoginInfo(ServiceCall call)
     {
@@ -527,6 +578,70 @@ public sealed partial class ContractProxyService(
             || await hasContractManagerRole(characterId, corporationId, call.Cancellation);
     }
 
+    private static int ContractSearchInt(PyValue? value, int fallback)
+    {
+        if (value is null or PyNone)
+            return fallback;
+        var number = ContractLong(value);
+        return number is >= int.MinValue and <= int.MaxValue
+            ? (int)number
+            : fallback;
+    }
+
+    private static int? ContractSearchOptionalInt(PyValue? value) =>
+        value is null or PyNone ? null : ContractSearchInt(value, 0);
+
+    private static long ContractSearchLong(PyValue? value) =>
+        value is null or PyNone ? 0 : ContractLong(value);
+
+    private static decimal? ContractSearchOptionalDecimal(PyValue? value) => value switch
+    {
+        null or PyNone => null,
+        PyInt integer => integer.Value,
+        PyLong integer => integer.Value,
+        PyReal real when double.IsFinite(real.Value) => (decimal)real.Value,
+        _ => null,
+    };
+
+    private static bool ContractSearchBool(PyValue? value) => value switch
+    {
+        PyBool boolean => boolean.Value,
+        PyInt integer => integer.Value != 0,
+        PyLong integer => integer.Value != 0,
+        PyReal real => real.Value != 0,
+        _ => false,
+    };
+
+    private static string? ContractSearchText(PyValue? value) => value switch
+    {
+        null or PyNone => null,
+        PyStr text => text.Value,
+        PyBytes bytes => System.Text.Encoding.UTF8.GetString(bytes.Value.Span),
+        _ => null,
+    };
+
+    private static IReadOnlyList<int> ContractSearchIntSet(PyValue? value, bool allowZero = false)
+    {
+        var values = value switch
+        {
+            PyList list => list.Items,
+            PyTuple tuple => tuple.Items,
+            PyObjectEx { Kind: ObjectExKind.Ex1, Header: PyTuple { Items: [PyToken { Value: "__builtin__.set" }, PyTuple { Items: [PyList list] }] } } => list.Items,
+            _ => [],
+        };
+        return values.Select(item => item switch
+            {
+                PyInt integer => integer.Value,
+                PyLong integer => integer.Value,
+                _ => 0,
+            })
+            .Where(id => id <= int.MaxValue && (id > 0 || allowZero && id == 0))
+            .Select(id => (int)id)
+            .Distinct()
+            .Order()
+            .ToArray();
+    }
+
     private static long ContractLong(PyValue value) => value switch
     {
         PyInt integer => integer.Value,
@@ -543,6 +658,72 @@ public sealed partial class ContractProxyService(
             ? (int)integer
             : throw MachoErrors.ThrowUserError("ConContractNotAvailable");
     }
+
+    private static PyValue BuildContractSearchResult(ContractSearchResult result) =>
+        Eve.Services.Py.KeyVal(
+            ("contracts", Eve.Services.Py.List(result.Contracts.Select(entry => (PyValue)BuildContractSearchEntry(entry)).ToArray())),
+            ("numFound", new PyInt(result.NumFound)),
+            ("searchTime", new PyLong(result.SearchTimeFileTime)),
+            ("maxResults", new PyInt(1000)));
+
+    private static PyValue BuildContractSearchEntry(ContractSearchEntry entry)
+    {
+        var contract = entry.Contract;
+        return Eve.Services.Py.KeyVal(
+            ("startSolarSystemName", new PyStr(entry.StartSolarSystemName)),
+            ("items", Eve.Services.Py.List(contract.Items.Select(BuildContractItemSearchRow).ToArray())),
+            ("bids", Eve.Services.Py.List([])),
+            ("contract", Eve.Services.Py.KeyVal(
+                ("contractID", new PyInt(contract.ContractId)),
+                ("type", new PyInt(contract.Type)),
+                ("issuerID", new PyInt(contract.IssuerId)),
+                ("issuerCorpID", new PyInt(contract.IssuerCorporationId)),
+                ("forCorp", contract.IsCorporationIssued ? PyBool.True : PyBool.False),
+                ("availability", new PyInt(contract.Availability)),
+                ("assigneeID", new PyInt(contract.AssigneeId)),
+                ("acceptorID", new PyInt(contract.AcceptorId)),
+                ("dateIssued", new PyLong(contract.DateIssuedFileTime)),
+                ("dateExpired", new PyLong(contract.DateExpiredFileTime)),
+                ("dateAccepted", new PyLong(contract.DateAcceptedFileTime)),
+                ("numDays", new PyInt(contract.NumDays)),
+                ("dateCompleted", new PyLong(contract.DateCompletedFileTime)),
+                ("dateDeleted", new PyInt(0)),
+                ("startStationID", new PyInt(contract.StartStationId)),
+                ("startSolarSystemID", new PyInt(entry.StartSolarSystemId)),
+                ("startRegionID", new PyInt(entry.StartRegionId)),
+                ("endStationID", new PyInt(contract.EndStationId)),
+                ("endSolarSystemID", new PyInt(entry.EndSolarSystemId)),
+                ("endRegionID", new PyInt(entry.EndRegionId)),
+                ("price", Eve.Services.Py.Number((double)contract.Price)),
+                ("reward", Eve.Services.Py.Number((double)contract.Reward)),
+                ("collateral", Eve.Services.Py.Number((double)contract.Collateral)),
+                ("title", new PyStr(contract.Title)),
+                ("description", new PyStr(contract.Description)),
+                ("status", new PyInt(contract.Status)),
+                ("crateID", new PyInt(contract.StartStationId)),
+                ("volume", Eve.Services.Py.Number(entry.Volume)),
+                ("startStationDivision", new PyInt(entry.StartStationDivision)),
+                ("issuerWalletKey", entry.IssuerWalletKey is { } issuerWalletKey ? new PyInt(issuerWalletKey) : PyNone.Instance),
+                ("acceptorWalletKey", entry.AcceptorWalletKey is { } acceptorWalletKey ? new PyInt(acceptorWalletKey) : PyNone.Instance))),
+            ("itemGroups", PyValue.PythonSet(entry.ItemGroupIds.Select(id => (PyValue)new PyInt(id)))),
+            ("startSolarSystemID", new PyInt(entry.StartSolarSystemId)),
+            ("startConstellationID", new PyInt(entry.StartConstellationId)),
+            ("endConstellationID", new PyInt(entry.EndConstellationId)),
+            ("itemCategories", PyValue.PythonSet(entry.ItemCategoryIds.Select(id => (PyValue)new PyInt(id)))),
+            ("itemTypes", PyValue.PythonSet(entry.ItemTypeIds.Select(id => (PyValue)new PyInt(id)))),
+            ("endSolarSystemID", new PyInt(entry.EndSolarSystemId)),
+            ("numBids", new PyInt(0)));
+    }
+
+    private static PyValue BuildContractItemSearchRow(ContractReadItemSnapshot item) =>
+        Eve.Services.Py.KeyVal(
+            ("itemID", new PyInt(item.ItemId)),
+            ("recordID", new PyInt(item.ItemId)),
+            ("itemTypeID", new PyInt(item.TypeId)),
+            ("typeID", new PyInt(item.TypeId)),
+            ("quantity", new PyInt(item.Quantity)),
+            ("inCrate", item.InCrate ? PyBool.True : PyBool.False),
+            ("isPackage", item.IsPackage ? PyBool.True : PyBool.False));
 
     private static PyValue BuildContractBundle(ContractReadBundle bundle)
     {

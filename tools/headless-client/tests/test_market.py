@@ -236,14 +236,28 @@ def test_docked_corporation_members_trade_at_an_eligible_upwell_structure():
         assert all(_number(_field(row, "locationID")) == structure_id for row in bought + sold)
 
         assert dbseed.quantity_at(buyer_character, structure_id, TRITANIUM) == 2
-        assert dbseed.quantity_at(seller_character, structure_id, TRITANIUM) == 2
+        # The open order holds its unfilled stock in market escrow until cancellation.
+        assert dbseed.quantity_at(seller_character, structure_id, TRITANIUM) == 0
+        escrow_quantity = dbseed.sql(
+            f"select coalesce(sum(i.quantity), 0) "
+            f"from {dbseed.schema('MARKET')}.orders o "
+            f"join {dbseed.schema('INVENTORY')}.items i on i.id = o.escrow_item_id "
+            f"where o.id = {int(ask_id)} and o.state = 0 "
+            f"and i.owner_id = {int(seller_character)} and i.type_id = {TRITANIUM}"
+        )
+        assert int(escrow_quantity) == 2
+        buyer_hangar = [row for row in _station_hangar_items(buyer, structure_id) if _field(row, "typeID") == TRITANIUM]
+        seller_hangar = [row for row in _station_hangar_items(seller, structure_id) if _field(row, "typeID") == TRITANIUM]
+        assert sum(_field(row, "quantity") for row in buyer_hangar) == 2, buyer_hangar
+        assert sum(_field(row, "quantity") for row in seller_hangar) == 0, seller_hangar
 
         seller_journal = _journal_since(seller_character, seller_journal_at)
         buyer_journal = _journal_since(buyer_character, buyer_journal_at)
         assert any(ref == 2 and amount == 100 for ref, amount in seller_journal), seller_journal
         assert any(ref == 54 and amount < 0 for ref, amount in seller_journal), seller_journal
         assert any(ref == 46 and amount < 0 for ref, amount in seller_journal), seller_journal
-        assert any(ref == 2 and amount == -100 for ref, amount in buyer_journal), buyer_journal
+        # The standing bid journals its reserve at placement (ref 42); filling it adds no second purchase debit.
+        assert any(ref == 42 and amount == -100 for ref, amount in buyer_journal), buyer_journal
         assert any(ref == 46 and amount < 0 for ref, amount in buyer_journal), buyer_journal
         assert dbseed.isk_of(seller_character) - seller_isk == pytest.approx(sum(amount for _, amount in seller_journal))
         assert dbseed.isk_of(buyer_character) - buyer_isk == pytest.approx(sum(amount for _, amount in buyer_journal))
@@ -251,6 +265,8 @@ def test_docked_corporation_members_trade_at_an_eligible_upwell_structure():
         seller.call("marketProxy", "CancelCharOrder", ask_id)
         assert all(_field(row, "orderID") != ask_id for row in _own_orders(seller))
         assert dbseed.quantity_at(seller_character, structure_id, TRITANIUM) == 2
+        seller_hangar = [row for row in _station_hangar_items(seller, structure_id) if _field(row, "typeID") == TRITANIUM]
+        assert sum(_field(row, "quantity") for row in seller_hangar) == 2, seller_hangar
         assert _payload(m.plain(buyer.call("marketProxy", "GetStationAsks"))) == {}
 
 # ---- M9: a trade through the market, as the client makes it ------------------------------------------------------------------------
@@ -292,7 +308,17 @@ def _field(row, *names):
     raise AssertionError(f"no column {names} in row {row!r}")
 
 def _station_hangar_items(client, station_id):
-    return _plain_rows(client.call("invbroker", "ListStationItems", station_id))
+    character_id = client.session.session_init.get("charid")
+    assert isinstance(character_id, int), "the global inventory moniker is bound to the selected character"
+    # V24 const.containerGlobal
+    result = client.call(
+        "charMgr",
+        "MachoBindObject",
+        (character_id, 10002),
+        ("ListStationItems", (station_id,), None),
+    )
+    assert isinstance(result, tuple) and len(result) == 2, result
+    return _plain_rows(result[1])
 
 def _own_orders(client):
     return _plain_rows(client.call("marketProxy", "GetCharOrders"))

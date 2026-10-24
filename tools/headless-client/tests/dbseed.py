@@ -178,6 +178,12 @@ def items_of(owner: int, type_id: int) -> list[int]:
     rows = sql(f"select id from {schema('INVENTORY')}.items where owner_id = {int(owner)} and type_id = {int(type_id)} order by id desc")
     return [int(row) for row in rows.split() if row]
 
+def quantity_at(owner: int, location: int, type_id: int) -> int:
+    """The total quantity of an owner's items of a type at a location."""
+    return int(sql(f"select coalesce(sum(quantity), 0) from {schema('INVENTORY')}.items "
+                   f"where owner_id = {int(owner)} and location_id = {int(location)} and type_id = {int(type_id)}") or 0)
+
+
 def hi_slot_count(type_id: int) -> int:
     """The high slots of a ship type (its hiSlots attribute, id 14, in sde.typeDogma)."""
     rows = sql('select elem->>\'value\' from sde."typeDogma", jsonb_array_elements(doc->\'dogmaAttributes\') elem '

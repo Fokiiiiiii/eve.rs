@@ -653,3 +653,10 @@ Regression tests added: `DungeonWaveTests.A_system_owned_wave_waits_until_a_pilo
 - `hold_tick_aligned` now flushes any queued updates and the current approach batch together, preserving order so `DoDestinyUpdate` reaches Host before `Approaching` becomes the RPC error. No client wire fields or later in-range second-`CmdDock` behavior changed.
 - Whole-client source checks: `RealDock` invokes bound `CmdDock` at `eve/client/script/ui/services/menuSvcExtras/movementFunctions.py:503-518`; Michelle applies `DoDestinyUpdate` at `eve/client/script/remote/michelle.py:481-512` and forwards batches at `:513-522`; the recording consumer is `eve/client/script/parklife/recorder.py:68-78`. The complete search found no other code consumers. The end-to-end walk asserts the approach error, movement events, rest inside docking range, and the second dock at `tools/headless-client/tests/test_movement.py:100-159`.
 - Local verification on this fix: `cargo +1.94.1 check -p eve-sim`, the focused Rust ordering test (1 passed), `cargo +1.94.1 fmt --all -- --check`, and workspace clippy with warnings denied passed. Post-fix Actions live verification is pending.
+
+
+## 2026-10-24 CORE FIX 1 handoff after push d3990b89
+
+- Pushed the handoff merge commit `d3990b89cef3dec4d454fcb49d9e763823cfb141` after merging `origin/main` through `2005c521`. The subsequent main head `425cec8e` adds character-contact/notepad Host tests and handoff text only; it does not change the stargate or space-simulation files.
+- Current-head focused Host wire run 412 (`40091793046`, SHA `8799c2aa`) passed with no failed tests or jobs. Rust workspace run 415 (`40092063319`, SHA `8799c2aa`) is still running its requested-tests step; its result is pending. The task-code push gate results and skipped slow-live cases are in the preceding CORE FIX 1 section.
+- `ci-status.py failures d3990b89` found no push-triggered `ci.yml` run for this docs/merge commit. The code push itself was already checked by run 809, focused runs 399 and 412, and the Rust workspace result in run 829.

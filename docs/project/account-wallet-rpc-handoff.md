@@ -20,9 +20,9 @@ EveJS comparison: `/home/user/evejs-v0.12.9/server/src/services/account/accountS
 
 - Initial local compile passed with 0 warnings and 0 errors. Follow-up compilation was killed with csc exit 137 under shared-memory pressure.
 - Actions run `40080221080` exposed an underfunded corporation fixture; it now starts with the 1,599,800 ISK founding fee plus 5,000 ISK.
-- Actions run `40084145705` exposed a missing kwargs-aware test packet helper; that helper was added. A concurrent merge reintroduced a duplicate declaration, now consolidated to one method.
+- Actions run `40084145705` exposed a missing kwargs-aware test packet helper; it was added and consolidated after a concurrent merge duplicated it.
 - Actions run `40084153623` checked the pre-helper source.
 - Feature commits: `0f5c0c20` (Host wire regression), `c6815db1` (founder balance).
-- Latest pushed head: `e58d147e`. Nine pre-existing unrelated Rust deletions remain unstaged and uncommitted.
+- Latest pushed head: `a9b8d788`. Nine pre-existing unrelated Rust deletions remain unstaged and uncommitted.
 
-Update this note after the next push and focused Actions run.
+Run the focused Actions check on the latest pushed head, then add its result here.

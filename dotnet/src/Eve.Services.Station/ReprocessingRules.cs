@@ -31,6 +31,9 @@ public static class ReprocessingRules
     public sealed record Quote(long ItemId, int TypeId, long QuantityToProcess, long LeftOvers, long Portions, double Efficiency,
         IReadOnlyList<Recoverable> Recoverables, double TotalIskCost);
 
+    public static bool MatchesSourceLocation(long requestedLocationId, long actualLocationId) =>
+        requestedLocationId <= 0 || requestedLocationId == actualLocationId;
+
     public static double StationTax(double baseTax, double standing)
     {
         if (standing <= 0) return baseTax;

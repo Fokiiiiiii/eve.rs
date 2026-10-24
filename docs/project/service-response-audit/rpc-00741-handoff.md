@@ -10,6 +10,6 @@ EveJS v0.12.9 `server/src/services/character/achievementTrackerMgrService.js:145
 
 Added `HostServerTests.Achievement_tracker_HasEverWarped_returns_a_boolean_through_host_wire` in `dotnet/tests/Eve.Host.Tests/HostServerTests.cs`. It registers the real service in the Host registry and sends the RPC through the socket dispatcher, asserting true/false wire booleans and the authoritative character IDs read.
 
-Local compile: `dotnet build Eve.Host.Tests.csproj --no-restore -p:BuildProjectReferences=false -p:UseSharedCompilation=false -m:1` passed. Focused Host wire test passed 1/1, skipped 0. The full dependency build was attempted and its test-project compiler was killed with exit 137 under concurrent build memory pressure; the narrowed compile above passed.
+Post-merge local verification: `dotnet test dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj --no-restore -p:UseSharedCompilation=false -m:1 --filter FullyQualifiedName~Achievement_tracker_HasEverWarped_returns_a_boolean_through_host_wire` rebuilt dependencies and passed 1/1, skipped 0. No database was used.
 
 GitHub Actions verification: pending.

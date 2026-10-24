@@ -67,6 +67,7 @@ public sealed class StargateJumpWireTests
             PyNone.Instance,
             callId: 3,
             oid), session));
+        await space.QuiesceAsync();
 
         Assert.False(space.IsWarping(session), $"jump command codes: {string.Join(",", sim.Heard.OfType<SimCommand>().Select(command => command.Code))}");
         var packets = sink.Sent.ToArray().OfType<PyObject>().ToArray();

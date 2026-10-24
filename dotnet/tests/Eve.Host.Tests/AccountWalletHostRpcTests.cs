@@ -42,16 +42,16 @@ public sealed class AccountWalletHostRpcTests
             await using (var connection = await source.OpenConnectionAsync())
             await using (var transaction = await connection.BeginTransactionAsync())
             {
-                async Task<long> CreatePilot(string name)
+                async Task<long> CreatePilot(string name, decimal initialCash = 5_000m)
                 {
                     var id = await characters.InsertAsync(connection, transaction,
                         new NewCharacter(1, name, 0, 1, 1, 1, 11, 1376, 1000044, null,
                             60000001, 30000001, 20000001, 10000001, null, null));
-                    await wallets.OpenAsync(connection, transaction, id, CorporationStore.CorporationFoundingCost + 5_000m, 0);
+                    await wallets.OpenAsync(connection, transaction, id, initialCash, 0);
                     return id;
                 }
 
-                sender = await CreatePilot($"Wallet RPC Sender {suffix}");
+                sender = await CreatePilot($"Wallet RPC Sender {suffix}", CorporationStore.CorporationFoundingCost + 5_000m);
                 recipient = await CreatePilot($"Wallet RPC Recipient {suffix}");
                 await transaction.CommitAsync();
             }

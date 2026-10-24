@@ -14,15 +14,20 @@ Production Host wiring supplies `PersistenceContractWriteModel` from `dotnet/src
 
 The RPC counts active personal and corporation issued contracts through `IContractReadModel.GetContractListForOwnerAsync`, paging at its 100-row limit, and returns the four client KeyVal fields. eve-logic `ContractsSvc.NumOutstandingContracts` calls the proxy at `contracts.py:688-690`; `CreateContractWnd.GetNumContractsAndLimits` at `createContractWnd.py:1182-1223` reads `myCorpTotal`, `nonCorpForMyCorp`, `myCharTotal`, or `nonCorpForMyChar` according to corporation and internal-assignee rules. EveJS v0.12.9 returns those same four fields in `server/src/services/_other/contractProxyService.js:322-338`; `collectMyPageInfo` counts outstanding contracts by personal or corporation issuer in `server/src/services/contracts/contractRuntimeState.js:3960-4036`.
 
+### RPC-01208: CollectMyPageInfo
+
+The Host RPC reads owner-scoped outstanding and attention lists plus existing current-contract and bid read models. It returns EveJS's fields: personal/corporate open counts, personal/corporate in-progress and bid counts, attention counts, and the four-column outstanding assignment tuples. Eve-logic `ContractsSvc.CollectMyPageInfo` calls the proxy and derives skill-based remaining limits from `numOutstandingContractsNonCorp` and `numOutstandingContractsForCorp` at `contracts.py:729-740`. `StartPagePanel.Init` consumes outstanding assignments, attention, bid and in-progress counts at `contractPanels.py:66-162`. EveJS aggregation is `contractRuntimeState.js:3960-4036`; it returns the same raw statistics and assignment columns. The exact reply field set and sampled counts are checked through the registered Host route by the focused wire test.
+
 ## Verification
 
-The Host wire regression is `Contract_reads_and_mutations_are_dispatched_through_the_host_with_client_shapes` in `dotnet/tests/Eve.Host.Tests/ContractProxyBatchWireTests.cs`. It calls the RPCs over the socket-backed Host with the real CoreServices registration. It checks the batch result, four count values and owner scopes, three login rowsets, escrow fields, contract list bundles, accepted row, completion boolean, and deletion boolean.
+The Host regression is `Contract_reads_and_mutations_are_dispatched_through_the_host_with_client_shapes` in `dotnet/tests/Eve.Host.Tests/ContractProxyBatchWireTests.cs`. It calls RPCs over a socket-backed Host with real CoreServices registration. It checks batch mutation results; counts including a 100-row page boundary; login rowsets; escrow fields; contract list bundles; current/expired rows; accepted row; completion/deletion booleans; and CollectMyPageInfo fields.
 
-- `dotnet build dotnet/src/Eve.Services.Core/Eve.Services.Core.csproj -p:UseSharedCompilation=false` — passed, zero warnings/errors.
-- Focused Host test `Contract_batch_and_outstanding_count_rpcs_use_host_registration_and_client_shapes` — passed (1 passed, 0 skipped).
-- No PostgreSQL connection was used. The test wires a recording store; production persistence reuse is covered by the existing single-contract writer and Host persistence tests.
-- Focused Actions run 40098916457 for pushed commit `755a38a2` passed; no tests were skipped.
+- Core build after CollectMyPageInfo: passed, zero warnings/errors.
+- Focused Host test after CollectMyPageInfo: passed (1 passed, 0 skipped).
+- No PostgreSQL connection was used.
+- Agent test run 40098916457 for push 755a38a2 passed; Agent test run 40099756130 for push 23db167f passed.
+- Local verification was run on code commit 835f8a1f before the origin/main merge; pushed tip after that merge was d89e97b2. The focused Actions runs listed above passed. Push-triggered ci.yml run 40098905958 remained in progress at last check; no ci.yml run was found for 23db167f by `ci-status.py failures`.
 
 ## Remaining assigned rows
 
-RPC-01208–RPC-01214, RPC-01216–RPC-01219, RPC-01221–RPC-01223, and RPC-01230 still need implementation. Additional V24 input cases remain for RPC-01209–RPC-01211, RPC-01212, RPC-01225, RPC-01227, and RPC-01229. The task's direct callsites identify their initial locations; whole-tree caller and reply-consumer tracing and EveJS comparisons remain to be completed for those rows. EveJS has deliberate `false` or `None` handlers for `FinishAuction`, `DeleteNotification`, `DeleteContractNotification`, and `GM_ExpireContract` at `contractProxyService.js:859-862, 890-898, 912-915`; do not copy these replies without confirming the V24 client behavior.
+Still missing: RPC-01212, RPC-01214, RPC-01216–RPC-01219, RPC-01221–RPC-01223, and RPC-01230. Covered by the Host wire test: RPC-01207, RPC-01208, RPC-01213, RPC-01215, RPC-01220, RPC-01224–RPC-01229, and RPC-01231. Remaining scenario coverage includes CompleteContract's other target statuses, CreateContract's valid shapes, corporate bids and lists, and the alternate expired-list case. For all remaining rows, the full caller/consumer paths and EveJS comparisons still need client file:line evidence. EveJS has deliberate `false` or `None` handlers for `FinishAuction`, `DeleteNotification`, `DeleteContractNotification`, and `GM_ExpireContract` at `contractProxyService.js:859-862, 890-898, 912-915`; do not copy these replies without confirming the V24 client behavior.

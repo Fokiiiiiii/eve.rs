@@ -44,6 +44,18 @@ public partial class HostServerTests
         Assert.Equal(new PyInt(101), counts["myCharTotal"]);
         Assert.Equal([42L, 42L, 84L], reads.OwnerIds);
 
+        var page = Fields(Assert.IsType<PyObject>(await Rpc(12, "CollectMyPageInfo")));
+        Assert.Equal(new PyInt(101), page["numOutstandingContractsNonCorp"]);
+        Assert.Equal(new PyInt(1), page["numOutstandingContractsForCorp"]);
+        Assert.Equal(new PyInt(102), page["numOutstandingContracts"]);
+        Assert.Equal(new PyInt(1), page["numInProgress"]);
+        Assert.Equal(new PyInt(1), page["numInProgressCorp"]);
+        Assert.Equal(new PyInt(1), page["numBiddingOn"]);
+        Assert.Equal(new PyInt(1), page["numBiddingOnCorp"]);
+        Assert.Equal(new PyInt(2), page["numRequiresAttention"]);
+        Assert.Equal(new PyInt(1), page["numRequiresAttentionCorp"]);
+        Assert.IsType<PyList>(page["outstandingContracts"]);
+
         var login = Fields(Assert.IsType<PyObject>(await Rpc(3, "GetLoginInfo")));
         Assert.Equal(new[] { "assignedToMe", "inProgress", "needsAttention" }, login.Keys.Order().ToArray());
 

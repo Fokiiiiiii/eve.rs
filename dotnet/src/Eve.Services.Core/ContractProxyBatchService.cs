@@ -95,4 +95,84 @@ public sealed partial class ContractProxyService
             startContractId = bundle.Contracts[^1].ContractId;
         }
     }
+
+    [Method("CollectMyPageInfo")]
+    public async Task<PyValue> CollectMyPageInfo(ServiceCall call)
+    {
+        var store = readModel ?? throw new InvalidOperationException("contract read model is not wired");
+        var characterId = call.Session.CharacterId
+            ?? throw new InvalidOperationException("contract page reads require a character session");
+        var (corporationId, allianceId) = await ReadCurrentOrganizationIdsAsync(call);
+        var now = Eve.Services.Py.FileTimeFromUnixMs(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        var personalOpen = await ReadOwnerContractsAsync(store, characterId, corporationId, characterId, 0, now, call);
+        var corporationOpen = corporationId > 0
+            ? await ReadOwnerContractsAsync(store, characterId, corporationId, corporationId, 0, now, call)
+            : [];
+        var personalAttention = await ReadOwnerContractsAsync(store, characterId, corporationId, characterId, -1, now, call);
+        var corporationAttention = corporationId > 0
+            ? await ReadOwnerContractsAsync(store, characterId, corporationId, corporationId, -1, now, call)
+            : [];
+        var personalProgress = await store.GetMyCurrentContractListAsync(
+            characterId, corporationId, true, false, now, call.Cancellation);
+        var corporationProgress = corporationId > 0 && await HasContractManagerRoleAsync(call, characterId, corporationId)
+            ? await store.GetMyCurrentContractListAsync(characterId, corporationId, true, true, now, call.Cancellation)
+            : new ContractReadBundle([]);
+        var personalBids = await store.GetMyBidsAsync(characterId, corporationId, false, now, call.Cancellation);
+        var corporationBids = corporationId > 0 && await HasContractManagerRoleAsync(call, characterId, corporationId)
+            ? await store.GetMyBidsAsync(characterId, corporationId, true, now, call.Cancellation)
+            : new ContractReadBundle([]);
+
+        var personalOutstandingCount = personalOpen.Count(row =>
+            !row.IsCorporationIssued && row.IssuerId == characterId);
+        var corporationOutstandingCount = corporationOpen.Count(row =>
+            row.IsCorporationIssued && row.IssuerCorporationId == corporationId);
+        var assigned = personalOpen.Concat(corporationOpen)
+            .Where(row => row.Status == 0 &&
+                (row.AssigneeId == characterId || row.AssigneeId == corporationId ||
+                    (allianceId > 0 && row.AssigneeId == allianceId)))
+            .DistinctBy(row => row.ContractId)
+            .Select(row => (PyValue)Eve.Services.Py.Tuple(
+                new PyInt(row.IssuerId), new PyInt(row.IssuerCorporationId),
+                new PyInt(row.AssigneeId), new PyInt(row.Type)))
+            .ToArray();
+
+        return Eve.Services.Py.KeyVal(
+            ("numInProgressCorp", new PyInt(corporationProgress.Contracts.Count)),
+            ("numOutstandingContractsNonCorp", new PyInt(personalOutstandingCount)),
+            ("numOutstandingContractsForCorp", new PyInt(corporationOutstandingCount)),
+            ("numOutstandingContracts", new PyInt(personalOutstandingCount + corporationOutstandingCount)),
+            ("numBiddingOn", new PyInt(personalBids.Contracts.Count)),
+            ("numRequiresAttentionCorp", new PyInt(corporationAttention.Count)),
+            ("numInProgress", new PyInt(personalProgress.Contracts.Count)),
+            ("numBiddingOnCorp", new PyInt(corporationBids.Contracts.Count)),
+            ("outstandingContracts", Eve.Services.Py.List(assigned)),
+            ("numRequiresAttention", new PyInt(personalAttention.Count)),
+            ("numContractsLeftCorp", new PyInt(0)));
+    }
+
+    private static async ValueTask<IReadOnlyList<ContractReadSnapshot>> ReadOwnerContractsAsync(
+        IContractReadModel store,
+        long characterId,
+        long corporationId,
+        long ownerId,
+        int status,
+        long nowFileTime,
+        ServiceCall call)
+    {
+        var contracts = new List<ContractReadSnapshot>();
+        long? startContractId = null;
+        while (true)
+        {
+            var bundle = await store.GetContractListForOwnerAsync(characterId, corporationId, ownerId,
+                status, 0, 0, 100, startContractId, nowFileTime, call.Cancellation);
+            contracts.AddRange(bundle.Contracts);
+            if (bundle.Contracts.Count < 100)
+                return contracts;
+            var nextStartContractId = bundle.Contracts[^1].ContractId;
+            if (nextStartContractId == startContractId)
+                return contracts;
+            startContractId = nextStartContractId;
+        }
+    }
+
 }

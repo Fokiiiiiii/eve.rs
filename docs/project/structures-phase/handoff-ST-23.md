@@ -38,7 +38,6 @@ Worktree `wt-st23` (removed at the end of the session). Database `eve_p4` (live 
 - The durable event bus delivers the owners' notices and the ore field a few seconds after the fire or the completion: live checks poll.
 - Disk: the release builds and the wide runs need about 6 GB free.
 
-
 ## 6. Control tower return live walk (2026-10-23)
 
 Added `ShipService.Drop` for the V24 client call, connected to the existing deployable provider with the item-keyed result list and CustomNotify error row the client helper consumes. A deterministic scenario in `tools/headless-client/tests/test_structures.py` uses a player corporation in the legal low-security system, places an Amarr Control Tower through `ship.Drop`, checks that an online tower is refused by `posMgr.UnanchorStructure`, changes the seeded tower to offline, then follows the unanchoring job through hull drop and `ship.Scoop`. The assertion checks ownership, location, cargo flag, the item-change notice, and removal of the space row. It moves only this scratch-schema job's due time forward so the Action does not wait for the SDE unanchoring delay.
@@ -50,7 +49,11 @@ The existing `live-slow.yml` selection already includes `test_structures.py`. Th
 - Commit `01053a2e290731e0ea551abb2b855e6dbaf7c0b9`, Agent test run [40041270573](https://github.com/Fokiiiiiii/eve.rs/actions/runs/40041270573): `Eve.Services.Space.Tests` focused scoop test 1 passed, 0 failed, 0 skipped; `tools/headless-client/tests/test_structures.py` 22 passed, 0 failed, 0 skipped.
 - This confirms the headless `ship.Drop` -> offline unanchor -> hull drop -> `ship.Scoop` flow, including `OnItemChange` and cargo state. No graphical V24 client run was part of this check.
 
-
 ## 8. Eject to an original ship at a distant structure (2026-10-24)
 
-The `EjectFromStructure` path now restores the exact physical ship recorded by `BoardStructure` after validating that it remains the character's singleton ship in the same solar system. It no longer applies the client boarding-distance rule to this restoration. EveJS v0.12.9 restores `restoreShipID` without a proximity check; the existing live scenario places the return refinery 200,000 km from the station-side ship and checks the `OnShipCosmeticsChanged` notification. The focused Actions result will be recorded after the run. The Release build of `Eve.Services.Space.Tests` passed after this fix with 0 warnings and 0 errors; no database tests were run locally.
+The `EjectFromStructure` path restores the exact physical ship recorded by `BoardStructure` after validating that it remains the character's singleton ship in the same solar system. It no longer applies the client boarding-distance rule to this restoration. EveJS v0.12.9 restores `restoreShipID` without a proximity check; the existing live scenario places the return refinery 200,000 km from the station-side ship and checks the `OnShipCosmeticsChanged` notification. Release build of `Eve.Services.Space.Tests` passed with 0 warnings and 0 errors.
+
+## 9. Actions verification (2026-10-24)
+
+- Commit `fd8f993872f6ee812533e9652bfa2e56a954fe12`, Agent test run [40043915164](https://github.com/Fokiiiiiii/eve.rs/actions/runs/40043915164): `Eve.Host.Tests` RPC inventory test 1 passed, 0 failed, 0 skipped; `tools/headless-client/tests/test_structures.py` 22 passed, 0 failed, 0 skipped.
+- The live selection includes the distant-structure Eject restoration and the control-tower unanchor/drop/scoop scenario. It ran headlessly; no graphical V24 client check was part of this result.

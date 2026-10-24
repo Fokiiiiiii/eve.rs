@@ -56,6 +56,11 @@ internal sealed partial class CharacterServicesComposition
 
     private SubscriptionMgrService CloneGradeSource => _cloneGradeSource ??= new SubscriptionMgrService(omega);
 
+    private PersistenceLookupDirectory? _lookupDirectory;
+
+    private PersistenceLookupDirectory LookupDirectory =>
+        _lookupDirectory ??= new PersistenceLookupDirectory(characters, corporations, sde, stations);
+
     /// <summary>
     /// Who is in each solar system now. The cap is <c>EVE_SYSTEM_POPULATION_CAP</c> characters per system (a positive
     /// whole number), or <see cref="SystemPopulation.DefaultCapacity"/>.
@@ -96,8 +101,8 @@ internal sealed partial class CharacterServicesComposition
                         .Where(entry => !string.IsNullOrWhiteSpace(entry.Value.ItemName))
                         .ToDictionary(entry => entry.Key, entry => entry.Value.ItemName!);
                 }),
-            Eve.Services.Core.CoreServices.CreateLookupService(
-                new Eve.Host.PersistenceLookupDirectory(characters, corporations, sde, stations)),
+            Eve.Services.Core.CoreServices.CreateLookupService(LookupDirectory),
+            new Eve.Services.Core.SearchQueryService(LookupDirectory),
             new Eve.Services.Core.SecurityMgrService(),
             new Eve.Services.Core.RWManagerService(),
             new Eve.Services.Core.FwCharacterEnlistmentMgrService(new Eve.Services.Core.FwCharacterEnlistmentRpcCallbacks(

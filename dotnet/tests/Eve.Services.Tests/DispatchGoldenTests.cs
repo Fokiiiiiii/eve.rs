@@ -364,6 +364,49 @@ public class DispatchGoldenTests
     }
 
     [Fact]
+    public async Task Station_and_bound_service_rpcs_have_independent_bounded_budgets()
+    {
+        var capture = new Capture();
+        var session = new ClientSession(capture) { SessionId = 913 };
+        var registry = new ServiceRegistry();
+        var general = new CharacterKillmailBudgetService();
+        var station = new ExpensiveService("stationSvc");
+        var dogma = new BoundObjectBudgetService("dogmaIM");
+        var corpStation = new BoundObjectBudgetService("corpStationMgr");
+        registry.Register(general);
+        registry.Register(station);
+        registry.Register(dogma);
+        registry.Register(corpStation);
+        registry.RegisterAlias("station", "stationSvc");
+        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 10 };
+        var boundObject = new PyTuple([new PyLong(1), new PyInt(1)]);
+        var getAllInfo = new PyTuple([new PyStr("GetAllInfo"), new PyTuple([]), Py.Dict()]);
+        var standingCheck = new PyTuple([new PyStr("DoStandingCheckForStationService"), new PyTuple([]), Py.Dict()]);
+
+        await dispatcher.DispatchAsync(CallRequestPacket("charMgr", "List"), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("station", "GetGuests"), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("dogmaIM", "MachoBindObject", boundObject, getAllInfo), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("corpStationMgr", "MachoBindObject", boundObject, standingCheck), session);
+
+        await dispatcher.DispatchAsync(CallRequestPacket("station", "GetGuests"), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("dogmaIM", "MachoBindObject", boundObject, getAllInfo), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("corpStationMgr", "MachoBindObject", boundObject, getAllInfo), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("charMgr", "ListStations"), session);
+
+        Assert.Equal(1, general.Calls);
+        Assert.Equal(1, station.Calls);
+        Assert.Equal(1, dogma.Calls);
+        Assert.Equal(1, corpStation.Calls);
+        Assert.Equal(8, capture.Sent.Count);
+        Assert.All(capture.Sent.Take(4), packet => Assert.Equal(7, CommandOf(packet)));
+        Assert.All(capture.Sent.Skip(4), packet =>
+        {
+            Assert.Equal(ErrorResponseCommand, CommandOf(packet));
+            Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(packet)));
+        });
+    }
+
+    [Fact]
     public async Task Expensive_market_calls_have_a_named_per_session_budget()
     {
         var capture = new Capture();
@@ -3015,6 +3058,21 @@ public class DispatchGoldenTests
                 new(new PyInt(44992), BestOrder(44992, 1_250_000, 4, 60003760)),
             ]);
             return ValueTask.FromResult(result);
+        }
+    }
+
+    private sealed class BoundObjectBudgetService(string name) : IService
+    {
+        public int Calls { get; private set; }
+
+        public string Name => name;
+
+        public bool HasMethod(string method) => method == "MachoBindObject";
+
+        public ValueTask<PyValue> CallAsync(ServiceCall call)
+        {
+            Calls++;
+            return ValueTask.FromResult<PyValue>(PyNone.Instance);
         }
     }
 

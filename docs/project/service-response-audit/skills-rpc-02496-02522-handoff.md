@@ -73,5 +73,7 @@ eve.rs has implementations for the other listed methods in `SkillHandlerService.
 - The no-character wire test verifies route reachability and those no-character shapes. It does not replace character-state persistence, successful action mutations, notification ordering, retry/concurrency/restart or graphical-client verification.
 - No database was opened. Graphical-client verification was not performed.
 
-- Pushed implementation SHA: `4a8c2199cf8676b5091dac8f5df9d22d54c52588`.
-- GitHub Actions focused dispatch `40098930677` completed successfully for the focused no-database Host test (0 failed jobs/tests reported). Push-triggered `ci.yml` run `40098860277` was still in progress at the last status check.
+- Focused implementation push SHA: `4a8c2199cf8676b5091dac8f5df9d22d54c52588`.
+- GitHub Actions focused dispatch `40098930677` completed successfully for the focused no-database Host test (0 failed jobs/tests reported).
+- Documentation and concurrent-main merge push SHA: `d1e6ba00f6bc7f65c3b39947f61f42e8bfdc7117`.
+- Push-triggered `ci.yml` run `40098860277` for the implementation SHA remained in progress at the last status check; check the final pushed SHA with `ci-status.py failures`.

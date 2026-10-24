@@ -98,7 +98,7 @@ Run 745 failed two `Eve.Market.Tests.ProtocolTests` cases because immediate fill
 
 ## 2026-10-24 market global-assets walk Actions follow-up
 
-- Push CI run 769 (`40053234501`) on `4307511c` includes market test commit `d3d45b18` and passed the full required gate. The End-to-end job passed in 11.4 minutes, along with Rust, Python, Windows, .NET build and shards, fixtures, and the required gate.
-- The focused market Actions run 266 (`40051416649`) on `d3d45b18` remains active at the selected-test step; it has no final test output yet. It is not recorded as a pass.
-- Later main CI runs 771 (`15a9ef6a`) and 772 (`ef6286e9`) were still in progress at this update. The current `ci-status.py` success summary does not expose pytest skip counts, so no skip count is recorded here; skipped scenarios are not counted as verified.
-- Local `python3 -m py_compile tools/headless-client/tests/test_market.py` passed. No local database, graphical-client run, or EveJS differential was performed.
+- Push CI run 769 (`40053234501`) on `4307511c` includes the global-assets inventory test (`d3d45b18`) and escrow-custody correction (`b5850087`). The full required gate passed, including the End-to-end job in 11.4 minutes.
+- Focused Actions run 266 (`40051416649`) on `d3d45b18` ended after 41.8 minutes: all .NET projects passed; live tests passed 3/4. `test_docked_corporation_members_trade_at_an_eligible_upwell_structure` failed because it expected the seller's unfilled two units in the hangar before cancellation, while the order held them in escrow. The current test checks 0 in the hangar before cancel and 2 after; run 769 includes that correction and passed the live flow.
+- Focused market rerun 292 (`40054489401`) on `4619fa62`, selected with `--projects none --live test_market.py`, remains in progress at this update. Latest main is `3589d7dc`; no CI run for that SHA was listed at the first status check. Run 774 on `4619fa62` is active, including its End-to-end job.
+- Local `python3 -m py_compile tools/headless-client/tests/test_market.py` passed. The Actions success summary does not report pytest skip counts, so skipped scenarios are not counted as verified. No local database, graphical-client run, or EveJS differential was performed.

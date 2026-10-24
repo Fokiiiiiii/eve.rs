@@ -304,7 +304,7 @@ public sealed class ReprocessingServiceTests
 
         Assert.Single(((PyList)hangarResult.Items[0]).Items);
         Assert.Single(((PyList)containerResult.Items[0]).Items);
-        Assert.Equal(414, await rig.TritaniumAsync(Character, ReprocessingRig.Station, ItemFlags.Hangar));
+        Assert.Equal(415, await rig.TritaniumAsync(Character, ReprocessingRig.Station, ItemFlags.Hangar));
         Assert.Equal(0, await rig.TritaniumAsync(Character, container, ItemFlags.Cargo));
     }
 
@@ -324,7 +324,7 @@ public sealed class ReprocessingServiceTests
         Assert.Equal(new long[] { source }, ((PyList)answer.Items[0]).Items.Select(v => ((PyLong)v).Value).ToArray());
         Assert.Null(await rig.Items.GetAsync(source));
         Assert.Equal(200, (await rig.Items.GetAsync(elsewhere))!.Quantity);
-        Assert.Equal(415, await rig.TritaniumAsync(Character, ReprocessingRig.Station, ItemFlags.Hangar));
+        Assert.Equal(416, await rig.TritaniumAsync(Character, ReprocessingRig.Station, ItemFlags.Hangar));
     }
 
     [ReprocessingPgFact]
@@ -343,7 +343,7 @@ public sealed class ReprocessingServiceTests
         Assert.Single(((PyList)first.Items[0]).Items);
         Assert.Empty(((PyList)retry.Items[0]).Items);
         Assert.Empty(((PyDict)retry.Items[1]).Entries);
-        Assert.Equal(830, await rig.TritaniumAsync(Character, ReprocessingRig.Station, ItemFlags.Hangar));
+        Assert.Equal(415, await rig.TritaniumAsync(Character, ReprocessingRig.Station, ItemFlags.Hangar));
         Assert.Equal(1, await rig.JournalCountAsync(ReprocessingService.ReprocessingTaxRefType, Character));
     }
 

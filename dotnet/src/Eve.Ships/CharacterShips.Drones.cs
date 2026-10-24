@@ -20,6 +20,9 @@ public sealed record DroneBayFull(long TypeId, double Available, double Volume) 
 /// <summary>The drone is not an item of the character's in the solar system.</summary>
 public sealed record DroneNotThere : DroneScoop;
 
+/// <summary>The drone and bay can be scooped; the simulation still decides whether it is within reach.</summary>
+public sealed record DroneScoopReady : DroneScoop;
+
 /// <summary>
 /// Drones as the ship's character deals with them: an item leaves the drone bay for the solar system when it is launched (one unit of a stack becomes a singleton of its own) and
 /// goes back to the bay when it is scooped. The drone in space is the simulation's ball; the item is what the database has of it.
@@ -74,14 +77,23 @@ public sealed partial class CharacterShips
     /// The drone, in the solar system, goes into the drone bay of the character's ship. The bay keeps room for the drones that are still out (<paramref name="stillOut"/>, their item ids),
     /// as the reference's does, so a drone that was launched always has a berth waiting; one that was not (a drone found, one let go) must find real room.
     /// </summary>
-    internal async Task<DroneScoop> ScoopDroneAsync(long characterId, long shipId, long droneId, int solarSystemId, IReadOnlyCollection<long> stillOut, CancellationToken cancellationToken = default)
+    internal Task<DroneScoop> ScoopDroneAsync(long characterId, long shipId, long droneId, int solarSystemId, IReadOnlyCollection<long> stillOut, CancellationToken cancellationToken = default) =>
+        ScoopDroneInSpaceAsync(characterId, shipId, droneId, solarSystemId, stillOut, false, false, cancellationToken);
+
+    internal Task<DroneScoop> CheckAbandonedDroneScoopAsync(long characterId, long shipId, long droneId, int solarSystemId, IReadOnlyCollection<long> stillOut, CancellationToken cancellationToken = default) =>
+        ScoopDroneInSpaceAsync(characterId, shipId, droneId, solarSystemId, stillOut, true, true, cancellationToken);
+
+    internal Task<DroneScoop> ScoopAbandonedDroneAsync(long characterId, long shipId, long droneId, int solarSystemId, IReadOnlyCollection<long> stillOut, CancellationToken cancellationToken = default) =>
+        ScoopDroneInSpaceAsync(characterId, shipId, droneId, solarSystemId, stillOut, true, false, cancellationToken);
+
+    private async Task<DroneScoop> ScoopDroneInSpaceAsync(long characterId, long shipId, long droneId, int solarSystemId, IReadOnlyCollection<long> stillOut, bool takeOwnership, bool checkOnly, CancellationToken cancellationToken)
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         await LockAsync(connection, transaction, characterId, cancellationToken);
 
         if (await items.LockAndGetAsync(connection, transaction, droneId, cancellationToken) is not { } drone
-            || drone.OwnerId != characterId || drone.LocationId != solarSystemId || drone.Flag != InSpaceFlag
+            || (!takeOwnership && drone.OwnerId != characterId) || drone.LocationId != solarSystemId || drone.Flag != InSpaceFlag
             || await LoadAsync(characterId, cancellationToken) is not { } snapshot || snapshot.Ship.Id != shipId
             || snapshot.Ship.LocationId != solarSystemId || snapshot.Ship.Flag != InSpaceFlag)
         {
@@ -108,9 +120,20 @@ public sealed partial class CharacterShips
         {
             return new DroneBayFull(drone.TypeId, Math.Round(room.Free, 6), Math.Round(required, 6));
         }
-        await items.MoveAsync(connection, transaction, drone.Id, shipId, DroneBayFlag, cancellationToken);
+        if (checkOnly)
+        {
+            return new DroneScoopReady();
+        }
+        if (takeOwnership)
+        {
+            await items.MoveToOwnerAsync(connection, transaction, drone.Id, characterId, shipId, DroneBayFlag, cancellationToken);
+        }
+        else
+        {
+            await items.MoveAsync(connection, transaction, drone.Id, shipId, DroneBayFlag, cancellationToken);
+        }
         await transaction.CommitAsync(cancellationToken);
-        return new DroneScooped(new ItemChanged(drone with { LocationId = shipId, Flag = DroneBayFlag }, drone.LocationId, InSpaceFlag, drone.Quantity));
+        return new DroneScooped(new ItemChanged(drone with { OwnerId = characterId, LocationId = shipId, Flag = DroneBayFlag }, drone.LocationId, InSpaceFlag, drone.Quantity));
     }
 
     /// <summary>

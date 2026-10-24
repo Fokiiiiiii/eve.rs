@@ -2,7 +2,7 @@
 
 ## Scope and current source paths
 
-This checkout was advanced through `origin/main` at the start of the task. The task changes were pushed on main through merge commit `85ce03fd`, which also incorporates current origin/main. The requested source layout has since been split: gate-jump completion is in `dotnet/src/Eve.Services.Space/SpaceSessions.Movement.cs`; the current Rust simulation lives under `crates/eve-space/src/sim/`. The nine pre-existing deleted files in the worktree were preserved and are unrelated to this change.
+This checkout was advanced through `origin/main` at the start of the task. The task changes were pushed on main through merge commit `9349cae6`, which also incorporates current origin/main. The requested source layout has since been split: gate-jump completion is in `dotnet/src/Eve.Services.Space/SpaceSessions.Movement.cs`; the current Rust simulation lives under `crates/eve-space/src/sim/`. The nine pre-existing deleted files in the worktree were preserved and are unrelated to this change.
 
 ## Client path and wire contract
 
@@ -33,4 +33,6 @@ This checkout was advanced through `origin/main` at the start of the task. The t
 - Focused live run `40077842646` failed after starting the live walk. Run `40081947255` succeeded (the required Host session-change filter, 1 passed and 0 skipped). Run `40081947368` ran the slow jump walk and failed; its log tail did not include the test assertion. In earlier run `40077070295`, the walk crossed systems and its session snapshot, rebind result, notification order, and destination scene/state checks produced no reported mismatch; it failed the earlier warp update comparison and rest timing (86.12 s vs 82.86 s). The Windows live-client job passed on `40077808041`.
 - Local .NET build of `Eve.Services.Space` was terminated when `csc` exited with code 137 under shared resource pressure. No local database was used. A graphical V24.01 UI exception log was not captured.
 
-- Focused Host run `40083151979` passed (1 passed, 0 skipped) and focused Space run `40083365205` passed. Slow jump run `40083381020` is still awaiting a clean status response after an Actions API connection reset. Push CI `40082922998` passed Rust 1.94.1 fmt/clippy/tests, .NET build, Space shard 1/2, and all other-test shards. Host shard 4/4 failed the concurrently added `AccountWalletHostRpcTests` because the fixture funded 5,000 ISK while corporation founding costs 1,599,800 ISK. Its seed now includes `CorporationStore.CorporationFoundingCost + 5_000m`; focused and push CI checks for this fixture change are pending.
+- Focused Host run `40083151979` passed (1 passed, 0 skipped) and focused Space run `40083365205` passed. Slow jump run `40083381020` is still awaiting a clean status response after an Actions API connection reset. Push CI `40082922998` passed Rust 1.94.1 fmt/clippy/tests, .NET build, Space shard 1/2, and all other-test shards. Host shard 4/4 failed the concurrently added `AccountWalletHostRpcTests` because the fixture funded 5,000 ISK while corporation founding costs 1,599,800 ISK. Its seed now includes `CorporationStore.CorporationFoundingCost + 5_000m`.
+
+- On `9349cae6`, Host session-change `40084107903`, Space jump-state `40084118944`, wallet RPC `40084131964`, and slow jump walk `40084153623` were dispatched; results are pending.

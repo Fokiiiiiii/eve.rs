@@ -607,3 +607,9 @@ Regression tests added: `DungeonWaveTests.A_system_owned_wave_waits_until_a_pilo
 
 - The worktree now includes origin/main through ab5acba6, merged before the planned push. The preceding main gate, run 807, is still active at this check: the Python client and fixture-generator jobs passed, while .NET build, Rust format/clippy, Windows, selected tests, and the server-stack E2E are active or queued.
 - After that merge, Rust 1.94.1 format, eve-space/eve-sim check, and workspace all-target clippy passed. The updated Space test-project rebuild exited 137 because the shared host had less than 1 GiB available memory; the earlier pre-merge build of that project passed. The focused Host test will be checked on Actions after push. No local database or graphical client was used.
+
+## 2026-10-24 push 1629f575 stargate jump
+
+- Pushed the merged stargate jump work as 1629f575858c after fetching and merging origin/main through f9d453be. This head includes the coast-only jump acceptance, accepted-jump warp-state cleanup, simulation regression, Host wire regression, the required DogmaStatic ship fixture, and the clippy cleanup.
+- Focused Agent run 40085311194 is checking Eve.Services.Space.Tests with FullyQualifiedName~StargateJumpWireTests; push-triggered CI run 809 is Actions run 40085296182. Both were queued at this note update.
+- Rust 1.94.1 format, eve-space/eve-sim check, and workspace all-target clippy passed locally. The post-merge C# test-project compile ended with Roslyn exit 137 while under shared memory pressure; the earlier build before the main fixture update passed. The focused simulation regression had passed in the prior local run. No database or graphical client was used.

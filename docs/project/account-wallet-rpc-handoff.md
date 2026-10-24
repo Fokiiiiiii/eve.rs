@@ -14,15 +14,15 @@ No server behavior or compatibility deviation changed. No local PostgreSQL comma
 - `eve/client/script/ui/shared/neocom/wallet/panels/personal/giveIskPanel.py:102-103`: personal `GiveCash` truthiness gates success UI.
 - `eve/client/script/ui/shared/neocom/wallet/transferMoneyWnd.py:147-152`: calls personal `GiveCash` or `GiveCashFromCorpAccount`; completion does not inspect the reply.
 
-EveJS comparison: `/home/user/evejs-v0.12.9/server/src/services/account/accountService.js:678-700` returns actual balances and checks corporation access; `:864-913` handles `GiveCash`; `:915-964` handles `GiveCashFromCorpAccount`. Existing corporation-donation response difference is recorded in `docs/reference/compat/DEVIATIONS.md`.
+EveJS comparison: `/home/user/evejs-v0.12.9/server/src/services/account/accountService.js:678-700` returns actual balances and checks corporation access; `:864-913` handles `GiveCash`; `:915-964` handles `GiveCashFromCorpAccount`. Existing corporation-donation response difference is in `docs/reference/compat/DEVIATIONS.md`.
 
 ## Checks and handoff
 
-- Initial local compile passed with 0 warnings and 0 errors. Follow-up compilation was killed with csc exit 137 under shared-memory pressure.
-- Actions run `40080221080` exposed an underfunded corporation fixture; it now starts with the 1,599,800 ISK founding fee plus 5,000 ISK.
-- Actions run `40084145705` exposed a missing kwargs-aware test packet helper; it was added and consolidated after a concurrent merge duplicated it.
-- Actions run `40084153623` checked the pre-helper source.
+- Initial local compile passed (0 warnings, 0 errors). Follow-up compile was killed with csc exit 137 under shared-memory pressure.
+- Actions run `40080221080` identified the corporation founding-fee fixture issue; fixed by funding the founder with the fee plus 5,000 ISK.
+- Actions runs `40084145705` and `40084153623` found the missing kwargs-aware Host packet helper and a duplicate from concurrent merges; the helper is now consolidated.
+- Actions run `40085201940` found the notification destination assertion was too strict. Personal uses `clientID`; corporation wallet notifications use `*corpid&corpAccountKey`. The regression now checks both.
 - Feature commits: `0f5c0c20` (Host wire regression), `c6815db1` (founder balance).
-- Latest pushed head: `a9b8d788`. Nine pre-existing unrelated Rust deletions remain unstaged and uncommitted.
+- Latest pushed head: `d9991d2d`. Nine pre-existing unrelated Rust deletions remain unstaged and uncommitted.
 
-Run the focused Actions check on the latest pushed head, then add its result here.
+Run the focused Actions check on the latest pushed head, then record its result here.

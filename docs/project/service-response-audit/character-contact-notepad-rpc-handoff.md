@@ -44,4 +44,5 @@ dotnet/tests/Eve.Host.Tests/CharacterContactNotepadHostTests.cs adds two databas
 - Focused Actions run 40097861742 passed the charMgr test. The inventory route returned `PyNone` because `NewItem` defaults `Singleton=false`; `CharacterShips.MoveAsync` refuses to move from a non-singleton ship. The Host fixture now marks its Rifter as a singleton and saves it as the character's active ship with `PgCharacterStore.SetShipAsync` in the item transaction.
 - Focused Actions run 40098949992 passed both new Host tests (2 passed, 0 failed, 0 skipped).
 - The push-triggered CI gate for `e114b7c5` exposed a separate merged ConfigService regression: the existing 501-ID limit test expected `CONFIG_BULK_LIMIT_EXCEEDED`, while `MaximumRequestedIds` was 10,000 and execution fell through into a null test dependency. Reduced the configured limit to the tested 500-ID contract; this CI fix is included in the final batch push.
-- The push-triggered CI gate result and focused ConfigService rerun will be added after they complete.
+- Focused Actions run 40099962353 passed the ConfigService 501-ID limit regression (1 passed, 0 failed, 0 skipped).
+- `ci.yml` run 40099954010 for `12cde77b8a4604b8d808c5915804aaa479802337` remained queued at the last status check; it has not produced a result yet.

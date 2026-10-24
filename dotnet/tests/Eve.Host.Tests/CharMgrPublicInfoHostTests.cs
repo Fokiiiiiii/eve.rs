@@ -1,6 +1,7 @@
 using Eve.Characters;
 using Eve.Macho;
 using Eve.Marshal;
+using Eve.Services;
 using Eve.Services.CharacterInfo;
 using Eve.Universe;
 
@@ -74,6 +75,8 @@ public partial class HostServerTests
         Assert.Equal(new PyInt(first.CorporationId), firstFields["corporationID"]);
         Assert.Equal(new PyInt(500004), firstFields["empireID"]);
         Assert.Equal($"description-{first.Id}", JsSemantics.StringValue(firstFields["description"]));
+        Assert.Equal(Py.Number(1.25), firstFields["securityRating"]);
+        Assert.Equal(Py.Number(1.25), firstFields["securityStatus"]);
         Assert.Equal(new PyInt(707), firstFields["medal1GraphicID"]);
 
         var secondFields = Fields(await Call(2, second.Id));

@@ -43,5 +43,7 @@ Other UI entry points: `linkedBookmarkFolderWindow.py:172` adds a known folder; 
 - Local focused test `Registered_bookmark_methods_reach_the_real_dispatcher_and_return_wire_errors_without_a_database`: passed (1 passed, 0 skipped); it does not connect to PostgreSQL.
 - Published change: commit `1bf8b206` (`Test bookmark RPC Host wire coverage`), merged with origin/main and pushed as `84ad0c1b`.
 - GitHub Actions `agent-test.yml` run `40085367825` passed for `84ad0c1ba363` (no failed tests or jobs; 0 skipped).
-- Push-triggered `ci.yml` run `40085361438` for `84ad0c1b` was still queued when this handoff update was prepared; record its final result after completion.
+- Push-triggered `ci.yml` run `40085361438` for `84ad0c1b` failed in unrelated structure and belt-rat checks. The structure test raced the undock session update; upstream commit `2caaf673` now waits for it, included in merged `7743f9f6`. The belt test exposed that `NO_SCENE` refusals were silently suppressed when no scene-unavailable callback existed; the follow-up fix logs that refusal in `SpaceSessions.Npc.cs` while preserving callback handling.
+- Follow-up `Eve.Services.Space.Tests` project build passed locally (0 warnings/errors). The regression itself is `[PgFact]`; no local PostgreSQL test was run. GitHub focused run `40089219237` passed for `A_refused_belt_spawn_is_reported_as_a_failure` (1 passed, 0 skipped).
+- Push-triggered `ci.yml` run `40089210663` for `5457d476` is in progress; record its final result after completion.
 - No graphical-client session was run.

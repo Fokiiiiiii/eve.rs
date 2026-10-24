@@ -463,3 +463,24 @@ CI run 672 on `1669e6dc` failed the structure market Host test because the fixtu
 - The checked-out main tip at this update is `9716acb1`. No push-triggered `ci.yml` run was listed for that SHA at the first check.
 - CI run 753 on `e863ec63` has passed the Python client, Rust format/clippy, fixture, and Rust advisory jobs. Its E2E, Windows, .NET build/shards, and Rust test jobs were still active. Focused Agent run 258 on the same code head was also active.
 - The follow-up will dispatch `ci.yml` against the latest main head so the complete gate covers the corrected parser and Upwell docking flow. No local PostgreSQL database was used.
+
+## 2026-10-24 run 753 Upwell inventory RPC follow-up
+
+- Run 753 on `e863ec63` failed `test_docked_corporation_members_trade_at_an_eligible_upwell_structure` at `tests/test_market.py:240`: after the trade and transaction checks, the buyer's `invbroker.ListStationItems(structure_id)` returned no Tritanium rows.
+- The market settlement moves filled goods to the destination hangar. `InvBrokerService.ListStationItems` then rejected any non-SDE station ID outside the global-assets context, which excluded an Upwell structure. EveJS resolves top-level entries by the requested dockable location.
+- The RPC now allows a non-SDE location only when it matches the session's docked location; the existing global-assets structure validation remains, and a remote structure query still returns an empty list. Regression `A_docked_structure_lists_its_own_station_items_but_not_a_remote_structure` checks both cases.
+- The focused .NET Release build passed with 0 warnings and 0 errors. The focused Actions test and latest-main CI gate are pending. No local PostgreSQL database was used.
+
+
+## 2026-10-24 selected Agent run 267 sell-order inventory expectation
+
+- Agent run 267 (`40051462122`) on `a231dfb8` passed the focused `Eve.Services.Inventory.Tests` regression (1 passed, 0 failed, 0 skipped), then failed `tests.test_market::test_docked_corporation_members_trade_at_an_eligible_upwell_structure`. The buyer's delivered Tritanium was in its structure hangar, but the seller's remaining two units were not.
+- The test expected the two remaining sell-order units to remain in the seller's hangar while also asserting a two-unit standing ask. EveJS v0.12.9 `executeSellEntryUnlocked` moves the order's unfilled remainder to its market escrow location; cancellation returns it to the original hangar. The live test now expects zero seller hangar units before cancellation and two after it. The EVE University [Market](https://wiki.eveuniversity.org/Market) page describes market orders and partial fills; its escrow detail follows the executable reference and the observed cancellation transition.
+- The push gate (run 760, `40051455352`) and pre-fix run 759 (`40051408023`) were still running when this note was added. No local PostgreSQL test was run.
+
+
+## 2026-10-24 push a719eee8 seller escrow expectation correction
+
+- Merged the concurrent main updates at `cd0a6029`, retaining the new post-cancel custody check, and pushed the seller hangar expectation correction as `a719eee8`.
+- Focused Agent run 268 (`40052275363`) is checking the inventory RPC regression and `tests/test_market.py` against this head. Push gate run 764 (`40052261614`) is also checking this head. Results are pending.
+- The correction follows the EveJS sell-order flow: after a partial fill, unfilled order stock is in market escrow and cancellation restores it to the structure hangar. No local PostgreSQL test was run.

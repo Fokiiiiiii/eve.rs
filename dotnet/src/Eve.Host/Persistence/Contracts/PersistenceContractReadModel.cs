@@ -16,12 +16,14 @@ public sealed class PersistenceContractReadModel : IContractReadModel
 
     private readonly NpgsqlDataSource _source;
     private readonly string _schema;
+    private readonly string _sdeSchema;
 
-    public PersistenceContractReadModel(NpgsqlDataSource source, string schema = DefaultSchema)
+    public PersistenceContractReadModel(NpgsqlDataSource source, string schema = DefaultSchema, string sdeSchema = Eve.Sde.SdeReader.DefaultSchema)
     {
         ArgumentNullException.ThrowIfNull(source);
         _source = source;
         _schema = $"\"{ValidateSchema(schema)}\"";
+        _sdeSchema = $"\"{ValidateSchema(sdeSchema)}\"";
     }
 
     public static IReadOnlyList<Eve.Data.Migration> MigrationSet() =>
@@ -107,6 +109,9 @@ public sealed class PersistenceContractReadModel : IContractReadModel
                 ADD COLUMN acceptor_wallet_account_key integer NOT NULL DEFAULT 1000 CHECK (acceptor_wallet_account_key BETWEEN 1000 AND 1006),
                 ADD COLUMN collateral_escrow numeric(28, 2) NOT NULL DEFAULT 0 CHECK (collateral_escrow >= 0),
                 ADD COLUMN date_completed_filetime bigint NOT NULL DEFAULT 0;
+            """),
+        new Eve.Data.Migration("0008_contract_search_index", """
+            CREATE INDEX contract_records_public_search ON contract_records (availability, date_expired_filetime, contract_id) WHERE status = 0;
             """),
     ];
 
@@ -343,6 +348,272 @@ public sealed class PersistenceContractReadModel : IContractReadModel
         return await AttachChildrenAsync(connection, contracts, cancellationToken);
     }
 
+
+    public async ValueTask<ContractSearchResult> SearchContractsAsync(
+        ContractSearchQuery query,
+        long nowFileTime,
+        CancellationToken cancellationToken)
+    {
+        if (query.CharacterId <= 0 || query.CorporationId < 0 || query.AllianceId < 0 || nowFileTime <= 0 ||
+            query.Availability is < 0 or > 3 || query.ContractType is < 0 or > 11 ||
+            query.LocationId < 0 || query.EndLocationId < 0 || query.IssuerId < 0 ||
+            query.StartNum is < 0 or > 100_000 || query.ItemTypeIds.Any(id => id <= 0) ||
+            query.ItemCategoryId < 0 || query.ItemGroupId < 0 || query.SearchHint != 0)
+            throw new ArgumentOutOfRangeException(nameof(query));
+
+        var startLocation = LocationKind(query.LocationId);
+        var endLocation = LocationKind(query.EndLocationId);
+        var sortColumn = query.SortBy switch
+        {
+            1 => "price_isk",
+            2 => "date_expired_filetime",
+            3 => "start_station_id",
+            4 => "start_system_id",
+            5 => "start_region_id",
+            6 => "start_constellation_id",
+            7 => "contract_type",
+            8 => "reward_isk",
+            9 => "collateral_isk",
+            10 => "volume",
+            11 => "assignee_id",
+            _ => "contract_id",
+        };
+        var descending = query.SortDirection is { } direction
+            ? direction != 0
+            : !query.HasExplicitSortBy;
+
+        var timer = System.Diagnostics.Stopwatch.StartNew();
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        var rows = new List<(ContractReadSnapshot Contract, long StartSystem, long StartConstellation, long StartRegion,
+            long EndSystem, long EndConstellation, long EndRegion, string StartName, string EndName,
+            int StartDivision, long? IssuerWalletKey, long? AcceptorWalletKey, double Volume)>();
+        var numFound = 0;
+        await using (var command = new NpgsqlCommand($"""
+            WITH matches AS MATERIALIZED (
+                SELECT c.contract_id, c.contract_type, c.status, c.availability, c.issuer_id,
+                       c.issuer_corporation_id, c.is_corporation_issued, c.assignee_id, c.acceptor_id,
+                       c.created_at_filetime, c.date_expired_filetime, c.date_accepted_filetime,
+                       c.date_completed_filetime, c.num_days, c.start_station_id, c.end_station_id,
+                       c.price_isk, c.reward_isk, c.collateral_isk, c.title, c.description,
+                       COALESCE(start_system.key, 0) AS start_system_id,
+                       COALESCE((start_system.doc->>'constellationID')::bigint, 0) AS start_constellation_id,
+                       COALESCE((start_system.doc->>'regionID')::bigint, 0) AS start_region_id,
+                       COALESCE(end_system.key, 0) AS end_system_id,
+                       COALESCE((end_system.doc->>'constellationID')::bigint, 0) AS end_constellation_id,
+                       COALESCE((end_system.doc->>'regionID')::bigint, 0) AS end_region_id,
+                       COALESCE(start_system.doc->'name'->>'en', start_system.doc->>'name', '') AS start_system_name,
+                       COALESCE(end_system.doc->'name'->>'en', end_system.doc->>'name', '') AS end_system_name,
+                       COALESCE(volume_data.volume, 0) AS volume,
+                       c.issuer_item_flag, c.issuer_wallet_account_key,
+                       CASE WHEN c.acceptor_id = 0 THEN NULL ELSE c.acceptor_wallet_account_key END AS acceptor_wallet_key
+                FROM {_schema}.contract_records AS c
+                LEFT JOIN {_sdeSchema}.npcStations AS start_station ON start_station.key = c.start_station_id
+                LEFT JOIN {_sdeSchema}.mapSolarSystems AS start_system
+                    ON start_system.key = NULLIF(start_station.doc->>'solarSystemID', '')::bigint
+                LEFT JOIN {_sdeSchema}.npcStations AS end_station ON end_station.key = c.end_station_id
+                LEFT JOIN {_sdeSchema}.mapSolarSystems AS end_system
+                    ON end_system.key = NULLIF(end_station.doc->>'solarSystemID', '')::bigint
+                LEFT JOIN LATERAL (
+                    SELECT COALESCE(SUM(NULLIF(item_type.doc->>'volume', '')::numeric * item.quantity), 0) AS volume
+                    FROM {_schema}.contract_items AS item
+                    LEFT JOIN {_sdeSchema}.types AS item_type ON item_type.key = item.type_id
+                    WHERE item.contract_id = c.contract_id AND item.in_crate
+                ) AS volume_data ON TRUE
+                WHERE c.status = 0 AND c.date_expired_filetime >= @now
+                  AND (
+                        (@availability IS NULL AND (c.availability = 0 OR c.assignee_id IN (@character, @corporation, @alliance)))
+                     OR (@availability = 0 AND c.availability = 0)
+                     OR (@availability = 1 AND (c.issuer_id = @character OR c.issuer_corporation_id = @character OR c.acceptor_id = @character OR c.assignee_id = @character))
+                     OR (@availability = 2 AND (c.issuer_id = @corporation OR c.issuer_corporation_id = @corporation OR c.acceptor_id = @corporation OR c.assignee_id = @corporation))
+                     OR (@availability = 3 AND c.assignee_id = @alliance)
+                  )
+                  AND (@contractType IN (0, 11) OR (@contractType = 10 AND c.contract_type IN (1, 2)) OR c.contract_type = @contractType)
+                  AND (@issuer = 0 OR c.issuer_id = @issuer OR c.issuer_corporation_id = @issuer)
+                  AND (@startLocation = 0 OR (@startKind = 0 AND c.start_station_id = @startLocation)
+                       OR (@startKind = 1 AND start_system.key = @startLocation)
+                       OR (@startKind = 2 AND (start_system.doc->>'constellationID')::bigint = @startLocation)
+                       OR (@startKind = 3 AND (start_system.doc->>'regionID')::bigint = @startLocation))
+                  AND (@endLocation = 0 OR (@endKind = 0 AND c.end_station_id = @endLocation)
+                       OR (@endKind = 1 AND end_system.key = @endLocation)
+                       OR (@endKind = 2 AND (end_system.doc->>'constellationID')::bigint = @endLocation)
+                       OR (@endKind = 3 AND (end_system.doc->>'regionID')::bigint = @endLocation))
+                  AND (@minPrice IS NULL OR c.price_isk >= @minPrice)
+                  AND (@maxPrice IS NULL OR c.price_isk <= @maxPrice)
+                  AND (@minReward IS NULL OR c.reward_isk >= @minReward)
+                  AND (@maxReward IS NULL OR c.reward_isk <= @maxReward)
+                  AND (@minCollateral IS NULL OR c.collateral_isk >= @minCollateral)
+                  AND (@maxCollateral IS NULL OR c.collateral_isk <= @maxCollateral)
+                  AND (@minVolume IS NULL OR COALESCE(volume_data.volume, 0) >= @minVolume)
+                  AND (@maxVolume IS NULL OR COALESCE(volume_data.volume, 0) <= @maxVolume)
+                  AND (cardinality(@itemTypes) = 0 OR EXISTS (
+                      SELECT 1 FROM {_schema}.contract_items AS item
+                      WHERE item.contract_id = c.contract_id AND item.type_id = ANY(@itemTypes)
+                  ))
+                  AND (@itemCategory = 0 OR EXISTS (
+                      SELECT 1
+                      FROM {_schema}.contract_items AS item
+                      JOIN {_sdeSchema}.types AS item_type ON item_type.key = item.type_id
+                      JOIN {_sdeSchema}.groups AS item_group ON item_group.key = NULLIF(item_type.doc->>'groupID', '')::bigint
+                      WHERE item.contract_id = c.contract_id
+                        AND (item_group.doc->>'categoryID')::integer = @itemCategory
+                  ))
+                  AND (@itemGroup = 0 OR EXISTS (
+                      SELECT 1
+                      FROM {_schema}.contract_items AS item
+                      JOIN {_sdeSchema}.types AS item_type ON item_type.key = item.type_id
+                      WHERE item.contract_id = c.contract_id
+                        AND (item_type.doc->>'groupID')::integer = @itemGroup
+                  ))
+                  AND (@itemTypeName = '' OR EXISTS (
+                      SELECT 1
+                      FROM {_schema}.contract_items AS item
+                      JOIN {_sdeSchema}.types AS item_type ON item_type.key = item.type_id
+                      WHERE item.contract_id = c.contract_id
+                        AND strpos(lower(COALESCE(item_type.doc->'name'->>'en', item_type.doc->>'name', '')), lower(@itemTypeName)) > 0
+                  ))
+                  AND (cardinality(@securityClasses) = 0 OR start_system.key IS NOT NULL AND
+                       CASE
+                           WHEN COALESCE((start_system.doc->>'securityStatus')::double precision, 0) <= 0 THEN 0
+                           WHEN (start_system.doc->>'securityStatus')::double precision < 0.45 THEN 1
+                           WHEN (start_system.doc->>'securityStatus')::double precision < 0.95 THEN 2
+                           ELSE 3
+                       END = ANY(@securityClasses))
+                  AND (NOT @excludeTrade OR NOT EXISTS (
+                      SELECT 1 FROM {_schema}.contract_items AS item
+                      WHERE item.contract_id = c.contract_id AND NOT item.in_crate
+                  ))
+                  AND (NOT @excludeMultiple OR (
+                      SELECT count(*) FROM {_schema}.contract_items AS item
+                      WHERE item.contract_id = c.contract_id AND item.in_crate
+                  ) <= 1)
+                  AND (NOT @excludeNoBuyout OR c.contract_type <> 2 OR c.price_isk > 0)
+                  AND (@description = '' OR strpos(lower(c.title || E'\n' || c.description), lower(@description)) > 0)
+            )
+            SELECT count.contract_count,
+                   page.contract_id, page.contract_type, page.status, page.availability, page.issuer_id,
+                   page.issuer_corporation_id, page.is_corporation_issued, page.assignee_id, page.acceptor_id,
+                   page.created_at_filetime, page.date_expired_filetime, page.date_accepted_filetime,
+                   page.date_completed_filetime, page.num_days, page.start_station_id, page.end_station_id,
+                   page.price_isk, page.reward_isk, page.collateral_isk, page.title, page.description,
+                   page.start_system_id, page.start_constellation_id, page.start_region_id,
+                   page.end_system_id, page.end_constellation_id, page.end_region_id,
+                   page.start_system_name, page.end_system_name, page.volume,
+                   page.issuer_item_flag, page.issuer_wallet_account_key, page.acceptor_wallet_key
+            FROM (SELECT count(*)::integer AS contract_count FROM matches) AS count
+            LEFT JOIN LATERAL (
+                SELECT * FROM matches
+                ORDER BY {sortColumn} {(descending ? "DESC" : "ASC")}, contract_id DESC
+                LIMIT 100 OFFSET @startNum
+            ) AS page ON TRUE
+            """, connection))
+        {
+            command.Parameters.AddWithValue("now", nowFileTime);
+            command.Parameters.AddWithValue("availability", NpgsqlTypes.NpgsqlDbType.Integer, (object?)query.Availability ?? DBNull.Value);
+            command.Parameters.AddWithValue("character", query.CharacterId);
+            command.Parameters.AddWithValue("corporation", query.CorporationId);
+            command.Parameters.AddWithValue("alliance", query.AllianceId);
+            command.Parameters.AddWithValue("contractType", query.ContractType);
+            command.Parameters.AddWithValue("issuer", query.IssuerId);
+            command.Parameters.AddWithValue("startLocation", query.LocationId);
+            command.Parameters.AddWithValue("startKind", startLocation);
+            command.Parameters.AddWithValue("endLocation", query.EndLocationId);
+            command.Parameters.AddWithValue("endKind", endLocation);
+            command.Parameters.AddWithValue("minPrice", NpgsqlTypes.NpgsqlDbType.Numeric, (object?)query.MinPrice ?? DBNull.Value);
+            command.Parameters.AddWithValue("maxPrice", NpgsqlTypes.NpgsqlDbType.Numeric, (object?)query.MaxPrice ?? DBNull.Value);
+            command.Parameters.AddWithValue("minReward", NpgsqlTypes.NpgsqlDbType.Numeric, (object?)query.MinReward ?? DBNull.Value);
+            command.Parameters.AddWithValue("maxReward", NpgsqlTypes.NpgsqlDbType.Numeric, (object?)query.MaxReward ?? DBNull.Value);
+            command.Parameters.AddWithValue("minCollateral", NpgsqlTypes.NpgsqlDbType.Numeric, (object?)query.MinCollateral ?? DBNull.Value);
+            command.Parameters.AddWithValue("maxCollateral", NpgsqlTypes.NpgsqlDbType.Numeric, (object?)query.MaxCollateral ?? DBNull.Value);
+            command.Parameters.AddWithValue("minVolume", NpgsqlTypes.NpgsqlDbType.Numeric, (object?)query.MinVolume ?? DBNull.Value);
+            command.Parameters.AddWithValue("maxVolume", NpgsqlTypes.NpgsqlDbType.Numeric, (object?)query.MaxVolume ?? DBNull.Value);
+            command.Parameters.AddWithValue("itemTypes", query.ItemTypeIds.ToArray());
+            command.Parameters.AddWithValue("itemCategory", query.ItemCategoryId);
+            command.Parameters.AddWithValue("itemGroup", query.ItemGroupId);
+            command.Parameters.AddWithValue("itemTypeName", query.ItemTypeName?.Trim() ?? "");
+            command.Parameters.AddWithValue("securityClasses", query.SecurityClasses.ToArray());
+            command.Parameters.AddWithValue("excludeTrade", query.ExcludeTrade);
+            command.Parameters.AddWithValue("excludeMultiple", query.ExcludeMultiple);
+            command.Parameters.AddWithValue("excludeNoBuyout", query.ExcludeNoBuyout);
+            command.Parameters.AddWithValue("description", query.Description?.Trim() ?? "");
+            command.Parameters.AddWithValue("startNum", query.StartNum);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                numFound = reader.GetInt32(0);
+                if (reader.IsDBNull(1))
+                    continue;
+                rows.Add((new ContractReadSnapshot(
+                    reader.GetInt64(1), reader.GetInt16(2), reader.GetInt16(3), reader.GetInt16(4),
+                    reader.GetInt64(5), reader.GetInt64(6), reader.GetBoolean(7), reader.GetInt64(8),
+                    reader.GetInt64(9), reader.GetInt64(10), reader.GetInt64(11), reader.GetInt64(12),
+                    reader.GetInt64(13), reader.GetInt32(14), reader.GetInt64(15), reader.GetInt64(16),
+                    reader.GetDecimal(17), reader.GetDecimal(18), reader.GetDecimal(19), reader.GetString(20),
+                    reader.GetString(21), [], []),
+                    reader.GetInt64(22), reader.GetInt64(23), reader.GetInt64(24),
+                    reader.GetInt64(25), reader.GetInt64(26), reader.GetInt64(27),
+                    reader.GetString(28), reader.GetString(29), reader.GetInt32(31), reader.GetInt32(32),
+                    reader.IsDBNull(33) ? null : reader.GetInt32(33), reader.GetDouble(30)));
+            }
+        }
+
+        var attached = await AttachChildrenAsync(connection, rows.Select(row => row.Contract).ToArray(), cancellationToken);
+        var metadata = await ReadSearchItemMetadataAsync(connection, attached.Contracts, cancellationToken);
+        var entries = rows.Select(row => new ContractSearchEntry(
+            attached.Contracts.Single(contract => contract.ContractId == row.Contract.ContractId),
+            row.StartSystem, row.StartConstellation, row.StartRegion,
+            row.EndSystem, row.EndConstellation, row.EndRegion,
+            row.StartName, row.EndName, row.StartDivision, row.IssuerWalletKey, row.AcceptorWalletKey, row.Volume,
+            metadata.GetValueOrDefault(row.Contract.ContractId).Types ?? [],
+            metadata.GetValueOrDefault(row.Contract.ContractId).Groups ?? [],
+            metadata.GetValueOrDefault(row.Contract.ContractId).Categories ?? [])).ToArray();
+        timer.Stop();
+        return new ContractSearchResult(entries, numFound,
+            (long)(timer.Elapsed.TotalSeconds * 10_000_000d));
+    }
+
+    private async Task<Dictionary<long, (IReadOnlyList<int> Types, IReadOnlyList<int> Groups, IReadOnlyList<int> Categories)>>
+        ReadSearchItemMetadataAsync(
+            NpgsqlConnection connection,
+            IReadOnlyList<ContractReadSnapshot> contracts,
+            CancellationToken cancellationToken)
+    {
+        var typeIds = contracts.SelectMany(contract => contract.Items).Select(item => item.TypeId).Distinct().ToArray();
+        var typeMetadata = new Dictionary<int, (int Group, int Category)>();
+        if (typeIds.Length > 0)
+        {
+            await using var command = new NpgsqlCommand($"""
+                SELECT item_type.key,
+                       (item_type.doc->>'groupID')::integer,
+                       (item_group.doc->>'categoryID')::integer
+                FROM {_sdeSchema}.types AS item_type
+                LEFT JOIN {_sdeSchema}.groups AS item_group
+                    ON item_group.key = NULLIF(item_type.doc->>'groupID', '')::bigint
+                WHERE item_type.key = ANY(@typeIds)
+                """, connection);
+            command.Parameters.AddWithValue("typeIds", typeIds);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+                typeMetadata[reader.GetInt32(0)] = (reader.GetInt32(1), reader.IsDBNull(2) ? 0 : reader.GetInt32(2));
+        }
+
+        return contracts.ToDictionary(
+            contract => contract.ContractId,
+            contract =>
+            {
+                var items = contract.Items.Select(item => item.TypeId).Distinct().Order().ToArray();
+                return ((IReadOnlyList<int>)items,
+                    (IReadOnlyList<int>)items.Select(id => typeMetadata.GetValueOrDefault(id).Group).Where(id => id > 0).Distinct().Order().ToArray(),
+                    (IReadOnlyList<int>)items.Select(id => typeMetadata.GetValueOrDefault(id).Category).Where(id => id > 0).Distinct().Order().ToArray());
+            });
+    }
+
+    private static int LocationKind(long locationId) => locationId switch
+    {
+        >= 10_000_000 and < 20_000_000 => 3,
+        >= 20_000_000 and < 30_000_000 => 2,
+        >= 30_000_000 and < 40_000_000 => 1,
+        _ => 0,
+    };
 
     public async ValueTask<ContractReadBundle> GetMyCurrentContractListAsync(
         long characterId,

@@ -87,7 +87,7 @@ public sealed class CharacterContactNotepadHostTests
         await using (var transaction = await connection.BeginTransactionAsync())
         {
             shipId = await items.CreateAsync(connection, transaction,
-                new NewItem(587, characterId, rig.Station, 4));
+                new NewItem(587, characterId, rig.Station, 4, Singleton: true));
             await rig.Characters.SetShipAsync(connection, transaction, characterId, shipId);
             stackId = await items.CreateAsync(connection, transaction,
                 new NewItem(34, characterId, shipId, 5, 10, Singleton: false));

@@ -101,24 +101,27 @@ def parse_test_failures(text: str) -> list[str]:
     patterns = (
         re.compile(r"^\[agent-test failure\]\s+(.+?)\s*$"),
         re.compile(r"^\s*FAILED\s+(.+?)(?:\s+-\s+.*)?$"),
+        re.compile(r"^\s*_{3,}\s*(.+?)\s*_{3,}\s*$"),
         re.compile(r"^\s*Failed\s+(.+?)(?:\s+\[[^\]]+\])?\s*$"),
         re.compile(r"^\s*test\s+(.+?)\s+\.\.\.\s+FAILED\s*$"),
         re.compile(r"^----\s+(.+?)\s+stdout ----\s*$"),
         re.compile(r"^\s*FAIL:\s*(.+?)\s*$"),
-        re.compile(r"^\s*_{3,}\s+(.+?)\s+_{3,}\s*$"),
     )
     names = []
+    headings = []
     for raw_line in text.splitlines():
         line = normalize_log_line(raw_line)
-        for pattern in patterns:
+        for index, pattern in enumerate(patterns):
             match = pattern.match(line)
             if match:
                 name = match.group(1).strip()
-                if name and name not in names:
-                    names.append(name)
+                target = headings if index == 2 else names
+                if name and name not in target:
+                    target.append(name)
                 break
     summary_names = {name.rsplit("::", 1)[-1] for name in names if "::" in name}
-    return [name for name in names if "::" in name or name not in summary_names]
+    names = [name for name in names if name not in summary_names]
+    return names + [name for name in headings if name not in summary_names and name not in names]
 
 
 def failure_log_tail(text: str, test_name: str) -> list[str]:

@@ -30,12 +30,10 @@ The eve.rs Host regression exercises these existing paths against persisted bala
 
 ## Checks and handoff
 
-- Local compile check passed: `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -p:UseSharedCompilation=false -m:1` (0 warnings, 0 errors).
-- The first parallel compile was killed during `Eve.Host` compilation with csc exit 137; the serial retry passed.
-- Focused Actions regression for the pushed source: pending.
-- Push-triggered CI result: pending.
-- Fix commit: `0f5c0c20`; pushed branch head after merging current `origin/main`: `d2de0897`.
-- Local worktree still has nine pre-existing unrelated Rust deletions; these were not staged or committed.
+- Initial local compile check passed with 0 warnings and 0 errors. Follow-up local recompilation was killed during C# compilation with csc exit 137 under shared-memory pressure.
+- Focused Actions run `40080221080` failed because the fixture founder had only 5,000 ISK for the 1,599,800 ISK corporation registration fee. The fixture now starts the founder at the fee plus 5,000 ISK and checks the post-fee balance.
 - No local PostgreSQL command was run.
+- Fix commits: `0f5c0c20` (wire regression), `c6815db1` (founder balance correction). Pushed branch head after main integration: `90f549b9`.
+- Nine pre-existing unrelated Rust deletions remain unstaged and were not committed.
 
-Update Actions outcomes below after the required checks finish.
+Update this note with the next Actions result after the check finishes.

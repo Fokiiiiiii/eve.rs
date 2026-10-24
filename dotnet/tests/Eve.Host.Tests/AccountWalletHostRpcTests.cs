@@ -51,7 +51,8 @@ public sealed class AccountWalletHostRpcTests
                     return id;
                 }
 
-                sender = await CreatePilot($"Wallet RPC Sender {suffix}", CorporationStore.CorporationFoundingCost + 5_000m);
+                sender = await CreatePilot($"Wallet RPC Sender {suffix}",
+                    CorporationStore.CorporationFoundingCost + 5_000m);
                 recipient = await CreatePilot($"Wallet RPC Recipient {suffix}");
                 await transaction.CommitAsync();
             }

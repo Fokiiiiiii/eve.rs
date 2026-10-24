@@ -782,3 +782,13 @@ Regression tests added: `DungeonWaveTests.A_system_owned_wave_waits_until_a_pilo
 - Fix pushed in commit `9d1ab1d0`, final main SHA `7854a726`: `tools/dev/shard-dotnet-tests.py` supports method-level assignment by case count, keeps theory cases together and emits exact `FullyQualifiedName=` filters. Only the Space workflow uses this option; Host shards retain their existing class-based assignment. Every Space test case remains assigned once. The regression check `tools/dev/test_shard_dotnet_tests.py` verifies unique method assignment, theory grouping, balanced counts and unchanged class grouping. `python3 tools/dev/test_shard_dotnet_tests.py` passed (2 tests); `git diff --check` passed.
 - Push-triggered CI run `40110799573` for `7854a726` is in progress. The full-gate result for the new Space assignment is pending. Runs 874 and 875 do not count as green full gates because their Space shard was cancelled. No three-consecutive-green sequence has been recorded.
 - The cancellation-safe simulation frame fix passed the Astrahus E2E case on runs 874 and 875.
+
+
+
+## 2026-10-24 Space shard size follow-up
+
+- Push gate run 876 (run `40110799573`, SHA `7854a726`) canceled the `.NET (space tests 1/4)` job at its 30-minute limit. Its test step selected 240 methods / 259 cases and emitted no TRX or assertion result; the other three Space shards completed.
+- On the same code, selected Agent run `40114278884` passed for the first 120 methods / 120 cases. The second half, `40114280246` (120 methods / 139 cases), was still active more than 39 minutes after dispatch.
+- Smaller selections passed: 60 methods / 63 cases (`40116054819`); 60 / 76 (`40116069568`); 90 / 103 (`40116529863`); and 90 / 99 (`40116543449`). No individual assertion has identified a failing method. The observed failure is the full 120-method selection taking beyond the push-gate limit while its smaller subsets complete.
+- The Space matrix now uses 16 method-based shards (about 60 methods per shard); Host and other-project shard counts are unchanged. The focused local shard regression passed (2 tests), and `git diff --check` passed. No local database was used.
+- Push-gate verification for the 16-shard matrix is pending. The 120-method diagnostic run `40114280246` remains active. No three-consecutive-green push-gate sequence has been recorded.

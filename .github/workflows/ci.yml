@@ -158,10 +158,22 @@ jobs:
       matrix:
         # Every shard has its own PostgreSQL service. Host and Space cases and other projects are assigned as separate shards.
         shard:
-          - { name: "space tests 1/4", artifact: "space-1", only: "Eve.Services.Space.Tests", index: 0, count: 4 }
-          - { name: "space tests 2/4", artifact: "space-2", only: "Eve.Services.Space.Tests", index: 1, count: 4 }
-          - { name: "space tests 3/4", artifact: "space-3", only: "Eve.Services.Space.Tests", index: 2, count: 4 }
-          - { name: "space tests 4/4", artifact: "space-4", only: "Eve.Services.Space.Tests", index: 3, count: 4 }
+          - { name: "space tests 1/16", artifact: "space-1", only: "Eve.Services.Space.Tests", index: 0, count: 16 }
+          - { name: "space tests 2/16", artifact: "space-2", only: "Eve.Services.Space.Tests", index: 1, count: 16 }
+          - { name: "space tests 3/16", artifact: "space-3", only: "Eve.Services.Space.Tests", index: 2, count: 16 }
+          - { name: "space tests 4/16", artifact: "space-4", only: "Eve.Services.Space.Tests", index: 3, count: 16 }
+          - { name: "space tests 5/16", artifact: "space-5", only: "Eve.Services.Space.Tests", index: 4, count: 16 }
+          - { name: "space tests 6/16", artifact: "space-6", only: "Eve.Services.Space.Tests", index: 5, count: 16 }
+          - { name: "space tests 7/16", artifact: "space-7", only: "Eve.Services.Space.Tests", index: 6, count: 16 }
+          - { name: "space tests 8/16", artifact: "space-8", only: "Eve.Services.Space.Tests", index: 7, count: 16 }
+          - { name: "space tests 9/16", artifact: "space-9", only: "Eve.Services.Space.Tests", index: 8, count: 16 }
+          - { name: "space tests 10/16", artifact: "space-10", only: "Eve.Services.Space.Tests", index: 9, count: 16 }
+          - { name: "space tests 11/16", artifact: "space-11", only: "Eve.Services.Space.Tests", index: 10, count: 16 }
+          - { name: "space tests 12/16", artifact: "space-12", only: "Eve.Services.Space.Tests", index: 11, count: 16 }
+          - { name: "space tests 13/16", artifact: "space-13", only: "Eve.Services.Space.Tests", index: 12, count: 16 }
+          - { name: "space tests 14/16", artifact: "space-14", only: "Eve.Services.Space.Tests", index: 13, count: 16 }
+          - { name: "space tests 15/16", artifact: "space-15", only: "Eve.Services.Space.Tests", index: 14, count: 16 }
+          - { name: "space tests 16/16", artifact: "space-16", only: "Eve.Services.Space.Tests", index: 15, count: 16 }
           - { name: "host tests 1/4", artifact: "host-1", only: "Eve.Host.Tests", index: 0, count: 4 }
           - { name: "host tests 2/4", artifact: "host-2", only: "Eve.Host.Tests", index: 1, count: 4 }
           - { name: "host tests 3/4", artifact: "host-3", only: "Eve.Host.Tests", index: 2, count: 4 }

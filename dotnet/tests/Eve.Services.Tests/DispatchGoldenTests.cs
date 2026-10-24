@@ -202,6 +202,20 @@ public class DispatchGoldenTests
         public object? GetService(Type serviceType) => null;
     }
 
+    private sealed class BudgetProbeService(string name) : IService
+    {
+        public string Name { get; } = name;
+        public int Calls { get; private set; }
+
+        public bool HasMethod(string method) => true;
+
+        public ValueTask<PyValue> CallAsync(ServiceCall call)
+        {
+            Calls++;
+            return ValueTask.FromResult<PyValue>(new PyInt(1));
+        }
+    }
+
     private sealed class NoMethodsService : IService
     {
         public string Name => "knownSvc";
@@ -257,6 +271,73 @@ public class DispatchGoldenTests
         }
 
         Assert.Equal(40, service.Calls);
+    }
+
+    [Fact]
+    public async Task Station_entry_rpc_burst_survives_an_exhausted_general_budget_and_contract_abuse_is_still_limited()
+    {
+        var capture = new Capture();
+        var session = new ClientSession(capture) { SessionId = 915 };
+        var registry = new ServiceRegistry();
+        var services = new Dictionary<string, BudgetProbeService>(StringComparer.Ordinal);
+        foreach (var name in new[]
+        {
+            "fleetProxy", "invbroker", "dogmaIM", "stationSvc", "contractProxy", "corporation", "corpRegistry",
+        })
+        {
+            var service = new BudgetProbeService(name);
+            services.Add(name, service);
+            registry.Register(service);
+        }
+        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs);
+
+        // Other expensive calls in the same login session can fill the shared general-purpose allowance.
+        for (var index = 0; index < 16; index++)
+        {
+            await dispatcher.DispatchAsync(CallRequestPacket("fleetProxy", "GetAvailableFleetAds"), session);
+            Assert.Equal(7, CommandOf(capture.Sent[^1]));
+        }
+
+        (string Service, string Method, PyValue[] Args)[] stationEntry =
+        [
+            ("invbroker", "MachoBindObject", [
+                new PyTuple([new PyInt(30_100_032), new PyInt(5)]),
+                new PyTuple([new PyStr("GetInventory"), new PyTuple([new PyInt(10_004), PyNone.Instance]), PyNone.Instance]),
+            ]),
+            ("dogmaIM", "MachoBindObject", [
+                new PyTuple([new PyInt(30_100_032), new PyInt(5)]),
+                new PyTuple([new PyStr("GetAllInfo"), new PyTuple([PyBool.True, PyBool.True, PyNone.Instance]), PyNone.Instance]),
+            ]),
+            ("stationSvc", "GetGuests", []),
+            ("contractProxy", "GetLoginInfo", []),
+            ("corporation", "List", []),
+            ("corpRegistry", "GetMyApplications", []),
+        ];
+
+        foreach (var (service, method, args) in stationEntry)
+        {
+            await dispatcher.DispatchAsync(CallRequestPacket(service, method, args), session);
+            Assert.Equal(7, CommandOf(capture.Sent[^1]));
+            Assert.Equal(1, Assert.IsType<PyInt>(ResultOf(capture.Sent[^1])).Value);
+        }
+        Assert.All(stationEntry, call => Assert.Equal(1, services[call.Service].Calls));
+
+        var abusiveCapture = new Capture();
+        var abusiveRegistry = new ServiceRegistry();
+        var contractService = new BudgetProbeService("contractProxy");
+        abusiveRegistry.Register(contractService);
+        var abusiveDispatcher = new PacketDispatcher(abusiveRegistry, () => FixedNowMs);
+        var abusiveSession = new ClientSession(abusiveCapture) { SessionId = 916 };
+        for (var index = 0; index < 16; index++)
+        {
+            await abusiveDispatcher.DispatchAsync(CallRequestPacket("contractProxy", "GetLoginInfo"), abusiveSession);
+            Assert.Equal(7, CommandOf(abusiveCapture.Sent[^1]));
+        }
+        await abusiveDispatcher.DispatchAsync(CallRequestPacket("contractProxy", "GetLoginInfo"), abusiveSession);
+
+        Assert.Equal(16, contractService.Calls);
+        Assert.Equal(ErrorResponseCommand, CommandOf(abusiveCapture.Sent[^1]));
+        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(abusiveCapture.Sent[^1])));
     }
 
     [Fact]

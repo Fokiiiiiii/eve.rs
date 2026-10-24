@@ -44,7 +44,9 @@ def test_a_pilot_fills_and_empties_its_hold_as_in_the_reference():
         only = {"events": who}
         last: dict = {"events": []}
         manager = who.call("invbroker", "MachoBindObject", (STATION, 15), None)[0]
-        hangar = who.call_bound(manager, "GetInventory", 10004)
+        hangar = who.call_bound(manager, "GetInventory", 10004, None)
+        assert hangar is not None, "the station hangar inventory bind returns a usable handle"
+        assert isinstance(who.call_bound(hangar, "List"), list), "opening the station hangar lists its rows"
         docked = who.call("invbroker", "MachoBindObject", (STATION, 15), ("GetInventoryFromId", (ship, 0), None))[1]
         slash = lambda command: (lambda: who.call("slash", "SlashCmd", command))  # noqa: E731
 

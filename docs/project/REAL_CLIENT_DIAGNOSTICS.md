@@ -93,3 +93,60 @@ The owner’s captures and process logs were read through `tools/mitm show` and 
 - Root cause and fix: industry calls shared the 160-unit general expensive-RPC bucket, so unrelated services could exhaust it. `industryManager` now has a separate per-session 160-unit rolling-minute bucket; the industry cap still returns `SessionRpcBudgetExceeded` before dispatch when depleted.
 - Regression: `DispatchGoldenTests.Industry_jobs_use_a_separate_per_session_budget` verifies that unrelated expensive calls cannot block the industry handler and that the industry bucket still enforces its own limit.
 - Check status: the focused `Eve.Services.Tests` Actions run `40010004814` completed successfully. No current graphical-client retest has been made.
+
+## (l) Service reply inventory from graphical captures
+
+- Scope: matched Macho CallReq and reply records in eve-rs-graphical.jsonl and eve-rs-10.0.402-client-retry.jsonl. The eve-rs-10.0.402-graphical.jsonl file has no service calls. The two captures contain 72 ErrorResponse replies and 123 successful empty replies.
+- Empty results below are capture observations, not failures by themselves. None is common for void calls, and empty lists or dictionaries can mean there is no matching state. As noted in (j), the EveJS and eve.rs sessions start from different character states; no wrong-shaped response is established by comparing these unpaired sessions.
+
+### Errors grouped by service
+
+| Service | Captured error replies |
+|---|---|
+| bound object | CmdStargateJump: CustomInfo ×5; GetInfoWindowDataForChar: UnMachoDestination ×1; GetMyApplications: UnMachoDestination ×14 and SessionRpcBudgetExceeded ×1; GetSkillChangesForISIS: UnMachoDestination ×1; GetSkillQueueAndFreePoints: UnMachoDestination ×1 |
+| corpStationMgr | MachoBindObject: SessionRpcBudgetExceeded ×1 |
+| dogmaIM | MachoBindObject: SessionRpcBudgetExceeded ×1 |
+| eventLog | LogClientStats: ServiceNotFound ×10 |
+| fleetMgr | RegisterForDamageUpdates: FleetError ×7 |
+| industryManager | GetJobCounts: SessionRpcBudgetExceeded ×2 |
+| invbroker | MachoBindObject: SessionRpcBudgetExceeded ×7 |
+| marketProxy | GetOrders: SessionRpcBudgetExceeded ×1; GetPlexHistory: SessionRpcBudgetExceeded ×2; GetRegionBest: SessionRpcBudgetExceeded ×3 |
+| station | GetGuests: SessionRpcBudgetExceeded ×2 |
+| structureDirectory | GetStructureMapData: RuntimeError ×11 |
+| XmppChatMgr | Hostname: ServiceNotFound ×2 |
+
+### Empty successful replies grouped by service
+
+- achievementTrackerMgr: UpdateClientAchievmentsAndCounters → None ×8.
+- agentMgr: GetMyEpicArcStatus → {} ×2.
+- bound object: CheckAndSendNotifications → [] ×2; CmdDock → None ×2; CmdFollowBall → None ×1; CmdWarpToStuff → None ×4; GetBoosters → {} ×2; GetImplants → {} ×2; GetMyApplications → {} ×1; GetSkillHistory → [] ×1; GetTargeters → [] ×5; GetTargets → [] ×5; GetWars → {} ×2; ListIncludingContainers → [] ×1; SetModuleOnline → None ×1.
+- bountyProxy: GetMyKillRights → [] ×2.
+- charFittingMgr: GetFittings → {} ×2.
+- charUnboundMgr: GetCharacterLockType → None ×2; SelectCharacterID → None ×2.
+- config: GetAverageMarketPrices → {} ×2; GetBlackListedPlanets → [] ×2; GetOldStationData → [] ×2.
+- dungeonInstanceCacheMgr: GetFactionWarfareInstances, GetHomefrontSiteInstances, GetIceBeltInstances, GetOreAnomalyInstances, and GetPirateInsurgencyInstances → {} ×3 each.
+- essMgr: GetDataForClientSolarSystem → None ×4.
+- expertSystemMgr: GetMyExpertSystems → {} ×1.
+- facWarMgr: GetMyCharacterRankInfo → None ×1.
+- keeper: GetCurrentDungeonForCharacter → None ×2.
+- loginCampaignManager: get_client_campaign_state → None ×2.
+- marketProxy: GetRegionBest → {} ×7.
+- milestoneMgr: ProcessCharacterLogon → None ×2.
+- notificationMgr: GetByGroupID → [] ×2.
+- officeManager: GetMyCorporationsOffices → [] ×2.
+- operationsManager: get_active_category_id → None ×2.
+- scanMgr: SignalTrackerRegister → None ×13.
+- seasonManager: get_season_data_for_character → None ×2.
+- shipCosmeticsMgr: GetEnabledCosmetics → {} ×5.
+- stationSvc: GetAllianceSystems → [] ×1.
+- structureAssetSafety: GetItemsInSafetyForCharacter → [] ×4.
+- structureDirectory: GetMyDockableStructures → [] ×4.
+- userSvc: GetMultiCharactersTrainingSlots → {} ×1.
+
+### Remaining repeated budget failures
+
+- Existing fixes already cover eventLog, structureDirectory, inventory, industry, and market errors in (b), (c), (d), and (k). fleetMgr.RegisterForDamageUpdates returned FleetError because the character was not in a fleet, matching EveJS membership rejection. CmdStargateJump returned action-dependent CustomInfo. The old GetMyApplications UnMachoDestination replies precede the current route; the retry capture returned an empty dictionary.
+- The remaining repeated failures are station.GetGuests (2), dogmaIM.MachoBindObject (1), and corpStationMgr.MachoBindObject (1). PacketDispatcher charged these calls to the same general per-session budget as unrelated expensive calls and rejected them before the registered service handler ran. The station alias resolves to stationSvc; GetGuests costs 10 units. The dogma bind call is charged for its nested GetAllInfo method. corpStationMgr.MachoBindObject itself costs 10 units; the captured nested call was DoStandingCheckForStationService.
+- Fix: each of stationSvc, dogmaIM, and corpStationMgr now has its own per-session rolling-minute bucket, each capped by MaxExpensiveRpcUnitsPerMinute (160 by default). The existing Host services still produce the response after the dispatcher allows the call, and each isolated bucket continues to reject calls after its cap is reached.
+- Regression: DispatchGoldenTests.Station_and_bound_service_rpcs_have_independent_bounded_budgets sends real encoded Macho CallReq packets through PacketDispatcher. It checks that exhausting the general bucket does not block each service, and that each new bucket still returns SessionRpcBudgetExceeded at its own cap.
+- Local checks: Eve.Services and Eve.Services.Tests builds succeeded with zero warnings or errors; the focused dispatcher wire test passed (1/1, zero skips). Focused GitHub Actions and the post-fix graphical-client retest are pending.

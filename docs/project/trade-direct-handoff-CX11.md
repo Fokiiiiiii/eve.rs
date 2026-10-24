@@ -5,7 +5,7 @@ Updated: 2026-10-24
 ## Implementation
 
 - `Eve.Services.Station/TradeMgrService.cs` parses `Add(itemID, sourceLocationID, qty?)` and `MultiAdd(itemIDs, sourceLocationID)`, maps client-visible refusals, and emits the offer, priming, money, completion and cancel notifications in client-consumed order.
-- `Eve.Trade/TradeAuthority.cs` validates active-ship, Asset Safety type 60, SDE restricted types 36/142, ownership and source-location ancestry. A full MultiAdd batch validates before mutation. Container descendants transfer with their root. Existing transactional custody, abort and recovery remain in place.
+- `Eve.Trade/TradeAuthority.cs` validates active-ship, Asset Safety type 60, SDE restricted types 36/142, ownership and source-location ancestry. A full MultiAdd batch validates before mutation. A container and its descendants transfer together. Existing transactional custody, abort and recovery remain in place.
 - `ItemTypeCatalog` reads tradability from the pinned SDE; `Items.TreeAsync` locks and returns the transfer subtree. Host composition injects the catalog.
 - Host dispatch/persistence coverage exercises active ship, Asset Safety, restricted type, wrong source, foreign owner, invalid mixed batch rollback, successful ISK/item settlement including a descendant, abort, restart recovery and concurrent completion. Trade authority coverage exercises atomic preflight and accessible nested sources.
 - Updated the focused trade headless walk to send the V24 source location argument.
@@ -28,6 +28,7 @@ The task-mentioned `jobs/461-trade-item-eligibility.txt`, `462-trade-container-d
 
 ## Verification
 
-- Local compile checks passed: `Eve.Host.Tests` and `Eve.Trade.Tests` with .NET 10, `UseSharedCompilation=false`, node reuse disabled. No PostgreSQL tests were run locally.
-- Pending Actions: focused `Trade_rpc` Host tests, the trade headless walk, and push-triggered `ci.yml`. Record run IDs/results and commit SHA here before handing off.
+- Local compile checks passed for `Eve.Host.Tests` and `Eve.Trade.Tests` with .NET 10, `UseSharedCompilation=false`, and node reuse disabled. No PostgreSQL tests were run locally.
+- Actions run `40073577535` passed on `859cf2c4b67c`: `Eve.Host.Tests` 3 passed, `Eve.Trade.Tests` 2 passed, and `test_walk_trade.py` 1 passed; all three groups had 0 failed and 0 skipped.
+- Push-triggered `ci.yml` run `40073571150` on `859cf2c4b67c` was still in progress at the last check. Check it with `python3 tools/dev/ci-status.py failures <final-sha>`.
 - Graphical-client execution was not performed.

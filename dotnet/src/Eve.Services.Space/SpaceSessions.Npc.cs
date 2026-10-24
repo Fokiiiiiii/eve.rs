@@ -125,9 +125,9 @@ public sealed partial class SpaceSessions
             {
                 return reply.Session;
             }
-            if (reply.Error?.StartsWith("NO_SCENE", StringComparison.Ordinal) == true && sceneUnavailable is not null)
+            if (reply.Error?.StartsWith("NO_SCENE", StringComparison.Ordinal) == true)
             {
-                sceneUnavailable();
+                sceneUnavailable?.Invoke();
             }
             else
             {
@@ -197,8 +197,7 @@ public sealed partial class SpaceSessions
     public event Action<BountyPaid>? BountyPaidOut;
 
     /// <summary>
-    /// Keeps the bounties NPCs are worth: a kill whose last blow was a pilot's goes to <paramref name="store"/>. What has come due is paid by <see cref="PayBountiesAsync"/>, which the
-    /// host runs as a recurring job of the durable scheduler (<c>space.bounty.pay</c>); a test calls it.
+    /// Keeps the bounties NPCs are worth: a kill whose last blow was a pilot's goes to <paramref name="store"/>. What has come due is paid by <see cref="PayBountiesAsync"/>, which the    /// host runs as a recurring job of the durable scheduler (<c>space.bounty.pay</c>); a test calls it.
     /// </summary>
     public void UseBounties(PgBountyStore store) => _bounties = store;
 
@@ -397,8 +396,7 @@ public sealed partial class SpaceSessions
                 Py.KeyVal(
                     ("enemyTypeID", new PyInt(added.EnemyTypeId)), ("amount", new PyInt((int)added.Amount)), ("payoutTime", new PyLong(added.PayoutTime)),
                     ("isModified", added.IsModified ? PyBool.True : PyBool.False)));
-        }
-    }
+        }    }
 
     /// <summary>
     /// The wreck of an NPC that asked the host to make it (<see cref="SimNpcIdentity.HostWreck"/>): an item of the pilot who dealt the last blow (of the NPC's corporation when no pilot did) with what
@@ -597,8 +595,7 @@ public sealed partial class SpaceSessions
         }
         var (selection, error, _) = selector.Select(query);
         if (selection is null)
-        {
-            _log?.Invoke($"site {siteId}: the wave {query} names no NPC ({error})");
+        {            _log?.Invoke($"site {siteId}: the wave {query} names no NPC ({error})");
             return 0;
         }
         await EnsureNpcTypesAsync(selection.ShipTypes, cancellationToken).ConfigureAwait(false);

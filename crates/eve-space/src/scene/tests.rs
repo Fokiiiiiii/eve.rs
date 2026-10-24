@@ -3788,3 +3788,40 @@ fn a_long_tick_soak_does_not_retain_per_tick_scene_state() {
     assert_eq!(baseline, retained_state(&scene));
     assert!(scene.pilots[&SESSION].ship.position.x.is_finite());
 }
+
+#[test]
+fn a_station_approach_stops_in_range_until_the_pilot_asks_to_dock_again() {
+    let mut scene = scene();
+    let station = scene.system.body(STATION).unwrap().clone();
+    let pilot = scene.pilots.get_mut(&SESSION).unwrap();
+    pilot.ship.position = Vec3::new(
+        station.position.x + station.radius + pilot.ship.spec.radius + DOCKING_RANGE + 500.0,
+        station.position.y,
+        station.position.z,
+    );
+    pilot.ship.velocity = Vec3::new(0.0, 0.0, 0.0);
+    pilot.ship.direction = Vec3::new(-1.0, 0.0, 0.0);
+    pilot.ship.speed_fraction = 0.0;
+    pilot.ship.course = Course::Stop;
+
+    let started = scene.command(SESSION, Command::Dock { station_id: STATION }, NOON);
+    assert!(started.iter().any(|out| matches!(out, Out::Approaching { .. })));
+
+    let arrived_at = NOON + TICKS_PER_SECOND * 90;
+    let arrived = scene.poll(arrived_at);
+    let ship = scene.ship(SESSION, arrived_at).unwrap();
+    let distance = ((ship.position.x - station.position.x).powi(2)
+        + (ship.position.y - station.position.y).powi(2)
+        + (ship.position.z - station.position.z).powi(2))
+    .sqrt()
+        - ship.spec.radius
+        - station.radius;
+    assert!(distance <= DOCKING_RANGE, "ship stopped {distance} m from the station surface");
+    assert!(scene.pilots[&SESSION].docking_approach.is_none());
+    assert!(scene.pilots[&SESSION].docking.is_none());
+    assert!(!arrived.iter().any(|out| matches!(out, Out::Notify { name: "OnDockingAccepted", .. })));
+
+    let accepted = scene.command(SESSION, Command::Dock { station_id: STATION }, arrived_at);
+    assert!(accepted.iter().any(|out| matches!(out, Out::Notify { name: "OnDockingAccepted", .. })));
+    assert!(scene.pilots[&SESSION].docking.is_some());
+}

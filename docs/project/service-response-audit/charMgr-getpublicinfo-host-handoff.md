@@ -32,8 +32,8 @@ EveJS v0.12.9 `server/src/services/character/charMgrService.js:372-421` construc
 
 ## Checks
 
-- Focused Actions run 40085613135 passed `Char_mgr_get_public_info_returns_client_keyval_through_host_with_macho_version`; no tests failed in the selected test step. The workflow's headless-client installation step was skipped because `--live ''` was requested.
-- Earlier focused Actions runs 40083584812, 40084094637, 40084479836, and 40085144852 exposed compile/assertion issues; each root cause was fixed and the final run passed.
-- `python3 tools/dev/ci-status.py failures af72d4de` found no push-triggered `ci.yml` run for this SHA.
+- Focused Actions run 40086240720 passed `Char_mgr_get_public_info_returns_client_keyval_through_host_with_macho_version` on the latest code SHA e0c685b4; the selected test job reported no failures. The workflow's headless-client installation step was skipped because `--live ''` was requested.
+- Earlier focused Actions runs 40083584812, 40084094637, 40084479836, and 40085144852 exposed compile/assertion issues; each root cause was fixed.
+- `python3 tools/dev/ci-status.py failures e0c685b4` found no push-triggered `ci.yml` run for that SHA.
 - The changed `Eve.Host.Tests` project did not finish compiling locally: after 1 hour 26 minutes, the build was canceled under shared-machine load. No PostgreSQL database was used.
 - Graphical-client verification was not performed.

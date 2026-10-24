@@ -117,7 +117,7 @@ public sealed class CharacterContactNotepadHostTests
         });
 
         var binding = Assert.IsType<PyTuple>(boundCall);
-        Assert.Equal(stackId, IntegerValue(binding.Items[1]));
+        Assert.Same(PyNone.Instance, binding.Items[1]);
         var moved = await items.GetAsync(stackId);
         Assert.NotNull(moved);
         Assert.Equal(shipId, moved.LocationId);

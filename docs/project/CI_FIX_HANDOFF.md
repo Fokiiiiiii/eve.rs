@@ -667,3 +667,9 @@ Regression tests added: `DungeonWaveTests.A_system_owned_wave_waits_until_a_pilo
 - The latest push is `2919b0e11bdbfbd5e71044e730e2b9761a99b0e3`; HEAD was clean and matched `origin/main` at that SHA. `ci-status.py failures 2919b0e1` found no push-triggered `ci.yml` run for the documentation/merge update.
 - The current-main Host wire check is run 412 (`40091793046`, SHA `8799c2aa`): success, no failed tests or jobs. Full Rust workspace tests on the task code passed in run 829 (`11c7a4f3`), including the stargate warp-arrival/jump regression. The additional current-main Rust run 415 (`40092063319`, SHA `8799c2aa`) remained active in its requested-tests step after more than 35 minutes; it is not counted as a pass.
 - The source-level V24.01 caller and consumer checks and EveJS v0.12.9 comparison are recorded above. Slow-live `tests/test_jump.py` was skipped by the standard gate; no graphical-client or EveJS live-session check was performed. No local or owner PostgreSQL database was used.
+
+
+## 2026-10-24 CORE FIX 1 handoff after push 187f1035
+
+- Pushed `187f10358954d536602479d7cf31e5f51789ac50` after fetching and merging `origin/main` through `9d6f0054`. That merge added character-phase Host coverage and handoff files; it does not change the stargate or space-simulation code. `ci-status.py failures 187f1035` found no `ci.yml` run.
+- Host wire run 412 (`40091793046`) is successful. Rust run 415 (`40092063319`, SHA `8799c2aa`) remains active in its requested-tests step after more than 35 minutes. Count the Rust workspace success in run 829 for the stargate simulation regression; do not count run 415 as a pass while it is active.

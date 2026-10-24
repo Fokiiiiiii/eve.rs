@@ -169,12 +169,14 @@ public sealed partial class ReprocessingService(NpgsqlDataSource source, PgItemS
         var requestedOwner = IdOf(call.Arg(2)) ?? 0;
         if (requestedOwner != 0 && requestedOwner != character)
             throw Notify("Reprocessing outputs go to your own items.");
+        var requestedSourceLocation = IdOf(call.Arg(1)) ?? 0;
+        if (requestedSourceLocation < 0) throw Notify("Invalid reprocessing source location.");
         var requestedLocation = IdOf(call.Arg(3));
         var requestedFlag = IdOf(call.Arg(4));
 
         await using var connection = await source.OpenConnectionAsync(call.Cancellation).ConfigureAwait(false);
         await using var transaction = await connection.BeginTransactionAsync(call.Cancellation).ConfigureAwait(false);
-        var plan = await PlanAsync(connection, transaction, call.Session, station, ItemIdsOf(call.Arg(0)), call.Cancellation).ConfigureAwait(false);
+        var plan = await PlanAsync(connection, transaction, call.Session, station, ItemIdsOf(call.Arg(0)), call.Cancellation, sourceLocationId: requestedSourceLocation).ConfigureAwait(false);
         var created = new List<Item>();
         var splitRoots = new List<(Item Before, long Root)>();
         if (plan.Oversized.Count > 0)
@@ -189,7 +191,7 @@ public sealed partial class ReprocessingService(NpgsqlDataSource source, PgItemS
                     created.Add(new Item(id, item.TypeId, item.OwnerId, item.LocationId, item.Flag, chunks[k], false, null));
                 }
             }
-            plan = await PlanAsync(connection, transaction, call.Session, station, ItemIdsOf(call.Arg(0)), call.Cancellation, extraIds: created.Select(c => c.Id)).ConfigureAwait(false);
+            plan = await PlanAsync(connection, transaction, call.Session, station, ItemIdsOf(call.Arg(0)), call.Cancellation, extraIds: created.Select(c => c.Id), sourceLocationId: requestedSourceLocation).ConfigureAwait(false);
         }
         if (plan.Lines.Count == 0)
         {
@@ -285,7 +287,7 @@ public sealed partial class ReprocessingService(NpgsqlDataSource source, PgItemS
     /// reprocess that follows see the same stacks.
     /// </summary>
     private async Task<Plan> PlanAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, ClientSession session, long stationId, IReadOnlyList<long> itemIds,
-        CancellationToken cancellationToken, IEnumerable<long>? extraIds = null)
+        CancellationToken cancellationToken, IEnumerable<long>? extraIds = null, long sourceLocationId = 0)
     {
         var character = CharacterOf(session);
         if (character <= 0) throw Notify("Only a character can reprocess.");
@@ -297,6 +299,7 @@ public sealed partial class ReprocessingService(NpgsqlDataSource source, PgItemS
         {
             if (activeShip > 0 && id == activeShip) throw Notify("You cannot reprocess the ship you are flying.");
             if (await items.LockAndGetAsync(connection, transaction, id, cancellationToken).ConfigureAwait(false) is { } item
+                && ReprocessingRules.MatchesSourceLocation(sourceLocationId, item.LocationId)
                 && await RootAtStationAsync(connection, transaction, item, stationId, character, cancellationToken).ConfigureAwait(false))
                 locked.Add(item);
         }

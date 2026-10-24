@@ -280,11 +280,88 @@ public sealed class ReprocessingServiceTests
         var quotes = (PyList)await CallPlant(rig.Service(), session, ReprocessingRig.Station, "GetQuotes", Ids1(inside), new PyInt(0));
         Assert.Single(((PyDict)quotes.Items[2]).Entries);
 
-        var answer = (PyList)await CallPlant(rig.Service(), session, ReprocessingRig.Station, "Reprocess", Ids1(inside), new PyInt(ReprocessingRig.Station), new PyInt(0), PyNone.Instance, PyNone.Instance);
+        var answer = (PyList)await CallPlant(rig.Service(), session, ReprocessingRig.Station, "Reprocess", Ids1(inside), new PyInt(container), new PyInt(0), PyNone.Instance, PyNone.Instance);
         Assert.Equal(new long[] { inside }, ((PyList)answer.Items[0]).Items.Select(v => ((PyLong)v).Value).ToArray());
         Assert.Null(await rig.Items.GetAsync(inside));
         // the yield goes where the sample stood: inside the container
         Assert.Equal(207, await rig.TritaniumAsync(Character, container, ItemFlags.Cargo));
+    }
+
+    [ReprocessingPgFact]
+    public async Task Reprocess_accepts_items_from_multiple_locations_as_the_client_batches_each_source()
+    {
+        await using var rig = await ReprocessingRig.CreateAsync();
+        await rig.OpenWalletAsync(Character, 1000m);
+        var hangarStack = await rig.CreateAsync(Character, ReprocessingRig.Station, ItemFlags.Hangar, FixedReprocessingData.Veldspar, 100);
+        var container = await rig.CreateAsync(Character, ReprocessingRig.Station, ItemFlags.Hangar, FixedReprocessingData.Tritanium, 1);
+        var containerStack = await rig.CreateAsync(Character, container, ItemFlags.Cargo, FixedReprocessingData.Veldspar, 100);
+        var session = Session(Character, ReprocessingRig.Station);
+
+        var hangarResult = (PyList)await CallPlant(rig.Service(), session, ReprocessingRig.Station, "Reprocess",
+            Ids1(hangarStack), new PyInt(ReprocessingRig.Station), new PyInt(Character), PyNone.Instance, PyNone.Instance);
+        var containerResult = (PyList)await CallPlant(rig.Service(), session, ReprocessingRig.Station, "Reprocess",
+            Ids1(containerStack), new PyInt(container), new PyInt(Character), new PyInt(ReprocessingRig.Station), new PyInt(ItemFlags.Hangar));
+
+        Assert.Single(((PyList)hangarResult.Items[0]).Items);
+        Assert.Single(((PyList)containerResult.Items[0]).Items);
+        Assert.Equal(414, await rig.TritaniumAsync(Character, ReprocessingRig.Station, ItemFlags.Hangar));
+        Assert.Equal(0, await rig.TritaniumAsync(Character, container, ItemFlags.Cargo));
+    }
+
+    [ReprocessingPgFact]
+    public async Task Reprocess_ignores_items_outside_the_requested_source_and_leaves_them_unchanged()
+    {
+        await using var rig = await ReprocessingRig.CreateAsync();
+        await rig.OpenWalletAsync(Character, 1000m);
+        var source = await rig.CreateAsync(Character, ReprocessingRig.Station, ItemFlags.Hangar, FixedReprocessingData.Veldspar, 200);
+        var otherLocation = await rig.CreateAsync(Character, ReprocessingRig.Station, ItemFlags.Hangar, FixedReprocessingData.Tritanium, 1);
+        var elsewhere = await rig.CreateAsync(Character, otherLocation, ItemFlags.Cargo, FixedReprocessingData.Veldspar, 200);
+        var session = Session(Character, ReprocessingRig.Station);
+
+        var answer = (PyList)await CallPlant(rig.Service(), session, ReprocessingRig.Station, "Reprocess",
+            Ids1(source, elsewhere), new PyInt(ReprocessingRig.Station), new PyInt(0), PyNone.Instance, PyNone.Instance);
+
+        Assert.Equal(new long[] { source }, ((PyList)answer.Items[0]).Items.Select(v => ((PyLong)v).Value).ToArray());
+        Assert.Null(await rig.Items.GetAsync(source));
+        Assert.Equal(200, (await rig.Items.GetAsync(elsewhere))!.Quantity);
+        Assert.Equal(415, await rig.TritaniumAsync(Character, ReprocessingRig.Station, ItemFlags.Hangar));
+    }
+
+    [ReprocessingPgFact]
+    public async Task Reprocessing_the_same_input_again_does_not_duplicate_yield_or_tax()
+    {
+        await using var rig = await ReprocessingRig.CreateAsync();
+        await rig.OpenWalletAsync(Character, 1000m);
+        var stack = await rig.CreateAsync(Character, ReprocessingRig.Station, ItemFlags.Hangar, FixedReprocessingData.Veldspar, 200);
+        var session = Session(Character, ReprocessingRig.Station);
+
+        var first = (PyList)await CallPlant(rig.Service(), session, ReprocessingRig.Station, "Reprocess",
+            Ids1(stack), new PyInt(ReprocessingRig.Station), new PyInt(0), PyNone.Instance, PyNone.Instance);
+        var retry = (PyList)await CallPlant(rig.Service(), session, ReprocessingRig.Station, "Reprocess",
+            Ids1(stack), new PyInt(ReprocessingRig.Station), new PyInt(0), PyNone.Instance, PyNone.Instance);
+
+        Assert.Single(((PyList)first.Items[0]).Items);
+        Assert.Empty(((PyList)retry.Items[0]).Items);
+        Assert.Empty(((PyDict)retry.Items[1]).Entries);
+        Assert.Equal(830, await rig.TritaniumAsync(Character, ReprocessingRig.Station, ItemFlags.Hangar));
+        Assert.Equal(1, await rig.JournalCountAsync(ReprocessingService.ReprocessingTaxRefType, Character));
+    }
+
+    [ReprocessingPgFact]
+    public async Task A_quantity_below_one_full_portion_is_preserved()
+    {
+        await using var rig = await ReprocessingRig.CreateAsync();
+        await rig.OpenWalletAsync(Character, 1000m);
+        var stack = await rig.CreateAsync(Character, ReprocessingRig.Station, ItemFlags.Hangar, FixedReprocessingData.Veldspar, 99);
+        var session = Session(Character, ReprocessingRig.Station);
+
+        var answer = (PyList)await CallPlant(rig.Service(), session, ReprocessingRig.Station, "Reprocess",
+            Ids1(stack), new PyInt(ReprocessingRig.Station), new PyInt(0), PyNone.Instance, PyNone.Instance);
+
+        Assert.Empty(((PyList)answer.Items[0]).Items);
+        Assert.Equal(99, (await rig.Items.GetAsync(stack))!.Quantity);
+        Assert.Equal(0, await rig.TritaniumAsync(Character, ReprocessingRig.Station, ItemFlags.Hangar));
+        Assert.Equal(0, await rig.JournalCountAsync(ReprocessingService.ReprocessingTaxRefType, Character));
     }
 
     [ReprocessingPgFact]

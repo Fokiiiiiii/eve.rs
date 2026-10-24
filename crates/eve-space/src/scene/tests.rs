@@ -497,7 +497,6 @@ fn ships_cannot_pass_through_each_other_in_one_settlement() {
     motion::advance(&mut unchecked_a, 1.0, None);
     motion::advance(&mut unchecked_b, 1.0, None);
     assert!(unchecked_a.position.x > unchecked_b.position.x);
-
     scene.settle_all(NOON + seconds(1));
 
     let a = &scene.pilots[&SESSION].ship;
@@ -1259,25 +1258,41 @@ fn a_speed_fraction_keeps_the_course_but_wakes_a_stopped_ship() {
 }
 
 #[test]
-fn a_dock_request_from_out_of_range_approaches_and_completes_docking_on_arrival() {
+fn a_dock_request_from_out_of_range_stops_in_range_until_asked_again() {
     let mut scene = scene();
+    let station = scene.system.body(STATION).unwrap().clone();
     // 50 km off the station's surface, at rest
     scene.pilots.get_mut(&SESSION).unwrap().ship.position =
         Vec3::new(1_000_000.0 + 1_047.0 + 50_000.0, 0.0, 0.0);
     scene.pilots.get_mut(&SESSION).unwrap().ship.velocity = Vec3::ZERO;
-    let first = scene.command(SESSION, Command::Dock { station_id: STATION }, NOON);
-    assert_eq!(first.last(), Some(&Out::Approaching { session: SESSION, command: 4, distance: 50_000.0 }));
-    let arrival = scene.poll(NOON + seconds(400));
-    assert!(arrival.iter().any(|out| matches!(out, Out::Notify { name: "OnDockingAccepted", .. })));
-    assert!(arrival.iter().any(|out| matches!(out, Out::Accepted { command: 4, .. })));
-    let ship = scene.ship(SESSION, NOON + seconds(400)).unwrap();
-    assert_eq!(ship.course, Course::Stop);
+    let started = scene.command(SESSION, Command::Dock { station_id: STATION }, NOON);
+    assert_eq!(started.last(), Some(&Out::Approaching { session: SESSION, command: 4, distance: 50_000.0 }));
 
-    let completed = scene.poll(NOON + seconds(404));
+    let arrived_at = NOON + seconds(400);
+    let arrived = scene.poll(arrived_at);
+    let ship = scene.ship(SESSION, arrived_at).unwrap();
+    let distance = ((ship.position.x - station.position.x).powi(2)
+        + (ship.position.y - station.position.y).powi(2)
+        + (ship.position.z - station.position.z).powi(2))
+    .sqrt()
+        - ship.spec.radius
+        - station.radius;
+    assert!(distance <= DOCKING_RANGE, "ship stopped {distance} m from the station surface");
+    assert!(scene.pilots[&SESSION].docking_approach.is_none());
+    assert!(scene.pilots[&SESSION].docking.is_none());
+    assert!(!arrived.iter().any(|out| matches!(out, Out::Notify { name: "OnDockingAccepted", .. })));
+    assert!(!arrived.iter().any(|out| matches!(out, Out::Accepted { command: 4, .. })));
+
+    let accepted = scene.command(SESSION, Command::Dock { station_id: STATION }, arrived_at);
+    assert!(accepted.iter().any(|out| matches!(out, Out::Notify { name: "OnDockingAccepted", .. })));
+    assert!(accepted.iter().any(|out| matches!(out, Out::Accepted { command: 4, .. })));
+    assert!(scene.pilots[&SESSION].docking.is_some());
+
+    let completed = scene.poll(arrived_at + seconds(4));
     assert!(
         completed.iter().any(|out| matches!(out, Out::Docked { session: SESSION, station_id: STATION, .. }))
     );
-    assert!(scene.ship(SESSION, NOON + seconds(404)).is_none());
+    assert!(scene.ship(SESSION, arrived_at + seconds(4)).is_none());
 }
 
 #[test]
@@ -3497,7 +3512,6 @@ fn a_wormhole_end_the_host_places_takes_a_ship_through_to_its_far_end_and_places
         }
         other => panic!("expected a jump, got {other:?}"),
     }
-
     let later = NOON + seconds(6);
     let traveller = scene.due_jumps(later).0.pop().unwrap();
     assert_eq!(traveller.to_far_end, Some((far, 5_000.0)));

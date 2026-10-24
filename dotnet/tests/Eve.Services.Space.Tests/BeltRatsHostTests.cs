@@ -111,7 +111,7 @@ public class BeltRatsHostTests
     }
 
     [PgFact]
-    public async Task A_refused_belt_spawn_is_reported_as_a_failure()
+    public async Task A_scene_unavailable_belt_spawn_is_reported_without_log_spam()
     {
         var (rig, session) = await InSpaceAsync(Always);
         await using var _ = rig;
@@ -121,7 +121,7 @@ public class BeltRatsHostTests
 
         Assert.Equal(BeltOutcome.SpawnFailed, decision!.Outcome);
         Assert.Single(rig.Sim.Heard.OfType<SimSpawn>());
-        Assert.Contains(rig.Log, line => line.Contains("NO_SCENE 30000142:0:0"));
+        Assert.DoesNotContain(rig.Log, line => line.Contains("NO_SCENE", StringComparison.Ordinal));
     }
 
     [PgFact]

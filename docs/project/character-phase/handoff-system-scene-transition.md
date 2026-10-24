@@ -2,7 +2,7 @@
 
 ## Scope and current source paths
 
-This checkout was advanced through `origin/main` at the start of the task; the task fixes are on main through `5e694c21`. The requested source layout has since been split: gate-jump completion is in `dotnet/src/Eve.Services.Space/SpaceSessions.Movement.cs`; the current Rust simulation lives under `crates/eve-space/src/sim/`. The nine pre-existing deleted files in the worktree were preserved and are unrelated to this change.
+This checkout was advanced through `origin/main` at the start of the task. The task changes were pushed on main through merge commit `b7ede94a`, which also incorporates current origin/main. The requested source layout has since been split: gate-jump completion is in `dotnet/src/Eve.Services.Space/SpaceSessions.Movement.cs`; the current Rust simulation lives under `crates/eve-space/src/sim/`. The nine pre-existing deleted files in the worktree were preserved and are unrelated to this change.
 
 ## Client path and wire contract
 
@@ -32,3 +32,5 @@ This checkout was advanced through `origin/main` at the start of the task; the t
 - The push CI run `40077808041` failed `StargateJumpWireTests.Bound_client_warp_then_stargate_jump_uses_the_wire_and_clears_warp_state` because `IsWarping` remained true after the jump RPC; the other .NET test failure was `TradeAuthorityTests.Stage_refuses_an_item_outside_the_hangar_or_not_owned_by_the_offering_pilot`. The jump cleanup now runs after the awaited self-destruct and contraband cleanup, immediately before the queue update. The focused Space Actions run did not return the test output in its log tail, and was rerun with diagnostic command codes in the assertion.
 - Focused live run `40077842646` failed after starting the live walk. In earlier run `40077070295`, the walk crossed systems and its session snapshot, rebind result, notification order, and destination scene/state checks produced no reported mismatch; it failed the earlier warp update comparison and rest timing (86.12 s vs 82.86 s). The Windows live-client job passed on `40077808041`.
 - Local .NET build of `Eve.Services.Space` was terminated when `csc` exited with code 137 under shared resource pressure. No local database was used. A graphical V24.01 UI exception log was not captured.
+
+- After `b7ede94a`, the required Host filter, focused Space warp-state test, and slow jump walk were dispatched again; results are pending.

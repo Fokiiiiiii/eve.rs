@@ -31,11 +31,11 @@ The eve.rs Host regression exercises these existing paths against persisted bala
 ## Checks and handoff
 
 - Initial local compile check passed with 0 warnings and 0 errors. Follow-up local recompilation was killed during C# compilation with csc exit 137 under shared-memory pressure.
-- Focused Actions run `40080221080` exposed the underfunded corporation fixture; it now starts with the fee plus 5,000 ISK and checks the post-fee balance.
-- Actions run `40084145705` found a compile error in a concurrent Host test: it used missing `Packets.CallWithKwargs`. Added that service-call packet helper to `TestFront`; it encodes the supplied args and kwargs in a real `CallReq`.
-- Actions run `40084153623` is an overlapping check of the pre-helper source.
+- Focused Actions run `40080221080` exposed and led to fixing the underfunded corporation fixture.
+- Actions run `40084145705` exposed a missing `Packets.CallWithKwargs` helper used by a concurrent Host wire test. The merge supplied the same helper too, so the duplicate was consolidated into one implementation and the default `Call` now delegates to it.
+- Actions run `40084153623` checked the pre-helper source.
 - No local PostgreSQL command was run.
-- Feature commits: `0f5c0c20` (wire regression), `c6815db1` (founder balance correction). Latest pushed head before this update: `d1742f0c`.
+- Feature commits: `0f5c0c20` (wire regression), `c6815db1` (founder balance correction). Latest pushed head before this update: `db76afeb`.
 - Nine pre-existing unrelated Rust deletions remain unstaged and were not committed.
 
-Update the latest commit and Actions result below after pushing the helper fix.
+Push this cleanup and rerun the focused Actions regression.

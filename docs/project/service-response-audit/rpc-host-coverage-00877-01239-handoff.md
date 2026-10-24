@@ -1,8 +1,8 @@
 # Host coverage handoff: RPC-00877–00896 and RPC-01235–01239
 
-## Scope and result
+## Scope and current result
 
-The 25 rows reduce to ten methods: seven on `allianceRegistry`, one on `corpFittingMgr`, and two on `corpMiningLedger`. Existing Host registrations were found for all methods. This change adds one database-free registered-dispatch wire test for `corpFittingMgr.GetCommunityFittings`, `corpMiningLedger.GetObserversWithMiningEvents`, and `corpMiningLedger.GetObserverLedger`. The test passes `machoVersion=1` and checks the cache-wrapped dictionary and both list reply shapes.
+The 25 rows reduce to ten methods: seven on `allianceRegistry`, one on `corpFittingMgr`, and two on `corpMiningLedger`. Existing Host registrations were found for all methods. Commit `1ca1c591` adds one database-free registered-dispatch wire test for `corpFittingMgr.GetCommunityFittings`, `corpMiningLedger.GetObserversWithMiningEvents`, and `GetObserverLedger`. The test passes `machoVersion=1` and checks the cache-wrapped dictionary and both list reply shapes.
 
 The alliance methods still lack a Host wire regression. They read authoritative corporation/alliance state through PostgreSQL. The task prohibits using PostgreSQL, so this work did not create a persistent alliance fixture or exercise those methods through the Host. Existing service tests in `dotnet/tests/Eve.Corporations.Tests/AllianceTests.cs:756-795` cover alliance membership, ranking, membership-day, and employment row shapes directly, but they do not replace the required Host wire coverage.
 
@@ -31,9 +31,10 @@ The matching functional reference is `/home/user/evejs-v0.12.9`:
 - Community fittings: `server/src/services/fitting/corpFittingMgrService.js:55-62` wraps the catalog dictionary in a 15-minute cached method result; `server/src/_secondary/fitting/fittingStore.js:667-669` provides the catalog response.
 - Mining ledger: `server/src/services/mining/corpMiningLedgerService.js:83-112` returns visible observer rows and observer-entry rows, or an empty list without corporation, observer, or ledger permission.
 
-## Verification
+## Verification and push
 
-- `MSBUILDDISABLENODEREUSE=1 dotnet test dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj --filter FullyQualifiedName~Community_fittings_and_corporate_mining_ledger_use_registered_wire_shapes -p:UseSharedCompilation=false --no-restore`: 1 passed, 0 failed, 0 skipped.
-- `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -p:UseSharedCompilation=false --no-restore`: succeeded, 0 warnings and 0 errors.
+- Local focused test: `MSBUILDDISABLENODEREUSE=1 dotnet test dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj --filter FullyQualifiedName~Community_fittings_and_corporate_mining_ledger_use_registered_wire_shapes -p:UseSharedCompilation=false --no-restore`: 1 passed, 0 failed, 0 skipped.
+- Local compile check: `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -p:UseSharedCompilation=false --no-restore`: succeeded, 0 warnings and 0 errors.
+- Selected Actions run `40101545907` for commit `1ca1c591`: success, no failed tests or jobs.
+- Push-triggered `ci.yml` run `40101539629` for `1ca1c591` was still queued at the last check; recheck with `python3 tools/dev/ci-status.py failures 1ca1c591`.
 - No database connection or graphical-client run was used. The new test constructs an unreachable data source but exercises only the pre-read access branch.
-- Push and Actions verification remain pending.

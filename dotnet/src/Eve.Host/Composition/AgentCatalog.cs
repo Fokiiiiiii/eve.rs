@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Eve.Services.Core;
+using Eve.Services.CharacterInfo;
 using Eve.Sde;
 
 namespace Eve.Host;
@@ -85,6 +86,23 @@ public static class AgentCatalog
             .ToArray();
     }
 
+    public static IReadOnlyDictionary<long, AgentOwnerInfo> BuildOwners(IEnumerable<SdeRow> npcCharacters)
+    {
+        ArgumentNullException.ThrowIfNull(npcCharacters);
+        return npcCharacters
+            .Where(row => row.Key > 0 &&
+                row.Doc.TryGetProperty("agent", out var agent) &&
+                agent.ValueKind == JsonValueKind.Object)
+            .Select(row => (
+                row.Key,
+                Name: row.Doc.TryGetProperty("name", out var name) ? AgentSdeText(name, "en") : "",
+                Gender: AgentSdeGender(row.Doc)))
+            .Where(owner => !string.IsNullOrWhiteSpace(owner.Name) && owner.Gender is not null)
+            .ToDictionary(
+                owner => owner.Key,
+                owner => new AgentOwnerInfo(owner.Name, owner.Gender!.Value));
+    }
+
     private static long AgentSdeInteger(JsonElement document, string name) =>
         document.TryGetProperty(name, out var value) &&
         value.ValueKind == JsonValueKind.Number &&
@@ -99,6 +117,11 @@ public static class AgentCatalog
         document.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
             ? value.GetString() ?? ""
             : "";
+
+    private static long? AgentSdeGender(JsonElement document) =>
+        document.TryGetProperty("gender", out var value) && value.ValueKind is JsonValueKind.True or JsonValueKind.False
+            ? value.ValueKind == JsonValueKind.True ? 1 : 0
+            : null;
 
     private static bool AgentSdeBoolean(JsonElement document, string name) =>
         document.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.True;

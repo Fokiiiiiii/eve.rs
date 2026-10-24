@@ -111,7 +111,7 @@ public sealed record StructureDockingAccessSnapshot(
     IReadOnlyList<StructureAccessListSnapshot?>? AccessLists);
 
 /// <summary>A client info payload tied to one deployed structure row in persistent state.</summary>
-public sealed record PersistedStructureInfo(long StructureId, bool PersistentlyDeployed, PyValue Info);
+public sealed record PersistedStructureInfo(long StructureId, bool PersistentlyDeployed, PyValue Info, string? ItemName = null);
 
 /// <summary>Read-only RPC adapter for the client's structureDirectory service.</summary>
 public sealed class StructureDirectoryService(IStructureDirectoryReadCallbacks read) : IService

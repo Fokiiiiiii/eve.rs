@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Eve.Host;
 using Eve.Services.Core;
+using Eve.Services.CharacterInfo;
 using Eve.Sde;
 using Npgsql;
 using Xunit;
@@ -18,6 +19,28 @@ public sealed class AgentCatalogSdeTests
     [
         (2, 8775), (3, 14), (4, 244), (5, 143), (6, 651), (7, 7), (8, 696), (9, 260), (10, 52), (11, 12), (12, 100), (13, 12),
     ];
+
+    [Fact]
+    public void Agent_owner_projection_uses_the_SDE_name_and_gender()
+    {
+        static SdeRow Row(long id, string json)
+        {
+            using var document = JsonDocument.Parse(json);
+            return new SdeRow(id, document.RootElement.Clone());
+        }
+
+        var owners = AgentCatalog.BuildOwners(
+        [
+            Row(3008416, """{"name":{"en":"Agent Example"},"gender":false,"agent":{"agentTypeID":2}}"""),
+            Row(3008417, """{"name":{"en":"Not an agent"},"gender":true}"""),
+            Row(3008418, """{"name":{"en":"Agent Missing Gender"},"agent":{"agentTypeID":2}}"""),
+            Row(3008419, """{"name":{"en":"Agent Female"},"gender":true,"agent":{"agentTypeID":2}}"""),
+        ]);
+
+        Assert.Equal(new AgentOwnerInfo("Agent Example", 0), owners[3008416]);
+        Assert.Equal(new AgentOwnerInfo("Agent Female", 1), owners[3008419]);
+        Assert.Equal(2, owners.Count);
+    }
 
     [SdeAgentPgFact]
     public async Task The_catalog_from_the_pinned_sde_has_the_sde_counts()

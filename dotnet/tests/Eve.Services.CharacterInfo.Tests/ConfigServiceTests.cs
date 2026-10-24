@@ -94,6 +94,68 @@ public sealed class ConfigServiceTests
         })).Items);
     }
 
+    [Fact]
+    public async Task Agent_owners_return_their_SDE_row_fields()
+    {
+        const long agentId = 3008416;
+        var service = new ConfigService(
+            null!, null!, null!, null!,
+            agentOwners: new Dictionary<long, AgentOwnerInfo>
+            {
+                [agentId] = new("Agent Example", 0),
+            });
+
+        var result = await service.GetMultiOwnersEx(Call("GetMultiOwnersEx", [agentId], new ClientSession()));
+        var row = Assert.Single(Rows(result, ["ownerID", "ownerName", "typeID", "gender", "ownerNameID"]));
+
+        Assert.Equal(agentId, Integer(row[0]));
+        Assert.Equal("Agent Example", Text(row[1]));
+        Assert.Equal(1373, Integer(row[2]));
+        Assert.Equal(0, Integer(row[3]));
+        Assert.Same(PyNone.Instance, row[4]);
+    }
+
+    [Fact]
+    public async Task Structure_locations_use_the_persisted_name_and_recorded_EveJS_row_shape()
+    {
+        const long structureId = 1_000_000_000_001;
+        const long unknownId = structureId + 1;
+        var reads = 0;
+        var service = new ConfigService(
+            null!,
+            null!,
+            new StationCatalog([]),
+            new SolarSystemCatalog([]),
+            readStructureNames: (ids, _) =>
+            {
+                reads++;
+                Assert.Equal([structureId, unknownId], ids);
+                IReadOnlyDictionary<long, string> names = new Dictionary<long, string>
+                {
+                    [structureId] = "Stored Fortizar",
+                };
+                return Task.FromResult(names);
+            });
+
+        var result = await service.GetMultiLocationsEx(new ServiceCall
+        {
+            Method = "GetMultiLocationsEx",
+            Args = [new PyList([new PyLong(structureId), new PyLong(unknownId)])],
+            Session = new ClientSession(),
+        });
+        var row = Assert.Single(Rows(result,
+            ["locationID", "locationName", "solarSystemID", "x", "y", "z", "locationNameID"]));
+
+        Assert.Equal(structureId, Integer(row[0]));
+        Assert.Equal("Stored Fortizar", Text(row[1]));
+        Assert.Same(PyNone.Instance, row[2]);
+        Assert.Equal(0d, Assert.IsType<PyReal>(row[3]).Value);
+        Assert.Equal(0d, Assert.IsType<PyReal>(row[4]).Value);
+        Assert.Equal(0d, Assert.IsType<PyReal>(row[5]).Value);
+        Assert.Equal($"Structure {structureId}", Text(row[6]));
+        Assert.Equal(1, reads);
+    }
+
     [ConfigServicePgFact]
     public async Task Owners_answer_characters_corporations_and_alliances_and_leave_unknown_ids_out()
     {

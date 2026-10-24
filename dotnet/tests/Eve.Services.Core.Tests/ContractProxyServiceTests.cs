@@ -56,7 +56,7 @@ public sealed class ContractProxyServiceTests
                 ("minPrice", new PyReal(100)),
                 ("description", new PyStr("blueprint")),
                 ("itemTypes", PyValue.PythonSet([new PyInt(34)])),
-                ("securityClasses", PyValue.PythonSet([new PyInt(2)])),
+                ("securityClasses", PyValue.PythonSet([new PyInt(0), new PyInt(2)])),
                 ("sortBy", new PyInt(1)),
                 ("sortDir", new PyInt(1)),
                 ("startNum", new PyInt(100))),
@@ -70,7 +70,7 @@ public sealed class ContractProxyServiceTests
         Assert.Equal(100m, query.MinPrice);
         Assert.Equal("blueprint", query.Description);
         Assert.Equal(new[] { 34 }, query.ItemTypeIds);
-        Assert.Equal(new[] { 2 }, query.SecurityClasses);
+        Assert.Equal(new[] { 0, 2 }, query.SecurityClasses);
         Assert.Equal((1, 1, true, 100), (query.SortBy, query.SortDirection, query.HasExplicitSortBy, query.StartNum));
 
         Assert.Equal(new PyInt(1), Value(response, "numFound"));

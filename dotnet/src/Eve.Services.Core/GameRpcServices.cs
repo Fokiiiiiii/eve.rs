@@ -407,7 +407,7 @@ public sealed partial class ContractProxyService(
             ContractSearchInt(call.Kwarg("itemCategoryID"), 0),
             ContractSearchInt(call.Kwarg("itemGroupID"), 0),
             ContractSearchText(call.Kwarg("itemTypeName")),
-            ContractSearchIntSet(call.Kwarg("securityClasses")),
+            ContractSearchIntSet(call.Kwarg("securityClasses"), allowZero: true),
             searchHint,
             ContractSearchInt(sortByValue, 0),
             sortDirection,
@@ -620,7 +620,7 @@ public sealed partial class ContractProxyService(
         _ => null,
     };
 
-    private static IReadOnlyList<int> ContractSearchIntSet(PyValue? value)
+    private static IReadOnlyList<int> ContractSearchIntSet(PyValue? value, bool allowZero = false)
     {
         var values = value switch
         {
@@ -635,7 +635,7 @@ public sealed partial class ContractProxyService(
                 PyLong integer => integer.Value,
                 _ => 0,
             })
-            .Where(id => id is > 0 and <= int.MaxValue)
+            .Where(id => id <= int.MaxValue && (id > 0 || allowZero && id == 0))
             .Select(id => (int)id)
             .Distinct()
             .Order()

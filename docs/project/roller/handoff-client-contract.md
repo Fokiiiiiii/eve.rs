@@ -21,3 +21,9 @@ Remaining gap: EveJS routes additional mobile-deployable and orbital item famili
 ## Client/EveJS differential follow-up
 
 `PokePlayerAboutChatMsgGm` now sends EveJS-compatible persisted system mail through the production mail adapter. The V24 XMPP client calls this RPC; EveJS uses sender `140000004` (`GM ELYSIAN`), subject `GM chat request`, and the requested channel in the message body. The Host validates the privileged payload, persists recipient status and notification before returning the message ID, and omits a sender mailbox copy as EveJS does. `Eve.Host.Tests` build passed, and `Mail_host_adapter_commits_mail_and_notification_before_returning_id` passed locally (1/1). GitHub Actions result is pending for the pushed commit.
+
+## Bootstrap config owners and structures (2026-10-24)
+
+Implemented the remaining `config.GetMultiOwnersEx` and `config.GetMultiLocationsEx` bootstrap rows. Agent owner data comes from pinned `npcCharacters` SDE rows (`name.en`, boolean gender mapped to 0/1); the wire row retains character type 1373 and `ownerNameID=None`. Missing names or genders produce no row. Deployed structure names are read in one batch from the existing persistence directory and returned with the EveJS structure row shape (no solar system, zero coordinates, `Structure <id>` name ID). Unknown structures and persisted rows without a name produce no row.
+
+Regressions: `AgentCatalogSdeTests.Agent_owner_projection_uses_the_SDE_name_and_gender`, `ConfigServiceTests.Agent_owners_return_their_SDE_row_fields`, `ConfigServiceTests.Structure_locations_use_the_persisted_name_and_recorded_EveJS_row_shape`, and `PersistenceStructureDirectoryReadModelTests`. Both touched .NET test projects compile cleanly; the structure service focused test passed locally. No PostgreSQL database or graphical client was used. Focused Actions verification is pending.

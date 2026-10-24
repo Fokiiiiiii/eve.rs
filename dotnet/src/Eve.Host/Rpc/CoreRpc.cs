@@ -87,7 +87,15 @@ internal sealed partial class CharacterServicesComposition
             new MultiLoginBlockerService(session => CloneGradeSource.CloneGradeOf(session.Get("userid"))),
             new PopulationCapService(characters, SystemPopulationModel),
             new Eve.Services.CharacterInfo.ConfigService(characters, corporations, stations, solarSystems,
-                ct => market.LatestAverageSalesAsync(ct), items, dogma),
+                ct => market.LatestAverageSalesAsync(ct), items, dogma,
+                agentOwners: agentOwnerById,
+                readStructureNames: async (ids, cancellationToken) =>
+                {
+                    var structures = await structureDirectoryReadModel.GetStructureInfosAsync(ids, cancellationToken);
+                    return structures
+                        .Where(entry => !string.IsNullOrWhiteSpace(entry.Value.ItemName))
+                        .ToDictionary(entry => entry.Key, entry => entry.Value.ItemName!);
+                }),
             Eve.Services.Core.CoreServices.CreateLookupService(
                 new Eve.Host.PersistenceLookupDirectory(characters, corporations, sde, stations)),
             new Eve.Services.Core.SecurityMgrService(),

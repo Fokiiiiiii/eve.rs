@@ -116,7 +116,7 @@ public sealed partial class SpaceSessions
     private ulong NextSpawnRequest() => Interlocked.Increment(ref _spawnRequests);
 
     /// <summary>Asks the simulation to make a ship that nobody flies; false when it refused (the reason is logged), a message for the client when it cannot be reached.</summary>
-    private async Task<ulong?> SpawnAsync(SimSpawn spawn, string what, CancellationToken cancellationToken)
+    private async Task<ulong?> SpawnAsync(SimSpawn spawn, string what, CancellationToken cancellationToken, Action? sceneUnavailable = null)
     {
         try
         {
@@ -125,7 +125,14 @@ public sealed partial class SpaceSessions
             {
                 return reply.Session;
             }
-            _log?.Invoke($"{what}: the ship was refused: {reply.Error}");
+            if (reply.Error?.StartsWith("NO_SCENE", StringComparison.Ordinal) == true)
+            {
+                sceneUnavailable?.Invoke();
+            }
+            else
+            {
+                _log?.Invoke($"{what}: the ship was refused: {reply.Error}");
+            }
             return null;
         }
         catch (SimUnavailableException error)
@@ -470,12 +477,18 @@ public sealed partial class SpaceSessions
         long hostileResponseThreshold = NpcHostileThreshold,
         double aggressionRangeOverride = 0,
         List<long>? shipIds = null,
-        bool stationary = false)
+        bool stationary = false,
+        Action? sceneUnavailable = null)
     {
         var composition = new List<(string Name, int Count)>();
         var unarmed = 0;
         for (var index = 0; index < profiles.Count; index++)
         {
+            if (!HasPilotsIn(anchor.SolarSystemId))
+            {
+                sceneUnavailable?.Invoke();
+                break;
+            }
             var profile = profiles[index];
             var type = _statics.Type(profile.ShipTypeId)!;
             var shipId = NpcIdBase + Interlocked.Increment(ref _npcs);
@@ -498,7 +511,7 @@ public sealed partial class SpaceSessions
             var direction = RandomUnitVector();
             double[] place = [anchor.Origin[0] + direction[0] * distance, anchor.Origin[1] + direction[1] * distance, anchor.Origin[2] + direction[2] * distance];
             var spawn = new SimSpawn(NextSpawnRequest(), SimSceneKey.SolarSystem(anchor.SolarSystemId), ship, anchor.ShipId, place, [0, 0, 0], RandomUnitVector(), NpcBehavior, identity);
-            if (await SpawnAsync(spawn, "npc", cancellationToken) is not { } npcSession)
+            if (await SpawnAsync(spawn, "npc", cancellationToken, sceneUnavailable) is not { } npcSession)
             {
                 break;
             }

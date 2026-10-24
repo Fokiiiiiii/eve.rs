@@ -47,7 +47,7 @@ public sealed class AccountWalletHostRpcTests
                     var id = await characters.InsertAsync(connection, transaction,
                         new NewCharacter(1, name, 0, 1, 1, 1, 11, 1376, 1000044, null,
                             60000001, 30000001, 20000001, 10000001, null, null));
-                    await wallets.OpenAsync(connection, transaction, id, 5_000m, 0);
+                    await wallets.OpenAsync(connection, transaction, id, CorporationStore.CorporationFoundingCost + 5_000m, 0);
                     return id;
                 }
 

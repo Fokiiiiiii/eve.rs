@@ -53,7 +53,8 @@ public sealed partial class SpaceContainers
             throw MachoErrors.ThrowUserError("SafetyActivated");
         }
         var pilot = await _ships.CharacterAsync(characterId, cancellationToken);
-        if (pilot is null || (!isFittings && item.OwnerId != characterId &&
+        var isStarbaseHull = !isFittings && _statics.CategoryName(type.CategoryId) == "Starbase";
+        if (pilot is null || (isStarbaseHull && item.OwnerId != characterId &&
             (item.OwnerId != pilot.CorporationId || spaceItem.CorporationId != pilot.CorporationId)))
         {
             throw MachoErrors.ThrowUserError("FakeItemNotFound");

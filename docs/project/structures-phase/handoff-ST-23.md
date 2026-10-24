@@ -49,3 +49,8 @@ The existing `live-slow.yml` selection already includes `test_structures.py`. Th
 
 - Commit `01053a2e290731e0ea551abb2b855e6dbaf7c0b9`, Agent test run [40041270573](https://github.com/Fokiiiiiii/eve.rs/actions/runs/40041270573): `Eve.Services.Space.Tests` focused scoop test 1 passed, 0 failed, 0 skipped; `tools/headless-client/tests/test_structures.py` 22 passed, 0 failed, 0 skipped.
 - This confirms the headless `ship.Drop` -> offline unanchor -> hull drop -> `ship.Scoop` flow, including `OnItemChange` and cargo state. No graphical V24 client run was part of this check.
+
+
+## 8. Eject to an original ship at a distant structure (2026-10-24)
+
+The `EjectFromStructure` path now restores the exact physical ship recorded by `BoardStructure` after validating that it remains the character's singleton ship in the same solar system. It no longer applies the client boarding-distance rule to this restoration. EveJS v0.12.9 restores `restoreShipID` without a proximity check; the existing live scenario places the return refinery 200,000 km from the station-side ship and checks the `OnShipCosmeticsChanged` notification. The focused Actions result will be recorded after the run. The Release build of `Eve.Services.Space.Tests` passed after this fix with 0 warnings and 0 errors; no database tests were run locally.

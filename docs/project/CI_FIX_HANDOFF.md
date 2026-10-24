@@ -452,3 +452,8 @@ CI run 672 on `1669e6dc` failed the structure market Host test because the fixtu
 - Pushed the merged Upwell docking and CI failure-name parser changes to main as `e863ec63`.
 - Push gate run 753 (`40050099878`) and focused Agent run 258 (`40050113361`) were active at this update. Run 753's Python client, Rust format/clippy, fixtures, and Rust advisory jobs had passed; the live E2E, Windows, .NET build/shards, and Rust tests were still running.
 - The earlier selected run 255 on `30dcbf9d` failed its test step, but its available tail ended after the live-test command. The current focused run checks the same market protocol cases and `test_market.py` on the corrected head. No local PostgreSQL database was used.
+
+## 2026-10-24 push 05bce6b0 handoff status
+
+- Pushed the handoff update with current main changes as `05bce6b0`. At the first status check, no `ci.yml` workflow for this SHA was listed yet.
+- CI run 753 and focused Agent run 258 for `e863ec63` were still active. Their results will be checked along with the push gate for the new head. No local PostgreSQL database was used.

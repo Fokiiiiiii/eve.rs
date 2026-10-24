@@ -22,12 +22,15 @@ public sealed record LookupLocation(
     long? ConstellationId = null,
     long? RegionId = null);
 
+public sealed record LookupType(int Id, string Name);
+
 public sealed record LookupSearchSources(
     Func<CancellationToken, Task<IReadOnlyList<LookupEntity>>> Characters,
     Func<CancellationToken, Task<IReadOnlyList<LookupEntity>>> Corporations,
     Func<CancellationToken, Task<IReadOnlyList<LookupEntity>>> Alliances,
     Func<CancellationToken, Task<IReadOnlyList<LookupEntity>>> Factions,
-    Func<int, CancellationToken, Task<IReadOnlyList<LookupLocation>>>? Locations = null) : ILookupDirectory
+    Func<int, CancellationToken, Task<IReadOnlyList<LookupLocation>>>? Locations = null,
+    Func<CancellationToken, Task<IReadOnlyList<LookupType>>>? Types = null) : ILookupDirectory
 {
     public async ValueTask<IReadOnlyList<LookupCharacter>> CharactersAsync(CancellationToken cancellationToken) =>
         (await Characters(cancellationToken).ConfigureAwait(false))
@@ -51,6 +54,9 @@ public sealed record LookupSearchSources(
 
     public async ValueTask<IReadOnlyList<LookupLocation>> LocationsByGroupAsync(int groupId, CancellationToken cancellationToken) =>
         Locations is null ? [] : await Locations(groupId, cancellationToken).ConfigureAwait(false);
+
+    public async ValueTask<IReadOnlyList<LookupType>> TypesAsync(CancellationToken cancellationToken) =>
+        Types is null ? [] : await Types(cancellationToken).ConfigureAwait(false);
 }
 
 /// <summary>

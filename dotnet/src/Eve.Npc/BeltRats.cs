@@ -67,6 +67,8 @@ public enum BeltOutcome
     /// <summary>No rat could be made for the faction (its pool has no profile of the hulls this security takes).</summary>
     PlanFailed,
     ChanceMiss,
+    /// <summary>A planned group had no ships accepted by the simulation.</summary>
+    SpawnFailed,
 }
 
 public sealed record BeltDecision(BeltOutcome Outcome, BeltRatPlan? Plan = null, string? Faction = null, string? Band = null);

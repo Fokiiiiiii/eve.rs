@@ -138,6 +138,7 @@ def _dock_at_market_structure(client, character: int, ship_id: int, fitted: list
         f"ship {ship_id} did not dock at market structure {structure_id}"
     )
 
+
 def _assert_wallet_notification_order(events, owner: str) -> None:
     names = [_plain_name(event.get("name")) for event in events if "name" in event]
     account_changes = [index for index, name in enumerate(names) if name == "OnAccountChange"]

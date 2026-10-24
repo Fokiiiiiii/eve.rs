@@ -94,7 +94,14 @@ The owner’s captures and process logs were read through `tools/mitm show` and 
 - Regression: `DispatchGoldenTests.Industry_jobs_use_a_separate_per_session_budget` verifies that unrelated expensive calls cannot block the industry handler and that the industry bucket still enforces its own limit.
 - Check status: the focused `Eve.Services.Tests` Actions run `40010004814` completed successfully. No current graphical-client retest has been made.
 
-## (l) Service reply inventory from graphical captures
+## (l) 2026-10-23 in-space, undock and session notification audit
+
+- Inventory and industry budget errors in the retry capture are already fixed on `origin/main` by `e1ed09a4` and `a8e6c9f5`; their existing evidence is recorded in (d) and (k). The capture's `GetJobCounts` and inventory refusals predate those fixes.
+- The undock and session-change path is covered on `origin/main` by `7b011e25`, `e24b0e26` and `c068f252`. Current space tests assert the undock notification order (`OnItemsChanged`, disconnect notifications, `$sessionchange`, then `OnInvulunOnUndockingUpdated`), ship/session state updates, and clearing `stationid2`. In this retry capture, the pilot starts in space, so its initial session has no `stationid2`; the later session notifications do not independently exercise clearing that field.
+- The capture has two failed `CmdStargateJump` attempts shortly after `CmdWarpToStuff`, followed by a successful retry and the normal arrival notifications/session change. EveJS rejects a stargate jump while warp landing is pending; the captured failures are consistent with that transition, but the server-side refusal reason is absent from this trace. eve.rs maps an unrecognized jump refusal to the same generic user error as EveJS. The existing jump tests cover refusal and successful state/notification order, so no server fix is supported by this evidence.
+- Focused Actions verification on `origin/main` commit `6c822c03`, run `40048976357`, succeeded for the inventory budget, undock order/state, and jump refusal/success tests. The workflow summary did not include per-test skip counts. No current-build graphical-client retest was made; this audit found no open server-side defect in these categories.
+
+## (m) Service reply inventory from graphical captures
 
 - Scope: matched Macho CallReq and reply records in eve-rs-graphical.jsonl and eve-rs-10.0.402-client-retry.jsonl. The eve-rs-10.0.402-graphical.jsonl file has no service calls. The two captures contain 72 ErrorResponse replies and 123 successful empty replies.
 - Empty results below are capture observations, not failures by themselves. None is common for void calls, and empty lists or dictionaries can mean there is no matching state. As noted in (j), the EveJS and eve.rs sessions start from different character states; no wrong-shaped response is established by comparing these unpaired sessions.

@@ -22,7 +22,7 @@ public sealed class CharacterEnergyMgrRpcService : IService
     {
         if (!HasMethod(call.Method)) return ValueTask.FromResult<PyValue>(PyNone.Instance);
         call.Cancellation.ThrowIfCancellationRequested();
-        if (call.Args.Count != 0 || call.Kwargs is not PyNone)
+        if (call.Args.Count != 0 || !HasOnlyTransportKwargs(call.Kwargs))
             throw MachoErrors.ThrowUserError("CHARACTER_ENERGY_ARGUMENTS_INVALID");
         var characterId = call.Session.CharacterId ?? call.Session.UserId ?? 0;
         var raw = characterId > 0
@@ -45,6 +45,10 @@ public sealed class CharacterEnergyMgrRpcService : IService
             Py.Tuple(new PyToken("characterenergy.characterEnergyState.CharacterEnergyState"),
                 Py.List(Py.Number(energy), new PyLong(last), Py.Number(increase), Py.Number(period), Py.Number(min), Py.Number(capacity))), [], []));
     }
+
+    private static bool HasOnlyTransportKwargs(PyValue? kwargs) =>
+        kwargs is PyNone ||
+        kwargs is PyDict dict && dict.Entries.All(entry => JsSemantics.StringValue(entry.Key) == "machoVersion");
 
     private static double Read(System.Text.Json.Nodes.JsonObject? source, string first, string second, double fallback) =>
         double.TryParse((source?[first] ?? source?[second])?.ToString(), System.Globalization.NumberStyles.Float,

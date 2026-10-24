@@ -463,3 +463,10 @@ CI run 672 on `1669e6dc` failed the structure market Host test because the fixtu
 - The checked-out main tip at this update is `9716acb1`. No push-triggered `ci.yml` run was listed for that SHA at the first check.
 - CI run 753 on `e863ec63` has passed the Python client, Rust format/clippy, fixture, and Rust advisory jobs. Its E2E, Windows, .NET build/shards, and Rust test jobs were still active. Focused Agent run 258 on the same code head was also active.
 - The follow-up will dispatch `ci.yml` against the latest main head so the complete gate covers the corrected parser and Upwell docking flow. No local PostgreSQL database was used.
+
+## 2026-10-24 run 753 Upwell inventory RPC follow-up
+
+- Run 753 on `e863ec63` failed `test_docked_corporation_members_trade_at_an_eligible_upwell_structure` at `tests/test_market.py:240`: after the trade and transaction checks, the buyer's `invbroker.ListStationItems(structure_id)` returned no Tritanium rows.
+- The market settlement moves filled goods to the destination hangar. `InvBrokerService.ListStationItems` then rejected any non-SDE station ID outside the global-assets context, which excluded an Upwell structure. EveJS resolves top-level entries by the requested dockable location.
+- The RPC now allows a non-SDE location only when it matches the session's docked location; the existing global-assets structure validation remains, and a remote structure query still returns an empty list. Regression `A_docked_structure_lists_its_own_station_items_but_not_a_remote_structure` checks both cases.
+- The focused .NET Release build passed with 0 warnings and 0 errors. The focused Actions test and latest-main CI gate are pending. No local PostgreSQL database was used.

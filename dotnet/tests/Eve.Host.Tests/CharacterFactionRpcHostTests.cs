@@ -8,6 +8,10 @@ namespace Eve.Host.Tests;
 
 public partial class HostServerTests
 {
+    private static PyDict TransportVersionKwargs() => new([
+        new KeyValuePair<PyValue, PyValue>(new PyStr("machoVersion"), new PyInt(1)),
+    ]);
+
     [Fact]
     public async Task Character_energy_state_reaches_the_client_through_the_registered_host_route()
     {
@@ -23,7 +27,8 @@ public partial class HostServerTests
         await front.SendAsync(open);
         await front.ReceiveAsync();
         await front.SendAsync(new Packet(open.SessionId,
-            MarshalCodec.Encode(Packets.Call(open, 1, "characterEnergyMgr", "GetMyEnergyState"))));
+            MarshalCodec.Encode(Packets.CallWithKwargs(
+                open, 1, "characterEnergyMgr", "GetMyEnergyState", new PyTuple([]), TransportVersionKwargs()))));
 
         var reply = Assert.IsType<Send>(await front.ReceiveAsync());
         var expected = new PyObjectEx(
@@ -45,7 +50,7 @@ public partial class HostServerTests
     }
 
     [Fact]
-    public async Task Faction_warfare_enlistment_reads_and_writes_persisted_state_through_host_routes()
+    public async Task Faction_warfare_enlistment_routes_read_write_and_change_session_state()
     {
         const long characterId = 90_000_165;
         const long corporationId = 98_000_165;
@@ -91,7 +96,8 @@ public partial class HostServerTests
         async Task<PyValue?> Call(long id, string method, params PyValue[] args)
         {
             await front.SendAsync(new Packet(open.SessionId,
-                MarshalCodec.Encode(Packets.Call(open, id, "fwCharacterEnlistmentMgr", method, args))));
+                MarshalCodec.Encode(Packets.CallWithKwargs(
+                    open, id, "fwCharacterEnlistmentMgr", method, new PyTuple(args), TransportVersionKwargs()))));
             while (true)
             {
                 var decoded = MarshalCodec.Decode(Assert.IsType<Send>(await front.ReceiveAsync()).Payload);

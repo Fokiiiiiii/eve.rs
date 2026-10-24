@@ -66,7 +66,7 @@ def without_noise(events: list) -> list:
     # V24 Michelle.FlushState logs and returns immediately for an empty state.
     return [
         event for event in events
-        if not (event["name"] == "DoDestinyUpdate" and not names(event))
+        if names(event)
         and names(event) not in (["SetState"], ["PackagedAction"])
         and "AddBalls2" not in names(event)
     ]

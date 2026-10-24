@@ -95,3 +95,10 @@ Run 745 failed two `Eve.Market.Tests.ProtocolTests` cases because immediate fill
 - Push CI run 762 (40052033248, b5850087) passed Rust checks/tests, Python client tests, .NET build and most .NET shards, plus the Windows matrix. Its fast live Upwell walk showed a buyer journal of `(46, -99.5), (149, -0.5), (42, -100.0)` after filling a standing bid; the buyer's 100 ISK had already been paid into escrow, so the fill uses journal ref 42 rather than a second ordinary purchase ref 2. The client test now asserts the escrow settlement row.
 - The same push exposed the RPC inventory snapshot count changing from 1382 to 1383 after the concurrent host registration change. The registry test's expected count is updated to 1383.
 - Focused Actions validation for the journal assertion and registry count is pending. The local Host test-project build was cancelled after it remained silent while compiling its dependency graph; no local database or graphical client was used.
+
+## 2026-10-24 market global-assets walk Actions follow-up
+
+- Push CI run 769 (`40053234501`) on `4307511c` includes market test commit `d3d45b18` and passed the full required gate. The End-to-end job passed in 11.4 minutes, along with Rust, Python, Windows, .NET build and shards, fixtures, and the required gate.
+- The focused market Actions run 266 (`40051416649`) on `d3d45b18` remains active at the selected-test step; it has no final test output yet. It is not recorded as a pass.
+- Later main CI runs 771 (`15a9ef6a`) and 772 (`ef6286e9`) were still in progress at this update. The current `ci-status.py` success summary does not expose pytest skip counts, so no skip count is recorded here; skipped scenarios are not counted as verified.
+- Local `python3 -m py_compile tools/headless-client/tests/test_market.py` passed. No local database, graphical-client run, or EveJS differential was performed.

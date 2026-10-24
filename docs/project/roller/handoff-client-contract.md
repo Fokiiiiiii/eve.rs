@@ -9,3 +9,11 @@ The populationCap headless scenario passed on `eve_p4` / port 26103 using the bu
 Structure review corrected a stale handoff: single-character cyno-beacon travel and persisted jump-bridge destination/link reads are wired. EveJS supports group beacon jumps, portal bridging, and Ansiblex travel; Host records explicit unsupported gaps for those transitions.
 
 The CI status also showed a separate earlier Live(slow) failure on SHA `ae6c86ce4fe9`: `test_arc29_walk.py` observed 89,000 ISK against a 100,000 ISK mission reward expectation. It is outside this client-contract audit and was not changed here.
+
+## Ship.Drop differential follow-up (2026-10-24)
+
+V24 `eveMisc.LaunchFromShip` sends `oldItems` as `(itemID, quantity)` pairs; EveJS 261018.1 processes each requested unit, groups launched IDs by source item, and appends `CustomNotify` on a per-item failure while proceeding to later requests. eve.rs previously launched once per source row. `ShipService.Drop` now processes the requested quantity and keeps prior successes plus the failure tuple. The existing authoritative provider moves one unit from a stack per launch.
+
+`ShipDropContractTests` calls the real bound-object route with an in-memory container boundary and covers multiple source items, quantities, and a partial user-error refusal. The touched service and test projects built cleanly; `ShipDropContractTests` and `ShipCoverageTests` passed 3/3 with no skips. No database or graphical client was used. The refreshed contract report now lists `ship.Drop` as routed and reduces client pairs without a Host route from 73 to 72.
+
+Remaining gap: EveJS routes additional mobile-deployable and orbital item families through `Drop`. The current Host provider supports only its implemented item families; a null launch result still returns an empty per-item list. Those cases need an authoritative launch transaction and evidence-backed refusal behavior before claiming full method parity.

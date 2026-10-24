@@ -90,6 +90,7 @@ public sealed class CharacterContactNotepadHostTests
                 new NewItem(587, characterId, rig.Station, 4));
             stackId = await items.CreateAsync(connection, transaction,
                 new NewItem(34, characterId, shipId, 5, 10, Singleton: false));
+            await rig.Characters.SetShipAsync(connection, transaction, characterId, shipId);
             await transaction.CommitAsync();
         }
 

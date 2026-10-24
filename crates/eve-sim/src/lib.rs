@@ -56,6 +56,13 @@ fn delay_to_next_second(now: SystemTime) -> Duration {
 }
 
 fn hold_tick_aligned(messages: Vec<Message>, held: &mut Vec<Message>) -> Vec<Message> {
+    // The movement update must arrive before Host returns the DockingApproach error.
+    if messages.iter().any(|message| matches!(message, Message::Approaching { .. })) {
+        let mut immediate = std::mem::take(held);
+        immediate.extend(messages);
+        return immediate;
+    }
+
     let mut immediate = Vec::with_capacity(messages.len());
     let mut preserve_notification_order = !held.is_empty();
     for message in messages {
@@ -81,7 +88,6 @@ fn hold_tick_aligned(messages: Vec<Message>, held: &mut Vec<Message>) -> Vec<Mes
     }
     immediate
 }
-
 /// Handles one host stream until it closes or sends an invalid message.
 /// `clock` returns FILETIME ticks for simulation updates.
 pub async fn serve_connection<S, C>(stream: S, universe: Arc<Universe>, clock: C) -> io::Result<()>
@@ -149,6 +155,23 @@ mod tests {
     fn a_destiny_update_waits_for_the_next_whole_second_boundary() {
         let now = UNIX_EPOCH + Duration::from_millis(12_345);
         assert_eq!(delay_to_next_second(now), Duration::from_millis(655));
+    }
+
+    #[test]
+    fn a_docking_approach_sends_its_movement_update_before_its_error_reply() {
+        let destiny = Message::Notify {
+            session_id: 1,
+            name: "DoDestinyUpdate".into(),
+            id_type: "clientID".into(),
+            args: Vec::new(),
+        };
+        let approaching = Message::Approaching { session_id: 1, command: 4, distance: 2_500.0 };
+        let mut held = Vec::new();
+
+        let immediate = hold_tick_aligned(vec![destiny.clone(), approaching.clone()], &mut held);
+
+        assert_eq!(immediate, [destiny, approaching]);
+        assert!(held.is_empty());
     }
 
     #[test]

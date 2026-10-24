@@ -639,9 +639,17 @@ Regression tests added: `DungeonWaveTests.A_system_owned_wave_waits_until_a_pilo
 - The focused Rust regression passed locally, as did Rust 1.94.1 formatting and workspace clippy. Push-triggered CI for this revision is being checked. Selected live run `40090893730` is still checking the production code for movement, undock, celestial warp and stargate jump.
 
 
+
 ## 2026-10-24 CORE FIX 1 latest-main verification follow-up
 
 - Fetched and fast-forwarded to `origin/main` at `8799c2aa`; stargate simulation and Host code remain present. Current-head focused Agent run 412 (`40091793046`) passed `Eve.Services.Space.Tests` with `FullyQualifiedName~StargateJumpWireTests` (no failed tests or jobs). Rust run 415 (`40092063319`) is checking the current workspace and is pending at this note update.
 - On the task code, push gate 829 (`11c7a4f3`) passed the full Rust workspace tests, including the warp-arrival/jump simulation regression. It failed the E2E structure-anchor scenario at `test_structures.py:490` after a coordinate warp, with “You must be in space to deploy a structure”; that scenario does not call `CmdStargateJump`. The .NET Space tests 2/2 job was cancelled after its test step ran for 30 minutes; no test result was reported. The standard E2E job skipped the skill-speed check and seven slow-live tests, including `tests/test_jump.py`; skips are not passes.
 - Older gate 831 (`05f054a3`) failed Rust test `scene::tests::a_dock_request_from_out_of_range_approaches_and_completes_docking_on_arrival`: it still expected docking acceptance on arrival. The later main update replaced that expectation with the client's second `CmdDock` sequence. Current-head Rust run 415 will establish the result on the updated test.
 - The V24.01 caller evidence and EveJS v0.12.9 comparison above remain current. No graphical-client or EveJS live-session verification was done.
+
+## 2026-10-24 CORE FIX 5 docking approach update ordering
+
+- Selected live run `40090893730` completed with 5 passed, 1 failed, 0 skipped. The failing Host/client walk was `test_a_dock_from_beyond_the_range_sends_the_ship_to_the_station_and_a_second_asks_docks_it[race-1]`: the expected `DoDestinyUpdate` was absent in the one-second window before the `DockingApproach` user error. The sim had queued the course update for the next whole-second flush while the approach error was returned immediately.
+- `hold_tick_aligned` now flushes any queued updates and the current approach batch together, preserving order so `DoDestinyUpdate` reaches Host before `Approaching` becomes the RPC error. No client wire fields or later in-range second-`CmdDock` behavior changed.
+- Whole-client source checks: `RealDock` invokes bound `CmdDock` at `eve/client/script/ui/services/menuSvcExtras/movementFunctions.py:503-518`; Michelle applies `DoDestinyUpdate` at `eve/client/script/remote/michelle.py:481-512` and forwards batches at `:513-522`; the recording consumer is `eve/client/script/parklife/recorder.py:68-78`. The complete search found no other code consumers. The end-to-end walk asserts the approach error, movement events, rest inside docking range, and the second dock at `tools/headless-client/tests/test_movement.py:100-159`.
+- Local verification on this fix: `cargo +1.94.1 check -p eve-sim`, the focused Rust ordering test (1 passed), `cargo +1.94.1 fmt --all -- --check`, and workspace clippy with warnings denied passed. Post-fix Actions live verification is pending.

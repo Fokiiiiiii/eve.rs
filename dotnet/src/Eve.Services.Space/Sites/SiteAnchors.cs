@@ -1,5 +1,4 @@
 using System.Collections.Concurrent;
-using System.Text.Json;
 using Eve.Sde;
 
 namespace Eve.Services.Space.Sites;
@@ -11,11 +10,11 @@ public interface ISiteAnchors
 }
 
 /// <summary>
-/// The anchors from the static data: the planets, asteroid belts, stations and stargates of the system, in the positions the simulation gives them (not the sun: the reference
+/// The anchors from the static data: the planets and moons, asteroid belts, stations and stargates of the system, in the positions the simulation gives them (not the sun).
 /// </summary>
 public sealed class SdeSiteAnchors(SdeReader sde) : ISiteAnchors
 {
-    private static readonly string[] Tables = ["mapPlanets", "mapAsteroidBelts", "npcStations", "mapStargates"];
+    private static readonly string[] Tables = ["mapPlanets", "mapMoons", "mapAsteroidBelts", "npcStations", "mapStargates"];
     private readonly ConcurrentDictionary<int, Task<IReadOnlyList<SiteAnchor>>> _systems = new();
 
     public Task<IReadOnlyList<SiteAnchor>> OfAsync(int solarSystemId, CancellationToken cancellationToken = default)
@@ -35,10 +34,9 @@ public sealed class SdeSiteAnchors(SdeReader sde) : ISiteAnchors
         {
             foreach (var row in await sde.ReadByFieldAsync(table, "solarSystemID", [solarSystemId]))
             {
-                if (row.Doc.TryGetProperty("position", out var position) && position.ValueKind == JsonValueKind.Object
-                    && position.TryGetProperty("x", out var x) && position.TryGetProperty("y", out var y) && position.TryGetProperty("z", out var z))
+                if (SiteAnchor.FromSdeRow(row) is { } anchor)
                 {
-                    anchors.Add(new SiteAnchor(row.Key, [x.GetDouble(), y.GetDouble(), z.GetDouble()]));
+                    anchors.Add(anchor);
                 }
             }
         }

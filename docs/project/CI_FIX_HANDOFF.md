@@ -484,3 +484,17 @@ CI run 672 on `1669e6dc` failed the structure market Host test because the fixtu
 - Merged the concurrent main updates at `cd0a6029`, retaining the new post-cancel custody check, and pushed the seller hangar expectation correction as `a719eee8`.
 - Focused Agent run 268 (`40052275363`) is checking the inventory RPC regression and `tests/test_market.py` against this head. Push gate run 764 (`40052261614`) is also checking this head. Results are pending.
 - The correction follows the EveJS sell-order flow: after a partial fill, unfilled order stock is in market escrow and cancellation restores it to the structure hangar. No local PostgreSQL test was run.
+
+
+## 2026-10-24 selected Agent run 276 buyer escrow journal expectation
+
+- Agent run 276 (`40052275363`) on `a719eee8` passed `Eve.Services.Inventory.Tests` (1 passed, 0 failed, 0 skipped), then passed the seller-hangar and active escrow quantity assertions in `test_docked_corporation_members_trade_at_an_eligible_upwell_structure`. It failed the buyer journal assertion: the standing bid recorded `(42, -100)` for market escrow, not the test's expected `(2, -100)` market transaction.
+- EveJS v0.12.9 `executeBuyRequest` debits the standing bid's remaining reserve as `JOURNAL_ENTRY_TYPE.MARKET_ESCROW`; eve.rs likewise keeps the bid funds in escrow. The live test now checks the escrow reference because the seller's fill consumes that already-funded order, without a second purchase debit. The next focused Agent run and latest-main gate will verify this correction.
+- The current main gate run 767 (`40052865670`) on `e0765b6c` was still active when this note was written. No local PostgreSQL test was run.
+
+
+## 2026-10-24 push 4307511c buyer escrow journal assertion correction
+
+- The focused rerun on `a719eee8` confirmed the new seller custody and escrow assertions, then exposed that the live walk expected a trade journal entry for a standing bid. The buyer had already funded the bid; EveJS and eve.rs record the `-100` reserve as market escrow reference type 42. The test now checks that journal entry.
+- Merged the concurrent `7956ef36` change, retaining its escrow and Host RPC count checks, and pushed the combined update as `4307511c`.
+- Focused Agent run `40053243687` and push gate run 769 (`40053234501`) are checking this head. Parent gate run 768 (`40053191315`) on `7956ef36` is also active. No local PostgreSQL test was run.

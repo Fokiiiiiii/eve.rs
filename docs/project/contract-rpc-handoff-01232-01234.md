@@ -20,4 +20,4 @@ EveJS v0.12.9 server/src/services/_other/contractProxyService.js implements Sear
 
 ## Verification and remaining checks
 
-Local checks passed: Eve.Host.Tests and Eve.Services.Core.Tests build with zero warnings/errors; the focused registered-Host PlaceBid wire test passed (1 passed, 0 skipped). The other two new Host wire cases are queued for the selected GitHub Actions run after push. No PostgreSQL database was used, per task constraints. Real graphical-client acceptance was not performed.
+Local checks passed: Eve.Host.Tests and Eve.Services.Core.Tests build with zero warnings/errors; focused registered-Host PlaceBid and SearchContracts wire tests passed individually (each 1 passed, 0 skipped). The initial selected Actions run had an incorrect class-name filter (zero tests); the corrected run executed all three new wire cases and exposed a test-only bytes-key assertion, which is fixed in commit 3cdc9827 and pushed in 062ede32. The corrected post-fix Actions run is pending. No PostgreSQL database was used, per task constraints. Real graphical-client acceptance was not performed.

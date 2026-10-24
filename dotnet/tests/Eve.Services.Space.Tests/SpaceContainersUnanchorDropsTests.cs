@@ -192,7 +192,8 @@ public sealed class SpaceContainersUnanchorDropsTests
         await rig.BindShipInSpaceAsync(session);
         var system = checked((int)session.GetInt("solarsystemid")!.Value);
         var shipId = session.GetInt("shipid")!.Value;
-        var pilot = (await rig.Characters.GetAsync(character.CharacterId))!;
+        var pilot = await rig.Ships.CharacterAsync(character.CharacterId);
+        Assert.NotNull(pilot);
 
         var hullType = rig.Statics.Type(Astrahus)!;
         var marker = StructureUnanchorDrop.HullMarker(StructureId);

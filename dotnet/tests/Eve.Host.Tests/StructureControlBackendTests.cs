@@ -412,15 +412,15 @@ public sealed class StructureControlBackendTests
     }
 
     /// <summary>
-    /// The return to the pilot's own ship after a boarding from space: if that ship is within boarding range, it is restored.
+    /// Ejection restores the pilot's original ship; it is not a second boarding action and does not check distance to the structure.
     /// </summary>
     [PgFact]
-    public async Task A_ship_boarded_from_space_returns_to_its_pilot_from_the_place_it_boarded_at()
+    public async Task A_ship_boarded_from_space_returns_to_its_pilot_when_near_the_structure()
     {
         await using var f = await Fixture.CreateAsync(withSpaceItems: true);
         var session = await f.FlyingSessionAsync(40);
         var ship = session.GetInt("shipid")!.Value;
-        // 2 000 m of surface from the Astrahus (radius 45 000 m) and the ship (50 m)
+        // 2 000 m of surface from the Astrahus; the simulation stops reporting positions after boarding.
         f.Sim.PositionAnswer = [45_000d + 50d + 2_000d, 0d, 0d];
         await f.Backend.BoardStructureAsync(f.Call(session), Structure);
         Assert.Equal(Structure, session.GetInt("structureid"));
@@ -456,17 +456,4 @@ public sealed class StructureControlBackendTests
         Assert.Equal(ship, session.GetInt("shipid"));
     }
 
-    /// <summary>Every text inside a wrapped error's payload, joined (the refusal's words).</summary>
-    private static string Texts(PyValue value) => value switch
-    {
-        PyStr text => text.Value,
-        PyWString text => text.Value,
-        PyBytes text => global::System.Text.Encoding.UTF8.GetString(text.Value.Span),
-        PyTuple tuple => string.Join("|", tuple.Items.Select(Texts)),
-        PyList list => string.Join("|", list.Items.Select(Texts)),
-        PyDict dict => string.Join("|", dict.Entries.SelectMany(entry => new[] { Texts(entry.Key), Texts(entry.Value) })),
-        PyObjectEx ex => string.Join("|", new[] { Texts(ex.Header) }.Concat(ex.List.Select(Texts)).Concat(ex.Dict.SelectMany(entry => new[] { Texts(entry.Key), Texts(entry.Value) }))),
-        PyObject obj => Texts(obj.Args),
-        _ => "",
-    };
 }

@@ -747,3 +747,11 @@ Regression tests added: `DungeonWaveTests.A_system_owned_wave_waits_until_a_pilo
 
 - Selected Agent run 470 (`40102696909`, SHA `2856a206`) failed `Eve.Host.Tests.RpcSecurityInventoryTests.Real_host_registry_methods_are_enumerable`: expected 1394 registered methods and found 1396 at `dotnet/tests/Eve.Host.Tests/RpcSecurityInventoryTests.cs:90`. The expected inventory is now 1396.
 - The changed Host test project compiles locally with zero warnings and errors. The focused Agent regression check will run against the pushed change. The current push gates are still in progress; no three-green sequence has been reached.
+
+
+## 2026-10-24 RPC inventory push status
+
+- Commit `187b7c0e` is on main with the Host RPC inventory expectation set to 1396. Its first push attempt raced another main update; the branch was fetched and merged again, then the push succeeded.
+- Focused Agent run 477 (`40105045416`) is checking `RpcSecurityInventoryTests.Real_host_registry_methods_are_enumerable` against the pushed change.
+- Push gate run 872 (`40104524389`, SHA `1686b316`) and newer run 873 (`40104855348`, SHA `e7ba3843`) remain in progress. Run 873 includes commit `187b7c0e`; its E2E result is still pending. There is no three-green sequence yet.
+- The changed contract read-model test now expects the real issuer corporation, assignee, and contract type values. The V24.01 client reads the login reply at `eve/client/script/ui/shared/neocom/contracts/contracts.py:190-198`, and the contract panel consumes issuer, assignee and type at `eve/client/script/ui/shared/neocom/contracts/contractPanels.py:90-98`; the detail window checks personal assignee at `contractsDetailsWnd.py:94`.

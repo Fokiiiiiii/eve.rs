@@ -440,7 +440,9 @@ CI run 672 on `1669e6dc` failed the structure market Host test because the fixtu
 - The CI log parser now extracts pytest's `FAILED path::test_name` heading when a summary table is missing. Focused regression `FailureParsingTests.test_pytest_failure_heading_without_summary_name` passed locally.
 - The focused Actions rerun and push-triggered gate for the merged helper and log parser are pending. No local PostgreSQL database was used.
 
-## 2026-10-24 CI run 749 parser follow-up
 
-- Push gate run 749 on `30dcbf9d` failed the Python client step `Test CI status output parsing`. The added pytest heading fallback also returned a short test name when the same log already contained the full `FAILED path::test_name` summary; the existing `FailureParsingTests.test_pytest_failure_name_and_section_tail` assertion covers this case.
-- The parser now returns heading names only when no structured failure name was found. Run 749's other jobs were still active; the next push gate will verify the fix and Upwell docking flow.
+## 2026-10-24 CI run 749 failure-output parser correction
+
+- Run 749 on `30dcbf9d` failed `FailureParsingTests.test_pytest_failure_name_and_section_tail`: the parser returned both pytest's bare failure heading (`test_character_walk`) and its qualified summary node (`tests/test_walk.py::test_character_walk`), while the focused assertion expects the qualified node only.
+- `parse_test_failures` now drops a bare name when a matching `::`-qualified name is present. The heading-only fallback remains covered by `test_pytest_failure_heading_without_summary_name`.
+- The focused failure-parsing test passes locally. The push-triggered CI result for this correction is pending; no database tests were run.

@@ -119,7 +119,9 @@ def parse_test_failures(text: str) -> list[str]:
                 if name and name not in target:
                     target.append(name)
                 break
-    return names or headings
+    summary_names = {name.rsplit("::", 1)[-1] for name in names if "::" in name}
+    names = [name for name in names if name not in summary_names]
+    return names + [name for name in headings if name not in summary_names and name not in names]
 
 
 def failure_log_tail(text: str, test_name: str) -> list[str]:

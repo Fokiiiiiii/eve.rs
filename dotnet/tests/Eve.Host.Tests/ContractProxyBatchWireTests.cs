@@ -54,7 +54,9 @@ public partial class HostServerTests
         Assert.Equal(new PyInt(1), page["numBiddingOnCorp"]);
         Assert.Equal(new PyInt(2), page["numRequiresAttention"]);
         Assert.Equal(new PyInt(1), page["numRequiresAttentionCorp"]);
-        Assert.IsType<PyList>(page["outstandingContracts"]);
+        var assignments = Assert.IsType<PyList>(page["outstandingContracts"]);
+        Assert.Equal([new PyInt(42), new PyInt(84), new PyInt(42), new PyInt(1)],
+            Assert.IsType<PyTuple>(Assert.Single(assignments.Items)).Items);
 
         var login = Fields(Assert.IsType<PyObject>(await Rpc(3, "GetLoginInfo")));
         Assert.Equal(new[] { "assignedToMe", "inProgress", "needsAttention" }, login.Keys.Order().ToArray());
@@ -170,9 +172,10 @@ public partial class HostServerTests
         public ValueTask<ContractLoginInfo> GetLoginInfoAsync(
             long characterId, long corporationId, long allianceId, long nowFileTime, CancellationToken cancellationToken) =>
             ValueTask.FromResult(new ContractLoginInfo(
-                [new ContractNeedsAttentionRow(1001, 1)],
+                [new ContractNeedsAttentionRow(1001, 0), new ContractNeedsAttentionRow(1002, 0),
+                    new ContractNeedsAttentionRow(1003, 1)],
                 [new ContractInProgressRow(1002, 3001, 3002, 9876543210123456)],
-                [new ContractAssignedToMeRow(1003, characterId)]));
+                [new ContractAssignedToMeRow(1003, characterId, corporationId, characterId, 1)]));
 
         public ValueTask<ContractEscrowSummary> GetMyContractEscrowAsync(
             long characterId, long corporationId, CancellationToken cancellationToken) =>

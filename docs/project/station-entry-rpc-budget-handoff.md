@@ -19,4 +19,6 @@ PacketDispatcher now charges contractProxy and corpRegistry/corporation against 
 - The original /home/user/wt-cx12 tree had staged/conflicted Skyhook work. It remains untouched; implementation is isolated in /home/user/wt-cx12-rpcbudget.
 
 ## Push / Actions
-Pending.
+- Implementation commit `af9cd4029eaead6064f7c95cb2e3e91a309cd812` was pushed to `main` after fetching and merging `origin/main` (already up to date).
+- Focused Actions run 40069789991 passed with no failed tests or jobs.
+- Push-triggered `ci.yml` run 40069784822 was still in progress at the latest check; `ci-status.py failures af9cd402` reported no failures while it ran.

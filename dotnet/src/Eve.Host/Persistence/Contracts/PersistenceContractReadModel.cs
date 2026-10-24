@@ -140,7 +140,7 @@ public sealed class PersistenceContractReadModel : IContractReadModel
         await using var command = new NpgsqlCommand($"""
             SELECT contract_id, issuer_id, issuer_corporation_id, is_corporation_issued,
                    acceptor_id, assignee_id, status, start_station_id, end_station_id,
-                   date_accepted_filetime, date_expired_filetime, num_days
+                   date_accepted_filetime, date_expired_filetime, num_days, contract_type
             FROM {_schema}.contract_records
             WHERE (status IN ($4, $5) AND
                    (issuer_id = $1 OR acceptor_id = $1 OR acceptor_id = $2 OR
@@ -195,7 +195,8 @@ public sealed class PersistenceContractReadModel : IContractReadModel
 
             if (status == Outstanding && dateExpired >= nowFileTime &&
                 (assigneeId == characterId || assigneeId == corporationId || allianceId > 0 && assigneeId == allianceId))
-                assigned.Add(new ContractAssignedToMeRow(contractId, issuerId));
+                assigned.Add(new ContractAssignedToMeRow(contractId, issuerId,
+                    issuerCorporationId, assigneeId, reader.GetInt16(12)));
         }
 
         return new ContractLoginInfo(attention, inProgress, assigned);

@@ -32,8 +32,8 @@ EveJS v0.12.9 `server/src/services/character/charMgrService.js:372-421` construc
 
 ## Checks
 
-- The changed `Eve.Services.CharacterInfo` project compiled successfully during the Host test project build.
-- The full Host test project build was canceled after 1 hour 26 minutes because the shared compiler queue remained saturated; it reported no source errors before cancellation.
-- No PostgreSQL database was used.
-- Actions runs 40083584812 and 40084094637 found compile errors, both fixed. Run 40084479836 compiled but the test expected PyStr where Macho decoding returns PyBytes; assertions now compare decoded string values. A focused rerun is pending.
+- Focused Actions run 40085613135 passed `Char_mgr_get_public_info_returns_client_keyval_through_host_with_macho_version`; no tests failed in the selected test step. The workflow's headless-client installation step was skipped because `--live ''` was requested.
+- Earlier focused Actions runs 40083584812, 40084094637, 40084479836, and 40085144852 exposed compile/assertion issues; each root cause was fixed and the final run passed.
+- `python3 tools/dev/ci-status.py failures af72d4de` found no push-triggered `ci.yml` run for this SHA.
+- The changed `Eve.Host.Tests` project did not finish compiling locally: after 1 hour 26 minutes, the build was canceled under shared-machine load. No PostgreSQL database was used.
 - Graphical-client verification was not performed.

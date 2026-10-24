@@ -247,6 +247,55 @@ public sealed class DungeonWaveTests
     }
 
     [PgFact]
+    public async Task A_system_owned_wave_waits_until_a_pilot_loads_its_scene()
+    {
+        await using var rig = await WaveRig.CreateAsync();
+        rig.Spawner.Present = false;
+
+        var start = await rig.Director.StartForSystemAsync(SystemId, Origin, 2173, "incursion:test", DungeonWaveDirector.Lifetime);
+        Assert.True(start.Started, start.Refusal);
+
+        await rig.RunDueAndDeliverAsync();
+        Assert.Empty(rig.Spawner.Batches);
+        Assert.Single(await rig.Content.ActiveByKindAsync(DungeonWaveDirector.Kind));
+        Assert.Empty(rig.Completions);
+
+        rig.Spawner.Present = true;
+        rig.Advance(TimeSpan.FromSeconds(15));
+        await rig.RunDueAndDeliverAsync();
+
+        Assert.Single(rig.Spawner.Batches);
+        Assert.NotEmpty(Assert.Single(rig.Spawner.Batches).Ships);
+        Assert.Single(await rig.Content.ActiveByKindAsync(DungeonWaveDirector.Kind));
+        Assert.Empty(rig.Completions);
+    }
+
+    [PgFact]
+    public async Task A_scene_disappearing_during_a_wave_retries_and_removes_any_partial_spawn()
+    {
+        await using var rig = await WaveRig.CreateAsync();
+        Assert.True((await rig.Director.StartForSystemAsync(SystemId, Origin, 2173, "incursion:scene-race", DungeonWaveDirector.Lifetime)).Started);
+        rig.Spawner.SceneUnavailable = true;
+
+        await rig.RunDueAndDeliverAsync();
+
+        var refused = Assert.Single(rig.Spawner.Batches).Ships;
+        Assert.Single(rig.Spawner.Removed);
+        Assert.Equal(refused, rig.Spawner.Removed);
+        Assert.Empty(rig.Completions);
+        Assert.Single(await rig.Content.ActiveByKindAsync(DungeonWaveDirector.Kind));
+
+        rig.Spawner.SceneUnavailable = false;
+        rig.Advance(TimeSpan.FromSeconds(15));
+        await rig.RunDueAndDeliverAsync();
+
+        Assert.Equal(2, rig.Spawner.Batches.Count);
+        Assert.NotEmpty(rig.Spawner.Batches[1].Ships);
+        Assert.Empty(rig.Completions);
+        Assert.Single(await rig.Content.ActiveByKindAsync(DungeonWaveDirector.Kind));
+    }
+
+    [PgFact]
     public async Task A_pilot_who_leaves_after_a_wave_came_has_that_wave_taken_out_by_the_sweep()
     {
         await using var rig = await WaveRig.CreateAsync();
@@ -343,16 +392,26 @@ public sealed class DungeonWaveTests
         /// <summary>When set, each wave gets at most this many NPCs from the simulation.</summary>
         public int? MakeAtMost { get; set; }
 
+        public bool SceneUnavailable { get; set; }
+
         public Task<DungeonSpawnResult> SpawnAsync(int solarSystemId, double[] origin, NpcSelection selection, int amount, CancellationToken cancellationToken)
         {
             lock (_gate)
             {
+                if (SceneUnavailable)
+                {
+                    var partial = new[] { ++_next };
+                    Batches.Add((amount, selection.Name, partial));
+                    return Task.FromResult(new DungeonSpawnResult(partial, "NO_SCENE", SceneUnavailable: true));
+                }
                 var count = MakeAtMost is { } limit ? Math.Min(limit, amount) : amount;
                 var ships = Enumerable.Range(0, count).Select(_ => ++_next).ToList();
                 Batches.Add((amount, selection.Name, ships));
                 return Task.FromResult(new DungeonSpawnResult(ships, count < amount ? "the simulation refused the rest" : null));
             }
         }
+
+        public bool HasPilotsInSystem(int solarSystemId) => Present;
 
         public bool IsPilotInSystem(long characterId, int solarSystemId) => Present;
 

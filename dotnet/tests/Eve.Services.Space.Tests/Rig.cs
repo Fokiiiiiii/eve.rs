@@ -97,8 +97,7 @@ internal sealed class SentLog : IEnumerable<PyValue>
 }
 
 /// <summary>Real stores in throwaway schemas, the real static data, a character made the way the game makes one, and a simulation played by the test.</summary>
-internal sealed class Rig : IAsyncDisposable
-{
+internal sealed class Rig : IAsyncDisposable{
     public static readonly string? Url = Environment.GetEnvironmentVariable("EVE_PG_URL");
 
     public const long ClockMs = 1_700_000_000_123;
@@ -197,7 +196,6 @@ private readonly Dictionary<long, ClientSession> _fleetSessions = new();
     public ServiceRegistry Registry { get; } = new();
 
     public List<string> Log { get; } = [];
-
     public NpgsqlDataSource Source { get; }
 
     public PgCharacterStore Characters { get; }
@@ -297,8 +295,7 @@ private readonly Dictionary<long, ClientSession> _fleetSessions = new();
                     wing_id bigint NOT NULL DEFAULT -1,
                     squad_id bigint NOT NULL DEFAULT -1,
                     role smallint NOT NULL CHECK (role BETWEEN 1 AND 4),
-                    job smallint NOT NULL DEFAULT 0,
-                    joined_at timestamptz NOT NULL DEFAULT now(),
+                    job smallint NOT NULL DEFAULT 0,                    joined_at timestamptz NOT NULL DEFAULT now(),
                     PRIMARY KEY (fleet_id, character_id)
                 );
                 CREATE TABLE fleet_wings (
@@ -397,8 +394,7 @@ private readonly Dictionary<long, ClientSession> _fleetSessions = new();
         await Statics.EnsureTypesAsync([Cockroach, 21857, 3638, 3651]);
         var made = await Creation.CreateAsync(new CreationRequest(account, name, 1, 1, 1, 10, 35, [1], [2]));
         var character = Assert.IsType<Created>(made);
-        if (shipTypeId != Cockroach)
-        {
+        if (shipTypeId != Cockroach)        {
             var replacement = (await Ships.GrantAsync(character.CharacterId, shipTypeId, 1, singleton: true))!.Single().After;
             await using var connection = await Source.OpenConnectionAsync();
             await using var transaction = await connection.BeginTransactionAsync();
@@ -440,6 +436,21 @@ private readonly Dictionary<long, ClientSession> _fleetSessions = new();
 
     private async Task<PyValue> CallAsync(IService service, ClientSession session, string method, string? bound, PyValue[] args) =>
         await service.CallAsync(new ServiceCall { Method = method, Args = args, Session = session, CallId = new PyInt(1), BoundObjectId = bound });
+
+    public async Task<PyValue> RegisteredCallAsync(ClientSession session, string serviceOrBoundObject, string method, params PyValue[] args)
+    {
+        var service = Registry.Lookup(serviceOrBoundObject)
+            ?? throw new InvalidOperationException($"The Host registry has no service or bound object '{serviceOrBoundObject}'.");
+        var bound = Registry.BoundObjects.ContainsKey(serviceOrBoundObject) ? serviceOrBoundObject : null;
+        return await service.CallAsync(new ServiceCall
+        {
+            Method = method,
+            Args = args,
+            Session = session,
+            CallId = new PyInt(1),
+            BoundObjectId = bound,
+        });
+    }
 
     public Task<PyValue> ShipCallAsync(ClientSession session, string method, string? bound = null, params PyValue[] args) => CallAsync(Ship, session, method, bound, args);
 
@@ -498,7 +509,6 @@ private readonly Dictionary<long, ClientSession> _fleetSessions = new();
 
     public static string OidOf(PyValue bound) =>
         JsSemantics.StringValue(((PyTuple)((PySubStream)((PySubStruct)bound).Value).Decoded!).Items[0])!;
-
     /// <summary>Waits for what a background task of the host does (a docking is finished off the thread the simulation spoke on).</summary>
     public static async Task UntilAsync(Func<bool> condition)
     {

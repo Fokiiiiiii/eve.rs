@@ -15,12 +15,14 @@ The gate-arrival owner is `dotnet/src/Eve.Services.Space/SpaceSessions.Movement.
 - Host regression checks session packet and state, the `MachoBindObject` tuple response, and destination `DoDestinyUpdate` after bind.
 - Slow headless `test_jump.py` checks the destination session snapshot, bind response, notifications, and destination scene/state against EveJS. `tools/dev/agent-test.py` supports selecting it with `slow:test_jump.py`.
 - Rust simulation keeps the matching `Jumping` result with its held `DoDestinyUpdate`, so the Host emits the queue notification after jump FX.
-- `TestFront.Packets.CallWithKwargs` now supports the concurrent CharMgr wire test while retaining the existing `Call` behavior.
+- The concurrent CharMgr host test adds `Packets.CallWithKwargs`; duplicate definitions introduced by merging the concurrent change have been removed.
 
 ## Verification
 
 - Local Host session-change regression passed earlier: 1 passed, 0 skipped. Local Space build later exited when Roslyn `csc` returned 137 under shared resource pressure; no local database was used. Local Rust package fmt passed; workspace checks are blocked by the nine inherited deletions.
 - Actions Host session-change `40083151979` passed (1, 0 skipped); Space jump-state `40083365205` passed. Rust 1.94.1 format/clippy/tests, .NET build, Windows headless live-client and other jobs passed in push run `40082922998`; its Host shard failed an unrelated wallet test fixture, subsequently fixed upstream.
-- On `9349cae6`, required Host `40084107903`, Space `40084118944`, and wallet `40084131964` failed during solution build because `CharMgrPublicInfoHostTests.cs:53` called the missing `Packets.CallWithKwargs`. That helper has now been added in current main; the three test filters need rerunning on the new SHA.
-- Slow live jump walk `40084153623` is still running. Earlier walk `40077070295` crossed systems and reported no mismatch in session snapshot, bind result, notification order, or destination scene/state, but failed the earlier warp update comparison and rest timing. No graphical V24.01 UI exception log was captured; the Windows workflow uses a headless client.
-- No ci.yml run was found for `81852f14`. Inspect push CI for the new SHA after pushing.
+- On `9349cae6`, Host `40084107903`, Space `40084118944`, and wallet `40084131964` failed compilation because `CharMgrPublicInfoHostTests.cs:53` called the then-missing `Packets.CallWithKwargs`.
+- On `6fd08e75`, Host `40085095316`, Space `40085093681`, and wallet `40085094182` failed compilation because the helper was defined twice. Slow walk `40085095367` also failed: compilation found that duplicate, and the live walk reported only warp mismatches (empty first update vs `SetMaxSpeed/WarpTo/OnSpecialFX/SetSpeedFraction`; rest at 86.49s vs 82.86s). It reached the destination; session snapshot, rebind result, notification order, and destination scene/state comparisons had no mismatch.
+- Required Host filter `40085594981` on `9e5e367a` passed (1 passed, 0 skipped). Space jump-state `40086026809` and slow headless jump `40086040972` on the same SHA are running.
+- Push CI `40085139075` on `0fff3636` passed Rust 1.94.1 fmt/clippy/tests, Python and fixture checks; .NET build failed on the duplicate helper, now removed. The End-to-end and Windows jobs were still pending at last check. No ci.yml run was found for `9e5e367a`.
+- No graphical V24.01 UI exception log was captured. The Windows workflow uses a headless client.

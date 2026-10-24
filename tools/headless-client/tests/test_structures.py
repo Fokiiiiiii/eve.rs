@@ -498,7 +498,10 @@ def test_a_director_anchors_an_astrahus_from_its_ship_in_a_legal_system_and_the_
         client.call_bound(ballpark[0], "UpdateStateRequest")
         timed_events(client, 2.0)
         x, y, z = LEGAL_STATION_POSITION
-        client.call_bound(ballpark[0], "CmdWarpToStuff", "position", (x + WARP_OFF, y, z), minRange=0)
+        try:
+            client.call_bound(ballpark[0], "CmdWarpToStuff", "position", (x + WARP_OFF, y, z), minRange=0)
+        except p.MachoError as failure:
+            pytest.fail(f"the warp was refused: {_refusal(failure)[0]}: {describe(failure.payload)}")
         item = dbseed.new_item(ASTRAHUS, owner=character, location=ship_id, flag=CARGO_FLAG, singleton=True)
         deadline = time.time() + 300
         while True:

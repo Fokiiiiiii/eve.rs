@@ -105,6 +105,7 @@ def parse_test_failures(text: str) -> list[str]:
         re.compile(r"^\s*test\s+(.+?)\s+\.\.\.\s+FAILED\s*$"),
         re.compile(r"^----\s+(.+?)\s+stdout ----\s*$"),
         re.compile(r"^\s*FAIL:\s*(.+?)\s*$"),
+        re.compile(r"^\s*_{3,}\s+(.+?)\s+_{3,}\s*$"),
     )
     names = []
     for raw_line in text.splitlines():

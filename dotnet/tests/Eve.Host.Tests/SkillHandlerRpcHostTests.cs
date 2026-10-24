@@ -43,12 +43,23 @@ public partial class HostServerTests
             new KeyValuePair<PyValue, PyValue>(new PyStr("machoVersion"), new PyInt(1)),
         ]);
         long callId = 0;
+        var notifications = new List<string>();
 
         async Task<PyValue> Call(string service, string method, params PyValue[] args)
         {
             await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(
                 Packets.CallWithKwargs(open, ++callId, service, method, new PyTuple(args), kwargs))));
-            return MarshalCodec.Decode(Assert.IsType<Send>(await front.ReceiveAsync()).Payload);
+            while (true)
+            {
+                var decoded = MarshalCodec.Decode(Assert.IsType<Send>(await front.ReceiveAsync()).Payload);
+                var packet = MachoPacket.Decode(decoded);
+                if (packet?.Type == MachoMessage.Notification)
+                {
+                    notifications.Add(packet.Dest.BroadcastId ?? string.Empty);
+                    continue;
+                }
+                return decoded;
+            }
         }
 
         var moniker = Assert.IsType<PyObject>(Result(await Call("skillMgr2", "GetMySkillHandler")));
@@ -104,6 +115,8 @@ public partial class HostServerTests
 
         Assert.Equal(new PyInt(900_000), Result(await Call("skillHandler", "InjectSkillpoints",
             new PyLong(injectorId), new PyInt(2))));
+        Assert.Equal(["OnItemChange", "OnFreeSkillPointsChanged"], notifications);
+        notifications.Clear();
         Assert.Equal(5_401_000, await skills.FreeSkillPointsAsync(character));
         Assert.Null(await items.GetAsync(injectorId));
 

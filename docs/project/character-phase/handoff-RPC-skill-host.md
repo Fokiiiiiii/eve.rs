@@ -37,7 +37,7 @@ Production construction is dotnet/src/Eve.Host/Composition/CharacterComposition.
 
 Tests:
 - SkillMgr2HostWireTests.Skill_mgr2_returns_its_bound_skill_handler_moniker_over_the_host_route: socket Host route and machoVersion.
-- SkillHandlerRpcHostTests.Skill_manager_reads_and_injector_mutations_use_the_composed_host_routes: socket calls against the production-composed services; checks read shapes, 50-result history argument, two-injector preview and mutation, persisted free SP/item changes, and valid split output.
+- SkillHandlerRpcHostTests.Skill_manager_reads_and_injector_mutations_use_the_composed_host_routes: socket calls against the production-composed services; checks read shapes, 50-result history argument, two-injector preview and mutation, notification order, persisted free SP/item changes, and valid split output.
 - Existing CharacterHostTests.Skill_injector_applies_sequential_awards_and_persists_points_and_inventory_through_host additionally checks notification order and restart persistence through the composed registry.
 
-The no-database focused socket test passed locally. The composed-host regression requires the Actions PostgreSQL fixture and is dispatched there. No graphical-client run was performed.
+The test project builds locally and the no-database focused socket test passed. The first Actions run exposed that injector notifications arrive before the RPC reply; the socket reader now consumes and checks that wire order. The updated composed-host regression is queued for Actions. No graphical-client run was performed.

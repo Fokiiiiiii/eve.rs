@@ -28,7 +28,7 @@ def test_bound_agent_moniker_courier_queries_and_offer_removal():
         first, second = candidates[:2]
         for agent in (first, second):
             seed_agent_standing(client, agent["corporationID"], character_id)
-            seed_personal_standing(client, agent, character_id)
+            seed_personal_standing(client, agent["agentID"], character_id)
 
         first_handle = client.call("agentMgr", "MachoBindObject", first["agentID"])
         _, actions, _ = do_action(client, first_handle, REQUEST)

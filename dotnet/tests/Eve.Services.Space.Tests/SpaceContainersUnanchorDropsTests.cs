@@ -198,7 +198,7 @@ public sealed class SpaceContainersUnanchorDropsTests
         var hullId = await AddDropAsync(rig, system, StructureId, Astrahus, marker,
             "Mismatched owner Astrahus", hullType.GroupId, hullType, character.CharacterId);
         var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            rig.Ships.ScoopSpaceArtifactAsync(character.CharacterId, session.GetInt("corpid")!.Value, false,
+            rig.Ships.ScoopSpaceArtifactAsync(character.CharacterId, CorporationId, false,
                 shipId, system, hullId, marker, rig.SpaceItems));
 
         Assert.Contains("custody record", error.Message, StringComparison.Ordinal);

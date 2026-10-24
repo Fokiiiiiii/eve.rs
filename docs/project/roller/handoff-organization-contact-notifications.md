@@ -83,3 +83,8 @@ Push CI run `40041988259` completed. The focused service regressions and all Hos
 - Local focused AgentMission regression passed 1/1 without a database.
 - Local Host.Tests build after merging `486812c1` passed with 0 warnings and 0 errors.
 - New Actions verification for the updated RPC inventory expectation has not started yet; No graphical-client verification was performed.
+
+
+## Inventory follow-up (2026-10-24)
+
+Main commit `486812c1` was merged before this correction. The Host inventory assertion now expects the observed 1382 registered RPC routes instead of 1378. Local `Eve.Host.Tests` build passed with 0 warnings and 0 errors. Actions run `40043761052` covers the updated inventory regression plus the bookmark, contact and mission keyword regressions; push CI run `40043754414` is active. Their results are pending. No local PostgreSQL tests were run.

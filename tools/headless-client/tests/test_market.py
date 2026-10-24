@@ -236,7 +236,7 @@ def test_docked_corporation_members_trade_at_an_eligible_upwell_structure():
         assert all(_number(_field(row, "locationID")) == structure_id for row in bought + sold)
 
         assert dbseed.quantity_at(buyer_character, structure_id, TRITANIUM) == 2
-        # The remaining sell-order stock stays in market escrow until cancellation.
+        # The unfilled seller quantity remains in order escrow until cancellation returns it.
         assert dbseed.quantity_at(seller_character, structure_id, TRITANIUM) == 0
         buyer_hangar = [row for row in _station_hangar_items(buyer, structure_id) if _field(row, "typeID") == TRITANIUM]
         seller_hangar = [row for row in _station_hangar_items(seller, structure_id) if _field(row, "typeID") == TRITANIUM]

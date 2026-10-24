@@ -39,6 +39,54 @@ public sealed class ContractProxyServiceTests
     }
 
     [Fact]
+    public async Task Public_contract_search_forwards_client_filters_and_returns_search_entries()
+    {
+        var readModel = new RecordingReadModel();
+        var service = new ContractProxyService(readModel,
+            readCurrentOrganizationIds: (_, _) => ValueTask.FromResult((84L, 126L)));
+        var response = Assert.IsType<PyObject>(await service.SearchContracts(new ServiceCall
+        {
+            Method = "SearchContracts",
+            Args = [],
+            Kwargs = Eve.Services.Py.Dict(
+                ("availability", new PyInt(0)),
+                ("contractType", new PyInt(10)),
+                ("locationID", new PyLong(30000001)),
+                ("issuerID", new PyInt(200)),
+                ("minPrice", new PyReal(100)),
+                ("description", new PyStr("blueprint")),
+                ("itemTypes", PyValue.PythonSet([new PyInt(34)])),
+                ("securityClasses", PyValue.PythonSet([new PyInt(0), new PyInt(2)])),
+                ("sortBy", new PyInt(1)),
+                ("sortDir", new PyInt(1)),
+                ("startNum", new PyInt(100))),
+            Session = new ClientSession { CharacterId = 42 },
+        }));
+
+        Assert.True(readModel.NowFileTime > 0);
+        var query = Assert.IsType<ContractSearchQuery>(readModel.SearchQuery);
+        Assert.Equal((42L, 84L, 126L, 0), (query.CharacterId, query.CorporationId, query.AllianceId, query.Availability));
+        Assert.Equal((10, 30000001L, 200L), (query.ContractType, query.LocationId, query.IssuerId));
+        Assert.Equal(100m, query.MinPrice);
+        Assert.Equal("blueprint", query.Description);
+        Assert.Equal(new[] { 34 }, query.ItemTypeIds);
+        Assert.Equal(new[] { 0, 2 }, query.SecurityClasses);
+        Assert.Equal((1, 1, true, 100), (query.SortBy, query.SortDirection, query.HasExplicitSortBy, query.StartNum));
+
+        Assert.Equal(new PyInt(1), Value(response, "numFound"));
+        Assert.Equal(new PyInt(1000), Value(response, "maxResults"));
+        Assert.Equal(new PyLong(5000000), Value(response, "searchTime"));
+        var result = Assert.Single(Assert.IsType<PyList>(Value(response, "contracts")).Items);
+        var contract = Assert.IsType<PyObject>(Value(Assert.IsType<PyObject>(result), "contract"));
+        Assert.Equal(new PyInt(1234), Value(contract, "contractID"));
+        Assert.Equal(new PyInt(30000001), Value(contract, "startSolarSystemID"));
+        Assert.Equal(new PyInt(4), Value(contract, "startStationDivision"));
+        Assert.Equal(new PyInt(1000), Value(contract, "issuerWalletKey"));
+        Assert.Equal(new PyStr("Solar System"), Value(Assert.IsType<PyObject>(result), "startSolarSystemName"));
+        Assert.IsType<PyObjectEx>(Value(Assert.IsType<PyObject>(result), "itemTypes"));
+    }
+
+    [Fact]
     public async Task Escrow_read_uses_the_persisted_summary()
     {
         var model = new RecordingReadModel();
@@ -551,6 +599,7 @@ public sealed class ContractProxyServiceTests
         public int OwnerStatus { get; private set; }
         public int OwnerPageSize { get; private set; }
         public long? OwnerStartContractId { get; private set; }
+        public ContractSearchQuery? SearchQuery { get; private set; }
 
         public ValueTask<ContractLoginInfo> GetLoginInfoAsync(
             long characterId, long corporationId, long allianceId, long nowFileTime, CancellationToken cancellationToken)
@@ -593,6 +642,18 @@ public sealed class ContractProxyServiceTests
             OwnerPageSize = pageSize;
             OwnerStartContractId = startContractId;
             return ValueTask.FromResult(new ContractReadBundle([Contract()]));
+        }
+
+        public ValueTask<ContractSearchResult> SearchContractsAsync(
+            ContractSearchQuery query, long nowFileTime, CancellationToken cancellationToken)
+        {
+            SearchQuery = query;
+            NowFileTime = nowFileTime;
+            var contract = Contract();
+            var entry = new ContractSearchEntry(
+                contract, 30000001, 20000001, 10000001, 30000002, 20000002, 10000002,
+                "Solar System", "Destination", 4, 1000, 1001, 25d, [34], [5], [6]);
+            return ValueTask.FromResult(new ContractSearchResult([entry], 1, 5_000_000));
         }
 
 public ValueTask<ContractReadBundle> GetMyCurrentContractListAsync(

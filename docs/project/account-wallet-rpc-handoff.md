@@ -4,7 +4,7 @@
 
 Rows RPC-00733–RPC-00738 all resolve to the already implemented `account` service methods. The gap was end-to-end Host wire regression coverage. Added `dotnet/tests/Eve.Host.Tests/AccountWalletHostRpcTests.cs`: it registers the production `AccountService` in `ServiceRegistry`, dispatches marshalled `Packets.Call` requests through `PacketDispatcher`, and uses persisted PostgreSQL stores and the production `WalletAnnouncer`. It checks the three RPC methods, response values/types, resulting balances, committed transaction changes, and notification-before-reply order.
 
-No implementation behavior or compatibility deviation was changed. No database was used locally; the focused `[PgFact]` must run in the GitHub Actions test environment.
+No implementation behavior or compatibility deviation was changed. No database was used locally; the focused `[PgFact]` runs in the GitHub Actions test environment.
 
 ## V24.01 whole-client evidence
 
@@ -32,8 +32,10 @@ The eve.rs Host regression exercises these existing paths against persisted bala
 
 - Local compile check passed: `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -p:UseSharedCompilation=false -m:1` (0 warnings, 0 errors).
 - The first parallel compile was killed during `Eve.Host` compilation with csc exit 137; the serial retry passed.
-- Focused Actions regression: pending.
-- Push-triggered CI check: pending.
+- Focused Actions regression for the pushed source: pending.
+- Push-triggered CI result: pending.
+- Fix commit: `0f5c0c20`; pushed branch head after merging current `origin/main`: `d2de0897`.
+- Local worktree still has nine pre-existing unrelated Rust deletions; these were not staged or committed.
 - No local PostgreSQL command was run.
 
-Keep this note current with the commit SHA and Actions outcomes after push.
+Update Actions outcomes below after the required checks finish.

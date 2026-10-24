@@ -33,3 +33,10 @@ Existing regressions cover rowset columns and location scalar in dotnet/tests/Ev
 ## Whole-client call and consumer evidence
 
 The whole V24.01 source search found the remote calls above and downstream consumers in agents.py:91-112, 218, 358-359, 798-801; infosvc.py:2020, 2593; journal.py:311-338; epicArcSvc.py:31, 38-44; and epicArcController.py:67-69. Rowset.AddField, Filter, and Index definitions are in eve/common/script/sys/rowset.py:81-90, 195-227. These references account for all listed rows; no matching client service call exists for the local object methods.
+
+## Verification and continuation
+
+- Current source review found all server RPCs already wired; this batch required no handler changes.
+- Actions run 40080641124 for Eve.Services.Core.Tests with filter FullyQualifiedName~Agent_mgr_ completed successfully for commit 9098d1a6. The selected test set did not access PostgreSQL.
+- tools/dev/ci-status.py failures 9098d1a6 reported that no ci.yml run was found at the time of the check.
+- Latest source checkpoint: 9098d1a6a4c4. This handoff refresh records the focused run outcome and is included in the following push.

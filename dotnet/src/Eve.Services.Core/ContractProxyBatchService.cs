@@ -108,10 +108,7 @@ public sealed partial class ContractProxyService
         var corporationOpen = corporationId > 0
             ? await ReadOwnerContractsAsync(store, characterId, corporationId, corporationId, 0, now, call)
             : [];
-        var personalAttention = await ReadOwnerContractsAsync(store, characterId, corporationId, characterId, -1, now, call);
-        var corporationAttention = corporationId > 0
-            ? await ReadOwnerContractsAsync(store, characterId, corporationId, corporationId, -1, now, call)
-            : [];
+        var pageInfo = await store.GetLoginInfoAsync(characterId, corporationId, allianceId, now, call.Cancellation);
         var personalProgress = await store.GetMyCurrentContractListAsync(
             characterId, corporationId, true, false, now, call.Cancellation);
         var corporationProgress = corporationId > 0 && await HasContractManagerRoleAsync(call, characterId, corporationId)
@@ -126,10 +123,7 @@ public sealed partial class ContractProxyService
             !row.IsCorporationIssued && row.IssuerId == characterId);
         var corporationOutstandingCount = corporationOpen.Count(row =>
             row.IsCorporationIssued && row.IssuerCorporationId == corporationId);
-        var assigned = personalOpen.Concat(corporationOpen)
-            .Where(row => row.Status == 0 &&
-                (row.AssigneeId == characterId || row.AssigneeId == corporationId ||
-                    (allianceId > 0 && row.AssigneeId == allianceId)))
+        var assigned = pageInfo.AssignedToMe
             .DistinctBy(row => row.ContractId)
             .Select(row => (PyValue)Eve.Services.Py.Tuple(
                 new PyInt(row.IssuerId), new PyInt(row.IssuerCorporationId),
@@ -142,11 +136,11 @@ public sealed partial class ContractProxyService
             ("numOutstandingContractsForCorp", new PyInt(corporationOutstandingCount)),
             ("numOutstandingContracts", new PyInt(personalOutstandingCount + corporationOutstandingCount)),
             ("numBiddingOn", new PyInt(personalBids.Contracts.Count)),
-            ("numRequiresAttentionCorp", new PyInt(corporationAttention.Count)),
+            ("numRequiresAttentionCorp", new PyInt(pageInfo.NeedsAttention.Count(row => row.State == 1))),
             ("numInProgress", new PyInt(personalProgress.Contracts.Count)),
             ("numBiddingOnCorp", new PyInt(corporationBids.Contracts.Count)),
             ("outstandingContracts", Eve.Services.Py.List(assigned)),
-            ("numRequiresAttention", new PyInt(personalAttention.Count)),
+            ("numRequiresAttention", new PyInt(pageInfo.NeedsAttention.Count(row => row.State == 0))),
             ("numContractsLeftCorp", new PyInt(0)));
     }
 

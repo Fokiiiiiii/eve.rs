@@ -235,6 +235,8 @@ def test_docked_corporation_members_trade_at_an_eligible_upwell_structure():
         assert sum(_field(row, "quantity") for row in sold) == 2, sold
         assert all(_number(_field(row, "locationID")) == structure_id for row in bought + sold)
 
+        assert dbseed.quantity_at(buyer_character, structure_id, TRITANIUM) == 2
+        assert dbseed.quantity_at(seller_character, structure_id, TRITANIUM) == 2
         buyer_hangar = [row for row in _station_hangar_items(buyer, structure_id) if _field(row, "typeID") == TRITANIUM]
         seller_hangar = [row for row in _station_hangar_items(seller, structure_id) if _field(row, "typeID") == TRITANIUM]
         assert sum(_field(row, "quantity") for row in buyer_hangar) == 2, buyer_hangar
@@ -252,8 +254,9 @@ def test_docked_corporation_members_trade_at_an_eligible_upwell_structure():
 
         seller.call("marketProxy", "CancelCharOrder", ask_id)
         assert all(_field(row, "orderID") != ask_id for row in _own_orders(seller))
-        returned = [row for row in _station_hangar_items(seller, structure_id) if _field(row, "typeID") == TRITANIUM]
-        assert sum(_field(row, "quantity") for row in returned) == 2, returned
+        assert dbseed.quantity_at(seller_character, structure_id, TRITANIUM) == 2
+        seller_hangar = [row for row in _station_hangar_items(seller, structure_id) if _field(row, "typeID") == TRITANIUM]
+        assert sum(_field(row, "quantity") for row in seller_hangar) == 2, seller_hangar
         assert _payload(m.plain(buyer.call("marketProxy", "GetStationAsks"))) == {}
 
 # ---- M9: a trade through the market, as the client makes it ------------------------------------------------------------------------
@@ -295,7 +298,17 @@ def _field(row, *names):
     raise AssertionError(f"no column {names} in row {row!r}")
 
 def _station_hangar_items(client, station_id):
-    return _plain_rows(client.call("invbroker", "ListStationItems", station_id))
+    character_id = client.session.session_init.get("charid")
+    assert isinstance(character_id, int), "the global inventory moniker is bound to the selected character"
+    # V24 const.containerGlobal
+    result = client.call(
+        "charMgr",
+        "MachoBindObject",
+        (character_id, 10002),
+        ("ListStationItems", (station_id,), None),
+    )
+    assert isinstance(result, tuple) and len(result) == 2, result
+    return _plain_rows(result[1])
 
 def _own_orders(client):
     return _plain_rows(client.call("marketProxy", "GetCharOrders"))

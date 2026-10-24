@@ -446,3 +446,27 @@ CI run 672 on `1669e6dc` failed the structure market Host test because the fixtu
 - Run 749 on `30dcbf9d` failed `FailureParsingTests.test_pytest_failure_name_and_section_tail`: the parser returned both pytest's bare failure heading (`test_character_walk`) and its qualified summary node (`tests/test_walk.py::test_character_walk`), while the focused assertion expects the qualified node only.
 - The parser drops a bare name when a matching `::`-qualified summary name is present. Run 750 (Actions run `40049835056`) on `e63b3aea` then exposed the heading-only case: `test_pytest_failure_heading_without_summary_name` returned `[]` instead of `['test_character_walk']`, because pytest's underscore-delimited failure heading was not parsed.
 - `parse_test_failures` now recognizes the underscore-delimited pytest heading while retaining the qualified-summary preference. Both focused failure-parsing assertions passed locally across the two corrections; the follow-up push-triggered CI result is pending. No database tests were run.
+
+## 2026-10-24 push e863ec63 verification
+
+- Pushed the merged Upwell docking and CI failure-name parser changes to main as `e863ec63`.
+- Push gate run 753 (`40050099878`) and focused Agent run 258 (`40050113361`) were active at this update. Run 753's Python client, Rust format/clippy, fixtures, and Rust advisory jobs had passed; the live E2E, Windows, .NET build/shards, and Rust tests were still running.
+- The earlier selected run 255 on `30dcbf9d` failed its test step, but its available tail ended after the live-test command. The current focused run checks the same market protocol cases and `test_market.py` on the corrected head. No local PostgreSQL database was used.
+
+## 2026-10-24 push 05bce6b0 handoff status
+
+- Pushed the handoff update with current main changes as `05bce6b0`. At the first status check, no `ci.yml` workflow for this SHA was listed yet.
+- CI run 753 and focused Agent run 258 for `e863ec63` were still active. Their results will be checked along with the push gate for the new head. No local PostgreSQL database was used.
+
+## 2026-10-24 current main verification
+
+- The checked-out main tip at this update is `9716acb1`. No push-triggered `ci.yml` run was listed for that SHA at the first check.
+- CI run 753 on `e863ec63` has passed the Python client, Rust format/clippy, fixture, and Rust advisory jobs. Its E2E, Windows, .NET build/shards, and Rust test jobs were still active. Focused Agent run 258 on the same code head was also active.
+- The follow-up will dispatch `ci.yml` against the latest main head so the complete gate covers the corrected parser and Upwell docking flow. No local PostgreSQL database was used.
+
+## 2026-10-24 run 753 Upwell inventory RPC follow-up
+
+- Run 753 on `e863ec63` failed `test_docked_corporation_members_trade_at_an_eligible_upwell_structure` at `tests/test_market.py:240`: after the trade and transaction checks, the buyer's `invbroker.ListStationItems(structure_id)` returned no Tritanium rows.
+- The market settlement moves filled goods to the destination hangar. `InvBrokerService.ListStationItems` then rejected any non-SDE station ID outside the global-assets context, which excluded an Upwell structure. EveJS resolves top-level entries by the requested dockable location.
+- The RPC now allows a non-SDE location only when it matches the session's docked location; the existing global-assets structure validation remains, and a remote structure query still returns an empty list. Regression `A_docked_structure_lists_its_own_station_items_but_not_a_remote_structure` checks both cases.
+- The focused .NET Release build passed with 0 warnings and 0 errors. The focused Actions test and latest-main CI gate are pending. No local PostgreSQL database was used.

@@ -2,7 +2,7 @@
 
 ## Scope and current source paths
 
-This checkout was advanced through `origin/main` at the start of the task. The task changes were pushed on main through merge commit `b7ede94a`, which also incorporates current origin/main. The requested source layout has since been split: gate-jump completion is in `dotnet/src/Eve.Services.Space/SpaceSessions.Movement.cs`; the current Rust simulation lives under `crates/eve-space/src/sim/`. The nine pre-existing deleted files in the worktree were preserved and are unrelated to this change.
+This checkout was advanced through `origin/main` at the start of the task. The task changes were pushed on main through merge commit `85ce03fd`, which also incorporates current origin/main. The requested source layout has since been split: gate-jump completion is in `dotnet/src/Eve.Services.Space/SpaceSessions.Movement.cs`; the current Rust simulation lives under `crates/eve-space/src/sim/`. The nine pre-existing deleted files in the worktree were preserved and are unrelated to this change.
 
 ## Client path and wire contract
 
@@ -33,4 +33,4 @@ This checkout was advanced through `origin/main` at the start of the task. The t
 - Focused live run `40077842646` failed after starting the live walk. Run `40081947255` succeeded (the required Host session-change filter, 1 passed and 0 skipped). Run `40081947368` ran the slow jump walk and failed; its log tail did not include the test assertion. In earlier run `40077070295`, the walk crossed systems and its session snapshot, rebind result, notification order, and destination scene/state checks produced no reported mismatch; it failed the earlier warp update comparison and rest timing (86.12 s vs 82.86 s). The Windows live-client job passed on `40077808041`.
 - Local .NET build of `Eve.Services.Space` was terminated when `csc` exited with code 137 under shared resource pressure. No local database was used. A graphical V24.01 UI exception log was not captured.
 
-- The Space test fixture correction and this handoff update are being pushed after the `b7ede94a` checks.
+- After `85ce03fd`, Host session-change run `40083151979`, Space jump-state run `40083365205`, and slow jump walk `40083381020` were dispatched; results are pending.

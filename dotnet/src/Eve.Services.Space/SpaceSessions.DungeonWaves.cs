@@ -17,6 +17,10 @@ public sealed partial class SpaceSessions
         {
             return new DungeonSpawnResult([], "the host has no NPC authority");
         }
+        if (!HasPilotsIn(solarSystemId))
+        {
+            return new DungeonSpawnResult([], "NO_SCENE", SceneUnavailable: true);
+        }
         await EnsureNpcTypesAsync(selection.ShipTypes, cancellationToken);
         var plan = selector.Roll(selection, amount, type => NpcHull.HasHitPoints(_statics.Type(type)), Random.Shared.NextDouble);
         if (!plan.Succeeded)
@@ -24,10 +28,12 @@ public sealed partial class SpaceSessions
             return new DungeonSpawnResult([], $"the NPCs of '{selection.Name}' could not be rolled: {plan.Error}");
         }
         var ships = new List<long>();
+        var sceneUnavailable = false;
         try
         {
-            await SpawnGroupAsync(plan.Profiles, new SpawnAnchor(solarSystemId, 0, origin), cancellationToken, shipIds: ships);
-            return new DungeonSpawnResult(ships, null);
+            await SpawnGroupAsync(plan.Profiles, new SpawnAnchor(solarSystemId, 0, origin), cancellationToken,
+                shipIds: ships, sceneUnavailable: () => sceneUnavailable = true);
+            return new DungeonSpawnResult(ships, sceneUnavailable ? "NO_SCENE" : null, sceneUnavailable);
         }
         catch (Exception error) when (error is not OperationCanceledException)
         {
@@ -68,6 +74,8 @@ public sealed class SpaceDungeonNpcs(SpaceSessions space) : IDungeonNpcSpawner
 {
     public Task<DungeonSpawnResult> SpawnAsync(int solarSystemId, double[] origin, NpcSelection selection, int amount, CancellationToken cancellationToken) =>
         space.SpawnDungeonWaveAsync(solarSystemId, origin, selection, amount, cancellationToken);
+
+    public bool HasPilotsInSystem(int solarSystemId) => space.HasPilotsIn(solarSystemId);
 
     public bool IsPilotInSystem(long characterId, int solarSystemId) => space.IsPilotInSystem(characterId, solarSystemId);
 

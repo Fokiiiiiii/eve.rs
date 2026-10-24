@@ -49,6 +49,9 @@ def live_files_for(value: str) -> tuple[list[str], bool]:
     if normalized in ("slow", "all"):
         names = sorted(path.name for path in (ROOT / "tools/headless-client/tests").glob("test_*.py"))
         return names, True
+    if normalized.startswith("slow:"):
+        names, _ = live_files_for(normalized.removeprefix("slow:"))
+        return names, True
 
     names = []
     for item in normalized.split(","):

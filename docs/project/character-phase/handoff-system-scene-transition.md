@@ -18,10 +18,12 @@ This checkout was advanced to `origin/main` at `914fc6497d843d5aa7ddaa7ae78f8bc4
 
 - Gate arrival now clears `stationid`, `stationid2`, and `structureid` through the same ordered `ClientSession.Change` call as the destination `solarsystemid`, `solarsystemid2`, and `locationid`. Unchanged fields stay absent from the wire notification.
 - `HostServerTests` now checks the session-change packet and server session values, the `MachoBindObject` tuple response, and that destination `DoDestinyUpdate` messages follow the bind response.
-- The slow headless jump walk now checks the destination session snapshot and bind response shape against the EveJS recording. The walk still needs a running live server and the V24.01 graphical client to confirm the reported UI exceptions directly.
+- The slow headless jump walk checks the destination session snapshot and bind response shape against the EveJS recording. `tools/dev/agent-test.py` now accepts `slow:test_jump.py` to run one selected slow walk with the slow-test flag enabled.
 
 ## Verification
 
-- Passed: `MSBUILDDISABLENODEREUSE=1 dotnet test dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj --no-restore --filter 'FullyQualifiedName~session_change' -p:UseSharedCompilation=false -m:2` (1 passed, 0 skipped). This also built the changed Space service project.
-- Not checked: the live headless gate-crossing walk and graphical-client exception log. No database was used.
-- Actions dispatch and the push-triggered CI check are pending the implementation push.
+- Passed locally: `MSBUILDDISABLENODEREUSE=1 dotnet test dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj --no-restore --filter 'FullyQualifiedName~session_change' -p:UseSharedCompilation=false -m:2` (1 passed, 0 skipped). This also built the changed Space service project.
+- Passed Actions run `40070546520`: the required `Eve.Host.Tests` session-change filter ran 1 test, 0 skipped.
+- Failed push CI run `40070537682`: the fast live Astrahus anchoring test received `You must be in space to deploy a structure` at `tests/test_structures.py:482`; the Space test shard was cancelled after the live job failed. This is outside the jump scenario and no causal link to the session change was found.
+- The broad slow Actions run `40073392170` failed in `test_crab_walk.py` before producing a JUnit report, so it does not establish the jump walk result. A focused `slow:test_jump.py` run is queued after this runner update.
+- Not checked: graphical V24.01 UI exception log. No local database was used.

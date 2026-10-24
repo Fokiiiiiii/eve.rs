@@ -30,10 +30,10 @@ The eve.rs Host regression exercises these existing paths against persisted bala
 
 ## Checks and handoff
 
-- Local compile check of the initial test passed with 0 warnings and 0 errors. The follow-up local compile was killed during C# compilation with csc exit 137 under shared-memory pressure.
-- Focused Actions run `40080221080` failed because the fixture founder had 5,000 ISK but corporation creation charges `CorporationStore.CorporationFoundingCost` (1,599,800 ISK). The test now funds the founder with 5,000,000 ISK and asserts the resulting balance after the fee and transfers.
+- Initial local compile check passed with 0 warnings and 0 errors. Follow-up local recompilation was killed during C# compilation with csc exit 137 under shared-memory pressure.
+- Focused Actions run `40080221080` failed because the test founder had only 5,000 ISK for the 1,599,800 ISK corporation registration fee. The fixture now starts the founder at the exact fee plus 5,000 ISK and checks the post-fee balance.
 - No local PostgreSQL command was run.
-- Fix commit: `0f5c0c20`; first pushed branch head: `ce9acebe`.
+- Fix commits: `0f5c0c20` (wire regression), `c6815db1` (founder balance correction). Current integration commit: `a2586d8b`.
 - Nine pre-existing unrelated Rust deletions remain unstaged and were not committed.
 
-Update this note with the follow-up commit SHA and next Actions outcome after push.
+Update this note with the pushed SHA and Actions outcome after the push.

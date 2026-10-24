@@ -34,7 +34,7 @@ The Host regression is `Contract_reads_and_mutations_are_dispatched_through_the_
 - Host build after assignment correction: passed, zero warnings/errors.
 - Agent test 40101123016 for pushed tip 5273c3dc passed with no failed jobs.
 - Latest code commit a30181a2, including the CreateContract wire case, was pushed with origin/main merged at 24cec7ac; Agent test 40101711525 passed with no failed jobs.
-- Handoff commit 81eb74e8 was merged with origin/main and pushed at c79cd86b. Push-triggered ci.yml run lookup for c79cd86b found no run. Focused Agent test 40102279877 for the Host RPC registry inventory on c79cd86b is in progress.
+- Handoff commit 81eb74e8 was merged with origin/main and pushed at c79cd86b; subsequent origin/main fixes were merged and pushed at cc34becb. No push-triggered ci.yml run was found for cc34becb. Focused Agent test 40102279877 for the Host RPC registry inventory on c79cd86b is in progress.
 - Focused Host test after CollectMyPageInfo and assignment correction: passed (1 passed, 0 skipped).
 - Focused Host test after adding the CreateContract ContractStruct case: passed (1 passed, 0 skipped).
 - No PostgreSQL connection was used.

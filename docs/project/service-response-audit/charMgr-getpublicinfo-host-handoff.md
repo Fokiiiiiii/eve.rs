@@ -35,5 +35,5 @@ EveJS v0.12.9 `server/src/services/character/charMgrService.js:372-421` construc
 - The changed `Eve.Services.CharacterInfo` project compiled successfully during the Host test project build.
 - The full Host test project build was canceled after 1 hour 26 minutes because the shared compiler queue remained saturated; it reported no source errors before cancellation.
 - No PostgreSQL database was used.
-- Actions runs 40083584812 and 40084094637 found compile errors, both fixed. Run 40084479836 compiled but the test expected PyStr where Macho decoding returns PyBytes; assertions now compare decoded string values. A focused rerun is pending.
+- Actions runs 40083584812 and 40084094637 found compile errors, both fixed. Run 40084479836 showed the decoded-string assertions needed PyBytes handling, now corrected. Run 40085144852 found a duplicate CallWithKwargs helper after an overlapping main update; the duplicate is removed and another focused rerun is pending.
 - Graphical-client verification was not performed.

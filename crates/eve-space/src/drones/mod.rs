@@ -85,6 +85,8 @@ pub enum DroneCommand {
     },
     /// Reconnect to an owned abandoned drone that is still nearby in this scene.
     Reconnect,
+    /// Take an abandoned drone from this scene into the pilot's bay.
+    Scoop,
 }
 
 impl DroneCommand {
@@ -100,6 +102,7 @@ impl DroneCommand {
             Self::MineRepeatedly { .. } => 7,
             Self::Salvage { .. } => 8,
             Self::Reconnect => 9,
+            Self::Scoop => 10,
         }
     }
 }

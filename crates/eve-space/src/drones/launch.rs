@@ -318,6 +318,29 @@ impl Scene {
             && self.apart(controller, drone_session).is_some_and(|distance| distance <= DRONE_RECONNECT_RANGE)
     }
 
+    pub(super) fn scoop_refusal(
+        &self,
+        controller: SessionId,
+        drone_session: SessionId,
+    ) -> Option<&'static str> {
+        if !self.pilots.contains_key(&controller) || self.is_fighter(drone_session) {
+            return Some("NOT_CONTROLLED");
+        }
+        let abandoned = self
+            .pilots
+            .get(&drone_session)
+            .and_then(|drone| drone.ship.npc.as_ref())
+            .and_then(|npc| npc.drone.as_ref())
+            .is_some_and(|link| link.controller == 0);
+        if !abandoned {
+            return Some("NOT_CONTROLLED");
+        }
+        self.apart(controller, drone_session)
+            .is_some_and(|distance| distance <= SCOOP_DISTANCE)
+            .then_some(())
+            .map_or(Some("OUT_OF_RANGE"), |_| None)
+    }
+
     /// A pilot gives its drones an order using the fitted Dogma control range.
     pub fn drone_command_with_range(
         &mut self,
@@ -338,10 +361,22 @@ impl Scene {
             if searching { self.opponents_of_with_range(controller, now, control_range) } else { Vec::new() };
         let mut asked = 0;
         for &drone_id in drones {
-            let session = self.session_of(drone_id).filter(|session| match command {
-                DroneCommand::Reconnect => self.can_reconnect(controller, *session),
-                _ => self.controller_of_drone(*session) == Some(controller) && !self.is_fighter(*session),
-            });
+            let session = if matches!(command, DroneCommand::Scoop) {
+                let Some(session) = self.session_of(drone_id) else {
+                    results.push((drone_id, Some("NOT_CONTROLLED")));
+                    continue;
+                };
+                if let Some(reason) = self.scoop_refusal(controller, session) {
+                    results.push((drone_id, Some(reason)));
+                    continue;
+                }
+                Some(session)
+            } else {
+                self.session_of(drone_id).filter(|session| match command {
+                    DroneCommand::Reconnect => self.can_reconnect(controller, *session),
+                    _ => self.controller_of_drone(*session) == Some(controller) && !self.is_fighter(*session),
+                })
+            };
             let Some(session) = session else {
                 results.push((drone_id, Some("NOT_CONTROLLED")));
                 continue;
@@ -451,6 +486,9 @@ impl Scene {
                         ai.follow = None;
                     }
                     out.extend(self.go_home(session, DEPARTING, now));
+                }
+                DroneCommand::Scoop => {
+                    out.extend(self.take_in(session, controller, now));
                 }
                 DroneCommand::Abandon => out.extend(self.abandon(session, now)),
                 DroneCommand::Assist { character_id } | DroneCommand::Guard { character_id } => {

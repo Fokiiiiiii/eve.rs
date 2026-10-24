@@ -197,7 +197,6 @@ fn ore_asteroid(id: i64, position: Vec3, units_remaining: i64) -> crate::wreck::
         units_remaining,
     }
 }
-
 fn for_the_player(told: &[Out]) -> Vec<Out> {
     told.iter().filter(|o| o.session() == PLAYER).cloned().collect()
 }
@@ -248,8 +247,7 @@ fn a_drone_is_told_to_its_controller_as_the_reference_tells_it_and_circles_the_s
         [Value::Long(DRONE_SHIP), Value::Long(crate::scene::tests::spec().ship_id), Value::Int(700)]
     );
     let fraction = &actions_named(&told, "SetSpeedFraction")[0];
-    assert_eq!(fraction[1], Value::Real(660.0 / 2_800.0));
-    // the drone is of the controller, not a ship that could be locked as a pilot's
+    assert_eq!(fraction[1], Value::Real(660.0 / 2_800.0)); // the drone is of the controller, not a ship that could be locked as a pilot's
     assert_eq!(scene.drones_of(PLAYER), [DRONE_SHIP]);
     assert_eq!(scene.controller_of_drone(drone), Some(PLAYER));
     // its slim item is the drone's: the type's name and graphic and what it is doing
@@ -748,7 +746,6 @@ fn an_armor_bot_mends_a_friendly_ship_only_when_its_cycle_ends() {
 
     assert!((after - before - 12.0).abs() < 1e-3, "{before} -> {after}");
 }
-
 #[test]
 fn a_drone_that_only_mends_is_refused_a_hostile_target_and_finds_nothing_to_mend_by_itself() {
     let mut scene = scene_with_a_player();
@@ -875,6 +872,50 @@ fn a_pilot_can_reconnect_to_a_drone_they_abandoned_while_it_remains_in_the_scene
 }
 
 #[test]
+fn another_pilot_can_scoop_only_a_nearby_abandoned_drone_and_gets_destiny_before_the_result() {
+    let (mut scene, _, _) = launched();
+    let scooper_session = PLAYER + 1;
+    let mut scooper = crate::scene::tests::spec();
+    scooper.ship_id = DRONE_SHIP + 1;
+    scooper.character_id = 22;
+    scene.undock(scooper_session, scooper, crate::scene::tests::STATION, LATER).unwrap();
+    scene.bind(scooper_session, LATER);
+
+    let controlled = scene.drone_command(scooper_session, &[DRONE_SHIP], DroneCommand::Scoop, LATER);
+    assert_eq!(result_of(&controlled), [(DRONE_SHIP, Some("NOT_CONTROLLED"))]);
+
+    let released = scene.drone_command(PLAYER, &[DRONE_SHIP], DroneCommand::Abandon, LATER);
+    assert!(released.iter().any(|out| matches!(out, Out::DroneReleased { session, drone_id, .. } if *session == PLAYER && *drone_id == DRONE_SHIP)));
+
+    let owner_position = scene.pilots[&PLAYER].ship.position;
+    scene.pilots.get_mut(&scooper_session).unwrap().ship.position.x = owner_position.x + 5_000.0;
+    let too_far = scene.drone_command(scooper_session, &[DRONE_SHIP], DroneCommand::Scoop, LATER + SECOND);
+    assert_eq!(result_of(&too_far), [(DRONE_SHIP, Some("OUT_OF_RANGE"))]);
+    assert!(scene.session_of(DRONE_SHIP).is_some(), "a refusal leaves the abandoned ball in space");
+
+    scene.pilots.get_mut(&scooper_session).unwrap().ship.position = owner_position;
+    let scooped =
+        scene.drone_command(scooper_session, &[DRONE_SHIP], DroneCommand::Scoop, LATER + 2 * SECOND);
+    assert_eq!(result_of(&scooped), [(DRONE_SHIP, None)]);
+    assert!(scooped.iter().any(|out| matches!(out, Out::DroneScooped { session, drone_id } if *session == scooper_session && *drone_id == DRONE_SHIP)));
+    assert_eq!(
+        actions_named(
+            &scooped.iter().filter(|out| out.session() == scooper_session).cloned().collect::<Vec<_>>(),
+            "OnDroneStateChange"
+        )
+        .len(),
+        1
+    );
+    let destiny = scooped.iter().position(|out| matches!(out, Out::Notify { session, name: "DoDestinyUpdate", .. } if *session == scooper_session)).unwrap();
+    let result = scooped.iter().position(|out| matches!(out, Out::DroneResults { session, command: 10, results } if *session == scooper_session && results == &[(DRONE_SHIP, None)])).unwrap();
+    assert!(destiny < result, "the scene removal is sent before the command reply");
+    assert!(scene.session_of(DRONE_SHIP).is_none());
+
+    let retry = scene.drone_command(scooper_session, &[DRONE_SHIP], DroneCommand::Scoop, LATER + 3 * SECOND);
+    assert_eq!(result_of(&retry), [(DRONE_SHIP, Some("NOT_CONTROLLED"))]);
+}
+
+#[test]
 fn a_drone_is_released_when_its_controller_session_returns_in_a_different_ship() {
     let (mut scene, _, _) = launched();
     let old_ship_id = scene.pilots[&PLAYER].ship.spec.ship_id;
@@ -962,7 +1003,6 @@ fn mining_and_salvage_orders_are_visible_on_the_drone_state() {
     assert!(mined.iter().any(
         |out| matches!(out, Out::DroneResults { command: 7, results, .. } if results == &[(DRONE_SHIP, None)])
     ));
-
     let character_id = scene.pilots[&PLAYER].ship.spec.character_id;
     let corporation_id = i64::from(scene.pilots[&PLAYER].ship.spec.corporation_id);
     let wreck_id = 90_002;

@@ -29,6 +29,9 @@ The task-mentioned `jobs/461-trade-item-eligibility.txt`, `462-trade-container-d
 ## Verification
 
 - Local compile checks passed for `Eve.Host.Tests` and `Eve.Trade.Tests` with .NET 10, `UseSharedCompilation=false`, and node reuse disabled. No PostgreSQL tests were run locally.
-- Actions run `40073577535` passed on `859cf2c4b67c`: `Eve.Host.Tests` 3 passed, `Eve.Trade.Tests` 2 passed, and `test_walk_trade.py` 1 passed; all three groups had 0 failed and 0 skipped.
-- Push-triggered `ci.yml` run `40073571150` on `859cf2c4b67c` was still in progress at the last check. Check it with `python3 tools/dev/ci-status.py failures <final-sha>`.
+- Focused Actions run `40073577535` passed on `859cf2c4b67c`: `Eve.Host.Tests` 3 passed, `Eve.Trade.Tests` 2 passed, and `test_walk_trade.py` 1 passed; all three groups had 0 failed and 0 skipped.
+- Push gate `40073571150` failed on three checks: an outdated Trade refusal test, an outdated warp packet expectation and a structure walk that needed to await undock/ballpark/warp updates. The first two failures were corrected; the structure walk now waits for those updates. Its fast suite also skipped eight slow live cases and one training-speed case; those skips are not counted as passes.
+- Follow-up Actions run `40079558176` on `ea2688a7cb56` exposed two additional message/packet expectation mismatches, corrected in the current worktree. The structure walk result is still pending.
+- Push gate `40079551300` on `ea2688a7cb56` is still running. Recheck both gates after the latest correction commit.
+- A local Space.Tests dependency build was killed with csc exit 137 under shared-machine pressure; a project-only retry was canceled after it made no progress. Verify its compilation and corrective cases through Actions.
 - Graphical-client execution was not performed.

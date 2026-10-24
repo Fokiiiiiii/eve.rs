@@ -53,7 +53,8 @@ public sealed class StargateJumpWireTests
         Assert.True(await dispatcher.DispatchAsync(CallPacket(
             "CmdWarpToStuffAutopilot", new PyTuple([new PyLong(Gate)]), PyNone.Instance, callId: 2, oid), session));
         Assert.True(space.IsWarping(session));
-        var warpResponse = Assert.Single(sink.Sent.ToArray().OfType<PyObject>());
+        var warpPackets = sink.Sent.ToArray().OfType<PyObject>().ToArray();
+        var warpResponse = Assert.Single(warpPackets);
         Assert.Equal(MachoMessage.CallRsp, MessageType(warpResponse));
         Assert.Equal(PyNone.Instance, CallResult(warpResponse));
         sink.Sent.Clear();

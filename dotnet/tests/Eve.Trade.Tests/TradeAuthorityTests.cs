@@ -76,21 +76,23 @@ public sealed class TradeAuthorityTests
     }
 
     [PgFact]
-    public async Task Stage_refuses_an_item_outside_the_hangar_or_not_owned_by_the_offering_pilot()
+    public async Task Stage_refuses_items_outside_the_accessible_source_chain_or_not_owned_by_the_offering_pilot()
     {
         await using var rig = await RigWithTwoPilotsAsync();
         var view = await rig.Trades.InitiateAsync(Alice, Bob, TradeRig.Station, 30000142);
-        var cargo = await rig.CreateItemAsync(Alice, TradeRig.Station, TradeRig.Cargo);
+        var foreignContainer = await rig.CreateItemAsync(Bob, TradeRig.Station, TradeRig.Hangar, singleton: true, typeId: 3293);
+        var inaccessible = await rig.CreateItemAsync(Alice, foreignContainer, TradeRig.Cargo);
         var bobs = await rig.CreateItemAsync(Bob, TradeRig.Station, TradeRig.Hangar);
 
-        var notHangar = await Assert.ThrowsAsync<TradeRefusedException>(() => rig.Trades.StageAsync(view.TradeId, Alice, cargo, 0));
+        var outsideSource = await Assert.ThrowsAsync<TradeRefusedException>(() => rig.Trades.StageAsync(view.TradeId, Alice, inaccessible, 0));
         var notOwned = await Assert.ThrowsAsync<TradeRefusedException>(() => rig.Trades.StageAsync(view.TradeId, Alice, bobs, 0));
 
-        Assert.Equal("Only items in your hangar here can be offered.", notHangar.Message);
-        Assert.Equal("Only items in your hangar here can be offered.", notOwned.Message);
+        Assert.Equal("That item is not available to trade from your current docked inventory.", outsideSource.Message);
+        Assert.Equal("That item is not available to trade.", notOwned.Message);
+        Assert.Equal((Alice, foreignContainer), ((await rig.Items.GetAsync(inaccessible))!.OwnerId, (await rig.Items.GetAsync(inaccessible))!.LocationId));
+        Assert.Equal(Bob, (await rig.Items.GetAsync(bobs))!.OwnerId);
         Assert.Empty((await rig.Trades.ViewAsync(view.TradeId))!.Items);
     }
-
     [PgFact]
     public async Task Money_cannot_exceed_the_wallet_and_any_change_clears_both_acceptances()
     {

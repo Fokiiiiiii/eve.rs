@@ -72,7 +72,7 @@ def test_two_pilots_trade_a_cockroach_for_isk_and_the_database_holds_the_result(
         seller_bound = seller.call("trademgr", "MachoBindObject", (trade,), None)[0]
         buyer_bound = buyer.call("trademgr", "MachoBindObject", (trade,), None)[0]
 
-        assert seller.call_bound(seller_bound, "Add", ship) is True
+        assert seller.call_bound(seller_bound, "Add", ship, STATION) is True
         assert buyer.call_bound(buyer_bound, "OfferMoney", PRICE) is True
         assert seller.call_bound(seller_bound, "MakeOffer", manifest(trade, [0, PRICE], [ship])) is True
         assert buyer.call_bound(buyer_bound, "MakeOffer", manifest(trade, [0, PRICE], [ship])) is True

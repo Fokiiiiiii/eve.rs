@@ -30,4 +30,11 @@ At `server/src/abyssal/transport/abyssalMgrService.js:56-88`, EveJS validates en
 
 The existing stateful room-transfer and final-exit checks remain in `AbyssalHostFlowTests.cs` (lines 496-507 and 738-746), where the real Host callback mutates persisted state and the durable notification subscriber checks ordering. Those database-backed cases were not exercised for this job; no database was used.
 
-Local checks: `dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj --no-restore -m:1 -p:UseSharedCompilation=false` succeeded (0 warnings, 0 errors); the focused `AbyssalGateWireTests` ran 1 passed, 0 failed, 0 skipped. GitHub Actions and the push-triggered gate are pending.
+Local checks for the Abyssal change: `dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj --no-restore -m:1 -p:UseSharedCompilation=false` succeeded (0 warnings, 0 errors); the focused `AbyssalGateWireTests` ran 1 passed, 0 failed, 0 skipped. Filtered GitHub Actions run 40086432553 passed on `993a47d4`; push-triggered CI run 40086426904 exposed unrelated upstream Space and Reprocessing test failures. Follow-up diagnosis and checks are tracked below.
+
+
+## Push-gate follow-up
+
+The push-triggered CI failures were traced to three causes: `SpaceSessions.SpawnAsync` invoked the `NO_SCENE` callback without logging the refusal, despite its helper contract and regression expecting the reason in the log; Reprocessing assertions omitted pre-existing Tritanium stacks or doubled a one-time yield; the restart test passed owner and location in reverse order to `PgItemStore.InLocationAsync(locationId, ownerId, ...)`. These are fixed in the follow-up commit: log the scene refusal, correct the three expected quantities (415, 416, 415), and query with `(StationId, character)`.
+
+The Space, Station, and Host test projects compile locally with 0 warnings/errors. PostgreSQL-backed regressions are not run locally and are queued for the Actions filter; this job did not use a database.

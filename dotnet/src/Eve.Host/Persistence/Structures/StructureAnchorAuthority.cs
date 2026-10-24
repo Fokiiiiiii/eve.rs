@@ -45,6 +45,8 @@ public sealed class StructureAnchorAuthority
     private readonly DogmaStatic _dogma;
     private readonly Func<NpgsqlConnection, NpgsqlTransaction, long, CancellationToken, Task<long?>> _corporationCreatedMs;
     private readonly Func<ClientSession, long, CancellationToken, Task<WarpCoordinates?>> _shipPosition;
+    private readonly Func<ClientSession, int?>? _solarSystemOf;
+    private readonly Func<ClientSession, long?>? _shipIdOf;
     private readonly Func<ClientSession, bool> _isWarping;
     private readonly Func<long, Task> _placed;
     private readonly Func<long, CancellationToken, ValueTask<IReadOnlyList<StructureProfileRecord>>>? _profiles;
@@ -57,7 +59,9 @@ public sealed class StructureAnchorAuthority
         Func<ClientSession, long, CancellationToken, Task<WarpCoordinates?>> shipPosition, Func<ClientSession, bool> isWarping, Func<long, Task> placed,
         Func<long, CancellationToken, ValueTask<IReadOnlyList<StructureProfileRecord>>>? profiles = null,
         Func<CancellationToken, ValueTask<(SovFwReadSnapshot Snapshot, IReadOnlyList<DevelopmentIndexRecord> DevelopmentIndices)>>? sov = null,
-        Func<NpgsqlConnection, NpgsqlTransaction, NewStructure, long, CancellationToken, Task<StructureTransition?>>? anchorWithDuration = null)
+        Func<NpgsqlConnection, NpgsqlTransaction, NewStructure, long, CancellationToken, Task<StructureTransition?>>? anchorWithDuration = null,
+        Func<ClientSession, int?>? solarSystemOf = null,
+        Func<ClientSession, long?>? shipIdOf = null)
     {
         _source = source;
         _store = store;
@@ -69,6 +73,8 @@ public sealed class StructureAnchorAuthority
         _dogma = dogma;
         _corporationCreatedMs = corporationCreatedMs;
         _shipPosition = shipPosition;
+        _solarSystemOf = solarSystemOf;
+        _shipIdOf = shipIdOf;
         _isWarping = isWarping;
         _placed = placed;
         _profiles = profiles;
@@ -85,8 +91,8 @@ public sealed class StructureAnchorAuthority
         {
             throw Notice("Select a character before deploying a structure.");
         }
-        var systemId = (int)(session.GetInt("solarsystemid") ?? session.GetInt("solarsystemid2") ?? 0);
-        var shipId = session.GetInt("shipid") ?? 0;
+        var systemId = _solarSystemOf?.Invoke(session) ?? (int)(session.GetInt("solarsystemid") ?? session.GetInt("solarsystemid2") ?? 0);
+        var shipId = _shipIdOf?.Invoke(session) ?? session.GetInt("shipid") ?? 0;
         if (systemId <= 0 || shipId <= 0)
         {
             throw Notice("You must be in space to deploy a structure.");

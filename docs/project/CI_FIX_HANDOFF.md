@@ -457,3 +457,9 @@ CI run 672 on `1669e6dc` failed the structure market Host test because the fixtu
 
 - Pushed the handoff update with current main changes as `05bce6b0`. At the first status check, no `ci.yml` workflow for this SHA was listed yet.
 - CI run 753 and focused Agent run 258 for `e863ec63` were still active. Their results will be checked along with the push gate for the new head. No local PostgreSQL database was used.
+
+## 2026-10-24 current main verification
+
+- The checked-out main tip at this update is `9716acb1`. No push-triggered `ci.yml` run was listed for that SHA at the first check.
+- CI run 753 on `e863ec63` has passed the Python client, Rust format/clippy, fixture, and Rust advisory jobs. Its E2E, Windows, .NET build/shards, and Rust test jobs were still active. Focused Agent run 258 on the same code head was also active.
+- The follow-up will dispatch `ci.yml` against the latest main head so the complete gate covers the corrected parser and Upwell docking flow. No local PostgreSQL database was used.

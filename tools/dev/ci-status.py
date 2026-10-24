@@ -108,16 +108,18 @@ def parse_test_failures(text: str) -> list[str]:
         re.compile(r"^\s*FAIL:\s*(.+?)\s*$"),
     )
     names = []
+    headings = []
     for raw_line in text.splitlines():
         line = normalize_log_line(raw_line)
-        for pattern in patterns:
+        for index, pattern in enumerate(patterns):
             match = pattern.match(line)
             if match:
                 name = match.group(1).strip()
-                if name and name not in names:
-                    names.append(name)
+                target = headings if index == 2 else names
+                if name and name not in target:
+                    target.append(name)
                 break
-    return names
+    return names or headings
 
 
 def failure_log_tail(text: str, test_name: str) -> list[str]:

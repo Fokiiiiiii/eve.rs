@@ -24,6 +24,8 @@ EveJS v0.12.9 implements bulk owners at `server/src/services/config/configServic
 
 ## Verification
 
+Implementation commit and origin/main merge were pushed to `main` as `1e3675a8`. GitHub Actions checks for this SHA are being dispatched.
+
 - `dotnet build dotnet/src/Eve.Services.CharacterInfo/Eve.Services.CharacterInfo.csproj -p:UseSharedCompilation=false`: passed.
 - `dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -p:UseSharedCompilation=false --no-restore`: passed, 0 warnings/errors.
 - `dotnet build dotnet/tests/Eve.Services.CharacterInfo.Tests/Eve.Services.CharacterInfo.Tests.csproj -p:UseSharedCompilation=false`: passed, 0 warnings/errors.

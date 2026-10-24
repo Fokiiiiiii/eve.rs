@@ -12,6 +12,8 @@ public sealed class PersistenceLookupDirectory(
         new(() => LoadNpcFactionIdsAsync(sde, CancellationToken.None));
     private readonly Lazy<Task<IReadOnlyDictionary<int, IReadOnlyList<Eve.Services.Core.LookupLocation>>>> _locations =
         new(() => LoadLocationsAsync(sde, stations, CancellationToken.None));
+    private readonly Lazy<Task<IReadOnlyList<Eve.Services.Core.LookupType>>> _types =
+        new(() => LoadTypesAsync(sde, CancellationToken.None));
 
     public async ValueTask<IReadOnlyList<Eve.Services.Core.LookupCharacter>> CharactersAsync(CancellationToken cancellationToken)
     {
@@ -61,6 +63,9 @@ public sealed class PersistenceLookupDirectory(
         return locations.GetValueOrDefault(groupId) ?? Array.Empty<Eve.Services.Core.LookupLocation>();
     }
 
+    public async ValueTask<IReadOnlyList<Eve.Services.Core.LookupType>> TypesAsync(CancellationToken cancellationToken) =>
+        await _types.Value.WaitAsync(cancellationToken);
+
     private static async Task<IReadOnlyList<Eve.Services.Core.LookupFaction>> LoadFactionsAsync(
         Eve.Sde.SdeReader sde,
         CancellationToken cancellationToken) =>
@@ -69,6 +74,14 @@ public sealed class PersistenceLookupDirectory(
                 row.Key,
                 Eve.Sde.SdeReader.English(row.Doc.GetProperty("name"))))
             .Where(faction => faction.Id > 0 && faction.Name.Length > 0)
+            .ToArray();
+
+    private static async Task<IReadOnlyList<Eve.Services.Core.LookupType>> LoadTypesAsync(
+        Eve.Sde.SdeReader sde,
+        CancellationToken cancellationToken) =>
+        (await sde.ReadTypeSummariesAsync(cancellationToken))
+            .Where(type => type.TypeId > 0 && !string.IsNullOrWhiteSpace(type.Name))
+            .Select(type => new Eve.Services.Core.LookupType(type.TypeId, type.Name))
             .ToArray();
 
     private static async Task<IReadOnlyDictionary<long, long>> LoadNpcFactionIdsAsync(
@@ -168,5 +181,4 @@ public sealed class PersistenceLookupDirectory(
 
     private static string Text(System.Text.Json.JsonElement row, string property) =>
         row.TryGetProperty(property, out var value) ? Eve.Sde.SdeReader.English(value) : "";
-
 }

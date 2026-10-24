@@ -26,6 +26,46 @@ public sealed class DungeonWaveSpaceTests
     }
 
     [PgFact]
+    public async Task A_system_owned_wave_waits_for_the_real_Host_undock_to_load_its_scene()
+    {
+        var rig = await Rig.CreateAsync();
+        await using var _ = rig;
+        await rig.UseBusAsync();
+        var character = await rig.NewCharacterAsync();
+        var session = await rig.SessionAsync(character);
+        var waves = await WaveRuntime.CreateAsync(rig);
+        var systemId = (int)session.GetInt("solarsystemid2")!.Value;
+
+        var start = await waves.Director.StartForSystemAsync(systemId, [0, 0, 0], 2173, "incursion:host-scene", DungeonWaveDirector.Lifetime);
+        Assert.True(start.Started, start.Refusal);
+
+        await waves.RunAsync();
+        Assert.Empty(rig.Sim.Heard.OfType<SimSpawn>());
+        Assert.DoesNotContain(rig.Log, line => line.Contains("NO_SCENE", StringComparison.Ordinal));
+        Assert.Single(await waves.Director.ActivePocketsAsync());
+
+        Assert.Same(rig.Ship, rig.Registry.Lookup("ship"));
+        var boundShip = await rig.BindShipAsync(session);
+        var answer = await rig.RegisteredCallAsync(session, boundShip, "Undock",
+            new Eve.Marshal.PyLong(session.GetInt("shipid")!.Value), Eve.Marshal.PyBool.False);
+        var undock = Assert.IsType<Eve.Marshal.PyTuple>(answer);
+        Assert.Equal(new Eve.Marshal.PyStr(boundShip), undock.Items[0]);
+        Assert.IsType<Eve.Marshal.PyLong>(undock.Items[1]);
+        Assert.Null(session.GetInt("stationid"));
+        Assert.Equal(systemId, session.GetInt("locationid"));
+        Assert.True(rig.Space.HasPilotsIn(systemId));
+
+        rig.Now += 15_000;
+        await waves.RunAsync();
+
+        var spawns = rig.Sim.Heard.OfType<SimSpawn>().ToList();
+        Assert.Equal(8, spawns.Count);
+        Assert.All(spawns, spawn => Assert.Equal(SpaceSessions.NpcBehavior, spawn.Behavior));
+        Assert.DoesNotContain(rig.Log, line => line.Contains("NO_SCENE", StringComparison.Ordinal));
+        Assert.Single(await waves.Director.ActivePocketsAsync());
+    }
+
+    [PgFact]
     public async Task A_dungeon_in_space_is_made_by_the_host_and_the_simulations_kills_count_its_waves_once()
     {
         var (rig, character, session) = await InSpaceAsync();
@@ -58,8 +98,7 @@ public sealed class DungeonWaveSpaceTests
         Assert.Equal(8, rig.Sim.Heard.OfType<SimSpawn>().Count());
     }
 
-    private static List<(string Topic, string Json)> Announced(Rig rig, string topic)
-    {
+    private static List<(string Topic, string Json)> Announced(Rig rig, string topic)    {
         lock (rig.Announced)
         {
             return rig.Announced.Where(announced => announced.Topic == topic).ToList();

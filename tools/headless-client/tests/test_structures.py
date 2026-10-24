@@ -148,9 +148,13 @@ def _pilot_without_role(ceo, pilot) -> tuple[int, int, int]:
     return corporation, character, ship_id
 
 def _refusal(failure: p.MachoError) -> tuple[str, str]:
-    """The label of the client's UserError the server raised (the first item of its tuple) and the whole of its payload as text."""
-    payload = describe(failure.payload)["$objectex"]["$tuple"]
-    return str(payload[1]["$tuple"][0]), str(describe(failure.payload))
+    """The label of a wrapped UserError, or the raw payload when the server sent another error shape."""
+    described = describe(failure.payload)
+    object_ex = described.get("$objectex") if isinstance(described, dict) else None
+    payload = object_ex.get("$tuple") if isinstance(object_ex, dict) else None
+    if not isinstance(payload, list) or len(payload) < 2:
+        return "<non-user-error>", str(described)
+    return str(payload[1]["$tuple"][0]), str(described)
 
 def _refused(call) -> tuple[str, str]:
     """(label, payload text) of the refusal the call gets; a call that is answered fails the test."""

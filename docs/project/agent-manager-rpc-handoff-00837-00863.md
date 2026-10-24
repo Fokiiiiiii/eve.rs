@@ -28,8 +28,8 @@ EveJS v0.12.9 implements the matching reads in `server/src/services/agent/agentM
 
 ## Existing checks and limits
 
-`dotnet/tests/Eve.Services.Core.Tests/AgentMissionServiceTests.cs` covers selected-character completion state, journal shapes and state, agent rowset columns, and solar-system scalar results; `AgentMissionStaticAuthorityTests.cs` covers non-empty static mission and epic-arc data; `AgentCatalogSdeTests.cs` covers SDE-derived agent records. `AgentMissionDispatchTests.cs` sends Macho packets through a test registry, but does not construct full Host composition. This audit added no server behavior because the service is already composed and tested; the focused Actions run is recorded below. No graphical-client run was performed.
+`dotnet/tests/Eve.Services.Core.Tests/AgentMissionServiceTests.cs` covers selected-character completion state, journal shapes and state, agent rowset columns, and solar-system scalar results; `AgentMissionStaticAuthorityTests.cs` covers non-empty static mission and epic-arc data; `AgentCatalogSdeTests.cs` covers SDE-derived agent records. `AgentMissionDispatchTests.cs` sends Macho packets through a test registry, but does not construct full Host composition. This audit added no server behavior because the service is already composed and tested. No graphical-client run was performed.
 
 ## Actions
 
-Pending focused run for this handoff commit: `Eve.Services.Core.Tests`, filter `FullyQualifiedName~AgentMissionServiceTests`.
+Focused Actions run 40082739789 for `Eve.Services.Core.Tests`, filter `FullyQualifiedName~AgentMissionServiceTests`, completed successfully with no failed tests or jobs. `python3 tools/dev/ci-status.py failures 8e4d0fdbb821fe35d843cc79491bcb95f5fbaad3` found no `ci.yml` run for that SHA.

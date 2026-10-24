@@ -367,6 +367,8 @@ public sealed class InsurgencyDirectorTests
             return Task.FromResult(new DungeonSpawnResult(ships, null));
         }
 
+        public bool HasPilotsInSystem(int solarSystemId) => true;
+
         public bool IsPilotInSystem(long characterId, int solarSystemId) => false;
 
         public void Remove(IReadOnlyList<long> shipIds)

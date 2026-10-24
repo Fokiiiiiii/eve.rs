@@ -95,17 +95,17 @@ public sealed class AccountWalletHostRpcTests
                 return Result(Assert.Single(replies));
             }
 
-            void AssertNotifications(int expectedCount)
+            void AssertNotifications(params string[] expectedIdTypes)
             {
                 var packets = capture.Sent.Select(packet =>
                     Assert.IsType<MachoPacket>(MachoPacket.Decode(packet))).ToArray();
-                Assert.Equal(expectedCount + 1, packets.Length);
-                Assert.All(packets[..expectedCount], packet =>
+                Assert.Equal(expectedIdTypes.Length + 1, packets.Length);
+                for (var index = 0; index < expectedIdTypes.Length; index++)
                 {
-                    Assert.Equal(MachoMessage.Notification, packet.Type);
-                    Assert.Equal("OnAccountChange", packet.Dest.BroadcastId);
-                    Assert.Equal("clientID", packet.Dest.IdType);
-                });
+                    Assert.Equal(MachoMessage.Notification, packets[index].Type);
+                    Assert.Equal("OnAccountChange", packets[index].Dest.BroadcastId);
+                    Assert.Equal(expectedIdTypes[index], packets[index].Dest.IdType);
+                }
                 Assert.Equal(MachoMessage.CallRsp, packets[^1].Type);
             }
 
@@ -114,17 +114,17 @@ public sealed class AccountWalletHostRpcTests
 
             Assert.Equal(PyBool.True, await Call(3, "GiveCash", Py.Number(recipient),
                 new PyReal(125.75), new PyStr("private gift")));
-            AssertNotifications(1);
+            AssertNotifications("clientID");
             Assert.Equal(new PyReal(4_874.25), await Call(4, "GetCashBalance", new PyInt(0)));
 
             Assert.Equal(PyNone.Instance, await Call(5, "GiveCash", Py.Number(corporation.Id),
                 new PyReal(40.25), new PyStr("corporation deposit")));
-            AssertNotifications(2);
+            AssertNotifications("clientID", "*corpid&corpAccountKey");
             Assert.Equal(new PyReal(40.25), await Call(6, "GetCashBalance", new PyInt(1), new PyInt(1000)));
 
             Assert.Equal(PyNone.Instance, await Call(7, "GiveCashFromCorpAccount", Py.Number(recipient),
                 new PyReal(12.25), new PyInt(1000), new PyStr("corporation payout")));
-            AssertNotifications(1);
+            AssertNotifications("*corpid&corpAccountKey");
             Assert.Equal(6, changes.Count);
             Assert.Equal(4_834m, (await wallets.GetAsync(sender))!.Isk);
             Assert.Equal(5_138m, (await wallets.GetAsync(recipient))!.Isk);

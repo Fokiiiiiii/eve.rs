@@ -733,6 +733,37 @@ public sealed class PersistenceContractWriteModel(
         return true;
     }
 
+    public async ValueTask<bool> SplitStackAsync(long itemId, long quantity, long characterId, long corporationId,
+        long stationId, bool forCorporation, int flag, CancellationToken cancellationToken)
+    {
+        if (itemId <= 0 || quantity <= 0 || characterId <= 0 || corporationId <= 0 || stationId <= 0)
+            throw new ArgumentOutOfRangeException(nameof(itemId));
+        if (forCorporation ? !ItemFlags.IsCorporationHangar(flag) : flag != ItemFlags.Hangar)
+            throw new ContractUserErrorException("ConContractNotAvailable");
+
+        var ownerId = forCorporation ? corporationId : characterId;
+        var item = await items.GetAsync(itemId, cancellationToken);
+        if (item is null || item.OwnerId != ownerId || item.Flag != flag)
+            throw new ContractUserErrorException("ConContractNotFound");
+        if (item.LocationId != stationId)
+            throw new ContractUserErrorException("ConNotInStation");
+        if (item.Singleton || item.Quantity < quantity)
+            throw new ContractUserErrorException("ConContractNotAvailable");
+
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        try
+        {
+            await items.MoveStackAsync(connection, transaction, item, quantity, ownerId, stationId, flag, cancellationToken);
+        }
+        catch (InvalidOperationException error) when (error.Message is "ITEM_CHANGED" or "ITEM_LOCKED")
+        {
+            throw new ContractUserErrorException("ConContractNotAvailable");
+        }
+        await transaction.CommitAsync(cancellationToken);
+        return true;
+    }
+
     private static async ValueTask<bool> CommitBidReplayAsync(NpgsqlTransaction transaction, CancellationToken cancellationToken)
     {
         await transaction.CommitAsync(cancellationToken);

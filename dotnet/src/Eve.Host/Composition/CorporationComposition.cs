@@ -273,11 +273,14 @@ internal sealed partial class CharacterServicesComposition
                     station.Id, station.TypeId, station.OwnerId, station.SolarSystemId, station.Security)
                 : null,
             now,
-            structureOffices);
+            structureOffices,
+            characterSessions,
+            itemTypes);
 
         corporationOfficeStore.RenewalRentSource = structureOffices.RenewalRentAsync;
         var rentDue = new StructureOfficeRentDue(source, corporationOfficeStore, economyWallets, foundations.Scheduler, structureOffices,
-            items, characters, notificationMailbox ?? throw new InvalidOperationException("The notifications mailbox is wired before the offices."));
+            items, characters, notificationMailbox ?? throw new InvalidOperationException("The notifications mailbox is wired before the offices."),
+            characterSessions);
         rentDue.Register();
         rentDue.SubscribeClosures(foundations.Events);
 

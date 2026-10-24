@@ -13,3 +13,11 @@ The CI status also showed a separate earlier Live(slow) failure on SHA `ae6c86ce
 ## Client/EveJS differential follow-up
 
 `PokePlayerAboutChatMsgGm` now sends EveJS-compatible persisted system mail through the production mail adapter. The V24 XMPP client calls this RPC; EveJS uses sender `140000004` (`GM ELYSIAN`), subject `GM chat request`, and the requested channel in the message body. The Host validates the privileged payload, persists recipient status and notification before returning the message ID, and omits a sender mailbox copy as EveJS does. `Eve.Host.Tests` build passed, and `Mail_host_adapter_commits_mail_and_notification_before_returning_id` passed locally (1/1). GitHub Actions result is pending for the pushed commit.
+
+## Corporation office notifications (2026-10-24)
+
+`OnOfficeRentalChange` now follows V24/EveJS name, `[corporationID, officeFolderID]` arguments, separate `stationid` and `corpid` broadcasts, recipient union and ordering. `OnItemsChanged` matches EveJS for station rent and empty station un-rent, including packed typeOffice 27 rows and the `*stationid&corpid` route. Host wires SDE type 27 metadata and active sessions into the existing office service; direct operations notify after commit, and rent-due/structure departure paths notify after their state commits.
+
+The full EveJS expired-impound path was compared. EJS excludes impounded offices from `GetMyCorporationsOffices`; eve.rs removes that office row at impound time and sends the same cache invalidation. The later EJS `TrashImpoundedOffice` notice has no second office-state transition in eve.rs. The timing difference is recorded in `DEVIATIONS.md`.
+
+Local checks: Corporation services, Host and Corporation tests projects built cleanly; `CorporationOfficeNotificationTests` passed 3/3. One initial Host compile found a missing `Eve.Services` import; the corrected Host rebuild passed. No PostgreSQL database was used. GitHub Actions will be checked after the code push.

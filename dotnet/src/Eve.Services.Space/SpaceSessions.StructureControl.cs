@@ -285,7 +285,9 @@ public sealed partial class SpaceSessions
     public async Task<bool> CanReturnToStructureShipAsync(ClientSession session, long shipId,
         int system, double x, double y, double z, double structureRadius, double shipRadius, CancellationToken token)
     {
-        if (ShipIdOf(session) != shipId || SolarSystemOf(session) != system ||
+        if (!_pilots.TryGetValue((ulong)session.SessionId, out var pilot) ||
+            pilot.CharacterId != session.CharacterId || pilot.ShipId != shipId || pilot.SolarSystemId != system ||
+            SolarSystemOf(session) != system ||
             await ScenePositionOfAsync(session, shipId, token) is not { } position || position.SolarSystemId != system)
             return false;
         var dx = position.X - x;

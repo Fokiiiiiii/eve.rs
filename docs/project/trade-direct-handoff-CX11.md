@@ -28,8 +28,9 @@ The task-mentioned `jobs/461-trade-item-eligibility.txt`, `462-trade-container-d
 
 ## Verification
 
-- Local compile checks passed for `Eve.Host.Tests` and `Eve.Trade.Tests` with .NET 10, `UseSharedCompilation=false`, and node reuse disabled. No PostgreSQL tests were run locally.
-- Focused Actions run `40073577535` passed on `859cf2c4b67c`: `Eve.Host.Tests` 3 passed, `Eve.Trade.Tests` 2 passed, and `test_walk_trade.py` 1 passed; all three groups had 0 failed and 0 skipped.
-- Push gate `40073571150` completed with failures in three checks: an old Trade authority test expected non-hangar refusal (fixed to check inaccessible ancestry), the Stargate wire test expected a single warp packet (fixed to accept the observed Notification followed by CallRsp), and the structure headless walk did not wait for undock/ballpark/warp notifications (waits added to match the existing warp walk). The fast run also skipped eight slow live cases and one training-speed case; those skips are not counted as passes.
-- A local Space.Tests dependency build was killed with csc exit 137 under shared-machine pressure; the project-only retry was canceled after it made no progress. Verify its compilation and all three corrective cases through Actions.
+- Earlier local builds of `Eve.Host.Tests` and `Eve.Trade.Tests` succeeded with .NET 10, `UseSharedCompilation=false`, and node reuse disabled. No PostgreSQL tests were run locally. A later Space.Tests build and Host.Tests recompile were canceled after prolonged shared-machine resource starvation.
+- Focused Actions run `40073577535` passed on `859cf2c4b67c`: Host 3/3, Trade 2/2 and `test_walk_trade.py` 1/1; no skips.
+- The first push gate `40073571150` exposed outdated trade/warp expectations and a structure walk that needed session-transition waits. The later focused run `40080249666` passed Host 3/3 and Trade 3/3; Space wire test was 0/1 and live cases 22/23. Its live failure was the structure walk; the fast run had 0 skipped.
+- Push gate `40080240344` completed with Host account-wallet and Space wire test failures; all other reported jobs, including end-to-end server stack and Windows, succeeded. The account fixture now funds the corporation registration fee; the wire fixture supplies its ship type to DogmaStatic. The structure walk now waits before undock, checks that undock succeeded, and waits for the state notifications.
+- The latest correction commit is pending focused Actions and push-gate verification. Earlier broad fast CI reported eight slow live skips and one training-speed skip; those skips are not passes.
 - Graphical-client execution was not performed.

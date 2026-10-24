@@ -1,5 +1,6 @@
 using Eve.Data;
 using Eve.Inventory;
+using Eve.Sde;
 using Eve.Wallet;
 using Npgsql;
 
@@ -26,7 +27,7 @@ internal sealed class TradeRig : IAsyncDisposable
         Items = new PgItemStore(source, "ti_" + suffix);
         Wallets = new PgWalletStore(source, "tw_" + suffix);
         Transactions = new WalletTransactions(source, "tw_" + suffix);
-        Trades = new TradeAuthority(source, Items, Transactions, Wallets, () => _now, "tt_" + suffix);
+        Trades = new TradeAuthority(source, Items, Transactions, Wallets, () => _now, "tt_" + suffix, new ItemTypeCatalog(new SdeReader(source)));
     }
 
     public NpgsqlDataSource Source { get; }

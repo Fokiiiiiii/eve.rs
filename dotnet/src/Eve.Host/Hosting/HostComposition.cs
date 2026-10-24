@@ -262,6 +262,16 @@ internal static class HostComposition
         {
             registry.Register(service);
         }
+        if (characterServices.Count == 0)
+        {
+            // The in-memory host has no character directory, but the client route still resolves.
+            var emptySearchSources = new LookupSearchSources(
+                _ => Task.FromResult<IReadOnlyList<LookupEntity>>([]),
+                _ => Task.FromResult<IReadOnlyList<LookupEntity>>([]),
+                _ => Task.FromResult<IReadOnlyList<LookupEntity>>([]),
+                _ => Task.FromResult<IReadOnlyList<LookupEntity>>([]));
+            registry.Register(new SearchQueryService(emptySearchSources));
+        }
         if (characterServices.Count > 0)
         {
             // names the client also uses for the same service

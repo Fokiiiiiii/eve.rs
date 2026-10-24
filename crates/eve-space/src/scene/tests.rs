@@ -1870,26 +1870,62 @@ fn a_ship_sent_to_a_system_without_the_gate_is_given_back_and_goes_on_where_it_w
 fn a_warp_to_a_gate_ends_within_jump_range_of_it_and_the_jump_is_accepted() {
     let mut scene = scene_by_a_gate();
     scene.command(SESSION, Command::SetSpeedFraction(0.0), NOON);
-    let told = scene.command(SESSION, Command::WarpTo { target_id: FAR_GATE, range: 0.0 }, NOON + seconds(1));
+    let warp_at = NOON + seconds(1);
+    let told = scene.command(SESSION, Command::WarpTo { target_id: FAR_GATE, range: 0.0 }, warp_at);
     assert_eq!(
         action_names(&told[0]),
         ["SetMaxSpeed", "WarpTo", "OnSpecialFX", "SetSpeedFraction"],
         "{told:?}"
     );
-    let mut t = NOON + seconds(1);
+    let refused = scene.command(SESSION, jump(FAR_GATE, 0), warp_at);
+    assert!(refused.iter().any(|out| matches!(out, Out::Refused { reason: "IN_WARP", .. })), "{refused:?}");
+
+    let gate = scene.system().body(FAR_GATE).unwrap().clone();
+    let mut t = warp_at;
     while t < NOON + seconds(300) {
         t += 2_500_000;
         scene.poll(t);
+        if scene.pilots[&SESSION].flight.as_ref().is_some_and(|flight| flight.is_warping()) {
+            break;
+        }
     }
-    let ship = scene.ship(SESSION, t).unwrap().clone();
-    assert_eq!(ship.course, Course::Stop, "the warp is over");
-    let gate = scene.system().body(FAR_GATE).unwrap();
-    let surface = crate::gate::surface_distance(gate, ship.position, ship.spec.radius);
-    assert!(surface <= crate::gate::JUMP_RANGE, "{surface} m off the gate's surface");
-    let out = scene.command(SESSION, jump(FAR_GATE, 0), t + seconds(1));
-    assert!(matches!(out[1], Out::Jumping { .. }), "{out:?}");
-}
+    assert!(
+        scene.pilots[&SESSION].flight.as_ref().is_some_and(|flight| flight.is_warping()),
+        "warp did not start by {t}"
+    );
+    let in_warp = scene.command(SESSION, jump(FAR_GATE, 0), t);
+    assert!(in_warp.iter().any(|out| matches!(out, Out::Refused { reason: "IN_WARP", .. })), "{in_warp:?}");
 
+    while t < NOON + seconds(300) {
+        t += 2_500_000;
+        scene.poll(t);
+        let ship = scene.ship(SESSION, t).unwrap();
+        let surface = crate::gate::surface_distance(&gate, ship.position, ship.spec.radius);
+        if scene.pilots[&SESSION].flight.as_ref().is_some_and(|flight| flight.is_coasting())
+            && surface <= crate::gate::JUMP_RANGE
+        {
+            break;
+        }
+    }
+
+    let ship = scene.ship(SESSION, t).unwrap().clone();
+    assert!(
+        scene.pilots[&SESSION].flight.as_ref().is_some_and(|flight| flight.is_coasting()),
+        "warp did not drop out near the gate at {t}"
+    );
+    let surface = crate::gate::surface_distance(&gate, ship.position, ship.spec.radius);
+    assert!(surface <= crate::gate::JUMP_RANGE, "{surface} m off the gate's surface");
+
+    let position = ship.position;
+    let out = scene.command(SESSION, jump(FAR_GATE, 0), t);
+    assert!(out.iter().any(|out| matches!(out, Out::Jumping { .. })), "{out:?}");
+    assert!(scene.pilots[&SESSION].flight.is_none(), "the jump cancels the old coast flight");
+    scene.poll(t + seconds(1));
+    let ship = scene.ship(SESSION, t + seconds(1)).unwrap();
+    assert_eq!(ship.course, Course::Stop);
+    assert_eq!(ship.position, position, "the ship remains stopped while the jump is pending");
+    assert!(scene.pilots[&SESSION].flight.is_none(), "the old coast flight does not resume");
+}
 #[test]
 fn a_warp_to_a_gate_with_the_same_calls_ends_at_the_same_point() {
     let land = || {

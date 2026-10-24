@@ -40,6 +40,46 @@ public sealed class ItemTypeCatalog(SdeReader sde)
     public async Task<ItemType?> GetAsync(int typeId, CancellationToken cancellationToken = default) =>
         (await GetAsync([typeId], cancellationToken)).GetValueOrDefault(typeId);
 
+    private IReadOnlyList<SdeRow>? _tradeRestrictionLists;
+    private readonly SemaphoreSlim _tradeRestrictionsGate = new(1, 1);
+
+    /// <summary>Whether the pinned SDE's direct-trade restriction lists allow this type.</summary>
+    public async Task<bool> IsTradableAsync(int typeId, CancellationToken cancellationToken = default)
+    {
+        var type = await GetAsync(typeId, cancellationToken).ConfigureAwait(false);
+        if (type is null) return false;
+        var lists = _tradeRestrictionLists;
+        if (lists is null)
+        {
+            await _tradeRestrictionsGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                lists = _tradeRestrictionLists ??= await sde.ReadAsync("typeLists", [36L, 142L], cancellationToken).ConfigureAwait(false);
+            }
+            finally
+            {
+                _tradeRestrictionsGate.Release();
+            }
+        }
+        if (lists.Count != 2) throw new InvalidOperationException("The SDE is missing a direct-trade restriction type list.");
+
+        static bool Names(System.Text.Json.JsonElement list, string field, int id) => id > 0
+            && list.TryGetProperty(field, out var values) && values.ValueKind == System.Text.Json.JsonValueKind.Array
+            && values.EnumerateArray().Any(value => value.TryGetInt32(out var candidate) && candidate == id);
+
+        foreach (var list in lists)
+        {
+            var included = Names(list.Doc, "includedTypeIDs", typeId)
+                || Names(list.Doc, "includedGroupIDs", type.GroupId)
+                || Names(list.Doc, "includedCategoryIDs", type.CategoryId);
+            var excluded = Names(list.Doc, "excludedTypeIDs", typeId)
+                || Names(list.Doc, "excludedGroupIDs", type.GroupId)
+                || Names(list.Doc, "excludedCategoryIDs", type.CategoryId);
+            if (included && !excluded) return false;
+        }
+        return true;
+    }
+
     private async Task<Dictionary<int, int>> GroupsAsync(CancellationToken cancellationToken)
     {
         if (_categoryOfGroup is { } known)

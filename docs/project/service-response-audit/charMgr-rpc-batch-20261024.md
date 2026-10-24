@@ -35,6 +35,15 @@ The whole /home/user/eve-logic tree was searched for each RPC and cache method.
 - Restore-enabled dotnet build spent over nine minutes at Determining projects to restore and exited 1 without restore diagnostics. The focused test has not run. The restore-enabled build remained at package restore and exited 1 without diagnostic output, so compilation is not established.
 - The git checkout started on branch cx21 with unrelated pre-existing worktree changes. Those changes are not part of this RPC batch and must remain untouched.
 
+## Later verification and remaining work
+
+- Host tests now send the real Macho CallReq through HostServer and the registered CharMgrService. The GetPublicInfo case sends transport keyword machoVersion, checks the KeyVal fields for two character fixtures, and covers a missing character; GetPublicInfo3 is checked as a one-row list. This ran successfully on commit 5ebf140b in Actions run 40086215702; the selected job reported no failed tests. The later assertion added for both security fields is queued for its own verification.
+- A previous run exposed a compile error from two identical CallWithKwargs helpers introduced as main advanced during the merge. The duplicate was removed. The next selected Host test passed.
+- The push-triggered ci.yml run for c84fe135 reported the same compile error and a separate live structure anchoring failure at tests/test_structures.py:486 (CustomNotify: You must be in space to deploy a structure). The failure is outside this charMgr change; the latest pushed ci.yml run is still pending at this checkpoint.
+- The first local restore-enabled .NET build did not finish package restore, so no local build or test result is established. The agent-test workflow skipped its headless-client installation because live tests were empty; that skip is separate from the passing selected .NET test.
+- Remaining rows still lack this batch's focused wire coverage: recent-kill paging, settings, and the global-assets inventory methods. The Host callback's production wiring and database-backed inventory behavior still need a DB-lane scenario; this task has not used PostgreSQL.
+- PublicInfo client warFactionID read remains a shape gap: crimewatchSvc.py:179 reads it, but EveJS charMgrService.js:372-421 and eve.rs PublicInfo do not provide it. Do not add a fabricated field.
+
 ## Client evidence required for continuation
 
 Before closing remaining rows, add Host-dispatched wire tests for the persisted PublicInfo shapes, the recent-kill row pages, and the global-assets methods using the real provider wiring. Include different valid page sizes, missing/unauthorized inventory state, and client-added transport arguments where the packet path adds them. Record Action results and separately identify skipped tests.

@@ -51,6 +51,24 @@ public partial class HostServerTests
             return MarshalCodec.Decode(Assert.IsType<Send>(await front.ReceiveAsync()).Payload);
         }
 
+        async Task<(string[] Notifications, PyValue Response)> CallWithNotifications(string method, params PyValue[] args)
+        {
+            await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(
+                Packets.CallWithKwargs(open, ++callId, "skillHandler", method, new PyTuple(args), kwargs))));
+            var notifications = new string[2];
+            for (var i = 0; i < notifications.Length; i++)
+            {
+                var packet = MarshalCodec.Decode(Assert.IsType<Send>(await front.ReceiveAsync()).Payload);
+                var state = Assert.IsType<PyTuple>(Assert.IsType<PyObject>(packet).Args).Items;
+                Assert.Equal(MachoMessage.Notification, Assert.IsType<PyInt>(state[0]).Value);
+                var address = Assert.IsType<PyTuple>(Assert.IsType<PyObject>(state[2]).Args).Items;
+                notifications[i] = Assert.IsType<PyStr>(address[1]).Value;
+            }
+
+            var response = MarshalCodec.Decode(Assert.IsType<Send>(await front.ReceiveAsync()).Payload);
+            return (notifications, response);
+        }
+
         var moniker = Assert.IsType<PyObject>(Result(await Call("skillMgr2", "GetMySkillHandler")));
         var monikerArgs = Assert.IsType<PyTuple>(moniker.Args);
         Assert.Equal("skillHandler", JsSemantics.StringValue(monikerArgs.Items[0]));
@@ -102,8 +120,10 @@ public partial class HostServerTests
             await transaction.CommitAsync();
         }
 
-        Assert.Equal(new PyInt(900_000), Result(await Call("skillHandler", "InjectSkillpoints",
-            new PyLong(injectorId), new PyInt(2))));
+        var (notifications, injectionResponse) = await CallWithNotifications("InjectSkillpoints",
+            new PyLong(injectorId), new PyInt(2));
+        Assert.Equal(["OnItemChange", "OnFreeSkillPointsChanged"], notifications);
+        Assert.Equal(new PyInt(900_000), Result(injectionResponse));
         Assert.Equal(5_401_000, await skills.FreeSkillPointsAsync(character));
         Assert.Null(await items.GetAsync(injectorId));
 

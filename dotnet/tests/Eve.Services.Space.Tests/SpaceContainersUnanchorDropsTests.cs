@@ -18,6 +18,7 @@ public sealed class SpaceContainersUnanchorDropsTests
     private const long CorporationId = 98_000_021;
     private const long AllianceId = 99_000_021;
     private const int SmallShieldBooster = 1103;
+    private const int Obelisk = 20187;
 
     [PgFact]
     public async Task Committed_unanchor_event_places_SDE_groups_and_restart_restore_keeps_them()
@@ -61,8 +62,8 @@ public sealed class SpaceContainersUnanchorDropsTests
     public async Task Bound_ship_scoop_moves_the_fittings_artifact_and_children_then_checks_hull_hold_room()
     {
         await using var rig = await Rig.CreateAsync();
-        await rig.Statics.EnsureTypesAsync([Astrahus, StructureUnanchorDrop.FittingsContainerTypeId, SmallShieldBooster]);
-        var character = await rig.NewCharacterAsync("Unanchor scoop pilot");
+        await rig.Statics.EnsureTypesAsync([Astrahus, StructureUnanchorDrop.FittingsContainerTypeId, SmallShieldBooster, Obelisk]);
+        var character = await rig.NewCharacterAsync("Unanchor scoop pilot", shipTypeId: Obelisk);
         var session = await rig.SessionAsync(character, 1);
         var shipOid = await rig.BindShipAsync(session);
         await rig.ShipCallAsync(session, "Undock", shipOid, new PyLong(session.GetInt("shipid")!.Value), PyBool.False);

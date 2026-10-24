@@ -59,9 +59,20 @@ fn hold_tick_aligned(messages: Vec<Message>, held: &mut Vec<Message>) -> Vec<Mes
     let mut immediate = Vec::with_capacity(messages.len());
     let mut preserve_notification_order = !held.is_empty();
     for message in messages {
+        let jump_follows_held_update = matches!(
+            &message,
+            Message::Jumping { session_id, .. }
+                if held.iter().any(|held| matches!(
+                    held,
+                    Message::Notify { session_id: held_session, name, .. }
+                        if held_session == session_id && name == "DoDestinyUpdate"
+                ))
+        );
         if matches!(&message, Message::Notify { name, .. } if name == "DoDestinyUpdate") {
             held.push(message);
             preserve_notification_order = true;
+        } else if jump_follows_held_update {
+            held.push(message);
         } else if preserve_notification_order && matches!(&message, Message::Notify { .. }) {
             held.push(message);
         } else {
@@ -174,5 +185,21 @@ mod tests {
                 followup,
             ]
         );
+        held.clear();
+        let destiny = Message::Notify {
+            session_id: 1,
+            name: "DoDestinyUpdate".into(),
+            id_type: "clientID".into(),
+            args: Vec::new(),
+        };
+        let jumping = Message::Jumping {
+            session_id: 1,
+            command: 9,
+            destination_system: 30_000_002,
+            destination_gate: 50_000_002,
+        };
+        let immediate = hold_tick_aligned(vec![destiny.clone(), jumping.clone()], &mut held);
+        assert!(immediate.is_empty());
+        assert_eq!(held, [destiny, jumping]);
     }
 }

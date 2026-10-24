@@ -145,7 +145,7 @@ public sealed class SpaceContainersUnanchorDropsTests
     {
         await using var rig = await Rig.CreateAsync();
         await rig.Statics.EnsureTypesAsync([AmarrControlTower]);
-        var character = await rig.NewCharacterAsync("Foreign Tower Pilot");
+        var character = await rig.NewCharacterAsync("TowerScoopPilot");
         var session = await rig.SessionAsync(character, 1);
         var shipOid = await rig.BindShipAsync(session);
         await rig.ShipCallAsync(session, "Undock", shipOid, new PyLong(session.GetInt("shipid")!.Value), PyBool.False);
@@ -185,7 +185,7 @@ public sealed class SpaceContainersUnanchorDropsTests
     {
         await using var rig = await Rig.CreateAsync();
         await rig.Statics.EnsureTypesAsync([Astrahus]);
-        var character = await rig.NewCharacterAsync("Mismatched Hull Owner");
+        var character = await rig.NewCharacterAsync("HullOwnerMismatch");
         var session = await rig.SessionAsync(character, 1);
         var shipOid = await rig.BindShipAsync(session);
         await rig.ShipCallAsync(session, "Undock", shipOid, new PyLong(session.GetInt("shipid")!.Value), PyBool.False);

@@ -412,8 +412,7 @@ public sealed class StructureControlBackendTests
     }
 
     /// <summary>
-    /// The return to the pilot's own ship after a boarding from space (ST-23): the simulation no longer answers the pilot for its ship once it boards, so the place
-    /// the pilot's ship had when it boarded is what the return measures. Within the return distance, the ship comes back; beyond it, it is refused.
+    /// The return to the pilot's own ship after a boarding from space: if that ship is within boarding range, it is restored.
     /// </summary>
     [PgFact]
     public async Task A_ship_boarded_from_space_returns_to_its_pilot_from_the_place_it_boarded_at()
@@ -421,7 +420,7 @@ public sealed class StructureControlBackendTests
         await using var f = await Fixture.CreateAsync(withSpaceItems: true);
         var session = await f.FlyingSessionAsync(40);
         var ship = session.GetInt("shipid")!.Value;
-        // 2 000 m of surface from the Astrahus (radius 45 000 m) and the ship (50 m): inside the 6 500 m a ship may return from
+        // 2 000 m of surface from the Astrahus (radius 45 000 m) and the ship (50 m)
         f.Sim.PositionAnswer = [45_000d + 50d + 2_000d, 0d, 0d];
         await f.Backend.BoardStructureAsync(f.Call(session), Structure);
         Assert.Equal(Structure, session.GetInt("structureid"));
@@ -433,13 +432,14 @@ public sealed class StructureControlBackendTests
         Assert.Equal(ship, session.GetInt("shipid"));
     }
 
+    /// <summary>A return to the pilot's original ship restores that ship even when it is beyond structure boarding range.</summary>
     [PgFact]
-    public async Task A_ship_boarded_from_space_far_from_its_structure_is_not_returned_to_by_the_place_it_boarded_at()
+    public async Task A_ship_boarded_from_space_returns_to_its_pilot_even_when_far_from_the_structure()
     {
         await using var f = await Fixture.CreateAsync(withSpaceItems: true);
         var session = await f.FlyingSessionAsync(41);
         var ship = session.GetInt("shipid")!.Value;
-        // 155 000 m of surface away: outside the return distance
+        // 155 000 m of surface away: beyond structure boarding range, but Eject restores the ship rather than boarding it
         f.Sim.PositionAnswer = [200_000d, 0d, 0d];
         await f.Backend.BoardStructureAsync(f.Call(session), Structure);
         await using (var connection = await f.Source.OpenConnectionAsync())
@@ -450,10 +450,10 @@ public sealed class StructureControlBackendTests
         }
         f.Sim.RefusePositions = true;
 
-        var refused = await Assert.ThrowsAsync<MachoWrappedException>(() => f.Backend.EjectFromStructureAsync(f.Call(session), ship).AsTask());
+        await f.Backend.EjectFromStructureAsync(f.Call(session), ship);
 
-        Assert.Contains("RETURN_SHIP_NOT_BOARDABLE", Texts(refused.Error.Payload));
-        Assert.NotNull(await f.OwnerAsync());
+        Assert.Null(await f.OwnerAsync());
+        Assert.Equal(ship, session.GetInt("shipid"));
     }
 
     /// <summary>Every text inside a wrapped error's payload, joined (the refusal's words).</summary>

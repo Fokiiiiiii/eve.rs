@@ -56,3 +56,8 @@ Serena diagnostics are clean for the new drop authority, timer, scoop backend, a
 - The transactional path also checks that the Upwell hull item's owner matches the corporation recorded on its deployed-space row, so the public access rule does not bypass custody integrity.
 - Focused tests cover a foreign pilot reaching the real cargo-capacity refusal for an Upwell hull, another corporation's tower being refused without scene removal, and owner/space-row mismatch being rejected before mutation.
 - The Release build of `Eve.Services.Space.Tests` passed locally with 0 warnings and 0 errors. The focused service and live checks will be recorded after Actions; no local PostgreSQL test was run.
+
+
+## Focused Actions follow-up (2026-10-24)
+
+- Agent test run 231 on `486812c1` passed all 22 selected live structure tests. Its Space test filter passed 2 and failed 2 because the added pilot names exceeded the two-space character-name rule; the fixtures now use valid names, and the focused rerun is pending.

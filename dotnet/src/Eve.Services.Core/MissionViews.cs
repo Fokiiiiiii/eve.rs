@@ -147,7 +147,7 @@ public static class MissionViews
         Field("contentID", PyNone.Instance),
         Field("briefingTextID", IdOrNone(view.BriefingMessageId)),
         Field("missionImage", PyNone.Instance),
-        Field("expirationTime", view.Record.ExpiresAt is { } expires ? new PyInt(expires.ToFileTime()) : PyNone.Instance),
+        Field("expirationTime", view.Record.ExpiresAt is { } expires ? new PyLong(expires.ToFileTime()) : PyNone.Instance),
         Field("missionState", new PyInt((int)view.Record.State)),
         Field("objectives", Objective(view)),
         Field("bookmarks", new PyList([])),

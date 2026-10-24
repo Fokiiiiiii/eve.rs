@@ -103,8 +103,8 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
         "MARKET_ARGUMENT_OUT_OF_RANGE" => "One of the market values is outside the supported range.",
         _ => "The market refused the request.",
     };
-    private readonly MarketNotifier notifier = new(wallets,characterSessions);
-    private Task Publish(MarketReceipt receipt) => notifier.PublishAsync(receipt);
+    private readonly MarketNotifier notifier = new(wallets,characterSessions,now);
+    private Task Publish(MarketReceipt receipt, MarketRequest? immediateFill = null) => notifier.PublishAsync(receipt, immediateFill);
 
     internal static PyValue OrderNotificationEntry(MarketOwnedOrder owned)
     {
@@ -479,7 +479,7 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
             if(receipt.OrderId is null && receipt.FilledQuantity == 0)
                 throw MachoErrors.ThrowUserError("CustomInfo",("info",new PyStr("No matching sell orders were available at the requested price.")));
             RecordPlacement(call,request);
-            await Publish(receipt);
+            await Publish(receipt,request);
             return PyNone.Instance;
         }
         catch (Exception e) when (e is MarketError or MoneyLimitException or InsufficientFundsException or Eve.Corporations.CorporationError) { throw Error(e); }
@@ -524,7 +524,7 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
             RefuseRepeatedPlacement(call, request);
             var receipt = await trading.PlaceAsync(request, key, call.Cancellation);
             RecordPlacement(call, request);
-            await Publish(receipt);
+            await Publish(receipt, request);
             return receipt.OrderId is not null || receipt.FilledQuantity > 0;
         }
         catch (Exception e) when (e is MarketError or MoneyLimitException or InsufficientFundsException or Eve.Corporations.CorporationError) { throw Error(e); }
@@ -593,9 +593,10 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
             var receipts = await trading.PlaceBuyOrdersAsync(requests, call.Cancellation);
             foreach (var line in requests) RecordPlacement(call, line.Request);
             var created = new List<MarketOwnedOrder>();
-            foreach (var receipt in receipts)
+            for (var i = 0; i < receipts.Count; i++)
             {
-                await Publish(receipt);
+                var receipt = receipts[i];
+                await Publish(receipt, requests[i].Request);
                 created.AddRange(receipt.ChangedOrders.Where(change => change.Reason == "Created").Select(change => change.Order));
             }
             return OwnerOrderRowset(created, null);

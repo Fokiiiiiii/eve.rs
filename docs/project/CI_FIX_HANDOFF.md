@@ -381,7 +381,7 @@ CI run 672 on `1669e6dc` failed the structure market Host test because the fixtu
 ## 2026-10-23 immediate multi-buy notification assertion
 
 - CI 719 on `42d5ccce` failed `MarketRpcTests.Buy_multi_fills_available_quantity_without_posting_the_rest` because it expected an order notification when the duration-zero request only filled matching asks and posted no remainder.
-- The test now expects no packets for that result. Its other assertions still check the empty returned order rows, 50 ISK fill, unchanged bid book and reduced ask quantity.
+- At that revision the test expected no packets for an immediate fill. This was later superseded: EveJS v0.12.9 sends the immediate-fill refresh notification, which the 2026-10-24 follow-up restores and asserts.
 - The Market.Tests Release build passed locally with 0 warnings and 0 errors. The focused Actions check is pending; no local PostgreSQL test was run.
 
 
@@ -390,3 +390,18 @@ CI run 672 on `1669e6dc` failed the structure market Host test because the fixtu
 - CI 719 and 731 exposed the tower-scoop capacity fixture failure, corrected on main by `1472c9c3`. The later CI 734 gate on `9f7ad7a0` showed Eject refusing the original ship because it was beyond the structure boarding distance.
 - This change opens unanchored Upwell hull scoop to any pilot while preserving Starbase hull authorization and the stored-corporation integrity check. It also removes only Eject's distance condition; it still validates the original ship, owner, type, location, flag, and solar-system state before restoring the session.
 - The `Eve.Services.Space.Tests` Release build passed locally with 0 warnings and 0 errors. Selected Actions checks will be recorded after completion; local PostgreSQL tests were not run.
+
+## 2026-10-24 CI run 738 market follow-up
+
+- The newest completed main failure inspected here was run 736 on `e831a724`: EjectFromStructure refused the original ship and the RPC inventory test expected 1,378 methods instead of 1,382. Main now contains the structure return correction in `2de5df10` and inventory count update in `9414192e`. Run 737 also exposed a headless station-ask assertion that treated a four-element wire tuple as a KeyVal; current main still needs this test correction.
+- V24.01 `MarketBase.PopulateAsksForMyRange` converts `GetStationAsks` tuple values with `ConvertTuplesToBestByOrders`. The headless assertion now checks the server tuple `(price, volRemaining, typeID, stationID)`, using the scenario's station ID.
+- EveJS v0.12.9 emits `OnOwnOrdersChanged` after a successful immediate buy fill. The notifier now sends that ephemeral orderID-zero refresh row with the filled quantity and current venue, and the Market RPC test checks its full marshalled packet. Host construction passes the shared clock to the notifier.
+- Host.Tests and Market.Tests Release builds passed locally with 0 warnings and 0 errors. No database-backed tests were run locally. Focused Actions and the push gate are pending; the graphical client was not used.
+
+
+## 2026-10-24 CI 737 follow-up
+
+- Push gate run 737 (`486812c1`) confirmed the Eject live flow and all 22 selected structure scenarios passed. The Host test still asserted the old distance refusal, and the new Space tests failed before reaching scoop logic because their character names exceeded the two-space name rule; both test expectations are corrected locally, with focused Action reruns pending.
+- The same gate's E2E failure was `test_market.py` expecting named `KeyVal` rows from `GetStationAsks`. Main's later `56e0d37d` merge includes the market wire-shape correction. Its latest gate will determine the result.
+- The RPC inventory count discrepancy (expected 1,378, actual 1,382) was corrected on main by `35964099` and recorded by `284dfe95`; that path is outside this structure follow-up.
+- The updated `Eve.Services.Space.Tests` and `Eve.Host.Tests` Release builds both passed locally with 0 warnings and 0 errors. No local PostgreSQL tests were run.

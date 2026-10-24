@@ -369,7 +369,7 @@ public sealed class AgentMissionServiceTests
         var content = new AgentMissionContent(missionId, 93031, "Courier Job", agent.MissionTypeLabel, false);
         var record = new AgentMissionRecord(
             characterId, agentId, AgentMissionState.Accepted, content,
-            DateTimeOffset.UnixEpoch, null, DateTimeOffset.UnixEpoch, null, null, null);
+            DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch, null, null, null);
         var mission = new MissionStatic(
             missionId, "Courier Job", true, 60, null, null, null, null,
             new MissionStaticCourier(34, 3, false),
@@ -408,6 +408,7 @@ public sealed class AgentMissionServiceTests
         var transport = Assert.IsType<PyTuple>(objective.Items[1]);
         Assert.Equal(new PyInt(34), DictField(Assert.IsType<PyDict>(transport.Items[4]), "typeID"));
         Assert.Equal(PyBool.True, DictField(Assert.IsType<PyDict>(transport.Items[4]), "hasCargo"));
+        Assert.Equal(new PyLong(DateTimeOffset.UnixEpoch.ToFileTime()), DictField(journal, "expirationTime"));
         Assert.Equal(new PyInt((int)AgentMissionState.Accepted), DictField(objectives, "missionState"));
 
         var keywords = Assert.IsType<PyDict>(await service.CallAsync(new ServiceCall

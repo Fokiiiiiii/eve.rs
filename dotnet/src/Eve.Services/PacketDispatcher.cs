@@ -22,6 +22,9 @@ public sealed class PacketDispatcher
     private readonly ConditionalWeakTable<ClientSession, ExpensiveRpcBudget> _inventoryBudgets = new();
     private readonly ConditionalWeakTable<ClientSession, ExpensiveRpcBudget> _industryBudgets = new();
     private readonly ConditionalWeakTable<ClientSession, ExpensiveRpcBudget> _marketBudgets = new();
+    private readonly ConditionalWeakTable<ClientSession, ExpensiveRpcBudget> _corpStationBudgets = new();
+    private readonly ConditionalWeakTable<ClientSession, ExpensiveRpcBudget> _dogmaBudgets = new();
+    private readonly ConditionalWeakTable<ClientSession, ExpensiveRpcBudget> _stationBudgets = new();
 
     public PacketDispatcher(ServiceRegistry registry, Func<long>? nowUnixMs = null)
     {
@@ -183,6 +186,9 @@ public sealed class PacketDispatcher
             "invbroker" => _inventoryBudgets,
             "industryManager" => _industryBudgets,
             "marketProxy" => _marketBudgets,
+            "corpStationMgr" => _corpStationBudgets,
+            "dogmaIM" => _dogmaBudgets,
+            "stationSvc" => _stationBudgets,
             _ => _expensiveBudgets,
         };
         var budgetLimit = service.Name switch

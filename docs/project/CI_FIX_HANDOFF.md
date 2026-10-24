@@ -197,7 +197,6 @@ CI run 672 on `1669e6dc` failed the structure market Host test because the fixtu
 - Push-triggered CI run 683 (`40014207144`) and merged-parent run 682 (`40014191246`) were still running in the neighboring worktree at its last update. Current CI and Agent checks on the merged head remain pending.
 - No local PostgreSQL or graphical-client verification was performed.
 
-
 ## 2026-10-23 CI 647/648 root-cause review
 
 - The E2E and Host logs report `42P01` for `sde.skinrComponentPointValues`. These records are in the mission SDE. The failing Host composition passed the regular SDE reader to the SKINR catalog, and the live harness loaded only the regular SDE build. Main commit `a00e62c9` now reads the catalog through `sde_mission`, verifies mission tables when reusing the loaded build, and has the live harness ensure the mission build. The cache key update in `86c11a0c` is separate from this schema mismatch.
@@ -397,7 +396,6 @@ CI run 672 on `1669e6dc` failed the structure market Host test because the fixtu
 - The market tuple assertion and EveJS-compatible immediate-fill notification are on main in 7dced4b3 (head 56e0d37d). V24.01 converts GetStationAsks tuples through ConvertTuplesToBestByOrders. EveJS v0.12.9 sends OnOwnOrdersChanged after an immediate fill, and MarketRpcTests checks the full marshalled refresh packet. Focused Agent runs 236 (Host RPC inventory) and 237 (Market immediate-fill RPC) passed.
 - The Space fixture names are shortened to valid names in the current worktree. Host.Tests and Space.Tests Release builds passed locally with 0 warnings and 0 errors. Main CI run 740 on 56e0d37d remained active at this update. Run 738 skipped eight speed-gated/slow headless cases.
 - No local database-backed tests were run.
-
 ## 2026-10-24 structure ejection follow-up
 
 - V24.01 EjectFromStructure forwards the shipID as a session change; EveJS v0.12.9 restores restoreShipID without checking position or distance. The Host backend still requires the requested ship to match the stored original ship and validates its owner, type, system location, and space flag.
@@ -428,3 +426,40 @@ CI run 672 on `1669e6dc` failed the structure market Host test because the fixtu
 - Run 745 on `fecd1a3e` failed `Native_market_rpc_reads_descriptor_rows_buys_sells_and_cancels_without_node` and `Market_client_plex_history_escrow_and_order_history_reads_are_native`. Both tests expected the old order-notification count after an immediate fill. `MarketNotifier.PublishAsync` now sends EveJS-compatible `OnOwnOrdersChanged` with reason `Filled` for an immediate fill with no resting order; the tests now include that notification in their expected counts.
 - The `Eve.Market.Tests` Release build passed locally with 0 warnings and 0 errors. Focused Actions checks are pending; these database-backed tests were not run locally.
 - Run 745 also failed the End-to-end job with `MachoError: macho error 2` at call ID 523. The CI log tail did not identify its pytest case; root-cause investigation is ongoing. Skips in that run included one Market test and the skill-speed plus seven slow live tests.
+
+## 2026-10-24 headless Upwell docking setup follow-up
+
+- The fast live E2E gate on run 747 (40046843651, 0fd2ca16) ended with MachoError: macho error 2 at call ID 525. The available CI log tail does not name the pytest case. Focused test_market.py Actions run 252 (40048337454) is still running against the earlier helper.
+- V24.01 eve/client/script/ui/services/structure/structureDocking.py:64-81 routes Dock through autoPilot.NavigateSystemTo(structureID, 2500, RequestDocking). The autopilot warps to an in-range item using CmdWarpToStuff before it calls Dock. EveJS server/src/services/structure/structureDockingService.js:134-179 follows a distant target and returns the approach refusal; the headless helper was repeating that RPC from 200,000 km away without the client warp.
+- The helper now issues the client-shaped beyonce.CmdWarpToStuff("item", structure_id, minRange=0), waits for the warp's Stop destiny action, then requests structureDocking.Dock and verifies completion. No production service behavior changed.
+- python3 -m py_compile tools/headless-client/tests/test_market.py passed. The post-change focused Actions check and push-triggered CI are pending. No local PostgreSQL test or graphical-client run was performed.
+
+## 2026-10-24 Upwell market docking and CI diagnostics follow-up
+
+- Runs 746 (`2d2b11ea`) and 747 (`0fd2ca16`) failed the E2E test `test_docked_corporation_members_trade_at_an_eligible_upwell_structure`; run 747 failed at call 525 with `MachoError: macho error 2`. The Fortizar fixture is 200,000 km from the station, and the client navigates to within 2.5 km before its Dock RPC. The headless helper now follows that client movement flow; the same correction is present in the fetched main head.
+- The CI log parser now extracts pytest's `FAILED path::test_name` heading when a summary table is missing. Focused regression `FailureParsingTests.test_pytest_failure_heading_without_summary_name` passed locally.
+- The focused Actions rerun and push-triggered gate for the merged helper and log parser are pending. No local PostgreSQL database was used.
+
+
+## 2026-10-24 CI runs 749-750 failure-output parser correction
+
+- Run 749 on `30dcbf9d` failed `FailureParsingTests.test_pytest_failure_name_and_section_tail`: the parser returned both pytest's bare failure heading (`test_character_walk`) and its qualified summary node (`tests/test_walk.py::test_character_walk`), while the focused assertion expects the qualified node only.
+- The parser drops a bare name when a matching `::`-qualified summary name is present. Run 750 (Actions run `40049835056`) on `e63b3aea` then exposed the heading-only case: `test_pytest_failure_heading_without_summary_name` returned `[]` instead of `['test_character_walk']`, because pytest's underscore-delimited failure heading was not parsed.
+- `parse_test_failures` now recognizes the underscore-delimited pytest heading while retaining the qualified-summary preference. Both focused failure-parsing assertions passed locally across the two corrections; the follow-up push-triggered CI result is pending. No database tests were run.
+
+## 2026-10-24 push e863ec63 verification
+
+- Pushed the merged Upwell docking and CI failure-name parser changes to main as `e863ec63`.
+- Push gate run 753 (`40050099878`) and focused Agent run 258 (`40050113361`) were active at this update. Run 753's Python client, Rust format/clippy, fixtures, and Rust advisory jobs had passed; the live E2E, Windows, .NET build/shards, and Rust tests were still running.
+- The earlier selected run 255 on `30dcbf9d` failed its test step, but its available tail ended after the live-test command. The current focused run checks the same market protocol cases and `test_market.py` on the corrected head. No local PostgreSQL database was used.
+
+## 2026-10-24 push 05bce6b0 handoff status
+
+- Pushed the handoff update with current main changes as `05bce6b0`. At the first status check, no `ci.yml` workflow for this SHA was listed yet.
+- CI run 753 and focused Agent run 258 for `e863ec63` were still active. Their results will be checked along with the push gate for the new head. No local PostgreSQL database was used.
+
+## 2026-10-24 current main verification
+
+- The checked-out main tip at this update is `9716acb1`. No push-triggered `ci.yml` run was listed for that SHA at the first check.
+- CI run 753 on `e863ec63` has passed the Python client, Rust format/clippy, fixture, and Rust advisory jobs. Its E2E, Windows, .NET build/shards, and Rust test jobs were still active. Focused Agent run 258 on the same code head was also active.
+- The follow-up will dispatch `ci.yml` against the latest main head so the complete gate covers the corrected parser and Upwell docking flow. No local PostgreSQL database was used.

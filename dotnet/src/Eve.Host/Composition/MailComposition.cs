@@ -83,6 +83,23 @@ internal sealed partial class CharacterServicesComposition
         Eve.Services.ClientSession session,
         CancellationToken cancellationToken)
     {
+        if (request.SenderCharacterId == Eve.Services.Core.GmChatPokeMailRequest.SystemSenderId &&
+            !request.SaveSenderCopy && Eve.Services.GameMasterRoles.Has(session, Eve.Services.GameMasterRoles.Gml))
+        {
+            if (request.CharacterRecipientIds.Count != 1 || request.MailingListId is not null ||
+                request.CorporationOrAllianceRecipientIds is { Count: > 0 } ||
+                request.ReplyToMessageId is not null || request.ForwardedFromMessageId is not null ||
+                request.Title != "GM chat request")
+                return null;
+
+            var recipientId = request.CharacterRecipientIds[0];
+            if (recipientId <= 0 || await characters.GetAsync(recipientId, cancellationToken) is null)
+                return null;
+            return new PersistenceMailSendRecipients(
+                [recipientId], Eve.Services.Core.GmChatPokeMailRequest.SystemSenderName, 2,
+                new Dictionary<long, int> { [recipientId] = 1 });
+        }
+
         if (request.SenderCharacterId <= 0 || session.CharacterId != request.SenderCharacterId)
             return null;
         var sender = await characters.GetAsync(request.SenderCharacterId, cancellationToken);

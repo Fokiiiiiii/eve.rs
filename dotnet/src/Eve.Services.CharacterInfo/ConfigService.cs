@@ -31,7 +31,7 @@ public sealed partial class ConfigService(
     private const long CorporationTypeId = 2;
     private const long AllianceTypeId = 16159;
     private const long CharacterTypeId = 1373;
-    private const int MaximumRequestedIds = 10_000;
+    private const int MaximumRequestedIds = 500;
 
     [Method("GetStationSolarSystemsByOwner")]
     public PyValue GetStationSolarSystemsByOwner(ServiceCall call)

@@ -77,8 +77,7 @@ Use lane `eve_p4` only and run database work through `tools/dev/db-lock.sh`. The
 
 ## 2026-10-23 main-gate failures after the cargo-capacity fix
 
-- Runs 620 (`a29f636f`) and 621 (`5ba7acea`) both completed the .NET test shards successfully; run 620 therefore verifies the cargo fixture setup and the migration expectation changes. Both E2E jobs still fail `test_market_browse_and_history_refresh_fit_one_session` when `GetMarketOrderHistory` returns Macho error 2.
-- V24.01's `MarketQuote.GetMarketOrderHistory` directly calls `marketProxy.GetMarketOrderHistory`. EveJS v0.12.9 processes pending expiry events, reads character and corporation orders, and returns the cached owner-order rowset. eve.rs sweeps expiry, reads both owner scopes, and builds the same rowset. The Action log does not include the service exception; the failing live test now includes the ERRORRESPONSE payload in its assertion output so the next run can identify the server-side exception.
+- Runs 620 (`a29f636f`) and 621 (`5ba7acea`) both completed the .NET test shards successfully; run 620 therefore verifies the cargo fixture setup and the migration expectation changes. Both E2E jobs still fail `test_market_browse_and_history_refresh_fit_one_session` when `GetMarketOrderHistory` returns Macho error 2.- V24.01's `MarketQuote.GetMarketOrderHistory` directly calls `marketProxy.GetMarketOrderHistory`. EveJS v0.12.9 processes pending expiry events, reads character and corporation orders, and returns the cached owner-order rowset. eve.rs sweeps expiry, reads both owner scopes, and builds the same rowset. The Action log does not include the service exception; the failing live test now includes the ERRORRESPONSE payload in its assertion output so the next run can identify the server-side exception.
 - Live-slow run 64 on `912cce53` reaches the death flow. The victim's session-change keys match the reference, including `stationid2`; the remaining failure is event delivery: hull death sends `OnItemChange` before the survivor's `AddBalls2`, and capsule death sends no filtered destiny events to the watcher. EveJS disembarks the capsule with broadcast disabled, removes it with the terminal explosion effect, then adds the corpse at that position. eve.rs sends the explosion through the simulator's observer set and later leaves the scene from the host callback; check the observer/view state and output ordering against that sequence.
 - Live-slow run 65 on `ecf46055` fails the same market-history call. Runs 622 and later were still in progress at this update; check `python3 tools/dev/ci-status.py status` after the push.
 - The ERRORRESPONSE payload diagnostic is included with this handoff update. This change is ready to be pushed after the required merge of the latest `origin/main` (`f9438e08` at this update); its next E2E result should identify the hidden server exception.
@@ -158,7 +157,6 @@ CI run 672 on `1669e6dc` failed the structure market Host test because the fixtu
 - The feature's market rules require the seller to be at the structure when the character has no Marketing skill. Main now places test characters at the structure. The new sell failure on run 675 occurs after that fixture correction; the local test now includes the wrapped user-facing refusal in its assertion output. The market feature handoff owns that separate issue.
 
 ## 2026-10-23 run 675 follow-up
-
 - Push CI run 675 (`40011062817`) on `ebf1ec87` reported `INVALID_COMPONENT_LICENSE_ITEM`; the unlimited-license parser unit check passed earlier, but the live request payload had not yet been traced. Agent run 146 (`40011418764`) also failed; the run 154 artifact later identified the extra protobuf wrapper in the test encoder (see below).
 - Run 675's Host tests found the persisted contact `senderID` type mismatch; the local expectation now matches the returned `PyInt`. The project build and focused Actions rerun are pending.
 - Run 675's Windows job later completed successfully in 14.4 minutes, including the Windows PowerShell 5.1 entry point, production TCP readiness, UTF-8 fixture decode and live login-to-character walk. TODO 14 records this result; the owner's Ctrl+C/console behavior and `global.json` path remain open.
@@ -238,7 +236,6 @@ CI run 672 on `1669e6dc` failed the structure market Host test because the fixtu
 - The fixture selector now excludes SDE `disallowedSlots`, another catalog condition it must respect, and the SaveRequest assertion includes the gateway response message. Run 686 on `4484ec9c` checks the earlier selector and market affiliation fixture; Actions for the corrected layout are pending. No PostgreSQL test was run locally.
 
 ## 2026-10-23 current main SKINR layout correction
-
 - Origin/main is now `1a9e73e9`. The run 158 failure on `253597a9` went past component consumption but returned HTTP 400 at Draft.SaveRequest. The follow-up found two fixture errors: selected components could disallow the slot, and `_layout` omitted the inner field-1 component ID in the selected coating/pattern oneof. Main commit `67753d67` corrects both.
 - Agent run 163 on `d8f4dab4` failed the focused live SKINR check before this layout correction. CI run 688 on `d8f4dab4` is still active; run 689 on `1a9e73e9` is queued for the corrected head. The latest gate is not yet green.
 - The Host.Tests build on the merged market-affiliation fixture passed with 0 warnings and 0 errors. The in-memory SKINR response-shape regression passed 1/1 with 0 skips, and Python syntax compilation passed after the current layout changes.
@@ -317,8 +314,7 @@ CI run 672 on `1669e6dc` failed the structure market Host test because the fixtu
 - CI run 695 (`c068f252`) failed `MarketHostTests.The_host_dispatches_accessible_structure_market_orders_and_recovers_partial_settlement_after_restart`: the old assertion expected two seller hangar units, although partial sell-order remainder stays at the order's escrow item. The test now joins the active order to `escrow_item_id` and checks the order volume, escrow owner/location/flag/quantity, and single matching row.
 - The same run failed `test_v24_skinr_design_sequences_and_applies_a_persisted_license` because the Host serialized the client `Attributes` fields at the wrong numbers. The V24.01 client defines `name=1`, `line_name=2`, `creator=3`, `layout=4`, `tier=5`, `not_sequenced=6`, and `first_sequenced=7`. `EncodeSkinDesign` now emits those fields and distinguishes saved drafts from completed licenses.
 - Origin/main advanced to `1f1e23a0` and included `c0857c18`'s escrow quantity check and `fa667e96`'s test-only adjustment to the old Host field layout. This follow-up strengthens the escrow assertion and restores the live test to the V24.01 schema while correcting the Host response.
-- The live SKINR test now checks the saved-draft response (`not_sequenced`) and the completed-license response (`first_sequenced`). The Host.Tests Release build passed with 0 warnings and 0 errors, and `python3 -m py_compile tools/headless-client/tests/test_skinr_live.py` passed. No local database or live-client test was run.
-- Focused Actions verification for the market Host test and full CI on the corrected source are pending.
+- The live SKINR test now checks the saved-draft response (`not_sequenced`) and the completed-license response (`first_sequenced`). The Host.Tests Release build passed with 0 warnings and 0 errors, and `python3 -m py_compile tools/headless-client/tests/test_skinr_live.py` passed. No local database or live-client test was run.- Focused Actions verification for the market Host test and full CI on the corrected source are pending.
 
 
 ## 2026-10-23 Upwell broker minimum review
@@ -397,8 +393,7 @@ CI run 672 on `1669e6dc` failed the structure market Host test because the fixtu
 - The unused CanReturnToStructureShipAsync helper encoded a distance check that the eject path does not call. It is removed. The Host regression now verifies that the original ship restores from 155 km surface distance after scene positions stop being available.- Host.Tests and Space.Tests Release builds passed locally with 0 warnings and 0 errors. The focused Actions run for the far-distance Host regression, Space scoop regressions, and next push gate are pending. No local database-backed tests or graphical-client verification were performed.
 ## 2026-10-24 CI 737 follow-up
 - Push gate run 737 (`486812c1`) confirmed the Eject live flow and all 22 selected structure scenarios passed. The Host test still asserted the old distance refusal, and the new Space tests failed before reaching scoop logic because their character names exceeded the two-space name rule; both test expectations are corrected locally, with focused Action reruns pending.
-- The same gate's E2E failure was `test_market.py` expecting named `KeyVal` rows from `GetStationAsks`. Main's later `56e0d37d` merge includes the market wire-shape correction. The follow-up gate on the current head will verify the tuple correction.
-- The RPC inventory count discrepancy (expected 1,378, actual 1,382) was corrected on main by `35964099` and recorded by `284dfe95`; that path is outside this structure follow-up.
+- The same gate's E2E failure was `test_market.py` expecting named `KeyVal` rows from `GetStationAsks`. Main's later `56e0d37d` merge includes the market wire-shape correction. The follow-up gate on the current head will verify the tuple correction.- The RPC inventory count discrepancy (expected 1,378, actual 1,382) was corrected on main by `35964099` and recorded by `284dfe95`; that path is outside this structure follow-up.
 - The updated `Eve.Services.Space.Tests` and `Eve.Host.Tests` Release builds both passed locally with 0 warnings and 0 errors. No local PostgreSQL tests were run.
 
 
@@ -476,7 +471,6 @@ CI run 672 on `1669e6dc` failed the structure market Host test because the fixtu
 - Merged the concurrent main updates at `cd0a6029`, retaining the new post-cancel custody check, and pushed the seller hangar expectation correction as `a719eee8`.
 - Focused Agent run 268 (`40052275363`) is checking the inventory RPC regression and `tests/test_market.py` against this head. Push gate run 764 (`40052261614`) is also checking this head. Results are pending.
 - The correction follows the EveJS sell-order flow: after a partial fill, unfilled order stock is in market escrow and cancellation restores it to the structure hangar. No local PostgreSQL test was run.
-
 
 ## 2026-10-24 selected Agent run 276 buyer escrow journal expectation
 
@@ -558,7 +552,6 @@ CI run 672 on `1669e6dc` failed the structure market Host test because the fixtu
 
 
 ## 2026-10-24 CORE FIX 4 Actions run 306 follow-up
-
 - Focused Agent run 306 (`40071132573`) on `2f177fc2` passed `Eve.Services.Core.Tests` (1 passed, 0 failed, 0 skipped) and failed only `SearchQueryHostTests.Host_registers_search_and_returns_the_client_query_wire_shape`: the no-database Host registry had no character services, so `CoreRpc` was not composed.
 - The persistent Host path already registers `search.Query` through `CoreRpc`. The in-memory/no-character Host now registers the same query service over empty lookup sources, preserving the route and returning empty groups without inventing data. The Host regression exercises this real registry path.
 - The RPC inventory assertion is 1,385 for the two new registered methods. The updated `Eve.Host.Tests` Debug build passed with 0 warnings and 0 errors. Focused Actions rerun and push-gate run `40071118705` are pending.
@@ -639,7 +632,6 @@ Regression tests added: `DungeonWaveTests.A_system_owned_wave_waits_until_a_pilo
 - The focused Rust regression passed locally, as did Rust 1.94.1 formatting and workspace clippy. Push-triggered CI for this revision is being checked. Selected live run `40090893730` is still checking the production code for movement, undock, celestial warp and stargate jump.
 
 
-
 ## 2026-10-24 CORE FIX 1 latest-main verification follow-up
 
 - Fetched and fast-forwarded to `origin/main` at `8799c2aa`; stargate simulation and Host code remain present. Current-head focused Agent run 412 (`40091793046`) passed `Eve.Services.Space.Tests` with `FullyQualifiedName~StargateJumpWireTests` (no failed tests or jobs). Rust run 415 (`40092063319`) is checking the current workspace and is pending at this note update.
@@ -688,8 +680,40 @@ Regression tests added: `DungeonWaveTests.A_system_owned_wave_waits_until_a_pilo
 
 - Run 841 (`9aff921f`) failed `test_a_director_anchors_an_astrahus_from_its_ship_in_a_legal_system_and_the_structure_is_placed_and_told` at `tools/headless-client/tests/test_structures.py:490` with `CustomNotify: You must be in space to deploy a structure.` It also failed `Bound_inventory_add_accepts_client_quantity_and_transport_kwargs_and_moves_the_item` with `Expected an integer, got PyNone`. Space shard 2/2 was cancelled at its 30-minute job limit.
 - Run 842 (`92b41deb`) repeated the Astrahus refusal and reported the inventory item remained at the station: expected ship ID `1990000000`, actual station ID `60000004`. Space shard 2/2 was also cancelled at 30 minutes.
-- The inventory fixture had a ship item and a session `shipid` but did not persist `characters.ship_id`. `CharacterShips.MoveAsync` loads the authoritative active-ship snapshot before it can move an item; with no snapshot it returns `NothingHappened`. Main now sets the ship through `PgCharacterStore.SetShipAsync` in the same item transaction (`d407fe4e`) and creates it as a singleton (`af2df06f`). The current reverse move from ship cargo to station hangar matches the docked unfit call in V24.01 `eve/client/script/ui/shared/fitting/fittingSlotController.py:238-241`; `invCacheContainer.Add` forwards the bound call and its result at `eve/client/script/environment/invCache.py:998-1025`. The active-ship fitting caller is `eve/client/script/dogma/clientDogmaLocation.py:669-671`. EveJS v0.12.9 `server/src/services/inventory/invBrokerService.js:12087-12673` returns the moved item ID on successful Add.
-- The Astrahus headless test waited only for `stationid` to clear, then called the remote service directly. V24.01's `InShipInSpace()` requires a nonzero `solarsystemid` and `shipid`, and no `structureid` (`eve/common/script/sys/eveCfg.py:1522-1523)); the Deploy UI also checks the inflight view and warp state before confirming (`eve/client/script/ui/services/structure/structureDeployment.py:85-95`). ConfirmDeployment calls Anchor, then cleans up and reloads the structure directory (`structureDeployment.py:172-175`). The test now waits for `stationid=None`, the expected `shipid` and `solarsystemid`, and no `structureid` before exercising Anchor. The server also verifies the ship's resolved position in that system (`dotnet/src/Eve.Host/Persistence/Structures/StructureAnchorAuthority.cs:85-100, 136-144`). The focused live Actions check for this wait is pending.
+- The inventory fixture had a ship item and a session `shipid` but did not persist `characters.ship_id`. `CharacterShips.MoveAsync` loads the authoritative active-ship snapshot before it can move an item; with no snapshot it returns `NothingHappened`. Main now sets the ship through `PgCharacterStore.SetShipAsync` in the same item transaction (`d407fe4e`) and creates it as a singleton (`af2df06f`). The Host regression now binds the persisted active ship and moves a stack from the station hangar into its cargo, exercising the destination that run 842 failed to reach. The V24.01 active-ship fitting caller uses that bound target in `eve/client/script/dogma/clientDogmaLocation.py:669-671`; the docked unfit route uses station-hangar Add in `eve/client/script/ui/shared/fitting/fittingSlotController.py:238-241`. `invCacheContainer.Add` forwards the bound call and its result at `eve/client/script/environment/invCache.py:998-1025`. EveJS v0.12.9 `server/src/services/inventory/invBrokerService.js:12087-12673` returns the moved item ID on successful Add.
+- The Astrahus headless test waited only for `stationid` to clear, then called the remote service directly. V24.01's `InShipInSpace()` requires a nonzero `solarsystemid` and `shipid`, and no `structureid` (`eve/common/script/sys/eveCfg.py:1522-1523`); the Deploy UI also checks the inflight view and warp state before confirming (`eve/client/script/ui/services/structure/structureDeployment.py:85-95`). ConfirmDeployment calls Anchor, then cleans up and reloads the structure directory (`structureDeployment.py:172-175`). The test now waits for `stationid=None`, the expected `shipid` and `solarsystemid`, and no `structureid` before exercising Anchor. The server also verifies the ship's resolved position in that system (`dotnet/src/Eve.Host/Persistence/Structures/StructureAnchorAuthority.cs:85-100, 136-144`). The focused live Actions check for this wait is pending.
 - The existing 2-way Space shard assignment has repeatedly left shard 2/2 running to the 30-minute job limit without a TRX result. A 4-way split is prepared as a separate workflow change so every Space test remains assigned and each hash partition is smaller; Actions will establish whether that removes the timeout.
 - The selected skill-wire test passed in Agent run `40097684911` on `49c8a4bc` after `98ebdc31` taught its wire reader to consume notifications before the CallRsp. Agent run `40098866056` failed before tests because its dispatch set `TEST_REF=HEAD`, which the resolver correctly rejected; it is not a test result. The recovery dispatch must use the pushed commit SHA.
 - Later full gates `40097819764` (`1e3675a8`) and `40097855460` (`c70b013c`) passed the Astrahus E2E job. Their remaining .NET shards were still active at this note update; neither is counted as a green full gate yet.
+
+
+## 2026-10-24 push 71c1f19a follow-up
+
+- Pushed `71c1f19a` after fetching and merging `origin/main` at `ffcd7393`. The Astrahus live test now waits for the same in-space session attributes the V24.01 UI checks before confirming deployment.
+- Push-triggered CI run `40099182876` is queued. Focused Agent runs `40099200679` and `40099201050` were dispatched against `71c1f19a` for `test_structures.py` and `Bound_inventory_add_accepts_client_quantity_and_transport_kwargs_and_moves_the_item`; both are queued and no test result is available yet.
+- The latest known full gates `40097819764` (`1e3675a8`) and `40097855460` (`c70b013c`) passed E2E, including the Astrahus scenario, but their Space 2/2 job was still active at the prior status check. Run 841 and 842 each cancelled Space 2/2 at the 30-minute limit.
+- This push still uses the 2-way Space matrix. The pending workflow commit changes the Space test assignment to four hash shards while preserving every test. Its push-triggered run will verify the split and the complete gate.
+
+
+## 2026-10-24 active-ship inventory regression alignment
+
+- The Host regression now binds the active ship and moves a station-hangar stack into the ship's cargo, matching the destination asserted in run 842. It persists `characters.ship_id` in the same transaction as the ship and stack, and sets `session.shipid` to that ship.
+- `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -c Release -p:UseSharedCompilation=false` passed with 0 warnings and 0 errors. No PostgreSQL test was run locally. A focused Actions check for this updated case will be dispatched against its pushed SHA.
+- Agent run `40099201050` was still queued and targets the earlier Host test on `71c1f19a`; it does not cover this updated station-to-ship scenario.
+
+
+## 2026-10-24 push 91e0c9bf follow-up
+
+- Pushed `91e0c9bf` after fetching and merging `origin/main` through `5104407a`. The push contains the 4-way Space test matrix and the inventory regression that binds the active ship and moves a station-hangar stack into cargo.
+- The changed .NET test project compiled locally with `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -c Release -p:UseSharedCompilation=false`: 0 warnings and 0 errors. No local PostgreSQL test was run.
+- Push-triggered CI run `40099675510` is queued. Focused Host run `40099687884` was dispatched for the inventory test on `91e0c9bf` and is queued. The focused Astrahus module and the earlier Host test runs `40099200679` and `40099201050` on `71c1f19a` are in progress; the latter does not include the revised station-to-ship scenario.
+- Run `40099182876` for `71c1f19a` is still in progress. The full-gate result for `91e0c9bf` and its four Space shard results are pending.
+
+
+## 2026-10-24 latest CI checks
+
+- Focused Host inventory test run `40099687884` passed for `91e0c9bf`. Focused Agent run `40100082351` passed the skill RPC notification-order test for `463d402d`; the failure in run `40097320500` was the test reading `CallRsp` before the queued notifications (`Expected: 7, Actual: 12`).
+- Run `40097320500` also failed the live case `test_a_director_anchors_an_astrahus_from_its_ship_in_a_legal_system_and_the_structure_is_placed_and_told` at `tools/headless-client/tests/test_structures.py:490` with `CustomNotify: You must be in space to deploy a structure.` The updated wait for `stationid`, `shipid`, `solarsystemid`, and no `structureid` is part of the later pushes; the full live result is pending.
+- The latest status check has push gates `40099182876` (71c1f19a), `40099675510` (91e0c9bf), `40099745688` (23db167f), `40099954010` (12cde77b), and `40100343293` (d89e97b2) still active or queued. No three-consecutive-green sequence has been recorded.
+- The previously failing 2-way Space shard was canceled at 30 minutes without a TRX result. The 4-way assignment is now in run `40099675510`; all four shard results and its complete gate remain pending.
+- The MachoError call IDs from runs 745 and 747 are confirmed as `test_docked_corporation_members_trade_at_an_eligible_upwell_structure` in `tools/headless-client/tests/test_market.py`: each failed at the direct `structureDocking.Dock` call (`test_market.py:116`, test at `:172`) while the Fortizar was 200,000 km away. The V24.01 client path at `eve/client/script/ui/services/structure/structureDocking.py:64-81` warps to docking range before requesting Dock; the headless helper now follows that transition.

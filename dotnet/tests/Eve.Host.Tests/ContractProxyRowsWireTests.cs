@@ -35,7 +35,7 @@ public sealed partial class HostServerTests
     public async Task Search_contracts_returns_the_fields_consumed_by_the_client_through_the_registered_host_service()
     {
         var writer = new RecordingContractWriter();
-        var readModel = new RecordingContractReadModel();
+        var readModel = new SearchContractReadModel();
         StartContractHost(writer, readModel);
         var front = await Handshaken(await ConnectAsync());
         var open = Open();
@@ -111,7 +111,7 @@ public sealed partial class HostServerTests
         Assert.IsType<PyDict>(keyVal.Args).Entries.Single(entry =>
             Assert.IsType<PyStr>(entry.Key).Value == name).Value;
 
-    private sealed class RecordingContractReadModel : IContractReadModel
+    private sealed class SearchContractReadModel : IContractReadModel
     {
         public ContractSearchQuery? Query { get; private set; }
 

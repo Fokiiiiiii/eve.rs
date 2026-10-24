@@ -1,4 +1,5 @@
 using System.Reflection;
+using Eve.Dogma;
 using Eve.Macho;
 using Eve.Marshal;
 using Eve.Services;
@@ -28,7 +29,8 @@ public sealed class StargateJumpWireTests
             WarpAnswer = new CommandReply(true, 0, null),
             JumpAnswer = new CommandReply(true, 0, null, null, DestinationSystem, DestinationGate)
         };
-        using var space = new SpaceSessions(sim, null!, null!, null!, new SolarSystemCatalog([]), () => UnixMs);
+        using var space = new SpaceSessions(
+            sim, null!, new DogmaStatic([], [], []), new StationCatalog([]), new SolarSystemCatalog([]), () => UnixMs);
         var sink = new Sink();
         var session = new ClientSession(sink) { SessionId = 7, ClientId = 7, CharacterId = Character, UserId = 1 };
         session.Set("shipid", new PyLong(Ship));

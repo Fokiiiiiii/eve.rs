@@ -46,6 +46,14 @@ public sealed partial class EventLogRpcService(Action<string>? log = null)
         return ValueTask.FromResult<PyValue>(PyNone.Instance);
     }
 
+    [Method("LogPlayerRequestedDisconnect")]
+    public ValueTask<PyValue> LogPlayerRequestedDisconnect(ServiceCall call)
+    {
+        call.Cancellation.ThrowIfCancellationRequested();
+        _log("LogPlayerRequestedDisconnect");
+        return ValueTask.FromResult<PyValue>(PyNone.Instance);
+    }
+
     private static long? ReadNonNegativeId(PyValue value) => value switch
     {
         PyInt number when number.Value >= 0 => number.Value,

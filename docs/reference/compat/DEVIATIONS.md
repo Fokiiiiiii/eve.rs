@@ -1,5 +1,14 @@
 # Deviations from the reference server
 
+## Host SKINR catalog data source (2026-10-23)
+
+The V24.01 pinned SDE build 3396210 has no `skinr*` authority tables, while the official CCP `missionPinned` build 3405148 contains `skinrComponentPointValues`, `skinrComponents`, `skinrSlotConfigurations`, `skinrSlots` and `skinrTierThresholds` (`sde/lock.json`). Host startup reads those tables for `ShipSkinrCatalog`, so the catalog now reads them, with that build’s `groups` and `types`, from `sde_mission`. Other Host data reads remain on the client-pinned `sde` schema. This keeps the SSO Host startup path available without changing the pinned source used for general game data.
+
+## SKINR batch sequencing duration (2026-10-23)
+
+Ship SKINR charges PLEX per license, while the sequencing duration is the tier base time once for a multi-license batch. EVE University’s [Ship SKINR mechanics](https://wiki.eveuniversity.org/Ship_SKINR) explicitly says multiple skins multiply PLEX cost but not sequencing time. EveJS 261018.1 `shipSkinSequencingRuntime.initiate` multiplies the tier duration by quantity, which conflicts with that mechanics reference; eve.rs follows the documented mechanic. `ShipSkinrDispatchTests.V24_skinr_routes_expose_the_called_methods_and_tier_rows` checks the published tier time table, and `ShipSkinrDispatchTests.Batch_quantity_multiplies_plex_cost_but_keeps_tier_time` covers quantity-independent duration.
+
+
 ## Lookup search resource bound (2026-10-23)
 
 `lookupSvc` returns an empty list for blank searches in its character, corporation, faction, owner, and location search handlers; eve.rs now returns that same result before loading directory rows. Search strings longer than 256 UTF-16 code units receive the named `CustomInfo` refusal before any directory read. EveJS 261018.1 (`server/src/services/corporation/lookupSvcService.js`, `Handle_LookupCharacters`, `Handle_LookupCorporations`, `Handle_LookupFactions`, and `Handle_LookupOwners`) has no corresponding input-length bound. The V24.01 callsites found in `eve-logic/eve/devtools/script/svc_slash.py:104,1117`, `eve/devtools/script/svc_trainer.py:50`, and `eve/client/script/ui/services/wars/war_cso.py:338` pass searched names; none defines an accepted maximum length. The 256-unit ceiling is an eve.rs resource bound for malformed or hostile calls; ordinary client-sized names retain the existing row and error shapes. `LookupSvcTests.Oversized_corporation_search_is_refused_before_loading_the_directory` verifies refusal occurs before provider access.
@@ -1424,9 +1433,9 @@ Sources. The wiki: "Jump drive" (https://wiki.eveuniversity.org/Jump_drive, fetc
   Test: `ConfigServiceTests.Alliance_short_names_return_a_client_rowset...`.
 - **Alliances are owners.** `GetMultiOwnersEx` answers a live alliance with its name and the alliance type (16159,
   `typeAlliance`), which the client's `cfg.EveOwners.IsAlliance` reads (`eveCfg.py:1226-1227`). A deleted alliance has no row.
-- **Station positions come from the static data.** `GetMultiLocationsEx` answers a station's `x`, `y`, `z` from the SDE
+- **Stations and structure locations use their data owners.** `GetMultiLocationsEx` answers a station's `x`, `y`, `z` from the SDE
   (`npcStations.position`). A solar system has no position in the static data and is answered with 0, as EveJS does
-  (`configService.js:128-145`). Structures are not answered (their catalogue is the structures track: no row).
+  (`configService.js:128-145`). A deployed structure is read from `PersistenceStructureDirectoryReadModel` in one batch and returns its persisted name, no solar system, zero coordinates, and `Structure <id>` `locationNameID`, matching EveJS 261018.1 `Handle_GetMultiLocationsEx` for a named row. EveJS falls back to `Structure <id>` when the persisted name is missing; eve.rs omits that row rather than inventing a location name. Unknown structures have no row.
 - **`GetOldStationData`** answers the empty list. The static data has no list of removed stations, and the client reads the
   answer only when it is not empty (`eveCfg.py:749-752`), so the empty list is the answer for "none".
 - **Not added: `GetMapObjects` and `GetMultiGraphicsEx`.** EveJS answers both (`configService.js:838-840`, `:857-860`), but no
@@ -1442,8 +1451,7 @@ Sources. The wiki: "Jump drive" (https://wiki.eveuniversity.org/Jump_drive, fetc
   type (`configService.js:306-329`); eve.rs does not use the base price as an average, since no market data backs it. In a
   database with no sales the payload is empty. Tests: `TradingTests.The_latest_average_sale_price...` (a real trade),
   `ConfigServiceTests.Average_market_prices...`.
-- **Not served yet: agent owners and the agent names.** The client reads an agent's owner row through the same recordset
-  (`eveCfg.py:548-560`); EveJS builds it (`buildAgentOwnerRow`). Owned by the agents track (TODO section 39).
+- **Agent owners use the pinned SDE.** `GetMultiOwnersEx` serves NPC characters with an `agent` object using `npcCharacters.name.en`, maps SDE boolean `gender` to 0/1, and returns character type 1373 with `ownerNameID=None`, the five-field row read by the client (`eveCfg.py:548-560`). EveJS 261018.1 `buildAgentOwnerRow` uses the same type and row shape but invents `Agent <id>` when it has no display name and defaults missing gender to 0; eve.rs omits rows missing the English name or gender. Tests: `AgentCatalogSdeTests.Agent_owner_projection_uses_the_SDE_name_and_gender`, `ConfigServiceTests.Agent_owners_return_their_SDE_row_fields`.
 ## Track A8c: the cynosural field in Pochven (2026-10-10)
 
 Sources. The wiki: "Pochven" (https://wiki.eveuniversity.org/Pochven, fetched 2026-10-10): "Region-wide cynosural field jammers stops anyone from lighting a cyno, which means capital ships cannot jump into the Pochven region. Note that similar to how it works in high security space and in incursion constellations, this does not stop capital ships already in the region to jump out of the region." "Cynosural field" (https://wiki.eveuniversity.org/Cynosural_field, fetched 2026-10-10): "Cynos cannot be lit in high-sec, and while they can be lit in wormhole space they serve no purpose as jump drives cannot jump to systems in wormhole space"; "Solar systems as a whole can be cyno jammed either through the navigation structure Tenebrex Cyno Jammer or a Sansha Incursion". "Jump drive" (fetched 2026-10-10): "Unlike a normal cyno, a Covert Cynosural Field ... can be generated even in cyno jammed systems" (the system jammer's covert exemption, which EveJS also has). "Wormhole space" (fetched 2026-10-10): no cyno text. The SDE (build 3396210, `sde."mapSolarSystems"`, `doc->>'regionID'`): Pochven is region 10000070. EveJS v0.12.9 `server/src/services/dogma/dogmaService/moduleOperation.js` line 2271: `CYNOSURAL_FIELD_JAMMED` raises "A cynosural system jammer is preventing cynosural fields from forming in this solar system."; `server/src/space/runtime/activationSpaceRestrictions.js` lines 189 to 200: the system jammer's refusal exempts the covert field. eve-logic: `dogma/moduleRestrictions.py` raises only `CantInEmpireSpace` and `CantInHighSecSpace`; it has no Pochven or jammer error name, and the Python source holds no client string for either, so the wording is EveJS's.
@@ -1643,11 +1651,12 @@ observable behaviour of the five RPCs it implements (not its bugs). Design: `mar
   OnOwnOrdersChanged rows carry the order's wallet division (`accountKey`, 1000 to 1006), not 1000. The reference keeps the order's account
   key (`marketProxyService.js:579-582`), and the client names the division from it (`quote.py:442-443`). Test:
   `MarketRpcTests.A_corporation_order_row_carries_its_wallet_division_as_keyID`. Status: done (M1).
-- **GetStationAsks and GetSystemAsks answer KeyVal rows (Q13, G10).** The client reads `.typeID` on each ask and passes the row to Buy
-  (`quote.py:97-100`; reached through the evelink endpoint `endpoints.py:160`). A positional tuple has no `.typeID`. eve.rs answers the
-  BestByOrder rows the regional best answers (price, volRemaining, typeID, stationID). The reference answers tuples
-  (`marketProxyService.js:6241`): the same defect in the reference is not copied. Tests: `MarketRpcTests.Station_and_system_asks...`,
-  `ProtocolTests.Ask_summary_rpcs...`. Status: done (M1).
+- **GetStationAsks and GetSystemAsks use four-value ask tuples (Q13, G10).** V24 `MarketBase.PopulateAsksForMyRange` passes station/system
+  mapping values through `ConvertTuplesToBestByOrders`, which expands each `(price, volRemaining, typeID, stationID)` tuple into a
+  `BestByOrder` namedtuple; `quote.py:97-100` reads its fields after that conversion. EveJS v0.12.9 and 261018.1 return the same tuple
+  shape. eve.rs now does too. `GetRegionBest` remains named KeyVals because the client does not run that conversion on region results.
+  Tests: `MarketRpcTests.Station_and_system_ask_rows_match_the_client_tuple_contract`, `ProtocolTests.Ask_summary_rpcs...`, and
+  `MarketHostTests.The_host_dispatches_accessible_structure_market_orders_and_recovers_partial_settlement_after_restart`. Status: done (M1).
 - **Client labels for market refusals (G6).** A MarketError is sent as the client's UserError label with its arguments where the client
   source raises that label: `MktBrokersFeeUnexpected2` with `actualBrokerFeePerc` (100 x the server's rate) and
   `expectedBrokerFeePercentage` (the client's quote as sent: the client itself passes the raw fraction here, `sellMulti.py:456`), and
@@ -1988,8 +1997,7 @@ Faction lists: `eve/common/lib/appConst.py:618-632`.
   warfare, insurgency). Until then every balance is empty; the tests credit through the store.
 - **LPStoreMgr status at this point (historical, superseded by A9 below):** the offer and purchase methods had not yet been implemented.
 
-- **The access rule is a port of the client's rule** (`AgentAccessRule`): the level threshold `m = 2(level-1) - 1`, the
-  floor (the lowest of the three standings must exceed -2), the research rule (the corporation standing must reach `m - 2`),
+- **The access rule is a port of the client's rule** (`AgentAccessRule`): the level threshold `m = 2(level-1) - 1`, the  floor (the lowest of the three standings must exceed -2), the research rule (the corporation standing must reach `m - 2`),
   the aura bypass, and the level-one rule (open to anyone except research agents). The three standings are the client's
   `npccharstandings` values for the agent's faction, corporation and agent (`standingsvc.py:100-104`); a missing one is 0.
   The skill bonus is 0.4 per trained level of Diplomacy (a negative standing), Criminal Connections (a positive standing toward
@@ -2982,7 +2990,7 @@ Focused PostgreSQL verification: Station 28/28, selected Space docking/undocking
 
 - **LP.** The official mission records contain no base LP reward (`fixedLpRewardAlpha` and `fixedLpRewardOmega` are zero). Q-21 adopts the configurable approximate reward tables from EveJS 261018.1; turn-in pays the configured mission-kind/level amount with system security and division skill factors. The value is not represented as CCP static data.
 - **Standings.** The SDE `extraStandings` (real data) change the standing toward the faction key by the value / 10 (the wiki's "+0.7" for the SDE's 7.0), once per completion (the completion transition is the guard; a replay is refused). The two writes (completion and standing) are in separate transactions; a crash between them loses the standing and does not repeat it. Status: decided; atomic since X4 (the completion and the standing write share one transaction), with a store-level rollback test in X5.
-- **Bonus time window** (`bonusReward`, `bonusTimeInterval`): not paid. The interval's unit is not established (G-R2). Status: OPEN.
+- **Bonus time window** (`bonusReward`, `bonusTimeInterval`): the EVE University [mission timer rules](https://wiki.eveuniversity.org/Mission) say the bonus timer starts with acceptance and pays when completion occurs within it; EveJS v0.12.9 `resolveMissionBonusTimeRemainingTicks` treats the interval as minutes and excludes an expired or exact-deadline completion. eve.rs now settles SDE-authored ISK bonuses when `acceptedAt + bonusTimeInterval` (minutes) is later than completion, as a separate wallet journal reference type 34 with an idempotent operation key. Regression covers completion before and exactly at the deadline. Non-ISK bonus items remain open because mission completion has no source-backed item reward settlement.
 
 ## Mission execution X3 step 2: client texts and held-mission views (2026-10-11)
 
@@ -3199,51 +3207,14 @@ Affected gates on the merged tree: Services.Core 652/652, Host 223/223, Space ho
 
 ## Direct trade (trademgr, 37a)
 
-Status: the server side is implemented and covered by `Eve.Trade.Tests` (9) and `Eve.Services.Station.Tests` (30). A
-headless-client walk with two pilots is in progress (see TODO 37a); the graphical client has not been driven.
+Status: server validation and custody cover the direct-trade item rules, batch staging and settlement. The two-pilot headless walk is checked through Actions; the graphical client has not been driven.
 
-- **What the server does.** `InitiateTrade` checks both pilots (docked, online, in the same place, not the same pilot, not in another
-  trade) and returns the trade as a `carbon.common.script.net.moniker.Moniker` (the shape `SkillMgr2Service` uses). The target gets
-  `OnTradeInitiate(initiatorCharID, moniker)`, as `pvptradesvc.py:42-50` expects. The bound trade serves `List`, `Add` (`qty` for a
-  part of a stack, `pvptradewnd`/`invControllers.py:1673-1691`), `MultiAdd`, `GetSelfInvItem`, `OfferMoney`, `MakeOffer` and `Abort`.
-- **Custody.** A staged item is moved into the trade container (its `locationID` is the trade id), as EVE.js does
-  (`tradeMgrService.js` `_stageItemIntoTrade`). The origin (location and flag) is stored. An abort returns it; a part of a stack is
-  merged back into the stack it came from, so the original item id returns.
-- **Completion.** When both pilots accept the same manifest (their ISK and the set of item ids), the items go to the other pilot's
-  docked hangar and the ISK moves in one PostgreSQL transaction, with one wallet journal entry per direction. The journal reference
-  type is `player_trading`, ESI ref type 1 (CCP eve-glue `JournalRefTypeEnumV2`, `wallet_journal_ref.py`). A pilot who no longer has the
-  ISK refuses the completion: the trade stays open, both acceptances are cleared and the items stay in custody.
-- **Restart and disconnect.** A host that stops with trades open ends them at start-up and returns the items
-  (`TradeAuthority.RecoverOpenAsync`). A pilot who disconnects ends the trade for both. EVE.js recovers durable trades instead;
-  eve.rs has no pilot connected to continue one, so the items go back.
-- **Trade ids.** A trade id is the container id, drawn from `trade.trade_ids` starting at 9 000 000 000 000 000, away from item ids.
-  It is a location for the items, so it must not collide with an item or a station.
-- **Where the rules are.** `Eve.Trade` (`TradeAuthority`, schema `trade`, migration `001_trade_sessions.sql`).
-  `Eve.Services.Station/TradeMgrService.cs` is the RPC layer only.
-
-**The manifest's item set.** The client builds `tradeItems=set(myItems) | set(herItems)` (`pvptradewnd.py:98`). EVE.js reads the
-set in both its header and its tail list, and reads each element as a plain id, an object with `itemID`, a packed row, or a row whose
-`line` starts with the id (`tradeMgrService.js:345-445`). eve.rs reads the same forms (`TradeMgrService.ManifestOf`, test
-`The_manifest_reads_every_form_of_a_trade_item_the_reference_accepts`).
-
-**The acceptance values.** `OnTradeOffer` carries one value per trader. The client reads only their truth
-(`pvptradewnd.py:126-139`, `bool(states[...])`), so eve.rs sends 0 or 1 where EVE.js sends the manifest or null. The window
-behaves the same. The 0/1 form is the difference, not the truth value.
-
-**The item-change diff.** EVE.js builds its item-change diff with the client's keys: owner 2, location 3, flag 4, quantity 5, stack
-size 9, singleton 10 (`characterState.js` `buildItemChangePayload`). For a non-singleton stack whose quantity equals its stack size,
-EVE.js sends only key 9 (`prefersStackSizeOnly`). eve.rs sends key 9 with the previous stack size for a changed stack, and keys 2, 3
-and 4 when the owner, location or flag changed. eve.rs sends one `OnItemChange` per item; EVE.js sends a batch `OnItemsChanged`. The
-client handles both (`invCache.py:219` and `invCache.py:229`).
-
-**Differences from EVE.js, all listed:**
-1. Staging from a ship's cargo or from a can is refused (`Only items in your hangar here can be offered.`). EVE.js accepts those
-   sources. Not built.
-2. No item tradability check. The client refuses non-tradable types (`is_tradable`, `invControllers.py:1681`); the server does not
-   check it yet, so a hand-made `Add` of such an item is accepted.
-3. A stack merged back into its source is announced as an `OnItemChange` with size 0 for the merged-away row. The EVE.js handling of
-   that case was not read; the live walk records what the client receives.
-4. `OnPrimingNeededForTradeItems` is sent to each pilot after a stage, with the staged item ids (`pvptradesvc.py:109-110`).
+- **Wire and client rules.** V24 sends `Add(itemID, sourceLocationID, qty?)` and `MultiAdd(itemIDs, sourceLocationID)`. `PlayerTrade.AddItems` refuses the active ship, Asset Safety items and types for which `is_tradable` is false (`invControllers.py:1667-1691`). The server repeats these checks and checks ownership, the selected source, and every ancestor location up to the character's docked location. Accessible nested inventory sources remain usable.
+- **Atomic staging.** Every item in a MultiAdd batch is checked before any item is moved. A refusal leaves staged items, persistence and notifications untouched. A batch has a 256 item limit.
+- **Custody and settlement.** Staging stores the original location and flag. Abort and startup recovery return staged items. Successful completion transfers a container and its descendants, plus the agreed ISK, in one transaction.
+- **Replies and notifications.** `OnTradeOffer` contains one null or manifest value per pilot, matching EveJS; the client reads each value by truth (`pvptradewnd.py:126-139`). The manifest contains trade container id, money and trade item set. `OfferMoney` notifies money before offer reset; mismatched `MakeOffer` resets the caller then broadcasts current offers; completion sends item changes before `OnTradeComplete`; abort sends item changes before `OnTradeCancel`. These event consumers are in `pvptradesvc.py:69-110` and `pvptradewnd.py:96-167`.
+- **Reference and deviations.** EveJS source-chain validation and staging are in `tradeMgrService.js:1200-1335,2019-2073`; its offer and abort ordering is in `:817-829,1068-1168,2075-2208`. eve.rs intentionally stages a validated batch in one transaction and transfers container descendants in the completion transaction. Its single-item `OnItemChange` events are consumed by `invCache.py:219,229`, which also handles batch changes.
+- **Implementation.** `Eve.Trade/TradeAuthority.cs` owns validation, staged custody, batch atomicity, recovery and settlement. `Eve.Services.Station/TradeMgrService.cs` parses the client arguments and emits the protocol events.
 
 ## Item locking (itemLocking, 37a)
 
@@ -3990,7 +3961,6 @@ Every refusal of the module activation path, as the code had it, checked against
 
 Tests: `crates/eve-space` 799 passed. dotnet: `Eve.Space.Tests` 313 passed, `Eve.Services.Dogma.Tests` 134 passed, `Eve.Services.Space.Tests` filtered to Module/Smartbomb/Ecm/Cloak/Drone 111 passed. not exercised: the live walk (`tools/headless-client/tests/test_fob_insystem_walk.py`), which fits a smartbomb in high security at red safety.
 
-
 ## Emergency hull energizer burnout (2026-10-19)
 
 V24 `eve/common/script/dogma/pythonEffects/emergencyHullEnergizer.py:Start` sets module damage to the module's hit points when activation starts. EveJS v0.12.9 `server/src/space/runtime/moduleHeat.js:913-926` applies one structure-HP of damage on activation. eve.rs persists full damage to the existing module condition after the simulation accepts activation, while the simulation sends the same burnout attribute update to the client. `ModulePackages.Of` refuses a module whose persisted damage is full or whose condition is incapacitated; `ModuleRefusals.Of` returns the existing `MODULE_INCAPACITATED` client message. The persistence and refusal regressions passed on eve_p3. Graphical-client behavior was not exercised.
@@ -4000,15 +3970,8 @@ V24 `eve/common/script/dogma/pythonEffects/emergencyHullEnergizer.py:Start` sets
 Owner policy: a refusal needs an SDE attribute, a client error key or text or constant, or a wiki basis; EveJS alone is not one. Reviewed in
 the mission, agent, market, trade, LP store, repair, reprocessing, bookmark, blueprint, item-locking, corporation-station and war-registry code.
 
-- **Immediate buy that matches nothing is booked (owner decision, 2026-10-13).** The client's `BuyStuff` (duration 0, its default) and `BuyMulti` announce
-  the order they placed (`OnClientEvent_OrderPlaced`, `marketsvc.py:267, 272`). An immediate buy takes what matches at its limit and books the rest as a buy
-  order at its price and range, with escrow and broker fee as for any buy order. The requested duration is 0, and an order of duration 0 rests nowhere, so the
-  booked order lasts the default buy duration of 90 days (`MarketRules.ImmediateBuyBookedDays`; the EVE default; not stated in the sources read). `BuyMultipleItems`
-  answers the rowset of the orders it created (the client iterates it). Tests: `An_immediate_buy_that_matches_nothing_is_booked_with_its_escrow`,
-  `An_immediate_buy_fills_what_matches_and_books_the_rest`, `Buy_multi_fills_each_line_at_its_limit_and_books_the_unfilled_rest_of_each_line`.
-- **Removed (no basis):** the "No matching sell orders" refusal of an immediate buy (`PlaceBuyOrder`, duration 0), which the owner has now replaced by the booking above. The PLEX
-  personal-market-only refusal: the client's `SellPlex` forwards the corporation flag like any item. The seven-day offer expiry for every
-  agent: the wiki gives it for COSMOS agents only and no data identifies them, so offers do not expire.
+- **Duration-zero buys are immediate and do not post unfilled quantity.** V24 `MarketQuote.BuyMulti` (`eve/client/script/ui/services/marketsvc.py:270-273`) only announces rows returned by `BuyMultipleItems`; EveJS v0.12.9 `executeBuyRequest` creates an order only when duration is greater than zero and `Handle_PlaceBuyOrder` returns `CustomInfo` when an immediate buy neither fills nor creates an order (`server/src/services/market/marketProxyService.js:5393-5664,6858-6965`). EVE University states that broker fees apply only to orders whose duration is other than immediate ([Market](https://wiki.eveuniversity.org/Market)). eve.rs now preserves duration zero, so partial fills charge for filled units only and leave no resting remainder. Regression coverage: `An_immediate_buy_fills_only_the_available_quantity`, `An_immediate_buy_that_matches_nothing_does_not_create_an_order`, `Buy_multi_fills_available_quantity_without_posting_the_rest`, and `Place_buy_order_with_no_matches_refuses_and_keeps_the_wallet_and_book_unchanged`.
+- **Removed (no basis):** the PLEX personal-market-only refusal: the client's `SellPlex` forwards the corporation flag like any item. The seven-day offer expiry for every agent: the wiki gives it for COSMOS agents only and no data identifies them, so offers do not expire.
 - **Kept, with the basis:** the four-hour block on a re-offer after a decline (the client's per-agent `GetReplayTimestamp` timer); the
   four-hour standing window (declining more than one mission in four hours, wiki) has no published amount and is not applied. The market
   modification delay (`mktModificationDelay = 300`, client constant); the price ticks (`TICK_SIGNIFICANT_FIGURES = 4`); the bookmark folder,
@@ -4208,6 +4171,8 @@ Sources: SDE build 3396210 (type 35893 "Corporation Offices", group 1717; type 2
 - **Un-rent by hand** is a Director or CEO action (EveJS ensureCanUnrentOffice, IsCeoOrDirector), and it also puts the items into the corporate wrap. A structure office is never impounded: the impound calls (HasCorpImpoundedItems, GetImpoundReleasePrice, GetItemsFromImpound, TrashImpoundedOffice) answer as a structure without impounded items (EveJS: impound is station-only).
 - **Refusals.** `StructureCorpOfficesDenied` (EveJS user error name) when the profile access does not admit the renter; `CORPORATION_ACCESS_DENIED` for a missing RentOffice role or, for the un-rent, a non-Director; `STRUCTURE_ASSET_SAFETY_UNAVAILABLE` when the un-rent's wrap is refused (the office is kept). Insufficient funds raises the wallet's `InsufficientFundsException`, the same as the station rent.
 - **The office hangar is the compression source.** The office folder (type 26) is the corporation's item at the structure. The corporation hangar items at the structure with the division flags are the office's hangar, and the ST-7 compression source accepts them while the office row exists (test `A_rented_office_hangar_at_a_structure...`).
+- **Office change notifications use the V24 office type.** The pinned SDE build 3396210 keeps the stored office folder at type 26. The V24 client defines `typeOffice=27` and `typeOfficeRental=26`, and EveJS 261018 sends type 27 in its `OnItemsChanged` row. eve.rs keeps the persisted folder at type 26, sends client type 27, and loads that type's group/category from `ItemTypeCatalog` (V24 `inventorycommon/const.py`; EveJS `corporationNotifications.js`).
+- **Impounded-office notice timing follows the active client view.** EveJS marks an office `impounded`, emits `OnOfficeRentalChange`, and later emits the same notice when `TrashImpoundedOffice` removes that inactive office entry. `GetMyCorporationsOffices` filters impounded offices (`officeManagerService.js:352-354,424-429`), and V24's `OnOfficeRentalChange` clears the station/corporation caches (`officeManager.py:69-77`). eve.rs removes the office row in the transaction that impounds assets and emits that cache invalidation after commit; the later asset-deletion call has no second office-state transition and needs no duplicate notice. This is an intentional timing difference with the same active-office view.
 - **Open (not built, or not verified):**
   - Station owner credit: the station rent settlement debits the renter and does not credit the station owner. This is the behaviour before ST-12, kept; it is a finding for the station path.
   - Station offices have no due or impound job: an unpaid station bill stays open. EveJS impounds the station office.
@@ -4948,6 +4913,10 @@ as reference. The client's `bookmarkSvc.py` (`OnSharedBookmarksFolderUpdated`, `
 - **`/tele` places the game master beside the target.** A target in space: 2 500 m off its ship along x, facing it (`SpaceSessions.RelocationOffsetMeters`; a project rule, the offset is not EveJS's). A target that is docked: the anchor of the system its station is in. EveJS's `/tele` to a docked character is not replicated (it is not read in full), so a docked target does not put the game master in its station.
 - **No gate, range, fuel, toll, emanation-lock or jump-timer rule applies.** EveJS's `/solar` passes `countsTowardJumpGoal: false` and is a game master's move; the relocation applies the same. The gate tolls, contraband and cloak of a stargate jump are not charged (they belong to a gate jump).
 - **Not built (recorded).** EveJS's abyssal-run abort (`abortAbyssalRunForAdministrativeTransition`) and the Local channel move before the answer: eve.rs has no abyssal host, and the Local channel move is not a separate host step here (the session change carries the location). A refused entry (the simulation says no) is answered `Space is not available right now. Try again in a moment.` (the client's text for a lost space), and the ship goes back to its station through the same recovery a lost ship takes.
+
+## Inventory, ship rename slim refresh (2026-10-23)
+
+V24.01 `BracketMgr.OnSlimItemChange` replaces the slim item and clears its cached display name (`eve-logic/eve/client/script/parklife/bracketMgr.py:416-440`). EveJS `Handle_SetLabel` updates the active session name and sends `OnCfgDataChanged` to that session (`evejs-v0.12.9/server/src/services/inventory/invBrokerService.js:10735-10794`, `_emitSetLabelCfgDataChanged`: 2606-2623); it has no `OnSlimItemChange` send in `invBrokerService.js`. The prior eve.rs `SetLabel` path refreshed the active ship's `ShipSpec`, but `Scene::respec` only sent the existing slim notification for security-status or stance changes. eve.rs now sends that same existing `OnSlimItemChange` when the ship name changes, so other clients' brackets receive the updated slim item. This is a deliberate client-visible extension of EveJS behavior; the notification wire shape is unchanged. Checked by `scene::tests::a_renamed_ship_is_shown_again_in_the_slim_item` (1 passed). Graphical-client display has not been exercised.
 - **Checked:** `RelocationTests` (Eve.Services.Space.Tests, database-backed on eve_p2): a docked pilot is in space in the other system at the anchor, a pilot in space leaves its scene (the leave before the enter) and enters at the place given, a refused entry returns the ship to its station, a docked pilot is found at its system's anchor, an unknown system moves nobody. `TeleportCommandTests` (Eve.Services.Dogma.Tests, no database): the usage lines, the unknown system and character, the disconnected and unlocated target, the `me` target, the refusal passed through, and the messages. The stale `SlashCatalogTests` expectations (`/repair`, `/giveme` and `/ship` were registered before this slice and the lists were not updated) are corrected.
 
 ## GM tools, slice G9: `/agent`, the caller's agent missions (2026-10-18)
@@ -5131,6 +5100,10 @@ An out-of-range station dock command now follows the station and completes docki
 
 - **Advanced Contracting capacity.** The creation path uses the V24 `NUM_CONTRACTS_BY_ADVSKILL` table alongside `NUM_CONTRACTS_BY_SKILL`; no per-level increment is inferred. See the contracts creation record above.
 
+
+## XmppChatMgr.Hostname response semantics
+
+V24.01 `xmppchatclient/xmppchatsvc.py:283-295` stores `Hostname()` as `XmppConnection.hostname`; `xmpp/xmppConnection.py:422` passes that value to the XMPP protocol connect call. The TCP endpoint is resolved separately as `ejabberd_address` (`xmppchatsvc.py:284,306`). eve.rs returns the configured XMPP domain, matching EveJS 261018.1 `server/src/services/chat/xmppChatMgrService.js:132-135`. EveJS v0.12.9 instead returned its separately configured `xmppConnectHost` (`server/src/services/chat/xmppChatMgrService.js:133-136`, `xmppConfig.js:16-18`). The Host reply test checks the configured domain.
 
 ## V24.01 chat transport inventory (2026-10-19)
 
@@ -5362,7 +5335,7 @@ EveJS 261018.1 checks corporation and alliance mail against the sender's current
 
 ## Bound RPC resource budget (2026-10-21)
 
-`PacketDispatcher` now charges 10 weighted units per minute for `industryManager` job counts, job reads, installs, completions and cancellations. These calls read the shared job snapshot or perform persisted inventory, wallet and blueprint operations. The default session allowance remains 160 units per rolling minute; excess calls receive `SessionRpcBudgetExceeded` before dispatch. This adds a server resource bound while preserving normal call results. Corporate job reads also recompute Factory Manager access against current persisted membership and title rows, so a cached session role alone cannot expose jobs after the role is revoked. Ship cosmetics license reads and writes also use the weighted budget, and `ActivateSkinLicense` refuses over 500 raw item IDs before item lookup with `SHIP_SKIN_LICENSE_BULK_LIMIT_EXCEEDED`; this bounds the transactional batch before work. Regression: `DispatchGoldenTests.Industry_job_calls_use_the_named_per_session_budget`. `industryManager.CompleteManyJobs` also refuses more than 500 raw rows with `INDUSTRY_JOB_BULK_LIMIT_EXCEEDED` before domain work, matching the other bulk RPC caps; `IndustryJobsServiceTests.Complete_many_refuses_more_than_500_rows_before_domain_dispatch` covers this boundary.
+`PacketDispatcher` now charges 10 weighted units per minute for `industryManager` job counts, job reads, installs, completions and cancellations. These calls read the shared job snapshot or perform persisted inventory, wallet and blueprint operations. Industry job RPCs consume a separate 160-unit per-session rolling-minute bucket, so unrelated expensive calls cannot exhaust them; the general allowance remains 160 units. Calls beyond either bucket receive `SessionRpcBudgetExceeded` before dispatch. This adds a server resource bound while preserving normal call results. Corporate job reads also recompute Factory Manager access against current persisted membership and title rows, so a cached session role alone cannot expose jobs after the role is revoked. Ship cosmetics license reads and writes also use the weighted budget, and `ActivateSkinLicense` refuses over 500 raw item IDs before item lookup with `SHIP_SKIN_LICENSE_BULK_LIMIT_EXCEEDED`; this bounds the transactional batch before work. Regression: `DispatchGoldenTests.Industry_job_calls_use_the_named_per_session_budget` verifies the industry cap, and `DispatchGoldenTests.Industry_jobs_use_a_separate_per_session_budget` verifies isolation from unrelated expensive calls. `industryManager.CompleteManyJobs` also refuses more than 500 raw rows with `INDUSTRY_JOB_BULK_LIMIT_EXCEEDED` before domain work, matching the other bulk RPC caps; `IndustryJobsServiceTests.Complete_many_refuses_more_than_500_rows_before_domain_dispatch` covers this boundary.
 
 The dispatcher applies the per-session weighted budget to an expensive method when a client supplies it as the nested initial call to `MachoBindObject`. This keeps bound and named invocation forms under the same resource limit; the client call shape is unchanged. `Bound_bind_invocations_consume_the_nested_expensive_rpc_budget` verifies that the second costly nested call receives `SessionRpcBudgetExceeded`.
 
@@ -5826,3 +5799,23 @@ Subscription status, info, time, clone-grade, and login-reward clone-grade reads
 `epicArcStatus.AgentHasEpicMissionsForCharacter` now requires exactly one positive integral agent ID, rejects keywords, and costs one per-session unit. V24.01 passes one selected agent ID (`eve/client/script/ui/station/agents/agentUtil.py:40,65`) while character identity remains session-derived. EveJS forwards a permissively selected first argument; Host refuses malformed shapes and IDs before the callback.
 
 Warp destination subjects from `Michelle.CmdWarpToStuff(subject, subjectID, **kwargs)` accept `launch` only when the session character owns a non-deleted, unexpired planetary launch record in the current solar system. The destination uses the record's persisted coordinates and the normal warp range, simulation, persistence, and Destiny path. The V24.01 journal passes its launch row's ID (`eve/client/script/ui/shared/neocom/journal.py:452-454`). This deliberately refuses EveJS v0.12.9's missing-launch fallback to a numeric target: no current owner-scoped launch row means there is no authorized destination. Operation-site, dungeon-instance, external-dungeon, and moon-mining-point subjects remain refused because eve.rs currently has no authoritative runtime destination provider for those subjects; their UI paths are not recorded as supported. The launch regression currently uses an injected service resolver; persisted owner-store behavior and graphical-client behavior remain open, as do these four other subjects.
+
+## Upwell structure market (2026-10-23)
+
+- V24.01 market calls use the active station or structure location for `GetStationAsks`, order placement, modification, cancellation, and fills. EveJS v0.12.9 and 261018.1 both require structure market service access and filter structure orders by the caller's access. eve.rs routes these calls through the persisted structure directory and the existing market, wallet, and inventory owners.
+- Structure eligibility is derived from pinned SDE type size: Large or Extra Large, excluding Athanor and Tatara refineries. Market service access requires the persisted Market service state to be online and the character to have access under the structure's profile. The Market service fuel rule resolves `Standup Market Hub I` from the pinned SDE and reads its fuel attributes; the runtime type ID is not captured or hardcoded.
+- For structure orders, `MARKET_TAX` supplies the owner-set broker rate and the structure quote adds the 0.5% SCC surcharge. Seller sales tax uses the 7.5% base reduced by Accounting; Broker Relations does not reduce structure fees. EVE University defines the Upwell structure broker fee as the 0.5% SCC surcharge plus the owner rate and specifies a 100 ISK minimum for the broker fee ([Market](https://wiki.eveuniversity.org/Market)). EveJS v0.12.9 instead applies a 100 ISK broker minimum and a separate 25 ISK SCC minimum (`server/src/services/market/marketRules.js:208-241,243-276`); eve.rs applies one combined 100 ISK minimum, retains the raw SCC portion in its separate wallet journal entry, and allocates the remainder to the owner fee. When no setting resolves, both EveJS snapshots use a 1.0% `MARKET_TAX` fallback and clamp it to 0–11.5% (`server/src/services/market/marketProxyService.js:145-146,1178-1204`; 261018.1 `src/server/src/services/market/marketProxyService.js:145-146,1230-1261`). eve.rs resolves per-group values from persisted structure settings and uses the same fallback. Mechanics: [EVE University Market](https://wiki.eveuniversity.org/Market), [Station Trading](https://wiki.eveuniversity.org/Station_Trading) and [Fitting Upwell structures](https://wiki.eveuniversity.org/Fitting_upwell_structures); structure type and fuel values come from pinned SDE data.
+- Structure order summaries retain location-level candidates until character access filtering is complete, then select the best visible order per type. The market DB wire descriptor for `stationID` is 64-bit so a structure ID is preserved. Host coverage exercises denied and permitted reads and writes, public fallback visibility, partial fill, competing fills, wallet and inventory results, and restart recovery; topology and wire tests cover SDE location mapping and ID width.
+- Structure ask summaries intentionally use named KeyVal values, including a 64-bit `stationID`. Both EveJS snapshots call `buildSummaryDict(..., "tuple")` for `GetStationAsks`, but the V24 caller `eve/client/script/ui/shared/market/quote.py:95-103` reads `ask.typeID`. The named value follows that observed client consumer; `MarketHostTests` and `MarketStructureWireTests` assert the shape and ID width.
+- Market cached-method scope follows EveJS: station asks use `stationid`, system asks and `GetOrders` use `solarsystemid2`, and PLEX book reads use `regionid`. The Host structure-read test checks the station scope metadata.
+- The external market-server paths in both EveJS snapshots use a region/type keyed order-book cache backed by persistent rows. `MarketRuntime.place_order` persists then invalidates scope caches and refreshes the region summary; `fill_order` commits the DB fill before in-memory scope invalidation, avoiding a rejected response after a committed fill. eve.rs keeps wallet, inventory and order settlement under its existing transaction owners.
+- Mechanics references: [EVE University Market](https://wiki.eveuniversity.org/Market) and [Station Trading](https://wiki.eveuniversity.org/Station_Trading) (redirects to Trading). The Host and live headless checks are pending; no graphical-client result is claimed.
+
+
+## Stargate jump after warp dropout (2026-10-24)
+
+The V24.01 client begins autopilot warp by recording the destination and calling `CmdWarpToStuffAutopilot(destinationID)` (`eve/client/script/parklife/autopilot.py:461-465`). It does not wait for the server's remaining coast simulation before attempting an ordinary stargate jump. Autopilot returns while the ship's ball is `DSTBALL_WARP` (`eve/client/script/parklife/autopilot.py:303-309`), then checks surface distance against `const.maxStargateJumpingDistance` and calls `CmdStargateJump(fromGate, toGate, session.shipid)` (`autopilot.py:337-357`). The manual gate path uses that same interaction range (`eve/client/script/ui/services/menusvc.py:3029-3032`) and calls the same RPC shape (`stargate/client/gateJumpSvc.py:122-125`). EVE University documents the 2,500 m gate range and that a gate can be activated after warp exits ([Stargates](https://wiki.eveuniversity.org/Stargates), [Warp mechanics](https://wiki.eveuniversity.org/Warp_mechanics)).
+
+eve.rs therefore permits the simulation's post-warp `Coasting` phase to jump once authoritative surface distance is within range, while retaining `IN_WARP` during alignment and warp itself. It clears the old coast flight when the jump is accepted so that it cannot resume.
+
+EveJS v0.12.9 adds a `WARP_LANDING_PENDING` refusal in `server/src/space/transitions.js:1754-1760, 4124-4321` while `hasPendingPilotWarpLanding` sees `pilotWarpVisibilityHandoff.landingPending` (`server/src/space/runtime/destinyDeliveryEligibility.js:61-69`; also `server/src/space/runtime/spaceRuntime/stargateJump.js:76-81`). The V24.01 callsites expose no such handoff condition, so eve.rs follows the client-visible post-warp range rule. EveJS's `Handle_CmdStargateJump` still validates ship ID and returns its bound result (`server/src/services/ship/beyonceService.js:4196-4233`). The v0.12.9 isolated test list has no stargate jump case, so this comparison is source-based; no EveJS end-to-end run was available.

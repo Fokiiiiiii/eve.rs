@@ -56,6 +56,11 @@ internal sealed partial class CharacterServicesComposition
 
     private SubscriptionMgrService CloneGradeSource => _cloneGradeSource ??= new SubscriptionMgrService(omega);
 
+    private PersistenceLookupDirectory? _lookupDirectory;
+
+    private PersistenceLookupDirectory LookupDirectory =>
+        _lookupDirectory ??= new PersistenceLookupDirectory(characters, corporations, sde, stations);
+
     /// <summary>
     /// Who is in each solar system now. The cap is <c>EVE_SYSTEM_POPULATION_CAP</c> characters per system (a positive
     /// whole number), or <see cref="SystemPopulation.DefaultCapacity"/>.
@@ -87,9 +92,17 @@ internal sealed partial class CharacterServicesComposition
             new MultiLoginBlockerService(session => CloneGradeSource.CloneGradeOf(session.Get("userid"))),
             new PopulationCapService(characters, SystemPopulationModel),
             new Eve.Services.CharacterInfo.ConfigService(characters, corporations, stations, solarSystems,
-                ct => market.LatestAverageSalesAsync(ct), items, dogma),
-            Eve.Services.Core.CoreServices.CreateLookupService(
-                new Eve.Host.PersistenceLookupDirectory(characters, corporations, sde, stations)),
+                ct => market.LatestAverageSalesAsync(ct), items, dogma,
+                agentOwners: agentOwnerById,
+                readStructureNames: async (ids, cancellationToken) =>
+                {
+                    var structures = await structureDirectoryReadModel.GetStructureInfosAsync(ids, cancellationToken);
+                    return structures
+                        .Where(entry => !string.IsNullOrWhiteSpace(entry.Value.ItemName))
+                        .ToDictionary(entry => entry.Key, entry => entry.Value.ItemName!);
+                }),
+            Eve.Services.Core.CoreServices.CreateLookupService(LookupDirectory),
+            new Eve.Services.Core.SearchQueryService(LookupDirectory),
             new Eve.Services.Core.SecurityMgrService(),
             new Eve.Services.Core.RWManagerService(),
             new Eve.Services.Core.FwCharacterEnlistmentMgrService(new Eve.Services.Core.FwCharacterEnlistmentRpcCallbacks(

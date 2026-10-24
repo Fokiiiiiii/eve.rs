@@ -6,6 +6,8 @@ namespace Eve.Structures;
 public static class StructureServiceIds
 {
     public const int Docking = 1;
+    /// <summary>The Upwell market service; access is controlled by structure setting MARKET_TAX (setting ID 4).</summary>
+    public const int Market = 5;
     /// <summary>The Medical service (EVE.js STRUCTURE_SERVICE_ID.MEDICAL), whose access is the cloning bay setting (EVE.js structureServiceAuthority.js 136).</summary>
     public const int Medical = 6;
     /// <summary>The JUMP_CLONE service (EVE.js STRUCTURE_SERVICE_ID.JUMP_CLONE): a clone bay that also needs the character to be able to dock (EVE.js characterHasStructureCloneService).</summary>

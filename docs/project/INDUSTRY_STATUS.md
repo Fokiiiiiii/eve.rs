@@ -255,3 +255,9 @@ Tests: `IndustryRulesTests` 35 of 35; `dotnet test tests/Eve.Host.Tests --filter
 ## Headless walk coverage (2026-10-23)
 
 `tools/headless-client/tests/test_walk_industry.py` completes ME and TE research through `CompleteJob`, then installs and delivers a manufacturing job using the researched original. It moves job end times into the past in the test database and exercises completion and inventory delivery without waiting for production timers. EveJS 261018.1 `server/src/services/industry/industryManagerService.js` routes `CompleteJob` to `deliverIndustryJob`.
+
+## Facility manager read paths
+
+`facilityManager.GetMaxActivityModifiers` returns the configured/stored system-zero cost index for manufacturing, time/material research, copying, invention and reactions through the existing industry cost-index source. `GetFacilityTaxes` reads NPC corporation rates from the pinned SDE cache and deployed-structure tax from the persisted `structures` record, using the same percent-to-fraction normalization as job installation. These reads share the facility resolver and deployed-structure owner; no duplicate facility state was added.
+
+`SetFacilityTaxes` remains explicitly refused until an authoritative tax writer exists; it no longer reports a successful `None`. Structure facility locations and broad structure facility discovery remain open. Local checks on 2026-10-23: `Eve.Services.Core` and `Eve.Host` builds succeeded with 0 warnings/errors; focused `IndustryFacilityManagerTests.Max_activity_modifiers_include_each_client_activity_with_its_cost_index` passed 1/1. PostgreSQL and the graphical client were not used.

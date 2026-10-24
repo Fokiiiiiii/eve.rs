@@ -150,7 +150,7 @@ public sealed record MissionStandingGain(long EntityId, double Amount, bool Dimi
 
 
 /// and a replayed outcome pays nothing twice. Rewards: the official base ISK of <c>missionRewards.reward</c> when its type is ISK (29), plus the
-/// configured approximate loyalty-point rule; the timed bonus window is not paid here (DEVIATIONS "Mission execution X1").
+/// configured approximate loyalty-point rule; SDE ISK time bonuses use the accepted mission's minute interval and wallet reference type 34.
 /// </summary>
 public sealed class MissionDungeonRuntime(
     AgentMissionStore store,
@@ -170,6 +170,7 @@ public sealed class MissionDungeonRuntime(
 
 
     public const int AgentMissionRewardRefType = 33;
+    public const int AgentMissionBonusRefType = 34;
 
     /// <summary>The mission dungeon's content definition is named <c>dungeon.{id}</c> (<c>DungeonWaveDirector.DefinitionOf</c>).</summary>
     public const string DefinitionPrefix = "dungeon.";
@@ -363,10 +364,23 @@ public sealed class MissionDungeonRuntime(
         var rewardSettings = missionRewardConfiguration ?? ApproximateMissionRewardConfiguration.Default;
         var basic = mission.Reward is null && level is { } tagged ? rewardSettings.BasicMissionRewardFor(tagged) : null;
         var isk = sdeIsk > 0 ? sdeIsk : basic?.Isk ?? 0;
-        if (isk > 0 && place is not null)
+        if (place is not null)
         {
-            await host.CreditIskAsync(owner, isk, place.CorporationId, AgentMissionRewardRefType,
-                $"Agent mission reward: {mission.NameEn}", $"agent-mission:{owner}:{record.Content.MissionId}:{rewardKey}", cancellationToken);
+            if (isk > 0)
+            {
+                await host.CreditIskAsync(owner, isk, place.CorporationId, AgentMissionRewardRefType,
+                    $"Agent mission reward: {mission.NameEn}", $"agent-mission:{owner}:{record.Content.MissionId}:{rewardKey}", cancellationToken);
+            }
+
+            var acceptedAt = record.AcceptedAt;
+            var bonus = mission.Reward;
+            if (acceptedAt is { } accepted && bonus?.BonusRewardTypeId == IskTypeId && bonus.BonusRewardQuantity > 0 &&
+                bonus.BonusIntervalMinutes is { } interval && interval > 0 && accepted.AddMinutes(interval) > now())
+            {
+                await host.CreditIskAsync(owner, bonus.BonusRewardQuantity, place.CorporationId, AgentMissionBonusRefType,
+                    $"Agent mission time bonus: {mission.NameEn}",
+                    $"agent-mission:{owner}:{record.Content.MissionId}:{rewardKey}:bonus", cancellationToken);
+            }
         }
 
         var gains = mission.ExtraStandings.Select(item => new MissionStandingGain(item.Id, item.Value / 10, false)).ToList();

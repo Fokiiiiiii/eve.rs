@@ -5,6 +5,7 @@ using Eve.Events;
 using Eve.Host.Persistence.Mail;
 using Eve.Scheduler;
 using Eve.Structures;
+using Eve.Services;
 using Eve.Services.Corporations;
 using Eve.Wallet;
 using Npgsql;
@@ -26,7 +27,8 @@ internal sealed class StructureOfficeRentDue(
     IStructureOffices structures,
     Eve.Inventory.PgItemStore items,
     PgCharacterStore characters,
-    PersistenceTransactionMailbox mailbox)
+    PersistenceTransactionMailbox mailbox,
+    CharacterSessions? characterSessions = null)
 {
     public const string JobKind = "office.rent_due";
     private const int RentalBillTypeId = 2;
@@ -115,7 +117,11 @@ internal sealed class StructureOfficeRentDue(
         }
         await transaction.CommitAsync(cancellationToken);
         if (evicted)
+        {
+            if (characterSessions is { } sessions)
+                CorporationOfficeNotifications.RentalChanged(sessions, bill.CorporationId, bill.StationId, office.OfficeFolderId);
             await NotifyAsync(open, cancellationToken);
+        }
     }
 
     /// <summary>
@@ -141,6 +147,8 @@ internal sealed class StructureOfficeRentDue(
         }
         await StationOfficeImpound.ImpoundAsync(items, offices, connection, transaction, office, now, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+        if (characterSessions is { } sessions)
+            CorporationOfficeNotifications.RentalChanged(sessions, bill.CorporationId, bill.StationId, office.OfficeFolderId);
         await NotifyAsync(open, cancellationToken);
     }
 

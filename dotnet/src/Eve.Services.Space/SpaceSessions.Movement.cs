@@ -353,6 +353,7 @@ public sealed partial class SpaceSessions
             throw JumpRefused(reply.Reason);
         }
 
+        _warping.TryRemove((ulong)session.SessionId, out _);
         await CancelShipSelfDestructAsync(pilot.ShipId, cancellationToken);
         // EVE.js jumpSessionViaStargate: the contraband of the ship is inspected in the system it arrives in
         await ApplyContrabandAsync(session, pilot.CharacterId, pilot.ShipId, destination, cancellationToken);
@@ -507,6 +508,9 @@ public sealed partial class SpaceSessions
                         new PyLong(JumpCloakTicks));
                     var system = new PyInt(jumped.ToSystem);
                     session.Change(
+                        ("stationid", None),
+                        ("stationid2", None),
+                        ("structureid", None),
                         ("solarsystemid", system),
                         ("solarsystemid2", system),
                         ("constellationid", new PyInt(moved.Character.ConstellationId)),

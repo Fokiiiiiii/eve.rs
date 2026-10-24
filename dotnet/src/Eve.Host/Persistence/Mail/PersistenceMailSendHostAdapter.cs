@@ -46,12 +46,41 @@ public sealed class PersistenceMailSendHostAdapter(
 {
     private readonly SemaphoreSlim _sendGate = new(1, 1);
 
+    private static bool IsGmChatPoke(
+        Eve.Services.Core.MailSendRequest request,
+        Eve.Services.ClientSession session) =>
+        request.SenderCharacterId == Eve.Services.Core.GmChatPokeMailRequest.SystemSenderId &&
+        Eve.Services.GameMasterRoles.Has(session, Eve.Services.GameMasterRoles.Gml) &&
+        !request.SaveSenderCopy && request.CharacterRecipientIds.Count == 1 &&
+        request.MailingListId is null &&
+        (request.CorporationOrAllianceRecipientIds is null || request.CorporationOrAllianceRecipientIds.Count == 0) &&
+        request.ReplyToMessageId is null && request.ForwardedFromMessageId is null &&
+        request.Title == "GM chat request" &&
+        request.Body.StartsWith("A GM would like to speak with you.<br><br>Requested channel: ", StringComparison.Ordinal);
+
+    public Task<long?> SendGmChatPokeAsync(
+        Eve.Services.Core.GmChatPokeMailRequest request,
+        Eve.Services.ClientSession session,
+        CancellationToken cancellationToken)
+    {
+        if (request.CharacterId <= 0 || request.SenderCharacterId != Eve.Services.Core.GmChatPokeMailRequest.SystemSenderId ||
+            request.SaveSenderCopy || request.Title != "GM chat request" ||
+            request.Body != $"A GM would like to speak with you.<br><br>Requested channel: {request.ChannelName}" ||
+            !Eve.Services.GameMasterRoles.Has(session, Eve.Services.GameMasterRoles.Gml))
+            return Task.FromResult<long?>(null);
+
+        return SendAsync(new Eve.Services.Core.MailSendRequest(
+            request.SenderCharacterId, [request.CharacterId], null, null, request.Title, request.Body,
+            null, null, request.SaveSenderCopy), session, cancellationToken);
+    }
+
     public async Task<long?> SendAsync(
         Eve.Services.Core.MailSendRequest request,
         Eve.Services.ClientSession session,
         CancellationToken cancellationToken)
     {
-        if (request.SenderCharacterId <= 0 || session.CharacterId != request.SenderCharacterId)
+        var gmChatPoke = IsGmChatPoke(request, session);
+        if (request.SenderCharacterId <= 0 || session.CharacterId != request.SenderCharacterId && !gmChatPoke)
             return null;
 
         await _sendGate.WaitAsync(cancellationToken);
@@ -101,15 +130,18 @@ public sealed class PersistenceMailSendHostAdapter(
                 };
             }
 
-            var senderDirectlyIncluded = directRecipients.Contains(request.SenderCharacterId);
-            var senderRead = !senderDirectlyIncluded &&
-                request.MailingListId is null &&
-                request.CorporationOrAllianceRecipientIds is null;
-            statuses[(request.SenderCharacterId, messageId)] = new JsonObject
+            if (request.SaveSenderCopy)
             {
-                ["statusMask"] = senderRead ? 1 : 0,
-                ["labelMask"] = recipients.SenderLabelMask,
-            };
+                var senderDirectlyIncluded = directRecipients.Contains(request.SenderCharacterId);
+                var senderRead = !senderDirectlyIncluded &&
+                    request.MailingListId is null &&
+                    request.CorporationOrAllianceRecipientIds is null;
+                statuses[(request.SenderCharacterId, messageId)] = new JsonObject
+                {
+                    ["statusMask"] = senderRead ? 1 : 0,
+                    ["labelMask"] = recipients.SenderLabelMask,
+                };
+            }
 
             var sourceFlags = new Dictionary<long, long>();
             if (request.ReplyToMessageId is { } replyId && replyId > 0)

@@ -131,13 +131,37 @@ internal static class HostComposition
                 new Eve.Host.Persistence.ContractNotifications(characterSessions).Subscribe(foundations.Events);
             // the public gateway's skill plans: the tables are the skills module's (migration 0009, applied with its store)
             var gateway = new Dictionary<string, PublicGateway.GatewayHandler>(StringComparer.Ordinal);
-            var skillCatalog = await Eve.Skills.SkillCatalog.LoadAsync(new Eve.Sde.SdeReader(source));
+            var skinrSchema = Env("EVE_SKINR_SCHEMA", Eve.Host.Persistence.PgShipSkinrStore.DefaultSchema);
+            await Eve.Host.Persistence.PgShipSkinrStore.MigrateAsync(source, skinrSchema);
+            var skinrStore = new Eve.Host.Persistence.PgShipSkinrStore(source, skinrSchema);
+            var sde = new Eve.Sde.SdeReader(source);
+            var missionSde = new Eve.Sde.SdeReader(source, Eve.Sde.SdeReader.MissionSchema);
+            var skinrCatalog = await ShipSkinrCatalog.LoadAsync(missionSde);
+            var skinrSkillTypeIds = (await sde.ReadTypeSummariesAsync())
+                .Where(type => type.Name is "Studio Management" or "Advanced Studio Management" or
+                    "Batch Sequencing" or "Mass Sequencing" or "Industrial Sequencing" or
+                    "Parallel Sequencing" or "Multi-thread Sequencing" or "Basic Induction" or
+                    "Induction Efficiency" or "Advanced Induction Efficiency" or "Peak Induction Acceleration")
+                .ToDictionary(type => type.Name, type => type.TypeId, StringComparer.Ordinal);
+            var skinrSkills = new Eve.Skills.PgSkillStore(source, Env("EVE_SKILLS_SCHEMA", Eve.Skills.PgSkillStore.DefaultSchema));
+            var skillCatalog = await Eve.Skills.SkillCatalog.LoadAsync(sde);
             foreach (var (name, handler) in PublicGateway.SkillPlanGateway.Handlers(new Eve.Skills.PgSkillPlanStore(source, Env("EVE_SKILLS_SCHEMA", Eve.Skills.PgSkillStore.DefaultSchema)), skillCatalog))
                 gateway[name] = handler;
             // the character titles: the SDE's title ids, and the owned and worn titles of the characters schema
             var titles = await LoadCharacterTitleIdsAsync(source, Eve.Sde.SdeReader.DefaultSchema);
             var titleStore = new Eve.Characters.CharacterTitleStore(source, Env("EVE_CHARACTERS_SCHEMA", Eve.Characters.PgCharacterStore.DefaultSchema));
             var notices = new PublicGateway.NoticeHub();
+            foreach (var (name, handler) in PublicGateway.ShipSkinrGateway.DraftHandlers(source, skinrStore, skinrCatalog, skinrSkills, skinrSkillTypeIds))
+                gateway[name] = handler;
+            Eve.Host.PublicGateway.ShipSkinrSequenceJobs.Register(foundations.Scheduler, skinrStore, foundations.Events);
+            Eve.Host.PublicGateway.ShipSkinrNoticeHandlers.Register(foundations.Events, notices);
+            var skinrWallets = new Eve.Wallet.PgWalletStore(source, Env("EVE_WALLET_SCHEMA", Eve.Wallet.PgWalletStore.DefaultSchema));
+            var skinrSessions = characterSessions ?? new CharacterSessions();
+            var skinrGateway = new PublicGateway.ShipSkinrSequencingGateway(source, skinrStore, skinrCatalog,
+                skinrSkills, skinrSkillTypeIds, contractItems, Env("EVE_INVENTORY_SCHEMA", PgItemStore.DefaultSchema),
+                skinrWallets, foundations.Scheduler, notices, skinrSessions, legacy?.Cache, clock);
+            foreach (var (name, handler) in skinrGateway.Handlers())
+                gateway[name] = handler;
             foreach (var (name, handler) in PublicGateway.TitleGateway.Handlers(titleStore, titles, notices))
                 gateway[name] = handler;
             var localChat = new PublicGateway.LocalChatGateway(connected, notices);
@@ -237,6 +261,16 @@ internal static class HostComposition
         foreach (var service in characterServices)
         {
             registry.Register(service);
+        }
+        if (characterServices.Count == 0)
+        {
+            // The in-memory host has no character directory, but the client route still resolves.
+            var emptySearchSources = new LookupSearchSources(
+                _ => Task.FromResult<IReadOnlyList<LookupEntity>>([]),
+                _ => Task.FromResult<IReadOnlyList<LookupEntity>>([]),
+                _ => Task.FromResult<IReadOnlyList<LookupEntity>>([]),
+                _ => Task.FromResult<IReadOnlyList<LookupEntity>>([]));
+            registry.Register(new SearchQueryService(emptySearchSources));
         }
         if (characterServices.Count > 0)
         {

@@ -54,7 +54,9 @@ public sealed partial class CharMgrService(
     Func<long, CancellationToken, ValueTask<int?>>? readRecustomizationState = null,
     Func<ServiceCall, ValueTask<PyValue>>? globalAssetsInventoryCall = null,
     Func<long, CancellationToken, ValueTask<decimal?>>? readBalance = null,
-    Func<long, long, CancellationToken, ValueTask<bool>>? canReadPrivateCorporationMemberInfo = null)
+    Func<long, long, CancellationToken, ValueTask<bool>>? canReadPrivateCorporationMemberInfo = null,
+    Func<long, long, int, long, string, CancellationToken, ValueTask>? writeContactNotification = null,
+    Func<long, CancellationToken, ValueTask<Character?>>? readCharacterById = null)
 {
     private const int MaxOrganizationInfoCharacterIds = 500;
     private const int MaxBulkContactOwnerIds = 500;
@@ -160,7 +162,11 @@ public sealed partial class CharMgrService(
     private async ValueTask<Character?> CharacterAsync(ServiceCall call)
     {
         var id = IdOf(call.Arg(0));
-        return id is null ? null : await characters.GetAsync(id.Value, call.Cancellation);
+        if (id is null)
+            return null;
+        return readCharacterById is null
+            ? await characters.GetAsync(id.Value, call.Cancellation)
+            : await readCharacterById(id.Value, call.Cancellation);
     }
 
     private async ValueTask<PyValue> PublicInfoAsync(Character character, CancellationToken cancellationToken)
@@ -916,15 +922,23 @@ public sealed partial class CharMgrService(
     }
 
     [Method("EditContact")]
-    public ValueTask<PyValue> EditContact(ServiceCall call) => AddContact(call);
+    public ValueTask<PyValue> EditContact(ServiceCall call) => AddOrEditContactAsync(call, ContactEditNotificationType);
 
     [Method("AddContact")]
-    public async ValueTask<PyValue> AddContact(ServiceCall call)
+    public ValueTask<PyValue> AddContact(ServiceCall call) => AddOrEditContactAsync(call, ContactAddNotificationType);
+
+    private const int ContactAddNotificationType = 89;
+    private const int ContactEditNotificationType = 90;
+
+    private async ValueTask<PyValue> AddOrEditContactAsync(ServiceCall call, int notificationType)
     {
+        var senderId = call.Session.CharacterId ?? 0;
         var contactId = NormalizeInteger(call.Arg(0));
         var relationshipId = call.Args.Count > 1 ? NormalizeInteger(call.Arg(1)) : 0;
         var inWatchlist = call.Args.Count > 2 && NormalizeBoolean(call.Arg(2));
-        await UpdatePersonalDataAsync(call, data =>
+        var sendNotification = call.Args.Count > 3 && NormalizeBoolean(call.Arg(3));
+        var message = call.Args.Count > 4 ? OptionalText(call.Arg(4)) ?? "" : "";
+        var updated = await UpdatePersonalDataAsync(call, data =>
         {
             if (contactId <= 0)
             {
@@ -939,6 +953,12 @@ public sealed partial class CharMgrService(
                     .Append(contact).OrderBy(item => item.ContactId).ToArray(),
             };
         });
+
+        if (updated is not null && sendNotification && contactId >= 90_000_000 && contactId != senderId &&
+            await characters.GetAsync(contactId, call.Cancellation) is not null && writeContactNotification is not null)
+        {
+            await writeContactNotification(senderId, contactId, notificationType, relationshipId, message, call.Cancellation);
+        }
         return None;
     }
 

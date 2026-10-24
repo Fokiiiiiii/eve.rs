@@ -40,6 +40,7 @@ internal sealed partial class CharacterServicesComposition
     private async Task NpcAgents()
     {
         npcCharacterRows = await sde.ReadAsync("npcCharacters", cancellationToken: CancellationToken.None);
+        agentOwnerById = AgentCatalog.BuildOwners(npcCharacterRows);
         agentsInSpaceById = (await sde.ReadAsync("agentsInSpace", cancellationToken: CancellationToken.None))
             .ToDictionary(row => row.Key);
         agentLocationById = new Dictionary<long, long>();

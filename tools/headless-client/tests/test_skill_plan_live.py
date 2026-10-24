@@ -36,7 +36,7 @@ def test_a_skill_plan_is_created_read_changed_with_a_milestone_activated_and_del
     with connect(f"skillplan-{run}") as client:
         character = enter_new_character(client, run)
         with grpc.insecure_channel(GATEWAY) as raw:
-            channel = as_user(raw, client.session.user_id)
+            channel = as_user(raw, client)
             # the Ping calls answer an empty frame
             assert channel.unary_unary(REQUEST_PING)(b"") == b""
 

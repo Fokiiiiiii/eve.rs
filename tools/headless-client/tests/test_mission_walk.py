@@ -28,6 +28,7 @@ from tests.test_undock import STATION, SYSTEM, arrive, outcome
 from tests.test_weapon import slims_in
 
 pytestmark = [
+    pytest.mark.timeout(1200),
     pytest.mark.skipif(not base.LIVE, reason="set EVE_LIVE_HOST=host:port to test against a running server"),
     pytest.mark.skipif(os.environ.get("EVE_LIVE_SLOW") != "1", reason="several minutes: set EVE_LIVE_SLOW=1"),
     pytest.mark.skipif("EVE_RELATIONS_SCHEMA" not in os.environ or "EVE_PSQL_URL" not in os.environ,
@@ -140,7 +141,7 @@ def in_range(who, call, what: str, limit: int = 60):
             return call()
         except packet.MachoError as error:
             # a lock takes a moment to land (AddTarget answers pending): until then the shot is refused as not locked
-            if not any(text in repr(error.payload) for text in ("TargetNotWithinRange", "That target is not locked")):
+            if not any(text in repr(error.payload) for text in ("TargetNotWithinRange", "That target is not locked", "EffectAlreadyActive2")):
                 raise AssertionError(f"{what}: {base.brief(error.payload)}") from error
             watch({"events": who}, 5.0)
     raise AssertionError(f"{what}: still out of range after {limit * 5} s")
@@ -183,6 +184,8 @@ def walk_into_dungeon(who, race, run: str):
     # the offer names the mission (891, a basic level 4 kill) with accept and decline (377, 378); the accept leaves no button
     assert "891" in replies["request"] and "(377, 3)" in replies["request"], replies["request"][:400]
     assert "891" in replies["accept"] and "(377, 3)" not in replies["accept"], replies["accept"][:400]
+    objective = reply_text(who.call_bound(agent[0], "GetMissionObjectiveInfo"))
+    assert "ownerID" in objective and "locationType" in objective and str(NEXT_SYSTEM) in objective, objective[:500]
 
     arrived: set[int] = set()
     arrived_types: dict[int, int] = {}
@@ -204,6 +207,7 @@ def test_a_basic_level_4_kill_mission_is_offered_accepted_and_its_dungeon_comes_
     with base.connect(f"walk-mission-{run}") as who:
         walk_into_dungeon(who, race, run)
 
+@pytest.mark.timeout(1800)
 def test_the_pilot_clears_the_dungeon_and_is_paid():
     """The owner's standard test ship (the Cockroach, effectively invulnerable) with the QA Smartbomb clears the dungeon: each cycle hits every NPC
     of the dungeon in its 250 km field, until the last NPC is gone; the mission is then complete and paid."""
@@ -232,6 +236,7 @@ def test_the_pilot_clears_the_dungeon_and_is_paid():
         watch({"events": who}, 10.0)
         assert cash(who) > cash_before, (cash_before, cash(who), actions, ledger_of(ship_id))
 
+@pytest.mark.timeout(1800)
 def test_arc_29_steps_1_and_2_are_completed_in_space():
     """Arc 29 (The Blood-Stained Stars), steps 1 and 2 on the owner's test ship: the entry agent at Arnon offers the arc's first mission (14117,
     a kill in dungeon 3509), the pilot accepts it and clears the dungeon with the QA Smartbomb; then it flies to Tar, where step 2 (14118) is

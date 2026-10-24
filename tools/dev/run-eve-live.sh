@@ -8,9 +8,9 @@
 # With EVE_PG_URL set the host keeps its accounts, characters and items in PostgreSQL (in scratch schemas, dropped
 # at the end) and serves the character screen from the loaded static data (`eve-sde ensure`); without it accounts
 # live in memory and there are no characters.
-# EVE_LIVE_PORT (default 26100) is where the front listens; it is the only fixed port of the run (the host and the simulation
-# use private sockets), so a second run at the same time needs another one, e.g. EVE_LIVE_PORT=26101. The script refuses a
-# port that already accepts connections. EVE_LIVE_LOG_DIR keeps the logs of the three processes there
+# EVE_LIVE_PORT (default 26100) is where the front listens; EVE_PUBLIC_GATEWAY_PORT (default 26101) is the public RPC listener.
+# The host and simulation use private sockets. A concurrent run needs both ports free; the script refuses occupied ports.
+# EVE_LIVE_LOG_DIR keeps the logs of the three processes there
 # (with KEEP_LOGS=1), for CI to upload. Passwords are checked (an unknown user name
 # creates the account; the same name needs the same password afterwards), so the wrong-password test runs too.
 set -euo pipefail
@@ -31,8 +31,15 @@ else:
     f = dict(re.findall(r'(?i)([A-Za-z ]+)=([^;]*)', url))
     f = {k.strip().lower(): v.strip() for k, v in f.items()}
     user = urllib.parse.quote(f.get('username', 'postgres'))
-    print(f'postgres://{user}@{f.get(\"host\", \"127.0.0.1\")}:{f.get(\"port\", \"5432\")}/{f.get(\"database\", \"eve\")}')
+    host = f.get('host', '127.0.0.1')
+    port = f.get('port', '5432')
+    database = f.get('database', 'eve')
+    print('postgres://{}@{}:{}/{}'.format(user, host, port, database))
 " "$EVE_PG_URL")"
+  if [ -z "$EVE_PSQL_URL" ]; then
+    echo "eve-live: EVE_PG_URL did not produce a psql URL" >&2
+    exit 1
+  fi
 fi
 # the simulation reads the static data's JSONL export: the copy `eve-sde ensure` keeps under .cache/sde, unless EVE_SDE_DIR names one
 if [ -z "${EVE_SDE_DIR:-}" ]; then
@@ -41,11 +48,27 @@ if [ -z "${EVE_SDE_DIR:-}" ]; then
 fi
 TARGET="${CARGO_TARGET_DIR:-$HERE/target}"
 PORT="${EVE_LIVE_PORT:-26100}"
+export EVE_LIVE_PORT="$PORT" EVE_NET_BINARY="$TARGET/release/eve-net" EVE_NET_LISTEN="127.0.0.1:$PORT"
+GATEWAY_ADDR="${EVE_PUBLIC_GATEWAY:-127.0.0.1:${EVE_PUBLIC_GATEWAY_PORT:-26101}}"
+GATEWAY_PORT="${GATEWAY_ADDR##*:}"
+export EVE_PUBLIC_GATEWAY="$GATEWAY_ADDR"
 SSO_TEST_PORT="${EVE_SSO_TEST_PORT:-26261}"
 export EVE_SSO_TEST_PORT="$SSO_TEST_PORT"
 export EVE_SSO_ISSUER="http://127.0.0.1:$SSO_TEST_PORT/"
 export EVE_SSO_METADATA_URL="http://127.0.0.1:$SSO_TEST_PORT/.well-known/oauth-authorization-server"
 export EVE_SSO_AUDIENCES="EVE Online,eve.rs-headless-client"
+if [ "$GATEWAY_PORT" = "$PORT" ]; then
+  echo "eve-live: the front and public gateway need different ports; set EVE_LIVE_PORT or EVE_PUBLIC_GATEWAY_PORT" >&2
+  exit 1
+fi
+if [ "$GATEWAY_PORT" = "$SSO_TEST_PORT" ] || [ "$PORT" = "$SSO_TEST_PORT" ]; then
+  echo "eve-live: the front, public gateway, and SSO test issuer need different ports" >&2
+  exit 1
+fi
+if (exec 3<>"/dev/tcp/127.0.0.1/$GATEWAY_PORT") 2>/dev/null; then
+  echo "eve-live: 127.0.0.1:$GATEWAY_PORT already accepts connections (another live run?); set EVE_PUBLIC_GATEWAY_PORT to a free port" >&2
+  exit 1
+fi
 if (exec 3<>"/dev/tcp/127.0.0.1/$SSO_TEST_PORT") 2>/dev/null; then
   echo "eve-live: 127.0.0.1:$SSO_TEST_PORT is reserved for the deterministic SSO test issuer" >&2
   exit 1
@@ -58,6 +81,8 @@ SOCK="$(mktemp -u /tmp/eve-host.XXXXXX.sock)"
 SIMSOCK="$(mktemp -u /tmp/eve-sim.XXXXXX.sock)"
 LOG="${EVE_LIVE_LOG_DIR:-$(mktemp -d)}"
 mkdir -p "$LOG"
+export EVE_LIVE_LOG_DIR="$LOG" EVE_HOST_SOCKET="$SOCK" EVE_SIM_SOCKET="$SIMSOCK"
+export EVE_HOST_DLL="$HERE/dotnet/src/Eve.Host/bin/Release/net10.0/eve-host.dll"
 host_pid=""
 net_pid=""
 sim_pid=""
@@ -67,8 +92,8 @@ SCRATCH=""
 if [ -n "${EVE_PG_URL:-}" ]; then
   SCRATCH="live_$$"
   export EVE_LOGIN_SCHEMA="${SCRATCH}_login" EVE_IDENTITY_SCHEMA="${SCRATCH}_identity" EVE_CHARACTERS_SCHEMA="${SCRATCH}_characters" EVE_INVENTORY_SCHEMA="${SCRATCH}_inventory" EVE_SKILLS_SCHEMA="${SCRATCH}_skills" EVE_WALLET_SCHEMA="${SCRATCH}_wallet" EVE_FITTING_SCHEMA="${SCRATCH}_fitting" EVE_NPC_SCHEMA="${SCRATCH}_npc" EVE_SPACE_SCHEMA="${SCRATCH}_space"
-  export EVE_GAMESTORE_SCHEMA="${SCRATCH}_gamestore" EVE_ASSET_SAFETY_SCHEMA="${SCRATCH}_asset_safety" EVE_CORPORATIONS_SCHEMA="${SCRATCH}_corporations" EVE_FLEET_SCHEMA="${SCRATCH}_fleet" EVE_INDUSTRY_SCHEMA="${SCRATCH}_industry" EVE_MARKET_SCHEMA="${SCRATCH}_market"
-  export EVE_SCHEDULER_SCHEMA="${SCRATCH}_scheduler" EVE_EVENTS_SCHEMA="${SCRATCH}_events" EVE_RELATIONS_SCHEMA="${SCRATCH}_relations" EVE_CONTENT_SCHEMA="${SCRATCH}_content" EVE_CRIMEWATCH_SCHEMA="${SCRATCH}_crimewatch" EVE_GLOBAL_CONFIG_SCHEMA="${SCRATCH}_global_config" EVE_STRUCTURES_SCHEMA="${SCRATCH}_structures" EVE_AGENTS_SCHEMA="${SCRATCH}_agents" EVE_INSURGENCY_SCHEMA="${SCRATCH}_insurgency" EVE_ESS_SCHEMA="${SCRATCH}_ess" EVE_TRADE_SCHEMA="${SCRATCH}_trade" EVE_BOOKMARKS_SCHEMA="${SCRATCH}_bookmarks" EVE_ACCESS_GROUPS_SCHEMA="${SCRATCH}_access_groups" EVE_WORMHOLE_SCHEMA="${SCRATCH}_wormhole" EVE_PLANETS_SCHEMA="${SCRATCH}_planets" EVE_CONTRABAND_SCHEMA="${SCRATCH}_contraband" EVE_FACTIONWARFARE_SCHEMA="${SCRATCH}_factionwarfare" EVE_CONTRACTS_SCHEMA="${SCRATCH}_contracts" EVE_XMPP_SCHEMA="${SCRATCH}_xmpp"
+  export EVE_SKINR_SCHEMA="${SCRATCH}_skinr" EVE_GAMESTORE_SCHEMA="${SCRATCH}_gamestore" EVE_ASSET_SAFETY_SCHEMA="${SCRATCH}_asset_safety" EVE_CORPORATIONS_SCHEMA="${SCRATCH}_corporations" EVE_FLEET_SCHEMA="${SCRATCH}_fleet" EVE_INDUSTRY_SCHEMA="${SCRATCH}_industry" EVE_MARKET_SCHEMA="${SCRATCH}_market"
+  export EVE_SCHEDULER_SCHEMA="${SCRATCH}_scheduler" EVE_EVENTS_SCHEMA="${SCRATCH}_events" EVE_RELATIONS_SCHEMA="${SCRATCH}_relations" EVE_CONTENT_SCHEMA="${SCRATCH}_content" EVE_CRIMEWATCH_SCHEMA="${SCRATCH}_crimewatch" EVE_GLOBAL_CONFIG_SCHEMA="${SCRATCH}_global_config" EVE_STRUCTURES_SCHEMA="${SCRATCH}_structures" EVE_AGENTS_SCHEMA="${SCRATCH}_agents" EVE_INSURGENCY_SCHEMA="${SCRATCH}_insurgency" EVE_ESS_SCHEMA="${SCRATCH}_ess" EVE_TRADE_SCHEMA="${SCRATCH}_trade" EVE_MARKET_SCHEMA="${SCRATCH}_market" EVE_BOOKMARKS_SCHEMA="${SCRATCH}_bookmarks" EVE_ACCESS_GROUPS_SCHEMA="${SCRATCH}_access_groups" EVE_WORMHOLE_SCHEMA="${SCRATCH}_wormhole" EVE_PLANETS_SCHEMA="${SCRATCH}_planets" EVE_CONTRABAND_SCHEMA="${SCRATCH}_contraband" EVE_FACTIONWARFARE_SCHEMA="${SCRATCH}_factionwarfare" EVE_CONTRACTS_SCHEMA="${SCRATCH}_contracts" EVE_XMPP_SCHEMA="${SCRATCH}_xmpp"
 fi
 
 cleanup() {
@@ -81,7 +106,7 @@ cleanup() {
     for _ in $(seq 1 50); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
   done
   if [ -n "$SCRATCH" ]; then
-    for schema in "$EVE_LOGIN_SCHEMA" "$EVE_TRADE_SCHEMA" "$EVE_IDENTITY_SCHEMA" "$EVE_CHARACTERS_SCHEMA" "$EVE_INVENTORY_SCHEMA" "$EVE_SKILLS_SCHEMA" "$EVE_WALLET_SCHEMA" "$EVE_FITTING_SCHEMA" "$EVE_ACCESS_GROUPS_SCHEMA" "$EVE_NPC_SCHEMA" "$EVE_SPACE_SCHEMA" "$EVE_SCHEDULER_SCHEMA" "$EVE_EVENTS_SCHEMA" "$EVE_RELATIONS_SCHEMA" "$EVE_CONTENT_SCHEMA" "$EVE_CRIMEWATCH_SCHEMA" "$EVE_GLOBAL_CONFIG_SCHEMA" "$EVE_STRUCTURES_SCHEMA" "$EVE_GAMESTORE_SCHEMA" "$EVE_ASSET_SAFETY_SCHEMA" "$EVE_CORPORATIONS_SCHEMA" "$EVE_FLEET_SCHEMA" "$EVE_INDUSTRY_SCHEMA" "$EVE_MARKET_SCHEMA" "$EVE_AGENTS_SCHEMA" "$EVE_INSURGENCY_SCHEMA" "$EVE_ESS_SCHEMA" "$EVE_BOOKMARKS_SCHEMA" "$EVE_WORMHOLE_SCHEMA" "$EVE_PLANETS_SCHEMA" "$EVE_CONTRABAND_SCHEMA" "$EVE_FACTIONWARFARE_SCHEMA" "$EVE_CONTRACTS_SCHEMA" "$EVE_XMPP_SCHEMA"; do
+    for schema in "$EVE_LOGIN_SCHEMA" "$EVE_TRADE_SCHEMA" "$EVE_IDENTITY_SCHEMA" "$EVE_CHARACTERS_SCHEMA" "$EVE_INVENTORY_SCHEMA" "$EVE_SKILLS_SCHEMA" "$EVE_WALLET_SCHEMA" "$EVE_FITTING_SCHEMA" "$EVE_ACCESS_GROUPS_SCHEMA" "$EVE_NPC_SCHEMA" "$EVE_SPACE_SCHEMA" "$EVE_SCHEDULER_SCHEMA" "$EVE_EVENTS_SCHEMA" "$EVE_RELATIONS_SCHEMA" "$EVE_CONTENT_SCHEMA" "$EVE_CRIMEWATCH_SCHEMA" "$EVE_GLOBAL_CONFIG_SCHEMA" "$EVE_STRUCTURES_SCHEMA" "$EVE_SKINR_SCHEMA" "$EVE_GAMESTORE_SCHEMA" "$EVE_ASSET_SAFETY_SCHEMA" "$EVE_CORPORATIONS_SCHEMA" "$EVE_FLEET_SCHEMA" "$EVE_INDUSTRY_SCHEMA" "$EVE_MARKET_SCHEMA" "$EVE_AGENTS_SCHEMA" "$EVE_INSURGENCY_SCHEMA" "$EVE_ESS_SCHEMA" "$EVE_BOOKMARKS_SCHEMA" "$EVE_WORMHOLE_SCHEMA" "$EVE_PLANETS_SCHEMA" "$EVE_CONTRABAND_SCHEMA" "$EVE_FACTIONWARFARE_SCHEMA" "$EVE_CONTRACTS_SCHEMA" "$EVE_XMPP_SCHEMA"; do
       psql "$EVE_PG_URL" -qc "DROP SCHEMA IF EXISTS $schema CASCADE" 2>/dev/null || true
     done
   fi
@@ -95,6 +120,9 @@ if [ "${EVE_LIVE_SKIP_DOTNET_BUILD:-0}" != "1" ]; then
   (cd "$HERE/dotnet" && dotnet build -c Release src/Eve.Host -nologo -v q -nodeReuse:false >"$LOG/host-build.out" 2>&1 || { tail -n 80 "$LOG/host-build.out"; exit 1; } && dotnet build-server shutdown)
 fi
 (cd "$HERE" && cargo build -q --release -p eve-net -p eve-sim)
+if [ -n "${EVE_PG_URL:-}" ]; then
+  (cd "$HERE" && cargo run -q -p eve-sde -- ensure --missions --pg "$EVE_PG_URL")
+fi
 
 # the simulation reads the static data itself (EVE_SDE_DIR, or the copy `eve-sde ensure` keeps under .cache/sde)
 (cd "$HERE" && exec env EVE_SIM_SOCKET="$SIMSOCK" "$TARGET/release/eve-sim" >"$LOG/sim.out" 2>&1) &
@@ -105,8 +133,9 @@ for _ in $(seq 1 300); do
   sleep 0.1
 done
 
-EVE_DEV_AUTO_CREATE=1 EVE_HOST="$SOCK" EVE_SIM_SOCKET="$SIMSOCK" dotnet "$HERE/dotnet/src/Eve.Host/bin/Release/net10.0/eve-host.dll" >"$LOG/host.out" 2>&1 &
+EVE_DEV_AUTO_CREATE=1 EVE_HOST="$SOCK" EVE_SIM_SOCKET="$SIMSOCK" dotnet "$EVE_HOST_DLL" >"$LOG/host.out" 2>&1 &
 host_pid=$!
+export EVE_HOST_PID="$host_pid"
 # a first start loads the static data catalogs: give a slow machine a minute (EVE_LIVE_START_TENTHS: tenths of a second to wait, 600 by default)
 host_ready=0
 for _ in $(seq 1 "${EVE_LIVE_START_TENTHS:-600}"); do
@@ -143,5 +172,5 @@ if [ -n "${EVE_RUN:-}" ]; then
   cd "$HERE" && bash -c "$EVE_RUN"
 else
   cd "$HERE/tools/headless-client"
-  EVE_LIVE_SERVER=eve.rs EVE_LIVE_STRICT_PASSWORDS=1 .venv/bin/python -m pytest -q tests/test_live.py tests/test_login_to_character.py tests/test_paperdoll_selection.py tests/test_sso_login_live.py tests/test_undock.py tests/test_movement.py tests/test_warp.py tests/test_jump.py tests/test_others.py tests/test_target.py tests/test_module.py tests/test_health.py tests/test_market.py tests/test_structures.py -rs
+  EVE_LIVE_SERVER=eve.rs EVE_LIVE_STRICT_PASSWORDS=1 .venv/bin/python -m pytest -q tests/test_live.py tests/test_login_to_character.py tests/test_paperdoll_selection.py tests/test_sso_login_live.py tests/test_undock.py tests/test_movement.py tests/test_warp.py tests/test_jump.py tests/test_others.py tests/test_target.py tests/test_module.py tests/test_health.py tests/test_market.py tests/test_structures.py tests/test_skinr_live.py -rs
 fi

@@ -88,7 +88,7 @@ public sealed class RpcSecurityInventoryTests : IAsyncLifetime
                 .Order(StringComparer.Ordinal)
                 .ToArray();
             Assert.True(missingServices.Length == 0, $"RPC methods were not enumerated for: {string.Join(", ", missingServices)}");
-            Assert.Equal(1378, rows.Length);
+            Assert.Equal(1385, rows.Length);
             Console.WriteLine($"RPC_INVENTORY_COUNT={rows.Length}");
             foreach (var row in rows) Console.WriteLine($"RPC_INVENTORY={row}");
         }

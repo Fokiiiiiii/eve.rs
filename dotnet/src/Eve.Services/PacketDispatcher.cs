@@ -20,6 +20,13 @@ public sealed class PacketDispatcher
     private readonly Func<long> _nowUnixMs;
     private readonly ConditionalWeakTable<ClientSession, ExpensiveRpcBudget> _expensiveBudgets = new();
     private readonly ConditionalWeakTable<ClientSession, ExpensiveRpcBudget> _inventoryBudgets = new();
+    private readonly ConditionalWeakTable<ClientSession, ExpensiveRpcBudget> _industryBudgets = new();
+    private readonly ConditionalWeakTable<ClientSession, ExpensiveRpcBudget> _marketBudgets = new();
+    private readonly ConditionalWeakTable<ClientSession, ExpensiveRpcBudget> _corpStationBudgets = new();
+    private readonly ConditionalWeakTable<ClientSession, ExpensiveRpcBudget> _dogmaBudgets = new();
+    private readonly ConditionalWeakTable<ClientSession, ExpensiveRpcBudget> _stationBudgets = new();
+    private readonly ConditionalWeakTable<ClientSession, ExpensiveRpcBudget> _corporationBudgets = new();
+    private readonly ConditionalWeakTable<ClientSession, ExpensiveRpcBudget> _contractBudgets = new();
 
     public PacketDispatcher(ServiceRegistry registry, Func<long>? nowUnixMs = null)
     {
@@ -41,7 +48,13 @@ public sealed class PacketDispatcher
     public bool StrictRpc { get; init; }
 
     /// <summary>Weighted work units available to one session during a rolling minute.</summary>
-    public int MaxExpensiveRpcUnitsPerMinute { get; init; } = 460;
+    public int MaxExpensiveRpcUnitsPerMinute { get; init; } = 160;
+
+    /// <summary>Weighted industry job work units available to one session during a rolling minute.</summary>
+    public int MaxIndustryRpcUnitsPerMinute { get; init; } = 160;
+
+    /// <summary>Weighted market work units available to one session during a rolling minute.</summary>
+    public int MaxMarketRpcUnitsPerMinute { get; init; } = 460;
 
     /// <summary>
     /// Handles one decoded packet from <paramref name="session"/>. Returns whether it was handled;
@@ -170,11 +183,26 @@ public sealed class PacketDispatcher
         if (call.Method == "MachoBindObject" && call.Args.Count > 1 &&
             NestedBoundMethod(call.Args[1]) is { } nestedMethod)
             cost = Math.Max(cost, ExpensiveRpcCost(service.Name, nestedMethod));
-        var budget = service.Name == "invbroker"
-            ? _inventoryBudgets
-            : _expensiveBudgets;
+        var budget = service.Name switch
+        {
+            "invbroker" => _inventoryBudgets,
+            "industryManager" => _industryBudgets,
+            "marketProxy" => _marketBudgets,
+            "corpStationMgr" => _corpStationBudgets,
+            "corpRegistry" or "corporation" => _corporationBudgets,
+            "contractProxy" => _contractBudgets,
+            "dogmaIM" => _dogmaBudgets,
+            "station" or "stationSvc" => _stationBudgets,
+            _ => _expensiveBudgets,
+        };
+        var budgetLimit = service.Name switch
+        {
+            "industryManager" => MaxIndustryRpcUnitsPerMinute,
+            "marketProxy" => MaxMarketRpcUnitsPerMinute,
+            _ => MaxExpensiveRpcUnitsPerMinute,
+        };
         if (cost > 0 && !budget.GetValue(session, _ => new ExpensiveRpcBudget())
-                .TryConsume(_nowUnixMs(), cost, MaxExpensiveRpcUnitsPerMinute))
+                .TryConsume(_nowUnixMs(), cost, budgetLimit))
         {
             SendError(packet, MachoErrors.UserError("SessionRpcBudgetExceeded"), session, serviceName);
             return true;

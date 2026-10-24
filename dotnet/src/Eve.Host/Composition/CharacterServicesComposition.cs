@@ -235,6 +235,7 @@ internal sealed partial class CharacterServicesComposition
     private Dictionary<long, SdeRow> agentsInSpaceById = default!;
     private Dictionary<long, long> agentLocationById = default!;
     private AgentMissionAgentData[] agentMissionAgentRows = default!;
+    private IReadOnlyDictionary<long, AgentOwnerInfo> agentOwnerById = default!;
     private PersistenceStructureDirectoryReadModel structureDirectoryReadModel = default!;
     private PersistenceStructureProfilesRpcBackend structureProfilesRpcBackend = default!;
     private StructureRpcCallbacks structureRpcCallbacks = default!;

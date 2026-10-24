@@ -83,11 +83,11 @@ public class ProtocolTests
             ("price",new PyReal(12)),("quantity",new PyInt(5)));
         Assert.Equal(PyBool.True,await proxy.PlaceMultiSellOrder(Call(session,"PlaceMultiSellOrder",6,new PyList([sell]),PyBool.False,new PyInt(90))));
 
-        Assert.Single(sink.Packets);
+        Assert.Equal(2,sink.Packets.Count);
         Assert.All(sink.Packets,packet => Assert.Equal("OnOwnOrdersChanged",NotificationName(packet)));
         var own=(await r.Book.BookAsync(r.Station.RegionId,34,r.Now)).Asks.Single(o => !o.IsNpc);
         Assert.Equal(PyNone.Instance,await proxy.CancelCharOrder(Call(session,"CancelCharOrder",7,new PyLong(own.Id))));
-        Assert.Equal(2,sink.Packets.Count);
+        Assert.Equal(3,sink.Packets.Count);
         Assert.All(sink.Packets,packet => Assert.Equal("OnOwnOrdersChanged",NotificationName(packet)));
         Assert.Equal(5,Assert.Single(await r.Items.InLocationAsync(r.Station.Id,actor)).Quantity);
     }
@@ -168,7 +168,7 @@ public class ProtocolTests
             new PyInt(r.Station.Id),new PyInt(plex),new PyReal(1000),new PyInt(1),new PyInt(-1),
             new PyInt(1),new PyInt(0),PyBool.False)));
 
-        Assert.Equal(2,sink.Packets.Count);
+        Assert.Equal(3,sink.Packets.Count);
         var histories=Assert.IsType<PyDict>(await proxy.GetPlexHistory(Call(session,"GetPlexHistory",25)));
         var pair=Assert.IsType<PyList>(Assert.Single(histories.Entries).Value);
         Assert.Equal(2,pair.Items.Count);
@@ -321,18 +321,20 @@ public class ProtocolTests
 
         foreach(var dict in new[]{station,system})
         {
-            // the ask summaries are KeyVal rows read by name (Q13, G10)
-            var type100=Fields(ByType(dict,100));
-            Assert.Equal(30m,Decimal(Field(type100,"price")));
-            Assert.Equal(1m,Decimal(Field(type100,"volRemaining")));
-            Assert.Equal(100,IntegerValue(Field(type100,"typeID")));
-            Assert.Equal(r.Station.Id,LongValue(Field(type100,"stationID")));
+            // V24 expands each station/system range value into BestByOrder(price, volume, typeID, stationID).
+            var type100=Assert.IsType<PyTuple>(ByType(dict,100));
+            Assert.Equal(4,type100.Items.Count);
+            Assert.Equal(30m,Decimal(type100.Items[0]));
+            Assert.Equal(1m,Decimal(type100.Items[1]));
+            Assert.Equal(100,IntegerValue(type100.Items[2]));
+            Assert.Equal(r.Station.Id,LongValue(type100.Items[3]));
 
-            var type200=Fields(ByType(dict,200));
-            Assert.Equal(9m,Decimal(Field(type200,"price")));
-            Assert.Equal(9m,Decimal(Field(type200,"volRemaining")));
-            Assert.Equal(200,IntegerValue(Field(type200,"typeID")));
-            Assert.Equal(r.Station.Id,LongValue(Field(type200,"stationID")));
+            var type200=Assert.IsType<PyTuple>(ByType(dict,200));
+            Assert.Equal(4,type200.Items.Count);
+            Assert.Equal(9m,Decimal(type200.Items[0]));
+            Assert.Equal(9m,Decimal(type200.Items[1]));
+            Assert.Equal(200,IntegerValue(type200.Items[2]));
+            Assert.Equal(r.Station.Id,LongValue(type200.Items[3]));
         }
 
         var region100=Fields(ByType(region,100));

@@ -10,6 +10,8 @@ Skipped unless EVE_LIVE_HOST is set. tools/dev/run-eve-live.sh runs it.
 
 from __future__ import annotations
 
+import os
+import time
 import uuid
 
 import pytest
@@ -17,13 +19,15 @@ import pytest
 from evecli import marshal as m
 from evecli import packet as p
 from evecli.describe import describe
+from evecli.observe import _plain_name, events_of, timed_events
 from tests import dbseed
 from tests import test_login_to_character as base
+from tests import test_structures as structures
+from tests.test_undock import actions_of, arrive
 
 pytestmark = pytest.mark.skipif(not base.LIVE, reason="set EVE_LIVE_HOST=host:port to test against a running server")
 
 TRITANIUM = 34
-ASK_ROW_NAMES = {"typeID", "stationID", "price", "volRemaining"}  # marketsvc.py:297-300; quote.py:97-100 reads .typeID
 
 def _new_character(client, run: str) -> int:
     creation = next(step for step in base.WALK["steps"] if step["call"][1] == "CreateCharacterWithDoll" and "ok" in step)
@@ -57,12 +61,12 @@ def test_a_docked_character_reads_the_market_as_the_client_does():
         station_id = client.session.session_init.get("stationid")
         assert isinstance(station_id, int), "a character that selected its station is docked: the session says where"
 
-        # GetStationAsks (proxy 6211): a dict of typeID -> KeyVal rows read by name; empty while nobody sells here
+        # Station/system range asks are (price, volRemaining, typeID, stationID) tuples for MarketBase conversion.
         asks = _payload(m.plain(client.call("marketProxy", "GetStationAsks")))
         assert isinstance(asks, dict)
         for type_id, row in asks.items():
-            assert isinstance(row, dict) and ASK_ROW_NAMES <= set(row), f"ask row for {type_id} has {sorted(row)}"
-            assert row["typeID"] == type_id
+            assert isinstance(row, tuple) and len(row) == 4, f"ask row for {type_id} is {row!r}"
+            assert row[2] == type_id and row[3] == station_id
 
         # the own-order lists and the escrow of a character that trades nothing yet are empty, not errors (proxy 6469, 6652)
         assert m.plain(client.call("marketProxy", "GetCharOrders")) is not None
@@ -98,6 +102,172 @@ def test_a_docked_character_reads_the_market_as_the_client_does():
         label, arguments = _label_and_arguments(refused.value)
         assert label == "CustomInfo"
         assert arguments == {"info": "Order prices have at most four significant figures."}
+
+# ---- Upwell market: dock, post both sides, match and read the committed result -------------------------------------
+
+def _dock_at_market_structure(client, character: int, ship_id: int, fitted: list, structure_id: int) -> None:
+    structures._reenter(client, character)
+    structures._undock(client, ship_id, fitted, station=structures.STATION, system=structures.SYSTEM)
+    seen = timed_events(client, 30.0, until=lambda events: structures._structure_slim(events, structure_id) is not None)
+    assert structures._structure_slim(seen, structure_id) is not None, f"Fortizar {structure_id} did not enter the ballpark"
+    ballpark = client.call("beyonce", "MachoBindObject", structures.SYSTEM, None)
+    client.call_bound(ballpark[0], "CmdWarpToStuff", "item", structure_id, minRange=0)
+    deadline = time.time() + 150
+    warp_finished = False
+    while not warp_finished and time.time() < deadline:
+        client.call_bound(ballpark[0], "UpdateStateRequest")
+        events = timed_events(client, 3.0)
+        warp_finished = any(
+            event.get("name") == "DoDestinyUpdate" and any(action[1] == "Stop" for action in actions_of(event)[0])
+            for event in events
+        )
+    assert warp_finished, f"ship {ship_id} did not finish warping to market structure {structure_id}"
+    deadline = time.time() + 120
+    while True:
+        try:
+            client.call("structureDocking", "Dock", structure_id, int(ship_id))
+            break
+        except p.MachoError as failure:
+            if structures._refusal(failure)[0] != "DockingApproach" or time.time() > deadline:
+                raise
+            timed_events(client, 5.0)
+    finished = timed_events(client, 60.0, until=lambda events: any(
+        _plain_name(event.get("name")) == "OnDockingFinished" for event in events
+    ))
+    assert any(_plain_name(event.get("name")) == "OnDockingFinished" for event in finished), (
+        f"ship {ship_id} did not dock at market structure {structure_id}"
+    )
+
+
+def _assert_wallet_notification_order(events, owner: str) -> None:
+    names = [_plain_name(event.get("name")) for event in events if "name" in event]
+    account_changes = [index for index, name in enumerate(names) if name == "OnAccountChange"]
+    order_changes = [index for index, name in enumerate(names) if name == "OnOwnOrdersChanged"]
+    assert account_changes and order_changes, f"{owner} did not receive both wallet and market order notifications: {names}"
+    assert max(account_changes) < min(order_changes), f"{owner}'s order notification preceded its committed wallet change: {names}"
+
+def test_docked_corporation_members_trade_at_an_eligible_upwell_structure():
+    """A V24 headless walk at a Fortizar with docking and market services online.
+
+    The two pilots dock through structureDocking, open GetStationAsks at the structure, post a resting bid and ask, fill both sides,
+    then check the structure's order book, wallet journal, item delivery, and notification order.
+    """
+    if not (os.environ.get("EVE_PG_URL") and os.environ.get("EVE_STRUCTURES_SCHEMA")):
+        pytest.skip("the live structure market walk needs the scratch database schemas from tools/dev/run-eve-live.sh")
+
+    seller_run = uuid.uuid4().hex[:10]
+    buyer_run = uuid.uuid4().hex[:10]
+    with base.connect(f"market-structure-seller-{seller_run}") as seller, base.connect(f"market-structure-buyer-{buyer_run}") as buyer:
+        seller_character, seller_ship, seller_fitted, _ = arrive(seller, structures.RACE, seller_run)
+        buyer_character, buyer_ship, buyer_fitted, _ = arrive(buyer, structures.RACE, buyer_run)
+        corporation = dbseed.found_corporation(structures.STATION, structures.SYSTEM, seller_character, seller_run)
+        dbseed.join_corporation(seller_character, corporation, structures.DIRECTOR)
+        dbseed.join_corporation(buyer_character, corporation, 0)
+
+        fortizar_type = dbseed.sql(
+            "select key from sde.types where doc #>> '{name,en}' = 'Fortizar'"
+        )
+        assert fortizar_type, "the pinned SDE has no Fortizar type"
+        structure_id = 1_040_000_000_000 + int(uuid.uuid4().hex[:12], 16)
+        structure_schema = dbseed.schema("STRUCTURES")
+        dbseed.sql(
+            f"insert into {structure_schema}.structures "
+            "(structure_id, type_id, solar_system_id, x, y, z, owner_corporation_id, name, state, state_started_ms, upkeep, core_installed, doc) "
+            f"values ({structure_id}, {int(fortizar_type)}, {structures.SYSTEM}, {structures.STRUCTURE_X}, {structures.STRUCTURE_Y}, "
+            f"{structures.STRUCTURE_Z}, {corporation}, 'Market Walk Fortizar', {structures.ONLINE_STATE}, 0, 1, true, '{{}}'::jsonb)"
+        )
+        for service_id in (1, 5):  # StructureServiceIds.Docking and Market, persisted online
+            dbseed.sql(
+                f"insert into {structure_schema}.structure_services (structure_id, service_id, state) "
+                f"values ({structure_id}, {service_id}, 1)"
+            )
+
+        _dock_at_market_structure(seller, seller_character, seller_ship, seller_fitted, structure_id)
+        _dock_at_market_structure(buyer, buyer_character, buyer_ship, buyer_fitted, structure_id)
+        assert _payload(m.plain(buyer.call("marketProxy", "GetStationAsks"))) == {}
+        events_of(seller)
+        events_of(buyer)
+
+        seller_isk = dbseed.isk_of(seller_character)
+        buyer_isk = dbseed.isk_of(buyer_character)
+        seller_journal_at = _journal_checkpoint(seller_character)
+        buyer_journal_at = _journal_checkpoint(buyer_character)
+        item_id = dbseed.new_item(TRITANIUM, owner=seller_character, location=structure_id, quantity=4)
+
+        # Post a standing bid from the buyer. The expected wallet update arrives before the order-change notice.
+        buyer.call("marketProxy", "PlaceBuyOrder", structure_id, TRITANIUM, 50.0, 2, -1, 1, 90, False, None)
+        _assert_wallet_notification_order(events_of(buyer), "buyer")
+
+        bid = next(row for row in _own_orders(buyer) if _field(row, "typeID") == TRITANIUM)
+        bid_id = _field(bid, "orderID")
+        assert _number(_field(bid, "stationID")) == structure_id
+        bids = _plain_rows(_payload(m.plain(buyer.call("marketProxy", "GetOrders", TRITANIUM)))[1])
+        assert len(bids) == 1 and _number(_field(bids[0], "stationID")) == structure_id, bids
+
+        # The seller posts four items at the bid price; two fill the bid and two remain for cancellation.
+        entry = m.Dict([
+            ("typeID", TRITANIUM), ("price", 50.0), ("quantity", 4),
+            ("stationID", structure_id), ("itemID", item_id),
+        ])
+        assert m.plain(seller.call("marketProxy", "PlaceMultiSellOrder", [entry], False, 90, None)) is True
+        _assert_wallet_notification_order(events_of(seller), "seller")
+        _assert_wallet_notification_order(events_of(buyer), "buyer after fill")
+
+        ask = next(row for row in _own_orders(seller) if _field(row, "typeID") == TRITANIUM)
+        ask_id = _field(ask, "orderID")
+        assert _field(ask, "volRemaining") == 2 and _number(_field(ask, "stationID")) == structure_id, ask
+        summary = _payload(m.plain(buyer.call("marketProxy", "GetStationAsks")))[TRITANIUM]
+        assert isinstance(summary, tuple) and len(summary) == 4, summary
+        assert summary == (50, 2, TRITANIUM, structure_id)
+        assert all(_field(row, "orderID") != bid_id for row in _own_orders(buyer))
+
+        order_books = _payload(m.plain(buyer.call("marketProxy", "GetOrders", TRITANIUM)))
+        visible_asks = _plain_rows(order_books[0])
+        visible_bids = _plain_rows(order_books[1])
+        assert len(visible_asks) == 1 and _number(_field(visible_asks[0], "stationID")) == structure_id
+        assert visible_asks[0]["volRemaining"] == 2 and visible_bids == []
+
+        bought = [row for row in _plain_rows(buyer.call("marketProxy", "CharGetTransactions", None))
+                  if _field(row, "typeID") == TRITANIUM]
+        sold = [row for row in _plain_rows(seller.call("marketProxy", "CharGetTransactions", None))
+                if _field(row, "typeID") == TRITANIUM]
+        assert sum(_field(row, "quantity") for row in bought) == 2, bought
+        assert sum(_field(row, "quantity") for row in sold) == 2, sold
+        assert all(_number(_field(row, "locationID")) == structure_id for row in bought + sold)
+
+        assert dbseed.quantity_at(buyer_character, structure_id, TRITANIUM) == 2
+        # The open order holds its unfilled stock in market escrow until cancellation.
+        assert dbseed.quantity_at(seller_character, structure_id, TRITANIUM) == 0
+        escrow_quantity = dbseed.sql(
+            f"select coalesce(sum(i.quantity), 0) "
+            f"from {dbseed.schema('MARKET')}.orders o "
+            f"join {dbseed.schema('INVENTORY')}.items i on i.id = o.escrow_item_id "
+            f"where o.id = {int(ask_id)} and o.state = 0 "
+            f"and i.owner_id = {int(seller_character)} and i.type_id = {TRITANIUM}"
+        )
+        assert int(escrow_quantity) == 2
+        buyer_hangar = [row for row in _station_hangar_items(buyer, structure_id) if _field(row, "typeID") == TRITANIUM]
+        seller_hangar = [row for row in _station_hangar_items(seller, structure_id) if _field(row, "typeID") == TRITANIUM]
+        assert sum(_field(row, "quantity") for row in buyer_hangar) == 2, buyer_hangar
+        assert sum(_field(row, "quantity") for row in seller_hangar) == 0, seller_hangar
+
+        seller_journal = _journal_since(seller_character, seller_journal_at)
+        buyer_journal = _journal_since(buyer_character, buyer_journal_at)
+        assert any(ref == 2 and amount == 100 for ref, amount in seller_journal), seller_journal
+        assert any(ref == 54 and amount < 0 for ref, amount in seller_journal), seller_journal
+        assert any(ref == 46 and amount < 0 for ref, amount in seller_journal), seller_journal
+        # The standing bid journals its reserve at placement (ref 42); filling it adds no second purchase debit.
+        assert any(ref == 42 and amount == -100 for ref, amount in buyer_journal), buyer_journal
+        assert any(ref == 46 and amount < 0 for ref, amount in buyer_journal), buyer_journal
+        assert dbseed.isk_of(seller_character) - seller_isk == pytest.approx(sum(amount for _, amount in seller_journal))
+        assert dbseed.isk_of(buyer_character) - buyer_isk == pytest.approx(sum(amount for _, amount in buyer_journal))
+
+        seller.call("marketProxy", "CancelCharOrder", ask_id)
+        assert all(_field(row, "orderID") != ask_id for row in _own_orders(seller))
+        assert dbseed.quantity_at(seller_character, structure_id, TRITANIUM) == 2
+        seller_hangar = [row for row in _station_hangar_items(seller, structure_id) if _field(row, "typeID") == TRITANIUM]
+        assert sum(_field(row, "quantity") for row in seller_hangar) == 2, seller_hangar
+        assert _payload(m.plain(buyer.call("marketProxy", "GetStationAsks"))) == {}
 
 # ---- M9: a trade through the market, as the client makes it ------------------------------------------------------------------------
 #
@@ -138,7 +308,17 @@ def _field(row, *names):
     raise AssertionError(f"no column {names} in row {row!r}")
 
 def _station_hangar_items(client, station_id):
-    return _plain_rows(client.call("invbroker", "ListStationItems", station_id))
+    character_id = client.session.session_init.get("charid")
+    assert isinstance(character_id, int), "the global inventory moniker is bound to the selected character"
+    # V24 const.containerGlobal
+    result = client.call(
+        "charMgr",
+        "MachoBindObject",
+        (character_id, 10002),
+        ("ListStationItems", (station_id,), None),
+    )
+    assert isinstance(result, tuple) and len(result) == 2, result
+    return _plain_rows(result[1])
 
 def _own_orders(client):
     return _plain_rows(client.call("marketProxy", "GetCharOrders"))
@@ -163,10 +343,12 @@ def test_a_seller_and_a_buyer_trade_through_the_market():
         _new_character(buyer, buyer_run)
         station_id = seller.session.session_init.get("stationid")
         assert isinstance(station_id, int) and buyer.session.session_init.get("stationid") == station_id
-        seller_isk = dbseed.isk_of(seller.session.session_init.get("charid"))
-        buyer_isk = dbseed.isk_of(buyer.session.session_init.get("charid"))
-        seller_journal_at = _journal_checkpoint(seller.session.session_init.get("charid"))
-        buyer_journal_at = _journal_checkpoint(buyer.session.session_init.get("charid"))
+        seller_id = seller.session.session_init.get("charid")
+        buyer_id = buyer.session.session_init.get("charid")
+        seller_isk = dbseed.isk_of(seller_id)
+        buyer_isk = dbseed.isk_of(buyer_id)
+        seller_journal_at = _journal_checkpoint(seller_id)
+        buyer_journal_at = _journal_checkpoint(buyer_id)
 
         # stock: the game master's command puts the items in the station hangar and says so
         message = seller.call("slash", "SlashCmd", "/giveitem Tritanium 100")
@@ -185,10 +367,11 @@ def test_a_seller_and_a_buyer_trade_through_the_market():
         # the book shows the ask to a buyer at the station (GetStationAsks, the KeyVal rows of M1)
         asks = _payload(m.plain(buyer.call("marketProxy", "GetStationAsks")))
         assert isinstance(asks, dict), f"{type(asks).__name__}: {str(asks)[:700]}"
-        best = _named(asks[TRITANIUM])
-        assert best["volRemaining"] == 40 and best["price"] == 50.0, best
+        best = asks[TRITANIUM]
+        assert isinstance(best, tuple) and len(best) == 4, best
+        assert best == (50, 40, TRITANIUM, station_id), best
 
-        # match: an immediate buy of 15 takes 15 of the ask at its price; no order rests and no row is faked
+        # match: the immediate buy takes 15 at the ask price; only the remaining 25 units stay on the book.
         assert buyer.call("marketProxy", "PlaceBuyOrder", station_id, TRITANIUM, 50.0, 15, -1, 1, 0, False, None) is None
         bought = [row for row in _plain_rows(buyer.call("marketProxy", "CharGetTransactions", None)) if _field(row, "typeID") == TRITANIUM]
         assert bought and sum(_field(row, "quantity") for row in bought) == 15, bought
@@ -196,13 +379,18 @@ def test_a_seller_and_a_buyer_trade_through_the_market():
         assert sold and sum(_field(row, "quantity") for row in sold) == 15, sold
         assert _field(next(row for row in _own_orders(seller) if _field(row, "orderID") == ask_id), "volRemaining") == 25
 
-        # Each account's balance delta is represented by its persisted trade and fee journal entries.
+        # Reconcile the trade, NPC broker minimum and Accounting-adjusted sales tax; no separate high-sec fee is charged.
         seller_journal = _journal_since(seller.session.session_init.get("charid"), seller_journal_at)
         buyer_journal = _journal_since(buyer.session.session_init.get("charid"), buyer_journal_at)
-        assert any(ref == 2 and amount == 750 for ref, amount in seller_journal), seller_journal
-        assert any(ref == 54 and amount < 0 for ref, amount in seller_journal), seller_journal
-        assert any(ref == 46 and amount == -100 for ref, amount in seller_journal), seller_journal
-        assert not any(ref == 149 for ref, _ in seller_journal), seller_journal
+        assert [amount for ref, amount in seller_journal if ref == 2] == [750.0], seller_journal
+        accounting_level = int(dbseed.sql(
+            f"SELECT COALESCE((SELECT level FROM {dbseed.schema('SKILLS')}.character_skills "
+            f"WHERE character_id = {seller_id} AND type_id = 16622), 0)"
+        ))
+        expected_tax = round(750 * 0.075 * (1 - 0.11 * accounting_level), 2)
+        assert [amount for ref, amount in seller_journal if ref == 54] == [-expected_tax], seller_journal
+        assert [amount for ref, amount in seller_journal if ref == 46] == [-100.0], seller_journal
+        assert {ref for ref, _ in seller_journal} == {2, 46, 54}, seller_journal
         assert buyer_journal == [(2, -750.0)], buyer_journal
         assert dbseed.isk_of(seller.session.session_init.get("charid")) - seller_isk == sum(amount for _, amount in seller_journal)
         assert dbseed.isk_of(buyer.session.session_init.get("charid")) - buyer_isk == sum(amount for _, amount in buyer_journal)

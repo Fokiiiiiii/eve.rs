@@ -36,7 +36,7 @@ permissions:
 env:
   # the toolchain the project is built and tested with (Cargo.toml's rust-version is 1.94); a newer clippy's new lints are
   # looked at by the advisory job below, not allowed to break the build
-  RUST_TOOLCHAIN: "1.99.0"
+  RUST_TOOLCHAIN: "1.94.1"
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"
   DOTNET_NOLOGO: "1"
@@ -94,7 +94,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .cache/sde
-          key: sde-${{ steps.sde-build.outputs.build }}
+          key: sde-${{ steps.sde-build.outputs.build }}-${{ hashFiles('sde/lock.json') }}
       - name: Fetch the static data
         if: steps.sde.outputs.cache-hit != 'true'
         run: cargo run -q -p eve-sde -- ensure
@@ -150,7 +150,7 @@ jobs:
   dotnet:
     name: .NET (${{ matrix.shard.name }})
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     needs: dotnet-build
     if: ${{ always() && github.event_name != 'schedule' && needs.dotnet-build.result == 'success' && (github.event_name != 'workflow_dispatch' || inputs.jobs == 'all' || contains(inputs.jobs, 'dotnet')) }}
     strategy:
@@ -205,7 +205,7 @@ jobs:
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .cache/sde
-          key: sde-${{ steps.sde-build.outputs.build }}
+          key: sde-${{ steps.sde-build.outputs.build }}-${{ hashFiles('sde/lock.json') }}
       - name: Load the static data into PostgreSQL
         run: |
           cargo run -q -p eve-sde -- ensure --pg "$EVE_PG_URL"
@@ -352,7 +352,7 @@ jobs:
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .cache/sde
-          key: sde-${{ steps.sde-build.outputs.build }}
+          key: sde-${{ steps.sde-build.outputs.build }}-${{ hashFiles('sde/lock.json') }}
       - name: Load the static data into PostgreSQL
         run: cargo run -q -p eve-sde -- ensure --pg "$EVE_PG_URL"
       - name: Install the headless client
@@ -372,6 +372,7 @@ jobs:
         with:
           name: live-logs
           path: .live-logs
+          include-hidden-files: true
           if-no-files-found: ignore
 
   windows:

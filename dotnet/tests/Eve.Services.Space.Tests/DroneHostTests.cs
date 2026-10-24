@@ -178,6 +178,106 @@ public class DroneHostTests
     }
 
     [PgFact]
+    public async Task A_pilot_scoops_a_nearby_abandoned_drone_before_destiny_removes_it_and_concurrent_retries_are_refused()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var owner = await FlyingWithADroneAsync(rig, characterName: "Drone Owner", sessionId: 1);
+        var scooper = await FlyingWithADroneAsync(rig, characterName: "Drone Scooper", sessionId: 2);
+        await LaunchAsync(owner);
+
+        await rig.Drones.CommandAsync(owner.Session, SimDroneCommands.Abandon, 0, [owner.Drone], CancellationToken.None);
+        rig.Sim.Say(new SimDroneReleased((ulong)owner.Session.SessionId, owner.Drone, [0, 0, 0]));
+
+        var itemChangeBeforeReply = false;
+        rig.Sim.DroneAnswer = (sessionId, command, _, droneIds) =>
+        {
+            var results = droneIds.Select(id => new SimDroneResult(id, "")).ToArray();
+            if (command == SimDroneCommands.Scoop)
+            {
+                var droneId = Assert.Single(droneIds);
+                rig.Sim.Say(new SimDroneScooped(sessionId, droneId));
+                itemChangeBeforeReply = Events.Of(scooper.Session, clear: false).Any(e => e.Name == "OnItemChange");
+            }
+            return new CommandReply(true, 0, null) { Drones = results };
+        };
+
+        var attempts = await Task.WhenAll(
+            rig.ShipCallAsync(scooper.Session, "ScoopDrone", scooper.Ship, new PyList([InventoryWire.Id(owner.Drone)])),
+            rig.ShipCallAsync(scooper.Session, "ScoopDrone", scooper.Ship, new PyList([InventoryWire.Id(owner.Drone)])));
+        var results = attempts.Select(attempt => Assert.IsType<PyDict>(attempt)).ToArray();
+        Assert.Single(results, result => result.Entries.Count == 0);
+        var retry = Assert.Single(results, result => result.Entries.Count > 0);
+        Assert.True(itemChangeBeforeReply, "the scooper receives the item change while the simulation is delivering the scoop event");
+        var command = Assert.Single(rig.Sim.Heard.OfType<SimDroneCommand>(), order => order.Command == SimDroneCommands.Scoop);
+        Assert.Equal(((ulong)scooper.Session.SessionId, SimDroneCommands.Scoop, (long)scooper.Session.GetInt("shipid")!.Value, owner.Drone),
+            (command.SessionId, command.Command, command.TargetId, Assert.Single(command.DroneIds)));
+
+        var captured = (await rig.Items.GetAsync(owner.Drone))!;
+        Assert.Equal((scooper.Character, (long)scooper.Session.GetInt("shipid")!.Value, CharacterShips.DroneBayFlag),
+            (captured.OwnerId, captured.LocationId, captured.Flag));
+
+        var refusal = Assert.IsType<PyTuple>(Assert.Single(retry.Entries).Value);
+        Assert.Equal(new PyStr("CustomNotify"), refusal.Items[0]);
+        Assert.Equal(new PyStr("That drone is not in local space."), Assert.Single(Assert.IsType<PyDict>(refusal.Items[1]).Entries).Value);
+    }
+
+    [PgFact]
+    public async Task A_pilot_receives_the_reference_range_refusal_for_an_abandoned_drone()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var owner = await FlyingWithADroneAsync(rig, characterName: "Drone Owner", sessionId: 1);
+        var scooper = await FlyingWithADroneAsync(rig, characterName: "Drone Scooper", sessionId: 2);
+        await LaunchAsync(owner);
+
+        await rig.Drones.CommandAsync(owner.Session, SimDroneCommands.Abandon, 0, [owner.Drone], CancellationToken.None);
+        rig.Sim.Say(new SimDroneReleased((ulong)owner.Session.SessionId, owner.Drone, [0, 0, 0]));
+        rig.Sim.DroneAnswer = (sessionId, command, _, droneIds) => new CommandReply(true, 0, null)
+        {
+            Drones = droneIds.Select(id => new SimDroneResult(id, command == SimDroneCommands.Scoop ? "OUT_OF_RANGE" : "")).ToArray(),
+        };
+
+        var result = Assert.IsType<PyDict>(await rig.ShipCallAsync(
+            scooper.Session, "ScoopDrone", scooper.Ship, new PyList([InventoryWire.Id(owner.Drone)])));
+        var refusal = Assert.IsType<PyTuple>(Assert.Single(result.Entries).Value);
+        Assert.Equal(new PyStr("CustomNotify"), refusal.Items[0]);
+        Assert.Equal(new PyStr("Drone is too far away to scoop into the bay."),
+            Assert.Single(Assert.IsType<PyDict>(refusal.Items[1]).Entries).Value);
+        Assert.Single(rig.Sim.Heard.OfType<SimDroneCommand>(), order => order.Command == SimDroneCommands.Scoop);
+
+        var drone = (await rig.Items.GetAsync(owner.Drone))!;
+        Assert.Equal((owner.Character, owner.System, CharacterShips.InSpaceFlag), (drone.OwnerId, (int)drone.LocationId, drone.Flag));
+    }
+
+    [PgFact]
+    public async Task A_pilot_cannot_scoop_an_abandoned_drone_when_the_bay_is_full()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var owner = await FlyingWithADroneAsync(rig, characterName: "Drone Owner", sessionId: 1);
+        var scooper = await FlyingWithADroneAsync(rig, characterName: "Drone Scooper", sessionId: 2);
+        await LaunchAsync(owner);
+
+        await rig.Drones.CommandAsync(owner.Session, SimDroneCommands.Abandon, 0, [owner.Drone], CancellationToken.None);
+        rig.Sim.Say(new SimDroneReleased((ulong)owner.Session.SessionId, owner.Drone, [0, 0, 0]));
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await rig.Items.CreateAsync(connection, transaction,
+                new NewItem(Hobgoblin, scooper.Character, scooper.Session.GetInt("shipid")!.Value, CharacterShips.DroneBayFlag, 100, false));
+            await transaction.CommitAsync();
+        }
+
+        var result = Assert.IsType<PyDict>(await rig.ShipCallAsync(
+            scooper.Session, "ScoopDrone", scooper.Ship, new PyList([InventoryWire.Id(owner.Drone)])));
+        var error = Assert.IsType<PyTuple>(Assert.Single(result.Entries).Value);
+        Assert.Equal(new PyStr("NotEnoughDroneBaySpace"), error.Items[0]);
+        Assert.Empty(Assert.IsType<PyDict>(error.Items[1]).Entries);
+        Assert.DoesNotContain(rig.Sim.Heard.OfType<SimDroneCommand>(), order => order.Command == SimDroneCommands.Scoop);
+
+        var drone = (await rig.Items.GetAsync(owner.Drone))!;
+        Assert.Equal((owner.Character, owner.System, CharacterShips.InSpaceFlag), (drone.OwnerId, (int)drone.LocationId, drone.Flag));
+    }
+
+    [PgFact]
     public async Task An_online_drone_damage_amplifier_increases_hobgoblin_weapon_damage_by_ten_percent()
     {
         await using var rig = await Rig.CreateAsync();
@@ -497,7 +597,6 @@ public class DroneHostTests
         Assert.Same(PyNone.Instance, orphan);
         Assert.Equal(moveCommands, rig.Sim.Heard.OfType<SimDroneCommand>().Count());
         Assert.Equal((flying.System, CharacterShips.InSpaceFlag), ((await rig.Items.GetAsync(unsupported.Id))!.LocationId, (await rig.Items.GetAsync(unsupported.Id))!.Flag));
-
         rig.Sim.DroneAnswer = (_, _, _, drones) => new CommandReply(true, 0, null)
         {
             Drones = [.. drones.Select(id => new SimDroneResult(id, "OUT_OF_RANGE"))],

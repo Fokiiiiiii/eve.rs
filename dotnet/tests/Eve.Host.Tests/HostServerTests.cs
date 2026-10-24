@@ -25,7 +25,7 @@ public sealed class PgFactAttribute : Xunit.FactAttribute
     }
 }
 
-public class HostServerTests : IAsyncLifetime
+public partial class HostServerTests : IAsyncLifetime
 {
     private const long FixedNowMs = 1_790_646_377_000;
 
@@ -97,6 +97,19 @@ public class HostServerTests : IAsyncLifetime
         }
     }
 
+    private sealed class BillManagerBudgetService : IService
+    {
+        public string Name => "billMgr";
+        public int Calls { get; private set; }
+        public bool HasMethod(string method) => method == "GetCorporationBills";
+
+        public ValueTask<PyValue> CallAsync(ServiceCall call)
+        {
+            Calls++;
+            return ValueTask.FromResult<PyValue>(PyNone.Instance);
+        }
+    }
+
     /// <summary>A service whose first call is slow: it shows whether a session's packets are kept in order.</summary>
     private sealed class SlowService : IService
     {
@@ -136,6 +149,46 @@ public class HostServerTests : IAsyncLifetime
             call.Session.AfterResponse(() =>
                 call.Session.SendNotification("OnInvulnCancelled", "shipid", new PyList([])));
             return ValueTask.FromResult<PyValue>(PyNone.Instance);
+        }
+    }
+
+    private sealed class SessionSceneTransitionService : IService
+    {
+        public const int DestinationSystem = 30_000_142;
+        public const string BoundOid = "N=ProxyNode:system-scene-transition";
+
+        public string Name => "beyonce";
+        public bool HasMethod(string method) => method is "JumpToSystem" or "MachoBindObject";
+
+        public ValueTask<PyValue> CallAsync(ServiceCall call)
+        {
+            if (call.Method == "JumpToSystem")
+            {
+                call.Session.Set("stationid", new PyInt(60_000_001));
+                call.Session.Set("stationid2", new PyInt(60_000_001));
+                call.Session.Set("structureid", PyNone.Instance);
+                call.Session.Set("solarsystemid", new PyInt(30_000_141));
+                call.Session.Set("solarsystemid2", new PyInt(30_000_141));
+                call.Session.Set("locationid", new PyInt(60_000_001));
+                call.Session.AfterResponse(() => call.Session.Change(
+                    ("stationid", PyNone.Instance),
+                    ("stationid2", PyNone.Instance),
+                    ("structureid", PyNone.Instance),
+                    ("solarsystemid", new PyInt(DestinationSystem)),
+                    ("solarsystemid2", new PyInt(DestinationSystem)),
+                    ("locationid", new PyInt(DestinationSystem))));
+                return ValueTask.FromResult<PyValue>(Py.Tuple(
+                    new PyStr(BoundOid),
+                    new PyLong(Py.FileTimeFromUnixMs(FixedNowMs + 10_000))));
+            }
+
+            var bound = new PySubStruct(new PySubStream(Py.Tuple(new PyStr(BoundOid), new PyLong(7))));
+            call.Session.AfterResponse(() =>
+            {
+                call.Session.SendNotification("DoDestinyUpdate", "clientID", new PyList([new PyStr("AddBalls2")]));
+                call.Session.SendNotification("DoDestinyUpdate", "clientID", new PyList([new PyStr("SetState")]));
+            });
+            return ValueTask.FromResult<PyValue>(Py.Tuple(bound, PyNone.Instance));
         }
     }
 
@@ -563,6 +616,63 @@ public class HostServerTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Corporation_application_bootstrap_bound_call_survives_an_exhausted_shared_budget()
+    {
+        using var source = Npgsql.NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest("Host=localhost"));
+        var characters = new Eve.Characters.PgCharacterStore(source);
+        var registryService = new Eve.Services.Corporations.CorpRegistryService(
+            new Eve.Corporations.CorporationStore(
+                source,
+                characters,
+                new Eve.Wallet.PgWalletStore(source),
+                new Eve.Wallet.WalletTransactions(source),
+                new Eve.Skills.PgSkillStore(source),
+                () => FixedNowMs),
+            characters,
+            () => FixedNowMs);
+        var billMgr = new BillManagerBudgetService();
+        const string boundObjectId = "N=ProxyNode:corp-registry-neocom-bootstrap";
+        Start(configure: registry =>
+        {
+            registry.Register(billMgr);
+            registry.Register(registryService);
+            registry.RegisterBoundObject(boundObjectId, registryService);
+        });
+        var front = await Handshaken(await ConnectAsync());
+        var open = Open();
+        await front.SendAsync(open);
+        _ = await front.ReceiveAsync();
+
+        static int Message(Send send) =>
+            Assert.IsType<MachoPacket>(MachoPacket.Decode(MarshalCodec.Decode(send.Payload))).Type;
+        for (long callId = 1; callId <= 16; callId++)
+        {
+            await front.SendAsync(new Packet(open.SessionId,
+                MarshalCodec.Encode(Packets.Call(open, callId, "billMgr", "GetCorporationBills"))));
+            var accepted = Assert.IsType<Send>(await front.ReceiveAsync());
+            Assert.Equal(MachoMessage.CallRsp, Message(accepted));
+            Assert.Equal(PyNone.Instance, Result(MarshalCodec.Decode(accepted.Payload)));
+        }
+
+        await front.SendAsync(new Packet(open.SessionId,
+            MarshalCodec.Encode(Packets.Call(open, 17, "billMgr", "GetCorporationBills"))));
+        var refused = Assert.IsType<Send>(await front.ReceiveAsync());
+        Assert.Equal(MachoMessage.ErrorResponse, Message(refused));
+        Assert.Contains("SessionRpcBudgetExceeded", Encoding.Latin1.GetString(refused.Payload.Span));
+        Assert.Equal(16, billMgr.Calls);
+
+        // No character is selected; the production handler returns its empty map before storage access.
+        var kwargs = new PyDict([
+            new KeyValuePair<PyValue, PyValue>(new PyStr("machoVersion"), new PyInt(1)),
+        ]);
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(
+            Packets.BoundCall(open, 18, boundObjectId, "GetMyApplications", new PyTuple([]), kwargs))));
+        var bootstrap = Assert.IsType<Send>(await front.ReceiveAsync());
+        Assert.Equal(MachoMessage.CallRsp, Message(bootstrap));
+        Assert.Empty(Assert.IsType<PyDict>(Result(MarshalCodec.Decode(bootstrap.Payload))).Entries);
+    }
+
+    [Fact]
     public async Task A_bound_beyonce_warp_call_preserves_subject_arguments_kwargs_and_response_order()
     {
         var handler = new BoundWarpSubjectContractService();
@@ -620,6 +730,58 @@ public class HostServerTests : IAsyncLifetime
         var retryNotification = Assert.IsType<Send>(await front.ReceiveAsync());
         Assert.Equal(MachoMessage.Notification, Message(retryNotification));
         Assert.Equal("OnInvulnCancelled", Decoded(retryNotification).Dest.BroadcastId);
+    }
+
+    [Fact]
+    public async Task A_session_change_then_beyonce_rebind_sends_the_destination_scene_and_state_in_order()
+    {
+        var service = new SessionSceneTransitionService();
+        ClientSession? session = null;
+        Start(configure: registry => registry.Register(service), sessionOpened: opened => session = opened);
+        var front = await Handshaken(await ConnectAsync());
+        var open = Open();
+        await front.SendAsync(open);
+        await front.ReceiveAsync();
+
+        await front.SendAsync(new Packet(open.SessionId,
+            MarshalCodec.Encode(Packets.Call(open, 1, "beyonce", "JumpToSystem"))));
+        var jumpResponse = Assert.IsType<Send>(await front.ReceiveAsync());
+        Assert.Equal(MachoMessage.CallRsp, Assert.IsType<MachoPacket>(MachoPacket.Decode(MarshalCodec.Decode(jumpResponse.Payload))).Type);
+        var jumpResult = Assert.IsType<PyTuple>(Result(MarshalCodec.Decode(jumpResponse.Payload)));
+        Assert.Equal(SessionSceneTransitionService.BoundOid, T(jumpResult.Items[0]));
+
+        var sessionChangeSend = Assert.IsType<Send>(await front.ReceiveAsync());
+        var sessionChange = Assert.IsType<MachoPacket>(MachoPacket.Decode(MarshalCodec.Decode(sessionChangeSend.Payload)));
+        Assert.Equal(MachoMessage.SessionChangeNotification, sessionChange.Type);
+        var fields = ((PyDict)((PyTuple)((PyTuple)sessionChange.Payload).Items[1]).Items[1]).Entries;
+        Assert.Equal(
+            ["stationid", "stationid2", "solarsystemid", "solarsystemid2", "locationid"],
+            fields.Select(entry => T(entry.Key)));
+        Assert.Equal(SessionSceneTransitionService.DestinationSystem, session!.GetInt("solarsystemid"));
+        Assert.Equal(SessionSceneTransitionService.DestinationSystem, session.GetInt("solarsystemid2"));
+        Assert.Equal(SessionSceneTransitionService.DestinationSystem, session.GetInt("locationid"));
+        Assert.Equal(PyNone.Instance, session.Get("stationid"));
+        Assert.Equal(PyNone.Instance, session.Get("stationid2"));
+        Assert.Equal(PyNone.Instance, session.Get("structureid"));
+
+        await front.SendAsync(new Packet(open.SessionId,
+            MarshalCodec.Encode(Packets.Call(
+                open, 2, "beyonce", "MachoBindObject",
+                new PyTuple([new PyInt(SessionSceneTransitionService.DestinationSystem), new PyInt(5)]),
+                PyNone.Instance))));
+        var bindResponse = Assert.IsType<Send>(await front.ReceiveAsync());
+        Assert.Equal(MachoMessage.CallRsp, Assert.IsType<MachoPacket>(MachoPacket.Decode(MarshalCodec.Decode(bindResponse.Payload))).Type);
+        var bindResult = Assert.IsType<PyTuple>(Result(MarshalCodec.Decode(bindResponse.Payload)));
+        Assert.Equal(2, bindResult.Items.Count);
+        Assert.IsType<PySubStruct>(bindResult.Items[0]);
+        Assert.Equal(PyNone.Instance, bindResult.Items[1]);
+
+        var scene = Assert.IsType<Send>(await front.ReceiveAsync());
+        var state = Assert.IsType<Send>(await front.ReceiveAsync());
+        Assert.Equal(MachoMessage.Notification, Assert.IsType<MachoPacket>(MachoPacket.Decode(MarshalCodec.Decode(scene.Payload))).Type);
+        Assert.Equal(MachoMessage.Notification, Assert.IsType<MachoPacket>(MachoPacket.Decode(MarshalCodec.Decode(state.Payload))).Type);
+        Assert.Equal("DoDestinyUpdate", Assert.IsType<MachoPacket>(MachoPacket.Decode(MarshalCodec.Decode(scene.Payload))).Dest.BroadcastId);
+        Assert.Equal("DoDestinyUpdate", Assert.IsType<MachoPacket>(MachoPacket.Decode(MarshalCodec.Decode(state.Payload))).Dest.BroadcastId);
     }
 
     [Fact]
@@ -4255,8 +4417,11 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
             Write,
             Flush,
             ReadCommitted,
-            (_, _, _) => Task.FromResult<PersistenceMailSendRecipients?>(
-                new([recipientId], "Sender", 2, new Dictionary<long, int> { [recipientId] = 1 })),
+            (request, _, _) => Task.FromResult<PersistenceMailSendRecipients?>(
+                request.SenderCharacterId == Eve.Services.Core.GmChatPokeMailRequest.SystemSenderId
+                    ? new([recipientId], Eve.Services.Core.GmChatPokeMailRequest.SystemSenderName, 2,
+                        new Dictionary<long, int> { [recipientId] = 1 })
+                    : new([recipientId], "Sender", 2, new Dictionary<long, int> { [recipientId] = 1 })),
             () => 1_800_000_000_000,
             (characterId, arguments) =>
             {
@@ -4269,7 +4434,7 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
                     System.Globalization.CultureInfo.InvariantCulture)]!;
                 Assert.Equal(typeId, saved["typeID"]!.GetValue<int>());
                 if (typeId == 1004)
-                    Assert.Equal(12, saved["data"]!["msg"]!["messageID"]!.GetValue<long>());
+                    Assert.InRange(saved["data"]!["msg"]!["messageID"]!.GetValue<long>(), 12L, 13L);
                 else if (typeId == 4)
                 {
                     Assert.Equal(2, saved["groupID"]!.GetValue<int>());
@@ -4348,6 +4513,44 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
         Assert.Equal(1_000_125, billNotification["senderID"]!.GetValue<long>());
         Assert.Equal(allianceId, billNotification["data"]!["allianceID"]!.GetValue<long>());
         Assert.Equal(3, liveNotifications.Count);
+
+        var gmSession = new Eve.Services.ClientSession { CharacterId = 90000035 };
+        gmSession.Set("accountRole", new Eve.Marshal.PyLong(Eve.Services.GameMasterRoles.Gml));
+        var gmService = new Eve.Services.Core.MailService(
+            _ => throw new InvalidOperationException("A GM poke must not read a player mailbox."),
+            (_, _, _, _) => throw new InvalidOperationException("A GM poke must not mark mail read."),
+            adapter.SendAsync,
+            adapter.SendGmChatPokeAsync);
+        var gmMessageId = Assert.IsType<Eve.Marshal.PyLong>(await gmService.CallAsync(new Eve.Services.ServiceCall
+        {
+            Method = "PokePlayerAboutChatMsgGm",
+            Args = [new Eve.Marshal.PyInt(recipientId), new Eve.Marshal.PyStr("help-channel")],
+            Session = gmSession,
+        }));
+
+        Assert.Equal(13L, gmMessageId.Value);
+        var gmMessage = committed["mail"]["messages"]!["13"]!;
+        Assert.Equal(Eve.Services.Core.GmChatPokeMailRequest.SystemSenderId,
+            gmMessage["senderID"]!.GetValue<long>());
+        Assert.Equal(Eve.Services.Core.GmChatPokeMailRequest.SystemSenderName,
+            gmMessage["senderName"]!.GetValue<string>());
+        Assert.Equal("GM chat request", gmMessage["title"]!.GetValue<string>());
+        Assert.Equal("A GM would like to speak with you.<br><br>Requested channel: help-channel",
+            gmMessage["body"]!.GetValue<string>());
+        Assert.Null(committed["mail"]["mailboxes"]![Eve.Services.Core.GmChatPokeMailRequest.SystemSenderId.ToString(
+            System.Globalization.CultureInfo.InvariantCulture)]?["statuses"]?["13"]);
+        Assert.Equal(1, committed["mail"]["mailboxes"]![recipientId.ToString(
+            System.Globalization.CultureInfo.InvariantCulture)]!["statuses"]!["13"]!["labelMask"]!.GetValue<int>());
+        var gmNotification = Assert.Single(
+            committed["notifications"]["boxes"]![recipientId.ToString(
+                System.Globalization.CultureInfo.InvariantCulture)]!["byID"]!.AsObject()
+                .Select(pair => pair.Value).OfType<System.Text.Json.Nodes.JsonObject>(),
+            notification => notification["data"]?["msg"]?["messageID"]?.GetValue<long>() == 13L);
+        Assert.Equal(Eve.Services.Core.GmChatPokeMailRequest.SystemSenderId,
+            gmNotification["senderID"]!.GetValue<long>());
+        Assert.Contains("mail", flushes.TakeLast(2));
+        Assert.Equal("notifications", flushes[^1]);
+        Assert.Equal(4, liveNotifications.Count);
     }
 
     [Fact]

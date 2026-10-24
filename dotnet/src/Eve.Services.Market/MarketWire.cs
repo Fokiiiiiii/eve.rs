@@ -7,7 +7,7 @@ public static class MarketWire
 {
     private static readonly (string Name,int Type)[] Columns = [
         ("price",5),("volRemaining",3),("typeID",3),("range",3),("orderID",20),("volEntered",3),("minVolume",3),
-        ("bid",3),("issueDate",64),("duration",3),("stationID",3),("regionID",3),("solarSystemID",3),("constellationID",3),("jumps",3)];
+        ("bid",3),("issueDate",64),("duration",3),("stationID",20),("regionID",3),("solarSystemID",3),("constellationID",3),("jumps",3)];
     private static readonly PyValue Header = new PyObjectEx(ObjectExKind.Ex1,
         Py.Tuple(new PyToken("blue.DBRowDescriptor"),Py.Tuple(Py.Tuple([.. Columns.Select(c => (PyValue)Py.Tuple(new PyStr(c.Name),new PyInt(c.Type)))]))),[],[]);
     public static PyValue Orders(IEnumerable<MarketOrder> orders,MarketTopology topology,MarketLocation viewer) => new PyObject(
@@ -17,14 +17,20 @@ public static class MarketWire
             ("lines",new PyList([.. orders.Select(o => (PyValue)Py.Tuple(
                 Py.Number((double)o.Price),new PyInt(o.VolumeRemaining),new PyInt(o.TypeId),new PyInt(MarketRules.RangeForClient(o.Range)),new PyLong(o.Id),
                 new PyInt(o.VolumeEntered),new PyInt(o.MinimumVolume),new PyInt(o.Bid ? 1 : 0),new PyLong(Py.FileTimeFromUnixMs(o.IssuedMs)),
-                new PyInt(o.Duration),new PyInt(o.Location.StationId),new PyInt(o.Location.RegionId),new PyInt(o.Location.SolarSystemId),
+                new PyInt(o.Duration),new PyLong(o.Location.StationId),new PyInt(o.Location.RegionId),new PyInt(o.Location.SolarSystemId),
                 new PyInt(o.Location.ConstellationId),new PyInt(topology.OrderDistance(viewer,o.Location))))]))));
 
     public static PyValue BestByOrder(MarketOrder order,long quantity) => Py.KeyVal(
         ("price",Py.Number(MarketRules.RoundIsk((double)order.Price))),
         ("volRemaining",Py.Number(quantity)),
         ("typeID",new PyInt(order.TypeId)),
-        ("stationID",new PyInt(order.Location.StationId)));
+        ("stationID",new PyLong(order.Location.StationId)));
+
+    public static PyValue BestByOrderTuple(MarketOrder order,long quantity) => Py.Tuple(
+        Py.Number(MarketRules.RoundIsk((double)order.Price)),
+        Py.Number(quantity),
+        new PyInt(order.TypeId),
+        new PyLong(order.Location.StationId));
 }
 
 internal static class MarketHistoryWire

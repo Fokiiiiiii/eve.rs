@@ -100,6 +100,61 @@ public class ItemMutationStoreTests : IAsyncLifetime
     }
 
     [PgFact]
+    public async Task A_move_racing_a_merge_leaves_one_valid_item_transition()
+    {
+        var source = Source();
+        var schema = NewSchema();
+        var items = new PgItemStore(source, schema);
+        await PgItemStore.MigrateAsync(source, schema);
+
+        long sourceId;
+        long destinationId;
+        await using (var connection = await source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            sourceId = await items.CreateAsync(connection, transaction, new NewItem(34, Character, 60_015_249, ItemFlags.Hangar, 10));
+            destinationId = await items.CreateAsync(connection, transaction, new NewItem(34, Character, 60_015_249, ItemFlags.Hangar, 10));
+            await transaction.CommitAsync();
+        }
+
+        var start = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        async Task MoveAsync()
+        {
+            await using var connection = await source.OpenConnectionAsync();
+            await using var transaction = await connection.BeginTransactionAsync();
+            await start.Task;
+            await items.MoveAsync(connection, transaction, sourceId, 60_015_250, ItemFlags.Hangar);
+            await transaction.CommitAsync();
+        }
+        async Task<ItemMergeResult?> MergeAsync()
+        {
+            await start.Task;
+            return await items.MergeAsync(sourceId, destinationId, 10, Character, 60_015_249, 60_015_249);
+        }
+
+        var move = MoveAsync();
+        var merge = MergeAsync();
+        start.SetResult(true);
+        var merged = await merge.WaitAsync(TimeSpan.FromSeconds(5));
+        await move.WaitAsync(TimeSpan.FromSeconds(5));
+
+        var sourceAfter = await items.GetAsync(sourceId);
+        var destinationAfter = await items.GetAsync(destinationId);
+        Assert.NotNull(destinationAfter);
+        if (merged is not null)
+        {
+            Assert.Null(sourceAfter);
+            Assert.Equal(20, destinationAfter.Quantity);
+        }
+        else
+        {
+            Assert.NotNull(sourceAfter);
+            Assert.Equal((60_015_250L, 10L), (sourceAfter.LocationId, sourceAfter.Quantity));
+            Assert.Equal(10, destinationAfter.Quantity);
+        }
+    }
+
+    [PgFact]
     public async Task The_provenance_table_is_applied_with_the_item_migrations()
     {
         var source = Source();

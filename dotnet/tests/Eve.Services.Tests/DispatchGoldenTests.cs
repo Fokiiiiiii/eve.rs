@@ -202,6 +202,20 @@ public class DispatchGoldenTests
         public object? GetService(Type serviceType) => null;
     }
 
+    private sealed class BudgetProbeService(string name) : IService
+    {
+        public string Name { get; } = name;
+        public int Calls { get; private set; }
+
+        public bool HasMethod(string method) => true;
+
+        public ValueTask<PyValue> CallAsync(ServiceCall call)
+        {
+            Calls++;
+            return ValueTask.FromResult<PyValue>(new PyInt(1));
+        }
+    }
+
     private sealed class NoMethodsService : IService
     {
         public string Name => "knownSvc";
@@ -257,6 +271,73 @@ public class DispatchGoldenTests
         }
 
         Assert.Equal(40, service.Calls);
+    }
+
+    [Fact]
+    public async Task Station_entry_rpc_burst_survives_an_exhausted_general_budget_and_contract_abuse_is_still_limited()
+    {
+        var capture = new Capture();
+        var session = new ClientSession(capture) { SessionId = 915 };
+        var registry = new ServiceRegistry();
+        var services = new Dictionary<string, BudgetProbeService>(StringComparer.Ordinal);
+        foreach (var name in new[]
+        {
+            "fleetProxy", "invbroker", "dogmaIM", "stationSvc", "contractProxy", "corporation", "corpRegistry",
+        })
+        {
+            var service = new BudgetProbeService(name);
+            services.Add(name, service);
+            registry.Register(service);
+        }
+        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs);
+
+        // Other expensive calls in the same login session can fill the shared general-purpose allowance.
+        for (var index = 0; index < 16; index++)
+        {
+            await dispatcher.DispatchAsync(CallRequestPacket("fleetProxy", "GetAvailableFleetAds"), session);
+            Assert.Equal(7, CommandOf(capture.Sent[^1]));
+        }
+
+        (string Service, string Method, PyValue[] Args)[] stationEntry =
+        [
+            ("invbroker", "MachoBindObject", [
+                new PyTuple([new PyInt(30_100_032), new PyInt(5)]),
+                new PyTuple([new PyStr("GetInventory"), new PyTuple([new PyInt(10_004), PyNone.Instance]), PyNone.Instance]),
+            ]),
+            ("dogmaIM", "MachoBindObject", [
+                new PyTuple([new PyInt(30_100_032), new PyInt(5)]),
+                new PyTuple([new PyStr("GetAllInfo"), new PyTuple([PyBool.True, PyBool.True, PyNone.Instance]), PyNone.Instance]),
+            ]),
+            ("stationSvc", "GetGuests", []),
+            ("contractProxy", "GetLoginInfo", []),
+            ("corporation", "List", []),
+            ("corpRegistry", "GetMyApplications", []),
+        ];
+
+        foreach (var (service, method, args) in stationEntry)
+        {
+            await dispatcher.DispatchAsync(CallRequestPacket(service, method, args), session);
+            Assert.Equal(7, CommandOf(capture.Sent[^1]));
+            Assert.Equal(1, Assert.IsType<PyInt>(ResultOf(capture.Sent[^1])).Value);
+        }
+        Assert.All(stationEntry, call => Assert.Equal(1, services[call.Service].Calls));
+
+        var abusiveCapture = new Capture();
+        var abusiveRegistry = new ServiceRegistry();
+        var contractService = new BudgetProbeService("contractProxy");
+        abusiveRegistry.Register(contractService);
+        var abusiveDispatcher = new PacketDispatcher(abusiveRegistry, () => FixedNowMs);
+        var abusiveSession = new ClientSession(abusiveCapture) { SessionId = 916 };
+        for (var index = 0; index < 16; index++)
+        {
+            await abusiveDispatcher.DispatchAsync(CallRequestPacket("contractProxy", "GetLoginInfo"), abusiveSession);
+            Assert.Equal(7, CommandOf(abusiveCapture.Sent[^1]));
+        }
+        await abusiveDispatcher.DispatchAsync(CallRequestPacket("contractProxy", "GetLoginInfo"), abusiveSession);
+
+        Assert.Equal(16, contractService.Calls);
+        Assert.Equal(ErrorResponseCommand, CommandOf(abusiveCapture.Sent[^1]));
+        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(abusiveCapture.Sent[^1])));
     }
 
     [Fact]
@@ -364,6 +445,49 @@ public class DispatchGoldenTests
     }
 
     [Fact]
+    public async Task Station_and_bound_service_rpcs_have_independent_bounded_budgets()
+    {
+        var capture = new Capture();
+        var session = new ClientSession(capture) { SessionId = 913 };
+        var registry = new ServiceRegistry();
+        var general = new CharacterKillmailBudgetService();
+        var station = new ExpensiveService("stationSvc");
+        var dogma = new BoundObjectBudgetService("dogmaIM");
+        var corpStation = new BoundObjectBudgetService("corpStationMgr");
+        registry.Register(general);
+        registry.Register(station);
+        registry.Register(dogma);
+        registry.Register(corpStation);
+        registry.RegisterAlias("station", "stationSvc");
+        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 10 };
+        var boundObject = new PyTuple([new PyLong(1), new PyInt(1)]);
+        var getAllInfo = new PyTuple([new PyStr("GetAllInfo"), new PyTuple([]), Py.Dict()]);
+        var standingCheck = new PyTuple([new PyStr("DoStandingCheckForStationService"), new PyTuple([]), Py.Dict()]);
+
+        await dispatcher.DispatchAsync(CallRequestPacket("charMgr", "List"), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("station", "GetGuests"), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("dogmaIM", "MachoBindObject", boundObject, getAllInfo), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("corpStationMgr", "MachoBindObject", boundObject, standingCheck), session);
+
+        await dispatcher.DispatchAsync(CallRequestPacket("station", "GetGuests"), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("dogmaIM", "MachoBindObject", boundObject, getAllInfo), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("corpStationMgr", "MachoBindObject", boundObject, getAllInfo), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("charMgr", "ListStations"), session);
+
+        Assert.Equal(1, general.Calls);
+        Assert.Equal(1, station.Calls);
+        Assert.Equal(1, dogma.Calls);
+        Assert.Equal(1, corpStation.Calls);
+        Assert.Equal(8, capture.Sent.Count);
+        Assert.All(capture.Sent.Take(4), packet => Assert.Equal(7, CommandOf(packet)));
+        Assert.All(capture.Sent.Skip(4), packet =>
+        {
+            Assert.Equal(ErrorResponseCommand, CommandOf(packet));
+            Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(packet)));
+        });
+    }
+
+    [Fact]
     public async Task Expensive_market_calls_have_a_named_per_session_budget()
     {
         var capture = new Capture();
@@ -384,7 +508,11 @@ public class DispatchGoldenTests
         registry.Register(recruitmentService);
         registry.Register(warService);
         var now = FixedNowMs;
-        var dispatcher = new PacketDispatcher(registry, () => now) { MaxExpensiveRpcUnitsPerMinute = 10 };
+        var dispatcher = new PacketDispatcher(registry, () => now)
+        {
+            MaxExpensiveRpcUnitsPerMinute = 10,
+            MaxMarketRpcUnitsPerMinute = 10,
+        };
 
         await dispatcher.DispatchAsync(CallRequestPacket("marketProxy", "GetOrders"), session);
         await dispatcher.DispatchAsync(CallRequestPacket("marketProxy", "BuyMultipleItems"), session);
@@ -590,7 +718,7 @@ public class DispatchGoldenTests
         var registry = new ServiceRegistry();
         var service = new ExpensiveService("marketProxy");
         registry.Register(service);
-        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 10 };
+        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 10, MaxMarketRpcUnitsPerMinute = 10 };
 
         await dispatcher.DispatchAsync(CallRequestPacket("marketProxy", "GetPlexHistory"), session);
         await dispatcher.DispatchAsync(CallRequestPacket("marketProxy", "GetPlexHistory"), session);
@@ -873,7 +1001,7 @@ public class DispatchGoldenTests
         var service = new ExpensiveService();
         captureRegistry.Register(service);
         var now = FixedNowMs;
-        var dispatcher = new PacketDispatcher(captureRegistry, () => now) { MaxExpensiveRpcUnitsPerMinute = 10 };
+        var dispatcher = new PacketDispatcher(captureRegistry, () => now) { MaxExpensiveRpcUnitsPerMinute = 10, MaxMarketRpcUnitsPerMinute = 10 };
         var methods = new[]
         {
             "GetCharOrders",
@@ -1158,7 +1286,7 @@ public class DispatchGoldenTests
         var registry = new ServiceRegistry();
         var service = new ExpensiveService("industryManager");
         registry.Register(service);
-        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 10 };
+        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxIndustryRpcUnitsPerMinute = 10 };
 
         await dispatcher.DispatchAsync(CallRequestPacket("industryManager", "GetJobsByOwner"), session);
         await dispatcher.DispatchAsync(CallRequestPacket("industryManager", "GetJobsByOwner"), session);
@@ -1166,6 +1294,33 @@ public class DispatchGoldenTests
         Assert.Equal(1, service.Calls);
         Assert.Equal(2, capture.Sent.Count);
         Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[1])));
+    }
+
+    [Fact]
+    public async Task Industry_jobs_use_a_separate_per_session_budget()
+    {
+        var capture = new Capture();
+        var session = new ClientSession(capture) { SessionId = 1027 };
+        var registry = new ServiceRegistry();
+        var fittingService = new ExpensiveService("charFittingMgr");
+        var industryService = new ExpensiveService("industryManager");
+        registry.Register(fittingService);
+        registry.Register(industryService);
+        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs)
+        {
+            MaxExpensiveRpcUnitsPerMinute = 10,
+            MaxIndustryRpcUnitsPerMinute = 10,
+        };
+
+        await dispatcher.DispatchAsync(CallRequestPacket("charFittingMgr", "GetFittings"), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("industryManager", "GetJobCounts"), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("industryManager", "GetJobCounts"), session);
+
+        Assert.Equal(1, fittingService.Calls);
+        Assert.Equal(1, industryService.Calls);
+        Assert.Equal(3, capture.Sent.Count);
+        Assert.NotEqual(ErrorResponseCommand, CommandOf(capture.Sent[1]));
+        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[2])));
     }
 
     [Fact]
@@ -2984,6 +3139,21 @@ public class DispatchGoldenTests
                 new(new PyInt(44992), BestOrder(44992, 1_250_000, 4, 60003760)),
             ]);
             return ValueTask.FromResult(result);
+        }
+    }
+
+    private sealed class BoundObjectBudgetService(string name) : IService
+    {
+        public int Calls { get; private set; }
+
+        public string Name => name;
+
+        public bool HasMethod(string method) => method == "MachoBindObject";
+
+        public ValueTask<PyValue> CallAsync(ServiceCall call)
+        {
+            Calls++;
+            return ValueTask.FromResult<PyValue>(PyNone.Instance);
         }
     }
 

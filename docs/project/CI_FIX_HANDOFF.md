@@ -477,3 +477,10 @@ CI run 672 on `1669e6dc` failed the structure market Host test because the fixtu
 - Agent run 267 (`40051462122`) on `a231dfb8` passed the focused `Eve.Services.Inventory.Tests` regression (1 passed, 0 failed, 0 skipped), then failed `tests.test_market::test_docked_corporation_members_trade_at_an_eligible_upwell_structure`. The buyer's delivered Tritanium was in its structure hangar, but the seller's remaining two units were not.
 - The test expected the two remaining sell-order units to remain in the seller's hangar while also asserting a two-unit standing ask. EveJS v0.12.9 `executeSellEntryUnlocked` moves the order's unfilled remainder to its market escrow location; cancellation returns it to the original hangar. The live test now expects zero seller hangar units before cancellation and two after it. The EVE University [Market](https://wiki.eveuniversity.org/Market) page describes market orders and partial fills; its escrow detail follows the executable reference and the observed cancellation transition.
 - The push gate (run 760, `40051455352`) and pre-fix run 759 (`40051408023`) were still running when this note was added. No local PostgreSQL test was run.
+
+
+## 2026-10-24 push a719eee8 seller escrow expectation correction
+
+- Merged the concurrent main updates at `cd0a6029`, retaining the new post-cancel custody check, and pushed the seller hangar expectation correction as `a719eee8`.
+- Focused Agent run 268 (`40052275363`) is checking the inventory RPC regression and `tests/test_market.py` against this head. Push gate run 764 (`40052261614`) is also checking this head. Results are pending.
+- The correction follows the EveJS sell-order flow: after a partial fill, unfilled order stock is in market escrow and cancellation restores it to the structure hangar. No local PostgreSQL test was run.

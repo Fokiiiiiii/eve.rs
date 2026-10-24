@@ -11,12 +11,13 @@ namespace Eve.Services.Corporations;
 /// </summary>
 public static class StationOfficeImpound
 {
-    public static async Task ImpoundAsync(PgItemStore items, CorporationOfficeStore store, NpgsqlConnection connection,
+    public static async Task<bool> ImpoundAsync(PgItemStore items, CorporationOfficeStore store, NpgsqlConnection connection,
         NpgsqlTransaction transaction, CorporationOffice office, long nowMs, CancellationToken cancellationToken)
     {
         var corporationId = office.CorporationId;
         var stationId = office.StationId;
         var assets = await items.InLocationAsync(stationId, corporationId, cancellationToken);
+        var hadAssets = assets.Any(item => ItemFlags.IsCorporationHangar(item.Flag));
         foreach (var item in assets.Where(item => ItemFlags.IsCorporationHangar(item.Flag)))
             await MoveIfCurrentAsync(items, connection, transaction, item, corporationId, stationId, item.Flag,
                 CorporationOfficeStore.ImpoundedFlag, cancellationToken);
@@ -25,6 +26,7 @@ public static class StationOfficeImpound
             folderOwner == corporationId && folderLocation == stationId)
             await items.DeleteAsync(connection, transaction, folder.Id, cancellationToken);
         await store.UnrentAsync(connection, transaction, office, nowMs, cancellationToken);
+        return hadAssets;
     }
 
     /// <summary>Moves one item to <paramref name="destinationFlag"/> if it is still the corporation's at the station with the expected flag.</summary>

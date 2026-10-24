@@ -1171,6 +1171,7 @@ impl Sim {
                     7 => DroneCommand::MineRepeatedly { target: target_id },
                     8 => DroneCommand::Salvage { target: (target_id > 0).then_some(target_id) },
                     9 => DroneCommand::Reconnect,
+                    10 => DroneCommand::Scoop,
                     other => {
                         return Err(ProtocolError(format!("unknown drone command {other}")));
                     }

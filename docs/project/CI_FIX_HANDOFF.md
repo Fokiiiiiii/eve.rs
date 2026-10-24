@@ -504,3 +504,10 @@ CI run 672 on `1669e6dc` failed the structure market Host test because the fixtu
 
 - Run 767 on `e0765b6c` failed `Eve.Host.Tests.RpcSecurityInventoryTests.Real_host_registry_methods_are_enumerable`: the expected count was 1,382 and the Host registry returned 1,383 after a new RPC was registered.
 - Commit `7956ef36` updates the expected inventory count to 1,383. The full push gate on that commit (run 768, `40053191315`) and the combined follow-up on `4307511c` (run 769, `40053234501`) are checking the corrected assertion along with the market escrow flow.
+
+
+## 2026-10-24 selected Agent run 282 mission standing seed
+
+- Agent run 282 (`40053552859`) on `e2fd3439` failed `tests.test_agent_moniker_live::test_bound_agent_moniker_courier_queries_and_offer_removal`: the walk passed an agent row dictionary to `seed_personal_standing`, whose game-master command helper accepts the agent ID, and raised `TypeError` converting the dictionary to an integer.
+- The neighboring research-agent walk passes `agent["agentID"]`. The EveJS seed helper also resolves an agent name from an integer ID, so the mission walk now passes the same identifier. No production behavior changed.
+- Local Python compilation and `git diff --check` passed. The focused Actions rerun and the push gate are pending.

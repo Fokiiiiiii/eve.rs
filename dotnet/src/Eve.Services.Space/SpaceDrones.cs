@@ -74,6 +74,17 @@ public sealed class SpaceDrones : ISpaceDrones, ISpaceDroneBays, IDisposable
         long ItemId, int TypeId, long CharacterId, long CorporationId, long AllianceId, long WarFactionId,
         long ShipId, int SolarSystemId, ulong Controller, ClientSession Pilot, IReadOnlyDictionary<int, double> Attributes);
 
+    private sealed class PendingScoop(Launched drone, ClientSession pilot, long characterId, long shipId, int solarSystemId, IReadOnlyCollection<long> stillOut)
+    {
+        public Launched Drone { get; } = drone;
+        public ClientSession Pilot { get; } = pilot;
+        public long CharacterId { get; } = characterId;
+        public long ShipId { get; } = shipId;
+        public int SolarSystemId { get; } = solarSystemId;
+        public IReadOnlyCollection<long> StillOut { get; } = stillOut;
+        public TaskCompletionSource<DroneScoop> Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    }
+
     private readonly ISimulation _sim;
     private readonly CharacterShips _ships;
     private readonly DogmaStatic _statics;
@@ -82,6 +93,8 @@ public sealed class SpaceDrones : ISpaceDrones, ISpaceDroneBays, IDisposable
     private readonly Action<string>? _log;
     private readonly ConcurrentDictionary<long, Launched> _launched = new();
 private readonly ConcurrentDictionary<long, Launched> _abandoned = new();
+    private readonly ConcurrentDictionary<long, PendingScoop> _pendingScoops = new();
+    private readonly ConcurrentDictionary<long, SemaphoreSlim> _scoopLocks = new();
     private readonly ConcurrentDictionary<long, byte> _letGo = new();
     private long _requests;
 
@@ -430,11 +443,13 @@ public (long CharacterId, int TypeId, int SolarSystemId, long CorporationId, lon
 
     private static string Describe(string reason, byte command) => reason switch
     {
+        "NOT_CONTROLLED" when command == SimDroneCommands.Scoop => "That drone cannot currently be scooped into the drone bay.",
         "NOT_CONTROLLED" => NotUnderControl,
         "NO_PILOT" => "That pilot is not in space.",
         "NO_WRECK" => "No salvageable wreck was found.",
         "NO_TARGET" when command == SimDroneCommands.Engage => "That target cannot be engaged by drones.",
         "OUT_OF_RANGE" when command == SimDroneCommands.Reconnect => "That drone is too far away to reconnect.",
+        "OUT_OF_RANGE" when command == SimDroneCommands.Scoop => "Drone is too far away to scoop into the bay.",
         "OUT_OF_RANGE" => "That target is out of drone control range.",
         "NO_OPPONENT" => "The drones found nothing to attack.",
         _ => "The drone cannot do that.",
@@ -510,14 +525,91 @@ public async Task<PyValue> ReconnectAsync(ClientSession session, CancellationTok
         return Dict(refused);
     }
 
-    public Task<PyValue> ScoopAsync(ClientSession session, IReadOnlyList<long> droneIds, CancellationToken cancellationToken)
+    public async Task<PyValue> ScoopAsync(ClientSession session, IReadOnlyList<long> droneIds, CancellationToken cancellationToken)
     {
-        // a drone that is out is its ship's until it is let go, and a drone that is let go leaves the scene: there is nothing here that has nobody to command it
-        var refused = droneIds.Select(id => new KeyValuePair<PyValue, PyValue>(
-            InventoryWire.Id(id),
-            Refusal(_launched.ContainsKey(id) ? "That drone cannot currently be scooped into the drone bay." : "That drone is not in local space."))).ToList();
-        return Task.FromResult(Dict(refused));
+        if (!_space.IsInSpace(session) || session.CharacterId is not { } characterId || session.GetInt("shipid") is not { } shipId
+            || _space.SolarSystemOf(session) is not { } system)
+        {
+            return RefuseAll(droneIds, "That drone is not in local space.");
+        }
+
+        var gate = _scoopLocks.GetOrAdd(characterId, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var refused = new List<KeyValuePair<PyValue, PyValue>>();
+            var controller = (ulong)session.SessionId;
+            foreach (var id in droneIds.Distinct())
+            {
+                if (_launched.ContainsKey(id))
+                {
+                    refused.Add(new(InventoryWire.Id(id), Refusal("That drone cannot currently be scooped into the drone bay.")));
+                    continue;
+                }
+                if (!_abandoned.TryGetValue(id, out var drone) || drone.SolarSystemId != system)
+                {
+                    refused.Add(new(InventoryWire.Id(id), Refusal("That drone is not in local space.")));
+                    continue;
+                }
+
+                var stillOut = _launched.Values.Where(d => d.Controller == controller).Select(d => d.ItemId).ToArray();
+                switch (await _ships.CheckAbandonedDroneScoopAsync(characterId, shipId, id, system, stillOut, cancellationToken).ConfigureAwait(false))
+                {
+                    case DroneBayFull:
+                        refused.Add(new(InventoryWire.Id(id), NotEnoughDroneBaySpace()));
+                        continue;
+                    case not DroneScoopReady:
+                        refused.Add(new(InventoryWire.Id(id), Refusal("That drone is not in local space.")));
+                        continue;
+                }
+
+                var pending = new PendingScoop(drone, session, characterId, shipId, system, stillOut);
+                if (!_pendingScoops.TryAdd(id, pending))
+                {
+                    refused.Add(new(InventoryWire.Id(id), Refusal("That drone is already being scooped.")));
+                    continue;
+                }
+
+                CommandReply reply;
+                try
+                {
+                    reply = await _sim.DroneCommandAsync(controller, SimDroneCommands.Scoop, shipId, [id], 0, CancellationToken.None).ConfigureAwait(false);
+                }
+                catch (SimUnavailableException error)
+                {
+                    _pendingScoops.TryRemove(id, out _);
+                    _log?.Invoke($"drones: {error.Message}");
+                    throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Space is not available right now. Try again in a moment.")));
+                }
+
+                var result = reply.Drones.FirstOrDefault(r => r.DroneId == id);
+                if (result is null || result.Reason.Length > 0)
+                {
+                    _pendingScoops.TryRemove(id, out _);
+                    refused.Add(new(InventoryWire.Id(id), Refusal(Describe(result?.Reason ?? "NOT_CONTROLLED", SimDroneCommands.Scoop))));
+                    continue;
+                }
+
+                var outcome = await pending.Completion.Task.ConfigureAwait(false);
+                _pendingScoops.TryRemove(id, out _);
+                if (outcome is DroneBayFull)
+                {
+                    refused.Add(new(InventoryWire.Id(id), NotEnoughDroneBaySpace()));
+                }
+                else if (outcome is not DroneScooped)
+                {
+                    refused.Add(new(InventoryWire.Id(id), Refusal("Unable to scoop that drone.")));
+                }
+            }
+            return Dict(refused);
+        }
+        finally
+        {
+            gate.Release();
+        }
     }
+
+    private static PyValue NotEnoughDroneBaySpace() => Py.Tuple(new PyStr("NotEnoughDroneBaySpace"), new PyDict([]));
 
     /// <summary>Capacity for the active ship's in-space drone-bay inventory (flag 87).</summary>
     public async Task<CharacterShips.Room?> RoomAsync(ClientSession session, long shipId, int flag, CancellationToken cancellationToken)
@@ -565,8 +657,12 @@ public async Task<PyValue> ReconnectAsync(ClientSession session, CancellationTok
         {
             switch (message)
             {
+                case SimDroneScooped scooped when _pendingScoops.TryGetValue(scooped.DroneId, out var pending)
+                    && (ulong)pending.Pilot.SessionId == scooped.SessionId:
+                    CompleteAbandonedScoop(pending);
+                    break;
                 case SimDroneScooped scooped when _launched.TryRemove(scooped.DroneId, out var taken):
-                    Run(() => TakeInAsync(taken), scooped.DroneId, "taken into the bay");
+                    TakeInAsync(taken).GetAwaiter().GetResult();
                     break;
                 case SimDroneReleased released when _launched.TryRemove(released.DroneId, out var gone):
                     _letGo.TryRemove(released.DroneId, out _);
@@ -604,25 +700,50 @@ public async Task<PyValue> ReconnectAsync(ClientSession session, CancellationTok
         _launched.Clear();
         _abandoned.Clear();
     }
-
-    /// <summary>A drone came into reach after it was told to return to the bay: the item goes back into the bay and the client is told.</summary>
+    /// <summary>A drone was taken in; persist the item and notify its pilot before the simulation's destiny removal reaches clients.</summary>
     private async Task TakeInAsync(Launched drone)
     {
         var stillOut = _launched.Values.Where(d => d.Controller == drone.Controller).Select(d => d.ItemId).ToArray();
-        switch (await _ships.ScoopDroneAsync(drone.CharacterId, drone.ShipId, drone.ItemId, drone.SolarSystemId, stillOut).ConfigureAwait(false))
+        var outcome = await _ships.ScoopDroneAsync(drone.CharacterId, drone.ShipId, drone.ItemId, drone.SolarSystemId, stillOut).ConfigureAwait(false);
+        if (outcome is DroneScooped scooped)
         {
-            case DroneScooped scooped:
-                ShipNotifications.SendItemChange(drone.Pilot, scooped.Change, RowOf);
-                var settled = scooped.Change with { PreviousLocationId = scooped.Change.After.LocationId, PreviousFlag = scooped.Change.After.Flag };
-                Later(() => ShipNotifications.SendItemChange(drone.Pilot, settled, RowOf));
-                break;
-            case DroneBayFull full:
-                _log?.Invoke($"drones: drone {drone.ItemId} was taken in but the bay of ship {drone.ShipId} has {full.Available} m3 and it takes {full.Volume}: it stays in space");
-                break;
-            default:
-                _log?.Invoke($"drones: drone {drone.ItemId} was taken in but is not in space any more");
-                break;
+            NotifyScooped(drone.Pilot, scooped);
         }
+        else if (outcome is DroneBayFull full)
+        {
+            _log?.Invoke($"drones: drone {drone.ItemId} was taken in but the bay of ship {drone.ShipId} has {full.Available} m3 and it takes {full.Volume}: it stays in space");
+        }
+        else
+        {
+            _log?.Invoke($"drones: drone {drone.ItemId} was taken in but is not in space any more");
+        }
+    }
+
+    private void CompleteAbandonedScoop(PendingScoop pending)
+    {
+        try
+        {
+            var outcome = _ships.ScoopAbandonedDroneAsync(pending.CharacterId, pending.ShipId, pending.Drone.ItemId, pending.SolarSystemId, pending.StillOut)
+                .GetAwaiter().GetResult();
+            if (outcome is DroneScooped scooped)
+            {
+                _abandoned.TryRemove(pending.Drone.ItemId, out _);
+                NotifyScooped(pending.Pilot, scooped);
+            }
+            pending.Completion.TrySetResult(outcome);
+        }
+        catch (Exception error)
+        {
+            _log?.Invoke($"drones: drone {pending.Drone.ItemId} could not be scooped: {error.Message}");
+            pending.Completion.TrySetException(error);
+        }
+    }
+
+    private void NotifyScooped(ClientSession pilot, DroneScooped scooped)
+    {
+        ShipNotifications.SendItemChange(pilot, scooped.Change, RowOf);
+        var settled = scooped.Change with { PreviousLocationId = scooped.Change.After.LocationId, PreviousFlag = scooped.Change.After.Flag };
+        Later(() => ShipNotifications.SendItemChange(pilot, settled, RowOf));
     }
 
     /// <summary>

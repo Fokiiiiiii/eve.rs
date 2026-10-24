@@ -731,7 +731,7 @@ public sealed class ContractReadModelTests
             var login = await store.GetLoginInfoAsync(100, 200, 300, now, CancellationToken.None);
             Assert.Equal(new[] { new Eve.Services.Core.ContractNeedsAttentionRow(3, 1), new Eve.Services.Core.ContractNeedsAttentionRow(4, 0), new Eve.Services.Core.ContractNeedsAttentionRow(5, 0) }, login.NeedsAttention);
             Assert.Equal(new[] { new Eve.Services.Core.ContractInProgressRow(2, 3001, 3002, now + 4 * 864_000_000_000L) }, login.InProgress);
-            Assert.Equal(new[] { new Eve.Services.Core.ContractAssignedToMeRow(1, 100), new Eve.Services.Core.ContractAssignedToMeRow(7, 107) }, login.AssignedToMe);
+            Assert.Equal(new[] { new Eve.Services.Core.ContractAssignedToMeRow(1, 100, 200, 100, 1), new Eve.Services.Core.ContractAssignedToMeRow(7, 107, 200, 300, 2) }, login.AssignedToMe);
 
             Assert.Equal(new Eve.Services.Core.ContractEscrowSummary(22m, 3),
                 await store.GetMyContractEscrowAsync(100, 200, CancellationToken.None));

@@ -391,21 +391,33 @@ CI run 672 on `1669e6dc` failed the structure market Host test because the fixtu
 - This change opens unanchored Upwell hull scoop to any pilot while preserving Starbase hull authorization and the stored-corporation integrity check. It also removes only Eject's distance condition; it still validates the original ship, owner, type, location, flag, and solar-system state before restoring the session.
 - The `Eve.Services.Space.Tests` Release build passed locally with 0 warnings and 0 errors. Selected Actions checks will be recorded after completion; local PostgreSQL tests were not run.
 
-## 2026-10-24 CI run 738 market follow-up
+## 2026-10-24 CI run 738 follow-up
 
-- The newest completed main failure inspected here was run 736 on `e831a724`: EjectFromStructure refused the original ship and the RPC inventory test expected 1,378 methods instead of 1,382. Main now contains the structure return correction in `2de5df10` and inventory count update in `9414192e`. Run 737 also exposed a headless station-ask assertion that treated a four-element wire tuple as a KeyVal; current main still needs this test correction.
-- V24.01 `MarketBase.PopulateAsksForMyRange` converts `GetStationAsks` tuple values with `ConvertTuplesToBestByOrders`. The headless assertion now checks the server tuple `(price, volRemaining, typeID, stationID)`, using the scenario's station ID.
-- EveJS v0.12.9 emits `OnOwnOrdersChanged` after a successful immediate buy fill. The notifier now sends that ephemeral orderID-zero refresh row with the filled quantity and current venue, and the Market RPC test checks its full marshalled packet. Host construction passes the shared clock to the notifier.
-- Host.Tests and Market.Tests Release builds passed locally with 0 warnings and 0 errors. No database-backed tests were run locally. Focused Actions and the push gate are pending; the graphical client was not used.
+- Run 738 (40043754414, sha 35964099) finished with four failing tests across three paths: the headless market test treated the four-field GetStationAsks tuple as a KeyVal; two Space scoop tests passed invalid character names to CharacterCreation (the fixtures exceeded CharacterNames.MaxSpaces=2); and a Host structure test expected far-away EjectFromStructure to refuse.
+- The market tuple assertion and EveJS-compatible immediate-fill notification are on main in 7dced4b3 (head 56e0d37d). V24.01 converts GetStationAsks tuples through ConvertTuplesToBestByOrders. EveJS v0.12.9 sends OnOwnOrdersChanged after an immediate fill, and MarketRpcTests checks the full marshalled refresh packet. Focused Agent runs 236 (Host RPC inventory) and 237 (Market immediate-fill RPC) passed.
+- The Space fixture names are shortened to valid names in the current worktree. Host.Tests and Space.Tests Release builds passed locally with 0 warnings and 0 errors. Main CI run 740 on 56e0d37d remained active at this update. Run 738 skipped eight speed-gated/slow headless cases.
+- No local database-backed tests were run.
 
+## 2026-10-24 structure ejection follow-up
+
+- V24.01 EjectFromStructure forwards the shipID as a session change; EveJS v0.12.9 restores restoreShipID without checking position or distance. The Host backend still requires the requested ship to match the stored original ship and validates its owner, type, system location, and space flag.
+- The unused CanReturnToStructureShipAsync helper encoded a distance check that the eject path does not call. It is removed. The Host regression now verifies that the original ship restores from 155 km surface distance after scene positions stop being available.
+- Host.Tests and Space.Tests Release builds passed locally with 0 warnings and 0 errors. The focused Actions run for the far-distance Host regression, Space scoop regressions, and next push gate are pending. No local database-backed tests or graphical-client verification were performed.
 
 ## 2026-10-24 CI 737 follow-up
 
 - Push gate run 737 (`486812c1`) confirmed the Eject live flow and all 22 selected structure scenarios passed. The Host test still asserted the old distance refusal, and the new Space tests failed before reaching scoop logic because their character names exceeded the two-space name rule; both test expectations are corrected locally, with focused Action reruns pending.
-- The same gate's E2E failure was `test_market.py` expecting named `KeyVal` rows from `GetStationAsks`. Main's later `56e0d37d` merge includes the market wire-shape correction. Its latest gate will determine the result.
+- The same gate's E2E failure was `test_market.py` expecting named `KeyVal` rows from `GetStationAsks`. Main's later `56e0d37d` merge includes the market wire-shape correction. The follow-up gate on the current head will verify the tuple correction.
 - The RPC inventory count discrepancy (expected 1,378, actual 1,382) was corrected on main by `35964099` and recorded by `284dfe95`; that path is outside this structure follow-up.
 - The updated `Eve.Services.Space.Tests` and `Eve.Host.Tests` Release builds both passed locally with 0 warnings and 0 errors. No local PostgreSQL tests were run.
 
+
+## 2026-10-24 CI run 740 and follow-up
+
+- CI run 740 on `56e0d37d` completed with the old structure regression and invalid Space fixture names, plus two Market protocol failures. The Market cases expected one and two notifications after orders that included an immediate fill; EveJS behavior emits a fill refresh as well as resting-order create/cancel refreshes. The current worktree now expects two notifications after the fill and sell order, three after cancel, and three in the PLEX flow.
+- The same run's headless job ended on `MachoError: macho error 2` for call id 19. The failure summary did not expose a pytest case name. Main's later `2a014844` commit updates the market seed and headless market walk; Actions run 745 is checking that path.
+- Main commits `61e84858` and `ff287b5e` correct the distant structure ejection expectation and shorten the invalid character fixtures; run 740 predates those updates.
+- Host.Tests, Space.Tests, Core.Tests, and Market.Tests Release builds passed locally with 0 warnings and 0 errors. No database-backed tests were run locally; the focused regressions will be checked on Actions.
 
 ## 2026-10-24 selected Actions rerun 238
 

@@ -117,7 +117,7 @@ def parse_test_failures(text: str) -> list[str]:
                 if name and name not in names:
                     names.append(name)
                 break
-    return names
+    return [name for name in names if not any(other.endswith(f"::{name}") for other in names if other != name)]
 
 
 def failure_log_tail(text: str, test_name: str) -> list[str]:

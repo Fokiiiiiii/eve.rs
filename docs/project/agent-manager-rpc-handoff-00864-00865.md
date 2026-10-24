@@ -31,4 +31,5 @@ Regression test: `dotnet/tests/Eve.Host.Tests/AgentCatalogHostWireTests.cs` comp
 
 - Passed: `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -m:2 -p:UseSharedCompilation=false` (0 warnings, 0 errors on final build).
 - Passed: focused `AgentCatalogHostWireTests.Agent_rowset_and_epic_arc_message_mapping_are_returned_through_registered_host_wire` (1 passed, 0 skipped).
-- GitHub Actions checks are pending; results will be added after dispatch.
+- Passed: GitHub Actions run 40085965152, 368 Agent test; focused test passed, no failed tests/jobs.
+- Push-triggered `ci.yml` run 40085959477 for commit 2593e5fa was in progress when last checked.

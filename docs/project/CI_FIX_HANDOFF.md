@@ -633,3 +633,7 @@ Regression tests added: `DungeonWaveTests.A_system_owned_wave_waits_until_a_pilo
 
 - Agent run `40090624287` ended before tests started: the live selection repeated the `slow:` prefix for each comma-separated filename, while `agent-test.py` accepts it once for the whole list. No test result was produced by that run.
 - Corrected dispatch `40090893730` uses `slow:test_movement.py,test_undock.py,test_warp.py,test_jump.py` and is in progress. Do not count the earlier run as a pass.
+## 2026-10-24 CORE FIX 5 updated simulation regression push
+
+- Pushed `bd6ab6ef00c1c5667aef7c1ead3fba408f0281e0` after fetching and merging origin/main. It updates the stale auto-accept simulation test to assert the V24.01 second-`CmdDock` sequence, removes the duplicate test, and records the intentional difference from EveJS 261018.1 in favor of V24.01 and EveJS v0.12.9.
+- The focused Rust regression passed locally, as did Rust 1.94.1 formatting and workspace clippy. Push-triggered CI for this revision is being checked. Selected live run `40090893730` is still checking the production code for movement, undock, celestial warp and stargate jump.

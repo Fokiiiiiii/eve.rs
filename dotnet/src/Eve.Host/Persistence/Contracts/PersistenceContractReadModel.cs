@@ -552,7 +552,7 @@ public sealed class PersistenceContractReadModel : IContractReadModel
                     reader.GetInt64(22), reader.GetInt64(23), reader.GetInt64(24),
                     reader.GetInt64(25), reader.GetInt64(26), reader.GetInt64(27),
                     reader.GetString(28), reader.GetString(29), reader.GetInt32(31), reader.GetInt32(32),
-                    reader.IsDBNull(33) ? null : reader.GetInt32(33), reader.GetDouble(30)));
+                    reader.IsDBNull(33) ? null : reader.GetInt32(33), (double)reader.GetDecimal(30)));
             }
         }
 

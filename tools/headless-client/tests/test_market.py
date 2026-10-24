@@ -256,7 +256,7 @@ def test_docked_corporation_members_trade_at_an_eligible_upwell_structure():
         assert any(ref == 2 and amount == 100 for ref, amount in seller_journal), seller_journal
         assert any(ref == 54 and amount < 0 for ref, amount in seller_journal), seller_journal
         assert any(ref == 46 and amount < 0 for ref, amount in seller_journal), seller_journal
-        # The standing bid pays from escrow at placement; filling it does not charge a second purchase.
+        # The standing bid journals its reserve at placement (ref 42); filling it adds no second purchase debit.
         assert any(ref == 42 and amount == -100 for ref, amount in buyer_journal), buyer_journal
         assert any(ref == 46 and amount < 0 for ref, amount in buyer_journal), buyer_journal
         assert dbseed.isk_of(seller_character) - seller_isk == pytest.approx(sum(amount for _, amount in seller_journal))

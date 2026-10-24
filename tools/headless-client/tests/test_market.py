@@ -236,7 +236,16 @@ def test_docked_corporation_members_trade_at_an_eligible_upwell_structure():
         assert all(_number(_field(row, "locationID")) == structure_id for row in bought + sold)
 
         assert dbseed.quantity_at(buyer_character, structure_id, TRITANIUM) == 2
-        assert dbseed.quantity_at(seller_character, structure_id, TRITANIUM) == 2
+        # The open order holds its unfilled stock in market escrow until cancellation.
+        assert dbseed.quantity_at(seller_character, structure_id, TRITANIUM) == 0
+        escrow_quantity = dbseed.sql(
+            f"select coalesce(sum(i.quantity), 0) "
+            f"from {dbseed.schema('MARKET')}.orders o "
+            f"join {dbseed.schema('INVENTORY')}.items i on i.id = o.escrow_item_id "
+            f"where o.id = {int(ask_id)} and o.state = 0 "
+            f"and i.owner_id = {int(seller_character)} and i.type_id = {TRITANIUM}"
+        )
+        assert int(escrow_quantity) == 2
 
         seller_journal = _journal_since(seller_character, seller_journal_at)
         buyer_journal = _journal_since(buyer_character, buyer_journal_at)

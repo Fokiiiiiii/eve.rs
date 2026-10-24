@@ -32,6 +32,7 @@ public sealed partial class ConfigService(
     private const long AllianceTypeId = 16159;
     private const long CharacterTypeId = 1373;
     private const int MaximumRequestedIds = 500;
+    private const int MaximumCachedOwnerIds = 10_000;
 
     [Method("GetStationSolarSystemsByOwner")]
     public PyValue GetStationSolarSystemsByOwner(ServiceCall call)
@@ -94,7 +95,7 @@ public sealed partial class ConfigService(
     [Method("GetMultiOwnersEx")]
     public async ValueTask<PyValue> GetMultiOwnersEx(ServiceCall call)
     {
-        var ids = RequestedIds(call.Arg(0));
+        var ids = RequestedIds(call.Arg(0), agentOwners: agentOwners);
         var nonAgentIds = agentOwners is null ? ids : ids.Where(id => !agentOwners.ContainsKey(id)).ToArray();
         var corporationById = nonAgentIds.Length == 0
             ? new Dictionary<long, Corporation>()
@@ -247,7 +248,10 @@ public sealed partial class ConfigService(
         return TupleSet(LocationColumns, rows);
     }
 
-    private static long[] RequestedIds(PyValue value, bool includeZero = false)
+    private static long[] RequestedIds(
+        PyValue value,
+        bool includeZero = false,
+        IReadOnlyDictionary<long, AgentOwnerInfo>? agentOwners = null)
     {
         var items = value switch
         {
@@ -255,10 +259,11 @@ public sealed partial class ConfigService(
             PyTuple tuple => tuple.Items,
             _ => throw MachoErrors.ThrowUserError("CONFIG_IDENTIFIER_LIST_INVALID"),
         };
-        if (items.Count > MaximumRequestedIds)
+        if (items.Count > (agentOwners is null ? MaximumRequestedIds : MaximumCachedOwnerIds))
             throw MachoErrors.ThrowUserError("CONFIG_BULK_LIMIT_EXCEEDED");
 
         var ids = new long[items.Count];
+        var databaseIdCount = 0;
         for (var index = 0; index < items.Count; index++)
         {
             var id = items[index] switch
@@ -269,6 +274,8 @@ public sealed partial class ConfigService(
             };
             if (id < 0 || id == 0 && !includeZero)
                 throw MachoErrors.ThrowUserError("CONFIG_IDENTIFIER_INVALID");
+            if (agentOwners?.ContainsKey(id) != true && ++databaseIdCount > MaximumRequestedIds)
+                throw MachoErrors.ThrowUserError("CONFIG_BULK_LIMIT_EXCEEDED");
             ids[index] = id;
         }
         return ids.Distinct().ToArray();

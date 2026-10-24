@@ -101,7 +101,6 @@ def parse_test_failures(text: str) -> list[str]:
     patterns = (
         re.compile(r"^\[agent-test failure\]\s+(.+?)\s*$"),
         re.compile(r"^\s*FAILED\s+(.+?)(?:\s+-\s+.*)?$"),
-        re.compile(r"^_{3,}\s*(.+?)\s*_{3,}\s*$"),
         re.compile(r"^\s*Failed\s+(.+?)(?:\s+\[[^\]]+\])?\s*$"),
         re.compile(r"^\s*test\s+(.+?)\s+\.\.\.\s+FAILED\s*$"),
         re.compile(r"^----\s+(.+?)\s+stdout ----\s*$"),
@@ -117,7 +116,8 @@ def parse_test_failures(text: str) -> list[str]:
                 if name and name not in names:
                     names.append(name)
                 break
-    return names
+    summary_names = {name.rsplit("::", 1)[-1] for name in names if "::" in name}
+    return [name for name in names if "::" in name or name not in summary_names]
 
 
 def failure_log_tail(text: str, test_name: str) -> list[str]:

@@ -1,3 +1,6 @@
+using Eve.Marshal;
+using Eve.Services;
+
 namespace Eve.Host.Tests;
 
 public sealed class XmppHostConfigurationTests
@@ -43,15 +46,17 @@ public sealed class XmppHostConfigurationTests
                 Environment.SetEnvironmentVariable(name, value);
         }
     }
+
     [Fact]
-    public async Task Xmpp_chat_manager_is_registered_when_the_listener_is_disabled()
+    public async Task Xmpp_chat_manager_is_registered_and_returns_the_hostname_when_the_listener_is_disabled()
     {
-        var names = new[] { "EVE_PG_URL", "EVE_XMPP_ENABLED", "EVE_SIM" };
+        var names = new[] { "EVE_PG_URL", "EVE_XMPP_ENABLED", "EVE_XMPP_DOMAIN", "EVE_SIM" };
         var previous = names.ToDictionary(name => name, Environment.GetEnvironmentVariable, StringComparer.Ordinal);
         try
         {
             Environment.SetEnvironmentVariable("EVE_PG_URL", null);
             Environment.SetEnvironmentVariable("EVE_XMPP_ENABLED", "false");
+            Environment.SetEnvironmentVariable("EVE_XMPP_DOMAIN", "chat.example");
             Environment.SetEnvironmentVariable("EVE_SIM", "off");
 
             var host = await HostComposition.BuildAsync(HostConfiguration.Read());
@@ -60,6 +65,13 @@ public sealed class XmppHostConfigurationTests
                 var chat = host.Registry.Lookup("XmppChatMgr");
                 Assert.NotNull(chat);
                 Assert.True(chat!.HasMethod("Hostname"));
+                var result = await chat.CallAsync(new ServiceCall
+                {
+                    Method = "Hostname",
+                    Args = [],
+                    Session = new ClientSession(),
+                });
+                Assert.Equal(new PyStr("chat.example"), result);
             }
             finally
             {
@@ -72,5 +84,4 @@ public sealed class XmppHostConfigurationTests
                 Environment.SetEnvironmentVariable(name, value);
         }
     }
-
 }

@@ -174,6 +174,19 @@ def test_a_ship_warps_to_a_gate_and_jumps_as_the_reference_did():
             problems.append(f"{where}: the session did not change")
         elif abs(change_ours - change_theirs) > TOLERANCE:
             problems.append(f"{where}: the session changed after {change_ours} s, in the recording after {change_theirs} s")
+        if who.session is None:
+            problems.append(f"{where}: no client session snapshot after the change")
+        else:
+            current = who.session.session_init
+            for key, expected in (
+                ("solarsystemid", next_system),
+                ("solarsystemid2", next_system),
+                ("locationid", next_system),
+                ("stationid", None),
+                ("structureid", None),
+            ):
+                if current.get(key) != expected:
+                    problems.append(f"{where}: session {key} is {current.get(key)!r}, expected {expected!r}")
 
         # the ballpark of the next system
         where = "bind the ballpark of the next system"
@@ -182,6 +195,10 @@ def test_a_ship_warps_to_a_gate_and_jumps_as_the_reference_did():
         if error is not None:
             problems.append(f"{where}: error {base.brief(error)}")
             assert problems == [], "\n".join(problems[:40])
+        else:
+            answer = describe(raw)
+            if shape(answer) != shape(recorded["ok"]):
+                problems.append(f"{where}: answered {base.brief(answer)} in place of {base.brief(recorded['ok'])}")
         landed = raw
         bound = wait_quietly(who, 4.0)
         theirs = collapse(recorded["events"])[:5]

@@ -14,4 +14,6 @@ public interface ILookupDirectory
     ValueTask<IReadOnlyList<LookupFaction>> FactionsAsync(CancellationToken cancellationToken);
     ValueTask<IReadOnlyList<LookupLocation>> LocationsByGroupAsync(int groupId, CancellationToken cancellationToken) =>
         ValueTask.FromResult<IReadOnlyList<LookupLocation>>([]);
+    ValueTask<IReadOnlyList<LookupType>> TypesAsync(CancellationToken cancellationToken) =>
+        ValueTask.FromResult<IReadOnlyList<LookupType>>([]);
 }

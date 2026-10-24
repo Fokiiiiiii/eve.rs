@@ -412,16 +412,15 @@ public sealed class StructureControlBackendTests
     }
 
     /// <summary>
-    /// The return to the pilot's own ship after a boarding from space (ST-23): the simulation no longer answers the pilot for its ship once it boards, so the place
-    /// the pilot's ship had when it boarded is what the return measures. Within the return distance, the ship comes back; beyond it, it is refused.
+    /// Ejection restores the pilot's original ship; it is not a second boarding action and does not check distance to the structure.
     /// </summary>
     [PgFact]
-    public async Task A_ship_boarded_from_space_returns_to_its_pilot_from_the_place_it_boarded_at()
+    public async Task A_ship_boarded_from_space_returns_to_its_pilot_when_near_the_structure()
     {
         await using var f = await Fixture.CreateAsync(withSpaceItems: true);
         var session = await f.FlyingSessionAsync(40);
         var ship = session.GetInt("shipid")!.Value;
-        // 2 000 m of surface from the Astrahus (radius 45 000 m) and the ship (50 m): inside the 6 500 m a ship may return from
+        // 2 000 m of surface from the Astrahus; the simulation stops reporting positions after boarding.
         f.Sim.PositionAnswer = [45_000d + 50d + 2_000d, 0d, 0d];
         await f.Backend.BoardStructureAsync(f.Call(session), Structure);
         Assert.Equal(Structure, session.GetInt("structureid"));
@@ -433,34 +432,22 @@ public sealed class StructureControlBackendTests
         Assert.Equal(ship, session.GetInt("shipid"));
     }
 
+    /// <summary>Ejection restores the controlled pilot's original ship; it is not a second boarding action.</summary>
     [PgFact]
-    public async Task A_ship_boarded_from_space_far_from_its_structure_is_not_returned_to_by_the_place_it_boarded_at()
+    public async Task A_ship_boarded_from_space_can_return_to_its_pilot_from_far_away()
     {
         await using var f = await Fixture.CreateAsync(withSpaceItems: true);
         var session = await f.FlyingSessionAsync(41);
         var ship = session.GetInt("shipid")!.Value;
-        // 155 000 m of surface away: outside the return distance
+        // 155 000 m of surface from the Astrahus.
         f.Sim.PositionAnswer = [200_000d, 0d, 0d];
         await f.Backend.BoardStructureAsync(f.Call(session), Structure);
         f.Sim.RefusePositions = true;
 
-        var refused = await Assert.ThrowsAsync<MachoWrappedException>(() => f.Backend.EjectFromStructureAsync(f.Call(session), ship).AsTask());
+        await f.Backend.EjectFromStructureAsync(f.Call(session), ship);
 
-        Assert.Contains("RETURN_SHIP_NOT_BOARDABLE", Texts(refused.Error.Payload));
-        Assert.NotNull(await f.OwnerAsync());
+        Assert.Null(await f.OwnerAsync());
+        Assert.Equal(ship, session.GetInt("shipid"));
     }
 
-    /// <summary>Every text inside a wrapped error's payload, joined (the refusal's words).</summary>
-    private static string Texts(PyValue value) => value switch
-    {
-        PyStr text => text.Value,
-        PyWString text => text.Value,
-        PyBytes text => global::System.Text.Encoding.UTF8.GetString(text.Value.Span),
-        PyTuple tuple => string.Join("|", tuple.Items.Select(Texts)),
-        PyList list => string.Join("|", list.Items.Select(Texts)),
-        PyDict dict => string.Join("|", dict.Entries.SelectMany(entry => new[] { Texts(entry.Key), Texts(entry.Value) })),
-        PyObjectEx ex => string.Join("|", new[] { Texts(ex.Header) }.Concat(ex.List.Select(Texts)).Concat(ex.Dict.SelectMany(entry => new[] { Texts(entry.Key), Texts(entry.Value) }))),
-        PyObject obj => Texts(obj.Args),
-        _ => "",
-    };
 }

@@ -391,9 +391,15 @@ CI run 672 on `1669e6dc` failed the structure market Host test because the fixtu
 - This change opens unanchored Upwell hull scoop to any pilot while preserving Starbase hull authorization and the stored-corporation integrity check. It also removes only Eject's distance condition; it still validates the original ship, owner, type, location, flag, and solar-system state before restoring the session.
 - The `Eve.Services.Space.Tests` Release build passed locally with 0 warnings and 0 errors. Selected Actions checks will be recorded after completion; local PostgreSQL tests were not run.
 
-## 2026-10-24 CI run 738 market follow-up
+## 2026-10-24 CI run 738 follow-up
 
-- The newest completed main failure inspected here was run 736 on `e831a724`: EjectFromStructure refused the original ship and the RPC inventory test expected 1,378 methods instead of 1,382. Main now contains the structure return correction in `2de5df10` and inventory count update in `9414192e`. Run 737 also exposed a headless station-ask assertion that treated a four-element wire tuple as a KeyVal; current main still needs this test correction.
-- V24.01 `MarketBase.PopulateAsksForMyRange` converts `GetStationAsks` tuple values with `ConvertTuplesToBestByOrders`. The headless assertion now checks the server tuple `(price, volRemaining, typeID, stationID)`, using the scenario's station ID.
-- EveJS v0.12.9 emits `OnOwnOrdersChanged` after a successful immediate buy fill. The notifier now sends that ephemeral orderID-zero refresh row with the filled quantity and current venue, and the Market RPC test checks its full marshalled packet. Host construction passes the shared clock to the notifier.
-- Host.Tests and Market.Tests Release builds passed locally with 0 warnings and 0 errors. No database-backed tests were run locally. Focused Actions and the push gate are pending; the graphical client was not used.
+- Run 738 (40043754414, sha 35964099) finished with four failing tests across three paths: the headless market test treated the four-field GetStationAsks tuple as a KeyVal; two Space scoop tests passed invalid character names to CharacterCreation (the fixtures exceeded CharacterNames.MaxSpaces=2); and a Host structure test expected far-away EjectFromStructure to refuse.
+- The market tuple assertion and EveJS-compatible immediate-fill notification are on main in 7dced4b3 (head 56e0d37d). V24.01 converts GetStationAsks tuples through ConvertTuplesToBestByOrders. EveJS v0.12.9 sends OnOwnOrdersChanged after an immediate fill, and MarketRpcTests checks the full marshalled refresh packet. Focused Agent runs 236 (Host RPC inventory) and 237 (Market immediate-fill RPC) passed.
+- The Space fixture names are shortened to valid names in the current worktree. Host.Tests and Space.Tests Release builds passed locally with 0 warnings and 0 errors. Main CI run 740 on 56e0d37d remained active at this update. Run 738 skipped eight speed-gated/slow headless cases.
+- No local database-backed tests were run.
+
+## 2026-10-24 structure ejection follow-up
+
+- V24.01 EjectFromStructure forwards the shipID as a session change; EveJS v0.12.9 restores restoreShipID without checking position or distance. The Host backend still requires the requested ship to match the stored original ship and validates its owner, type, system location, and space flag.
+- The unused CanReturnToStructureShipAsync helper encoded a distance check that the eject path does not call. It is removed. The Host regression now verifies that the original ship restores from 155 km surface distance after scene positions stop being available.
+- Host.Tests and Space.Tests Release builds passed locally with 0 warnings and 0 errors. The focused Actions run for the far-distance Host regression, Space scoop regressions, and next push gate are pending. No local database-backed tests or graphical-client verification were performed.

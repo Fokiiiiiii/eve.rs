@@ -3207,51 +3207,14 @@ Affected gates on the merged tree: Services.Core 652/652, Host 223/223, Space ho
 
 ## Direct trade (trademgr, 37a)
 
-Status: the server side is implemented and covered by `Eve.Trade.Tests` (9) and `Eve.Services.Station.Tests` (30). A
-headless-client walk with two pilots is in progress (see TODO 37a); the graphical client has not been driven.
+Status: server validation and custody cover the direct-trade item rules, batch staging and settlement. The two-pilot headless walk is checked through Actions; the graphical client has not been driven.
 
-- **What the server does.** `InitiateTrade` checks both pilots (docked, online, in the same place, not the same pilot, not in another
-  trade) and returns the trade as a `carbon.common.script.net.moniker.Moniker` (the shape `SkillMgr2Service` uses). The target gets
-  `OnTradeInitiate(initiatorCharID, moniker)`, as `pvptradesvc.py:42-50` expects. The bound trade serves `List`, `Add` (`qty` for a
-  part of a stack, `pvptradewnd`/`invControllers.py:1673-1691`), `MultiAdd`, `GetSelfInvItem`, `OfferMoney`, `MakeOffer` and `Abort`.
-- **Custody.** A staged item is moved into the trade container (its `locationID` is the trade id), as EVE.js does
-  (`tradeMgrService.js` `_stageItemIntoTrade`). The origin (location and flag) is stored. An abort returns it; a part of a stack is
-  merged back into the stack it came from, so the original item id returns.
-- **Completion.** When both pilots accept the same manifest (their ISK and the set of item ids), the items go to the other pilot's
-  docked hangar and the ISK moves in one PostgreSQL transaction, with one wallet journal entry per direction. The journal reference
-  type is `player_trading`, ESI ref type 1 (CCP eve-glue `JournalRefTypeEnumV2`, `wallet_journal_ref.py`). A pilot who no longer has the
-  ISK refuses the completion: the trade stays open, both acceptances are cleared and the items stay in custody.
-- **Restart and disconnect.** A host that stops with trades open ends them at start-up and returns the items
-  (`TradeAuthority.RecoverOpenAsync`). A pilot who disconnects ends the trade for both. EVE.js recovers durable trades instead;
-  eve.rs has no pilot connected to continue one, so the items go back.
-- **Trade ids.** A trade id is the container id, drawn from `trade.trade_ids` starting at 9 000 000 000 000 000, away from item ids.
-  It is a location for the items, so it must not collide with an item or a station.
-- **Where the rules are.** `Eve.Trade` (`TradeAuthority`, schema `trade`, migration `001_trade_sessions.sql`).
-  `Eve.Services.Station/TradeMgrService.cs` is the RPC layer only.
-
-**The manifest's item set.** The client builds `tradeItems=set(myItems) | set(herItems)` (`pvptradewnd.py:98`). EVE.js reads the
-set in both its header and its tail list, and reads each element as a plain id, an object with `itemID`, a packed row, or a row whose
-`line` starts with the id (`tradeMgrService.js:345-445`). eve.rs reads the same forms (`TradeMgrService.ManifestOf`, test
-`The_manifest_reads_every_form_of_a_trade_item_the_reference_accepts`).
-
-**The acceptance values.** `OnTradeOffer` carries one value per trader. The client reads only their truth
-(`pvptradewnd.py:126-139`, `bool(states[...])`), so eve.rs sends 0 or 1 where EVE.js sends the manifest or null. The window
-behaves the same. The 0/1 form is the difference, not the truth value.
-
-**The item-change diff.** EVE.js builds its item-change diff with the client's keys: owner 2, location 3, flag 4, quantity 5, stack
-size 9, singleton 10 (`characterState.js` `buildItemChangePayload`). For a non-singleton stack whose quantity equals its stack size,
-EVE.js sends only key 9 (`prefersStackSizeOnly`). eve.rs sends key 9 with the previous stack size for a changed stack, and keys 2, 3
-and 4 when the owner, location or flag changed. eve.rs sends one `OnItemChange` per item; EVE.js sends a batch `OnItemsChanged`. The
-client handles both (`invCache.py:219` and `invCache.py:229`).
-
-**Differences from EVE.js, all listed:**
-1. Staging from a ship's cargo or from a can is refused (`Only items in your hangar here can be offered.`). EVE.js accepts those
-   sources. Not built.
-2. No item tradability check. The client refuses non-tradable types (`is_tradable`, `invControllers.py:1681`); the server does not
-   check it yet, so a hand-made `Add` of such an item is accepted.
-3. A stack merged back into its source is announced as an `OnItemChange` with size 0 for the merged-away row. The EVE.js handling of
-   that case was not read; the live walk records what the client receives.
-4. `OnPrimingNeededForTradeItems` is sent to each pilot after a stage, with the staged item ids (`pvptradesvc.py:109-110`).
+- **Wire and client rules.** V24 sends `Add(itemID, sourceLocationID, qty?)` and `MultiAdd(itemIDs, sourceLocationID)`. `PlayerTrade.AddItems` refuses the active ship, Asset Safety items and types for which `is_tradable` is false (`invControllers.py:1667-1691`). The server repeats these checks and checks ownership, the selected source, and every ancestor location up to the character's docked location. Accessible nested inventory sources remain usable.
+- **Atomic staging.** Every item in a MultiAdd batch is checked before any item is moved. A refusal leaves staged items, persistence and notifications untouched. A batch has a 256 item limit.
+- **Custody and settlement.** Staging stores the original location and flag. Abort and startup recovery return staged items. Successful completion transfers a container and its descendants, plus the agreed ISK, in one transaction.
+- **Replies and notifications.** `OnTradeOffer` contains one null or manifest value per pilot, matching EveJS; the client reads each value by truth (`pvptradewnd.py:126-139`). The manifest contains trade container id, money and trade item set. `OfferMoney` notifies money before offer reset; mismatched `MakeOffer` resets the caller then broadcasts current offers; completion sends item changes before `OnTradeComplete`; abort sends item changes before `OnTradeCancel`. These event consumers are in `pvptradesvc.py:69-110` and `pvptradewnd.py:96-167`.
+- **Reference and deviations.** EveJS source-chain validation and staging are in `tradeMgrService.js:1200-1335,2019-2073`; its offer and abort ordering is in `:817-829,1068-1168,2075-2208`. eve.rs intentionally stages a validated batch in one transaction and transfers container descendants in the completion transaction. Its single-item `OnItemChange` events are consumed by `invCache.py:219,229`, which also handles batch changes.
+- **Implementation.** `Eve.Trade/TradeAuthority.cs` owns validation, staged custody, batch atomicity, recovery and settlement. `Eve.Services.Station/TradeMgrService.cs` parses the client arguments and emits the protocol events.
 
 ## Item locking (itemLocking, 37a)
 
@@ -5847,3 +5810,12 @@ Warp destination subjects from `Michelle.CmdWarpToStuff(subject, subjectID, **kw
 - Market cached-method scope follows EveJS: station asks use `stationid`, system asks and `GetOrders` use `solarsystemid2`, and PLEX book reads use `regionid`. The Host structure-read test checks the station scope metadata.
 - The external market-server paths in both EveJS snapshots use a region/type keyed order-book cache backed by persistent rows. `MarketRuntime.place_order` persists then invalidates scope caches and refreshes the region summary; `fill_order` commits the DB fill before in-memory scope invalidation, avoiding a rejected response after a committed fill. eve.rs keeps wallet, inventory and order settlement under its existing transaction owners.
 - Mechanics references: [EVE University Market](https://wiki.eveuniversity.org/Market) and [Station Trading](https://wiki.eveuniversity.org/Station_Trading) (redirects to Trading). The Host and live headless checks are pending; no graphical-client result is claimed.
+
+
+## Stargate jump after warp dropout (2026-10-24)
+
+The V24.01 client begins autopilot warp by recording the destination and calling `CmdWarpToStuffAutopilot(destinationID)` (`eve/client/script/parklife/autopilot.py:461-465`). It does not wait for the server's remaining coast simulation before attempting an ordinary stargate jump. Autopilot returns while the ship's ball is `DSTBALL_WARP` (`eve/client/script/parklife/autopilot.py:303-309`), then checks surface distance against `const.maxStargateJumpingDistance` and calls `CmdStargateJump(fromGate, toGate, session.shipid)` (`autopilot.py:337-357`). The manual gate path uses that same interaction range (`eve/client/script/ui/services/menusvc.py:3029-3032`) and calls the same RPC shape (`stargate/client/gateJumpSvc.py:122-125`). EVE University documents the 2,500 m gate range and that a gate can be activated after warp exits ([Stargates](https://wiki.eveuniversity.org/Stargates), [Warp mechanics](https://wiki.eveuniversity.org/Warp_mechanics)).
+
+eve.rs therefore permits the simulation's post-warp `Coasting` phase to jump once authoritative surface distance is within range, while retaining `IN_WARP` during alignment and warp itself. It clears the old coast flight when the jump is accepted so that it cannot resume.
+
+EveJS v0.12.9 adds a `WARP_LANDING_PENDING` refusal in `server/src/space/transitions.js:1754-1760, 4124-4321` while `hasPendingPilotWarpLanding` sees `pilotWarpVisibilityHandoff.landingPending` (`server/src/space/runtime/destinyDeliveryEligibility.js:61-69`; also `server/src/space/runtime/spaceRuntime/stargateJump.js:76-81`). The V24.01 callsites expose no such handoff condition, so eve.rs follows the client-visible post-warp range rule. EveJS's `Handle_CmdStargateJump` still validates ship ID and returns its bound result (`server/src/services/ship/beyonceService.js:4196-4233`). The v0.12.9 isolated test list has no stargate jump case, so this comparison is source-based; no EveJS end-to-end run was available.

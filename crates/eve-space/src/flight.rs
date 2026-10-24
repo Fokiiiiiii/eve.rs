@@ -93,6 +93,11 @@ impl Flight {
         matches!(self.phase, Phase::Warping { .. })
     }
 
+    /// Whether the ship has dropped out of warp and is decelerating.
+    pub fn is_coasting(&self) -> bool {
+        matches!(self.phase, Phase::Coasting { .. })
+    }
+
     /// The ship keeps flying at its top speed towards the destination while it lines up.
     fn fly(&self, ship: &mut Ship, span: i64) {
         if span <= 0 {

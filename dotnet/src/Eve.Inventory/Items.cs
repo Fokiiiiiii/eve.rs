@@ -280,6 +280,36 @@ public sealed class PgItemStore
             await invalidator.InvalidateAsync(connection, transaction, id, ShipContractInvalidationReason.CorporationHangar, cancellationToken);
     }
 
+    /// <summary>Locks and returns an item and all inventory items nested inside it.</summary>
+    public async Task<IReadOnlyList<Item>> TreeAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long rootId, CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand($"""
+            WITH RECURSIVE tree(id, path) AS (
+                SELECT id, ARRAY[id] FROM {_schema}.items WHERE id = $1
+                UNION ALL
+                SELECT child.id, tree.path || child.id
+                FROM {_schema}.items AS child
+                JOIN tree ON child.location_id = tree.id
+                WHERE NOT child.id = ANY(tree.path)
+            )
+            SELECT item.id, item.type_id, item.owner_id, item.location_id, item.flag, item.quantity, item.singleton,
+                   item.custom_name, item.blueprint_copy, item.blueprint_locked, item.blueprint_runs,
+                   item.material_efficiency, item.time_efficiency, item.custom_info
+            FROM tree
+            JOIN {_schema}.items AS item ON item.id = tree.id
+            ORDER BY cardinality(tree.path), item.id
+            FOR UPDATE OF item
+            """, connection, transaction)
+        {
+            Parameters = { new() { Value = rootId } },
+        };
+        var items = new List<Item>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+            items.Add(Read(reader));
+        return items;
+    }
+
     public async Task MoveToOwnerAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long id, long ownerId, long locationId, int flag, CancellationToken cancellationToken = default)
     {
         var item = await LockAndGetAsync(connection, transaction, id, cancellationToken);

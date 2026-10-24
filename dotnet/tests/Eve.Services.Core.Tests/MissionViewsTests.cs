@@ -50,7 +50,11 @@ public class MissionViewsTests
     {
         var view = new HeldMissionView(Kill(), new AgentMissionRecord(1, 2, AgentMissionState.Accepted,
             new AgentMissionContent(9301, 57289, "Kill Step", "", false), null, null, null, null, null, null), 140982);
-        var fields = MissionViews.Briefing(view).Entries.ToDictionary(entry => ((PyStr)entry.Key).Value, entry => entry.Value);
+        var agent = new AgentMissionAgentData(
+            2, 8, 24, 3, null, 1000036, false, true, 17, false, "courier", "Courier",
+            18, 1531, 1, 30000165, 416, 4239, 20520);
+        var fields = MissionViews.Briefing(agent, view, DateTimeOffset.UnixEpoch)
+            .Entries.ToDictionary(entry => ((PyStr)entry.Key).Value, entry => entry.Value);
         Assert.Equal(57289, ((PyInt)fields["Mission Title ID"]).Value);
         Assert.Equal(140982, ((PyInt)fields["Mission Briefing ID"]).Value);
     }

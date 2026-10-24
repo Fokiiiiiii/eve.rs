@@ -22,5 +22,5 @@ PacketDispatcher now charges contractProxy and corpRegistry/corporation against 
 - Implementation commit `af9cd4029eaead6064f7c95cb2e3e91a309cd812` was pushed after fetching and merging `origin/main` (then already up to date).
 - Focused Actions run 40069789991 passed with no failed tests or jobs.
 - The push-triggered `ci.yml` run 40069784822 was cancelled when a later handoff update was pushed; its required gate reported `.NET (space tests 2/2)` cancelled, while the other jobs succeeded.
-- On the latest merged `main` (`3f7ab3de`), the local focused test passed (1 passed, 0 skipped); focused Actions run 40072174572 passed with no failed tests or jobs.
+- At `3f7ab3de`, after merging the then-current `origin/main`, the local focused test passed (1 passed, 0 skipped); focused Actions run 40072174572 passed with no failed tests or jobs.
 - `ci-status.py failures 3f7ab3de` reported no push-triggered `ci.yml` run for that merge commit.

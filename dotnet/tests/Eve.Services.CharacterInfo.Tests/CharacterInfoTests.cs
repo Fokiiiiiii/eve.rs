@@ -580,6 +580,7 @@ public class CharMgrTests
         var fields = Fields(records.Items[0]);
         Assert.Equal(new PyStr("A saved bio"), fields["description"]);
         Assert.Equal(await Rig.CallAsync(rig.CharMgr, session, "GetCharacterCreationDate", Id(characterId)), fields["startDateTime"]);
+        Assert.Equal(Py.Number(-2.5), fields["securityRating"]);
         Assert.Equal(Py.Number(-2.5), fields["securityStatus"]);
         Assert.Equal(Id(9876), fields["medal1GraphicID"]);
     }

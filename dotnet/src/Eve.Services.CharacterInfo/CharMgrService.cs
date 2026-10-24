@@ -133,7 +133,7 @@ public sealed partial class CharMgrService(
             ("createDateTime", FileTime(c.CreatedAt)),
             ("startDateTime", FileTime(c.CreatedAt)),
             ("description", new PyStr(description)),
-            ("securityRating", new PyInt(0)),
+            ("securityRating", Py.Number(securityStatus)),
             ("securityStatus", Py.Number(securityStatus)),
             ("bounty", new PyInt(0)),
             ("title", new PyStr("")),

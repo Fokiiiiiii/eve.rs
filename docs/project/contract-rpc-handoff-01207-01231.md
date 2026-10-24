@@ -24,7 +24,7 @@ The Host route receives the V24 `contracts.contractStruct.ContractStruct` object
 
 ## Additional full-tree caller evidence
 
-The client wrappers at `contracts.py:711-719` preserve distinct replies: `GetItemsInContainer` sorts item rows by type name, `GetNumItemsInContainers` returns a mapping consumed as item counts, and `GetItemsInDockableLocation` returns the dockable inventory set. Full-tree consumers are `createContractWnd.py:92-96, 194-198, 933-937, 1320-1324, 1343-1347, 1647-1651`: inventory selection/revalidation reads the station item set; multi-contract creation sums container counts; per-container inspection uses each child row's `itemID`, `typeID`, and `stacksize`. EveJS v0.12.9 handles item rows via `contractProxyService.js:869-875, 882-888`; its container counter at `648-677` returns only readable containers with positive contents, using `canReadContractContainer` before counting. The existing Host inventory service centralizes hangar and corporation visibility in `InvBrokerService.ContentsAsync` (`dotnet/src/Eve.Services.Inventory/InvBrokerService.cs:237-274`) and its corporation access path (`:196-235`). These RPCs still need a real Host wire test and authoritative inventory wiring.
+The client wrappers at `contracts.py:711-719` preserve distinct replies: `GetItemsInContainer` sorts item rows by type name, `GetNumItemsInContainers` returns a mapping consumed as item counts, and `GetItemsInDockableLocation` returns the dockable inventory set. Full-tree consumers are `createContractWnd.py:92-96, 194-198, 933-937, 1320-1324, 1343-1347, 1647-1651`: inventory selection/revalidation reads the station item set; multi-contract creation sums container counts; per-container inspection uses each child row's `itemID`, `typeID`, and `stacksize`. EveJS v0.12.9 handles item rows via `contractProxyService.js:869-875, 882-888`; its container counter at `648-677` returns only readable containers with positive contents, using `canReadContractContainer` before counting. The existing Host inventory service centralizes hangar and corporation visibility in `InvBrokerService.ContentsAsync` (`dotnet/src/Eve.Services.Inventory/InvBrokerService.cs:237-274`) and its corporation access path (`dotnet/src/Eve.Services.Inventory/InvBrokerService.cs:196-235`). These RPCs still need a real Host wire test and authoritative inventory wiring.
 
 ## Verification
 
@@ -33,12 +33,13 @@ The Host regression is `Contract_reads_and_mutations_are_dispatched_through_the_
 - Core build after CollectMyPageInfo and assignment correction: passed, zero warnings/errors.
 - Host build after assignment correction: passed, zero warnings/errors.
 - Agent test 40101123016 for pushed tip 5273c3dc passed with no failed jobs.
-- Latest code commit a30181a2, including the CreateContract wire case, was pushed with origin/main merged at 24cec7ac; focused Agent test 40101711525 is pending.
+- Latest code commit a30181a2, including the CreateContract wire case, was pushed with origin/main merged at 24cec7ac; Agent test 40101711525 passed with no failed jobs.
+- Handoff commit 81eb74e8 was merged with origin/main and pushed at c79cd86b; subsequent origin/main fixes were merged and pushed at cc34becb. No push-triggered ci.yml run was found for cc34becb. Focused Agent test 40102279877 for the Host RPC registry inventory on c79cd86b is in progress.
 - Focused Host test after CollectMyPageInfo and assignment correction: passed (1 passed, 0 skipped).
 - Focused Host test after adding the CreateContract ContractStruct case: passed (1 passed, 0 skipped).
 - No PostgreSQL connection was used.
 - Agent test run 40098916457 for push 755a38a2 passed; Agent test run 40099756130 for push 23db167f passed.
-- Local verification was run on code commit 835f8a1f before the origin/main merge; pushed tip after that merge was d89e97b2. The focused Actions runs listed above passed. Push-triggered ci.yml run 40098905958 remained in progress at last check; no ci.yml run was found for 23db167f by `ci-status.py failures`.
+- Local verification was run on code commit 835f8a1f before the origin/main merge; pushed tip after that merge was d89e97b2. The focused Actions runs listed above passed. Push-triggered ci.yml run 40098905958 for 755a38a2 completed with failures: the Host RPC inventory expected 1385 methods but found 1393; `test_a_corporation_unanchors_and_scoops_its_control_tower`, `CharacterContactNotepadHostTests.Bound_inventory_add_accepts_client_quantity_and_transport_kwargs_and_moves_the_item`, and `ConfigServiceTests.Batched_config_lookups_refuse_more_than_500_raw_ids` also failed. Later pushes include fixes in undock, inventory, and config paths. Runs 40101115215 (5273c3dc) and 40101705581 (24cec7ac) were active at last poll; no PostgreSQL connection was used locally.
 
 ## Remaining assigned rows
 

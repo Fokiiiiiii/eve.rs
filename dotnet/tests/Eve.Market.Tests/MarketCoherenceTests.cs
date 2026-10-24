@@ -202,7 +202,7 @@ public class MarketCoherenceTests
     {
         await using var r = await TradeRig.Create();
         var sessions = new CharacterSessions();
-        r.Notifier = new MarketNotifier(r.Wallets, sessions);
+        r.Notifier = new MarketNotifier(r.Wallets, sessions, () => r.Now);
         var seller = await ViewerAsync(r, sessions, await r.Actor("Seller", 10_000m), 231);
         var buyer = await ViewerAsync(r, sessions, await r.Actor("Buyer"), 232);
         var placedAt = r.Now;

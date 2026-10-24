@@ -6,7 +6,11 @@ using Npgsql;
 namespace Eve.Trade;
 
 /// <summary>A trade the rules refuse. The message is what the pilots are told (the client shows it as a notification).</summary>
-public sealed class TradeRefusedException(string message) : Exception(message);
+public sealed class TradeRefusedException(string message, string? errorName = null, IReadOnlySet<int>? typeIds = null) : Exception(message)
+{
+    public string? ErrorName { get; } = errorName;
+    public IReadOnlySet<int> TypeIds { get; } = typeIds ?? new HashSet<int>();
+}
 
 /// <summary>
 /// The trade as it stands: the two traders in the order the client lists them (initiator first), what each offers in ISK, who has
@@ -63,10 +67,11 @@ public sealed class TradeAuthority
     private readonly PgItemStore _items;
     private readonly WalletTransactions _wallets;
     private readonly PgWalletStore _balances;
+    private readonly ItemTypeCatalog _itemTypes;
     private readonly Func<long> _nowMs;
     private readonly string _schema;
 
-    public TradeAuthority(NpgsqlDataSource source, PgItemStore items, WalletTransactions wallets, PgWalletStore balances, Func<long> nowMs, string schema = DefaultSchema)
+    public TradeAuthority(NpgsqlDataSource source, PgItemStore items, WalletTransactions wallets, PgWalletStore balances, Func<long> nowMs, string schema = DefaultSchema, ItemTypeCatalog? itemTypes = null)
     {
         if (!System.Text.RegularExpressions.Regex.IsMatch(schema, "^[a-z_][a-z0-9_]{0,62}$"))
             throw new ArgumentException($"not a usable schema name: {schema}", nameof(schema));
@@ -74,6 +79,7 @@ public sealed class TradeAuthority
         _items = items;
         _wallets = wallets;
         _balances = balances;
+        _itemTypes = itemTypes ?? throw new ArgumentNullException(nameof(itemTypes));
         _nowMs = nowMs;
         _schema = schema;
     }
@@ -157,54 +163,119 @@ public sealed class TradeAuthority
     /// Puts an item of one trader into the trade's container. <paramref name="quantity"/> 0 (or a singleton, or the whole stack) moves the item;
     /// a smaller quantity splits the stack and moves the new part. Any change clears both acceptances.
     /// </summary>
-    public async Task<TradeChange> StageAsync(long tradeId, long characterId, long itemId, long quantity, CancellationToken cancellationToken = default)
+    public Task<TradeChange> StageAsync(long tradeId, long characterId, long itemId, long quantity, CancellationToken cancellationToken = default) =>
+        StageAsync(tradeId, characterId, itemId, quantity, 0, 0, cancellationToken);
+
+    public Task<TradeChange> StageAsync(long tradeId, long characterId, long itemId, long quantity, long sourceLocationId, long activeShipId, CancellationToken cancellationToken = default) =>
+        StageItemsAsync(tradeId, characterId, [(itemId, quantity)], sourceLocationId, activeShipId, cancellationToken);
+
+    /// <summary>Stages a batch only after every item and source chain has passed validation, in one transaction.</summary>
+    public Task<TradeChange> StageManyAsync(long tradeId, long characterId, IReadOnlyList<long> itemIds, long sourceLocationId, long activeShipId, CancellationToken cancellationToken = default)
+    {
+        if (itemIds.Count is 0 or > 256 || itemIds.Distinct().Count() != itemIds.Count)
+            throw new TradeRefusedException("The trade item list is invalid.");
+        return StageItemsAsync(tradeId, characterId, itemIds.Select(id => (id, 0L)).ToArray(), sourceLocationId, activeShipId, cancellationToken);
+    }
+
+    private async Task<TradeChange> StageItemsAsync(long tradeId, long characterId, IReadOnlyList<(long ItemId, long Quantity)> requested,
+        long sourceLocationId, long activeShipId, CancellationToken cancellationToken)
     {
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-        var view = await ReadViewAsync(connection, transaction, tradeId, cancellationToken) ?? throw new TradeRefusedException("Trade session is no longer available.");
+        var view = await ReadViewAsync(connection, transaction, tradeId, cancellationToken)
+            ?? throw new TradeRefusedException("Trade session is no longer available.");
         RequireOpenParticipant(view, characterId);
 
-        var item = await _items.LockAndGetAsync(connection, transaction, itemId, cancellationToken)
-            ?? throw new TradeRefusedException("That item is no longer there.");
-        if (item.OwnerId != characterId || item.LocationId != view.LocationId || item.Flag != ItemFlags.Hangar)
-            throw new TradeRefusedException("Only items in your hangar here can be offered.");
+        var selected = new List<(Item Item, long Quantity, HashSet<long> SourceChain)>(requested.Count);
+        foreach (var (itemId, quantity) in requested)
+        {
+            var item = await _items.LockAndGetAsync(connection, transaction, itemId, cancellationToken)
+                ?? throw new TradeRefusedException("That item is no longer there.");
+            var chain = await ValidateOfferedItemAsync(connection, transaction, view, characterId, item, sourceLocationId, activeShipId, cancellationToken);
+            selected.Add((item, quantity, chain));
+        }
+        await _itemTypes.GetAsync(selected.Select(value => value.Item.TypeId).Distinct(), cancellationToken).ConfigureAwait(false);
+        var nonTradableTypes = new HashSet<int>();
+        foreach (var (item, _, _) in selected)
+            if (!await _itemTypes.IsTradableAsync(item.TypeId, cancellationToken).ConfigureAwait(false))
+                nonTradableTypes.Add(item.TypeId);
+        if (nonTradableTypes.Count > 0)
+            throw new TradeRefusedException("This item cannot be traded.", "ItemCannotBeTraded", nonTradableTypes);
+        for (var i = 0; i < selected.Count; i++)
+        for (var j = i + 1; j < selected.Count; j++)
+        {
+            if (selected[i].SourceChain.Contains(selected[j].Item.Id) || selected[j].SourceChain.Contains(selected[i].Item.Id))
+                throw new TradeRefusedException("A trade batch cannot contain both a container and its contents.");
+        }
 
         var moves = new List<TradeItemMove>();
-        Item staged;
-        long? sourceId = null;
-        if (item.Singleton || quantity <= 0 || quantity >= item.Quantity)
+        foreach (var (item, quantity, _) in selected)
         {
-            await _items.MoveAsync(connection, transaction, item.Id, tradeId, ItemFlags.Hangar, cancellationToken);
-            staged = await _items.LockAndGetAsync(connection, transaction, item.Id, cancellationToken) ?? throw new InvalidOperationException("the staged item vanished");
-            moves.Add(new TradeItemMove(staged, item.OwnerId, item.LocationId, item.Flag, item.Quantity));
-        }
-        else
-        {
-            staged = await _items.MoveStackAsync(connection, transaction, item, quantity, characterId, tradeId, ItemFlags.Hangar, cancellationToken);
-            sourceId = item.Id;
-            var source = await _items.LockAndGetAsync(connection, transaction, item.Id, cancellationToken)
-                ?? throw new InvalidOperationException("the split stack vanished");
-            moves.Add(new TradeItemMove(source, source.OwnerId, source.LocationId, source.Flag, item.Quantity));
-            moves.Add(new TradeItemMove(staged, characterId, item.LocationId, item.Flag, 0));
-        }
-
-        await using (var stage = new NpgsqlCommand(
-            $"INSERT INTO {_schema}.staged_items(item_id, trade_id, owner_id, source_item_id, origin_location_id, origin_flag) VALUES ($1, $2, $3, $4, $5, $6)",
-            connection, transaction)
-        {
-            Parameters =
+            Item staged;
+            long? sourceId = null;
+            if (item.Singleton || quantity <= 0 || quantity >= item.Quantity)
             {
-                new() { Value = staged.Id }, new() { Value = tradeId }, new() { Value = characterId },
-                new() { Value = (object?)sourceId ?? DBNull.Value }, new() { Value = item.LocationId }, new() { Value = item.Flag },
-            },
-        })
-        {
+                await _items.MoveAsync(connection, transaction, item.Id, tradeId, ItemFlags.Hangar, cancellationToken);
+                staged = await _items.LockAndGetAsync(connection, transaction, item.Id, cancellationToken)
+                    ?? throw new InvalidOperationException("the staged item vanished");
+                moves.Add(new TradeItemMove(staged, item.OwnerId, item.LocationId, item.Flag, item.Quantity));
+            }
+            else
+            {
+                staged = await _items.MoveStackAsync(connection, transaction, item, quantity, characterId, tradeId, ItemFlags.Hangar, cancellationToken);
+                sourceId = item.Id;
+                var source = await _items.LockAndGetAsync(connection, transaction, item.Id, cancellationToken)
+                    ?? throw new InvalidOperationException("the split stack vanished");
+                moves.Add(new TradeItemMove(source, source.OwnerId, source.LocationId, source.Flag, item.Quantity));
+                moves.Add(new TradeItemMove(staged, characterId, item.LocationId, item.Flag, 0));
+            }
+
+            await using var stage = new NpgsqlCommand(
+                $"INSERT INTO {_schema}.staged_items(item_id, trade_id, owner_id, source_item_id, origin_location_id, origin_flag) VALUES ($1, $2, $3, $4, $5, $6)",
+                connection, transaction)
+            {
+                Parameters =
+                {
+                    new() { Value = staged.Id }, new() { Value = tradeId }, new() { Value = characterId },
+                    new() { Value = (object?)sourceId ?? DBNull.Value }, new() { Value = item.LocationId }, new() { Value = item.Flag },
+                },
+            };
             await stage.ExecuteNonQueryAsync(cancellationToken);
         }
+
         await ClearAcceptanceAsync(connection, transaction, tradeId, cancellationToken);
-        var after = await ReadViewAsync(connection, transaction, tradeId, cancellationToken) ?? throw new InvalidOperationException("the trade vanished");
+        var after = await ReadViewAsync(connection, transaction, tradeId, cancellationToken)
+            ?? throw new InvalidOperationException("the trade vanished");
         await transaction.CommitAsync(cancellationToken);
         return new TradeChange(after, moves);
+    }
+
+    private async Task<HashSet<long>> ValidateOfferedItemAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, TradeView view,
+        long characterId, Item item, long sourceLocationId, long activeShipId, CancellationToken cancellationToken)
+    {
+        if (item.OwnerId != characterId)
+            throw new TradeRefusedException("That item is not available to trade.");
+        if (item.Id == activeShipId && activeShipId > 0)
+            throw new TradeRefusedException("People aboard the active ship cannot trade it.", "PeopleAboardShip");
+        if (item.TypeId == 60)
+            throw new TradeRefusedException("Asset Safety wraps cannot be traded.", "CannotTradeAssetSafety");
+        if (sourceLocationId > 0 && item.LocationId != sourceLocationId)
+            throw new TradeRefusedException("That item is no longer in the source inventory.");
+
+        var chain = new HashSet<long> { item.Id };
+        var root = item;
+        while (root.LocationId != view.LocationId)
+        {
+            if (root.LocationId <= 0 || !chain.Add(root.LocationId))
+                throw new TradeRefusedException("That item is not available to trade from your current docked inventory.");
+            var parent = await _items.LockAndGetAsync(connection, transaction, root.LocationId, cancellationToken);
+            if (parent is null || parent.OwnerId != characterId)
+                throw new TradeRefusedException("That item is not available to trade from your current docked inventory.");
+            if (parent.TypeId == 60)
+                throw new TradeRefusedException("Asset Safety contents cannot be traded.", "CannotTradeAssetSafety");
+            root = parent;
+        }
+        return chain;
     }
 
     /// <summary>Sets what a pilot offers in ISK (it cannot exceed the wallet now). Any change clears both acceptances.</summary>
@@ -282,11 +353,18 @@ public sealed class TradeAuthority
         foreach (var (itemId, owner) in await StagedOwnersAsync(connection, transaction, tradeId, cancellationToken))
         {
             var receiver = view.OtherOf(owner);
-            var before = await _items.LockAndGetAsync(connection, transaction, itemId, cancellationToken)
-                ?? throw new InvalidOperationException("a staged item vanished");
-            await _items.MoveToOwnerAsync(connection, transaction, itemId, receiver, view.LocationId, ItemFlags.Hangar, cancellationToken);
-            var after = await _items.LockAndGetAsync(connection, transaction, itemId, cancellationToken) ?? throw new InvalidOperationException("a moved item vanished");
-            moves.Add(new TradeItemMove(after, before.OwnerId, before.LocationId, before.Flag, before.Quantity));
+            var tree = await _items.TreeAsync(connection, transaction, itemId, cancellationToken);
+            if (tree.Count == 0 || tree[0].Id != itemId || tree.Any(item => item.OwnerId != owner))
+                throw new InvalidOperationException("a staged item tree is inconsistent");
+            foreach (var before in tree)
+            {
+                await _items.MoveToOwnerAsync(connection, transaction, before.Id, receiver,
+                    before.Id == itemId ? view.LocationId : before.LocationId,
+                    before.Id == itemId ? ItemFlags.Hangar : before.Flag, cancellationToken);
+                var after = await _items.LockAndGetAsync(connection, transaction, before.Id, cancellationToken)
+                    ?? throw new InvalidOperationException("a moved item vanished");
+                moves.Add(new TradeItemMove(after, before.OwnerId, before.LocationId, before.Flag, before.Quantity));
+            }
         }
 
         var now = _nowMs();

@@ -127,6 +127,10 @@ def join_corporation(character: int, corporation: int, roles: int) -> None:
     sql(f"insert into {schema('CORPORATIONS')}.members (character_id, corporation_id, started_ms, roles) values "
         f"({int(character)}, {int(corporation)}, {now}, {int(roles)}) on conflict (character_id) do update set "
         f"corporation_id = excluded.corporation_id, started_ms = excluded.started_ms, roles = excluded.roles")
+    relations = schema('RELATIONS')
+    sql(f"delete from {relations}.relations where kind = 'affiliation.corporation' and subject = {int(character)}")
+    sql(f"insert into {relations}.relations (kind, subject, object, value, attrs, since_ms, updated_ms) values "
+        f"('affiliation.corporation', {int(character)}, {int(corporation)}, 1, '{{}}'::jsonb, {now}, {now})")
 
 def found_alliance(creator: int, corporation: int, key: str) -> int:
     alliance = int(sql(f"select nextval('{schema('CORPORATIONS')}.alliance_ids')"))
@@ -173,6 +177,12 @@ def items_of(owner: int, type_id: int) -> list[int]:
     """The ids of an owner's items of a type, newest first."""
     rows = sql(f"select id from {schema('INVENTORY')}.items where owner_id = {int(owner)} and type_id = {int(type_id)} order by id desc")
     return [int(row) for row in rows.split() if row]
+
+def quantity_at(owner: int, location: int, type_id: int) -> int:
+    """The total quantity of an owner's items of a type at a location."""
+    return int(sql(f"select coalesce(sum(quantity), 0) from {schema('INVENTORY')}.items "
+                   f"where owner_id = {int(owner)} and location_id = {int(location)} and type_id = {int(type_id)}") or 0)
+
 
 def hi_slot_count(type_id: int) -> int:
     """The high slots of a ship type (its hiSlots attribute, id 14, in sde.typeDogma)."""

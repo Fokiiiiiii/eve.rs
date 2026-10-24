@@ -203,6 +203,34 @@ public sealed class AgentMissionStore
             return current with { State = AgentMissionState.Failed };
         });
 
+    /// <summary>Removes the current offer from the journal. A repeated request has no second transition or notice.</summary>
+    public async Task<AgentMissionChange?> RemoveOfferAsync(
+        long characterId, long agentId, DateTimeOffset now, CancellationToken cancellationToken = default)
+    {
+        var current = await ReadAsync(characterId, agentId, cancellationToken);
+        if (current is null || current.State == AgentMissionState.Allocated) return null;
+        if (current.State != AgentMissionState.Offered)
+            throw Refused("not_offered", "there is no offer to remove");
+
+        var offeredAt = current.OfferedAt?.ToUnixTimeMilliseconds() ?? 0;
+        var reference = $"offer-removed:{characterId}:{agentId}:{current.Content.MissionId}:{offeredAt}";
+        return await ChangeAsync(characterId, agentId, reference, "offer_removed", now, cancellationToken, record =>
+        {
+            if (record?.State != AgentMissionState.Offered)
+                throw Refused("not_offered", "there is no offer to remove");
+            return record with
+            {
+                State = AgentMissionState.Allocated,
+                OfferedAt = null,
+                ExpiresAt = null,
+                AcceptedAt = null,
+                CompletedAt = null,
+                DeclineUntil = null,
+                QuitAt = null,
+            };
+        });
+    }
+
     public async Task<IReadOnlyList<AgentMissionRecord>> ReadAcceptedAsync(CancellationToken cancellationToken = default)
     {
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);

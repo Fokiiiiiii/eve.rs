@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using Eve.Host;
 using Eve.Host.PublicGateway;
 
@@ -15,6 +16,13 @@ try
     if (gateway is not null)
         Console.Error.WriteLine($"eve-host: public gateway listening on port {gateway.Port} ({(gatewayCertificate is null ? "h2c" : "HTTP/2 TLS")})");
     using var cancel = new CancellationTokenSource();
+    using var terminate = OperatingSystem.IsWindows() ? null : PosixSignalRegistration.Create(
+        PosixSignal.SIGTERM,
+        context =>
+        {
+            context.Cancel = true;
+            cancel.Cancel();
+        });
     Console.CancelKeyPress += (_, args) =>
     {
         args.Cancel = true;

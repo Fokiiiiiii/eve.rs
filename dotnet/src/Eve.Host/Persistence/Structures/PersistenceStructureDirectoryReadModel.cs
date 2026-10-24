@@ -164,7 +164,8 @@ public async ValueTask<Eve.Services.Core.PersistedStructureInfo?> GetStructureIn
         return new Eve.Services.Core.PersistedStructureInfo(
             structureId,
             true,
-            StructureInfoPayload(structureId, structure));
+            StructureInfoPayload(structureId, structure),
+            Text(structure["itemName"] ?? structure["name"]));
     }
 
 public async ValueTask<IReadOnlyDictionary<long, Eve.Services.Core.PersistedStructureInfo>> GetStructureInfosAsync(
@@ -185,7 +186,8 @@ public async ValueTask<IReadOnlyDictionary<long, Eve.Services.Core.PersistedStru
         result[structureId] = new Eve.Services.Core.PersistedStructureInfo(
             structureId,
             true,
-            StructureInfoPayload(structureId, structure));
+            StructureInfoPayload(structureId, structure),
+            Text(structure["itemName"] ?? structure["name"]));
     }
     return result;
 }

@@ -15,7 +15,9 @@ public sealed partial class OfficeManagerService(
     Eve.Wallet.WalletTransactions wallets,
     Func<long,CorporationOfficeStation?> readStation,
     Func<long> now,
-    IStructureOffices? structures = null)
+    IStructureOffices? structures = null,
+    CharacterSessions? characterSessions = null,
+    Eve.Inventory.ItemTypeCatalog? itemTypes = null)
 {
     private const long RentOfficeRole = CorporationRoles.RentOffice;
     // The SDE inventory flag for the station's Impounded location.
@@ -109,14 +111,15 @@ public sealed partial class OfficeManagerService(
         var submittedQuote = Money(call.Arg(0)) ?? throw new CorporationError("OFFICE_PRICE_REQUIRED");
         if (submittedQuote < CorporationOfficeStore.MinimumRentIsk)
             throw new CorporationError("OFFICE_PRICE_INVALID");
+        var notificationType = await OfficeNotificationTypeAsync(call.Cancellation);
         var existingItems = await items.InLocationAsync(station.Id, corporationId, call.Cancellation);
         var atStation = now();
-        await store.WriteAsync(async (connection, transaction) =>
+        var changedOffice = await store.WriteAsync<CorporationOffice?>(async (connection, transaction) =>
         {
             await store.LockStationAsync(connection, transaction, station.Id, call.Cancellation);
             if (await store.GetAsync(connection, transaction, corporationId, station.Id, forUpdate: true,
                 cancellationToken: call.Cancellation) is not null)
-                return 0;
+                return null;
 
             var occupied = await store.CountAtStationAsync(connection, transaction, station.Id, call.Cancellation);
             if (occupied >= station.OfficeCapacity) throw new CorporationError("OFFICE_SLOTS_FULL");
@@ -142,8 +145,10 @@ public sealed partial class OfficeManagerService(
             foreach (var item in existingItems.Where(item => item.Flag == ImpoundedFlag))
                 await MoveIfCurrentAsync(connection, transaction, item, corporationId, station.Id,
                     ImpoundedFlag, Eve.Inventory.ItemFlags.CorpSAG1, call.Cancellation);
-            return 0;
+            return office;
         }, call.Cancellation);
+        if (changedOffice is not null && characterSessions is { } sessions && notificationType is { } type)
+            CorporationOfficeNotifications.Rented(sessions, corporationId, station.Id, changedOffice.OfficeFolderId, type);
         return PyNone.Instance;
     }
 
@@ -158,17 +163,22 @@ public sealed partial class OfficeManagerService(
         if (!IsCeoOrDirector(actor, authority))
             throw new CorporationError("CORPORATION_ACCESS_DENIED");
 
+        var notificationType = await OfficeNotificationTypeAsync(call.Cancellation);
         var atStation = now();
-        await store.WriteAsync(async (connection, transaction) =>
+        var changed = await store.WriteAsync<(CorporationOffice Office, bool SendItemChange)?>(async (connection, transaction) =>
         {
             await store.LockStationAsync(connection, transaction, station.Id, call.Cancellation);
             var office = await store.GetAsync(connection, transaction, corporationId, station.Id,
                 forUpdate: true, cancellationToken: call.Cancellation);
-            if (office is null) return 0;
+            if (office is null) return null;
 
-            await StationOfficeImpound.ImpoundAsync(items, store, connection, transaction, office, atStation, call.Cancellation);
-            return 0;
+            var hadAssets = await StationOfficeImpound.ImpoundAsync(items, store, connection, transaction, office,
+                atStation, call.Cancellation);
+            return (office, !hadAssets);
         }, call.Cancellation);
+        if (changed is { } result && characterSessions is { } sessions && notificationType is { } type)
+            CorporationOfficeNotifications.Unrented(sessions, corporationId, station.Id, result.Office.OfficeFolderId,
+                type, result.SendItemChange);
         return PyNone.Instance;
     }
 
@@ -306,6 +316,15 @@ public sealed partial class OfficeManagerService(
     public ValueTask<PyValue> PrimeOfficeItem(ServiceCall call) =>
         ValueTask.FromResult<PyValue>(PyNone.Instance);
 
+    private async Task<Eve.Inventory.ItemType?> OfficeNotificationTypeAsync(CancellationToken token)
+    {
+        if (characterSessions is null) return null;
+        if (itemTypes is null)
+            throw new InvalidOperationException("The office notification item type catalog is not wired.");
+        return await itemTypes.GetAsync(CorporationOfficeNotifications.OfficeTypeId, token)
+            ?? throw new InvalidOperationException($"SDE item type {CorporationOfficeNotifications.OfficeTypeId} is missing.");
+    }
+
     private async Task<long> CurrentCorporationIdAsync(ServiceCall call)
     {
         var corporationId = SessionCorporationId(call.Session);
@@ -394,14 +413,15 @@ public sealed partial class OfficeManagerService(
         if (!await structures!.MayRentAsync(actor, site.StructureId, call.Cancellation))
             throw new CorporationError("StructureCorpOfficesDenied");
         var rent = await structures.RentForAsync(actor, site.StructureId, call.Cancellation);
+        var notificationType = await OfficeNotificationTypeAsync(call.Cancellation);
         var atStructure = now();
         var structureStation = new CorporationOfficeStation(site.StructureId, site.TypeId, site.OwnerCorporationId, site.SolarSystemId, 0);
-        await store.WriteAsync(async (connection, transaction) =>
+        var changedOffice = await store.WriteAsync<CorporationOffice?>(async (connection, transaction) =>
         {
             await store.LockStationAsync(connection, transaction, site.StructureId, call.Cancellation);
             if (await store.GetAsync(connection, transaction, corporationId, site.StructureId, forUpdate: true,
                 cancellationToken: call.Cancellation) is not null)
-                return 0;
+                return null;
 
             var officeFolderId = await items.CreateAsync(connection, transaction,
                 new Eve.Inventory.NewItem(CorporationOfficeStore.OfficeFolderTypeId, corporationId, site.StructureId,
@@ -418,8 +438,10 @@ public sealed partial class OfficeManagerService(
                     $"office-rent:{office.OfficeId}:credit", "office_rental_fee", call.Cancellation);
             }
             await structures.ScheduleRentDueAsync(connection, transaction, office.OfficeId, office.ExpiresAtMs, call.Cancellation);
-            return 0;
+            return office;
         }, call.Cancellation);
+        if (changedOffice is not null && characterSessions is { } sessions && notificationType is { } type)
+            CorporationOfficeNotifications.Rented(sessions, corporationId, site.StructureId, changedOffice.OfficeFolderId, type);
         return PyNone.Instance;
     }
 
@@ -433,17 +455,19 @@ public sealed partial class OfficeManagerService(
         if (!IsCeoOrDirector(actor, authority))
             throw new CorporationError("CORPORATION_ACCESS_DENIED");
         var atStructure = now();
-        await store.WriteAsync(async (connection, transaction) =>
+        var changedOffice = await store.WriteAsync<CorporationOffice?>(async (connection, transaction) =>
         {
             await store.LockStationAsync(connection, transaction, site.StructureId, call.Cancellation);
             var office = await store.GetAsync(connection, transaction, corporationId, site.StructureId,
                 forUpdate: true, cancellationToken: call.Cancellation);
-            if (office is null) return 0;
+            if (office is null) return null;
             if (!await structures!.MoveOfficeToSafetyAsync(connection, transaction, site, corporationId, call.Cancellation))
                 throw new CorporationError("STRUCTURE_ASSET_SAFETY_UNAVAILABLE");
             await store.UnrentAsync(connection, transaction, office, atStructure, call.Cancellation);
-            return 0;
+            return office;
         }, call.Cancellation);
+        if (changedOffice is not null && characterSessions is { } sessions)
+            CorporationOfficeNotifications.RentalChanged(sessions, corporationId, site.StructureId, changedOffice.OfficeFolderId);
         return PyNone.Instance;
     }
 

@@ -10,7 +10,7 @@ public sealed record MissionStaticReward(
     long RewardQuantity,
     long? BonusRewardTypeId,
     long BonusRewardQuantity,
-    long? BonusIntervalSeconds);
+    long? BonusIntervalMinutes);
 
 /// <summary>A kill mission's objective (CCP <c>missions</c>.<c>killMission</c>). The dungeon is a client dungeon ID, not a row of <c>dungeons</c>.
 /// <c>DropItemTypeId</c> is the type of an item the mission container drops (<c>dropItemInMissionContainer</c>), when there is one.</summary>

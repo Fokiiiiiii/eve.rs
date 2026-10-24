@@ -60,7 +60,7 @@ public sealed class MissionStaticCatalogTests
         Assert.Equal(29, mission.Reward!.RewardTypeId);
         Assert.Equal(500000, mission.Reward.RewardQuantity);
         Assert.Equal(1000000, mission.Reward.BonusRewardQuantity);
-        Assert.Equal(300, mission.Reward.BonusIntervalSeconds);
+        Assert.Equal(300, mission.Reward.BonusIntervalMinutes);
         Assert.Equal([(500002L, 1.5)], mission.ExtraStandings);
         Assert.Equal("Go to the fields.", mission.EnglishMessages["messages.mission.briefing"]);
     }

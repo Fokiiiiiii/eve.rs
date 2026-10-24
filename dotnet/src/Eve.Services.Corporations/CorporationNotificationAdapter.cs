@@ -151,6 +151,24 @@ public static void ApplicationChanged(CharacterSessions? sessions,ServiceCall ca
         });
     }
 
+    public static void MutualWarsUpdated(CharacterSessions? sessions, ServiceCall call, params long[] ownerIds)
+    {
+        if (sessions is null) return;
+        var owners = ownerIds.Where(id => id > 0).ToHashSet();
+        if (owners.Count == 0) return;
+        call.Session.AfterResponse(() =>
+        {
+            foreach (var session in sessions.All())
+            {
+                var corporationId = session.GetInt("corporationID") ?? session.GetInt("corpid") ?? 0;
+                var allianceId = session.GetInt("allianceID") ?? session.GetInt("allianceid") ?? 0;
+                if (!owners.Contains(corporationId) && !owners.Contains(allianceId))
+                    continue;
+                Send(session, "OnMutualWarsUpdated_Remote", "clientID");
+            }
+        });
+    }
+
     private static PyDict MemberChange(Member? before,Member? after)
     {
         var changes = new List<KeyValuePair<PyValue,PyValue>>();

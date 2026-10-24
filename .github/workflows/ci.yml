@@ -36,7 +36,7 @@ permissions:
 env:
   # the toolchain the project is built and tested with (Cargo.toml's rust-version is 1.94); a newer clippy's new lints are
   # looked at by the advisory job below, not allowed to break the build
-  RUST_TOOLCHAIN: "1.99.0"
+  RUST_TOOLCHAIN: "1.94.1"
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"
   DOTNET_NOLOGO: "1"
@@ -150,7 +150,7 @@ jobs:
   dotnet:
     name: .NET (${{ matrix.shard.name }})
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     needs: dotnet-build
     if: ${{ always() && github.event_name != 'schedule' && needs.dotnet-build.result == 'success' && (github.event_name != 'workflow_dispatch' || inputs.jobs == 'all' || contains(inputs.jobs, 'dotnet')) }}
     strategy:
@@ -372,6 +372,7 @@ jobs:
         with:
           name: live-logs
           path: .live-logs
+          include-hidden-files: true
           if-no-files-found: ignore
 
   windows:

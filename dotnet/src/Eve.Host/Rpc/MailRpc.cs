@@ -166,7 +166,8 @@ internal sealed partial class CharacterServicesComposition
                         new PyTuple([new PyList([new PyInt(messageId)]), PyBool.True, PyNone.Instance]));
                 }
             },
-            mailSendWriter.SendAsync),
+            mailSendWriter.SendAsync,
+            mailSendWriter.SendGmChatPokeAsync),
         new NotificationMgrService(notificationMgr.ReadAsync, now, mutate: notificationMgr.MutateAsync),
         new MailingListService(
             async ct =>

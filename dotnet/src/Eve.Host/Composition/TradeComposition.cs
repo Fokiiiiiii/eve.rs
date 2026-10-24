@@ -30,7 +30,7 @@ internal sealed partial class CharacterServicesComposition
     {
         var schema = Env("EVE_TRADE_SCHEMA", TradeAuthority.DefaultSchema);
         await TradeAuthority.MigrateAsync(source, schema);
-        tradeAuthority = new TradeAuthority(source, items, economyWallets, wallets, now, schema);
+        tradeAuthority = new TradeAuthority(source, items, economyWallets, wallets, now, schema, itemTypes);
         var ended = await tradeAuthority.RecoverOpenAsync();
         if (ended.Count > 0)
             Console.Error.WriteLine($"eve-host: {ended.Count} direct trade(s) left open by a stopped host were ended and their items returned");

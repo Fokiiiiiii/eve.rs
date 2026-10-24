@@ -1,16 +1,17 @@
+using Eve.Macho;
 using Eve.Market;
 using Eve.Marshal;
 using Eve.Wallet;
 
 namespace Eve.Services.Market;
 
-public sealed class MarketNotifier(WalletTransactions wallets, CharacterSessions? sessions)
+public sealed class MarketNotifier(WalletTransactions wallets, CharacterSessions? sessions, Func<long> now)
 {
     private const string ObjectCachingService = "objectCaching";
     private const string MarketService = "marketProxy";
     private const int PlexTypeId = 44992;
 
-    public async Task PublishAsync(MarketReceipt receipt)
+    public async Task PublishAsync(MarketReceipt receipt, MarketRequest? immediateFill = null)
     {
         // A successful replay announces the current balance, not the original receipt's historical balance.
         foreach (var account in receipt.ChangedWallets)
@@ -29,6 +30,36 @@ public sealed class MarketNotifier(WalletTransactions wallets, CharacterSessions
                 sessions?.Of(characterId)?.SendNotification("OnOwnOrdersChanged","charid",
                     Py.List(MarketProxyService.OrderNotificationEntry(change.Order)),new PyStr(change.Reason),new PyInt(orderIsCorp ? 1 : 0));
         }
+        if (immediateFill is { } request && receipt.OrderId is null && receipt.FilledQuantity > 0 &&
+            sessions?.Of(request.ActorId) is { } session)
+            session.SendNotification("OnOwnOrdersChanged","charid",
+                Py.List(ImmediateFillOrderEntry(request,receipt.FilledQuantity,session,now())),
+                new PyStr("Filled"),new PyInt(request.UseCorporation ? 1 : 0));
+    }
+
+    private static PyValue ImmediateFillOrderEntry(MarketRequest request, long quantity, ClientSession session, long nowMs)
+    {
+        var ownerId = request.UseCorporation ? session.GetInt("corpid") ?? request.ActorId : request.ActorId;
+        var systemId = checked((int)(session.GetInt("solarsystemid2") ?? session.GetInt("solarsystemid") ?? 0));
+        var regionId = checked((int)(session.GetInt("regionid") ?? 0));
+        return Py.KeyVal(
+            ("orderID",new PyLong(0)),
+            ("typeID",new PyInt(request.TypeId)),
+            ("charID",new PyInt(ownerId)),
+            ("regionID",new PyInt(regionId)),
+            ("stationID",new PyLong(request.StationId)),
+            ("range",new PyInt(MarketRules.RangeRegion)),
+            ("bid",new PyInt(0)),
+            ("price",Py.Number(MarketRules.RoundIsk((double)request.Price))),
+            ("volEntered",new PyInt(quantity)),
+            ("volRemaining",new PyInt(0)),
+            ("issueDate",new PyLong(Py.FileTimeFromUnixMs(nowMs))),
+            ("minVolume",new PyInt(1)),
+            ("contraband",new PyInt(0)),
+            ("duration",new PyInt(0)),
+            ("isCorp",new PyInt(request.UseCorporation ? 1 : 0)),
+            ("solarSystemID",new PyInt(systemId)),
+            ("escrow",Py.Number(0)));
     }
 
     /// <summary>

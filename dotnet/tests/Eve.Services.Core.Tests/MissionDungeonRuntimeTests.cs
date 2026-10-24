@@ -145,6 +145,43 @@ public class MissionDungeonRuntimeTests
         Assert.Single(host.Credits);
     }
 
+    private const string BonusKillMission = """
+        {"_key": 9104, "name": {"en": "Bonus Kill Step"}, "nameID": 1238, "hasStandingRewards": false,
+         "killMission": {"dungeonID": 3509, "objectiveQuantity": 0},
+         "missionRewards": {"reward": {"rewardTypeID": 29, "rewardQuantity": 100000},
+                            "bonusReward": {"rewardTypeID": 29, "rewardQuantity": 40000}, "bonusTimeInterval": 5}}
+        """;
+
+    [AgentsPgFact]
+    public async Task A_mission_time_bonus_is_paid_only_when_completed_before_its_deadline()
+    {
+        var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var schema = "mdr_" + Guid.NewGuid().ToString("N")[..12];
+        await using var cleanup = new Cleanup(source, schema);
+        await AgentMissionStore.MigrateAsync(source, schema);
+        var store = new AgentMissionStore(source, schema);
+        var host = new FakeHost { Store = store };
+        var catalog = MissionStaticCatalog.FromRows(3405148,
+            [new SdeRow(9104, JsonDocument.Parse(BonusKillMission).RootElement.Clone())], []);
+        var completedAt = Start.AddMinutes(4);
+        var runtime = new MissionDungeonRuntime(store, catalog, host,
+            _ => new MissionAgentPlace(System, Corporation), () => completedAt);
+        await store.OfferAsync(Pilot, Agent, new AgentMissionContent(9104, 1238, "Bonus Kill Step", "", false), Start, "offer:bonus");
+        await store.AcceptAsync(Pilot, Agent, Start, "accept:bonus");
+        await store.OfferAsync(Pilot + 1, Agent, new AgentMissionContent(9104, 1238, "Bonus Kill Step", "", false), Start, "offer:late");
+        await store.AcceptAsync(Pilot + 1, Agent, Start, "accept:late");
+        Assert.Equal(2, await runtime.SweepAsync());
+
+        await runtime.OnDungeonOutcomeAsync("completed", Pilot, "dungeon.3509", 79, default);
+        completedAt = Start.AddMinutes(5);
+        await runtime.OnDungeonOutcomeAsync("completed", Pilot + 1, "dungeon.3509", 80, default);
+
+        Assert.Equal(new[] { 100000L, 40000L, 100000L }, host.Credits.Select(credit => credit.Amount));
+        Assert.Equal(new[] { 33, 34, 33 }, host.Credits.Select(credit => credit.RefType));
+        Assert.Equal(AgentMissionState.Completed, (await store.ReadAsync(Pilot, Agent))!.State);
+        Assert.Equal(AgentMissionState.Completed, (await store.ReadAsync(Pilot + 1, Agent))!.State);
+    }
+
     [AgentsPgFact]
     public async Task A_game_master_completion_pays_the_accepted_mission_once_and_refuses_one_that_is_not_accepted()
     {

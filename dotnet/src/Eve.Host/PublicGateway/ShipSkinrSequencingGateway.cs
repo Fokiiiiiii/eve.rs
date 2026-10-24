@@ -233,7 +233,7 @@ internal sealed class ShipSkinrSequencingGateway(
                 return Error(400, "INVALID_COMPONENT_LICENSE_ITEM", responseType);
             componentId = license.Component.Id;
             categoryId = license.Component.CategoryId;
-            infinite = license.Uses == 0;
+            infinite = license.Uses <= 0;
             var consume = infinite ? 1L : quantity;
             grantUses = infinite ? 0 : checked((long)license.Uses * consume);
             if (quantity != consume || (!infinite && grantUses <= 0))
@@ -600,7 +600,7 @@ internal sealed class ShipSkinrSequencingGateway(
         var layout = reader.GetFieldValue<byte[]>(4);
         if (!catalog.TryValidateLayout(layout, out var hull, out var tier, out _)) return null;
         return new SkinDesign(reader.GetInt64(0), reader.GetString(1), reader.GetString(2), hull, tier,
-            layout, reader.GetFieldValue<byte[]>(5), reader.GetInt64(6));
+            layout, reader.GetFieldValue<byte[]>(5), null);
     }
 
     private async Task<SkinDesign?> ReadDesignAsync(long? character, string skinHex, CancellationToken cancellationToken)
@@ -633,7 +633,7 @@ internal sealed class ShipSkinrSequencingGateway(
                     var draftLayout = draftReader.GetFieldValue<byte[]>(4);
                     if (!catalog.TryValidateLayout(draftLayout, out var hull, out var draftTier, out _)) return null;
                     return new SkinDesign(draftReader.GetInt64(0), draftReader.GetString(1), draftReader.GetString(2),
-                        hull, draftTier, draftLayout, draftReader.GetFieldValue<byte[]>(5), draftReader.GetInt64(6));
+                        hull, draftTier, draftLayout, draftReader.GetFieldValue<byte[]>(5), null);
                 }
             }
         }
@@ -718,14 +718,17 @@ internal sealed class ShipSkinrSequencingGateway(
     private static byte[] EncodeSkinDesign(SkinDesign design)
     {
         var payload = new ProtoWriter();
-        payload.Message(1, Sequential(design.CharacterId));
-        payload.String(2, design.Name);
-        payload.String(3, design.LineName);
-        payload.Bytes(4, design.Layout);
+        payload.String(1, design.Name);
+        payload.String(2, design.LineName);
+        payload.Message(3, Sequential(design.CharacterId));
+        payload.Message(4, design.Layout);
         var tier = new ProtoWriter();
         tier.Uint(1, (ulong)design.Tier);
         payload.Message(5, tier.ToArray());
-        payload.Message(6, Timestamp(design.CreatedMs));
+        if (design.FirstSequencedMs is { } firstSequencedMs)
+            payload.Message(7, Timestamp(firstSequencedMs));
+        else
+            payload.Uint(6, 1);
         return payload.ToArray();
     }
 
@@ -1239,7 +1242,7 @@ internal sealed class ShipSkinrSequencingGateway(
     private enum ReceiptResult { New, Replay, Conflict }
     private sealed record ComponentNeed(bool Infinite, long Quantity);
     private sealed record SkinLicense(bool Activated, long Unactivated, long Escrowed, long FirstAcquiredMs, long UpdatedMs);
-    private sealed record SkinDesign(long CharacterId, string Name, string LineName, int ShipTypeId, int Tier, byte[] Layout, byte[] EditorConfigurations, long CreatedMs);
+    private sealed record SkinDesign(long CharacterId, string Name, string LineName, int ShipTypeId, int Tier, byte[] Layout, byte[] EditorConfigurations, long? FirstSequencedMs);
     private sealed record SkinJob(Guid Id, long CharacterId, string SkinHex, int ShipTypeId, int Tier, int Quantity, long DueMs, string State, long CreatedMs, long? CompletedMs);
     private readonly record struct SequenceDesign(string Name, string LineName, ReadOnlyMemory<byte> Layout);
 }

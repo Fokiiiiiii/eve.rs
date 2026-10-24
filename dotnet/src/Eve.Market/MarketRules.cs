@@ -8,7 +8,10 @@ public sealed record MarketSkillLevels(int Trade = 0, int Retail = 0, int Broker
     int Daytrading = 0, int Wholesale = 0, int Margin = 0, int Marketing = 0, int Procurement = 0,
     int Accounting = 0, int Tycoon = 0);
 public sealed record MarketLimits(int Count, double TransactionTaxRate, int SellRange, int BuyRange, int Visibility, int ModifyRange);
-public sealed record MarketContext(double BrokerCommissionRate, double SccSurchargeRate, double ModificationFeeDiscount, MarketLimits Limits);
+public sealed record MarketContext(double BrokerCommissionRate, double SccSurchargeRate, double ModificationFeeDiscount, MarketLimits Limits)
+{
+    public bool MinimumBrokerFeeIncludesScc { get; init; }
+}
 public sealed record FeeInfo(double Amount, double RawPercentage, bool UsingMinimumValue);
 
 public static class MarketRules
@@ -43,8 +46,6 @@ public static class MarketRules
     }
 
     public static bool IsAllowedDuration(int days) => days is 0 or 1 or 3 or 7 or 14 or 30 or 90;
-    /// <summary>The duration of an immediate buy that is booked for its unfilled rest: the default duration of a buy order (90 days).</summary>
-    public const int ImmediateBuyBookedDays = 90;
     public static bool IsAllowedBuyRange(int range) => range is -1 or 0 or 1 or 2 or 3 or 4 or 5 or 10 or 20 or 30 or 40 or RangeRegion;
     private static int Skill(int level) => Math.Clamp(level, 0, 5);
     private static int RangeOf(int level) => Skill(level) switch { 0 => -1, 1 => 0, 2 => 5, 3 => 10, 4 => 20, _ => RangeRegion };
@@ -79,7 +80,7 @@ public static class MarketRules
             ? Math.Clamp(configured, 0, 11.5)
             : 1.0;
         var context = Context(skills, false);
-        return context with { BrokerCommissionRate = percent / 100.0 };
+        return context with { BrokerCommissionRate = percent / 100.0, MinimumBrokerFeeIncludesScc = true };
     }
 
     public static FeeInfo BrokerFee(MarketContext context, double? oldAmount, double newAmount)
@@ -104,6 +105,12 @@ public static class MarketRules
             }
         }
         var total = RoundIsk(fee + modification);
+        if (context.MinimumBrokerFeeIncludesScc)
+        {
+            var scc = SccSurcharge(context, oldAmount, newAmount).Amount;
+            var usesMinimum = RoundIsk(total + scc) <= 100;
+            return new FeeInfo(usesMinimum ? RoundIsk(100 - scc) : total, context.BrokerCommissionRate, usesMinimum);
+        }
         return new FeeInfo(total <= 100 ? 100 : total, context.BrokerCommissionRate, total <= 100);
     }
 
@@ -130,7 +137,8 @@ public static class MarketRules
             }
         }
         var total = RoundIsk(fee + modification);
-        return new FeeInfo(total <= 25 ? 25 : total, rate, total <= 25);
+        var usesMinimum = !context.MinimumBrokerFeeIncludesScc && total <= 25;
+        return new FeeInfo(usesMinimum ? 25 : total, rate, usesMinimum);
     }
 
     public static double SalesTax(MarketContext context, double grossAmount)

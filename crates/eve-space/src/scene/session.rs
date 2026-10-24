@@ -660,6 +660,7 @@ impl Scene {
         let security_changed = new.security_status != old.security_status;
         // a stance that changed is in the slim item too (`shipStance`, the reference's slim update after a switch)
         let stance_changed = new.stance != old.stance;
+        let name_changed = new.name != old.name;
         let ship_id = id(new.ship_id);
         let (owner, ship) = (new.character_id, new.ship_id);
         let sim_profile_update = self.sim_damageable_entities.contains(&old.ship_id).then_some((
@@ -687,7 +688,7 @@ impl Scene {
             told.extend(self.tell_all(session, actions));
         }
         // a security status that changed is in the slim item: the pilot and whoever sees the ship are shown it again (the reference does, when a crime costs a pilot some)
-        if security_changed || stance_changed {
+        if security_changed || stance_changed || name_changed {
             let ship = &self.pilots[&session].ship;
             let change = payload::ship_slim_item_change(stamp, ship);
             told.extend(self.tell_all(session, vec![change]));

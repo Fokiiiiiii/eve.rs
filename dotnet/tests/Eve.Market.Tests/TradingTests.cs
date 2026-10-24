@@ -136,7 +136,7 @@ public class TradingTests
     {
         await using var r=await TradeRig.Create();
         var buyer=await r.Actor("Multi Buyer");
-        (MarketRequest Request,string OperationKey)[] failed=[(r.Buy(buyer,10,10),"multi-0"),(r.Buy(buyer,1000,100),"multi-1")];
+        (MarketRequest Request,string OperationKey)[] failed=[(r.Buy(buyer,10,10,days:90),"multi-0"),(r.Buy(buyer,1000,100,days:90),"multi-1")];
 
         await Assert.ThrowsAsync<InsufficientFundsException>(() => r.Trading.PlaceBuyOrdersAsync(failed));
         Assert.Equal(10000m,(await r.WalletStore.GetAsync(buyer))!.Isk);
@@ -144,15 +144,14 @@ public class TradingTests
         await using (var check=r.Source.CreateCommand($"SELECT count(*) FROM {r.MarketSchema}.commands WHERE operation_key IN ('multi-0','multi-1')"))
             Assert.Equal(0L,(long)(await check.ExecuteScalarAsync())!);
 
-        (MarketRequest Request,string OperationKey)[] retry=[(r.Buy(buyer,10,10),"multi-0"),(r.Buy(buyer,20,1),"multi-1")];
+        (MarketRequest Request,string OperationKey)[] retry=[(r.Buy(buyer,10,10,days:90),"multi-0"),(r.Buy(buyer,20,1,days:90),"multi-1")];
         var receipts=await r.Trading.PlaceBuyOrdersAsync(retry);
         Assert.Equal(2,receipts.Count);
         Assert.All(receipts,receipt => Assert.NotNull(receipt.OrderId));
-        var balance=(await r.WalletStore.GetAsync(buyer))!.Isk;
-        Assert.Equal(9680m,balance);
+        Assert.Equal(9680m,(await r.WalletStore.GetAsync(buyer))!.Isk);
         var replay=await r.Reopen().PlaceBuyOrdersAsync(retry);
         Assert.Equal(receipts.Select(receipt => receipt.OrderId),replay.Select(receipt => receipt.OrderId));
-        Assert.Equal(balance,(await r.WalletStore.GetAsync(buyer))!.Isk);
+        Assert.Equal(9680m,(await r.WalletStore.GetAsync(buyer))!.Isk);
         Assert.Equal(2,(await r.Book.BookAsync(r.Station.RegionId,34,r.Now)).Bids.Count);
     }
 
@@ -175,7 +174,7 @@ public class TradingTests
     }
 
     [PgFact]
-    public async Task Partial_immediate_purchase_can_leave_a_bid_smaller_than_its_original_minimum()
+    public async Task Partial_posted_buy_order_can_leave_a_bid_smaller_than_its_original_minimum()
     {
         await using var r=await TradeRig.Create();
         var actor=await r.Actor("Trader One");
@@ -223,38 +222,37 @@ public class TradingTests
         Assert.Equal(1,results.Sum(x => x.FilledQuantity));
         Assert.Equal(1,(await r.Items.InLocationAsync(r.Station.Id,a)).Sum(i => i.Quantity)+(await r.Items.InLocationAsync(r.Station.Id,b)).Sum(i => i.Quantity));
         Assert.Empty((await r.Book.BookAsync(r.Station.RegionId,34,r.Now)).Asks);
-        // the buyer that did not fill books its order (an immediate buy's rest is booked): one bid is left, and its escrow is held
-        Assert.Single((await r.Book.BookAsync(r.Station.RegionId,34,r.Now)).Bids);
-        Assert.True((await r.WalletStore.GetAsync(a))!.Isk+(await r.WalletStore.GetAsync(b))!.Isk < 19950m);
+        Assert.Empty((await r.Book.BookAsync(r.Station.RegionId,34,r.Now)).Bids);
+        var balances=new[] {(await r.WalletStore.GetAsync(a))!.Isk,(await r.WalletStore.GetAsync(b))!.Isk};
+        Assert.Equal(19950m,balances.Sum());
+        Assert.Contains(balances,balance=>balance==9950m);
+        Assert.Contains(balances,balance=>balance==10000m);
     }
 
     [PgFact]
-    public async Task An_immediate_buy_fills_what_matches_and_books_the_rest()
+    public async Task An_immediate_buy_fills_only_the_available_quantity()
     {
         await using var r=await TradeRig.Create();
         var actor=await r.Actor("Quick Buyer");
         await r.Book.SeedNpcAsync([new("ask",34,false,10,2,32767,MarketLocation.From(r.Station),r.Now)]);
         var result=await r.Trading.PlaceAsync(r.Buy(actor,10,5),"quick-mixed");
         Assert.Equal(2,result.FilledQuantity);
-        Assert.NotNull(result.OrderId);
+        Assert.Null(result.OrderId);
         Assert.Empty((await r.Book.BookAsync(r.Station.RegionId,34,r.Now)).Asks);
-        var bid=Assert.Single((await r.Book.BookAsync(r.Station.RegionId,34,r.Now)).Bids);
-        Assert.Equal((3,90), (bid.VolumeRemaining,bid.Duration));
-        // 2 bought at 10 and 3 escrowed at 10, the fees aside
-        Assert.True((await r.WalletStore.GetAsync(actor))!.Isk <= 10000m-20m-30m);
+        Assert.Empty((await r.Book.BookAsync(r.Station.RegionId,34,r.Now)).Bids);
+        Assert.Equal(9980m,(await r.WalletStore.GetAsync(actor))!.Isk);
     }
 
     [PgFact]
-    public async Task An_immediate_buy_that_matches_nothing_books_its_order_and_returns_its_id()
+    public async Task An_immediate_buy_that_matches_nothing_does_not_create_an_order()
     {
         await using var r=await TradeRig.Create();
         var actor=await r.Actor("Quick Buyer");
         var result=await r.Trading.PlaceAsync(r.Buy(actor,10,5),"quick-empty");
         Assert.Equal(0,result.FilledQuantity);
-        Assert.NotNull(result.OrderId);
-        var bid=Assert.Single((await r.Book.BookAsync(r.Station.RegionId,34,r.Now)).Bids);
-        Assert.Equal((5,90), (bid.VolumeRemaining,bid.Duration));
-        Assert.True((await r.WalletStore.GetAsync(actor))!.Isk <= 10000m-50m);
+        Assert.Null(result.OrderId);
+        Assert.Empty((await r.Book.BookAsync(r.Station.RegionId,34,r.Now)).Bids);
+        Assert.Equal(10000m,(await r.WalletStore.GetAsync(actor))!.Isk);
     }
 
     [PgFact]

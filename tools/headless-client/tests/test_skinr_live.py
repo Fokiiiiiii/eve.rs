@@ -21,6 +21,7 @@ import grpc
 import pytest
 
 from evecli import marshal as m
+from evecli.observe import notifications_of
 from tests import dbseed
 from tests.gateway_wire import (
     REQUEST_SEND,
@@ -152,6 +153,13 @@ CROSS JOIN LATERAL jsonb_array_elements_text(
 WHERE component.doc->>'published' = 'true'
   AND component.doc->>'category' IN ('1', '2')
   AND allowed.category::int = (component.doc->>'category')::int
+  AND NOT EXISTS (
+      SELECT 1
+      FROM jsonb_array_elements_text(
+          COALESCE(component.doc->'disallowedSlots', component.doc->'disallowed_slots', '[]'::jsonb)
+      ) AS disallowed(slot_id)
+      WHERE disallowed.slot_id::int = hull_slots.slot_id
+  )
   AND COALESCE(
         NULLIF(associated.value->>'licenseUsesGranted', '')::int,
         NULLIF(associated.value->>'license_uses_granted', '')::int,
@@ -178,7 +186,7 @@ def _skinr_fixture() -> tuple[int, int, int, int, int, int, int, int]:
 
 def _layout(ship_type_id: int, slot_id: int, component_id: int, category: int) -> bytes:
     configuration = field(1, type_identifier(slot_id)) + field(
-        2, field(category, type_identifier(component_id))
+        2, field(category, field(1, type_identifier(component_id)))
     )
     return field(1, configuration) + field(2, type_identifier(ship_type_id))
 
@@ -194,14 +202,13 @@ def _skin_identifier(character: int, skin_hex: str) -> bytes:
 
 
 def _item_consume_payload(item_id: int) -> bytes:
-    item_identifier = field(1, field(1, number_field(1, item_id)))
-    return field(1, item_identifier) + number_field(2, 1)
+    return field(1, field(1, number_field(1, item_id))) + number_field(2, 1)
 
 
 def _skin_hex_from_draft(draft: bytes) -> str:
     fields = read_fields(draft)
     attributes = fields[2][0] if 2 in fields else fields[1][0]
-    return read_fields(attributes)[1][0].decode()
+    return read_fields(read_fields(attributes)[1][0])[1][0].decode()
 
 
 def _send(channel, request_name: str, character: int, payload: bytes, request_id=None):
@@ -283,7 +290,7 @@ def _tcp_listener_open(address: str) -> bool:
         return False
 
 
-def _stop_restarted_host(process: subprocess.Popen) -> None:
+def _stop_restarted_process(process: subprocess.Popen) -> None:
     if process.poll() is not None:
         return
     process.terminate()
@@ -299,11 +306,13 @@ def _restart_host() -> subprocess.Popen:
     simulation_socket = os.environ["EVE_SIM_SOCKET"]
     host_dll = os.environ["EVE_HOST_DLL"]
     old_pid = int(os.environ["EVE_HOST_PID"])
+    front_port = os.environ["EVE_LIVE_PORT"]
+    net_binary = os.environ["EVE_NET_BINARY"]
     os.kill(old_pid, signal.SIGTERM)
 
     deadline = time.monotonic() + 45
-    while _unix_listener_open(socket_path):
-        assert time.monotonic() < deadline, "the existing host did not close its socket"
+    while _unix_listener_open(socket_path) or _tcp_listener_open(f"127.0.0.1:{front_port}"):
+        assert time.monotonic() < deadline, "the existing host and front did not close their listeners"
         time.sleep(0.1)
 
     log_path = os.path.join(
@@ -323,20 +332,46 @@ def _restart_host() -> subprocess.Popen:
             stdout=log,
             stderr=subprocess.STDOUT,
         )
+    atexit.register(_stop_restarted_process, process)
 
     deadline = time.monotonic() + 120
-    gateway_ready = False
     while time.monotonic() < deadline:
         if process.poll() is not None:
             with open(log_path, encoding="utf-8", errors="replace") as log:
                 details = "".join(log.readlines()[-80:])
             raise AssertionError(f"the restarted host exited early:\n{details}")
         if _unix_listener_open(socket_path) and _tcp_listener_open(GATEWAY):
-            gateway_ready = True
             break
         time.sleep(0.2)
-    assert gateway_ready, f"the restarted host did not reopen its listeners; see {log_path}"
-    atexit.register(_stop_restarted_host, process)
+    else:
+        raise AssertionError(f"the restarted host did not reopen its listeners; see {log_path}")
+
+    net_log_path = os.path.join(
+        os.environ.get("EVE_LIVE_LOG_DIR", "/tmp"),
+        f"net-skinr-restart-{os.getpid()}.out",
+    )
+    net_env = os.environ.copy()
+    net_env.update(EVE_HOST=socket_path, EVE_NET_LISTEN=f"127.0.0.1:{front_port}")
+    with open(net_log_path, "ab") as log:
+        net_process = subprocess.Popen(
+            [net_binary],
+            env=net_env,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+        )
+    atexit.register(_stop_restarted_process, net_process)
+
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        if net_process.poll() is not None:
+            with open(net_log_path, encoding="utf-8", errors="replace") as log:
+                details = "".join(log.readlines()[-80:])
+            raise AssertionError(f"the restarted front exited early:\n{details}")
+        if _tcp_listener_open(f"127.0.0.1:{front_port}"):
+            break
+        time.sleep(0.1)
+    else:
+        raise AssertionError(f"the restarted front did not reopen its listener; see {net_log_path}")
     return process
 
 
@@ -369,7 +404,7 @@ def test_v24_skinr_design_sequences_and_applies_a_persisted_license():
             location=START_STATION,
         )
         with grpc.insecure_channel(GATEWAY) as raw:
-            channel = as_user(raw, client.session.user_id)
+            channel = as_user(raw, client)
             notices = channel.stream_stream(NOTICES_CONSUME)(
                 iter([request("eve_public.gateway.Notices.Consume", character, b"")]),
                 timeout=45.0,
@@ -379,14 +414,14 @@ def test_v24_skinr_design_sequences_and_applies_a_persisted_license():
 
             # ConsumeRequest is retried with the same correlation UUID: the item and its license change once.
             consume_request_id = uuid.uuid4()
-            status, response_type, _ = _send(
+            status, response_type, _, message = _send_detail(
                 channel,
                 COMPONENT_ITEM + "ConsumeRequest",
                 character,
                 _item_consume_payload(item),
                 consume_request_id,
             )
-            assert (status, response_type) == (200, COMPONENT_ITEM + "ConsumeResponse")
+            assert (status, response_type) == (200, COMPONENT_ITEM + "ConsumeResponse"), message
             assert _send(
                 channel,
                 COMPONENT_ITEM + "ConsumeRequest",
@@ -418,14 +453,14 @@ def test_v24_skinr_design_sequences_and_applies_a_persisted_license():
             line_name = "Live design"
             draft_id = uuid.uuid4()
             save_payload = field(1, name.encode()) + field(2, line_name.encode()) + field(3, layout)
-            status, response_type, saved = _send(
+            status, response_type, saved, message = _send_detail(
                 channel,
                 DRAFT + "SaveRequest",
                 character,
                 save_payload,
                 draft_id,
             )
-            assert (status, response_type) == (200, DRAFT + "SaveResponse")
+            assert (status, response_type) == (200, DRAFT + "SaveResponse"), message
             assert uuid.UUID(bytes=read_fields(read_fields(saved)[1][0])[1][0]) == draft_id
             assert _skin_hex_from_draft(saved)
 
@@ -469,7 +504,23 @@ def test_v24_skinr_design_sequences_and_applies_a_persisted_license():
                 channel, DRAFT + "UpdateRequest", character, update_payload
             )
             assert (status, response_type) == (200, DRAFT + "UpdateResponse")
-            assert _skin_hex_from_draft(updated)
+            skin_hex = _skin_hex_from_draft(updated)
+            status, response_type, draft_skin_data = _send(
+                channel,
+                "eve_public.cosmetic.ship.skin.thirdparty.api.GetRequest",
+                character,
+                field(1, skin_hex.encode()),
+            )
+            assert (status, response_type) == (
+                200,
+                "eve_public.cosmetic.ship.skin.thirdparty.api.GetResponse",
+            )
+            draft_fields = read_fields(read_fields(draft_skin_data)[1][0])
+            assert draft_fields[1][0] == name.encode()
+            assert draft_fields[2][0] == updated_line.encode()
+            assert draft_fields[4][0] == layout
+            assert draft_fields[6]
+            assert 7 not in draft_fields
 
             sequence_components = _component_kind(component_id, category, infinite=True)
             invalid_component = _component_kind(component_id + 1, category, infinite=True)
@@ -583,7 +634,6 @@ def test_v24_skinr_design_sequences_and_applies_a_persisted_license():
             assert len(job_ids) == 1
             job_id = next(iter(job_ids))
             job_key = job_id.hex
-            skin_hex = _skin_hex_from_draft(updated)
             skinr = dbseed.schema("SKINR")
             stored_cost = int(dbseed.sql(
                 f"select plex_cost from {skinr}.skinr_sequencing_jobs where job_id = '{job_id}'"
@@ -605,7 +655,7 @@ def test_v24_skinr_design_sequences_and_applies_a_persisted_license():
             assert (status, response_type) == (200, JOB + "GetAllActiveResponse")
             active_rows = read_fields(active).get(1, [])
             assert len(active_rows) == 1
-            assert uuid.UUID(bytes=read_fields(active_rows[0])[1][0]) == job_id
+            assert uuid.UUID(bytes=read_fields(read_fields(active_rows[0])[1][0])[1][0]) == job_id
 
             # The saved design can be deleted after start: the durable job carries its authoritative layout.
             status, response_type, _ = _send(
@@ -633,7 +683,7 @@ def test_v24_skinr_design_sequences_and_applies_a_persisted_license():
             while len(event_names) < 2:
                 notice_name, payload = _notice(next(notices))
                 if notice_name.endswith("CompletedNotice"):
-                    assert uuid.UUID(bytes=read_fields(payload)[1][0]) == job_id
+                    assert uuid.UUID(bytes=read_fields(read_fields(payload)[1][0])[1][0]) == job_id
                     event_names.append(notice_name)
                 elif notice_name.endswith("UpdatedNotice"):
                     assert read_fields(payload).get(1)
@@ -672,8 +722,14 @@ def test_v24_skinr_design_sequences_and_applies_a_persisted_license():
                 "eve_public.cosmetic.ship.skin.thirdparty.api.GetResponse",
             )
             saved_skin = read_fields(skin_data)[1][0]
-            assert read_fields(saved_skin)[2][0] == updated_line.encode()
-            assert read_fields(saved_skin)[4][0] == layout
+            skin_fields = read_fields(saved_skin)
+            assert skin_fields[1][0] == name.encode()
+            assert skin_fields[2][0] == updated_line.encode()
+            assert skin_fields[3]
+            assert skin_fields[4][0] == layout
+            assert skin_fields[5]
+            assert 6 not in skin_fields
+            assert read_fields(skin_fields[7][0])[1][0] > 0
 
             license_id = _skin_identifier(character, skin_hex)
             status, response_type, owned = _send(
@@ -721,7 +777,7 @@ def test_v24_skinr_design_sequences_and_applies_a_persisted_license():
                 )
                 restarted_client.notifications.clear()
                 with grpc.insecure_channel(GATEWAY) as restarted_raw:
-                    restarted_channel = as_user(restarted_raw, restarted_client.session.user_id)
+                    restarted_channel = as_user(restarted_raw, restarted_client)
                     status, response_type, persisted_job = _send(
                         restarted_channel,
                         JOB + "GetRequest",
@@ -755,6 +811,8 @@ def test_v24_skinr_design_sequences_and_applies_a_persisted_license():
                         apply_request_id,
                     )
                     assert (status, response_type) == (200, LICENSE + "ApplyResponse")
+                    # Read the MACHO session so its queued cosmetic notices enter the client event list.
+                    restarted_client.call("machoNet", "GetServiceInfo")
                     assert _send(
                         restarted_channel,
                         LICENSE + "ApplyRequest",
@@ -762,7 +820,10 @@ def test_v24_skinr_design_sequences_and_applies_a_persisted_license():
                         application_payload,
                         apply_request_id,
                     )[:2] == (200, LICENSE + "ApplyResponse")
-                    names = [event["name"] for event in restarted_client.notifications]
+                    assert isinstance(
+                        m.plain(restarted_client.call("userSvc", "GetUserToken")), str
+                    )
+                    names = [event["name"] for event in notifications_of(restarted_client)]
                     assert names.count("OnShipCosmeticsChanged") == 1
                     assert names.count("OnCurrentShipSkinChange") == 1
                     assert dbseed.sql(

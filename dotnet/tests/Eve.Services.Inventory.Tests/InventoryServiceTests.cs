@@ -371,6 +371,22 @@ public class InvBrokerTests
         Assert.Equal([ship], rows.Select(r => ((PyLong)r.Values[0]).Value));
     }
 
+    [PgFact]
+    public async Task A_docked_structure_lists_its_own_station_items_but_not_a_remote_structure()
+    {
+        await using var rig = await Rig.CreateAsync();
+        const long structure = 1_040_000_000_001;
+        var tritanium = await rig.AddAsync(Rig.Tritanium, Rig.Character, structure, quantity: 10);
+        var docked = Rig.Session(station: null);
+        docked.Set("stationid", new PyLong(structure));
+
+        var rows = Rows(await rig.CallAsync(docked, "ListStationItems", null, new PyLong(structure)));
+        Assert.Contains(rows, row => PackedItemId(row) == tritanium);
+
+        var remote = Rig.Session(station: Rig.OtherStation, id: 2);
+        Assert.Empty(Rows(await rig.CallAsync(remote, "ListStationItems", null, new PyLong(structure))));
+    }
+
 [PgFact]
     public async Task Station_inventory_rpcs_list_owned_items_and_set_a_ship_label()
     {

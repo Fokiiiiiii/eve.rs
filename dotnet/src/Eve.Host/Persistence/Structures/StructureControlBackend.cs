@@ -268,10 +268,7 @@ public sealed class StructureControlBackend
             if (requested > 0)
             {
                 if (requested != owner.OriginalShipId || structure is null) throw Denied("INVALID_RETURN_SHIP");
-                var ship = await PhysicalShipAsync(session, requested, true, systemId, owner.StructureId, token);
-                var shipRadius = _statics.Type(ship.TypeId)!.Attributes.GetValueOrDefault(162);
-                if (!await _space.CanReturnToStructureShipAsync(session, requested, systemId, structure.X, structure.Y, structure.Z,
-                    _statics.Type(structure.TypeId)?.Attributes.GetValueOrDefault(162) ?? 0, shipRadius, token)) throw Denied("RETURN_SHIP_NOT_BOARDABLE");
+                await PhysicalShipAsync(session, requested, true, systemId, owner.StructureId, token);
             }
         }
         var detached = false;

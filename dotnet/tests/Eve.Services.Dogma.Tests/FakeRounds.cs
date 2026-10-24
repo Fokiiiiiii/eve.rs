@@ -13,13 +13,24 @@ internal sealed class FakeRounds : ISpaceRounds
 
     public List<string> Asked { get; } = [];
 
+    private readonly TaskCompletionSource _completed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public Task AdjustmentCompleted => _completed.Task;
+
     /// <summary>What every change of rounds is answered with: a gun that does not run, unless the test says it does.</summary>
     public GunRounds Answer { get; set; } = GunRounds.Idle;
 
-    public Task<T> AdjustAsync<T>(ClientSession session, long moduleId, int chargeType, RoundsChange change, Func<GunRounds, Task<T>> afterwards, CancellationToken cancellationToken)
+    public async Task<T> AdjustAsync<T>(ClientSession session, long moduleId, int chargeType, RoundsChange change, Func<GunRounds, Task<T>> afterwards, CancellationToken cancellationToken)
     {
         Asked.Add($"{moduleId} {chargeType} {change}");
-        return afterwards(Answer);
+        try
+        {
+            return await afterwards(Answer);
+        }
+        finally
+        {
+            _completed.TrySetResult();
+        }
     }
 
     public void GiveBack(ClientSession session, long moduleId, long rounds) => Asked.Add($"give back {moduleId} {rounds}");

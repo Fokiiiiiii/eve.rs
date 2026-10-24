@@ -89,8 +89,7 @@ Row type差は今回の破損に混ぜていない。
 `../../../dotnet/src/Eve.Services.Space/SpaceSessions.Modules.cs:683`、643 →
 `../../../crates/eve-space/src/scene/session.rs:433`。
 
-**残る具体的修正候補:** `Scene.respec` はShipSpecを更新するがslim broadcast条件はsecurity_changedまたはstance_changedだけ（同file:458、478）。nameだけの変更は周囲へOnSlimItemChangeを送らない。
-親への回帰シナリオ: pilotと同bubbleのobserverを接続しrename。DB/cfg/session更新後、両clientのslim nameとreentry後のnameが同じになること。name-only changeを既存respecのslim変更条件へ加える候補。Rust source/testは今回のwrite scope外のため未変更。
+**修正済み:** `Scene::respec` now includes name changes in the existing slim notification condition. The V24 bracket handler replaces its slim item and clears the cached display name; EveJS updates the caller's presentation without broadcasting this notification. The compatibility extension is recorded in `docs/reference/compat/DEVIATIONS.md`. The focused Rust regression passed; a graphical-client observer walk remains outstanding.
 
 ## 4. caller / Host確認
 
@@ -171,7 +170,7 @@ ID値はfresh split IDを元itemと別であること/real rowであることと
 | 未実装branch候補 | repairSvc.MachoBindObject、repairSvc.RepairItemsInStructure、invbroker.GetInventory | structure/deliveryの真正stateとowner/service権限。station成功をstructure完成として数えない。 |
 | consumer未確認 | stationSvc.GetAllianceSystems、stationSvc.GetSystemsForAlliance | global/alliance filterとrow形をV24 callsite/traceで確認。Alliance creation修正とは別メソッド。 |
 | legacy export候補・V24必要性未確認 | repairSvc.MachoResolveObject、reprocessingSvc.MachoResolveObject | Moniker lifecycle traceで必要性を確定。古いroute名だけで未実装を断定しない。 |
-| 今回確認したlower-level残件 | invbroker.SetLabel → Scene.respec | name-only slim broadcast。pilot+observerのrename即時表示。 |
+| FIXED (Rust unit) | invbroker.SetLabel → Scene.respec | `name_changed` now joins the existing slim refresh condition; `scene::tests::a_renamed_ship_is_shown_again_in_the_slim_item` passes. Graphical-client presentation remains unchecked. |
 
 Trade/Reprocess/Skillbook/Newbie/Map/Structure、Host/Rust source、および他担当artifactを変更していない。
 
@@ -273,3 +272,31 @@ After the analyzer/string-wire fixture repairs, the parent observed the full Inv
 ## Follow-up: contracts read owner (2026-10-19)
 
 `GetLoginInfo` and `GetMyContractEscrow` now use `PersistenceContractReadModel` and the PostgreSQL contracts schema. Core rowset tests (2) and the `eve_p3` Host read test (1) passed. Contract creation and lifecycle writes remain open; see `docs/project/CONTRACTS_DESIGN.md` and the contract row in `docs/project/TODO.md`.
+
+## 11. Mixed item move/merge contention (2026-10-23)
+
+The scale review explicitly left mixed-operation contention open. Added `ItemMutationStoreTests.A_move_racing_a_merge_leaves_one_valid_item_transition` with two independent PostgreSQL transactions released together. It verifies bounded completion and either legal result: the move wins and the original source remains in its new location, or the merge wins and the source is deleted while the destination has the combined quantity. The test uses the existing per-item row lock and ascending merge lock order; no production behavior changed. The test project builds locally. It was not run locally because this test requires PostgreSQL; focused Actions run `40039425362` passed. Corporation hangar move authorization is covered by `InventoryServiceTests.Corporation_ship_inventory_reads_and_docked_add_and_multiadd_enforce_division_access` and `InventoryRpcFixTests.MultiAdd_corporation_split_keeps_source_custody_and_requires_take_role_for_the_reverse_move`; focused Actions runs `40039559444` (corp assets) and `40039577298` (hangar role) passed.
+
+## 10. Ship rename slim notification (2026-10-23)
+
+The existing `invbroker.SetLabel` flow persists the custom name, then refreshes the active ship's `ShipSpec` through `SpaceSessions.RefreshShipAsync`. `Scene::respec` already emits `OnSlimItemChange` for security and stance changes, but omitted name-only changes. The existing payload serializes the ship's slim item, including its name; V24.01 `BracketMgr.OnSlimItemChange` replaces the displayed slim item and clears its cached display name. EveJS SetLabel also updates the client-facing presentation after saving the item name. No notification shape changed.
+
+Added `name_changed` to the existing slim refresh condition. `scene::tests::a_renamed_ship_is_shown_again_in_the_slim_item` checks the notice, updated sim state and same-name no-op; it passed locally (1/1). `cargo +1.94.1 fmt --all -- --check`, `cargo +1.94.1 check -p eve-space --lib`, and `cargo +1.94.1 clippy --workspace --all-targets -- -D warnings` passed. `dotnet build dotnet/tests/Eve.Inventory.Tests/Eve.Inventory.Tests.csproj -p:UseSharedCompilation=false --no-restore` passed with 0 warnings and 0 errors after syncing with `origin/main`. The mixed item move/merge regression passed focused Actions run `40039425362`. The graphical client has not been exercised. For commit `9f708b3b`, selected run `40038710701` and push CI run `40038689663` completed with failures in the broader .NET/headless checks; see section 12.
+
+## 12. Push CI follow-up (2026-10-23)
+
+Commit `c2e1db90` passed focused Actions run `40039425362` (mixed move/merge), `40039559444` (corporation assets) and `40039577298` (corporation hangar division access). Push CI `40039416006` failed on five existing checks after the latest-main merge: the control-tower headless flow and DB scoop test used a ship with 5,040 m³ free for an 8,000 m³ object; the courier keywords test lacked the expected EveJS destination/reward fields; the contact test assumed `PyObject` dictionary rows; the RPC inventory test expected an older method count. The full CI also skipped the slow movement/warp/jump/target/module checks and skill-training-speed check.
+
+The latest main commits corrected the headless cargo ship, mission keywords and contact row decoding. Push CI then found the RPC inventory snapshot still expected 1,378 rows while the registered Host exposed 1,382; this follow-up changes the expected count. The Space DB regression now uses the SDE Obelisk (type 20187) for its successful scoop path; capacity checks remain unchanged. The Space test project compiled locally with 0 warnings and 0 errors, and its PostgreSQL test passed focused Actions run `40042876238` (6.7 minutes) on commit `e831a724`. Push CI `40042866526` failed on the stale RPC count and is awaiting a rerun. No PostgreSQL database was used locally.
+
+## 13. Space scoop and structure return follow-up (2026-10-24)
+
+The structure-return guard now checks the authoritative pilot ship and system after boarding has changed the session ship ID to the structure. The live headless board/eject flow passed in Actions run `40044327870`; the Host regression for a ship boarding from 200 km passed in push CI run `40045506688`. The Space scoop owner-mismatch regression initially failed because its test passed the absent session `corpid`; it now passes the recorded pilot corporation instead. The Space test project builds locally with 0 warnings and 0 errors; no PostgreSQL test ran locally.
+
+Push CI `40045506688` reported the scoop fixture issue, a headless Macho error and two Market test failures. The scoop fixture now uses the recorded pilot corporation (`8d745aa1`); later `origin/main` merges include updated market/headless fixtures and structure-return code. The focused scoop test passed Actions run `40047200844` on `1a8a622c`. On the merged main commit `0fd2ca16`, every .NET test shard passed, including Space and Host; the live headless job failed with Macho error 2, and its summary did not identify the test. The slow movement/warp/jump/target/module checks and skill-training-speed check were skipped. The latest `tests/test_structures.py` Actions run (`40048239944`, ref `d4e141a3`) passed with no failed tests after 45 minutes. No graphical client run was performed.
+
+## 14. Ship drop and corporation ship inventory follow-up (2026-10-24)
+
+Later main merges added the bound `ship.Drop` quantity response with per-item refusal notifications and corporation ship cargo access checks. `ShipDropContractTests` passed Actions run `40051631303`; the corporation ship division access regression passed `40052122485`. Local builds for `Eve.Services.Space.Tests`, `Eve.Services.Inventory.Tests` and `Eve.Host.Tests` passed with 0 warnings and 0 errors. No PostgreSQL test ran locally.
+
+Full CI `40052033248` exposed two stale expectations: the Host RPC registry count was 1,383 after `ship.Drop` was added, and the corporation market test expected buyer journal ref 2 where the actual entries were reserve ref 42, market transaction ref 46 and tax ref 149. The Host snapshot now expects 1,383 (`062b7ce2`), and the market regression was corrected in later main commit `3c27f0bd`. Focused `ShipDropContractTests` (`40051631303`), corporation ship access (`40052122485`) and the Host RPC snapshot (`40053919851`) passed. Full CI `40054154565` passed on `ef6286e9`, including headless, Windows, Rust, all .NET shards, build and fixtures. The standard headless run skipped its slow movement/warp/jump/target/module checks and skill-training-speed check. No PostgreSQL database was used locally.

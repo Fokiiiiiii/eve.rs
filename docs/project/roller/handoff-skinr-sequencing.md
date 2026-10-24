@@ -22,3 +22,19 @@
 - Focused test `FullyQualifiedName~V24_skinr_routes_expose` passed before the merge (one test, zero skipped).
 - The live headless walk and graphical-client verification still need GitHub Actions/graphical execution. No PostgreSQL database was used locally.
 - After pushing, dispatch `Eve.Host.Tests` with filter `FullyQualifiedName~ShipSkinrDispatchTests`, wait for the run, and inspect the push-triggered CI failures. Fix red checks at their root, then update this note after each push.
+
+## 2026-10-23 nested sequencing UUID assertion
+
+- Push CI run 690 (`40016706205`) failed in the live walk after design save when `uuid.UUID(bytes=...)` received the serialized `sequencing.job.Identifier` wrapper.
+- The V24 descriptors define both `GetAllActiveResponse.Job.id` and `CompletedNotice.id` as an `Identifier` message, with raw UUID bytes in its field 1. The Host encoders match that wire shape; the headless test now unwraps the nested identifier before decoding the UUID.
+- Python syntax compilation and the focused live Actions check are pending. No local PostgreSQL or graphical-client check was run.
+
+
+## 2026-10-23 public-gateway application notification read
+- Push CI run `40029399172` on `1bf92f6f` reached the post-restart ApplyRequest, accepted both the initial request and its replay, and failed only when the live test immediately inspected `restarted_client.notifications`.
+- The application goes through the public gateway, which sends the two cosmetic notices to the logged-in MACHO session. The headless `Client` records server notices only while a MACHO `call` reads that connection; the test made only gRPC calls after clearing the notice list. Added a harmless `machoNet.GetServiceInfo` read after the first gateway response to pump the queued notices before checking that the replay did not send duplicates. Production notification behavior is unchanged.
+- Python syntax check and a new push-gate run are pending. No local PostgreSQL database or graphical-client test was used.
+
+## 2026-10-23 merged-main notification-read check
+- Merged `origin/main` at `f5d1a85b`; the live test now drains the MACHO session after the public-gateway ApplyResponse before replaying the same request ID and checking exactly one pair of cosmetic notices.
+- Python syntax compilation passed, and the current `Eve.Host.Tests` Release build passed with 0 warnings and 0 errors. The push-triggered live check is pending. No local PostgreSQL database or graphical-client verification was performed.

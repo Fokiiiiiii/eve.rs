@@ -65,13 +65,15 @@ internal sealed class Rig : IAsyncDisposable
     Func<long, CancellationToken, ValueTask<long?>>? readCorporationMemberStartedMs = null,
     Func<IReadOnlyList<Character>, CancellationToken, ValueTask<IReadOnlyDictionary<long, CharMgrOrganizationInfo>>>? readOrganizationInfo = null,
     HomeStationResolver? homeStations = null,
-    Func<long, long, CancellationToken, ValueTask<bool>>? canReadPrivateCorporationMemberInfo = null) =>
+    Func<long, long, CancellationToken, ValueTask<bool>>? canReadPrivateCorporationMemberInfo = null,
+    Func<long, long, int, long, string, CancellationToken, ValueTask>? writeContactNotification = null) =>
     new(Characters, homeStations ?? CreateHomeStationResolver(Characters), ReadRecentShipKillmailPageAsync,
         ReadCharacterDescriptionAsync, WriteCharacterDescriptionAsync, ReadSecurityStatusAsync, ReadMedal1GraphicIdAsync,
         readPersonalData, updatePersonalData, writeActivityStatus, writeLogSettings,
         readCorporationMemberStartedMs, readOrganizationInfo,
         readBalance: async (characterId, token) => (await Wallets.GetAsync(characterId, token))?.Isk,
-        canReadPrivateCorporationMemberInfo: canReadPrivateCorporationMemberInfo);
+        canReadPrivateCorporationMemberInfo: canReadPrivateCorporationMemberInfo,
+        writeContactNotification: writeContactNotification);
 
 public static HomeStationResolver CreateHomeStationResolver(
     PgCharacterStore characters,
@@ -580,6 +582,7 @@ public class CharMgrTests
         var fields = Fields(records.Items[0]);
         Assert.Equal(new PyStr("A saved bio"), fields["description"]);
         Assert.Equal(await Rig.CallAsync(rig.CharMgr, session, "GetCharacterCreationDate", Id(characterId)), fields["startDateTime"]);
+        Assert.Equal(Py.Number(-2.5), fields["securityRating"]);
         Assert.Equal(Py.Number(-2.5), fields["securityStatus"]);
         Assert.Equal(Id(9876), fields["medal1GraphicID"]);
     }
@@ -786,6 +789,45 @@ public class CharMgrTests
         var result = await Rig.CallAsync(service, session, "EditContact", [Id(2001), Id(-10), PyBool.True]);
         Assert.IsType<PyNone>(result);
         Assert.Equal(new CharMgrContact(2001, true, -10, 3), Assert.Single(state.Contacts));
+    }
+
+    [PgFact]
+    public async Task Contact_add_and_edit_forward_the_recipient_notice_only_when_requested()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var senderId = await rig.MakeAsync("Ann Lee");
+        var recipientId = await rig.MakeAsync("Bob Lee");
+        var state = CharMgrPersonalData.Empty;
+        var notices = new List<(long Sender, long Recipient, int Type, long Level, string Message)>();
+        var service = rig.CreateCharMgr(
+            (_, _) => ValueTask.FromResult<CharMgrPersonalData?>(state),
+            (_, update, _) =>
+            {
+                state = update(state);
+                return ValueTask.FromResult<CharMgrPersonalData?>(state);
+            },
+            writeContactNotification: (sender, recipient, type, level, message, _) =>
+            {
+                notices.Add((sender, recipient, type, level, message));
+                return ValueTask.CompletedTask;
+            });
+        var (session, _) = Rig.Session(senderId);
+
+        Assert.Equal(PyNone.Instance, await Rig.CallAsync(service, session, "AddContact",
+            Id(recipientId), Id(-10), PyBool.True, PyBool.True, new PyStr("Hello")));
+        Assert.Equal([(senderId, recipientId, 89, -10L, "Hello")], notices);
+        Assert.Equal(new CharMgrContact(recipientId, true, -10, 0), Assert.Single(state.Contacts));
+
+        Assert.Equal(PyNone.Instance, await Rig.CallAsync(service, session, "EditContact",
+            Id(recipientId), Id(-5), PyBool.False, PyBool.True, new PyStr("Updated")));
+        Assert.Equal(
+            [(senderId, recipientId, 89, -10L, "Hello"), (senderId, recipientId, 90, -5L, "Updated")],
+            notices);
+        Assert.Equal(new CharMgrContact(recipientId, false, -5, 0), Assert.Single(state.Contacts));
+
+        await Rig.CallAsync(service, session, "AddContact",
+            Id(recipientId), Id(-3), PyBool.False, PyBool.False, new PyStr("Ignored"));
+        Assert.Equal(2, notices.Count);
     }
 
     [PgFact]

@@ -23,7 +23,7 @@ public sealed record RelationKind(string Name)
     public double Clamp(double value) => Math.Clamp(value, Min, Max);
 }
 
-/// <summary>The kinds the game has. Add yours here (or define it with <see cref="RelationStore.Define"/>) rather than keeping a table of your own.</summary>
+/// <summary>The kinds the game has. Add yours here (or define it with <see cref="RelationStore.Define"/>).</summary>
 public static class RelationKinds
 {
 
@@ -38,6 +38,12 @@ public static class RelationKinds
     /// <summary>subject (the ally) fights in a war for a side; the object is the id of the <c>war</c> relation, the attributes say which side.</summary>
     public static readonly RelationKind WarAlly = new("war.ally");
 
+    /// <summary>Subject invited object to a mutual war; attributes contain the client sent date and until is the invitation expiry.</summary>
+    public static readonly RelationKind MutualWarInvite = new("war.mutual_invite");
+
+    /// <summary>Subject has blocked incoming mutual war invitations.</summary>
+    public static readonly RelationKind MutualWarInviteBlocked = new("war.mutual_invite_blocked");
+
     /// <summary>subject (a character) is a member of object (a corporation).</summary>
     public static readonly RelationKind CorporationMember = new("affiliation.corporation") { Cardinality = Cardinality.OnePerSubject };
 
@@ -47,5 +53,7 @@ public static class RelationKinds
     /// <summary>subject (a corporation, an alliance or an enlisted character) belongs to object (a faction).</summary>
     public static readonly RelationKind FactionMember = new("affiliation.faction") { Cardinality = Cardinality.OnePerSubject };
 
-    public static IReadOnlyList<RelationKind> All { get; } = [Standing, SecurityStatus, War, WarAlly, CorporationMember, AllianceMember, FactionMember];
+    public static IReadOnlyList<RelationKind> All { get; } =
+        [Standing, SecurityStatus, War, WarAlly, MutualWarInvite, MutualWarInviteBlocked,
+         CorporationMember, AllianceMember, FactionMember];
 }

@@ -1,22 +1,22 @@
 # Market status
 
-Updated 2026-10-22. This status follows the V24.01 client call sites and the persisted Host implementation.
+Updated 2026-10-23. This status follows the V24.01 call sites, current Host wiring, pinned SDE and EVE University market rules.
 
 ## Built
 
-- `MarketTrading` and `MarketProxyService` persist player orders and NPC supply at SDE stations, escrow, item custody, fills, cancellations, modifications, expiries, and wallet journal entries.
-- Order placement applies duration, range, minimum-volume, visibility, and order-count rules. Market RPC integer parsing refuses fractional, non-finite, and out-of-range Int32 values before narrowing. Buy Multiple executes its lines in one serializable transaction.
-- Corporate order reads resolve the current persisted corporation and require the persisted Accountant role, matching the V24.01 corporation orders tab gate.
-- NPC order seeding imports a captured market snapshot for SDE stations. History reads aggregate persisted market fills by region and split the current day from earlier days in the client response.
-- NPC station broker commission uses Broker skill, factional-warfare upgrades, and persisted faction and corporation standings. Sales tax uses Accounting; player-structure SCC surcharge is represented by the rule calculation.
-- The two-account headless trade walk passed on eve_p3. It checks the trade transfer, seller tax, broker fee, both balance deltas against persisted wallet journal rows, and that the NPC station order does not charge the Upwell structure SCC surcharge.
+- `MarketTrading` and `MarketProxyService` persist station and eligible Upwell structure orders, NPC supply, escrow, item custody, fills, cancellations, modifications, expiries and wallet journals.
+- Order placement applies duration, range, minimum-volume, visibility and order-count rules. Buy Multiple executes its lines in one serializable transaction; duration-zero requests only fill available sellers and leave unfilled quantity unposted. A duration-zero `PlaceBuyOrder` with no match returns the client refusal.
+- Corporate order reads resolve current persisted corporation membership and require the persisted Accountant role.
+- NPC order import reads captured market snapshots for SDE stations. History and transaction reads follow the client response shape and persisted fills.
+- NPC station broker commission uses Broker skill, factional-warfare upgrades and persisted standings. Seller tax uses Accounting. Upwell broker fees combine the owner rate and 0.5% SCC surcharge under one 100 ISK minimum; the accounting entries remain separate.
+- Structure access, per-character visibility, large-structure eligibility, order placement and matching, wallet and item settlement, cancellation, modification and restart persistence have Host coverage.
 
 ## Open
 
-- Player-structure order placement, reading, settlement, and custody are not wired into the market venue model. The implementation must authorize the market service from persisted structure state and profile settings, resolve structure system and region, and settle goods and wallet entries at that structure.
-- Graphical-client acceptance remains open. NPC seed import tests exercise captured artifacts; they do not validate a live seeded book.
-- The market ask response contract has a separate client decoding question documented in `service-response-audit/market-asks-fix.md`.
+- The market ask row's client decoding remains unresolved. V24 has both named-field and tuple consumers; server-side marshal tests do not establish how the native client restores the named row.
+- Native graphical-client acceptance remains open. The NPC headless walk does not verify the structure market through the graphical client.
+- CI must verify the latest structure-market rollback, combined broker-minimum, and duration-zero buy regressions. The local machine was not used for PostgreSQL tests.
 
 ## Regression evidence
 
-The `Eve.Market.Tests` PostgreSQL suite passed on eve_p3 (122 passed, 1 benchmark skipped). The focused `RulesTests` selection passed 7 tests with 4 delay-dependent cases skipped. Host registration and restart checks are in `dotnet/tests/Eve.Host.Tests/MarketHostTests.cs`; the two-account walk is `tools/headless-client/tests/test_market.py::test_a_seller_and_a_buyer_trade_through_the_market` and passed against a running Host on eve_p3.
+The two-account station headless walk passed on `eve_p3`; it checks transfer, tax, broker fee, wallet journals, partial fill, modification refusal and cancellation. Host tests cover structure market access, fee charging, failed-transaction rollback, item custody, settlement and restart recovery. The focused combined-minimum rule test passes without a database. The new duration-zero buy database scenarios await Actions verification.

@@ -50,6 +50,19 @@ public sealed class ShipSkinrCatalogDataTests
         Assert.False(actual.ContainsKey(500));
     }
 
+    [Fact]
+    public void Unlimited_license_types_use_the_runtime_unlimited_sentinel()
+    {
+        using var associatedTypes = JsonDocument.Parse(
+            """[{"typeID":9001,"licenseUsesGranted":-1},{"typeID":9002,"licenseUsesGranted":-2},{"typeID":9003,"licenseUsesGranted":3}]""");
+
+        var actual = ShipSkinrCatalog.ReadLicenseUsesByType(associatedTypes.RootElement);
+
+        Assert.Equal(0, actual[9001]);
+        Assert.False(actual.ContainsKey(9002));
+        Assert.Equal(3, actual[9003]);
+    }
+
     private static SdeRow Row(long key, string json)
     {
         using var document = JsonDocument.Parse(json);

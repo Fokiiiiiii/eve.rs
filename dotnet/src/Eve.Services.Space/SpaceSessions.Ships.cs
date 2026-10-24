@@ -141,7 +141,7 @@ public sealed partial class SpaceSessions
 
                 // server value is cleared (characterState: session.stationid2 = null); a later docking announces it from nothing (a pod's death does)
                 session.Set("stationid2", None);
-                session.Change((placeKey, None), ("locationid", new PyInt(systemId)), ("solarsystemid", new PyInt(systemId)));
+                session.Change((placeKey, None), ("locationid", new PyInt(systemId)), ("solarsystemid", new PyInt(systemId)), ("shipid", InventoryWire.Id(moved.Ship.Id)));
                 DockedLocationChanged?.Invoke(session, previousStationId, previousStructureId);
                 session.SendNotification("OnInvulunOnUndockingUpdated", "shipid", InventoryWire.Id(pilot!.ShipId),
                     new PyLong(pilot.InvulnerableUntil), new PyLong(UndockInvulnerabilityTicks));
@@ -177,8 +177,7 @@ public sealed partial class SpaceSessions
             || await _ships.LoadAsync(pilot.CharacterId, cancellationToken) is not { } fitting
             || fitting.Ship.Id != pilot.ShipId
             || fitting.Ship.TypeId == CharacterShips.CapsuleTypeId)
-        {
-            return None;
+        {            return None;
         }
 
         IReadOnlyList<string> blockers;
@@ -358,7 +357,6 @@ public sealed partial class SpaceSessions
             || abandoned.ShipTypeId == CharacterShips.CapsuleTypeId
             || abandoned.SolarSystemId != currentPilot.SolarSystemId)
             return None;
-
         var currentPosition = await PositionOfAsync(session, currentShipId, cancellationToken);
         var shipPosition = await PositionOfAsync(session, shipId, cancellationToken);
         if (currentPosition is not { } from || shipPosition is not { } to || from.SolarSystemId != to.SolarSystemId)
@@ -537,8 +535,7 @@ public sealed partial class SpaceSessions
             if (IsMovementOrder(code, args)) throw Notify("A controlled structure cannot move.");
             _sim.Command((ulong)session.SessionId, code, args);
             return;
-        }
-        CancelSafeLogoff(session);
+        }        CancelSafeLogoff(session);
         if (_pilots.TryGetValue((ulong)session.SessionId, out var pilot))
         {
 

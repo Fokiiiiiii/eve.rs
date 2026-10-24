@@ -307,10 +307,12 @@ def test_a_seller_and_a_buyer_trade_through_the_market():
         _new_character(buyer, buyer_run)
         station_id = seller.session.session_init.get("stationid")
         assert isinstance(station_id, int) and buyer.session.session_init.get("stationid") == station_id
-        seller_isk = dbseed.isk_of(seller.session.session_init.get("charid"))
-        buyer_isk = dbseed.isk_of(buyer.session.session_init.get("charid"))
-        seller_journal_at = _journal_checkpoint(seller.session.session_init.get("charid"))
-        buyer_journal_at = _journal_checkpoint(buyer.session.session_init.get("charid"))
+        seller_id = seller.session.session_init.get("charid")
+        buyer_id = buyer.session.session_init.get("charid")
+        seller_isk = dbseed.isk_of(seller_id)
+        buyer_isk = dbseed.isk_of(buyer_id)
+        seller_journal_at = _journal_checkpoint(seller_id)
+        buyer_journal_at = _journal_checkpoint(buyer_id)
 
         # stock: the game master's command puts the items in the station hangar and says so
         message = seller.call("slash", "SlashCmd", "/giveitem Tritanium 100")
@@ -341,13 +343,18 @@ def test_a_seller_and_a_buyer_trade_through_the_market():
         assert sold and sum(_field(row, "quantity") for row in sold) == 15, sold
         assert _field(next(row for row in _own_orders(seller) if _field(row, "orderID") == ask_id), "volRemaining") == 25
 
-        # Each account's balance delta is represented by its persisted trade and fee journal entries.
+        # Reconcile the trade, NPC broker minimum and Accounting-adjusted sales tax; no separate high-sec fee is charged.
         seller_journal = _journal_since(seller.session.session_init.get("charid"), seller_journal_at)
         buyer_journal = _journal_since(buyer.session.session_init.get("charid"), buyer_journal_at)
-        assert any(ref == 2 and amount == 750 for ref, amount in seller_journal), seller_journal
-        assert any(ref == 54 and amount < 0 for ref, amount in seller_journal), seller_journal
-        assert any(ref == 46 and amount == -100 for ref, amount in seller_journal), seller_journal
-        assert not any(ref == 149 for ref, _ in seller_journal), seller_journal
+        assert [amount for ref, amount in seller_journal if ref == 2] == [750.0], seller_journal
+        accounting_level = int(dbseed.sql(
+            f"SELECT COALESCE((SELECT level FROM {dbseed.schema('SKILLS')}.character_skills "
+            f"WHERE character_id = {seller_id} AND type_id = 16622), 0)"
+        ))
+        expected_tax = round(750 * 0.075 * (1 - 0.11 * accounting_level), 2)
+        assert [amount for ref, amount in seller_journal if ref == 54] == [-expected_tax], seller_journal
+        assert [amount for ref, amount in seller_journal if ref == 46] == [-100.0], seller_journal
+        assert {ref for ref, _ in seller_journal} == {2, 46, 54}, seller_journal
         assert buyer_journal == [(2, -750.0)], buyer_journal
         assert dbseed.isk_of(seller.session.session_init.get("charid")) - seller_isk == sum(amount for _, amount in seller_journal)
         assert dbseed.isk_of(buyer.session.session_init.get("charid")) - buyer_isk == sum(amount for _, amount in buyer_journal)

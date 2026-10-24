@@ -40,4 +40,4 @@ The first selected Actions run 40086984233 stopped during the .NET solution buil
 
 Verified locally after the implementation change: `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj --no-restore -p:UseSharedCompilation=false` passed with 0 warnings and 0 errors. The focused Host wire test passed 1/1 with 0 skipped. No database or graphical client was used.
 
-For pushes `178cd06c35657c0c53d8a6356c88ba879cb28194` and `8166ae9286f7`, `python3 tools/dev/ci-status.py failures <sha>` reported no `ci.yml` run found.
+For pushes `178cd06c35657c0c53d8a6356c88ba879cb28194`, `8166ae9286f7`, and `6772793d4b86d924001f89ba92108e8713878a57`, `python3 tools/dev/ci-status.py failures <sha>` reported no `ci.yml` run found.

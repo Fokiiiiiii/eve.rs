@@ -9,3 +9,7 @@ The populationCap headless scenario passed on `eve_p4` / port 26103 using the bu
 Structure review corrected a stale handoff: single-character cyno-beacon travel and persisted jump-bridge destination/link reads are wired. EveJS supports group beacon jumps, portal bridging, and Ansiblex travel; Host records explicit unsupported gaps for those transitions.
 
 The CI status also showed a separate earlier Live(slow) failure on SHA `ae6c86ce4fe9`: `test_arc29_walk.py` observed 89,000 ISK against a 100,000 ISK mission reward expectation. It is outside this client-contract audit and was not changed here.
+
+## Client/EveJS differential follow-up
+
+`PokePlayerAboutChatMsgGm` now sends EveJS-compatible persisted system mail through the production mail adapter. The V24 XMPP client calls this RPC; EveJS uses sender `140000004` (`GM ELYSIAN`), subject `GM chat request`, and the requested channel in the message body. The Host validates the privileged payload, persists recipient status and notification before returning the message ID, and omits a sender mailbox copy as EveJS does. `Eve.Host.Tests` build passed, and `Mail_host_adapter_commits_mail_and_notification_before_returning_id` passed locally (1/1). GitHub Actions result is pending for the pushed commit.

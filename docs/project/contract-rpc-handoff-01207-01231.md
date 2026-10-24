@@ -24,6 +24,7 @@ The Host regression is `Contract_reads_and_mutations_are_dispatched_through_the_
 
 - Core build after CollectMyPageInfo and assignment correction: passed, zero warnings/errors.
 - Host build after assignment correction: passed, zero warnings/errors.
+- Latest code commit d0db3ff3 was pushed with origin/main merged at 5273c3dc; focused Agent test dispatch for that push is pending.
 - Focused Host test after CollectMyPageInfo: passed (1 passed, 0 skipped).
 - No PostgreSQL connection was used.
 - Agent test run 40098916457 for push 755a38a2 passed; Agent test run 40099756130 for push 23db167f passed.

@@ -197,8 +197,7 @@ CI run 672 on `1669e6dc` failed the structure market Host test because the fixtu
 - Push-triggered CI run 683 (`40014207144`) and merged-parent run 682 (`40014191246`) were still running in the neighboring worktree at its last update. Current CI and Agent checks on the merged head remain pending.
 - No local PostgreSQL or graphical-client verification was performed.
 
-## 2026-10-23 CI 647/648 root-cause review- The E2E and Host logs report `42P01` for `sde.skinrComponentPointValues`. These records are in the mission SDE. The failing Host composition passed the regular SDE reader to the SKINR catalog, and the live harness loaded only the regular SDE build. Main commit `a00e62c9` now reads the catalog through `sde_mission`, verifies mission tables when reusing the loaded build, and has the live harness ensure the mission build. The cache key update in `86c11a0c` is separate from this schema mismatch.- Run 648 also reports `ShipSkinrDispatchTests.Draft_save_and_read_responses_keep_the_v24_row_shape` failing its decoded skin string assertion. Main commit `bb6029d1` corrects the test's nested response decoding.
-- Run 647/648 predate these changes. Run 683 on `8610990c` is checking the corrected SKINR live fixture shape; run 684 on the later head `253597a9` is now the newest push gate. Check both completed results before closing these causes.
+## 2026-10-23 CI 647/648 root-cause review- The E2E and Host logs report `42P01` for `sde.skinrComponentPointValues`. These records are in the mission SDE. The failing Host composition passed the regular SDE reader to the SKINR catalog, and the live harness loaded only the regular SDE build. Main commit `a00e62c9` now reads the catalog through `sde_mission`, verifies mission tables when reusing the loaded build, and has the live harness ensure the mission build. The cache key update in `86c11a0c` is separate from this schema mismatch.- Run 648 also reports `ShipSkinrDispatchTests.Draft_save_and_read_responses_keep_the_v24_row_shape` failing its decoded skin string assertion. Main commit `bb6029d1` corrects the test's nested response decoding.- Run 647/648 predate these changes. Run 683 on `8610990c` is checking the corrected SKINR live fixture shape; run 684 on the later head `253597a9` is now the newest push gate. Check both completed results before closing these causes.
 
 ## 2026-10-23 Agent-test selection review
 
@@ -397,7 +396,6 @@ CI run 672 on `1669e6dc` failed the structure market Host test because the fixtu
 - V24.01 EjectFromStructure forwards the shipID as a session change; EveJS v0.12.9 restores restoreShipID without checking position or distance. The Host backend still requires the requested ship to match the stored original ship and validates its owner, type, system location, and space flag.
 - The unused CanReturnToStructureShipAsync helper encoded a distance check that the eject path does not call. It is removed. The Host regression now verifies that the original ship restores from 155 km surface distance after scene positions stop being available.- Host.Tests and Space.Tests Release builds passed locally with 0 warnings and 0 errors. The focused Actions run for the far-distance Host regression, Space scoop regressions, and next push gate are pending. No local database-backed tests or graphical-client verification were performed.
 ## 2026-10-24 CI 737 follow-up
-
 - Push gate run 737 (`486812c1`) confirmed the Eject live flow and all 22 selected structure scenarios passed. The Host test still asserted the old distance refusal, and the new Space tests failed before reaching scoop logic because their character names exceeded the two-space name rule; both test expectations are corrected locally, with focused Action reruns pending.
 - The same gate's E2E failure was `test_market.py` expecting named `KeyVal` rows from `GetStationAsks`. Main's later `56e0d37d` merge includes the market wire-shape correction. The follow-up gate on the current head will verify the tuple correction.
 - The RPC inventory count discrepancy (expected 1,378, actual 1,382) was corrected on main by `35964099` and recorded by `284dfe95`; that path is outside this structure follow-up.
@@ -598,7 +596,6 @@ Regression tests added: `DungeonWaveTests.A_system_owned_wave_waits_until_a_pilo
 ## 2026-10-24 CORE FIX 1 latest-main gate before push
 - The worktree now includes origin/main through ab5acba6, merged before the planned push. The preceding main gate, run 807, is still active at this check: the Python client and fixture-generator jobs passed, while .NET build, Rust format/clippy, Windows, selected tests, and the server-stack E2E are active or queued.
 - After that merge, Rust 1.94.1 format, eve-space/eve-sim check, and workspace all-target clippy passed. The updated Space test-project rebuild exited 137 because the shared host had less than 1 GiB available memory; the earlier pre-merge build of that project passed. The focused Host test will be checked on Actions after push. No local database or graphical client was used.
-
 ## 2026-10-24 push 1629f575 stargate jump
 
 - Pushed the merged stargate jump work as 1629f575858c after fetching and merging origin/main through f9d453be. This head includes the coast-only jump acceptance, accepted-jump warp-state cleanup, simulation regression, Host wire regression, the required DogmaStatic ship fixture, and the clippy cleanup.
@@ -632,3 +629,7 @@ Regression tests added: `DungeonWaveTests.A_system_owned_wave_waits_until_a_pilo
 - Pushed the NPC scene-refusal and docking-approach fixes as `8c2994862f3de21450615c3b032fe5b473e916ab`, after fetching and merging `origin/main` through `014e0b85`.
 - Selected Actions run `40090624287` is checking `BeltRatsHostTests.A_scene_unavailable_belt_spawn_is_reported_without_log_spam` and the slow live movement, undock, celestial warp and gate-jump walks. Results will be added after the run completes.
 - Local checks on the changed projects: the focused Rust station-approach test passed (1 passed); `cargo +1.94.1 check -p eve-space`, workspace clippy with warnings denied, and `cargo +1.94.1 fmt --all -- --check` passed. The .NET Space test project built with 0 warnings and 0 errors. No local PostgreSQL database was used.
+## 2026-10-24 CORE FIX 5 selected-run argument correction
+
+- Agent run `40090624287` ended before tests started: the live selection repeated the `slow:` prefix for each comma-separated filename, while `agent-test.py` accepts it once for the whole list. No test result was produced by that run.
+- Corrected dispatch `40090893730` uses `slow:test_movement.py,test_undock.py,test_warp.py,test_jump.py` and is in progress. Do not count the earlier run as a pass.

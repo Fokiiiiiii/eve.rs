@@ -93,3 +93,10 @@ Main commit `486812c1` was merged before this correction. The Host inventory ass
 ## Focused inventory verification (2026-10-24)
 
 Actions run `40043761052` passed all selected tests: bookmark prime, Host EditContact, AgentMission keywords and RPC inventory. No failed tests or jobs. Push CI `40043754414` for commit `35964099` is still running; the full CI status remains pending. The local Host.Tests build passed with 0 warnings and 0 errors. No local PostgreSQL tests or graphical-client checks were run.
+
+
+## Latest CI follow-up (2026-10-24)
+
+Push CI `40043754414` for `35964099` completed. The updated RPC inventory count and all four focused service tests passed. Three unrelated failures remained: the live market test decoded a tuple row where it expected a named KeyVal; a Space scoop test's fixture character creation returned `CreationRefused`; and a Host structure test expected a refusal where the implementation now allows the return. Main commit `4930fd25` contains market, Space fixture and StructureControl follow-up changes; the next CI run will verify them.
+
+The inherited mission journal serializer was also corrected: `expirationTime` now uses `PyLong` for the 64-bit FileTime, with an assertion in the existing AgentMission regression. Local `Eve.Services.Core.Tests` build passed with 0 warnings and 0 errors. Actions run `40045225224` reruns that regression; push CI `40045219089` is active. Results are pending. No local PostgreSQL test or graphical-client run was performed.

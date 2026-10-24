@@ -83,11 +83,11 @@ public class ProtocolTests
             ("price",new PyReal(12)),("quantity",new PyInt(5)));
         Assert.Equal(PyBool.True,await proxy.PlaceMultiSellOrder(Call(session,"PlaceMultiSellOrder",6,new PyList([sell]),PyBool.False,new PyInt(90))));
 
-        Assert.Single(sink.Packets);
+        Assert.Equal(2,sink.Packets.Count);
         Assert.All(sink.Packets,packet => Assert.Equal("OnOwnOrdersChanged",NotificationName(packet)));
         var own=(await r.Book.BookAsync(r.Station.RegionId,34,r.Now)).Asks.Single(o => !o.IsNpc);
         Assert.Equal(PyNone.Instance,await proxy.CancelCharOrder(Call(session,"CancelCharOrder",7,new PyLong(own.Id))));
-        Assert.Equal(2,sink.Packets.Count);
+        Assert.Equal(3,sink.Packets.Count);
         Assert.All(sink.Packets,packet => Assert.Equal("OnOwnOrdersChanged",NotificationName(packet)));
         Assert.Equal(5,Assert.Single(await r.Items.InLocationAsync(r.Station.Id,actor)).Quantity);
     }
@@ -168,7 +168,7 @@ public class ProtocolTests
             new PyInt(r.Station.Id),new PyInt(plex),new PyReal(1000),new PyInt(1),new PyInt(-1),
             new PyInt(1),new PyInt(0),PyBool.False)));
 
-        Assert.Equal(2,sink.Packets.Count);
+        Assert.Equal(3,sink.Packets.Count);
         var histories=Assert.IsType<PyDict>(await proxy.GetPlexHistory(Call(session,"GetPlexHistory",25)));
         var pair=Assert.IsType<PyList>(Assert.Single(histories.Entries).Value);
         Assert.Equal(2,pair.Items.Count);

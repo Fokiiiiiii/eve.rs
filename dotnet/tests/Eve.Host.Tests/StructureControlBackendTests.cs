@@ -432,14 +432,14 @@ public sealed class StructureControlBackendTests
         Assert.Equal(ship, session.GetInt("shipid"));
     }
 
-    /// <summary>Ejection restores the controlled pilot's original ship; it is not a second boarding action.</summary>
+    /// <summary>A return to the pilot's original ship restores that ship even when it is beyond structure boarding range.</summary>
     [PgFact]
-    public async Task A_ship_boarded_from_space_can_return_to_its_pilot_from_far_away()
+    public async Task A_ship_boarded_from_space_returns_to_its_pilot_even_when_far_from_the_structure()
     {
         await using var f = await Fixture.CreateAsync(withSpaceItems: true);
         var session = await f.FlyingSessionAsync(41);
         var ship = session.GetInt("shipid")!.Value;
-        // 155 000 m of surface from the Astrahus.
+        // 155 000 m of surface away: beyond structure boarding range, but Eject restores the ship rather than boarding it
         f.Sim.PositionAnswer = [200_000d, 0d, 0d];
         await f.Backend.BoardStructureAsync(f.Call(session), Structure);
         f.Sim.RefusePositions = true;

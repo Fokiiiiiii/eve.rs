@@ -30,7 +30,8 @@ public sealed class StargateJumpWireTests
             JumpAnswer = new CommandReply(true, 0, null, null, DestinationSystem, DestinationGate)
         };
         var statics = new DogmaStatic([], [], [new TypeDef(1001, 1, 1, new Dictionary<int, double>(), [], "Test ship")]);
-        using var space = new SpaceSessions(sim, null!, statics, null!, new SolarSystemCatalog([]), () => UnixMs);
+        using var space = new SpaceSessions(
+            sim, null!, statics, new StationCatalog([]), new SolarSystemCatalog([]), () => UnixMs);
         var sink = new Sink();
         var session = new ClientSession(sink) { SessionId = 7, ClientId = 7, CharacterId = Character, UserId = 1 };
         session.Set("shipid", new PyLong(Ship));

@@ -442,6 +442,12 @@ public sealed class StructureControlBackendTests
         // 155 000 m of surface away: beyond structure boarding range, but Eject restores the ship rather than boarding it
         f.Sim.PositionAnswer = [200_000d, 0d, 0d];
         await f.Backend.BoardStructureAsync(f.Call(session), Structure);
+        await using (var connection = await f.Source.OpenConnectionAsync())
+        await using (var command = new NpgsqlCommand($"SELECT x FROM {f.SpaceSchema}.space_items WHERE item_id = $1", connection))
+        {
+            command.Parameters.AddWithValue(ship);
+            Assert.Equal(200_000d, (double)(await command.ExecuteScalarAsync())!);
+        }
         f.Sim.RefusePositions = true;
 
         await f.Backend.EjectFromStructureAsync(f.Call(session), ship);

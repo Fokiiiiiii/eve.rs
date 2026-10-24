@@ -100,3 +100,23 @@ Actions run `40043761052` passed all selected tests: bookmark prime, Host EditCo
 Push CI `40043754414` for `35964099` completed. The updated RPC inventory count and all four focused service tests passed. Three unrelated failures remained: the live market test decoded a tuple row where it expected a named KeyVal; a Space scoop test's fixture character creation returned `CreationRefused`; and a Host structure test expected a refusal where the implementation now allows the return. Main commit `4930fd25` contains market, Space fixture and StructureControl follow-up changes; the next CI run will verify them.
 
 The inherited mission journal serializer was also corrected: `expirationTime` now uses `PyLong` for the 64-bit FileTime, with an assertion in the existing AgentMission regression. Local `Eve.Services.Core.Tests` build passed with 0 warnings and 0 errors. Actions run `40045225224` reruns that regression; push CI `40045219089` is active. Results are pending. No local PostgreSQL test or graphical-client run was performed.
+
+
+
+## Focused mission expiry verification (2026-10-24)
+
+Focused Actions run `40045225224` for commit `343cd0fd` passed the AgentMission keyword regression, including the 64-bit `expirationTime` assertion. The push CI run `40045219089` for the same code commit is still running; its Rust format/clippy, Python, fixture, .NET build, Rust tests, and latest-stable advisory jobs have passed so far, while several .NET shards, the end-to-end walk, and Windows job are still active. No failure has been reported yet. Earlier focused run `40043761052` also passed the bookmark expiry, contact edit, mission keywords, and RPC inventory tests. No local PostgreSQL tests or graphical-client run were performed.
+
+
+
+## Completed push CI result (2026-10-24)
+
+Push CI run `40045219089` for `343cd0fd` completed with a failed required gate. Rust format/clippy, Rust tests, Python client checks, fixture generation, .NET build, Windows, all Host shards, and the Services.Core shard passed. The focused AgentMission run `40045225224` passed, as did the four selected bookmark/contact/mission/inventory regressions in `40043761052`.
+
+The full run's failures were outside this service slice: the headless E2E job received Macho error 2; `SpaceContainersUnanchorDropsTests.Scoop_transaction_rejects_an_upwell_hull_owner_that_disagrees_with_its_recorded_corporation` expected a custody-record error but got a nullable-value error; and two Market protocol tests failed (`Native_market_rpc_reads_descriptor_rows_buys_sells_and_cancels_without_node` observed two notifications where one was expected, plus `Market_client_plex_history_escrow_and_order_history_reads_are_native`). The push-triggered CI for the later main commit `808933b7` will check the newer Space fixture adjustment. The slow live movement, warp, jump, target, module, health, and others tests plus the skill-speed case were skipped by workflow settings; these are not passes. No local PostgreSQL or graphical-client checks were performed.
+
+
+
+## Neighboring main CI follow-up (2026-10-24)
+
+CI run `40045506688` for later main commit `808933b7` is still active. Rust checks/tests, Python, fixtures, .NET build, Windows-independent Host shards, and Space shard 2 have passed so far; E2E, Space shard 1, and Market shard 3 have failed again. The run has not completed, so detailed outcomes remain pending. This shows the previous Space fixture adjustment did not yet clear the full Space shard failure. The chat/contact/bookmark focused regressions remain green in their selected run; these neighboring failures are not from the service changes in this handoff.

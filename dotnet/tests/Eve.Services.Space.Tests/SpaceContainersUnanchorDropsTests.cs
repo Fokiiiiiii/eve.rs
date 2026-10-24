@@ -192,13 +192,15 @@ public sealed class SpaceContainersUnanchorDropsTests
         await rig.BindShipInSpaceAsync(session);
         var system = checked((int)session.GetInt("solarsystemid")!.Value);
         var shipId = session.GetInt("shipid")!.Value;
+        var pilot = await rig.Ships.CharacterAsync(character.CharacterId);
+        Assert.NotNull(pilot);
 
         var hullType = rig.Statics.Type(Astrahus)!;
         var marker = StructureUnanchorDrop.HullMarker(StructureId);
         var hullId = await AddDropAsync(rig, system, StructureId, Astrahus, marker,
             "Mismatched owner Astrahus", hullType.GroupId, hullType, character.CharacterId);
         var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            rig.Ships.ScoopSpaceArtifactAsync(character.CharacterId, session.GetInt("corpid")!.Value, false,
+            rig.Ships.ScoopSpaceArtifactAsync(character.CharacterId, pilot.CorporationId, false,
                 shipId, system, hullId, marker, rig.SpaceItems));
 
         Assert.Contains("custody record", error.Message, StringComparison.Ordinal);

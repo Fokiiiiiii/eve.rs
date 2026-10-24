@@ -38,3 +38,20 @@ The working tree also began with nine unrelated deleted Rust source files. They 
 - The station inventory report’s `GetInventory(10004, None)` budget refusal comes from the 05:29 UTC graphical capture, before `e1ed09a4` (06:35 UTC) separated inventory calls from unrelated expensive RPCs. It is the same shared-bucket starvation documented in `REAL_CLIENT_DIAGNOSTICS.md` (d), not a new failure against the current dispatcher.
 - The current dispatcher keeps inventory bounded at 160 units per session and applies nested `MachoBindObject` costs to that bucket. `DispatchGoldenTests.Inventory_calls_keep_a_bounded_budget_separate_from_other_expensive_services` passed locally (1 passed, 0 failed, 0 skipped); it proves unrelated expensive calls do not consume the inventory allowance and that the inventory cap still refuses excess work.
 - The later inventory UI scout did not inspect captures or assert a row/capacity wire mismatch. No code change or graphical-client retest was needed for this follow-up.
+
+## Client-behavior evidence index (2026-10-24)
+
+This index covers the service families exercised by the market flow; it links the tests that assert client calls, response shapes, persisted effects, or notifications. “Client-contract” means a V24-shaped request/response is exercised against the Host or its headless endpoint. “Differential” means the same scenario is run against EveJS and eve.rs.
+
+| Service family | Client-behavior tests | Evidence and remaining gap |
+|---|---|---|
+| `marketProxy` | `tools/headless-client/tests/test_market.py::test_a_docked_character_reads_the_market_as_the_client_does`; `test_a_seller_and_a_buyer_trade_through_the_market`; `test_market_browse_and_history_refresh_fit_one_session` | Client-shaped asks/orders/transaction rows and named refusals; the trade walk checks wallet, escrow, item delivery, cancel and modification. The new docked-read test fills the missing explicit empty-book and refusal contract. No same-scenario EveJS comparison is recorded. |
+| Upwell structure market and docking | `tools/headless-client/tests/test_market.py::test_docked_corporation_members_trade_at_an_eligible_upwell_structure` | The new two-pilot walk exercises V24 docking, structure market discovery, resting and matched orders, remaining stock, wallet journal, item custody, and notification ordering against the persisted Fortizar. No EveJS differential or graphical-client run is recorded. |
+| `invbroker` station inventory | `test_a_seller_and_a_buyer_trade_through_the_market`; `test_docked_corporation_members_trade_at_an_eligible_upwell_structure` | The walks read the station/structure hangar before and after settlement. They cover the market custody path; general inventory rowsets and mutation methods are covered separately by the inventory Host tests. No same-scenario EveJS comparison is recorded. |
+| Wallet and account notifications | `test_a_seller_and_a_buyer_trade_through_the_market`; `test_docked_corporation_members_trade_at_an_eligible_upwell_structure` | The walks reconcile balance changes with journal rows and assert account-change notifications precede order-change notices. The market-client flow has no EveJS differential. |
+
+The two new contract cases in this handoff are the docked station read/refusal test and the two-character Upwell market walk. The first checks the basic `marketProxy` contracts on an empty book; the second covers the highest-impact cross-service market flow through docking, settlement and committed notifications. Both use the V24 headless client and assert actual Host responses rather than calling service classes directly.
+
+### Verification boundary
+
+The service-level and Host tests listed in this handoff prove their named assertions only. The two new client walks require the live headless workflow and scratch schemas; their pass status is recorded after Actions completes. These tests do not establish native graphical-client acceptance or EveJS differential parity.

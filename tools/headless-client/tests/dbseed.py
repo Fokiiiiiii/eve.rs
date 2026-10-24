@@ -127,6 +127,10 @@ def join_corporation(character: int, corporation: int, roles: int) -> None:
     sql(f"insert into {schema('CORPORATIONS')}.members (character_id, corporation_id, started_ms, roles) values "
         f"({int(character)}, {int(corporation)}, {now}, {int(roles)}) on conflict (character_id) do update set "
         f"corporation_id = excluded.corporation_id, started_ms = excluded.started_ms, roles = excluded.roles")
+    relations = schema('RELATIONS')
+    sql(f"delete from {relations}.relations where kind = 'affiliation.corporation' and subject = {int(character)}")
+    sql(f"insert into {relations}.relations (kind, subject, object, value, attrs, since_ms, updated_ms) values "
+        f"('affiliation.corporation', {int(character)}, {int(corporation)}, 1, '{{}}'::jsonb, {now}, {now})")
 
 def found_alliance(creator: int, corporation: int, key: str) -> int:
     alliance = int(sql(f"select nextval('{schema('CORPORATIONS')}.alliance_ids')"))

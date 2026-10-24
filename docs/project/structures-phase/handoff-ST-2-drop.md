@@ -61,3 +61,8 @@ Serena diagnostics are clean for the new drop authority, timer, scoop backend, a
 ## Focused Actions follow-up (2026-10-24)
 
 - Agent test run 231 on `486812c1` passed all 22 selected live structure tests. Its Space test filter passed 2 and failed 2 because the added pilot names exceeded the two-space character-name rule; the fixtures now use valid names, and the focused rerun is pending.
+
+
+## Focused Actions rerun on 2026-10-24
+
+- Agent test run 238 on `4930fd25` passed 3 of 4 Space cases and the Host Eject case passed 1 of 1. The remaining custody test passed no business assertion because its test session had no `corpid` field; it now reads the pilot's corporation from the authoritative character store. Focused rerun pending.

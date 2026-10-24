@@ -418,3 +418,7 @@ CI run 672 on `1669e6dc` failed the structure market Host test because the fixtu
 - The same run's headless job ended on `MachoError: macho error 2` for call id 19. The failure summary did not expose a pytest case name. Main's later `2a014844` commit updates the market seed and headless market walk; Actions run 745 is checking that path.
 - Main commits `61e84858` and `ff287b5e` correct the distant structure ejection expectation and shorten the invalid character fixtures; run 740 predates those updates.
 - Host.Tests, Space.Tests, Core.Tests, and Market.Tests Release builds passed locally with 0 warnings and 0 errors. No database-backed tests were run locally; the focused regressions will be checked on Actions.
+
+## 2026-10-24 selected Actions rerun 238
+
+- The Host distant-ship regression passed 1/1. Space tests passed 3/4; the remaining test failed in setup when it read an absent `session.corpid` field instead of the authoritative pilot record. The test now uses `CharacterAsync(...).CorporationId` and is queued for another focused run.

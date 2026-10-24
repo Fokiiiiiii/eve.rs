@@ -569,7 +569,8 @@ public sealed partial class SpaceSessions
         {
             return;
         }
-        if (pilot.End())
+        var hasProtection = pilot.InvulnerableUntil > FileTimeNow() || pilot.JumpCloak || pilot.CancelExpiry is not null;
+        if (pilot.End() && hasProtection)
         {
             if (pilot.JumpCloak)
             {

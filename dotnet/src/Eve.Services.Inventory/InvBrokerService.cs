@@ -834,8 +834,9 @@ public sealed partial class InvBrokerService(
             return new PyList([]);
 
         if (stations.Get(station) is null &&
-            (context?.Kind != Kind.GlobalAssets ||
-                await GlobalAssetStructureAsync(station, call.Cancellation) is null))
+            (context?.Kind == Kind.GlobalAssets
+                ? await GlobalAssetStructureAsync(station, call.Cancellation) is null
+                : StationOf(call.Session) != station))
             return new PyList([]);
 
         var stationItems = context is { Kind: Kind.GlobalAssets }

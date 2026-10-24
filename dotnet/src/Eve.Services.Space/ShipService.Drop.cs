@@ -37,20 +37,27 @@ public sealed partial class ShipService
                 continue;
             }
 
-            // shortcut: one source item id is launched once; add stack quantities when a Host launch provider consumes stacks.
+            var quantity = parts.Count > 1 && IdOf(parts[1]) is { } requestedQuantity
+                ? Math.Max(1, requestedQuantity)
+                : 1;
             var values = new List<PyValue>();
-            try
+            for (var launched = 0L; launched < quantity; launched++)
             {
-                if (await containers.LaunchFromShipAsync(call.Session, itemId, call.Cancellation) is { } launchedId)
+                try
                 {
+                    if (await containers.LaunchFromShipAsync(call.Session, itemId, call.Cancellation) is not { } launchedId)
+                    {
+                        break;
+                    }
                     values.Add(new PyLong(launchedId));
                 }
-            }
-            catch (MachoWrappedException error) when (error.Error.IsUserError)
-            {
-                values.Add(Py.Tuple(
-                    new PyStr("CustomNotify"),
-                    new PyDict([new(new PyStr("notify"), new PyStr(error.Error.UserErrorMessage))])));
+                catch (MachoWrappedException error) when (error.Error.IsUserError)
+                {
+                    values.Add(Py.Tuple(
+                        new PyStr("CustomNotify"),
+                        new PyDict([new(new PyStr("notify"), new PyStr(error.Error.UserErrorMessage))])));
+                    break;
+                }
             }
             response.Add(new(new PyLong(itemId), new PyList(values)));
         }

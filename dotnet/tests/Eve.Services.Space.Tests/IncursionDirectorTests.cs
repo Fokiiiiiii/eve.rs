@@ -541,6 +541,8 @@ public sealed class IncursionDirectorTests
             }
         }
 
+        public bool HasPilotsInSystem(int solarSystemId) => true;
+
         public bool IsPilotInSystem(long characterId, int solarSystemId) => false;
 
         public void Remove(IReadOnlyList<long> shipIds)

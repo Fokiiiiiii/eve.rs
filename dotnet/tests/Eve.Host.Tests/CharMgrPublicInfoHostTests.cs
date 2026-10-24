@@ -67,18 +67,18 @@ public partial class HostServerTests
              "solarSystemID", "militiaFactionID", "medal1GraphicID"],
             firstFields.Keys);
         Assert.Equal(new PyInt(first.Id), firstFields["characterID"]);
-        Assert.Equal(new PyStr(first.Name), firstFields["characterName"]);
+        Assert.Equal(first.Name, JsSemantics.StringValue(firstFields["characterName"]));
         Assert.Equal(new PyInt(first.BloodlineId), firstFields["bloodlineID"]);
         Assert.Equal(new PyInt(first.SchoolId), firstFields["schoolID"]);
         Assert.Equal(new PyInt(first.Gender), firstFields["gender"]);
         Assert.Equal(new PyInt(first.CorporationId), firstFields["corporationID"]);
         Assert.Equal(new PyInt(500004), firstFields["empireID"]);
-        Assert.Equal(new PyStr($"description-{first.Id}"), firstFields["description"]);
+        Assert.Equal($"description-{first.Id}", JsSemantics.StringValue(firstFields["description"]));
         Assert.Equal(new PyInt(707), firstFields["medal1GraphicID"]);
 
         var secondFields = Fields(await Call(2, second.Id));
         Assert.Equal(new PyInt(second.Id), secondFields["characterID"]);
-        Assert.Equal(new PyStr(second.Name), secondFields["characterName"]);
+        Assert.Equal(second.Name, JsSemantics.StringValue(secondFields["characterName"]));
         Assert.Equal(new PyInt(second.BloodlineId), secondFields["bloodlineID"]);
         Assert.Equal(new PyInt(second.SchoolId), secondFields["schoolID"]);
         Assert.Equal(new PyInt(second.Gender), secondFields["gender"]);

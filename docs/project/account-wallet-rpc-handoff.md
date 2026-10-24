@@ -2,40 +2,27 @@
 
 ## Scope and implementation
 
-Rows RPC-00733–RPC-00738 all resolve to the already implemented `account` service methods. The gap was end-to-end Host wire regression coverage. Added `dotnet/tests/Eve.Host.Tests/AccountWalletHostRpcTests.cs`: it registers the production `AccountService` in `ServiceRegistry`, dispatches marshalled `Packets.Call` requests through `PacketDispatcher`, and uses persisted PostgreSQL stores and the production `WalletAnnouncer`. It checks the three RPC methods, response values/types, resulting balances, committed transaction changes, and notification-before-reply order.
+Rows RPC-00733–RPC-00738 already have working `account` service methods. Added `dotnet/tests/Eve.Host.Tests/AccountWalletHostRpcTests.cs` to close end-to-end Host wire coverage. It registers production `AccountService`, dispatches marshalled `Packets.Call` requests through `PacketDispatcher`, uses persisted stores and production `WalletAnnouncer`, and checks reply shapes, balances, committed changes, and notification order.
 
-No implementation behavior or compatibility deviation was changed. No database was used locally; the focused `[PgFact]` runs in the GitHub Actions test environment.
+No server behavior or compatibility deviation changed. No local PostgreSQL command was run.
 
 ## V24.01 whole-client evidence
 
-The whole `/home/user/eve-logic` search found these callers and consumers:
+- `carbon/common/script/net/httpGate.py:34`: calls `GetCashBalance(0)`, JSON encodes the result.
+- `eve/client/script/ui/shared/neocom/wallet/walletSvc.py:40-48`: consumes personal scalar wealth; `:157-158` reads corp scalar and maps `UserError` to zero.
+- `eve/client/script/ui/shared/neocom/corporation/corp_ui_home.py:197`: consumes `GetCashBalance(1, 1000)` for dividend eligibility.
+- `eve/client/script/ui/shared/neocom/wallet/panels/personal/giveIskPanel.py:102-103`: personal `GiveCash` truthiness gates success UI.
+- `eve/client/script/ui/shared/neocom/wallet/transferMoneyWnd.py:147-152`: calls personal `GiveCash` or `GiveCashFromCorpAccount`; completion does not inspect the reply.
 
-- `carbon/common/script/net/httpGate.py:34`: calls `GetCashBalance(0)` and returns the value as JSON.
-- `eve/client/script/ui/shared/neocom/wallet/walletSvc.py:40-48`: reads personal cash as a scalar for wallet wealth; `:157-158` reads corporation cash as a scalar and maps a `UserError` to zero.
-- `eve/client/script/ui/shared/neocom/corporation/corp_ui_home.py:197`: calls `GetCashBalance(1, 1000)` and uses the amount for dividend form eligibility.
-- `eve/client/script/ui/shared/neocom/wallet/panels/personal/giveIskPanel.py:102-103`: calls personal `GiveCash` and checks truthiness before showing success.
-- `eve/client/script/ui/shared/neocom/wallet/transferMoneyWnd.py:147-152`: calls personal `GiveCash` or `GiveCashFromCorpAccount`; the window handles completion without consuming the returned value.
-
-These consumers establish that cash balance must be numeric and that the personal gift panel requires a truthy success value. The transfer window does not inspect the transfer reply.
-
-## EveJS comparison
-
-The matching executable reference is `/home/user/evejs-v0.12.9/server/src/services/account/accountService.js`:
-
-- `:678-700` returns the actual personal/corporation balance and checks corporation access.
-- `:864-913` performs personal/corporation `GiveCash` transfers.
-- `:915-964` performs `GiveCashFromCorpAccount`.
-
-The eve.rs Host regression exercises these existing paths against persisted balances and the real announcer. The existing deviation record for corporation donation reply details is in `docs/reference/compat/DEVIATIONS.md`; this work adds no new difference.
+EveJS comparison: `/home/user/evejs-v0.12.9/server/src/services/account/accountService.js:678-700` returns actual balances and checks corporation access; `:864-913` handles `GiveCash`; `:915-964` handles `GiveCashFromCorpAccount`. Existing corporation-donation response difference is in `docs/reference/compat/DEVIATIONS.md`.
 
 ## Checks and handoff
 
-- Initial local compile check passed with 0 warnings and 0 errors. Follow-up local recompilation was killed during C# compilation with csc exit 137 under shared-memory pressure.
-- Focused Actions run `40080221080` exposed the underfunded corporation fixture; it now starts with the fee plus 5,000 ISK and checks the post-fee balance.
-- Actions run `40084145705` found a compile error in a concurrent Host test: it used missing `Packets.CallWithKwargs`. Added that service-call packet helper to `TestFront`; it encodes the supplied args and kwargs in a real `CallReq`.
-- Actions run `40084153623` is an overlapping check of the pre-helper source.
-- No local PostgreSQL command was run.
-- Feature commits: `0f5c0c20` (wire regression), `c6815db1` (founder balance correction). Latest pushed head before this update: `d1742f0c`.
-- Nine pre-existing unrelated Rust deletions remain unstaged and were not committed.
+- Initial local compile passed (0 warnings, 0 errors). Follow-up compile was killed with csc exit 137 under shared-memory pressure.
+- Actions run `40080221080` identified the corporation founding-fee fixture issue; fixed by funding the founder with the fee plus 5,000 ISK.
+- Actions runs `40084145705` and `40084153623` found the missing kwargs-aware Host packet helper and a duplicate from concurrent merges; the helper is now consolidated.
+- Actions run `40085201940` found the notification destination assertion was too strict. Personal uses `clientID`; corporation wallet notifications use `*corpid&corpAccountKey`. The regression now checks both.
+- Feature commits: `0f5c0c20` (Host wire regression), `c6815db1` (founder balance).
+- Latest pushed head: `d9991d2d`. Nine pre-existing unrelated Rust deletions remain unstaged and uncommitted.
 
-Update the latest commit and Actions result below after pushing the helper fix.
+Run the focused Actions check on the latest pushed head, then record its result here.

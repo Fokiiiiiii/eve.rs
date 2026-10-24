@@ -89,7 +89,7 @@ public sealed class CharacterContactNotepadHostTests
             shipId = await items.CreateAsync(connection, transaction,
                 new NewItem(587, characterId, rig.Station, 4));
             stackId = await items.CreateAsync(connection, transaction,
-                new NewItem(34, characterId, rig.Station, 4, 10, Singleton: false));
+                new NewItem(34, characterId, shipId, 5, 10, Singleton: false));
             await transaction.CommitAsync();
         }
 
@@ -104,13 +104,13 @@ public sealed class CharacterContactNotepadHostTests
             Session = session,
             Args =
             [
-                new PyTuple([new PyLong(shipId)]),
+                new PyLong(rig.Station),
                 new PyTuple([
                     new PyStr("Add"),
-                    new PyTuple([new PyLong(stackId), new PyLong(rig.Station)]),
+                    new PyTuple([new PyLong(stackId), new PyLong(shipId)]),
                     new PyDict([
                         new(new PyStr("qty"), PyNone.Instance),
-                        new(new PyStr("flag"), new PyInt(5)),
+                        new(new PyStr("flag"), new PyInt(4)),
                         new(new PyStr("machoVersion"), new PyInt(3396210)),
                     ]),
                 ]),
@@ -121,14 +121,14 @@ public sealed class CharacterContactNotepadHostTests
         Assert.Equal(stackId, IntegerValue(binding.Items[1]));
         var moved = await items.GetAsync(stackId);
         Assert.NotNull(moved);
-        Assert.Equal(shipId, moved.LocationId);
-        Assert.Equal(5, moved.Flag);
+        Assert.Equal(rig.Station, moved.LocationId);
+        Assert.Equal(4, moved.Flag);
 
         await rig.RestartAsync();
         moved = await new PgItemStore(rig.Source, rig.InventorySchema).GetAsync(stackId);
         Assert.NotNull(moved);
-        Assert.Equal(shipId, moved.LocationId);
-        Assert.Equal(5, moved.Flag);
+        Assert.Equal(rig.Station, moved.LocationId);
+        Assert.Equal(4, moved.Flag);
     }
 
     private static async Task<PyValue> CallAsync(IService service, string method, ClientSession session, params PyValue[] args) =>

@@ -86,9 +86,19 @@ internal static class Packets
     private static PyValue Source(SessionOpen open, long callId) =>
         new PyTuple([new PyInt(2), new PyLong((long)open.ClientId), new PyInt(callId), PyNone.Instance]);
 
-    public static PyValue Call(SessionOpen open, long callId, string service, string method, params PyValue[] args)
+    public static PyValue Call(SessionOpen open, long callId, string service, string method, params PyValue[] args) =>
+        CallWithKwargs(open, callId, service, method, new PyTuple(args), PyNone.Instance);
+
+    public static PyValue CallWithKwargs(SessionOpen open, long callId, string service, string method, PyValue args, PyValue kwargs)
     {
-        var body = new PyTuple([new PyInt(1), new PyStr(method), new PyTuple(args), PyNone.Instance]);
+        var body = new PyTuple([new PyInt(1), new PyStr(method), args, kwargs]);
+        var payload = new PyTuple([new PyTuple([new PyInt(0), new PySubStream(body)])]);
+        return Packet("CallReq", [new PyInt(6), Source(open, callId), new PyTuple([new PyInt(8), new PyStr(service), PyNone.Instance]), new PyInt(open.UserId), payload, PyNone.Instance]);
+    }
+
+    public static PyValue CallWithKwargs(SessionOpen open, long callId, string service, string method, PyValue args, PyValue kwargs)
+    {
+        var body = new PyTuple([new PyInt(1), new PyStr(method), args, kwargs]);
         var payload = new PyTuple([new PyTuple([new PyInt(0), new PySubStream(body)])]);
         return Packet("CallReq", [new PyInt(6), Source(open, callId), new PyTuple([new PyInt(8), new PyStr(service), PyNone.Instance]), new PyInt(open.UserId), payload, PyNone.Instance]);
     }

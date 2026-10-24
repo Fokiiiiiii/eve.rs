@@ -98,8 +98,9 @@ Run 745 failed two `Eve.Market.Tests.ProtocolTests` cases because immediate fill
 
 ## 2026-10-24 market global-assets walk Actions follow-up
 
-- Push CI run 769 (`40053234501`) on `4307511c` includes the global-assets inventory test (`d3d45b18`) and escrow-custody correction (`b5850087`). The full required gate passed, including the End-to-end job in 11.4 minutes.
-- Focused Actions run 266 (`40051416649`) on `d3d45b18` ended after 41.8 minutes: all .NET projects passed; live tests passed 3/4. `test_docked_corporation_members_trade_at_an_eligible_upwell_structure` failed because it expected the seller's unfilled two units in the hangar before cancellation, while the order held them in escrow. The current test checks 0 in the hangar before cancel and 2 after; run 769 includes that correction and passed the live flow.
-- Focused market rerun 292 (`40054489401`) on `4619fa62`, selected with `--projects none --live test_market.py`, succeeded in 8.1 minutes with no failed tests. The successful Actions summary does not expose pytest skip counts.
-- Latest main is `981d7d09`; no CI run for that SHA was listed at the first status check. Run 774 on `4619fa62` remains active with its End-to-end job in progress. No market test or InvBroker code changed between `4619fa62` and `981d7d09`.
+- Push CI run 769 (`40053234501`) on `4307511c` includes the global-assets inventory test (`d3d45b18`) and escrow-custody correction (`b5850087`). The full required gate passed, including End-to-end in 11.4 minutes.
+- Focused Actions run 266 (`40051416649`) on `d3d45b18` failed after 41.8 minutes: the live Upwell test expected the seller's unfilled two units in the hangar before cancellation, while the order held them in escrow. The test now checks zero before cancellation and two after; run 769 passed the corrected flow.
+- Focused market run 292 (`40054489401`) on `4619fa62`, selected with `--projects none --live test_market.py`, succeeded in 8.1 minutes with no failed tests. The success summary does not report a skip count.
+- Full CI runs 772 (`ef6286e9`) and 773 (`21744fd5`) passed every selected job and the required gate. The market and InvBroker paths did not change after run 773 through current main `8e9dbd0c); both fix commits are ancestors of main.
+- Run 774 (`40054348279`, `4619fa62`) passed End-to-end in 14.0 minutes, Windows in 14.2 minutes, and every job except `.NET (space tests 2/2)`. That test shard was cancelled after 15.3 minutes, before a test result summary appeared; the required gate failed because the job was cancelled. No market or E2E failure was reported.
 - Local `python3 -m py_compile tools/headless-client/tests/test_market.py` passed. No local database, graphical-client run, or EveJS differential was performed.

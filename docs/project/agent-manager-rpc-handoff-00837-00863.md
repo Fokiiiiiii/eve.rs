@@ -36,8 +36,8 @@ EveJS v0.12.9 sends 19 GetAgents columns; eve.rs sends 15. The V24.01 callers ab
 
 Added `dotnet/tests/Eve.Host.Tests/AgentMgrReadWireTests.cs`. It runs the actual HostServer socket and PacketDispatcher with the concrete AgentMissionService registered under `agentMgr`. It exercises all seven remote read methods, the transport-added `machoVersion` keyword, two character state rows, the 15-column rowset, nested epic-arc values, journal/bookmark/research records, bound-agent filtering of both journal buckets, and the solar-system scalar. These methods are read-only; no persistence or notification is expected. The test does not require PostgreSQL.
 
-The first selected Actions run 40086984233 stopped during the .NET solution build before tests because the merged `CharMgrPublicInfoHostTests.cs` lacked `using Eve.Services;` for `Py` (CS0103 at lines 77-78). Added the missing import. The corrected selected Actions run 40087670132 passed for `Agent_mgr_read_rpcs_are_registered_on_the_host_and_return_client_consumed_shapes`; no failed tests or jobs.
+The first selected Actions run 40086984233 stopped during the .NET solution build before tests because the merged `CharMgrPublicInfoHostTests.cs` lacked `using Eve.Services;` for `Py` (CS0103 at lines 77-78). Added the missing import. Corrected selected Actions runs 40087670132 and 40088224032 passed for `Agent_mgr_read_rpcs_are_registered_on_the_host_and_return_client_consumed_shapes`; no failed tests or jobs.
 
 Verified locally after the implementation change: `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj --no-restore -p:UseSharedCompilation=false` passed with 0 warnings and 0 errors. The focused Host wire test passed 1/1 with 0 skipped. No database or graphical client was used.
 
-For push `178cd06c35657c0c53d8a6356c88ba879cb28194`, `python3 tools/dev/ci-status.py failures 178cd06c` reported no `ci.yml` run found.
+For pushes `178cd06c35657c0c53d8a6356c88ba879cb28194` and `8166ae9286f7`, `python3 tools/dev/ci-status.py failures <sha>` reported no `ci.yml` run found.

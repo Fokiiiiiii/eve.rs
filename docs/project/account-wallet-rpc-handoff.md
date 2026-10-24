@@ -16,15 +16,15 @@ No server behavior or compatibility deviation changed. No local PostgreSQL comma
 
 EveJS comparison: `/home/user/evejs-v0.12.9/server/src/services/account/accountService.js:678-700` returns actual balances and checks corporation access; `:864-913` handles `GiveCash`; `:915-964` handles `GiveCashFromCorpAccount`. Existing corporation-donation response difference is in `docs/reference/compat/DEVIATIONS.md`.
 
-## Checks and handoff
+## Checks
 
 - Initial local compile passed with 0 warnings and 0 errors. Follow-up compile was killed with csc exit 137 under shared-memory pressure.
-- Focused Actions run `40080221080` exposed the corporation founding-fee fixture issue; fixed with the fee plus 5,000 ISK starting balance.
+- Actions run `40080221080` exposed the corporation founding-fee fixture issue; fixed with the fee plus 5,000 ISK starting balance.
 - Actions runs `40084145705` and `40084153623` exposed and verified fixes for the kwargs packet helper.
 - Actions run `40085201940` found the notification destination assertion issue; personal notifications use `clientID`, corporation wallet notifications use `*corpid&corpAccountKey`.
 - Focused Actions run `40085581144`, test ref `25fdbc54`: passed, 1 passed, 0 failed, 0 skipped. Release solution build succeeded.
 - `python3 tools/dev/ci-status.py failures 25fdbc54`: no `ci.yml` run found.
 - Feature commits: `0f5c0c20` (Host wire regression), `c6815db1` (founder balance).
-- Latest merged origin head: `181e2186`. Nine pre-existing unrelated Rust deletions remain unstaged and uncommitted.
+- Nine pre-existing unrelated Rust deletions remain unstaged and uncommitted.
 
 The focused regression and its result are complete.

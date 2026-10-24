@@ -389,6 +389,7 @@ public sealed class AgentMissionService(
         call.Cancellation.ThrowIfCancellationRequested();
         var characterId = Positive(call.Session.Get("charid"));
         if (characterId == 0) return EmptyJournal();
+        var boundAgentId = BoundAgentId(call);
 
         var state = await readMissionState(characterId, call.Cancellation);
         call.Cancellation.ThrowIfCancellationRequested();
@@ -397,7 +398,8 @@ public sealed class AgentMissionService(
             ? []
             : missions
                 .Select(pair => (AgentId: PositiveString(pair.Key), Record: pair.Value as JsonObject))
-                .Where(entry => entry.AgentId > 0 && entry.Record is not null)
+                .Where(entry => entry.AgentId > 0 && entry.Record is not null &&
+                    (boundAgentId == 0 || entry.AgentId == boundAgentId))
                 .OrderBy(entry => entry.AgentId)
                 .ToArray();
 
@@ -420,7 +422,11 @@ public sealed class AgentMissionService(
         call.Cancellation.ThrowIfCancellationRequested();
         var researchRows = research is null
             ? []
-            : research.Select(row => (PyValue)Tuple(row as JsonArray)).ToArray();
+            : research
+                .Where(row => boundAgentId == 0 ||
+                    row is JsonArray values && values.Count > 0 && Integer(values[0]) == boundAgentId)
+                .Select(row => (PyValue)Tuple(row as JsonArray))
+                .ToArray();
         return new PyTuple([new PyList(missionRows), new PyList(researchRows)]);
     }
 

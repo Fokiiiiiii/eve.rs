@@ -7,7 +7,7 @@ Both rows are client-side collection operations, not missing remote service meth
 - RPC-00864 `agentMgr.Index`: `Index` is called on the Rowset returned by `agentMgr.GetAgents`.
 - RPC-00865 `agentMgr.get`: `get` is called on the nested mapping returned by `agentMgr.GetMessagesForEpicArcMissions`.
 
-The server service calls already have real Host registration and implementations. Added a wire regression that sends both RPCs through a composed Host and checks the serialized reply shapes and consumed values.
+The server service calls already have real Host registration and implementations. A HostServer wire regression sends both parent RPCs and verifies their serialized reply values; the local collection methods are not remote routes.
 
 ## Client evidence
 
@@ -29,6 +29,8 @@ Regression test: `dotnet/tests/Eve.Host.Tests/AgentCatalogHostWireTests.cs` comp
 
 ## Verification
 
-- Passed: `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -m:2 -p:UseSharedCompilation=false` (0 warnings, 0 errors on final build).
-- Passed: focused `AgentCatalogHostWireTests.Agent_rowset_and_epic_arc_message_mapping_are_returned_through_registered_host_wire` (1 passed, 0 skipped).
-- GitHub Actions checks are pending; results will be added after dispatch.
+- Passed locally: `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -m:2 -p:UseSharedCompilation=false` (0 warnings, 0 errors before the latest upstream merge).
+- Passed locally: focused Host wire test (1 passed, 0 skipped).
+- Passed Actions run 40086504639 on e8c3981b and run 40087682115 on a331f016; both ran the focused Host wire test successfully.
+- Actions run 40087040633 on f0ff6758 found a missing `Eve.Services` import in the upstream-merged `CharMgrPublicInfoHostTests.cs`. Added that import; the later Agent test build and focused test both passed.
+- `ci-status.py failures a331f016` reported no push-triggered `ci.yml` run found.

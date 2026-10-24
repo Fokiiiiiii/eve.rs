@@ -48,7 +48,7 @@ public sealed class ConfigServiceTests
         await Assert.ThrowsAsync<MachoWrappedException>(async () => await service.GetMultiCorpTickerNamesEx(new ServiceCall
         {
             Method = "GetMultiCorpTickerNamesEx",
-            Args = [new PyList(Enumerable.Repeat<PyValue>(new PyInt(1), 501).ToArray())],
+            Args = [new PyList(Enumerable.Repeat<PyValue>(new PyInt(1), 10_001).ToArray())],
             Session = session,
         }));
     }
@@ -486,4 +486,20 @@ public sealed class ConfigServiceTests
 
     private static long Integer(PyValue value) => Assert.IsType<PyInt>(value).Value;
     private static string Text(PyValue value) => Assert.IsType<PyStr>(value).Value;
+    [Fact]
+    public async Task Multi_owner_prime_accepts_501_unbatched_client_ids()
+    {
+        const int count = 501;
+        var ids = Enumerable.Range(0, count).Select(index => 3_000_000L + index).ToArray();
+        var agentOwners = ids.ToDictionary(id => id, id => new AgentOwnerInfo($"Agent {id}", id % 2));
+        var service = new ConfigService(null!, null!, null!, null!, agentOwners: agentOwners);
+
+        var rows = Rows(await service.GetMultiOwnersEx(Call("GetMultiOwnersEx", ids, new ClientSession())),
+            ["ownerID", "ownerName", "typeID", "gender", "ownerNameID"]);
+
+        Assert.Equal(count, rows.Length);
+        Assert.Equal(ids[0], Integer(rows[0][0]));
+        Assert.Equal(ids[^1], Integer(rows[^1][0]));
+    }
+
 }

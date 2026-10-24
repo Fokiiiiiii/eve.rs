@@ -88,6 +88,7 @@ public sealed class CharacterContactNotepadHostTests
         {
             shipId = await items.CreateAsync(connection, transaction,
                 new NewItem(587, characterId, rig.Station, 4));
+            await rig.Characters.SetShipAsync(connection, transaction, characterId, shipId);
             stackId = await items.CreateAsync(connection, transaction,
                 new NewItem(34, characterId, shipId, 5, 10, Singleton: false));
             await transaction.CommitAsync();
@@ -95,6 +96,7 @@ public sealed class CharacterContactNotepadHostTests
 
         var session = new ClientSession { CharacterId = characterId, UserId = 1 };
         session.Set("stationid", new PyLong(rig.Station));
+        session.Set("shipid", new PyLong(shipId));
         var invBroker = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("invbroker"));
         Assert.True(invBroker.HasMethod("MachoBindObject"));
         var boundCall = await invBroker.CallAsync(new ServiceCall

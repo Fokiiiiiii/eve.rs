@@ -202,4 +202,58 @@ public sealed class TradeAuthorityTests
         Assert.Equal((9, TradeRig.Station, TradeRig.Hangar), ((await rig.Items.GetAsync(item))!.Quantity, (await rig.Items.GetAsync(item))!.LocationId, (await rig.Items.GetAsync(item))!.Flag));
         Assert.Null(await rig.Trades.OpenViewForAsync(Bob));
     }
+    [PgFact]
+    public async Task MultiAdd_validates_the_whole_batch_before_moving_any_item()
+    {
+        await using var rig = await RigWithTwoPilotsAsync();
+        var view = await rig.Trades.InitiateAsync(Alice, Bob, TradeRig.Station, 30000142);
+        var valid = await rig.CreateItemAsync(Alice, TradeRig.Station, TradeRig.Hangar);
+        var foreign = await rig.CreateItemAsync(Bob, TradeRig.Station, TradeRig.Hangar);
+
+        var refused = await Assert.ThrowsAsync<TradeRefusedException>(() =>
+            rig.Trades.StageManyAsync(view.TradeId, Alice, [valid, foreign], TradeRig.Station, 0));
+
+        Assert.Equal("That item is not available to trade.", refused.Message);
+        Assert.Equal(TradeRig.Station, (await rig.Items.GetAsync(valid))!.LocationId);
+        Assert.Equal(Bob, (await rig.Items.GetAsync(foreign))!.OwnerId);
+        Assert.Empty((await rig.Trades.ViewAsync(view.TradeId))!.Items);
+    }
+
+    [PgFact]
+    public async Task An_accessible_nested_source_can_be_staged_and_returned_to_its_container()
+    {
+        await using var rig = await RigWithTwoPilotsAsync();
+        var view = await rig.Trades.InitiateAsync(Alice, Bob, TradeRig.Station, 30000142);
+        var container = await rig.CreateItemAsync(Alice, TradeRig.Station, TradeRig.Hangar, singleton: true, typeId: 3293);
+        var child = await rig.CreateItemAsync(Alice, container, TradeRig.Hangar);
+
+        var staged = await rig.Trades.StageAsync(view.TradeId, Alice, child, 0, container, 0);
+        Assert.Equal(view.TradeId, (await rig.Items.GetAsync(child))!.LocationId);
+        Assert.Equal(Alice, (await rig.Items.GetAsync(container))!.OwnerId);
+
+        await rig.Trades.AbortAsync(view.TradeId);
+
+        Assert.Equal((Alice, container), ((await rig.Items.GetAsync(child))!.OwnerId, (await rig.Items.GetAsync(child))!.LocationId));
+        Assert.Contains(staged.Moves, move => move.After.Id == child);
+    }
+
+    [PgFact]
+    public async Task Concurrent_acceptance_completes_once_and_moves_the_item_once()
+    {
+        await using var rig = await RigWithTwoPilotsAsync();
+        var view = await rig.Trades.InitiateAsync(Alice, Bob, TradeRig.Station, 30000142);
+        var item = await rig.CreateItemAsync(Alice, TradeRig.Station, TradeRig.Hangar);
+        await rig.Trades.StageAsync(view.TradeId, Alice, item, 0, TradeRig.Station, 0);
+        var manifest = (await rig.Trades.ViewAsync(view.TradeId))!.Items.Select(staged => staged.Id).ToHashSet();
+
+        var results = await Task.WhenAll(
+            rig.Trades.OfferAsync(view.TradeId, Alice, [0m, 0m], manifest),
+            rig.Trades.OfferAsync(view.TradeId, Bob, [0m, 0m], manifest));
+
+        Assert.Single(results, result => result.Outcome == TradeOfferOutcome.Completed);
+        Assert.Single(results, result => result.Outcome == TradeOfferOutcome.Pending);
+        Assert.Equal(Bob, (await rig.Items.GetAsync(item))!.OwnerId);
+        Assert.Equal("completed", (await rig.Trades.ViewAsync(view.TradeId))!.Status);
+    }
+
 }

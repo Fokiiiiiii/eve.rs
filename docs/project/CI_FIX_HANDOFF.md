@@ -553,7 +553,8 @@ CI run 672 on `1669e6dc` failed the structure market Host test because the fixtu
 ### Verification
 
 - The selected client-source searches covered every GetMyApplications and GetMyOpenInvitations occurrence in /home/user/eve-logic; the call and result consumers are listed above.
-- Latest-main local `Eve.Host.Tests` build passed with 0 warnings and 0 errors (15m22s). The focused `Corporation_application_bootstrap_bound_call_survives_an_exhausted_shared_budget` test passed (1 passed, 0 failed, 0 skipped; 467ms).
+- Latest-main local `Eve.Host.Tests` build passed with 0 warnings and 0 errors (9m44s). The focused `Corporation_application_bootstrap_bound_call_survives_an_exhausted_shared_budget` test passed (1 passed, 0 failed, 0 skipped; 431ms).
+- `cargo +1.94.1 fmt --all -- --check` and `cargo +1.94.1 clippy --workspace --all-targets -- -D warnings` passed; clippy used `target-cx`.
 - The focused Actions run and push-triggered CI status will be recorded after push. No graphical-client validation was performed, and no PostgreSQL database was used.
 
 

@@ -28,10 +28,9 @@ The task-mentioned `jobs/461-trade-item-eligibility.txt`, `462-trade-container-d
 
 ## Verification
 
-- Local compile checks passed for `Eve.Host.Tests` and `Eve.Trade.Tests` with .NET 10, `UseSharedCompilation=false`, and node reuse disabled. No PostgreSQL tests were run locally.
-- Focused Actions run `40073577535` passed on `859cf2c4b67c`: `Eve.Host.Tests` 3 passed, `Eve.Trade.Tests` 2 passed, and `test_walk_trade.py` 1 passed; all three groups had 0 failed and 0 skipped.
-- Push gate `40073571150` failed on three checks: an outdated Trade refusal test, an outdated warp packet expectation and a structure walk that needed to await undock/ballpark/warp updates. The first two failures were corrected; the structure walk now waits for those updates. Its fast suite also skipped eight slow live cases and one training-speed case; those skips are not counted as passes.
-- Follow-up Actions run `40079558176` on `ea2688a7cb56` exposed two additional message/packet expectation mismatches, corrected in the current worktree. The structure walk result is still pending.
-- Push gate `40079551300` on `ea2688a7cb56` is still running. Recheck both gates after the latest correction commit.
-- A local Space.Tests dependency build was killed with csc exit 137 under shared-machine pressure; a project-only retry was canceled after it made no progress. Verify its compilation and corrective cases through Actions.
+- Earlier local builds of `Eve.Host.Tests` and `Eve.Trade.Tests` succeeded with .NET 10, `UseSharedCompilation=false`, and node reuse disabled. No PostgreSQL tests were run locally. A later Space.Tests build and Host.Tests recompile were canceled after prolonged shared-machine resource starvation.
+- Focused Actions run `40073577535` passed on `859cf2c4b67c`: Host 3/3, Trade 2/2 and `test_walk_trade.py` 1/1; no skips.
+- The first push gate `40073571150` exposed outdated trade/warp expectations and a structure walk that needed session-transition waits. The later focused run `40080249666` passed Host 3/3 and Trade 3/3; Space wire test was 0/1 and live cases 22/23. Its live failure was the structure walk; the fast run had 0 skipped.
+- Push gate `40080240344` completed with Host account-wallet and Space wire test failures; all other reported jobs, including end-to-end server stack and Windows, succeeded. The account fixture now funds the corporation registration fee; the wire fixture supplies its ship type to DogmaStatic. The structure walk now waits before undock, checks that undock succeeded, and waits for the state notifications.
+- The latest correction commit is pending focused Actions and push-gate verification. Earlier broad fast CI reported eight slow live skips and one training-speed skip; those skips are not passes.
 - Graphical-client execution was not performed.

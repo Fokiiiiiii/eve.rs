@@ -26,8 +26,8 @@ The Host regression is `Contract_reads_and_mutations_are_dispatched_through_the_
 - Focused Host test after CollectMyPageInfo: passed (1 passed, 0 skipped).
 - No PostgreSQL connection was used.
 - Agent test run 40098916457 for push 755a38a2 passed; Agent test run 40099756130 for push 23db167f passed.
-- Push-triggered ci.yml run 40098905958 was still in progress at last check. No ci.yml run was found for 23db167f by `ci-status.py failures`.
+- Local verification was run on code commit 835f8a1f before the origin/main merge; pushed tip after that merge was d89e97b2. The focused Actions runs listed above passed. Push-triggered ci.yml run 40098905958 remained in progress at last check; no ci.yml run was found for 23db167f by `ci-status.py failures`.
 
 ## Remaining assigned rows
 
-RPC-01207, RPC-01209–RPC-01214, RPC-01216–RPC-01230 remain without a complete end-to-end implementation or row-specific regression. Additional valid-input cases remain for RPC-01209–RPC-01211, RPC-01212, RPC-01225, RPC-01227, and RPC-01229. Their whole-client caller/consumer traces and EveJS comparisons have not yet been recorded. EveJS has deliberate `false` or `None` handlers for `FinishAuction`, `DeleteNotification`, `DeleteContractNotification`, and `GM_ExpireContract` at `contractProxyService.js:859-862, 890-898, 912-915`; do not copy these replies without confirming the V24 client behavior.
+Still missing: RPC-01212, RPC-01214, RPC-01216–RPC-01219, RPC-01221–RPC-01223, and RPC-01230. Covered by the Host wire test: RPC-01207, RPC-01208, RPC-01213, RPC-01215, RPC-01220, RPC-01224–RPC-01229, and RPC-01231. Remaining scenario coverage includes CompleteContract's other target statuses, CreateContract's valid shapes, corporate bids and lists, and the alternate expired-list case. For all remaining rows, the full caller/consumer paths and EveJS comparisons still need client file:line evidence. EveJS has deliberate `false` or `None` handlers for `FinishAuction`, `DeleteNotification`, `DeleteContractNotification`, and `GM_ExpireContract` at `contractProxyService.js:859-862, 890-898, 912-915`; do not copy these replies without confirming the V24 client behavior.

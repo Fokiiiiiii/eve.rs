@@ -507,6 +507,9 @@ public sealed partial class SpaceSessions
                         new PyLong(JumpCloakTicks));
                     var system = new PyInt(jumped.ToSystem);
                     session.Change(
+                        ("stationid", None),
+                        ("stationid2", None),
+                        ("structureid", None),
                         ("solarsystemid", system),
                         ("solarsystemid2", system),
                         ("constellationid", new PyInt(moved.Character.ConstellationId)),

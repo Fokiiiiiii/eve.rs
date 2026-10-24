@@ -12,4 +12,4 @@ Added `HostServerTests.Achievement_tracker_HasEverWarped_returns_a_boolean_throu
 
 Post-merge local verification: `dotnet test dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj --no-restore -p:UseSharedCompilation=false -m:1 --filter FullyQualifiedName~Achievement_tracker_HasEverWarped_returns_a_boolean_through_host_wire` rebuilt dependencies and passed 1/1, skipped 0. No database was used.
 
-GitHub Actions verification: pending.
+The selected `agent-test.yml` run 40086130401 passed for this RPC (1 passed, 0 skipped). Push CI run 40086121446 failed outside this RPC: `tests/test_structures.py:486` (structure anchor refused), `ReprocessingHostTests.Reprocess_uses_the_registered_host_service_and_keeps_the_settlement_after_restart`, `BeltRatsHostTests.A_refused_belt_spawn_is_reported_as_a_failure`, and three `ReprocessingServiceTests` (source scope and repeat settlement). The affected test/source paths are changed by upstream commits merged before this push (`7b764abb`, `8bce0049`, and the structure walk commits). No `HasEverWarped` test failed. Those unrelated failures remain outside RPC-00741 scope.

@@ -28,7 +28,8 @@ The Host regression is `Contract_reads_and_mutations_are_dispatched_through_the_
 
 - Core build after CollectMyPageInfo and assignment correction: passed, zero warnings/errors.
 - Host build after assignment correction: passed, zero warnings/errors.
-- Latest code commit d0db3ff3 was pushed with origin/main merged at 5273c3dc; focused Agent test dispatch for that push is pending.
+- Agent test 40101123016 for pushed tip 5273c3dc passed with no failed jobs.
+- Latest code commit a30181a2, including the CreateContract wire case, was pushed with origin/main merged at 24cec7ac; focused Agent test 40101711525 is pending.
 - Focused Host test after CollectMyPageInfo and assignment correction: passed (1 passed, 0 skipped).
 - Focused Host test after adding the CreateContract ContractStruct case: passed (1 passed, 0 skipped).
 - No PostgreSQL connection was used.

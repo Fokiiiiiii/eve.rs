@@ -58,6 +58,17 @@ public partial class HostServerTests
         Assert.Equal([new PyInt(42), new PyInt(84), new PyInt(42), new PyInt(1)],
             Assert.IsType<PyTuple>(Assert.Single(assignments.Items)).Items);
 
+        var created = Assert.IsType<PyList>(await Rpc(13, "CreateContract", new PyObject(new PyStr("contracts.contractStruct.ContractStruct"), new PyTuple([
+            new PyInt(1), PyBool.False, new PyInt(0), new PyInt(1440), new PyInt(0),
+            new PyInt(3001), new PyInt(0), new PyInt(1000), new PyInt(0), new PyInt(0),
+            new PyStr("wire contract"), new PyStr(""),
+            new PyList([new PyTuple([new PyInt(7001), new PyInt(1)])]),
+            new PyInt(4), new PyList([]), PyBool.False, PyBool.False]))));
+        Assert.Equal([new PyInt(6001)], created.Items);
+        Assert.Equal((42L, 3001L, 1440, 1000m, "wire contract", (short)1), writer.CreatedRequest is { } request
+            ? (request.IssuerCharacterId, request.StartStationId, request.ExpiryMinutes, request.Price, request.Title, request.ContractType)
+            : default);
+
         var login = Fields(Assert.IsType<PyObject>(await Rpc(3, "GetLoginInfo")));
         Assert.Equal(new[] { "assignedToMe", "inProgress", "needsAttention" }, login.Keys.Order().ToArray());
 
@@ -94,6 +105,7 @@ public partial class HostServerTests
         Func<long> now = () => FixedNowMs;
         foreach (var service in CoreServices.Create(
             new NoAccounts(), now, contractReadModel: reads, contractWriteModel: writer,
+            contractSkillLevel: (_, _, _) => ValueTask.FromResult(0),
             readCurrentCalendarGroups: (_, _) => ValueTask.FromResult((84L, 0L))))
             registry.Register(service);
 
@@ -125,12 +137,16 @@ public partial class HostServerTests
     private sealed class RecordingContractWriter : IContractWriteModel
     {
         public List<long> Deleted { get; } = [];
+        public CreateItemExchangeRequest? CreatedRequest { get; private set; }
         public (long ContractId, long CharacterId, long CorporationId, bool HasRole) LastDelete { get; private set; }
         public (long ContractId, long Status, long CharacterId, long CorporationId, long StationId, bool HasRole) LastComplete { get; private set; }
         public (long ContractId, long CharacterId, long CorporationId, bool ForCorp, int WalletKey, long StationId) LastAccept { get; private set; }
 
-        public ValueTask<CreatedContract> CreateContractAsync(CreateItemExchangeRequest request, CancellationToken cancellationToken) =>
-            ValueTask.FromException<CreatedContract>(new NotSupportedException());
+        public ValueTask<CreatedContract> CreateContractAsync(CreateItemExchangeRequest request, CancellationToken cancellationToken)
+        {
+            CreatedRequest = request;
+            return ValueTask.FromResult(new CreatedContract(6001, request.Items.Select(item => item.ItemId).ToArray()));
+        }
 
         public ValueTask<AcceptedContract> AcceptContractAsync(long contractId, long characterId, long corporationId,
             long allianceId, bool acceptForCorporation, int acceptorWalletKey, long currentStationId,

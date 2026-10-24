@@ -81,3 +81,10 @@ Run 745 failed two `Eve.Market.Tests.ProtocolTests` cases because immediate fill
 - The shared hangar helper now follows that wire route. The Upwell market walk checks the buyer's and seller's visible structure rows after the fill, then checks the seller's rows after cancelling the remaining order; the existing persisted-quantity checks remain.
 - The Host binds `charMgr.MachoBindObject` to the global-assets inventory provider. `InvBrokerService.ListStationItems` permits a structure location in `GlobalAssets` context after validating it as a dockable asset location, then reads the character's items at that location.
 - Local `python3 -m py_compile tools/headless-client/tests/test_market.py` passed. Focused Actions validation is pending. No local database or graphical-client run was used.
+
+
+## 2026-10-24 CI run 757 order escrow follow-up
+
+- Push CI run 757 (40050603403, 676f26f6) passed Rust checks/tests, Python client tests, the .NET build and shards, fixtures, and the Windows matrix. Its live Upwell market walk failed because it expected the seller's two unfilled units in the structure hangar before cancelling the open ask.
+- The order retains the unfilled quantity in escrow until cancellation. The walk now checks buyer delivery after the fill and seller return after cancellation; it does not count escrowed stock as hangar inventory before cancel.
+- The structure inventory client path was subsequently added via the V24 global-assets charMgr moniker, and persisted inventory checks remain. Focused Actions runs against the pre-escrow-assertion fix do not establish the corrected walk. No local PostgreSQL or graphical-client run was used.

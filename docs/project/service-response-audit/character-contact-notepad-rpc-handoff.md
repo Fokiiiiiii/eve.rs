@@ -36,4 +36,7 @@ dotnet/tests/Eve.Host.Tests/CharacterContactNotepadHostTests.cs adds two databas
 
 - Local check: dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -p:UseSharedCompilation=false --no-restore succeeded with 0 warnings and 0 errors.
 - The tests require the Host PostgreSQL fixture; no PostgreSQL database was used locally.
-- Selected GitHub Actions checks and push-gate result will be recorded here after they complete.
+- GitHub Actions run 40093894419 failed the focused charMgr Host regression at AddOwnerNote: `PersistenceCharMgrReadModel.WriteChanges` received `TABLE_NOT_FOUND` for `characterNotes`. The whole Host route reached persistence; `LegacyGameStoreComposition.OpenAsync` had loaded `characters` but omitted `characterNotes`, so cache writes could not resolve that table.
+- Fixed Host initialization by loading `characterNotes` alongside `characters` in `dotnet/src/Eve.Host/Composition/LegacyGameStoreComposition.cs`. The regression exercises note creation, reads, and restart persistence through the registered Host.
+- Local check after the fix: `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -p:UseSharedCompilation=false --no-restore` succeeded with 0 warnings and 0 errors.
+- Focused Actions rerun and push-gate result will be added after they complete.

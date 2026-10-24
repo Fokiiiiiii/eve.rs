@@ -101,12 +101,11 @@ def parse_test_failures(text: str) -> list[str]:
     patterns = (
         re.compile(r"^\[agent-test failure\]\s+(.+?)\s*$"),
         re.compile(r"^\s*FAILED\s+(.+?)(?:\s+-\s+.*)?$"),
-        re.compile(r"^_{3,}\s*(.+?)\s*_{3,}\s*$"),
+        re.compile(r"^\s*_{3,}\s*(.+?)\s*_{3,}\s*$"),
         re.compile(r"^\s*Failed\s+(.+?)(?:\s+\[[^\]]+\])?\s*$"),
         re.compile(r"^\s*test\s+(.+?)\s+\.\.\.\s+FAILED\s*$"),
         re.compile(r"^----\s+(.+?)\s+stdout ----\s*$"),
         re.compile(r"^\s*FAIL:\s*(.+?)\s*$"),
-        re.compile(r"^\s*_{3,}\s+(.+?)\s+_{3,}\s*$"),
     )
     names = []
     headings = []

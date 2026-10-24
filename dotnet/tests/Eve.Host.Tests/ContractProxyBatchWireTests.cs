@@ -35,12 +35,12 @@ public partial class HostServerTests
         Assert.Equal([1001L, 1002L, 1003L], writer.Deleted);
     }
 
-    private void StartContractHost(RecordingContractWriter writer)
+    private void StartContractHost(RecordingContractWriter writer, IContractReadModel? readModel = null)
     {
         var registry = new ServiceRegistry();
         Func<long> now = () => FixedNowMs;
         foreach (var service in CoreServices.Create(
-            new NoAccounts(), now, contractWriteModel: writer,
+            new NoAccounts(), now, contractReadModel: readModel, contractWriteModel: writer,
             readCurrentCalendarGroups: (_, _) => ValueTask.FromResult((84L, 0L))))
             registry.Register(service);
 
@@ -56,6 +56,8 @@ public partial class HostServerTests
                 {
                     session.Set("charid", new PyInt(42));
                     session.Set("corpid", new PyInt(84));
+                    session.Set("stationid", new PyInt(3001));
+                    session.Set("corprole", new PyLong(72057594037927936L));
                 },
             },
             dispatcher,
@@ -70,6 +72,8 @@ public partial class HostServerTests
     private sealed class RecordingContractWriter : IContractWriteModel
     {
         public List<long> Deleted { get; } = [];
+        public (long ContractId, long CharacterId, long CorporationId, bool ForCorporation, int WalletKey, decimal Amount) LastBid { get; private set; }
+        public (long ItemId, long Quantity, long CharacterId, long CorporationId, long StationId, bool ForCorporation, int Flag) LastSplit { get; private set; }
 
         public ValueTask<CreatedContract> CreateContractAsync(CreateItemExchangeRequest request, CancellationToken cancellationToken) =>
             ValueTask.FromException<CreatedContract>(new NotSupportedException());
@@ -95,7 +99,17 @@ public partial class HostServerTests
         }
 
         public ValueTask<bool> PlaceBidAsync(long contractId, long characterId, long corporationId, long allianceId,
-            bool bidForCorporation, int bidderWalletKey, decimal amount, CancellationToken cancellationToken) =>
-            ValueTask.FromException<bool>(new NotSupportedException());
+            bool bidForCorporation, int bidderWalletKey, decimal amount, CancellationToken cancellationToken)
+        {
+            LastBid = (contractId, characterId, corporationId, bidForCorporation, bidderWalletKey, amount);
+            return ValueTask.FromResult(true);
+        }
+
+        public ValueTask<bool> SplitStackAsync(long itemId, long quantity, long characterId, long corporationId,
+            long stationId, bool forCorporation, int flag, CancellationToken cancellationToken)
+        {
+            LastSplit = (itemId, quantity, characterId, corporationId, stationId, forCorporation, flag);
+            return ValueTask.FromResult(true);
+        }
     }
 }

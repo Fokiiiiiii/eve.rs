@@ -18,11 +18,11 @@ EveJS comparison: `/home/user/evejs-v0.12.9/server/src/services/account/accountS
 
 ## Checks and handoff
 
-- Initial local compile passed with 0 warnings and 0 errors. Follow-up compilation was killed with csc exit 137 under shared-memory pressure.
-- Actions run `40080221080` identified the founding-fee fixture issue; founder now starts with 1,599,800 ISK plus 5,000 ISK.
-- Actions runs `40084145705` and `40084153623` found a missing kwargs-aware test packet helper and duplicate introduced while merging concurrent work; it is now a single implementation.
-- Actions run `40085201940` reached the test and found the notification destination assertion was too strict. Personal notifications use `clientID`; corporation wallet notifications use `*corpid&corpAccountKey`. The regression now checks each shape.
+- Initial local compile passed (0 warnings, 0 errors). Follow-up compile was killed with csc exit 137 under shared-memory pressure.
+- Actions run `40080221080` identified the corporation founding-fee fixture issue; fixed by funding the founder with the fee plus 5,000 ISK.
+- Actions runs `40084145705` and `40084153623` found the missing kwargs-aware Host packet helper and a duplicate from concurrent merges; the helper is now consolidated.
+- Actions run `40085201940` found the notification destination assertion was too strict. Personal uses `clientID`; corporation wallet notifications use `*corpid&corpAccountKey`. The regression now checks both.
 - Feature commits: `0f5c0c20` (Host wire regression), `c6815db1` (founder balance).
-- Last pushed head before this update: `c9d9c30c`. Nine pre-existing unrelated Rust deletions remain unstaged and uncommitted.
+- Latest pushed head: `d9991d2d`. Nine pre-existing unrelated Rust deletions remain unstaged and uncommitted.
 
-Push the notification assertion update and rerun the focused Actions regression.
+Run the focused Actions check on the latest pushed head, then record its result here.

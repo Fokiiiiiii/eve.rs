@@ -373,7 +373,9 @@ internal sealed partial class CharacterServicesComposition
             profiles: structureProfilesRpcBackend.GetProfilesAsync,
             sov: ReadStructureAnchorSovereigntyAsync,
             anchorWithDuration: (connection, transaction, structure, anchoringMs, ct) =>
-                structureTimers.AnchorAsync(connection, transaction, structure with { AnchoringMs = anchoringMs }, ct));
+                structureTimers.AnchorAsync(connection, transaction, structure with { AnchoringMs = anchoringMs }, ct),
+            solarSystemOf: session => spaceSessions?.SolarSystemOf(session),
+            shipIdOf: session => spaceSessions?.ShipIdOf(session));
         // ST-6a: the moon drill starts a chunk (StartNewExtraction); the fracture and the cancel follow in (d)
         var moonRules = await MoonRulesSource.LoadAsync(sde);
         var moonRigRules = new MoonRigReadModel(items, dogma, moonRules, structureStore);

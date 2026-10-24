@@ -8,6 +8,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+eve-net = { path = "../eve-net" }
 eve-space = { path = "../eve-space" }
 tokio = { version = "1", features = ["rt", "net", "io-util", "sync", "time", "macros", "signal"] }
 

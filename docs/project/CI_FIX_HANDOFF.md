@@ -177,7 +177,6 @@ CI run 672 on `1669e6dc` failed the structure market Host test because the fixtu
 - Run 678 on `737ba657` still failed the first structure sell after the persisted character location was changed to the same structure as the session. That disproved the location-only diagnosis.
 - `MarketHostTests` now includes the returned Macho label or CustomInfo text in the failed sell assertion. The next focused Actions run will expose the exact remaining refusal for a root fix.
 
-
 ## 2026-10-23 merged-head verification update
 
 - Merged origin/main `d7f45242` after fetching; that update only added contact-notification handoff notes. The merged `Eve.Host.Tests` project build completed successfully with 0 warnings and 0 errors. No local PostgreSQL test was run.
@@ -298,7 +297,6 @@ CI run 672 on `1669e6dc` failed the structure market Host test because the fixtu
 - The existing immediate-buy compatibility entry records that unfilled volume becomes a 90-day bid. In this race one buyer fills two units for 20 ISK; the other creates a two-unit bid, reserves 20 ISK, and pays the 100 ISK broker and 25 ISK SCC minimums. The Host regression now checks both balances and the one open bid's quantity and escrow.
 - Host.Tests compiled locally with 0 warnings and 0 errors; the focused Host Agent test on the corrected head is pending. No local database test was run.
 - CI 699 also failed the SKINR live test because its restart helper sent SIGTERM, which did not activate the Host's Console.CancelKeyPress shutdown path. Main commit d86a5ef5 changes the helper to send SIGINT; Agent run 183 and CI 701 are checking that fix.
-
 ## 2026-10-23 Agent test selection notes
 
 - Agent run 106 on 8b3c8e04 matched a Host composition change and failed to compile the test fixture delegate (CS1593); ed01d2d8 fixes the delegate invocation.
@@ -478,7 +476,6 @@ CI run 672 on `1669e6dc` failed the structure market Host test because the fixtu
 - EveJS v0.12.9 `executeBuyRequest` debits the standing bid's remaining reserve as `JOURNAL_ENTRY_TYPE.MARKET_ESCROW`; eve.rs likewise keeps the bid funds in escrow. The live test now checks the escrow reference because the seller's fill consumes that already-funded order, without a second purchase debit. The next focused Agent run and latest-main gate will verify this correction.
 - The current main gate run 767 (`40052865670`) on `e0765b6c` was still active when this note was written. No local PostgreSQL test was run.
 
-
 ## 2026-10-24 push 4307511c buyer escrow journal assertion correction
 
 - The focused rerun on `a719eee8` confirmed the new seller custody and escrow assertions, then exposed that the live walk expected a trade journal entry for a standing bid. The buyer had already funded the bid; EveJS and eve.rs record the `-100` reserve as market escrow reference type 42. The test now checks that journal entry.
@@ -537,7 +534,6 @@ CI run 672 on `1669e6dc` failed the structure market Host test because the fixtu
 
 - Latest main contains the server-side budget isolation from af9cd402: PacketDispatcher.cs:28 creates a per-session corporation budget, and :192 routes corpRegistry/corporation through it rather than the shared expensive-RPC budget. GetMyApplications remains costed; this keeps the guard while allowing unrelated general RPC bursts.
 - HostServerTests.Corporation_application_bootstrap_bound_call_survives_an_exhausted_shared_budget (HostServerTests.cs:618) starts the real Host over TCP, registers the production CorpRegistryService and its bound object, exhausts the general budget through registered calls, confirms the next call is refused, then sends the client-shaped bound GetMyApplications call with machoVersion=1 and asserts CallRsp plus an empty PyDict. The fixture constructs a data source but opens no database connection; the handler returns before storage because no character is selected.
-
 ### Verification
 
 - The selected client-source searches covered every GetMyApplications and GetMyOpenInvitations occurrence in /home/user/eve-logic; the call and result consumers are listed above.
@@ -660,7 +656,6 @@ Regression tests added: `DungeonWaveTests.A_system_owned_wave_waits_until_a_pilo
 - The current-main Host wire check is run 412 (`40091793046`, SHA `8799c2aa`): success, no failed tests or jobs. Full Rust workspace tests on the task code passed in run 829 (`11c7a4f3`), including the stargate warp-arrival/jump regression. The additional current-main Rust run 415 (`40092063319`, SHA `8799c2aa`) remained active in its requested-tests step after more than 35 minutes; it is not counted as a pass.
 - The source-level V24.01 caller and consumer checks and EveJS v0.12.9 comparison are recorded above. Slow-live `tests/test_jump.py` was skipped by the standard gate; no graphical-client or EveJS live-session check was performed. No local or owner PostgreSQL database was used.
 
-
 ## 2026-10-24 CORE FIX 1 handoff after push 187f1035
 
 - Pushed `187f10358954d536602479d7cf31e5f51789ac50` after fetching and merging `origin/main` through `9d6f0054`. That merge added character-phase Host coverage and handoff files; it does not change the stargate or space-simulation code. `ci-status.py failures 187f1035` found no `ci.yml` run.
@@ -718,9 +713,60 @@ Regression tests added: `DungeonWaveTests.A_system_owned_wave_waits_until_a_pilo
 - The previously failing 2-way Space shard was canceled at 30 minutes without a TRX result. The 4-way assignment is now in run `40099675510`; all four shard results and its complete gate remain pending.
 - The MachoError call IDs from runs 745 and 747 are confirmed as `test_docked_corporation_members_trade_at_an_eligible_upwell_structure` in `tools/headless-client/tests/test_market.py`: each failed at the direct `structureDocking.Dock` call (`test_market.py:116`, test at `:172`) while the Fortizar was 200,000 km away. The V24.01 client path at `eve/client/script/ui/services/structure/structureDocking.py:64-81` warps to docking range before requesting Dock; the headless helper now follows that transition.
 
-
 ## 2026-10-24 documentation push 32368c7d
 
 - Push `32368c7d` contains handoff updates and the merge through `fabf4845`. No CI run was created for this push because `.github/workflows/ci.yml` excludes `docs/**` and Markdown files from push triggers.
 - Agent test run 432 (`40095571275`) failed `Eve.Host.Tests.CharacterContactNotepadHostTests.Bound_inventory_add_accepts_client_quantity_and_transport_kwargs_and_moves_the_item`: it expected destination ship `1990000000` but observed station `60000004`. The fixture set session `shipid` without persisting the authoritative `characters.ship_id`, so the active-ship move did not happen. The regression now persists the active ship and exercises moving a station-hangar stack into its cargo; focused run 454 (`40099687884`) passed.
 - The latest code-bearing push gates remain under observation: run `40099675510` for `91e0c9bf` has a failed live job while its .NET shards continue; run `40099182876` for `71c1f19a` also has a failed live job and failed .NET shards. Their complete logs and the newer queued gates must determine whether these failures are already resolved by later commits.
+
+
+## 2026-10-24 CI recovery continuation
+
+- Completed run 852 (`40098905958`, `755a38a2`) failed `test_a_corporation_unanchors_and_scoops_its_control_tower` at `tools/headless-client/tests/test_structures.py:633`, before the tower action, when the shared `_undock` helper's `ship.Undock` returned MachoError 2 (call 15). The pytest case and full failure tail are recorded from the Actions log; no user error payload was included.
+- Run 852 also failed `Eve.Host.Tests.RpcSecurityInventoryTests.Real_host_registry_methods_are_enumerable`: expected 1385, actual 1393. The current test still asserts 1385 at `dotnet/tests/Eve.Host.Tests/RpcSecurityInventoryTests.cs:91`. The currently queued gates must establish the inventory count on their SHAs before changing this assertion.
+- Run 852 repeated `Bound_inventory_add_accepts_client_quantity_and_transport_kwargs_and_moves_the_item` (expected an integer, got PyNone) and `Batched_config_lookups_refuse_more_than_500_raw_ids` (NullReferenceException in `ConfigService.GetMultiOwnersEx` before the requested limit error). These failures predate later inventory and config fixes. Run 853 (`40098945511`, `e114b7c5`) repeated the config failure and RPC inventory count failure.
+- Agent run 464 (`40101697373`) passed `Batched_config_lookups_refuse_more_than_500_raw_ids` on `1ca1c591`.
+- The V24.01 owner lookup flow is `eve/common/script/sys/eveCfg.py:549` (`EveOwners` binds `GetMultiOwnersEx`) through `carbon/common/script/sys/cfg.py:537-604` (`Recordset._Prime` batches pending keys, decodes the five-field rowset, and caches rows). `eve/client/script/parklife/ownerprimer.py:35-42` passes distinct owners from a `DoBallsAdded` event without a local count cap. EveJS v0.12.9 `server/src/services/config/configService.js:378-478` returns the five-column tuple rowset and has no 500-ID cap. The server-side limit is already recorded in `docs/reference/compat/DEVIATIONS.md:5531, 5587`; an over-500 client batch was not observed in these CI logs.
+- Run 40099954010's live artifact records `eve-sim: the host connection ended: frame of 1107305565 bytes exceeds 1048576` immediately after NPC/site generation in system 30000903. The host then logs the simulation link reset and the site generation failure. The whole workflow has not yet published its pytest failure summary, so the exact case remains outstanding.
+- At this update, no three consecutive green push gates have been recorded.
+
+## 2026-10-24 follow-up: current-main owner and Astrahus results
+
+- CI run 854 (`40099182876`, `71c1f19a`) failed `test_a_director_anchors_an_astrahus_from_its_ship_in_a_legal_system_and_the_structure_is_placed_and_told` at `tools/headless-client/tests/test_structures.py:510` after the updated wait confirmed `stationid=None`, the expected `shipid` and `solarsystemid`, and no `structureid`. The server refused `Anchor` with `CustomNotify: You must be in space to deploy a structure.` `StructureAnchorAuthority.AnchorAsync` first checks session system/ship (`dotnet/src/Eve.Host/Persistence/Structures/StructureAnchorAuthority.cs:85-100`), then checks the simulation ship position and matching system (`:136-144`) with the same refusal. The client-side session assertion passed, so the remaining branch is consistent with missing or mismatched simulation position; the run does not log the actual position result. The client deployment flow and its preconditions are documented above. Newer gates include `48d0dbf8` (active ship assignment preserving the undock wire shape); check its E2E outcome before changing this path.
+- CI run 855 (`40099954010`, `12cde77b`) artifacts show `ConfigServiceTests.Multi_owner_prime_accepts_501_unbatched_client_ids` failed with `MachoWrappedException` from `RequestedIds`, and `HostServerTests.Config_recordset_routes_return_client_rows_through_host_with_transport_kwargs` expected CallRsp opcode 7 but received ErrorResponse opcode 15 on the 501-agent `GetMultiOwnersEx` call. These are one root: the raw-ID limit counted cache-backed agent owners that need no database query. V24.01 `Recordset._Prime` passes all pending keys to its multi-fetcher (`carbon/common/script/sys/cfg.py:537-604`), and `ownerprimer` passes distinct event owners in one Prime (`eve/client/script/parklife/ownerprimer.py:35-42`); EveJS v0.12.9 returns the five-column owner rowset without a 500-ID cap. Main commit `7f05600b` now permits cache-backed owners while retaining the database limit. Selected Agent tests on `2856a206` are checking the service and Host regressions; results are pending.
+- Run 855's `RpcSecurityInventoryTests.Real_host_registry_methods_are_enumerable` still expected 1385 but discovered 1393. Main commit `0bea06f7` updates the snapshot to 1393; current-main selected and push-gate checks are pending.
+- Run 855's simulator artifact records a frame length of 1,107,305,565 bytes after NPC/site generation in system 30000903. The completed-workflow pytest summary is still unavailable, so the exact live case remains pending. No three consecutive green push gates have been recorded.
+
+## 2026-10-24 historical CI boundary check
+
+- Run 583 (`39935089151`, `6ba36886`) was the last successful full gate before the first red gate in this interval. Run 584 (`39943204376`, `2d422e84`) was the first failure; its sole test failure was `RpcSecurityInventoryTests.Real_host_registry_methods_are_enumerable`, expected 1374 and found 1378. Main commit `097de488` later refreshed that inventory baseline. This direct assertion identifies the first red cause; no bisection was needed for run 584.
+- Run 647 (`39991023879`, `872df205`) failed before the headless client walk because `HostComposition` queried missing relation `sde.skinrComponentPointValues` while loading `ShipSkinrCatalog`. The same startup failure appears in the Windows live job and Host tests, so run 647 has no pytest case to identify. Commit `a00e62c9` moved the mission-only table read to the mission SDE lane; this historical startup defect is not the current run 855 E2E failure.
+
+
+## 2026-10-24 RPC inventory baseline follow-up
+
+- Selected Agent run 470 (`40102696909`, SHA `2856a206`) failed `Eve.Host.Tests.RpcSecurityInventoryTests.Real_host_registry_methods_are_enumerable`: expected 1394 registered methods and found 1396 at `dotnet/tests/Eve.Host.Tests/RpcSecurityInventoryTests.cs:90`. The expected inventory is now 1396.
+- The changed Host test project compiles locally with zero warnings and errors. The focused Agent regression check will run against the pushed change. The current push gates are still in progress; no three-green sequence has been reached.
+
+
+## 2026-10-24 RPC inventory push status
+
+- Commit `187b7c0e` is on main with the Host RPC inventory expectation set to 1396. Its first push attempt raced another main update; the branch was fetched and merged again, then the push succeeded.
+- Focused Agent run 477 (`40105045416`) passed `RpcSecurityInventoryTests.Real_host_registry_methods_are_enumerable` against the pushed change.
+- Push gate run 872 (`40104524389`, SHA `1686b316`) and newer run 873 (`40104855348`, SHA `e7ba3843`) remain in progress. Run 873 includes commit `187b7c0e`; its E2E result is still pending. There is no three-green sequence yet.
+- The changed contract read-model test now expects the real issuer corporation, assignee, and contract type values. The V24.01 client reads the login reply at `eve/client/script/ui/shared/neocom/contracts/contracts.py:190-198`, and the contract panel consumes issuer, assignee and type at `eve/client/script/ui/shared/neocom/contracts/contractPanels.py:90-98`; the detail window checks personal assignee at `contractsDetailsWnd.py:94`.
+
+
+## 2026-10-24 simulation frame cancellation root
+
+- Completed CI run 870 (`40104165507`, SHA `f76fc833`) and run 872 (`40104524389`, SHA `1686b316`) both failed the live test `test_a_director_anchors_an_astrahus_from_its_ship_in_a_legal_system_and_the_structure_is_placed_and_told` at `tools/headless-client/tests/test_structures.py:513`. The pilot's session was already undocked in the expected ship and system; the client bound Beyonce, sent `UpdateStateRequest`, called bound `CmdWarpToStuff("position", ...)`, then the test's direct `structureDeployment.Anchor` call received `CustomNotify: You must be in space to deploy a structure.` The run 872 simulation artifact recorded `frame of 874185566 bytes exceeds 1048576`; related repeated artifacts were `874841694` bytes (run 873), `4076556294` (run 854), and `1107305565` (run 855).
+- Root cause: `eve-sim` read each length-prefixed frame with `AsyncReadExt::read_exact` from a `tokio::select!` loop that also polls and flushes simulation ticks. Tokio documents that `select!` cancels losing futures and that `read_exact` is not cancellation-safe, so bytes consumed into the dropped header or payload future were lost; the next frame then began at the wrong byte and appeared to have a huge length ([Tokio select cancellation-safety documentation](https://docs.rs/tokio/latest/tokio/macro.select.html)). The existing `eve-net::frame::FrameReader` retains partial bytes in its `BytesMut` and fills it with `read_buf` (`crates/eve-net/src/frame.rs:13-54`); `eve-sim` now reuses it for the hello and select loop, preserving the 1 MiB limit. The new focused test cancels reads during both a partial header and a partial payload, then confirms the complete frame is returned.
+- The simulation connection is internal Host-to-Rust IPC; the EVE client contract did not change. Whole-client review found the only `UpdateStateRequest` call path in `eve/client/script/remote/michelle.py:847-855`. The full `CmdWarpToStuff` caller search covered `eve/client/script/util/profiling.py:317`, `eve/client/script/ui/shared/addressBookEntries.py:155`, `eve/client/script/ui/shared/neocom/journal.py:452`, `eve/client/script/ui/shared/infoPanels/listSurroundingsBtn.py:381`, `eve/client/script/ui/shared/agencyNew/contentPieces/escalationContentPiece.py:74`, `eve/client/script/ui/services/menusvc.py:1427,2737,2747,2757`, `eve/client/script/ui/services/menuSvcExtras/movementFunctions.py:418,432,451,462,488`, `eve/client/script/parklife/transmissionMgr.py:142`, `eve/client/script/parklife/autopilot.py:464` (autopilot variant), `objectives/client/objective_task/dungeon.py:341,369`, and `jobboard/client/features/dungeons/escalation_sites/job.py:57`. Michelle forwards the call to the bound park and returns no payload (`michelle.py:732-738`). The structure UI checks inflight view, `InShipInSpace()`, and warp state before deployment (`structureDeployment.py:85-95`); its confirmation sends `Anchor`, cleans up, and reloads the directory (`eve/client/script/ui/services/structure/structureDeployment.py:166-176`). It consumes no return value. This server-internal fix changes none of those wire arguments, response shapes, session attributes, or notifications.
+- Other failures in run 870 were stale test baselines already corrected on main: `Login_and_escrow_reads_use_persisted_contract_rows_and_owner_scopes` expected zero issuer-corporation, assignee, and type fields while the stored rows returned `(200,100,1)` and `(200,300,2)`; the V24.01 login reply and contract panel consume those fields (`eve/client/script/ui/shared/neocom/contracts/contracts.py:190-198`, `eve/client/script/ui/shared/neocom/contracts/contractPanels.py:90-98`; personal assignment is checked in `eve/client/script/ui/shared/neocom/contracts/contractsDetailsWnd.py:94`). The RPC inventory snapshot expected 1394 while the registry contained 1396. Run 873's Host 4/4 and Host 2/4 shards passed, and selected Agent run 477 passed the 1396 inventory assertion.
+- Local verification: `cargo +1.94.1 check -p eve-sim`, the focused `a_partial_sim_frame_survives_select_cancellation` test (1 passed), `cargo +1.94.1 fmt --all -- --check`, and `cargo +1.94.1 clippy --workspace --all-targets -- -D warnings` all passed. No local database was used. Run 873 (`40104855348`, SHA `e7ba3843`) has the same E2E failure; its .NET space 4/4 shard is still active at this note, so its complete gate result is pending. Its fast-live summary skips skill-speed and seven slow-live cases; those skips are not passes. No graphical-client session was run, and no three-green push-gate sequence has been recorded.
+
+
+## 2026-10-24 simulation frame fix push
+
+- Commit `3ff57cc841632c432d9fd0afa120c8f9c0759f90` was pushed to `main` after fetching and merging `origin/main` at `2df5b09f`.
+- Push-triggered CI run `40107313833` for `3ff57cc8` is queued. Its Actions result is pending. Earlier run 873 (`40104855348`, `e7ba3843`) still has the same Astrahus E2E failure; its Space 4/4 shard is active. No post-fix gate result or three-green sequence has been recorded yet.

@@ -29,8 +29,9 @@ public sealed class StargateJumpWireTests
             WarpAnswer = new CommandReply(true, 0, null),
             JumpAnswer = new CommandReply(true, 0, null, null, DestinationSystem, DestinationGate)
         };
+        var statics = new DogmaStatic([], [], [new TypeDef(1001, 1, 1, new Dictionary<int, double>(), [], "Test ship")]);
         using var space = new SpaceSessions(
-            sim, null!, new DogmaStatic([], [], []), new StationCatalog([]), new SolarSystemCatalog([]), () => UnixMs);
+            sim, null!, statics, new StationCatalog([]), new SolarSystemCatalog([]), () => UnixMs);
         var sink = new Sink();
         var session = new ClientSession(sink) { SessionId = 7, ClientId = 7, CharacterId = Character, UserId = 1 };
         session.Set("shipid", new PyLong(Ship));
@@ -55,7 +56,8 @@ public sealed class StargateJumpWireTests
         Assert.True(await dispatcher.DispatchAsync(CallPacket(
             "CmdWarpToStuffAutopilot", new PyTuple([new PyLong(Gate)]), PyNone.Instance, callId: 2, oid), session));
         Assert.True(space.IsWarping(session));
-        var warpResponse = Assert.Single(sink.Sent.ToArray().OfType<PyObject>());
+        var warpPackets = sink.Sent.ToArray().OfType<PyObject>().ToArray();
+        var warpResponse = Assert.Single(warpPackets);
         Assert.Equal(MachoMessage.CallRsp, MessageType(warpResponse));
         Assert.Equal(PyNone.Instance, CallResult(warpResponse));
         sink.Sent.Clear();
@@ -66,8 +68,9 @@ public sealed class StargateJumpWireTests
             PyNone.Instance,
             callId: 3,
             oid), session));
+        await space.QuiesceAsync();
 
-        Assert.False(space.IsWarping(session));
+        Assert.False(space.IsWarping(session), $"jump command codes: {string.Join(",", sim.Heard.OfType<SimCommand>().Select(command => command.Code))}");
         var packets = sink.Sent.ToArray().OfType<PyObject>().ToArray();
         Assert.Equal([MachoMessage.Notification, MachoMessage.CallRsp], packets.Select(MessageType));
         var notification = Assert.Single(Events.Of(session, clear: false), item => item.Name == "OnJumpQueueUpdate");

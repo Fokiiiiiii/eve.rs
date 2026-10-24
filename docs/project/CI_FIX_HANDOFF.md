@@ -422,3 +422,9 @@ CI run 672 on `1669e6dc` failed the structure market Host test because the fixtu
 ## 2026-10-24 selected Actions rerun 238
 
 - The Host distant-ship regression passed 1/1. Space tests passed 3/4; the remaining test failed in setup when it read an absent `session.corpid` field instead of the authoritative pilot record. The test now uses `CharacterAsync(...).CorporationId` and is queued for another focused run.
+
+## 2026-10-24 CI run 745 market notification follow-up
+
+- Run 745 on `fecd1a3e` failed `Native_market_rpc_reads_descriptor_rows_buys_sells_and_cancels_without_node` and `Market_client_plex_history_escrow_and_order_history_reads_are_native`. Both tests expected the old order-notification count after an immediate fill. `MarketNotifier.PublishAsync` now sends EveJS-compatible `OnOwnOrdersChanged` with reason `Filled` for an immediate fill with no resting order; the tests now include that notification in their expected counts.
+- The `Eve.Market.Tests` Release build passed locally with 0 warnings and 0 errors. Focused Actions checks are pending; these database-backed tests were not run locally.
+- Run 745 also failed the End-to-end job with `MachoError: macho error 2` at call ID 523. The CI log tail did not identify its pytest case; root-cause investigation is ongoing. Skips in that run included one Market test and the skill-speed plus seven slow live tests.

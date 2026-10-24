@@ -27,7 +27,7 @@ The V24.01 war declaration callsites select HQ IDs from `structureDirectory.GetV
 
 ## Agent GetAgents wire columns (2026-10-20)
 
-`agentMgr.GetAgents` returns the 15 columns produced by EveJS 261018.1. System, dungeon, spawn and type metadata remain in the server catalog for `GetSolarSystemOfAgent` and are not serialized in this rowset. The client adds its own system and faction fields after loading the table. `AgentMissionServiceTests.Agent_mgr_agents_and_location_match_the_reference_rowset_and_scalar` and `AgentCatalogSdeTests` cover the wire and catalog data.
+`agentMgr.GetAgents` returns 15 columns. EveJS v0.12.9 adds four columns after `bloodlineID` (`solarSystemID`, `dungeonID`, `spawnPointID`, and `typeID`; `server/src/services/agent/agentMgrService.js:787-833`), while the later EveJS 261018.1 response and eve.rs use the 15-column projection. The V24.01 callers are `eve/client/script/ui/station/agents/agents.py:91-113` and `eve/client/script/ui/shared/info/infosvc.py:2593-2607`: the first uses the row fields through `bloodlineID`, then derives lowercase `solarsystemID` and `factionID` locally; the second reads `agentID` and `divisionID`. The info window obtains a solar-system ID through the separate `GetSolarSystemOfAgent` call (`agents.py:799-801`, `infosvc.py:2020-2022`). No client consumer of the four additional row fields was found in the complete client-tree search. Retaining 15 columns therefore preserves the observed V24.01 use while avoiding unused duplicate location metadata. `AgentMissionServiceTests.Agent_mgr_agents_and_location_match_the_reference_rowset_and_scalar` and `AgentCatalogSdeTests` cover the rowset and catalog data.
 
 ## Account session exclusivity (2026-10-19)
 

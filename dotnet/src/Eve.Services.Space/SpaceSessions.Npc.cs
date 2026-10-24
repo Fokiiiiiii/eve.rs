@@ -128,6 +128,7 @@ public sealed partial class SpaceSessions
             if (reply.Error?.StartsWith("NO_SCENE", StringComparison.Ordinal) == true && sceneUnavailable is not null)
             {
                 sceneUnavailable();
+                _log?.Invoke($"{what}: the ship was refused: {reply.Error}");
             }
             else
             {

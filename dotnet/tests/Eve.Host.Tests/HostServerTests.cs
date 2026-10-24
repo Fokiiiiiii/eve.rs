@@ -25,7 +25,7 @@ public sealed class PgFactAttribute : Xunit.FactAttribute
     }
 }
 
-public class HostServerTests : IAsyncLifetime
+public partial class HostServerTests : IAsyncLifetime
 {
     private const long FixedNowMs = 1_790_646_377_000;
 

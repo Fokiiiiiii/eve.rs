@@ -142,7 +142,7 @@ internal sealed partial class CharacterServicesComposition
             StandingToward = (character, owner, token) => foundations.Relations.StandingTowardAsync(character, owner, token),
         };
         // M3: resting orders expire as durable jobs; the minute sweep and the restart reschedule are started with the market
-        var marketNotifier = new Eve.Services.Market.MarketNotifier(economyWallets, characterSessions);
+        var marketNotifier = new Eve.Services.Market.MarketNotifier(economyWallets, characterSessions, now);
         // M8: the minute sweep runs the market's invariants (escrow, item custody, fill journal) and logs any mismatch
         marketExpiry = new Eve.Services.Market.MarketExpiryWorker(foundations.Scheduler, marketTrading, now, (receipt, _) => marketNotifier.PublishAsync(receipt),
             new Eve.Market.MarketReconciliation(source, marketSchema, walletSchema, inventorySchema),

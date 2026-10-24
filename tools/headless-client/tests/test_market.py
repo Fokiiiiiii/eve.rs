@@ -329,10 +329,11 @@ def test_a_seller_and_a_buyer_trade_through_the_market():
         # the book shows the ask to a buyer at the station (GetStationAsks, the KeyVal rows of M1)
         asks = _payload(m.plain(buyer.call("marketProxy", "GetStationAsks")))
         assert isinstance(asks, dict), f"{type(asks).__name__}: {str(asks)[:700]}"
-        best = _named(asks[TRITANIUM])
-        assert best["volRemaining"] == 40 and best["price"] == 50.0, best
+        best = asks[TRITANIUM]
+        assert isinstance(best, tuple) and len(best) == 4, best
+        assert best == (50, 40, TRITANIUM, station_id), best
 
-        # match: an immediate buy of 15 takes 15 of the ask at its price; no order rests and no row is faked
+        # match: the immediate buy takes 15 at the ask price; only the remaining 25 units stay on the book.
         assert buyer.call("marketProxy", "PlaceBuyOrder", station_id, TRITANIUM, 50.0, 15, -1, 1, 0, False, None) is None
         bought = [row for row in _plain_rows(buyer.call("marketProxy", "CharGetTransactions", None)) if _field(row, "typeID") == TRITANIUM]
         assert bought and sum(_field(row, "quantity") for row in bought) == 15, bought

@@ -61,6 +61,11 @@ public class MarketRpcTests
         var sink = new RecordingPacketSink();
         var session = new ClientSession(sink) { SessionId = sessionId };
         session.Set("charid", new PyInt(actor));
+        session.Set("regionid", new PyInt(rig.Station.RegionId));
+        session.Set("constellationid", new PyInt(rig.Station.ConstellationId));
+        session.Set("solarsystemid", new PyInt(rig.Station.SolarSystemId));
+        session.Set("solarsystemid2", new PyInt(rig.Station.SolarSystemId));
+        session.Set("stationid", new PyLong(rig.Station.Id));
         var sessions = new CharacterSessions();
         sessions.Enter(actor, session);
         var catalog = await MarketCatalog.LoadAsync(new Eve.Sde.SdeReader(rig.Source));
@@ -318,7 +323,32 @@ public class MarketRpcTests
         Assert.Empty(Assert.IsType<PyList>(Field(Fields(rows),"lines")).Items);
         Assert.Empty((await r.Book.BookAsync(r.Station.RegionId,Tritanium,r.Now)).Bids);
         Assert.Equal(9950m,(await r.WalletStore.GetAsync(actor))!.Isk);
-        Assert.Empty(seat.Sink.Packets);
+        Assert.NotEmpty(seat.Sink.Packets);
+        var packet = Assert.IsType<PyObject>(seat.Sink.Packets[^1]);
+        var packetFields = Assert.IsType<PyTuple>(packet.Args).Items;
+        var sequence = checked((int)Assert.IsType<PyInt>(Field(Assert.IsType<PyDict>(packetFields[5]), "sn")).Value);
+        var expectedNotification = ClientNotification.Build(seat.Session.UserId ?? 0, seat.Session.NodeId,
+            "OnOwnOrdersChanged", "charid",
+            [Py.List(Py.KeyVal(
+                ("orderID",new PyLong(0)),
+                ("typeID",new PyInt(Tritanium)),
+                ("charID",new PyInt(actor)),
+                ("regionID",new PyInt(r.Station.RegionId)),
+                ("stationID",new PyLong(r.Station.Id)),
+                ("range",new PyInt(MarketRules.RangeRegion)),
+                ("bid",new PyInt(0)),
+                ("price",Py.Number(MarketRules.RoundIsk(10d))),
+                ("volEntered",new PyInt(5)),
+                ("volRemaining",new PyInt(0)),
+                ("issueDate",new PyLong(Py.FileTimeFromUnixMs(r.Now))),
+                ("minVolume",new PyInt(1)),
+                ("contraband",new PyInt(0)),
+                ("duration",new PyInt(0)),
+                ("isCorp",new PyInt(0)),
+                ("solarSystemID",new PyInt(r.Station.SolarSystemId)),
+                ("escrow",Py.Number(0)))),
+                new PyStr("Filled"), new PyInt(0)], sequence);
+        Assert.Equal(MarshalCodec.Encode(expectedNotification), MarshalCodec.Encode(packet));
         Assert.Equal(95,(await r.Book.BookAsync(r.Station.RegionId,Tritanium,r.Now)).Asks.Single().VolumeRemaining);
     }
 

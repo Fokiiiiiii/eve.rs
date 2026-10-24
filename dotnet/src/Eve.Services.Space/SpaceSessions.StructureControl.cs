@@ -282,22 +282,6 @@ public sealed partial class SpaceSessions
             throw Notify("The structure control lifecycle backend is not available.");
     }
 
-    public async Task<bool> CanReturnToStructureShipAsync(ClientSession session, long shipId,
-        int system, double x, double y, double z, double structureRadius, double shipRadius, CancellationToken token)
-    {
-        if (!_pilots.TryGetValue((ulong)session.SessionId, out var pilot) ||
-            pilot.CharacterId != session.CharacterId || pilot.ShipId != shipId || pilot.SolarSystemId != system ||
-            SolarSystemOf(session) != system ||
-            await ScenePositionOfAsync(session, shipId, token) is not { } position || position.SolarSystemId != system)
-            return false;
-        var dx = position.X - x;
-        var dy = position.Y - y;
-        var dz = position.Z - z;
-        var distance = Math.Sqrt(dx * dx + dy * dy + dz * dz) - structureRadius - shipRadius;
-        // V24.01 maxBoardingDistance, also used by BoardAsync; the structure menu measures surface distance.
-        return double.IsFinite(distance) && distance <= 6_500d;
-    }
-
     public async ValueTask<bool> EjectStructureControlToCapsuleAsync(ClientSession session, CancellationToken token)
     {
         if (!_pilots.TryGetValue((ulong)session.SessionId, out var pilot)) return false;

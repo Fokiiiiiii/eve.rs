@@ -29,3 +29,17 @@ Local verification: the focused `AgentMissionServiceTests.Bound_agent_mission_qu
 1. Compile-check `Eve.Host.Tests` locally; do not run PostgreSQL tests locally.
 2. Commit and push to main, then dispatch Actions with focused .NET filters plus `test_agent_moniker_live.py`.
 3. Inspect the selected Actions run and push-triggered CI. Update this handoff with the run IDs and outcomes after each push.
+
+## Client-contract differential follow-up (2026-10-24)
+
+EveJS 261018.1 `buildMissionBriefingInfo` returns mission keywords, decline time, acceptance timestamp, and expiration time. The V24.01 client reads and caches the `Mission Keywords` field from `GetMissionBriefingInfo`. The bound handler now resolves the agent from the live agent rows, reuses the existing keyword projection, and emits timestamps and remaining decline ticks only from the held mission record.
+
+EveJS 261018.1 `buildMissionObjectivePayload` derives `importantStandings` from `missionRecord.importantMission`. Eve.rs now projects the persisted `AgentMissionContent.Important` value, which Host populates from the static agent's `ImportantMission` field. Fields without an authoritative source in the held mission/catalog, such as content and image, remain `None`.
+
+Changed in this follow-up:
+- `dotnet/src/Eve.Services.Core/AgentMissionService.cs`
+- `dotnet/src/Eve.Services.Core/MissionViews.cs`
+- `dotnet/tests/Eve.Services.Core.Tests/AgentMissionServiceTests.cs`
+- `dotnet/tests/Eve.Services.Core.Tests/MissionViewsTests.cs`
+
+Local checks succeeded: `Eve.Services.Core` build, `Eve.Services.Core.Tests` build, and `Bound_agent_mission_briefing_projects_keywords_and_persisted_times` (1 passed, 0 failed, 0 skipped). The focused objective regression and the push-triggered Actions checks are pending on the new commit. The graphical client was not used.

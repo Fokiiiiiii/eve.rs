@@ -106,7 +106,7 @@ public sealed class AgentMissionService(
         "GetPlausibleMissionIDs" => ReadPlausibleMissionIdsAsync(call),
         "GetSolarSystemOfAgent" => ReadSolarSystemOfAgentAsync(call),
         "GetAgentLocationWrap" => ReadAgentLocationWrapAsync(call),
-        "GetMissionBriefingInfo" => ReadHeldMissionAsync(call, MissionViews.Briefing),
+        "GetMissionBriefingInfo" => ReadMissionBriefingInfoAsync(call),
         "GetMissionObjectiveInfo" => ReadHeldMissionAsync(call, MissionViews.Objective),
         "GetMissionJournalInfo" => ReadMissionJournalInfoAsync(call),
         "GetMissionKeywords" => ReadMissionKeywordsAsync(call),
@@ -134,6 +134,21 @@ public sealed class AgentMissionService(
         var agentId = BoundAgentId(call);
         if (characterId == 0 || agentId == 0 || rpcCallbacks?.ReadHeldMission is not { } readHeld) return PyNone.Instance;
         return await readHeld(characterId, agentId, call.Cancellation) is { } view ? answer(view) : PyNone.Instance;
+    }
+
+    private async ValueTask<PyValue> ReadMissionBriefingInfoAsync(ServiceCall call)
+    {
+        call.Cancellation.ThrowIfCancellationRequested();
+        var characterId = Positive(call.Session.Get("charid"));
+        var agentId = BoundAgentId(call);
+        if (characterId == 0 || agentId == 0 || rpcCallbacks?.ReadHeldMission is not { } readHeld)
+            return PyNone.Instance;
+        var mission = await readHeld(characterId, agentId, call.Cancellation);
+        call.Cancellation.ThrowIfCancellationRequested();
+        if (mission is null || rpcCallbacks?.ReadAgents is not { } readAgents) return PyNone.Instance;
+        var agent = (await readAgents(call.Cancellation)).FirstOrDefault(item => item.AgentId == agentId);
+        call.Cancellation.ThrowIfCancellationRequested();
+        return agent is null ? PyNone.Instance : MissionViews.Briefing(agent, mission, DateTimeOffset.UtcNow);
     }
 
     private async ValueTask<PyValue> ReadMissionJournalInfoAsync(ServiceCall call)

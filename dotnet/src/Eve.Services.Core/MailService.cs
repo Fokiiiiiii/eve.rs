@@ -150,7 +150,7 @@ private async ValueTask<PyValue> SendMailAsync(ServiceCall call)
             : BoundedText(call.Arg(1), MaxGmChatChannelCharacters, "MAIL_CHANNEL_LIMIT_EXCEEDED");
         var request = new GmChatPokeMailRequest(
             characterId,
-            140000004,
+            GmChatPokeMailRequest.SystemSenderId,
             channelName,
             "GM chat request",
             $"A GM would like to speak with you.<br><br>Requested channel: {channelName}",
@@ -332,7 +332,8 @@ public sealed record MailSendRequest(
     string Title,
     string Body,
     long? ReplyToMessageId,
-    long? ForwardedFromMessageId);
+    long? ForwardedFromMessageId,
+    bool SaveSenderCopy = true);
 
 public sealed record GmChatPokeMailRequest(
     long CharacterId,
@@ -340,7 +341,11 @@ public sealed record GmChatPokeMailRequest(
     string ChannelName,
     string Title,
     string Body,
-    bool SaveSenderCopy);
+    bool SaveSenderCopy)
+{
+    public const long SystemSenderId = 140000004;
+    public const string SystemSenderName = "GM ELYSIAN";
+}
 
 public delegate Task<long?> GmChatPokeMailCallback(
     GmChatPokeMailRequest request,

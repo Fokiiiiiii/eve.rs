@@ -147,7 +147,6 @@ public sealed record SimGetAbyssalParticipantPoseReply(
 }
 
 public sealed record SimHello(ushort Version) : SimMessage;
-
 public sealed record SimHelloAck(ushort Version, uint PollHz) : SimMessage;
 
 /// <summary>How a ship comes into space.</summary>
@@ -298,7 +297,6 @@ public static class SimCommands
 
     /// <summary>Who has the ship locked.</summary>
     public const byte GetTargeters = 15;
-
     /// <summary>Stop a module's effect at the end of its cycle (the module's id).</summary>
     public const byte Deactivate = 16;
 
@@ -599,7 +597,6 @@ public abstract record SimAction
 
     /// <summary>Uses loaded charges at each cycle; after they run out the effect may switch to an uncharged action or stop.</summary>
     public sealed record Charged(SimAction Action, SimAction? Fallback, int ChargeTypeId, int ChargeFlag, int ChargePerCycle, long Charges) : SimAction;
-
     /// <summary>
     /// Engages the ship's active cloaking device (tag 5). A cloak that is not warp-safe (<paramref name="WarpSafe"/> false, a standard cloaking device) holds the
     /// ship out of warp while it runs; a warp-safe (covert ops) cloak carries it into warp.
@@ -988,7 +985,9 @@ public static class SimDroneCommands
     public const byte Salvage = 8;
 
     /// <summary>The key an order is answered under in <see cref="CommandReply"/>s: an order to drones shares the codes of the commands, so it is told apart by this offset.</summary>
-public const byte Reconnect = 9;
+    public const byte Reconnect = 9;
+    /// <summary>Takes an abandoned drone into the pilot's bay when it is within scoop range.</summary>
+    public const byte Scoop = 10;
 
     public static byte Key(byte command) => (byte)(0xE0 + command);
 }
@@ -1198,7 +1197,6 @@ public sealed record SimRemoveWreck(long WreckId, int Effect) : SimMessage;
 public sealed record SimDeployed(
     int SolarSystemId, long DeployableId, string Name, int TypeId, int GroupId, IReadOnlyList<double> Position, double Radius, long OwnerId, int CorporationId,
     int AllianceId, long ShipId, double LifetimeMs) : SimMessage;
-
 /// <summary>The host takes a cynosural field out of space when its record's time is up (protocol 44); a deployable that is not one, or not in space, is left alone.</summary>
 public sealed record SimRemoveDeployed(long DeployableId) : SimMessage;
 
@@ -1349,7 +1347,6 @@ public sealed record SimDamageableEntityUpserted(
     int SolarSystemId, long EntityId, int TypeId, long OwnerId, long CorporationId, long AllianceId, long WarFactionId) : SimMessage;
 
 public sealed record SimDamageableEntityRemoved(int SolarSystemId, long EntityId) : SimMessage;
-
 /// <summary>The answer to <see cref="SimCommands.Measure"/>: metres from the centre of the ship to the surface of the wreck or can, or null when there is no such wreck.</summary>
 public sealed record SimMeasured(ulong SessionId, byte Command, double? Distance) : SimMessage;
 

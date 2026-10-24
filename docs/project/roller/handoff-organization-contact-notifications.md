@@ -100,3 +100,9 @@ Actions run `40043761052` passed all selected tests: bookmark prime, Host EditCo
 Push CI `40043754414` for `35964099` completed. The updated RPC inventory count and all four focused service tests passed. Three unrelated failures remained: the live market test decoded a tuple row where it expected a named KeyVal; a Space scoop test's fixture character creation returned `CreationRefused`; and a Host structure test expected a refusal where the implementation now allows the return. Main commit `4930fd25` contains market, Space fixture and StructureControl follow-up changes; the next CI run will verify them.
 
 The inherited mission journal serializer was also corrected: `expirationTime` now uses `PyLong` for the 64-bit FileTime, with an assertion in the existing AgentMission regression. Local `Eve.Services.Core.Tests` build passed with 0 warnings and 0 errors. Actions run `40045225224` reruns that regression; push CI `40045219089` is active. Results are pending. No local PostgreSQL test or graphical-client run was performed.
+
+
+
+## Focused mission expiry verification (2026-10-24)
+
+Focused Actions run `40045225224` for commit `343cd0fd` passed the AgentMission keyword regression, including the 64-bit `expirationTime` assertion. The push CI run `40045219089` for the same code commit is still running; its Rust format/clippy, Python, fixture, .NET build, Rust tests, and latest-stable advisory jobs have passed so far, while several .NET shards, the end-to-end walk, and Windows job are still active. No failure has been reported yet. Earlier focused run `40043761052` also passed the bookmark expiry, contact edit, mission keywords, and RPC inventory tests. No local PostgreSQL tests or graphical-client run were performed.

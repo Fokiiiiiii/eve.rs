@@ -4,6 +4,8 @@
 
 The 25 requested RPC rows are 10 shared charUnboundMgr methods (the duplicate row pairs refer to old/new client generations). The existing service methods and production composition were traced. This increment adds a real Host registry/socket/dispatcher/wire regression for three database-independent methods: GetCohortsForUser, GetQAStarterSystemIDs and ToggleValidation. The remaining stateful methods still need Host coverage; this batch is not complete.
 
+Implementation tested at push SHA `b4a43cfe5724` (merged origin/main). Focused Actions run `40094016933` passed. Push-triggered `ci.yml` run `40094011027` was still in progress at the last check.
+
 ## Client callers and reply consumers
 
 CBM searches over the complete V24.01 `home-user-eve-logic` project found:
@@ -27,14 +29,14 @@ The client makes no additional uses of these direct replies beyond the consumers
 
 EveJS v0.12.9 handlers are in `server/src/services/character/charService.js`: GetNumCharacters 1369-1376; UpdateCharacterGender 1378-1409; UpdateCharacterBloodline 1411-1456; GetCohortsForUser 1458-1461; SelectCharacterID 1525-1848; PrepareCharacterForDelete 1850-1857; GetValidRandomName 1871-1875; GetQAStarterSystemIDs 1877-1881; ToggleValidation 1883-1902; ValidateNameEx 1904-1912. Production eve.rs composition is `dotnet/src/Eve.Host/Composition/CharacterServicesComposition.cs`; method implementations are `dotnet/src/Eve.Services.CharacterSelect/CharUnboundMgrService.cs`. The tested replies match EveJS and the client: empty cohort list, sorted starter-system ID list from the creation catalog, and Boolean validation-toggle transitions.
 
-The new test `dotnet/tests/Eve.Host.Tests/CharUnboundMgrReadWireTests.cs` registers the actual service through the test Host registry and sends calls through the socket dispatcher and marshal codec. It includes transport-added `machoVersion`, checks each decoded reply, and exercises both toggle states. It does not substitute a handler. The other seven methods access persisted character state through `PgCharacterStore` and related stores. No PostgreSQL database was used as required; their success, rejection, persistence and follow-up transitions still need focused database-backed Host scenarios.
+The test `dotnet/tests/Eve.Host.Tests/CharUnboundMgrReadWireTests.cs` registers the actual service through the test Host registry and sends calls through the socket dispatcher and marshal codec. It includes transport-added `machoVersion`, checks each decoded reply, and exercises both toggle states. It does not substitute a handler. The other seven methods access persisted character state through `PgCharacterStore` and/or related stores. No PostgreSQL database was used as required; their success, rejection, persistence and follow-up transitions still need focused database-backed Host scenarios.
 
 ## Verification
 
-- `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -p:UseSharedCompilation=false` — passed with 0 errors and one transient output-file retry warning from overlapping local builds.
-- Focused test `FullyQualifiedName~Char_unbound_mgr_stateless_reads_and_validation_toggle_are_registered_on_the_host` — passed, 1 test, 0 skipped.
+- `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -p:UseSharedCompilation=false` — passed with 0 errors; one transient output-file retry warning occurred because overlapping local builds briefly accessed the same output.
+- Focused test `FullyQualifiedName~Char_unbound_mgr_stateless_reads_and_validation_toggle_are_registered_on_the_host` — passed, 1 test, 0 skipped locally and on Actions.
 - No PostgreSQL database or graphical client used.
 
 ## Continuation
 
-Commit and push this increment, then record the SHA and Actions result here. Before marking RPC-01139–RPC-01163 covered, add database-backed Host tests for GetNumCharacters, GetValidRandomName, PrepareCharacterForDelete, SelectCharacterID, UpdateCharacterBloodline, UpdateCharacterGender and ValidateNameEx, including their persisted effects and client follow-up state.
+The batch is not complete: add Host coverage for GetNumCharacters, GetValidRandomName, PrepareCharacterForDelete, SelectCharacterID, UpdateCharacterBloodline, UpdateCharacterGender and ValidateNameEx, including persisted effects and client follow-up state. The user explicitly disallowed PostgreSQL for this job, so these stateful calls were not invoked. Reconcile push-triggered CI run `40094011027` when it completes.

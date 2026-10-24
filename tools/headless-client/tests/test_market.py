@@ -23,7 +23,7 @@ from evecli.observe import _plain_name, events_of, timed_events
 from tests import dbseed
 from tests import test_login_to_character as base
 from tests import test_structures as structures
-from tests.test_undock import arrive
+from tests.test_undock import actions_of, arrive
 
 pytestmark = pytest.mark.skipif(not base.LIVE, reason="set EVE_LIVE_HOST=host:port to test against a running server")
 
@@ -103,13 +103,25 @@ def test_a_docked_character_reads_the_market_as_the_client_does():
         assert label == "CustomInfo"
         assert arguments == {"info": "Order prices have at most four significant figures."}
 
-# ---- Upwell market: dock, post both sides, match and read the committed result -----------------------------------------------
+# ---- Upwell market: dock, post both sides, match and read the committed result -------------------------------------
 
 def _dock_at_market_structure(client, character: int, ship_id: int, fitted: list, structure_id: int) -> None:
     structures._reenter(client, character)
     structures._undock(client, ship_id, fitted, station=structures.STATION, system=structures.SYSTEM)
     seen = timed_events(client, 30.0, until=lambda events: structures._structure_slim(events, structure_id) is not None)
     assert structures._structure_slim(seen, structure_id) is not None, f"Fortizar {structure_id} did not enter the ballpark"
+    ballpark = client.call("beyonce", "MachoBindObject", structures.SYSTEM, None)
+    client.call_bound(ballpark[0], "CmdWarpToStuff", "item", structure_id, minRange=0)
+    deadline = time.time() + 150
+    warp_finished = False
+    while not warp_finished and time.time() < deadline:
+        client.call_bound(ballpark[0], "UpdateStateRequest")
+        events = timed_events(client, 3.0)
+        warp_finished = any(
+            event.get("name") == "DoDestinyUpdate" and any(action[1] == "Stop" for action in actions_of(event)[0])
+            for event in events
+        )
+    assert warp_finished, f"ship {ship_id} did not finish warping to market structure {structure_id}"
     deadline = time.time() + 120
     while True:
         try:
@@ -125,6 +137,7 @@ def _dock_at_market_structure(client, character: int, ship_id: int, fitted: list
     assert any(_plain_name(event.get("name")) == "OnDockingFinished" for event in finished), (
         f"ship {ship_id} did not dock at market structure {structure_id}"
     )
+
 
 def _assert_wallet_notification_order(events, owner: str) -> None:
     names = [_plain_name(event.get("name")) for event in events if "name" in event]
@@ -222,10 +235,8 @@ def test_docked_corporation_members_trade_at_an_eligible_upwell_structure():
         assert sum(_field(row, "quantity") for row in sold) == 2, sold
         assert all(_number(_field(row, "locationID")) == structure_id for row in bought + sold)
 
-        buyer_hangar = [row for row in _station_hangar_items(buyer, structure_id) if _field(row, "typeID") == TRITANIUM]
-        seller_hangar = [row for row in _station_hangar_items(seller, structure_id) if _field(row, "typeID") == TRITANIUM]
-        assert sum(_field(row, "quantity") for row in buyer_hangar) == 2, buyer_hangar
-        assert sum(_field(row, "quantity") for row in seller_hangar) == 2, seller_hangar
+        assert dbseed.quantity_at(buyer_character, structure_id, TRITANIUM) == 2
+        assert dbseed.quantity_at(seller_character, structure_id, TRITANIUM) == 2
 
         seller_journal = _journal_since(seller_character, seller_journal_at)
         buyer_journal = _journal_since(buyer_character, buyer_journal_at)
@@ -239,8 +250,7 @@ def test_docked_corporation_members_trade_at_an_eligible_upwell_structure():
 
         seller.call("marketProxy", "CancelCharOrder", ask_id)
         assert all(_field(row, "orderID") != ask_id for row in _own_orders(seller))
-        returned = [row for row in _station_hangar_items(seller, structure_id) if _field(row, "typeID") == TRITANIUM]
-        assert sum(_field(row, "quantity") for row in returned) == 2, returned
+        assert dbseed.quantity_at(seller_character, structure_id, TRITANIUM) == 2
         assert _payload(m.plain(buyer.call("marketProxy", "GetStationAsks"))) == {}
 
 # ---- M9: a trade through the market, as the client makes it ------------------------------------------------------------------------

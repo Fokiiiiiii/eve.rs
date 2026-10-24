@@ -29,15 +29,24 @@ public static class MissionViews
 
     private static PyValue IdOrNone(long? value) => value is > 0 ? new PyInt(value.Value) : PyNone.Instance;
 
-    public static PyDict Briefing(HeldMissionView view) => new(
+    public static PyDict Briefing(AgentMissionAgentData agent, HeldMissionView view, DateTimeOffset now) => new(
     [
-        Field("Mission Keywords", new PyDict([])),
+        Field("Mission Keywords", Keywords(agent, view)),
         Field("Mission Title ID", IdOrNone(view.Mission.NameId)),
         Field("ContentID", PyNone.Instance),
         Field("Mission Image", PyNone.Instance),
-        Field("Decline Time", PyNone.Instance),
-        Field("AcceptTimestamp", PyNone.Instance),
-        Field("Expiration Time", PyNone.Instance),
+        Field("Decline Time", view.Record.State == AgentMissionState.Accepted
+            ? PyNone.Instance
+            : view.Record.DeclineUntil is { } declineUntil && declineUntil > now
+                ? new PyLong((declineUntil - now).Ticks)
+                : new PyInt(-1)),
+        Field("AcceptTimestamp", view.Record.State == AgentMissionState.Accepted && view.Record.AcceptedAt is { } acceptedAt
+            ? new PyLong(acceptedAt.ToFileTime())
+            : PyNone.Instance),
+        Field("Expiration Time", view.Record.ExpiresAt is { } expiration
+            && (view.Record.State == AgentMissionState.Accepted || view.Mission.ExpirationMinutes > 0)
+                ? new PyLong(expiration.ToFileTime())
+                : PyNone.Instance),
         Field("Mission Briefing ID", IdOrNone(view.BriefingMessageId)),
     ]);
 
@@ -128,7 +137,7 @@ public static class MissionViews
                 ? new PyList([new PyInt(location.SolarSystemId)])
                 : new PyList([])),
 
-            Field("importantStandings", new PyInt(0)),
+            Field("importantStandings", new PyInt(view.Record.Content.Important ? 1 : 0)),
             Field("missionExtra", PyNone.Instance),
             Field("contentID", PyNone.Instance),
             Field("agentGift", new PyList([])),

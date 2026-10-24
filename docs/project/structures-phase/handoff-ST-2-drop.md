@@ -15,7 +15,7 @@ The C# drop authority, timer callback, post-commit scene placement, and bound `S
 ## Client Scoop Contract
 
 - V24 client `MenuSvc.RealScoop` calls `ship.Scoop(objectID)` or `ship.Scoop(objectID, password)` after the ship is in interaction range. The new `[Method("Scoop")]` is on the existing bound `ShipService`; it uses the existing binder ownership check and keeps the normal no-value success response.
-- `SpaceContainers.ScoopAsync` accepts only a valid unanchor hull marker on an SDE `Structure` type or the marker-verified type `10167` fittings container. Fittings containers open through `OpenAsync` even though their SDE group is 306. Any pilot may open, take from, or scoop these unanchored artifacts as CCP describes.
+- `SpaceContainers.ScoopAsync` accepts only a valid unanchor hull marker on an SDE `Structure` type or the marker-verified type `10167` fittings container. Fittings containers open through `OpenAsync` even though their SDE group is 306. Any pilot may open, take from, or scoop these containers. For hulls, CCP says anyone may scoop an unanchored Upwell structure; unanchored Starbase hulls retain EveJS v0.12.9's owner/corporation access gate.
 - Scoop checks the active ship/system, asks the simulation to measure the item, enforces the 2,500 m interaction range, and runs the existing cargo-hold type/capacity rules. `CharacterShips.ScoopSpaceArtifactAsync` locks the active ship, root item, and descendants; transfers the root to the character's cargo, changes every contained item's owner while preserving its type/location/flag/quantity, and removes the space row in one transaction. A stale item, invalid SDE/group record, full cargo hold, or persistence error cannot report a successful scoop or remove the scene item. `RemoveWreck` and ship inventory notifications happen only after commit. Container moves/loot-all now lock the container before its child items so they serialize with scoop.
 - The optional password argument is accepted for the V24 call shape; these generated artifacts are not secure containers and do not acquire a guessed password rule.
 
@@ -48,3 +48,11 @@ Parent reported an initial focused Space test run with 9 tests: 8 passed and `Bo
 ## Remaining Verification
 
 Serena diagnostics are clean for the new drop authority, timer, scoop backend, and new test files after the fixes above. Serena still reports a `CS1503` at the pre-existing `ShipService.MachoBindObject` call (line 51) saying `ShipService` cannot convert to `IService`; it is outside the scoop method and may depend on generated service interfaces. Parent's serial .NET build must resolve whether this is a language-server/source-generator diagnostic. Graphical V24 client execution is not verified in this worker.
+
+
+## 2026-10-24 Hull scoop access correction
+
+- The bound scoop path now applies ownership authorization only to unanchored Starbase hulls. Upwell Structure hulls are open to any pilot, matching CCP's [Upwell Structures – Quick Facts](https://support.eveonline.com/hc/en-us/articles/209985225-Upwell-Structures-Quick-Facts) and EveJS v0.12.9's hull-kind-specific access check.
+- The transactional path also checks that the Upwell hull item's owner matches the corporation recorded on its deployed-space row, so the public access rule does not bypass custody integrity.
+- Focused tests cover a foreign pilot reaching the real cargo-capacity refusal for an Upwell hull, another corporation's tower being refused without scene removal, and owner/space-row mismatch being rejected before mutation.
+- The Release build of `Eve.Services.Space.Tests` passed locally with 0 warnings and 0 errors. The focused service and live checks will be recorded after Actions; no local PostgreSQL test was run.

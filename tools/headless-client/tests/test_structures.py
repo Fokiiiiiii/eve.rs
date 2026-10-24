@@ -525,8 +525,7 @@ def _ship_of(character: int) -> int:
 
 def test_a_pilot_in_space_boards_the_structure_and_ejects_back_into_its_own_ship():
     """structureControl.BoardStructure from space (V24.01 Handle_BoardStructure), then EjectFromStructure with the pilot's own ship (V24.01 and EVE.js
-    ejectFromStructureControl with restoreShipID): the ship is restored (OnShipCosmeticsChanged carries its id) and the structure has no pilot. The ship is
-    seeded within the return distance of the refinery, the place the server restores on the next selection."""
+    ejectFromStructureControl with restoreShipID): the ship is restored (OnShipCosmeticsChanged carries its id) and the structure has no pilot. The original ship remains 200,000 km from the refinery; eject restores that ship without treating it as a boarding action."""
     with base.connect(f"walk-return-{uuid.uuid4().hex[:10]}") as client:
         character, ship_id, fitted, _ = arrive(client, RACE, uuid.uuid4().hex[:10])
         _undock(client, ship_id, fitted)

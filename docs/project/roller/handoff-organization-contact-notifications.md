@@ -76,7 +76,20 @@ The V24.01 chat inventory in `docs/reference/compat/DEVIATIONS.md` identifies XM
 Commit `cf391eec` is on main. Focused Actions run `40041993458` passed, with no failed tests or jobs, for the bookmark prime, Host EditContact and AgentMission service regressions. The local AgentMission focused test passed 1/1. Push CI run `40041988259` remains in progress. No PostgreSQL tests were run locally.
 
 
-## Remaining checks
+## Follow-up CI result (2026-10-24)
 
-- Review push CI `40041988259` when it completes; its failures on `fd4828ca` included unrelated live structure/market and Space scoop fixtures, alongside the now-fixed Host dictionary helper and mission keyword omissions.
-- No graphical-client verification has been performed.
+Push CI run `40041988259` completed. The focused service regressions and all Host test shards except `RpcSecurityInventoryTests.Real_host_registry_methods_are_enumerable` passed. That test expected 1378 RPC rows but the current registry contains 1382, so the assertion is updated to 1382 in the follow-up. CI also found that `EjectFromStructure` refused `RETURN_SHIP_NOT_BOARDABLE` in the headless structure walk. Main commit `486812c1` contains Structures-side changes for this path and was merged locally; the next push CI will recheck it. Windows, Rust, .NET build, and selected remaining test shards passed. Slow headless tests were skipped by their documented settings and are not counted as passes.
+
+- Local focused AgentMission regression passed 1/1 without a database.
+- Local Host.Tests build after merging `486812c1` passed with 0 warnings and 0 errors.
+- New Actions verification for the updated RPC inventory expectation has not started yet; No graphical-client verification was performed.
+
+
+## Inventory follow-up (2026-10-24)
+
+Main commit `486812c1` was merged before this correction. The Host inventory assertion now expects the observed 1382 registered RPC routes instead of 1378. Local `Eve.Host.Tests` build passed with 0 warnings and 0 errors. Actions run `40043761052` covers the updated inventory regression plus the bookmark, contact and mission keyword regressions; push CI run `40043754414` is active. Their results are pending. No local PostgreSQL tests were run.
+
+
+## Focused inventory verification (2026-10-24)
+
+Actions run `40043761052` passed all selected tests: bookmark prime, Host EditContact, AgentMission keywords and RPC inventory. No failed tests or jobs. Push CI `40043754414` for commit `35964099` is still running; the full CI status remains pending. The local Host.Tests build passed with 0 warnings and 0 errors. No local PostgreSQL tests or graphical-client checks were run.

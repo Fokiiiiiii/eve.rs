@@ -55,9 +55,13 @@ public sealed partial class CharacterShips
         {
             return new ShipRefused(ShipRefusal.NotAllowedInHold, ModuleTypeId: item.TypeId, ShipTypeId: snapshot.Ship.TypeId);
         }
+        var category = statics.CategoryName(type.CategoryId);
         var custodyMatches = fittings
             ? item.OwnerId == spaceItem.CharacterId || item.OwnerId == spaceItem.CorporationId
-            : item.OwnerId == characterId || item.OwnerId == corporationId && spaceItem.CorporationId == corporationId;
+            : category == "Structure"
+                ? item.OwnerId == spaceItem.CorporationId
+                : category == "Starbase" && (item.OwnerId == characterId ||
+                    item.OwnerId == corporationId && spaceItem.CorporationId == corporationId);
         if (spaceItem.GroupId != type.GroupId || spaceItem.LauncherId <= 0 || !custodyMatches)
         {
             throw new InvalidOperationException($"Space artifact {itemId} disagrees with its SDE identity or custody record.");

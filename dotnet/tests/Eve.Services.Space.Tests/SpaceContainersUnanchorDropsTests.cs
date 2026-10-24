@@ -13,6 +13,7 @@ namespace Eve.Services.Space.Tests;
 public sealed class SpaceContainersUnanchorDropsTests
 {
     private const int Astrahus = 35832;
+    private const int AmarrControlTower = 12235;
     private const int SolarSystemId = 30000142;
     private const long StructureId = 9_020_011;
     private const long CorporationId = 98_000_021;
@@ -106,7 +107,7 @@ public sealed class SpaceContainersUnanchorDropsTests
 
         var hullType = rig.Statics.Type(Astrahus)!;
         var hullId = await AddDropAsync(rig, system, StructureId, Astrahus,
-            StructureUnanchorDrop.HullMarker(StructureId), "Unanchored Astrahus", hullType.GroupId, hullType, character.CharacterId);
+            StructureUnanchorDrop.HullMarker(StructureId), "Unanchored Astrahus", hullType.GroupId, hullType, CorporationId);
         var hullBall = BallOf(rig, system, hullId, Astrahus, hullType.GroupId,
             StructureUnanchorDrop.HullMarker(StructureId), StructureId, empty: true);
         rig.Sim.PlaceWreck(hullBall);
@@ -137,6 +138,74 @@ public sealed class SpaceContainersUnanchorDropsTests
             Assert.NotNull(await rig.SpaceItems.GetAsync(hullId));
             Assert.DoesNotContain(rig.Sim.Heard.OfType<SimRemoveWreck>(), message => message.WreckId == hullId);
         }
+    }
+
+    [PgFact]
+    public async Task Bound_ship_scoop_rejects_another_corporations_control_tower()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await rig.Statics.EnsureTypesAsync([AmarrControlTower]);
+        var character = await rig.NewCharacterAsync("Foreign control tower scoop pilot");
+        var session = await rig.SessionAsync(character, 1);
+        var shipOid = await rig.BindShipAsync(session);
+        await rig.ShipCallAsync(session, "Undock", shipOid, new PyLong(session.GetInt("shipid")!.Value), PyBool.False);
+        shipOid = await rig.BindShipInSpaceAsync(session);
+        var system = checked((int)session.GetInt("solarsystemid")!.Value);
+        var shipId = session.GetInt("shipid")!.Value;
+        Assert.NotEqual(CorporationId, session.GetInt("corpid"));
+        rig.Sim.MeasureAnswer = 25;
+
+        var towerType = rig.Statics.Type(AmarrControlTower)!;
+        var towerId = await AddDropAsync(rig, system, StructureId, AmarrControlTower,
+            StructureUnanchorDrop.HullMarker(StructureId), "Unanchored Amarr Control Tower", towerType.GroupId, towerType);
+        rig.Sim.PlaceWreck(BallOf(rig, system, towerId, AmarrControlTower, towerType.GroupId,
+            StructureUnanchorDrop.HullMarker(StructureId), StructureId, empty: true));
+
+        MachoWrappedException? refusal = null;
+        try
+        {
+            await rig.ShipCallAsync(session, "Scoop", shipOid, new PyLong(towerId));
+        }
+        catch (MachoWrappedException error)
+        {
+            refusal = error;
+        }
+
+        Assert.NotNull(refusal);
+        Assert.Equal("FakeItemNotFound", refusal.Error.UserErrorMessage);
+        var towerAfter = Assert.IsType<Eve.Inventory.Item>(await rig.Items.GetAsync(towerId));
+        Assert.Equal((CorporationId, system, CharacterShips.InSpaceFlag),
+            (towerAfter.OwnerId, towerAfter.LocationId, towerAfter.Flag));
+        Assert.NotNull(await rig.SpaceItems.GetAsync(towerId));
+        Assert.DoesNotContain(rig.Sim.Heard.OfType<SimRemoveWreck>(), message => message.WreckId == towerId);
+    }
+
+    [PgFact]
+    public async Task Scoop_transaction_rejects_an_upwell_hull_owner_that_disagrees_with_its_recorded_corporation()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await rig.Statics.EnsureTypesAsync([Astrahus]);
+        var character = await rig.NewCharacterAsync("Mismatched Upwell hull owner");
+        var session = await rig.SessionAsync(character, 1);
+        var shipOid = await rig.BindShipAsync(session);
+        await rig.ShipCallAsync(session, "Undock", shipOid, new PyLong(session.GetInt("shipid")!.Value), PyBool.False);
+        await rig.BindShipInSpaceAsync(session);
+        var system = checked((int)session.GetInt("solarsystemid")!.Value);
+        var shipId = session.GetInt("shipid")!.Value;
+
+        var hullType = rig.Statics.Type(Astrahus)!;
+        var marker = StructureUnanchorDrop.HullMarker(StructureId);
+        var hullId = await AddDropAsync(rig, system, StructureId, Astrahus, marker,
+            "Mismatched owner Astrahus", hullType.GroupId, hullType, character.CharacterId);
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            rig.Ships.ScoopSpaceArtifactAsync(character.CharacterId, session.GetInt("corpid")!.Value, false,
+                shipId, system, hullId, marker, rig.SpaceItems));
+
+        Assert.Contains("custody record", error.Message, StringComparison.Ordinal);
+        var hullAfter = Assert.IsType<Eve.Inventory.Item>(await rig.Items.GetAsync(hullId));
+        Assert.Equal((character.CharacterId, system, CharacterShips.InSpaceFlag),
+            (hullAfter.OwnerId, hullAfter.LocationId, hullAfter.Flag));
+        Assert.NotNull(await rig.SpaceItems.GetAsync(hullId));
     }
 
     private sealed record Drops(long HullId, long FittingsId);

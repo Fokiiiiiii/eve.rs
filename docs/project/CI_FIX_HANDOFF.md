@@ -383,3 +383,10 @@ CI run 672 on `1669e6dc` failed the structure market Host test because the fixtu
 - CI 719 on `42d5ccce` failed `MarketRpcTests.Buy_multi_fills_available_quantity_without_posting_the_rest` because it expected an order notification when the duration-zero request only filled matching asks and posted no remainder.
 - The test now expects no packets for that result. Its other assertions still check the empty returned order rows, 50 ISK fill, unchanged bid book and reduced ask quantity.
 - The Market.Tests Release build passed locally with 0 warnings and 0 errors. The focused Actions check is pending; no local PostgreSQL test was run.
+
+
+## 2026-10-24 structure follow-up from CI 734
+
+- CI 719 and 731 exposed the tower-scoop capacity fixture failure, corrected on main by `1472c9c3`. The later CI 734 gate on `9f7ad7a0` showed Eject refusing the original ship because it was beyond the structure boarding distance.
+- This change opens unanchored Upwell hull scoop to any pilot while preserving Starbase hull authorization and the stored-corporation integrity check. It also removes only Eject's distance condition; it still validates the original ship, owner, type, location, flag, and solar-system state before restoring the session.
+- The `Eve.Services.Space.Tests` Release build passed locally with 0 warnings and 0 errors. Selected Actions checks will be recorded after completion; local PostgreSQL tests were not run.

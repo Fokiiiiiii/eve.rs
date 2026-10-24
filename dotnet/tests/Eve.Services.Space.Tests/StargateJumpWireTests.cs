@@ -43,9 +43,8 @@ public sealed class StargateJumpWireTests
 
         Assert.True(await dispatcher.DispatchAsync(CallPacket(
             "MachoBindObject", new PyTuple([new PyInt(System), new PyInt(5),]), PyNone.Instance, callId: 1), session));
-        var bindPackets = sink.Sent.ToArray().OfType<PyObject>().ToArray();
-        Assert.Equal([MachoMessage.Notification, MachoMessage.CallRsp], bindPackets.Select(MessageType));
-        var bindResponse = Assert.Single(bindPackets, packet => MessageType(packet) == MachoMessage.CallRsp);
+        var bindResponse = Assert.Single(sink.Sent.ToArray().OfType<PyObject>());
+        Assert.Equal(MachoMessage.CallRsp, MessageType(bindResponse));
         var bound = Assert.IsType<PyTuple>(CallResult(bindResponse));
         var oid = Rig.OidOf(bound.Items[0]);
         Assert.NotEmpty(oid);

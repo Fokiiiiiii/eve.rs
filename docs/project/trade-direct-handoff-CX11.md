@@ -28,7 +28,10 @@ The task-mentioned `jobs/461-trade-item-eligibility.txt`, `462-trade-container-d
 
 ## Verification
 
-- Local compile checks passed for `Eve.Host.Tests` and `Eve.Trade.Tests` with .NET 10, `UseSharedCompilation=false`, and node reuse disabled. No PostgreSQL tests were run locally.
-- Actions run `40073577535` passed on `859cf2c4b67c`: `Eve.Host.Tests` 3 passed, `Eve.Trade.Tests` 2 passed, and `test_walk_trade.py` 1 passed; all three groups had 0 failed and 0 skipped.
-- Push-triggered `ci.yml` run `40073571150` on `859cf2c4b67c` was still in progress at the last check. Check it with `python3 tools/dev/ci-status.py failures <final-sha>`.
-- Graphical-client execution was not performed.
+- Earlier local builds of `Eve.Host.Tests` and `Eve.Trade.Tests` succeeded with .NET 10, `UseSharedCompilation=false`, and node reuse disabled. No PostgreSQL tests were run locally. A later Space.Tests build and Host.Tests recompile were canceled after prolonged shared-machine resource starvation.
+- Focused Actions run `40073577535` passed on `859cf2c4b67c`: Host 3/3, Trade 2/2 and `test_walk_trade.py` 1/1; no skips.
+- The first push gate `40073571150` exposed outdated trade/warp expectations and a structure walk that needed session-transition waits. The later focused run `40080249666` passed Host 3/3 and Trade 3/3; Space wire test was 0/1 and live cases 22/23. Its live failure was the structure walk; the fast run had 0 skipped.
+- Push gate `40080240344` completed with Host account-wallet and Space wire test failures; all other reported jobs, including end-to-end server stack and Windows, succeeded. The account fixture now funds the corporation registration fee; the wire fixture supplies its ship type to DogmaStatic. The structure walk now waits before undock, checks that undock succeeded, and waits for the state notifications.
+- Focused Actions run `40083557725` on `d1e3bc93a920`: trade Host 3/3, Trade 3/3, Space 1/1, and live trade/structure 23/23 passed with no skips. One unrelated Host account-wallet assertion failed because it expected `clientID` for a corporate wallet broadcast; the test now checks the observed `*corpid&corpAccountKey` destination. The correction is `c0c4bc3f`, merged with origin/main `f6ae24f0`; rerun is pending.
+- Push gate `40083548997` remains in progress. The end-to-end job and Host shard 4/4 have reported failures; the Host failure is the same corporate notification expectation. Earlier push gate `40080240344` ended with account-wallet and Space wire test failures; latest correction fixes both fixtures and the structure walk, but full gate verification is pending.
+- Earlier broad fast CI reported eight slow live skips and one training-speed skip; those skips are not passes. Graphical-client execution was not performed.

@@ -18,6 +18,9 @@ public interface IDungeonNpcSpawner
     /// </summary>
     Task<DungeonSpawnResult> SpawnAsync(int solarSystemId, double[] origin, NpcSelection selection, int amount, CancellationToken cancellationToken);
 
+    /// <summary>Whether any pilot is in space in the solar system.</summary>
+    bool HasPilotsInSystem(int solarSystemId);
+
     /// <summary>Whether the character is in space in the solar system.</summary>
     bool IsPilotInSystem(long characterId, int solarSystemId);
 
@@ -25,7 +28,7 @@ public interface IDungeonNpcSpawner
     void Remove(IReadOnlyList<long> shipIds);
 }
 
-public sealed record DungeonSpawnResult(IReadOnlyList<long> ShipIds, string? Error);
+public sealed record DungeonSpawnResult(IReadOnlyList<long> ShipIds, string? Error, bool SceneUnavailable = false);
 
 /// <summary>What a dungeon instance keeps of its start: the dungeon, where its NPCs come, and the waves (what each asks for).</summary>
 public sealed record DungeonInstanceData(long DungeonID, int SolarSystemId, double[] Origin, IReadOnlyList<DungeonWaveData> Waves);
@@ -344,13 +347,25 @@ public sealed class DungeonWaveDirector
             await _content.FailAsync(context.Connection, context.Transaction, instance.Id, $"wave {due.WaveIndex}: {refusal}", cancellationToken);
             return;
         }
-        // the simulation keeps a system's scene only while a pilot is in it: a wave that comes due with its pilot away waits for it (it is not refused and failed)
-        if (instance.Owner != NoPilotOwner && !_spawner.IsPilotInSystem(instance.Owner, data.SolarSystemId))
+        // The simulation keeps a system's scene only while a pilot is in it; system-owned waves wait for any pilot, while character-owned waves wait for their owner.
+        bool sceneLoaded = instance.Owner == NoPilotOwner
+            ? _spawner.HasPilotsInSystem(data.SolarSystemId)
+            : _spawner.IsPilotInSystem(instance.Owner, data.SolarSystemId);
+        if (!sceneLoaded)
         {
             context.RunAgainAt(context.NowMs + WaveRetryMs);
             return;
         }
         DungeonSpawnResult result = await _spawner.SpawnAsync(data.SolarSystemId, data.Origin, selection, wave.Amount, cancellationToken);
+        if (result.SceneUnavailable)
+        {
+            if (result.ShipIds.Count > 0)
+            {
+                _spawner.Remove(result.ShipIds);
+            }
+            context.RunAgainAt(context.NowMs + WaveRetryMs);
+            return;
+        }
         await Sql.ExecuteAsync(context.Connection, context.Transaction, Q("INSERT INTO {schema}.dungeon_wave_spawns (instance_id, wave_index, spawned_ms, npc_count) VALUES ($1, $2, $3, $4)"),
             cancellationToken, instance.Id, due.WaveIndex, context.NowMs, result.ShipIds.Count);
         foreach (long ship in result.ShipIds)

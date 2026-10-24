@@ -71,6 +71,7 @@ internal static class LegacyGameStoreComposition
         await mailCache.LoadAsync("notifications");
         await mailCache.LoadAsync("crimewatchRuntime");
         await mailCache.LoadAsync("characters");
+        await mailCache.LoadAsync("characterNotes");
         await mailCache.LoadAsync("sovereignty");
         await mailCache.LoadAsync("characterEnergyState");
         await mailCache.LoadAsync("shipCosmetics");

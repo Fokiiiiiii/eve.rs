@@ -31,6 +31,7 @@ Added `dotnet/tests/Eve.Host.Tests/SkillMgr2ReadWireTests.cs`: socket-level Host
 
 - Host test project build passed.
 - Focused local test passed: 1 passed, 0 skipped.
-- Actions dispatch `40095471229` for pushed commit `9aff921f7b2c` passed (1 test, 0 skipped).
-- Push CI `40095465896` for `9aff921f` was still in progress at this handoff update.
-- This verifies only the accessor transition. It does not wire-test all 25 listed RPC rows. Continue with Host wire checks for each listed skillHandler call and mutation effects, then run the focused Actions check and update this note with results.
+- Actions run `40095471229` for `9aff921f7b2c`: passed, 1 test, 0 skipped.
+- Actions run `40096031733` for `c8d859409682`: passed, 1 test, 0 skipped.
+- Push CI `40095465896` for `9aff921f` remained in progress at this update; `failures` reported no failed jobs.
+- This verifies only the accessor transition. It does not wire-test all 25 listed RPC rows. Continue with Host wire checks for each listed skillHandler call and mutation effects. The concurrent `SkillHandlerRpcHostTests` uses null dependencies and does not establish authoritative behavior for those methods.

@@ -222,6 +222,7 @@ name = "eve-sim"
 version = "0.1.0"
 dependencies = [
  "eve-destiny",
+ "eve-net",
  "eve-space",
  "tokio",
 ]

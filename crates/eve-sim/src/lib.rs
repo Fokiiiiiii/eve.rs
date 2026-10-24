@@ -6,9 +6,10 @@ use std::io;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use eve_net::frame::FrameReader;
 use eve_space::link::{Message, PROTOCOL_VERSION};
 use eve_space::sim::{POLL_HZ, Sim, Universe};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::time::{Instant, MissedTickBehavior};
 
 /// The largest frame accepted (a ship's numbers are a few hundred bytes; this is generous).
@@ -20,26 +21,6 @@ pub fn filetime_now() -> i64 {
     const UNIX_EPOCH_TICKS: i64 = 116_444_736_000_000_000;
     let since_epoch = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
     UNIX_EPOCH_TICKS + (since_epoch.as_nanos() / 100) as i64
-}
-
-/// Reads one frame's payload; `None` when the peer closed between frames.
-async fn read_frame<R: AsyncRead + Unpin>(reader: &mut R) -> io::Result<Option<Vec<u8>>> {
-    let mut length = [0u8; 4];
-    match reader.read_exact(&mut length).await {
-        Ok(_) => {}
-        Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => return Ok(None),
-        Err(error) => return Err(error),
-    }
-    let length = u32::from_le_bytes(length) as usize;
-    if length > MAX_FRAME {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("frame of {length} bytes exceeds {MAX_FRAME}"),
-        ));
-    }
-    let mut payload = vec![0u8; length];
-    reader.read_exact(&mut payload).await?;
-    Ok(Some(payload))
 }
 
 async fn write_all<W: AsyncWrite + Unpin>(writer: &mut W, messages: &[Message]) -> io::Result<()> {
@@ -95,7 +76,8 @@ where
     S: AsyncRead + AsyncWrite + Unpin,
     C: Fn() -> i64,
 {
-    let (mut reader, mut writer) = tokio::io::split(stream);
+    let (reader, mut writer) = tokio::io::split(stream);
+    let mut reader = FrameReader::new(reader, MAX_FRAME);
     let mut sim = Sim::new(universe);
     let mut poll = tokio::time::interval(Duration::from_millis(1000 / u64::from(POLL_HZ)));
     poll.set_missed_tick_behavior(MissedTickBehavior::Skip);
@@ -105,7 +87,7 @@ where
     let mut held = Vec::new();
 
     // the host speaks first
-    let hello = read_frame(&mut reader).await?.ok_or_else(|| {
+    let hello = reader.next().await?.ok_or_else(|| {
         io::Error::new(io::ErrorKind::UnexpectedEof, "the host closed before it said hello")
     })?;
     match Message::decode(&hello) {
@@ -130,7 +112,7 @@ where
 
     loop {
         tokio::select! {
-            frame = read_frame(&mut reader) => {
+            frame = reader.next() => {
                 let Some(payload) = frame? else { return Ok(()) };
                 let message = Message::decode(&payload).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
                 let replies = sim.handle(message, clock()).map_err(io::Error::other)?;
@@ -224,5 +206,27 @@ mod tests {
         let immediate = hold_tick_aligned(vec![destiny.clone(), jumping.clone()], &mut held);
         assert!(immediate.is_empty());
         assert_eq!(held, [destiny, jumping]);
+    }
+    #[tokio::test]
+    async fn a_partial_sim_frame_survives_select_cancellation() {
+        use tokio::io::AsyncWriteExt;
+
+        let (mut writer, reader) = tokio::io::duplex(16);
+        let mut frames = FrameReader::new(reader, MAX_FRAME);
+
+        writer.write_all(&[3, 0]).await.unwrap();
+        tokio::select! {
+            frame = frames.next() => panic!("partial header unexpectedly produced {frame:?}"),
+            _ = tokio::time::sleep(Duration::from_millis(10)) => {}
+        }
+
+        writer.write_all(&[0, 0, 1]).await.unwrap();
+        tokio::select! {
+            frame = frames.next() => panic!("partial payload unexpectedly produced {frame:?}"),
+            _ = tokio::time::sleep(Duration::from_millis(10)) => {}
+        }
+
+        writer.write_all(&[2, 3]).await.unwrap();
+        assert_eq!(frames.next().await.unwrap().unwrap().as_ref(), &[1, 2, 3]);
     }
 }

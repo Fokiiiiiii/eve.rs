@@ -42,5 +42,6 @@ Other UI entry points: `linkedBookmarkFolderWindow.py:172` adds a known folder; 
 - Local `dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj --no-restore -p:UseSharedCompilation=false -m:1`: passed, 0 warnings and 0 errors.
 - Local focused test `Registered_bookmark_methods_reach_the_real_dispatcher_and_return_wire_errors_without_a_database`: passed (1 passed, 0 skipped); it does not connect to PostgreSQL.
 - Published change: commit `1bf8b206` (`Test bookmark RPC Host wire coverage`), merged with origin/main and pushed as `84ad0c1b`.
-- GitHub Actions `agent-test.yml` run `40085367825` and push-triggered `ci.yml` run `40085361438` were queued/in progress when this handoff update was prepared; record their final results here after completion.
+- GitHub Actions `agent-test.yml` run `40085367825` passed for `84ad0c1ba363` (no failed tests or jobs; 0 skipped).
+- Push-triggered `ci.yml` run `40085361438` for `84ad0c1b` was still queued when this handoff update was prepared; record its final result after completion.
 - No graphical-client session was run.

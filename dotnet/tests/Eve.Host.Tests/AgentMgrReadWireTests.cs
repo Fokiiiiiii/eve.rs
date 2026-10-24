@@ -113,6 +113,9 @@ public partial class HostServerTests
         var machoVersion = new PyDict([
             new KeyValuePair<PyValue, PyValue>(new PyStr("machoVersion"), new PyInt(1)),
         ]);
+        Assert.False(service.HasMethod("Index"));
+        Assert.False(service.HasMethod("get"));
+
         Start(
             configure: registry => registry.Register(service),
             sessionOpened: session => session.Set("charid", new PyInt(AgentRpcPilot)));

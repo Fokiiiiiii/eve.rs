@@ -193,7 +193,6 @@ public sealed partial class SpaceSessions
 
     private PgBountyStore? _bounties;
     private int _paying;
-
     public event Action<BountyPaid>? BountyPaidOut;
 
     /// <summary>
@@ -392,8 +391,7 @@ public sealed partial class SpaceSessions
         {
             // `util.KeyVal`; the payout time is a FILETIME, past what a JavaScript number holds, so it goes as a long
             killer.Session.SendNotification(
-                "OnBountyAddedToPayout", "charid",
-                Py.KeyVal(
+                "OnBountyAddedToPayout", "charid",                Py.KeyVal(
                     ("enemyTypeID", new PyInt(added.EnemyTypeId)), ("amount", new PyInt((int)added.Amount)), ("payoutTime", new PyLong(added.PayoutTime)),
                     ("isModified", added.IsModified ? PyBool.True : PyBool.False)));
         }    }
@@ -592,8 +590,7 @@ public sealed partial class SpaceSessions
         if (amount <= 0 || Npcs is not { } selector)
         {
             return 0;
-        }
-        var (selection, error, _) = selector.Select(query);
+        }        var (selection, error, _) = selector.Select(query);
         if (selection is null)
         {            _log?.Invoke($"site {siteId}: the wave {query} names no NPC ({error})");
             return 0;

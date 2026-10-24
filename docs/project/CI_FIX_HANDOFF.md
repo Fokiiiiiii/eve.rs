@@ -439,3 +439,10 @@ CI run 672 on `1669e6dc` failed the structure market Host test because the fixtu
 - Runs 746 (`2d2b11ea`) and 747 (`0fd2ca16`) failed the E2E test `test_docked_corporation_members_trade_at_an_eligible_upwell_structure`; run 747 failed at call 525 with `MachoError: macho error 2`. The Fortizar fixture is 200,000 km from the station, and the client navigates to within 2.5 km before its Dock RPC. The headless helper now follows that client movement flow; the same correction is present in the fetched main head.
 - The CI log parser now extracts pytest's `FAILED path::test_name` heading when a summary table is missing. Focused regression `FailureParsingTests.test_pytest_failure_heading_without_summary_name` passed locally.
 - The focused Actions rerun and push-triggered gate for the merged helper and log parser are pending. No local PostgreSQL database was used.
+
+
+## 2026-10-24 CI runs 749-750 failure-output parser correction
+
+- Run 749 on `30dcbf9d` failed `FailureParsingTests.test_pytest_failure_name_and_section_tail`: the parser returned both pytest's bare failure heading (`test_character_walk`) and its qualified summary node (`tests/test_walk.py::test_character_walk`), while the focused assertion expects the qualified node only.
+- The parser drops a bare name when a matching `::`-qualified summary name is present. Run 750 (Actions run `40049835056`) on `e63b3aea` then exposed the heading-only case: `test_pytest_failure_heading_without_summary_name` returned `[]` instead of `['test_character_walk']`, because pytest's underscore-delimited failure heading was not parsed.
+- `parse_test_failures` now recognizes the underscore-delimited pytest heading while retaining the qualified-summary preference. Both focused failure-parsing assertions passed locally across the two corrections; the follow-up push-triggered CI result is pending. No database tests were run.

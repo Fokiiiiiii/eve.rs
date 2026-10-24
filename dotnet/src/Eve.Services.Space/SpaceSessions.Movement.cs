@@ -353,10 +353,10 @@ public sealed partial class SpaceSessions
             throw JumpRefused(reply.Reason);
         }
 
-        _warping.TryRemove((ulong)session.SessionId, out _);
         await CancelShipSelfDestructAsync(pilot.ShipId, cancellationToken);
         // EVE.js jumpSessionViaStargate: the contraband of the ship is inspected in the system it arrives in
         await ApplyContrabandAsync(session, pilot.CharacterId, pilot.ShipId, destination, cancellationToken);
+        _warping.TryRemove((ulong)session.SessionId, out _);
         _emanationLocks.Left(pilot.CharacterId, pilot.SolarSystemId);
         if (GateRules?.DestinationOf(gateId) is { } arrivalGate)
         {

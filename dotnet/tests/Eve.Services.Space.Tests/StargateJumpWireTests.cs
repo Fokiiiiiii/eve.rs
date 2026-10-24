@@ -54,8 +54,8 @@ public sealed class StargateJumpWireTests
             "CmdWarpToStuffAutopilot", new PyTuple([new PyLong(Gate)]), PyNone.Instance, callId: 2, oid), session));
         Assert.True(space.IsWarping(session));
         var warpPackets = sink.Sent.ToArray().OfType<PyObject>().ToArray();
-        Assert.Equal([MachoMessage.Notification, MachoMessage.CallRsp], warpPackets.Select(MessageType));
-        var warpResponse = Assert.Single(warpPackets, packet => MessageType(packet) == MachoMessage.CallRsp);
+        var warpResponse = Assert.Single(warpPackets);
+        Assert.Equal(MachoMessage.CallRsp, MessageType(warpResponse));
         Assert.Equal(PyNone.Instance, CallResult(warpResponse));
         sink.Sent.Clear();
 
@@ -66,7 +66,7 @@ public sealed class StargateJumpWireTests
             callId: 3,
             oid), session));
 
-        Assert.False(space.IsWarping(session));
+        Assert.False(space.IsWarping(session), $"jump command codes: {string.Join(",", sim.Heard.OfType<SimCommand>().Select(command => command.Code))}");
         var packets = sink.Sent.ToArray().OfType<PyObject>().ToArray();
         Assert.Equal([MachoMessage.Notification, MachoMessage.CallRsp], packets.Select(MessageType));
         var notification = Assert.Single(Events.Of(session, clear: false), item => item.Name == "OnJumpQueueUpdate");

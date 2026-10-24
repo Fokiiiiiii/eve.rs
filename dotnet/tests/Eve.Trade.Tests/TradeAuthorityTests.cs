@@ -87,7 +87,7 @@ public sealed class TradeAuthorityTests
         var outsideSource = await Assert.ThrowsAsync<TradeRefusedException>(() => rig.Trades.StageAsync(view.TradeId, Alice, inaccessible, 0));
         var notOwned = await Assert.ThrowsAsync<TradeRefusedException>(() => rig.Trades.StageAsync(view.TradeId, Alice, bobs, 0));
 
-        Assert.Equal("That item is not available to trade.", outsideSource.Message);
+        Assert.Equal("That item is not available to trade from your current docked inventory.", outsideSource.Message);
         Assert.Equal("That item is not available to trade.", notOwned.Message);
         Assert.Equal((Alice, foreignContainer), ((await rig.Items.GetAsync(inaccessible))!.OwnerId, (await rig.Items.GetAsync(inaccessible))!.LocationId));
         Assert.Equal(Bob, (await rig.Items.GetAsync(bobs))!.OwnerId);

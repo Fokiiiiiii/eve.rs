@@ -572,6 +572,10 @@ public sealed class ContractProxyServiceTests
             LastBid = (contractId, characterId, corporationId, bidForCorporation, bidderWalletKey, amount);
             return ValueTask.FromResult(true);
         }
+
+        public ValueTask<bool> SplitStackAsync(long itemId, long quantity, long characterId, long corporationId,
+            long stationId, bool forCorporation, int flag, CancellationToken cancellationToken) =>
+            ValueTask.FromException<bool>(new NotSupportedException());
     }
 
     private static PyObject Rowset(PyObject keyVal, string name) => Assert.IsType<PyObject>(Value(keyVal, name));

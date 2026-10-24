@@ -63,6 +63,9 @@ public interface IContractWriteModel
     ValueTask<bool> PlaceBidAsync(long contractId, long characterId, long corporationId, long allianceId,
         bool bidForCorporation, int bidderWalletKey, decimal amount, CancellationToken cancellationToken);
 
+    ValueTask<bool> SplitStackAsync(long itemId, long quantity, long characterId, long corporationId,
+        long stationId, bool forCorporation, int flag, CancellationToken cancellationToken);
+
     ValueTask<CreatedContract> CreateItemExchangeAsync(
         CreateItemExchangeRequest request,
         CancellationToken cancellationToken) => CreateContractAsync(request, cancellationToken);

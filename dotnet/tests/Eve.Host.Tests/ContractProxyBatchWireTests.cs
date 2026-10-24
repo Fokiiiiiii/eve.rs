@@ -54,7 +54,20 @@ public partial class HostServerTests
         Assert.Equal(new PyInt(1), page["numBiddingOnCorp"]);
         Assert.Equal(new PyInt(2), page["numRequiresAttention"]);
         Assert.Equal(new PyInt(1), page["numRequiresAttentionCorp"]);
-        Assert.IsType<PyList>(page["outstandingContracts"]);
+        var assignments = Assert.IsType<PyList>(page["outstandingContracts"]);
+        Assert.Equal([new PyInt(42), new PyInt(84), new PyInt(42), new PyInt(1)],
+            Assert.IsType<PyTuple>(Assert.Single(assignments.Items)).Items);
+
+        var created = Assert.IsType<PyList>(await Rpc(13, "CreateContract", new PyObject(new PyStr("contracts.contractStruct.ContractStruct"), new PyTuple([
+            new PyInt(1), PyBool.False, new PyInt(0), new PyInt(1440), new PyInt(0),
+            new PyInt(3001), new PyInt(0), new PyInt(1000), new PyInt(0), new PyInt(0),
+            new PyStr("wire contract"), new PyStr(""),
+            new PyList([new PyTuple([new PyInt(7001), new PyInt(1)])]),
+            new PyInt(4), new PyList([]), PyBool.False, PyBool.False]))));
+        Assert.Equal([new PyInt(6001)], created.Items);
+        Assert.Equal((42L, 3001L, 1440, 1000m, "wire contract", (short)1), writer.CreatedRequest is { } request
+            ? (request.IssuerCharacterId, request.StartStationId, request.ExpiryMinutes, request.Price, request.Title, request.ContractType)
+            : default);
 
         var login = Fields(Assert.IsType<PyObject>(await Rpc(3, "GetLoginInfo")));
         Assert.Equal(new[] { "assignedToMe", "inProgress", "needsAttention" }, login.Keys.Order().ToArray());
@@ -86,12 +99,13 @@ public partial class HostServerTests
         Assert.Equal((5003L, 42L, 84L, false, 1000, 3001L), writer.LastAccept);
     }
 
-    private void StartContractHost(RecordingContractWriter writer, IContractReadModel reads)
+    private void StartContractHost(RecordingContractWriter writer, IContractReadModel? readModel = null)
     {
         var registry = new ServiceRegistry();
         Func<long> now = () => FixedNowMs;
         foreach (var service in CoreServices.Create(
-            new NoAccounts(), now, contractReadModel: reads, contractWriteModel: writer,
+            new NoAccounts(), now, contractReadModel: readModel, contractWriteModel: writer,
+            contractSkillLevel: (_, _, _) => ValueTask.FromResult(0),
             readCurrentCalendarGroups: (_, _) => ValueTask.FromResult((84L, 0L))))
             registry.Register(service);
 
@@ -107,8 +121,8 @@ public partial class HostServerTests
                 {
                     session.Set("charid", new PyInt(42));
                     session.Set("corpid", new PyInt(84));
-                    session.Set("corprole", new PyLong(72_057_594_037_927_936));
                     session.Set("stationid", new PyInt(3001));
+                    session.Set("corprole", new PyLong(72_057_594_037_927_936));
                 },
             },
             dispatcher,
@@ -123,12 +137,18 @@ public partial class HostServerTests
     private sealed class RecordingContractWriter : IContractWriteModel
     {
         public List<long> Deleted { get; } = [];
+        public (long ContractId, long CharacterId, long CorporationId, bool ForCorporation, int WalletKey, decimal Amount) LastBid { get; private set; }
+        public (long ItemId, long Quantity, long CharacterId, long CorporationId, long StationId, bool ForCorporation, int Flag) LastSplit { get; private set; }
+        public CreateItemExchangeRequest? CreatedRequest { get; private set; }
         public (long ContractId, long CharacterId, long CorporationId, bool HasRole) LastDelete { get; private set; }
         public (long ContractId, long Status, long CharacterId, long CorporationId, long StationId, bool HasRole) LastComplete { get; private set; }
         public (long ContractId, long CharacterId, long CorporationId, bool ForCorp, int WalletKey, long StationId) LastAccept { get; private set; }
 
-        public ValueTask<CreatedContract> CreateContractAsync(CreateItemExchangeRequest request, CancellationToken cancellationToken) =>
-            ValueTask.FromException<CreatedContract>(new NotSupportedException());
+        public ValueTask<CreatedContract> CreateContractAsync(CreateItemExchangeRequest request, CancellationToken cancellationToken)
+        {
+            CreatedRequest = request;
+            return ValueTask.FromResult(new CreatedContract(6001, request.Items.Select(item => item.ItemId).ToArray()));
+        }
 
         public ValueTask<AcceptedContract> AcceptContractAsync(long contractId, long characterId, long corporationId,
             long allianceId, bool acceptForCorporation, int acceptorWalletKey, long currentStationId,
@@ -159,8 +179,18 @@ public partial class HostServerTests
         }
 
         public ValueTask<bool> PlaceBidAsync(long contractId, long characterId, long corporationId, long allianceId,
-            bool bidForCorporation, int bidderWalletKey, decimal amount, CancellationToken cancellationToken) =>
-            ValueTask.FromException<bool>(new NotSupportedException());
+            bool bidForCorporation, int bidderWalletKey, decimal amount, CancellationToken cancellationToken)
+        {
+            LastBid = (contractId, characterId, corporationId, bidForCorporation, bidderWalletKey, amount);
+            return ValueTask.FromResult(true);
+        }
+
+        public ValueTask<bool> SplitStackAsync(long itemId, long quantity, long characterId, long corporationId,
+            long stationId, bool forCorporation, int flag, CancellationToken cancellationToken)
+        {
+            LastSplit = (itemId, quantity, characterId, corporationId, stationId, forCorporation, flag);
+            return ValueTask.FromResult(true);
+        }
     }
 
     private sealed class RecordingContractReadModel : IContractReadModel
@@ -170,9 +200,10 @@ public partial class HostServerTests
         public ValueTask<ContractLoginInfo> GetLoginInfoAsync(
             long characterId, long corporationId, long allianceId, long nowFileTime, CancellationToken cancellationToken) =>
             ValueTask.FromResult(new ContractLoginInfo(
-                [new ContractNeedsAttentionRow(1001, 1)],
+                [new ContractNeedsAttentionRow(1001, 0), new ContractNeedsAttentionRow(1002, 0),
+                    new ContractNeedsAttentionRow(1003, 1)],
                 [new ContractInProgressRow(1002, 3001, 3002, 9876543210123456)],
-                [new ContractAssignedToMeRow(1003, characterId)]));
+                [new ContractAssignedToMeRow(1003, characterId, corporationId, characterId, 1)]));
 
         public ValueTask<ContractEscrowSummary> GetMyContractEscrowAsync(
             long characterId, long corporationId, CancellationToken cancellationToken) =>

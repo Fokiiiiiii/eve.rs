@@ -30,4 +30,8 @@ EVE University describes active Interstellar Shipcaster beacons as destination s
 
 - `dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -p:UseSharedCompilation=false`: passed, 0 warnings and 0 errors.
 - Focused Host wire test `Movement_rpcs_use_registered_host_routes_with_client_wire_shapes`: passed (1 passed, 0 failed, 0 skipped).
-- The stance wire assertion supplies an in-memory callback state through the production service contract; it does not exercise the database write provider. That provider remains covered by the existing domain tests, while this change avoids PostgreSQL as requested. The test is a Host socket/headless check, not a graphical-client run.
+- The stance wire assertion supplies an in-memory callback state through the production service contract; it does not exercise the database write provider. That provider remains covered by the existing domain tests, while this change avoids PostgreSQL as requested.
+
+- Dispatched `agent-test.yml` for `f335b402` with `Eve.Host.Tests` and the focused method filter: run `40243527358` succeeded, 0 failed tests/jobs and 0 skipped cases.
+- Push-triggered `ci.yml` run `40243521339` for `f335b402` failed in the unrelated insurance wire test: the persisted price lookup returned `PyInt(0)` instead of `PyReal(1000000)`. Main addressed the identifier mismatch in `fd73decd` by quoting the mixed-case persisted table name in `InsuranceRpcHostWireTests.cs`. The later `ci.yml` run `40245093534` for `ac7158ca` was still queued at the last check; no pass is claimed here.
+- The test is a Host socket/headless check, not a graphical-client run.

@@ -81,11 +81,7 @@ public sealed class ShipcasterRpcService : IService
         }
 
         if (call.Method == "CanCharacterJump")
-        {
-            if (_canCharacterJump is not { } canCharacterJump)
-                throw MissingBackend("Starter shipcaster eligibility");
-            return canCharacterJump(call) ? PyBool.True : PyBool.False;
-        }
+            return (_canCharacterJump?.Invoke(call) ?? false) ? PyBool.True : PyBool.False;
 
         if (_travel is not null)
             return await _travel(call).ConfigureAwait(false);

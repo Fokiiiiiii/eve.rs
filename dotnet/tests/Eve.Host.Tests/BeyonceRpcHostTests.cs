@@ -63,6 +63,6 @@ public partial class HostServerTests
         Assert.Equal(ObjectCaching.ResultClass, JsSemantics.StringValue(cached.Name));
         var formations = Assert.IsType<PyTuple>(((PySubStream)((PyTuple)cached.Args).Items[1]).Decoded);
         Assert.Equal(["Diamond", "Arrow"], formations.Items.Select(
-            formation => JsSemantics.StringValue(Assert.IsType<PyStr>(Assert.IsType<PyTuple>(formation).Items[0]))));
+            formation => JsSemantics.StringValue(Assert.IsType<PyTuple>(formation).Items[0])));
     }
 }

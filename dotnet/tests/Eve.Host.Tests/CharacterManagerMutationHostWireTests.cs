@@ -59,7 +59,7 @@ public partial class HostServerTests
             Py.Tuple(noteId, new PyStr("N:Planner"), new PyStr("client note"))));
         var noteRows = Assert.IsType<PyList>(await CallOverHost(front, open, 11, "charMgr", "GetOwnerNote", Py.Tuple(noteId)));
         Assert.Equal("N:Planner", T(PersonalWireField(Assert.Single(noteRows.Items), "label")));
-        Assert.Equal(new PyStr("client note"), PersonalWireField(Assert.Single(noteRows.Items), "note"));
+        Assert.Equal("client note", T(PersonalWireField(Assert.Single(noteRows.Items), "note")));
 
         Assert.Equal(PyNone.Instance, await CallOverHost(front, open, 12, "charMgr", "SaveCharacterSetting",
             Py.Tuple(new PyStr("windowState"), new PyStr("open"))));

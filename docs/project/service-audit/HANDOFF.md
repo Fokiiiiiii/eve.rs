@@ -3,7 +3,7 @@
 ## Snapshot and regeneration
 
 - Client source: /home/user/eve-logic, commit 1dbb5711a072a146e1d228365668ac05655eefe1.
-- Host source used for generation: origin/main c9e1a454ce5e2d2c71ee4c59b1b026f58b47a1ae plus this task's changes.
+- Host source used for generation: origin/main 894528ec1d5d97f1017370066df0f593a97f8f3f plus this task's changes.
 - Regenerate both CSVs and the P0/P1 work queue with:
   python3 tools/spec-extract/run_service_audit_current.py --queue-dir /tmp/claude-0/-home-user/fb9607a2-2996-57a7-a22d-383b9f5b5fae/scratchpad/cx/queue
 - The service-audit Python regression tests run in the `ci.yml` Python job.

@@ -630,10 +630,13 @@ public enum AssetSafetyActionState
     PersistenceFailure,
 }
 
-public sealed class StructureAssetSafetyService(IStructureAssetSafetyReadCallbacks read) : IService
+public sealed class StructureAssetSafetyService(
+    IStructureAssetSafetyReadCallbacks read,
+    Action<ClientSession, long, bool, string, IReadOnlyList<PyValue>>? notifyOwner = null) : IService
 {
     private readonly IStructureAssetSafetyReadCallbacks _read =
         read ?? throw new ArgumentNullException(nameof(read));
+    private readonly Action<ClientSession, long, bool, string, IReadOnlyList<PyValue>>? _notifyOwner = notifyOwner;
 
     public string Name => "structureAssetSafety";
 
@@ -703,6 +706,8 @@ public sealed class StructureAssetSafetyService(IStructureAssetSafetyReadCallbac
                 var result = await _read.MovePersonalAssetsToSafetyAsync(
                     call, solarSystemId, structureId, call.Cancellation);
                 RequireSuccessfulAction(result, AssetSafetyActionState.PersonalWrapCreated, allowEjection: true);
+                _notifyOwner?.Invoke(call.Session!, characterId, false, "OnAssetSafetyCreated",
+                    [new PyLong(characterId), new PyLong(solarSystemId), new PyLong(structureId)]);
                 return PyNone.Instance;
             }
 
@@ -715,6 +720,8 @@ public sealed class StructureAssetSafetyService(IStructureAssetSafetyReadCallbac
                 var result = await _read.MoveCorpAssetsToSafetyAsync(
                     call, solarSystemId, structureId, call.Cancellation);
                 RequireSuccessfulAction(result, AssetSafetyActionState.CorporationWrapCreated, allowEjection: true);
+                _notifyOwner?.Invoke(call.Session!, corporationId, true, "OnAssetSafetyCreated",
+                    [new PyLong(corporationId), new PyLong(solarSystemId), new PyLong(structureId)]);
                 return PyNone.Instance;
             }
 
@@ -727,9 +734,20 @@ public sealed class StructureAssetSafetyService(IStructureAssetSafetyReadCallbac
                     throw Eve.Services.MachoErrors.ThrowUserError(
                         "CustomNotify", ("notify", new PyWString("Invalid Asset Safety delivery request.")));
                 await _read.ProcessDueAutomaticDeliveriesAsync(call.Cancellation);
+                var personalWraps = await _read.GetItemsInSafetyForCharacterAsync(characterId, call.Cancellation);
+                var ownerId = ContainsWrap(personalWraps, assetWrapId) ? characterId : 0;
+                var corporationOwned = false;
+                if (ownerId == 0 && corporationId > 0 && ContainsWrap(
+                    await _read.GetItemsInSafetyForCorpAsync(characterId, corporationId, call.Cancellation), assetWrapId))
+                {
+                    ownerId = corporationId;
+                    corporationOwned = true;
+                }
                 var result = await _read.MoveSafetyWrapToStructureAsync(
                     call, assetWrapId, solarSystemId, destinationId, call.Cancellation);
                 RequireSuccessfulAction(result, AssetSafetyActionState.WrapDelivered);
+                if (ownerId > 0)
+                    _notifyOwner?.Invoke(call.Session!, ownerId, corporationOwned, "OnAssetSafetyDelivered", [new PyLong(ownerId)]);
                 return PyNone.Instance;
             }
 
@@ -750,6 +768,18 @@ public sealed class StructureAssetSafetyService(IStructureAssetSafetyReadCallbac
                 return PyNone.Instance;
         }
     }
+
+    private static bool ContainsWrap(PyList wraps, long wrapId) => wraps.Items.Any(row =>
+    {
+        var fields = row switch
+        {
+            PyDict dict => dict,
+            PyObject { Args: PyDict dict } => dict,
+            _ => null,
+        };
+        return fields is not null && fields.Entries.Any(entry =>
+            Eve.Macho.JsSemantics.StringValue(entry.Key) == "assetWrapID" && PositiveId(entry.Value) == wrapId);
+    });
 
     private static Eve.Services.MachoWrappedException MoveEjectTimeDenied() =>
         Eve.Services.MachoErrors.ThrowUserError(

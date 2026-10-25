@@ -60,7 +60,7 @@ internal sealed partial class CharacterServicesComposition
             new Eve.Services.Core.StructureRpcService("structureHangarViewMgr", structureRpcCallbacks),
             new Eve.Services.Core.StructureRpcService("structureProfiles", structureRpcCallbacks),
             new Eve.Services.Core.StructureRpcService("structureVulnerability", structureRpcCallbacks),
-            new Eve.Services.Core.StructureAssetSafetyService(structureAssetSafetyReadModel),
+            new Eve.Services.Core.StructureAssetSafetyService(structureAssetSafetyReadModel, NotifyAssetSafetyOwner),
             structureSettingsService,
             skyhookResourceMgrService,
     ];

@@ -50,12 +50,12 @@ public partial class HostServerTests
         var personalSet = Assert.IsType<PyList>(((PyTuple)((PyTuple)personalItems.Header).Items[1]).Items[0]);
         Assert.Single(personalSet.Items);
         var personalRow = Assert.IsType<PyPackedRow>(Assert.Single(personalSet.Items));
-        Assert.Equal(new PyLong(7001), personalRow.Values[0]);
+        Assert.Equal(new PyInt(7001), personalRow.Fields().Single(field => field.Key == "itemID").Value);
         Assert.Equal(new PyInt(34), personalRow.Values[1]);
         var corporateItems = Assert.IsType<PyObjectEx>(await Rpc(15, "GetItemsInDockableLocation", new PyInt(3001), PyBool.True));
         var corporateSet = Assert.IsType<PyList>(((PyTuple)((PyTuple)corporateItems.Header).Items[1]).Items[0]);
         var corporateRow = Assert.IsType<PyPackedRow>(Assert.Single(corporateSet.Items));
-        Assert.Equal(new PyLong(8001), corporateRow.Values[0]);
+        Assert.Equal(new PyInt(8001), corporateRow.Fields().Single(field => field.Key == "itemID").Value);
         Assert.Equal(new PyInt(34), corporateRow.Values[1]);
 
         var containerItems = Assert.IsType<PyList>(await Rpc(16, "GetItemsInContainer",
@@ -109,7 +109,6 @@ public partial class HostServerTests
         var escrow = Fields(Assert.IsType<PyObject>(await Rpc(4, "GetMyContractEscrow")));
         Assert.Equal(new PyInt(1250), escrow["iskEscrow"]);
         Assert.Equal(new PyInt(3), escrow["itemsEscrow"]);
-
         var bids = Fields(Assert.IsType<PyObject>(await Rpc(5, "GetMyBids", PyBool.False)));
         Assert.Single(Assert.IsType<PyList>(bids["contracts"]).Items);
 
@@ -146,7 +145,11 @@ public partial class HostServerTests
 
         var config = GlobalConfig.Build(Options);
         registry.Register(new MachoNetService(new Info(registry, config), now));
-        var dispatcher = new PacketDispatcher(registry, now);
+        var dispatcher = new PacketDispatcher(registry, now)
+        {
+            // This batch exceeds the production per-session RPC limit; budget behavior has separate coverage.
+            MaxExpensiveRpcUnitsPerMinute = 10_000,
+        };
         var encoded = MarshalCodec.Encode(config);
         _server = new HostServer(
             new HostOptions
@@ -225,8 +228,7 @@ public partial class HostServerTests
         {
             LastSplit = (itemId, quantity, characterId, corporationId, stationId, forCorporation, flag);
             return ValueTask.FromResult(true);
-        }
-    }
+        }    }
 
     private sealed class RecordingContractInventoryReader : IContractInventoryReader
     {
@@ -295,11 +297,9 @@ public partial class HostServerTests
                 ? [Contract(2001, characterId, corporationId, false), Contract(2002, characterId, corporationId, false)]
                 : [Contract(3001, corporationId, corporationId, true)]));
         }
-
         public ValueTask<ContractSearchResult> SearchContractsAsync(
             ContractSearchQuery query, long nowFileTime, CancellationToken cancellationToken) =>
             ValueTask.FromResult(new ContractSearchResult([], 0, 0));
-
         public ValueTask<ContractReadBundle> GetMyCurrentContractListAsync(
             long characterId, long corporationId, bool isAccepted, bool forCorporation,
             long nowFileTime, CancellationToken cancellationToken) =>

@@ -24,11 +24,12 @@ These caller and consumer locations were searched across /home/user/eve-logic wi
 
 DungeonRpc.cs registers DungeonService and DungeonInstanceCacheMgrService against PersistenceDungeonReadModel, which reads SDE, active content, and persisted dungeon state. CoreRpc.cs wires DynamicResourceCacheMgrService to ESS readers. CoreServices.Create registers DungeonExplorationMgrService and DynamicBountyMgrService.
 
-DungeonDynamicResourceHostWireTests.cs covers the PyList, escalating-path rowset, grouped battlefield/ice-heist maps, signature count map, settings, DBS output map and zero-output filtering, and disabled bounty tuple through the real Host socket.
+DungeonDynamicResourceHostWireTests.cs covers the PyList, escalating-path rowset, grouped battlefield/ice-heist maps, signature count map, settings, DBS output map and zero-output filtering, and disabled bounty tuple through the real Host socket. The Value(PyDict, string) helper is shared with DynamicResourceCacheMgrHostTests.cs.
 
 ## Checks and limits
 
-PASS: Dungeon_and_dynamic_resource_cache_calls_round_trip_through_host_registration (1 passed, 0 failed, 0 skipped), after resolving the helper collision.
-PASS: dotnet build dotnet/src/Eve.Services.Space/Eve.Services.Space.csproj -p:UseSharedCompilation=false (0 warnings, 0 errors). The focused test invocation also compiled Eve.Host.Tests successfully.
-Actions run 40196410619 for 21f001c failed because merged DynamicResourceCacheMgrHostTests.cs:69 collided with the Value helper in this test. The helper was renamed; the focused test passes locally. The selected agent-test run 40196417010 also failed on that SHA; its rerun is pending.
+PASS: Dungeon_and_dynamic_resource_cache_calls_round_trip_through_host_registration (1 passed, 0 failed, 0 skipped) after the shared Value helper was restored.
+PASS: dotnet build dotnet/src/Eve.Services.Space/Eve.Services.Space.csproj -p:UseSharedCompilation=false (0 warnings, 0 errors). Focused test invocations compiled Eve.Host.Tests successfully.
+Actions 40196410619 on SHA 21f001c failed because both Host test files defined Value(PyDict, string); this was first corrected by renaming the new test's lookup helper. Main then removed the duplicate helper from DynamicResourceCacheMgrHostTests.cs, which exposed its expected shared Value helper; it is now restored in DungeonDynamicResourceHostWireTests.cs. Actions 40198363063 and CI run 40198356757 on SHA 75f32014 failed before this restoration with nine unresolved Value references in DynamicResourceCacheMgrHostTests.cs. The correction is committed and a new Actions run is pending.
+
 Not exercised: graphical client, PostgreSQL-backed Host composition, or nonzero dynamic-bounty activation. The disabled pair matches EveJS v0.12.9.

@@ -1,6 +1,8 @@
-using Eve.Marshal;
+using Eve.Inventory;
 using Eve.Macho;
+using Eve.Marshal;
 using Eve.Services;
+using Eve.Services.Inventory;
 
 namespace Eve.Host.Tests;
 
@@ -73,5 +75,65 @@ public partial class HostServerTests
             Method = "GetOwnerNote", Args = [noteId], Session = new ClientSession { CharacterId = characterId },
         }));
         Assert.Equal(new PyStr("client note"), PersonalWireField(Assert.Single(persisted.Items), "note"));
+    }
+
+    [PgFact]
+    public async Task Bound_inventory_add_uses_registered_host_wire_with_client_arguments_and_transport_metadata()
+    {
+        await using var rig = await CharacterHostTests.CharacterHostRig.CreateAsync();
+        var characterId = await rig.CreateCharacterAsync();
+        var items = new PgItemStore(rig.Source, rig.InventorySchema);
+        long shipId;
+        long stackId;
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            shipId = await items.CreateAsync(connection, transaction,
+                new NewItem(587, characterId, rig.Station, 4, Singleton: true));
+            await rig.Characters.SetShipAsync(connection, transaction, characterId, shipId);
+            stackId = await items.CreateAsync(connection, transaction,
+                new NewItem(34, characterId, rig.Station, 4, 10, Singleton: false));
+            await transaction.CommitAsync();
+        }
+
+        var invBroker = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("invbroker"));
+        Start(configure: registry => registry.Register(invBroker),
+            sessionOpened: session =>
+            {
+                session.CharacterId = characterId;
+                session.Set("charid", new PyLong(characterId));
+                session.Set("stationid", new PyLong(rig.Station));
+                session.Set("shipid", new PyLong(shipId));
+            });
+        var front = await Handshaken(await ConnectAsync());
+        var open = Open();
+        await front.SendAsync(open);
+        _ = await front.ReceiveAsync();
+
+        var transport = new PyDict([new KeyValuePair<PyValue, PyValue>(
+            new PyStr("machoVersion"), new PyInt(3_396_210))]);
+        var nestedKwargs = new PyDict([
+            new KeyValuePair<PyValue, PyValue>(new PyStr("qty"), PyNone.Instance),
+            new KeyValuePair<PyValue, PyValue>(new PyStr("flag"), new PyInt(5)),
+            new KeyValuePair<PyValue, PyValue>(new PyStr("machoVersion"), new PyInt(3_396_210)),
+        ]);
+        var request = Packets.CallWithKwargs(open, 1, "invbroker", "MachoBindObject",
+            Py.Tuple(new PyLong(shipId), Py.Tuple(
+                new PyStr("Add"),
+                Py.Tuple(new PyLong(stackId), new PyLong(rig.Station)),
+                nestedKwargs)), transport);
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(request)));
+        var reply = Assert.IsType<PyTuple>(Result(MarshalCodec.Decode(Assert.IsType<Send>(await front.ReceiveAsync()).Payload)));
+        Assert.Equal(Eve.Services.InventoryWire.Id(stackId), reply.Items[1]);
+        var moved = await items.GetAsync(stackId);
+        Assert.NotNull(moved);
+        Assert.Equal(shipId, moved.LocationId);
+        Assert.Equal(5, moved.Flag);
+
+        await rig.RestartAsync();
+        moved = await new PgItemStore(rig.Source, rig.InventorySchema).GetAsync(stackId);
+        Assert.NotNull(moved);
+        Assert.Equal(shipId, moved.LocationId);
+        Assert.Equal(5, moved.Flag);
     }
 }

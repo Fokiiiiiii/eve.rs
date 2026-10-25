@@ -30,4 +30,6 @@ The production ESS services were already registered from `CoreRpc.cs` and compos
 - Focused Host wire test: 1 passed, 0 failed, 0 skipped.
 - No database or graphical-client run. The wire fixture does not exercise PostgreSQL persistence or notification fan-out; those production paths remain covered by their existing service/Host tests.
 - The branch was merged with the fetched `origin/main` at merge commit `a5c78ab0`; the merged Host test project builds cleanly and the focused test passes again.
-- Push and Actions verification are the remaining steps; record their commit/run result here.
+- Pushed to `main` at `057404f1e36b4b0d7e5d79250f1a19702c74dffc`.
+- Selected Actions run `40200598714` passed (1 targeted test, 0 failures, 0 skips): https://github.com/Fokiiiiiii/eve.rs/actions/runs/40200598714.
+- Push-triggered `ci.yml` run `40200591142` failed at `.NET (space tests 13/32) → Upload test timing results`; the failure summary contained no failed test name, and the step log ended after artifact path validation. The selected Host wire run and the other listed CI jobs passed. This points to the artifact upload step rather than test assertions, but the repository status output does not expose the underlying cause.

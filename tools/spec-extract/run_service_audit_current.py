@@ -251,6 +251,14 @@ def complete_host_routes(contract: Any, repo_root: pathlib.Path):
             source,
         ))
 
+    if "StructureTravelRpcService" in registered_types:
+        route_pairs = contract.host_registered_methods(repo_root / "dotnet/src")
+        for registration in registration_sources:
+            for match in re.finditer(r"\bnew\s+StructureTravelRpcService\s*\(\s*(['\"])([^'\"]+)\1", registration):
+                service = match.group(2)
+                type_by_service[service] = "StructureTravelRpcService"
+                routes.update((name, method) for name, method in route_pairs if name == service)
+
     source_root = repo_root / "dotnet/src"
     for path in sorted(source_root.rglob("*.cs")):
         try:

@@ -40,6 +40,21 @@ class CompositionRouteEvidenceTests(unittest.TestCase):
             (composition / "AgentRpc.cs").write_text(
                 "IService[] AgentRpcServices() => [agentMissionService];\n"
             )
+            space = source_root / "Eve.Services.Space"
+            space.mkdir(parents=True)
+            (space / "StructureTravelRpcService.cs").write_text(
+                'public sealed class StructureTravelRpcService {\n'
+                '    public bool HasMethod(string method) => Name switch {\n'
+                '        "structureCynoBeaconMgr" => method is "CmdBridgeToStructureBeacon" or "CmdGroupJumpToStructureBeacon",\n'
+                '        _ => false,\n'
+                '    };\n'
+                '}\n'
+            )
+            rpc = host_root / "Rpc"
+            rpc.mkdir()
+            (rpc / "AgentRpc.cs").write_text(
+                'new StructureTravelRpcService("structureCynoBeaconMgr");\n'
+            )
             hosting = host_root / "Hosting"
             hosting.mkdir()
             (hosting / "HostComposition.cs").write_text(
@@ -50,6 +65,9 @@ class CompositionRouteEvidenceTests(unittest.TestCase):
             )
             self.assertEqual("AgentMissionService", type_by_service["agentMgr"])
             self.assertIn(("agentMgr", "GetAgents"), routes)
+            self.assertEqual("StructureTravelRpcService", type_by_service["structureCynoBeaconMgr"])
+            self.assertIn(("structureCynoBeaconMgr", "CmdBridgeToStructureBeacon"), routes)
+            self.assertIn(("structureCynoBeaconMgr", "CmdGroupJumpToStructureBeacon"), routes)
 
             test_root.mkdir(parents=True)
             test_file = test_root / "AgentMissionReadWireTests.cs"

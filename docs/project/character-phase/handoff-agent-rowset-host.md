@@ -1,42 +1,30 @@
 # Agent rowset Host coverage handoff
 
-## Status
+## Resolution
 
-Host wire regressions are implemented for the client operations represented by RPC-00837 through RPC-00843 and RPC-00864, plus the nested mapping lookup represented by RPC-00865. The first group operates on the GetAgents rowset returned by agentMgr; none of those names is a separate server RPC. RPC-00865 is the dict.get consumer of GetMessagesForEpicArcMissions.
+All nine rows are already covered by the two real agentMgr read routes. RPC-00837–00843 and RPC-00864 name client-local operations on the Rowset returned by GetAgents; they are not separate Macho methods. RPC-00865 names Python dict.get on the nested mapping returned by GetMessagesForEpicArcMissions. There is no missing Host route for those local operations.
 
-## V24.01 client trace
+Production registers AgentMissionService through CharacterServicesComposition.AgentRpcServices -> AgentRpc -> CharacterServiceList -> HostComposition. Its HasMethod/CallAsync pair exposes GetAgents and GetMessagesForEpicArcMissions (dotnet/src/Eve.Services.Core/AgentMissionService.cs:55-109). GetAgents reads the agent catalog callback and creates the rowset (AgentMissionService.cs:149-157, 555-572); production data comes from AgentCatalog/SDE through MissionComposition (dotnet/src/Eve.Host/Composition/MissionComposition.cs:193-195; dotnet/src/Eve.Host/Composition/AgentCatalog.cs:17-20, 56-74). Epic Arc message data comes from the mission catalog callback and is returned with numeric mission keys (AgentMissionService.cs:495-506, 283-296).
 
-eve/client/script/ui/station/agents/agents.py loads sm.RemoteSvc('agentMgr').GetAgents().Clone() at line 91. Lines 92–93 add client-local factionID and solarsystemID; lines 94–105 derive them from station metadata, in-space agent data and the corporation faction helper. It then builds:
+## V24.01 callers and reply consumers
 
-| Row | Client expression | Evidence / behavior |
-|---|---|---|
-| RPC-00837 | AddField('factionID', None) | agents.py:92; populated at agents.py:105 |
-| RPC-00838 | AddField('solarsystemID', None) | agents.py:93; populated from station/in-space data at agents.py:95-103 |
-| RPC-00839 | Filter('stationID') | agents.py:108 |
-| RPC-00840 | Filter('solarsystemID') | agents.py:109 |
-| RPC-00841 | Filter('corporationID') | agents.py:110 |
-| RPC-00842 | Filter('factionID') | agents.py:111 |
-| RPC-00843 | Filter('agentTypeID') | agents.py:112 |
-| RPC-00864 | Index('agentID') | agents.py:107; local lookup returns the indexed row in agents.py:116-120 |
-| RPC-00865 | messages.get(messageType, {}).get(missionID, None) | epicArcController.py:67-68; consumes GetMessagesForEpicArcMissions() |
+Whole-tree searches in /home/user/eve-logic found two direct GetAgents callers:
 
-The second direct server GetAgents caller found in the whole client tree is eve/client/script/ui/shared/info/infosvc.py:2593; it indexes by agentID and reads each row's divisionID at lines 2597-2598. CBM's Agents.__GetAllAgents data-flow trace found the cache's local consumers, including all six indexed/filter views, lookup, career-agent checks, location lookup, epic-arc agent selection and dialogue operations. GetAgentByID has 13 direct callers across the client tree. Examples include standings (standingsUIUtil.py:250-260, standingsvc.py:201-230), journal (journal.py:703), agency (contentProviderEpicArcs.py:56), info windows (infosvc.py:2000) and epic-arc sorting (epicArcController.py:473-478). Those are local cache consumers, not RPC calls to agentMgr.GetAgentByID.
+- eve/client/script/ui/station/agents/agents.py:91 clones the reply. Lines 92-105 add client-local factionID and solarsystemID and derive them from corporation faction data, station metadata or in-space agent data.
+- That same method builds the ID index and five filters at agents.py:108-113. Their row mapping is: RPC-00864 Index('agentID') at line 108; RPC-00843 Filter('stationID') at 109; RPC-00842 Filter('solarsystemID') at 110; RPC-00840 Filter('corporationID') at 111; RPC-00841 Filter('factionID') at 112; RPC-00839 Filter('agentTypeID') at 113. RPC-00837 and RPC-00838 are AddField('factionID', None) and AddField('solarsystemID', None) at lines 92-93.
+- The index feeds GetAgentByID and the other agent lookup/dialogue methods in agents.py:116-285. CBM found 22 callers of __GetAllAgents and 13 internal GetAgentByID consumers. The station, solar-system, corporation, faction and type filters feed the matching getters at lines 131-154; external uses include agencyUtil.py:47,51, contentProviderAgents.py:115, dockedUI/controllers/stationController.py:97-98 and systemMapSvc.py:958-960.
+- The other direct GetAgents caller is eve/client/script/ui/shared/info/infosvc.py:2593. It indexes by agentID and reads divisionID at line 2597.
 
-## EveJS comparison and eve.rs path
+The only direct GetMessagesForEpicArcMissions caller found in the whole client tree is eve/client/script/ui/shared/epicArcs/epicArcController.py:67. RPC-00865 is the local messages.get(messageType, {}).get(missionID, None) at lines 67-68. _ConnectAllNodes consumes chapter-title IDs at lines 72-73; _ConstructNode reads in-progress and completed IDs at lines 83-88 and passes them to EpicArcMissionNode, whose name and hint methods use those message IDs. Missing mapping keys yield None by the client expression.
 
-EveJS v0.12.9 server/src/services/agent/agentMgrService.js:787-833 returns a mutable rowset; it includes the 15 identity/type/station/corporation fields plus solarSystemID, dungeonID, spawnPointID and typeID. Its Handle_GetAgentByID at 1415-1423 returns a row and materializes it for the session. The client callsites above determine the fields needed for these nine client expressions; the indexed client fields are present in the rowset, and the two added fields are explicitly derived client-side.
+## EveJS comparison and wire checks
 
-eve.rs registers AgentMissionService through the Host registry. GetAgents reads the catalog callback, sorts by AgentId, and emits the 15-column rowset (dotnet/src/Eve.Services.Core/AgentMissionService.cs:57-63, 463-471, 555-572). Production supplies this callback from agentMissionAgentRows in dotnet/src/Eve.Host/Composition/MissionComposition.cs:193-195; those rows are built by AgentCatalog from SDE character/agent records in dotnet/src/Eve.Host/Composition/AgentCatalog.cs:17-20, 56-74. GetMessagesForEpicArcMissions maps the catalog's nested values to numeric inner keys (AgentMissionService.cs:500-516).
+EveJS v0.12.9 AgentMgrService.Handle_GetAgents returns a mutable Rowset with 19 columns (server/src/services/agent/agentMgrService.js:787-833). Its Handle_GetMessagesForEpicArcMissions returns the nested mapping, built with numeric mission keys (agentMgrService.js:894-904, 210-222). eve.rs returns the 15 columns used by the GetAgents client paths; the existing compatibility record “Agent GetAgents wire columns” documents that choice. No behavior difference was introduced for this batch.
 
-The existing docs/reference/compat/DEVIATIONS.md entry “Agent GetAgents wire columns” records the 15-column choice against EveJS 261018.1 and the existing service-level test. This batch adds Host socket checks for the 15-column sorted rowset and the epic-arc nested mapping so the actual registry, dispatcher, marshal encode/decode and reply path are covered.
+AgentMgrHostTests.Agent_mgr_GetAgents_rowset_reaches_the_client_through_host_registration, AgentMgrReadWireTests.Agent_mgr_read_rpcs_are_registered_on_the_host_and_return_client_consumed_shapes and AgentEpicArcHostTests.Agent_mgr_epic_arc_messages_preserve_the_nested_get_lookup_shape_through_host_rpc exercise the actual HostServer TCP dispatcher, ServiceRegistry and MarshalCodec. They check the GetAgents rowset and nested message map rather than calling handlers directly. Production route registration is covered by the Host composition path above.
 
 ## Verification
 
-- MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -p:UseSharedCompilation=false --no-restore — passed, 0 warnings and 0 errors.
-- MSBUILDDISABLENODEREUSE=1 dotnet test dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj --no-build --filter 'FullyQualifiedName~Agent_mgr_' -p:UseSharedCompilation=false — passed, 4 tests, 0 skipped. The filter includes two existing service tests and the two new Host socket tests.
-- No PostgreSQL database was used.
-- Graphical-client acceptance was not performed.
-
-## Next
-
-Commit with the requested author, fetch and merge origin/main, push HEAD:main, update this handoff with the pushed SHA and Actions run results, then dispatch the focused Eve.Host.Tests filter and inspect both the selected run and push-triggered CI.
+- The focused local Host wire test invocation targeted the GetAgents rowset and Epic Arc nested mapping cases. It was interrupted after over eight minutes of shared-machine compilation; it produced no test result and is not counted as a pass.
+- No PostgreSQL database is used for these static read routes.
+- The graphical V24.01 client was not launched.

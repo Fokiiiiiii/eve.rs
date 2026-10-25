@@ -108,7 +108,6 @@ public sealed class InsuranceRpcHostWireTests : IAsyncLifetime
         await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
         const int rifterTypeId = 587;
         const long fullInsurancePriceCents = 100_000_000;
-        _host = await HostComposition.BuildAsync(Settings());
         var gameStoreSchema = Schema("EVE_GAMESTORE_SCHEMA");
         await using (var seed = source.CreateCommand($"""
             CREATE SCHEMA IF NOT EXISTS "{gameStoreSchema}";
@@ -120,6 +119,7 @@ public sealed class InsuranceRpcHostWireTests : IAsyncLifetime
             ON CONFLICT (key) DO UPDATE SET doc = EXCLUDED.doc, rev = prices.rev + 1;
             """))
             await seed.ExecuteNonQueryAsync();
+        _host = await HostComposition.BuildAsync(Settings());
         var insurance = _host.Registry.Lookup("insuranceSvc") ?? throw new InvalidOperationException("insuranceSvc is not registered");
         foreach (var method in new[] { "GetContractForShip", "GetContracts", "GetInsurancePrice", "GetInsurancePrices", "InsureShip", "UnInsureShip" })
             Assert.True(insurance.HasMethod(method), method);

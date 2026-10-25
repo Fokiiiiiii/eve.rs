@@ -97,7 +97,8 @@ public partial class HostServerTests : IAsyncLifetime
         }
     }
 
-    private sealed class BillManagerBudgetService : IService    {
+    private sealed class BillManagerBudgetService : IService
+    {
         public string Name => "billMgr";
         public int Calls { get; private set; }
         public bool HasMethod(string method) => method == "GetCorporationBills";
@@ -196,7 +197,8 @@ public partial class HostServerTests : IAsyncLifetime
         public string? GetOmegaExpiry(long accountId) => OmegaLicenses.DefaultOmegaExpiryText;
     }
 
-    private sealed class EmptyStructureDirectoryReadCallbacks :        Eve.Services.Core.IStructureDirectoryReadCallbacks,
+    private sealed class EmptyStructureDirectoryReadCallbacks :
+        Eve.Services.Core.IStructureDirectoryReadCallbacks,
         Eve.Services.Core.IStructureSettingsReadCallbacks
     {
         public ValueTask<Eve.Marshal.PyValue> GetJumpBridgesWithMyAccessAsync(Eve.Services.ServiceCall call) =>
@@ -295,7 +297,8 @@ public partial class HostServerTests : IAsyncLifetime
         public PyDict GlobalConfig() => config;
 
         public int UserCount() => 0;
-        public PyValue ClusterGameStatisticsForClient() => Py.Tuple(new PyDict([]), new PyDict([]), new PyInt(1));    }
+        public PyValue ClusterGameStatisticsForClient() => Py.Tuple(new PyDict([]), new PyDict([]), new PyInt(1));
+    }
 
     // ── helpers ─────────────────────────────────────────────────────────────
 
@@ -316,7 +319,7 @@ public partial class HostServerTests : IAsyncLifetime
     private static PyValue? Result(PyValue response)
     {
         var state = ((PyTuple)((PyObject)response).Args).Items;
-        Assert.Equal(7, ((PyInt)state[0]).Value, $"Response: {response}"); // CALL_RSP
+        Assert.Equal(7, ((PyInt)state[0]).Value); // CALL_RSP
         var payload = (PyTuple)state[4];
         return payload.Items[0] is PySubStream { Decoded: { } inner } ? inner : payload.Items[0];
     }
@@ -394,7 +397,8 @@ public partial class HostServerTests : IAsyncLifetime
         var verifier = new FixedSsoTokenVerifier(token, new VerifiedSsoIdentity(issuer, subject));
 
         Start(accounts: accounts, ssoTokenVerifier: verifier);
-        var front = await Handshaken(await ConnectAsync());        await front.SendAsync(new AuthRequest(
+        var front = await Handshaken(await ConnectAsync());
+        await front.SendAsync(new AuthRequest(
             1, AuthCredentialKind.Sso, "EVE-SSO-CONNECTION", new byte[] { 2 }, token, "FR", "127.0.0.1"));
         var accepted = Assert.IsType<Accepted>(Assert.IsType<AuthReply>(await front.ReceiveAsync()).Outcome);
 
@@ -493,7 +497,8 @@ public partial class HostServerTests : IAsyncLifetime
         Assert.Equal(new Rejected("Unavailable"), (await front.AuthenticateAsync("pilot", [1], 1)).Outcome);
         Assert.Equal(new Rejected("Unavailable"), (await front.AuthenticateAsync("pilot", [1], 2)).Outcome); // still answering
         Assert.Contains(_log, line => line == "account authentication failed due to a host error");
-        Assert.DoesNotContain(_log, line => line.Contains("pilot", StringComparison.Ordinal));        Assert.DoesNotContain(_log, line => line.Contains("database is down", StringComparison.Ordinal));
+        Assert.DoesNotContain(_log, line => line.Contains("pilot", StringComparison.Ordinal));
+        Assert.DoesNotContain(_log, line => line.Contains("database is down", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -592,7 +597,8 @@ public partial class HostServerTests : IAsyncLifetime
         var state = ((PyDict)((PyTuple)((PyTuple)packet.Args).Items[4]).Items[2]).Entries.ToDictionary(e => T(e.Key)!, e => e.Value);
         var role = ((PyLong)state["role"]).Value;
         Assert.Equal(0x6000_0000_8000_0000, role);
-        Assert.Equal(0L, role & (1L << 56));    }
+        Assert.Equal(0L, role & (1L << 56));
+    }
 
     [Fact]
     public async Task Achievement_tracker_HasEverWarped_returns_a_boolean_through_host_wire()
@@ -691,7 +697,8 @@ public partial class HostServerTests : IAsyncLifetime
         await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(
             Packets.BoundCall(open, 18, boundObjectId, "GetMyApplications", new PyTuple([]), kwargs))));
         var bootstrap = Assert.IsType<Send>(await front.ReceiveAsync());
-        Assert.Equal(MachoMessage.CallRsp, Message(bootstrap));        Assert.Empty(Assert.IsType<PyDict>(Result(MarshalCodec.Decode(bootstrap.Payload))).Entries);
+        Assert.Equal(MachoMessage.CallRsp, Message(bootstrap));
+        Assert.Empty(Assert.IsType<PyDict>(Result(MarshalCodec.Decode(bootstrap.Payload))).Entries);
     }
 
     [Fact]
@@ -790,7 +797,8 @@ public partial class HostServerTests : IAsyncLifetime
             MarshalCodec.Encode(Packets.Call(
                 open, 2, "beyonce", "MachoBindObject",
                 new PyTuple([new PyInt(SessionSceneTransitionService.DestinationSystem), new PyInt(5)]),
-                PyNone.Instance))));        var bindResponse = Assert.IsType<Send>(await front.ReceiveAsync());
+                PyNone.Instance))));
+        var bindResponse = Assert.IsType<Send>(await front.ReceiveAsync());
         Assert.Equal(MachoMessage.CallRsp, Assert.IsType<MachoPacket>(MachoPacket.Decode(MarshalCodec.Decode(bindResponse.Payload))).Type);
         var bindResult = Assert.IsType<PyTuple>(Result(MarshalCodec.Decode(bindResponse.Payload)));
         Assert.Equal(2, bindResult.Items.Count);
@@ -889,7 +897,8 @@ public partial class HostServerTests : IAsyncLifetime
                     "fleetSetups": [{ "setupName": "Rapid" }]
                 } } }
                 """)!.AsObject(),
-            ["characterNotes"] = new System.Text.Json.Nodes.JsonObject(),        };
+            ["characterNotes"] = new System.Text.Json.Nodes.JsonObject(),
+        };
         Task<System.Text.Json.Nodes.JsonObject> ReadTable(string name, CancellationToken _) =>
             Task.FromResult((System.Text.Json.Nodes.JsonObject)tables[name].DeepClone());
         var writes = new List<(string Table, string Path, System.Text.Json.Nodes.JsonNode? Data)>();
@@ -988,7 +997,8 @@ public partial class HostServerTests : IAsyncLifetime
                   }
                 }
                 """)!.AsObject(),
-        };        Task<System.Text.Json.Nodes.JsonObject> ReadTable(string name, CancellationToken _) =>
+        };
+        Task<System.Text.Json.Nodes.JsonObject> ReadTable(string name, CancellationToken _) =>
             Task.FromResult((System.Text.Json.Nodes.JsonObject)tables[name].DeepClone());
         var model = new PersistenceCharMgrReadModel(ReadTable,
             (_, _, _, _) => ValueTask.FromResult<System.Collections.Generic.IReadOnlyList<Eve.Marshal.PyValue>>([]),
@@ -1087,7 +1097,8 @@ public partial class HostServerTests : IAsyncLifetime
         Assert.Equal("ready", newOwnerNote.Data!["note"]!.GetValue<string>());
         Assert.False(string.IsNullOrEmpty(newOwnerNote.Data["created"]!.GetValue<string>()));
         Assert.False(string.IsNullOrEmpty(newOwnerNote.Data["updated"]!.GetValue<string>()));
-        Assert.Contains(writes, write => write.Path == "/characters/1001/notes/2/label" &&            write.Data!.GetValue<string>() == "Updated");
+        Assert.Contains(writes, write => write.Path == "/characters/1001/notes/2/label" &&
+            write.Data!.GetValue<string>() == "Updated");
         Assert.Contains(writes, write => write.Path == "/characters/1001/notes/2/note" &&
             write.Data!.GetValue<string>() == "changed");
         Assert.Contains(writes, write => write.Path == "/characters/1001/notes/2/updated");
@@ -1186,7 +1197,8 @@ public partial class HostServerTests : IAsyncLifetime
         Assert.Equal(new PyList([]), result);
 
         Task<System.Text.Json.Nodes.JsonObject> DatabaseFailure(string tableName, CancellationToken cancellationToken) =>
-            Task.FromException<System.Text.Json.Nodes.JsonObject>(new Eve.GameStore.PersistenceException(                "database unavailable",
+            Task.FromException<System.Text.Json.Nodes.JsonObject>(new Eve.GameStore.PersistenceException(
+                "database unavailable",
                 "PERSISTENCE_CONNECTION_FAILED"));
         await Assert.ThrowsAsync<Eve.GameStore.PersistenceException>(async () =>
             await PersistenceReadHelpers.ReadOptionalTableAsync(
@@ -1285,7 +1297,8 @@ public partial class HostServerTests : IAsyncLifetime
                         ["skyhookID"] = 50_003,
                         ["typeID"] = 81_080,
                         ["solarSystemID"] = systemId,
-                        ["planetID"] = 40_000_003,                        ["corporationID"] = 90_000_002,
+                        ["planetID"] = 40_000_003,
+                        ["corporationID"] = 90_000_002,
                         ["allianceID"] = 70_000_002,
                     },
                 },
@@ -1384,7 +1397,8 @@ public partial class HostServerTests : IAsyncLifetime
         var writer = new global::Eve.Host.PersistenceSovFwWriteOperations(
             ReadCache,
             Write,
-            Flush,            ReadDurable,
+            Flush,
+            ReadDurable,
             Authorize,
             new SemaphoreSlim(1, 1),
             Charge,
@@ -1483,7 +1497,8 @@ public partial class HostServerTests : IAsyncLifetime
         var denied = new Eve.Services.ServiceCall
         {
             Method = "sovMgr",
-            Args = [],            Session = new Eve.Services.ClientSession { CharacterId = 90_000_011 },
+            Args = [],
+            Session = new Eve.Services.ClientSession { CharacterId = 90_000_011 },
         };
         Assert.False(await writer.CanManageHubAsync(denied, systemId, hub));
         Assert.Empty(await writer.DestroySkyhooksAsync(denied, systemId, hub, [50_002]));
@@ -1583,6 +1598,7 @@ public partial class HostServerTests : IAsyncLifetime
         Assert.Equal(1, writeCount);
         Assert.Equal(1, flushCount);
         Assert.Equal(Eve.Services.Core.SkyhookResourcePermission.Activate, Assert.Single(permissions));
+
         Assert.Null(await writer.PersistAsync(call, snapshot, false, CancellationToken.None));
         Assert.Equal(1, writeCount);
         Assert.Equal(1, flushCount);
@@ -1681,6 +1697,7 @@ public partial class HostServerTests : IAsyncLifetime
             structureDirectory, structureSettings, skyhookMgr, map, tales, scanning, fleetObject, fleetManager, fleetProxy,
         }.Concat(sovereignty))
             registry.Register(service);
+
         Assert.Same(mail, registry.Lookup("mailMgr"));
         Assert.Same(notifications, registry.Lookup("notificationMgr"));
         Assert.Same(calendar, registry.Lookup("calendarMgr"));
@@ -1780,7 +1797,8 @@ public partial class HostServerTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_ping_is_answered_and_an_unknown_service_gets_a_service_not_found_error()    {
+    public async Task A_ping_is_answered_and_an_unknown_service_gets_a_service_not_found_error()
+    {
         Start();
         var front = await Handshaken(await ConnectAsync());
         var open = Open();
@@ -1879,6 +1897,7 @@ public partial class HostServerTests : IAsyncLifetime
             var open = Open();
             await front.SendAsync(open);
             await front.ReceiveAsync(); // the initial state
+
             var requested = new PyList([new PyInt(1400000001), new PyInt(999999999), new PyInt(1500000001)]);
             await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(Packets.Call(open, 1, "config", "GetMultiOwnersEx", requested))));
             var value = Result(MarshalCodec.Decode(Assert.IsType<Send>(await front.ReceiveAsync()).Payload));
@@ -1978,7 +1997,8 @@ public partial class HostServerTests : IAsyncLifetime
     {
         var problems = new List<(string Message, Exception? Error)>();
         Start(
-            configure: registry => registry.Register(new RefusingService()),            onProblem: (message, error) => { lock (problems) { problems.Add((message, error)); } });
+            configure: registry => registry.Register(new RefusingService()),
+            onProblem: (message, error) => { lock (problems) { problems.Add((message, error)); } });
         var front = await Handshaken(await ConnectAsync());
         var open = Open();
         await front.SendAsync(open);
@@ -2077,7 +2097,8 @@ public partial class HostServerTests : IAsyncLifetime
         await front.SendAsync(new Packet(other.SessionId, MarshalCodec.Encode(Packets.Call(other, 1, "slow", "Second"))));
 
         // the other session is answered while the slow one is still busy; then the slow session's two
-        // calls arrive in the order they were sent, although the second is quick        var order = new List<(ulong Session, string Method)>();
+        // calls arrive in the order they were sent, although the second is quick
+        var order = new List<(ulong Session, string Method)>();
         for (var i = 0; i < 3; i++)
         {
             var reply = Assert.IsType<Send>(await front.ReceiveAsync());
@@ -2176,6 +2197,7 @@ public partial class HostServerTests : IAsyncLifetime
         await front.SendAsync(new Send(1, new byte[] { 1 }));
         Assert.Null(await front.ReceiveOrEndAsync());
     }
+
     [Fact]
     public async Task Garbage_or_an_oversized_frame_closes_that_front_and_the_host_keeps_serving()
     {
@@ -2276,6 +2298,7 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
             RoomCalls++;
             return Task.FromResult<Eve.Ships.CharacterShips.Room?>(new(25, 5));
         }
+
         public Task<long?> AddAsync(ClientSession session, long itemId, long sourceId, long destinationId, int destinationFlag, long? quantity, CancellationToken cancellationToken)
         {
             AddCall = (itemId, sourceId, destinationId, destinationFlag, quantity);
@@ -2374,7 +2397,8 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
         Assert.IsType<Eve.Marshal.PyObject>(capacity);
         Assert.Equal(1, droneBays.RoomCalls);
 
-        var added = await broker.Add(new Eve.Services.ServiceCall        {
+        var added = await broker.Add(new Eve.Services.ServiceCall
+        {
             Method = "Add",
             Args = [new Eve.Marshal.PyInt(droneId), new Eve.Marshal.PyInt(InSpaceInventory.SystemId)],
             Kwargs = new Eve.Marshal.PyDict([
@@ -2474,6 +2498,7 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
         rig.Now = createdAt + 20 * AssetSafetyPgRig.DayMs - 1;
         await rig.Store.ProcessDueAutomaticDeliveriesAsync(CancellationToken.None);
         Assert.Equal(0, await rig.WrapStateAsync(wrapId));
+
         rig.Now++;
         await rig.Store.ProcessDueAutomaticDeliveriesAsync(CancellationToken.None);
         Assert.Equal(1, await rig.WrapStateAsync(wrapId));
@@ -2572,7 +2597,8 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
             var itemId = await rig.AddAssetAsync(characterId, structureId, 3);
             Assert.Equal(Eve.Services.Core.AssetSafetyActionState.ItemsEjected,
                 await rig.Store.MovePersonalAssetsToSafetyAsync(
-                    rig.Call("MovePersonalAssetsToSafety", characterId, 0, checked((int)(30 + systemId % 1000))),                    systemId, structureId, CancellationToken.None));
+                    rig.Call("MovePersonalAssetsToSafety", characterId, 0, checked((int)(30 + systemId % 1000))),
+                    systemId, structureId, CancellationToken.None));
             var wrapId = await rig.WrapIdForStateAsync(characterId, 1, structureId, 2);
             Assert.True(await rig.SpaceItemExistsAsync(wrapId));
             Assert.Equal(0, await rig.ItemOwnerAsync(itemId));
@@ -2671,7 +2697,8 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
         public static async Task<AssetSafetyPgRig> CreateAsync()
         {
             var suffix = Guid.NewGuid().ToString("N")[..8];
-            var connectionBuilder = new Npgsql.NpgsqlConnectionStringBuilder(                Eve.Data.PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+            var connectionBuilder = new Npgsql.NpgsqlConnectionStringBuilder(
+                Eve.Data.PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
             var source = new Npgsql.NpgsqlDataSourceBuilder(connectionBuilder.ConnectionString).Build();
             var inventorySchema = $"as_i_{suffix}";
             var walletSchema = $"as_w_{suffix}";
@@ -2770,7 +2797,8 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
             {
                 members.Parameters.Add(new Npgsql.NpgsqlParameter { Value = corporationId });
                 members.Parameters.Add(new Npgsql.NpgsqlParameter { Value = ceoId });
-                members.Parameters.Add(new Npgsql.NpgsqlParameter { Value = 0L });                members.Parameters.Add(new Npgsql.NpgsqlParameter { Value = directorId });
+                members.Parameters.Add(new Npgsql.NpgsqlParameter { Value = 0L });
+                members.Parameters.Add(new Npgsql.NpgsqlParameter { Value = directorId });
                 members.Parameters.Add(new Npgsql.NpgsqlParameter { Value = Eve.Corporations.CorporationRoles.Director });
                 members.Parameters.Add(new Npgsql.NpgsqlParameter { Value = memberId });
                 members.Parameters.Add(new Npgsql.NpgsqlParameter { Value = 0L });
@@ -2869,7 +2897,8 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
         }
 
         public async Task<short> WrapStateAsync(long wrapId)
-        {            await using var connection = await Source.OpenConnectionAsync();
+        {
+            await using var connection = await Source.OpenConnectionAsync();
             await using var command = Command(connection,
                 $"SELECT state FROM {AssetSafetySchema}.asset_safety_wraps WHERE wrap_id=$1");
             command.Parameters.Add(new Npgsql.NpgsqlParameter { Value = wrapId });
@@ -2968,7 +2997,8 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
         }
 
         public async Task<long> HighSecuritySystemWithoutNpcStationAsync()
-        {            var regions = (await Sde.ReadAsync("mapRegions")).ToDictionary(
+        {
+            var regions = (await Sde.ReadAsync("mapRegions")).ToDictionary(
                 r => checked((int)r.Key),
                 r => (
                     Name: Eve.Sde.SdeReader.English(r.Doc.GetProperty("name")),
@@ -3067,7 +3097,8 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
 
         public async ValueTask DisposeAsync()
         {
-            foreach (var schema in _schemas)            {
+            foreach (var schema in _schemas)
+            {
                 await using var connection = await Source.OpenConnectionAsync();
                 await using var command = Command(connection, $"DROP SCHEMA IF EXISTS {schema} CASCADE");
                 await command.ExecuteNonQueryAsync();
@@ -3166,7 +3197,8 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
                     ["typeID"] = 35841,
                     ["solarSystemID"] = 30000143,
                     ["ownerCorpID"] = corporationId,
-                    ["allianceID"] = allianceId,                    ["profileID"] = profileId,
+                    ["allianceID"] = allianceId,
+                    ["profileID"] = profileId,
                     ["itemName"] = "Bridge B",
                     ["serviceStates"] = new System.Text.Json.Nodes.JsonObject { ["1"] = 1, ["15"] = 1 },
                     ["accessProfile"] = new System.Text.Json.Nodes.JsonObject { ["docking"] = "owner" },
@@ -3265,7 +3297,8 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
 
     [Fact]
     public async Task Structure_directory_host_reads_deployed_rows_and_docking_profiles()
-    {        const long structureId = 88000011;
+    {
+        const long structureId = 88000011;
         const long deniedStructureId = 88000012;
         const long characterId = 90000011;
         const long corporationId = 98000011;
@@ -3365,6 +3398,7 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
         var publicFields = Assert.IsType<Eve.Marshal.PyDict>(Assert.IsType<Eve.Marshal.PyObject>(foreignInfo!.Info).Args).Entries;
         Assert.DoesNotContain(publicFields, entry => entry.Key.Equals(new Eve.Marshal.PyStr("services")));
         Assert.DoesNotContain(publicFields, entry => entry.Key.Equals(new Eve.Marshal.PyStr("allianceID")));
+
         var myStructures = await readModel.GetMyCharacterStructuresAsync(characterId, CancellationToken.None);
         Assert.Equal(new long[] { structureId },
             myStructures.Entries.Select(entry => entry.Key switch
@@ -3463,6 +3497,7 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
         var denied = await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(() => service.CallAsync(call).AsTask());
         Assert.Equal("CrpAccessDenied", denied.Error.UserErrorMessage);
         Assert.Equal(0, structureReads);
+
         directoryAccess = true;
         session.Set("corprole", new Eve.Marshal.PyInt(0));
         var result = Assert.IsType<Eve.Marshal.PyDict>(await service.CallAsync(call));
@@ -3562,7 +3597,8 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
             async (id, cancellationToken) =>
             {
                 if (await directory.GetStructureInfoAsync(id, cancellationToken) is not { PersistentlyDeployed: true })
-                    return null;                var key = id.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                    return null;
+                var key = id.ToString(System.Globalization.CultureInfo.InvariantCulture);
                 if (tables["structures"][key] is not System.Text.Json.Nodes.JsonObject row ||
                     systems.Get(systemId) is not { } system)
                     return null;
@@ -3661,7 +3697,8 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
                 },
             },
             ["accessGroups"] = new()
-            {                [groupId.ToString(System.Globalization.CultureInfo.InvariantCulture)] = new System.Text.Json.Nodes.JsonObject
+            {
+                [groupId.ToString(System.Globalization.CultureInfo.InvariantCulture)] = new System.Text.Json.Nodes.JsonObject
                 {
                     ["creatorID"] = 90000003,
                     ["members"] = new System.Text.Json.Nodes.JsonArray
@@ -3760,6 +3797,7 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
         var model = new PersistenceStructureDirectoryReadModel(ReadTable, Affiliation, null!, null!);
         Assert.True(await model.CharacterHasServiceAsync(ownerCharacterId, structureId, 1, CancellationToken.None));
         Assert.False(await model.CharacterHasServiceAsync(otherCharacterId, structureId, 1, CancellationToken.None));
+
         var explicitStructure = (System.Text.Json.Nodes.JsonObject)tables["structures"][structureId.ToString(
             System.Globalization.CultureInfo.InvariantCulture)]!.DeepClone();
         explicitStructure["profileID"] = explicitMissingProfileId;
@@ -3859,7 +3897,8 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
     [Fact]
     public async Task Weapon_target_context_reads_affiliation_crimewatch_war_limited_engagement_and_friendly_fire()
     {
-        const long now = 1_790_646_377_000;        const long attacker = 90000001;
+        const long now = 1_790_646_377_000;
+        const long attacker = 90000001;
         const long target = 90000002;
         const long corporation = 98000001;
         const long alliance = 99000001;
@@ -3958,7 +3997,8 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
                                 ["isCapital"] = true,
                             },
                         },
-                    },                    [otherSystemId.ToString(System.Globalization.CultureInfo.InvariantCulture)] = new System.Text.Json.Nodes.JsonObject
+                    },
+                    [otherSystemId.ToString(System.Globalization.CultureInfo.InvariantCulture)] = new System.Text.Json.Nodes.JsonObject
                     {
                         ["solarSystemID"] = otherSystemId,
                         ["claimStructureID"] = 1020003,
@@ -4057,7 +4097,8 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
                 [allianceId.ToString(System.Globalization.CultureInfo.InvariantCulture)] =
                     new System.Text.Json.Nodes.JsonObject
                     {
-                        ["capitalInfo"] = new System.Text.Json.Nodes.JsonObject                        {
+                        ["capitalInfo"] = new System.Text.Json.Nodes.JsonObject
+                        {
                             ["currentCapitalSystem"] = systemId,
                             ["newCapitalSystem"] = systemId,
                             ["newCapitalSystemValidAfter"] = "133000000000000000"
@@ -4156,7 +4197,8 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
                         ["corporationID"] = otherCorporationId,
                         ["claimStructureID"] = sharedClaimId,
                         ["infrastructureHubID"] = sharedHubId,
-                        ["structures"] = new System.Text.Json.Nodes.JsonArray(                            new System.Text.Json.Nodes.JsonObject
+                        ["structures"] = new System.Text.Json.Nodes.JsonArray(
+                            new System.Text.Json.Nodes.JsonObject
                             {
                                 ["itemID"] = sharedClaimId, ["corporationID"] = fromCorporationId,
                                 ["ownerID"] = fromCorporationId, ["allianceID"] = allianceId
@@ -4255,7 +4297,8 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
         var recipientIds = new List<long>();
         var labels = new Dictionary<long, int>();
 
-        Assert.True(MailOrganizationAuthorization.TryAddRecipient(recipientIds, labels, 101, 1, maximum: 1));        Assert.True(MailOrganizationAuthorization.TryAddRecipient(recipientIds, labels, 101, 8, maximum: 1));
+        Assert.True(MailOrganizationAuthorization.TryAddRecipient(recipientIds, labels, 101, 1, maximum: 1));
+        Assert.True(MailOrganizationAuthorization.TryAddRecipient(recipientIds, labels, 101, 8, maximum: 1));
         Assert.False(MailOrganizationAuthorization.TryAddRecipient(recipientIds, labels, 102, 1, maximum: 1));
         Assert.Equal(new[] { 101L }, recipientIds);
         Assert.Equal(9, labels[101]);
@@ -4354,7 +4397,8 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
         System.Text.Json.Nodes.JsonObject ReadCache(string table) =>
             (System.Text.Json.Nodes.JsonObject)cache[table].DeepClone();
 
-        void SetPath(System.Text.Json.Nodes.JsonObject root, string path, System.Text.Json.Nodes.JsonNode? value)        {
+        void SetPath(System.Text.Json.Nodes.JsonObject root, string path, System.Text.Json.Nodes.JsonNode? value)
+        {
             var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
             var current = root;
             for (var index = 0; index < segments.Length - 1; index++)
@@ -4453,7 +4497,8 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
         Assert.Equal(2, committed["mail"]["mailboxes"]![senderId.ToString(
             System.Globalization.CultureInfo.InvariantCulture)]!["statuses"]!["12"]!["labelMask"]!.GetValue<int>());
         Assert.Equal(10L, committed["mail"]["mailboxes"]![senderId.ToString(
-            System.Globalization.CultureInfo.InvariantCulture)]!["statuses"]!["10"]!["statusMask"]!.GetValue<long>());        Assert.Equal(32, committed["mail"]["mailboxes"]![senderId.ToString(
+            System.Globalization.CultureInfo.InvariantCulture)]!["statuses"]!["10"]!["statusMask"]!.GetValue<long>());
+        Assert.Equal(32, committed["mail"]["mailboxes"]![senderId.ToString(
             System.Globalization.CultureInfo.InvariantCulture)]!["statuses"]!["10"]!["labelMask"]!.GetValue<int>());
         Assert.Equal(20L, committed["mail"]["mailboxes"]![senderId.ToString(
             System.Globalization.CultureInfo.InvariantCulture)]!["statuses"]!["11"]!["statusMask"]!.GetValue<long>());
@@ -4552,7 +4597,8 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
         {
             [allianceId] = [corporationId, secondCorporationId],
         };
-        var reader = new PersistenceCalendarAudienceReader(            (ownerId, _) => Task.FromResult(corporationMembers.GetValueOrDefault(ownerId, [])),
+        var reader = new PersistenceCalendarAudienceReader(
+            (ownerId, _) => Task.FromResult(corporationMembers.GetValueOrDefault(ownerId, [])),
             (ownerId, _) => Task.FromResult(allianceCorporations.GetValueOrDefault(ownerId, [])));
 
         Assert.Equal(new long[] { 90000041, 90000042 },

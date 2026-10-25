@@ -46,6 +46,8 @@ public sealed class PersistenceMailSendHostAdapter(
 {
     private readonly SemaphoreSlim _sendGate = new(1, 1);
 
+
+
     private static bool IsGmChatPoke(
         Eve.Services.Core.MailSendRequest request,
         Eve.Services.ClientSession session) =>

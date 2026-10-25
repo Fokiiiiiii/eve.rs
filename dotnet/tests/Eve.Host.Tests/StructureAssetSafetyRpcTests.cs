@@ -1,3 +1,4 @@
+using Eve.Macho;
 using Eve.Marshal;
 using Eve.Macho;
 using Eve.Services;
@@ -113,14 +114,14 @@ public partial class HostServerTests
             .. values.Select(value => new KeyValuePair<PyValue, PyValue>(new PyStr(value.Key), value.Value)),
         ]);
 
-        private PyDict WrapRow(WireAssetSafetyWrap wrap) => Entry(
+        private PyValue WrapRow(WireAssetSafetyWrap wrap) => new PyObject(new PyStr("util.KeyVal"), Entry(
             ("assetWrapID", new PyLong(wrap.Id)),
             ("solarSystemID", new PyLong(wrap.SystemId)),
             ("wrapName", new PyStr(wrap.Name)),
             ("ejectTime", new PyLong(wrap.EjectTime)),
             ("daysUntilCanDeliverConst", new PyInt(5)),
             ("daysUntilAutoMoveConst", new PyInt(20)),
-            ("nearestNPCStationInfo", Entry(("itemID", new PyLong(destinationId)), ("typeID", new PyInt(1531)))));
+            ("nearestNPCStationInfo", Entry(("itemID", new PyLong(destinationId)), ("typeID", new PyInt(1531))))));
 
         public ValueTask<PyList> GetItemsInSafetyForCharacterAsync(long id, CancellationToken cancellationToken) =>
             ValueTask.FromResult(new PyList([.. _wraps.Where(wrap => !wrap.Delivered && !wrap.Corporation && wrap.OwnerId == id).Select(WrapRow)]));

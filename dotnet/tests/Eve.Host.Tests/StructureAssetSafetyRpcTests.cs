@@ -1,6 +1,5 @@
 using Eve.Macho;
 using Eve.Marshal;
-using Eve.Macho;
 using Eve.Services;
 using Eve.Services.Core;
 
@@ -117,8 +116,7 @@ public partial class HostServerTests
         private PyValue WrapRow(WireAssetSafetyWrap wrap) => new PyObject(new PyStr("util.KeyVal"), Entry(
             ("assetWrapID", new PyLong(wrap.Id)),
             ("solarSystemID", new PyLong(wrap.SystemId)),
-            ("wrapName", new PyStr(wrap.Name)),
-            ("ejectTime", new PyLong(wrap.EjectTime)),
+            ("wrapName", new PyStr(wrap.Name)),            ("ejectTime", new PyLong(wrap.EjectTime)),
             ("daysUntilCanDeliverConst", new PyInt(5)),
             ("daysUntilAutoMoveConst", new PyInt(20)),
             ("nearestNPCStationInfo", Entry(("itemID", new PyLong(destinationId)), ("typeID", new PyInt(1531))))));

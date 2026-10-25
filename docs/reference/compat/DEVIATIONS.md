@@ -1568,12 +1568,11 @@ Sources. The wiki: "Pochven" (https://wiki.eveuniversity.org/Pochven, fetched 20
   (`CharacterShips.Space.cs`), so the stored state is the same. A session with no character is answered True, as the
   reference answers. Status: decided (slice D). Tests: `CharacterLogoffTests` (PostgreSQL), live
   `test_a_character_logs_off_to_the_selection_screen_and_selects_again`.
-- **Requests that nothing records answer False, not True.** `userSvc.CastUpvote`, `CastDownvote`, `ReportBot`,
-  `ReportISKSpammer` and `ActivateCharacterReSculpt` answered True without recording anything; `kiringMgr.ActivateRedeemingCode`
-  answered True for any code. eve.rs has no feedback, report, re-sculpt token or redeeming-code store, so none is
-  accepted: the answer is False. The client does not read the answer of the votes and reports (`customersatisficationcont.py:38`,
-  `infoContentBase.py:1690`, `chat_service.py:203`); the re-sculpt activation ignores it too (`menuFunctions.py:390-391`),
-  so a re-sculpt is not offered as done. Status: open until the stores exist (TODO section 41).
+- **GATE-C supersedes this earlier decision for votes and reports.** `userSvc.CastUpvote`, `CastDownvote`, `ReportBot` and
+  `ReportISKSpammer` answer True and keep nothing, matching EveJS (see the GATE-C decision below). The V24.01 client
+  ignores these replies (`customersatisficationcont.py:38`, `infoContentBase.py:1690`, `chat_service.py:203`); no feedback
+  or report store is planned in this phase. `ActivateCharacterReSculpt` and `kiringMgr.ActivateRedeemingCode` remain
+  separate operations and remain False until their providers exist (TODO section 41).
 - **The paperdoll state follows the stored appearance.** `charMgr.GetPaperdollState` answered 0 for every character. The
   reference answers 2 (no existing customization) until a doll is stored, then 0 (`paperDollPayloads.js`,
   `resolvePaperDollState`). The client reads the state at station entry to ask about a recustomization
@@ -5827,3 +5826,7 @@ EveJS v0.12.9 adds a `WARP_LANDING_PENDING` refusal in `server/src/space/transit
 EveJS v0.12.9 resolves system NPC spawn context through `nativeNpcService.resolveNativeSpawnContextForSystem` and calls `spaceRuntime.ensureScene` while building that context (`server/src/space/npc/nativeNpcService.js:857-942`; scene creation is `spaceRuntime/sceneRegistry.js:149-208`). eve.rs owns scene lifetime in the simulation: `Sim::enter` creates an instance-0 solar-system scene when a ship enters (`crates/eve-space/src/sim/spawn.rs:728-739`), jump arrival creates the destination scene before sending `Jumped` (`spawn.rs:1034-1066`), and empty system scenes are removed (`spawn.rs:1021-1030`). Public system NPC spawns also create a missing scene on demand from authoritative universe data (`spawn.rs:825-835`).
 
 System-owned dungeon and incursion waves therefore wait for any pilot in the system before requesting NPCs, retry at 15-second intervals, and treat a pilot departure observed during a batch as a retry: remove any partial ships and do not write the wave-spawn row. The scene remains simulation-owned; this intentionally delays NPC appearance in empty systems compared with EveJS, without changing selection, NPC behavior, or kill-based wave progression. Character-owned waves retain their owner-presence requirement. Regression coverage: `DungeonWaveTests.A_system_owned_wave_waits_until_a_pilot_loads_its_scene`, `DungeonWaveTests.A_scene_disappearing_during_a_wave_retries_and_removes_any_partial_spawn`, and `DungeonWaveSpaceTests.A_system_owned_wave_waits_for_the_real_Host_undock_to_load_its_scene`. The live client call-site and consumer inventory is recorded in `docs/project/CI_FIX_HANDOFF.md`.\n
+
+## Industry job completion replies (2026-10-25)
+
+EveJS v0.12.9 returns a job row from `CompleteJob` and `CancelJob`, and a list of delivered job rows from `CompleteManyJobs` (`server/src/services/industry/industryManagerService.js:97-125`). eve.rs returns `None` after each committed transition. The V24.01 client calls at `eve/client/script/industry/industrySvc.py:149-160` do not return or inspect those values, so the difference does not change the client-visible flow. `InstallJob` continues to return the committed job id used by the caller (`industrySvc.py:139-146`).

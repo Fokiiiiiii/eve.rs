@@ -32,7 +32,7 @@ public partial class HostServerTests
             var response = MarshalCodec.Decode(reply.Payload);
             var responseState = ((PyTuple)((PyObject)response).Args).Items;
             Assert.True(((PyInt)responseState[0]).Value == 7,
-                $"{method} returned an error response: {System.Text.Json.JsonSerializer.Serialize(response)}");
+                $"{method} returned an error response: {FormatRpcValue(responseState[4])}");
             return Result(response)!;
         }
 
@@ -97,7 +97,6 @@ public partial class HostServerTests
         var assignments = Assert.IsType<PyList>(page["outstandingContracts"]);
         Assert.Equal([new PyInt(42), new PyInt(84), new PyInt(42), new PyInt(1)],
             Assert.IsType<PyTuple>(Assert.Single(assignments.Items)).Items);
-
         var created = Assert.IsType<PyList>(await Rpc(13, "CreateContract", new PyObject(new PyStr("contracts.contractStruct.ContractStruct"), new PyTuple([
             new PyInt(1), PyBool.False, new PyInt(0), new PyInt(1440), new PyInt(0),
             new PyInt(3001), new PyInt(0), new PyInt(1000), new PyInt(0), new PyInt(0),
@@ -164,7 +163,11 @@ public partial class HostServerTests
 
         var config = GlobalConfig.Build(Options);
         registry.Register(new MachoNetService(new Info(registry, config), now));
-        var dispatcher = new PacketDispatcher(registry, now);
+        var dispatcher = new PacketDispatcher(registry, now)
+        {
+            // This RPC batch tests contract wire shapes; budget refusal has separate coverage.
+            MaxExpensiveRpcUnitsPerMinute = 100_000,
+        };
         var encoded = MarshalCodec.Encode(config);
         _server = new HostServer(
             new HostOptions
@@ -352,6 +355,27 @@ public partial class HostServerTests
                 0, 3001, 0, 5000m, 0m, 0m, "Contract", "Description",
                 [new ContractReadItemSnapshot(7001, 34, 2, true, false)], []);
     }
+
+    private static string FormatRpcValue(PyValue? value) => value switch
+    {
+        null => "<null>",
+        PyNone => "None",
+        PyBool boolean => boolean.Value ? "True" : "False",
+        PyInt integer => integer.Value.ToString(),
+        PyLong integer => integer.Value.ToString(),
+        PyReal number => number.Value.ToString(System.Globalization.CultureInfo.InvariantCulture),
+        PyStr text => text.Value,
+        PyBytes bytes => System.Text.Encoding.UTF8.GetString(bytes.Value.Span),
+        PyWString text => text.Value,
+        PyToken token => token.Value,
+        PyTuple tuple => $"({string.Join(", ", tuple.Items.Select(FormatRpcValue))})",
+        PyList list => $"[{string.Join(", ", list.Items.Select(FormatRpcValue))}]",
+        PyDict dict => $"{{{string.Join(", ", dict.Entries.Select(entry => $"{FormatRpcValue(entry.Key)}: {FormatRpcValue(entry.Value)}"))}}}",
+        PySubStream { Decoded: { } decoded } => FormatRpcValue(decoded),
+        PyObject obj => FormatRpcValue(obj.Args),
+        PyObjectEx objectEx => $"object(header={FormatRpcValue(objectEx.Header)}, dict={FormatRpcValue(new PyDict(objectEx.Dict))})",
+        _ => value.GetType().Name,
+    };
 
     private static IReadOnlyDictionary<string, PyValue> Fields(PyObject value) =>
         Assert.IsType<PyDict>(value.Args).Entries.ToDictionary(

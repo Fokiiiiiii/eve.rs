@@ -113,7 +113,7 @@ public partial class HostServerTests
             .. values.Select(value => new KeyValuePair<PyValue, PyValue>(new PyStr(value.Key), value.Value)),
         ]);
 
-        private PyDict WrapRow(WireAssetSafetyWrap wrap) => Entry(
+        private PyValue WrapRow(WireAssetSafetyWrap wrap) => new PyObject(new PyStr("util.KeyVal"), Entry(
             ("assetWrapID", new PyLong(wrap.Id)),
             ("solarSystemID", new PyLong(wrap.SystemId)),
             ("wrapName", new PyStr(wrap.Name)),

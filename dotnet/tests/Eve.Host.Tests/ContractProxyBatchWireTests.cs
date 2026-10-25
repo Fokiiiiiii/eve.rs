@@ -50,13 +50,15 @@ public partial class HostServerTests
         var personalSet = Assert.IsType<PyList>(((PyTuple)((PyTuple)personalItems.Header).Items[1]).Items[0]);
         Assert.Single(personalSet.Items);
         var personalRow = Assert.IsType<PyPackedRow>(Assert.Single(personalSet.Items));
-        Assert.Equal(new PyLong(7001), personalRow.Values[0]);
-        Assert.Equal(new PyInt(34), personalRow.Values[1]);
+        var personalFields = personalRow.Fields().ToDictionary(field => field.Key, field => field.Value);
+        Assert.Equal(new PyInt(7001), personalFields["itemID"]);
+        Assert.Equal(new PyInt(34), personalFields["typeID"]);
         var corporateItems = Assert.IsType<PyObjectEx>(await Rpc(15, "GetItemsInDockableLocation", new PyInt(3001), PyBool.True));
         var corporateSet = Assert.IsType<PyList>(((PyTuple)((PyTuple)corporateItems.Header).Items[1]).Items[0]);
         var corporateRow = Assert.IsType<PyPackedRow>(Assert.Single(corporateSet.Items));
-        Assert.Equal(new PyLong(8001), corporateRow.Values[0]);
-        Assert.Equal(new PyInt(34), corporateRow.Values[1]);
+        var corporateFields = corporateRow.Fields().ToDictionary(field => field.Key, field => field.Value);
+        Assert.Equal(new PyInt(8001), corporateFields["itemID"]);
+        Assert.Equal(new PyInt(34), corporateFields["typeID"]);
 
         var containerItems = Assert.IsType<PyList>(await Rpc(16, "GetItemsInContainer",
             new PyInt(3001), new PyInt(7001), PyBool.False, new PyInt(4)));

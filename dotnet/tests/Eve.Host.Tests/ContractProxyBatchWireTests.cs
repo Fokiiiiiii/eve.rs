@@ -28,12 +28,19 @@ public partial class HostServerTests
         {
             await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(
                 Packets.Call(open, id, "contractProxy", method, args))));
-            var reply = Assert.IsType<Send>(await front.ReceiveAsync());
-            var response = MarshalCodec.Decode(reply.Payload);
-            var responseState = ((PyTuple)((PyObject)response).Args).Items;
-            Assert.True(((PyInt)responseState[0]).Value == 7,
-                $"{method} returned an error response: {FormatRpcValue(responseState[4])}");
-            return Result(response)!;
+            // The client link can carry notifications before a pending RPC response.
+            while (true)
+            {
+                var reply = Assert.IsType<Send>(await front.ReceiveAsync());
+                var response = MarshalCodec.Decode(reply.Payload);
+                if (response is not PyObject { Args: PyTuple responseArgs } || responseArgs.Items.Count < 3 ||
+                    MachoAddress.Decode(responseArgs.Items[2]).CallId != new PyInt(id))
+                    continue;
+                var responseState = responseArgs.Items;
+                Assert.True(((PyInt)responseState[0]).Value == 7,
+                    $"{method} returned an error response: {FormatRpcValue(responseState[4])}");
+                return Result(response)!;
+            }
         }
 
         var deleteResult = Assert.IsType<PyTuple>(await Rpc(1, "DeleteMultipleContracts",

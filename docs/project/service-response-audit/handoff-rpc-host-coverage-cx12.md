@@ -29,6 +29,7 @@ Scope: RPC-01767–RPC-01768, RPC-01839–RPC-01845, RPC-02109–RPC-02110, RPC-
 
 ## Actions status
 
-- On `63a64d23`, the focused Core and Host Actions runs succeeded (40190235392, 40190236662). Push-gate CI (40190222770) failed in the contract batch wire helper at `DeleteContract`; its end-to-end job succeeded. The selected full `test_login_to_character.py` run (40190235213) is still being followed.
-- On `5dbc0a2c`, the V24 alias-mode Core test passed on Actions (40191564033), and the isolated contract batch Host test passed (40191989482). Push-gate CI (40191553927) remains in progress.
-- Re-run the Host shard and inspect both push-gate CI runs after the response-correlation fix is pushed. Record final run results here before handoff.
+- On `63a64d23`, focused Core and Host Actions runs succeeded (`40190235392`, `40190236662`). Push-gate CI (`40190222770`) failed because the Host response helper consumed a preceding Host send and because the RPC inventory expected 1,399 methods after QuickQuery raised it to 1,400. The selected agent-test run (`40190235213`) failed; its output did not identify an individual failing test.
+- On `5dbc0a2c`, the alias-mode Core test passed (`40191564033`), and the isolated contract batch Host test passed (`40191989482`). Push-gate CI (`40191553927`) failed only on the stale RPC inventory count.
+- On `64db67d5`, the focused Host Actions run (`40193666282`) passed both `Contract_reads_and_mutations_are_dispatched_through_the_host_with_client_shapes` and `Real_host_registry_methods_are_enumerable`. Push-gate CI (`40193659035`) is queued/in progress; run `failures 64db67d5` for its final result.
+- Local `Eve.Services.Core` and `Eve.Host.Tests` builds succeeded. The focused QuickQuery unit test passed (1 passed, 0 skipped). No database was used locally and no graphical-client test was performed.

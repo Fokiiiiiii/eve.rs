@@ -297,7 +297,6 @@ CI run 672 on `1669e6dc` failed the structure market Host test because the fixtu
 - Host.Tests compiled locally with 0 warnings and 0 errors; the focused Host Agent test on the corrected head is pending. No local database test was run.
 - CI 699 also failed the SKINR live test because its restart helper sent SIGTERM, which did not activate the Host's Console.CancelKeyPress shutdown path. Main commit d86a5ef5 changes the helper to send SIGINT; Agent run 183 and CI 701 are checking that fix.
 ## 2026-10-23 Agent test selection notes
-
 - Agent run 106 on 8b3c8e04 matched a Host composition change and failed to compile the test fixture delegate (CS1593); ed01d2d8 fixes the delegate invocation.
 - Agent run 108 on 951a8744 used the unrelated Capacity filter and cargo-capacity live test even though that commit changed only the handoff note. Host startup then failed because the regular SDE lane lacked `sde.skinrComponentPointValues`; the selected test failure did not validate the handoff-only change. The Host now reads that mission table from the mission SDE lane (a00e62c9). For handoff-only commits, do not dispatch an unrelated selected-test run; for code commits, choose the test owning the changed behavior.
 ## 2026-10-23 follow-up: market escrow assertion and SKINR wire shape
@@ -497,7 +496,6 @@ CI run 672 on `1669e6dc` failed the structure market Host test because the fixtu
 
 
 ## 2026-10-24 CORE stargate jump after warp
-
 - Root behavior: `Flight` distinguishes alignment, active warp and post-warp coast. Stargate jump now refuses alignment/warp with `IN_WARP`, accepts coasting only after the simulation's gate surface-distance check passes, then clears the previous flight. Host clears its `_warping` marker only after the simulation accepted the jump.
 - Regression coverage: Rust `scene::tests::a_warp_to_a_gate_ends_within_jump_range_of_it_and_the_jump_is_accepted` sends warp, confirms jumps are refused during both alignment and active warp, advances to coast within range, jumps, and confirms the old coast cannot resume. `Eve.Services.Space.Tests.StargateJumpWireTests.Bound_client_warp_then_stargate_jump_uses_the_wire_and_clears_warp_state` sends a bound warp packet and then a bound `CmdStargateJump` through `ServiceRegistry` and `PacketDispatcher`; it checks Notification-before-CallRsp, queue fields, bound reply tuple and warp-state cleanup without a database.
 - Whole V24.01 caller check: the only `CmdStargateJump` callers are autopilot (`eve/client/script/parklife/autopilot.py:357`), manual gate jump (`stargate/client/gateJumpSvc.py:123`) and insider (`eve/devtools/script/insider.py:630`). The preceding autopilot warp records its destination and calls `CmdWarpToStuffAutopilot(destinationID)` (`autopilot.py:461-465`), matching the Host wire test's one-argument warp call. Autopilot waits for `IsJumpQueued` and `DSTBALL_WARP` to clear (`autopilot.py:303-309`), then checks surface distance against `const.maxStargateJumpingDistance` before sending the three arguments (`autopilot.py:337-357`). The UI requests gate interaction at that same max range (`eve/client/script/ui/services/menusvc.py:3029-3032`). The full client search found the following `DSTBALL_WARP` consumers: `menucheckers/sessionChecker.py:159`, `eve/client/script/ui/services/flightPredictionSvc.py:482`, `eve/client/script/ui/services/menuSvcExtras/menuFunctions.py:131`, `eve/client/script/ui/services/menuSvcExtras/invItemFunctions.py:50`, `eve/client/script/ui/inflight/shipHud/activeShipController.py:259`, `eve/client/script/ui/camera/shipOrbitCamera.py:152,292`, `eve/client/script/ui/camera/cameraUtil.py:201`, `eve/client/script/ui/camera/spaceCamera.py:200`, `eve/client/script/environment/effects/Warp.py:454`, `eve/client/script/environment/effects/WarpFlash.py:229`, `eve/client/script/environment/spaceObject/ship.py:307`, `eve/client/script/parklife/spaceMgr.py:200,738`, `eve/client/script/parklife/autopilot.py:308,558`, and `eve/client/script/remote/michelle.py:430,434`.
@@ -557,7 +555,6 @@ Baseline checked after fetching `origin/main`: `aeb7a0f8fb3248774475bc3f0137c06b
 The Host checks this signal before each NPC request and stops a batch once no pilot remains in the system (`SpaceSessions.Npc.cs:488-492`). Only `NO_SCENE` refusals stop producing the repeated ship-refused log (`SpaceSessions.Npc.cs:118-132`). System-owned waves wait until any pilot loads the scene, retry after 15 seconds, and clean up any partial ships from a scene race without persisting a spawn row (`DungeonWaveDirector.cs:328-373`, `SpaceSessions.DungeonWaves.cs:13-40`). Other refusal errors continue through the existing failure path. The intentional timing difference from EveJS is documented in `docs/reference/compat/DEVIATIONS.md`.
 
 The real Host registers a `ShipService` from `AgentRpc` (`dotnet/src/Eve.Host/Rpc/AgentRpc.cs:109`) and `HostComposition` adds it to the service registry (`dotnet/src/Eve.Host/Hosting/HostComposition.cs:258-262`). The focused Host-space test binds with the `ship.MachoBindObject` signature through `Rig.BindShipAsync`, which registers the returned bound OID; it then resolves that OID from `ServiceRegistry` for `Undock` and asserts the client tuple and station/system transition before the wave spawns (`PacketDispatcher.cs:587-592`, `Rig.cs:440-453,489-498`, `DungeonWaveSpaceTests.cs:28-66`). The test uses the real Host service and typed Marshal values; the Actions live walk will exercise the serialized Macho call sequence and client kwargs.
-
 Whole-tree V24.01 client cross-check (`/home/user/eve-logic`):
 
 - Warp RPC wrapper/callers: `eve/client/script/remote/michelle.py:732-740`; `profiling.py:317`; `addressBookEntries.py:155`; `neocom/journal.py:452`; `infoPanels/listSurroundingsBtn.py:381`; `agencyNew/contentPieces/escalationContentPiece.py:74`; `menusvc.py:1427,2737,2747,2757`; `movementFunctions.py:418,432,451,462,488`; `transmissionMgr.py:142`; `objectives/client/objective_task/dungeon.py:341,369`; `jobboard/client/features/dungeons/escalation_sites/job.py:57`. The separate autopilot warp is `autopilot.py:464`. `movementFunctions.py:437-458` sends the item target and `minRange`, then sets the UI destination/alignment. Warp Destiny updates enter through `michelle.py:481-522`; the warp effect emits `OnWarpFinished(itemID,typeID)` at `Warp.py:522`, consumed by `tacticalNavigationService.py:481` and dungeon objectives at `objective_task/dungeon.py:85,94,201,218,252,264`.
@@ -747,7 +744,6 @@ Regression tests added: `DungeonWaveTests.A_system_owned_wave_waits_until_a_pilo
 
 
 ## 2026-10-24 RPC inventory push status
-
 - Commit `187b7c0e` is on main with the Host RPC inventory expectation set to 1396. Its first push attempt raced another main update; the branch was fetched and merged again, then the push succeeded.
 - Focused Agent run 477 (`40105045416`) passed `RpcSecurityInventoryTests.Real_host_registry_methods_are_enumerable` against the pushed change.
 - Push gate run 872 (`40104524389`, SHA `1686b316`) and newer run 873 (`40104855348`, SHA `e7ba3843`) remain in progress. Run 873 includes commit `187b7c0e`; its E2E result is still pending. There is no three-green sequence yet.
@@ -767,7 +763,6 @@ Regression tests added: `DungeonWaveTests.A_system_owned_wave_waits_until_a_pilo
 
 - Commit `3ff57cc841632c432d9fd0afa120c8f9c0759f90` was pushed to `main` after fetching and merging `origin/main` at `2df5b09f`.
 - Push-triggered CI run `40107313833` for `3ff57cc8` and run `40107385749` for `848e2081` are in progress. Run 873 (`40104855348`, `e7ba3843`) completed with the same Astrahus E2E failure and a cancelled Space 4/4 shard. No post-fix gate result or three-green sequence has been recorded yet.
-
 
 ## 2026-10-24 Space shard timeout investigation
 
@@ -827,7 +822,6 @@ Regression tests added: `DungeonWaveTests.A_system_owned_wave_waits_until_a_pilo
 - Whole-client evidence: `contracts.py:42` exports the client call; `GetContractProxySvc` selects `contractProxy` at `contracts.py:91-95`, and the wrapper calls the proxy at `contracts.py:717-718`. All UI callers are in `createContractWnd.py:92,194,933,1320,1343,1647`: item selection reads `itemID`, `typeID`, `stacksize`, and `flagID` (`:92-100,933-947,1647-1664`); the container path calls `GetNumItemsInContainers` and `GetItemsInContainer` (`:1320,1343-1352`). The client iterates the dockable set directly; container reads accept an empty result with `or []` in `contracts.py:711-715`.
 - EveJS v0.12.9 uses the same named row fields in `buildContractInventoryItemRow` (`server/src/services/_other/contractProxyService.js:539-557`) and returns packed rows in a Python set from `Handle_GetItemsInDockableLocation` (`:882-888`). It filters personal hangar or corporation contract flags in `:559-590`. No production behavior change was needed.
 - The Host project build completed with zero warnings and errors. After correcting the item field lookup, the focused test reached the production contract RPC budget and returned `SessionRpcBudgetExceeded`; the synthetic multi-call test now raises its dispatcher budget while the separate budget refusal assertion in `HostServerTests.cs:687-690` remains intact. The focused contract test passed locally: 1 passed, 0 failed, 0 skipped. No PostgreSQL database was used.
-
 ## 2026-10-25 Push-gate run 902 and 906 follow-up
 
 - Push-gate run 902 (`40183830326`, SHA `7ba739e0`) reported four Host failures: the contract packed-row item ID assertion (expected 7001, observed type ID 34), the Asset Safety delivered-notification timeout at `AssetSafetyRpcWireTests.cs:104`, the RPC registry count (1396 expected, 1399 found), and redeem-token claiming without a station or structure in the test session.
@@ -847,15 +841,29 @@ The registered Asset Safety delivery RPC now resolves the wrap owner before any 
 
 Push-gate run 907 (`40185852943`, SHA `f6a38240`) failed because the packed row itemID was a `PyInt` for these small IDs while the assertion expected `PyLong`. The latest origin/main version now locates the `itemID` field by name and expects `PyInt`, matching `InventoryWire.PackedRow`. The post-merge Host test-project build on 72746bc0 completed with zero warnings and errors; the updated merged code is being rebuilt. Actions run 909 and focused Agent run 579 are being checked for this correction. No local PostgreSQL connection was used.
 
-
 ## 2026-10-25 push gate 909 contract RPC budget follow-up
 
 Push gate run 909 (`40186841175`, SHA `71b96203`) completed red on Host shard 1/4. The contract Host test expected CALL_RSP (7) during its CompleteContract call and received CallError (15); that run did not include the decoded error payload. The updated test formatter exposed `SessionRpcBudgetExceeded` locally when the expanded socket batch reached the corporation expired-list RPC with the dispatcher at its production default budget. This is the same synthetic-batch budget path that can reject the earlier completion RPC after the long read sequence.
 
 The socket test now sets `MaxExpensiveRpcUnitsPerMinute` to 100,000 solely for this multi-call wire scenario; the dedicated budget refusal coverage remains separate. The focused Release Host test passed after that fixture change (1 passed, 0 failed, 0 skipped). The next Actions run will verify the original push-gate failure is cleared. No PostgreSQL database was used.
 
+
 ## 2026-10-25 Contract RPC budget regression on run 913
 
 - Push-gate run 913 (`40188404827`, SHA `9de5c915`) failed Host shard 1/4 in `Contract_reads_and_mutations_are_dispatched_through_the_host_with_client_shapes`: `Result` expected CALL_RSP 7 and received ERRORRESPONSE 15 on the test's final `DeleteContract` request (`ContractProxyBatchWireTests.cs:131`). The test made 17 sequential `contractProxy` calls in one session. Each costs 10 units and the default rolling-minute budget is 160 (`PacketDispatcher.cs:50,344`), so request 17 was rejected by the production guard.
 - This is the same synthetic-test budget issue recorded in the run-909 section above. The current Host fixture raises the limit to 100,000 only for the composite wire-shape batch (`ContractProxyBatchWireTests.cs:167-169`); production limits stay unchanged. Separate Host coverage still verifies that call 17 is refused at the production limit (`HostServerTests.cs:685-690`). The prior contract inventory section contains the whole-client V24.01 call-site and EveJS evidence; no client behavior changed.
 - Runs 911 (`40187459173`) and 912 (`40188008665`) passed; run 913 failed on the budget setup. The run-913 failure resets the green streak. Record three consecutive full push-gate successes after this correction before closing the issue.
+
+### Contract wire and registry checks on main
+
+Contract focused Agent run `40191299209` passed (1 test, 0 failed, 0 skipped). A duplicate run `40191429427` and run `40192341901` each failed at the final `DeleteContract` call; local focused Release runs passed, and retry `40192886626` on `7f93dbca` passed (1 test, 0 failed, 0 skipped). Full gate `40192014272` on `1861d739` passed Rust format/clippy, fixtures, Rust, Python, Windows, .NET build, E2E, all space shards, and all other-test shards. Host shard 4/4 failed only because the RPC inventory expected 1399 methods but registered 1400.
+
+The additional entry is `alphaInjectorMgr.GetNextAvailableInjection`, registered with `AlphaInjectorMgrService` in `CharacterServiceList`. The V24.01 caller is `skillsvc.py:1003-1007`; consumers use it to show the cooldown in `skillInjectorWindow.py:180` and `banner.py:100-107,121-133`. The banner compares the reply with client wallclock and counts down at `banner.py:121-133`. EveJS v0.12.9 returns the next-available FileTime as a long, or zero when none exists (`alphaInjectorMgrService.js:15-20`, `skillTradingRuntime.js:660-667`). The RPC inventory assertion now expects 1400. Local Release build of `Eve.Host.Tests` passed with 0 warnings and 0 errors; Actions verification for the registry test is pending. No local PostgreSQL database was used.
+
+## 2026-10-25 registry inventory correction and current gate status
+
+Runs 927 (`6b4380a6`) and 928 (`45e455f4`) were canceled after Host shard 1/4 and 2/4 respectively failed `RpcSecurityInventoryTests.Real_host_registry_methods_are_enumerable` at `RpcSecurityInventoryTests.cs:91`: expected 1399 registered methods, actual 1400. Run 929 (`6e62defd`) completed with the same failure on Host shard 3/4. Its E2E job passed in 12.3 minutes; the Required CI gate failed only because of that Host shard. This was one stale test expectation, not a client behavior failure. The additional `alphaInjectorMgr.GetNextAvailableInjection` registration and whole-client call/consumer evidence are recorded above.
+
+Commit `e1c1f3a4` updates the inventory expectation to 1400. As of 2026-10-25 13:15 UTC, its first full gate, run 932 (`54f56fe0`, `40195015477`), is still in progress: E2E and three .NET Host shards remain active; .NET build, Rust checks, Windows, fixture generation and Python checks have passed so far. Run 933 (`2846142c`, `40196124358`) is in progress after adding DynamicResourceCacheMgr Host tests. Run 934 (`21f001cb`, `40196410619`) is queued after the DynamicResourceCacheMgr service coverage change. No post-correction full gate has completed yet; the green streak is 0/3.
+
+Focused Agent runs 624 and 625 on `2846142c` passed, but they do not count as full push-gate runs. The run-929 Host shard log tail also shows two skipped Abyssal cases; these are not passes.

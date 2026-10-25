@@ -52,7 +52,8 @@ public partial class HostServerTests
         var location = Assert.IsType<PyObject>(Assert.Single(locations.Items));
         var locationFields = Assert.IsType<PyDict>(location.Args);
         Assert.Contains(locationFields.Entries, entry => entry.Key == new PyStr("itemID") && entry.Value == new PyInt(30000142));
-        Assert.Contains(locationFields.Entries, entry => entry.Key == new PyStr("itemName") && entry.Value == new PyStr("Jita"));
+        Assert.Contains(locationFields.Entries, entry =>
+            JsSemantics.StringValue(entry.Key) == "itemName" && JsSemantics.StringValue(entry.Value) == "Jita");
 
         var owners = Assert.IsType<PyList>(await HostRpcAsync(
             front, open, 3, "lookupSvc", "LookupNoneNPCAccountOwners", new PyStr("Shared"), new PyInt(0)));

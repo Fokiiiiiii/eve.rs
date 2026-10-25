@@ -67,6 +67,10 @@ OWNER_REJECTIONS = {
     ("fleetMgr", "RegisterForDamageUpdates"): "owner log: 2026-10-24 core breakage, non-fleet subscription raised FleetError",
     ("beyonce", "CmdStargateJump"): "owner log: 2026-10-24 core breakage, in-warp gate jump rejected after normal warp",
 }
+CLIENT_LOCAL_APIS = {
+    ("charMgr", "InvalidateStationItemsCache"):
+        "client-local cache eviction at eve/client/script/environment/invCache.py:855-859; no service or moniker call",
+}
 CORE_SERVICES = {
     "pingService", "air_npe", "config", "subscriptionMgr", "charMgr", "charUnboundMgr",
     "station", "stationSvc", "invbroker", "dogmaIM", "beyonce", "viewStateSvc",
@@ -467,6 +471,8 @@ def test_evidence(repo_root: pathlib.Path, pairs: set[tuple[str, str]], type_by_
 
 def status_for(pair: tuple[str, str], routes: set[tuple[str, str]], tests: dict[tuple[str, str], list[str]],
                contract: Any) -> tuple[str, str]:
+    if pair in CLIENT_LOCAL_APIS:
+        return "CLIENT-LOCAL", CLIENT_LOCAL_APIS[pair]
     if pair in OWNER_REJECTIONS:
         return "REJECTS-VALID-INPUT", OWNER_REJECTIONS[pair]
     if pair in contract.REGISTERED_BEHAVIOR_GAPS:

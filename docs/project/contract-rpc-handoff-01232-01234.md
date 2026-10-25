@@ -27,3 +27,8 @@ Local checks passed: Eve.Host.Tests and Eve.Services.Core.Tests build with zero 
 The current worktree already contained the implementation and registered-Host wire regressions from commits `6ea3ca9e` and `20d5e0ba`; no code change was needed for this recheck. `dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -p:UseSharedCompilation=false` passed with zero warnings and errors. The focused PlaceBid wire test passed (1 passed, 0 skipped). Selected Actions run `40172724038` completed successfully with no failed jobs or tests; it selected the three `registered_host_service` cases for PlaceBid, SearchContracts, and SplitStack. No database was used.
 
 The latest push CI run checked during the recheck, `40172681164` for `47b6cb04`, completed as cancelled because `.NET (space tests 1/16)` was cancelled; the required gate therefore reported cancelled. This shard does not cover the contract RPC tests. The contract Actions result above passed. No graphical-client run was performed.
+
+
+## Latest push verification (2026-10-25)
+
+After this handoff update was pushed as `c752afd4`, selected Actions run `40175238723` passed on that commit with no failed tests or jobs. `python3 tools/dev/ci-status.py failures c752afd4` found no `ci.yml` run for the documentation-only commit.

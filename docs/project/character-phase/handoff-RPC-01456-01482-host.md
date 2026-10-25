@@ -29,4 +29,5 @@ The production ESS services were already registered from `CoreRpc.cs` and compos
 - `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj --no-restore -p:BuildProjectReferences=false -p:UseSharedCompilation=false`: passed, 0 warnings and 0 errors.
 - Focused Host wire test: 1 passed, 0 failed, 0 skipped.
 - No database or graphical-client run. The wire fixture does not exercise PostgreSQL persistence or notification fan-out; those production paths remain covered by their existing service/Host tests.
-- Commit/push and Actions status will be recorded here after they complete.
+- The branch was merged with the fetched `origin/main` at merge commit `a5c78ab0`; the merged Host test project builds cleanly and the focused test passes again.
+- Push and Actions verification are the remaining steps; record their commit/run result here.

@@ -33,6 +33,8 @@ The current generated `CLIENT_CALL_MATRIX.csv` assigns different sequential IDs 
 ## Checks
 
 - Passed: `dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -p:UseSharedCompilation=false` (0 warnings, 0 errors).
-- Passed: focused `Eve.Host.Tests` filter `FullyQualifiedName~Map_reads_return_the_registered_wire_shapes_through_the_host` (1 passed, 0 skipped).
+- Passed locally: focused `Eve.Host.Tests` filter `FullyQualifiedName~Map_reads_return_the_registered_wire_shapes_through_the_host` (1 passed, 0 skipped).
+- Passed on Actions: focused agent-test run `40236372876` at `1b6c08cf`, no failed tests or jobs.
+- Push `ci.yml` run `40236366754` is in progress; its result is pending.
 - No PostgreSQL database or graphical client was used.
 - The first `--no-restore` build attempt reported that this worktree had no NuGet assets; the normal build restored dependencies and passed.

@@ -23,6 +23,7 @@ public sealed class SearchQueryHostTests
                 var search = host.Registry.Lookup("search");
                 Assert.NotNull(search);
                 Assert.True(search!.HasMethod("Query"));
+                Assert.True(search.HasMethod("QuickQuery"));
                 var response = Assert.IsType<PyDict>(await search.CallAsync(new ServiceCall
                 {
                     Method = "Query",
@@ -35,6 +36,15 @@ public sealed class SearchQueryHostTests
 
                 Assert.Equal([2L, 3L, 7L, 9L, 10L], response.Entries.Select(entry => ((PyInt)entry.Key).Value));
                 Assert.All(response.Entries, entry => Assert.Empty(Assert.IsType<PyList>(entry.Value).Items));
+
+                var quick = Assert.IsType<PyList>(await search.CallAsync(new ServiceCall
+                {
+                    Method = "QuickQuery",
+                    Args = [new PyStr(""), new PyList([new PyInt(2), new PyInt(10)])],
+                    Kwargs = Py.Dict(("machoVersion", new PyInt(496))),
+                    Session = new ClientSession { SessionId = 42 },
+                }));
+                Assert.Empty(quick.Items);
             }
             finally
             {

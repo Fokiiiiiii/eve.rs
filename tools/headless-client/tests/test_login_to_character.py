@@ -330,6 +330,53 @@ def test_a_character_logs_off_to_the_selection_screen_and_selects_again():
         assert m.plain(client.call("charUnboundMgr", "SelectCharacterID", charID=character_id, secondChoiceID=None, skipTutorial=False)) is None
         assert client.session.session_init.get("charid") == character_id
 
+def test_search_query_and_quickquery_use_the_registered_host_route():
+    """The client's item type lookup reads Query's category map and QuickQuery's flat ID list."""
+    run = uuid.uuid4().hex[:10]
+    with connect(f"walk-search-{run}") as client:
+        query = m.plain(client.call("search", "Query", "Rifter", [10], exact=2))
+        quick = m.plain(client.call("search", "QuickQuery", "Rifter", [10], exact=2, machoVersion=496))
+
+        assert isinstance(query, dict)
+        assert isinstance(query[10], list) and query[10]
+        assert isinstance(quick, list) and quick
+        assert set(query[10]).issubset(set(quick))
+
+
+def test_login_configuration_and_loyalty_rpc_routes_keep_their_wire_contracts():
+    """The selection UI and wallet services use the registered Host methods, not local stubs."""
+    run = uuid.uuid4().hex[:10]
+    with connect(f"walk-rpc-coverage-{run}") as client:
+        creation = next(
+            step
+            for step in WALK["steps"]
+            if step["call"][1] == "CreateCharacterWithDoll" and "ok" in step
+        )
+        service, method, described = creation["call"]
+        character_id = m.plain(client.call(service, method, *[revive(value, run) for value in described]))
+        assert isinstance(character_id, int)
+        assert client.call("charUnboundMgr", "SelectCharacterID", charID=character_id, secondChoiceID=None, skipTutorial=False) is None
+
+        assert isinstance(m.plain(client.call("kiringMgr", "IsMonochromeStyleEnabled", machoVersion=496)), bool)
+        assert isinstance(m.plain(client.call("machoNet", "GetGlobalConfig", machoVersion=496)), dict)
+        assert isinstance(m.plain(client.call("multiLoginBlocker", "Login", f"walk-{run}", machoVersion=496)), bool)
+
+        assert client.call("LPStoreMgr", "GetAvailableOffersFromCorp", 1000125, machoVersion=496) is not None
+        assert client.call("LPSvc", "GetAllMyCharacterWalletLPBalances", machoVersion=496) is not None
+        assert client.call("LPSvc", "GetAllMyCorporationWalletLPBalances", machoVersion=496) is not None
+        with pytest.raises(p.MachoError):
+            client.call("LPStoreMgr", "TakeOfferForCharacter", 1000125, 0, 1, machoVersion=496)
+        with pytest.raises(p.MachoError):
+            client.call("LPStoreMgr", "TakeOfferForCorporation", 1000125, 0, 1, machoVersion=496)
+        for method, args in (
+            ("ExchangeConcordLP", (1000125, 10)),
+            ("TransferLPFromMyCorpWalletToOtherCorp", (1000125, 1000125, 10)),
+            ("TransferLPFromMyWalletToOtherCorp", (1000125, 1000125, 10)),
+        ):
+            with pytest.raises(p.MachoError):
+                client.call("LPSvc", method, *args, machoVersion=496)
+
+
 def test_the_loyalty_point_wallet_answers_and_the_concord_exchange_is_refused():
     """LPSvc (the loyalty point wallet): a new character's balance rowset is answered (no source credits points yet), and
     ExchangeConcordLP is refused with the reason rather than answered as done (AG-1, DEVIATIONS.md)."""
@@ -376,6 +423,7 @@ def test_the_population_cap_answers_through_its_moniker():
         ((system_id, slot_key),) = slots.items()
         assert isinstance(system_id, int) and len(slot_key) == 36, slots
         assert m.plain(client.call_bound(bound, "GetCharacterLoadSlot", character_id)) == slots
+        assert m.plain(client.call_bound(bound, "MoveCharacterToNewSystem", character_id, system_id, slot_key)) is None
 
         for system, key in ((system_id + 1, slot_key), (system_id, "not-a-slot")):
             with pytest.raises(p.MachoError):

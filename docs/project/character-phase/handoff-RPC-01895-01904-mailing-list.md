@@ -23,9 +23,13 @@ The test callback records the real service's Host-provider boundary. Existing pr
 | RPC-01903 SetMembersMuted | mailingListsSvc.py:121-124 invalidates cached members; evemailingListConfig.py:276-282,288-290 mutes selected members then refreshes. | mailingListsMgrService.js:202-209 mutes authorized members and returns null. | MailingListComposition.cs:277-307 persists and sends OnMailingListSetMuted; the client consumes this in mailingListsSvc.py:149-153. |
 | RPC-01904 SetMembersOperator | mailingListsSvc.py:126-129 invalidates cached members; evemailingListConfig.py:283-290 promotes selected members then refreshes. | mailingListsMgrService.js:211-218 assigns operator role and returns null. | MailingListComposition.cs:277-307 persists and sends OnMailingListSetOperator; the client consumes this in mailingListsSvc.py:143-147. |
 
-The client-side decision points above were searched across the full /home/user/eve-logic tree, including downstream notification handlers in mailingListsSvc.py. No machoVersion occurrence is present in the mailing-list client service file.
+The client-side decision points above were searched across the full /home/user/eve-logic tree, including downstream notification handlers in mailingListsSvc.py. The transport adds machoVersion=1 when no cached version exists (carbon/common/script/net/ServiceCallGPCS.py:221-225); the Host wire regression now sends it as kwargs and checks that the manager receives the original positional arguments.
 
 ## Verification
+
+- PASS: `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -p:UseSharedCompilation=false -m:1 --no-restore` — 0 warnings, 0 errors after updating from main.
+- PASS: focused Host wire test on the merged tree with `machoVersion=1` sent as transport kwargs — 1 passed, 0 failed, 0 skipped.
+- Build prerequisite: added the missing `Eve.Services` using to the newly merged `ShipRpcHostTests.cs`; that unrelated test had blocked compilation of the shared Host test project.
 
 - PASS: MSBUILDDISABLENODEREUSE=1 dotnet test dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -p:UseSharedCompilation=false --filter 'FullyQualifiedName~Mailing_list_manager_mutations_are_forwarded_through_registered_host_wire' — 1 passed, 0 failed, 0 skipped.
 - The same focused test was rerun after tightening the Join KeyVal field assertion — 1 passed, 0 failed, 0 skipped.

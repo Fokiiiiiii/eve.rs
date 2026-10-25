@@ -17,7 +17,8 @@ public partial class HostServerTests
     {
         var writer = new RecordingContractWriter();
         var reads = new RecordingContractReadModel();
-        StartContractHost(writer, reads);
+        var inventory = new RecordingContractInventoryReader();
+        StartContractHost(writer, reads, inventory);
         var front = await Handshaken(await ConnectAsync());
         var open = Open();
         await front.SendAsync(open);
@@ -43,6 +44,36 @@ public partial class HostServerTests
         Assert.Equal(new PyInt(1), counts["nonCorpForMyCorp"]);
         Assert.Equal(new PyInt(101), counts["myCharTotal"]);
         Assert.Equal([42L, 42L, 84L], reads.OwnerIds);
+
+        var personalItems = Assert.IsType<PyObjectEx>(await Rpc(14, "GetItemsInDockableLocation", new PyInt(3001), PyBool.False));
+        Assert.Equal("__builtin__.set", ((PyToken)((PyTuple)personalItems.Header).Items[0]).Value);
+        var personalSet = Assert.IsType<PyList>(((PyTuple)((PyTuple)personalItems.Header).Items[1]).Items[0]);
+        Assert.Single(personalSet.Items);
+        var personalRow = Assert.IsType<PyPackedRow>(Assert.Single(personalSet.Items));
+        Assert.Equal(new PyInt(7001), personalRow.Values[1]);
+        var corporateItems = Assert.IsType<PyObjectEx>(await Rpc(15, "GetItemsInDockableLocation", new PyInt(3001), PyBool.True));
+        var corporateSet = Assert.IsType<PyList>(((PyTuple)((PyTuple)corporateItems.Header).Items[1]).Items[0]);
+        Assert.Equal(new PyInt(8001), Assert.IsType<PyPackedRow>(Assert.Single(corporateSet.Items)).Values[1]);
+
+        var containerItems = Assert.IsType<PyList>(await Rpc(16, "GetItemsInContainer",
+            new PyInt(3001), new PyInt(7001), PyBool.False, new PyInt(4)));
+        Assert.Equal(2, containerItems.Items.Count);
+        Assert.All(containerItems.Items, row => Assert.IsType<PyPackedRow>(row));
+        var containerCounts = Assert.IsType<PyDict>(await Rpc(17, "GetNumItemsInContainers",
+            new PyInt(3001), new PyList([new PyInt(7001), new PyInt(7002), new PyInt(7003)]),
+            PyBool.False, new PyInt(4)));
+        Assert.Equal(2, containerCounts.Entries.Count);
+        Assert.Contains(containerCounts.Entries, entry => entry.Key == new PyInt(7001) && entry.Value == new PyInt(2));
+        Assert.Contains(containerCounts.Entries, entry => entry.Key == new PyInt(7003) && entry.Value == new PyInt(1));
+        Assert.DoesNotContain(containerCounts.Entries, entry => entry.Key == new PyInt(7002));
+        Assert.Equal([
+            ("dockable", 3001L, 0L, false, 0),
+            ("dockable", 3001L, 0L, true, 0),
+            ("container", 3001L, 7001L, false, 4),
+            ("container", 3001L, 7001L, false, 4),
+            ("container", 3001L, 7002L, false, 4),
+            ("container", 3001L, 7003L, false, 4)
+        ], inventory.Requests);
 
         var page = Fields(Assert.IsType<PyObject>(await Rpc(12, "CollectMyPageInfo")));
         Assert.Equal(new PyInt(101), page["numOutstandingContractsNonCorp"]);
@@ -99,13 +130,14 @@ public partial class HostServerTests
         Assert.Equal((5003L, 42L, 84L, false, 1000, 3001L), writer.LastAccept);
     }
 
-    private void StartContractHost(RecordingContractWriter writer, IContractReadModel? readModel = null)
+    private void StartContractHost(RecordingContractWriter writer, IContractReadModel? readModel = null,
+        IContractInventoryReader? inventory = null)
     {
         var registry = new ServiceRegistry();
         Func<long> now = () => FixedNowMs;
         foreach (var service in CoreServices.Create(
             new NoAccounts(), now, contractReadModel: readModel, contractWriteModel: writer,
-            contractSkillLevel: (_, _, _) => ValueTask.FromResult(0),
+            contractSkillLevel: (_, _, _) => ValueTask.FromResult(0), contractInventoryReader: inventory,
             readCurrentCalendarGroups: (_, _) => ValueTask.FromResult((84L, 0L))))
             registry.Register(service);
 
@@ -190,6 +222,36 @@ public partial class HostServerTests
         {
             LastSplit = (itemId, quantity, characterId, corporationId, stationId, forCorporation, flag);
             return ValueTask.FromResult(true);
+        }
+    }
+
+    private sealed class RecordingContractInventoryReader : IContractInventoryReader
+    {
+        public List<(string Kind, long StationId, long ContainerId, bool ForCorporation, int Flag)> Requests { get; } = [];
+
+        public ValueTask<IReadOnlyList<ItemRow>> GetContractDockableItemsAsync(
+            ClientSession session, long stationId, bool forCorporation, CancellationToken cancellationToken)
+        {
+            Requests.Add(("dockable", stationId, 0, forCorporation, 0));
+            return ValueTask.FromResult<IReadOnlyList<ItemRow>>(
+                [new ItemRow(forCorporation ? 8001 : 7001, 34, forCorporation ? 84 : 42, stationId,
+                    forCorporation ? 115 : 4, 2, 25, 8)]);
+        }
+
+        public ValueTask<IReadOnlyList<ItemRow>> GetContractContainerItemsAsync(
+            ClientSession session, long stationId, long containerId, bool forCorporation, int flagId,
+            CancellationToken cancellationToken)
+        {
+            Requests.Add(("container", stationId, containerId, forCorporation, flagId));
+            IReadOnlyList<ItemRow> rows = containerId switch
+            {
+                7001 => [
+                    new ItemRow(9001, 35, 42, containerId, 4, 1, 26, 8),
+                    new ItemRow(9002, 36, 42, containerId, 4, 3, 27, 8)],
+                7003 => [new ItemRow(9003, 37, 42, containerId, 4, 1, 28, 8)],
+                _ => []
+            };
+            return ValueTask.FromResult(rows);
         }
     }
 

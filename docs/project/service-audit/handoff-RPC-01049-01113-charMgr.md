@@ -31,4 +31,4 @@ The corresponding EveJS paths are server/src/services/character/charMgrService.j
 
 ## Verification limits
 
-The focused Host wire test and Host/test-project compile-check were run locally. No PostgreSQL database or graphical EVE client was used. Existing CharacterInfo service tests cover character-bound state and persistence; the added no-database Host regression verifies registered routing and wire transport arguments.
+Local Host and Eve.Host.Tests compile-checks passed. The focused Host wire regression passed locally (1 passed, 0 skipped) and in Actions run 40216476212 for commit 070f82b1 (success, no failed jobs). The regenerated service audit now marks 24 listed RPC rows IMPLEMENTED-TESTED; RPC-01092 remains a false-positive MISSING row because the call is local to the client. No PostgreSQL database or graphical EVE client was used. Existing CharacterInfo service tests cover character-bound state and persistence; the added no-database Host regression verifies registered routing and wire transport arguments.

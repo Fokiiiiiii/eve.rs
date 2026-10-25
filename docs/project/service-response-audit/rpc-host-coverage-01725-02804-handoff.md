@@ -29,5 +29,6 @@ Updated 2026-10-25.
 - At `72746bc0`, local Host.Tests build succeeded (0 warnings/errors), eight focused tests passed (0 skipped), and Actions run `40186144273` succeeded.
 - At `20c354b6`, the dynamic info no-data test was added. The local build succeeded (0 warnings/errors), eight focused tests passed (0 skipped), and Actions run `40187369602` passed.
 - Current main head `976dae96`: Actions run `40187931398` succeeded with no failed jobs. `ci-status.py failures 976dae96` reported no ci.yml run.
-- For this increment, the Host.Tests project build succeeded (0 warnings/errors) and the focused keeper/localization wire test passed (1 passed, 0 skipped). The lookup and kill-right Host cases have not yet been executed.
+- For this increment, the Host.Tests project build succeeded (0 warnings/errors) and the keeper/localization wire test passed locally (1 passed, 0 skipped).
+- Actions run `40204774520` on `6fd6d8e9` failed before executing tests (0 passed, 0 failed, 0 skipped): the filter used the new filename, but the test class is the existing partial `HostServerTests`. It is being corrected to filter by test method names.
 - Successful dynamic mutation persistence and populated `GetDynamicItemInfo` data remain uncovered. In this increment, the dungeon editor’s bound-object methods, successful kill-right payment/activation and owner notification, database state, and graphical-client behavior were not exercised. No database was used. The audit generator misses the inventory publisher wrapper and shared wire-test helpers, so its CSV coverage remains stale.

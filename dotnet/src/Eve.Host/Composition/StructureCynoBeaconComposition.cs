@@ -47,4 +47,24 @@ internal sealed partial class CharacterServicesComposition
             throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Your jump drive is not available.")));
         return jumpDrive.JumpToStructureBeaconAsync(session, structureId, typeId, solarSystemId, boundObjectId, cancellationToken);
     }
+
+    private async ValueTask<PyValue> BridgeToStructureBeaconAsync(
+        ServiceCall call, long structureId, Eve.Services.Space.StructureBeaconInfo beacon)
+    {
+        if (spaceSessions?.Bridges is not { } bridges)
+            throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Structure cyno bridging is not available.")));
+        await bridges.OpenStructureAsync(
+            call.Session, structureId, beacon.TypeId, checked((int)beacon.SolarSystemId), call.Cancellation);
+        return PyBool.True;
+    }
+
+    private async ValueTask<PyValue> GroupJumpToStructureBeaconAsync(
+        ServiceCall call, long structureId, Eve.Services.Space.StructureBeaconInfo beacon)
+    {
+        if (spaceSessions?.Conduits is not { } conduits)
+            throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Structure group jumps are not available.")));
+        return await conduits.GroupJumpToStructureBeaconAsync(
+            call.Session, structureId, beacon.TypeId, checked((int)beacon.SolarSystemId), call.BoundObjectId, call.Cancellation);
+    }
+
 }

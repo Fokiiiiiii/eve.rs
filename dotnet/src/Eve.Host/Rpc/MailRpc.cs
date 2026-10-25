@@ -144,30 +144,13 @@ internal sealed partial class CharacterServicesComposition
         insuranceService,
         new MailService(
             ct => ReadGameStoreTableAsync("mail", ct),
-            async (characterId, messageId, requestingSession, ct) =>
-            {
-                var statusPath = $"/mailboxes/{characterId}/statuses/{messageId}";
-                if (mailCache.Read("mail", statusPath).Data is not JsonObject status)
-                    return;
-                var priorMask = long.TryParse(status["statusMask"]?.ToString(),
-                    System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture,
-                    out var parsedMask) ? parsedMask : 0;
-                if ((priorMask & 1) != 0)
-                    return;
-                status["statusMask"] = priorMask | 1L;
-                var write = mailCache.Write("mail", statusPath, status);
-                if (!write.Success)
-                    throw new InvalidOperationException($"Could not mark mail {messageId} read: {write.ErrorMsg}");
-                await mailCache.FlushTableAsync("mail", ct);
-                if (characterSessions.Of(characterId) is { } otherSession &&
-                    !ReferenceEquals(otherSession, requestingSession))
-                {
-                    otherSession.SendNotification("OnMailUpdatedByExternal", "clientID",
-                        new PyTuple([new PyList([new PyInt(messageId)]), PyBool.True, PyNone.Instance]));
-                }
-            },
+            (characterId, messageId, requestingSession, ct) => MutateMailboxAsync(
+                new MailboxMutationRequest(characterId, "MarkAsRead",
+                    [new PyList([new PyInt(messageId)])], requestingSession),
+                ct),
             mailSendWriter.SendAsync,
-            mailSendWriter.SendGmChatPokeAsync),
+            mailSendWriter.SendGmChatPokeAsync,
+            MutateMailboxAsync),
         new NotificationMgrService(notificationMgr.ReadAsync, now, mutate: notificationMgr.MutateAsync),
         new MailingListService(
             async ct =>
@@ -178,4 +161,64 @@ internal sealed partial class CharacterServicesComposition
             mutateMailingList),
     ];
 }
+
+    private async Task MutateMailboxAsync(MailboxMutationRequest request, CancellationToken cancellationToken)
+    {
+        await mailSendWriter.MutationGate.WaitAsync(cancellationToken);
+        try
+        {
+            var state = await ReadGameStoreTableAsync("mail", cancellationToken);
+            var mailbox = (state["mailboxes"] as JsonObject)?[
+                request.CharacterId.ToString(System.Globalization.CultureInfo.InvariantCulture)] as JsonObject;
+            var messages = state["messages"] as JsonObject;
+            if (mailbox?["statuses"] is not JsonObject statuses || messages is null)
+                return;
+
+            var changed = MailboxMutation.Apply(mailbox, messages, request).Changed;
+            if (changed.Count == 0)
+                return;
+            foreach (var entry in changed)
+            {
+                var status = statuses[entry.Id.ToString(System.Globalization.CultureInfo.InvariantCulture)] as JsonObject
+                    ?? throw new InvalidOperationException($"Updated mail {entry.Id} lost its status row.");
+                var write = mailCache.Write("mail", $"/mailboxes/{request.CharacterId}/statuses/{entry.Id}", status);
+                if (!write.Success)
+                    throw new InvalidOperationException($"Could not update mail {entry.Id}: {write.ErrorMsg}");
+            }
+            await mailCache.FlushTableAsync("mail", cancellationToken);
+
+            var recipientSession = characterSessions.Of(request.CharacterId);
+            if (recipientSession is null || ReferenceEquals(recipientSession, request.Session))
+                return;
+            var messageIds = new PyList([.. changed.Select(entry => (PyValue)new PyInt(entry.Id))]);
+            if (request.Method is "MoveToTrash" or "MoveAllToTrash" or "MoveToTrashByLabel" or "MoveToTrashByList")
+            {
+                recipientSession.SendNotification("OnMailTrashed", "clientID", new PyTuple([messageIds]));
+            }
+            else if (request.Method is "MoveFromTrash" or "MoveAllFromTrash")
+            {
+                recipientSession.SendNotification("OnMailRestored", "clientID", new PyTuple([messageIds]));
+            }
+            else if (request.Method is "RemoveLabels" or "ReplaceLabels")
+            {
+                foreach (var group in changed.GroupBy(entry => entry.LabelMask))
+                    recipientSession.SendNotification("OnMailUpdatedByExternal", "clientID",
+                        new PyTuple([
+                            new PyList([.. group.Select(entry => (PyValue)new PyInt(entry.Id))]),
+                            PyNone.Instance,
+                            new PyInt(checked((int)group.Key))
+                        ]));
+            }
+            else
+            {
+                var isRead = request.Method is "MarkAsRead" or "MarkAsReadByLabel" or "MarkAsReadByList";
+                recipientSession.SendNotification("OnMailUpdatedByExternal", "clientID",
+                    new PyTuple([messageIds, PyValue.Of(isRead), PyNone.Instance]));
+            }
+        }
+        finally
+        {
+            mailSendWriter.MutationGate.Release();
+        }
+    }
 }

@@ -11,7 +11,7 @@ namespace Eve.Services.Core;
 
 /// server/src/services/mail/{mailMgrService,mailState}.js.
 /// Client: eve-logic 1dbb5711a072a146e1d228365668ac05655eefe1,
-/// eve/client/script/ui/services/mail/mailSvc.py (SyncMail, GetBody, GetLabels).
+/// eve/client/script/ui/services/mail/mailSvc.py (SyncMail, GetBody, GetLabels and mailbox mutations).
 /// </summary>
 /// <param name="readMail">Returns a consistent snapshot of the persisted mail table root.</param>
 /// <param name="markAsRead">
@@ -22,7 +22,8 @@ public sealed class MailService(
     Func<CancellationToken, Task<JsonObject>> readMail,
     Func<long, long, ClientSession, CancellationToken, Task> markAsRead,
     Func<MailSendRequest, ClientSession, CancellationToken, Task<long?>>? sendMail = null,
-    GmChatPokeMailCallback? pokePlayerAboutChatMsgGm = null) : IService
+    GmChatPokeMailCallback? pokePlayerAboutChatMsgGm = null,
+    MailboxMutationCallback? mutateMailbox = null) : IService
 {
     private readonly Func<CancellationToken, Task<JsonObject>> _readMail =
         readMail ?? throw new ArgumentNullException(nameof(readMail));
@@ -30,6 +31,7 @@ public sealed class MailService(
         markAsRead ?? throw new ArgumentNullException(nameof(markAsRead));
     private readonly Func<MailSendRequest, ClientSession, CancellationToken, Task<long?>>? _sendMail = sendMail;
     private readonly GmChatPokeMailCallback? _pokePlayerAboutChatMsgGm = pokePlayerAboutChatMsgGm;
+    private readonly MailboxMutationCallback? _mutateMailbox = mutateMailbox;
 
     private const int MaxCharacterRecipients = 50;
     private const int MaxMailboxMessageIds = 500;
@@ -40,7 +42,12 @@ public sealed class MailService(
 
     public string Name => "mailMgr";
 
-    public bool HasMethod(string method) => method is "SyncMail" or "GetMailHeaders" or "GetBody" or "GetLabels" or "MarkAsRead" or "SendMail" or "PokePlayerAboutChatMsgGm";
+    public bool HasMethod(string method) => method is
+        "SyncMail" or "GetMailHeaders" or "GetBody" or "GetLabels" or "MarkAsRead" or
+        "MarkAsUnread" or "MarkAsReadByLabel" or "MarkAsReadByList" or
+        "MarkAsUnreadByLabel" or "MarkAsUnreadByList" or "MoveFromTrash" or "MoveToTrash" or
+        "MoveAllFromTrash" or "MoveAllToTrash" or "MoveToTrashByLabel" or "MoveToTrashByList" or
+        "RemoveLabels" or "ReplaceLabels" or "SendMail" or "PokePlayerAboutChatMsgGm";
 
     public async ValueTask<PyValue> CallAsync(ServiceCall call)
     {
@@ -48,6 +55,19 @@ public sealed class MailService(
             return PyNone.Instance;
         call.Cancellation.ThrowIfCancellationRequested();
 
+        if (call.Method == "MarkAsRead" && _mutateMailbox is not null)
+        {
+            await MutateMailboxAsync(call);
+            return PyNone.Instance;
+        }
+        if (call.Method is "MarkAsUnread" or "MarkAsReadByLabel" or "MarkAsReadByList" or
+            "MarkAsUnreadByLabel" or "MarkAsUnreadByList" or "MoveFromTrash" or "MoveToTrash" or
+            "MoveAllFromTrash" or "MoveAllToTrash" or "MoveToTrashByLabel" or "MoveToTrashByList" or
+            "RemoveLabels" or "ReplaceLabels")
+        {
+            await MutateMailboxAsync(call);
+            return PyNone.Instance;
+        }
         if (call.Method == "MarkAsRead")
         {
             var requestedIds = Items(call.Arg(0));
@@ -113,7 +133,50 @@ public sealed class MailService(
         }
     }
 
-private async ValueTask<PyValue> SendMailAsync(ServiceCall call)
+private async Task MutateMailboxAsync(ServiceCall call)
+    {
+        var characterId = call.Session.CharacterId.GetValueOrDefault();
+        if (characterId <= 0)
+            return;
+        var callback = _mutateMailbox ??
+            throw new InvalidOperationException("mailMgr mailbox changes require an atomic persistence callback.");
+        if (call.Method is "MarkAsRead" or "MarkAsUnread" or "MoveFromTrash" or "MoveToTrash" or "RemoveLabels" or "ReplaceLabels")
+        {
+            var ids = Items(call.Arg(0));
+            if (ids.Count > MaxMailboxMessageIds)
+                throw MailLimitRefusal("MAIL_BULK_LIMIT_EXCEEDED");
+            if (ids.Any(id => PositiveId(id) <= 0))
+                throw MailLimitRefusal("MAIL_MESSAGE_ID_INVALID");
+        }
+        if (call.Method is "MarkAsReadByLabel" or "MarkAsUnreadByLabel" or "MoveToTrashByLabel")
+        {
+            if (PositiveId(call.Arg(0)) <= 0)
+                throw MailLimitRefusal("MAIL_LABEL_ID_INVALID");
+        }
+        if (call.Method is "MarkAsReadByList" or "MarkAsUnreadByList" or "MoveToTrashByList")
+        {
+            if (PositiveId(call.Arg(0)) <= 0)
+                throw MailLimitRefusal("MAIL_LIST_ID_INVALID");
+        }
+        if (call.Method is "RemoveLabels" or "ReplaceLabels")
+        {
+            var labels = NonNegativeId(call.Arg(1));
+            if (labels < 0)
+                throw MailLimitRefusal("MAIL_LABEL_ID_INVALID");
+        }
+        await callback(new MailboxMutationRequest(characterId, call.Method, call.Args, call.Session), call.Cancellation);
+    }
+
+    private static long NonNegativeId(PyValue value) => value switch
+    {
+        PyInt integer when integer.Value >= 0 => integer.Value,
+        PyLong integer when integer.Value >= 0 => integer.Value,
+        PyReal real when double.IsFinite(real.Value) && real.Value >= 0 && real.Value < long.MaxValue
+            && real.Value == Math.Truncate(real.Value) => (long)real.Value,
+        _ => -1,
+    };
+
+    private async ValueTask<PyValue> SendMailAsync(ServiceCall call)
     {
         var characterId = call.Session.CharacterId.GetValueOrDefault();
         if (characterId <= 0)
@@ -322,6 +385,106 @@ private static PyValue OptionalIds(JsonNode? value) => value is JsonArray ids
 
     private static string Text(JsonNode? value) =>
         value is JsonValue scalar && scalar.TryGetValue<string>(out var text) ? text : value?.ToJsonString() ?? "";
+}
+
+public sealed record MailboxMutationRequest(
+    long CharacterId,
+    string Method,
+    IReadOnlyList<PyValue> Arguments,
+    ClientSession Session);
+
+public delegate Task MailboxMutationCallback(
+    MailboxMutationRequest request,
+    CancellationToken cancellationToken);
+
+public sealed record MailboxMutationResult(
+    IReadOnlyList<(long Id, long StatusMask, long LabelMask)> Changed);
+
+public static class MailboxMutation
+{
+    public static MailboxMutationResult Apply(
+        JsonObject mailbox,
+        JsonObject messages,
+        MailboxMutationRequest request)
+    {
+        var statuses = mailbox["statuses"] as JsonObject;
+        if (statuses is null)
+            return new MailboxMutationResult([]);
+        var arguments = request.Arguments;
+        var requestedIds = arguments.Count > 0 ? Ids(arguments[0]).ToHashSet() : [];
+        var selector = arguments.Count > 0 ? Integer(arguments[0]) : 0;
+        var labelMask = arguments.Count > 1 ? Integer(arguments[1]) : 0;
+        var changed = new List<(long Id, long StatusMask, long LabelMask)>();
+        foreach (var (key, node) in statuses.ToArray())
+        {
+            if (node is not JsonObject status ||
+                !long.TryParse(key, NumberStyles.None, CultureInfo.InvariantCulture, out var id) ||
+                id <= 0 || messages[key] is not JsonObject message)
+                continue;
+            var statusMask = Integer(status["statusMask"]);
+            var currentLabels = Integer(status["labelMask"]);
+            var selected = request.Method switch
+            {
+                "MarkAsRead" or "MarkAsUnread" or "MoveFromTrash" or "MoveToTrash" =>
+                    requestedIds.Contains(id),
+                "MoveAllToTrash" or "MoveAllFromTrash" => true,
+                "MarkAsReadByLabel" or "MarkAsUnreadByLabel" or "MoveToTrashByLabel" =>
+                    (currentLabels & selector) == selector,
+                "MarkAsReadByList" or "MarkAsUnreadByList" or "MoveToTrashByList" =>
+                    Integer(message["toListID"]) == selector,
+                "RemoveLabels" or "ReplaceLabels" => requestedIds.Contains(id),
+                _ => false,
+            };
+            if (!selected)
+                continue;
+            if (request.Method is "MarkAsReadByLabel" or "MarkAsUnreadByLabel" or
+                "MarkAsReadByList" or "MarkAsUnreadByList")
+            {
+                if ((statusMask & 8) != 0)
+                    continue;
+            }
+            var nextStatus = request.Method switch
+            {
+                "MarkAsRead" or "MarkAsReadByLabel" or "MarkAsReadByList" => statusMask | 1,
+                "MarkAsUnread" or "MarkAsUnreadByLabel" or "MarkAsUnreadByList" => statusMask & ~1L,
+                "MoveToTrash" or "MoveAllToTrash" or "MoveToTrashByLabel" or "MoveToTrashByList" => statusMask | 8,
+                "MoveFromTrash" or "MoveAllFromTrash" => statusMask & ~8L,
+                _ => statusMask,
+            };
+            var nextLabels = request.Method switch
+            {
+                "RemoveLabels" => currentLabels & ~labelMask,
+                "ReplaceLabels" => labelMask,
+                _ => currentLabels,
+            };
+            if (nextStatus == statusMask && nextLabels == currentLabels)
+                continue;
+            status["statusMask"] = nextStatus;
+            status["labelMask"] = nextLabels;
+            changed.Add((id, nextStatus, nextLabels));
+        }
+        return new MailboxMutationResult(changed);
+    }
+
+    private static IReadOnlyList<long> Ids(PyValue value) => value switch
+    {
+        PyList list => list.Items.Select(Integer).Where(id => id > 0).Distinct().ToArray(),
+        PyTuple tuple => tuple.Items.Select(Integer).Where(id => id > 0).Distinct().ToArray(),
+        _ => [],
+    };
+
+    private static long Integer(PyValue value) => value switch
+    {
+        PyInt integer => integer.Value,
+        PyLong integer => integer.Value,
+        PyReal real when double.IsFinite(real.Value) && real.Value >= long.MinValue && real.Value < long.MaxValue
+            && real.Value == Math.Truncate(real.Value) => (long)real.Value,
+        _ => 0,
+    };
+
+    private static long Integer(JsonNode? value) =>
+        long.TryParse(value?.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var number)
+            ? number : 0;
 }
 
 public sealed record MailSendRequest(

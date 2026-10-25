@@ -197,7 +197,6 @@ Published drones that carry a non-damage effect (a stasis webifier, a neutralize
 | OPEN | Hybrid drones (`-I`) | A hybrid carries a turret and an EW effect; they run on separate clocks. Their combined behaviour and the client's view of both are not checked. |
 | LIMITATION | Recall mid-cycle | A repairer's cycle that has begun lands its mend when the drone stops (not at the cycle's end). Hold records of a destroyed drone lapse after their duration instead of being lifted at once. |
 | OPEN | Mining and salvage drones | Mining drones now route through `MiningProfile` (`SpaceDrones.cs`, the same mining numbers a mining module uses; `MiningYield` and `MiningProfile` in `Eve.Ships`), covered by `MiningYieldTests` and `MiningProfileTests`. Not yet verified in the graphical client. |
-
 ## 7. Module effects wired, body pending (exploration, hacking, scanners)
 
 Each effect below is **OPEN — module wired, effect body pending**. Its handler (`ExplorationModuleEffects.cs`) derives from `PendingModuleEffect` (`dotnet/src/Eve.Services.Space/Effects/PendingModuleEffect.cs`) and is registered in `ModuleEffects.Default`, so the module fits and onlines as usual. The effect stays listed by `Uncovered` (`Implemented` is false): a refusal is not coverage. An activation is refused with `EFFECT_NOT_IMPLEMENTED`, which the client shows as "X cannot be activated." (the same as `UNSUPPORTED_EFFECT`); no cycle, capacitor or success is reported.
@@ -397,8 +396,7 @@ The start scripts are `tools/windows/` (`start-server.bat`, `start-server-dev.ba
 | OPEN | Windows PowerShell and console behavior | PowerShell developer scripts now cover service control, checks, and headless tests. Verify Ctrl+C, the batch prompt, and window-close behavior on the owner's Windows setup. |
 | OPEN | `global.json` SDK path `../.dotnet` | Check SDK selection on the owner's Windows checkout path. |
 | DONE | Windows test entry points | `tools/windows/check-all.ps1`, `pg18.ps1`, and `run-headless.ps1` provide PowerShell 5.1 counterparts for local checks, installed PostgreSQL 18 service control, and headless tests. |
-| DONE | Host `tcp:` listener | `HostListener` binds numeric IPv4 TCP endpoints; Windows tests cover its defaults and binding. |
-| DONE | Platform-aware defaults | `eve-net` (`DEFAULT_HOST`), `eve-sim` (`127.0.0.1:26011` off Unix) and `HostConfiguration.DefaultEndpoint`/`DefaultSimSocket` default to TCP on Windows; unit tests cover them. |
+| DONE | Host `tcp:` listener | `HostListener` binds numeric IPv4 TCP endpoints; Windows tests cover its defaults and binding. || DONE | Platform-aware defaults | `eve-net` (`DEFAULT_HOST`), `eve-sim` (`127.0.0.1:26011` off Unix) and `HostConfiguration.DefaultEndpoint`/`DefaultSimSocket` default to TCP on Windows; unit tests cover them. |
 | DONE | Ctrl-C of the simulation | `eve-sim` races the connection against Ctrl-C; before, it ignored Ctrl-C while a host was connected. |
 | DONE | Line endings | `.gitattributes`: `* text=auto`, `.sh` LF, `.bat`/`.ps1` CRLF. |
 
@@ -597,8 +595,7 @@ Open, each with its blocker:
   allowed for them, and neither is written. The EVE University wiki "Hacking" page gives the analyzer numbers (base virus coherence 40 and strength 20 for tier 1,
   60 and 30 for tier 2; Hacking and Archaeology add 10 coherence per level; the minigame's failure penalties). It does not give the range, the cycle, the activation
   or the Data Subverter: those stay on the SDE attributes (54, 73, 902, 1909 to 1911). The body is blocked: eve.rs has no hackable site entity (a materialised
-  container with a hacking state) for the target to be validated against.
-- Survey Scanner: not part of this runtime. The reference's scanner module runtime has no survey effect; `surveyScan` belongs to the mining chipsets (section 7).
+  container with a hacking state) for the target to be validated against.- Survey Scanner: not part of this runtime. The reference's scanner module runtime has no survey effect; `surveyScan` belongs to the mining chipsets (section 7).
 - Resistance at activation: EVE.js refuses the start before a cycle is spent. The host reads the target's resistance at the cycle's end, so the eve.rs scanner
   spends one cycle. A pre-activation check needs the target's resistance in the activation request (a wire field).
 - NPC targets: a target needs an item record for its hold and fittings. NPC ships have none, so they are refused as `NO_TARGET`.
@@ -797,8 +794,7 @@ Done (tests: `ShipStanceWorldTests`, `ShipStanceNotifyTests`, `ShipStanceTableTe
 - SF-4 (T3C assembly): `ship.AssembleShip` on the station `ship` moniker (`ShipService.AssembleShip`, `CharacterShips.AssembleAsync`). A packaged hull in the hangar becomes assembled; a Strategic Cruiser takes one subsystem per class (125 to 128), each for its hull (SDE 1380). The answer is the ship's id, a list, or None. The name is normalised as EveJS does. An incomplete undock is refused (`SpaceSessions.UndockAsync`). A subsystem class is at most four. A swap in the station goes through the move path, and the fit check refuses a subsystem of another hull.
 - SF-5 (hidden modifiers): flag-156 items are in the ship's dogma world (`ShipSnapshot.LoadAsync`), not in `Fitted`. The Sharpshooter and Defence modes move the hull's numbers as their SDE effects say.
 - SF-6 (T3D stance): a changed stance sends `OnStanceActive (shipID, stanceID)` to the pilot after the commit, and a ship in space is sent again (`ShipStanceMgrService`, `RefreshShipAsync`). The table matches the SDE groups and the client. The switch is refused in station (the wiki: "while in space"; EveJS allows station, a recorded deviation).
-- SF-7 (sweep): every ship-scope effect is passive, and every modifier is applied (`ShipEffectSweepTests`, real SDE).
-- SF-8 and SF-9 (hull data): cargo is the SDE `types.capacity` (attribute 38, loaded from `types`); the packaged volumes are the client's table and are kept. The SDE gaps are pinned (three hulls with no capacity, four with no skill, Opux Luxury Yacht with no type bonus and no effect).
+- SF-7 (sweep): every ship-scope effect is passive, and every modifier is applied (`ShipEffectSweepTests`, real SDE).- SF-8 and SF-9 (hull data): cargo is the SDE `types.capacity` (attribute 38, loaded from `types`); the packaged volumes are the client's table and are kept. The SDE gaps are pinned (three hulls with no capacity, four with no skill, Opux Luxury Yacht with no type bonus and no effect).
 - SF-11 (special hulls, partial): the role bonuses of the command destroyer, blockade runner, black ops and jump freighter reach the hull's numbers (`SpecialHullBonusTests`).
 
 Open, each with its blocker:
@@ -998,7 +994,6 @@ Open, each with its blocker (the remaining increments):
 - Shortcut: a beacon that is lit before a restart is not told to its fleet again (as the field of track A6; the notice is sent when it anchors, not when a ship returns to the system).
 - Shortcut: a bridge or a conduit does not survive a restart of the host (track A9, unchanged), so a beacon jump to a bridge opened before the restart is not possible; the beacon itself comes back.
 - not exercised: the client and the MITM capture (`tools/mitm/README.md`): the beacon's menu entry, the fleet's notices, the bridge's notice and the jump's arrival at a beacon are not seen in the client. The host jump to an anchored beacon is tested at the host (`A_revelation_jumps_to_an_anchored_beacon...`), the simulation's arrival at a beacon is not driven by a test.
-
 ## 36. Track S2c: module bonuses tested at module level, the Crimewatch timer race (2026-10-10)
 
 Done (tests: `ModuleBonusTests` (PgFact: each module fitted with its skills at level five, started, its numbers compared with the SDE), `SiegeModuleTests`, `SpecialHullBonusTests`; Crimewatch `RuntimeTests.A_timer_that_runs_out...`; fit `RulesTests`; decisions and sources in DEVIATIONS "Track S2c").
@@ -1197,8 +1192,7 @@ walk, flying the Cockroach, the EVE.js side of the MITM capture, the client's lo
 
 ## Agents slice AG-3 (2026-10-11)
 
-Continues AG-2 on the same branch. A9 part 2 is done (DEVIATIONS "Agents slice AG-3, A9 (part 2)").
-A1 done: the agent catalog is a pure function (`AgentCatalog.Build`, Eve.Host) that the composition calls; `AgentCatalogSdeTests`
+Continues AG-2 on the same branch. A9 part 2 is done (DEVIATIONS "Agents slice AG-3, A9 (part 2)").A1 done: the agent catalog is a pure function (`AgentCatalog.Build`, Eve.Host) that the composition calls; `AgentCatalogSdeTests`
 (2, PostgreSQL, the pinned SDE): 10,966 agents by agentTypeID, 1,773 locators, 360 in space, and two concrete agents
 (3008416 basic, 3019369 in space). Open after it: the
 standing requirements of store offers and the structure stores (gaps), the idempotency key the client does not send.
@@ -1397,8 +1391,7 @@ Open:
 | status | item | where | note |
 |---|---|---|---|
 | DONE | `BodyKind::Structure`, `StructureStatus`, `PlaceStructure` / `RemoveStructure` / `SetStructureState` (protocol 59) | `crates/eve-space/src/scene/structures.rs`, `link/*`, `sim/dispatch.rs` | Sim-side only; the host sends nothing yet (increment d). |
-| DONE | Slim item of a structure (state, upkeep, timer, unanchoring, repairing, category 65) | `crates/eve-space/src/slim.rs` `structure_fields` | Client field names read from eve-logic `structure.py`, `structureBracket.py`. |
-| DONE | C# codec, records, `ISimulation`, `SimClient`, fakes; fixtures regenerated | `dotnet/src/Eve.Space/*`, `oracle/fixtures/simlink/messages.json` | `Eve.Space.Tests` 276 pass; `Eve.Services.Space.Tests` 648 pass with PG. |
+| DONE | Slim item of a structure (state, upkeep, timer, unanchoring, repairing, category 65) | `crates/eve-space/src/slim.rs` `structure_fields` | Client field names read from eve-logic `structure.py`, `structureBracket.py`. || DONE | C# codec, records, `ISimulation`, `SimClient`, fakes; fixtures regenerated | `dotnet/src/Eve.Space/*`, `oracle/fixtures/simlink/messages.json` | `Eve.Space.Tests` 276 pass; `Eve.Services.Space.Tests` 648 pass with PG. |
 | DONE (sim) | Health layers, per-second damage cap, `StructureDamaged` (protocol 60) | `crates/eve-space/src/health/structure.rs`, `scene/structures.rs` `damage_structure` | Slice 4: turrets, missiles, smartbombs and damage bombs hit a structure's layers (`weapons/fire.rs`, `missile_entity.rs`, `deployable.rs`); a hit that empties several layers is told per layer, in order. Open: fighters and drones, spool and disruption against a structure. |
 | DONE | Dockable body generalisation in `scene/docking.rs` | ST-1 (c) | Built: row 1374 (four scene tests). |
 | DONE | Host `SpaceStructures` (restore on first entry, `structure.state_changed` subscriber, damage to the ST-0 machine) | ST-1 (d) | Built: row 1375 (`dotnet/src/Eve.Services.Space/SpaceStructures.cs`). |
@@ -1597,8 +1590,7 @@ follow a completed step, with forks, the 90-day restart and the held-back sites 
 
 ## 54. Mission execution X3 step 2: client texts and the held-mission views (2026-10-11)
 
-| Status | Item | Where / blocker |
-|---|---|---|
+| Status | Item | Where / blocker ||---|---|---|
 | DONE (tests) | Loader of the client's mission text IDs (embedded copy `client-missions.jsonl.gz`, build 3396210, IDs only) into schema `client_sde` (replaced at each start); `EVE_CLIENT_SDE_DIR` overrides | `Eve.Services.Core/ClientMissionMessages.cs`; `MissionComposition.LoadClientMissionMessagesAsync`; `MissionViewsTests` (synthetic, and the real export when configured: 2,886 rows with messages, 6 without) |
 | DONE (tests) | `GetMissionBriefingInfo` and `GetMissionObjectiveInfo` on the bound agent for a held (offered, accepted or completed) mission: the briefing and title IDs; the kill dungeon objective and the ISK reward; None when no mission is held | `Eve.Services.Core/MissionViews.cs`; `AgentMissionService.ReadHeldMissionAsync`; host `ReadHeldMissionAsync` |
 | PARTIAL (tests) | Fetch and courier objective payloads | `MissionViews.Objective` exposes cargo and pickup/drop-off rows from Host item/station state; `MissionDungeonRuntime` transfers/consumes tagged courier cargo and completes fetch turn-ins idempotently (`MissionViewsTests`, `MissionDungeonRuntimeTests`). The full live arc courier steps remain held; see section 43b/55. |
@@ -1797,7 +1789,6 @@ Evidence and decisions: `docs/project/WORMHOLE_DESIGN.md` (sources, SDE numbers,
 ## Wormhole space: final status (2026-10-12)
 
 The design is in `docs/project/WORMHOLE_DESIGN.md`; the deviations and project rules are in `docs/reference/compat/DEVIATIONS.md` (the sections named "Wormhole ..."). Earlier wormhole rows above are superseded by this section.
-
 | Status | Area | What is there | Evidence |
 |---|---|---|---|
 | DONE (tests) | Wormhole types, rules, J-space classes, effect beacons | 129 types from the SDE; mass and lifetime rules; 2,604 systems with their class; 36 beacons | `WormholeTypeCatalogTests`, `WormholeRulesTests`, `WormholeClientDataTests`, `WormholeEffectsTests` |
@@ -1998,7 +1989,6 @@ Existing exact-name TODO evidence (same owner/work): [existing row](../../docs/p
 **CH-6 (character phase, S1, S5):** `userSvc.ActivateMultiTraining(itemID, trainingID)` consumes one Multiple Character Training certificate (type 34133 or 63188) held by a character of the account from its stack (the rest of the stack stays), adds 30 days to the queue (the named slot, else the free slot or the one that ends first), and refuses other items, unknown items and non-Omega accounts with the reference's CustomInfo text (`PersistenceNewEdenStoreRuntime.MultipleTraining`). Every granted slot schedules a durable job at its end (`MultipleTrainingSlotExpiry`, job kind `skills.mctSlotExpiry`, scheduled in the grant's transaction): at the end, the running queues beyond the remaining slots are paused, the character with the fewest skill points first (wiki "Multiple Character Training"), and the account's clients are told (`OnSkillQueuePausedServer`, `OnMultipleCharactersTrainingUpdated`). Tests: `CharacterHostTests` (consume, 30 days, refusal, restart, the notification to the registered session, a stack of two, the expiry job scheduled at the slot end and run by the scheduler), `TrainingServiceTests` (the pause decision and the notification order), live `test_multi_training_live.py` (refusal; a stack of two certificates gives up one per activation, the slots read). Startup now reads persisted account slot expiries and recreates missing future expiry jobs; expiries that passed while the host was stopped immediately reconcile over-limit queues. Host regression: `Host_startup_recreates_expiry_jobs_for_existing_training_slots`; new certificate grants still schedule their jobs in the grant transaction.
 
 **CH-3 (character phase, S1, S5), partial:** `skillHandler.CheckAndSendNotifications` answers an empty list and sends nothing, as the reference does (EveJS `skillMgrService.js` 594; the client calls it only from a development provider). Test: `CharacterHostTests` (Host registry). Notification order: `SkillQueueContractTests.Save_abort_and_level_completion_keep_the_reference_notification_order` covers save/pause, abort and level completion. S6: `GetSkillBundleInfo(skillBundleID)` answers the client's own shape, the pair (name label, icon) with an empty label and no icon (eve-logic `crate/lootItem.py` 87 unpacks it and falls back to the default icon). No bundle name or icon exists in any source (S5 searched them all), so the answer carries no bundle data and does not check the id. Tests: `CharacterHostTests.Skill_bundle_info_answers_the_client_empty_shape_through_the_registry`, live `test_skill_bundle_info_live.py`. Open: the name and icon source, which the owner decides (DEVIATIONS, S6).
-
 **CH-10 (character phase, S1):** GATE-C decided by the owner: `CastUpvote`, `CastDownvote`, `ReportBot` and `ReportISKSpammer` answer `true` and keep nothing (DEVIATIONS, "Character phase: votes, reports and playtime"). `GetSessionPlaytimeMinutes` answers 0 as the reference does; no V24.01 caller and no stored source were found. Test: `UserSvcServiceTests` (Core tests).
 
 #### Named group: keeper (1 exits)
@@ -2033,7 +2023,7 @@ Existing exact-name TODO evidence (same owner/work): [existing row](../../docs/p
 
 [AssignLabels (EJS-0223)](../../docs/project/service-response-audit/evejs-only-responses.md:474); [CreateLabel (EJS-0224)](../../docs/project/service-response-audit/evejs-only-responses.md:475); [DeleteLabel (EJS-0225)](../../docs/project/service-response-audit/evejs-only-responses.md:476); [DeleteMail (EJS-0226)](../../docs/project/service-response-audit/evejs-only-responses.md:477); [EditLabel (EJS-0227)](../../docs/project/service-response-audit/evejs-only-responses.md:478); [EmptyTrash (EJS-0228)](../../docs/project/service-response-audit/evejs-only-responses.md:479); [MarkAllAsRead (EJS-0229)](../../docs/project/service-response-audit/evejs-only-responses.md:480); [MarkAllAsUnread (EJS-0230)](../../docs/project/service-response-audit/evejs-only-responses.md:481); [MarkAsReadByLabel (EJS-0232)](../../docs/project/service-response-audit/evejs-only-responses.md:483); [MarkAsReadByList (EJS-0233)](../../docs/project/service-response-audit/evejs-only-responses.md:484); [MarkAsUnread (EJS-0234)](../../docs/project/service-response-audit/evejs-only-responses.md:485); [MarkAsUnreadByLabel (EJS-0235)](../../docs/project/service-response-audit/evejs-only-responses.md:486); [MarkAsUnreadByList (EJS-0236)](../../docs/project/service-response-audit/evejs-only-responses.md:487); [MoveAllFromTrash (EJS-0237)](../../docs/project/service-response-audit/evejs-only-responses.md:488); [MoveAllToTrash (EJS-0238)](../../docs/project/service-response-audit/evejs-only-responses.md:489); [MoveFromTrash (EJS-0239)](../../docs/project/service-response-audit/evejs-only-responses.md:490); [MoveToTrash (EJS-0240)](../../docs/project/service-response-audit/evejs-only-responses.md:491); [MoveToTrashByLabel (EJS-0241)](../../docs/project/service-response-audit/evejs-only-responses.md:492); [MoveToTrashByList (EJS-0242)](../../docs/project/service-response-audit/evejs-only-responses.md:493); [RemoveLabels (EJS-0243)](../../docs/project/service-response-audit/evejs-only-responses.md:494); [ReplaceLabels (EJS-0244)](../../docs/project/service-response-audit/evejs-only-responses.md:495).
 
-V24.01 `mailSvc.MarkMessagesAsRead` calls `mailMgr.MarkAsRead` (`eve/client/script/ui/services/mail/mailSvc.py:336-348`). eve.rs now exposes this RPC and routes unique message IDs through the durable mail status callback; `MailServiceTests.Mark_as_read_forwards_each_distinct_mailbox_message_to_durable_host_callback` covers the service contract. `mailMgr.SendMail` has durable Host wiring; `MailServiceTests.SendMail_decodes_UTF8_client_byte_strings_for_title_and_body` verifies V24 byte-string title/body decoding, and the two-pilot live walk in `tests/test_walk_xmpp_live.py` passes on eve_p3 through recipient delivery, compressed body read, persisted read status, reply delivery, and reply body read. The other listed mailMgr methods remain gaps for separate client-call and Host-state review.
+Selected Host coverage RPC-01868–RPC-01879, RPC-01882–RPC-01894 is implemented and has a registered-route regression in `dotnet/tests/Eve.Host.Tests/MailRpcHostWireTests.cs`; it checks SyncMail's consumed fields, mail status/label transitions, a 500-ID burst, and mailing-list response shapes and mutation routes. Client calls and consumers are recorded in `service-response-audit/mail-host-rpc-01868-01894-handoff.md`. Other mailMgr methods remain separate gaps.
 
 #### Named group: map (1 exits)
 
@@ -2197,7 +2187,6 @@ These routes already exist. The work is an authoritative provider/transaction/no
 The provider entries [EJS-0661](../../docs/project/service-response-audit/evejs-only-responses.md:947), [EJS-0665](../../docs/project/service-response-audit/evejs-only-responses.md:951), [EJS-0668](../../docs/project/service-response-audit/evejs-only-responses.md:954) are also result-field entries; they are not repeated as separate work above. Thus this provider+other index covers all **14 unique** group IDs EJS-0659 through EJS-0672. The three notification groups and both session groups still need real delivery/order acceptance; no live break reproduction was performed in this worker.
 
 ### Public protobuf gateway: complete candidate selector index (182; category VERIFY)
-
 **Status for every selector below: VERIFY V24 NEED / DTO / OWNER / POLICY, not “182 confirmed missing features.”** Current production public transport/producer absence is a source finding, but the 182 selectors include legacy defaults, empty compatibility payloads, admin requests and intentional 404 cases. Full nested DTO comparisons: **0 complete / 182 incomplete**. The index has 59 namespace groups. It extends the existing native protobuf startup row; it is not a second gateway project or 182 additional OPEN services.
 
 For each candidate, establish actual caller/request fields, response field numbers/types/oneof/repeated/optional status, application status versus gRPC trailers, identity/permission scope, real state owner, notifications, retry and next client action. Retain the older “gateway not built” owner decision until it is explicitly reconciled with the current startup TODO. The actual public service paths `Requests/Ping, Notices/Ping, Events/Ping, Requests/Send, Notices/Consume, Events/Publish` are separate from MachoNet and internal HostLink; no name alias substitutes for them.
@@ -2397,7 +2386,6 @@ For each candidate, establish actual caller/request fields, response field numbe
 #### Gateway candidate namespace: eve_public.sovereignty.hub.workforce.api (4)
 
 [ConfigureRequest (EJS-0632)](../../docs/project/service-response-audit/evejs-only-responses.md:909); [GetConfigurationRequest (EJS-0633)](../../docs/project/service-response-audit/evejs-only-responses.md:910); [GetNetworkableHubsRequest (EJS-0634)](../../docs/project/service-response-audit/evejs-only-responses.md:911); [GetStateRequest (EJS-0635)](../../docs/project/service-response-audit/evejs-only-responses.md:912).
-
 #### Gateway candidate namespace: eve_public.sovereignty.mercenaryden.activity.api (4)
 
 [GetAllRequest (EJS-0636)](../../docs/project/service-response-audit/evejs-only-responses.md:913); [GetCapacityRequest (EJS-0637)](../../docs/project/service-response-audit/evejs-only-responses.md:914); [GetForMercenaryDenRequest (EJS-0638)](../../docs/project/service-response-audit/evejs-only-responses.md:915); [StartRequest (EJS-0639)](../../docs/project/service-response-audit/evejs-only-responses.md:916).
@@ -2597,8 +2585,7 @@ Handoff: `docs/project/structures-phase/handoff-ST-19.md`. Decisions and sources
 | Status | Row | Notes |
 |---|---|---|
 | VERIFIED (PostgreSQL, Host) | (1) the destruction wrap of the composition is driven over the real asset safety read model; the test found and fixed K-space read as wormhole (`IsWormholeClass`, 7/8/9 are K-space) | `Destruction_wrap_of_the_composition_is_the_real_asset_safety_read_model...` (`StructureUnanchorDropTests`) |
-| VERIFIED (PostgreSQL, Space) | (2) a mission pocket (dungeon instance origin) is a deadspace anchor for the Mobile Observatory; the pocket is not a simulation body | `A_started_dungeon_is_a_deadspace_anchor_at_its_origin_in_its_system` (`DungeonWaveTests`) |
-| VERIFIED (PostgreSQL, Space, Rust, codec) | (3) control towers (group 365) launched from a ship: placed unanchored, anchored after the SDE anchoring delay (30 min), never end by time, a Mobile Observatory is refused within 100 km, restart keeps the anchored state; Rust `a_control_tower_is_in_space...`, simlink fixtures 204 valid / 82 invalid | `ControlTowerHostTests` (3 tests) |
+| VERIFIED (PostgreSQL, Space) | (2) a mission pocket (dungeon instance origin) is a deadspace anchor for the Mobile Observatory; the pocket is not a simulation body | `A_started_dungeon_is_a_deadspace_anchor_at_its_origin_in_its_system` (`DungeonWaveTests`) || VERIFIED (PostgreSQL, Space, Rust, codec) | (3) control towers (group 365) launched from a ship: placed unanchored, anchored after the SDE anchoring delay (30 min), never end by time, a Mobile Observatory is refused within 100 km, restart keeps the anchored state; Rust `a_control_tower_is_in_space...`, simlink fixtures 204 valid / 82 invalid | `ControlTowerHostTests` (3 tests) |
 | PARTIAL | (3) no client RPC removes a deployed tower (removal is `RemoveControlTowerAsync`, the item is deleted, not returned to the hold); fuel, modules and the tower's own interface are not built | DEVIATIONS "Structure ST-19" |
 | VERIFIED (PostgreSQL, Corporations) | (4) one-time creditor migration: a station rent bill taken before ST-16 gets the station owner as creditor once; a bill with a creditor is untouched | `StationBillCreditorMigrationTests` |
 | PARTIAL | (4) the rent due job running after the migration is not exercised by a test | DEVIATIONS "Structure ST-19" |

@@ -80,8 +80,8 @@ public partial class HostServerTests
         _ = await front.ReceiveAsync();
 
         var config = Assert.IsType<PyDict>(await CallOverHost(front, open, 1, "machoNet", "GetGlobalConfig", Py.Tuple([])));
-        Assert.Contains(config.Entries, entry => entry.Key.Equals(new PyStr("imageserverurl")));
-        Assert.Contains(config.Entries, entry => entry.Key.Equals(new PyStr("defaultPortraitSaveSize")));
+        Assert.Contains(config.Entries, entry => JsSemantics.StringValue(entry.Key) == "imageserverurl");
+        Assert.Contains(config.Entries, entry => JsSemantics.StringValue(entry.Key) == "defaultPortraitSaveSize");
 
         var statistics = Assert.IsType<PyTuple>(await CallOverHost(front, open, 2, "machoNet",
             "GetClusterGameStatisticsForClient",

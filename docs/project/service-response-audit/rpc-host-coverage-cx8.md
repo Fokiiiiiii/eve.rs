@@ -32,8 +32,9 @@ Added `dotnet/tests/Eve.Host.Tests/Rpc01800To02100HostWireTests.cs`. Each test o
 - EveJS moon handlers are at `server/src/services/structure/moonExtractionsService.js:1247-1261`; shared mutation logic at lines 1057-1112 persists extraction state and sends the corresponding owner/update notifications. Client behavior above ignores mutation return values and reacts to RPC errors/updates.
 - eve.rs already registers `GetGlobalConfig` and `GetClusterGameStatisticsForClient` in `dotnet/src/Eve.Host/MachoNetService.cs:84-85`. Moon RPC registration is in `dotnet/src/Eve.Host/Rpc/StructureRpc.cs`; production authority/store/scheduler and moon update delivery are composed in `dotnet/src/Eve.Host/Composition/StructureComposition.cs`. The wire test uses the real Host registry and real RPC service, but its mutation callback is an in-memory state provider; it does not exercise database durability or the production notification outbox. Existing structure persistence tests cover those production components separately.
 
-## Verification
+## Verification and pushes
 
-- Local build: `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj --no-restore -p:UseSharedCompilation=false -p:BuildProjectReferences=false` passed.
-- Local focused test: `Lookup_owner_searches_use_the_registered_service_and_client_keyvals_over_host_wire` passed (1 passed, 0 skipped).
-- GitHub Actions focused MachoNet and moon Host-wire tests and the push-triggered CI result remain to be checked for this commit.
+- Local Host test project build passed both before the initial push and after the wire-key assertion fix. Commands used `MSBUILDDISABLENODEREUSE=1`, `-p:UseSharedCompilation=false`, and `-p:BuildProjectReferences=false`.
+- Local focused lookup wire test passed (1 passed, 0 skipped).
+- First Actions run `40205736699` for `648e2c02`: 2 passed, 1 failed, 0 skipped. The MachoNet config assertion compared decoded `PyBytes` keys with `PyStr`; the assertion now converts wire keys with `JsSemantics.StringValue`. Fix commit `79e37068` was pushed after fetch/merge.
+- Focused Actions rerun and push-triggered CI for the corrected commit are pending.

@@ -374,7 +374,7 @@ public sealed partial class PersistenceNewEdenStoreRuntime(
             throw new InvalidOperationException("Redeem items can only be claimed at a station or structure.");
         var requested = TokenPairs(tokens);
         if (requested.Length == 0)
-            return RedeemResult(stationId, []);
+            return await RedeemResultAsync(characterId, stationId, []);
 
         await _gate.WaitAsync(cancellationToken);
         try
@@ -449,7 +449,7 @@ public sealed partial class PersistenceNewEdenStoreRuntime(
                 await transaction.CommitAsync(cancellationToken);
             }
 
-            return RedeemResult(stationId, [.. replayItems, .. newCreated]);
+            return await RedeemResultAsync(characterId, stationId, [.. replayItems, .. newCreated]);
         }
         finally
         {
@@ -512,16 +512,25 @@ public sealed partial class PersistenceNewEdenStoreRuntime(
             ("isAutoInject", row["isAutoInject"] is JsonValue autoInject && autoInject.TryGetValue<bool>(out var enabled) && enabled
                 ? PyBool.True : PyBool.False));
 
-    private static PyDict RedeemResult(
+    private async ValueTask<PyValue> RedeemResultAsync(
+        long characterId,
         long stationId,
-        IReadOnlyList<(long ItemId, int TypeId, long Quantity)> itemsCreated) =>
-        Py.Dict(
+        IReadOnlyList<(long ItemId, int TypeId, long Quantity)> itemsCreated)
+    {
+        var wallet = await plexWallets.GetAsync(characterId);
+        return Py.Dict(
             ("errors", new PyList([])),
             ("stationID", new PyLong(stationId)),
             ("itemsCreated", new PyList([.. itemsCreated.Select(item => Py.Dict(
                 ("itemID", new PyLong(item.ItemId)),
                 ("typeID", new PyInt(item.TypeId)),
-                ("quantity", new PyLong(item.Quantity))))])));
+                ("quantity", new PyLong(item.Quantity))))])),
+            ("activated_licenses", new PyList([])),
+            ("isk_rewarded", new PyReal(0)),
+            ("isk_balance", wallet is null ? PyNone.Instance : new PyReal((double)wallet.Isk)),
+            ("skillpoints", new PyInt(0)),
+            ("charID", new PyLong(characterId)));
+    }
 
     private static long TokenId(string operationKey, int productIndex)
     {

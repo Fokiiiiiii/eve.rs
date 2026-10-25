@@ -43,7 +43,7 @@ Whole-tree searches found the direct `billMgr`, `bountyProxy`, `cache`, `clientS
 
 - Pushed commit: `6b4380a6faef` (includes the logger fix, socket regression, and this handoff).
 - Agent-test run `40193473051`: passed for `Eve.Host.Tests`, focused filter `Cache_version_and_client_logs_round_trip_through_the_host_registry`; no failed tests or jobs.
-- Push-triggered CI run `40193463753`: queued when last checked. Its result is pending.
+- Push-triggered CI run `40193463753`: in progress when last checked. Its result is pending.
 
 ## Remaining work
 

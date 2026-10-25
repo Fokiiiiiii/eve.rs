@@ -108,8 +108,8 @@ public sealed class InsuranceRpcHostWireTests : IAsyncLifetime
             CREATE TABLE IF NOT EXISTS "{gameStoreSchema}"."shipInsurancePrices"
                 (key text PRIMARY KEY, doc jsonb NOT NULL, rev bigint NOT NULL DEFAULT 1);
             INSERT INTO "{gameStoreSchema}"."shipInsurancePrices" AS prices (key, doc)
-            VALUES ('/', jsonb_build_object('byTypeID', jsonb_build_object(
-                '587', jsonb_build_object('typeID', 587, 'fullInsurancePriceCents', 100000000))))
+            VALUES ('byTypeID', jsonb_build_object(
+                '587', jsonb_build_object('typeID', 587, 'fullInsurancePriceCents', 100000000)))
             ON CONFLICT (key) DO UPDATE SET doc = EXCLUDED.doc, rev = prices.rev + 1;
             """))
             await seed.ExecuteNonQueryAsync();

@@ -197,7 +197,7 @@ public partial class HostServerTests
         var reply = Assert.IsType<Send>(await front.ReceiveAsync());
         var response = Assert.IsType<PyObject>(MarshalCodec.Decode(reply.Payload));
         var state = Assert.IsType<PyTuple>(response.Args);
-        Assert.Equal(new PyInt(6), state.Items[0]);
+        Assert.Equal(new PyInt(MachoMessage.ErrorResponse), state.Items[0]);
         Assert.Empty(writer.Expired);
     }
 

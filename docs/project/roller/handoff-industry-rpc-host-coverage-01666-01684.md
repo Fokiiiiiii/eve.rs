@@ -38,6 +38,7 @@ The existing compatibility record documents the only client-irrelevant reply dif
 - PASS: Actions run `40182750083` for `IndustryHostRpcTests` on `73d5442b` completed successfully with no failed tests or jobs; the status summary did not report skipped-test totals.
 - `python3 tools/dev/ci-status.py failures 73d5442b` reported no push-triggered `ci.yml` run for that SHA.
 - On merged SHA `2a28de00`, the selected Actions run exposed a compile error in the concurrently merged `StructureAssetSafetyRpcTests.cs`: it used `MachoMessage` without `using Eve.Macho;`. Added the missing namespace; the focused test `Structure_asset_safety_remote_calls_cross_the_registered_host_with_client_shapes` passed (1 passed, 0 failed, 0 skipped). A rerun on the fix commit is pending.
-- A concurrent main merge then added the same import, producing a duplicate using on `854e82a5`; removed the duplicate. Release focused run of `IndustryHostRpcTests` and the structure wire test passed (3 passed, 0 failed, 0 skipped). Actions rerun on the duplicate-free commit is pending.
+- A concurrent main merge then added the same import, producing a duplicate using on `854e82a5`; removed the duplicate. Release focused run of `IndustryHostRpcTests` and the structure wire test passed (3 passed, 0 failed, 0 skipped). Actions run `40186839806` on `6709a204` passed with no failed tests or jobs; the status summary did not report skipped totals.
+- `python3 tools/dev/ci-status.py failures 6709a204` reported no push-triggered `ci.yml` run for that SHA.
 - `python3 tools/dev/ci-status.py failures 2a28de00` reported no push-triggered `ci.yml` run for that SHA.
 - PostgreSQL and graphical-client sessions were not used.

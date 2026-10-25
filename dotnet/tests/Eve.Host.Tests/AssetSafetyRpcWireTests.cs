@@ -20,13 +20,28 @@ public partial class HostServerTests
         await rig.OpenWalletAsync(characterId, 1_000_000_000m);
         await rig.OpenWalletAsync(corporationId, 1_000_000_000m);
 
+        var connected = new ConnectedSessions();
+        void NotifyOwner(ClientSession actor, long ownerId, bool corporation, string name, IReadOnlyList<PyValue> arguments)
+        {
+            foreach (var recipient in connected.Snapshot())
+            {
+                if ((corporation ? recipient.GetInt("corpid") : recipient.CharacterId) != ownerId)
+                    continue;
+                var args = arguments.ToArray();
+                if (ReferenceEquals(recipient, actor))
+                    recipient.AfterResponse(() => recipient.SendNotification(name, "clientID", args));
+                else
+                    recipient.SendNotification(name, "clientID", args);
+            }
+        }
         Start(
-            configure: registry => registry.Register(new StructureAssetSafetyService(rig.Store)),
+            configure: registry => registry.Register(new StructureAssetSafetyService(rig.Store, NotifyOwner)),
             sessionOpened: session =>
             {
                 session.CharacterId = characterId;
                 session.Set("corpid", new PyLong(corporationId));
                 session.Set("accountRole", new PyLong(GameMasterRoles.Gml));
+                connected.Add(session);
             });
         var front = await Handshaken(await ConnectAsync());
         var open = Open();
@@ -43,8 +58,15 @@ public partial class HostServerTests
         async Task<PyValue> Call(long id, string method, params PyValue[] args)
         {
             var reply = await SendCall(id, method, new PyTuple(args), transport);
-            return Result(MarshalCodec.Decode(reply.Payload))
+            var result = Result(MarshalCodec.Decode(reply.Payload))
                 ?? throw new InvalidOperationException("The Host returned no RPC value.");
+            if (method is "MovePersonalAssetsToSafety" or "MoveCorpAssetsToSafety")
+            {
+                var notice = ReadNotification(Assert.IsType<Send>(await front.ReceiveAsync()));
+                Assert.Equal("OnAssetSafetyCreated", notice.Name);
+                Assert.Equal(method == "MoveCorpAssetsToSafety" ? corporationId : characterId, Number(notice.Args[0]));
+            }
+            return result;
         }
 
         Assert.Same(PyNone.Instance, await Call(1, "MovePersonalAssetsToSafety",
@@ -73,11 +95,15 @@ public partial class HostServerTests
         Assert.Equal(15, ((PyInt)((PyTuple)((PyObject)MarshalCodec.Decode(earlyDelivery.Payload)).Args).Items[0]).Value);
         Assert.Contains("eveexceptions.UserError", earlyError);
 
+        // Five-day manual-delivery wait plus the GM's five-day timer shift.
         rig.Now += 10 * AssetSafetyPgRig.DayMs + 1;
         var delivered = await SendCall(7, "MoveSafetyWrapToStructure",
             new PyTuple([new PyLong(personalWrapId), new PyLong(rig.SameSystemStation.SolarSystemId)]),
             Py.Dict(("destinationID", new PyLong(rig.SameSystemStation.Id)), ("machoVersion", new PyInt(1))));
         Assert.Same(PyNone.Instance, Result(MarshalCodec.Decode(delivered.Payload)));
+        var deliveredNotice = ReadNotification(Assert.IsType<Send>(await front.ReceiveAsync()));
+        Assert.Equal("OnAssetSafetyDelivered", deliveredNotice.Name);
+        Assert.Equal(characterId, Number(deliveredNotice.Args[0]));
         Assert.Equal(1, await rig.ItemLocationCountAsync(personalItemId, rig.SameSystemStation.Id, characterId));
         Assert.Equal(1, await rig.ItemLocationCountAsync(corporationItemId, corporationWrapId, corporationId));
     }

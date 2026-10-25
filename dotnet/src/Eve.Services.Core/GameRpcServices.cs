@@ -79,6 +79,53 @@ public sealed partial class ContractProxyService(
     Func<long, long, CancellationToken, ValueTask<bool>>? hasContractManagerRole = null,
     Func<long, CancellationToken, ValueTask<(long CorporationId, long AllianceId)>>? readCurrentOrganizationIds = null)
 {
+    public IContractInventoryReader? Inventory { get; set; }
+
+    [Method("GetItemsInContainer")]
+    public async Task<PyValue> GetItemsInContainer(ServiceCall call)
+    {
+        var reader = Inventory ?? throw new InvalidOperationException("contract inventory is not wired");
+        var stationId = ContractSearchLong(call.Arg(0));
+        var containerId = ContractSearchLong(call.Arg(1));
+        var forCorporation = ContractSearchBool(call.Arg(2));
+        var flagId = ContractSearchInt(call.Args.Count > 3 ? call.Arg(3) : null, 0);
+        var items = await reader.GetContractContainerItemsAsync(
+            call.Session, stationId, containerId, forCorporation, flagId, call.Cancellation);
+        return Eve.Services.Py.List(items.Select(item => InventoryWire.PackedRow(item)).ToArray());
+    }
+
+    [Method("GetNumItemsInContainers")]
+    public async Task<PyValue> GetNumItemsInContainers(ServiceCall call)
+    {
+        var reader = Inventory ?? throw new InvalidOperationException("contract inventory is not wired");
+        var stationId = ContractSearchLong(call.Arg(0));
+        var containerIds = ContractSearchIntSet(call.Arg(1));
+        if (containerIds.Count > 500)
+            throw MachoErrors.ThrowUserError("ConContractNotAvailable");
+        var forCorporation = ContractSearchBool(call.Arg(2));
+        var flagId = ContractSearchInt(call.Args.Count > 3 ? call.Arg(3) : null, 0);
+        var counts = new List<KeyValuePair<PyValue, PyValue>>();
+        foreach (var containerId in containerIds)
+        {
+            var items = await reader.GetContractContainerItemsAsync(
+                call.Session, stationId, containerId, forCorporation, flagId, call.Cancellation);
+            if (items.Count > 0)
+                counts.Add(new(new PyInt(containerId), new PyInt(items.Count)));
+        }
+        return new PyDict(counts);
+    }
+
+    [Method("GetItemsInDockableLocation")]
+    public async Task<PyValue> GetItemsInDockableLocation(ServiceCall call)
+    {
+        var reader = Inventory ?? throw new InvalidOperationException("contract inventory is not wired");
+        var stationId = ContractSearchLong(call.Arg(0));
+        var forCorporation = ContractSearchBool(call.Arg(1));
+        var items = await reader.GetContractDockableItemsAsync(
+            call.Session, stationId, forCorporation, call.Cancellation);
+        return PyValue.PythonSet(items.Select(item => InventoryWire.PackedRow(item)));
+    }
+
     private const long CorpRoleContractManager = 72057594037927936L; // appConst.corpRoleContractManager
     private const int ContractingSkill = 25235;
     private const int AdvancedContractingSkill = 73912;

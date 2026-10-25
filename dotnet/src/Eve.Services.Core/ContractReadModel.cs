@@ -36,13 +36,34 @@ public sealed record ContractReadSnapshot(
     string Title,
     string Description,
     IReadOnlyList<ContractReadItemSnapshot> Items,
-    IReadOnlyList<ContractReadBidSnapshot> Bids);
+    IReadOnlyList<ContractReadBidSnapshot> Bids,
+    long StartSolarSystemId = 0,
+    long StartRegionId = 0,
+    long EndSolarSystemId = 0,
+    long EndRegionId = 0,
+    int StartStationDivision = 0,
+    long IssuerWalletKey = 1000,
+    long? AcceptorWalletKey = null,
+    double Volume = 0);
 
 public sealed record ContractReadItemSnapshot(long ItemId, int TypeId, long Quantity, bool InCrate, bool IsPackage);
 
 public sealed record ContractReadBidSnapshot(long BidId, long BidderId, decimal Amount, long CreatedAtFileTime, bool IsCorporation);
 
 public sealed record ContractReadBundle(IReadOnlyList<ContractReadSnapshot> Contracts);
+
+public sealed record ContractDetailRead(
+    ContractReadSnapshot Contract,
+    long StartSolarSystemId,
+    long StartRegionId,
+    long EndSolarSystemId,
+    long EndRegionId,
+    long StartConstellationId,
+    long EndConstellationId,
+    string StartSolarSystemName,
+    IReadOnlyList<int> ItemGroups,
+    IReadOnlyList<int> ItemCategories,
+    IReadOnlyList<int> ItemTypes);
 
 public sealed record ContractSearchQuery(
     long CharacterId,
@@ -98,6 +119,10 @@ public sealed record ContractSearchResult(IReadOnlyList<ContractSearchEntry> Con
 
 public interface IContractReadModel
 {
+    ValueTask<ContractDetailRead?> GetContractAsync(long contractId, CancellationToken cancellationToken);
+
+    ValueTask<ContractReadSnapshot?> GetCourierContractFromItemIdAsync(long itemId, CancellationToken cancellationToken);
+
     ValueTask<ContractLoginInfo> GetLoginInfoAsync(
         long characterId,
         long corporationId,

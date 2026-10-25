@@ -11,6 +11,48 @@ namespace Eve.Host.Tests;
 public sealed class ContractReadModelTests
 {
     [Fact]
+    public async Task Dismissed_contract_notifications_stay_hidden_after_reopening_the_read_model()
+    {
+        var connectionString = Environment.GetEnvironmentVariable("EVE_PG_URL")
+            ?? throw new InvalidOperationException("EVE_PG_URL must name the assigned PostgreSQL lane");
+        var suffix = Guid.NewGuid().ToString("N");
+        var contractsSchema = $"contract_dismiss_{suffix}";
+        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(connectionString));
+        await PersistenceContractReadModel.MigrateAsync(source, contractsSchema);
+        var nowMs = 1_800_000_000_000L;
+        var nowFileTime = Eve.Services.Py.FileTimeFromUnixMs(nowMs);
+        await using (var seed = source.CreateCommand($"""
+            INSERT INTO {contractsSchema}.contract_records
+                (contract_id, issuer_id, issuer_corporation_id, is_corporation_issued, contract_type,
+                 status, start_station_id, date_expired_filetime, created_at_filetime)
+            VALUES
+                (1, 100, 200, false, 1, 0, 600, $1, $2),
+                (2, 100, 200, true, 2, 0, 600, $1, $2)
+            """))
+        {
+            seed.Parameters.AddWithValue(nowFileTime - 1);
+            seed.Parameters.AddWithValue(nowFileTime - 100);
+            await seed.ExecuteNonQueryAsync();
+        }
+
+        var writer = new PersistenceContractWriteModel(source, new PgItemStore(source, $"contract_dismiss_items_{suffix}"),
+            new WalletTransactions(source, $"contract_dismiss_wallet_{suffix}"), () => nowMs, contractsSchema);
+        Assert.True(await writer.DismissNotificationAsync(1, 100, 200, false, false, CancellationToken.None));
+        Assert.True(await writer.DismissNotificationAsync(2, 100, 200, true, true, CancellationToken.None));
+        Assert.True(await writer.DismissNotificationAsync(1, 100, 200, false, false, CancellationToken.None));
+
+        var reopened = new PersistenceContractReadModel(source, contractsSchema);
+        var login = await reopened.GetLoginInfoAsync(100, 200, 0, nowFileTime, CancellationToken.None);
+        Assert.Empty(login.NeedsAttention);
+        Assert.Empty((await reopened.GetMyExpiredContractListAsync(100, 200, false, nowFileTime, CancellationToken.None)).Contracts);
+        Assert.Empty((await reopened.GetMyExpiredContractListAsync(100, 200, true, nowFileTime, CancellationToken.None)).Contracts);
+        Assert.Empty((await reopened.GetContractListForOwnerAsync(
+            100, 200, 100, -1, 0, 0, 100, null, nowFileTime, CancellationToken.None)).Contracts);
+        Assert.Empty((await reopened.GetContractListForOwnerAsync(
+            100, 200, 200, -1, 0, 0, 100, null, nowFileTime, CancellationToken.None)).Contracts);
+    }
+
+    [Fact]
     public async Task Item_exchange_creation_stages_stack_and_wallet_charges_in_one_transaction()
     {
         var connectionString = Environment.GetEnvironmentVariable("EVE_PG_URL")

@@ -82,9 +82,10 @@ jobs:
         env:
           TEST_REF: ${{ inputs.ref }}
         run: python3 tools/dev/resolve-agent-test-ref.py "$TEST_REF"
-      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+      - uses: actions/setup-dotnet@349aa191ae05aee6d53db4bcba37bd6980e812fe # v6 with skip-lts-prepass
         with:
-          dotnet-version: 10.0.x
+          dotnet-version: 10.0.401
+          skip-lts-prepass: true
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"

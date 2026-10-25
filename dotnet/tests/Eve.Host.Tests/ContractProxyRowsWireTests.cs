@@ -115,6 +115,12 @@ public sealed partial class HostServerTests
     {
         public ContractSearchQuery? Query { get; private set; }
 
+        public ValueTask<ContractDetailRead?> GetContractAsync(long contractId, CancellationToken cancellationToken) =>
+            ValueTask.FromResult<ContractDetailRead?>(null);
+
+        public ValueTask<ContractReadSnapshot?> GetCourierContractFromItemIdAsync(long itemId, CancellationToken cancellationToken) =>
+            ValueTask.FromResult<ContractReadSnapshot?>(null);
+
         public ValueTask<ContractLoginInfo> GetLoginInfoAsync(long characterId, long corporationId, long allianceId,
             long nowFileTime, CancellationToken cancellationToken) =>
             ValueTask.FromException<ContractLoginInfo>(new NotSupportedException());

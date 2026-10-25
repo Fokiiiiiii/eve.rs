@@ -87,7 +87,7 @@ public static void ApplicationChanged(CharacterSessions? sessions,ServiceCall ca
         {
             foreach (var id in uniqueRecipients)
                 if (sessions.Of(id) is { } member)
-                    Send(member,"OnMedalsReceived","clientID",Py.Tuple(CorporationWire.Id(medalId)));
+                    Send(member,"OnMedalIssued","clientID",Py.Tuple(CorporationWire.Id(medalId)));
         });
     }
 

@@ -5,7 +5,8 @@
 - Added `ActivityMgrService` to the production character service composition in `dotnet/src/Eve.Host/Rpc/CharacterServiceList.cs`. The wire regression obtains `activityMgr`, `alphaInjectorMgr`, and `billMgr` from the composed `CharacterHostRig.Registry`, then sends calls through a real TCP Host, packet dispatcher, and registry.
 - Relaxed `GetNextAvailableInjection` to accept the observed transport kwarg `machoVersion` when its value is an integer; unknown kwargs and positional arguments still fail.
 - Added `ActivityAlphaBillRpcHostWireTests` covering badge list shape and update notification, seen-ID transitions, popup state reads/writes, duplicate alpha RPC observations, transport kwargs, malformed alpha kwargs, corporation bill list shapes, and current bill RPC errors.
-- Local compile check: `dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -p:UseSharedCompilation=false --no-restore` succeeded with zero warnings and errors. Database tests are delegated to GitHub Actions.
+- Local compile check: `dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -p:UseSharedCompilation=false --no-restore` succeeded with zero warnings and errors.
+- Commit `6e62defdde5b3f4838d01f230c8c3f6f90c96288` is on `main`. Focused Actions run `40193591013` passed for `Activity_alpha_injector_and_bill_rpcs_keep_client_wire_contracts_on_the_composed_host`. Push-triggered `ci.yml` run `40193586079` was still in progress at this handoff update.
 
 ## Client trace and EveJS comparison
 

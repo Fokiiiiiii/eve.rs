@@ -233,7 +233,7 @@ internal static class HostComposition
             amUnderage: async (call, ct) =>
                 identityAccounts is not null && call.Session.UserId is { } accountId
                     && await identityAccounts.IsUnderageAsync(checked((uint)accountId), ct));
-        var coreServices = CoreServices.Create(
+        foreach (var service in CoreServices.Create(
             omegaAccounts, now, calendarStore, calendarAudience,
             authentication: authentication,
             gameRpcCallbacks: gameRpcCallbacks,
@@ -257,10 +257,7 @@ internal static class HostComposition
             readCurrentCalendarGroups: readCurrentCalendarGroups,
               contractBrokerFeeAdjustment: contractBrokerFeeAdjustment,
               hasContractManagerRole: hasContractManagerRole,
-              localizationTextChanges: HostConfiguration.ParseLocalizationTextChanges(Env("EVE_LOCALIZATION_TEXT_CHANGES", ""))).ToArray();
-        CharacterServicesComposition.SingleRegisteredService<Eve.Services.Core.ContractProxyService>(coreServices).Inventory =
-            CharacterServicesComposition.SingleRegisteredService<Eve.Services.Inventory.InvBrokerService>(characterServices);
-        foreach (var service in coreServices)
+              localizationTextChanges: HostConfiguration.ParseLocalizationTextChanges(Env("EVE_LOCALIZATION_TEXT_CHANGES", ""))))
         {
             registry.Register(service);
         }

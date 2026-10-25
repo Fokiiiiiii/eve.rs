@@ -115,8 +115,8 @@ public sealed class InsuranceRpcHostWireTests : IAsyncLifetime
             CREATE TABLE IF NOT EXISTS "{gameStoreSchema}"."shipInsurancePrices"
                 (key text PRIMARY KEY, doc jsonb NOT NULL, rev bigint NOT NULL DEFAULT 1);
             INSERT INTO "{gameStoreSchema}"."shipInsurancePrices" AS prices (key, doc)
-            VALUES ('/', jsonb_build_object('byTypeID', jsonb_build_object(
-                '587', jsonb_build_object('typeID', 587, 'fullInsurancePriceCents', 100000000))))
+            VALUES ('byTypeID', jsonb_build_object(
+                '587', jsonb_build_object('fullInsurancePriceCents', 100000000)))
             ON CONFLICT (key) DO UPDATE SET doc = EXCLUDED.doc, rev = prices.rev + 1;
             """))
             await seed.ExecuteNonQueryAsync();
@@ -154,7 +154,7 @@ public sealed class InsuranceRpcHostWireTests : IAsyncLifetime
         var prices = Assert.IsType<PyDict>(await insurance.CallAsync(
             Call(session, "GetInsurancePrices", 2, new PyList([new PyInt(rifterTypeId)]))));
         Assert.Equal(price, prices.Entries.Single().Value);
-        Assert.Equal(new PyInt((int)(fullInsurancePriceCents / 100)), price);
+        Assert.Equal(fullInsurancePriceCents, Cents(price));
         Assert.Same(PyNone.Instance, await insurance.CallAsync(Call(session, "GetContractForShip", 3, new PyLong(shipId))));
         Assert.Empty(Assert.IsType<PyList>(await insurance.CallAsync(Call(session, "GetContracts", 4))).Items);
 

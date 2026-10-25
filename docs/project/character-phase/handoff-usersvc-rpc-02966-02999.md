@@ -6,7 +6,7 @@ These rows already had real Host registrations/providers or are a client-side an
 
 The rows `RPC-02998` and `RPC-02999` do not call `userSvc.get`: `redeemsvc.py:127–129` calls Python `dict.get` on the `ClaimRedeemTokens` result for optional `itemsCreated` and `stationID`. Whole-tree search found no `RemoteSvc('userSvc').get(...)` call. The test checks those actual result keys; no route is added for the local dictionary method.
 
-Pushed commit `4a85476c` to `main`. Focused Actions run `40183701537` is running for `Registered_user_service_replies_match_the_v24_consumers` (`Eve.Host.Tests`).
+Pushed commit `4a85476c` to `main`. Focused Actions runs `40183701537` and `40184323340` failed before the selected test because the Release solution build had errors. Push-triggered CI run `40183692247` also found a Host startup failure. The follow-up includes latest-main fixes for both causes: `StructureAssetSafetyRpcTests.cs` now imports `Eve.Macho`, and HostComposition passes the registered character inventory broker as `contractInventoryReader` when creating the core services. `CharacterServiceList` no longer searches its character-service list for the separately created core `ContractProxyService`. The Host test project compile check after the merge succeeds (0 warnings, 0 errors). Correction commit `13d51670` is pushed to `main`; focused Actions run `40186802357` is checking `Registered_user_service_replies_match_the_v24_consumers`.
 
 ## V24.01 caller and consumer evidence, with EveJS comparison
 

@@ -51,10 +51,12 @@ public partial class HostServerTests
         Assert.Single(personalSet.Items);
         var personalRow = Assert.IsType<PyPackedRow>(Assert.Single(personalSet.Items));
         Assert.Equal(new PyInt(7001), personalRow.Fields().Single(field => field.Key == "itemID").Value);
+        Assert.Equal(new PyInt(34), personalRow.Values[1]);
         var corporateItems = Assert.IsType<PyObjectEx>(await Rpc(15, "GetItemsInDockableLocation", new PyInt(3001), PyBool.True));
         var corporateSet = Assert.IsType<PyList>(((PyTuple)((PyTuple)corporateItems.Header).Items[1]).Items[0]);
         var corporateRow = Assert.IsType<PyPackedRow>(Assert.Single(corporateSet.Items));
         Assert.Equal(new PyInt(8001), corporateRow.Fields().Single(field => field.Key == "itemID").Value);
+        Assert.Equal(new PyInt(34), corporateRow.Values[1]);
 
         var containerItems = Assert.IsType<PyList>(await Rpc(16, "GetItemsInContainer",
             new PyInt(3001), new PyInt(7001), PyBool.False, new PyInt(4)));
@@ -107,7 +109,6 @@ public partial class HostServerTests
         var escrow = Fields(Assert.IsType<PyObject>(await Rpc(4, "GetMyContractEscrow")));
         Assert.Equal(new PyInt(1250), escrow["iskEscrow"]);
         Assert.Equal(new PyInt(3), escrow["itemsEscrow"]);
-
         var bids = Fields(Assert.IsType<PyObject>(await Rpc(5, "GetMyBids", PyBool.False)));
         Assert.Single(Assert.IsType<PyList>(bids["contracts"]).Items);
 
@@ -227,8 +228,7 @@ public partial class HostServerTests
         {
             LastSplit = (itemId, quantity, characterId, corporationId, stationId, forCorporation, flag);
             return ValueTask.FromResult(true);
-        }
-    }
+        }    }
 
     private sealed class RecordingContractInventoryReader : IContractInventoryReader
     {

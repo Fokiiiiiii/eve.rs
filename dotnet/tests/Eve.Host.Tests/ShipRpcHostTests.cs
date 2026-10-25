@@ -1,5 +1,4 @@
 using Eve.Macho;
-using Eve.Services;
 using Eve.Marshal;
 using Eve.Services;
 using Eve.Services.Space;

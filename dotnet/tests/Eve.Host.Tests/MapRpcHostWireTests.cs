@@ -177,4 +177,124 @@ public partial class HostServerTests
         Assert.Equal(new PyReal(0.125), Assert.Single(costs.Entries).Value);
         Assert.Equal([(1L, 1L), (3L, 1L), (3L, 24L), (5L, 24L)], historyCalls);
     }
+
+    [Fact]
+    public async Task Map_personal_and_industry_replies_follow_registered_host_routes_with_client_kwargs()
+    {
+        const long corporationId = 98_765;
+        const long characterId = 90_001;
+        const long solarSystemId = 30_000_142;
+        const long ownerId = 99_001;
+        const long stationId = 60_000_001;
+        const long lastVisit = 1_790_646_377_000;
+        await using var source = NpgsqlDataSource.Create(
+            "Host=127.0.0.1;Port=1;Database=eve;Username=postgres;Timeout=1;Pooling=false");
+        var costActivities = new List<long>();
+        var jobActivities = new List<long>();
+        var map = new MapService(
+            new Eve.ReadSide.ReadSide(source),
+            () => FixedNowMs,
+            _ =>
+            [
+                (CharacterId: characterId, LocationId: solarSystemId),
+                (CharacterId: characterId, LocationId: solarSystemId),
+            ])
+        {
+            ReadDataHook = call =>
+            {
+                PyValue? value = call.Method switch
+                {
+                    "GetIndustryCostModifier" => CostIndex(),
+                    "GetIndustryJobsOverLast24Hours" => JobCounts(),
+                    "GetRecentSovActivity" => Py.Rowset(
+                        ["solarSystemID", "ownerID", "oldOwnerID", "stationID", "changeTime"],
+                        [Py.Tuple(new PyInt(solarSystemId), new PyInt(ownerId), new PyInt(99_000),
+                            new PyInt(stationId), new PyLong(lastVisit))]),
+                    _ => null,
+                };
+                return ValueTask.FromResult(value);
+
+                PyValue CostIndex()
+                {
+                    costActivities.Add(((PyInt)call.Arg(0)).Value);
+                    return new PyDict([new(new PyInt(solarSystemId), new PyReal(0.125))]);
+                }
+
+                PyValue JobCounts()
+                {
+                    jobActivities.Add(((PyInt)call.Arg(0)).Value);
+                    return Py.Rowset(
+                        ["solarSystemID", "noOfJobs"],
+                        [Py.Tuple(new PyInt(solarSystemId), new PyInt(4))]);
+                }
+            },
+        };
+        var mapRoute = new IncursionAnomalyService(
+            "map",
+            _ => ValueTask.FromResult<IReadOnlyList<JsonObject>>([]),
+            (_, _) => ValueTask.FromResult<IReadOnlyList<JsonObject>>([]),
+            fallback: map,
+            nowUnixMs: () => FixedNowMs);
+
+        Start(
+            configure: registry => registry.Register(mapRoute),
+            sessionOpened: session => session.Set("corpid", new PyInt(corporationId)));
+        var front = await Handshaken(await ConnectAsync());
+        var open = Open();
+        await front.SendAsync(open);
+        await front.ReceiveAsync();
+        var kwargs = new PyDict([new(new PyStr("machoVersion"), new PyInt(1))]);
+        uint callId = 0;
+
+        async Task<PyValue?> Call(string method, params PyValue[] args)
+        {
+            await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(Packets.CallWithKwargs(
+                open, ++callId, "map", method, new PyTuple(args), kwargs))));
+            var reply = Assert.IsType<Send>(await front.ReceiveAsync());
+            return Result(MarshalCodec.Decode(reply.Payload));
+        }
+
+        foreach (var activityId in new long[] { 1, 3 })
+        {
+            var costs = Assert.IsType<PyDict>(
+                await Call("GetIndustryCostModifier", new PyInt(activityId)));
+            Assert.Equal(new PyReal(0.125),
+                Assert.Single(costs.Entries, entry => entry.Key.Equals(new PyInt(solarSystemId))).Value);
+
+            var jobs = Assert.IsType<PyObject>(
+                await Call("GetIndustryJobsOverLast24Hours", new PyInt(activityId)));
+            Assert.Equal(["solarSystemID", "noOfJobs"],
+                Assert.IsType<PyList>(WireField(jobs, "header")).Items.Select(WireText).ToArray());
+            Assert.Equal(
+                Py.Tuple(new PyInt(solarSystemId), new PyInt(4)),
+                Assert.Single(Assert.IsType<PyList>(WireField(jobs, "lines")).Items));
+        }
+
+        var members = Assert.IsType<PyObject>(await Call("GetMyExtraMapInfo"));
+        Assert.Equal(["characterID", "locationID"],
+            Assert.IsType<PyList>(WireField(members, "header")).Items.Select(WireText).ToArray());
+        Assert.Equal(
+            Py.Tuple(new PyInt(characterId), new PyInt(solarSystemId)),
+            Assert.Single(Assert.IsType<PyList>(WireField(members, "lines")).Items));
+
+        var agents = Assert.IsType<PyObject>(await Call("GetMyExtraMapInfoAgents"));
+        Assert.Equal(["fromID", "rank"],
+            Assert.IsType<PyList>(WireField(agents, "header")).Items.Select(WireText).ToArray());
+        Assert.Empty(Assert.IsType<PyList>(WireField(agents, "lines")).Items);
+
+        var sov = Assert.IsType<PyObject>(await Call("GetRecentSovActivity"));
+        Assert.Equal(["solarSystemID", "ownerID", "oldOwnerID", "stationID", "changeTime"],
+            Assert.IsType<PyList>(WireField(sov, "header")).Items.Select(WireText).ToArray());
+        Assert.Equal(
+            Py.Tuple(new PyInt(solarSystemId), new PyInt(ownerId), new PyInt(99_000),
+                new PyInt(stationId), new PyLong(lastVisit)),
+            Assert.Single(Assert.IsType<PyList>(WireField(sov, "lines")).Items));
+
+        var visits = Assert.IsType<PyObject>(await Call("GetSolarSystemVisits"));
+        Assert.Equal(["lastDateTime", "solarSystemID", "visits"],
+            Assert.IsType<PyList>(WireField(visits, "header")).Items.Select(WireText).ToArray());
+        Assert.Empty(Assert.IsType<PyList>(WireField(visits, "lines")).Items);
+        Assert.Equal([1L, 3L], costActivities);
+        Assert.Equal([1L, 3L], jobActivities);
+    }
 }

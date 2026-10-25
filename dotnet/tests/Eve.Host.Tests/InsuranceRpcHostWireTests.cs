@@ -104,8 +104,8 @@ public sealed class InsuranceRpcHostWireTests : IAsyncLifetime
         var insuranceSchema = Schema("EVE_GAMESTORE_SCHEMA");
         await using (var command = source.CreateCommand($"""
             CREATE SCHEMA IF NOT EXISTS "{insuranceSchema}";
-            CREATE TABLE "{insuranceSchema}".shipInsurancePrices (key text PRIMARY KEY, doc jsonb NOT NULL, rev bigint NOT NULL DEFAULT 1);
-            INSERT INTO "{insuranceSchema}".shipInsurancePrices (key, doc)
+            CREATE TABLE "{insuranceSchema}"."shipInsurancePrices" (key text PRIMARY KEY, doc jsonb NOT NULL, rev bigint NOT NULL DEFAULT 1);
+            INSERT INTO "{insuranceSchema}"."shipInsurancePrices" (key, doc)
             VALUES ('byTypeID', @doc);
             """))
         {

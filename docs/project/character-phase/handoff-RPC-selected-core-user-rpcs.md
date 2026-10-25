@@ -2,7 +2,9 @@
 
 ## Change
 
-`CharacterServicesComposition.CoreRpc()` now registers `PingService`, `AuthenticationRpcService`, the shared `SubscriptionMgrService`, and `AirNpeService`. AIR state reads come from `PgCharacterStore.GetAsync`; tutorial skip calls `MarkTutorialSkippedAsync` so the persisted transition is returned before `OnAirNpeStateChanged` is sent.
+The production route owners already register this set: `CoreServices.Create` provides ping, authentication, and subscription services; `ProgressRpc` provides AIR NPE using the character store. `HostComposition` injects authentication callbacks backed by `PgAccruedTimeStore` and `PgAccountDirectory`. Do not register another default authentication instance from `CharacterServicesComposition.CoreRpc()`: CI showed it overrides the configured callbacks when the character services are present.
+
+Authentication string arguments now use `JsSemantics.StringValue`, which accepts the client wire's `PyBytes` as well as Unicode/token values. The existing nonempty token, length, argument-count, and language validation remains in place.
 
 `LoginOnboardingSubscriptionRpcHostWireTests` covers Air NPE get/skip/get, authentication accrued time and underage replies, language session updates, subscription time and clone grade, and ping through the real TCP `HostServer` and `PacketDispatcher`. Calls include transport `machoVersion`; the existing `TransportMetadataHostWireTests` also covers it for `air_npe.is_air_npe_enabled`, `pingService.Ping`, and `subscriptionMgr.GetCloneGrade`.
 
@@ -28,4 +30,4 @@ Whole-tree search of `/home/user/eve-logic` found no additional remote callers f
 
 Local verification: `dotnet test dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj --no-restore --filter 'FullyQualifiedName~Login_and_onboarding_rpcs_keep_client_wire_contracts_with_transport_kwargs|FullyQualifiedName~User_service_activation_and_feedback_rpcs_are_dispatched_through_host_wire' -p:UseSharedCompilation=false -m:1` passed both focused Host wire tests with zero skips. The auth test also confirms that an empty JWT receives an error response. No PostgreSQL database was used. The wire checks do not use a graphical client.
 
-The selected GitHub Actions run and push-triggered CI result will be recorded here before closing the batch. Persistence and restart were source-reviewed in the existing production store callbacks; the database-backed test lane was outside this batch.
+Selected Actions test run `40231173241` passed for commit `5bc385bb6004460c20b5272e321ba3a32a7853c9`, with no failed tests or jobs. Push-triggered CI run `40231095991` failed: duplicate default authentication registration overrode the configured persistence callbacks and increased the RPC inventory by six. The duplicate `CoreRpc` registrations were removed in the follow-up fix. Persistence and restart were source-reviewed in the existing production store callbacks; the database-backed test lane was outside this batch.

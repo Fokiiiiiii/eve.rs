@@ -2,9 +2,9 @@
 
 ## Scope and disposition
 
-RPC-00996 and RPC-00997 are inventory-bound calls, not character-manager calls. The V24.01 fitting UI calls the bound inventory object's `Add` from `eve/client/script/ui/shared/fitting/fittingSlotController.py:237–241`; nodegraph fitting does so from `nodegraph/client/actions/module.py:74–78`. The new socket test uses the registered production `invbroker.MachoBindObject`, nested `Add`, client `qty`/ `flag`, and transport `machoVersion=3396210`; it checks the item move and restart persistence.
+RPC-00996 and RPC-00997 are inventory-bound calls, not character-manager calls. V24.01 fitting invokes the bound inventory object's `Add` from `eve/client/script/ui/shared/fitting/fittingSlotController.py:237–241`; nodegraph fitting calls it from `nodegraph/client/actions/module.py:74–78`. `CharacterManagerMutationHostWireTests.Bound_inventory_add_uses_registered_host_wire_with_client_arguments_and_transport_metadata` routes the registered production `invbroker.MachoBindObject` and nested `Add` through the socket Host, with client `qty` and `flag`, transport `machoVersion=3396210`, persistent item movement and Host rebuild.
 
-The other rows are registered on production `charMgr` and use character-owned persistence. EveJS v0.12.9 handlers: `Handle_AddContact` (`server/src/services/character/charMgrService.js:903–916`), `Handle_DeleteContacts` (922–928), `Handle_EditContactsRelationshipID` (930–943), `Handle_BlockOwners` (945–951), `Handle_AddOwnerNote` (1030–1036), `Handle_EditOwnerNote` (1038–1046), `Handle_DeleteCharacterSetting` (1079–1083).
+The remaining rows are registered on production `charMgr` and use character-owned persistence. EveJS v0.12.9 handlers: `Handle_AddContact` (`server/src/services/character/charMgrService.js:903–916`), `Handle_DeleteContacts` (922–928), `Handle_EditContactsRelationshipID` (930–943), `Handle_BlockOwners` (945–951), `Handle_AddOwnerNote` (1030–1036), `Handle_EditOwnerNote` (1038–1046), `Handle_DeleteCharacterSetting` (1079–1083).
 
 ## V24.01 callers and consumers
 
@@ -16,23 +16,23 @@ The other rows are registered on production `charMgr` and use character-owned pe
 - AddOwnerNote 01002–01007 / EditOwnerNote 01018–01023: `notepad.py:168–203` chunks strings at 6000 characters, persists chunks and consumes returned note IDs/loaded `note` fields; `:206–214`, `:538–545`, `:622–647` create/edit named notes and folder labels.
 - Contact list consumer: `addressbookService.py:193–250` consumes `addressbook.addresses` and `addressbook.blocked`, including `contactID`, `inWatchlist`, `relationshipID`, `labelMask`, and `senderID`.
 
-The server returns `util.KeyVal` with rowsets for contact-list reads; the client uses AddOwnerNote's note ID and then reads `GetOwnerNote` rows. The client callers emit the contact cache notifications after successful RPC returns.
+The server returns `util.KeyVal` with rowsets for contact-list reads. The client uses AddOwnerNote's note ID and then reads `GetOwnerNote` rows. The contact callers emit cache notifications after successful RPC returns.
 
-## Checks
+## Checks and remaining verification
 
-- `CharacterPersonalRpcHostWireTests.CharMgr_contact_list_uses_the_registered_service_and_client_rowsets_over_host_wire` covers a real socket Host request through registered `charMgr`, asserting `util.KeyVal` and both rowset shapes. Local focused run: 1 passed, 0 failed, 0 skipped. Actions run `40217908521` passed for ref `c9e1a454ce5e`.
+- `CharacterPersonalRpcHostWireTests.CharMgr_contact_list_uses_the_registered_service_and_client_rowsets_over_host_wire` passes locally (1 passed, 0 failed, 0 skipped) and Actions run `40217908521` passed for ref `c9e1a454ce5e`.
 - Existing `CharacterContactNotepadHostTests.Character_contact_note_and_setting_rpcs_round_trip_through_registered_host` covers mutation state, 500-item limits, read-back and restart persistence through registered `IService.CallAsync`.
-- Added `CharacterManagerMutationHostWireTests.Character_manager_mutations_persist_through_registered_host_wire`: uses the production `charMgr` from `CharacterHostRig` in the real socket Host; covers AddContact, BlockOwners (500 owners), EditContactsRelationshipID, DeleteContacts (500 IDs), AddOwnerNote, both EditOwnerNote call forms, setting save/delete, subsequent reads and note persistence after Host rebuild.
-- Added `CharacterManagerMutationHostWireTests.Bound_inventory_add_uses_registered_host_wire_with_client_arguments_and_transport_metadata`: sends V24.01 build `machoVersion` in both outer transport and nested bound call, accepts `qty=None`, moves a stack into its ship, and confirms persistence after Host rebuild.
-- The test project build passed after both tests were added (0 warnings, 0 errors). The local database-free focused contact-list wire test passed (1 passed, 0 failed, 0 skipped). Both new wire regressions require PostgreSQL and await a successful focused Actions run.
-- Focused Actions runs `40224991836` and `40225134650` failed before test execution: `actions/setup-dotnet` received HTTP 409 downloading .NET 10.0.14 and SDK 10.0.403 from dotnetorigin.blob.core.windows.net.
-- Earlier inventory-registry test `RpcSecurityInventoryTests.Real_host_registry_methods_are_enumerable` was restored after a merge truncated its source; expected count 1414. Local project build and Actions run `40221496527` passed for ref `8ce3380f`.
-- Descendant push CI run `40221666019` for `e6310b34c165` failed in the separate `ConfigServiceTests.Batched_config_lookups_refuse_more_than_500_raw_ids` case. Main now includes a change to that test. Push CI for current refs is checked separately.
+- Added `CharacterManagerMutationHostWireTests.Character_manager_mutations_persist_through_registered_host_wire`: the production `charMgr` from `CharacterHostRig` is registered in a real socket Host; tests AddContact, BlockOwners (500 owners), EditContactsRelationshipID, DeleteContacts (500 IDs), AddOwnerNote, both EditOwnerNote forms, setting save/delete, subsequent reads and note persistence after Host rebuild.
+- Added `CharacterManagerMutationHostWireTests.Bound_inventory_add_uses_registered_host_wire_with_client_arguments_and_transport_metadata`: checks the bound inventory RPC, accepted transport metadata, item movement and persistence after Host rebuild.
+- The `Eve.Host.Tests` project built with 0 warnings and 0 errors after both new regressions. One database-free focused wire test passed locally. The two database-backed wire tests could not be executed locally because this task prohibits local database use.
+- Focused Actions runs `40224991836`, `40225134650`, `40225716431`, and `40225969854` all failed before test execution. `actions/setup-dotnet` received HTTP 409 for .NET 10.0.14 and SDK 10.0.403 from `dotnetorigin.blob.core.windows.net`.
+- Push CI run `40225705507` for `a22cd8bb` failed on Linux and Windows during the same SDK download step. `ci-status.py failures 49caa4e9` reported no `ci.yml` run for the later documentation-only descendant.
+- Earlier inventory-registry test `RpcSecurityInventoryTests.Real_host_registry_methods_are_enumerable` passed locally and Actions run `40221496527` for ref `8ce3380f`. It was restored after an earlier merge truncated its source; expected registered count is 1414.
+- Descendant CI run `40221666019` for `e6310b34c165` failed in the separate `ConfigServiceTests.Batched_config_lookups_refuse_more_than_500_raw_ids` case. Main contains a later change to that test, but its post-merge CI could not start the .NET jobs because of the SDK download failure.
 
 ## Continuation record
 
 - Initial Actions run `40217732635` used invalid ref `HEAD` and failed checkout; correct focused Host run `40217908521` passed.
-- Repaired inventory test Actions run `40221496527` passed for ref `8ce3380f`.
 - Two intervening inventory runs on ref `894528ec` failed before test results; that commit contained truncated test source, which was restored.
 - `ci-status.py failures 8ce3380f` reported no push-triggered run for that SHA.
-- The two new PostgreSQL-backed socket tests are not complete until they pass on Actions. No database was used locally.
+- RPC-00996–01023 need a successful Actions run of the two new PostgreSQL-backed wire regressions before completion. No PostgreSQL database was used locally.

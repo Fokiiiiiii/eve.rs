@@ -1,5 +1,4 @@
 using Eve.Macho;
-using Eve.Services;
 using Eve.Marshal;
 using Eve.Services;
 using Eve.Services.Space;
@@ -42,8 +41,6 @@ public partial class HostServerTests
             Packets.CallWithKwargs(open, 2, "ship", "MachoBindObject", bindArgs, kwargs))));
         var bound = Assert.IsType<PyTuple>(Result(MarshalCodec.Decode(
             Assert.IsType<Send>(await front.ReceiveAsync()).Payload)));
-        Assert.Equal(
-            new PyLong(Py.FileTimeFromUnixMs(FixedNowMs)),
-            bound.Items[1]);
+        Assert.Equal(new PyLong(Py.FileTimeFromUnixMs(FixedNowMs)), bound.Items[1]);
     }
 }

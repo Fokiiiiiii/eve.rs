@@ -21,3 +21,14 @@ EveJS v0.12.9 server/src/services/_other/contractProxyService.js implements Sear
 ## Verification and remaining checks
 
 Local checks passed: Eve.Host.Tests and Eve.Services.Core.Tests build with zero warnings/errors; focused registered-Host PlaceBid and SearchContracts wire tests passed individually (each 1 passed, 0 skipped). The initial selected Actions run had an incorrect class-name filter (zero tests); the corrected run executed all three new wire cases and exposed a test-only bytes-key assertion, which is fixed in commit 3cdc9827 and pushed in 062ede32. The corrected post-fix Actions run 40103405871 on 4b7e8526 passed all three selected wire cases (0 failed, 0 skipped). At handoff, push CI run 40102106613 on 68531606 remained in progress despite reported failures in live movement/structure behavior and several existing .NET suites, including a ContractReadModel assigned-row expectation mismatch; I did not check their causes further. `ci-status.py failures 4b7e8526` found no push CI run for the latest documentation/test-assertion commit. No PostgreSQL database was used, per task constraints. Real graphical-client acceptance was not performed.
+
+## Verification recheck (2026-10-25)
+
+The current worktree already contained the implementation and registered-Host wire regressions from commits `6ea3ca9e` and `20d5e0ba`; no code change was needed for this recheck. `dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -p:UseSharedCompilation=false` passed with zero warnings and errors. The focused PlaceBid wire test passed (1 passed, 0 skipped). Selected Actions run `40172724038` completed successfully with no failed jobs or tests; it selected the three `registered_host_service` cases for PlaceBid, SearchContracts, and SplitStack. No database was used.
+
+The latest push CI run checked during the recheck, `40172681164` for `47b6cb04`, completed as cancelled because `.NET (space tests 1/16)` was cancelled; the required gate therefore reported cancelled. This shard does not cover the contract RPC tests. The contract Actions result above passed. No graphical-client run was performed.
+
+
+## Latest push verification (2026-10-25)
+
+After this handoff update was pushed as `c752afd4`, selected Actions run `40175238723` passed on that commit with no failed tests or jobs. `python3 tools/dev/ci-status.py failures c752afd4` found no `ci.yml` run for the documentation-only commit.

@@ -83,3 +83,8 @@ EveJS v0.12.9 exposes the same FW methods in server/src/services/corporation/fwC
 Production FW registration is in dotnet/src/Eve.Host/Rpc/CoreRpc.cs and binds callback operations to the character and corporation stores. `FwEnlistmentRpcHostTests.Faction_warfare_enlistment_methods_return_client_shapes_over_registered_host_routes` drives the actual handler over the Host socket with machoVersion, checks the three-field enlistment list and faction-policy list, then verifies removal, cooldown and the subsequent corp-only enlistment shape. The related FactionActivityRpcServicesTests.Enlistment_reads_corporation_policy_persists_direct_membership_and_changes_session covers callback mutation behavior; the production Host composition owns the PostgreSQL persistence delegates.
 
 Local verification before merge: the Eve.Host.Tests project built with 0 warnings and 0 errors, and the focused Host socket test passed (1 passed, 0 failed, 0 skipped). After merging origin/main, the same focused test passed again with its updated transport dispatcher. No database was used. A graphical-client run was not performed.
+
+
+### GitHub Actions status for 06550ad4ded496f93f9501c47599dfa99334dde6
+
+Selected agent-test runs 40225507669, 40225724141 and 40225951161 all failed in actions/setup-dotnet before test execution. The .NET runtime 10.0.14 and SDK 10.0.403 downloads from dotnetorigin.blob.core.windows.net returned HTTP 409 on each attempt. Push-triggered ci.yml run 40225494897 also failed at .NET setup on Linux/Windows and its required gate failed. The selected test did not run in Actions; no GitHub test pass is claimed.

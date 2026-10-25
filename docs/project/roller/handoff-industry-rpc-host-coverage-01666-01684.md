@@ -37,4 +37,6 @@ The existing compatibility record documents the only client-irrelevant reply dif
 - The regression checks all seven manager calls and both monitor calls, manager wire shapes and typed mutation inputs, material-change notification delivery, and disconnect cleanup.
 - PASS: Actions run `40182750083` for `IndustryHostRpcTests` on `73d5442b` completed successfully with no failed tests or jobs; the status summary did not report skipped-test totals.
 - `python3 tools/dev/ci-status.py failures 73d5442b` reported no push-triggered `ci.yml` run for that SHA.
+- On merged SHA `2a28de00`, the selected Actions run exposed a compile error in the concurrently merged `StructureAssetSafetyRpcTests.cs`: it used `MachoMessage` without `using Eve.Macho;`. Added the missing namespace; the focused test `Structure_asset_safety_remote_calls_cross_the_registered_host_with_client_shapes` passed (1 passed, 0 failed, 0 skipped). A rerun on the fix commit is pending.
+- `python3 tools/dev/ci-status.py failures 2a28de00` reported no push-triggered `ci.yml` run for that SHA.
 - PostgreSQL and graphical-client sessions were not used.

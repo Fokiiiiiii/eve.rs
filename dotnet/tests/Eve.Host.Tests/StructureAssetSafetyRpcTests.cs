@@ -15,14 +15,29 @@ public partial class HostServerTests
         const long sourceStructureId = 7000001;
         const long destinationId = 6000001;
         var callbacks = new WireAssetSafetyReadCallbacks(systemId, destinationId);
+        var connected = new ConnectedSessions();
+        void NotifyOwner(ClientSession actor, long ownerId, bool corporation, string name, IReadOnlyList<PyValue> arguments)
+        {
+            foreach (var recipient in connected.Snapshot())
+            {
+                if ((corporation ? recipient.GetInt("corpid") : recipient.CharacterId) != ownerId)
+                    continue;
+                var args = arguments.ToArray();
+                if (ReferenceEquals(recipient, actor))
+                    recipient.AfterResponse(() => recipient.SendNotification(name, "clientID", args));
+                else
+                    recipient.SendNotification(name, "clientID", args);
+            }
+        }
         Start(
-            configure: registry => registry.Register(new StructureAssetSafetyService(callbacks)),
+            configure: registry => registry.Register(new StructureAssetSafetyService(callbacks, NotifyOwner)),
             sessionOpened: session =>
             {
                 session.CharacterId = characterId;
                 session.Set("corpid", new PyInt(corporationId));
                 session.Set("accountRole", new PyLong(GameMasterRoles.Gml));
                 session.Set("role", new PyLong(GameMasterRoles.Gml));
+                connected.Add(session);
             });
         var front = await Handshaken(await ConnectAsync());
         var open = Open();
@@ -37,7 +52,14 @@ public partial class HostServerTests
             ]);
             await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(
                 Packets.CallWithKwargs(open, callbacks.NextCallId++, "structureAssetSafety", method, new PyTuple(args), keywords))));
-            return Result(MarshalCodec.Decode(Assert.IsType<Send>(await front.ReceiveAsync()).Payload));
+            var result = Result(MarshalCodec.Decode(Assert.IsType<Send>(await front.ReceiveAsync()).Payload));
+            if (method is "MovePersonalAssetsToSafety" or "MoveCorpAssetsToSafety" or "MoveSafetyWrapToStructure")
+            {
+                var notice = ReadNotification(Assert.IsType<Send>(await front.ReceiveAsync()));
+                Assert.Equal(method == "MoveSafetyWrapToStructure" ? "OnAssetSafetyDelivered" : "OnAssetSafetyCreated", notice.Name);
+                Assert.Equal(method == "MoveCorpAssetsToSafety" ? corporationId : characterId, Number(notice.Args[0]));
+            }
+            return result;
         }
 
         Assert.Same(PyNone.Instance, await Call("MovePersonalAssetsToSafety",
@@ -65,6 +87,16 @@ public partial class HostServerTests
             [new PyLong(callbacks.PersonalWrapId), new PyLong(systemId)],
             ("destinationID", new PyLong(destinationId))));
         Assert.Equal((callbacks.PersonalWrapId, destinationId), callbacks.DeliveredWrap);
+    }
+
+    private static (string Name, PyValue[] Args) ReadNotification(Send send)
+    {
+        var state = ((PyTuple)((PyObject)MarshalCodec.Decode(send.Payload)).Args).Items;
+        Assert.Equal(MachoMessage.Notification, Number(state[0]));
+        var destination = ((PyTuple)((PyObject)state[2]).Args).Items;
+        var body = (PyBuffer)((PyTuple)((PyTuple)state[4]).Items[0]).Items[1];
+        var inner = (PyTuple)MarshalCodec.Decode(body.Value.ToArray());
+        return (T(destination[1])!, [.. ((PyTuple)((PyTuple)inner.Items[1]).Items[1]).Items]);
     }
 
     private sealed class WireAssetSafetyReadCallbacks(long systemId, long destinationId) : IStructureAssetSafetyReadCallbacks

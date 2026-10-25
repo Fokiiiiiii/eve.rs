@@ -3,16 +3,19 @@
 ## Current snapshot
 
 - Client source: /home/user/eve-logic, commit 1dbb5711a072a146e1d228365668ac05655eefe1.
-- Host source: this worktree after merging origin/main at fb5aa2b9ebeebdda8b26ff48113c37bae13fc665 and the P0 audit changes.
-- P0 implementation/test push: 21f75f92. Latest main synchronization push: 22c62010.
-- Focused Actions run 40219719160 passed for Search_quick_query_returns_client_id_list_through_host_with_transport_kwargs; no failed tests or jobs. Push CI run 40219660982 passed; no failed tests or jobs. No separate ci.yml run was created for the docs-only synchronization at 22c62010.
+- Host source used for the latest CSV generation: origin/main ec27cb3462ebc3ff5bd2b9acb34c5e82221afdbe plus this task's changes.
+- Latest integrated origin/main: 8ce3380f6ce2ceff780e49dcac7768bcc0fc06dc; its changes since CSV generation are documentation-only.
+- Prior P0 implementation/test push: 21f75f92. Latest main synchronization push: 22c62010. Focused Actions run 40219719160 passed for Search_quick_query_returns_client_id_list_through_host_with_transport_kwargs; push CI run 40219660982 passed.
 - Regenerate both CSVs and the P0/P1 work queue with:
-  python3 tools/spec-extract/run_service_audit_current.py --queue-dir /tmp/service-audit-cx5-final
-- Latest generated totals (2026-10-25): 4,173 client rows, 2,345 RPC rows, 1,408 active Host routes, and 61 queue files. Coverage: CLIENT-LOCAL 1, HOLLOW 10, IMPLEMENTED-TESTED 371, IMPLEMENTED-UNTESTED 1,552, MISSING 403, REJECTS-VALID-INPUT 8.
-- The Host route scanner resolves HasMethod string constants, inspects partials under Host Composition, recognizes factory-created InvBrokerService behind its Host wrapper, and prioritizes connected Host packet tests over generic handler tests. It distinguishes dictionary .get and local instance .clear from RPCs.
-- CLIENT_CALL_MATRIX.csv records RPC calls, service binds, bound-object dispatch, notification subscriptions/handlers, and session attributes. EVE_RS_COVERAGE.csv is the RPC-only join. IMPLEMENTED-TESTED marks a matching test source, not a test run.
+  python3 tools/spec-extract/run_service_audit_current.py --queue-dir /tmp/service-audit-cx6-final
+- The service-audit Python regression tests run in the `ci.yml` Python job.
+- Generated totals: 4,173 client rows, 2,345 RPC rows, 1,408 active Host routes, and 60 queue files. Coverage: CLIENT-LOCAL 1, HOLLOW 10, IMPLEMENTED-TESTED 379, IMPLEMENTED-UNTESTED 1,552, MISSING 403, and no REJECTS-VALID-INPUT rows.
+- The audit now classifies client-local calls separately; later RPC row IDs can shift when those calls are reclassified. Compare target methods by service/method and client source path.
+- The Host route scanner resolves string constants referenced by HasMethod comparisons and inspects the full Host Composition directory, including partial AgentRpc and MissionComposition files. This includes SearchQueryService.Query, whose route compares against QueryMethod, and AgentMissionService, which is returned from AgentRpcServices and registered through the Host characterServices list.
 
 ## P0 service-audit review (2026-10-25)
+
+Coverage statuses match current Host source registrations and known behavior gaps. IMPLEMENTED-TESTED rows name a focused test found in source; that label records test evidence and does not assert that the test ran during this audit. Queue batches contain up to 25 P0/P1 RPC rows grouped by service family, with fix classes A/B/C and real-Host wire-test, whole-client trace, push, and Actions instructions.
 
 ### Whole-client evidence and Host behavior
 
@@ -28,17 +31,39 @@
 - EveJS 261018.1 has GetMultiOwnersEx but no GetOwnersEx/GetPositionEx/GetPositionsEx in the inspected config service. eve.rs supplies client-declared recordsets from authoritative rowset builders.
 - EveJS QuickQuery returns deduplicated flat IDs and handles exact/hideNPC, but ignores onlyAltName at server/src/services/_other/searchService.js:479-500. eve.rs honors alternate/ticker names requested by the client. Both differences are recorded in docs/reference/compat/DEVIATIONS.md:5833-5838.
 
+- SearchService.Handle_Query returns a dictionary keyed by group ID, with matching result ID lists in server/src/services/_other/searchService.js:415-429.
+- ConfigService.Handle_GetMultiOwnersEx accepts the requested ID list, normalizes numeric IDs, and builds owner rows in server/src/services/config/configService.js:378-417. This supports treating a normal valid ID batch as expected input while retaining malformed-ID handling.
+- PingService.Handle_Ping returns null in server/src/services/ping/pingService.js:18-21; the V24.01 caller ignores the reply. AIR NPE returns the boolean from isAirNpeEnabled in server/src/services/npe/airNpeService.js:25-28. SubscriptionMgr.GetCloneGrade returns the session subscription state’s cloneGrade in server/src/services/subscription/subscriptionMgrService.js:77-81.
+- FleetMgr.Handle_RegisterForDamageUpdates delegates the supplied favorites list (`server/src/services/fleets/fleetMgrService.js:33-38`); EveJS 261018.1 requires membership in `fleetRuntime.ensureFleetMembership` (`server/src/services/fleets/fleetRuntime.js:633-642`). V24.01 exposes the toggle without a fleet-membership guard and sends empty favorites or `None` when clearing (`fleetWatchList.py:155-164,177-181`; `fleetSvc.py:450-453,787-795`). eve.rs accepts only those empty unsubscribe forms without membership, clears the session watchlist, and still refuses nonempty updates without membership.
+
 ### Local checks and limits
 
 - Passed: python3 -m unittest tools.spec-extract.test_service_audit_local_calls.
 - Passed after latest merge: target-only dotnet builds for Eve.Services.Space.Tests and Eve.Host.Tests, both zero warnings/errors. Their dependencies passed earlier full builds. The Host inventory test source was restored from the complete main-checkout version after an upstream update truncated it; the corrected source compiles.
 - No PostgreSQL database was used. The focused QuickQuery .NET test passed on Actions, not locally. The graphical V24.01 client has not been exercised.
 
-## Existing audit follow-up
+- A (MISSING): 403 RPC rows lack active Host routes. P0/P1 non-tested rows are queued; lower-priority rows remain in the inventory.
+- B (REJECTS-VALID-INPUT): The eight priority rows listed below now have real-Host wire tests and regenerated coverage evidence; the regenerated inventory contains no REJECTS-VALID-INPUT rows.
+- C (HOLLOW): 10 targeted RPC rows remain hollow after the three structure cyno rows moved to IMPLEMENTED-TESTED: eight Shipcaster inventory rows and two Ansiblex travel rows.
+- Python compile checks and one focused composition-route extraction test passed during this audit. No PostgreSQL database was used. The real graphical client and database-backed mixed-owner request were not exercised locally; a 17-by-100-owner normal burst ran through the real Host. Follow-up to the service-audit push (91a326a5): CI found three incorrect expected inventory totals in ReprocessingServiceTests and a reversed (locationId, ownerId) argument pair in ReprocessingHostTests. The corrected totals account for the initial Tritanium item and the 50% station yield; the persistence assertion now queries InLocationAsync(StationId, character). These are test-only corrections; ReprocessingService and Host behavior are unchanged. Focused database-backed Actions run 40089514853 passed (three Reprocessing service tests and one Host persistence test). Push CI run 40089504834 failed the live structure placement test; .NET space shard 2/2 was cancelled and eight optional slow live checks were skipped. Follow-up runs 40090250476 (ad55c2de) and 40092260488 (8799c2aa) remain in progress. Latest main 2919b0e1 includes simulator tick-alignment and docking-notification ordering changes (56bcae9a); its test_structures.py run 40093710819 is in progress.
 
-- A (MISSING): latest generator reports 403 RPC rows without active Host routes.
-- B (REJECTS-VALID-INPUT): 8 rows remain for Ping, AIR NPE, Config owner IDs, clone-grade reads, and no-fleet updates. EveJS confirms RegisterForDamageUpdates requires fleet membership. Owner logs report normal-burst SessionRpcBudgetExceeded while binding services; the method-level coverage table does not replay binding bursts.
-- C (HOLLOW): 10 rows remain: eight Shipcaster inventory rows and two Ansiblex travel rows. Three structure cyno rows are IMPLEMENTED-TESTED in the generated CSV.
+## Priority reject rows and whole-tree client trace (2026-10-25)
+
+The wire metadata fix treats the client-added `machoVersion=1` as transport data: `carbon/common/script/net/ServiceCallGPCS.py:221-225` and `ObjectCallGPCS.py:403-407` add it to normal remote calls. `PacketDispatcher` removes that key before constructing `ServiceCall`, preserving any other application keywords for existing validation.
+
+### Client callsites, reply consumers, and EveJS 261018.1
+
+- RPC-00867 and RPC-00868 (`air_npe.is_air_npe_enabled`): `storylines/client/airnpe.py:52-60` caches the remote boolean; both `eve/client/script/ui/login/characterCreationContainer_new.py:741-742` and `characterCreationContainer.py:893-894` branch on it during creation. The global-config callback re-reads the value and skips the tutorial when disabled (`airnpe.py:71-74`). EveJS returns its runtime setting from `server/src/services/npe/airNpeService.js:25-28` and `tutorialRuntime.js:143-146`.
+- RPC-01182 (`config.GetMultiOwnersEx`): `eve/common/script/sys/eveCfg.py:548-550` configures the shared `eveowners` recordset. `carbon/common/script/sys/cfg.py:520-605` collects `waitingKeys`, calls the fetch method with `list(keysToGet)` at line 579, and inserts the returned rows by the declared columns; the owner columns are set at `eveCfg.py:591-603`. The whole-tree search found 768 `cfg.eveowners.Get` consumers across 275 files; for example `fleetSvc.py:784-785` reads owner names for fleet members. EveJS builds the owner TupleSet in `server/src/services/config/configService.js:381-481`.
+- RPC-02247 (`pingService.Ping`): the only whole-tree caller is `carbon/client/script/remote/connectionService.py:178-191`; its idle ping loop ignores the reply. EveJS returns `null` at `server/src/services/ping/pingService.js:18-21`.
+- RPC-02845 and RPC-02846 (`subscriptionMgr.GetCloneGrade`): `omega/client/clone_grade_svc.py:112-127` caches the returned grade; its consumers compare the grade for Omega and skill restrictions at lines 130-170. The whole-tree `get_clone_grade_with_grace_period` callers are `agentinteraction/rewardcont.py:245-246`, `loginrewards/client/seasonalLoginCampaignService.py:212-213`, `eve/common/script/util/industryCommon.py:488-491`, `eve/client/script/ui/shared/planet/mecDen/mercDenUiController.py:81-82`, `eve/client/script/parklife/crimewatchSvc.py:130-131`, `skillQueueSvc.py:82-83`, and `eve/client/script/ui/station/agents/agents.py:558-559`. EveJS returns the session `cloneGrade` at `server/src/services/subscription/subscriptionMgrService.js:77-81`.
+- RPC-01554 and RPC-01555 (`fleetMgr.RegisterForDamageUpdates`): `fleetSvc.py:150-153` starts with an empty favorites set; `SetDamageUpdates` re-registers at lines 450-453, and `RegisterForDamageUpdates` sends favorites or `None` at lines 787-795. Leaving a fleet clears favorites and can trigger registration at lines 1681-1691. `fleetWatchList.py:155-164,177-181` exposes the toggle without a fleet guard; the caller ignores the reply. EveJS delegates to `fleetRuntime.registerForDamageUpdates` at `server/src/services/fleets/fleetMgrService.js:33-38`, which filters/stores the list at `fleetRuntime.js:2572-2587` after its membership check at lines 633-642. The intentional Host difference is limited to empty-set/`None` unsubscribe while fleetless; malformed and nonempty requests retain validation and membership errors.
+
+### Implementation and checks
+
+- `GetMultiOwnersEx` accepts up to 10,000 raw IDs, preserves integer/container validation, reads characters in one bulk request, and uses the existing bulk corporation/alliance stores. Its RPC budget is proportional to request size in groups of 100; the shared 160-unit limit remains.
+- Local builds passed for `Eve.Host.Tests` and `Eve.Services.Space.Tests`. Three focused real-Host wire tests passed: `Client_transport_macho_version_is_not_an_application_keyword_for_core_read_calls`, `Owner_recordset_batches_fit_a_normal_session_burst`, and `Empty_fleet_damage_subscription_clears_watchlist_without_membership`. No test was skipped.
+- No PostgreSQL database or graphical client was used. The character/corporation database-backed owner batch was not exercised locally; its code path compiled and uses the existing bulk stores.
 
 ## Shipcaster and structure travel evidence
 

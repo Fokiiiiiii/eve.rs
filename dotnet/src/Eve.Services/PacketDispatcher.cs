@@ -179,7 +179,7 @@ public sealed class PacketDispatcher
             return true;
         }
 
-        var cost = ExpensiveRpcCost(service.Name, call.Method);
+        var cost = ExpensiveRpcCost(service.Name, call.Method, call.Args);
         if (call.Method == "MachoBindObject" && call.Args.Count > 1 &&
             NestedBoundMethod(call.Args[1]) is { } nestedMethod)
             cost = Math.Max(cost, ExpensiveRpcCost(service.Name, nestedMethod));
@@ -216,7 +216,7 @@ public sealed class PacketDispatcher
             {
                 Method = call.Method,
                 Args = call.Args,
-                Kwargs = call.Kwargs,
+                Kwargs = ApplicationKwargs(call.Kwargs),
                 Session = session,
                 CallId = packet.CallId,
                 BoundObjectId = session.CurrentBoundObjectId,
@@ -298,13 +298,35 @@ public sealed class PacketDispatcher
     /// Strict mode: answers the call with a Macho error that names the failure and a correlation id, and logs the
     /// failure with the call's arguments (and the exception's stack trace, when there is one) to stderr.
     /// </summary>
-    private static int ExpensiveRpcCost(string service, string method)
+    private static PyValue ApplicationKwargs(PyValue kwargs)
+    {
+        if (kwargs is not PyDict dict)
+            return kwargs;
+        var entries = dict.Entries
+            .Where(entry => JsSemantics.StringValue(entry.Key) != "machoVersion")
+            .ToArray();
+        return entries.Length == dict.Entries.Count
+            ? kwargs
+            : entries.Length == 0 ? PyNone.Instance : new PyDict(entries);
+    }
+
+    private static int ExpensiveRpcCost(string service, string method, IReadOnlyList<PyValue>? args = null)
     {
         if (method == "GetAllInfo")
             return 10;
+        if (service == "config" && method == "GetMultiOwnersEx")
+        {
+            // Recordset sends uncapped owner batches; scale the budget with rows rather than charging every batch as one heavy call.
+            var count = args is { Count: > 0 } ? args[0] switch
+            {
+                PyList list => list.Items.Count,
+                PyTuple tuple => tuple.Items.Count,
+                _ => 0,
+            } : 0;
+            return Math.Max(1, (Math.Min(count, 10_000) + 99) / 100);
+        }
         if (service == "config" && method is
-            "GetMultiOwnersEx" or "GetMultiCorpTickerNamesEx" or
-            "GetMultiAllianceShortNamesEx" or "GetMultiLocationsEx")
+            "GetMultiCorpTickerNamesEx" or "GetMultiAllianceShortNamesEx" or "GetMultiLocationsEx")
             return 10;
         if (service == "marketProxy" && method is
             "GetOrders" or "GetStationAsks" or "GetSystemAsks" or "GetRegionBest" or

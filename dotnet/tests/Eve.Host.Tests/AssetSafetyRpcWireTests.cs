@@ -58,21 +58,21 @@ public partial class HostServerTests
         async Task<PyValue> Call(long id, string method, params PyValue[] args)
         {
             var reply = await SendCall(id, method, new PyTuple(args), transport);
-            var result = Result(MarshalCodec.Decode(reply.Payload))
+            return Result(MarshalCodec.Decode(reply.Payload))
                 ?? throw new InvalidOperationException("The Host returned no RPC value.");
-            if (method is "MovePersonalAssetsToSafety" or "MoveCorpAssetsToSafety")
-            {
-                var notice = ReadNotification(Assert.IsType<Send>(await front.ReceiveAsync()));
-                Assert.Equal("OnAssetSafetyCreated", notice.Name);
-                Assert.Equal(method == "MoveCorpAssetsToSafety" ? corporationId : characterId, Number(notice.Args[0]));
-            }
-            return result;
         }
 
         Assert.Same(PyNone.Instance, await Call(1, "MovePersonalAssetsToSafety",
             new PyLong(rig.SameSystemStation.SolarSystemId), new PyLong(structureId)));
+        var personalCreated = ReadNotification(Assert.IsType<Send>(await front.ReceiveAsync()));
+        Assert.Equal("OnAssetSafetyCreated", personalCreated.Name);
+        Assert.Equal(characterId, Number(personalCreated.Args[0]));
+
         Assert.Same(PyNone.Instance, await Call(2, "MoveCorpAssetsToSafety",
             new PyLong(rig.SameSystemStation.SolarSystemId), new PyLong(structureId)));
+        var corporationCreated = ReadNotification(Assert.IsType<Send>(await front.ReceiveAsync()));
+        Assert.Equal("OnAssetSafetyCreated", corporationCreated.Name);
+        Assert.Equal(corporationId, Number(corporationCreated.Args[0]));
 
         var personalWrapId = await rig.WrapIdAsync(characterId, 1, structureId);
         var corporationWrapId = await rig.WrapIdAsync(corporationId, 2, structureId);
@@ -95,7 +95,6 @@ public partial class HostServerTests
         Assert.Equal(15, ((PyInt)((PyTuple)((PyObject)MarshalCodec.Decode(earlyDelivery.Payload)).Args).Items[0]).Value);
         Assert.Contains("eveexceptions.UserError", earlyError);
 
-        // Five-day manual-delivery wait plus the GM's five-day timer shift.
         rig.Now += 10 * AssetSafetyPgRig.DayMs + 1;
         var delivered = await SendCall(7, "MoveSafetyWrapToStructure",
             new PyTuple([new PyLong(personalWrapId), new PyLong(rig.SameSystemStation.SolarSystemId)]),

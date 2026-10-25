@@ -2,7 +2,7 @@
 
 ## Status
 
-Partial. Push bbb7b6f1b916b272859ad71047f642e4b473fe1b includes 173d933b fix: accept transport metadata on ship kill counter. Three shipcaster reads have a Host-dispatch regression from earlier commits; kill-counter has a Host-dispatch wire regression. Production shipcaster registration still has no authoritative landing-pad/faction provider. Successful Host-wire regressions for cosmetics and stance remain to be added.
+Partial. Push bbb7b6f1b916b272859ad71047f642e4b473fe1b includes 173d933b fix: accept transport metadata on ship kill counter. Three shipcaster reads have a Host-dispatch regression from earlier commits; kill-counter has a Host-dispatch wire regression. Production shipcaster registration still has no authoritative landing-pad/faction provider. Ship stance now has a real-Host wire regression in MovementRpcHostWireTests.cs:14-49. Cosmetics still need a successful Host-wire regression.
 
 ## V24.01 client callers and consumers
 
@@ -22,4 +22,4 @@ Partial. Push bbb7b6f1b916b272859ad71047f642e4b473fe1b includes 173d933b fix: ac
 
 - Production shipcaster names are registered in dotnet/src/Eve.Host/Rpc/AgentRpc.cs:110 without state callbacks; docs/project/TODO.md retains that gap. Existing ShipcasterHostWireTests sends all three methods through real Host dispatch with test fixture providers.
 - Kill-counter production registration reads persisted shipKillCounters in dotnet/src/Eve.Host/Rpc/CoreRpc.cs:147. The wire test sends GetItemKillCountPlayer(9001) through a loopback Host and asserts persisted player count 23 as PyInt. It accepts only the transport-added machoVersion keyword.
-- Selected kill-counter Actions run 40242203372 passed. Push-triggered CI 40242192488 and selected insurance runs 40243583086/40244085447/40245860424 exposed fixture issues. The latest log showed that the stored row key must be byTypeID for RowCodec to reassemble the table shape expected by PersistenceInsuranceReadModel. The fixture now seeds a quoted table and byTypeID row, and asserts the numeric price via Cents. Local Host.Tests build passed before the row-key correction; the focused Actions check for that correction remains to be run. No local database or graphical-client check was used.
+- Selected kill-counter Actions run 40242203372 passed. Push-triggered CI 40242192488 and selected insurance runs 40243583086/40244085447/40245860424 exposed fixture issues. The final root cause was storing the price under the wrong GameStore row key: RowCodec needs byTypeID to reassemble the shape consumed by PersistenceInsuranceReadModel. The fixture now seeds the quoted table/byTypeID row and checks price using Cents. Host.Tests build passed locally (0 warnings, 0 errors). Insurance focused Actions run 40246465004 passed: 1 passed, 0 failed, 0 skipped. No local database or graphical-client check was used.

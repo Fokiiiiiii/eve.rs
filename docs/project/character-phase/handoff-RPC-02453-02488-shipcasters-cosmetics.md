@@ -2,7 +2,7 @@
 
 ## Status
 
-Partial. Commit `a03adf89` (pushed in `3bfe6605c1f8340c5363ea28dc501e4a10aba0db)) adds a loopback Host wire regression for the three shipcaster read methods. The requested end-to-end batch is not complete: production Host composition does not register a shipcaster service or supply authoritative landing-pad/faction state, and the cosmetics, kill-counter and stance paths still need Host wire regressions that exercise their real state owners.
+Partial. Commit `a03adf89` (included in pushed SHA `3bfe6605c1f8340c5363ea28dc501e4a10aba0db`) adds a loopback Host wire regression for the three shipcaster read methods. The requested end-to-end batch is not complete: production Host composition does not register a shipcaster service or supply authoritative landing-pad/faction state, and the cosmetics, kill-counter and stance paths still need Host wire regressions that exercise their real state owners.
 
 ## V24.01 client trace
 
@@ -21,6 +21,6 @@ The shipcaster RPC service and object-ex wire shape exist in `dotnet/src/Eve.Ser
 
 Local focused test `Shipcaster_reads_return_client_wire_rows_through_host_dispatch`: 1 passed, 0 failed, 0 skipped. No local database or graphical-client verification was used.
 
-Selected Actions run `40230103524` failed during the Release build before test execution because the merged `ShipRpcHostTests.cs` lacked `using Eve.Services;` for `Py`. The import is now added; the same local focused Host test rebuilt the project and passed. A retry Actions run and push-triggered `ci.yml` status for the corrective commit remain to be recorded. No client graphical run was performed.
+The first selected Actions run `40230103524` failed at Release compilation before the test because the merged `ShipRpcHostTests.cs` lacked `using Eve.Services;` for `Py`. The missing namespace was added in `916e0bca` and pushed in `d8ca628437402c29b442bdc033313ca9bd836680`. Retry `40231225904` passed the Release build and selected test; no tests or jobs failed. The push-triggered `ci.yml` status lookup for that SHA returned no run. No client graphical run was performed.
 
 Remaining work is production Host registration backed by authoritative shipcaster state, plus real Host wire regressions for cosmetics mutations, kill-counter persistence and stance mutation/notifications.

@@ -25,4 +25,5 @@ The current Host `dotnet/src/Eve.Services.Corporations/CorporationService.cs` re
 
 - `MSBUILDDISABLENODEREUSE=1 dotnet test dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj --filter FullyQualifiedName~Corporation_medal_rpcs_use_the_registered_host_service_and_preserve_wire_outcomes -p:UseSharedCompilation=false --no-restore`: passed, 1 passed, 0 skipped.
 - The first focused test attempt exposed a Rowset marshal-string normalization mismatch in the test assertion; the assertion now normalizes its expected value by a marshal round trip.
+- `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -p:UseSharedCompilation=false --no-restore`: succeeded with 0 warnings and 0 errors.
 - Real graphical V24.01 client behavior was not exercised.

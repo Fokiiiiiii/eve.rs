@@ -16,7 +16,7 @@ GetDBSMapData previously returned an empty dictionary despite an available ESS s
 - RPC-01415/01416/01417/01418: get, iteritems, and keys are Python mapping operations on the returned PyDict (baseMapFilter.py:134,137,158; contentProviderSignatures.py:22). EveJS buildSignatureCountDict returns a dictionary (dungeonInstanceCacheMgrService.js:313-321).
 - RPC-01419: dynamicResourceSvc.py:58-64 unpacks (output, dbsIsActive); infoPanelLocationInfo.py:319-326 shows output * 100 only when active. EveJS returns disabled [0, 0] (dynamicBountyMgrService.js:11-20).
 - RPC-01423/01424 are consumed by mapFilterDynamicBounty.py:18-35; RPC-01425/01426 by mapViewColorHandler.py:210-224. They need a system-ID-to-output map and minOutput/maxOutput/equilibriumValue.
-- RPC-01427/01428/01429/01430: essSystemContentPiece.py:22-24 and essSystemInfoContainer.py:51,103,111-113 request settings. Other whole-tree callers: essFiltersCont.py:22-25; essBountiesOutputTooltip.py:18-19; essGameplayTooltip.py:18; essMainBankTooltip.py:18-20; essReserveBankTooltip.py:18-19; infoPanels/essUI/controller.py:25; dynamicresources/client/ess/settings.py:24,38-39 reads reservePulseIntervalSeconds. EveJS settings are in dynamicResourceState.js:285-287.
+- RPC-01427/01428/01429/01430: essSystemContentPiece.py:22-24 and essSystemInfoContainer.py:51,103,111-113 request settings. Other whole-tree callers: essFiltersCont.py:22-25; essBountiesOutputTooltip.py:18-19; essGameplayTooltip.py:18; essMainBankTooltip.py:20-21; essReserveBankTooltip.py:18-19; infoPanels/essUI/controller.py:25; dynamicresources/client/ess/settings.py:24,38-39 reads reservePulseIntervalSeconds. EveJS settings are in dynamicResourceState.js:285-287.
 
 These caller and consumer locations were searched across /home/user/eve-logic with Serena and cross-checked with CBM graph searches.
 
@@ -28,7 +28,8 @@ DungeonDynamicResourceHostWireTests.cs covers the PyList, escalating-path rowset
 
 ## Checks and limits
 
-PASS: Dungeon_and_dynamic_resource_cache_calls_round_trip_through_host_registration (1 passed, 0 failed, 0 skipped), including the latest merged Host test source.
+PASS: Dungeon_and_dynamic_resource_cache_calls_round_trip_through_host_registration (1 passed, 0 failed, 0 skipped) on the latest merged Host test source.
 PASS: dotnet build dotnet/src/Eve.Services.Space/Eve.Services.Space.csproj -p:UseSharedCompilation=false (0 warnings, 0 errors). Focused test invocations compiled Eve.Host.Tests successfully.
-Actions 40196410619 on SHA 21f001c failed because both Host test files defined Value(PyDict, string). The new test's helper was renamed to EntryValue. On SHA 75f32014, Actions 40198363063 and CI run 40198356757 then exposed nine unresolved Value references in the neighboring test. The latest main merge changed those callers to the shared EntryValue helper; the focused test passes on the merged tree. Actions 40200111554 and CI run 40200078948 for SHA 8c9911df are checking that tree.
+PASS: selected agent-test run 40200111554 for 8c9911df and run 40200862170 for 100a91e1; each had no failed tests or jobs.
+CI run 40200853613 on 100a91e1 found the Host registry inventory count stale at 1400: actual 1401, including EventLogRpcService.LogClientEvent (eventLog service). The inventory regression now expects 1401 and asserts eventLog.LogClientEvent is enumerated. The inventory test uses PostgreSQL and was not run locally; the next push CI run will cover this correction. CI run 40200853613 was still in progress after reporting this failure.
 Not exercised: graphical client, PostgreSQL-backed Host composition, or nonzero dynamic-bounty activation. The disabled pair matches EveJS v0.12.9.

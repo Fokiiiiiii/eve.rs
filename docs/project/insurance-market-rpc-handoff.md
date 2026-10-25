@@ -39,5 +39,5 @@ Insurance delegates all six operations through `server/src/services/insurance/in
 
 - PASS: `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -p:UseSharedCompilation=false -p:BuildProjectReferences=false --no-restore` (0 warnings, 0 errors).
 - The first build attempt reported missing NuGet assets; restore completed during the subsequent successful build.
-- Database-backed Host tests were not run on this machine, per the no-database instruction. The focused Actions run and push CI status will be added after dispatch.
+- Database-backed Host tests were not executed locally, per the no-database instruction. Focused Actions runs 40224752533 and 40224967561 both failed in `actions/setup-dotnet` before test startup: the .NET 10.0.14 runtime and 10.0.403 SDK downloads returned HTTP 409. Push CI run 40224742683 failed at the same setup step. No test cases started; retry after the distribution endpoint recovers.
 - The graphical V24.01 client was not used.

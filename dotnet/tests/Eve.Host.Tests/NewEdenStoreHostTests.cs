@@ -8,6 +8,7 @@ using Eve.Services;
 using Eve.Services.Core;
 using Eve.Sde;
 using Eve.Universe;
+using Eve.Trade;
 using Eve.Wallet;
 using Npgsql;
 
@@ -30,7 +31,7 @@ public sealed class NewEdenStoreHostTests : IAsyncLifetime
     [
         "EVE_IDENTITY_SCHEMA", "EVE_GLOBAL_CONFIG_SCHEMA", "EVE_CHARACTERS_SCHEMA", "EVE_INVENTORY_SCHEMA", "EVE_SKILLS_SCHEMA", "EVE_WALLET_SCHEMA",
         "EVE_FITTING_SCHEMA", "EVE_NPC_SCHEMA", "EVE_SPACE_SCHEMA", "EVE_GAMESTORE_SCHEMA", "EVE_ASSET_SAFETY_SCHEMA", "EVE_CORPORATIONS_SCHEMA",
-        "EVE_MARKET_SCHEMA", "EVE_FLEET_SCHEMA", "EVE_INDUSTRY_SCHEMA", "EVE_SCHEDULER_SCHEMA", "EVE_EVENTS_SCHEMA", "EVE_RELATIONS_SCHEMA",
+        "EVE_MARKET_SCHEMA", "EVE_TRADE_SCHEMA", "EVE_FLEET_SCHEMA", "EVE_INDUSTRY_SCHEMA", "EVE_SCHEDULER_SCHEMA", "EVE_EVENTS_SCHEMA", "EVE_RELATIONS_SCHEMA",
         "EVE_CONTENT_SCHEMA", "EVE_CRIMEWATCH_SCHEMA",
     ];
 
@@ -84,9 +85,9 @@ public sealed class NewEdenStoreHostTests : IAsyncLifetime
 
     private sealed class Sink : IPacketSink
     {
-        public void Send(PyValue packet)
-        {
-        }
+        private readonly System.Collections.Concurrent.ConcurrentQueue<PyValue> _packets = new();
+        public int Count => _packets.Count;
+        public void Send(PyValue packet) => _packets.Enqueue(packet);
     }
 
     private static HostSettings Settings() => new(
@@ -147,6 +148,239 @@ public sealed class NewEdenStoreHostTests : IAsyncLifetime
         var advertised = new HostMachoNetInfo(host.Registry, () => GlobalConfig.Build(new ClusterOptions())).Services();
         Assert.Contains(advertised, entry => entry.Key == "standing2" && entry.Value is null);
         Assert.Contains(advertised, entry => entry.Key == "tradeMgr" && entry.Value == "station");
+    }
+
+
+    private sealed record DirectTradeContext(
+        HostRuntime Host,
+        NpgsqlDataSource Source,
+        Station Station,
+        long AliceId,
+        long BobId,
+        IService Service,
+        ClientSession Alice,
+        ClientSession Bob,
+        Sink AliceSink,
+        Sink BobSink,
+        PgItemStore Items,
+        TradeAuthority Authority);
+
+    private static long _tradeCallId = 2000;
+
+    private async Task<DirectTradeContext> OpenDirectTradeAsync()
+    {
+        var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var host = await BuildHostAsync();
+        var station = (await StationCatalog.LoadAsync(new SdeReader(source))).All.First();
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        var aliceId = await CreatePilotAsync(source, station, "Trade Alice " + suffix);
+        var bobId = await CreatePilotAsync(source, station, "Trade Bob " + suffix);
+        var aliceSink = new Sink();
+        var bobSink = new Sink();
+        var alice = DockedSession(aliceId, station, aliceSink);
+        var bob = DockedSession(bobId, station, bobSink);
+        host.CharacterSessions!.Enter(aliceId, alice);
+        host.CharacterSessions.Enter(bobId, bob);
+
+        var items = new PgItemStore(source, Schema("EVE_INVENTORY_SCHEMA"));
+        var walletSchema = Schema("EVE_WALLET_SCHEMA");
+        var authority = new TradeAuthority(source, items, new WalletTransactions(source, walletSchema),
+            new PgWalletStore(source, walletSchema), () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            Schema("EVE_TRADE_SCHEMA"), new ItemTypeCatalog(new SdeReader(source)));
+        var service = Assert.IsAssignableFrom<IService>(host.Registry.Lookup("trademgr"));
+        await service.CallAsync(Call(alice, "InitiateTrade", Interlocked.Increment(ref _tradeCallId), [new PyLong(bobId)]));
+        return new DirectTradeContext(host, source, station, aliceId, bobId, service, alice, bob, aliceSink, bobSink, items, authority);
+    }
+
+    private static async Task<long> CreateTradeItemAsync(DirectTradeContext context, NewItem item)
+    {
+        await using var connection = await context.Source.OpenConnectionAsync();
+        await using var transaction = await connection.BeginTransactionAsync();
+        var id = await context.Items.CreateAsync(connection, transaction, item);
+        await transaction.CommitAsync();
+        return id;
+    }
+
+    private static ClientSession DockedSession(long characterId, Station station, Sink sink)
+    {
+        var session = new ClientSession(sink) { CharacterId = characterId };
+        session.Set("stationid", new PyInt(station.Id));
+        session.Set("solarsystemid2", new PyInt(station.SolarSystemId));
+        return session;
+    }
+
+    private static async Task<PyValue> TradeBoundCallAsync(DirectTradeContext context, ClientSession session, long tradeId,
+        string method, PyValue[] args, PyDict? kwargs = null)
+    {
+        var nested = Py.Tuple(new PyStr(method), new PyList(args), kwargs ?? new PyDict([]));
+        var bound = await context.Service.CallAsync(Call(session, "MachoBindObject", Interlocked.Increment(ref _tradeCallId),
+            [new PyTuple([new PyLong(tradeId)]), nested]));
+        return Assert.IsType<PyTuple>(bound).Items[1];
+    }
+
+    private static PyValue TradeManifest(long tradeId, decimal aliceIsk, decimal bobIsk, IEnumerable<long> itemIds)
+    {
+        var items = new PyObjectEx(ObjectExKind.Ex1,
+            new PyTuple([new PyToken("__builtin__.set"), new PyTuple([new PyList(itemIds.Select(id => (PyValue)new PyLong(id)).ToList())])]),
+            [], []);
+        return new PyObjectEx(ObjectExKind.Ex1, new PyStr("KeyVal"), [], [
+            new(new PyStr("tradeContainerID"), new PyLong(tradeId)),
+            new(new PyStr("money"), new PyList([new PyReal((double)aliceIsk), new PyReal((double)bobIsk)])),
+            new(new PyStr("tradeItems"), items),
+        ]);
+    }
+
+    private static async Task<int> FirstRestrictedTradeTypeAsync(SdeReader sde, ItemTypeCatalog types)
+    {
+        var lists = await sde.ReadAsync("typeLists", [36L, 142L]);
+        foreach (var list in lists)
+        {
+            var doc = list.Doc;
+            var candidates = new List<long>();
+            static long[] Values(System.Text.Json.JsonElement doc, string field) =>
+                doc.TryGetProperty(field, out var values) && values.ValueKind == System.Text.Json.JsonValueKind.Array
+                    ? values.EnumerateArray().Where(value => value.TryGetInt64(out _)).Select(value => value.GetInt64()).ToArray()
+                    : [];
+
+            candidates.AddRange(Values(doc, "includedTypeIDs"));
+            var groupIds = Values(doc, "includedGroupIDs");
+            if (groupIds.Length > 0)
+                candidates.AddRange((await sde.ReadByFieldAsync("types", "groupID", groupIds)).Select(row => row.Key));
+            var categoryIds = Values(doc, "includedCategoryIDs");
+            if (categoryIds.Length > 0)
+            {
+                var groups = await sde.ReadByFieldAsync("groups", "categoryID", categoryIds);
+                candidates.AddRange((await sde.ReadByFieldAsync("types", "groupID", groups.Select(row => row.Key))).Select(row => row.Key));
+            }
+            foreach (var candidate in candidates.Distinct())
+                if (candidate <= int.MaxValue && !await types.IsTradableAsync((int)candidate))
+                    return (int)candidate;
+        }
+        throw new InvalidOperationException("The pinned SDE has no type in the trade-restricted lists.");
+    }
+
+    [PgFact]
+    public async Task Trade_rpc_invalid_items_and_a_bad_multiadd_leave_persistence_and_notifications_unchanged()
+    {
+        var context = await OpenDirectTradeAsync();
+        await using var source = context.Source;
+        var trade = (await context.Authority.OpenViewForAsync(context.AliceId))!;
+        var beforeAlicePackets = context.AliceSink.Count;
+        var beforeBobPackets = context.BobSink.Count;
+
+        var activeShip = await CreateTradeItemAsync(context,
+            new NewItem(34, context.AliceId, context.Station.Id, ItemFlags.Hangar, Singleton: true));
+        context.Alice.Set("shipid", new PyLong(activeShip));
+        var shipError = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await TradeBoundCallAsync(context, context.Alice, trade.TradeId, "Add",
+                [new PyLong(activeShip), new PyLong(context.Station.Id)]));
+        Assert.Equal("PeopleAboardShip", shipError.Error.UserErrorMessage);
+
+        var wrap = await CreateTradeItemAsync(context,
+            new NewItem(60, context.AliceId, context.Station.Id, ItemFlags.Hangar, Singleton: true));
+        var wrapError = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await TradeBoundCallAsync(context, context.Alice, trade.TradeId, "Add",
+                [new PyLong(wrap), new PyLong(context.Station.Id)]));
+        Assert.Equal("CannotTradeAssetSafety", wrapError.Error.UserErrorMessage);
+
+        var catalog = new ItemTypeCatalog(new SdeReader(context.Source));
+        var restrictedType = await FirstRestrictedTradeTypeAsync(new SdeReader(context.Source), catalog);
+        var restricted = await CreateTradeItemAsync(context,
+            new NewItem(restrictedType, context.AliceId, context.Station.Id, ItemFlags.Hangar));
+        var restrictedError = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await TradeBoundCallAsync(context, context.Alice, trade.TradeId, "Add",
+                [new PyLong(restricted), new PyLong(context.Station.Id)]));
+        Assert.Equal("ItemCannotBeTraded", restrictedError.Error.UserErrorMessage);
+
+        var wrongSourceItem = await CreateTradeItemAsync(context,
+            new NewItem(34, context.AliceId, context.Station.Id, ItemFlags.Hangar));
+        var sourceError = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await TradeBoundCallAsync(context, context.Alice, trade.TradeId, "Add",
+                [new PyLong(wrongSourceItem), new PyLong(context.Station.Id + 1L)]));
+        Assert.Equal("CustomNotify", sourceError.Error.UserErrorMessage);
+
+        var foreignItem = await CreateTradeItemAsync(context,
+            new NewItem(34, context.BobId, context.Station.Id, ItemFlags.Hangar));
+        var ownerError = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await TradeBoundCallAsync(context, context.Alice, trade.TradeId, "Add",
+                [new PyLong(foreignItem), new PyLong(context.Station.Id)]));
+        Assert.Equal("CustomNotify", ownerError.Error.UserErrorMessage);
+
+        var validItem = await CreateTradeItemAsync(context,
+            new NewItem(34, context.AliceId, context.Station.Id, ItemFlags.Hangar));
+        var batchError = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await TradeBoundCallAsync(context, context.Alice, trade.TradeId, "MultiAdd",
+                [new PyList([new PyLong(validItem), new PyLong(activeShip)]), new PyLong(context.Station.Id)]));
+        Assert.Equal("PeopleAboardShip", batchError.Error.UserErrorMessage);
+
+        Assert.Equal(context.Station.Id, (await context.Items.GetAsync(validItem))!.LocationId);
+        Assert.Equal(context.Station.Id, (await context.Items.GetAsync(wrongSourceItem))!.LocationId);
+        Assert.Equal(context.BobId, (await context.Items.GetAsync(foreignItem))!.OwnerId);
+        Assert.Empty((await context.Authority.ViewAsync(trade.TradeId))!.Items);
+        Assert.Equal(beforeAlicePackets, context.AliceSink.Count);
+        Assert.Equal(beforeBobPackets, context.BobSink.Count);
+    }
+
+    [PgFact]
+    public async Task Trade_rpc_completes_and_transfers_nested_items_and_abort_and_recovery_restore_items()
+    {
+        var context = await OpenDirectTradeAsync();
+        await using var source = context.Source;
+        var trade = (await context.Authority.OpenViewForAsync(context.AliceId))!;
+        var container = await CreateTradeItemAsync(context,
+            new NewItem(3293, context.AliceId, context.Station.Id, ItemFlags.Hangar, Singleton: true));
+        var child = await CreateTradeItemAsync(context,
+            new NewItem(34, context.AliceId, container, ItemFlags.Hangar));
+
+        Assert.Equal(PyBool.True, await TradeBoundCallAsync(context, context.Alice, trade.TradeId, "Add",
+            [new PyLong(container), new PyLong(context.Station.Id)]));
+        Assert.Equal(PyBool.True, await TradeBoundCallAsync(context, context.Bob, trade.TradeId, "OfferMoney", [new PyReal(250)]));
+        var manifest = TradeManifest(trade.TradeId, 0m, 250m, [container]);
+        Assert.Equal(PyBool.True, await TradeBoundCallAsync(context, context.Alice, trade.TradeId, "MakeOffer", [manifest]));
+        Assert.Equal(PyBool.True, await TradeBoundCallAsync(context, context.Bob, trade.TradeId, "MakeOffer", [manifest]));
+        Assert.Equal(context.BobId, (await context.Items.GetAsync(container))!.OwnerId);
+        Assert.Equal((context.BobId, container), ((await context.Items.GetAsync(child))!.OwnerId, (await context.Items.GetAsync(child))!.LocationId));
+        Assert.Equal(9750m, (await new PgWalletStore(context.Source, Schema("EVE_WALLET_SCHEMA")).GetAsync(context.BobId))!.Isk);
+        Assert.True(context.AliceSink.Count > 1);
+        Assert.True(context.BobSink.Count > 1);
+
+        var reopened = await context.Authority.InitiateAsync(context.AliceId, context.BobId, context.Station.Id, context.Station.SolarSystemId);
+        var abortItem = await CreateTradeItemAsync(context,
+            new NewItem(34, context.AliceId, context.Station.Id, ItemFlags.Hangar));
+        Assert.Equal(PyBool.True, await TradeBoundCallAsync(context, context.Alice, reopened.TradeId, "Add",
+            [new PyLong(abortItem), new PyLong(context.Station.Id)]));
+        Assert.Equal(PyBool.True, await TradeBoundCallAsync(context, context.Alice, reopened.TradeId, "Abort", []));
+        Assert.Equal(context.Station.Id, (await context.Items.GetAsync(abortItem))!.LocationId);
+
+        var recoveryTrade = await context.Authority.InitiateAsync(context.AliceId, context.BobId, context.Station.Id, context.Station.SolarSystemId);
+        var recoveryItem = await CreateTradeItemAsync(context,
+            new NewItem(34, context.AliceId, context.Station.Id, ItemFlags.Hangar));
+        await context.Authority.StageAsync(recoveryTrade.TradeId, context.AliceId, recoveryItem, 0,
+            context.Station.Id, context.Alice.GetInt("shipid") ?? 0);
+        Assert.Equal(recoveryTrade.TradeId, (await context.Items.GetAsync(recoveryItem))!.LocationId);
+        Assert.Single(await context.Authority.RecoverOpenAsync());
+        Assert.Equal(context.Station.Id, (await context.Items.GetAsync(recoveryItem))!.LocationId);
+    }
+
+    [PgFact]
+    public async Task Trade_rpc_concurrent_acceptances_complete_once()
+    {
+        var context = await OpenDirectTradeAsync();
+        await using var source = context.Source;
+        var trade = (await context.Authority.OpenViewForAsync(context.AliceId))!;
+        var item = await CreateTradeItemAsync(context,
+            new NewItem(34, context.AliceId, context.Station.Id, ItemFlags.Hangar));
+        await TradeBoundCallAsync(context, context.Alice, trade.TradeId, "Add",
+            [new PyLong(item), new PyLong(context.Station.Id)]);
+        var manifest = TradeManifest(trade.TradeId, 0m, 0m, [item]);
+
+        var results = await Task.WhenAll(
+            TradeBoundCallAsync(context, context.Alice, trade.TradeId, "MakeOffer", [manifest]),
+            TradeBoundCallAsync(context, context.Bob, trade.TradeId, "MakeOffer", [manifest]));
+
+        Assert.All(results, result => Assert.Equal(PyBool.True, result));
+        Assert.Equal(context.BobId, (await context.Items.GetAsync(item))!.OwnerId);
+        Assert.Equal("completed", (await context.Authority.ViewAsync(trade.TradeId))!.Status);
     }
 
     [PgFact]

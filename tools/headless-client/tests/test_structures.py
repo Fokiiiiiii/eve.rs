@@ -125,7 +125,7 @@ def _reenter(client, character: int) -> None:
 def _undock(client, ship_id: int, fitted: list, station: int = STATION, system: int = SYSTEM) -> None:
     """The pilot leaves its station with its ship and is bound to the system's ballpark."""
     ship = client.call("ship", "MachoBindObject", (station, 15), None)
-    client.call_bound(ship[0], "Undock", ship_id, False, onlineModules=m.List(fitted))
+    assert client.call_bound(ship[0], "Undock", ship_id, False, onlineModules=m.List(fitted)) is not None, "the ship did not undock"
     client.call("beyonce", "MachoBindObject", system, None)
 
 def _undocked_pilot(client) -> tuple[int, int]:
@@ -148,9 +148,13 @@ def _pilot_without_role(ceo, pilot) -> tuple[int, int, int]:
     return corporation, character, ship_id
 
 def _refusal(failure: p.MachoError) -> tuple[str, str]:
-    """The label of the client's UserError the server raised (the first item of its tuple) and the whole of its payload as text."""
-    payload = describe(failure.payload)["$objectex"]["$tuple"]
-    return str(payload[1]["$tuple"][0]), str(describe(failure.payload))
+    """The label of a wrapped UserError, or the raw payload when the server sent another error shape."""
+    described = describe(failure.payload)
+    object_ex = described.get("$objectex") if isinstance(described, dict) else None
+    payload = object_ex.get("$tuple") if isinstance(object_ex, dict) else None
+    if not isinstance(payload, list) or len(payload) < 2:
+        return "<non-user-error>", str(described)
+    return str(payload[1]["$tuple"][0]), str(described)
 
 def _refused(call) -> tuple[str, str]:
     """(label, payload text) of the refusal the call gets; a call that is answered fails the test."""
@@ -467,10 +471,37 @@ def test_a_director_anchors_an_astrahus_from_its_ship_in_a_legal_system_and_the_
         dbseed.sql(f"update {dbseed.schema('CORPORATIONS')}.corporations set created_ms = {int(time.time() * 1000) - 8 * 86_400_000} where id = {corporation}")
         _relocate(character, ship_id)
         _reenter(client, character)
+        timed_events(client, 0.5)
+        assert client.session is not None
+        assert client.session.session_init.get("stationid") == LEGAL_STATION, "the pilot did not select into the legal station"
         _undock(client, ship_id, fitted, LEGAL_STATION, LEGAL_SYSTEM)
+        timed_events(
+            client,
+            15.0,
+            until=lambda _: (
+                client.session is not None
+                and client.session.session_init.get("stationid") is None
+                and client.session.session_init.get("shipid") == ship_id
+                and client.session.session_init.get("solarsystemid") == LEGAL_SYSTEM
+                and not client.session.session_init.get("structureid")
+            ),
+        )
+        assert (
+            client.session is not None
+            and client.session.session_init.get("stationid") is None
+            and client.session.session_init.get("shipid") == ship_id
+            and client.session.session_init.get("solarsystemid") == LEGAL_SYSTEM
+            and not client.session.session_init.get("structureid")
+        ), "the pilot was not in its ship in the expected system after undocking"
         ballpark = client.call("beyonce", "MachoBindObject", LEGAL_SYSTEM, None)
+        timed_events(client, 2.5)
+        client.call_bound(ballpark[0], "UpdateStateRequest")
+        timed_events(client, 2.0)
         x, y, z = LEGAL_STATION_POSITION
-        client.call_bound(ballpark[0], "CmdWarpToStuff", "position", (x + WARP_OFF, y, z), minRange=0)
+        try:
+            client.call_bound(ballpark[0], "CmdWarpToStuff", "position", (x + WARP_OFF, y, z), minRange=0)
+        except p.MachoError as failure:
+            pytest.fail(f"the warp was refused: {_refusal(failure)[0]}: {describe(failure.payload)}")
         item = dbseed.new_item(ASTRAHUS, owner=character, location=ship_id, flag=CARGO_FLAG, singleton=True)
         deadline = time.time() + 300
         while True:

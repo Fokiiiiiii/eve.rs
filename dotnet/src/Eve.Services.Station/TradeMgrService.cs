@@ -61,7 +61,7 @@ public sealed partial class TradeMgrService(CharacterSessions sessions, TradeAut
         }
         catch (TradeRefusedException refused)
         {
-            throw Notify(refused.Message);
+            throw Refusal(refused);
         }
 
         // a pilot who disconnects in the trade ends it: its items go back to where they were
@@ -155,12 +155,15 @@ public sealed partial class TradeMgrService(CharacterSessions sessions, TradeAut
     {
         var view = await BoundViewAsync(call).ConfigureAwait(false);
         var itemId = IdOf(call.Arg(0)) ?? throw Notify("That item is no longer there.");
+        var sourceLocationId = call.Args.Count > 1 ? IdOf(call.Args[1]) ?? 0 : 0;
+        if (sourceLocationId <= 0)
+            throw Notify("The source inventory could not be resolved.");
         var quantity = IdOf(Kwarg(call.Kwargs, "qty")) ?? 0;
-        await StageAsync(view, CharacterOf(call.Session), itemId, quantity, call.Cancellation).ConfigureAwait(false);
+        await StageAsync(view, CharacterOf(call.Session), itemId, quantity, sourceLocationId, ActiveShipId(call.Session), call.Cancellation).ConfigureAwait(false);
         return PyBool.True;
     }
 
-    /// <summary><c>MultiAdd(itemIDs, sourceLocationID)</c>: puts several whole items into the trade.</summary>
+    /// <summary><c>MultiAdd(itemIDs, sourceLocationID)</c>: validates and stages the full batch in one transaction.</summary>
     [Method("MultiAdd")]
     public async ValueTask<PyValue> MultiAdd(ServiceCall call)
     {
@@ -168,12 +171,22 @@ public sealed partial class TradeMgrService(CharacterSessions sessions, TradeAut
         var ids = ItemIdsOf(call.Arg(0));
         if (ids.Count == 0)
             return PyBool.False;
-        foreach (var itemId in ids)
-            await StageAsync(view, CharacterOf(call.Session), itemId, 0, call.Cancellation).ConfigureAwait(false);
+        var sourceLocationId = call.Args.Count > 1 ? IdOf(call.Args[1]) ?? 0 : 0;
+        if (sourceLocationId <= 0)
+            throw Notify("The source inventory could not be resolved.");
+        try
+        {
+            var change = await trades!.StageManyAsync(view.TradeId, CharacterOf(call.Session), ids,
+                sourceLocationId, ActiveShipId(call.Session), call.Cancellation).ConfigureAwait(false);
+            await AnnounceAsync(change, call.Cancellation, announceOffer: true, primeItems: true).ConfigureAwait(false);
+        }
+        catch (TradeRefusedException refused)
+        {
+            throw Refusal(refused);
+        }
         return PyBool.True;
     }
 
-    /// <summary><c>OfferMoney(amount)</c>: the ISK the caller offers (cannot exceed its wallet). Any change clears both acceptances.</summary>
     [Method("OfferMoney")]
     public async ValueTask<PyValue> OfferMoney(ServiceCall call)
     {
@@ -182,7 +195,7 @@ public sealed partial class TradeMgrService(CharacterSessions sessions, TradeAut
         try
         {
             var change = await trades!.SetMoneyAsync(view.TradeId, CharacterOf(call.Session), amount, call.Cancellation).ConfigureAwait(false);
-            await AnnounceAsync(change, call.Cancellation).ConfigureAwait(false);
+            await AnnounceAsync(change, call.Cancellation, announceMoney: true, announceOffer: true).ConfigureAwait(false);
         }
         catch (TradeRefusedException refused)
         {
@@ -215,14 +228,14 @@ public sealed partial class TradeMgrService(CharacterSessions sessions, TradeAut
         switch (outcome.Outcome)
         {
             case TradeOfferOutcome.Mismatch:
-                await AnnounceAsync(outcome.Change, call.Cancellation).ConfigureAwait(false);
                 call.Session.SendNotification("OnTradeOfferReset", "clientID", new PyLong(view.TradeId), PyBool.True);
+                await AnnounceAsync(outcome.Change, call.Cancellation, announceOffer: true).ConfigureAwait(false);
                 return PyBool.False;
             case TradeOfferOutcome.Pending:
-                await AnnounceAsync(outcome.Change, call.Cancellation).ConfigureAwait(false);
+                await AnnounceAsync(outcome.Change, call.Cancellation, announceOffer: true).ConfigureAwait(false);
                 return PyBool.True;
             case TradeOfferOutcome.Refused:
-                await AnnounceAsync(outcome.Change, call.Cancellation).ConfigureAwait(false);
+                await AnnounceAsync(outcome.Change, call.Cancellation, announceOffer: true).ConfigureAwait(false);
                 throw Notify(outcome.Reason ?? "Trade completion failed.");
             default:
                 await AnnounceCompletedAsync(outcome, call.Cancellation).ConfigureAwait(false);
@@ -239,21 +252,32 @@ public sealed partial class TradeMgrService(CharacterSessions sessions, TradeAut
         return PyBool.True;
     }
 
-    private async Task StageAsync(TradeView view, long characterId, long itemId, long quantity, CancellationToken cancellationToken)
+    private async Task StageAsync(TradeView view, long characterId, long itemId, long quantity, long sourceLocationId, long activeShipId, CancellationToken cancellationToken)
     {
         TradeChange change;
         try
         {
-            change = await trades!.StageAsync(view.TradeId, characterId, itemId, quantity, cancellationToken).ConfigureAwait(false);
+            change = await trades!.StageAsync(view.TradeId, characterId, itemId, quantity, sourceLocationId, activeShipId, cancellationToken).ConfigureAwait(false);
         }
         catch (TradeRefusedException refused)
         {
-            throw Notify(refused.Message);
+            throw Refusal(refused);
         }
-        await AnnounceAsync(change, cancellationToken).ConfigureAwait(false);
+        await AnnounceAsync(change, cancellationToken, announceOffer: true, primeItems: true).ConfigureAwait(false);
     }
 
     private static long CharacterOf(ClientSession session) => session.CharacterId ?? session.GetInt("charID") ?? session.GetInt("characterID") ?? 0;
+
+    private static long ActiveShipId(ClientSession session) => session.GetInt("shipid") ?? session.GetInt("activeShipID") ?? 0;
+
+    private static MachoWrappedException Refusal(TradeRefusedException refused) => refused.ErrorName switch
+    {
+        "PeopleAboardShip" => MachoErrors.ThrowUserError("PeopleAboardShip"),
+        "CannotTradeAssetSafety" => MachoErrors.ThrowUserError("CannotTradeAssetSafety"),
+        "ItemCannotBeTraded" => MachoErrors.ThrowUserError("ItemCannotBeTraded",
+            ("type_ids", PyValue.PythonSet(refused.TypeIds.Order().Select(id => (PyValue)new PyInt(id))))),
+        _ => Notify(refused.Message),
+    };
 
     /// <summary>Ends a trade (cancel or disconnect) and tells both pilots.</summary>
     private async Task EndAsync(long tradeId, CancellationToken cancellationToken)
@@ -279,10 +303,14 @@ public sealed partial class TradeMgrService(CharacterSessions sessions, TradeAut
     }
 
     /// <summary>After a change: the item moves, the priming of the items, the ISK offers and the acceptances, to both pilots.</summary>
-    private async Task AnnounceAsync(TradeChange change, CancellationToken cancellationToken)
+    private async Task AnnounceAsync(TradeChange change, CancellationToken cancellationToken,
+        bool announceMoney = false, bool announceOffer = false, bool primeItems = false)
     {
         var view = change.View;
-        var staged = change.Moves.Where(m => !m.Removed).Select(m => new PyLong(m.After.Id)).ToList();
+        var staged = primeItems
+            ? change.Moves.Where(move => !move.Removed && move.After.LocationId == view.TradeId).Select(move => new PyLong(move.After.Id)).ToList()
+            : [];
+        var offers = announceOffer ? await OfferStatesAsync(view, cancellationToken).ConfigureAwait(false) : null;
         foreach (var traderId in new[] { view.InitiatorId, view.TargetId })
         {
             var session = sessions.Of(traderId);
@@ -291,9 +319,30 @@ public sealed partial class TradeMgrService(CharacterSessions sessions, TradeAut
                 session.SendNotification("OnItemChange", "clientID", InventoryWire.PackedRow(await RowAsync(move.After, cancellationToken).ConfigureAwait(false)), Differences(move), PyNone.Instance);
             if (staged.Count > 0)
                 session.SendNotification("OnPrimingNeededForTradeItems", "clientID", new PyList([.. staged]));
-            session.SendNotification("OnTradeMoneyOffer", "clientID", new PyLong(view.TradeId), new PyList([new PyReal((double)view.InitiatorIsk), new PyReal((double)view.TargetIsk)]));
-            session.SendNotification("OnTradeOffer", "clientID", new PyLong(view.TradeId), new PyList([new PyInt(view.InitiatorAccepted ? 1 : 0), new PyInt(view.TargetAccepted ? 1 : 0)]));
+            if (announceMoney)
+                session.SendNotification("OnTradeMoneyOffer", "clientID", new PyLong(view.TradeId),
+                    new PyList([new PyReal((double)view.InitiatorIsk), new PyReal((double)view.TargetIsk)]));
+            if (offers is not null)
+                session.SendNotification("OnTradeOffer", "clientID", new PyLong(view.TradeId), offers);
         }
+    }
+
+    private async Task<PyValue> OfferStatesAsync(TradeView view, CancellationToken cancellationToken)
+    {
+        if (!view.InitiatorAccepted && !view.TargetAccepted)
+            return new PyList([None, None]);
+        var items = new List<PyValue>();
+        foreach (var item in view.Items)
+            items.Add(InventoryWire.PackedRow(await RowAsync(item, cancellationToken).ConfigureAwait(false)));
+        var manifest = new PyObjectEx(ObjectExKind.Ex1, new PyStr("KeyVal"), [], [
+            new(new PyStr("tradeContainerID"), new PyLong(view.TradeId)),
+            new(new PyStr("money"), new PyList([new PyReal((double)view.InitiatorIsk), new PyReal((double)view.TargetIsk)])),
+            new(new PyStr("tradeItems"), PyValue.PythonSet(items)),
+        ]);
+        return new PyList([
+            view.InitiatorAccepted ? manifest : None,
+            view.TargetAccepted ? manifest : None,
+        ]);
     }
 
     /// <summary>The trade completed: the items it moved, then <c>OnTradeComplete</c> with the items the pilots received.</summary>
@@ -301,7 +350,7 @@ public sealed partial class TradeMgrService(CharacterSessions sessions, TradeAut
     {
         var view = outcome.Change.View;
         var received = new List<PyValue>();
-        foreach (var move in outcome.Change.Moves)
+        foreach (var move in outcome.Change.Moves.Where(move => move.PreviousLocationId == view.TradeId))
             received.Add(InventoryWire.PackedRow(await RowAsync(move.After, cancellationToken).ConfigureAwait(false)));
         foreach (var traderId in new[] { view.InitiatorId, view.TargetId })
         {
@@ -309,7 +358,7 @@ public sealed partial class TradeMgrService(CharacterSessions sessions, TradeAut
             if (session is null) continue;
             foreach (var move in outcome.Change.Moves)
                 session.SendNotification("OnItemChange", "clientID", InventoryWire.PackedRow(await RowAsync(move.After, cancellationToken).ConfigureAwait(false)), Differences(move), PyNone.Instance);
-            session.SendNotification("OnTradeComplete", "clientID", new PyLong(view.TradeId), new PyList([.. received]));
+            session.SendNotification("OnTradeComplete", "clientID", new PyLong(view.TradeId), PyValue.PythonSet(received));
         }
     }
 

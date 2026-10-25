@@ -116,7 +116,7 @@ public sealed partial class SpaceSessions
     private ulong NextSpawnRequest() => Interlocked.Increment(ref _spawnRequests);
 
     /// <summary>Asks the simulation to make a ship that nobody flies; false when it refused (the reason is logged), a message for the client when it cannot be reached.</summary>
-    private async Task<ulong?> SpawnAsync(SimSpawn spawn, string what, CancellationToken cancellationToken)
+    private async Task<ulong?> SpawnAsync(SimSpawn spawn, string what, CancellationToken cancellationToken, Action? sceneUnavailable = null)
     {
         try
         {
@@ -125,7 +125,14 @@ public sealed partial class SpaceSessions
             {
                 return reply.Session;
             }
-            _log?.Invoke($"{what}: the ship was refused: {reply.Error}");
+            if (reply.Error?.StartsWith("NO_SCENE", StringComparison.Ordinal) == true)
+            {
+                sceneUnavailable?.Invoke();
+            }
+            else
+            {
+                _log?.Invoke($"{what}: the ship was refused: {reply.Error}");
+            }
             return null;
         }
         catch (SimUnavailableException error)
@@ -186,12 +193,10 @@ public sealed partial class SpaceSessions
 
     private PgBountyStore? _bounties;
     private int _paying;
-
     public event Action<BountyPaid>? BountyPaidOut;
 
     /// <summary>
-    /// Keeps the bounties NPCs are worth: a kill whose last blow was a pilot's goes to <paramref name="store"/>. What has come due is paid by <see cref="PayBountiesAsync"/>, which the
-    /// host runs as a recurring job of the durable scheduler (<c>space.bounty.pay</c>); a test calls it.
+    /// Keeps the bounties NPCs are worth: a kill whose last blow was a pilot's goes to <paramref name="store"/>. What has come due is paid by <see cref="PayBountiesAsync"/>, which the    /// host runs as a recurring job of the durable scheduler (<c>space.bounty.pay</c>); a test calls it.
     /// </summary>
     public void UseBounties(PgBountyStore store) => _bounties = store;
 
@@ -386,12 +391,10 @@ public sealed partial class SpaceSessions
         {
             // `util.KeyVal`; the payout time is a FILETIME, past what a JavaScript number holds, so it goes as a long
             killer.Session.SendNotification(
-                "OnBountyAddedToPayout", "charid",
-                Py.KeyVal(
+                "OnBountyAddedToPayout", "charid",                Py.KeyVal(
                     ("enemyTypeID", new PyInt(added.EnemyTypeId)), ("amount", new PyInt((int)added.Amount)), ("payoutTime", new PyLong(added.PayoutTime)),
                     ("isModified", added.IsModified ? PyBool.True : PyBool.False)));
-        }
-    }
+        }    }
 
     /// <summary>
     /// The wreck of an NPC that asked the host to make it (<see cref="SimNpcIdentity.HostWreck"/>): an item of the pilot who dealt the last blow (of the NPC's corporation when no pilot did) with what
@@ -470,12 +473,18 @@ public sealed partial class SpaceSessions
         long hostileResponseThreshold = NpcHostileThreshold,
         double aggressionRangeOverride = 0,
         List<long>? shipIds = null,
-        bool stationary = false)
+        bool stationary = false,
+        Action? sceneUnavailable = null)
     {
         var composition = new List<(string Name, int Count)>();
         var unarmed = 0;
         for (var index = 0; index < profiles.Count; index++)
         {
+            if (!HasPilotsIn(anchor.SolarSystemId))
+            {
+                sceneUnavailable?.Invoke();
+                break;
+            }
             var profile = profiles[index];
             var type = _statics.Type(profile.ShipTypeId)!;
             var shipId = NpcIdBase + Interlocked.Increment(ref _npcs);
@@ -498,7 +507,7 @@ public sealed partial class SpaceSessions
             var direction = RandomUnitVector();
             double[] place = [anchor.Origin[0] + direction[0] * distance, anchor.Origin[1] + direction[1] * distance, anchor.Origin[2] + direction[2] * distance];
             var spawn = new SimSpawn(NextSpawnRequest(), SimSceneKey.SolarSystem(anchor.SolarSystemId), ship, anchor.ShipId, place, [0, 0, 0], RandomUnitVector(), NpcBehavior, identity);
-            if (await SpawnAsync(spawn, "npc", cancellationToken) is not { } npcSession)
+            if (await SpawnAsync(spawn, "npc", cancellationToken, sceneUnavailable) is not { } npcSession)
             {
                 break;
             }
@@ -581,11 +590,9 @@ public sealed partial class SpaceSessions
         if (amount <= 0 || Npcs is not { } selector)
         {
             return 0;
-        }
-        var (selection, error, _) = selector.Select(query);
+        }        var (selection, error, _) = selector.Select(query);
         if (selection is null)
-        {
-            _log?.Invoke($"site {siteId}: the wave {query} names no NPC ({error})");
+        {            _log?.Invoke($"site {siteId}: the wave {query} names no NPC ({error})");
             return 0;
         }
         await EnsureNpcTypesAsync(selection.ShipTypes, cancellationToken).ConfigureAwait(false);

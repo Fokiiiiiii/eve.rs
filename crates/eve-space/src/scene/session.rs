@@ -724,21 +724,20 @@ impl Scene {
     pub fn poll(&mut self, now: i64) -> Vec<Out> {
         self.settle_all(now);
         let mut told = self.populate_pochven(now);
-        let arrived: Vec<(SessionId, i64)> = self
+        let arrived: Vec<SessionId> = self
             .pilots
             .iter()
             .filter_map(|(session, pilot)| {
                 let station_id = pilot.docking_approach?;
                 let station = self.system.body(station_id).filter(|body| is_dock_body(body))?;
                 (surface_distance(&pilot.ship, station.position, station.radius) <= DOCKING_RANGE)
-                    .then_some((*session, station_id))
+                    .then_some(*session)
             })
             .collect();
-        for (session, station_id) in arrived {
+        for session in arrived {
             if let Some(pilot) = self.pilots.get_mut(&session) {
                 pilot.docking_approach = None;
             }
-            told.extend(self.dock(session, station_id, now));
         }
         let due: Vec<(SessionId, i64)> = self
             .pilots

@@ -54,7 +54,7 @@ impl Scene {
         if pilot.docking.is_some() {
             return refused("DOCKING");
         }
-        if pilot.flight.is_some() {
+        if pilot.flight.as_ref().is_some_and(|flight| !flight.is_coasting()) {
             return refused("IN_WARP");
         }
         // a stargate, or a wormhole end: the far end is the destination (a wormhole's far end is not a gate of the system it leads to)
@@ -99,6 +99,7 @@ impl Scene {
         let leaves_at = (now + JUMP_DELAY).max(boundary + JUMP_EFFECT_DELAY);
         let mut out = self.clear_tether_policy(session, now);
         let pilot = self.pilots.get_mut(&session).expect("checked above");
+        pilot.flight = None;
         let ship = &mut pilot.ship;
         if !matches!(ship.course, Course::Stop) || ship.speed_fraction > 0.0 || speed_of(ship.velocity) > 0.5
         {

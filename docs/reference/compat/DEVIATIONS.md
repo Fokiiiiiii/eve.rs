@@ -27,7 +27,7 @@ The V24.01 war declaration callsites select HQ IDs from `structureDirectory.GetV
 
 ## Agent GetAgents wire columns (2026-10-20)
 
-`agentMgr.GetAgents` returns the 15 columns produced by EveJS 261018.1. System, dungeon, spawn and type metadata remain in the server catalog for `GetSolarSystemOfAgent` and are not serialized in this rowset. The client adds its own system and faction fields after loading the table. `AgentMissionServiceTests.Agent_mgr_agents_and_location_match_the_reference_rowset_and_scalar` and `AgentCatalogSdeTests` cover the wire and catalog data.
+`agentMgr.GetAgents` returns 15 columns. EveJS v0.12.9 adds four columns after `bloodlineID` (`solarSystemID`, `dungeonID`, `spawnPointID`, and `typeID`; `server/src/services/agent/agentMgrService.js:787-833`), while the later EveJS 261018.1 response and eve.rs use the 15-column projection. The V24.01 callers are `eve/client/script/ui/station/agents/agents.py:91-113` and `eve/client/script/ui/shared/info/infosvc.py:2593-2607`: the first uses the row fields through `bloodlineID`, then derives lowercase `solarsystemID` and `factionID` locally; the second reads `agentID` and `divisionID`. The info window obtains a solar-system ID through the separate `GetSolarSystemOfAgent` call (`agents.py:799-801`, `infosvc.py:2020-2022`). No client consumer of the four additional row fields was found in the complete client-tree search. Retaining 15 columns therefore preserves the observed V24.01 use while avoiding unused duplicate location metadata. `AgentMissionServiceTests.Agent_mgr_agents_and_location_match_the_reference_rowset_and_scalar` and `AgentCatalogSdeTests` cover the rowset and catalog data.
 
 ## Account session exclusivity (2026-10-19)
 
@@ -77,7 +77,7 @@ V24.01 `eve/common/script/util/urlUtil.py` calls `userSvc.GetUserToken` when add
 
 ### First-space camera entry for characters without warp history
 
-V24.01 `eve/client/script/ui/camera/enterSpaceCamera.py:39-42` calls `AnimEnterFirstTimeEverInSpace()` when `achievementTrackerMgr.HasEverWarped()` is false. EveJS v261018.1 (`server/src/services/character/achievementTrackerMgrService.js`) defaults a character without a saved warp value to true. eve.rs reads the persisted `has_ever_warped` flag from the character achievement-tracker row, with a legacy game-store projection fallback, and returns false when both sources are absent. Newly created characters therefore follow the client’s first-space entry path. This default intentionally follows the V24 callsite, while EveJS defaults missing history to true. An explicitly saved true value controls the result. After the simulator accepts a warp, eve.rs stores the character flag and sets the session value; refused commands do not change it. The focused RPC and store tests, accepted/refused/retry warp tests, and the slow headless warp walk cover these transitions.
+V24.01 `eve/client/script/ui/camera/enterSpaceCamera.py:39-45` uses the no-argument boolean result to select the first-space animation when false, then switches to the primary camera. EveJS v0.12.9 (`/home/user/evejs-v0.12.9/server/src/services/character/achievementTrackerMgrService.js:145-170`) checks session and persisted tracker state, then defaults missing history to true; its native tracker lookup is in `server/src/services/achievement/achievementState.js:659-662`. eve.rs reads the persisted `has_ever_warped` flag from the character achievement-tracker row, with a legacy game-store projection fallback, and returns false when both sources are absent. Newly created characters therefore follow the client’s first-space entry path. This default intentionally follows the V24 callsite, while EveJS defaults missing history to true. An explicitly saved true value controls the result. After the simulator accepts a warp, eve.rs stores the character flag and sets the session value; refused commands do not change it. `HostServerTests.Achievement_tracker_HasEverWarped_returns_a_boolean_through_host_wire`, the focused RPC and store tests, accepted/refused/retry warp tests, and the slow headless warp walk cover these transitions.
 
 ## Login service discovery boundary (2026-10-20)
 
@@ -3207,51 +3207,14 @@ Affected gates on the merged tree: Services.Core 652/652, Host 223/223, Space ho
 
 ## Direct trade (trademgr, 37a)
 
-Status: the server side is implemented and covered by `Eve.Trade.Tests` (9) and `Eve.Services.Station.Tests` (30). A
-headless-client walk with two pilots is in progress (see TODO 37a); the graphical client has not been driven.
+Status: server validation and custody cover the direct-trade item rules, batch staging and settlement. The two-pilot headless walk is checked through Actions; the graphical client has not been driven.
 
-- **What the server does.** `InitiateTrade` checks both pilots (docked, online, in the same place, not the same pilot, not in another
-  trade) and returns the trade as a `carbon.common.script.net.moniker.Moniker` (the shape `SkillMgr2Service` uses). The target gets
-  `OnTradeInitiate(initiatorCharID, moniker)`, as `pvptradesvc.py:42-50` expects. The bound trade serves `List`, `Add` (`qty` for a
-  part of a stack, `pvptradewnd`/`invControllers.py:1673-1691`), `MultiAdd`, `GetSelfInvItem`, `OfferMoney`, `MakeOffer` and `Abort`.
-- **Custody.** A staged item is moved into the trade container (its `locationID` is the trade id), as EVE.js does
-  (`tradeMgrService.js` `_stageItemIntoTrade`). The origin (location and flag) is stored. An abort returns it; a part of a stack is
-  merged back into the stack it came from, so the original item id returns.
-- **Completion.** When both pilots accept the same manifest (their ISK and the set of item ids), the items go to the other pilot's
-  docked hangar and the ISK moves in one PostgreSQL transaction, with one wallet journal entry per direction. The journal reference
-  type is `player_trading`, ESI ref type 1 (CCP eve-glue `JournalRefTypeEnumV2`, `wallet_journal_ref.py`). A pilot who no longer has the
-  ISK refuses the completion: the trade stays open, both acceptances are cleared and the items stay in custody.
-- **Restart and disconnect.** A host that stops with trades open ends them at start-up and returns the items
-  (`TradeAuthority.RecoverOpenAsync`). A pilot who disconnects ends the trade for both. EVE.js recovers durable trades instead;
-  eve.rs has no pilot connected to continue one, so the items go back.
-- **Trade ids.** A trade id is the container id, drawn from `trade.trade_ids` starting at 9 000 000 000 000 000, away from item ids.
-  It is a location for the items, so it must not collide with an item or a station.
-- **Where the rules are.** `Eve.Trade` (`TradeAuthority`, schema `trade`, migration `001_trade_sessions.sql`).
-  `Eve.Services.Station/TradeMgrService.cs` is the RPC layer only.
-
-**The manifest's item set.** The client builds `tradeItems=set(myItems) | set(herItems)` (`pvptradewnd.py:98`). EVE.js reads the
-set in both its header and its tail list, and reads each element as a plain id, an object with `itemID`, a packed row, or a row whose
-`line` starts with the id (`tradeMgrService.js:345-445`). eve.rs reads the same forms (`TradeMgrService.ManifestOf`, test
-`The_manifest_reads_every_form_of_a_trade_item_the_reference_accepts`).
-
-**The acceptance values.** `OnTradeOffer` carries one value per trader. The client reads only their truth
-(`pvptradewnd.py:126-139`, `bool(states[...])`), so eve.rs sends 0 or 1 where EVE.js sends the manifest or null. The window
-behaves the same. The 0/1 form is the difference, not the truth value.
-
-**The item-change diff.** EVE.js builds its item-change diff with the client's keys: owner 2, location 3, flag 4, quantity 5, stack
-size 9, singleton 10 (`characterState.js` `buildItemChangePayload`). For a non-singleton stack whose quantity equals its stack size,
-EVE.js sends only key 9 (`prefersStackSizeOnly`). eve.rs sends key 9 with the previous stack size for a changed stack, and keys 2, 3
-and 4 when the owner, location or flag changed. eve.rs sends one `OnItemChange` per item; EVE.js sends a batch `OnItemsChanged`. The
-client handles both (`invCache.py:219` and `invCache.py:229`).
-
-**Differences from EVE.js, all listed:**
-1. Staging from a ship's cargo or from a can is refused (`Only items in your hangar here can be offered.`). EVE.js accepts those
-   sources. Not built.
-2. No item tradability check. The client refuses non-tradable types (`is_tradable`, `invControllers.py:1681`); the server does not
-   check it yet, so a hand-made `Add` of such an item is accepted.
-3. A stack merged back into its source is announced as an `OnItemChange` with size 0 for the merged-away row. The EVE.js handling of
-   that case was not read; the live walk records what the client receives.
-4. `OnPrimingNeededForTradeItems` is sent to each pilot after a stage, with the staged item ids (`pvptradesvc.py:109-110`).
+- **Wire and client rules.** V24 sends `Add(itemID, sourceLocationID, qty?)` and `MultiAdd(itemIDs, sourceLocationID)`. `PlayerTrade.AddItems` refuses the active ship, Asset Safety items and types for which `is_tradable` is false (`invControllers.py:1667-1691`). The server repeats these checks and checks ownership, the selected source, and every ancestor location up to the character's docked location. Accessible nested inventory sources remain usable.
+- **Atomic staging.** Every item in a MultiAdd batch is checked before any item is moved. A refusal leaves staged items, persistence and notifications untouched. A batch has a 256 item limit.
+- **Custody and settlement.** Staging stores the original location and flag. Abort and startup recovery return staged items. Successful completion transfers a container and its descendants, plus the agreed ISK, in one transaction.
+- **Replies and notifications.** `OnTradeOffer` contains one null or manifest value per pilot, matching EveJS; the client reads each value by truth (`pvptradewnd.py:126-139`). The manifest contains trade container id, money and trade item set. `OfferMoney` notifies money before offer reset; mismatched `MakeOffer` resets the caller then broadcasts current offers; completion sends item changes before `OnTradeComplete`; abort sends item changes before `OnTradeCancel`. These event consumers are in `pvptradesvc.py:69-110` and `pvptradewnd.py:96-167`.
+- **Reference and deviations.** EveJS source-chain validation and staging are in `tradeMgrService.js:1200-1335,2019-2073`; its offer and abort ordering is in `:817-829,1068-1168,2075-2208`. eve.rs intentionally stages a validated batch in one transaction and transfers container descendants in the completion transaction. Its single-item `OnItemChange` events are consumed by `invCache.py:219,229`, which also handles batch changes.
+- **Implementation.** `Eve.Trade/TradeAuthority.cs` owns validation, staged custody, batch atomicity, recovery and settlement. `Eve.Services.Station/TradeMgrService.cs` parses the client arguments and emits the protocol events.
 
 ## Item locking (itemLocking, 37a)
 
@@ -5133,7 +5096,7 @@ Q-16 adopts the June 16 checkpoint per item for build 3396210. CCP’s [Version 
 
 ## Space movement slice S1 (2026-10-19)
 
-An out-of-range station dock command now follows the station and completes docking as soon as the ship reaches docking range. The scene reuses the in-range dock path, so current restrictions are checked again and the normal docking delay and notifications apply. `crates/eve-space/src/scene/tests.rs::a_dock_request_from_out_of_range_approaches_and_completes_docking_on_arrival` covers the approach, acceptance and completion. EveJS 261018.1 takes the same arrival path in `server/src/space/runtime/spaceRuntime/docking.js` (`completeArrivedDockingApproaches`). The warp selected-range calculation is covered by `a_range_within_the_jump_range_changes_nothing_and_one_beyond_it_sets_the_sphere_that_far_out`. The Rust sim polls at 4 Hz for due work; the sim link holds `DoDestinyUpdate` until the next whole-second boundary and queues later notifications behind it to preserve their order, while command replies remain immediate; this matches EveJS `server/src/network/tickAlignedSends.js`. Unit tests cover the boundary delay, notification ordering and immediate replies; `crates/eve-sim/tests/link.rs::a_ship_is_sent_out_bound_told_to_dock_and_reported_docked` exercises the wire ordering. No graphical-client timing run has been recorded.
+An out-of-range station dock command starts an approach and returns `DockingApproach`; when it reaches range, the scene stops the ship and waits for the client's second `CmdDock` before accepting the dock. This follows EveJS v0.12.9 `Handle_CmdDock` (`server/src/services/ship/beyonceService.js:4133-4194`), which starts `followBall` and returns `DockingApproach` when out of range, then calls `acceptDocking` only when the command is repeated in range. The V24.01 caller makes that second request in `eve/client/script/ui/services/menuSvcExtras/movementFunctions.py:505-516`. EveJS 261018.1 differs: its tick calls `completeArrivedDockingApproaches` to accept the dock on arrival (`server/src/space/runtime/spaceRuntime/docking.js:173-217`). `crates/eve-space/src/scene/tests.rs::a_dock_request_from_out_of_range_stops_in_range_until_asked_again` covers approach, arrival, the second request and completion. The warp selected-range calculation is covered by `a_range_within_the_jump_range_changes_nothing_and_one_beyond_it_sets_the_sphere_that_far_out`. The Rust sim polls at 4 Hz for due work; the sim link holds `DoDestinyUpdate` until the next whole-second boundary and queues later notifications behind it to preserve their order, while command replies remain immediate; this matches EveJS `server/src/network/tickAlignedSends.js`. Unit tests cover the boundary delay, notification ordering and immediate replies; `crates/eve-sim/tests/link.rs::a_ship_is_sent_out_bound_told_to_dock_and_reported_docked` exercises the wire ordering. No graphical-client timing run has been recorded.
 
 - **Advanced Contracting capacity.** The creation path uses the V24 `NUM_CONTRACTS_BY_ADVSKILL` table alongside `NUM_CONTRACTS_BY_SKILL`; no per-level increment is inferred. See the contracts creation record above.
 
@@ -5851,3 +5814,16 @@ Warp destination subjects from `Michelle.CmdWarpToStuff(subject, subjectID, **kw
 ## Corporation medal award notification
 
 The Host sends `OnMedalIssued(medalID)` to each online award recipient after the RPC response. V24.01 `eve/client/script/ui/services/medals.py:21,131-136` subscribes to that event and invalidates the recipient's `corporationSvc.GetMedalsReceived` cache. EveJS v0.12.9 `server/src/services/corporation/corpService.js:607-630` invalidates only its process-side medal caches and does not emit a client notification. The Host event follows the V24.01 consumer so an already connected recipient refreshes medal state; its registered-route regression checks event name, recipient address, and after-response order.
+\n\n## Stargate jump after warp dropout (2026-10-24)
+
+The V24.01 client begins autopilot warp by recording the destination and calling `CmdWarpToStuffAutopilot(destinationID)` (`eve/client/script/parklife/autopilot.py:461-465`). It does not wait for the server's remaining coast simulation before attempting an ordinary stargate jump. Autopilot returns while the ship's ball is `DSTBALL_WARP` (`eve/client/script/parklife/autopilot.py:303-309`), then checks surface distance against `const.maxStargateJumpingDistance` and calls `CmdStargateJump(fromGate, toGate, session.shipid)` (`autopilot.py:337-357`). The manual gate path uses that same interaction range (`eve/client/script/ui/services/menusvc.py:3029-3032`) and calls the same RPC shape (`stargate/client/gateJumpSvc.py:122-125`). EVE University documents the 2,500 m gate range and that a gate can be activated after warp exits ([Stargates](https://wiki.eveuniversity.org/Stargates), [Warp mechanics](https://wiki.eveuniversity.org/Warp_mechanics)).
+
+eve.rs therefore permits the simulation's post-warp `Coasting` phase to jump once authoritative surface distance is within range, while retaining `IN_WARP` during alignment and warp itself. It clears the old coast flight when the jump is accepted so that it cannot resume.
+
+EveJS v0.12.9 adds a `WARP_LANDING_PENDING` refusal in `server/src/space/transitions.js:1754-1760, 4124-4321` while `hasPendingPilotWarpLanding` sees `pilotWarpVisibilityHandoff.landingPending` (`server/src/space/runtime/destinyDeliveryEligibility.js:61-69`; also `server/src/space/runtime/spaceRuntime/stargateJump.js:76-81`). The V24.01 callsites expose no such handoff condition, so eve.rs follows the client-visible post-warp range rule. EveJS's `Handle_CmdStargateJump` still validates ship ID and returns its bound result (`server/src/services/ship/beyonceService.js:4196-4233`). The v0.12.9 isolated test list has no stargate jump case, so this comparison is source-based; no EveJS end-to-end run was available.
+
+## System-owned NPC waves wait for a loaded solar-system scene (2026-10-24)
+
+EveJS v0.12.9 resolves system NPC spawn context through `nativeNpcService.resolveNativeSpawnContextForSystem` and calls `spaceRuntime.ensureScene` while building that context (`server/src/space/npc/nativeNpcService.js:857-942`; scene creation is `spaceRuntime/sceneRegistry.js:149-208`). eve.rs owns scene lifetime in the simulation: `Sim::enter` creates an instance-0 solar-system scene when a ship enters (`crates/eve-space/src/sim/spawn.rs:728-739`), jump arrival creates the destination scene before sending `Jumped` (`spawn.rs:1034-1066`), and empty system scenes are removed (`spawn.rs:1021-1030`). Public system NPC spawns also create a missing scene on demand from authoritative universe data (`spawn.rs:825-835`).
+
+System-owned dungeon and incursion waves therefore wait for any pilot in the system before requesting NPCs, retry at 15-second intervals, and treat a pilot departure observed during a batch as a retry: remove any partial ships and do not write the wave-spawn row. The scene remains simulation-owned; this intentionally delays NPC appearance in empty systems compared with EveJS, without changing selection, NPC behavior, or kill-based wave progression. Character-owned waves retain their owner-presence requirement. Regression coverage: `DungeonWaveTests.A_system_owned_wave_waits_until_a_pilot_loads_its_scene`, `DungeonWaveTests.A_scene_disappearing_during_a_wave_retries_and_removes_any_partial_spawn`, and `DungeonWaveSpaceTests.A_system_owned_wave_waits_for_the_real_Host_undock_to_load_its_scene`. The live client call-site and consumer inventory is recorded in `docs/project/CI_FIX_HANDOFF.md`.\n

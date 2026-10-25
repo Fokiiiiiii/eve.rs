@@ -55,7 +55,8 @@ public sealed partial class CharMgrService(
     Func<ServiceCall, ValueTask<PyValue>>? globalAssetsInventoryCall = null,
     Func<long, CancellationToken, ValueTask<decimal?>>? readBalance = null,
     Func<long, long, CancellationToken, ValueTask<bool>>? canReadPrivateCorporationMemberInfo = null,
-    Func<long, long, int, long, string, CancellationToken, ValueTask>? writeContactNotification = null)
+    Func<long, long, int, long, string, CancellationToken, ValueTask>? writeContactNotification = null,
+    Func<long, CancellationToken, ValueTask<Character?>>? readCharacterById = null)
 {
     private const int MaxOrganizationInfoCharacterIds = 500;
     private const int MaxBulkContactOwnerIds = 500;
@@ -134,7 +135,7 @@ public sealed partial class CharMgrService(
             ("createDateTime", FileTime(c.CreatedAt)),
             ("startDateTime", FileTime(c.CreatedAt)),
             ("description", new PyStr(description)),
-            ("securityRating", new PyInt(0)),
+            ("securityRating", Py.Number(securityStatus)),
             ("securityStatus", Py.Number(securityStatus)),
             ("bounty", new PyInt(0)),
             ("title", new PyStr("")),
@@ -161,7 +162,11 @@ public sealed partial class CharMgrService(
     private async ValueTask<Character?> CharacterAsync(ServiceCall call)
     {
         var id = IdOf(call.Arg(0));
-        return id is null ? null : await characters.GetAsync(id.Value, call.Cancellation);
+        if (id is null)
+            return null;
+        return readCharacterById is null
+            ? await characters.GetAsync(id.Value, call.Cancellation)
+            : await readCharacterById(id.Value, call.Cancellation);
     }
 
     private async ValueTask<PyValue> PublicInfoAsync(Character character, CancellationToken cancellationToken)

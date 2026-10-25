@@ -497,7 +497,6 @@ fn ships_cannot_pass_through_each_other_in_one_settlement() {
     motion::advance(&mut unchecked_a, 1.0, None);
     motion::advance(&mut unchecked_b, 1.0, None);
     assert!(unchecked_a.position.x > unchecked_b.position.x);
-
     scene.settle_all(NOON + seconds(1));
 
     let a = &scene.pilots[&SESSION].ship;
@@ -1259,25 +1258,41 @@ fn a_speed_fraction_keeps_the_course_but_wakes_a_stopped_ship() {
 }
 
 #[test]
-fn a_dock_request_from_out_of_range_approaches_and_completes_docking_on_arrival() {
+fn a_dock_request_from_out_of_range_stops_in_range_until_asked_again() {
     let mut scene = scene();
+    let station = scene.system.body(STATION).unwrap().clone();
     // 50 km off the station's surface, at rest
     scene.pilots.get_mut(&SESSION).unwrap().ship.position =
         Vec3::new(1_000_000.0 + 1_047.0 + 50_000.0, 0.0, 0.0);
     scene.pilots.get_mut(&SESSION).unwrap().ship.velocity = Vec3::ZERO;
-    let first = scene.command(SESSION, Command::Dock { station_id: STATION }, NOON);
-    assert_eq!(first.last(), Some(&Out::Approaching { session: SESSION, command: 4, distance: 50_000.0 }));
-    let arrival = scene.poll(NOON + seconds(400));
-    assert!(arrival.iter().any(|out| matches!(out, Out::Notify { name: "OnDockingAccepted", .. })));
-    assert!(arrival.iter().any(|out| matches!(out, Out::Accepted { command: 4, .. })));
-    let ship = scene.ship(SESSION, NOON + seconds(400)).unwrap();
-    assert_eq!(ship.course, Course::Stop);
+    let started = scene.command(SESSION, Command::Dock { station_id: STATION }, NOON);
+    assert_eq!(started.last(), Some(&Out::Approaching { session: SESSION, command: 4, distance: 50_000.0 }));
 
-    let completed = scene.poll(NOON + seconds(404));
+    let arrived_at = NOON + seconds(400);
+    let arrived = scene.poll(arrived_at);
+    let ship = scene.ship(SESSION, arrived_at).unwrap();
+    let distance = ((ship.position.x - station.position.x).powi(2)
+        + (ship.position.y - station.position.y).powi(2)
+        + (ship.position.z - station.position.z).powi(2))
+    .sqrt()
+        - ship.spec.radius
+        - station.radius;
+    assert!(distance <= DOCKING_RANGE, "ship stopped {distance} m from the station surface");
+    assert!(scene.pilots[&SESSION].docking_approach.is_none());
+    assert!(scene.pilots[&SESSION].docking.is_none());
+    assert!(!arrived.iter().any(|out| matches!(out, Out::Notify { name: "OnDockingAccepted", .. })));
+    assert!(!arrived.iter().any(|out| matches!(out, Out::Accepted { command: 4, .. })));
+
+    let accepted = scene.command(SESSION, Command::Dock { station_id: STATION }, arrived_at);
+    assert!(accepted.iter().any(|out| matches!(out, Out::Notify { name: "OnDockingAccepted", .. })));
+    assert!(accepted.iter().any(|out| matches!(out, Out::Accepted { command: 4, .. })));
+    assert!(scene.pilots[&SESSION].docking.is_some());
+
+    let completed = scene.poll(arrived_at + seconds(4));
     assert!(
         completed.iter().any(|out| matches!(out, Out::Docked { session: SESSION, station_id: STATION, .. }))
     );
-    assert!(scene.ship(SESSION, NOON + seconds(404)).is_none());
+    assert!(scene.ship(SESSION, arrived_at + seconds(4)).is_none());
 }
 
 #[test]
@@ -1870,26 +1885,62 @@ fn a_ship_sent_to_a_system_without_the_gate_is_given_back_and_goes_on_where_it_w
 fn a_warp_to_a_gate_ends_within_jump_range_of_it_and_the_jump_is_accepted() {
     let mut scene = scene_by_a_gate();
     scene.command(SESSION, Command::SetSpeedFraction(0.0), NOON);
-    let told = scene.command(SESSION, Command::WarpTo { target_id: FAR_GATE, range: 0.0 }, NOON + seconds(1));
+    let warp_at = NOON + seconds(1);
+    let told = scene.command(SESSION, Command::WarpTo { target_id: FAR_GATE, range: 0.0 }, warp_at);
     assert_eq!(
         action_names(&told[0]),
         ["SetMaxSpeed", "WarpTo", "OnSpecialFX", "SetSpeedFraction"],
         "{told:?}"
     );
-    let mut t = NOON + seconds(1);
+    let refused = scene.command(SESSION, jump(FAR_GATE, 0), warp_at);
+    assert!(refused.iter().any(|out| matches!(out, Out::Refused { reason: "IN_WARP", .. })), "{refused:?}");
+
+    let gate = scene.system().body(FAR_GATE).unwrap().clone();
+    let mut t = warp_at;
     while t < NOON + seconds(300) {
         t += 2_500_000;
         scene.poll(t);
+        if scene.pilots[&SESSION].flight.as_ref().is_some_and(|flight| flight.is_warping()) {
+            break;
+        }
     }
-    let ship = scene.ship(SESSION, t).unwrap().clone();
-    assert_eq!(ship.course, Course::Stop, "the warp is over");
-    let gate = scene.system().body(FAR_GATE).unwrap();
-    let surface = crate::gate::surface_distance(gate, ship.position, ship.spec.radius);
-    assert!(surface <= crate::gate::JUMP_RANGE, "{surface} m off the gate's surface");
-    let out = scene.command(SESSION, jump(FAR_GATE, 0), t + seconds(1));
-    assert!(matches!(out[1], Out::Jumping { .. }), "{out:?}");
-}
+    assert!(
+        scene.pilots[&SESSION].flight.as_ref().is_some_and(|flight| flight.is_warping()),
+        "warp did not start by {t}"
+    );
+    let in_warp = scene.command(SESSION, jump(FAR_GATE, 0), t);
+    assert!(in_warp.iter().any(|out| matches!(out, Out::Refused { reason: "IN_WARP", .. })), "{in_warp:?}");
 
+    while t < NOON + seconds(300) {
+        t += 2_500_000;
+        scene.poll(t);
+        let ship = scene.ship(SESSION, t).unwrap();
+        let surface = crate::gate::surface_distance(&gate, ship.position, ship.spec.radius);
+        if scene.pilots[&SESSION].flight.as_ref().is_some_and(|flight| flight.is_coasting())
+            && surface <= crate::gate::JUMP_RANGE
+        {
+            break;
+        }
+    }
+
+    let ship = scene.ship(SESSION, t).unwrap().clone();
+    assert!(
+        scene.pilots[&SESSION].flight.as_ref().is_some_and(|flight| flight.is_coasting()),
+        "warp did not drop out near the gate at {t}"
+    );
+    let surface = crate::gate::surface_distance(&gate, ship.position, ship.spec.radius);
+    assert!(surface <= crate::gate::JUMP_RANGE, "{surface} m off the gate's surface");
+
+    let position = ship.position;
+    let out = scene.command(SESSION, jump(FAR_GATE, 0), t);
+    assert!(out.iter().any(|out| matches!(out, Out::Jumping { .. })), "{out:?}");
+    assert!(scene.pilots[&SESSION].flight.is_none(), "the jump cancels the old coast flight");
+    scene.poll(t + seconds(1));
+    let ship = scene.ship(SESSION, t + seconds(1)).unwrap();
+    assert_eq!(ship.course, Course::Stop);
+    assert_eq!(ship.position, position, "the ship remains stopped while the jump is pending");
+    assert!(scene.pilots[&SESSION].flight.is_none(), "the old coast flight does not resume");
+}
 #[test]
 fn a_warp_to_a_gate_with_the_same_calls_ends_at_the_same_point() {
     let land = || {
@@ -3461,7 +3512,6 @@ fn a_wormhole_end_the_host_places_takes_a_ship_through_to_its_far_end_and_places
         }
         other => panic!("expected a jump, got {other:?}"),
     }
-
     let later = NOON + seconds(6);
     let traveller = scene.due_jumps(later).0.pop().unwrap();
     assert_eq!(traveller.to_far_end, Some((far, 5_000.0)));

@@ -2,7 +2,7 @@
 
 ## Status
 
-Partial. Push bbb7b6f1b916b272859ad71047f642e4b473fe1b includes 173d933b fix: accept transport metadata on ship kill counter. The three shipcaster read methods have a Host-dispatch regression from earlier commits; kill-counter has a new Host-dispatch wire regression. The requested batch remains incomplete: production shipcaster registration has no authoritative landing-pad/faction provider, and this batch has no successful Host-wire regressions for cosmetics or stance.
+Partial. Push bbb7b6f1b916b272859ad71047f642e4b473fe1b includes 173d933b fix: accept transport metadata on ship kill counter. Three shipcaster reads have a Host-dispatch regression from earlier commits; kill-counter has a Host-dispatch wire regression. Production shipcaster registration still has no authoritative landing-pad/faction provider. Successful Host-wire regressions for cosmetics and stance remain to be added.
 
 ## V24.01 client callers and consumers
 
@@ -21,7 +21,7 @@ Partial. Push bbb7b6f1b916b272859ad71047f642e4b473fe1b includes 173d933b fix: ac
 ## eve.rs and checks
 
 - Production shipcaster names are registered in dotnet/src/Eve.Host/Rpc/AgentRpc.cs:110 without state callbacks; docs/project/TODO.md retains that gap. Existing ShipcasterHostWireTests sends all three methods through real Host dispatch with test fixture providers.
-- Kill-counter production registration reads persisted shipKillCounters in dotnet/src/Eve.Host/Rpc/CoreRpc.cs:147. The new wire test sends GetItemKillCountPlayer(9001) through a loopback Host and asserts persisted player count 23 as PyInt. It also accepts only the transport-added machoVersion keyword.
-- Selected Actions run 40242203372 passed the kill-counter focused regression. Push-triggered CI 40242192488 failed in unrelated InsuranceRpcHostWireTests: the isolated test GameStore had no shipInsurancePrices row, so its Rifter quote list was empty at test line 140. The selected test run itself passed. No database or graphical client was used locally.
+- Kill-counter production registration reads persisted shipKillCounters in dotnet/src/Eve.Host/Rpc/CoreRpc.cs:147. The wire test sends GetItemKillCountPlayer(9001) through a loopback Host and asserts persisted player count 23 as PyInt. It accepts only the transport-added machoVersion keyword.
+- Selected kill-counter Actions run 40242203372 passed. Push-triggered CI 40242192488 failed in an unrelated insurance test because its isolated GameStore had no shipInsurancePrices row. The isolated run 40243583086 on that older ref also failed. A later origin/main merge added a persisted Rifter price fixture before Host startup in InsuranceRpcHostWireTests; selected Actions run 40244085447 is checking that updated test on merged ref 864257ed. No database or graphical-client check was run locally.
 
-Remaining work: implement an authoritative shipcaster state provider; add successful real-Host wire coverage for cosmetics and stance; resolve the insurance fixture's missing persisted price state before treating the push CI gate as green.
+Remaining work: implement an authoritative shipcaster state provider; add successful real-Host wire coverage for cosmetics and stance; verify the insurance test against the updated mainline fixture.

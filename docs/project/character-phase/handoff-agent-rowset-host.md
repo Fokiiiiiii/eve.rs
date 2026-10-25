@@ -25,6 +25,8 @@ AgentMgrHostTests.Agent_mgr_GetAgents_rowset_reaches_the_client_through_host_reg
 
 ## Verification
 
+- Pushed commit b6e86c2160e7f842504612cb0de3e0f63a702499. Focused Actions run 40212946974 completed successfully; the status tool reported no failed tests or jobs.
 - The focused local Host wire test invocation targeted the GetAgents rowset and Epic Arc nested mapping cases. It was interrupted after over eight minutes of shared-machine compilation; it produced no test result and is not counted as a pass.
+- `ci-status.py failures b6e86c2160e7f842504612cb0de3e0f63a702499` found no push-triggered ci.yml run.
 - No PostgreSQL database is used for these static read routes.
 - The graphical V24.01 client was not launched.

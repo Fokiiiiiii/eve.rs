@@ -188,7 +188,10 @@ public sealed class MarketTradeHostWireTests : IAsyncLifetime
         var header = Assert.IsType<PyList>(Field(fields, "header")).Items.Select(JsSemantics.PlainText).ToArray();
         Assert.Equal(new[] { "tradeContainerID", "traders", "state", "money", "items" }, header);
         var line = Assert.IsType<PyList>(Field(fields, "line"));
-        Assert.Equal(new PyList([new PyLong(actor), new PyLong(targetId)]), line.Items[1]);
+        var traders = Assert.IsType<PyList>(line.Items[1]);
+        Assert.Equal(2, traders.Items.Count);
+        Assert.Equal(new PyLong(actor), traders.Items[0]);
+        Assert.Equal(new PyLong(targetId), traders.Items[1]);
         Assert.Single(targetSink.Packets);
 
         var tradeId = Assert.IsType<PyLong>(bindParameters.Items[0]).Value;

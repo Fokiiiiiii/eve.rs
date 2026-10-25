@@ -32,7 +32,7 @@ public partial class HostServerTests
             var response = MarshalCodec.Decode(reply.Payload);
             var responseState = ((PyTuple)((PyObject)response).Args).Items;
             Assert.True(((PyInt)responseState[0]).Value == 7,
-                $"{method} returned an error response: {System.Text.Json.JsonSerializer.Serialize(response)}");
+                $"{method} returned an error response: {FormatRpcValue(responseState[4])}");
             return Result(response)!;
         }
 
@@ -97,7 +97,6 @@ public partial class HostServerTests
         var assignments = Assert.IsType<PyList>(page["outstandingContracts"]);
         Assert.Equal([new PyInt(42), new PyInt(84), new PyInt(42), new PyInt(1)],
             Assert.IsType<PyTuple>(Assert.Single(assignments.Items)).Items);
-
         var created = Assert.IsType<PyList>(await Rpc(13, "CreateContract", new PyObject(new PyStr("contracts.contractStruct.ContractStruct"), new PyTuple([
             new PyInt(1), PyBool.False, new PyInt(0), new PyInt(1440), new PyInt(0),
             new PyInt(3001), new PyInt(0), new PyInt(1000), new PyInt(0), new PyInt(0),
@@ -118,6 +117,9 @@ public partial class HostServerTests
 
         var bids = Fields(Assert.IsType<PyObject>(await Rpc(5, "GetMyBids", PyBool.False)));
         Assert.Single(Assert.IsType<PyList>(bids["contracts"]).Items);
+        var corporationBids = Fields(Assert.IsType<PyObject>(await Rpc(18, "GetMyBids", PyBool.True)));
+        Assert.Single(Assert.IsType<PyList>(corporationBids["contracts"]).Items);
+        Assert.Equal([false, true, false, true], reads.BidForCorporationRequests);
 
         var ownerContracts = Fields(Assert.IsType<PyObject>(await Rpc(6, "GetContractListForOwner",
             new PyInt(42), new PyInt(0), new PyInt(1), new PyInt(0))));
@@ -125,16 +127,25 @@ public partial class HostServerTests
 
         var current = Fields(Assert.IsType<PyObject>(await Rpc(7, "GetMyCurrentContractList", PyBool.False, PyBool.False)));
         Assert.Single(Assert.IsType<PyList>(current["contracts"]).Items);
+        var corporationCurrent = Fields(Assert.IsType<PyObject>(await Rpc(19, "GetMyCurrentContractList", PyBool.False, PyBool.True)));
+        Assert.Single(Assert.IsType<PyList>(corporationCurrent["contracts"]).Items);
+        Assert.Equal([(true, false), (true, true), (false, false), (false, true)], reads.CurrentContractRequests);
 
         var expired = Fields(Assert.IsType<PyObject>(await Rpc(8, "GetMyExpiredContractList", PyBool.False)));
         Assert.Single(Assert.IsType<PyList>(expired["contracts"]).Items);
+        var corporationExpired = Fields(Assert.IsType<PyObject>(await Rpc(20, "GetMyExpiredContractList", PyBool.True)));
+        Assert.Single(Assert.IsType<PyList>(corporationExpired["contracts"]).Items);
+        Assert.Equal([false, true], reads.ExpiredForCorporationRequests);
 
         var accepted = Fields(Assert.IsType<PyObject>(await Rpc(9, "AcceptContract", new PyInt(5003), PyBool.False)));
         Assert.Equal(new PyInt(5003), accepted["contractID"]);
         Assert.Same(PyBool.True, await Rpc(10, "CompleteContract", new PyInt(5001), new PyInt(4)));
-        Assert.Same(PyBool.True, await Rpc(11, "DeleteContract", new PyInt(6001)));
-
         Assert.Equal((5001L, 4L, 42L, 84L, 3001L, true), writer.LastComplete);
+        Assert.Same(PyBool.True, await Rpc(21, "CompleteContract", new PyInt(5001), new PyInt(7)));
+        Assert.Equal((5001L, 7L, 42L, 84L, 3001L, true), writer.LastComplete);
+        Assert.Same(PyBool.True, await Rpc(22, "CompleteContract", new PyInt(5001), new PyInt(6)));
+        Assert.Equal((5001L, 6L, 42L, 84L, 3001L, true), writer.LastComplete);
+        Assert.Same(PyBool.True, await Rpc(11, "DeleteContract", new PyInt(6001)));
         Assert.Equal((6001L, 42L, 84L, true), writer.LastDelete);
         Assert.Equal((5003L, 42L, 84L, false, 1000, 3001L), writer.LastAccept);
     }
@@ -152,7 +163,11 @@ public partial class HostServerTests
 
         var config = GlobalConfig.Build(Options);
         registry.Register(new MachoNetService(new Info(registry, config), now));
-        var dispatcher = new PacketDispatcher(registry, now);
+        var dispatcher = new PacketDispatcher(registry, now)
+        {
+            // This RPC batch tests contract wire shapes; budget refusal has separate coverage.
+            MaxExpensiveRpcUnitsPerMinute = 100_000,
+        };
         var encoded = MarshalCodec.Encode(config);
         _server = new HostServer(
             new HostOptions
@@ -280,9 +295,18 @@ public partial class HostServerTests
             long characterId, long corporationId, CancellationToken cancellationToken) =>
             ValueTask.FromResult(new ContractEscrowSummary(1250, 3));
 
+        public List<bool> BidForCorporationRequests { get; } = [];
+        public List<(bool IsAccepted, bool ForCorporation)> CurrentContractRequests { get; } = [];
+        public List<bool> ExpiredForCorporationRequests { get; } = [];
+
         public ValueTask<ContractReadBundle> GetMyBidsAsync(
-            long characterId, long corporationId, bool forCorporation, long nowFileTime, CancellationToken cancellationToken) =>
-            ValueTask.FromResult(new ContractReadBundle([Contract(4001, characterId, corporationId, false)]));
+            long characterId, long corporationId, bool forCorporation, long nowFileTime, CancellationToken cancellationToken)
+        {
+            BidForCorporationRequests.Add(forCorporation);
+            return ValueTask.FromResult(new ContractReadBundle([
+                Contract(forCorporation ? 4002 : 4001, forCorporation ? corporationId : characterId,
+                    corporationId, forCorporation)]));
+        }
 
         public ValueTask<ContractReadBundle> GetContractListForOwnerAsync(
             long characterId, long corporationId, long ownerId, int status, int contractType, long issuedBy,
@@ -308,19 +332,50 @@ public partial class HostServerTests
 
         public ValueTask<ContractReadBundle> GetMyCurrentContractListAsync(
             long characterId, long corporationId, bool isAccepted, bool forCorporation,
-            long nowFileTime, CancellationToken cancellationToken) =>
-            ValueTask.FromResult(new ContractReadBundle([Contract(5004, characterId, corporationId, false)]));
+            long nowFileTime, CancellationToken cancellationToken)
+        {
+            CurrentContractRequests.Add((isAccepted, forCorporation));
+            return ValueTask.FromResult(new ContractReadBundle([
+                Contract(forCorporation ? 5006 : 5004, forCorporation ? corporationId : characterId,
+                    corporationId, forCorporation)]));
+        }
 
         public ValueTask<ContractReadBundle> GetMyExpiredContractListAsync(
             long characterId, long corporationId, bool forCorporation, long nowFileTime,
-            CancellationToken cancellationToken) =>
-            ValueTask.FromResult(new ContractReadBundle([Contract(5005, characterId, corporationId, false)]));
+            CancellationToken cancellationToken)
+        {
+            ExpiredForCorporationRequests.Add(forCorporation);
+            return ValueTask.FromResult(new ContractReadBundle([
+                Contract(forCorporation ? 5007 : 5005, forCorporation ? corporationId : characterId,
+                    corporationId, forCorporation)]));
+        }
 
         private static ContractReadSnapshot Contract(long id, long issuer, long corporation, bool issuedByCorporation) =>
             new(id, 1, 0, 0, issuer, corporation, issuedByCorporation, 0, 0, 1, long.MaxValue, 0, 0,
                 0, 3001, 0, 5000m, 0m, 0m, "Contract", "Description",
                 [new ContractReadItemSnapshot(7001, 34, 2, true, false)], []);
     }
+
+    private static string FormatRpcValue(PyValue? value) => value switch
+    {
+        null => "<null>",
+        PyNone => "None",
+        PyBool boolean => boolean.Value ? "True" : "False",
+        PyInt integer => integer.Value.ToString(),
+        PyLong integer => integer.Value.ToString(),
+        PyReal number => number.Value.ToString(System.Globalization.CultureInfo.InvariantCulture),
+        PyStr text => text.Value,
+        PyBytes bytes => System.Text.Encoding.UTF8.GetString(bytes.Value.Span),
+        PyWString text => text.Value,
+        PyToken token => token.Value,
+        PyTuple tuple => $"({string.Join(", ", tuple.Items.Select(FormatRpcValue))})",
+        PyList list => $"[{string.Join(", ", list.Items.Select(FormatRpcValue))}]",
+        PyDict dict => $"{{{string.Join(", ", dict.Entries.Select(entry => $"{FormatRpcValue(entry.Key)}: {FormatRpcValue(entry.Value)}"))}}}",
+        PySubStream { Decoded: { } decoded } => FormatRpcValue(decoded),
+        PyObject obj => FormatRpcValue(obj.Args),
+        PyObjectEx objectEx => $"object(header={FormatRpcValue(objectEx.Header)}, dict={FormatRpcValue(new PyDict(objectEx.Dict))})",
+        _ => value.GetType().Name,
+    };
 
     private static IReadOnlyDictionary<string, PyValue> Fields(PyObject value) =>
         Assert.IsType<PyDict>(value.Args).Entries.ToDictionary(

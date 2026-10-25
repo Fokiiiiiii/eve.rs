@@ -64,4 +64,4 @@ The client-side decision points above were searched across the full /home/user/e
   - `Ship_fitting_info_and_dirt_timestamp_use_the_registered_host_routes` still expected PyStr for two decoded strings; the wire values were PyBytes.
   - `Insurance_rpc_purchase_lookup_list_and_cancellation_follow_the_persisted_host_state` still found no 50% quote for the Rifter insurance value.
 - Agent test run `40235241341` for the selected five Host tests failed after starting the project test command; its recorded step output did not include test names or a test summary. The mailing-list test itself passed in run `40230484611` before these unrelated Host-test follow-ups.
-- The latest repo head after documentation merge is `90b8df54`; the handoff is current through the completed `f70c174e` Actions result. No real graphical-client walkthrough was done, and no PostgreSQL database was used locally.
+- The code under review is the pushed `f70c174e` state; later `main` merges add unrelated work. This handoff includes that state’s completed Actions results. No real graphical-client walkthrough was done, and no PostgreSQL database was used locally.

@@ -2,9 +2,9 @@
 
 ## Current status
 
-The production fleetObjectHandler is registered from CharacterServicesComposition.FleetRpc() in dotnet/src/Eve.Host/Composition/FleetComposition.cs; its handler is FleetObjectService (dotnet/src/Eve.Services.Space/FleetObjectService.cs). The Host test registers this production service in the actual HostServer registry and sends MachoNet calls over a socket with the transport-added machoVersion kwarg (dotnet/tests/Eve.Host.Tests/FleetObjectRpcWireTests.cs). It covers all 25 listed row occurrences, including all six GetWings callsites. The focused no-database wire test passed (1 passed, 0 skipped).
+Commit feae8354 was pushed to main. The production fleetObjectHandler is registered from CharacterServicesComposition.FleetRpc() in dotnet/src/Eve.Host/Composition/FleetComposition.cs; its handler is FleetObjectService (dotnet/src/Eve.Services.Space/FleetObjectService.cs). The Host test registers this production service in the actual HostServer registry and sends MachoNet calls over a socket with the transport-added machoVersion kwarg (dotnet/tests/Eve.Host.Tests/FleetObjectRpcWireTests.cs). It covers all 25 listed row occurrences, including all six GetWings callsites. Local build passed and the focused no-database wire test passed (1 passed, 0 skipped).
 
-The test deliberately exercises the no-active-fleet state. It confirms real dispatch and its empty-state replies; it does not exercise persisted fleet mutation/read success, notification fanout, or restart. No PostgreSQL database was used.
+The test deliberately exercises the no-active-fleet state. It confirms real dispatch and its empty-state replies; it does not exercise persisted fleet mutation/read success, notification fanout, or restart. Agent-test run 40176463800 passed with no failed tests/jobs. Push-triggered CI run 40176456650 is queued. No PostgreSQL database was used.
 
 ## Whole-tree V24.01 client flow
 
@@ -27,10 +27,12 @@ The calls all originate in eve/client/script/parklife/fleetSvc.py; CBM whole-pro
 
 ## EveJS v0.12.9 comparison
 
-server/src/services/fleets/fleetObjectHandlerService.js:173-411 dispatches these same getters, mutations and broadcasts to fleetRuntime.js and preserves the corresponding runtime result. In particular, fleetRuntime.js:1933-1979 returns true from MoveMember and the successfully moved character ID list from MassMoveMembers; those are consumed in the client flow above. In eve.rs, the handler is backed by FleetStore and Host callbacks, and mutation notifications are emitted from the persisted before/after snapshots. A positive-state Host regression for these replies and notifications remains outstanding.
+server/src/services/fleets/fleetObjectHandlerService.js:173-411 dispatches these same getters, mutations and broadcasts to fleetRuntime.js and preserves the corresponding runtime result. In particular, fleetRuntime.js:1933-1979 returns true from MoveMember and the successfully moved character ID list from MassMoveMembers; those are consumed in the client flow above. In eve.rs, the handler is backed by FleetStore and Host callbacks, and mutation notifications are emitted from the persisted before/after snapshots. A positive-state Host regression for these replies and notifications remains outstanding. Serena replace_content and replace_in_files rejected edits with “No language servers available in the manager”; no fallback editor was used.
 
 ## Checks
 
 - MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -p:UseSharedCompilation=false — passed, 0 warnings/errors.
 - MSBUILDDISABLENODEREUSE=1 dotnet test dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj --no-build --filter 'FullyQualifiedName~Fleet_object_rpcs_are_dispatched_through_host_with_transport_kwargs' -p:UseSharedCompilation=false — passed, 1 test, 0 skipped.
+- Agent Actions run 40176463800 — passed, 0 failed tests/jobs.
+- Push-triggered ci.yml run 40176456650 — queued when this note was updated.
 - The graphical V24.01 client was not exercised.

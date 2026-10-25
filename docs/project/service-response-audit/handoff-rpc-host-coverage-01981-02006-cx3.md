@@ -32,3 +32,4 @@ Added `Map_personal_and_industry_replies_follow_registered_host_routes_with_clie
 - Focused test `FullyQualifiedName~Map_personal_and_industry_replies_follow_registered_host_routes_with_client_kwargs`: passed, 1 passed, 0 failed, 0 skipped.
 - No database or graphical-client session was used. The test verifies wire routing and shapes, not live database queries or visit history accumulation across a character's travel.
 - After merging `origin/main` at `d5414e3f`, the same focused test passed again on the merged tree (1 passed, 0 failed, 0 skipped).
+- After the subsequent upstream merge `473b4da9`, the focused test was rebuilt and passed again (1 passed, 0 failed, 0 skipped).

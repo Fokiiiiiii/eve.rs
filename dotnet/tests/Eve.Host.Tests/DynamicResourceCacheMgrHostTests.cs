@@ -44,28 +44,25 @@ public partial class HostServerTests
 
         var settings = Assert.IsType<PyDict>(await CallAsync("GetDynamicResourceSettings"));
         Assert.Equal(17, settings.Entries.Count);
-        Assert.Equal(new PyInt(9900), ResourceValue(settings, "autopaymentIntervalSeconds"));
-        Assert.Equal(new PyReal(0.975), ResourceValue(settings, "mainBankPayRatio"));
+        Assert.Equal(new PyInt(9900), EntryValue(settings, "autopaymentIntervalSeconds"));
+        Assert.Equal(new PyReal(0.975), EntryValue(settings, "mainBankPayRatio"));
 
         var agency = Assert.IsType<PyDict>(await CallAsync("GetESSAgencyData"));
         var system = Assert.IsType<PyDict>(agency.Entries.Single(entry => entry.Key is PyInt id && id.Value == systemId).Value);
-        Assert.Equal(new PyReal(1.25), ResourceValue(system, "currentOutput"));
-        Assert.Equal(new PyInt(42_000_000), ResourceValue(system, "mainValue"));
-        Assert.Equal(new PyInt(7_000_000), ResourceValue(system, "reserveValue"));
-        Assert.Same(PyBool.True, ResourceValue(system, "vaultOpen"));
+        Assert.Equal(new PyReal(1.25), EntryValue(system, "currentOutput"));
+        Assert.Equal(new PyInt(42_000_000), EntryValue(system, "mainValue"));
+        Assert.Equal(new PyInt(7_000_000), EntryValue(system, "reserveValue"));
+        Assert.Same(PyBool.True, EntryValue(system, "vaultOpen"));
 
         var details = Assert.IsType<PyDict>(await CallAsync("GetESSSystemDetails", new PyInt(systemId)));
         Assert.Equal(5, details.Entries.Count);
-        Assert.Equal(new PyInt(1), ResourceValue(details, "activeLinks"));
-        Assert.Equal(new PyInt(5), ResourceValue(details, "totalPulses"));
-        Assert.Equal(new PyInt(300), ResourceValue(details, "reserveTimeChosen"));
+        Assert.Equal(new PyInt(1), EntryValue(details, "activeLinks"));
+        Assert.Equal(new PyInt(5), EntryValue(details, "totalPulses"));
+        Assert.Equal(new PyInt(300), EntryValue(details, "reserveTimeChosen"));
 
         var keys = Assert.IsType<PyList>(await CallAsync("GetESSReserveBankKeys", new PyInt(systemId)));
         Assert.Equal(
             EssReserveKeys.All.Where(key => key.Quadrant == quadrant).Select(key => (PyValue)new PyInt(key.KeyTypeId)),
             keys.Items);
     }
-
-    private static PyValue ResourceValue(PyDict dict, string key) =>
-        dict.Entries.Single(entry => T(entry.Key) == key).Value;
 }

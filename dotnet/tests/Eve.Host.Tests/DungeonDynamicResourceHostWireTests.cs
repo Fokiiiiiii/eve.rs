@@ -78,26 +78,26 @@ public partial class HostServerTests
 
         var battlefields = Assert.IsType<PyDict>(
             await Call("dungeonInstanceCacheMgr", "GetFactionWarfareBattlefieldInstances"));
-        var battlefield = Assert.IsType<PyList>(Value(battlefields, systemId));
+        var battlefield = Assert.IsType<PyList>(EntryValue(battlefields, systemId));
         Assert.Equal(new PyInt(801), RowField(Assert.IsType<PyObject>(battlefield.Items[0]), "instanceID"));
 
         var iceHeists = Assert.IsType<PyDict>(
             await Call("dungeonInstanceCacheMgr", "GetPirateInsurgencyIceHeistInstances"));
         Assert.Equal(new PyInt(802),
-            RowField(Assert.IsType<PyObject>(Assert.IsType<PyList>(Value(iceHeists, systemId + 1)).Items[0]), "instanceID"));
+            RowField(Assert.IsType<PyObject>(Assert.IsType<PyList>(EntryValue(iceHeists, systemId + 1)).Items[0]), "instanceID"));
 
         var signatures = Assert.IsType<PyDict>(
             await Call("dungeonInstanceCacheMgr", "GetSignatureInstances"));
-        Assert.Equal(new PyInt(1), Value(signatures, systemId + 2));
+        Assert.Equal(new PyInt(1), EntryValue(signatures, systemId + 2));
 
         var settings = Assert.IsType<PyDict>(
             await Call("dynamicResourceCacheMgr", "GetDynamicResourceSettings"));
-        Assert.Equal(new PyInt(1), Value(settings, "minOutput"));
-        Assert.Equal(new PyInt(2), Value(settings, "maxOutput"));
-        Assert.Equal(new PyReal(1.5), Value(settings, "equilibriumValue"));
+        Assert.Equal(new PyInt(1), EntryValue(settings, "minOutput"));
+        Assert.Equal(new PyInt(2), EntryValue(settings, "maxOutput"));
+        Assert.Equal(new PyReal(1.5), EntryValue(settings, "equilibriumValue"));
         var outputBySystem = Assert.IsType<PyDict>(
             await Call("dynamicResourceCacheMgr", "GetDBSMapData"));
-        Assert.Equal(new PyReal(1.75), Value(outputBySystem, systemId));
+        Assert.Equal(new PyReal(1.75), EntryValue(outputBySystem, systemId));
         Assert.DoesNotContain(outputBySystem.Entries, entry => entry.Key == new PyInt(systemId + 1));
 
         Assert.Equal(new PyTuple([new PyInt(0), new PyInt(0)]),
@@ -117,10 +117,10 @@ public partial class HostServerTests
             ["lifecycleState"] = "active",
         };
 
-    private static PyValue Value(PyDict dictionary, long key) =>
+    private static PyValue EntryValue(PyDict dictionary, long key) =>
         dictionary.Entries.Single(entry => entry.Key == new PyInt(key)).Value;
 
-    private static PyValue Value(PyDict dictionary, string key) =>
+    private static PyValue EntryValue(PyDict dictionary, string key) =>
         dictionary.Entries.Single(entry => Text(entry.Key) == key).Value;
 
     private static PyValue RowField(PyObject value, string name) =>

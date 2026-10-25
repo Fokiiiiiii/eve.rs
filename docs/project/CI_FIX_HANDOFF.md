@@ -864,6 +864,22 @@ The additional entry is `alphaInjectorMgr.GetNextAvailableInjection`, registered
 
 Runs 927 (`6b4380a6`) and 928 (`45e455f4`) were canceled after Host shard 1/4 and 2/4 respectively failed `RpcSecurityInventoryTests.Real_host_registry_methods_are_enumerable` at `RpcSecurityInventoryTests.cs:91`: expected 1399 registered methods, actual 1400. Run 929 (`6e62defd`) completed with the same failure on Host shard 3/4. Its E2E job passed in 12.3 minutes; the Required CI gate failed only because of that Host shard. This was one stale test expectation, not a client behavior failure. The additional `alphaInjectorMgr.GetNextAvailableInjection` registration and whole-client call/consumer evidence are recorded above.
 
-Commit `e1c1f3a4` updates the inventory expectation to 1400. As of 2026-10-25 13:15 UTC, its first full gate, run 932 (`54f56fe0`, `40195015477`), is still in progress: E2E and three .NET Host shards remain active; .NET build, Rust checks, Windows, fixture generation and Python checks have passed so far. Run 933 (`2846142c`, `40196124358`) is in progress after adding DynamicResourceCacheMgr Host tests. Run 934 (`21f001cb`, `40196410619`) is queued after the DynamicResourceCacheMgr service coverage change. No post-correction full gate has completed yet; the green streak is 0/3.
+Commit `e1c1f3a4` updates the inventory expectation to 1400. Runs 932 (`54f56fe0`, `40195015477`) and 933 (`2846142c`, `40196124358`) completed successfully, including E2E. Run 934 (`21f001cb`, `40196410619`) failed its Linux .NET build and Windows solution build with CS0111, while E2E passed in 12.6 minutes. Run 935 (`ae28824a`, `40197245182`) completed successfully across all jobs, including E2E, the first green gate after the helper fix. Run 936 (`75f32014`, `40198356757`) subsequently failed .NET build with CS0103 after a shared helper rename; this resets the current green streak to 0/3. Its E2E and Windows jobs were still active at the last status check.
 
 Focused Agent runs 624 and 625 on `2846142c` passed, but they do not count as full push-gate runs. The run-929 Host shard log tail also shows two skipped Abyssal cases; these are not passes.
+
+
+## 2026-10-25 DynamicResourceCacheMgr Host helper collision
+
+- CI run 934 (`40196410619`, SHA `21f001cb`) failed both the Linux .NET build and Windows solution build at `dotnet/tests/Eve.Host.Tests/DynamicResourceCacheMgrHostTests.cs:69`: CS0111 reported that partial class `HostServerTests` already defines `Value` with the same parameter types. The newly added file repeated `Value(PyDict, string)`, already defined in `DungeonDynamicResourceHostWireTests.cs`.
+- Run 934's E2E job passed in 12.6 minutes. It reported eight skips: one skill-training-speed check (`test_login_to_character.py:1093`) and seven slow-live checks in movement, warp, jump, others, target, module and health. These skips are separate from the successful E2E result.
+- Run 935 E2E reported the same eight skips: one skill-training-speed check and seven slow-live checks in movement, warp, jump, others, target, module and health. They are not counted as passing tests.
+- Main commit `ae28824a` removes the duplicate test helper; the new test now uses the existing shared helper. This changes test code only; production RPC behavior and client-visible wire data are unchanged. Agent run 626 (`40196417010`) on the failing SHA stopped at the compile error. Focused Agent run 627 (`40197253258`) passed `Dynamic_resource_cache_reads_are_returned_through_host_wire` (1 passed, 0 failed, 0 skipped).
+- Push-gate run 935 (`40197245182`) passed all jobs, including Required CI gate; E2E passed in 12.4 minutes. The post-fix full-gate streak is 1/3.
+
+
+## 2026-10-25 EntryValue caller update after run 936
+
+- CI run 936 (`40198356757`, SHA `75f32014`) failed its Linux .NET build with nine CS0103 errors in `DynamicResourceCacheMgrHostTests.cs` (lines 47-61): `Value` was no longer in scope. Main commit `33dc1594` renamed the shared `HostServerTests` helper to `EntryValue` in `DungeonDynamicResourceHostWireTests.cs`, but left nine call sites in the dynamic-resource test using the old name.
+- The correction updates those nine assertions to call the existing `EntryValue(PyDict, string)` helper. It keeps the shared helper and adds no duplicate implementation. This is a test-only change; client-visible RPC behavior does not change.
+- At the time of this update, run 936's `.NET build` had failed while E2E and Windows jobs were still running. Agent run 628 was still active on the same pre-fix SHA. Verify the corrected call sites with a focused Actions test and the next push-gate run; the new green streak starts at 0/3.

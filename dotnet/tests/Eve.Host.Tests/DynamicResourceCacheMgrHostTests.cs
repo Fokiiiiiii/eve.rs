@@ -66,6 +66,4 @@ public partial class HostServerTests
             keys.Items);
     }
 
-    private static PyValue Value(PyDict dict, string key) =>
-        dict.Entries.Single(entry => T(entry.Key) == key).Value;
 }

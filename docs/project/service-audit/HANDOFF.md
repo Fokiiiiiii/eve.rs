@@ -3,7 +3,7 @@
 ## Snapshot and regeneration
 
 - Client source: /home/user/eve-logic, commit 1dbb5711a072a146e1d228365668ac05655eefe1.
-- Host source used for generation: 45d8f55a (post-merge source, including structure bridge/group change 44077e0b).
+- Host source used for generation: origin/main 06aed391 (2026-10-25); Shipcaster callback/test WIP was present locally, and the target status rows remained unchanged.
 - Regenerate both CSVs and the P0/P1 work queue with:
   python3 tools/spec-extract/run_service_audit_current.py --queue-dir /tmp/claude-0/-home-user/fb9607a2-2996-57a7-a22d-383b9f5b5fae/scratchpad/cx/queue
 - The service-audit Python regression tests run in the `ci.yml` Python job.
@@ -36,7 +36,7 @@ Coverage statuses match current Host source registrations and known behavior gap
 
 - A (MISSING): 493 RPC rows lack active Host routes. P0/P1 non-tested rows are queued; lower-priority rows remain in the inventory.
 - B (REJECTS-VALID-INPUT): 8 rows are recorded for Ping, AIR NPE, Config owner IDs, clone-grade reads, and no-fleet updates. EveJS source confirms no-fleet validation for RegisterForDamageUpdates; normal transport metadata and the other logged inputs still need valid-call handling. Owner logs also report normal-burst SessionRpcBudgetExceeded while binding several services; the coverage table is method-level and does not independently replay binding bursts.
-- C (HOLLOW): 13 shipcaster/structure travel rows are registered but lack client-usable behavior.
+- C (HOLLOW): 10 targeted RPC rows remain hollow after the three structure cyno rows moved to IMPLEMENTED-TESTED: eight Shipcaster inventory rows and two Ansiblex travel rows.
 - Python compile checks and one focused composition-route extraction test passed during this audit. No PostgreSQL database was used. The real graphical client and normal-burst scenarios were not exercised locally. Follow-up to the service-audit push (91a326a5): CI found three incorrect expected inventory totals in ReprocessingServiceTests and a reversed (locationId, ownerId) argument pair in ReprocessingHostTests. The corrected totals account for the initial Tritanium item and the 50% station yield; the persistence assertion now queries InLocationAsync(StationId, character). These are test-only corrections; ReprocessingService and Host behavior are unchanged. Focused database-backed Actions run 40089514853 passed (three Reprocessing service tests and one Host persistence test). Push CI run 40089504834 failed the live structure placement test; .NET space shard 2/2 was cancelled and eight optional slow live checks were skipped. Follow-up runs 40090250476 (ad55c2de) and 40092260488 (8799c2aa) remain in progress. Latest main 2919b0e1 includes simulator tick-alignment and docking-notification ordering changes (56bcae9a); its test_structures.py run 40093710819 is in progress.
 
 

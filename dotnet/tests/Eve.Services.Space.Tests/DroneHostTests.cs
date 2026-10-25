@@ -258,11 +258,24 @@ public class DroneHostTests
 
         await rig.Drones.CommandAsync(owner.Session, SimDroneCommands.Abandon, 0, [owner.Drone], CancellationToken.None);
         rig.Sim.Say(new SimDroneReleased((ulong)owner.Session.SessionId, owner.Drone, [0, 0, 0]));
+
+        var shipId = scooper.Session.GetInt("shipid")!.Value;
+        var room = await rig.Ships.DroneBayRoomInSpaceAsync(scooper.Character, shipId, scooper.System);
+        Assert.NotNull(room);
+        await rig.Statics.EnsureTypesAsync([Hobgoblin]);
+        var droneType = rig.Statics.Type(Hobgoblin);
+        Assert.NotNull(droneType);
+        var volumeAttribute = rig.Statics.AttributeId("volume");
+        Assert.NotNull(volumeAttribute);
+        var droneVolume = droneType!.Attributes.GetValueOrDefault(volumeAttribute.Value);
+        Assert.True(droneVolume > 0);
+        var quantity = checked((long)Math.Ceiling(room.Value.Free / droneVolume) + 1);
+
         await using (var connection = await rig.Source.OpenConnectionAsync())
         await using (var transaction = await connection.BeginTransactionAsync())
         {
             await rig.Items.CreateAsync(connection, transaction,
-                new NewItem(Hobgoblin, scooper.Character, scooper.Session.GetInt("shipid")!.Value, CharacterShips.DroneBayFlag, 100, false));
+                new NewItem(Hobgoblin, scooper.Character, shipId, CharacterShips.DroneBayFlag, quantity, false));
             await transaction.CommitAsync();
         }
 

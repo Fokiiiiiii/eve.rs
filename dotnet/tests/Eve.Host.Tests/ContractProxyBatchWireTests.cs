@@ -32,7 +32,7 @@ public partial class HostServerTests
             var response = MarshalCodec.Decode(reply.Payload);
             var responseState = ((PyTuple)((PyObject)response).Args).Items;
             Assert.True(((PyInt)responseState[0]).Value == 7,
-                $"{method} returned an error response: {response}");
+                $"{method} returned an error response: {System.Text.Json.JsonSerializer.Serialize(response)}");
             return Result(response)!;
         }
 
@@ -54,13 +54,15 @@ public partial class HostServerTests
         var personalSet = Assert.IsType<PyList>(((PyTuple)((PyTuple)personalItems.Header).Items[1]).Items[0]);
         Assert.Single(personalSet.Items);
         var personalRow = Assert.IsType<PyPackedRow>(Assert.Single(personalSet.Items));
-        Assert.Equal(new PyInt(7001), personalRow.Fields().Single(field => field.Key == "itemID").Value);
-        Assert.Equal(new PyInt(34), personalRow.Values[1]);
+        var personalFields = personalRow.Fields().ToDictionary(field => field.Key, field => field.Value);
+        Assert.Equal(new PyInt(7001), personalFields["itemID"]);
+        Assert.Equal(new PyInt(34), personalFields["typeID"]);
         var corporateItems = Assert.IsType<PyObjectEx>(await Rpc(15, "GetItemsInDockableLocation", new PyInt(3001), PyBool.True));
         var corporateSet = Assert.IsType<PyList>(((PyTuple)((PyTuple)corporateItems.Header).Items[1]).Items[0]);
         var corporateRow = Assert.IsType<PyPackedRow>(Assert.Single(corporateSet.Items));
-        Assert.Equal(new PyInt(8001), corporateRow.Fields().Single(field => field.Key == "itemID").Value);
-        Assert.Equal(new PyInt(34), corporateRow.Values[1]);
+        var corporateFields = corporateRow.Fields().ToDictionary(field => field.Key, field => field.Value);
+        Assert.Equal(new PyInt(8001), corporateFields["itemID"]);
+        Assert.Equal(new PyInt(34), corporateFields["typeID"]);
 
         var containerItems = Assert.IsType<PyList>(await Rpc(16, "GetItemsInContainer",
             new PyInt(3001), new PyInt(7001), PyBool.False, new PyInt(4)));
@@ -113,6 +115,7 @@ public partial class HostServerTests
         var escrow = Fields(Assert.IsType<PyObject>(await Rpc(4, "GetMyContractEscrow")));
         Assert.Equal(new PyInt(1250), escrow["iskEscrow"]);
         Assert.Equal(new PyInt(3), escrow["itemsEscrow"]);
+
         var bids = Fields(Assert.IsType<PyObject>(await Rpc(5, "GetMyBids", PyBool.False)));
         Assert.Single(Assert.IsType<PyList>(bids["contracts"]).Items);
         var corporationBids = Fields(Assert.IsType<PyObject>(await Rpc(18, "GetMyBids", PyBool.True)));
@@ -143,8 +146,8 @@ public partial class HostServerTests
         Assert.Equal((5001L, 7L, 42L, 84L, 3001L, true), writer.LastComplete);
         Assert.Same(PyBool.True, await Rpc(22, "CompleteContract", new PyInt(5001), new PyInt(6)));
         Assert.Equal((5001L, 6L, 42L, 84L, 3001L, true), writer.LastComplete);
-        Assert.Same(PyBool.True, await Rpc(11, "DeleteContract", new PyInt(5002)));
-        Assert.Equal((5002L, 42L, 84L, true), writer.LastDelete);
+        Assert.Same(PyBool.True, await Rpc(11, "DeleteContract", new PyInt(6001)));
+        Assert.Equal((6001L, 42L, 84L, true), writer.LastDelete);
         Assert.Equal((5003L, 42L, 84L, false, 1000, 3001L), writer.LastAccept);
     }
 
@@ -161,11 +164,7 @@ public partial class HostServerTests
 
         var config = GlobalConfig.Build(Options);
         registry.Register(new MachoNetService(new Info(registry, config), now));
-        var dispatcher = new PacketDispatcher(registry, now)
-        {
-            // This batch exceeds the production per-session RPC limit; budget behavior has separate coverage.
-            MaxExpensiveRpcUnitsPerMinute = 10_000,
-        };
+        var dispatcher = new PacketDispatcher(registry, now);
         var encoded = MarshalCodec.Encode(config);
         _server = new HostServer(
             new HostOptions
@@ -244,7 +243,8 @@ public partial class HostServerTests
         {
             LastSplit = (itemId, quantity, characterId, corporationId, stationId, forCorporation, flag);
             return ValueTask.FromResult(true);
-        }    }
+        }
+    }
 
     private sealed class RecordingContractInventoryReader : IContractInventoryReader
     {
@@ -322,9 +322,11 @@ public partial class HostServerTests
                 ? [Contract(2001, characterId, corporationId, false), Contract(2002, characterId, corporationId, false)]
                 : [Contract(3001, corporationId, corporationId, true)]));
         }
+
         public ValueTask<ContractSearchResult> SearchContractsAsync(
             ContractSearchQuery query, long nowFileTime, CancellationToken cancellationToken) =>
             ValueTask.FromResult(new ContractSearchResult([], 0, 0));
+
         public ValueTask<ContractReadBundle> GetMyCurrentContractListAsync(
             long characterId, long corporationId, bool isAccepted, bool forCorporation,
             long nowFileTime, CancellationToken cancellationToken)

@@ -24,4 +24,5 @@ Added StructureHostWireCoverageTests.Structure_settings_bridge_and_vulnerability
 
 - The local Eve.Host.Tests compile-check succeeded with 0 warnings and 0 errors.
 - The focused Host wire test passed (1 passed, 0 skipped); no PostgreSQL database was used.
-- GitHub Actions verification is pending the push.
+- Agent Actions run 40233790168 passed on 0d197881 (1 passed, 0 skipped).
+- Push-triggered CI run 40233781515 failed. It reported existing unrelated test failures in authentication account-state/live coverage and the insurance persistence host test, plus three newly merged Host test assertions that expected PyStr/array equality where the Host wire decode produced PyBytes/list-backed tuples. The three wire assertions were corrected to inspect the decoded values; the unrelated authentication and insurance failures are outside this structure RPC batch. The local Host.Tests compile-check passed after those assertion corrections. The follow-up CI result is pending.

@@ -108,22 +108,6 @@ public sealed class InsuranceRpcHostWireTests : IAsyncLifetime
         await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
         const int rifterTypeId = 587;
         const long fullInsurancePriceCents = 100_000_000;
-        var insuranceSchema = Schema("EVE_GAMESTORE_SCHEMA");
-        await using (var command = source.CreateCommand($"""
-            CREATE SCHEMA IF NOT EXISTS "{insuranceSchema}";
-            CREATE TABLE "{insuranceSchema}"."shipInsurancePrices" (key text PRIMARY KEY, doc jsonb NOT NULL, rev bigint NOT NULL DEFAULT 1);
-            INSERT INTO "{insuranceSchema}"."shipInsurancePrices" (key, doc)
-            VALUES ('byTypeID', @doc);
-            """))
-        {
-            var typePrices = new JsonObject
-            {
-                [rifterTypeId.ToString()] = new JsonObject { ["fullInsurancePriceCents"] = fullInsurancePriceCents },
-            };
-            command.Parameters.AddWithValue("doc", NpgsqlTypes.NpgsqlDbType.Jsonb, typePrices.ToJsonString());
-            await command.ExecuteNonQueryAsync();
-        }
-
         _host = await HostComposition.BuildAsync(Settings());
         var gameStoreSchema = Schema("EVE_GAMESTORE_SCHEMA");
         await using (var seed = source.CreateCommand($"""
@@ -170,7 +154,7 @@ public sealed class InsuranceRpcHostWireTests : IAsyncLifetime
         var prices = Assert.IsType<PyDict>(await insurance.CallAsync(
             Call(session, "GetInsurancePrices", 2, new PyList([new PyInt(rifterTypeId)]))));
         Assert.Equal(price, prices.Entries.Single().Value);
-        Assert.Equal(fullInsurancePriceCents, Cents(price));
+        Assert.Equal(new PyInt((int)(fullInsurancePriceCents / 100)), price);
         Assert.Same(PyNone.Instance, await insurance.CallAsync(Call(session, "GetContractForShip", 3, new PyLong(shipId))));
         Assert.Empty(Assert.IsType<PyList>(await insurance.CallAsync(Call(session, "GetContracts", 4))).Items);
 

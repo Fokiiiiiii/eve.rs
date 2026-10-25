@@ -45,12 +45,25 @@ public sealed class DynamicResourceCacheMgrService(
         {
             "GetDynamicResourceSettings" => Py.Dict([.. DefaultSettings.Select(setting =>
                 (setting.Name, Py.Number(setting.Value)))]),
-            "GetDBSMapData" => new PyDict([]),
+            "GetDBSMapData" => await DbsMapDataAsync(call.Cancellation),
             "GetESSAgencyData" => await AgencyDataAsync(call.Cancellation),
             "GetESSSystemDetails" => await SystemDetailsAsync(call),
             "GetESSReserveBankKeys" => await ReserveKeysAsync(call),
             _ => PyNone.Instance,
         };
+    }
+
+    private async ValueTask<PyValue> DbsMapDataAsync(CancellationToken cancellationToken)
+    {
+        if (listSystems is null)
+            return new PyDict([]);
+
+        var entries = (await listSystems(cancellationToken))
+            .Where(state => state.SolarSystemId > 0 && state.CurrentOutput > 0)
+            .Select(state => new KeyValuePair<PyValue, PyValue>(
+                Py.Number(state.SolarSystemId), Py.Number(state.CurrentOutput)))
+            .ToArray();
+        return new PyDict(entries);
     }
 
     private async ValueTask<PyValue> SystemDetailsAsync(ServiceCall call)

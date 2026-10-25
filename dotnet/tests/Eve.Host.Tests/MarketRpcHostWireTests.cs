@@ -102,7 +102,7 @@ public sealed class MarketRpcHostWireTests : IAsyncLifetime
         Assert.IsType<PyDict>(Received(await market.CallAsync(Call(session, "GetSystemAsks", 11))));
         Assert.IsType<PyList>(await market.CallAsync(Call(session, "CharGetTransactions", 12, PyNone.Instance)));
         Assert.IsType<PyList>(await market.CallAsync(Call(session, "CorpGetTransactions", 13, PyNone.Instance)));
-        Assert.IsType<PyObjectEx>(await market.CallAsync(Call(session, "GetCharEscrow", 14)));
+        Assert.IsType<PyObject>(await market.CallAsync(Call(session, "GetCharEscrow", 14)));
         Assert.IsType<PyObject>(Received(await market.CallAsync(Call(session, "GetCharOrders", 15))));
         Assert.IsType<PyObject>(Received(await market.CallAsync(Call(session, "GetCorporationOrders", 16))));
         var histories = Assert.IsType<PyDict>(await market.CallAsync(

@@ -43,104 +43,84 @@ public sealed class SpaceBridges(
     /// <c>CmdBridgeToFleetModuleBeacon</c>, or the deployable variant by the field's id). It needs the matching portal generator fitted, the skill, a lit field of
     /// its own fleet, a Titan only to a standard field and not in high security, the range of its jump drive, and the isotopes of the activation.
     /// </summary>
-    public async Task OpenAsync(ClientSession session, long fieldId, int destinationSystem, CancellationToken cancellationToken)
+    public Task OpenAsync(ClientSession session, long fieldId, int destinationSystem, CancellationToken cancellationToken) =>
+        OpenAsync(session, fieldId, destinationSystem, null, cancellationToken);
+
+    public Task OpenStructureAsync(
+        ClientSession session, long structureId, int structureTypeId, int destinationSystem, CancellationToken cancellationToken) =>
+        OpenAsync(session, structureId, destinationSystem, structureTypeId, cancellationToken);
+
+    private async Task OpenAsync(
+        ClientSession session, long fieldId, int destinationSystem, int? structureTypeId, CancellationToken cancellationToken)
     {
         if (session.CharacterId is not { } character || session.GetInt("shipid") is not { } shipId || shipId <= 0)
-        {
             throw Refusal("DeniedShipChanged");
-        }
         var origin = (int)(session.GetInt("solarsystemid2") ?? session.GetInt("solarsystemid") ?? 0);
         if (origin <= 0 || await space.PositionOfAsync(session, shipId, cancellationToken) is null)
-        {
             throw Refusal("DeniedShipChanged");
-        }
+
         var now = nowUnixMs();
-        if (await deployed.GetAsync(fieldId, cancellationToken) is not { } field
-            || !SpaceContainers.IsLitField(field, now)
-            || field.SolarSystemId != destinationSystem)
-        {
+        var field = structureTypeId is null ? await deployed.GetAsync(fieldId, cancellationToken) : null;
+        if (structureTypeId is null
+            ? field is null || !SpaceContainers.IsLitField(field, now) || field.SolarSystemId != destinationSystem
+            : structureTypeId != StructureBeaconTravel.PharoluxCynoBeaconType || destinationSystem <= 0)
             throw Notify("That cynosural field is not lit.");
-        }
+
         var fleet = await fleets.FleetIdForCharacterAsync(character, cancellationToken);
-        if (fleet is null || fleet != await fleets.FleetIdForCharacterAsync(field.OwnerId, cancellationToken))
-        {
+        if (fleet is null || field is not null && fleet != await fleets.FleetIdForCharacterAsync(field.OwnerId, cancellationToken))
             throw Notify("You are not in the fleet of that cynosural field.");
-        }
         if (await ships.ShipTypeOfAsync(character, shipId, cancellationToken) is not { } hullType)
-        {
             throw Refusal("DeniedShipChanged");
-        }
+
         await statics.EnsureTypesAsync([hullType], cancellationToken);
         if (statics.Type(hullType) is not { } hull || !hull.Attributes.TryGetValue(JumpDriveRules.RangeAttribute, out var baseRange) || baseRange <= 0
             || !hull.Attributes.TryGetValue(JumpDriveRules.FuelPerLightYearAttribute, out var fuelPerLightYear)
             || !hull.Attributes.TryGetValue(JumpDriveRules.FuelTypeAttribute, out var jumpFuel))
-        {
             throw Notify("Your ship has no jump drive.");
-        }
-        // the generator the ship fits: a Titan's standard bridge, or a Black Ops' covert one
+
         var generator = (await ships.FittedModulesAsync(character, shipId, cancellationToken))
-            .FirstOrDefault(module => module.TypeId is JumpDriveRules.TitanGeneratorType or JumpDriveRules.CovertGeneratorType or JumpDriveRules.IndustrialGeneratorType);
+            .FirstOrDefault(module => structureTypeId is not null
+                ? module.TypeId == JumpDriveRules.TitanGeneratorType
+                : module.TypeId is JumpDriveRules.TitanGeneratorType or JumpDriveRules.CovertGeneratorType or JumpDriveRules.IndustrialGeneratorType);
         if (generator.Attributes is null || !generator.Attributes.TryGetValue(JumpDriveRules.PortalDurationAttribute, out var lifetime) || lifetime <= 0
             || !generator.Attributes.TryGetValue(JumpDriveRules.PortalPassengerAttribute, out var passengerAttribute)
             || !generator.Attributes.TryGetValue(1298, out var fitsGroup) || (int)fitsGroup != hull.GroupId)
-        {
             throw Notify("Your ship is not fitted with an online jump portal generator for that cynosural field.");
-        }
+
         var titan = generator.TypeId == JumpDriveRules.TitanGeneratorType;
         var industrial = generator.TypeId == JumpDriveRules.IndustrialGeneratorType;
-        var kind = JumpDriveRules.KindOf(field.TypeId);
-
-        if (titan && kind != JumpDriveRules.FieldKind.Standard && field.Kind != SpaceContainers.BeaconKind)
-        {
+        var kind = JumpDriveRules.KindOf(structureTypeId ?? field!.TypeId);
+        if (titan && kind != JumpDriveRules.FieldKind.Standard && field?.Kind != SpaceContainers.BeaconKind)
             throw Notify("A titan jump bridge goes only to a standard cynosural field or a beacon.");
-        }
         if (industrial && kind != JumpDriveRules.FieldKind.Industrial)
-        {
             throw Notify("An industrial jump bridge goes only to an industrial cynosural field.");
-        }
-        // the bridging hull must be allowed to jump to that kind of field (the SDE's cyno rules: JF, capital industrial and Black Ops to industrial)
         if (!JumpDriveRules.MayJumpTo(kind, hull.GroupId))
-        {
             throw Notify("That cynosural field does not take this ship.");
-        }
         if (systems.Get(destinationSystem) is { } entered && JumpDriveRules.EntryRefusal(entered.RegionId) is { } entry)
-        {
             throw Notify(entry);
-        }
-
         if ((titan || industrial) && systems.Get(origin) is { } place && Security.IsHighSecOrHigher(Security.ClassFromLevel(place.Security)))
-        {
             throw Notify("Jump drives cannot be used in high-security space.");
-        }
         if (await LevelAsync(JumpDriveRules.JumpPortalGenerationSkill, character, cancellationToken) < 1)
-        {
             throw Notify("Your pilot cannot use a jump portal generator yet (Jump Portal Generation at level one).");
-        }
 
         var lightYears = systems.LightYearsBetween(origin, destinationSystem) ?? throw Refusal("DeniedShipChanged");
         var calibration = await LevelAsync(JumpDriveRules.CalibrationSkill, character, cancellationToken);
         if (lightYears > JumpDriveRules.Range(baseRange, calibration, await PerLevelAsync(JumpDriveRules.CalibrationSkill, JumpDriveRules.CalibrationPerLevelAttribute, cancellationToken)))
-        {
             throw Notify("That cynosural field is out of your jump drive's range.");
-        }
-        // the activation's isotopes (the generator's 714 of 713) less the skill a level (1775); a covert generator has none (the SDE)
+
         var activationFuel = generator.Attributes.TryGetValue(JumpDriveRules.PortalFuelQuantityAttribute, out var activation)
             ? (long)Math.Ceiling(Math.Round(activation * (1 + await PerLevelAsync(JumpDriveRules.JumpPortalGenerationSkill, JumpDriveRules.JumpPortalGenerationPerLevelAttribute, cancellationToken)), 6))
             : 0;
         var activationType = generator.Attributes.TryGetValue(JumpDriveRules.PortalFuelTypeAttribute, out var strontium) ? (int)strontium : 0;
         if (activationFuel > 0 && await ships.FuelHeldAsync(character, shipId, activationType, cancellationToken) < activationFuel)
-        {
             throw Notify("The bridge ship does not have enough jump portal activation fuel.");
-        }
-        var capacitor = generator.Attributes.TryGetValue(JumpDriveRules.ModuleCapacitorAttribute, out var need) ? need : 0;
 
+        var capacitor = generator.Attributes.TryGetValue(JumpDriveRules.ModuleCapacitorAttribute, out var need) ? need : 0;
         var immobile = titan ? (long)lifetime : 0;
         await space.OpenBridgeAsync(session, shipId, fieldId, destinationSystem, (long)lifetime, immobile, JumpDriveRules.BridgeRangeMeters, capacitor, cancellationToken);
         if (activationFuel > 0 && !await ships.DebitFuelAsync(character, shipId, activationType, activationFuel, cancellationToken))
-        {
-            // shortcut: the fuel was checked a moment before and another debit may have taken it; the bridge stands (the same shortcut as the jump's)
             log?.Invoke($"the activation fuel of character {character} was taken by another debit after the check");
-        }
+
         var conservation = await PerLevelAsync(JumpDriveRules.FuelConservationSkill, JumpDriveRules.FuelBonusAttribute, cancellationToken);
         var conservationLevel = await LevelAsync(JumpDriveRules.FuelConservationSkill, character, cancellationToken);
         var record = new JumpBridgeRecord(
@@ -160,7 +140,6 @@ public sealed class SpaceBridges(
             now + (long)lifetime);
         _bridges[shipId] = record;
         await AnnounceAsync(record, true);
-
         session.SendNotification("OnGroupJumpAnchorActivated", "clientID", new PyInt(destinationSystem), new PyInt(0));
     }
 

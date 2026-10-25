@@ -815,7 +815,7 @@ ROOT_CAUSES: dict[str, tuple[str, str]] = {
     ),
     "structure_travel": (
         "G7",
-        "Host wires single-character CmdJumpToStructureBeacon through StructureBeaconTravel and the SpaceSessions jump callback, and wires jump-bridge destination/link reads through the persisted structure directory. It explicitly refuses group jumps and portal bridging to cynosural beacons, and production registers structureJumpBridgeMgr without a CmdJumpThroughStructureStargate travel provider. EveJS implements those group, portal-bridge, and Ansiblex travel transitions; these routes need fleet notifications, portal activation/fuel, access/range checks, and authoritative session settlement.",
+        "Host wires single-character and group CmdJumpToStructureBeacon calls through StructureBeaconTravel and the SpaceSessions bridge/conduit owners, and wires jump-bridge destination/link reads through the persisted structure directory. The remaining CmdJumpThroughStructureStargate route lacks a production travel provider. EveJS implements Ansiblex travel with reciprocal-link, ACL, proximity, disruption, range/mass, fuel, fee, durable settlement, and session-transition checks.",
     ),
     "structure_fuel": (
         "G8",
@@ -861,8 +861,6 @@ REGISTERED_BEHAVIOR_GAPS: dict[tuple[str, str], str] = {
     ("shipCasterLandingPadMgr", "GetFactionLandingPads"): "shipcaster_state",
     ("shipCasterLauncherMgr", "GetFactionsWithShipcaster"): "shipcaster_state",
     ("starterShipcasterTravelMgr", "CanCharacterJump"): "shipcaster_state",
-    ("structureCynoBeaconMgr", "CmdBridgeToStructureBeacon"): "structure_travel",
-    ("structureCynoBeaconMgr", "CmdGroupJumpToStructureBeacon"): "structure_travel",
     ("structureJumpBridgeMgr", "CmdJumpThroughStructureStargate"): "structure_travel",
 }
 

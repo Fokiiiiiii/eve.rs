@@ -31,8 +31,21 @@ public partial class HostServerTests
             var reply = Assert.IsType<Send>(await front.ReceiveAsync());
             var response = MarshalCodec.Decode(reply.Payload);
             var responseState = ((PyTuple)((PyObject)response).Args).Items;
+            static string Describe(PyValue value) => value switch
+            {
+                PyBytes bytes => System.Text.Encoding.UTF8.GetString(bytes.Value.Span),
+                PyStr text => text.Value,
+                PyInt number => number.Value.ToString(),
+                PyLong number => number.Value.ToString(),
+                PyTuple tuple => $"({string.Join(", ", tuple.Items.Select(Describe))})",
+                PyList list => $"[{string.Join(", ", list.Items.Select(Describe))}]",
+                PyObject obj => $"{Describe(obj.Name)} {Describe(obj.Args)}",
+                PySubStream { Decoded: { } decoded } => Describe(decoded),
+                PyDict dict => $"dict[{dict.Entries.Count}]",
+                _ => value.GetType().Name,
+            };
             Assert.True(((PyInt)responseState[0]).Value == 7,
-                $"{method} returned an error response: {response}");
+                $"{method} returned an error response: {Describe(response)}");
             return Result(response)!;
         }
 

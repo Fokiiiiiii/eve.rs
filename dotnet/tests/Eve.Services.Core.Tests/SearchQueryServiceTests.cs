@@ -43,6 +43,42 @@ public sealed class SearchQueryServiceTests
         Assert.Empty(Ids(exact, 3));
     }
 
+    [Fact]
+    public async Task QuickQuery_returns_a_unique_flat_list_and_honors_alias_and_npc_filters()
+    {
+        var directory = new LookupSearchSources(
+            Characters: _ => Task.FromResult<IReadOnlyList<LookupEntity>>([]),
+            Corporations: _ => Task.FromResult<IReadOnlyList<LookupEntity>>([
+                new(301, "Alpha Corporation", TickerName: "ALP"),
+                new(302, "Alpha NPC Corporation", TickerName: "NPC", IsNpc: true),
+            ]),
+            Alliances: _ => Task.FromResult<IReadOnlyList<LookupEntity>>([]),
+            Factions: _ => Task.FromResult<IReadOnlyList<LookupEntity>>([]));
+        var service = new SearchQueryService(directory);
+        var request = new ServiceCall
+        {
+            Method = "QuickQuery",
+            Args = [new PyStr("alpha"), new PyList([new PyInt(3), new PyInt(3)])],
+            Kwargs = Py.Dict(("hideNPC", PyBool.True)),
+            Session = new ClientSession(),
+        };
+
+        var result = Assert.IsType<PyList>(await service.CallAsync(request));
+        Assert.Equal([301L], result.Items.Select(Id));
+
+        var aliasRequest = new ServiceCall
+        {
+            Method = "QuickQuery",
+            Args = [new PyStr("ALP"), new PyList([new PyInt(3)])],
+            Kwargs = Py.Dict(("exact", new PyInt(1)), ("onlyAltName", PyBool.True)),
+            Session = new ClientSession(),
+        };
+        result = Assert.IsType<PyList>(await service.CallAsync(aliasRequest));
+        Assert.Equal([301L], result.Items.Select(Id));
+
+        static long Id(PyValue value) => Assert.IsType<PyInt>(value).Value;
+    }
+
     private static ServiceCall Request(string search, PyList groups, int exact = 0) => new()
     {
         Method = "Query",

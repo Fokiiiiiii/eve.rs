@@ -30,8 +30,9 @@ The full `/home/user/eve-logic` tree was searched with Serena pattern search and
 ## Checks and remaining limits
 
 - Local Host project build: passed after correcting a test-only type assertion.
-- Focused Host wire test `Air_and_login_support_rpcs_return_client_shapes_through_the_host`: passed, 1 passed and 0 skipped.
-- The first focused attempts exposed incorrect test expectations for the actual CoreServices authentication reply, default Omega session, and wire-encoded notification name; those expectations were corrected before the passing run.
+- Focused Host wire test `Air_and_login_support_rpcs_return_client_shapes_through_the_host`: passed locally, 1 passed and 0 skipped; Actions run 40243952160 passed.
+- Existing `User_service_activation_and_feedback_rpcs_are_dispatched_through_host_wire`: Actions run 40243951464 passed.
+- Push CI for the batch SHA `a090812ef4cd8a0c1496fc02a7c1533b1914143a` failed in the unrelated insurance wire test; a focused Actions rerun of that test also failed (run 40245446472). The subsequent `origin/main` update `fb968804` changes the insurance wire test. Its push CI run 40245942547 was queued at handoff time.
 - No PostgreSQL database or graphical client was used. The new AIR callback fixture verifies Host ordering and notification wire encoding; production persistence remains covered by the existing provider path rather than this in-memory wire fixture.
 
 ## Inventory note

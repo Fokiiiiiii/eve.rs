@@ -35,5 +35,6 @@ The existing compatibility record documents the only client-irrelevant reply dif
 - PASS: `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj --no-restore -p:UseSharedCompilation=false` (0 warnings, 0 errors).
 - PASS: focused `IndustryHostRpcTests` (2 passed, 0 failed, 0 skipped). The real service implementations are dispatched as Macho CallReq through `ServiceRegistry` and `PacketDispatcher`; industry mutations use a recording operations-port fixture, and monitor materials use a provider fixture. No PostgreSQL was used.
 - The regression checks all seven manager calls and both monitor calls, manager wire shapes and typed mutation inputs, material-change notification delivery, and disconnect cleanup.
-- Actions and push-triggered CI checks for this batch are pending.
+- PASS: Actions run `40182750083` for `IndustryHostRpcTests` on `73d5442b` completed successfully with no failed tests or jobs; the status summary did not report skipped-test totals.
+- `python3 tools/dev/ci-status.py failures 73d5442b` reported no push-triggered `ci.yml` run for that SHA.
 - PostgreSQL and graphical-client sessions were not used.

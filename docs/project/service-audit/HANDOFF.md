@@ -4,7 +4,8 @@
 
 - Client source: /home/user/eve-logic, commit 1dbb5711a072a146e1d228365668ac05655eefe1.
 - Host source used for the latest CSV generation: origin/main ec27cb3462ebc3ff5bd2b9acb34c5e82221afdbe plus this task's changes.
-- Latest integrated origin/main: 8ce3380f6ce2ceff780e49dcac7768bcc0fc06dc; its changes since CSV generation are documentation-only.
+- Latest main push containing this task's implementation and tests: e6310b34c165b815bedc0cbb636129324fde78d2.
+- Latest integrated origin/main: fbe1eed5; this follow-up updates a handoff file only.
 - Prior P0 implementation/test push: 21f75f92. Latest main synchronization push: 22c62010. Focused Actions run 40219719160 passed for Search_quick_query_returns_client_id_list_through_host_with_transport_kwargs; push CI run 40219660982 passed.
 - Regenerate both CSVs and the P0/P1 work queue with:
   python3 tools/spec-extract/run_service_audit_current.py --queue-dir /tmp/service-audit-cx6-final
@@ -62,7 +63,7 @@ The wire metadata fix treats the client-added `machoVersion=1` as transport data
 ### Implementation and checks
 
 - `GetMultiOwnersEx` accepts up to 10,000 raw IDs, preserves integer/container validation, reads characters in one bulk request, and uses the existing bulk corporation/alliance stores. Its RPC budget is proportional to request size in groups of 100; the shared 160-unit limit remains.
-- Local builds passed for `Eve.Host.Tests` and `Eve.Services.Space.Tests`. Three focused real-Host wire tests passed: `Client_transport_macho_version_is_not_an_application_keyword_for_core_read_calls`, `Owner_recordset_batches_fit_a_normal_session_burst`, and `Empty_fleet_damage_subscription_clears_watchlist_without_membership`. No test was skipped.
+- Local `Eve.Host.Tests` build passed with zero warnings/errors. The three focused real-Host wire tests passed (3/3, zero skipped) immediately before push e6310b34c165b815bedc0cbb636129324fde78d2. The focused Actions run and push-triggered CI status are pending.
 - No PostgreSQL database or graphical client was used. The character/corporation database-backed owner batch was not exercised locally; its code path compiled and uses the existing bulk stores.
 
 ## Shipcaster and structure travel evidence

@@ -132,10 +132,10 @@ public partial class HostServerTests
         var accepted = Fields(Assert.IsType<PyObject>(await Rpc(9, "AcceptContract", new PyInt(5003), PyBool.False)));
         Assert.Equal(new PyInt(5003), accepted["contractID"]);
         Assert.Same(PyBool.True, await Rpc(10, "CompleteContract", new PyInt(5001), new PyInt(4)));
-        Assert.Same(PyBool.True, await Rpc(11, "DeleteContract", new PyInt(5002)));
+        Assert.Same(PyBool.True, await Rpc(11, "DeleteContract", new PyInt(6001)));
 
         Assert.Equal((5001L, 4L, 42L, 84L, 3001L, true), writer.LastComplete);
-        Assert.Equal((5002L, 42L, 84L, true), writer.LastDelete);
+        Assert.Equal((6001L, 42L, 84L, true), writer.LastDelete);
         Assert.Equal((5003L, 42L, 84L, false, 1000, 3001L), writer.LastAccept);
     }
 

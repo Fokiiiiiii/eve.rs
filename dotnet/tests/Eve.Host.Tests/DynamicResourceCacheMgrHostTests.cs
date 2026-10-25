@@ -5,6 +5,8 @@ namespace Eve.Host.Tests;
 
 public partial class HostServerTests
 {
+    private static PyValue Value(PyDict dict, string key) =>
+        dict.Entries.Single(entry => Eve.Macho.JsSemantics.StringValue(entry.Key) == key).Value;
     [Fact]
     public async Task Dynamic_resource_cache_reads_are_returned_through_host_wire()
     {
@@ -65,5 +67,4 @@ public partial class HostServerTests
             EssReserveKeys.All.Where(key => key.Quadrant == quadrant).Select(key => (PyValue)new PyInt(key.KeyTypeId)),
             keys.Items);
     }
-
 }

@@ -884,3 +884,9 @@ Focused Agent runs 624 and 625 on `2846142c` passed, but they do not count as fu
 - The correction updates those nine assertions to call the existing `EntryValue(PyDict, string)` helper. It keeps the shared helper and adds no duplicate implementation. This is a test-only change; client-visible RPC behavior does not change.
 - CI run 936 finished red: the Linux .NET build and Windows .NET solution build both reported the same nine CS0103 errors, and Required CI gate failed. E2E passed in 12.0 minutes; it skipped one skill-training-speed case and seven slow-live cases (movement, warp, jump, others, target, module and health). The .NET shards were skipped after the build failure.
 - Agent run 628 on the failing SHA failed at build. Focused Agent run 629 on corrected commit `9ff4a645` passed `Dynamic_resource_cache_reads_are_returned_through_host_wire` (1 passed, 0 failed, 0 skipped). Push-gate run 937 passed all jobs, including Required CI gate; E2E passed in 13.5 minutes. It listed eight skips: one skill-training-speed check and seven slow-live checks in movement, warp, jump, others, target, module and health. After run 936's failure, the green streak is now 1/3.
+
+
+## 2026-10-25 Restored shared Host lookup alias
+
+- Main commit `1d3f9007` restores `Value(PyDict, string)` in `DungeonDynamicResourceHostWireTests.cs` as a forwarding alias to `EntryValue`, preserving existing Host test callers without duplicating lookup logic. `DynamicResourceCacheMgrHostTests.cs` continues to use `EntryValue` at its nine assertions, so the earlier duplicate-helper and missing-helper build failures stay resolved.
+- Focused Agent run 631 (`40200111554`) on `8c9911df` passed the selected test. Full push-gate run 939 (`40200078948`) is still in progress; its build, Rust, Python and the completed .NET shards are passing so far. E2E, Windows and remaining .NET jobs are pending. Do not advance the green streak until Required CI gate completes.

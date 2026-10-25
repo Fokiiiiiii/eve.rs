@@ -5,8 +5,8 @@
 - Added `ActivityMgrService` to the production character service composition in `dotnet/src/Eve.Host/Rpc/CharacterServiceList.cs`. The wire regression obtains `activityMgr`, `alphaInjectorMgr`, and `billMgr` from the composed `CharacterHostRig.Registry`, then sends calls through a real TCP Host, packet dispatcher, and registry.
 - Relaxed `GetNextAvailableInjection` to accept the observed transport kwarg `machoVersion` when its value is an integer; unknown kwargs and positional arguments still fail.
 - Added `ActivityAlphaBillRpcHostWireTests` covering badge list shape and update notification, seen-ID transitions, popup state reads/writes, duplicate alpha RPC observations, transport kwargs, malformed alpha kwargs, corporation bill list shapes, and current bill RPC errors.
-- Local compile check: `dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -p:UseSharedCompilation=false --no-restore` succeeded with zero warnings and errors.
-- Focused activity/alpha/bill wire Actions run `40193591013` passed. The initial push-triggered `ci.yml` run `40193586079` failed because the inventory expected 1,399 methods while the new route made 1,400. The latest main merge updates the expected inventory to 1,400; inventory regression run `40196187738` passed. Push-triggered CI for latest main commit `21f001cb` was queued at this handoff update.
+- Local Host test project build succeeded twice with zero warnings and errors.
+- Focused activity/alpha/bill wire Actions run `40193591013` passed. Inventory test run `40196187738` passed after the expected count changed from 1,399 to 1,400 for the newly registered route. CI run `40196410619` then found a duplicate `Value(PyDict, string)` helper between merged `HostServerTests` partials on Windows and Linux. Renamed the helper in `DynamicResourceCacheMgrHostTests.cs` to `ResourceValue`; local build passes. The fix is committed and the push-triggered workflow result is pending.
 
 ## Client trace and EveJS comparison
 

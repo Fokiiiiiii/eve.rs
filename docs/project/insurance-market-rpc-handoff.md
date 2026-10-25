@@ -1,6 +1,6 @@
 # Insurance / market Host RPC coverage handoff
 
-## Scope and implementation
+## Scope and current implementation
 
 All requested service methods were present in this worktree. Insurance uses the production persisted read/write models in `dotnet/src/Eve.Host/Composition/CharacterComposition.cs:201-212` and is registered in `dotnet/src/Eve.Host/Rpc/MailRpc.cs:141-145`. Its ship-loss and boarding paths use the same insurance writer in `dotnet/src/Eve.Host/Composition/SpaceComposition.cs:334-355`. Market methods are composed by the economy RPC registration. No handler or storage implementation was duplicated.
 
@@ -14,6 +14,6 @@ Market calls are forwarded by `eve/client/script/ui/services/marketsvc.py:270-28
 
 ## EveJS comparison and checks
 
-EveJS v0.12.9 insurance service delegates the matching methods at `server/src/services/insurance/insuranceService.js:26-89`; its runtime supplies persisted contracts and quote/purchase behavior. Market proxy handlers for these rows are in `server/src/services/market/marketProxyService.js:6211-6965` (asks, owner data, histories, transactions, cancellation and multi-buy). The current eve.rs implementation follows the same client-facing reply categories while validating and persisting against the authoritative state. No compatibility deviation was introduced.
+EveJS v0.12.9 insurance service delegates matching methods at `server/src/services/insurance/insuranceService.js:26-89`; its runtime supplies persisted contracts and quote/purchase behavior. Market proxy handlers for these rows are in `server/src/services/market/marketProxyService.js:6211-6965` (asks, owner data, histories, transactions, cancellation and multi-buy). The current eve.rs implementation follows the same client-facing reply categories while validating and persisting against authoritative state. No compatibility deviation was introduced.
 
-Local check: `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -p:UseSharedCompilation=false -p:BuildProjectReferences=false --no-restore` passed, 0 warnings/errors. PostgreSQL tests were not run locally. The new Host wire test and existing Host regressions require Actions verification. Graphical-client operation has not been exercised.
+Local check: `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -p:UseSharedCompilation=false -p:BuildProjectReferences=false --no-restore` passed, 0 warnings/errors. PostgreSQL tests were not run locally. Actions run `40176570540` failed with 1 passed, 1 failed: the test expected GetCharEscrow to be `PyObjectEx`, while the real reply is `PyObject`. The reply assertion was corrected in `MarketRpcHostWireTests.cs`; the follow-up Actions run is pending. The push-triggered `ci.yml` run `40176563700` was in progress at this handoff update. Graphical-client operation has not been exercised.

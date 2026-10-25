@@ -4,6 +4,9 @@
 
 - Client source: /home/user/eve-logic, commit 1dbb5711a072a146e1d228365668ac05655eefe1.
 - Host source: this worktree after merging origin/main at fb5aa2b9ebeebdda8b26ff48113c37bae13fc665 and the P0 audit changes.
+- Pushed to main: 21f75f92.
+- Focused Actions run 40219719160 passed for Search_quick_query_returns_client_id_list_through_host_with_transport_kwargs; no failed tests or jobs.
+- Push CI run 40219660982 passed; no failed tests or jobs.
 - Regenerate both CSVs and the P0/P1 work queue with:
   python3 tools/spec-extract/run_service_audit_current.py --queue-dir /tmp/service-audit-cx5-final
 - Latest generated totals (2026-10-25): 4,173 client rows, 2,345 RPC rows, 1,408 active Host routes, and 61 queue files. Coverage: CLIENT-LOCAL 1, HOLLOW 10, IMPLEMENTED-TESTED 371, IMPLEMENTED-UNTESTED 1,552, MISSING 403, REJECTS-VALID-INPUT 8.
@@ -26,16 +29,16 @@
 - EveJS 261018.1 has GetMultiOwnersEx but no GetOwnersEx/GetPositionEx/GetPositionsEx in the inspected config service. eve.rs supplies client-declared recordsets from authoritative rowset builders.
 - EveJS QuickQuery returns deduplicated flat IDs and handles exact/hideNPC, but ignores onlyAltName at server/src/services/_other/searchService.js:479-500. eve.rs honors alternate/ticker names requested by the client. Both differences are recorded in docs/reference/compat/DEVIATIONS.md:5833-5838.
 
-### Local checks and remaining checks
+### Local checks and limits
 
 - Passed: python3 -m unittest tools.spec-extract.test_service_audit_local_calls.
-- Passed after merges through 070f82b: dotnet build for Eve.Host.Tests and Eve.Services.Space.Tests with -p:UseSharedCompilation=false and MSBUILDDISABLENODEREUSE=1; both had zero warnings/errors. Host.Tests was also built against the latest fb5aa2b merge, zero warnings/errors.
-- No PostgreSQL database was used. The focused QuickQuery .NET test was compiled but not executed locally. Its Actions run and the graphical V24.01 client check are outstanding.
+- Passed after latest merge: target-only dotnet builds for Eve.Services.Space.Tests and Eve.Host.Tests, both zero warnings/errors. Dependencies had passed earlier full builds. The Host inventory test source was restored from the complete main-checkout version after the latest upstream file was truncated; the corrected source compiles.
+- No PostgreSQL database was used. The focused QuickQuery .NET test was run on Actions, not locally. The graphical V24.01 client has not been exercised.
 
 ## Existing audit follow-up
 
 - A (MISSING): latest generator reports 403 RPC rows without active Host routes.
-- B (REJECTS-VALID-INPUT): 8 rows remain for Ping, AIR NPE, Config owner IDs, clone-grade reads, and no-fleet updates. EveJS confirms RegisterForDamageUpdates requires fleet membership. Owner logs report normal-burst SessionRpcBudgetExceeded while binding several services; the method-level coverage table does not replay binding bursts.
+- B (REJECTS-VALID-INPUT): 8 rows remain for Ping, AIR NPE, Config owner IDs, clone-grade reads, and no-fleet updates. EveJS confirms RegisterForDamageUpdates requires fleet membership. Owner logs report normal-burst SessionRpcBudgetExceeded while binding services; the method-level coverage table does not replay binding bursts.
 - C (HOLLOW): 10 rows remain: eight Shipcaster inventory rows and two Ansiblex travel rows. Three structure cyno rows are IMPLEMENTED-TESTED in the generated CSV.
 
 ## Shipcaster and structure travel evidence
@@ -48,4 +51,4 @@
 - EveJS 261018.1 bridge handling activates a Titan portal, notifies fleet members, and returns true (structureCynoBeaconMgrService.js:687-760). Group travel delegates to _jumpToBeacon (:680-685,547-674), including session, fuel, timer, and notifications. Ansiblex checks link, ACL, proximity, disruption, range/mass, fuel, fee, and wallet settlement (structureJumpBridgeMgrService.js:1724-1896). Titan portal selection follows https://wiki.eveuniversity.org/Jump_drives.
 - eve.rs implements structure-beacon bridge/group-jump through registered Host RPC and existing Space owners. Local checks for that earlier change passed the Space and Host test builds and Structure_cyno_travel_uses_the_host_route_with_transport_macho_version (1 passed, 0 skipped). Actions run 40211733150 passed at f73ea669; push CI run 40211717451 had no failed jobs or tests.
 - Still open: Shipcaster production read providers and eligibility lack authoritative state sources. Ansiblex CmdJumpThroughStructureStargate lacks full Host travel wiring and settlement/state transition. AgentRpc.cs:110 registers Shipcaster services without state/travel/eligibility providers; ShipcasterRpcService.cs:22-44,57-90 supports callbacks but production leaves them absent. ShipcasterHostWireTests.cs:17-20 uses fixture pad state only. StructureRpc.cs:49-52 registers destination/link lookups without travel; PersistenceStructureDirectoryReadModel.cs:61-90 exposes persisted pair data, while crates/eve-space/src/scene/jump.rs:28-63 accepts only Stargate/Wormhole bodies for CmdStargateJump. A Shipcaster callback/test WIP remains in a Git stash and does not establish production state wiring.
-- Earlier follow-up checks on 2026-10-25: Space, Space.Tests, and Host.Tests builds had zero warnings/errors; Shipcaster_landing_pad_rpc_uses_the_host_route_with_transport_macho_version passed 1/1, zero skipped. That wire test used a fixture callback, and does not prove production state wiring.
+- Earlier follow-up checks on 2026-10-25: Space, Space.Tests, and Host.Tests builds had zero warnings/errors; Shipcaster_landing_pad_rpc_uses_the_host_route_with_transport_macho_version passed 1/1, zero skipped. That wire test used a fixture callback and does not prove production state wiring.

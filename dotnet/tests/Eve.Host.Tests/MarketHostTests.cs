@@ -155,6 +155,32 @@ public sealed class MarketHostTests : IAsyncLifetime
             [new("ask", Tritanium, false, 10, 100, 32767, MarketLocation.From(station), DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())]);
         var session = new ClientSession(new Sink()) { SessionId = 301 };
         session.Set("charid", new PyInt(actor));
+        session.Set("characterID", new PyInt(actor));
+        session.Set("corpid", new PyInt(1000044));
+        session.Set("stationid", new PyLong(station.Id));
+
+        // These insurance calls use the production Host registration and its persisted read/write models.
+        var insurance = host.Registry.Lookup("insuranceSvc") ?? throw new InvalidOperationException("insuranceSvc is not registered");
+        Assert.True(insurance.HasMethod("GetContracts"));
+        Assert.True(insurance.HasMethod("GetContractForShip"));
+        Assert.True(insurance.HasMethod("GetInsurancePrice"));
+        Assert.True(insurance.HasMethod("GetInsurancePrices"));
+        Assert.True(insurance.HasMethod("InsureShip"));
+        Assert.True(insurance.HasMethod("UnInsureShip"));
+        Assert.Empty(Assert.IsType<PyList>(await insurance.CallAsync(Call(session, "GetContracts", 30))).Items);
+        Assert.Empty(Assert.IsType<PyList>(await insurance.CallAsync(Call(session, "GetContracts", 31, new PyInt(1)))).Items);
+        Assert.Same(PyNone.Instance, await insurance.CallAsync(Call(session, "GetContractForShip", 32, new PyLong(1))));
+        var insurancePrice = await insurance.CallAsync(Call(session, "GetInsurancePrice", 33, new PyInt(Tritanium)));
+        Assert.True(insurancePrice is PyInt or PyLong or PyReal);
+        var insurancePrices = Assert.IsType<PyDict>(await insurance.CallAsync(
+            Call(session, "GetInsurancePrices", 34, new PyList([new PyInt(Tritanium), new PyInt(Tritanium + 1)]))));
+        Assert.Equal(2, insurancePrices.Entries.Count);
+        var insureFailure = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            insurance.CallAsync(Call(session, "InsureShip", 35, new PyLong(1), new PyInt(0), PyBool.False)).AsTask());
+        Assert.Equal("InsureShipFailed", insureFailure.Error.UserErrorMessage);
+        var uninsureFailure = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            insurance.CallAsync(Call(session, "UnInsureShip", 36, new PyLong(1))).AsTask());
+        Assert.Equal("UnInsureShipFailed", uninsureFailure.Error.UserErrorMessage);
 
         // the multi-buy fills the ask at its limit: no order is created (the answer is the rowset of created orders, empty), the wallet charged, and the fill in the transaction tab
         var bought = await market.CallAsync(Call(session, "BuyMultipleItems", 1, new PyInt(station.Id),

@@ -38,7 +38,7 @@ SERVICE_MARKERS = ("RemoteSvc", "ProxySvc", "ConnectTo", "GetRemotePark", "Macho
 RETURN_DIRECT = audit.re.compile(
     r"\breturn\s+(?:sm|session|self\.session)\.(?:RemoteSvc|ProxySvc|ConnectToRemoteService|"
     r"ConnectToSolarSystemService|ConnectToAnyService|ConnectToSolServerService|"
-    r"ConnectToProxyServerService|ConnectToService)\s*\(\s*(['\"])([A-Za-z0-9_]+)\1\s*\)"
+    r"ConnectToProxyServerService|ConnectToService)\s*\(\s*(['\"])([A-Za-z0-9_]+)\1\s*\)(?!\s*\.)"
 )
 RETURN_SELF = audit.re.compile(r"\breturn\s+self\.([A-Za-z_][A-Za-z0-9_]*)\b")
 RETURN_LOCAL = audit.re.compile(r"\breturn\s+([A-Za-z_][A-Za-z0-9_]*)\s*$")
@@ -115,12 +115,15 @@ def accessor_calls(contract: Any, path: pathlib.Path, source: str) -> list[dict[
         elif function_name:
             locals_[(class_name, function_name, lhs)] = match.group("service")
 
-    def resolve(class_name: str, function_name: str, name: str) -> str | None:
-        service = (accessors.get((class_name, name))
-                   or attrs.get((class_name, name))
-                   or locals_.get((class_name, function_name, name)))
+    def resolve(class_name: str, function_name: str, name: str, *,
+                allow_global: bool = True, allow_local: bool = True) -> str | None:
+        service = accessors.get((class_name, name)) or attrs.get((class_name, name))
+        if service is None and allow_local:
+            service = locals_.get((class_name, function_name, name))
         if service:
             return service
+        if not allow_global:
+            return None
         candidates = GLOBAL_ACCESSORS.get(name, set())
         return next(iter(candidates)) if len(candidates) == 1 else None
 
@@ -145,16 +148,24 @@ def accessor_calls(contract: Any, path: pathlib.Path, source: str) -> list[dict[
         audit.re.compile(r"\bself\.([A-Za-z_][A-Za-z0-9_]*)\s*\.\s*([A-Za-z_][A-Za-z0-9_]*)\s*\("),
         audit.re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(\s*\)\s*\.\s*([A-Za-z_][A-Za-z0-9_]*)\s*\("),
     )
-    for pattern in patterns:
+    for pattern_index, pattern in enumerate(patterns):
         for match in pattern.finditer(source):
             line = contract.line_at(source, match.start())
             class_name, function_name = scopes[line - 1]
-            service = resolve(class_name, function_name, match.group(1))
+            method = match.group(2)
+            # GetGlobalConfig returns data here; dictionary .get is a local lookup.
+            if method == "get":
+                continue
+            # Instance fields can share names with local remote-service aliases.
+            service = resolve(class_name, function_name, match.group(1),
+                                allow_global=pattern_index != 1, allow_local=pattern_index != 1)
             if service:
-                add_call(result, service, match.group(2), match.start(2), match.group(1))
+                add_call(result, service, method, match.start(2), match.group(1))
 
     for match in audit.re.finditer(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(\s*\)\s*\.\s*([A-Za-z_][A-Za-z0-9_]*)\s*\.\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(", source):
         accessor, property_name, method = match.groups()
+        if method == "get":
+            continue
         candidates = GLOBAL_ACCESSORS.get(property_name, set())
         if len(candidates) == 1:
             add_call(result, next(iter(candidates)), method, match.start(3), f"{accessor}().{property_name}")
@@ -178,7 +189,6 @@ def accessor_calls(contract: Any, path: pathlib.Path, source: str) -> list[dict[
         if service:
             add_call(result, service, match.group("method"), match.start("method"), lhs)
     return result
-
 
 _original_extended_calls = audit.extended_calls
 
@@ -250,8 +260,16 @@ def complete_host_routes(contract: Any, repo_root: pathlib.Path):
             r"\bnew\s+(?:[A-Za-z_][\w]*\.)*([A-Za-z_][A-Za-z0-9_]*)\s*(?:\(|\{)",
             source,
         ))
+        # The Host registers this factory's InvBrokerService through its publisher wrapper.
+        if re.search(r"\bHostInventoryServiceFactory\.CreateInvBroker\s*\(", source):
+            registered_types.add("InvBrokerService")
 
     source_root = repo_root / "dotnet/src"
+    routes.update(
+        (service, method)
+        for service, method in contract.host_registered_methods(source_root)
+        if type_by_service.get(service) in registered_types
+    )
     for path in sorted(source_root.rglob("*.cs")):
         try:
             source = path.read_text(errors="replace")
@@ -268,7 +286,7 @@ def complete_host_routes(contract: Any, repo_root: pathlib.Path):
             for expression in contract.HAS_METHOD_EXPRESSION.finditer(block):
                 value = expression.group(1)
                 routes.update((service, literal.group(2)) for literal in contract.STRING_LITERAL.finditer(value))
-                for name in re.findall(r"(?:==|\bis\b)\s*([A-Za-z_][A-Za-z0-9_]*)", value):
+                for name in re.findall(r"\b[A-Za-z_][A-Za-z0-9_]*\b", value):
                     constant = re.compile(
                         rf"\b(?:const\s+)?string\s+{re.escape(name)}\s*=\s*(['\"])([^'\"]+)\1"
                     )
@@ -289,24 +307,28 @@ def host_harness_test_evidence(
     if not test_root.exists():
         return {}
     contract = audit.load_contract()
+    real_host_start = re.compile(r"\bStart\s*\(")
     real_host_registration = re.compile(
-        r"\bStart\s*\(\s*configure\s*:\s*registry\s*=>\s*registry\.Register\s*\(",
-        re.S,
+        r"\bconfigure\s*:\s*registry\s*=>\s*registry\.Register\s*\("
     )
     for path in sorted(test_root.rglob("*.cs")):
         try:
             source = path.read_text(errors="replace")
         except OSError:
             continue
-        for match in audit.TEST_DECORATED.finditer(source):
+        decorated_tests = list(audit.TEST_DECORATED.finditer(source))
+        for match in decorated_tests:
             opening = source.find("{", match.end() - 1)
             if opening < 0:
                 continue
             end = contract.csharp_block_end(source, opening)
             if end is None:
-                continue
+                # shortcut: fallback is limited to single-test files; upgrade when csharp_block_end supports these local-function tests.
+                if len(decorated_tests) != 1:
+                    continue
+                end = len(source)
             body = source[opening:end]
-            if not real_host_registration.search(body) or not re.search(r"\bConnectAsync\s*\(", body):
+            if not real_host_start.search(body) or not real_host_registration.search(body) or not re.search(r"\bConnectAsync\s*\(", body):
                 continue
             relative = path.relative_to(repo_root).as_posix()
             test_name = match.group(1)
@@ -323,8 +345,9 @@ def host_harness_test_evidence(
 def filtered_test_evidence(repo_root: pathlib.Path, pairs: set[tuple[str, str]],
                            type_by_service: dict[str, str]) -> dict[tuple[str, str], list[str]]:
     source_matches = runner._original_test_evidence(repo_root, pairs, type_by_service)
-    for pair, names in host_harness_test_evidence(repo_root, pairs, type_by_service).items():
-        source_matches[pair] = sorted(set(source_matches.get(pair, [])).union(names))
+    host_matches = host_harness_test_evidence(repo_root, pairs, type_by_service)
+    for pair, names in host_matches.items():
+        source_matches[pair] = names + sorted(set(source_matches.get(pair, [])) - set(names))
     excluded = ("budget", "registered_under_the_client_names")
     return {
         pair: [name for name in names if not any(marker in name.lower() for marker in excluded)]

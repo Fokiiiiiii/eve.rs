@@ -75,6 +75,20 @@ internal sealed partial class CharacterServicesComposition
 
     private IReadOnlyList<IService> CoreRpc() =>
     [
+            new PingService(),
+            new AuthenticationRpcService(),
+            CloneGradeSource,
+            new AirNpeService(
+                () => newCharacterExperienceMode,
+                async (characterId, cancellationToken) =>
+                {
+                    var character = await characters.GetAsync(characterId, cancellationToken);
+                    return character is null
+                        ? null
+                        : new AirNpeCharacterState(character.TutorialEntryMode, character.AirNpeState);
+                },
+                (characterId, tutorialEnabled, cancellationToken) =>
+                    characters.MarkTutorialSkippedAsync(characterId, tutorialEnabled, cancellationToken)),
             new CharUnboundMgrService(
                 accounts, characters, items, training, wallets, creation, catalog, online, characterEntryHooks, Random.Shared,
                 newCharacterExperienceMode == "tutorial",

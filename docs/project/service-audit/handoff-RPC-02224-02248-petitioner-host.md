@@ -33,5 +33,6 @@ The eve.rs Host response defaults in `dotnet/src/Eve.Services.Core/PetitionerSer
 
 - PASS: `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -p:UseSharedCompilation=false` (0 warnings, 0 errors).
 - PASS: focused `Eve.Host.Tests` filter for `Petitioner_client_calls_return_reference_shapes_through_host_registration` (1 passed, 0 skipped).
-- GitHub Actions verification is pending the push.
+- PASS: GitHub Actions `agent-test.yml` run 40207670385 for c05e8ea3 (1 test passed; no skipped tests or failed jobs).
+- PASS: push-triggered `ci.yml` run 40207660894 for c05e8ea3 (success; no failed tests or jobs).
 - The real graphical client flow was not exercised.

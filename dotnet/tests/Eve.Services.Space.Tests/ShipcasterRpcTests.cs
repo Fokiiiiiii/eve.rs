@@ -109,15 +109,14 @@ public sealed class ShipcasterRpcTests
     }
 
     [Fact]
-    public async Task Starter_jump_check_uses_the_wired_character_policy_and_reports_a_missing_policy()
+    public async Task Starter_jump_check_returns_a_boolean_for_wired_and_unseeded_characters()
     {
         var session = new ClientSession { CharacterId = 42 };
         var service = new ShipcasterRpcService("starterShipcasterTravelMgr", Systems, canCharacterJump: call => call.Session.CharacterId == 42);
         var defaultService = new ShipcasterRpcService("starterShipcasterTravelMgr", Systems);
 
         Assert.Equal(PyBool.True, await service.CallAsync(Call("CanCharacterJump", session: session)));
-        await Assert.ThrowsAsync<MachoWrappedException>(async () =>
-            await defaultService.CallAsync(Call("CanCharacterJump", session: session)));
+        Assert.Equal(PyBool.False, await defaultService.CallAsync(Call("CanCharacterJump", session: session)));
     }
 
     [Fact]

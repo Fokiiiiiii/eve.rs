@@ -17,7 +17,7 @@ public partial class HostServerTests
         {
             DropOffItemsAsync = (_, ids, shipId, structureId) =>
             {
-                observed.Add($"drop:{shipId}:{structureId}:{string.Join(',', ids)}");
+                observed.Add($"drop:{shipId}:{structureId}:{ids.Count}");
                 return ValueTask.FromResult<IReadOnlyList<long>>([ids[0], ids[^1]]);
             },
             GetStructurePilotAsync = (_, structureId) =>
@@ -92,7 +92,7 @@ public partial class HostServerTests
         }
 
         Assert.Equal(new PyInt(9001), await Call("structureControl", "GetStructurePilot", Py.Tuple(new PyInt(7001))));
-        Assert.Equal(PyNone.Instance, await Call("structureControl", "TakeControl", Py.Tuple(new PyInt(7001))));
+        Assert.Equal(PyNone.Instance, await Call("structureControl", "TakeControl", Py.Tuple()));
         Assert.Equal(PyNone.Instance, await Call("structureControl", "BoardStructure", Py.Tuple(new PyInt(7002))));
         Assert.Equal(PyNone.Instance, await Call("structureControl", "EjectFromStructure", Py.Tuple(new PyInt(7003))));
         Assert.Equal(PyNone.Instance, await Call("structureControl", "ReleaseControl", Py.Tuple()));
@@ -100,8 +100,8 @@ public partial class HostServerTests
         var moved = Assert.IsType<PyList>(await Call(
             "structureCargoDelivery",
             "DropOffItems",
-            Py.Tuple(new PyList([new PyInt(11), new PyInt(12), new PyInt(13)]), new PyInt(7004), new PyInt(7005))));
-        Assert.Equal(new PyList([new PyInt(11), new PyInt(13)]), moved);
+            Py.Tuple(new PyList(Enumerable.Range(1, 500).Select(id => (PyValue)new PyInt(id)).ToArray()), new PyInt(7004), new PyInt(7005))));
+        Assert.Equal(new PyList([new PyInt(1), new PyInt(500)]), moved);
 
         Assert.Equal(PyNone.Instance, await Call(
             "structureDeliveries",
@@ -121,7 +121,7 @@ public partial class HostServerTests
         Assert.Equal(
             [
                 "pilot:7001", "take:7001", "board:7002", "eject:7003", "release",
-                "drop:7004:7005:11,12,13", "deliver:7001:9002:21,22",
+                "drop:7004:7005:500", "deliver:7001:9002:21,22",
                 "anchor:8001:Structure:3:17", "beacon",
             ],
             observed);

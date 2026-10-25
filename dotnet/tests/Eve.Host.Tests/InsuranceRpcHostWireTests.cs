@@ -99,6 +99,17 @@ public sealed class InsuranceRpcHostWireTests : IAsyncLifetime
         var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
         await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
         _host = await HostComposition.BuildAsync(Settings());
+        var gameStoreSchema = Schema("EVE_GAMESTORE_SCHEMA");
+        await using (var seed = source.CreateCommand($"""
+            CREATE SCHEMA IF NOT EXISTS "{gameStoreSchema}";
+            CREATE TABLE IF NOT EXISTS "{gameStoreSchema}"."shipInsurancePrices"
+                (key text PRIMARY KEY, doc jsonb NOT NULL, rev bigint NOT NULL DEFAULT 1);
+            INSERT INTO "{gameStoreSchema}"."shipInsurancePrices" AS prices (key, doc)
+            VALUES ('/', jsonb_build_object('byTypeID', jsonb_build_object(
+                '587', jsonb_build_object('typeID', 587, 'fullInsurancePriceCents', 100000000))))
+            ON CONFLICT (key) DO UPDATE SET doc = EXCLUDED.doc, rev = prices.rev + 1;
+            """))
+            await seed.ExecuteNonQueryAsync();
         var insurance = _host.Registry.Lookup("insuranceSvc") ?? throw new InvalidOperationException("insuranceSvc is not registered");
         const int rifterTypeId = 587;
         foreach (var method in new[] { "GetContractForShip", "GetContracts", "GetInsurancePrice", "GetInsurancePrices", "InsureShip", "UnInsureShip" })

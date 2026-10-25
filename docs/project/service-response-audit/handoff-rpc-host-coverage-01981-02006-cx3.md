@@ -31,3 +31,4 @@ Added `Map_personal_and_industry_replies_follow_registered_host_routes_with_clie
 - `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -p:UseSharedCompilation=false`: passed, 0 warnings, 0 errors.
 - Focused test `FullyQualifiedName~Map_personal_and_industry_replies_follow_registered_host_routes_with_client_kwargs`: passed, 1 passed, 0 failed, 0 skipped.
 - No database or graphical-client session was used. The test verifies wire routing and shapes, not live database queries or visit history accumulation across a character's travel.
+- After merging `origin/main` at `d5414e3f`, the same focused test passed again on the merged tree (1 passed, 0 failed, 0 skipped).

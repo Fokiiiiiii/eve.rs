@@ -214,17 +214,17 @@ public sealed partial class CorpMgrService
     private async ValueTask<CorpMgrAggressionSettings> ReadAggressionSettingsAsync(
         long corporationId, CancellationToken cancellationToken)
     {
+        if (readAggressionSettings is not null &&
+            await readAggressionSettings(corporationId, cancellationToken) is { } callback)
+            return callback;
+
         var corporation = corporationId > 0
             ? await store.GetAsync(corporationId, cancellationToken)
             : null;
         var defaults = corporation?.IsNpc == true
             ? new CorpMgrAggressionSettings(null, 0)
             : new CorpMgrAggressionSettings(0, null);
-        var stored = StoredAggressionSettings(corporation, defaults);
-        var callback = readAggressionSettings is null
-            ? null
-            : await readAggressionSettings(corporationId, cancellationToken);
-        return callback ?? stored;
+        return StoredAggressionSettings(corporation, defaults);
     }
 
     private static CorpMgrAggressionSettings StoredAggressionSettings(

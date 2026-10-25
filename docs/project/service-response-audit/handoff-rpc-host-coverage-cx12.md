@@ -29,7 +29,9 @@ Scope: RPC-01767–RPC-01768, RPC-01839–RPC-01845, RPC-02109–RPC-02110, RPC-
 
 ## Actions status
 
-- On `63a64d23`, focused Core and Host Actions runs succeeded (`40190235392`, `40190236662`). Push-gate CI (`40190222770`) failed because the Host response helper consumed a preceding Host send and because the RPC inventory expected 1,399 methods after QuickQuery raised it to 1,400. The selected agent-test run (`40190235213`) failed; its output did not identify an individual failing test.
-- On `5dbc0a2c`, the alias-mode Core test passed (`40191564033`), and the isolated contract batch Host test passed (`40191989482`). Push-gate CI (`40191553927`) failed only on the stale RPC inventory count.
-- On `64db67d5`, the focused Host Actions run (`40193666282`) passed both `Contract_reads_and_mutations_are_dispatched_through_the_host_with_client_shapes` and `Real_host_registry_methods_are_enumerable`. Push-gate CI (`40193659035`) is queued/in progress; run `failures 64db67d5` for its final result.
-- Local `Eve.Services.Core` and `Eve.Host.Tests` builds succeeded. The focused QuickQuery unit test passed (1 passed, 0 skipped). No database was used locally and no graphical-client test was performed.
+- On `63a64d23`, focused Core and Host Actions runs succeeded (`40190235392`, `40190236662`). Push-gate CI (`40190222770`) exposed two issues: the Host response helper consumed a preceding Host send, and RPC inventory expected 1,399 methods after QuickQuery raised it to 1,400. The response helper now correlates by call ID; the inventory expectation is 1,400.
+- On `5dbc0a2c`, alias-mode Core (`40191564033`) and isolated contract Host (`40191989482`) tests passed. Push-gate CI (`40191553927`) failed on the stale RPC inventory count.
+- On `64db67d5`, focused Host tests (`40193666282`) and the login live test (`40194520823`) passed. Its push-gate jobs all succeeded, but run `40193659035` was cancelled by a newer main push before the required gate completed.
+- The next main build exposed duplicate `Value(PyDict, string)` helpers between `DynamicResourceCacheMgrHostTests.cs` and `DungeonDynamicResourceHostWireTests.cs`. The duplicate was removed and the shared partial-class helper is used. Local `Eve.Host.Tests` build passed afterward.
+- On `752f1b8d`, focused Host Actions (`40198727755`) passed. Push-gate CI (`40198824851`) passed with no failed tests or jobs; .NET build, all .NET shards, Headless E2E, Windows, Rust, and Python jobs succeeded. The focused QuickQuery test passed locally (1 passed, 0 skipped); `Eve.Services.Core` and `Eve.Host.Tests` builds passed.
+- No database was used locally and no graphical-client test was performed.

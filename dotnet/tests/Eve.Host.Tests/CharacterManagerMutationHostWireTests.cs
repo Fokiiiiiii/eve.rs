@@ -58,7 +58,7 @@ public partial class HostServerTests
         Assert.Equal(PyNone.Instance, await CallOverHost(front, open, 10, "charMgr", "EditOwnerNote",
             Py.Tuple(noteId, new PyStr("N:Planner"), new PyStr("client note"))));
         var noteRows = Assert.IsType<PyList>(await CallOverHost(front, open, 11, "charMgr", "GetOwnerNote", Py.Tuple(noteId)));
-        Assert.Equal(new PyStr("N:Planner"), PersonalWireField(Assert.Single(noteRows.Items), "label"));
+        Assert.Equal("N:Planner", T(PersonalWireField(Assert.Single(noteRows.Items), "label")));
         Assert.Equal(new PyStr("client note"), PersonalWireField(Assert.Single(noteRows.Items), "note"));
 
         Assert.Equal(PyNone.Instance, await CallOverHost(front, open, 12, "charMgr", "SaveCharacterSetting",
@@ -123,7 +123,21 @@ public partial class HostServerTests
                 Py.Tuple(new PyLong(stackId), new PyLong(rig.Station)),
                 nestedKwargs)), transport);
         await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(request)));
-        var reply = Assert.IsType<PyTuple>(Result(MarshalCodec.Decode(Assert.IsType<Send>(await front.ReceiveAsync()).Payload)));
+        PyValue response = PyNone.Instance;
+        var sawNotification = false;
+        for (var packetIndex = 0; packetIndex < 8 && response is PyNone; packetIndex++)
+        {
+            var packet = Assert.IsType<PyObject>(MarshalCodec.Decode(Assert.IsType<Send>(await front.ReceiveAsync()).Payload));
+            var state = Assert.IsType<PyTuple>(packet.Args).Items;
+            if (Assert.IsType<PyInt>(state[0]).Value == MachoMessage.Notification)
+            {
+                sawNotification = true;
+                continue;
+            }
+            response = packet;
+        }
+        Assert.True(sawNotification, "moving the stack should notify the connected session");
+        var reply = Assert.IsType<PyTuple>(Result(response));
         Assert.Equal(Eve.Services.InventoryWire.Id(stackId), reply.Items[1]);
         var moved = await items.GetAsync(stackId);
         Assert.NotNull(moved);

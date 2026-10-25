@@ -10,7 +10,16 @@ public partial class HostServerTests
     [Fact]
     public async Task Corporation_read_rpcs_keep_client_shapes_through_host_with_transport_kwargs()
     {
-        var corporationManager = new CorpMgrService(null!, null!);
+        var readCorporations = new List<long>();
+        var corporationManager = new CorpMgrService(
+            null!,
+            null!,
+            readAggressionSettings: (id, _) =>
+            {
+                readCorporations.Add(id);
+                return ValueTask.FromResult<CorpMgrAggressionSettings?>(
+                    new CorpMgrAggressionSettings(123, 456));
+            });
         var corporationService = new CorporationService(null!, null!);
 
         Start(configure: registry =>
@@ -35,9 +44,18 @@ public partial class HostServerTests
             return Result(MarshalCodec.Decode(reply.Payload))!;
         }
 
+        var corporationIds = Enumerable.Range(1, 500)
+            .Select(index => (PyValue)new PyLong(70000000 + index))
+            .ToArray();
         var settings = Assert.IsType<PyDict>(await Call(
-            1, "corpmgr", "GetAggressionSettingsForCorps", new PyList([])));
-        Assert.Empty(settings.Entries);
+            1, "corpmgr", "GetAggressionSettingsForCorps", new PyList(corporationIds)));
+        Assert.Equal(500, settings.Entries.Count);
+        Assert.Equal(Enumerable.Range(1, 500).Select(index => 70000000L + index), readCorporations);
+        var firstSettings = Assert.IsType<PyObject>(settings.Entries[0].Value);
+        var firstFields = Assert.IsType<PyDict>(firstSettings.Args).Entries
+            .ToDictionary(entry => JsSemantics.StringValue(entry.Key)!, entry => entry.Value);
+        Assert.Equal(new PyLong(123), firstFields["_enableAfter"]);
+        Assert.Equal(new PyLong(456), firstFields["_disableAfter"]);
 
         Assert.Same(PyNone.Instance, await Call(
             2, "corporationSvc", "GetCorpInfo", new PyInt(0)));

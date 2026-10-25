@@ -2,9 +2,9 @@
 
 ## Current status
 
-One PostgreSQL-free real Host wire regression is in `dotnet/tests/Eve.Host.Tests/CorporationClientRpcWireTests.cs`. It registers production `CorpMgrService` and `CorporationService` in the Host service registry, sends calls with transport-added `machoVersion`, and checks the empty bulk-settings dictionary, the missing-corporation `None`, and the empty medal-recipient rowset. It does not finish the requested RPC-01290–RPC-01316 batch.
+The PostgreSQL-free real Host wire regression in `dotnet/tests/Eve.Host.Tests/CorporationClientRpcWireTests.cs` registers production `CorpMgrService` and `CorporationService`, sends calls with transport-added `machoVersion`, and checks a 500-entry non-empty `GetAggressionSettingsForCorps` result, `GetCorpInfo(0)` returning `None`, and an empty medal-recipient rowset. The handler now returns a non-null injected aggression read before consulting its persisted fallback, so the authoritative reader is usable without opening a corporation-store connection. This verifies the returned `PyDict` keys/settings through Host dispatch; it does not finish RPC-01290–RPC-01316.
 
-No PostgreSQL database was used. The remaining positive-state corporation and medal cases depend on `CorporationStore` / character persistence and still need Host wire regressions. The current Host test covers only their no-state short paths.
+No PostgreSQL database was used. Positive-state tests for the remaining corporation and medal calls depend on persisted corporation/character data and remain outstanding.
 
 ## V24.01 callers and consumers
 
@@ -12,7 +12,7 @@ No PostgreSQL database was used. The remaining positive-state corporation and me
 |---|---|
 | RPC-01290–01295, `corpmgr.GetPublicInfo` | Direct callers include `bountyWindow.py:410`, `corporationInfoWindow.py:48,183`, `killRights.py:151`, and `warPermit.py:42`. The bounty UI reads public corporation fields at `bountyWindow.py:411`; corporation info reads `corporationID`, `ceoID`, `description`, `deleted`, and `stationID` at `corporationInfoWindow.py:60,66,184-215`; kill rights reads `allianceID` at `killRights.py:152-153`. |
 | RPC-01296–01297, `corpmgr.SearchAssets` | `corp_ui_accounts.py:751` supplies bucket, category, group, type and quantity; it iterates returned rows and reads `locationID` at `corp_ui_accounts.py:752-773` to derive solar system, labels and location groups. |
-| RPC-01298, `corpmgr.iteritems` | This is the Python dictionary consumer of `GetAggressionSettingsForCorps`, called in `base_corporation.py:272`. The loop at `:273-275` caches each corporation/settings pair and returns the merged mapping. The server operation is `GetAggressionSettingsForCorps`; `iteritems` is not a separate RPC. |
+| RPC-01298, `corpmgr.iteritems` | This is the Python dictionary consumer of `GetAggressionSettingsForCorps`, called in `base_corporation.py:272`; a second whole-tree caller passes recruitment corporation IDs at `:1111`. The loop at `:273-275` caches each corporation/settings pair and returns the merged mapping, while `:1111-1115` looks up each advert's corporation and uses its settings for the friendly-fire label. The server operation is `GetAggressionSettingsForCorps`; `iteritems` is not a separate RPC. |
 | RPC-01299–01302, `corporationSvc.CreateMedal` | The wrapper in `medals.py:31-47` sends title, description and graphics; after a confirmation error it retries with the fourth positional `True` at `:46`. `medalribbonranks.py:561` is another wrapper caller. |
 | RPC-01303–01304, `GetAllCorpMedals` | `medals.py:59-60` unpacks the medal and graphics rowsets. The member decorations window consumes them at `corp_ui_member_decorations.py:53`; menu code consumes the result at `menuFunctions.py:59`. |
 | RPC-01305, `GetCorpInfo` | `infosvc.py:1165` calls this for an NPC corporation; the caller checks the returned faction information at `infosvc.py:1170` and uses NPC corporation size/extent at `:1251,1260`. |
@@ -32,9 +32,10 @@ Production registration is in `dotnet/src/Eve.Host/Rpc/CorporationRpc.cs:46,60`.
 
 ## Verification and remaining work
 
-- `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -p:UseSharedCompilation=false` — passed, 0 warnings and 0 errors.
+- `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/src/Eve.Services.Corporations/Eve.Services.Corporations.csproj --no-restore -p:UseSharedCompilation=false -p:BuildProjectReferences=false` — passed, 0 warnings and 0 errors.
+- `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj --no-restore -p:UseSharedCompilation=false -p:BuildProjectReferences=false` — passed, 0 warnings and 0 errors.
 - `MSBUILDDISABLENODEREUSE=1 dotnet test dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj --no-build --filter 'FullyQualifiedName~Corporation_read_rpcs_keep_client_shapes_through_host_with_transport_kwargs' -p:UseSharedCompilation=false` — passed, 1 test, 0 skipped.
-- Two earlier attempts of the same focused test exposed wire-decoded rowset/key type assumptions; the assertions were corrected and the final run passed.
+- Pushed SHA `93a5c7b5` passed agent-test run `40173516530`; its push-triggered `ci.yml` run `40173509928` remained in progress at the latest check. Pushed SHA `34a9e462` passed agent-test run `40174450658`; its push-triggered `ci.yml` run `40174443344` was queued at the latest check.
 - Graphical-client behavior was not exercised.
 
 The remaining requested Host checks are positive-state calls for public corporation info, asset search, medal creation/list/details/received, and employment history. They were not included because those paths read persisted corporation/character state and this task forbids using a PostgreSQL database. Do not close the RPC rows based on the test above.

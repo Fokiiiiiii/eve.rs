@@ -39,6 +39,12 @@ Whole-tree searches found the direct `billMgr`, `bountyProxy`, `cache`, `clientS
 - `MSBUILDDISABLENODEREUSE=1 dotnet test dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj --no-build -p:UseSharedCompilation=false --filter 'FullyQualifiedName~Cache_version_and_client_logs_round_trip_through_the_host_registry'` — passed, 1 test, 0 skipped.
 - No database was used. The graphical client was not exercised.
 
+## Push and Actions status
+
+- Pushed commit: `6b4380a6faef` (includes the logger fix, socket regression, and this handoff).
+- Agent-test run `40193473051`: passed for `Eve.Host.Tests`, focused filter `Cache_version_and_client_logs_round_trip_through_the_host_registry`; no failed tests or jobs.
+- Push-triggered CI run `40193463753`: queued when last checked. Its result is pending.
+
 ## Remaining work
 
 Host socket regressions and full runtime registration/state tracing remain for bill settings, blueprints, bounty/kill-right operations and corporation skyhooks. Validate the exact production registry composition for each service and compare each tested success/error/state path with EveJS before closing this batch. The local-only rows 00950, 00967 and 00968 should be corrected in the coverage source instead of implemented as RPCs.

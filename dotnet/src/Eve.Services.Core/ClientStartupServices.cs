@@ -223,7 +223,7 @@ public sealed partial class ShipKillCounterService(
     public async ValueTask<PyValue> GetItemKillCountPlayer(ServiceCall call)
     {
         call.Cancellation.ThrowIfCancellationRequested();
-        if (call.Args.Count != 1 || call.Kwargs is not PyNone)
+        if (call.Args.Count != 1 || !OnlyMachoVersionKeyword(call.Kwargs))
             throw MachoErrors.ThrowUserError("SHIP_KILL_COUNTER_ARGUMENTS_INVALID");
         var itemId = call.Arg(0) switch
         {
@@ -246,4 +246,12 @@ public sealed partial class ShipKillCounterService(
 
         return new PyInt((int)Math.Clamp(Math.Truncate(count), 0d, MaxDisplayedKillmarks));
     }
+
+    private static bool OnlyMachoVersionKeyword(PyValue kwargs) => kwargs switch
+    {
+        PyNone => true,
+        PyDict dictionary => dictionary.Entries.All(entry =>
+            Eve.Macho.JsSemantics.StringValue(entry.Key) == "machoVersion"),
+        _ => false,
+    };
 }

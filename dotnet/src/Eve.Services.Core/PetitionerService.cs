@@ -9,8 +9,7 @@ namespace Eve.Services.Core;
 public delegate ValueTask<PyValue?> PetitionerRpcCallback(ServiceCall call);
 
 /// <summary>
-
-/// client-safe empty and default wire values; a callback may handle any route when wired.
+/// Client-safe empty and default wire values; a callback may handle any route when wired.
 /// </summary>
 [Service("petitioner")]
 public sealed partial class PetitionerService
@@ -85,7 +84,15 @@ public sealed partial class PetitionerService
 
     private static string ZendeskLink(ServiceCall call)
     {
-        var ticketId = JsSemantics.NumberValue(call.Kwarg("ticketID") ?? PyNone.Instance);
+        var ticketId = call.Kwarg("ticketID") switch
+        {
+            PyInt integer => integer.Value,
+            PyLong integer => integer.Value,
+            PyReal number => number.Value,
+            var value when double.TryParse(JsSemantics.StringValue(value), NumberStyles.Float,
+                CultureInfo.InvariantCulture, out var parsed) => parsed,
+            _ => 0d,
+        };
         if (!double.IsFinite(ticketId) || ticketId <= 0)
             return $"{HelpCenterUrl}/requests/new";
         var id = Math.Truncate(ticketId).ToString("0", CultureInfo.InvariantCulture);

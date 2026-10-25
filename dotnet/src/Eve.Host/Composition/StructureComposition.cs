@@ -496,4 +496,25 @@ internal sealed partial class CharacterServicesComposition
         structureSettingsService = new Eve.Services.Core.StructureSettingsService(structureDirectoryReadModel);
         sovereigntyReadModel = new PersistenceSovFwReadModel(ReadGameStoreTableAsync, AffiliationOfAsync);
     }
+
+    private void NotifyAssetSafetyOwner(
+        ClientSession actor,
+        long ownerId,
+        bool corporation,
+        string notification,
+        IReadOnlyList<PyValue> arguments)
+    {
+        foreach (var recipient in connected.Snapshot())
+        {
+            var recipientOwnerId = corporation ? recipient.GetInt("corpid") : recipient.CharacterId;
+            if (recipientOwnerId != ownerId)
+                continue;
+
+            var args = arguments.ToArray();
+            if (ReferenceEquals(recipient, actor))
+                recipient.AfterResponse(() => recipient.SendNotification(notification, "clientID", args));
+            else
+                recipient.SendNotification(notification, "clientID", args);
+        }
+    }
 }

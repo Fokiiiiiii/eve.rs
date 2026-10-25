@@ -31,8 +31,8 @@ public partial class HostServerTests
         var fitting = Assert.IsType<PyTuple>(Result(MarshalCodec.Decode(
             Assert.IsType<Send>(await front.ReceiveAsync()).Payload)));
         Assert.Equal(
-            Py.Tuple(new PyStr("Rifter fit"), new PyStr("res:/fit.png"), new PyInt(587), PyNone.Instance),
-            fitting);
+            Py.Tuple(new PyStr("Rifter fit"), new PyStr("res:/fit.png"), new PyInt(587), PyNone.Instance).Items,
+            fitting.Items);
 
         var bindArgs = Py.Tuple(
             Py.Tuple(new PyInt(600), new PyInt(15)),

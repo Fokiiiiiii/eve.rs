@@ -3,11 +3,11 @@
 ## Snapshot and regeneration
 
 - Client source: /home/user/eve-logic, commit 1dbb5711a072a146e1d228365668ac05655eefe1.
-- Host source used for generation: db3f889608709c915b2ce0c57384cf8872efe7d4.
+- Host source used for generation: 45d8f55a (post-merge source, including structure bridge/group change 44077e0b).
 - Regenerate both CSVs and the P0/P1 work queue with:
   python3 tools/spec-extract/run_service_audit_current.py --queue-dir /tmp/claude-0/-home-user/fb9607a2-2996-57a7-a22d-383b9f5b5fae/scratchpad/cx/queue
 - The service-audit Python regression tests run in the `ci.yml` Python job.
-- Generated totals (2026-10-25): 4,225 client rows, 2,397 RPC rows, 1,366 active Host routes, and 67 queue files. Coverage: HOLLOW 10, IMPLEMENTED-TESTED 241, IMPLEMENTED-UNTESTED 1,666, MISSING 472, and REJECTS-VALID-INPUT 8.
+- Generated totals (2026-10-25, post-merge regeneration): 4,225 client rows, 2,397 RPC rows, 1,366 active Host routes, and 65 queue files. Coverage: HOLLOW 10, IMPLEMENTED-TESTED 280, IMPLEMENTED-UNTESTED 1,627, MISSING 472, and REJECTS-VALID-INPUT 8.
 - The Host route scanner resolves string constants referenced by HasMethod comparisons and inspects the full Host Composition directory, including partial AgentRpc and MissionComposition files. This includes SearchQueryService.Query, whose route compares against QueryMethod, and AgentMissionService, which is returned from AgentRpcServices and registered through the Host characterServices list.
 
 CLIENT_CALL_MATRIX.csv includes RPC calls, service binds, bound-object method dispatch, notification subscriptions/handlers, and session attribute reads/writes. Each row records the observed argument shape, client call site, nearest static reply consumer, and priority. EVE_RS_COVERAGE.csv is the RPC-only join because binds, notifications, and session fields do not have a one-to-one Host method status.

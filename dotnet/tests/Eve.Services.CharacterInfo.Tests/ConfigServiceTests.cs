@@ -251,10 +251,10 @@ public sealed class ConfigServiceTests
     }
 
     [Fact]
-    public async Task Batched_config_lookups_refuse_more_than_500_raw_ids()
+    public async Task Batched_config_lookups_refuse_more_than_10_000_raw_ids()
     {
         var service = new ConfigService(null!, null!, null!, null!);
-        var requested = Enumerable.Range(1, 501).Select(id => (long)id).ToArray();
+        var requested = Enumerable.Range(1, 10_001).Select(id => (long)id).ToArray();
 
         var error = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
             await service.GetMultiOwnersEx(Call("GetMultiOwnersEx", requested, new ClientSession())));

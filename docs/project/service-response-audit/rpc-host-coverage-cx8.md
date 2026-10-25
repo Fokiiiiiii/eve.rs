@@ -36,7 +36,7 @@ Added `dotnet/tests/Eve.Host.Tests/Rpc01800To02100HostWireTests.cs`. Each test o
 
 - Local Host test project builds passed with `MSBUILDDISABLENODEREUSE=1`, `-p:UseSharedCompilation=false`, and `-p:BuildProjectReferences=false`.
 - Local focused lookup wire test passed (1 passed, 0 skipped).
-- First focused Actions run `40205736699` for `648e2c02`: 2 passed, 1 failed, 0 skipped. The MachoNet config assertion compared decoded `PyBytes` keys with `PyStr`; test now compares via `JsSemantics.StringValue`.
-- Corrected focused Actions run `40206490430` for `a08a0f47` passed (3 passed, 0 skipped).
-- Push CI run `40206450634` for `79e37068` failed in `FocusedRpc01742HostWireTests`: its `itemName` wire key/value are decoded as `PyBytes` but were compared as `PyStr`. That test now converts both with `JsSemantics.StringValue`. A local Host test project build passed after this change.
-- The above CI failure is addressed in the current worktree; this correction and focused/CI reruns are still to be committed and pushed.
+- First focused Actions run `40205736699` for `648e2c02`: 2 passed, 1 failed, 0 skipped. The MachoNet config assertion compared decoded `PyBytes` keys with `PyStr`; it was corrected to use `JsSemantics.StringValue`.
+- Focused Actions run `40206490430` for `a08a0f47` passed (3 passed, 0 skipped).
+- Push CI run `40206450634` for `79e37068` exposed a second decoded-wire test issue: `FocusedRpc01742HostWireTests` compared the `itemName` `PyBytes` key/value as `PyStr`. The assertion now uses `JsSemantics.StringValue` for both.
+- On final code SHA `5ae745e0`, focused Actions run `40207756533` passed (4 passed, 0 skipped), including the corrected lookup location test. Push CI run `40207748422` passed with no failed tests or jobs. `ci-status.py failures 5ae745e0` confirmed the successful result.

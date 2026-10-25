@@ -5,15 +5,18 @@ using Eve.Macho;
 public sealed class SearchQueryService(ILookupDirectory directory) : IService
 {
     private const string QueryMethod = "Query";
+    private const string QuickQueryMethod = "QuickQuery";
     private const int MaxSearchLength = 256;
 
     public string Name => "search";
 
-    public bool HasMethod(string method) => method == QueryMethod;
+    public bool HasMethod(string method) => method is QueryMethod or QuickQueryMethod;
 
     public async ValueTask<PyValue> CallAsync(ServiceCall call)
     {
         call.Cancellation.ThrowIfCancellationRequested();
+        if (call.Method == QuickQueryMethod)
+            return await QuickQueryAsync(call).ConfigureAwait(false);
         var search = JsSemantics.StringValue(call.Arg(0))?.Trim() ?? string.Empty;
         if (search.Length > MaxSearchLength)
             throw MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr("Lookup text is too long.")));
@@ -39,6 +42,39 @@ public sealed class SearchQueryService(ILookupDirectory directory) : IService
         return new PyDict(entries);
     }
 
+    private async ValueTask<PyValue> QuickQueryAsync(ServiceCall call)
+    {
+        var search = JsSemantics.StringValue(call.Arg(0))?.Trim() ?? string.Empty;
+        if (search.Length > MaxSearchLength)
+            throw MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr("Lookup text is too long.")));
+        if (search.Length == 0)
+            return new PyList([]);
+
+        var exactMode = ReadExactMode(call.Kwarg("exact"));
+        var hideNpc = JsSemantics.Truthy(call.Kwarg("hideNPC") ?? PyNone.Instance);
+        var onlyAltName = JsSemantics.Truthy(call.Kwarg("onlyAltName") ?? PyNone.Instance);
+        var seen = new HashSet<long>();
+        var matches = new List<PyValue>();
+        foreach (var resultType in ReadGroupIds(call.Arg(1)))
+        {
+            var entries = await EntriesAsync(resultType, call.Cancellation).ConfigureAwait(false);
+            var ranked = entries
+                .Select(entry => (Entry: entry, Name: onlyAltName ? entry.AlternateName : entry.Name))
+                .Where(row => row.Entry.Id > 0 && !(hideNpc && row.Entry.IsNpc) && !string.IsNullOrWhiteSpace(row.Name) &&
+                    Matches(row.Name!, search, exactMode))
+                .OrderBy(row => Rank(row.Name!, search))
+                .ThenBy(row => row.Name, StringComparer.CurrentCulture)
+                .ThenBy(row => row.Entry.Id)
+                .Take(500);
+            foreach (var row in ranked)
+            {
+                if (seen.Add(row.Entry.Id))
+                    matches.Add(new PyInt(row.Entry.Id));
+            }
+        }
+        return new PyList(matches);
+    }
+
     private async ValueTask<IReadOnlyList<SearchEntry>> EntriesAsync(int resultType, CancellationToken cancellationToken)
     {
         switch (resultType)
@@ -48,10 +84,10 @@ public sealed class SearchQueryService(ILookupDirectory directory) : IService
                     .Select(row => new SearchEntry(row.Id, row.Name)).ToArray();
             case 3:
                 return (await directory.CorporationsAsync(cancellationToken).ConfigureAwait(false))
-                    .Select(row => new SearchEntry(row.Id, row.Name)).ToArray();
+                    .Select(row => new SearchEntry(row.Id, row.Name, row.TickerName, row.IsNpc)).ToArray();
             case 4:
                 return (await directory.AlliancesAsync(cancellationToken).ConfigureAwait(false))
-                    .Select(row => new SearchEntry(row.Id, row.Name)).ToArray();
+                    .Select(row => new SearchEntry(row.Id, row.Name, row.TickerName, row.IsNpc)).ToArray();
             case 5:
                 return (await directory.FactionsAsync(cancellationToken).ConfigureAwait(false))
                     .Select(row => new SearchEntry(row.Id, row.Name)).ToArray();
@@ -153,5 +189,5 @@ public sealed class SearchQueryService(ILookupDirectory directory) : IService
         return result.ToString();
     }
 
-    private sealed record SearchEntry(long Id, string Name);
+    private sealed record SearchEntry(long Id, string Name, string? AlternateName = null, bool IsNpc = false);
 }

@@ -2091,7 +2091,7 @@ V24.01 `mailSvc.MarkMessagesAsRead` calls `mailMgr.MarkAsRead` (`eve/client/scri
 
 #### Named group: search (2 exits)
 
-[Query (EJS-0387)](../../docs/project/service-response-audit/evejs-only-responses.md:638); [QuickQuery (EJS-0388)](../../docs/project/service-response-audit/evejs-only-responses.md:639).
+[Query (EJS-0387)](../../docs/project/service-response-audit/evejs-only-responses.md:638); [QuickQuery (EJS-0388)](../../docs/project/service-response-audit/evejs-only-responses.md:639). Current Host wiring and client end-to-end coverage, including the added `QuickQuery` route, are tracked in [CX12 handoff](service-response-audit/handoff-rpc-host-coverage-cx12.md).
 
 #### Named group: seasonManager (13 exits)
 

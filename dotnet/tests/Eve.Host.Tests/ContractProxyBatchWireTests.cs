@@ -35,7 +35,7 @@ public partial class HostServerTests
                 ? System.Text.Encoding.UTF8.GetString(name.Value.Span)
                 : response.ToString();
             Assert.True(((PyInt)responseState[0]).Value == 7,
-                $"{method} returned an error response {errorName}: {response}");
+                $"{method} returned an error response {errorName}: {System.Text.Json.JsonSerializer.Serialize(response)}");
             return Result(response)!;
         }
 

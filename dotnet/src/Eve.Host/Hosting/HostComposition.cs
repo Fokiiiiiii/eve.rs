@@ -254,6 +254,7 @@ internal static class HostComposition
             readCurrentCalendarGroups: readCurrentCalendarGroups,
               contractBrokerFeeAdjustment: contractBrokerFeeAdjustment,
               hasContractManagerRole: hasContractManagerRole,
+            contractInventoryReader: CharacterServicesComposition.SingleRegisteredService<Eve.Services.Inventory.InvBrokerService>(characterServices),
               localizationTextChanges: HostConfiguration.ParseLocalizationTextChanges(Env("EVE_LOCALIZATION_TEXT_CHANGES", ""))))
         {
             registry.Register(service);

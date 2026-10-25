@@ -248,6 +248,9 @@ internal static class HostComposition
                 : throw new InvalidOperationException("the control towers are not wired on this server"),
             contractReadModel: contractReadModel,
             contractWriteModel: contractWriteModel,
+            contractInventoryReader: characterServices.Count > 0
+                ? CharacterServicesComposition.SingleRegisteredService<InvBrokerService>(characterServices)
+                : null,
             contractSkillLevel: contractSkillLevel,
             calendarSessions: characterSessions,
             canManageCalendarGroupEvent: canManageCalendarGroupEvent,

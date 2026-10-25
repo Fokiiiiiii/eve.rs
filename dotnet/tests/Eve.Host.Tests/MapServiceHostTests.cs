@@ -40,7 +40,7 @@ public partial class HostServerTests
 
             if (columns is null)
             {
-                Assert.IsType<PyDict>(value);
+                Assert.Empty(Assert.IsType<PyDict>(value).Entries);
                 continue;
             }
 

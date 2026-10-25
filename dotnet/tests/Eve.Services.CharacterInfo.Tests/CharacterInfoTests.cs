@@ -1001,7 +1001,7 @@ public class CharMgrTests
         Assert.Equal(settings, loggedSettings);
 
         Assert.Equal(new PyDict([]), await Rig.CallAsync(service, session, "GetCharacterSettings"));
-        Assert.Equal(PyNone.Instance, await Rig.CallAsync(service, session, "SaveCharacterSetting", new PyStr("window"), new PyStr("dock")));
+        Assert.Equal(PyNone.Instance, await Rig.CallAsync(service, session, "SaveCharacterSetting", new PyBytes(System.Text.Encoding.UTF8.GetBytes("window")), new PyStr("dock")));
         Assert.Equal(PyNone.Instance, await Rig.CallAsync(service, session, "SaveCharacterSetting", new PyStr("fleetSetups"), new PyStr("[]")));
         var savedSettings = new PyDict([
             new KeyValuePair<PyValue, PyValue>(new PyStr("fleetSetups"), new PyStr("[]")),

@@ -104,3 +104,5 @@ The first Agent-test attempt (40229018434) and push CI (40229011102) failed duri
 ### Latest Actions result and follow-up
 
 Agent-test run 40230877435 on 9f4975e0 failed because the concurrent main merge added the same `Eve.Services` import, leaving a duplicate directive. Removed the duplicate after the merge. The merged tree now builds locally (Host test project, 0 warnings/errors), and the fleet focused wire test passes (1 passed, 0 skipped). This cleanup is ready to push; its Actions result will be recorded after dispatch.
+
+Agent-test run 40231721857 for commit 351a68bd passed with no failed tests or jobs. `python3 tools/dev/ci-status.py failures 351a68bd` returned `No ci.yml run found`.

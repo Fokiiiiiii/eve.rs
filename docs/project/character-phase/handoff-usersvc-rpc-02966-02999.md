@@ -6,6 +6,8 @@ These rows already had real Host registrations/providers or are a client-side an
 
 The rows `RPC-02998` and `RPC-02999` do not call `userSvc.get`: `redeemsvc.py:127–129` calls Python `dict.get` on the `ClaimRedeemTokens` result for optional `itemsCreated` and `stationID`. Whole-tree search found no `RemoteSvc('userSvc').get(...)` call. The test checks those actual result keys; no route is added for the local dictionary method.
 
+Pushed commit `4a85476c` to `main`. Focused Actions run `40183701537` is running for `Registered_user_service_replies_match_the_v24_consumers` (`Eve.Host.Tests`).
+
 ## V24.01 caller and consumer evidence, with EveJS comparison
 
 | Rows / method | Whole-client caller and reply consumer | EveJS v0.12.9 behavior |

@@ -5,8 +5,8 @@
 - Added `ActivityMgrService` to the production character service composition in `dotnet/src/Eve.Host/Rpc/CharacterServiceList.cs`. The wire regression obtains `activityMgr`, `alphaInjectorMgr`, and `billMgr` from the composed `CharacterHostRig.Registry`, then sends calls through a real TCP Host, packet dispatcher, and registry.
 - Relaxed `GetNextAvailableInjection` to accept the observed transport kwarg `machoVersion` when its value is an integer; unknown kwargs and positional arguments still fail.
 - Added `ActivityAlphaBillRpcHostWireTests` covering badge list shape and update notification, seen-ID transitions, popup state reads/writes, duplicate alpha RPC observations, transport kwargs, malformed alpha kwargs, corporation bill list shapes, and current bill RPC errors.
-- Local Host test project build succeeded with zero warnings and errors.
-- Focused activity/alpha/bill wire Actions run `40193591013` passed. Inventory test run `40196187738` passed after the expected count changed from 1,399 to 1,400 for the new route. Run `40196410619` then found a duplicate `Value(PyDict, string)` helper between merged `HostServerTests` partials; renamed it to `ResourceValue` and resolved the concurrent main merge. Inventory regression run `40200502011` passed, and push-triggered CI run `40200493865` passed on `5d33d34e816022d3567fd6e8cf157f037955f076`.
+- Local Host test project build succeeded with zero warnings and errors. Focused activity/alpha/bill wire Actions run `40193591013` passed. Push-triggered CI run `40200493865` passed on `5d33d34e816022d3567fd6e8cf157f037955f076`.
+- Later concurrent main additions changed the registry inventory from 1,400 to 1,401. The focused check `40201793594` failed only that count assertion (0 passed, 1 failed); updated the expected count to 1,401. The corrected inventory check and latest push CI are pending.
 
 ## Client trace and EveJS comparison
 

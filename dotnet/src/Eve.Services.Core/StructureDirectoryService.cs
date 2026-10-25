@@ -768,8 +768,17 @@ public sealed class StructureAssetSafetyService(
         }
     }
 
-    private static bool ContainsWrap(PyList wraps, long wrapId) => wraps.Items.OfType<PyDict>().Any(row =>
-        row.Entries.Any(entry => Eve.Macho.JsSemantics.StringValue(entry.Key) == "assetWrapID" && PositiveId(entry.Value) == wrapId));
+    private static bool ContainsWrap(PyList wraps, long wrapId) => wraps.Items.Any(row =>
+    {
+        var fields = row switch
+        {
+            PyDict dict => dict,
+            PyObject { Args: PyDict dict } => dict,
+            _ => null,
+        };
+        return fields is not null && fields.Entries.Any(entry =>
+            Eve.Macho.JsSemantics.StringValue(entry.Key) == "assetWrapID" && PositiveId(entry.Value) == wrapId);
+    });
 
     private static Eve.Services.MachoWrappedException MoveEjectTimeDenied() =>
         Eve.Services.MachoErrors.ThrowUserError(

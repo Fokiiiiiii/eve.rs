@@ -2,9 +2,9 @@
 
 ## Result
 
-The Host composition already owns real skill behavior and registers both requested services. This batch replaces the null-dependency socket test with real Host wiring coverage and adds a socket regression for the skillMgr2 moniker. The composed-host wire test covers the remaining methods, stateful injection, injector splitting, persistence reads, client shapes, and transport machoVersion.
+The production Host composition owns real skill behavior and registers both skill services. This update adds a Host socket regression for the faction-warfare enlistment methods and records whole-tree V24.01 caller evidence for RPC-01631 through RPC-02514.
 
-No handler or state owner was duplicated. GetSkillBundleInfo keeps its existing client-shaped fallback, which is recorded in docs/reference/compat/DEVIATIONS.md under Character phase S6.
+No production handler or state owner was duplicated. GetSkillBundleInfo keeps its existing client-shaped fallback, recorded in docs/reference/compat/DEVIATIONS.md under Character phase S6.
 
 ## Eve-logic whole-tree call and consumer evidence
 
@@ -31,18 +31,18 @@ No handler or state owner was duplicated. GetSkillBundleInfo keeps its existing 
 
 EveJS v0.12.9 implements the same routed read and mutation families in server/src/services/skills/skillMgrService.js: history 282-297; ISIS changes 299-302; total skill points 304-307; attributes and skills 314-322; respec info 423-442; queue plus free points 444-448; boosters and implants 450-469; free skill points 471-474; injector awards 533-541; diminished preview 554-562; split 574-582. skillMgr2Service.js:10-21 returns the carbon.common.script.net.moniker.Moniker for skillHandler, binding the current character. For rows 02541-02543, EveJS returns a Python mapping for client-side access (skillMgrService.js:210-218); those names are not server RPCs. EveJS has no GetSkillBundleInfo route; the existing eve.rs empty-label/None two-value response follows the V24.01 loot-row consumer and the S6 compatibility record in DEVIATIONS.md.
 
-## Host and verification path
+## Host wiring and existing skill checks
 
 Production construction is dotnet/src/Eve.Host/Composition/CharacterComposition.cs:133-149; dotnet/src/Eve.Host/Rpc/CharacterRpc.cs:68-71 includes SkillMgr2Service and the stateful SkillHandlerService in character RPCs. Host registration consumes that service list in dotnet/src/Eve.Host/Hosting/HostComposition.cs:263-280.
 
-Tests:
 - SkillMgr2HostWireTests.Skill_mgr2_returns_its_bound_skill_handler_moniker_over_the_host_route: socket Host route and machoVersion.
-- SkillHandlerRpcHostTests.Skill_manager_reads_and_injector_mutations_use_the_composed_host_routes: socket calls against the production-composed services; checks read shapes, 50-result history argument, two-injector preview and mutation, notification order before the CALL_RSP, persisted free SP/item changes, and valid split output.
-- Existing CharacterHostTests.Skill_injector_applies_sequential_awards_and_persists_points_and_inventory_through_host additionally checks notification order and restart persistence through the composed registry.
+- SkillHandlerRpcHostTests.Skill_rpcs_accept_transport_macho_version_and_keep_the_client_wire_shapes_on_the_host: socket Host route and real SkillHandlerService instance; it uses null dependencies, so this is wire registration, argument transport and fallback-shape coverage, not authoritative skill state.
+- SkillHandlerRpcHostTests.Skill_manager_reads_and_injector_mutations_use_the_composed_host_routes: calls the production-composed services through IService.CallAsync (not a socket); verifies read shapes, injector preview and mutation, notification order, persisted free SP/item changes, and split output.
+- CharacterHostTests.Skill_injector_applies_sequential_awards_and_persists_points_and_inventory_through_host also calls the composed service directly and checks notification order plus restart persistence.
 
-No handler change was needed because the current source already had these real Host routes and the composed socket regression. Whole-tree V24.01 inspection confirms rows RPC-02541 through RPC-02543 are local dictionary get/iteritems operations on GetSkills: it is keyed by type ID, returns skill entries, and callers handle missing entries as None (skillsvc.py:243-251,713); skill maps are iterated at :282 and :731, while the attribute map is iterated into godma at :225-228.
+Whole-tree V24.01 inspection confirms rows RPC-02541 through RPC-02543 are local dictionary get/iteritems operations on GetSkills: it is keyed by type ID, returns skill entries, and callers handle missing entries as None (skillsvc.py:243-251,713); skill maps are iterated at :282 and :731, while the attribute map is iterated into godma at :225-228.
 
-Focused Actions verification passed on the current pushed source: run 40098961742 and run 40099326231 each reported `Skill_manager_reads_and_injector_mutations_use_the_composed_host_routes` — 1 passed, 0 failed, 0 skipped. The earlier run on f3a971e782c9603a3343f3a3260ce4eb4d1f96c5 passed as well. The workflow uses an isolated PostgreSQL 18 service; no local database was used. No `ci.yml` run was listed for the pushed revisions when checked. No graphical-client run was performed.
+Focused Actions verification passed on earlier pushed skill revisions: runs 40098961742 and 40099326231 each reported `Skill_manager_reads_and_injector_mutations_use_the_composed_host_routes` — 1 passed, 0 failed, 0 skipped. The workflow used an isolated PostgreSQL 18 service; no local database was used. No graphical-client run was performed.
 
 ## RPC coverage update: RPC-01631 through RPC-02514
 
@@ -80,6 +80,6 @@ EveJS v0.12.9 exposes the same FW methods in server/src/services/corporation/fwC
 
 ### Host coverage and verification for this batch
 
-Production FW registration is in dotnet/src/Eve.Host/Rpc/CoreRpc.cs and binds callback operations to the character and corporation stores. `FwEnlistmentRpcHostTests.Faction_warfare_enlistment_methods_return_client_shapes_over_registered_host_routes` drives the registered service over the Host socket with machoVersion, checks the three-field enlistment list and faction-policy list, then verifies removal, cooldown and the subsequent corp-only enlistment shape. The related FactionActivityRpcServicesTests.Enlistment_reads_corporation_policy_persists_direct_membership_and_changes_session covers service mutation callbacks; the production Host composition owns the PostgreSQL persistence delegates.
+Production FW registration is in dotnet/src/Eve.Host/Rpc/CoreRpc.cs and binds callback operations to the character and corporation stores. `FwEnlistmentRpcHostTests.Faction_warfare_enlistment_methods_return_client_shapes_over_registered_host_routes` drives the actual handler over the Host socket with machoVersion, checks the three-field enlistment list and faction-policy list, then verifies removal, cooldown and the subsequent corp-only enlistment shape. The related FactionActivityRpcServicesTests.Enlistment_reads_corporation_policy_persists_direct_membership_and_changes_session covers callback mutation behavior; the production Host composition owns the PostgreSQL persistence delegates.
 
-Local verification: `dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -p:UseSharedCompilation=false` succeeded with 0 warnings and 0 errors. The single focused Host socket test passed (1 passed, 0 failed, 0 skipped). No database was used. A graphical-client run was not performed.
+Local verification before merge: the Eve.Host.Tests project built with 0 warnings and 0 errors, and the focused Host socket test passed (1 passed, 0 failed, 0 skipped). After merging origin/main, the same focused test passed again with its updated transport dispatcher. No database was used. A graphical-client run was not performed.

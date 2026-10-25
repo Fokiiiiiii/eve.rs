@@ -115,6 +115,9 @@ public partial class HostServerTests
         Assert.Equal(new PyInt(3), escrow["itemsEscrow"]);
         var bids = Fields(Assert.IsType<PyObject>(await Rpc(5, "GetMyBids", PyBool.False)));
         Assert.Single(Assert.IsType<PyList>(bids["contracts"]).Items);
+        var corporationBids = Fields(Assert.IsType<PyObject>(await Rpc(18, "GetMyBids", PyBool.True)));
+        Assert.Single(Assert.IsType<PyList>(corporationBids["contracts"]).Items);
+        Assert.Equal([false, true, false, true], reads.BidForCorporationRequests);
 
         var ownerContracts = Fields(Assert.IsType<PyObject>(await Rpc(6, "GetContractListForOwner",
             new PyInt(42), new PyInt(0), new PyInt(1), new PyInt(0))));
@@ -122,16 +125,25 @@ public partial class HostServerTests
 
         var current = Fields(Assert.IsType<PyObject>(await Rpc(7, "GetMyCurrentContractList", PyBool.False, PyBool.False)));
         Assert.Single(Assert.IsType<PyList>(current["contracts"]).Items);
+        var corporationCurrent = Fields(Assert.IsType<PyObject>(await Rpc(19, "GetMyCurrentContractList", PyBool.False, PyBool.True)));
+        Assert.Single(Assert.IsType<PyList>(corporationCurrent["contracts"]).Items);
+        Assert.Equal([(true, false), (true, true), (false, false), (false, true)], reads.CurrentContractRequests);
 
         var expired = Fields(Assert.IsType<PyObject>(await Rpc(8, "GetMyExpiredContractList", PyBool.False)));
         Assert.Single(Assert.IsType<PyList>(expired["contracts"]).Items);
+        var corporationExpired = Fields(Assert.IsType<PyObject>(await Rpc(20, "GetMyExpiredContractList", PyBool.True)));
+        Assert.Single(Assert.IsType<PyList>(corporationExpired["contracts"]).Items);
+        Assert.Equal([false, true], reads.ExpiredForCorporationRequests);
 
         var accepted = Fields(Assert.IsType<PyObject>(await Rpc(9, "AcceptContract", new PyInt(5003), PyBool.False)));
         Assert.Equal(new PyInt(5003), accepted["contractID"]);
         Assert.Same(PyBool.True, await Rpc(10, "CompleteContract", new PyInt(5001), new PyInt(4)));
-        Assert.Same(PyBool.True, await Rpc(11, "DeleteContract", new PyInt(5002)));
-
         Assert.Equal((5001L, 4L, 42L, 84L, 3001L, true), writer.LastComplete);
+        Assert.Same(PyBool.True, await Rpc(21, "CompleteContract", new PyInt(5001), new PyInt(7)));
+        Assert.Equal((5001L, 7L, 42L, 84L, 3001L, true), writer.LastComplete);
+        Assert.Same(PyBool.True, await Rpc(22, "CompleteContract", new PyInt(5001), new PyInt(6)));
+        Assert.Equal((5001L, 6L, 42L, 84L, 3001L, true), writer.LastComplete);
+        Assert.Same(PyBool.True, await Rpc(11, "DeleteContract", new PyInt(5002)));
         Assert.Equal((5002L, 42L, 84L, true), writer.LastDelete);
         Assert.Equal((5003L, 42L, 84L, false, 1000, 3001L), writer.LastAccept);
     }
@@ -280,9 +292,18 @@ public partial class HostServerTests
             long characterId, long corporationId, CancellationToken cancellationToken) =>
             ValueTask.FromResult(new ContractEscrowSummary(1250, 3));
 
+        public List<bool> BidForCorporationRequests { get; } = [];
+        public List<(bool IsAccepted, bool ForCorporation)> CurrentContractRequests { get; } = [];
+        public List<bool> ExpiredForCorporationRequests { get; } = [];
+
         public ValueTask<ContractReadBundle> GetMyBidsAsync(
-            long characterId, long corporationId, bool forCorporation, long nowFileTime, CancellationToken cancellationToken) =>
-            ValueTask.FromResult(new ContractReadBundle([Contract(4001, characterId, corporationId, false)]));
+            long characterId, long corporationId, bool forCorporation, long nowFileTime, CancellationToken cancellationToken)
+        {
+            BidForCorporationRequests.Add(forCorporation);
+            return ValueTask.FromResult(new ContractReadBundle([
+                Contract(forCorporation ? 4002 : 4001, forCorporation ? corporationId : characterId,
+                    corporationId, forCorporation)]));
+        }
 
         public ValueTask<ContractReadBundle> GetContractListForOwnerAsync(
             long characterId, long corporationId, long ownerId, int status, int contractType, long issuedBy,
@@ -306,13 +327,23 @@ public partial class HostServerTests
             ValueTask.FromResult(new ContractSearchResult([], 0, 0));
         public ValueTask<ContractReadBundle> GetMyCurrentContractListAsync(
             long characterId, long corporationId, bool isAccepted, bool forCorporation,
-            long nowFileTime, CancellationToken cancellationToken) =>
-            ValueTask.FromResult(new ContractReadBundle([Contract(5004, characterId, corporationId, false)]));
+            long nowFileTime, CancellationToken cancellationToken)
+        {
+            CurrentContractRequests.Add((isAccepted, forCorporation));
+            return ValueTask.FromResult(new ContractReadBundle([
+                Contract(forCorporation ? 5006 : 5004, forCorporation ? corporationId : characterId,
+                    corporationId, forCorporation)]));
+        }
 
         public ValueTask<ContractReadBundle> GetMyExpiredContractListAsync(
             long characterId, long corporationId, bool forCorporation, long nowFileTime,
-            CancellationToken cancellationToken) =>
-            ValueTask.FromResult(new ContractReadBundle([Contract(5005, characterId, corporationId, false)]));
+            CancellationToken cancellationToken)
+        {
+            ExpiredForCorporationRequests.Add(forCorporation);
+            return ValueTask.FromResult(new ContractReadBundle([
+                Contract(forCorporation ? 5007 : 5005, forCorporation ? corporationId : characterId,
+                    corporationId, forCorporation)]));
+        }
 
         private static ContractReadSnapshot Contract(long id, long issuer, long corporation, bool issuedByCorporation) =>
             new(id, 1, 0, 0, issuer, corporation, issuedByCorporation, 0, 0, 1, long.MaxValue, 0, 0,

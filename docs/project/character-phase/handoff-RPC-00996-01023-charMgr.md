@@ -31,3 +31,10 @@ The push-triggered CI run for `c9e1a454ce5e` exposed a stale RPC inventory asser
 - Merging `origin/main` exposed a malformed truncation in `dotnet/tests/Eve.Host.Tests/RpcSecurityInventoryTests.cs` (CS1022 at lines 1, 3, and 15–20). The intact test source was restored from the read-only main checkout into this worktree. The post-merge `dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -p:UseSharedCompilation=false --no-restore` passed with 0 warnings and 0 errors.
 - Local focused test: `MSBUILDDISABLENODEREUSE=1 dotnet test dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj --no-build --filter "FullyQualifiedName~CharMgr_contact_list_uses_the_registered_service_and_client_rowsets_over_host_wire"` passed (1 passed, 0 failed, 0 skipped). It checks the existing list read wire path, not mutation rows.
 - The restored RPC inventory assertion still needs its focused Actions check and the push-triggered CI result.
+
+## 2026-10-25 pushed verification
+
+- Pushed source SHA `ac29183aa8fff50b4a8cb1299cad0e8fb1d1dd8c` to `main`.
+- The required selected Actions run `40219986015` failed in the `Check out the requested branch or commit` step before compiling or running tests. `git ls-remote origin refs/heads/main` returned the requested SHA, so the commit is reachable on origin; this run provides no focused test result. The workflow initialized its configured PostgreSQL service before that step failed. No database was queried by this worktree.
+- Push-triggered `ci.yml` run `40220052863` was queued at the last status check.
+- Local Host test-project build after merge passed with 0 warnings and 0 errors. The focused database-free Host wire test passed locally (1 passed, 0 failed, 0 skipped). Mutation rows remain incomplete for Host wire coverage as stated above.

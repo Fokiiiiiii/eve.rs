@@ -2,7 +2,7 @@
 
 ## Result
 
-These rows were already implemented in the real `corporationSvc`; this change adds a focused socket regression through Host packet dispatch and records the coverage. There is no behavior deviation from EveJS v0.12.9.
+These rows were already implemented in the real `corporationSvc`; the focused socket regression covers their registered Host routes and records the wire outcomes. The award notification now uses `OnMedalIssued`, the V24.01 client event, rather than the previous `OnMedalsReceived` name, which no client handler consumes. EveJS v0.12.9 emits no award notification; this client-driven difference is recorded in `docs/reference/compat/DEVIATIONS.md`.
 
 The test registers the actual `CorporationService` with `ServiceRegistry`, sends marshaled `corporationSvc` calls through Host, and checks the empty recipient Rowset plus Macho error replies from both GiveMedalToCharacters arities and SetMedalStatus for a session without a character. It includes transport `machoVersion`. The no-character route avoids opening a database connection. Database-backed award/status persistence and notification delivery were not exercised in this no-database job.
 
@@ -19,10 +19,11 @@ The tree-wide search for these RPC names found the call sites and consumers abov
 
 EveJS v0.12.9 `server/src/services/corporation/corpService.js:547-565` applies medal statuses for the current corporation and returns null; `:595-605` returns the recipients Rowset; `:607-630` awards each recipient and returns null. It accepts the extra confirmation argument without changing its result.
 
-The current Host `dotnet/src/Eve.Services.Corporations/CorporationService.cs` returns the matching five-column recipient Rowset, authorizes medal changes against the corporation manager role, persists status/award changes, and emits award notifications. The focused wire test exercises route resolution, the no-character empty Rowset, and authorization errors for all requested methods and both Give arities. Existing service implementation tests remain the source for database-level behavior; this task did not access PostgreSQL.
+The current Host `dotnet/src/Eve.Services.Corporations/CorporationService.cs` returns the matching five-column recipient Rowset, authorizes medal changes against the corporation manager role, and persists status/award changes. Its after-response notification is now named `OnMedalIssued`, consumed by `medals.py:21,131-137`; the previous `OnMedalsReceived` event was not consumed by V24. The focused socket test exercises route resolution, the no-character empty Rowset, transport `machoVersion`, and authorization errors for SetMedalStatus and both Give arities. Existing corporation protocol tests exercise persisted awards/status and the after-response recipient notice. This no-database task does not exercise the database-backed path through HostComposition.
 
 ## Verification
 
-- `MSBUILDDISABLENODEREUSE=1 dotnet test dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj --filter FullyQualifiedName~Corporation_medal_rpcs_use_the_registered_host_service_and_preserve_wire_outcomes -p:UseSharedCompilation=false --no-restore`: passed, 1 passed, 0 skipped.
-- The first focused test attempt exposed a Rowset marshal-string normalization mismatch in the test assertion; the assertion now normalizes its expected value by a marshal round trip.
+- `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -p:UseSharedCompilation=false -m:1` — passed, 0 warnings and 0 errors.
+- `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/tests/Eve.Corporations.Tests/Eve.Corporations.Tests.csproj -p:UseSharedCompilation=false -m:1` — passed, 0 warnings and 0 errors.
+- `MSBUILDDISABLENODEREUSE=1 dotnet test dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj --filter FullyQualifiedName~Corporation_medal_rpcs_use_the_registered_host_service_and_preserve_wire_outcomes -p:UseSharedCompilation=false --no-restore -m:1` — passed, 1 passed, 0 skipped. This no-character socket path did not open a PostgreSQL connection.
 - Real graphical V24.01 client behavior was not exercised.

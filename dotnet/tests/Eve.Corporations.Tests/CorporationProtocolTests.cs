@@ -1344,10 +1344,10 @@ private static PyValue RowField(PyValue value,string key)
             new PyWString("Notice"),new PyWString("Award"),new PyList([])))).Value;
         await medals.GiveMedalToCharacters(Call(founderSession,"GiveMedalToCharacters",new PyInt(medalId),
             new PyList([new PyInt(member)]),new PyWString("Awarded")));
-        Assert.DoesNotContain(memberSink.Packets,p => NotificationName(p) == "OnMedalsReceived");
+        Assert.DoesNotContain(memberSink.Packets,p => NotificationName(p) == "OnMedalIssued");
         founderSession.RunAfterResponse();
-        Assert.DoesNotContain(founderSink.Packets,p => NotificationName(p) == "OnMedalsReceived");
-        var medalNotice = Assert.Single(memberSink.Packets,p => NotificationName(p) == "OnMedalsReceived");
+        Assert.DoesNotContain(founderSink.Packets,p => NotificationName(p) == "OnMedalIssued");
+        var medalNotice = Assert.Single(memberSink.Packets,p => NotificationName(p) == "OnMedalIssued");
         Assert.Equal("clientID",NotificationAddress(medalNotice).IdType);
         await registry.ResignFromCEO(Call(founderSession,"ResignFromCEO",new PyInt(member)));
         Assert.Empty(affiliationWrites);

@@ -123,8 +123,6 @@ public partial class HostServerTests
     private static PyValue EntryValue(PyDict dictionary, string key) =>
         dictionary.Entries.Single(entry => Text(entry.Key) == key).Value;
 
-    private static PyValue Value(PyDict dictionary, string key) => EntryValue(dictionary, key);
-
     private static PyValue RowField(PyObject value, string name) =>
         ((PyDict)value.Args).Entries.Single(entry => Text(entry.Key) == name).Value;
 

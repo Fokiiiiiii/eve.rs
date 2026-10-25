@@ -1568,12 +1568,11 @@ Sources. The wiki: "Pochven" (https://wiki.eveuniversity.org/Pochven, fetched 20
   (`CharacterShips.Space.cs`), so the stored state is the same. A session with no character is answered True, as the
   reference answers. Status: decided (slice D). Tests: `CharacterLogoffTests` (PostgreSQL), live
   `test_a_character_logs_off_to_the_selection_screen_and_selects_again`.
-- **Requests that nothing records answer False, not True.** `userSvc.CastUpvote`, `CastDownvote`, `ReportBot`,
-  `ReportISKSpammer` and `ActivateCharacterReSculpt` answered True without recording anything; `kiringMgr.ActivateRedeemingCode`
-  answered True for any code. eve.rs has no feedback, report, re-sculpt token or redeeming-code store, so none is
-  accepted: the answer is False. The client does not read the answer of the votes and reports (`customersatisficationcont.py:38`,
-  `infoContentBase.py:1690`, `chat_service.py:203`); the re-sculpt activation ignores it too (`menuFunctions.py:390-391`),
-  so a re-sculpt is not offered as done. Status: open until the stores exist (TODO section 41).
+- **GATE-C supersedes this earlier decision for votes and reports.** `userSvc.CastUpvote`, `CastDownvote`, `ReportBot` and
+  `ReportISKSpammer` answer True and keep nothing, matching EveJS (see the GATE-C decision below). The V24.01 client
+  ignores these replies (`customersatisficationcont.py:38`, `infoContentBase.py:1690`, `chat_service.py:203`); no feedback
+  or report store is planned in this phase. `ActivateCharacterReSculpt` and `kiringMgr.ActivateRedeemingCode` remain
+  separate operations and remain False until their providers exist (TODO section 41).
 - **The paperdoll state follows the stored appearance.** `charMgr.GetPaperdollState` answered 0 for every character. The
   reference answers 2 (no existing customization) until a doll is stored, then 0 (`paperDollPayloads.js`,
   `resolvePaperDollState`). The client reads the state at station entry to ask about a recustomization

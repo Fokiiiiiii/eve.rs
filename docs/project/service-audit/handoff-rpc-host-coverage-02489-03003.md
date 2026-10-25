@@ -1,26 +1,33 @@
 # RPC Host coverage handoff: 02489, 02490, 02768-02770, 03003
 
-## Current result
+## Result
 
-A real Host socket regression now covers all six rows. Ship-stance returns the established no-character error shape in the no-session case. CanCharacterJump returns the client-consumed False boolean when no eligible-character provider is configured. The two shipcaster travel methods and void-space exit return Host ErrorResponse packets without pretending a jump succeeded.
+A focused wire regression now drives the registered services through a real Host dispatcher, includes transport-added `machoVersion`, checks the stance response and notification, checks the starter eligibility boolean, and checks the reference rejection responses for shipcaster travel and Void Space exit. The previously present `ShipMovementRpcCoverageTests` was removed because its stance and Void Space requests could succeed as unknown-service errors rather than prove the actual routes.
 
-Host composition registers ship-stance and void-space in CoreServices; shipcaster services are registered from AgentRpc.cs:110. That production registration currently supplies no landing-pad, eligibility, or travel callbacks.
+The task's client wire coverage is resolved. Successful shipcaster travel and Void Space exit remain open because their authoritative runtime state is not implemented or registered. This change does not claim a playable travel transition.
 
-This is RPC coverage, not a playable shipcaster travel implementation. EVE University describes a working one-way Interstellar Shipcaster for enlisted militia pilots, with destinations driven by active beacons and cycling destinations. That state and travel transition are not owned by the current Host, so the task must remain open for a successful authoritative jump flow. Source: https://wiki.eveuniversity.org/Shipcaster
+## V24.01 whole-tree caller and consumer evidence
 
-## V24.01 client call and consumption evidence
+- **RPC-02489 `shipStanceMgr.SetShipStance`:** `eve/client/script/ui/inflight/shipstance.py:29-32` invokes with `(ship_id, stance_id)` and discards the ordinary RPC return. Every `OnStanceActive` consumer found by a whole-tree search is `eve/client/script/ui/inflight/ship_stance_button.py:53-56`, `eve/client/script/ui/shared/fitting/fittingController.py:429-432`, `eve/client/script/ui/station/base.py:268-271`, and `eve/client/script/ui/view/hangarView.py:707-710`; ship scene animation also consumes the stance at `eve/client/script/ui/shared/fitting/shipSceneContainer.py:324-326`. The fitting ghost path dispatches the same event at `eve/client/script/ui/shared/fittingScreen/ghostFittingSvc.py:1323-1326`. Host returns the previous stance and sends `OnStanceActive(shipID, stanceID)` for a changed state (`GameRpcServices.cs`); its production write provider uses the item store and transaction in `MissionComposition.cs:87-145`.
+- **RPC-02490 `shipcasterTravelMgr.CmdJumpThroughShipcaster`:** the menu path is `menusvc.py:3069-3071`, the movement wrapper is `movementFunctions.py:601-604`, and `shipcasterSvc.py:17-20` passes `(shipcasterID, toSolarsystemID, toLandingPadID)` to `PerformSessionChange('jump', ...)`. It does not inspect an ordinary RPC reply.
+- **RPC-02768 and RPC-02769 `starterShipcasterTravelMgr.CanCharacterJump`:** both rows map to the same zero-argument method at `shipcasterSvc.py:31-32`; that wrapper returns the boolean directly. Whole-tree search found no additional direct caller or consumer of `CanJumpStarterShipcaster`.
+- **RPC-02770 `starterShipcasterTravelMgr.CmdJumpThroughStarterShipcaster`:** `menusvc.py:3074-3075` and the confirmation path `movementFunctions.py:607-616` lead to `shipcasterSvc.py:34-37`, which passes `(shipcasterID)` to `PerformSessionChange('jump', ...)`. It does not consume an ordinary RPC reply.
+- **RPC-03003 `voidSpaceMgr.VoidSpaceEndGateActivation`:** `movementFunctions.py:587-589` passes `(itemID)` to `PerformSessionChange('voidToKnownJump', ...)`; the caller relies on session transition behavior, not a returned data object.
 
-- **RPC-02489 SetShipStance:** eve/client/script/ui/inflight/shipstance.py:29-32 calls with (ship_id, stance_id) and discards the RPC return. ship_stance_button.py:53-55, fittingController.py:429-431, station/base.py:268-270, and hangarView.py:707-709 consume OnStanceActive(shipID, stanceID) to update controls and ship visuals. The server returns the previous stance ID; the visible transition is notification-driven.
-- **RPC-02490 CmdJumpThroughShipcaster:** eve/client/script/parklife/shipcasterSvc.py:17-19 calls with (shipcasterID, toSolarsystemID, toLandingPadID) inside PerformSessionChange('jump', ...). menusvc.py:3069-3071 and movementFunctions.py:601-604 lead from the menu to that call. The session manager consumes a successful session transition; there is no ordinary data reply consumer.
-- **RPC-02768 and RPC-02769 CanCharacterJump:** shipcasterSvc.py:31-32 calls with no explicit arguments and returns the RPC value directly to its caller. These two coverage rows describe the same wire method and are covered by the same Host dispatch assertion. Whole-tree search found no additional direct Python reference to CanJumpStarterShipcaster.
-- **RPC-02770 CmdJumpThroughStarterShipcaster:** shipcasterSvc.py:34-36 calls with (shipcasterID) inside PerformSessionChange('jump', ...); menusvc.py:3074-3075 and movementFunctions.py:607-616 establish the UI path and confirmation before the RPC.
-- **RPC-03003 VoidSpaceEndGateActivation:** movementFunctions.py:587-589 calls with (itemID) inside PerformSessionChange('voidToKnownJump', ...). The client expects the session transition rather than a returned data object.
+The client search also found shipcaster landing-pad and launcher data callers at `shipcasterSvc.py:22-29`; those response rows are outside this task.
 
-## EveJS v0.12.9 comparison
+## EveJS v0.12.9 comparison and current authority
 
-- server/src/services/ship/shipStanceMgrService.js:35-49 returns the prior stance after the runtime mutation; shipStanceRuntime.js:424-572 owns the update.
-- server/src/services/shipcaster/shipcasterTravelMgrService.js:23-33 rejects the travel call with CustomNotify when no active destination exists.
-- server/src/services/shipcaster/starterShipcasterTravelMgrService.js:23-29 returns eligibility; shipcasterRuntime.js:210-213 checks the explicit eligible-character set. Lines 31-37 reject a starter jump when no destination is available.
-- server/src/services/activity/voidSpaceMgrService.js:82-88 rejects exit-gate activation when there is no active Void Space origin state.
+- `shipStanceMgrService.js:35-49` returns `oldStanceID` after `shipStanceRuntime.js:424-572` updates stance state.
+- `shipcasterTravelMgrService.js:23-33` rejects a shipcaster travel request when there is no active destination. `starterShipcasterTravelMgrService.js:31-37` likewise rejects starter travel when no destination exists. `shipcasterRuntime.js:210-213` returns true only for a character in the explicit starter-eligible set; an unseeded character returns false.
+- `voidSpaceMgrService.js:82-88` rejects end-gate activation when there is no active Void Space origin state.
 
-The current host test compares the no-destination rejection behavior and false eligibility wire shape with this reference. It does not exercise the EVE University successful shipcaster mechanics or a graphical client.
+Host registers shipcaster routes from `dotnet/src/Eve.Host/Rpc/AgentRpc.cs:110`, and the Void Space route from `dotnet/src/Eve.Host/Rpc/ProgressRpc.cs:106`. Ship stance is registered in `dotnet/src/Eve.Services.Core/CoreServices.cs:80`. The shipcaster Host registrations have no beacon, faction, eligibility or travel provider; the Void Space registration has no runtime callback. Accordingly the regression checks EveJS's no-destination / no-origin refusal paths and does not fabricate a jump.
+
+EVE University describes active Interstellar Shipcaster beacons as destination state (zero to three active, cycling destinations when multiple are active), and limits use to pilots enlisted with the relevant militia: https://wiki.eveuniversity.org/Shipcaster . eve.rs does not yet own that active beacon state or a successful shipcaster transition. No mechanics deviation from EveJS is introduced by this coverage change.
+
+## Verification
+
+- `dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -p:UseSharedCompilation=false`: passed, 0 warnings and 0 errors.
+- Focused Host wire test `Movement_rpcs_use_registered_host_routes_with_client_wire_shapes`: passed (1 passed, 0 failed, 0 skipped).
+- The stance wire assertion supplies an in-memory callback state through the production service contract; it does not exercise the database write provider. That provider remains covered by the existing domain tests, while this change avoids PostgreSQL as requested. The test is a Host socket/headless check, not a graphical-client run.

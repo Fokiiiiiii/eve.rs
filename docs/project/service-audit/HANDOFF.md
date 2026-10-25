@@ -4,8 +4,8 @@
 
 - Client source: /home/user/eve-logic, commit 1dbb5711a072a146e1d228365668ac05655eefe1.
 - Host source used for the latest CSV generation: origin/main ec27cb3462ebc3ff5bd2b9acb34c5e82221afdbe plus this task's changes.
-- Latest main push containing this task's implementation and tests: e6310b34c165b815bedc0cbb636129324fde78d2.
-- Latest integrated origin/main: fbe1eed5; this follow-up updates a handoff file only.
+- P0 implementation/test push: e6310b34c165b815bedc0cbb636129324fde78d2.
+- Handoff synchronization push: 6e8019cd6104; latest integrated origin/main is a3267e58, documentation-only since the P0 push.
 - Prior P0 implementation/test push: 21f75f92. Latest main synchronization push: 22c62010. Focused Actions run 40219719160 passed for Search_quick_query_returns_client_id_list_through_host_with_transport_kwargs; push CI run 40219660982 passed.
 - Regenerate both CSVs and the P0/P1 work queue with:
   python3 tools/spec-extract/run_service_audit_current.py --queue-dir /tmp/service-audit-cx6-final
@@ -63,7 +63,7 @@ The wire metadata fix treats the client-added `machoVersion=1` as transport data
 ### Implementation and checks
 
 - `GetMultiOwnersEx` accepts up to 10,000 raw IDs, preserves integer/container validation, reads characters in one bulk request, and uses the existing bulk corporation/alliance stores. Its RPC budget is proportional to request size in groups of 100; the shared 160-unit limit remains.
-- Local `Eve.Host.Tests` build passed with zero warnings/errors. The three focused real-Host wire tests passed (3/3, zero skipped) immediately before push e6310b34c165b815bedc0cbb636129324fde78d2. The focused Actions run and push-triggered CI status are pending.
+- Local `Eve.Host.Tests` build passed with zero warnings/errors; the focused real-Host wire tests passed 3/3 with zero skipped. Focused Actions run 40221717263 passed all 3 tests. Push CI run 40221666019 failed only because `ConfigServiceTests.Batched_config_lookups_refuse_more_than_500_raw_ids` still expected the former 500-ID cap. The test now checks the 10,000-ID limit (10,001 rejected); `Eve.Services.CharacterInfo.Tests` built with zero warnings/errors and that focused test passed 1/1, zero skipped. Follow-up Actions and push-CI runs are pending. The earlier CI also skipped one unrelated Dogma benchmark test.
 - No PostgreSQL database or graphical client was used. The character/corporation database-backed owner batch was not exercised locally; its code path compiled and uses the existing bulk stores.
 
 ## Shipcaster and structure travel evidence

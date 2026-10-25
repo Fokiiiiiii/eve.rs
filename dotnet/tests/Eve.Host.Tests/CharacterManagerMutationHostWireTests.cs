@@ -76,7 +76,7 @@ public partial class HostServerTests
         {
             Method = "GetOwnerNote", Args = [noteId], Session = new ClientSession { CharacterId = characterId },
         }));
-        Assert.Equal(new PyStr("client note"), PersonalWireField(Assert.Single(persisted.Items), "note"));
+        Assert.Equal("client note", T(PersonalWireField(Assert.Single(persisted.Items), "note")));
     }
 
     [PgFact]

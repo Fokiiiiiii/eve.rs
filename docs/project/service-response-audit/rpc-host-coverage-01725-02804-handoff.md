@@ -9,7 +9,7 @@ Updated 2026-10-25.
 - Encoded items: `menuFunctions.py:473-477` calls `DecodeItem` and opens the encoded-item window only for a URL. EveJS `encodedItemsService.js:178-209` accepts `.png` and `.webm` URLs.
 - Item locking: `itemLocking.py:11-79` caches the location-to-item map, checks membership, and invalidates/scatters on lock changes; `corp_ui_accounts.py:509-595` renders locked-location groups. EveJS `itemLockingService.js:21-36` returns keyed item records.
 - Mutual war invites: `mutualWarInvites.py:8-41` wraps all six methods; it returns pending rows, consumes blocked state, and ignores mutation returns. EveJS `mutualWarInviteMgrService.js:87-108` filters rows by owner and sorts newest first.
-- Asset safety: `assetSafetySvc.py:25-30` returns character/corporation calls; `assetSafetyControllers.py:10-17` consumes the row lists. EveJS `structureAssetSafetyService.js:185-192` returns persisted wraps.
+- Asset safety: `assetSafetySvc.py:25-30` returns character/corporation calls; `assetSafetyControllers.py:10-17` consumes row lists. EveJS `structureAssetSafetyService.js:185-192` returns persisted wraps.
 
 ## eve.rs wiring and transport
 
@@ -20,8 +20,8 @@ Updated 2026-10-25.
 ## Tests and current state
 
 - `InvBrokerDescriptorHostTests.cs` checks the registered inventory route through HostServer.
-- `ServiceResponseBatchHostWireTests.cs` checks dynamic-item refusal, encoded URL, invite filtering and order, block state and mutation callback order, asset safety row fields and owner IDs, and empty item-locking collections, all through HostServer.
-- `StructureAssetSafetyRpcTests.cs` exercises registered Host mutation replies, notification order, wrap-name and delivery-target result shapes. `Eve.Macho` is imported exactly once.
-- Prior revision `24a2628c`: Host.Tests built (0 warnings/errors), six focused tests passed (0 skipped), and Actions run `40182343738` succeeded.
-- Revision `b464cc84` exposed a missing `Eve.Macho` import in the upstream structure safety test. Commit `f32ba259` added it; an upstream concurrent commit added the same line before merge, leaving a duplicate. Actions run `40184910516` then failed on that duplicate import. The current worktree removes the duplicate; Host.Tests build succeeded (0 warnings/errors) and seven focused tests passed (0 skipped). The corrected file and this note are ready to commit and recheck on Actions.
-- Successful mutation persistence and populated `GetDynamicItemInfo` replies remain uncovered. No database or graphical-client run was performed. The service-audit generator still misses the inventory publisher wrapper and shared wire-test helpers, so its CSV coverage statuses are stale.
+- `ServiceResponseBatchHostWireTests.cs` checks dynamic-item refusal, encoded URL, invite filtering/order, blocked state and callback order, asset-safety row fields/owner IDs, and empty item-locking collections, all through HostServer.
+- `DynamicItemInfoHostWireTests.cs` checks the no-data `GetDynamicItemInfo` reply for itemID 0 through HostServer.
+- `StructureAssetSafetyRpcTests.cs` exercises registered Host mutation replies, notification order, wrap-name and delivery-target result shapes.
+- At `72746bc0`, local Host.Tests built with 0 warnings/errors and all eight focused tests passed with 0 skipped. Actions run `40186144273` succeeded. The preceding Actions failure `40184910516` was caused by the duplicate import after two concurrent commits added the same using; the duplicate was removed.
+- Successful dynamic mutation persistence and a populated `GetDynamicItemInfo` reply remain uncovered. No database or graphical-client run was performed. The coverage generator misses the inventory publisher wrapper and shared wire-test helpers, so its CSV status is stale.

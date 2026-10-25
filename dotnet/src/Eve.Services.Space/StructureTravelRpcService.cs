@@ -5,8 +5,8 @@ using Eve.Services;
 namespace Eve.Services.Space;
 
 /// <summary>
-/// RPC surface for structure travel. The host can wire the callback to its travel runtime when
-/// structure jumps are supported; current SpaceSessions only handles stargate-to-stargate jumps.
+/// RPC surface for structure travel. The Host wires the travel calls to persisted structure access and
+/// the existing session movement runtime.
 /// </summary>
 public sealed class StructureTravelRpcService : IService
 {

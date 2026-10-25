@@ -45,3 +45,13 @@ The client-side decision points above were searched across the full /home/user/e
 - Other CI failures exposed stale wire-test assumptions: decoded strings are `PyBytes`, error packets use `MachoMessage.ErrorResponse` (15), and inventory movement emits a notification before the call reply. The affected assertions/read loop now follow those observed wire shapes.
 - The CI insurance purchase test failed because the Rifter produced no 50% quote from its returned insurance value. It remains to be resolved on the database-backed Actions lane; local database tests were not run as required.
 - Local Host test project build passed with 0 errors (6 transient file-copy retry warnings while another process held `Eve.Services.Space.dll`). The no-database inventory focused invocation failed with 236 rows versus the CI snapshot of 1,420; no database was used.
+
+
+## Latest verification state
+
+- Commit `f70c174e` is pushed to `main`; its selected Agent test run `40235241341` failed after starting the Host test command, but the emitted log contained no test failure names or summary. The prior broader selected run `40232977831` likewise ended without test-result details.
+- Push-triggered CI for `1fe2bb2e` completed with failures. The Host test failures included the insurance quote test at `InsuranceRpcHostWireTests.cs:140`, plus wire expectation mismatches in character notes, Beyonce formation strings, and ship fitting tuple equality. The latter three expectations were updated on `f70c174e`. Inventory count and bound inventory notification ordering corrections were also included in the prior commit.
+- The same CI run's fast live Python job failed in two authentication tests: the new-account accrued-time result was empty and the age-gate read stayed false after the test updated account state. Eight slow/skill-speed tests were skipped by their environment gates. Those authentication failures are outside the mailing-list RPC path.
+- On `f70c174e`, push-triggered CI run `40235234218` was queued when this handoff was updated.
+- Local Host test project build after the latest wire expectation changes passed: 0 warnings, 0 errors. The no-database inventory test invocation reported 236 rows, while database-backed CI had reported 1,420; no PostgreSQL database was used locally.
+- The mailing-list focused Agent test passed on `3bbc382b` (run `40230484611`, 1 passed, 0 failed, 0 skipped). The latest edits do not change that test or production mailing-list code.

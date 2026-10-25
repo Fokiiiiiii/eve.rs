@@ -2,25 +2,26 @@
 
 ## Status
 
-Partial. Commit `a03adf89` (included in pushed SHA `3bfe6605c1f8340c5363ea28dc501e4a10aba0db`) adds a loopback Host wire regression for the three shipcaster read methods. The requested batch is not complete. Production Host registers the shipcaster service names in `AgentRpc.cs:110`, but provides no landing-pad/faction state. Cosmetics and stance still need Host wire regressions; kill-counter now has one.
+Partial. Push bbb7b6f1b916b272859ad71047f642e4b473fe1b includes 173d933b fix: accept transport metadata on ship kill counter. Three shipcaster reads have a Host-dispatch regression from earlier commits; kill-counter has a Host-dispatch wire regression. Production shipcaster registration still has no authoritative landing-pad/faction provider. Successful Host-wire regressions for cosmetics and stance remain to be added.
 
-## V24.01 client trace
+## V24.01 client callers and consumers
 
-- Shipcaster: `shipcasterSvc.py:22-29` forwards the three reads. Warzone UI consumes faction IDs at `warzoneMapPanel.py:397` and `shipCasterVisualization.py:60`, all-pad rows at `warzoneMapPanel.py:424`, and faction-filtered pads at `shipCasterVisualization.py:57` and `warzoneInfoSideCont.py:228`. These consumers use faction, system, built, linked and disruption state.
-- Apply skin: `shipUtil.py:27` applies the active ship's skin; `cosmetics/client/cosmeticsSvc.py:160-162` applies a skin during the cosmetics flow. GM operations call GiveSkin with duration (`devMenuFunctions.py:8-15`), permanent (`:18-21`), or single-use (`:24-27`) options, expire at `:32-35`, and remove a character or corporation license at `:77-83`. The skin panel exposes GiveSkin and RemoveSkin at `skinPanel.py:633,651`.
-- Kill counter: all three client callers are `menusvc.py:869-870`, `baseHangarBehaviours.py:94-97`, and `panelOverview.py:273-285`. They consume a numeric count for the ship menu, hangar model (capped at 999), and overview killmark (zero suppresses the mark). Whole-tree `search_for_pattern` found no other callers or consumers.
-- Ship stance: inflight selection calls the bound service at `shipstance.py:31`. The fitting center updates stance controls on item/attribute changes at `fittingCenter.py:43,66,252-258`.
+- Shipcaster calls: eve/client/script/parklife/shipcasterSvc.py:23-30. Consumers: warzoneMapPanel.py:397,424, shipCasterVisualization.py:57,60, warzoneInfoSideCont.py:228; rows expose faction/system and built/linked/disruption state. shipcaster/landingPadData.py:9-77 defines the six-field client row.
+- Cosmetics callers: eve/client/script/ui/cosmetics/ship/shipUtil.py:27-28, cosmetics/client/cosmeticsSvc.py:160-162, ui/shared/skins/devMenuFunctions.py:8-27,35-36,77-84, skinPanel.py:633,651-652. Notification consumers: nodegraph/client/events/cosmetic.py:9-13, cosmetics/client/shipSkinStateController.py:72, ui/shared/neocom/charsheet/skinsPanel.py:152-155, ui/shared/skins/controller.py:236-238, cosmeticFittingCenter.py:107, hangarView.py:769-776, shipSceneContainer.py:116-121.
+- Kill counter callers: ui/services/menusvc.py:869-870, ui/view/hangarBehaviours/baseHangarBehaviours.py:94-95, ui/shared/info/shipInfoPanels/panelOverview.py:275-276. They consume a numeric count; hangar caps display at 999 and overview suppresses zero.
+- Stance caller: ui/inflight/shipstance.py:30-32 ignores the RPC return. Notification consumers: ui/inflight/ship_stance_button.py:53-55, fittingController.py:429-431, hangarView.py:707-713.
 
-## EveJS comparison
+## EveJS reference
 
-EveJS shipcaster reads serialize the in-memory list and faction set in `server/src/services/shipcaster/shipcasterRuntime.js:155-188`; those collections are populated only through test-seed helpers, with no production producer. Cosmetic RPCs delegate to stateful license/ship-skin logic in `server/src/services/ship/shipCosmeticsMgrService.js:308-389` and `shipCosmeticsState.js:327-384,440-460,484-556`. The kill-counter RPC returns the persisted player count as a numeric result (`shipKillCounterService.js:19-31`). SetShipStance calls the runtime and returns the previous stance ID (`shipStanceMgrService.js:35-49)); the runtime updates ship state and broadcasts refreshes (`shipStanceRuntime.js:424-572`).
+- Shipcaster reads serialize in-memory list/faction state in server/src/services/shipcaster/shipcasterRuntime.js:155-188; producer evidence is limited to test seed helpers.
+- Cosmetics RPCs use stateful logic in server/src/services/ship/shipCosmeticsMgrService.js:308-389 and shipCosmeticsState.js:327-384,440-460,484-556.
+- Kill counter returns persisted player count in shipKillCounterService.js:19-31.
+- Stance returns the previous stance (shipStanceMgrService.js:35-49) and updates/refreshes runtime ship state (shipStanceRuntime.js:424-572).
 
-## eve.rs and verification
+## eve.rs and checks
 
-The shipcaster RPC service and object-ex wire shape exist in `dotnet/src/Eve.Services.Space/ShipcasterRpcService.cs`. Host production registers them in `dotnet/src/Eve.Host/Rpc/AgentRpc.cs:110`, but passes no landing-pad, faction, eligibility or travel callbacks; `docs/project/TODO.md` records those gaps. `ShipcasterHostWireTests.cs` verifies populated rows through Host dispatch, including the client class token, six fields and faction list.
+- Production shipcaster names are registered in dotnet/src/Eve.Host/Rpc/AgentRpc.cs:110 without state callbacks; docs/project/TODO.md retains that gap. Existing ShipcasterHostWireTests sends all three methods through real Host dispatch with test fixture providers.
+- Kill-counter production registration reads persisted shipKillCounters in dotnet/src/Eve.Host/Rpc/CoreRpc.cs:147. The wire test sends GetItemKillCountPlayer(9001) through a loopback Host and asserts persisted player count 23 as PyInt. It accepts only the transport-added machoVersion keyword.
+- Selected kill-counter Actions run 40242203372 passed. Push-triggered CI 40242192488 failed in an unrelated insurance test because its isolated GameStore had no shipInsurancePrices row. The isolated run 40243583086 on that older ref also failed. A later origin/main merge added a persisted Rifter price fixture before Host startup in InsuranceRpcHostWireTests; selected Actions run 40244085447 is checking that updated test on merged ref 864257ed. No database or graphical-client check was run locally.
 
-`ShipKillCounterHostWireTests.Ship_kill_counter_returns_the_persisted_player_count_through_host_dispatch` sends `GetItemKillCountPlayer(9001)` through the real loopback Host and asserts the persisted `playerKills` count returns as `PyInt(23)`. Local `dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj` succeeded with one transient file-copy retry warning caused by overlapping MSBuild processes; focused test: 1 passed, 0 failed, 0 skipped. No database or graphical-client verification was used.
-
-The first selected Actions run `40230103524` failed at Release compilation before the test because merged `ShipRpcHostTests.cs` lacked `using Eve.Services;` for `Py`. The missing namespace was added in `916e0bca` and pushed in `d8ca628437402c29b442bdc033313ca9bd836680`. Retry `40231225904` passed the Release build and selected test; no tests or jobs failed. The push-triggered `ci.yml` status lookup for that SHA returned no run. No graphical client was used.
-
-Remaining work is an authoritative shipcaster state provider and Host wire regressions for skin mutations and stance mutation/notifications.
+Remaining work: implement an authoritative shipcaster state provider; add successful real-Host wire coverage for cosmetics and stance; verify the insurance test against the updated mainline fixture.

@@ -3,11 +3,11 @@
 ## Snapshot and regeneration
 
 - Client source: /home/user/eve-logic, commit 1dbb5711a072a146e1d228365668ac05655eefe1.
-- Host source used for generation: origin/main 17cd6691bac78a3463aa379a277419c809ae3488 plus task commits d4ce449c and 0c8d9da2.
+- Host source used for generation: origin/main 28f1fbb16cecd22424ff55c91af9ccc7ec19afe9 plus this task's changes.
 - Regenerate both CSVs and the P0/P1 work queue with:
   python3 tools/spec-extract/run_service_audit_current.py --queue-dir /tmp/claude-0/-home-user/fb9607a2-2996-57a7-a22d-383b9f5b5fae/scratchpad/cx/queue
 - The service-audit Python regression tests run in the `ci.yml` Python job.
-- Generated totals: 4,225 client rows, 2,397 RPC rows, 1,366 active Host routes, and 0 queue files. Coverage: HOLLOW 10, IMPLEMENTED-TESTED 288, IMPLEMENTED-UNTESTED 1,627, MISSING 472, and no REJECTS-VALID-INPUT rows.
+- Generated totals: 4,225 client rows, 2,397 RPC rows, 1,379 active Host routes, and 0 queue files. Coverage: HOLLOW 10, IMPLEMENTED-TESTED 288, IMPLEMENTED-UNTESTED 1,640, MISSING 459, and no REJECTS-VALID-INPUT rows.
 - The Host route scanner resolves string constants referenced by HasMethod comparisons and inspects the full Host Composition directory, including partial AgentRpc and MissionComposition files. This includes SearchQueryService.Query, whose route compares against QueryMethod, and AgentMissionService, which is returned from AgentRpcServices and registered through the Host characterServices list.
 
 CLIENT_CALL_MATRIX.csv includes RPC calls, service binds, bound-object method dispatch, notification subscriptions/handlers, and session attribute reads/writes. Each row records the observed argument shape, client call site, nearest static reply consumer, and priority. EVE_RS_COVERAGE.csv is the RPC-only join because binds, notifications, and session fields do not have a one-to-one Host method status.
@@ -34,7 +34,7 @@ Coverage statuses match current Host source registrations and known behavior gap
 
 ## Owner-log classes and remaining checks
 
-- A (MISSING): 472 RPC rows lack active Host routes. P0/P1 non-tested rows are queued; lower-priority rows remain in the inventory.
+- A (MISSING): 459 RPC rows lack active Host routes. P0/P1 non-tested rows are queued; lower-priority rows remain in the inventory.
 - B (REJECTS-VALID-INPUT): The eight priority rows listed below now have real-Host wire tests and regenerated coverage evidence; the regenerated inventory contains no REJECTS-VALID-INPUT rows.
 - C (HOLLOW): 10 targeted RPC rows remain hollow after the three structure cyno rows moved to IMPLEMENTED-TESTED: eight Shipcaster inventory rows and two Ansiblex travel rows.
 - Python compile checks and one focused composition-route extraction test passed during this audit. No PostgreSQL database was used. The real graphical client and database-backed mixed-owner request were not exercised locally; a 17-by-100-owner normal burst ran through the real Host. Follow-up to the service-audit push (91a326a5): CI found three incorrect expected inventory totals in ReprocessingServiceTests and a reversed (locationId, ownerId) argument pair in ReprocessingHostTests. The corrected totals account for the initial Tritanium item and the 50% station yield; the persistence assertion now queries InLocationAsync(StationId, character). These are test-only corrections; ReprocessingService and Host behavior are unchanged. Focused database-backed Actions run 40089514853 passed (three Reprocessing service tests and one Host persistence test). Push CI run 40089504834 failed the live structure placement test; .NET space shard 2/2 was cancelled and eight optional slow live checks were skipped. Follow-up runs 40090250476 (ad55c2de) and 40092260488 (8799c2aa) remain in progress. Latest main 2919b0e1 includes simulator tick-alignment and docking-notification ordering changes (56bcae9a); its test_structures.py run 40093710819 is in progress.

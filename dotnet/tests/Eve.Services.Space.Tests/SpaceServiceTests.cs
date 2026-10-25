@@ -4570,12 +4570,16 @@ public class SpaceServiceTests
         {
             ("AddToWatchlist", [new PyList([]), new PyList([])]),
             ("RemoveFromWatchlist", [new PyLong(pilot.CharacterId), new PyList([])]),
-            ("RegisterForDamageUpdates", [new PyList([])]),
+            ("RegisterForDamageUpdates", [new PyList([new PyLong(pilot.CharacterId)])]),
         })
         {
             var error = await Assert.ThrowsAsync<MachoWrappedException>(async () => await Call(method, args));
             Assert.Equal("FleetNotInFleet", error.Error.UserErrorMessage);
         }
+
+        session.Set("fleetWatchlist", new PyList([new PyLong(pilot.CharacterId)]));
+        Assert.Equal(PyBool.True, await Call("RegisterForDamageUpdates", new PyList([])));
+        Assert.Empty(((PyList)session.Get("fleetWatchlist")!).Items);
     }
 
     [PgFact]
